@@ -1,6 +1,8 @@
 # Skill-First Agent Runtime: 技术设计
 
 > 核心概念与设计哲学见 [overview.md](./overview.md)。
+>
+> **本文已拆分为迭代文档**，见 [docs/iteration/](./iteration/)。如有冲突，以迭代文档为准。本文保留作为原始设计参考。
 
 ## 长时异步 Tool 设计
 
