@@ -82,3 +82,4 @@ v0.1 结束时，开发者应该能够：
 | [011](./issues/011-builtin-read-file.md) | Builtin read_file tool |
 | [012](./issues/012-python-sdk.md) | Python SDK（PyO3 binding） |
 | [013](./issues/013-typescript-sdk.md) | TypeScript SDK（napi-rs binding） |
+| [014](./issues/014-e2e-validation.md) | 端到端验收（4 个 demo 全部跑通） |

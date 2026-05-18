@@ -16,8 +16,9 @@ Agent 通过 `read_file` tool 按需读取 skill 的 SKILL.md 和 references 文
 - [ ] 文件不存在或读取失败时返回 `ToolError`（不 panic）
 - [ ] 当读取的路径匹配已注册 skill 的 SKILL.md 路径时，发出 `SkillContentRead { skill_name, file, tokens }` 事件
 - [ ] `tokens` 为粗略估算（字符数 / 4），不调用 tokenizer
-- [ ] v0.1 不限制路径（path allowlist 是 v0.2 安全增强），但所有读取操作均通过事件记录
+- [ ] v0.1 不限制路径（path allowlist 是 v0.2 安全增强）
+- [ ] **仅当**读取路径匹配已注册 skill 的 SKILL.md 时发出 `SkillContentRead`；读取其他任意文件不产生专用审计事件（这是已知限制，不是完整审计）
 
 ## 说明
 
-`read_file` 的路径限制留给 v0.2，但 `SkillContentRead` 事件提供了完整的审计日志，让用户在 v0.1 阶段也能观测所有文件访问行为。
+`SkillContentRead` 只覆盖 skill 内容读取，不是全量文件访问审计。v0.1 的安全依赖"用户信任 skill 来源"；v0.2 通过 path allowlist 收紧，届时可以对所有读取发出审计事件。

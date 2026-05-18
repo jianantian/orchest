@@ -19,7 +19,7 @@
 - [ ] `ToolContext` 结构体：`run_id`、`tool_call_id`、`on_update: Option<mpsc::Sender<Value>>`
 - [ ] `AgentConfig` 结构体（含 `mcp_servers` 字段预留，类型为 `Vec<Value>` 占位）
 - [ ] `BudgetConfig` 和 `BudgetUsage` 结构体
-- [ ] `RunState` 结构体，含 `schema_version: &'static str`
+- [ ] `RunState` 结构体，含 `schema_version: String`（不用 `&'static str`，后者无法从 JSON 反序列化）
 - [ ] `RunStatus` enum：全部变体包括 `WaitingForAsyncTool`
 - [ ] `RuntimeEvent` enum：全部变体（参考 spec 中"Runtime Event"章节）
 - [ ] `ModelStreamChunk` enum：`Text`、`Thinking`、`ToolCallArgsChunk`、`Done`
@@ -31,3 +31,4 @@
 - `RunId` 用 `uuid::Uuid` 的 newtype wrapper
 - `JsonSchema` 在 v0.1 用 `serde_json::Value` 作为类型别名，不引入 jsonschema crate
 - `ToolError` 和 `ModelError` 各自定义为简单的 `struct { message: String, code: Option<String> }`
+- `AgentConfig.mcp_servers` 在 v0.1 用 `Vec<serde_json::Value>` 占位，并加 `#[serde(default)]`；v0.2 替换为 `Vec<McpServerConfig>`。占位类型可以接受任意 JSON，但调用方不应在 v0.1 传入非空值

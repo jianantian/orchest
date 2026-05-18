@@ -24,13 +24,16 @@ Anthropic 推荐的高级 agent 模式：与其为每种能力注册独立 tool�
 - [ ] run 结束时销毁 session，释放资源
 
 **Python 执行：**
-- [ ] 通过 subprocess 运行 `python3 -c {code}`（或复用 persistent subprocess，见 v0.2 的 persistent script mode）
-- [ ] stdout 流式转发为 `ToolCallUpdate` 事件（每行一个 update）
+- [ ] 使用 **persistent subprocess** 实现 session：每个 run 启动一个长驻 `python3 -i` 进程（interactive 模式），通过 stdin 逐次喂入代码，通过 stdout/stderr 读取输出
+- [ ] 使用哨兵行（如 `print("__ORCHEST_DONE__")`）标记每次代码块的输出结束，runtime 读到哨兵行后停止本次读取
+- [ ] stdout 流式转发为 `ToolCallUpdate` 事件（每行一个 update），不等代码执行完才返回
 - [ ] stderr 包含在最终 output 的 `stderr` 字段
+- [ ] **注意**：不使用 `python3 -c`（每次新进程，变量不保留）；persistent subprocess 才能实现"同一 run 内变量共享"
 
 **JavaScript 执行：**
 - [ ] 通过 `deno run --allow-net --allow-read -` 执行（Deno 提供比 Node 更好的权限控制）
-- [ ] 若系统无 Deno，fallback 到 `node -e {code}`，并在 tool description 中标注沙箱级别降低
+- [ ] Deno 原生支持 top-level await，每次调用传入完整代码片段（session 共享通过 Deno 的 `--v8-flags=--harmony` REPL 模式实现，或降级为无状态执行）
+- [ ] 若系统无 Deno，fallback 到无状态的 `node -e {code}`（明确告知用户：fallback 模式下变量不在调用间共享），并在 tool description 中标注
 
 **超时控制：**
 - [ ] 超过 `timeout_seconds` 时，kill 子进程，返回 `{ exit_code: -1, stderr: "timeout" }`

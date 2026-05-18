@@ -12,6 +12,7 @@
 
 **启动接口（供 skill script 调用）：**
 - [ ] `orchest-sdk` Python/TS 包提供 `create_sub_agent(parent_run_id, config, input)` 函数
+- [ ] `orchest-sdk` 是 runtime **自动注入**的内置包，无需 skill 在 `dependencies` 里手动声明：Python 侧 runtime 在创建 skill venv 时预装，Node 侧放入 `NODE_PATH` 的内置目录（与 issue 001/002 的用户依赖机制分开管理）
 - [ ] skill script 通过环境变量 `ORCHEST_PARENT_RUN_ID` 获取父 run ID
 - [ ] sub-agent 的 `BudgetConfig` 由两部分约束：传入的显式配置 + 父 agent 剩余预算的上限
 

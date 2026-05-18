@@ -14,7 +14,7 @@ v0.2 结束时，开发者应该能够：
 ## 成功指标
 
 - MCP server 集成通过 `mcp-server-filesystem`（官方参考实现）的端到端测试
-- 注册 200 个 tool 时，单次 model call 的 context 占用不超过注册 20 个时的 120%（Tool Search Tool 生效）
+- 注册 200 个 tool 时（`tool_search_enabled: true`），单次 model call 的 context 占用不超过注册 20 个时的 120%（Tool Search Tool 生效）
 - OpenAI adapter 通过与 Anthropic adapter 相同的 smoke test 套件
 - 超长 session（累计 50k+ tokens）在触发 compaction 后继续正确运行
 
@@ -43,7 +43,7 @@ v0.2 结束时，开发者应该能够：
 
 ### Context Compaction
 
-- 超过 `BudgetConfig.compaction_threshold`（token 比例，默认 0.8）时触发
+- 超过 `AgentConfig.compaction_threshold`（token 比例，默认 0.8）时触发（放在 `AgentConfig` 而非 `BudgetConfig`，因为这是 context 管理策略，不是资源预算约束）
 - 压缩策略：保留 system prompt + 最近 N 轮对话，对更早的历史摘要
 - 摘要由模型生成（内部调用一次 model call，不计入 step 计数）
 - 压缩后发出 `ContextCompacted { removed_messages, summary_tokens }` 事件

@@ -12,7 +12,7 @@ Polling 模式下，runtime 需要反复调用 `poll()` 来获取 job 状态，�
 
 **JobHandle 扩展：**
 - [ ] `JobHandle` 新增 `webhook: Option<WebhookConfig>` 字段
-- [ ] `WebhookConfig { expected_job_id: String }` — runtime 用此 ID 匹配入站 webhook
+- [ ] `WebhookConfig { expected_job_id: String }` — runtime 用此 ID 匹配入站 webhook；**不**包含 callback URL（URL 由 runtime 通过 `ctx.webhook_base_url` 注入，tool 自行拼接传给外部服务）
 - [ ] `JobHandle.poll` 在 webhook 模式下可以为 `None`（纯 webhook，无 polling fallback）
 
 **本地 HTTP Server：**
@@ -23,9 +23,9 @@ Polling 模式下，runtime 需要反复调用 `poll()` 来获取 job 状态，�
 - [ ] HTTP server 在所有 run 完成后关闭
 
 **Callback URL 注入：**
-- [ ] `ToolContext` 新增 `webhook_base_url: Option<String>` 字段
-- [ ] Tool 可以通过 `ctx.webhook_base_url` 构造 callback URL 传给外部服务
-- [ ] 未启用 webhook server 时该字段为 `None`
+- [ ] `ToolContext` 新增 `webhook_base_url: Option<String>` 字段（这是 callback URL 的唯一来源）
+- [ ] Tool 通过 `format!("{}/webhooks/async-job/{}", ctx.webhook_base_url.as_ref().unwrap(), job_id)` 构造完整 callback URL，传给外部服务
+- [ ] 未启用 webhook server 时该字段为 `None`；tool 在构造 `JobHandle` 时应检查此字段是否存在
 
 **Fallback：**
 - [ ] 若 `JobHandle` 同时有 `poll` 和 `webhook`，优先等待 webhook；超过 `poll_interval * 3` 无 webhook 收到时，fallback 到 polling

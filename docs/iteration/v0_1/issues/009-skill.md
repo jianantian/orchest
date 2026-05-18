@@ -17,8 +17,21 @@ Runtime 启动时扫描指定 `skills_dir` 下的所有 `SKILL.md` 文件，解�
 - [ ] `raw_frontmatter` 保留完整解析结果（`serde_json::Value`）
 - [ ] 解析失败的 SKILL.md 记录警告并跳过，不影响其他 skill 加载
 - [ ] `SkillManifest.path` 为 skill 目录的绝对路径
-- [ ] `scan()` 返回后，所有 skill 的 `bundled_tools` 已注册到 `ToolRegistry`
+- [ ] `scan()` 只返回 `Vec<SkillManifest>`，**不**直接操作 `ToolRegistry`（职责分离，由调用方负责注册）
 - [ ] skill 列表（name + description + path）可供 run loop 构造 system prompt
+
+## 调用方职责
+
+`SkillScanner::scan()` 的调用方（Agent 初始化逻辑）负责把每个 manifest 的 `bundled_tools` 注册进 `ToolRegistry`：
+
+```rust
+let manifests = SkillScanner::scan(&skills_dir)?;
+for manifest in &manifests {
+    for tool in manifest.bundled_tools() {
+        registry.register(Arc::new(tool))?;
+    }
+}
+```
 
 ## SKILL.md Frontmatter 格式示例
 

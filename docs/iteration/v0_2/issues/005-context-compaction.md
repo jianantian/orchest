@@ -11,7 +11,7 @@
 ## 验收标准
 
 **触发条件：**
-- [ ] `BudgetConfig` 新增 `compaction_threshold: Option<f32>`（0.0–1.0，默认 None 表示不启用）
+- [ ] `AgentConfig` 新增 `compaction_threshold: Option<f32>`（0.0–1.0，默认 None 表示不启用）；该字段是 context 管理策略，不属于资源预算，不放在 `BudgetConfig`
 - [ ] 每次模型调用后检查：`used_tokens / context_window_size >= compaction_threshold` 时触发
 
 **压缩策略：**

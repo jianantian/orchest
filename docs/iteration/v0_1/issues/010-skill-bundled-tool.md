@@ -27,7 +27,8 @@ Skill 可以 bundle 可执行脚本作为 tool。Runtime 通过 spawn 子进程�
 
 **安全：**
 - [ ] `executable` 只允许白名单（`python`、`python3`、`node`、`bash`、`sh`）中的值，其他值返回 `ToolError`
-- [ ] `script` 路径必须在 skill 目录内（防止路径穿越），否则返回 `ToolError`
+- [ ] 执行前用 `which`（Unix）或 `where`（Windows）解析实际路径，验证 resolved path 是系统标准路径（在 `PATH` 内），不允许绝对路径或相对路径形式的 `executable`
+- [ ] `script` 路径必须在 skill 目录内（防止路径穿越）：resolve 为绝对路径后检查是否以 `skill_dir` 为前缀，否则返回 `ToolError`
 
 ## 说明
 
