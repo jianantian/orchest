@@ -29,6 +29,7 @@ Issues 001-013 各自有单元级验收标准，但需要一个明确的集成�
   - `async_tool_started` / `async_tool_progress` / `async_tool_completed`
   - `skill_content_read`（需要配置 skill 目录）
   - `approval_requested` / `approval_granted`
+  - `approval_requested` / `approval_denied`，并验证 denied 后不执行对应 tool、最终 run 仍可 `run_completed`
   - `budget_warning`（需要配置很小的 budget 触发）
   - `run_completed`
 
