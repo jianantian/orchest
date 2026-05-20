@@ -1,60 +1,82 @@
 /**
- * Streaming example: process events from an agent run.
+ * Streaming example: print model text deltas from runtime events.
  *
- * Usage: npx ts-node examples/ts_streaming.ts
- * (requires building the native addon first with @napi-rs/cli)
+ * Usage:
+ *   cargo build -p agent-runtime-node
+ *   npx ts-node --compiler-options '{"module":"CommonJS"}' examples/ts_streaming.ts
  */
 
-console.log("TypeScript SDK Streaming Example");
-console.log("================================\n");
+const { spawn } = require("node:child_process");
+const { copyFileSync, existsSync } = require("node:fs");
+const { join, resolve } = require("node:path");
 
-// This example shows how to process streaming events.
-// The v0.1 SDK returns events as an array (runSync).
-// AsyncIterator support is planned for v0.2.
+const repoRoot = resolve(__dirname, "..");
+const nativeSource = join(repoRoot, "target/debug/libagent_runtime_node.dylib");
+const nativeAddon = join(repoRoot, "target/debug/agent_runtime_node.node");
 
-/*
-import { Agent, RuntimeEvent } from '@orchest/agent-runtime';
-
-const agent = new Agent({
-  model: "claude-sonnet-4-20250514",
-  systemPrompt: "You are a helpful assistant.",
-  budget: { maxToolCalls: 5, maxCostUsd: 0.10 },
-});
-
-const events = agent.runSync("Tell me a short joke") as RuntimeEvent[];
-
-for (const event of events) {
-  switch (event.type) {
-    case "ModelStreamChunk":
-      // In streaming mode, print text deltas as they arrive
-      const delta = event.delta as Record<string, unknown>;
-      if ("Text" in delta) {
-        process.stdout.write(String(delta.Text));
-      }
-      break;
-
-    case "ToolCallStarted":
-      console.log(`\n[Tool] ${event.tool} called`);
-      break;
-
-    case "ToolCallCompleted":
-      console.log(`[Tool] ${event.tool} → ${JSON.stringify(event.output)}`);
-      break;
-
-    case "RunCompleted":
-      console.log(`\n[Done] Run completed`);
-      break;
-
-    case "RunFailed":
-      console.error(`\n[Error] ${event.error}`);
-      break;
-
-    case "BudgetWarning":
-      console.warn("[Budget] Approaching limit");
-      break;
-  }
+if (!existsSync(nativeAddon)) {
+  copyFileSync(nativeSource, nativeAddon);
 }
-*/
 
-console.log("Build the native addon to run this example.");
-console.log("See crates/agent-runtime-node/README.md for instructions.");
+const { Agent } = require(nativeAddon);
+
+function startProvider(port: number) {
+  const child = spawn("python3", ["examples/mock_anthropic_provider.py", String(port)], {
+    cwd: repoRoot,
+    stdio: "ignore",
+  });
+  process.on("exit", () => child.kill());
+  return child;
+}
+
+function textDelta(delta: unknown): string {
+  const value = delta as Record<string, unknown>;
+  const text = (value.Text || value.text) as Record<string, unknown> | undefined;
+  return String(text?.delta ?? "");
+}
+
+const port = 8798;
+const provider = process.env.ANTHROPIC_API_KEY ? undefined : startProvider(port);
+process.env.ANTHROPIC_API_KEY ||= "local-demo-key";
+
+setTimeout(() => {
+  const agent = new Agent({
+    model: "claude-sonnet-4-20250514",
+    systemPrompt: "You are a helpful assistant.",
+    apiUrl: process.env.ANTHROPIC_API_URL || `http://127.0.0.1:${port}/v1/messages`,
+    budget: { maxToolCalls: 5, maxCostUsd: 0.1 },
+  });
+
+  agent.registerTool({
+    name: "get_weather",
+    description: "Get the current weather for a city",
+    inputSchema: {
+      type: "object",
+      properties: { city: { type: "string" } },
+      required: ["city"],
+    },
+  });
+
+  const events = agent.runSync("Tell me the Tokyo weather in one short sentence.");
+  for (const event of events as Array<Record<string, unknown>>) {
+    switch (event.type) {
+      case "modelStreamChunk":
+        process.stdout.write(textDelta(event.delta));
+        break;
+      case "toolCallStarted":
+        console.log(`\n[Tool] ${event.tool} called`);
+        break;
+      case "toolCallCompleted":
+        console.log(`[Tool] ${event.tool} -> ${JSON.stringify(event.output)}`);
+        break;
+      case "runCompleted":
+        console.log(`\n[Done] Run completed`);
+        break;
+      case "runFailed":
+        console.error(`\n[Error] ${event.error}`);
+        process.exitCode = 1;
+        break;
+    }
+  }
+  provider?.kill();
+}, 100);

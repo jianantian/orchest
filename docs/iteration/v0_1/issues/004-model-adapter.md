@@ -21,6 +21,7 @@ Run loop 通过 `ModelAdapter` trait 与模型交互，抹平不同 provider 的
 - [ ] `ModelResponse` 包含完整的 tool calls（从完整 response 一次性解析，不从 streaming chunk 增量解析）
 - [ ] `ModelSpec` 支持指定 model id 字符串（如 `"claude-3-5-sonnet-20241022"`）
 - [ ] API key 从 `ANTHROPIC_API_KEY` 环境变量读取，也支持构造时传入
+- [ ] API URL 默认使用 Anthropic 官方 `/v1/messages` endpoint，也支持通过 SDK 参数、adapter config、`ANTHROPIC_API_URL` 或 `ANTHROPIC_BASE_URL` 指向协议兼容 provider；base URL 会自动归一化到 `/v1/messages`
 
 ## 说明
 

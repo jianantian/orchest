@@ -520,6 +520,7 @@ from agent_runtime import Agent
 agent = Agent(
     model="claude-3-5-sonnet",
     system_prompt="你是一个研究助手",
+    api_url="https://api.anthropic.com",  # base URL，会自动使用 /v1/messages
     skills_dir="./skills",
     mcp_servers=[                          # v0.2 生效
         {"name": "github", "transport": {"stdio": {"command": "mcp-server-github"}}},
@@ -563,6 +564,7 @@ import { Agent } from "@yourname/agent-runtime"
 const agent = new Agent({
   model: "claude-3-5-sonnet",
   systemPrompt: "你是一个研究助手",
+  apiUrl: "https://api.anthropic.com", // base URL，会自动使用 /v1/messages
   skillsDir: "./skills",
   budget: { maxTokens: 100_000, maxToolCalls: 50 },
 })

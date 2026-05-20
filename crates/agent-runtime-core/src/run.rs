@@ -42,18 +42,20 @@ pub struct AgentConfig {
     pub mcp_servers: Vec<Value>,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct RunState {
     pub run_id: RunId,
     pub schema_version: String,
     pub config: AgentConfig,
     pub messages: Vec<Message>,
+    #[serde(skip)]
     pub available_tools: Vec<Arc<dyn Tool>>,
     pub step: u32,
     pub status: RunStatus,
     pub budget_used: BudgetUsage,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum RunStatus {
     Running,
     WaitingForApproval {
@@ -62,6 +64,7 @@ pub enum RunStatus {
     WaitingForAsyncTool {
         tool_call: ToolCall,
         job_handle: JobHandle,
+        #[serde(skip, default = "Instant::now")]
         since: Instant,
     },
     Completed {
@@ -549,6 +552,7 @@ mod tests {
                 provider: "test".into(),
                 model: "test".into(),
                 api_key_env: None,
+                api_url: None,
                 max_tokens: None,
             },
             budget: BudgetConfig {

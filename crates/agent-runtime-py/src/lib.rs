@@ -9,9 +9,10 @@ use serde_json::Value;
 
 use agent_runtime_core::budget::BudgetConfig;
 use agent_runtime_core::events::RuntimeEvent;
-use agent_runtime_core::model::anthropic::AnthropicAdapter;
+use agent_runtime_core::model::anthropic::{AnthropicAdapter, AnthropicConfig};
 use agent_runtime_core::model::ModelSpec;
 use agent_runtime_core::run::{AgentConfig, AgentRun};
+use agent_runtime_core::tool::async_job::{JobHandle, JobStatus};
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
     JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
@@ -21,6 +22,7 @@ use agent_runtime_core::tool::{
 struct Agent {
     model: String,
     system_prompt: String,
+    api_url: Option<String>,
     #[allow(dead_code)]
     skills_dir: Option<String>,
     budget: Option<PyBudget>,
@@ -73,33 +75,138 @@ impl Tool for PyTool {
     }
 
     async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        let callback = self.def.callback.clone();
+        let callback = &self.def.callback;
         let input_str = serde_json::to_string(&input).map_err(|e| ToolError {
             message: format!("failed to serialize input: {}", e),
             code: None,
         })?;
 
-        let result = Python::attach(|py| -> PyResult<String> {
+        let result = Python::attach(|py| -> PyResult<Py<PyAny>> {
             let json_mod = py.import("json")?;
             let input_py = json_mod.call_method1("loads", (&input_str,))?;
-            let result = callback.call1(py, (input_py,))?;
-            let result_str: String = json_mod
-                .call_method1("dumps", (result.bind(py),))?
-                .extract()?;
-            Ok(result_str)
+            let result = if let Ok(kwargs) = input_py.cast::<PyDict>() {
+                callback.call(py, (), Some(kwargs))?
+            } else {
+                callback.call1(py, (input_py,))?
+            };
+            Ok(result)
         })
         .map_err(|e| ToolError {
             message: format!("Python tool error: {}", e),
             code: None,
         })?;
 
-        let value: Value = serde_json::from_str(&result).map_err(|e| ToolError {
+        if let Some(job_handle) = py_async_job_handle(&result)? {
+            return Ok(ToolOutput::AsyncJob(job_handle));
+        }
+
+        let result_str = Python::attach(|py| -> PyResult<String> {
+            let json_mod = py.import("json")?;
+            json_mod
+                .call_method1("dumps", (result.bind(py),))?
+                .extract()
+        })
+        .map_err(|e| ToolError {
+            message: format!("failed to serialize Python return value: {}", e),
+            code: None,
+        })?;
+
+        let value: Value = serde_json::from_str(&result_str).map_err(|e| ToolError {
             message: format!("failed to parse Python return value: {}", e),
             code: None,
         })?;
 
         Ok(ToolOutput::Immediate(value))
     }
+}
+
+fn py_async_job_handle(result: &Py<PyAny>) -> Result<Option<JobHandle>, ToolError> {
+    Python::attach(|py| -> PyResult<Option<JobHandle>> {
+        let dict = match result.bind(py).cast::<PyDict>() {
+            Ok(dict) => dict,
+            Err(_) => return Ok(None),
+        };
+        let Some(async_job) = dict.get_item("async_job")? else {
+            return Ok(None);
+        };
+        let async_job = async_job.cast::<PyDict>()?;
+        let job_id: String = async_job
+            .get_item("job_id")?
+            .ok_or_else(|| PyRuntimeError::new_err("async_job missing job_id"))?
+            .extract()?;
+        let poll_interval_ms = async_job
+            .get_item("poll_interval_ms")?
+            .and_then(|v| v.extract::<u64>().ok())
+            .unwrap_or(1000);
+        let poll: Py<PyAny> = async_job
+            .get_item("poll")?
+            .ok_or_else(|| PyRuntimeError::new_err("async_job missing poll"))?
+            .extract()?;
+
+        let poll_fn = move || {
+            let poll = Python::attach(|py| poll.clone_ref(py));
+            Box::pin(async move {
+                Python::attach(|py| -> Result<JobStatus, ToolError> {
+                    let value = poll.call0(py).map_err(|e| ToolError {
+                        message: format!("Python async job poll error: {}", e),
+                        code: None,
+                    })?;
+                    let json_mod = py.import("json").map_err(|e| ToolError {
+                        message: format!("failed to import json: {}", e),
+                        code: None,
+                    })?;
+                    let json_str: String = json_mod
+                        .call_method1("dumps", (value.bind(py),))
+                        .and_then(|v| v.extract())
+                        .map_err(|e| ToolError {
+                            message: format!("failed to serialize poll result: {}", e),
+                            code: None,
+                        })?;
+                    let parsed: Value = serde_json::from_str(&json_str).map_err(|e| ToolError {
+                        message: format!("failed to parse poll result: {}", e),
+                        code: None,
+                    })?;
+
+                    match parsed.get("status").and_then(|v| v.as_str()) {
+                        Some("completed") => Ok(JobStatus::Completed(
+                            parsed.get("result").cloned().unwrap_or(Value::Null),
+                        )),
+                        Some("failed") => Ok(JobStatus::Failed(
+                            parsed
+                                .get("error")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown error")
+                                .to_string(),
+                        )),
+                        _ => Ok(JobStatus::Pending {
+                            progress: parsed
+                                .get("progress")
+                                .and_then(|v| v.as_f64())
+                                .map(|v| v as f32),
+                            message: parsed
+                                .get("message")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                        }),
+                    }
+                })
+            })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<JobStatus, ToolError>> + Send>,
+                >
+        };
+
+        Ok(Some(JobHandle {
+            job_id,
+            poll: Arc::new(poll_fn),
+            poll_interval: Duration::from_millis(poll_interval_ms),
+            timeout: None,
+        }))
+    })
+    .map_err(|e| ToolError {
+        message: format!("invalid Python async job return value: {}", e),
+        code: None,
+    })
 }
 
 fn infer_schema_from_hints(py: Python<'_>, func: &Py<PyAny>) -> PyResult<Value> {
@@ -155,6 +262,29 @@ fn infer_schema_from_hints(py: Python<'_>, func: &Py<PyAny>) -> PyResult<Value> 
 fn runtime_event_to_dict(py: Python<'_>, event: &RuntimeEvent) -> PyResult<Py<PyDict>> {
     let json_str = serde_json::to_string(event)
         .map_err(|e| PyRuntimeError::new_err(format!("failed to serialize event: {}", e)))?;
+    let value: Value = serde_json::from_str(&json_str)
+        .map_err(|e| PyRuntimeError::new_err(format!("failed to parse event: {}", e)))?;
+
+    let event_obj = match value {
+        Value::Object(outer) if outer.len() == 1 => {
+            let (variant, fields) = outer.into_iter().next().ok_or_else(|| {
+                PyRuntimeError::new_err("failed to extract serialized event variant")
+            })?;
+            let mut result = match fields {
+                Value::Object(fields) => fields,
+                other => {
+                    let mut fields = serde_json::Map::new();
+                    fields.insert("value".into(), other);
+                    fields
+                }
+            };
+            result.insert("type".into(), Value::String(to_snake_case(&variant)));
+            Value::Object(result)
+        }
+        other => other,
+    };
+    let json_str = serde_json::to_string(&event_obj)
+        .map_err(|e| PyRuntimeError::new_err(format!("failed to serialize event dict: {}", e)))?;
 
     let json_mod = py.import("json")?;
     let dict = json_mod.call_method1("loads", (&json_str,))?;
@@ -163,15 +293,33 @@ fn runtime_event_to_dict(py: Python<'_>, event: &RuntimeEvent) -> PyResult<Py<Py
     Ok(dict)
 }
 
+fn to_snake_case(name: &str) -> String {
+    let mut out = String::new();
+    for (idx, ch) in name.chars().enumerate() {
+        if ch.is_uppercase() {
+            if idx > 0 {
+                out.push('_');
+            }
+            for lower in ch.to_lowercase() {
+                out.push(lower);
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 #[pymethods]
 impl Agent {
     #[new]
-    #[pyo3(signature = (model, system_prompt, skills_dir=None, budget=None))]
+    #[pyo3(signature = (model, system_prompt, skills_dir=None, budget=None, api_url=None))]
     fn new(
         model: String,
         system_prompt: String,
         skills_dir: Option<String>,
         budget: Option<Bound<'_, PyDict>>,
+        api_url: Option<String>,
     ) -> PyResult<Self> {
         let py_budget = if let Some(b) = budget {
             Some(PyBudget {
@@ -189,10 +337,15 @@ impl Agent {
         Ok(Self {
             model,
             system_prompt,
+            api_url,
             skills_dir,
             budget: py_budget,
             tools: Vec::new(),
         })
+    }
+
+    fn set_api_url(&mut self, api_url: Option<String>) {
+        self.api_url = api_url;
     }
 
     fn tool(&mut self, py: Python<'_>, func: Py<PyAny>) -> PyResult<Py<PyAny>> {
@@ -242,6 +395,7 @@ impl Agent {
                 provider: "anthropic".into(),
                 model: self.model.clone(),
                 api_key_env: None,
+                api_url: self.api_url.clone(),
                 max_tokens: Some(4096),
             },
             budget: budget_config,
@@ -270,21 +424,29 @@ impl Agent {
         }
 
         let model_adapter: Arc<dyn agent_runtime_core::model::ModelAdapter> = Arc::new(
-            AnthropicAdapter::new(self.model.clone(), 4096, None)
-                .map_err(|e| PyRuntimeError::new_err(format!("failed to create model: {}", e)))?,
+            AnthropicAdapter::from_config(AnthropicConfig {
+                model: self.model.clone(),
+                max_tokens: 4096,
+                api_key: None,
+                api_url: self.api_url.clone(),
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("failed to create model: {}", e)))?,
         );
 
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| PyRuntimeError::new_err(format!("failed to create runtime: {}", e)))?;
 
-        let events = rt.block_on(async {
-            let (_handle, mut event_rx) = AgentRun::start(config, input, model_adapter, registry);
+        let events = py.detach(|| {
+            rt.block_on(async {
+                let (_handle, mut event_rx) =
+                    AgentRun::start(config, input, model_adapter, registry);
 
-            let mut events = Vec::new();
-            while let Some(event) = event_rx.recv().await {
-                events.push(event);
-            }
-            events
+                let mut events = Vec::new();
+                while let Some(event) = event_rx.recv().await {
+                    events.push(event);
+                }
+                events
+            })
         });
 
         let py_list = pyo3::types::PyList::empty(py);

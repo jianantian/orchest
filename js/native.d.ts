@@ -3,6 +3,7 @@ export class Agent {
     model: string;
     systemPrompt: string;
     skillsDir?: string;
+    apiUrl?: string;
     budget?: {
       maxTokens?: number;
       maxToolCalls?: number;

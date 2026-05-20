@@ -9,6 +9,7 @@ export interface AgentOptions {
   model: string;
   systemPrompt: string;
   skillsDir?: string;
+  apiUrl?: string;
   budget?: BudgetOptions;
 }
 
@@ -28,23 +29,23 @@ export interface ToolRegistration {
 }
 
 export type RuntimeEvent =
-  | { type: "RunStarted"; run_id: string }
-  | { type: "ModelCallStarted"; step: number }
-  | { type: "ModelStreamChunk"; delta: unknown }
-  | { type: "ModelCallCompleted"; tokens: { input_tokens: number; output_tokens: number } }
-  | { type: "ToolCallStarted"; tool: string; source: unknown; input: unknown }
-  | { type: "ToolCallUpdate"; tool: string; tool_call_id: string; partial: unknown }
-  | { type: "ToolCallCompleted"; tool: string; output: unknown; duration: unknown }
-  | { type: "ToolCallFailed"; tool: string; error: string }
-  | { type: "AsyncToolStarted"; tool: string; job_id: string }
-  | { type: "AsyncToolProgress"; tool: string; job_id: string; status: unknown }
-  | { type: "AsyncToolCompleted"; tool: string; job_id: string; output: unknown; elapsed: unknown }
-  | { type: "SkillContentRead"; skill_name: string; file: string; tokens: number }
-  | { type: "ApprovalRequested"; tool_call: unknown }
-  | { type: "ApprovalGranted"; tool_call: unknown }
-  | { type: "ApprovalDenied"; tool_call: unknown }
-  | { type: "BudgetWarning"; used: unknown; limit: unknown }
-  | { type: "RunCompleted"; output: unknown }
-  | { type: "RunFailed"; error: string };
+  | { type: "runStarted"; run_id: string }
+  | { type: "modelCallStarted"; step: number }
+  | { type: "modelStreamChunk"; delta: unknown }
+  | { type: "modelCallCompleted"; tokens: { input_tokens: number; output_tokens: number } }
+  | { type: "toolCallStarted"; tool: string; source: unknown; input: unknown }
+  | { type: "toolCallUpdate"; tool: string; tool_call_id: string; partial: unknown }
+  | { type: "toolCallCompleted"; tool: string; output: unknown; duration: unknown }
+  | { type: "toolCallFailed"; tool: string; error: string }
+  | { type: "asyncToolStarted"; tool: string; job_id: string }
+  | { type: "asyncToolProgress"; tool: string; job_id: string; status: unknown }
+  | { type: "asyncToolCompleted"; tool: string; job_id: string; output: unknown; elapsed: unknown }
+  | { type: "skillContentRead"; skill_name: string; file: string; tokens: number }
+  | { type: "approvalRequested"; tool_call: unknown }
+  | { type: "approvalGranted"; tool_call: unknown }
+  | { type: "approvalDenied"; tool_call: unknown }
+  | { type: "budgetWarning"; used: unknown; limit: unknown }
+  | { type: "runCompleted"; output: unknown }
+  | { type: "runFailed"; error: string };
 
 export { Agent } from "./native";

@@ -1,55 +1,81 @@
 /**
  * Basic example: register tools and run an agent.
  *
- * Usage: npx ts-node examples/ts_basic.ts
- * (requires building the native addon first with @napi-rs/cli)
+ * Usage:
+ *   cargo build -p agent-runtime-node
+ *   npx ts-node --compiler-options '{"module":"CommonJS"}' examples/ts_basic.ts
  */
 
-// In a real setup, import from the built native addon:
-// import { Agent } from '@orchest/agent-runtime';
+const { spawn } = require("node:child_process");
+const { copyFileSync, existsSync } = require("node:fs");
+const { join, resolve } = require("node:path");
 
-console.log("TypeScript SDK Basic Example");
-console.log("============================\n");
+const repoRoot = resolve(__dirname, "..");
+const nativeSource = join(repoRoot, "target/debug/libagent_runtime_node.dylib");
+const nativeAddon = join(repoRoot, "target/debug/agent_runtime_node.node");
 
-// This example shows the intended API. To actually run it,
-// build the native addon with @napi-rs/cli first.
-
-/*
-const agent = new Agent({
-  model: "claude-sonnet-4-20250514",
-  systemPrompt: "You are a helpful assistant with access to tools.",
-});
-
-agent.registerTool({
-  name: "get_weather",
-  description: "Get the current weather for a city",
-  inputSchema: {
-    type: "object",
-    properties: {
-      city: { type: "string", description: "City name" },
-    },
-    required: ["city"],
-  },
-});
-
-agent.registerTool({
-  name: "get_time",
-  description: "Get the current time in a timezone",
-  inputSchema: {
-    type: "object",
-    properties: {
-      timezone: { type: "string", description: "IANA timezone" },
-    },
-    required: ["timezone"],
-  },
-});
-
-const events = agent.runSync("What's the weather in Tokyo?");
-for (const event of events) {
-  const e = event as Record<string, unknown>;
-  console.log(`[${e.type}]`, JSON.stringify(e, null, 2));
+if (!existsSync(nativeAddon)) {
+  copyFileSync(nativeSource, nativeAddon);
 }
-*/
 
-console.log("Build the native addon to run this example.");
-console.log("See crates/agent-runtime-node/README.md for instructions.");
+const { Agent } = require(nativeAddon);
+
+function startProvider(port: number) {
+  const child = spawn("python3", ["examples/mock_anthropic_provider.py", String(port)], {
+    cwd: repoRoot,
+    stdio: "ignore",
+  });
+  process.on("exit", () => child.kill());
+  return child;
+}
+
+function textDelta(delta: unknown): string {
+  const value = delta as Record<string, unknown>;
+  const text = (value.Text || value.text) as Record<string, unknown> | undefined;
+  return String(text?.delta ?? "");
+}
+
+const port = 8797;
+const provider = process.env.ANTHROPIC_API_KEY ? undefined : startProvider(port);
+process.env.ANTHROPIC_API_KEY ||= "local-demo-key";
+
+setTimeout(() => {
+  const agent = new Agent({
+    model: "claude-sonnet-4-20250514",
+    systemPrompt: "You are a helpful assistant with access to tools.",
+    apiUrl: process.env.ANTHROPIC_API_URL || `http://127.0.0.1:${port}/v1/messages`,
+  });
+
+  agent.registerTool({
+    name: "get_weather",
+    description: "Get the current weather for a city",
+    inputSchema: {
+      type: "object",
+      properties: { city: { type: "string" } },
+      required: ["city"],
+    },
+  });
+
+  const events = agent.runSync("What's the weather in Tokyo?");
+  for (const event of events as Array<Record<string, unknown>>) {
+    switch (event.type) {
+      case "modelStreamChunk":
+        process.stdout.write(textDelta(event.delta));
+        break;
+      case "toolCallStarted":
+        console.log(`\n[Tool Call] ${event.tool}(${JSON.stringify(event.input)})`);
+        break;
+      case "toolCallCompleted":
+        console.log(`[Tool Result] ${JSON.stringify(event.output)}`);
+        break;
+      case "runCompleted":
+        console.log(`\n[Done] ${event.output}`);
+        break;
+      case "runFailed":
+        console.error(`\n[Error] ${event.error}`);
+        process.exitCode = 1;
+        break;
+    }
+  }
+  provider?.kill();
+}, 100);
