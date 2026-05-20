@@ -380,6 +380,8 @@ impl ModelAdapter for AnthropicAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     #[test]
     fn uses_default_api_url_when_none_is_provided() {
@@ -436,5 +438,99 @@ mod tests {
         };
 
         assert_eq!(error.code.as_deref(), Some("invalid_api_url"));
+    }
+
+    #[tokio::test]
+    async fn stream_emits_thinking_boundaries_from_provider_events() {
+        let api_url = serve_sse_once(
+            r#"event: message_start
+data: {"message":{"usage":{"input_tokens":3}}}
+
+event: content_block_start
+data: {"content_block":{"type":"thinking"}}
+
+event: content_block_delta
+data: {"delta":{"type":"thinking_delta","thinking":"first "}}
+
+event: content_block_delta
+data: {"delta":{"type":"thinking_delta","thinking":"second"}}
+
+event: content_block_stop
+data: {}
+
+event: message_delta
+data: {"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}
+
+event: message_stop
+data: {}
+
+"#,
+        )
+        .await;
+
+        let adapter = AnthropicAdapter::from_config(AnthropicConfig {
+            model: "claude-test".into(),
+            max_tokens: 128,
+            api_key: Some("key".into()),
+            api_url: Some(api_url),
+        })
+        .expect("adapter should be created");
+
+        let (tx, mut rx) = mpsc::channel(16);
+        let response = adapter
+            .stream(&[], &[], tx)
+            .await
+            .expect("stream should parse provider response");
+
+        let mut chunks = Vec::new();
+        while let Some(chunk) = rx.recv().await {
+            chunks.push(chunk);
+        }
+
+        assert!(matches!(chunks[0], ModelStreamChunk::ThinkingStart));
+        assert!(matches!(
+            &chunks[1],
+            ModelStreamChunk::Thinking { delta } if delta == "first "
+        ));
+        assert!(matches!(
+            &chunks[2],
+            ModelStreamChunk::Thinking { delta } if delta == "second"
+        ));
+        assert!(matches!(chunks[3], ModelStreamChunk::ThinkingEnd));
+        assert!(matches!(chunks[4], ModelStreamChunk::Done { .. }));
+        assert_eq!(response.usage.input_tokens, 3);
+        assert_eq!(response.usage.output_tokens, 5);
+    }
+
+    async fn serve_sse_once(body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test server should bind");
+        let address = listener
+            .local_addr()
+            .expect("test server should have local address");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept one request");
+            let mut request = vec![0; 4096];
+            let _ = socket
+                .read(&mut request)
+                .await
+                .expect("test server should read request");
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("test server should write response");
+        });
+
+        format!("http://{address}/v1/messages")
     }
 }

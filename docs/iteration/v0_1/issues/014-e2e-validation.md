@@ -24,6 +24,7 @@ Issues 001-013 各自有单元级验收标准，但需要一个明确的集成�
   - `run_started`
   - `model_call_started` / `model_call_completed`
   - `model_stream_chunk`（text delta）
+  - `model_stream_chunk`（thinking boundary ordering：`ThinkingStart` → `Thinking` → `ThinkingEnd`）
   - `tool_call_started` / `tool_call_completed`
   - `async_tool_started` / `async_tool_progress` / `async_tool_completed`
   - `skill_content_read`（需要配置 skill 目录）

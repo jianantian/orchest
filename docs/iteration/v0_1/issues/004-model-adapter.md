@@ -17,6 +17,8 @@ Run loop 通过 `ModelAdapter` trait 与模型交互，抹平不同 provider 的
 - [ ] streaming 时逐 chunk 发出 `ModelStreamChunk::Text { delta }`
 - [ ] tool call 参数流式时发出 `ModelStreamChunk::ToolCallArgsChunk { id, delta }`
 - [ ] extended thinking 时发出 `ModelStreamChunk::Thinking { delta }`
+- [ ] 当上游 provider 明确暴露 thinking block start/end 信号时，adapter 必须按顺序发出 `ModelStreamChunk::ThinkingStart`、一个或多个 `ModelStreamChunk::Thinking { delta }`、`ModelStreamChunk::ThinkingEnd`
+- [ ] 至少一个 adapter 测试验证 thinking boundary 的顺序和完整性
 - [ ] 流结束时发出 `ModelStreamChunk::Done { usage: TokenUsage }`
 - [ ] `ModelResponse` 包含完整的 tool calls（从完整 response 一次性解析，不从 streaming chunk 增量解析）
 - [ ] `ModelSpec` 支持指定 model id 字符串（如 `"claude-3-5-sonnet-20241022"`）
@@ -26,6 +28,8 @@ Run loop 通过 `ModelAdapter` trait 与模型交互，抹平不同 provider 的
 ## 说明
 
 loop 内部只调用 `stream()`。`call()` 保留是为了测试和 utility 场景。
+
+如果 provider 只暴露 thinking delta、没有明确的 block start/end 信号，adapter 不应自行猜测边界；这种情况下只发出可证明的 `Thinking { delta }` chunk，并在 provider-specific adapter 文档或测试中记录该限制。
 
 `ModelResponse` 结构：
 ```rust

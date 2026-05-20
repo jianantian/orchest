@@ -133,6 +133,46 @@ impl Tool for EchoTool {
     }
 }
 
+struct ThinkingBoundaryModel;
+
+#[async_trait::async_trait]
+impl ModelAdapter for ThinkingBoundaryModel {
+    async fn stream(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        tx: mpsc::Sender<ModelStreamChunk>,
+    ) -> Result<ModelResponse, ModelError> {
+        let usage = TokenUsage {
+            input_tokens: 4,
+            output_tokens: 8,
+        };
+        let _ = tx.send(ModelStreamChunk::ThinkingStart).await;
+        let _ = tx
+            .send(ModelStreamChunk::Thinking {
+                delta: "checking".into(),
+            })
+            .await;
+        let _ = tx.send(ModelStreamChunk::ThinkingEnd).await;
+        let _ = tx
+            .send(ModelStreamChunk::Text {
+                delta: "done".into(),
+            })
+            .await;
+        let _ = tx
+            .send(ModelStreamChunk::Done {
+                usage: usage.clone(),
+            })
+            .await;
+
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("done".into())],
+            usage,
+            stop_reason: StopReason::EndTurn,
+        })
+    }
+}
+
 #[tokio::test]
 async fn e2e_event_coverage() {
     let model = Arc::new(E2EModelAdapter);
@@ -204,6 +244,34 @@ async fn e2e_event_coverage() {
     let last = event_types.last().unwrap();
     assert_eq!(*first, "RunStarted");
     assert_eq!(*last, "RunCompleted");
+}
+
+#[tokio::test]
+async fn e2e_thinking_boundaries_preserve_order() {
+    let model = Arc::new(ThinkingBoundaryModel);
+    let registry = ToolRegistry::new();
+
+    let (handle, mut rx) = AgentRun::start(test_config(), "test thinking".into(), model, registry);
+
+    let mut chunks = Vec::new();
+    while let Some(event) = rx.recv().await {
+        if let RuntimeEvent::ModelStreamChunk { delta } = event {
+            chunks.push(delta);
+        }
+    }
+    handle.wait().await;
+
+    assert!(matches!(chunks[0], ModelStreamChunk::ThinkingStart));
+    assert!(matches!(
+        &chunks[1],
+        ModelStreamChunk::Thinking { delta } if delta == "checking"
+    ));
+    assert!(matches!(chunks[2], ModelStreamChunk::ThinkingEnd));
+    assert!(matches!(
+        &chunks[3],
+        ModelStreamChunk::Text { delta } if delta == "done"
+    ));
+    assert!(matches!(chunks[4], ModelStreamChunk::Done { .. }));
 }
 
 #[tokio::test]
