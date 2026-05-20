@@ -22,6 +22,7 @@
 - [ ] `RunState` 结构体，含 `schema_version: String`（不用 `&'static str`，后者无法从 JSON 反序列化）
 - [ ] `RunStatus` enum：全部变体包括 `WaitingForAsyncTool`
 - [ ] `RuntimeEvent` enum：全部变体（参考 spec 中"Runtime Event"章节）
+- [ ] `RuntimeEvent` 序列化后的 `type` 字段使用统一的 snake_case wire format（如 `model_stream_chunk`、`approval_requested`），所有 SDK 透传同一契约
 - [ ] `ModelStreamChunk` enum：`Text`、`ThinkingStart`、`Thinking`、`ThinkingEnd`、`ToolCallArgsChunk`、`Done`
 - [ ] 所有需要序列化的类型实现 `Serialize` / `Deserialize`
 - [ ] `JobHandle.poll` 不实现 `Serialize`（文档注释说明跨进程恢复的限制）
@@ -30,6 +31,7 @@
 
 - `RunId` 用 `uuid::Uuid` 的 newtype wrapper
 - `JsonSchema` 在 v0.1 用 `serde_json::Value` 作为类型别名，不引入 jsonschema crate
+- `RuntimeEvent.type` 的 canonical wire format 是 snake_case。Python dict、TypeScript object、demo 输出和 E2E 检查都应观察同一套事件名；语言绑定可以提供本地命名 helper，但 helper 不是 wire contract。
 - `ToolError` 和 `ModelError` 各自定义为简单的 `struct { message: String, code: Option<String> }`
 - `ToolMetadata.max_output_tokens`：runtime 在 tool 执行完成后检查输出大小，超出时自动截断并在结果末尾附加 `[output truncated]` 说明；防止单个 tool 结果撑爆 context
 - `ModelStreamChunk::ThinkingStart` / `ThinkingEnd`：标记 extended thinking block 的开始和结束边界，让消费方（TUI、日志）能正确渲染折叠/展开，而不需要自行猜测边界；`ThinkingStart` 和 `ThinkingEnd` 不携带 payload

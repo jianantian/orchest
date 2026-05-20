@@ -223,7 +223,7 @@ fn runtime_event_to_value(value: serde_json::Value) -> serde_json::Value {
             };
             result.insert(
                 "type".into(),
-                serde_json::Value::String(to_camel_case(&variant)),
+                serde_json::Value::String(to_snake_case(&variant)),
             );
             serde_json::Value::Object(result)
         }
@@ -231,12 +231,45 @@ fn runtime_event_to_value(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
-fn to_camel_case(name: &str) -> String {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return String::new();
-    };
-    let mut out = first.to_lowercase().collect::<String>();
-    out.extend(chars);
+fn to_snake_case(name: &str) -> String {
+    let mut out = String::new();
+    for (idx, ch) in name.chars().enumerate() {
+        if ch.is_uppercase() {
+            if idx > 0 {
+                out.push('_');
+            }
+            for lower in ch.to_lowercase() {
+                out.push(lower);
+            }
+        } else {
+            out.push(ch);
+        }
+    }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_event_type_uses_snake_case_wire_format() {
+        let event = serde_json::json!({
+            "ModelStreamChunk": {
+                "delta": { "Text": { "delta": "hello" } }
+            }
+        });
+
+        let converted = runtime_event_to_value(event);
+
+        assert_eq!(converted["type"], "model_stream_chunk");
+        assert!(converted.get("delta").is_some());
+    }
+
+    #[test]
+    fn snake_case_conversion_handles_runtime_event_names() {
+        assert_eq!(to_snake_case("RunStarted"), "run_started");
+        assert_eq!(to_snake_case("ApprovalDenied"), "approval_denied");
+        assert_eq!(to_snake_case("AsyncToolProgress"), "async_tool_progress");
+    }
 }

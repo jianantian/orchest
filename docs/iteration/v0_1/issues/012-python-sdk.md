@@ -19,7 +19,7 @@
 
 **事件格式（Python dict）：**
 - [ ] 每个事件包含 `type` 字段（snake_case，如 `"model_stream_chunk"`）
-- [ ] 事件字段与 `RuntimeEvent` 变体对应（camelCase 转 snake_case）
+- [ ] 事件字段与 `RuntimeEvent` 变体对应，并透传 v0.1 canonical snake_case wire format
 
 **Async Job 支持：**
 - [ ] tool handler 可以返回 dict `{"async_job": {"job_id": ..., "poll_interval_ms": ..., "poll": <async callable>}}`

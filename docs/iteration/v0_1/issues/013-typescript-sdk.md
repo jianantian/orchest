@@ -18,8 +18,9 @@
 - [ ] `agent.respondApproval(runId: string, approved: boolean)` 响应 approval
 
 **事件类型（TypeScript）：**
-- [ ] 每个事件有 `type` 字段（camelCase，如 `"modelStreamChunk"`）
+- [ ] 每个事件有 `type` 字段，使用 v0.1 canonical snake_case wire format（如 `"model_stream_chunk"`）
 - [ ] 提供完整的 TypeScript 类型定义（`RuntimeEvent` discriminated union）
+- [ ] 如果提供 camelCase 事件名 helper 或 alias，只能作为 TypeScript 侧非契约兼容层；底层 wire contract 和 discriminant 仍以 snake_case 为准
 
 **Async Job 支持：**
 - [ ] tool handler 可以返回 `{ asyncJob: { jobId, pollIntervalMs, poll: () => Promise<JobPollResult> } }`
@@ -33,7 +34,7 @@
 
 **Demo 验证：**
 - [ ] `ts_basic.ts`：注册两个 tool，运行 agent，打印事件
-- [ ] `ts_streaming.ts`：实时打印 token 流式输出，展示 `model_stream_chunk` 处理
+- [ ] `ts_streaming.ts`：实时打印 token 流式输出，展示 snake_case `model_stream_chunk` 处理
 
 ## 说明
 
