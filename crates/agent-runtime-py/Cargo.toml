@@ -8,4 +8,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 agent-runtime-core = { path = "../agent-runtime-core" }
-pyo3 = { version = "0.28", features = ["extension-module"] }
+pyo3 = { version = "0.28", features = ["extension-module", "py-clone"] }
+async-trait = "0.1"
+pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
