@@ -59,19 +59,19 @@ setTimeout(() => {
   const events = agent.runSync("What's the weather in Tokyo?");
   for (const event of events as Array<Record<string, unknown>>) {
     switch (event.type) {
-      case "modelStreamChunk":
+      case "model_stream_chunk":
         process.stdout.write(textDelta(event.delta));
         break;
-      case "toolCallStarted":
+      case "tool_call_started":
         console.log(`\n[Tool Call] ${event.tool}(${JSON.stringify(event.input)})`);
         break;
-      case "toolCallCompleted":
+      case "tool_call_completed":
         console.log(`[Tool Result] ${JSON.stringify(event.output)}`);
         break;
-      case "runCompleted":
+      case "run_completed":
         console.log(`\n[Done] ${event.output}`);
         break;
-      case "runFailed":
+      case "run_failed":
         console.error(`\n[Error] ${event.error}`);
         process.exitCode = 1;
         break;

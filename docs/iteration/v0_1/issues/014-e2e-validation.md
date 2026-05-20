@@ -19,6 +19,7 @@ Issues 001-013 各自有单元级验收标准，但需要一个明确的集成�
 - [ ] `examples/ts_streaming.ts` 成功运行，逐 token 流式输出正常
 
 **RuntimeEvent 覆盖检查：**
+- [ ] Python 和 TypeScript demos 观测到的 `RuntimeEvent.type` 均使用 canonical snake_case wire format，不出现 camelCase 事件 discriminant
 - [ ] 以下事件在至少一个 demo 中均可观测到：
   - `run_started`
   - `model_call_started` / `model_call_completed`
