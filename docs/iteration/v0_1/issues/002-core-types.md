@@ -14,7 +14,7 @@
 - [ ] `ToolOutput` enum：`Immediate(Value)`、`AsyncJob(JobHandle)`
 - [ ] `JobHandle` 结构体：`job_id: String`、`poll: Arc<dyn Fn() -> BoxFuture<...>>`、`poll_interval: Duration`、`timeout: Option<Duration>`
 - [ ] `JobStatus` enum：`Pending { progress, message }`、`Completed(Value)`、`Failed(String)`
-- [ ] `ToolMetadata` 结构体：`side_effect`、`requires_approval`、`cost_hint`、`timeout`、`source`
+- [ ] `ToolMetadata` 结构体：`side_effect`、`requires_approval`、`cost_hint`、`timeout`、`source`、`max_output_tokens: Option<u64>`
 - [ ] `ToolSource` enum：`InProcess`、`McpServer { server_id }`、`Skill { skill_name }`、`Builtin`
 - [ ] `ToolContext` 结构体：`run_id`、`tool_call_id`、`on_update: Option<mpsc::Sender<Value>>`
 - [ ] `AgentConfig` 结构体（含 `mcp_servers` 字段预留，类型为 `Vec<Value>` 占位）
@@ -22,7 +22,7 @@
 - [ ] `RunState` 结构体，含 `schema_version: String`（不用 `&'static str`，后者无法从 JSON 反序列化）
 - [ ] `RunStatus` enum：全部变体包括 `WaitingForAsyncTool`
 - [ ] `RuntimeEvent` enum：全部变体（参考 spec 中"Runtime Event"章节）
-- [ ] `ModelStreamChunk` enum：`Text`、`Thinking`、`ToolCallArgsChunk`、`Done`
+- [ ] `ModelStreamChunk` enum：`Text`、`ThinkingStart`、`Thinking`、`ThinkingEnd`、`ToolCallArgsChunk`、`Done`
 - [ ] 所有需要序列化的类型实现 `Serialize` / `Deserialize`
 - [ ] `JobHandle.poll` 不实现 `Serialize`（文档注释说明跨进程恢复的限制）
 
@@ -31,4 +31,7 @@
 - `RunId` 用 `uuid::Uuid` 的 newtype wrapper
 - `JsonSchema` 在 v0.1 用 `serde_json::Value` 作为类型别名，不引入 jsonschema crate
 - `ToolError` 和 `ModelError` 各自定义为简单的 `struct { message: String, code: Option<String> }`
+- `ToolMetadata.max_output_tokens`：runtime 在 tool 执行完成后检查输出大小，超出时自动截断并在结果末尾附加 `[output truncated]` 说明；防止单个 tool 结果撑爆 context
+- `ModelStreamChunk::ThinkingStart` / `ThinkingEnd`：标记 extended thinking block 的开始和结束边界，让消费方（TUI、日志）能正确渲染折叠/展开，而不需要自行猜测边界；`ThinkingStart` 和 `ThinkingEnd` 不携带 payload
+- `requires_approval: bool` 是 v0.1 的简化表达；已知演化方向是 `ApprovalPolicy` 枚举（`Never / Always / WhenSideEffect`），届时会是 minor breaking change，先记录在此
 - `AgentConfig.mcp_servers` 在 v0.1 用 `Vec<serde_json::Value>` 占位，并加 `#[serde(default)]`；v0.2 替换为 `Vec<McpServerConfig>`。占位类型可以接受任意 JSON，但调用方不应在 v0.1 传入非空值

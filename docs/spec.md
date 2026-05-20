@@ -125,7 +125,9 @@ pub trait ModelAdapter: Send + Sync {
 
 pub enum ModelStreamChunk {
     Text { delta: String },
-    Thinking { delta: String },                      // extended thinking
+    ThinkingStart,                                   // extended thinking block 开始（无 payload）
+    Thinking { delta: String },                      // extended thinking 增量
+    ThinkingEnd,                                     // extended thinking block 结束（无 payload）
     ToolCallArgsChunk { id: String, delta: String }, // tool call 参数增量（仅供 UI 用，loop 仍从完整 response 解析 tool call）
     Done { usage: TokenUsage },
 }
@@ -221,9 +223,10 @@ pub enum ToolOutput {
 
 pub struct ToolMetadata {
     pub side_effect: bool,
-    pub requires_approval: bool,
+    pub requires_approval: bool,   // 已知演化方向：ApprovalPolicy 枚举（Never/Always/WhenSideEffect）
     pub cost_hint: Option<CostHint>,
-    pub timeout: Option<Duration>,  // 适用于 execute() 调用本身（提交阶段）；AsyncJob 的等待超时在 JobHandle.timeout
+    pub timeout: Option<Duration>,           // 适用于 execute() 调用本身（提交阶段）；AsyncJob 的等待超时在 JobHandle.timeout
+    pub max_output_tokens: Option<u64>,      // 超出时 runtime 自动截断并附加 [output truncated]
     pub source: ToolSource,
 }
 
