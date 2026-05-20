@@ -1,0 +1,170 @@
+# Development Workflow
+
+## Overview
+
+```
+Pick issue → In Progress → branch → develop → merge to main → issue auto-closes
+```
+
+One issue = one branch = one merge commit. No PRs for solo work. The GitHub Project board updates automatically via commit messages.
+
+---
+
+## Step-by-Step
+
+### 1. Pick an Issue
+
+Work through issues in order within each iteration — most have sequential dependencies. Check the current iteration's PRD for the dependency order.
+
+```bash
+# View open issues for v0.1
+gh issue list --repo jianantian/orchest --label "v0.1" --state open
+
+# View the milestone progress
+gh api repos/jianantian/orchest/milestones --jq '.[] | {title, open_issues, closed_issues}'
+```
+
+### 2. Set to In Progress
+
+Move the card on the [Project board](https://github.com/users/jianantian/projects/1) to **In Progress**, or do it from the CLI:
+
+```bash
+gh issue edit <N> --repo jianantian/orchest --add-label "in-progress"
+```
+
+### 3. Create a Branch
+
+```bash
+git checkout main && git pull
+git checkout -b issue-<N>-<slug>
+# e.g. git checkout -b issue-5-run-loop
+```
+
+Branch naming: `issue-<N>-<slug>` where slug matches the issue filename (e.g. `run-loop`, `core-types`).
+
+### 4. Develop
+
+Keep commits focused. Reference the issue's acceptance criteria in `docs/iteration/` as your definition of done.
+
+```bash
+# Check the spec
+cat docs/iteration/v0_1/issues/005-run-loop.md
+
+# Commit as you go
+git add -p
+git commit -m "feat: implement run loop core state machine"
+git commit -m "feat: add budget check at loop entry"
+```
+
+Write the `closes #N` reference in the **final** commit of the branch — this is what triggers automatic issue closing on push.
+
+```bash
+git commit -m "feat: complete agent run loop (closes #5)"
+```
+
+### 5. Run Checks Before Merging
+
+```bash
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+cargo fmt --check
+```
+
+All three must pass. Fix any failures before merging.
+
+### 6. Merge to Main
+
+```bash
+git checkout main
+git merge --no-ff issue-<N>-<slug>   # --no-ff preserves a merge commit per issue
+git push
+git branch -d issue-<N>-<slug>
+```
+
+After push:
+- The `closes #N` commit **automatically closes the issue**
+- The Project board card **moves to Done**
+- The milestone progress bar advances
+
+---
+
+## Parallel Work with Worktrees
+
+For v0.1, issues are mostly sequential — a single branch is enough. From v0.2 onward, some issues can be developed in parallel (e.g. MCP stdio and OpenAI adapter are independent). Use worktrees then:
+
+```bash
+# Set up two parallel workspaces
+git worktree add ../orchest-mcp   issue-16-mcp-stdio
+git worktree add ../orchest-oai   issue-19-openai-adapter
+
+# Work in each directory independently
+cd ../orchest-mcp   && cargo test
+cd ../orchest-oai   && cargo test
+
+# Merge each when done (from the main repo directory)
+cd ~/Develop/orchest
+git merge --no-ff issue-16-mcp-stdio
+git merge --no-ff issue-19-openai-adapter
+
+# Clean up
+git worktree remove ../orchest-mcp
+git worktree remove ../orchest-oai
+```
+
+Do not use worktrees for issues that share modified files — resolve the conflict on a single branch instead.
+
+---
+
+## Iteration Cadence
+
+### Starting a New Iteration
+
+Before picking up the first issue of a new iteration:
+
+1. Verify the previous iteration's milestone is 100% closed
+2. Re-read the new iteration's `prd.md` to refresh scope and success metrics
+3. Start with issue `001` — it sets up the scaffolding everything else depends on
+
+### Dependency Order in v0.1
+
+Issues must be completed roughly in this order due to type and trait dependencies:
+
+```
+001 (workspace setup)
+  └── 002 (core types)
+        └── 003 (tool registry)
+              └── 004 (model adapter)
+                    └── 005 (run loop)
+                          ├── 006 (budget guard)
+                          ├── 007 (approval gate)
+                          ├── 008 (async job)
+                          ├── 009 (skill loading)
+                          │     └── 010 (skill bundled tool)
+                          └── 011 (builtin read_file)
+                                └── 012 (Python SDK)
+                                └── 013 (TypeScript SDK)
+                                      └── 014 (e2e validation)
+```
+
+006–011 have some flexibility and can be interleaved once 005 is done.
+
+---
+
+## Quick Reference
+
+```bash
+# Start issue N
+git checkout -b issue-<N>-<slug>
+
+# Final commit (triggers auto-close)
+git commit -m "feat: <description> (closes #<N>)"
+
+# Pre-merge checks
+cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --check
+
+# Merge and push
+git checkout main && git merge --no-ff issue-<N>-<slug> && git push && git branch -d issue-<N>-<slug>
+
+# Check milestone progress
+gh api repos/jianantian/orchest/milestones --jq '.[] | "\(.title): \(.closed_issues)/\(.open_issues + .closed_issues)"'
+```

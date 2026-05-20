@@ -220,6 +220,12 @@ skills/                          # example skills
 
 ---
 
+## Development Workflow
+
+See [WORKFLOW.md](./WORKFLOW.md) for the full development workflow: picking up issues, branch naming, pre-merge checks, worktree usage for parallel issues, and the v0.1 dependency order.
+
+---
+
 ## Commit Conventions
 
 Prefix: `docs:` (documentation), `feat:` (feature, during implementation), `fix:` (bug fix), `refactor:` (refactoring)
