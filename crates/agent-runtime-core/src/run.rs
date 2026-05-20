@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
-use crate::budget::{BudgetConfig, BudgetUsage};
+use crate::budget::{BudgetConfig, BudgetGuard, BudgetUsage};
 use crate::events::RuntimeEvent;
 use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelResponse, ModelSpec, ModelStreamChunk, Role,
@@ -134,6 +134,7 @@ async fn run_loop(
 
     let tool_defs = registry.list();
     let mut step: u32 = 0;
+    let mut budget = BudgetGuard::new(config.budget.clone());
 
     loop {
         if step >= config.max_steps {
@@ -141,6 +142,25 @@ async fn run_loop(
                 &tx,
                 RuntimeEvent::RunFailed {
                     error: "max_steps_reached".into(),
+                },
+            )
+            .await;
+            return;
+        }
+
+        if let Some(_violation) = budget.check() {
+            emit(
+                &tx,
+                RuntimeEvent::BudgetWarning {
+                    used: budget.usage().clone(),
+                    limit: budget.config().clone(),
+                },
+            )
+            .await;
+            emit(
+                &tx,
+                RuntimeEvent::RunFailed {
+                    error: "budget_exceeded".into(),
                 },
             )
             .await;
@@ -175,6 +195,8 @@ async fn run_loop(
                 return;
             }
         };
+
+        budget.record_model_call(&response.usage);
 
         emit(
             &tx,
@@ -314,6 +336,8 @@ async fn run_loop(
                     });
                 }
             }
+
+            budget.record_tool_call();
         }
 
         messages.push(Message {
