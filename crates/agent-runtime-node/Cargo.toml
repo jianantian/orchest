@@ -1,0 +1,12 @@
+[package]
+name = "agent-runtime-node"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+agent-runtime-core = { path = "../agent-runtime-core" }
+napi = "2"
+napi-derive = "2"
