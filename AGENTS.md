@@ -4,7 +4,7 @@
 
 Orchest 是一个**底层 Rust SDK**，为开发者提供构建 AI agent 应用的运行时核心。它不是一个完整的 agent 产品，而是其他 agent 产品的发动机：负责 agent loop、状态管理、事件流、tool 调度、skill 加载。
 
-当前阶段：**纯文档，无实现代码**。所有工作在 `docs/` 目录下进行。
+当前阶段：**纯文档，无实现代码**。所有工作在 `docs/` 目录下进行。代码引入后，`crates/`、`examples/`、`skills/` 将按 Rust 项目规范一节的结构组织。
 
 ---
 
@@ -102,6 +102,120 @@ polaris 文档记录的是**不随迭代变化的约束**。修改要谨慎，�
 - 不要在 overview.md 里加实现细节（overview 面向外部读者）
 - 不要把多频道路由、用户管理、Web UI 等产品层需求带进 SDK 设计
 - 不要在没有对应 polaris 依据的情况下新增 Non-Goal
+
+---
+
+## Rust 项目规范
+
+### Workspace 结构
+
+```
+Cargo.toml                      # workspace root，不含业务代码
+crates/
+  agent-runtime-core/           # 纯 Rust 核心，无 FFI
+    src/
+      lib.rs
+      run.rs                    # AgentRun, RunState, run loop
+      tool/
+        mod.rs                  # Tool trait, ToolRegistry, ToolOutput
+        in_process.rs           # FFI callback tool
+        skill_bundled.rs        # script tool + async job 协议解析
+        async_job.rs            # JobHandle, JobStatus, poll loop
+        builtin.rs              # read_file（内置 tool）
+        mcp.rs                  # MCP tool（v0.2 加入）
+      skill/
+        mod.rs                  # SkillManifest, discovery, SKILL.md 解析
+        executor.rs             # ScriptExecutor trait + BareSubprocessExecutor
+      model/
+        mod.rs                  # ModelAdapter trait
+        anthropic.rs
+        openai.rs               # v0.2 加入
+        streaming.rs            # ModelStreamChunk 公共逻辑
+      events.rs                 # RuntimeEvent enum
+      budget.rs                 # BudgetGuard, BudgetConfig, BudgetUsage
+  agent-runtime-py/             # PyO3 binding，不含核心逻辑
+    src/lib.rs
+  agent-runtime-node/           # napi-rs binding，不含核心逻辑
+    src/lib.rs
+examples/
+skills/                         # 示例 skill
+```
+
+**原则**：核心逻辑只在 `agent-runtime-core`，binding crate 只做类型转换和 FFI 胶水，不含业务判断。
+
+### 依赖规范
+
+**已确定的核心依赖（不要替换）：**
+
+| 依赖 | 用途 | Feature |
+|------|------|---------|
+| `tokio` | 异步运行时 | `full` |
+| `serde` + `serde_json` | 序列化 | `derive` |
+| `async-trait` | 异步 trait 对象 | — |
+| `uuid` | RunId | `v4`, `serde` |
+| `pyo3` | Python binding | `extension-module` |
+| `napi` + `napi-derive` | Node.js binding | — |
+
+**新增依赖的原则：**
+- 优先 std + tokio，避免引入 actor framework（已锁定决策）
+- 错误处理用 `thiserror`（library crate），不用 `anyhow`（application crate）
+- 新依赖需要在 PR body 或 commit body 里说明理由和备选方案
+
+### 错误处理
+
+- **每个模块定义自己的 `XxxError`**，用 `thiserror` derive：`ToolError`、`ModelError`、`SkillError`、`BudgetError`
+- **library code 禁止 `unwrap()` 和 `expect()`**，除非在 `#[cfg(test)]` 块或有充分注释的不变量保证（如 mutex poison）
+- FFI 边界（PyO3/napi）统一把内部 error 转换为对应语言的 exception/Error，不透传 Rust error 类型
+
+### Trait 与可见性
+
+- `pub trait` 只用于公开 API（`Tool`、`ModelAdapter`、`ScriptExecutor`）；内部扩展点用 `pub(crate) trait`
+- 实现类型默认 `pub(crate)`，只有需要在 binding crate 里构造的类型才 `pub`
+- **不要为了省事把整个模块 `pub use *`**，明确 re-export 哪些类型
+
+### 异步规范
+
+- run loop 跑在 `tokio::spawn` 的 task 上；event channel 用 `tokio::sync::mpsc`；approval gate 用 `tokio::sync::oneshot`
+- **trait 方法用 `async-trait`**，不用 `-> impl Future`（与 PyO3/napi FFI 不兼容）
+- blocking 操作（文件 I/O、子进程等）用 `tokio::task::spawn_blocking` 包裹，不在 async context 里直接阻塞
+
+### 序列化规范
+
+- 跨 FFI 传递的类型必须实现 `Serialize + Deserialize`
+- `JobHandle.poll` 闭包**不可序列化**，`RunState` 序列化时跳过该字段（`#[serde(skip)]`），文档注释说明跨进程恢复的限制
+- `JsonSchema` 在 v0.1 用 `serde_json::Value` 类型别名，不引入 jsonschema crate
+
+### unsafe 规范
+
+- **`agent-runtime-core` 禁止 `unsafe`**
+- PyO3 和 napi-rs 的 binding crate 因 FFI 需要，允许 `unsafe`，但必须：
+  - 每处 `unsafe` 块都有注释说明 safety invariant
+  - 不在 `unsafe` 块里做业务逻辑，只做类型转换
+
+### 测试规范
+
+- **单元测试**：`#[cfg(test)]` 放在对应文件末尾，mock 用 struct 实现 trait（不引入 mockall 等框架）
+- **集成测试**：`tests/` 放在 workspace root，每个场景一个文件，文件名描述场景（`tool_async_job.rs`、`skill_loading.rs`）
+- **测试辅助 struct** 命名加 `Fake` 前缀（`FakeModelAdapter`、`FakeScriptExecutor`），放在 `#[cfg(test)]` 模块或 `tests/helpers/` 下
+- CI 必须通过：`cargo test --workspace`、`cargo clippy --workspace -- -D warnings`、`cargo fmt --check`
+
+### 命名规范
+
+| 场景 | 规范 | 示例 |
+|------|------|------|
+| 类型 / trait | `PascalCase` | `ToolMetadata`, `ModelAdapter` |
+| 方法 / 变量 | `snake_case` | `execute()`, `run_id` |
+| 常量 | `SCREAMING_SNAKE_CASE` | `MAX_POLL_RETRIES` |
+| 模块文件 | `snake_case` | `async_job.rs`, `skill_bundled.rs` |
+| 错误类型 | `XxxError` | `ToolError`, `ModelError` |
+| 测试辅助 | `FakeXxx` | `FakeModelAdapter` |
+| Feature flag | `kebab-case` | `mcp`, `openai` |
+
+### 代码组织原则
+
+- 每个文件专注一个主类型或 trait；超过 400 行考虑拆分
+- `mod.rs` 只做 re-export 和模块声明，逻辑放在子文件
+- run loop 的核心状态机逻辑集中在 `run.rs`，不要把 loop 的逻辑分散到各个 tool/model 模块里
 
 ---
 
