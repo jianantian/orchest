@@ -2,12 +2,18 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
+use tokio::sync::mpsc;
 
 use crate::budget::{BudgetConfig, BudgetUsage};
-use crate::model::{Message, ModelSpec};
-use crate::tool::async_job::JobHandle;
-use crate::tool::{Tool, ToolCall};
+use crate::events::RuntimeEvent;
+use crate::model::{
+    ContentBlock, Message, ModelAdapter, ModelResponse, ModelSpec, ModelStreamChunk, Role,
+    StopReason,
+};
+use crate::tool::async_job::{JobHandle, JobStatus};
+use crate::tool::registry::ToolRegistry;
+use crate::tool::{Tool, ToolCall, ToolContext, ToolOutput};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RunId(pub uuid::Uuid);
@@ -65,4 +71,567 @@ pub enum RunStatus {
         error: String,
     },
     Aborted,
+}
+
+pub type EventReceiver = mpsc::Receiver<RuntimeEvent>;
+
+pub struct RunHandle {
+    pub run_id: RunId,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl RunHandle {
+    pub async fn wait(self) {
+        let _ = self.task.await;
+    }
+}
+
+pub struct AgentRun;
+
+impl AgentRun {
+    pub fn start(
+        config: AgentConfig,
+        input: String,
+        model: Arc<dyn ModelAdapter>,
+        registry: ToolRegistry,
+    ) -> (RunHandle, EventReceiver) {
+        let run_id = RunId::new();
+        let (event_tx, event_rx) = mpsc::channel(256);
+
+        let task = tokio::spawn(async move {
+            run_loop(run_id, config, input, model, registry, event_tx).await;
+        });
+
+        let handle = RunHandle { run_id, task };
+        (handle, event_rx)
+    }
+}
+
+async fn emit(tx: &mpsc::Sender<RuntimeEvent>, event: RuntimeEvent) {
+    let _ = tx.send(event).await;
+}
+
+async fn run_loop(
+    run_id: RunId,
+    config: AgentConfig,
+    input: String,
+    model: Arc<dyn ModelAdapter>,
+    registry: ToolRegistry,
+    tx: mpsc::Sender<RuntimeEvent>,
+) {
+    emit(&tx, RuntimeEvent::RunStarted { run_id }).await;
+
+    let mut messages = vec![
+        Message {
+            role: Role::System,
+            content: vec![ContentBlock::Text(config.system_prompt.clone())],
+        },
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text(input)],
+        },
+    ];
+
+    let tool_defs = registry.list();
+    let mut step: u32 = 0;
+
+    loop {
+        if step >= config.max_steps {
+            emit(
+                &tx,
+                RuntimeEvent::RunFailed {
+                    error: "max_steps_reached".into(),
+                },
+            )
+            .await;
+            return;
+        }
+
+        emit(&tx, RuntimeEvent::ModelCallStarted { step }).await;
+
+        let (stream_tx, mut stream_rx) = mpsc::channel::<ModelStreamChunk>(64);
+        let event_tx_clone = tx.clone();
+        let forward_task = tokio::spawn(async move {
+            while let Some(chunk) = stream_rx.recv().await {
+                let _ = event_tx_clone
+                    .send(RuntimeEvent::ModelStreamChunk { delta: chunk })
+                    .await;
+            }
+        });
+
+        let response = model.stream(&messages, &tool_defs, stream_tx).await;
+        let _ = forward_task.await;
+
+        let response: ModelResponse = match response {
+            Ok(r) => r,
+            Err(e) => {
+                emit(
+                    &tx,
+                    RuntimeEvent::RunFailed {
+                        error: e.to_string(),
+                    },
+                )
+                .await;
+                return;
+            }
+        };
+
+        emit(
+            &tx,
+            RuntimeEvent::ModelCallCompleted {
+                tokens: response.usage.clone(),
+            },
+        )
+        .await;
+
+        let mut tool_uses = Vec::new();
+        let mut text_parts = Vec::new();
+
+        for block in &response.content {
+            match block {
+                ContentBlock::ToolUse { id, name, input } => {
+                    tool_uses.push(ToolCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input: input.clone(),
+                    });
+                }
+                ContentBlock::Text(t) => {
+                    text_parts.push(t.clone());
+                }
+                _ => {}
+            }
+        }
+
+        match response.stop_reason {
+            StopReason::EndTurn if tool_uses.is_empty() => {
+                let output = json!(text_parts.join(""));
+                emit(&tx, RuntimeEvent::RunCompleted { output }).await;
+                return;
+            }
+            StopReason::MaxTokens if tool_uses.is_empty() => {
+                let output = json!(text_parts.join(""));
+                emit(&tx, RuntimeEvent::RunCompleted { output }).await;
+                return;
+            }
+            _ => {}
+        }
+
+        messages.push(Message {
+            role: Role::Assistant,
+            content: response.content.clone(),
+        });
+
+        let mut tool_results = Vec::new();
+
+        for tool_call in &tool_uses {
+            let tool = match registry.get(&tool_call.name) {
+                Some(t) => t,
+                None => {
+                    emit(
+                        &tx,
+                        RuntimeEvent::ToolCallFailed {
+                            tool: tool_call.name.clone(),
+                            error: format!("tool '{}' not found", tool_call.name),
+                        },
+                    )
+                    .await;
+                    tool_results.push(ContentBlock::ToolResult {
+                        tool_use_id: tool_call.id.clone(),
+                        content: json!({"error": format!("tool '{}' not found", tool_call.name)}),
+                    });
+                    continue;
+                }
+            };
+
+            let source = tool.metadata().source.clone();
+            emit(
+                &tx,
+                RuntimeEvent::ToolCallStarted {
+                    tool: tool_call.name.clone(),
+                    source,
+                    input: tool_call.input.clone(),
+                },
+            )
+            .await;
+
+            let ctx = ToolContext {
+                run_id,
+                tool_call_id: tool_call.id.clone(),
+                on_update: None,
+            };
+
+            let start_time = Instant::now();
+            let result = tool.execute(tool_call.input.clone(), &ctx).await;
+
+            match result {
+                Ok(ToolOutput::Immediate(value)) => {
+                    let duration = start_time.elapsed();
+                    emit(
+                        &tx,
+                        RuntimeEvent::ToolCallCompleted {
+                            tool: tool_call.name.clone(),
+                            output: value.clone(),
+                            duration,
+                        },
+                    )
+                    .await;
+                    tool_results.push(ContentBlock::ToolResult {
+                        tool_use_id: tool_call.id.clone(),
+                        content: value,
+                    });
+                }
+                Ok(ToolOutput::AsyncJob(handle)) => {
+                    emit(
+                        &tx,
+                        RuntimeEvent::AsyncToolStarted {
+                            tool: tool_call.name.clone(),
+                            job_id: handle.job_id.clone(),
+                        },
+                    )
+                    .await;
+
+                    let async_result =
+                        poll_async_job(&tx, &tool_call.name, &handle, start_time).await;
+
+                    tool_results.push(ContentBlock::ToolResult {
+                        tool_use_id: tool_call.id.clone(),
+                        content: async_result,
+                    });
+                }
+                Err(e) => {
+                    emit(
+                        &tx,
+                        RuntimeEvent::ToolCallFailed {
+                            tool: tool_call.name.clone(),
+                            error: e.message.clone(),
+                        },
+                    )
+                    .await;
+                    tool_results.push(ContentBlock::ToolResult {
+                        tool_use_id: tool_call.id.clone(),
+                        content: json!({"error": e.message}),
+                    });
+                }
+            }
+        }
+
+        messages.push(Message {
+            role: Role::User,
+            content: tool_results,
+        });
+
+        step += 1;
+    }
+}
+
+async fn poll_async_job(
+    tx: &mpsc::Sender<RuntimeEvent>,
+    tool_name: &str,
+    handle: &JobHandle,
+    start_time: Instant,
+) -> Value {
+    let timeout = handle.timeout;
+
+    loop {
+        tokio::time::sleep(handle.poll_interval).await;
+
+        if let Some(max) = timeout {
+            if start_time.elapsed() > max {
+                emit(
+                    tx,
+                    RuntimeEvent::ToolCallFailed {
+                        tool: tool_name.to_string(),
+                        error: "async job timed out".into(),
+                    },
+                )
+                .await;
+                return json!({"error": "async job timed out"});
+            }
+        }
+
+        match (handle.poll)().await {
+            Ok(JobStatus::Pending { progress, message }) => {
+                emit(
+                    tx,
+                    RuntimeEvent::AsyncToolProgress {
+                        tool: tool_name.to_string(),
+                        job_id: handle.job_id.clone(),
+                        status: JobStatus::Pending { progress, message },
+                    },
+                )
+                .await;
+            }
+            Ok(JobStatus::Completed(value)) => {
+                let elapsed = start_time.elapsed();
+                emit(
+                    tx,
+                    RuntimeEvent::AsyncToolCompleted {
+                        tool: tool_name.to_string(),
+                        job_id: handle.job_id.clone(),
+                        output: value.clone(),
+                        elapsed,
+                    },
+                )
+                .await;
+                return value;
+            }
+            Ok(JobStatus::Failed(err)) => {
+                emit(
+                    tx,
+                    RuntimeEvent::ToolCallFailed {
+                        tool: tool_name.to_string(),
+                        error: err.clone(),
+                    },
+                )
+                .await;
+                return json!({"error": err});
+            }
+            Err(e) => {
+                emit(
+                    tx,
+                    RuntimeEvent::ToolCallFailed {
+                        tool: tool_name.to_string(),
+                        error: e.message.clone(),
+                    },
+                )
+                .await;
+                return json!({"error": e.message});
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::budget::BudgetConfig;
+    use crate::model::{ModelError, TokenUsage};
+    use crate::tool::{JsonSchema, ToolDef, ToolError, ToolMetadata, ToolSource};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    struct FakeModelAdapter {
+        call_count: AtomicU32,
+    }
+
+    impl FakeModelAdapter {
+        fn final_answer() -> Self {
+            Self {
+                call_count: AtomicU32::new(0),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ModelAdapter for FakeModelAdapter {
+        async fn stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDef],
+            tx: mpsc::Sender<ModelStreamChunk>,
+        ) -> Result<ModelResponse, ModelError> {
+            let count = self.call_count.fetch_add(1, Ordering::SeqCst);
+            let _ = tx
+                .send(ModelStreamChunk::Text {
+                    delta: "hello".into(),
+                })
+                .await;
+            let usage = TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+            };
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+
+            if count == 0 {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text("hello".into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                })
+            } else {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text("done".into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                })
+            }
+        }
+    }
+
+    fn test_config() -> AgentConfig {
+        AgentConfig {
+            system_prompt: "you are helpful".into(),
+            model: ModelSpec {
+                provider: "test".into(),
+                model: "test".into(),
+                api_key_env: None,
+                max_tokens: None,
+            },
+            budget: BudgetConfig {
+                max_tokens: None,
+                max_tool_calls: None,
+                max_duration: None,
+                max_cost_usd: None,
+            },
+            max_steps: 10,
+            allowed_skills: None,
+            allowed_tools: None,
+            mcp_servers: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn run_loop_final_answer() {
+        let model = Arc::new(FakeModelAdapter::final_answer());
+        let registry = ToolRegistry::new();
+
+        let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
+
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        handle.wait().await;
+
+        assert!(matches!(events[0], RuntimeEvent::RunStarted { .. }));
+        assert!(matches!(
+            events[1],
+            RuntimeEvent::ModelCallStarted { step: 0 }
+        ));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+    }
+
+    #[tokio::test]
+    async fn run_loop_max_steps() {
+        let model = Arc::new(FakeModelAdapter::final_answer());
+        let registry = ToolRegistry::new();
+
+        let mut config = test_config();
+        config.max_steps = 0;
+
+        let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        handle.wait().await;
+
+        assert!(events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::RunFailed { error } if error == "max_steps_reached"
+        )));
+    }
+
+    struct ToolCallModelAdapter;
+
+    #[async_trait::async_trait]
+    impl ModelAdapter for ToolCallModelAdapter {
+        async fn stream(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDef],
+            tx: mpsc::Sender<ModelStreamChunk>,
+        ) -> Result<ModelResponse, ModelError> {
+            let has_tool_result = messages.iter().any(|m| {
+                m.content
+                    .iter()
+                    .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
+            });
+
+            let usage = TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+            };
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+
+            if has_tool_result {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text("done".into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                })
+            } else {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "call_1".into(),
+                        name: "echo".into(),
+                        input: json!({"text": "hello"}),
+                    }],
+                    usage,
+                    stop_reason: StopReason::ToolUse,
+                })
+            }
+        }
+    }
+
+    struct EchoTool;
+
+    #[async_trait::async_trait]
+    impl Tool for EchoTool {
+        fn name(&self) -> &str {
+            "echo"
+        }
+        fn description(&self) -> &str {
+            "echoes input"
+        }
+        fn input_schema(&self) -> &JsonSchema {
+            &serde_json::Value::Null
+        }
+        fn output_schema(&self) -> Option<&JsonSchema> {
+            None
+        }
+        fn metadata(&self) -> &ToolMetadata {
+            &ToolMetadata {
+                side_effect: false,
+                requires_approval: false,
+                cost_hint: None,
+                timeout: None,
+                max_output_tokens: None,
+                source: ToolSource::InProcess,
+            }
+        }
+        async fn execute(
+            &self,
+            input: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::Immediate(input))
+        }
+    }
+
+    #[tokio::test]
+    async fn run_loop_with_tool_call() {
+        let model = Arc::new(ToolCallModelAdapter);
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(EchoTool)).unwrap();
+
+        let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
+
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        handle.wait().await;
+
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ToolCallStarted { tool, .. } if tool == "echo")));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ToolCallCompleted { tool, .. } if tool == "echo")));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+    }
 }
