@@ -1,4 +1,5 @@
 pub mod async_job;
+pub mod builtin;
 pub mod in_process;
 pub mod registry;
 
@@ -61,6 +62,7 @@ pub struct ToolContext {
     pub run_id: RunId,
     pub tool_call_id: String,
     pub on_update: Option<mpsc::Sender<Value>>,
+    pub event_tx: Option<mpsc::Sender<crate::events::RuntimeEvent>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]

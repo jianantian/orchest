@@ -336,6 +336,7 @@ async fn run_loop(
                 run_id,
                 tool_call_id: tool_call.id.clone(),
                 on_update: None,
+                event_tx: Some(tx.clone()),
             };
 
             let start_time = Instant::now();
