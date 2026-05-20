@@ -20,6 +20,7 @@ Issues 001-013 各自有单元级验收标准，但需要一个明确的集成�
 
 **RuntimeEvent 覆盖检查：**
 - [ ] Python 和 TypeScript demos 观测到的 `RuntimeEvent.type` 均使用 canonical snake_case wire format，不出现 camelCase 事件 discriminant
+- [ ] Validation 输出或说明引用 [v0.1 E2E Validation Notes](../e2e-validation.md)，并明确标记 `read_file` path boundary 是 v0.1 known limitation
 - [ ] 以下事件在至少一个 demo 中均可观测到：
   - `run_started`
   - `model_call_started` / `model_call_completed`
@@ -36,6 +37,11 @@ Issues 001-013 各自有单元级验收标准，但需要一个明确的集成�
 **RunState 序列化：**
 - [ ] 在 run 中途（tool call 完成后）将 `RunState` 序列化为 JSON，验证格式有效
 - [ ] 从 JSON 重新加载 `RunState`，字段无损失（`JobHandle.poll` 除外）
+
+**Known-risk visibility：**
+- [ ] `read_file` 读取已注册 skill `SKILL.md` 时可观测到 `SkillContentRead`
+- [ ] `read_file` 读取非 skill 文件在 v0.1 被允许，但不会产生 `SkillContentRead`；该行为在 validation notes 中标为 accepted known risk
+- [ ] 该 known risk cross-link 到 Polaris non-goals / 无沙箱运行建议
 
 ## 依赖
 
