@@ -454,6 +454,37 @@ async fn e2e_skill_content_read_event() {
 }
 
 #[tokio::test]
+async fn e2e_read_file_known_risk_boundary_is_visible() {
+    let tmp = tempfile::tempdir().expect("tempdir should be created");
+    let non_skill_file = tmp.path().join("outside-skill.txt");
+    std::fs::write(&non_skill_file, "host-readable content")
+        .expect("non-skill file should be written");
+
+    let tool = ReadFileTool::new();
+    let (event_tx, mut event_rx) = mpsc::channel(16);
+    let ctx = ToolContext {
+        run_id: agent_runtime_core::run::RunId::new(),
+        tool_call_id: "read_non_skill".into(),
+        on_update: None,
+        event_tx: Some(event_tx),
+    };
+
+    let output = tool
+        .execute(json!({"path": non_skill_file.to_str().unwrap()}), &ctx)
+        .await
+        .expect("v0.1 read_file intentionally allows host-readable non-skill files");
+
+    assert!(matches!(
+        output,
+        ToolOutput::Immediate(Value::String(content)) if content == "host-readable content"
+    ));
+    assert!(
+        event_rx.try_recv().is_err(),
+        "non-skill reads are allowed in v0.1 but do not emit SkillContentRead"
+    );
+}
+
+#[tokio::test]
 async fn e2e_budget_usage_serialization() {
     let usage = agent_runtime_core::budget::BudgetUsage {
         tokens_used: 1500,
