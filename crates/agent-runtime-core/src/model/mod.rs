@@ -1,5 +1,30 @@
+pub mod anthropic;
+
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::mpsc;
+
+use crate::tool::ToolDef;
+
+#[async_trait]
+pub trait ModelAdapter: Send + Sync {
+    async fn stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        tx: mpsc::Sender<ModelStreamChunk>,
+    ) -> Result<ModelResponse, ModelError>;
+
+    async fn call(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+    ) -> Result<ModelResponse, ModelError> {
+        let (tx, _rx) = mpsc::channel(64);
+        self.stream(messages, tools, tx).await
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModelStreamChunk {
