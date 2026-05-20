@@ -78,11 +78,16 @@ pub type EventReceiver = mpsc::Receiver<RuntimeEvent>;
 pub struct RunHandle {
     pub run_id: RunId,
     task: tokio::task::JoinHandle<()>,
+    approval_tx: mpsc::Sender<bool>,
 }
 
 impl RunHandle {
     pub async fn wait(self) {
         let _ = self.task.await;
+    }
+
+    pub async fn respond_approval(&self, _run_id: RunId, approved: bool) {
+        let _ = self.approval_tx.send(approved).await;
     }
 }
 
@@ -97,12 +102,26 @@ impl AgentRun {
     ) -> (RunHandle, EventReceiver) {
         let run_id = RunId::new();
         let (event_tx, event_rx) = mpsc::channel(256);
+        let (approval_tx, approval_rx) = mpsc::channel(1);
 
         let task = tokio::spawn(async move {
-            run_loop(run_id, config, input, model, registry, event_tx).await;
+            run_loop(
+                run_id,
+                config,
+                input,
+                model,
+                registry,
+                event_tx,
+                approval_rx,
+            )
+            .await;
         });
 
-        let handle = RunHandle { run_id, task };
+        let handle = RunHandle {
+            run_id,
+            task,
+            approval_tx,
+        };
         (handle, event_rx)
     }
 }
@@ -118,6 +137,7 @@ async fn run_loop(
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
     tx: mpsc::Sender<RuntimeEvent>,
+    mut approval_rx: mpsc::Receiver<bool>,
 ) {
     emit(&tx, RuntimeEvent::RunStarted { run_id }).await;
 
@@ -265,6 +285,41 @@ async fn run_loop(
                     continue;
                 }
             };
+
+            if tool.metadata().requires_approval {
+                emit(
+                    &tx,
+                    RuntimeEvent::ApprovalRequested {
+                        tool_call: tool_call.clone(),
+                    },
+                )
+                .await;
+
+                let approved = approval_rx.recv().await.unwrap_or(false);
+
+                if approved {
+                    emit(
+                        &tx,
+                        RuntimeEvent::ApprovalGranted {
+                            tool_call: tool_call.clone(),
+                        },
+                    )
+                    .await;
+                } else {
+                    emit(
+                        &tx,
+                        RuntimeEvent::ApprovalDenied {
+                            tool_call: tool_call.clone(),
+                        },
+                    )
+                    .await;
+                    tool_results.push(ContentBlock::ToolResult {
+                        tool_use_id: tool_call.id.clone(),
+                        content: json!({"error": "tool call denied by user"}),
+                    });
+                    continue;
+                }
+            }
 
             let source = tool.metadata().source.clone();
             emit(
@@ -599,15 +654,34 @@ mod tests {
         }
     }
 
-    struct EchoTool;
+    struct FakeTool {
+        name: &'static str,
+        requires_approval: bool,
+    }
+
+    impl FakeTool {
+        fn echo() -> Self {
+            Self {
+                name: "echo",
+                requires_approval: false,
+            }
+        }
+
+        fn guarded(name: &'static str) -> Self {
+            Self {
+                name,
+                requires_approval: true,
+            }
+        }
+    }
 
     #[async_trait::async_trait]
-    impl Tool for EchoTool {
+    impl Tool for FakeTool {
         fn name(&self) -> &str {
-            "echo"
+            self.name
         }
         fn description(&self) -> &str {
-            "echoes input"
+            "fake tool"
         }
         fn input_schema(&self) -> &JsonSchema {
             &serde_json::Value::Null
@@ -616,13 +690,24 @@ mod tests {
             None
         }
         fn metadata(&self) -> &ToolMetadata {
-            &ToolMetadata {
-                side_effect: false,
-                requires_approval: false,
-                cost_hint: None,
-                timeout: None,
-                max_output_tokens: None,
-                source: ToolSource::InProcess,
+            if self.requires_approval {
+                &ToolMetadata {
+                    side_effect: true,
+                    requires_approval: true,
+                    cost_hint: None,
+                    timeout: None,
+                    max_output_tokens: None,
+                    source: ToolSource::InProcess,
+                }
+            } else {
+                &ToolMetadata {
+                    side_effect: false,
+                    requires_approval: false,
+                    cost_hint: None,
+                    timeout: None,
+                    max_output_tokens: None,
+                    source: ToolSource::InProcess,
+                }
             }
         }
         async fn execute(
@@ -638,7 +723,7 @@ mod tests {
     async fn run_loop_with_tool_call() {
         let model = Arc::new(ToolCallModelAdapter);
         let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(EchoTool)).unwrap();
+        registry.register(Arc::new(FakeTool::echo())).unwrap();
 
         let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
 
@@ -657,5 +742,127 @@ mod tests {
         assert!(events
             .iter()
             .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+    }
+
+    struct ApprovalModelAdapter;
+
+    #[async_trait::async_trait]
+    impl ModelAdapter for ApprovalModelAdapter {
+        async fn stream(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDef],
+            tx: mpsc::Sender<ModelStreamChunk>,
+        ) -> Result<ModelResponse, ModelError> {
+            let has_tool_result = messages.iter().any(|m| {
+                m.content
+                    .iter()
+                    .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
+            });
+            let usage = TokenUsage {
+                input_tokens: 5,
+                output_tokens: 5,
+            };
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+
+            if has_tool_result {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text("done".into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                })
+            } else {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "call_1".into(),
+                        name: "write_file".into(),
+                        input: json!({}),
+                    }],
+                    usage,
+                    stop_reason: StopReason::ToolUse,
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_gate_approved() {
+        let model = Arc::new(ApprovalModelAdapter);
+        let mut registry = ToolRegistry::new();
+        registry
+            .register(Arc::new(FakeTool::guarded("write_file")))
+            .unwrap();
+
+        let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
+
+        let mut events = Vec::new();
+        loop {
+            match rx.recv().await {
+                Some(RuntimeEvent::ApprovalRequested { .. }) => {
+                    events.push(RuntimeEvent::ApprovalRequested {
+                        tool_call: ToolCall {
+                            id: String::new(),
+                            name: String::new(),
+                            input: json!(null),
+                        },
+                    });
+                    handle.respond_approval(handle.run_id, true).await;
+                }
+                Some(event) => events.push(event),
+                None => break,
+            }
+        }
+        handle.wait().await;
+
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ApprovalRequested { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ApprovalGranted { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ToolCallCompleted { .. })));
+    }
+
+    #[tokio::test]
+    async fn approval_gate_denied() {
+        let model = Arc::new(ApprovalModelAdapter);
+        let mut registry = ToolRegistry::new();
+        registry
+            .register(Arc::new(FakeTool::guarded("write_file")))
+            .unwrap();
+
+        let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
+
+        let mut events = Vec::new();
+        loop {
+            match rx.recv().await {
+                Some(RuntimeEvent::ApprovalRequested { .. }) => {
+                    events.push(RuntimeEvent::ApprovalRequested {
+                        tool_call: ToolCall {
+                            id: String::new(),
+                            name: String::new(),
+                            input: json!(null),
+                        },
+                    });
+                    handle.respond_approval(handle.run_id, false).await;
+                }
+                Some(event) => events.push(event),
+                None => break,
+            }
+        }
+        handle.wait().await;
+
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ApprovalDenied { .. })));
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ToolCallStarted { .. })));
     }
 }
