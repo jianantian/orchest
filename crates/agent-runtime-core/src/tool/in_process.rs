@@ -72,6 +72,7 @@ impl Tool for InProcessTool {
             run_id: ctx.run_id,
             tool_call_id: ctx.tool_call_id.clone(),
             on_update: ctx.on_update.clone(),
+            event_tx: ctx.event_tx.clone(),
         };
         (self.callback)(input, ctx_owned).await
     }

@@ -407,6 +407,7 @@ echo '{"greeting": "hello"}'
             run_id: crate::run::RunId::new(),
             tool_call_id: "tc_1".into(),
             on_update: None,
+            event_tx: None,
         };
         let result = tool
             .execute(serde_json::json!({"name": "world"}), &ctx)
@@ -443,6 +444,7 @@ echo '{"greeting": "hello"}'
             run_id: crate::run::RunId::new(),
             tool_call_id: "tc_1".into(),
             on_update: None,
+            event_tx: None,
         };
         let result = tool.execute(serde_json::json!({}), &ctx).await;
         assert!(result.is_err());
@@ -479,6 +481,7 @@ fi
             run_id: crate::run::RunId::new(),
             tool_call_id: "tc_1".into(),
             on_update: None,
+            event_tx: None,
         };
         let result = tool.execute(serde_json::json!({}), &ctx).await;
         assert!(result.is_ok());
