@@ -10,14 +10,22 @@ use super::{
 };
 use crate::tool::ToolDef;
 
-const API_URL: &str = "https://api.anthropic.com/v1/messages";
+const DEFAULT_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
 
 pub struct AnthropicAdapter {
     api_key: String,
+    api_url: String,
     model: String,
     max_tokens: u32,
     client: reqwest::Client,
+}
+
+pub struct AnthropicConfig {
+    pub model: String,
+    pub max_tokens: u32,
+    pub api_key: Option<String>,
+    pub api_url: Option<String>,
 }
 
 impl AnthropicAdapter {
@@ -26,17 +34,58 @@ impl AnthropicAdapter {
         max_tokens: u32,
         api_key: Option<String>,
     ) -> Result<Self, ModelError> {
-        let api_key = api_key
+        Self::new_with_api_url(
+            model,
+            max_tokens,
+            api_key,
+            env::var("ANTHROPIC_API_URL").ok(),
+        )
+    }
+
+    pub fn new_with_api_url(
+        model: String,
+        max_tokens: u32,
+        api_key: Option<String>,
+        api_url: Option<String>,
+    ) -> Result<Self, ModelError> {
+        Self::from_config(AnthropicConfig {
+            model,
+            max_tokens,
+            api_key,
+            api_url,
+        })
+    }
+
+    pub fn from_config(config: AnthropicConfig) -> Result<Self, ModelError> {
+        let api_key = config
+            .api_key
             .or_else(|| env::var("ANTHROPIC_API_KEY").ok())
+            .or_else(|| env::var("ANTHROPIC_AUTH_TOKEN").ok())
+            .or_else(|| env::var("OPENROUTER_API_KEY").ok())
             .ok_or_else(|| ModelError {
-                message: "ANTHROPIC_API_KEY not set and no api_key provided".into(),
+                message:
+                    "ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, OPENROUTER_API_KEY not set and no api_key provided"
+                        .into(),
                 code: Some("missing_api_key".into()),
             })?;
+        let api_url = config
+            .api_url
+            .or_else(|| env::var("ANTHROPIC_API_URL").ok())
+            .or_else(|| env::var("ANTHROPIC_BASE_URL").ok())
+            .unwrap_or_else(|| DEFAULT_API_URL.to_string());
+
+        if api_url.trim().is_empty() {
+            return Err(ModelError {
+                message: "Anthropic API URL cannot be empty".into(),
+                code: Some("invalid_api_url".into()),
+            });
+        }
 
         Ok(Self {
             api_key,
-            model,
-            max_tokens,
+            api_url: normalize_messages_url(&api_url),
+            model: config.model,
+            max_tokens: config.max_tokens,
             client: reqwest::Client::new(),
         })
     }
@@ -112,6 +161,15 @@ impl AnthropicAdapter {
     }
 }
 
+fn normalize_messages_url(value: &str) -> String {
+    let trimmed = value.trim().trim_end_matches('/');
+    if trimmed.ends_with("/v1/messages") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/v1/messages")
+    }
+}
+
 #[async_trait::async_trait]
 impl ModelAdapter for AnthropicAdapter {
     async fn stream(
@@ -124,7 +182,7 @@ impl ModelAdapter for AnthropicAdapter {
 
         let response = self
             .client
-            .post(API_URL)
+            .post(&self.api_url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", API_VERSION)
             .header("content-type", "application/json")
@@ -316,5 +374,67 @@ impl ModelAdapter for AnthropicAdapter {
             usage,
             stop_reason,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uses_default_api_url_when_none_is_provided() {
+        let adapter = AnthropicAdapter::from_config(AnthropicConfig {
+            model: "claude-test".into(),
+            max_tokens: 128,
+            api_key: Some("key".into()),
+            api_url: None,
+        })
+        .expect("adapter should be created");
+
+        assert_eq!(adapter.api_url, DEFAULT_API_URL);
+    }
+
+    #[test]
+    fn uses_custom_api_url_when_provided() {
+        let api_url = "https://compatible.example.com/v1/messages".to_string();
+        let adapter = AnthropicAdapter::from_config(AnthropicConfig {
+            model: "claude-test".into(),
+            max_tokens: 128,
+            api_key: Some("key".into()),
+            api_url: Some(api_url.clone()),
+        })
+        .expect("adapter should be created");
+
+        assert_eq!(adapter.api_url, api_url);
+    }
+
+    #[test]
+    fn appends_messages_endpoint_to_base_url() {
+        let adapter = AnthropicAdapter::from_config(AnthropicConfig {
+            model: "claude-test".into(),
+            max_tokens: 128,
+            api_key: Some("key".into()),
+            api_url: Some("https://openrouter.ai/api".into()),
+        })
+        .expect("adapter should be created");
+
+        assert_eq!(adapter.api_url, "https://openrouter.ai/api/v1/messages");
+    }
+
+    #[test]
+    fn rejects_empty_api_url() {
+        let result = AnthropicAdapter::from_config(AnthropicConfig {
+            model: "claude-test".into(),
+            max_tokens: 128,
+            api_key: Some("key".into()),
+            api_url: Some(" ".into()),
+        });
+
+        let error = match result {
+            Ok(_) => panic!("empty api url should be rejected"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code.as_deref(), Some("invalid_api_url"));
     }
 }

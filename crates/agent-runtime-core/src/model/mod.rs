@@ -54,6 +54,8 @@ pub struct ModelSpec {
     pub provider: String,
     pub model: String,
     pub api_key_env: Option<String>,
+    #[serde(default)]
+    pub api_url: Option<String>,
     pub max_tokens: Option<u32>,
 }
 

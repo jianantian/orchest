@@ -24,6 +24,59 @@ pub struct JobHandle {
     pub timeout: Option<Duration>,
 }
 
+fn lost_poll_fn() -> Arc<PollFn> {
+    Arc::new(|| {
+        Box::pin(async {
+            Ok(JobStatus::Failed(
+                "job poll function was not restored".into(),
+            ))
+        })
+    })
+}
+
+impl Serialize for JobHandle {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct SerializableJobHandle<'a> {
+            job_id: &'a str,
+            poll_interval: Duration,
+            timeout: Option<Duration>,
+        }
+
+        SerializableJobHandle {
+            job_id: &self.job_id,
+            poll_interval: self.poll_interval,
+            timeout: self.timeout,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for JobHandle {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct SerializableJobHandle {
+            job_id: String,
+            poll_interval: Duration,
+            timeout: Option<Duration>,
+        }
+
+        let value = SerializableJobHandle::deserialize(deserializer)?;
+        Ok(Self {
+            job_id: value.job_id,
+            poll: lost_poll_fn(),
+            poll_interval: value.poll_interval,
+            timeout: value.timeout,
+        })
+    }
+}
+
 impl std::fmt::Debug for JobHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("JobHandle")

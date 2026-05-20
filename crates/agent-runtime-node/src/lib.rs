@@ -6,7 +6,7 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use agent_runtime_core::budget::BudgetConfig;
-use agent_runtime_core::model::anthropic::AnthropicAdapter;
+use agent_runtime_core::model::anthropic::{AnthropicAdapter, AnthropicConfig};
 use agent_runtime_core::model::ModelSpec;
 use agent_runtime_core::run::{AgentConfig, AgentRun};
 use agent_runtime_core::tool::registry::ToolRegistry;
@@ -19,6 +19,7 @@ pub struct AgentOptions {
     pub model: String,
     pub system_prompt: String,
     pub skills_dir: Option<String>,
+    pub api_url: Option<String>,
     pub budget: Option<BudgetOptions>,
 }
 
@@ -83,6 +84,7 @@ impl Tool for StaticTool {
 pub struct Agent {
     model: String,
     system_prompt: String,
+    api_url: Option<String>,
     #[allow(dead_code)]
     skills_dir: Option<String>,
     budget: Option<BudgetOptions>,
@@ -96,6 +98,7 @@ impl Agent {
         Self {
             model: options.model,
             system_prompt: options.system_prompt,
+            api_url: options.api_url,
             skills_dir: options.skills_dir,
             budget: options.budget,
             tools: Vec::new(),
@@ -146,6 +149,7 @@ impl Agent {
                 provider: "anthropic".into(),
                 model: self.model.clone(),
                 api_key_env: None,
+                api_url: self.api_url.clone(),
                 max_tokens: Some(4096),
             },
             budget: budget_config,
@@ -163,8 +167,13 @@ impl Agent {
         }
 
         let model: Arc<dyn agent_runtime_core::model::ModelAdapter> = Arc::new(
-            AnthropicAdapter::new(self.model.clone(), 4096, None)
-                .map_err(|e| napi::Error::from_reason(format!("{}", e)))?,
+            AnthropicAdapter::from_config(AnthropicConfig {
+                model: self.model.clone(),
+                max_tokens: 4096,
+                api_key: None,
+                api_url: self.api_url.clone(),
+            })
+            .map_err(|e| napi::Error::from_reason(format!("{}", e)))?,
         );
 
         let rt = tokio::runtime::Runtime::new()
@@ -184,7 +193,7 @@ impl Agent {
         for event in &events {
             let value = serde_json::to_value(event)
                 .map_err(|e| napi::Error::from_reason(format!("serialize error: {}", e)))?;
-            result.push(value);
+            result.push(runtime_event_to_value(value));
         }
 
         Ok(result)
@@ -196,4 +205,38 @@ impl Agent {
             "respondApproval requires an active run handle (not yet supported)",
         ))
     }
+}
+
+fn runtime_event_to_value(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(outer) if outer.len() == 1 => {
+            let Some((variant, fields)) = outer.into_iter().next() else {
+                return serde_json::Value::Object(serde_json::Map::new());
+            };
+            let mut result = match fields {
+                serde_json::Value::Object(fields) => fields,
+                other => {
+                    let mut fields = serde_json::Map::new();
+                    fields.insert("value".into(), other);
+                    fields
+                }
+            };
+            result.insert(
+                "type".into(),
+                serde_json::Value::String(to_camel_case(&variant)),
+            );
+            serde_json::Value::Object(result)
+        }
+        other => other,
+    }
+}
+
+fn to_camel_case(name: &str) -> String {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    let mut out = first.to_lowercase().collect::<String>();
+    out.extend(chars);
+    out
 }
