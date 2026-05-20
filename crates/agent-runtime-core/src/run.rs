@@ -865,4 +865,147 @@ mod tests {
             .iter()
             .any(|e| matches!(e, RuntimeEvent::ToolCallStarted { .. })));
     }
+
+    struct AsyncTool {
+        polls_until_done: AtomicU32,
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for AsyncTool {
+        fn name(&self) -> &str {
+            "async_op"
+        }
+        fn description(&self) -> &str {
+            "async operation"
+        }
+        fn input_schema(&self) -> &JsonSchema {
+            &serde_json::Value::Null
+        }
+        fn output_schema(&self) -> Option<&JsonSchema> {
+            None
+        }
+        fn metadata(&self) -> &ToolMetadata {
+            &ToolMetadata {
+                side_effect: false,
+                requires_approval: false,
+                cost_hint: None,
+                timeout: None,
+                max_output_tokens: None,
+                source: ToolSource::InProcess,
+            }
+        }
+        async fn execute(
+            &self,
+            _input: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<ToolOutput, ToolError> {
+            let remaining = Arc::new(AtomicU32::new(self.polls_until_done.load(Ordering::SeqCst)));
+            let poll_fn = {
+                let remaining = Arc::clone(&remaining);
+                move || {
+                    let remaining = Arc::clone(&remaining);
+                    Box::pin(async move {
+                        let left = remaining.fetch_sub(1, Ordering::SeqCst);
+                        if left <= 1 {
+                            Ok(JobStatus::Completed(json!("async_result")))
+                        } else {
+                            Ok(JobStatus::Pending {
+                                progress: Some(1.0 - (left as f32 / 3.0)),
+                                message: Some("working".into()),
+                            })
+                        }
+                    })
+                        as std::pin::Pin<
+                            Box<
+                                dyn std::future::Future<Output = Result<JobStatus, ToolError>>
+                                    + Send,
+                            >,
+                        >
+                }
+            };
+            Ok(ToolOutput::AsyncJob(JobHandle {
+                job_id: "job-1".into(),
+                poll: Arc::new(poll_fn),
+                poll_interval: std::time::Duration::from_millis(1),
+                timeout: None,
+            }))
+        }
+    }
+
+    struct AsyncToolModelAdapter;
+
+    #[async_trait::async_trait]
+    impl ModelAdapter for AsyncToolModelAdapter {
+        async fn stream(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDef],
+            tx: mpsc::Sender<ModelStreamChunk>,
+        ) -> Result<ModelResponse, ModelError> {
+            let has_tool_result = messages.iter().any(|m| {
+                m.content
+                    .iter()
+                    .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
+            });
+            let usage = TokenUsage {
+                input_tokens: 5,
+                output_tokens: 5,
+            };
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+
+            if has_tool_result {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text("done".into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                })
+            } else {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "call_1".into(),
+                        name: "async_op".into(),
+                        input: json!({}),
+                    }],
+                    usage,
+                    stop_reason: StopReason::ToolUse,
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn async_job_polling() {
+        let model = Arc::new(AsyncToolModelAdapter);
+        let mut registry = ToolRegistry::new();
+        registry
+            .register(Arc::new(AsyncTool {
+                polls_until_done: AtomicU32::new(3),
+            }))
+            .unwrap();
+
+        let (handle, mut rx) = AgentRun::start(test_config(), "go".into(), model, registry);
+
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        handle.wait().await;
+
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::AsyncToolStarted { tool, job_id } if tool == "async_op" && job_id == "job-1")));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::AsyncToolProgress { .. })));
+        assert!(events.iter().any(
+            |e| matches!(e, RuntimeEvent::AsyncToolCompleted { tool, .. } if tool == "async_op")
+        ));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+    }
 }
