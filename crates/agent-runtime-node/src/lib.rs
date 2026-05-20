@@ -1,1 +1,199 @@
+use std::sync::Arc;
+use std::time::Duration;
 
+use async_trait::async_trait;
+use napi_derive::napi;
+use serde_json::Value;
+
+use agent_runtime_core::budget::BudgetConfig;
+use agent_runtime_core::model::anthropic::AnthropicAdapter;
+use agent_runtime_core::model::ModelSpec;
+use agent_runtime_core::run::{AgentConfig, AgentRun};
+use agent_runtime_core::tool::registry::ToolRegistry;
+use agent_runtime_core::tool::{
+    JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
+};
+
+#[napi(object)]
+pub struct AgentOptions {
+    pub model: String,
+    pub system_prompt: String,
+    pub skills_dir: Option<String>,
+    pub budget: Option<BudgetOptions>,
+}
+
+#[napi(object)]
+pub struct BudgetOptions {
+    pub max_tokens: Option<i64>,
+    pub max_tool_calls: Option<i32>,
+    pub max_duration_secs: Option<i64>,
+    pub max_cost_usd: Option<f64>,
+}
+
+#[napi(object)]
+pub struct ToolRegistration {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+    pub requires_approval: Option<bool>,
+    pub side_effect: Option<bool>,
+}
+
+struct StaticTool {
+    name: String,
+    description: String,
+    input_schema: JsonSchema,
+    metadata: ToolMetadata,
+}
+
+#[async_trait]
+impl Tool for StaticTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn input_schema(&self) -> &JsonSchema {
+        &self.input_schema
+    }
+
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
+
+    fn metadata(&self) -> &ToolMetadata {
+        &self.metadata
+    }
+
+    async fn execute(
+        &self,
+        _input: Value,
+        _ctx: &ToolContext,
+    ) -> std::result::Result<ToolOutput, ToolError> {
+        Ok(ToolOutput::Immediate(serde_json::json!({
+            "error": "JS callback tools not yet wired in v0.1 — use Rust tools or skill bundled scripts"
+        })))
+    }
+}
+
+#[napi]
+pub struct Agent {
+    model: String,
+    system_prompt: String,
+    #[allow(dead_code)]
+    skills_dir: Option<String>,
+    budget: Option<BudgetOptions>,
+    tools: Vec<Arc<dyn Tool>>,
+}
+
+#[napi]
+impl Agent {
+    #[napi(constructor)]
+    pub fn new(options: AgentOptions) -> Self {
+        Self {
+            model: options.model,
+            system_prompt: options.system_prompt,
+            skills_dir: options.skills_dir,
+            budget: options.budget,
+            tools: Vec::new(),
+        }
+    }
+
+    #[napi]
+    pub fn register_tool(&mut self, options: ToolRegistration) -> napi::Result<()> {
+        let tool = StaticTool {
+            name: options.name.clone(),
+            description: options.description.clone(),
+            input_schema: options.input_schema,
+            metadata: ToolMetadata {
+                side_effect: options.side_effect.unwrap_or(false),
+                requires_approval: options.requires_approval.unwrap_or(false),
+                cost_hint: None,
+                timeout: None,
+                max_output_tokens: None,
+                source: ToolSource::InProcess,
+            },
+        };
+
+        self.tools.push(Arc::new(tool));
+        Ok(())
+    }
+
+    #[napi]
+    pub fn run_sync(&self, input: String) -> napi::Result<Vec<serde_json::Value>> {
+        let budget_config = if let Some(ref b) = self.budget {
+            BudgetConfig {
+                max_tokens: b.max_tokens.map(|v| v as u64),
+                max_tool_calls: b.max_tool_calls.map(|v| v as u32),
+                max_duration: b.max_duration_secs.map(|v| Duration::from_secs(v as u64)),
+                max_cost_usd: b.max_cost_usd,
+            }
+        } else {
+            BudgetConfig {
+                max_tokens: None,
+                max_tool_calls: None,
+                max_duration: None,
+                max_cost_usd: None,
+            }
+        };
+
+        let config = AgentConfig {
+            system_prompt: self.system_prompt.clone(),
+            model: ModelSpec {
+                provider: "anthropic".into(),
+                model: self.model.clone(),
+                api_key_env: None,
+                max_tokens: Some(4096),
+            },
+            budget: budget_config,
+            max_steps: 20,
+            allowed_skills: None,
+            allowed_tools: None,
+            mcp_servers: vec![],
+        };
+
+        let mut registry = ToolRegistry::new();
+        for tool in &self.tools {
+            registry
+                .register(Arc::clone(tool))
+                .map_err(|e| napi::Error::from_reason(format!("{}", e)))?;
+        }
+
+        let model: Arc<dyn agent_runtime_core::model::ModelAdapter> = Arc::new(
+            AnthropicAdapter::new(self.model.clone(), 4096, None)
+                .map_err(|e| napi::Error::from_reason(format!("{}", e)))?,
+        );
+
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| napi::Error::from_reason(format!("failed to create runtime: {}", e)))?;
+
+        let events = rt.block_on(async {
+            let (_handle, mut event_rx) = AgentRun::start(config, input, model, registry);
+
+            let mut events = Vec::new();
+            while let Some(event) = event_rx.recv().await {
+                events.push(event);
+            }
+            events
+        });
+
+        let mut result = Vec::new();
+        for event in &events {
+            let value = serde_json::to_value(event)
+                .map_err(|e| napi::Error::from_reason(format!("serialize error: {}", e)))?;
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
+    #[napi]
+    pub fn respond_approval(&self, _run_id: String, _approved: bool) -> napi::Result<()> {
+        Err(napi::Error::from_reason(
+            "respondApproval requires an active run handle (not yet supported)",
+        ))
+    }
+}
