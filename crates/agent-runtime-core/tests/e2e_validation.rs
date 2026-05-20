@@ -644,9 +644,19 @@ impl ModelAdapter for ApprovalAdapter {
         });
 
         if has_tool_result {
+            let denied = messages.iter().any(|m| {
+                m.content.iter().any(|c| match c {
+                    ContentBlock::ToolResult { content, .. } => content
+                        .get("error")
+                        .and_then(|value| value.as_str())
+                        .is_some_and(|error| error == "tool call denied by user"),
+                    _ => false,
+                })
+            });
+            let output = if denied { "Denied." } else { "Approved." };
             let _ = tx
                 .send(ModelStreamChunk::Text {
-                    delta: "Approved.".into(),
+                    delta: output.into(),
                 })
                 .await;
             let _ = tx
@@ -655,7 +665,7 @@ impl ModelAdapter for ApprovalAdapter {
                 })
                 .await;
             Ok(ModelResponse {
-                content: vec![ContentBlock::Text("Approved.".into())],
+                content: vec![ContentBlock::Text(output.into())],
                 usage,
                 stop_reason: StopReason::EndTurn,
             })
@@ -743,5 +753,61 @@ async fn e2e_approval_flow() {
             .iter()
             .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
         "missing RunCompleted"
+    );
+}
+
+#[tokio::test]
+async fn e2e_approval_denied_flow_completes_without_executing_tool() {
+    let model = Arc::new(ApprovalAdapter);
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(GuardedTool)).unwrap();
+
+    let (handle, mut rx) = AgentRun::start(test_config(), "delete it".into(), model, registry);
+
+    let mut saw_approval_requested = false;
+    let mut events = Vec::new();
+
+    while let Some(event) = rx.recv().await {
+        if matches!(event, RuntimeEvent::ApprovalRequested { .. }) {
+            saw_approval_requested = true;
+            handle.respond_approval(handle.run_id, false).await;
+        }
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert!(saw_approval_requested, "expected ApprovalRequested event");
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ApprovalDenied { .. })),
+        "missing ApprovalDenied"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ToolCallStarted { tool, .. } if tool == "guarded")),
+        "denied tool should not start execution"
+    );
+    assert!(
+        !events.iter().any(
+            |e| matches!(e, RuntimeEvent::ToolCallCompleted { tool, .. } if tool == "guarded")
+        ),
+        "denied tool should not complete execution"
+    );
+    assert!(
+        events.iter().any(|e| {
+            matches!(
+                e,
+                RuntimeEvent::RunCompleted { output } if output == &json!("Denied.")
+            )
+        }),
+        "denial should feed a tool result back to the model and allow RunCompleted"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunFailed { .. })),
+        "approval denial by itself should not fail the run"
     );
 }

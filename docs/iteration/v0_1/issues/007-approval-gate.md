@@ -17,6 +17,8 @@
 - [ ] `RunHandle.respond_approval(run_id: RunId, approved: bool)` 唤醒 loop
 - [ ] `approved: true` → 发出 `ApprovalGranted`，继续执行该 tool
 - [ ] `approved: false` → 发出 `ApprovalDenied`，tool result 为拒绝消息，loop 继续下一步
+- [ ] E2E 覆盖 `approved: false` 路径：被拒绝的 tool 不发出 `ToolCallStarted` / `ToolCallCompleted`，模型收到拒绝 tool result 后继续下一步
+- [ ] `approved: false` 的最终 run 语义明确断言：除非后续模型调用失败或预算耗尽，run 应以 `RunCompleted` 收尾，而不是因为拒绝本身进入 `RunFailed`
 - [ ] `max_duration` 超时时，waiting for approval 状态也会被 budget guard 终止
 - [ ] `RunHandle` 可以跨线程安全传递（`Send + Sync`）
 
