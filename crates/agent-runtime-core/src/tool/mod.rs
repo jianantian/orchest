@@ -1,4 +1,6 @@
 pub mod async_job;
+pub mod in_process;
+pub mod registry;
 
 use std::time::Duration;
 
