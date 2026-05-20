@@ -1,249 +1,250 @@
-# Orchest — Agent 工作指南
+# Orchest — Agent Working Guide
 
-## 这是什么
+## What This Is
 
-Orchest 是一个**底层 Rust SDK**，为开发者提供构建 AI agent 应用的运行时核心。它不是一个完整的 agent 产品，而是其他 agent 产品的发动机：负责 agent loop、状态管理、事件流、tool 调度、skill 加载。
+Orchest is a **low-level Rust SDK** that provides the agent runtime core for building AI agent applications. It is not a complete agent product — it is the engine that other agent products run on: responsible for the agent loop, state management, event streaming, tool dispatch, and skill loading.
 
-当前阶段：**纯文档，无实现代码**。所有工作在 `docs/` 目录下进行。代码引入后，`crates/`、`examples/`、`skills/` 将按 Rust 项目规范一节的结构组织。
-
----
-
-## 术语边界（最重要，不得混淆）
-
-这三个概念在 Anthropic 生态中常被混淆，Orchest 严格区分：
-
-| 概念 | 定义 | 层次 |
-|------|------|------|
-| **Tool** | 模型可以调用的最小原子能力单元，包含名称、schema、execute 实现 | 能力层 |
-| **MCP** | Tool 提供方的传输协议，不是特殊的 tool 类型 | 协议层 |
-| **Skill** | 通过文件系统组织的过程性知识包（SKILL.md + 可选脚本），按渐进式披露暴露给 agent | 知识层 |
-
-**MCP 不是 tool 的替代品**，它是把 tool 的发现和执行从应用代码中解耦出来的协议层。通过 MCP 接入的 tool 和直接注册的 in-process tool 在 runtime 内部通过同一个 `Tool` trait 统一对待。
-
-**Skill 的核心不是 tool 的集合**，而是 how-to 知识。很多 skill 完全由 markdown 构成，调用的是当前会话已有的 tool。
-
-遇到任何关于这三者边界的疑问，以 `docs/polaris/concept-boundaries.md` 为准。
+Current stage: **documentation only, no implementation code yet**. All work lives under `docs/`. Once code is introduced, `crates/`, `examples/`, and `skills/` will be organized per the Rust Project Conventions section below.
 
 ---
 
-## 文档地图
+## Terminology Boundaries (Most Important — Never Conflate)
+
+These three concepts are frequently confused in the Anthropic ecosystem. Orchest enforces strict separation:
+
+| Concept | Definition | Layer |
+|---------|-----------|-------|
+| **Tool** | The smallest atomic capability unit the model can invoke — contains name, schema, and an `execute` implementation | Capability layer |
+| **MCP** | The transport protocol for tool providers — not a special tool type or replacement for tools | Protocol layer |
+| **Skill** | A filesystem-organized procedural knowledge package (SKILL.md + optional scripts), exposed to the agent via progressive disclosure | Knowledge layer |
+
+**MCP is not a replacement for tools.** It is the protocol layer that decouples tool discovery and execution from application code. Tools arriving via MCP and tools registered directly as in-process tools are treated identically inside the runtime through the same `Tool` trait.
+
+**A Skill's core is not a collection of tools.** It is how-to knowledge. Many skills consist entirely of Markdown and call tools that already exist in the current session.
+
+For any question about these boundaries, defer to `docs/polaris/concept-boundaries.md`.
+
+---
+
+## Document Map
 
 ```
 docs/
-├── overview.md              # 产品定位、核心概念、设计哲学（面向外部读者）
-├── spec.md                  # 原始技术设计参考（已部分过时，见下方权威规则）
+├── overview.md                # Product positioning, core concepts, design philosophy (external-facing)
+├── spec.md                    # Original technical design reference (partially superseded — see authority rules)
 ├── polaris/
-│   ├── concept-boundaries.md  # Tool/MCP/Skill 边界定义（权威）
-│   ├── design-principles.md   # 设计原则和决策参考问题
-│   └── non-goals.md           # 硬性边界 + 无沙箱环境的最低安全建议
+│   ├── concept-boundaries.md  # Tool/MCP/Skill boundary definitions (authoritative)
+│   ├── design-principles.md   # Design principles and decision heuristics
+│   └── non-goals.md           # Hard boundaries + minimum security guidance for sandboxless environments
 ├── iteration/
-│   ├── v0_1/                  # 最小可用：Rust core + 双语言 SDK
-│   ├── v0_2/                  # MCP 集成 + OpenAI adapter + context compaction
-│   └── v0_3/                  # 生产完整度：skill 依赖 + code exec + sub-agent + 沙箱架构
+│   ├── v0_1/                  # Minimum viable: Rust core + dual-language SDK
+│   ├── v0_2/                  # MCP integration + OpenAI adapter + context compaction
+│   └── v0_3/                  # Production readiness: skill deps + code exec + sub-agent + sandbox architecture
 └── research/
-    └── claw-landscape.md      # 7 个同类产品的架构研究（提炼 SDK 层可参考的设计）
+    └── claw-landscape.md      # Architecture research across 7 comparable products (SDK-layer takeaways)
 ```
 
-### 权威规则（重要）
+### Authority Rules (Important)
 
-**迭代文档 > spec.md**。`docs/spec.md` 是原始设计，部分内容已被迭代文档取代。如有冲突，以 `docs/iteration/` 为准。`spec.md` 保留作原始参考，不应在其中做"权威"修改。
+**Iteration docs override spec.md.** `docs/spec.md` is the original design; parts of it have been superseded by iteration documents. When there is a conflict, the `docs/iteration/` files are authoritative. `spec.md` is kept as a historical reference — do not make authoritative changes there.
 
-每个迭代有两层文档：
-- `prd.md`：迭代目标、成功指标、范围、不在范围内
-- `issues/*.md`：拆解成可执行的实现单元，含验收标准
-
----
-
-## 迭代状态
-
-| 迭代 | 状态 | 核心内容 |
-|------|------|---------|
-| **v0.1** | 文档完成，待实现 | Rust core run loop、skill 加载、异步 job、budget guard、approval gate、Python/TS SDK |
-| **v0.2** | 文档完成，待实现 | MCP stdio/HTTP、Tool Search Tool、OpenAI adapter、context compaction、webhook 异步 tool |
-| **v0.3** | 文档完成，待实现 | Skill 依赖管理、Code Execution MCP、sub-agent、ScriptExecutor 抽象 + capability 声明 |
+Each iteration has two layers:
+- `prd.md` — iteration goals, success metrics, scope, and explicit out-of-scope items
+- `issues/*.md` — implementation-ready units with acceptance criteria
 
 ---
 
-## 锁定的设计决策（不要试图改变）
+## Iteration Status
 
-以下决策已经过充分讨论，不需要重新论证：
-
-- **Rust 核心 + PyO3/napi-rs**：跨语言 SDK 需要 in-process 嵌入而非 IPC，Rust 是唯一合理选择
-- **Skill-first**：完整对齐 Anthropic Agent Skills 开放标准，SKILL.md 格式不得与官方标准不兼容
-- **MCP 是传输协议而非 tool 类型**：通过 MCP 接入的 tool 在 runtime 内部通过 `Tool` trait 统一对待
-- **极简 core**：runtime 只做"循环 + 状态管理 + 事件流"，所有能力外移到 tool 和 skill
-- **流式输出是 v0.1 核心**：不是可选项，`ModelAdapter::stream()` 是主路径
-- **v0.1 顺序执行 tool call**：保持 approval gate 简单，并行是 v0.2 优化项
-- **沙箱留到 v0.3 之后**：但 v0.3 必须完成 `ScriptExecutor` trait 抽象和 `capabilities` 声明
+| Iteration | Status | Core Scope |
+|-----------|--------|-----------|
+| **v0.1** | Docs complete, not yet implemented | Rust core run loop, skill loading, async jobs, budget guard, approval gate, Python/TS SDK |
+| **v0.2** | Docs complete, not yet implemented | MCP stdio/HTTP, Tool Search Tool, OpenAI adapter, context compaction, webhook async tool |
+| **v0.3** | Docs complete, not yet implemented | Skill dependency management, Code Execution MCP, sub-agent, ScriptExecutor abstraction + capability declaration |
 
 ---
 
-## 做文档变更时的规范
+## Locked Design Decisions (Do Not Re-litigate)
 
-### 新增 issue
+The following decisions are settled. Do not propose alternatives without a compelling new argument:
 
-1. 放在对应迭代的 `issues/` 目录下，文件名格式：`NNN-slug.md`（三位数字前缀）
-2. 必须包含：背景、目标、验收标准（checkbox 列表）、说明（可选）
-3. 验收标准要具体可测，不能写"实现 X"，要写"当 Y 时，Z 成立"
-
-### 修改 spec.md
-
-spec.md 里的类型定义（`ToolMetadata`、`ModelStreamChunk`、`RunStatus` 等）是 v0.1 的实现合同。修改时：
-- 同步更新受影响的 issue 验收标准
-- 在 `## 设计决策记录` 末尾补充决策理由
-
-### 修改 polaris 文档
-
-polaris 文档记录的是**不随迭代变化的约束**。修改要谨慎，改之前先确认这真的是永久边界而不是当前迭代的取舍。
-
-### 不要做的事
-
-- 不要在 spec.md 里直接做"权威"变更而不更新对应 issue
-- 不要在 overview.md 里加实现细节（overview 面向外部读者）
-- 不要把多频道路由、用户管理、Web UI 等产品层需求带进 SDK 设计
-- 不要在没有对应 polaris 依据的情况下新增 Non-Goal
+- **Rust core + PyO3/napi-rs** — cross-language SDKs require in-process embedding, not IPC; Rust is the only viable choice
+- **Skill-first** — full alignment with the Anthropic Agent Skills open standard; SKILL.md format must remain compatible with the official spec
+- **MCP is a transport protocol, not a tool type** — tools arriving via MCP are handled through the same `Tool` trait as in-process tools
+- **Minimal core** — the runtime only handles "loop + state management + event stream"; all capabilities live in tools and skills
+- **Streaming output is a v0.1 first-class concern** — not optional; `ModelAdapter::stream()` is the primary path
+- **Sequential tool execution in v0.1** — keeps the approval gate simple; parallelism is a v0.2 optimization
+- **No sandbox until v0.3+** — but v0.3 must complete the `ScriptExecutor` trait abstraction and `capabilities` declaration
 
 ---
 
-## Rust 项目规范
+## Documentation Change Conventions
 
-### Workspace 结构
+### Adding an Issue
+
+1. Place it under the relevant iteration's `issues/` directory; filename format: `NNN-slug.md` (three-digit numeric prefix)
+2. Must include: Background, Goal, Acceptance Criteria (checkbox list), Notes (optional)
+3. Acceptance criteria must be concrete and testable — write "when Y, Z holds" not just "implement X"
+
+### Editing spec.md
+
+The type definitions in spec.md (`ToolMetadata`, `ModelStreamChunk`, `RunStatus`, etc.) are the implementation contract for v0.1. When editing:
+- Sync any affected issue acceptance criteria
+- Append the rationale to the `## Design Decision Log` section at the bottom
+
+### Editing Polaris Docs
+
+Polaris documents record **constraints that do not change across iterations**. Edit with care — confirm this is a permanent boundary, not a current-iteration tradeoff, before modifying.
+
+### Things to Avoid
+
+- Do not make authoritative changes to spec.md without updating the corresponding issues
+- Do not add implementation details to overview.md (it is external-facing)
+- Do not bring multi-channel routing, user management, or Web UI concerns into SDK design
+- Do not add a Non-Goal without grounding it in an existing polaris rationale
+
+---
+
+## Rust Project Conventions
+
+### Workspace Structure
 
 ```
-Cargo.toml                      # workspace root，不含业务代码
+Cargo.toml                       # workspace root — no business logic here
 crates/
-  agent-runtime-core/           # 纯 Rust 核心，无 FFI
+  agent-runtime-core/            # pure Rust core, no FFI
     src/
       lib.rs
-      run.rs                    # AgentRun, RunState, run loop
+      run.rs                     # AgentRun, RunState, run loop
       tool/
-        mod.rs                  # Tool trait, ToolRegistry, ToolOutput
-        in_process.rs           # FFI callback tool
-        skill_bundled.rs        # script tool + async job 协议解析
-        async_job.rs            # JobHandle, JobStatus, poll loop
-        builtin.rs              # read_file（内置 tool）
-        mcp.rs                  # MCP tool（v0.2 加入）
+        mod.rs                   # Tool trait, ToolRegistry, ToolOutput
+        in_process.rs            # FFI callback tool
+        skill_bundled.rs         # script tool + async job protocol parsing
+        async_job.rs             # JobHandle, JobStatus, poll loop
+        builtin.rs               # built-in read_file tool
+        mcp.rs                   # MCP tool (added in v0.2)
       skill/
-        mod.rs                  # SkillManifest, discovery, SKILL.md 解析
-        executor.rs             # ScriptExecutor trait + BareSubprocessExecutor
+        mod.rs                   # SkillManifest, discovery, SKILL.md parsing
+        executor.rs              # ScriptExecutor trait + BareSubprocessExecutor
       model/
-        mod.rs                  # ModelAdapter trait
+        mod.rs                   # ModelAdapter trait
         anthropic.rs
-        openai.rs               # v0.2 加入
-        streaming.rs            # ModelStreamChunk 公共逻辑
-      events.rs                 # RuntimeEvent enum
-      budget.rs                 # BudgetGuard, BudgetConfig, BudgetUsage
-  agent-runtime-py/             # PyO3 binding，不含核心逻辑
+        openai.rs                # added in v0.2
+        streaming.rs             # ModelStreamChunk shared logic
+      events.rs                  # RuntimeEvent enum
+      budget.rs                  # BudgetGuard, BudgetConfig, BudgetUsage
+  agent-runtime-py/              # PyO3 binding — no business logic
     src/lib.rs
-  agent-runtime-node/           # napi-rs binding，不含核心逻辑
+  agent-runtime-node/            # napi-rs binding — no business logic
     src/lib.rs
 examples/
-skills/                         # 示例 skill
+skills/                          # example skills
 ```
 
-**原则**：核心逻辑只在 `agent-runtime-core`，binding crate 只做类型转换和 FFI 胶水，不含业务判断。
+**Rule:** All business logic lives in `agent-runtime-core`. Binding crates only do type conversion and FFI glue — no business decisions.
 
-### 依赖规范
+### Dependencies
 
-**已确定的核心依赖（不要替换）：**
+**Locked core dependencies (do not replace):**
 
-| 依赖 | 用途 | Feature |
-|------|------|---------|
-| `tokio` | 异步运行时 | `full` |
-| `serde` + `serde_json` | 序列化 | `derive` |
-| `async-trait` | 异步 trait 对象 | — |
+| Crate | Purpose | Features |
+|-------|---------|---------|
+| `tokio` | Async runtime | `full` |
+| `serde` + `serde_json` | Serialization | `derive` |
+| `async-trait` | Async trait objects | — |
 | `uuid` | RunId | `v4`, `serde` |
+| `thiserror` | Error types in library crates | — |
 | `pyo3` | Python binding | `extension-module` |
 | `napi` + `napi-derive` | Node.js binding | — |
 
-**新增依赖的原则：**
-- 优先 std + tokio，避免引入 actor framework（已锁定决策）
-- 错误处理用 `thiserror`（library crate），不用 `anyhow`（application crate）
-- 新依赖需要在 PR body 或 commit body 里说明理由和备选方案
+**Policy for adding new dependencies:**
+- Prefer std + tokio; do not introduce actor frameworks (locked decision)
+- Use `thiserror` in library crates; `anyhow` is for application binaries, not SDKs
+- Justify every new dependency in the PR or commit body: what it does, what alternatives were considered
 
-### 错误处理
+### Error Handling
 
-- **每个模块定义自己的 `XxxError`**，用 `thiserror` derive：`ToolError`、`ModelError`、`SkillError`、`BudgetError`
-- **library code 禁止 `unwrap()` 和 `expect()`**，除非在 `#[cfg(test)]` 块或有充分注释的不变量保证（如 mutex poison）
-- FFI 边界（PyO3/napi）统一把内部 error 转换为对应语言的 exception/Error，不透传 Rust error 类型
+- **Each module defines its own `XxxError`** using `thiserror` derive: `ToolError`, `ModelError`, `SkillError`, `BudgetError`
+- **`unwrap()` and `expect()` are banned in library code** except inside `#[cfg(test)]` blocks or where an invariant is explicitly documented in a comment
+- At FFI boundaries (PyO3/napi), convert internal errors to the target language's exception/Error type — do not leak Rust error types
 
-### Trait 与可见性
+### Traits and Visibility
 
-- `pub trait` 只用于公开 API（`Tool`、`ModelAdapter`、`ScriptExecutor`）；内部扩展点用 `pub(crate) trait`
-- 实现类型默认 `pub(crate)`，只有需要在 binding crate 里构造的类型才 `pub`
-- **不要为了省事把整个模块 `pub use *`**，明确 re-export 哪些类型
+- `pub trait` is only for the public API surface (`Tool`, `ModelAdapter`, `ScriptExecutor`); internal extension points use `pub(crate) trait`
+- Implementation types default to `pub(crate)`; only types that need to be constructed in binding crates are `pub`
+- Do not blanket re-export with `pub use *` — explicitly name what is exported
 
-### 异步规范
+### Async Conventions
 
-- run loop 跑在 `tokio::spawn` 的 task 上；event channel 用 `tokio::sync::mpsc`；approval gate 用 `tokio::sync::oneshot`
-- **trait 方法用 `async-trait`**，不用 `-> impl Future`（与 PyO3/napi FFI 不兼容）
-- blocking 操作（文件 I/O、子进程等）用 `tokio::task::spawn_blocking` 包裹，不在 async context 里直接阻塞
+- The run loop runs on a `tokio::spawn` task; the event channel uses `tokio::sync::mpsc`; the approval gate uses `tokio::sync::oneshot`
+- **Use `async-trait` for trait methods** — do not use `-> impl Future` (incompatible with PyO3/napi FFI)
+- Wrap blocking operations (file I/O, subprocess spawning) in `tokio::task::spawn_blocking`; do not block inside an async context
 
-### 序列化规范
+### Serialization
 
-- 跨 FFI 传递的类型必须实现 `Serialize + Deserialize`
-- `JobHandle.poll` 闭包**不可序列化**，`RunState` 序列化时跳过该字段（`#[serde(skip)]`），文档注释说明跨进程恢复的限制
-- `JsonSchema` 在 v0.1 用 `serde_json::Value` 类型别名，不引入 jsonschema crate
+- Types that cross the FFI boundary must implement `Serialize + Deserialize`
+- `JobHandle.poll` is a closure and **cannot be serialized** — skip it with `#[serde(skip)]` and document in a comment that async job state is lost on cross-process restore
+- `JsonSchema` is a type alias for `serde_json::Value` in v0.1; do not introduce a jsonschema crate yet
 
-### unsafe 规范
+### Unsafe Policy
 
-- **`agent-runtime-core` 禁止 `unsafe`**
-- PyO3 和 napi-rs 的 binding crate 因 FFI 需要，允许 `unsafe`，但必须：
-  - 每处 `unsafe` 块都有注释说明 safety invariant
-  - 不在 `unsafe` 块里做业务逻辑，只做类型转换
+- **`agent-runtime-core` must contain no `unsafe` code**
+- Binding crates (`agent-runtime-py`, `agent-runtime-node`) may use `unsafe` for FFI, but every `unsafe` block must:
+  - Have a comment explaining the safety invariant
+  - Contain only type conversion — no business logic inside `unsafe`
 
-### 测试规范
+### Testing
 
-- **单元测试**：`#[cfg(test)]` 放在对应文件末尾，mock 用 struct 实现 trait（不引入 mockall 等框架）
-- **集成测试**：`tests/` 放在 workspace root，每个场景一个文件，文件名描述场景（`tool_async_job.rs`、`skill_loading.rs`）
-- **测试辅助 struct** 命名加 `Fake` 前缀（`FakeModelAdapter`、`FakeScriptExecutor`），放在 `#[cfg(test)]` 模块或 `tests/helpers/` 下
-- CI 必须通过：`cargo test --workspace`、`cargo clippy --workspace -- -D warnings`、`cargo fmt --check`
+- **Unit tests**: `#[cfg(test)]` module at the bottom of the relevant file; use plain structs implementing the trait for fakes (no mockall or similar frameworks)
+- **Integration tests**: `tests/` at the workspace root, one file per scenario, named after the scenario (`tool_async_job.rs`, `skill_loading.rs`)
+- **Test helpers** are named with a `Fake` prefix: `FakeModelAdapter`, `FakeScriptExecutor`; place them in a `#[cfg(test)]` module or `tests/helpers/`
+- CI must pass: `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`, `cargo fmt --check`
 
-### 命名规范
+### Naming Conventions
 
-| 场景 | 规范 | 示例 |
-|------|------|------|
-| 类型 / trait | `PascalCase` | `ToolMetadata`, `ModelAdapter` |
-| 方法 / 变量 | `snake_case` | `execute()`, `run_id` |
-| 常量 | `SCREAMING_SNAKE_CASE` | `MAX_POLL_RETRIES` |
-| 模块文件 | `snake_case` | `async_job.rs`, `skill_bundled.rs` |
-| 错误类型 | `XxxError` | `ToolError`, `ModelError` |
-| 测试辅助 | `FakeXxx` | `FakeModelAdapter` |
-| Feature flag | `kebab-case` | `mcp`, `openai` |
+| Context | Convention | Examples |
+|---------|-----------|---------|
+| Types / traits | `PascalCase` | `ToolMetadata`, `ModelAdapter` |
+| Methods / variables | `snake_case` | `execute()`, `run_id` |
+| Constants | `SCREAMING_SNAKE_CASE` | `MAX_POLL_RETRIES` |
+| Module files | `snake_case` | `async_job.rs`, `skill_bundled.rs` |
+| Error types | `XxxError` suffix | `ToolError`, `ModelError` |
+| Test fakes | `FakeXxx` prefix | `FakeModelAdapter` |
+| Feature flags | `kebab-case` | `mcp`, `openai` |
 
-### 代码组织原则
+### Code Organization
 
-- 每个文件专注一个主类型或 trait；超过 400 行考虑拆分
-- `mod.rs` 只做 re-export 和模块声明，逻辑放在子文件
-- run loop 的核心状态机逻辑集中在 `run.rs`，不要把 loop 的逻辑分散到各个 tool/model 模块里
+- Each file focuses on one primary type or trait; consider splitting if a file exceeds ~400 lines
+- `mod.rs` only re-exports and declares submodules — keep logic in the subfiles
+- The core state machine of the run loop belongs in `run.rs`; do not scatter loop logic across tool/model modules
 
 ---
 
-## Commit 规范
+## Commit Conventions
 
-前缀：`docs:`（文档）、`feat:`（功能，实现阶段）、`fix:`（修复）、`refactor:`（重构）
+Prefix: `docs:` (documentation), `feat:` (feature, during implementation), `fix:` (bug fix), `refactor:` (refactoring)
 
-Subject 示例：
+Subject examples:
 - `docs: add v0.2 issue for webhook async tool`
 - `docs: clarify ScriptExecutor trait in spec`
-- `docs: rename v1.0 to v0.3, add sandbox-ready architecture`
+- `feat: implement Tool trait and ToolRegistry`
 
-Subject 长度控制在 72 字符以内。Body 说明变更原因和影响范围（特别是跨多个文件的连锁变更）。
+Keep subjects under 72 characters. Use the body to explain why and what downstream files were also updated.
 
 ---
 
-## 常用检索命令
+## Useful Search Commands
 
 ```bash
-# 在设计文档中搜索关键词
-rg "术语或类型名" docs/
+# Search the design corpus for a term or type name
+rg "term" docs/
 
-# 列出所有文档文件
+# List all documentation files
 find docs -maxdepth 4 -name "*.md" | sort
 
-# 查看所有未完成的验收标准
+# Show all unchecked acceptance criteria across iterations
 rg "\- \[ \]" docs/iteration/
 
-# 确认没有遗漏的 v1.0 引用（应为空）
+# Verify no stale v1.0 references remain (should return nothing)
 rg "v1\.0|v1_0" docs/
 ```
