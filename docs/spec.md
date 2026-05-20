@@ -49,6 +49,47 @@ Tool 的 `execute()` 只负责"提交任务"——调用外部 API、写入队�
 
 Budget guard 的 `max_duration` 计入异步等待时间，防止 run 因长时 tool 无限挂起。
 
+### 时序图
+
+同步 tool 路径与异步 tool 路径的对比：
+
+```mermaid
+sequenceDiagram
+    participant L as Run Loop
+    participant M as Model
+    participant T as Tool
+    participant E as EventStream
+
+    Note over L,E: 同步 Tool 路径
+    L->>E: ModelCallStarted
+    L->>M: stream(messages, tools)
+    M-->>E: ModelStreamChunk × N
+    M-->>L: ModelResponse(ToolCalls)
+    L->>E: ModelCallCompleted
+    L->>E: ToolCallStarted
+    L->>T: execute(input, ctx)
+    T-->>E: ToolCallUpdate（可选，流式中间结果）
+    T-->>L: Immediate(value)
+    L->>E: ToolCallCompleted
+    L->>L: messages.push(tool_result)
+
+    Note over L,E: 异步 Tool 路径
+    L->>E: ToolCallStarted
+    L->>T: execute(input, ctx)
+    T-->>L: AsyncJob(handle)
+    L->>E: AsyncToolStarted {job_id}
+    L->>L: status = WaitingForAsyncTool
+    loop 每隔 poll_interval
+        L->>T: handle.poll()
+        T-->>L: Pending {progress, message}
+        L->>E: AsyncToolProgress
+    end
+    T-->>L: Completed(value)
+    L->>E: AsyncToolCompleted
+    L->>L: status = Running
+    L->>L: messages.push(tool_result)
+```
+
 ### 适用范围
 
 这个模型对所有 ToolSource 均适用：
@@ -207,7 +248,16 @@ pub struct SkillManifest {
     pub path: PathBuf,                          // skill 目录路径
     pub allowed_tools: Option<Vec<String>>,     // 可选的 tool 限制
     pub bundled_tools: Vec<BundledTool>,        // SKILL.md 中声明的 script tool
+    pub capabilities: Option<SkillCapabilities>, // v0.3 新增，来自 SKILL.md frontmatter
     pub raw_frontmatter: Value,                 // 保留完整 frontmatter 供扩展
+}
+
+pub struct SkillCapabilities {
+    pub network: bool,                  // 是否需要网络访问（未来可细化为域名列表）
+    pub filesystem_read: Vec<PathBuf>,  // 允许读取的路径（未来沙箱策略数据来源）
+    pub filesystem_write: Vec<PathBuf>, // 允许写入的路径
+    pub env: Vec<String>,               // 需要传入子进程的环境变量名
+    pub max_memory_mb: Option<u32>,
 }
 
 pub struct BundledTool {
@@ -223,6 +273,37 @@ pub struct BundledTool {
 Skill 的加载通过 agent 主动读取实现——runtime 不做"加载 skill 进入 context"的特殊机制。Agent 看到 skill 列表（来自 system prompt），用 `read_file` 读取 SKILL.md，把内容自然地纳入推理。
 
 skill 中声明的 `bundled_tools` 在启动时全部注册到 tool registry（选项 A），原因：与 Anthropic 官方一致，简化设计；实际场景 10-50 个 skill、每个 1-5 个 tool，总量可控；token 问题未来通过 Tool Search Tool 解决。
+
+### Script 执行层
+
+Skill bundled script 的执行通过 `ScriptExecutor` trait 隔离，使沙箱实现可在不改动 run loop 的情况下替换：
+
+```rust
+pub trait ScriptExecutor: Send + Sync {
+    async fn execute(
+        &self,
+        tool: &BundledTool,
+        args: &[String],
+        ctx: &ExecutionContext,
+    ) -> Result<ScriptOutput, ScriptError>;
+}
+
+// v0.1/v0.2/v0.3 唯一实现；未来可替换为 FirejailExecutor / BubblewrapExecutor
+pub struct BareSubprocessExecutor;
+
+pub struct ExecutionContext {
+    pub work_dir: PathBuf,                      // 每次执行的隔离临时目录，不继承 cwd
+    pub env: HashMap<String, String>,           // 只包含 capabilities.env 声明的变量（v0.3 起生效）
+    pub capabilities: Option<SkillCapabilities>, // 是未来沙箱策略的数据来源
+    pub timeout: Duration,                      // 来自 ToolMetadata.timeout
+    pub on_update: Option<mpsc::Sender<Value>>, // 流式进度推送
+}
+```
+
+v0.3 的 `CapabilityValidator` 在 skill 加载时：
+1. 若 skill 含有 `scripts/` 但未声明 `capabilities`，发出 `SkillMissingCapabilities` 警告事件
+2. 从 `capabilities.env` 构造 `ExecutionContext.env`（未声明的变量不传入子进程）
+3. 不做任何硬性阻断——收集和警告，为后续沙箱强制执行打基础
 
 ### Agent
 
@@ -571,7 +652,7 @@ for await (const event of agent.run("帮我研究 Rust 异步运行时")) {
 - Persistent script mode（如果脚本冷启动开销成为瓶颈）
 - Webhook 模式异步 tool（作为 polling 的补充）
 
-### v1.0 之前的开放问题
+### v0.3 之前的开放问题
 
 - **Skill 依赖管理**：skill 的 Python/Node 脚本需要特定依赖时，runtime 怎么准备环境？目前依赖用户全局安装，不优雅但简单
 - **Code Execution as MCP**：是否支持 agent 写代码调用 tool 而非直接调用？这是 Anthropic 在推的高级模式，能大幅降低 token，但实现复杂度高

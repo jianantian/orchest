@@ -27,13 +27,23 @@
 | Context compaction | 超长 session 是 v0.2 才面对的问题 |
 | 多 model adapter（OpenAI 等） | 一个 adapter 足以验证架构 |
 | Multi-agent 协作 | sub-agent 的 budget 继承和事件嵌套是独立复杂度 |
-| Skill 沙箱（firejail/bubblewrap） | v0.1 要求用户审核 skill 来源，sandboxing 是安全增强 |
+| Skill 沙箱（firejail/bubblewrap） | v0.3 完成 ScriptExecutor 抽象和 capability 声明；实际进程隔离留后续 |
 | 并行 tool call | 顺序执行保持审批门简单，并行是 v0.2 优化项 |
 | Webhook 模式异步 tool | polling 模式先验证，webhook 是补充 |
 | Persistent script mode | 只在冷启动成为实测瓶颈后才值得做 |
 
-## v1.0 之前的开放问题（不是 Non-Goals，是未决定）
+## v0.3 之前的开放问题（不是 Non-Goals，是未决定）
 
 - **Skill 依赖管理**：skill 的 Python/Node 脚本需要特定依赖时，runtime 怎么准备环境
 - **Code Execution as MCP**：是否支持 agent 写代码调用 tool（Anthropic 在推的高级模式）
 - **Skill sub-agent**：skill 是否能在内部启动 sub-agent，budget 怎么继承、event 怎么嵌套
+
+## 无沙箱环境的最低运营建议
+
+v0.1–v0.3 不做进程级沙箱，在此期间建议遵守以下约束以降低误用风险：
+
+- **只加载来自受信目录的 skill**：通过 `AgentConfig.skills_dir` 指向受你控制的路径；不自动加载来自网络或未知来源的 skill
+- **含 `scripts/` 的 skill 须手动审核**：bundled script 会以当前进程权限执行，审核方式与审查第三方 shell 脚本相同
+- **`side_effect: true` 的 tool 默认开启 `requires_approval`**：这是 v0.1 就支持的控制手段，对 skill bundled tool 同样适用，不应跳过
+- **通过 `capabilities.env` 收缩环境变量暴露**：v0.3 起 `ExecutionContext` 只向子进程传递 skill 声明的变量，不继承完整父进程环境；对包含密钥的进程尤为重要
+- **审计 `SkillContentRead` 和 `ToolCallStarted` 事件**：所有 skill 文件读取和 tool 调用已记录在事件流中，可接入日志系统检测异常访问模式
