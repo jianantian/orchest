@@ -1,5 +1,20 @@
 # v0.4 PRD：验收、文档与扩展骨架
 
+## 前置依赖：Hotfix 2026-05
+
+main 上已有 `docs/hotfix/2026_05/` 一份 contract repair 计划，覆盖 `allowed_tools` / `allowed_skills` 枢纽、`ToolMetadata.timeout` / `max_output_tokens` enforcement、SDK 入口接通 skill loading、OpenAI tool-call 历史映射、sub-agent approval 路由、MCP HTTP 重试安全性等。
+
+v0.4 验收场景会直接撞上其中多处问题：
+
+- issue 002 / 003 中的 budget、approval、timeout 路径依赖 Hotfix 002
+- issue 003 v0.2 scenario 的 OpenAI 切换依赖 Hotfix 005
+- issue 003 v0.2 scenario 的 MCP 集成依赖 Hotfix 007
+- issue 003 v0.3 scenario 的 sub-agent / skill 入口依赖 Hotfix 003 / 006
+- issue 005 / 006 中 `WebFetchTool` 的 timeout 行为依赖 Hotfix 002
+- issue 007 的 skill 加载依赖 Hotfix 003
+
+**因此 v0.4 issue 002 起的实施工作建议在 Hotfix 2026-05 完成后启动**；v0.4 issue 001（能力清单 + 晋升标准 + 建 `docs/sdk/`）可与 Hotfix 并行，因为它仅做文档盘点不依赖运行时行为。
+
 ## 目标
 
 v0.1–v0.3 的 runtime 规划能力已全部实现。v0.4 不引入新的 runtime 特性，聚焦把已有能力沉淀为可对外发布的形态：
