@@ -34,6 +34,10 @@ impl ToolRegistry {
         self.tools.get(name).cloned()
     }
 
+    pub fn contains(&self, name: &str) -> bool {
+        self.tools.contains_key(name)
+    }
+
     pub fn list(&self) -> Vec<ToolDef> {
         self.order
             .iter()
