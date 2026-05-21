@@ -1,5 +1,6 @@
 pub mod async_job;
 pub mod builtin;
+pub mod code_exec;
 pub mod in_process;
 pub mod mcp;
 pub mod registry;
@@ -62,6 +63,7 @@ pub enum CostHint {
 #[derive(Debug)]
 pub struct ToolContext {
     pub run_id: RunId,
+    pub run_depth: u32,
     pub tool_call_id: String,
     pub on_update: Option<mpsc::Sender<Value>>,
     pub event_tx: Option<mpsc::Sender<crate::events::RuntimeEvent>>,

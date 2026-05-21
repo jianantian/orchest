@@ -32,11 +32,11 @@
 | Webhook 模式异步 tool | polling 模式先验证，webhook 是补充 |
 | Persistent script mode | 只在冷启动成为实测瓶颈后才值得做 |
 
-## v0.3 之前的开放问题（不是 Non-Goals，是未决定）
+## v0.3 解决的生产化问题
 
-- **Skill 依赖管理**：skill 的 Python/Node 脚本需要特定依赖时，runtime 怎么准备环境
-- **Code Execution as MCP**：是否支持 agent 写代码调用 tool（Anthropic 在推的高级模式）
-- **Skill sub-agent**：skill 是否能在内部启动 sub-agent，budget 怎么继承、event 怎么嵌套
+- **Skill 依赖管理**：skill 的 Python/Node 脚本通过 SKILL.md frontmatter 声明依赖，runtime 准备按 skill 隔离的缓存环境
+- **Code Execution as MCP**：启用 `AgentConfig.code_execution_enabled` 后，runtime 提供内置 `execute_python` / `execute_javascript` tool
+- **Skill sub-agent**：runtime 提供 sub-agent budget 继承、深度限制和生命周期事件；多 agent 协作编排仍不属于 SDK core
 
 ## 无沙箱环境的最低运营建议
 

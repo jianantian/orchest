@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -15,6 +15,7 @@ use crate::model::{
     StopReason,
 };
 use crate::tool::async_job::{JobHandle, JobStatus};
+use crate::tool::code_exec::CodeExecutionMcpServer;
 use crate::tool::mcp::{
     McpClient, McpHttpClient, McpServerConfig, McpStdioClient, McpTool, McpTransport,
 };
@@ -37,6 +38,12 @@ impl Default for RunId {
     }
 }
 
+impl std::fmt::Display for RunId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub system_prompt: String,
@@ -55,6 +62,10 @@ pub struct AgentConfig {
     pub compaction_recent_messages: usize,
     #[serde(default)]
     pub webhook_enabled: bool,
+    #[serde(default)]
+    pub code_execution_enabled: bool,
+    #[serde(default)]
+    pub run_depth: u32,
 }
 
 fn default_recent_messages() -> usize {
@@ -127,6 +138,37 @@ impl RunHandle {
 
 pub struct AgentRun;
 
+pub struct SubAgentRuntime;
+
+impl SubAgentRuntime {
+    pub fn cap_budget(requested: &BudgetConfig, parent_remaining: &BudgetConfig) -> BudgetConfig {
+        BudgetConfig {
+            max_tokens: min_option(requested.max_tokens, parent_remaining.max_tokens),
+            max_tool_calls: min_option(requested.max_tool_calls, parent_remaining.max_tool_calls),
+            max_duration: min_option(requested.max_duration, parent_remaining.max_duration),
+            max_cost_usd: min_option_f64(requested.max_cost_usd, parent_remaining.max_cost_usd),
+        }
+    }
+}
+
+fn min_option<T: Ord + Copy>(requested: Option<T>, remaining: Option<T>) -> Option<T> {
+    match (requested, remaining) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+fn min_option_f64(requested: Option<f64>, remaining: Option<f64>) -> Option<f64> {
+    match (requested, remaining) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
 impl AgentRun {
     pub fn start(
         config: AgentConfig,
@@ -196,6 +238,20 @@ async fn run_loop(
         )
         .await;
         return;
+    }
+
+    if config.code_execution_enabled {
+        for tool in CodeExecutionMcpServer::tools() {
+            if let Err(error) = registry.register(tool) {
+                emit(
+                    &tx,
+                    RuntimeEvent::RuntimeWarning {
+                        message: format!("failed to register code execution tool: {error}"),
+                    },
+                )
+                .await;
+            }
+        }
     }
 
     let mut messages = vec![
@@ -424,6 +480,7 @@ async fn run_loop(
 
             let ctx = ToolContext {
                 run_id,
+                run_depth: config.run_depth,
                 tool_call_id: tool_call.id.clone(),
                 on_update: None,
                 event_tx: Some(tx.clone()),
@@ -437,6 +494,19 @@ async fn run_loop(
 
             match result {
                 Ok(ToolOutput::Immediate(value)) => {
+                    let mut value = value;
+                    if value.get("__sub_agent_request").and_then(Value::as_bool) == Some(true) {
+                        value = execute_sub_agent_request(
+                            run_id,
+                            &config,
+                            &model,
+                            &registry,
+                            &tx,
+                            &mut budget,
+                            &value,
+                        )
+                        .await;
+                    }
                     if config.tool_search_enabled && tool_call.name == "search_tools" {
                         append_searched_tool_defs(&mut tool_defs, &value);
                     }
@@ -499,6 +569,153 @@ async fn run_loop(
         });
 
         step += 1;
+    }
+}
+
+async fn execute_sub_agent_request(
+    parent_run_id: RunId,
+    parent_config: &AgentConfig,
+    model: &Arc<dyn ModelAdapter>,
+    registry: &ToolRegistry,
+    tx: &mpsc::Sender<RuntimeEvent>,
+    parent_budget: &mut BudgetGuard,
+    request: &Value,
+) -> Value {
+    let child_run_id = RunId::new();
+    if parent_config.run_depth >= 3 {
+        emit(
+            tx,
+            RuntimeEvent::SubAgentFailed {
+                child_run_id,
+                error: "max_run_depth_exceeded".into(),
+            },
+        )
+        .await;
+        return json!({"error": "max_run_depth_exceeded"});
+    }
+    let remaining = parent_budget.remaining_config();
+    if remaining.max_tokens == Some(0)
+        || remaining.max_tool_calls == Some(0)
+        || remaining.max_duration == Some(Duration::ZERO)
+        || remaining.max_cost_usd == Some(0.0)
+    {
+        emit(
+            tx,
+            RuntimeEvent::SubAgentFailed {
+                child_run_id,
+                error: "parent_budget_exhausted".into(),
+            },
+        )
+        .await;
+        return json!({"error": "parent_budget_exhausted"});
+    }
+
+    let requested_budget = request
+        .get("config")
+        .and_then(|config| config.get("budget"))
+        .map(parse_budget_config)
+        .unwrap_or_else(|| remaining.clone());
+    let mut child_config = parent_config.clone();
+    child_config.budget = SubAgentRuntime::cap_budget(&requested_budget, &remaining);
+    child_config.run_depth = parent_config.run_depth + 1;
+    if let Some(allowed_tools) = request
+        .get("config")
+        .and_then(|config| config.get("allowed_tools"))
+        .and_then(Value::as_array)
+    {
+        child_config.allowed_tools = Some(
+            allowed_tools
+                .iter()
+                .filter_map(Value::as_str)
+                .map(String::from)
+                .collect(),
+        );
+    }
+    let input = request
+        .get("input")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    let child_registry = registry.filter_by_allowed(&child_config.allowed_tools);
+    let (handle, mut child_rx) =
+        AgentRun::start(child_config, input, Arc::clone(model), child_registry);
+    let actual_child_run_id = handle.run_id;
+    emit(
+        tx,
+        RuntimeEvent::SubAgentStarted {
+            parent_run_id,
+            child_run_id: actual_child_run_id,
+            config_summary: json!({
+                "run_depth": parent_config.run_depth + 1,
+                "budget": request.get("config").and_then(|config| config.get("budget")).cloned().unwrap_or(Value::Null),
+            }),
+        },
+    )
+    .await;
+    let mut child_usage = BudgetUsage::default();
+    let mut output = Value::Null;
+    let mut failed = None;
+
+    while let Some(event) = child_rx.recv().await {
+        match &event {
+            RuntimeEvent::ModelCallCompleted { tokens } => {
+                child_usage.tokens_used += tokens.input_tokens + tokens.output_tokens;
+            }
+            RuntimeEvent::ToolCallCompleted { .. } => {
+                child_usage.tool_calls_used += 1;
+            }
+            RuntimeEvent::RunCompleted {
+                output: child_output,
+            } => {
+                output = child_output.clone();
+            }
+            RuntimeEvent::RunFailed { error } => {
+                failed = Some(error.clone());
+            }
+            _ => {}
+        }
+        emit(tx, event).await;
+    }
+    handle.wait().await;
+    parent_budget.record_external_usage(&child_usage);
+
+    if let Some(error) = failed {
+        emit(
+            tx,
+            RuntimeEvent::SubAgentFailed {
+                child_run_id: actual_child_run_id,
+                error: error.clone(),
+            },
+        )
+        .await;
+        json!({"error": error})
+    } else {
+        emit(
+            tx,
+            RuntimeEvent::SubAgentCompleted {
+                child_run_id: actual_child_run_id,
+                output: output.clone(),
+                budget_used: child_usage,
+            },
+        )
+        .await;
+        output
+    }
+}
+
+fn parse_budget_config(value: &Value) -> BudgetConfig {
+    BudgetConfig {
+        max_tokens: value.get("max_tokens").and_then(Value::as_u64),
+        max_tool_calls: value
+            .get("max_tool_calls")
+            .and_then(Value::as_u64)
+            .map(|value| value as u32),
+        max_duration: value
+            .get("max_duration_secs")
+            .and_then(Value::as_u64)
+            .map(Duration::from_secs),
+        max_cost_usd: value.get("max_cost_usd").and_then(Value::as_f64),
     }
 }
 
@@ -1050,6 +1267,8 @@ mod tests {
             compaction_threshold: None,
             compaction_recent_messages: default_recent_messages(),
             webhook_enabled: false,
+            code_execution_enabled: false,
+            run_depth: 0,
         }
     }
 

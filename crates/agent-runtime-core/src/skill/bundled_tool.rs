@@ -4,16 +4,16 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
 
-use crate::skill::BundledToolDef;
+use crate::skill::executor::{BareSubprocessExecutor, ExecutionContext, ScriptExecutor};
+use crate::skill::{
+    BundledToolDef, CapabilityValidator, SkillCapabilities, SkillDependencies, SkillEnvManager,
+};
 use crate::tool::async_job::{JobHandle, JobStatus};
 use crate::tool::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
 
 const ALLOWED_EXECUTABLES: &[&str] = &["python", "python3", "node", "bash", "sh"];
 
-#[derive(Debug)]
 pub struct SkillBundledTool {
     name: String,
     description: String,
@@ -22,6 +22,26 @@ pub struct SkillBundledTool {
     skill_dir: PathBuf,
     input_schema: JsonSchema,
     metadata: ToolMetadata,
+    dependencies: SkillDependencies,
+    capabilities: Option<SkillCapabilities>,
+    executor: Arc<dyn ScriptExecutor>,
+    env_manager: SkillEnvManager,
+}
+
+impl std::fmt::Debug for SkillBundledTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SkillBundledTool")
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("executable", &self.executable)
+            .field("script", &self.script)
+            .field("skill_dir", &self.skill_dir)
+            .field("input_schema", &self.input_schema)
+            .field("metadata", &self.metadata)
+            .field("dependencies", &self.dependencies)
+            .field("capabilities", &self.capabilities)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SkillBundledTool {
@@ -29,6 +49,24 @@ impl SkillBundledTool {
         def: &BundledToolDef,
         skill_dir: PathBuf,
         skill_name: String,
+    ) -> Result<Self, ToolError> {
+        Self::new_with_options(
+            def,
+            skill_dir,
+            skill_name,
+            SkillDependencies::default(),
+            None,
+            Arc::new(BareSubprocessExecutor::new()),
+        )
+    }
+
+    pub fn new_with_options(
+        def: &BundledToolDef,
+        skill_dir: PathBuf,
+        skill_name: String,
+        dependencies: SkillDependencies,
+        capabilities: Option<SkillCapabilities>,
+        executor: Arc<dyn ScriptExecutor>,
     ) -> Result<Self, ToolError> {
         if !ALLOWED_EXECUTABLES.contains(&def.executable.as_str()) {
             return Err(ToolError {
@@ -85,68 +123,123 @@ impl SkillBundledTool {
                 max_output_tokens: None,
                 source: ToolSource::Skill { skill_name },
             },
-        })
-    }
-
-    fn resolve_executable(&self) -> Result<PathBuf, ToolError> {
-        which::which(&self.executable).map_err(|e| ToolError {
-            message: format!("executable '{}' not found in PATH: {}", self.executable, e),
-            code: Some("EXECUTABLE_NOT_FOUND".into()),
+            dependencies,
+            capabilities,
+            executor,
+            env_manager: SkillEnvManager::default(),
         })
     }
 
     async fn spawn_script(
         &self,
         input_json: &[u8],
-        extra_args: &[&str],
+        extra_args: &[String],
         timeout: Option<Duration>,
+        parent_run_id: Option<crate::run::RunId>,
+        run_depth: u32,
     ) -> Result<(String, String, i32), ToolError> {
-        let exe_path = self.resolve_executable()?;
-
-        let mut cmd = Command::new(&exe_path);
-        cmd.arg(&self.script);
-        for arg in extra_args {
-            cmd.arg(arg);
-        }
-        cmd.current_dir(&self.skill_dir)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-
-        let mut child = cmd.spawn().map_err(|e| ToolError {
-            message: format!("failed to spawn process: {}", e),
-            code: Some("SPAWN_ERROR".into()),
+        let tempdir = tempfile::tempdir().map_err(|e| ToolError {
+            message: format!("failed to create temporary work dir: {e}"),
+            code: Some("TEMP_DIR_ERROR".into()),
         })?;
-
-        if let Some(stdin) = child.stdin.as_mut() {
-            let _ = stdin.write_all(input_json).await;
-            let _ = stdin.shutdown().await;
+        let mut env = CapabilityValidator::execution_env(self.capabilities.as_ref());
+        if let Some(parent_run_id) = parent_run_id {
+            env.insert("ORCHEST_PARENT_RUN_ID".into(), parent_run_id.to_string());
         }
-
-        let wait_fut = child.wait_with_output();
-        let output = if let Some(t) = timeout {
-            tokio::time::timeout(t, wait_fut)
-                .await
-                .map_err(|_| ToolError {
-                    message: "script execution timed out".into(),
-                    code: Some("TIMEOUT".into()),
-                })?
-                .map_err(|e| ToolError {
-                    message: format!("process IO error: {}", e),
-                    code: Some("IO_ERROR".into()),
-                })?
-        } else {
-            wait_fut.await.map_err(|e| ToolError {
-                message: format!("process IO error: {}", e),
-                code: Some("IO_ERROR".into()),
-            })?
+        env.insert("ORCHEST_RUN_DEPTH".into(), run_depth.to_string());
+        let mut executable = self.executable.clone();
+        let manifest_for_env = crate::skill::SkillManifest {
+            name: match &self.metadata.source {
+                ToolSource::Skill { skill_name } => skill_name.clone(),
+                _ => self.name.clone(),
+            },
+            description: self.description.clone(),
+            path: self.skill_dir.clone(),
+            allowed_tools: None,
+            bundled_tools: vec![],
+            dependencies: self.dependencies.clone(),
+            capabilities: self.capabilities.clone(),
+            raw_frontmatter: Value::Null,
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let code = output.status.code().unwrap_or(-1);
+        if matches!(self.executable.as_str(), "python" | "python3")
+            && !self.dependencies.python.is_empty()
+        {
+            let env_dir = self
+                .env_manager
+                .ensure_python_env(&manifest_for_env)
+                .await
+                .map_err(|e| ToolError {
+                    message: e.message,
+                    code: e.code,
+                })?;
+            executable = env_dir
+                .join("bin")
+                .join("python")
+                .to_string_lossy()
+                .to_string();
+        }
 
-        Ok((stdout, stderr, code))
+        if self.executable == "node" && !self.dependencies.node.is_empty() {
+            let env_dir = self
+                .env_manager
+                .ensure_node_env(&manifest_for_env)
+                .await
+                .map_err(|e| ToolError {
+                    message: e.message,
+                    code: e.code,
+                })?;
+            let sdk_dir = self
+                .env_manager
+                .ensure_builtin_node_sdk()
+                .await
+                .map_err(|e| ToolError {
+                    message: e.message,
+                    code: e.code,
+                })?;
+            env.insert(
+                "NODE_PATH".into(),
+                format!(
+                    "{}:{}",
+                    env_dir.join("node_modules").to_string_lossy(),
+                    sdk_dir.to_string_lossy()
+                ),
+            );
+        } else if self.executable == "node" {
+            let sdk_dir = self
+                .env_manager
+                .ensure_builtin_node_sdk()
+                .await
+                .map_err(|e| ToolError {
+                    message: e.message,
+                    code: e.code,
+                })?;
+            env.insert("NODE_PATH".into(), sdk_dir.to_string_lossy().to_string());
+        }
+
+        let tool = BundledToolDef {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            executable,
+            script: self.script.clone(),
+            input_schema: self.input_schema.clone(),
+        };
+        let ctx = ExecutionContext {
+            work_dir: tempdir.path().to_path_buf(),
+            env,
+            capabilities: self.capabilities.clone(),
+            timeout,
+            on_update: None,
+        };
+        let output = self
+            .executor
+            .execute(&tool, &self.script, extra_args, input_json, &ctx)
+            .await
+            .map_err(|e| ToolError {
+                message: e.message,
+                code: e.code,
+            })?;
+        Ok((output.stdout, output.stderr, output.exit_code))
     }
 }
 
@@ -172,14 +265,20 @@ impl Tool for SkillBundledTool {
         &self.metadata
     }
 
-    async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let input_json = serde_json::to_vec(&input).map_err(|e| ToolError {
             message: format!("failed to serialize input: {}", e),
             code: Some("SERIALIZATION_ERROR".into()),
         })?;
 
         let (stdout, stderr, exit_code) = self
-            .spawn_script(&input_json, &[], self.metadata.timeout)
+            .spawn_script(
+                &input_json,
+                &[],
+                self.metadata.timeout,
+                Some(ctx.run_id),
+                ctx.run_depth,
+            )
             .await?;
 
         if !stderr.is_empty() {
@@ -213,56 +312,41 @@ impl Tool for SkillBundledTool {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(5);
 
-            let exe = self.executable.clone();
-            let script = self.script.clone();
-            let skill_dir = self.skill_dir.clone();
+            let tool = Arc::new(self.clone_for_poll());
             let tool_name = self.name.clone();
             let poll_job_id = job_id.clone();
 
             let poll_fn = move || {
-                let exe = exe.clone();
-                let script = script.clone();
-                let skill_dir = skill_dir.clone();
+                let tool = Arc::clone(&tool);
                 let tool_name = tool_name.clone();
                 let poll_job_id = poll_job_id.clone();
 
                 Box::pin(async move {
-                    let exe_path = which::which(&exe).map_err(|e| ToolError {
-                        message: format!("executable '{}' not found: {}", exe, e),
-                        code: Some("EXECUTABLE_NOT_FOUND".into()),
-                    })?;
+                    let (stdout, stderr, exit_code) = tool
+                        .spawn_script(
+                            &[],
+                            &["--poll".to_string(), poll_job_id.clone()],
+                            tool.metadata.timeout,
+                            None,
+                            0,
+                        )
+                        .await?;
 
-                    let mut cmd = Command::new(&exe_path);
-                    cmd.arg(&script)
-                        .arg("--poll")
-                        .arg(&poll_job_id)
-                        .current_dir(&skill_dir)
-                        .stdin(std::process::Stdio::null())
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped());
-
-                    let output = cmd.output().await.map_err(|e| ToolError {
-                        message: format!("poll spawn error: {}", e),
-                        code: Some("SPAWN_ERROR".into()),
-                    })?;
-
-                    let stderr = String::from_utf8_lossy(&output.stderr);
                     if !stderr.is_empty() {
                         eprintln!("[skill:{}:poll] stderr: {}", tool_name, stderr.trim());
                     }
 
-                    if !output.status.success() {
+                    if exit_code != 0 {
                         return Err(ToolError {
                             message: format!(
                                 "poll script exited with code {}: {}",
-                                output.status.code().unwrap_or(-1),
+                                exit_code,
                                 stderr.trim()
                             ),
                             code: Some("NON_ZERO_EXIT".into()),
                         });
                     }
 
-                    let stdout = String::from_utf8_lossy(&output.stdout);
                     let parsed: Value =
                         serde_json::from_str(stdout.trim()).map_err(|e| ToolError {
                             message: format!("failed to parse poll output: {}", e),
@@ -314,6 +398,24 @@ impl Tool for SkillBundledTool {
         }
 
         Ok(ToolOutput::Immediate(parsed))
+    }
+}
+
+impl SkillBundledTool {
+    fn clone_for_poll(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            executable: self.executable.clone(),
+            script: self.script.clone(),
+            skill_dir: self.skill_dir.clone(),
+            input_schema: self.input_schema.clone(),
+            metadata: self.metadata.clone(),
+            dependencies: self.dependencies.clone(),
+            capabilities: self.capabilities.clone(),
+            executor: Arc::clone(&self.executor),
+            env_manager: self.env_manager.clone(),
+        }
     }
 }
 
@@ -406,6 +508,7 @@ echo '{"greeting": "hello"}'
 
         let ctx = ToolContext {
             run_id: crate::run::RunId::new(),
+            run_depth: 0,
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: None,
@@ -444,6 +547,7 @@ echo '{"greeting": "hello"}'
 
         let ctx = ToolContext {
             run_id: crate::run::RunId::new(),
+            run_depth: 0,
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: None,
@@ -482,6 +586,7 @@ fi
 
         let ctx = ToolContext {
             run_id: crate::run::RunId::new(),
+            run_depth: 0,
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: None,
@@ -506,5 +611,63 @@ fi
             }
             _ => panic!("expected AsyncJob output"),
         }
+    }
+
+    #[tokio::test]
+    async fn execution_context_does_not_inherit_parent_env() {
+        std::env::set_var("ORCHEST_VISIBLE_ENV", "allowed");
+        std::env::set_var("ORCHEST_HIDDEN_ENV", "blocked");
+        let tmp = tempfile::tempdir().unwrap();
+        let script = r#"#!/bin/sh
+echo "{\"visible\":\"$ORCHEST_VISIBLE_ENV\",\"hidden\":\"$ORCHEST_HIDDEN_ENV\",\"cwd\":\"$(pwd)\"}"
+"#;
+        let skill_dir = create_skill_dir(tmp.path(), "env.sh", script);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                skill_dir.join("scripts/env.sh"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+
+        let def = make_def("bash", "scripts/env.sh");
+        let capabilities = crate::skill::SkillCapabilities {
+            network: false,
+            filesystem_read: vec![],
+            filesystem_write: vec![],
+            env: vec!["ORCHEST_VISIBLE_ENV".into()],
+            max_memory_mb: None,
+        };
+        let tool = SkillBundledTool::new_with_options(
+            &def,
+            skill_dir.clone(),
+            "test".into(),
+            crate::skill::SkillDependencies::default(),
+            Some(capabilities),
+            Arc::new(crate::skill::executor::BareSubprocessExecutor::new()),
+        )
+        .unwrap();
+
+        let ctx = ToolContext {
+            run_id: crate::run::RunId::new(),
+            run_depth: 0,
+            tool_call_id: "tc_1".into(),
+            on_update: None,
+            event_tx: None,
+            webhook_base_url: None,
+        };
+        let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
+        let ToolOutput::Immediate(value) = result else {
+            panic!("expected immediate output");
+        };
+        assert_eq!(value["visible"], "allowed");
+        assert_eq!(value["hidden"], "");
+        assert_ne!(
+            value["cwd"].as_str(),
+            Some(skill_dir.to_string_lossy().as_ref())
+        );
     }
 }

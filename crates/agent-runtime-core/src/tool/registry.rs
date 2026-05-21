@@ -9,7 +9,7 @@ pub enum RegistryError {
     DuplicateName(String),
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
     order: Vec<String>,

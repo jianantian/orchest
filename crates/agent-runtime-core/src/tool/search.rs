@@ -150,6 +150,7 @@ mod tests {
         ]);
         let ctx = ToolContext {
             run_id: crate::run::RunId::new(),
+            run_depth: 0,
             tool_call_id: "search".into(),
             on_update: None,
             event_tx: None,
