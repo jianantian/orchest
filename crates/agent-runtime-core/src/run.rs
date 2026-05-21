@@ -151,6 +151,27 @@ impl SubAgentRuntime {
     }
 }
 
+fn truncate_output(value: Value, max_tokens: u64) -> Value {
+    let max_chars = max_tokens as usize * 4;
+    match value {
+        Value::String(s) if s.len() > max_chars => {
+            let truncated = &s[..max_chars.min(s.len())];
+            Value::String(format!("{truncated}\n[output truncated]"))
+        }
+        other => {
+            let serialized = serde_json::to_string(&other).unwrap_or_default();
+            if serialized.len() > max_chars {
+                Value::String(format!(
+                    "{}\n[output truncated]",
+                    &serialized[..max_chars.min(serialized.len())]
+                ))
+            } else {
+                other
+            }
+        }
+    }
+}
+
 fn narrow_permission_list(parent: &Option<Vec<String>>, requested: &[String]) -> Vec<String> {
     match parent {
         None => requested.to_vec(),
@@ -487,6 +508,24 @@ async fn run_loop(
                 }
             }
 
+            if let Some(max) = config.budget.max_tool_calls {
+                if budget.usage().tool_calls_used >= max {
+                    emit(
+                        &tx,
+                        RuntimeEvent::ToolCallFailed {
+                            tool: tool_call.name.clone(),
+                            error: "tool call budget exceeded".into(),
+                        },
+                    )
+                    .await;
+                    tool_results.push(ContentBlock::ToolResult {
+                        tool_use_id: tool_call.id.clone(),
+                        content: json!({"error": "tool call budget exceeded"}),
+                    });
+                    continue;
+                }
+            }
+
             let source = tool.metadata().source.clone();
             emit(
                 &tx,
@@ -510,11 +549,39 @@ async fn run_loop(
             };
 
             let start_time = Instant::now();
-            let result = tool.execute(tool_call.input.clone(), &ctx).await;
+            let metadata_timeout = tool.metadata().timeout;
+            let max_output_tokens = tool.metadata().max_output_tokens;
+            let execute_fut = tool.execute(tool_call.input.clone(), &ctx);
+            let result = if let Some(timeout) = metadata_timeout {
+                match tokio::time::timeout(timeout, execute_fut).await {
+                    Ok(r) => r,
+                    Err(_) => {
+                        emit(
+                            &tx,
+                            RuntimeEvent::ToolCallFailed {
+                                tool: tool_call.name.clone(),
+                                error: "tool execution timed out".into(),
+                            },
+                        )
+                        .await;
+                        tool_results.push(ContentBlock::ToolResult {
+                            tool_use_id: tool_call.id.clone(),
+                            content: json!({"error": "tool execution timed out"}),
+                        });
+                        budget.record_tool_call();
+                        continue;
+                    }
+                }
+            } else {
+                execute_fut.await
+            };
 
             match result {
                 Ok(ToolOutput::Immediate(value)) => {
                     let mut value = value;
+                    if let Some(max_tokens) = max_output_tokens {
+                        value = truncate_output(value, max_tokens);
+                    }
                     if value.get("__sub_agent_request").and_then(Value::as_bool) == Some(true) {
                         value = execute_sub_agent_request(
                             run_id,
@@ -2202,5 +2269,289 @@ mod tests {
         let requested = vec!["a".into(), "b".into()];
         let result = narrow_permission_list(&parent, &requested);
         assert_eq!(result, vec!["a".to_string()]);
+    }
+
+    struct SlowTool {
+        metadata: ToolMetadata,
+    }
+
+    impl SlowTool {
+        fn new() -> Self {
+            Self {
+                metadata: ToolMetadata {
+                    side_effect: false,
+                    requires_approval: false,
+                    cost_hint: None,
+                    timeout: Some(Duration::from_millis(50)),
+                    max_output_tokens: None,
+                    source: ToolSource::InProcess,
+                },
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for SlowTool {
+        fn name(&self) -> &str {
+            "slow"
+        }
+        fn description(&self) -> &str {
+            "sleeps forever"
+        }
+        fn input_schema(&self) -> &JsonSchema {
+            &serde_json::Value::Null
+        }
+        fn output_schema(&self) -> Option<&JsonSchema> {
+            None
+        }
+        fn metadata(&self) -> &ToolMetadata {
+            &self.metadata
+        }
+        async fn execute(
+            &self,
+            _input: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<ToolOutput, ToolError> {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            Ok(ToolOutput::Immediate(json!("should not reach")))
+        }
+    }
+
+    struct SlowToolModel;
+
+    #[async_trait::async_trait]
+    impl ModelAdapter for SlowToolModel {
+        async fn stream(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDef],
+            tx: mpsc::Sender<ModelStreamChunk>,
+        ) -> Result<ModelResponse, ModelError> {
+            let has_tool_result = messages.iter().any(|m| {
+                m.content
+                    .iter()
+                    .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
+            });
+            let usage = TokenUsage {
+                input_tokens: 5,
+                output_tokens: 5,
+            };
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+            if has_tool_result {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text("done".into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                })
+            } else {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "call_1".into(),
+                        name: "slow".into(),
+                        input: json!({}),
+                    }],
+                    usage,
+                    stop_reason: StopReason::ToolUse,
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_metadata_timeout_enforced() {
+        let model = Arc::new(SlowToolModel);
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(SlowTool::new())).unwrap();
+
+        let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
+
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        handle.wait().await;
+
+        assert!(
+            events.iter().any(
+                |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error == "tool execution timed out")
+            ),
+            "should emit ToolCallFailed with timeout error"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+            "run should continue after timeout"
+        );
+    }
+
+    struct BigOutputTool {
+        metadata: ToolMetadata,
+    }
+
+    impl BigOutputTool {
+        fn new() -> Self {
+            Self {
+                metadata: ToolMetadata {
+                    side_effect: false,
+                    requires_approval: false,
+                    cost_hint: None,
+                    timeout: None,
+                    max_output_tokens: Some(10),
+                    source: ToolSource::InProcess,
+                },
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for BigOutputTool {
+        fn name(&self) -> &str {
+            "big_output"
+        }
+        fn description(&self) -> &str {
+            "returns large output"
+        }
+        fn input_schema(&self) -> &JsonSchema {
+            &serde_json::Value::Null
+        }
+        fn output_schema(&self) -> Option<&JsonSchema> {
+            None
+        }
+        fn metadata(&self) -> &ToolMetadata {
+            &self.metadata
+        }
+        async fn execute(
+            &self,
+            _input: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::Immediate(Value::String("x".repeat(1000))))
+        }
+    }
+
+    #[tokio::test]
+    async fn max_output_tokens_truncates_output() {
+        let model = Arc::new(AllowedToolsModel {
+            target_tool: "big_output".into(),
+        });
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(BigOutputTool::new())).unwrap();
+
+        let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
+
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        handle.wait().await;
+
+        let completed = events.iter().find_map(|e| match e {
+            RuntimeEvent::ToolCallCompleted { output, .. } => Some(output),
+            _ => None,
+        });
+        assert!(completed.is_some(), "should have ToolCallCompleted");
+        let output_str = completed.unwrap().as_str().unwrap();
+        assert!(output_str.contains("[output truncated]"));
+        assert!(output_str.len() < 1000);
+    }
+
+    struct MultiToolCallModel {
+        call_count: AtomicU32,
+    }
+
+    #[async_trait::async_trait]
+    impl ModelAdapter for MultiToolCallModel {
+        async fn stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDef],
+            tx: mpsc::Sender<ModelStreamChunk>,
+        ) -> Result<ModelResponse, ModelError> {
+            let count = self.call_count.fetch_add(1, Ordering::SeqCst);
+            let usage = TokenUsage {
+                input_tokens: 5,
+                output_tokens: 5,
+            };
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+            if count < 5 {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: format!("call_{count}"),
+                        name: "echo".into(),
+                        input: json!({"n": count}),
+                    }],
+                    usage,
+                    stop_reason: StopReason::ToolUse,
+                })
+            } else {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text("done".into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn max_tool_calls_boundary_enforced() {
+        let mut config = test_config();
+        config.budget.max_tool_calls = Some(2);
+
+        let model = Arc::new(MultiToolCallModel {
+            call_count: AtomicU32::new(0),
+        });
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(FakeTool::echo())).unwrap();
+
+        let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        handle.wait().await;
+
+        let completed_count = events
+            .iter()
+            .filter(|e| matches!(e, RuntimeEvent::ToolCallCompleted { .. }))
+            .count();
+        assert_eq!(completed_count, 2, "should execute exactly max_tool_calls");
+
+        let budget_exceeded = events.iter().any(
+            |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error == "tool call budget exceeded"),
+        );
+        assert!(budget_exceeded, "third tool call should be denied by budget");
+    }
+
+    #[test]
+    fn truncate_output_string() {
+        let value = Value::String("x".repeat(200));
+        let result = truncate_output(value, 10);
+        let s = result.as_str().unwrap();
+        assert!(s.contains("[output truncated]"));
+        assert!(s.len() < 200);
+    }
+
+    #[test]
+    fn truncate_output_json_object() {
+        let value = json!({"data": "y".repeat(200)});
+        let result = truncate_output(value, 10);
+        let s = result.as_str().unwrap();
+        assert!(s.contains("[output truncated]"));
+    }
+
+    #[test]
+    fn truncate_output_small_passes_through() {
+        let value = json!("hello");
+        let result = truncate_output(value.clone(), 100);
+        assert_eq!(result, value);
     }
 }
