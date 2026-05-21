@@ -162,6 +162,8 @@ impl Agent {
             compaction_threshold: None,
             compaction_recent_messages: 10,
             webhook_enabled: false,
+            code_execution_enabled: false,
+            run_depth: 0,
         };
 
         let mut registry = ToolRegistry::new();
@@ -230,6 +232,12 @@ fn runtime_event_to_value(value: serde_json::Value) -> serde_json::Value {
                 "type".into(),
                 serde_json::Value::String(to_snake_case(&variant)),
             );
+            result
+                .entry("runDepth")
+                .or_insert(serde_json::Value::from(0));
+            result
+                .entry("childRunId")
+                .or_insert(serde_json::Value::Null);
             serde_json::Value::Object(result)
         }
         other => other,

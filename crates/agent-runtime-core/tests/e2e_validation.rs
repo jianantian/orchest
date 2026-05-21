@@ -43,6 +43,8 @@ fn test_config() -> AgentConfig {
         compaction_threshold: None,
         compaction_recent_messages: 10,
         webhook_enabled: false,
+        code_execution_enabled: false,
+        run_depth: 0,
     }
 }
 
@@ -212,7 +214,12 @@ async fn e2e_event_coverage() {
             RuntimeEvent::ApprovalDenied { .. } => "ApprovalDenied",
             RuntimeEvent::BudgetWarning { .. } => "BudgetWarning",
             RuntimeEvent::RuntimeWarning { .. } => "RuntimeWarning",
+            RuntimeEvent::SkillDependencyError { .. } => "SkillDependencyError",
+            RuntimeEvent::SkillMissingCapabilities { .. } => "SkillMissingCapabilities",
             RuntimeEvent::ContextCompacted { .. } => "ContextCompacted",
+            RuntimeEvent::SubAgentStarted { .. } => "SubAgentStarted",
+            RuntimeEvent::SubAgentCompleted { .. } => "SubAgentCompleted",
+            RuntimeEvent::SubAgentFailed { .. } => "SubAgentFailed",
             RuntimeEvent::RunCompleted { .. } => "RunCompleted",
             RuntimeEvent::RunFailed { .. } => "RunFailed",
         })
@@ -439,6 +446,7 @@ async fn e2e_skill_content_read_event() {
     let (event_tx, mut event_rx) = mpsc::channel(16);
     let ctx = ToolContext {
         run_id: agent_runtime_core::run::RunId::new(),
+        run_depth: 0,
         tool_call_id: "read_skill".into(),
         on_update: None,
         event_tx: Some(event_tx),
@@ -473,6 +481,7 @@ async fn e2e_read_file_known_risk_boundary_is_visible() {
     let (event_tx, mut event_rx) = mpsc::channel(16);
     let ctx = ToolContext {
         run_id: agent_runtime_core::run::RunId::new(),
+        run_depth: 0,
         tool_call_id: "read_non_skill".into(),
         on_update: None,
         event_tx: Some(event_tx),

@@ -54,7 +54,37 @@ my-skill/
 └── assets/            # 可选：模板、资源
 ```
 
-SKILL.md 的 frontmatter 至少包含 `name` 和 `description`。
+SKILL.md 的 frontmatter 至少包含 `name` 和 `description`。Orchest 还支持 runtime 扩展字段，用于声明 bundled script 的依赖和执行能力：
+
+```yaml
+---
+name: web_extract
+description: Extract structured data from web pages
+dependencies:
+  python:
+    - requests>=2.31
+    - beautifulsoup4
+  node:
+    axios: "^1.6"
+capabilities:
+  network: true
+  filesystem:
+    read: []
+    write: []
+  env:
+    - OPENAI_API_KEY
+  max_memory_mb: 256
+bundled_tools:
+  - name: extract_page
+    description: Extract page metadata
+    executable: python
+    script: scripts/extract_page.py
+    input_schema:
+      type: object
+---
+```
+
+`dependencies.python` 会在 skill 首次执行前创建独立 venv；`dependencies.node` 会创建该 skill 独立的 `node_modules`。`capabilities.env` 是传入脚本进程的环境变量白名单，未声明的父进程环境变量不会被继承。
 
 ### 三者的关系
 
@@ -99,6 +129,8 @@ v0.1 不实现，但 tool registry 的设计要为后续扩展留口。
 不兼容的部分（需要明确）：
 - Anthropic 的某些 skill 假设有 code execution 环境（Python REPL），本 runtime 通过 spawn 子进程模拟
 - bundled scripts 的 schema 声明需要扩展到 SKILL.md 的 frontmatter 中（Anthropic 的脚本是约定式的，没有 schema 声明）
+
+Code Execution as MCP 在 Orchest 中是可信代码执行能力：启用 `AgentConfig.code_execution_enabled` 后，runtime 注册 `execute_python` 和 `execute_javascript` 两个内置 tool。v0.3 不提供完整文件系统或网络沙箱，不适合执行来自外部不可信来源的代码。
 
 ## 这个 Runtime 不会变成什么
 

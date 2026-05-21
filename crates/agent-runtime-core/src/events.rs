@@ -84,9 +84,31 @@ pub enum RuntimeEvent {
     RuntimeWarning {
         message: String,
     },
+    SkillDependencyError {
+        skill_name: String,
+        error: String,
+    },
+    SkillMissingCapabilities {
+        skill_name: String,
+    },
     ContextCompacted {
         removed_messages: usize,
         summary_tokens: u32,
+    },
+
+    SubAgentStarted {
+        parent_run_id: RunId,
+        child_run_id: RunId,
+        config_summary: Value,
+    },
+    SubAgentCompleted {
+        child_run_id: RunId,
+        output: Value,
+        budget_used: BudgetUsage,
+    },
+    SubAgentFailed {
+        child_run_id: RunId,
+        error: String,
     },
 
     RunCompleted {

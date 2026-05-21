@@ -70,6 +70,7 @@ impl Tool for InProcessTool {
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let ctx_owned = ToolContext {
             run_id: ctx.run_id,
+            run_depth: ctx.run_depth,
             tool_call_id: ctx.tool_call_id.clone(),
             on_update: ctx.on_update.clone(),
             event_tx: ctx.event_tx.clone(),

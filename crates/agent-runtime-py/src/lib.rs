@@ -280,6 +280,8 @@ fn runtime_event_to_dict(py: Python<'_>, event: &RuntimeEvent) -> PyResult<Py<Py
                 }
             };
             result.insert("type".into(), Value::String(to_snake_case(&variant)));
+            result.entry("run_depth").or_insert(Value::from(0));
+            result.entry("child_run_id").or_insert(Value::Null);
             Value::Object(result)
         }
         other => other,
@@ -409,6 +411,8 @@ impl Agent {
             compaction_threshold: None,
             compaction_recent_messages: 10,
             webhook_enabled: false,
+            code_execution_enabled: false,
+            run_depth: 0,
         };
 
         let mut registry = ToolRegistry::new();

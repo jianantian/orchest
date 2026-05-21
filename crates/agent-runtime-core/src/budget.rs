@@ -57,6 +57,33 @@ impl BudgetGuard {
         self.usage.tool_calls_used += 1;
     }
 
+    pub fn record_external_usage(&mut self, usage: &BudgetUsage) {
+        self.usage.tokens_used += usage.tokens_used;
+        self.usage.tool_calls_used += usage.tool_calls_used;
+        self.usage.cost_usd += usage.cost_usd;
+    }
+
+    pub fn remaining_config(&self) -> BudgetConfig {
+        BudgetConfig {
+            max_tokens: self
+                .config
+                .max_tokens
+                .map(|max| max.saturating_sub(self.usage.tokens_used)),
+            max_tool_calls: self
+                .config
+                .max_tool_calls
+                .map(|max| max.saturating_sub(self.usage.tool_calls_used)),
+            max_duration: self
+                .config
+                .max_duration
+                .map(|max| max.saturating_sub(self.start.elapsed())),
+            max_cost_usd: self
+                .config
+                .max_cost_usd
+                .map(|max| (max - self.usage.cost_usd).max(0.0)),
+        }
+    }
+
     pub fn check(&self) -> Option<BudgetViolation> {
         if let Some(max) = self.config.max_tokens {
             if self.usage.tokens_used > max {

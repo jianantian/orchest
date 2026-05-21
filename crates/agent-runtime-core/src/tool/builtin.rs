@@ -143,6 +143,7 @@ mod tests {
         let tool = ReadFileTool::new();
         let ctx = ToolContext {
             run_id: crate::run::RunId::new(),
+            run_depth: 0,
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: None,
@@ -166,6 +167,7 @@ mod tests {
         let tool = ReadFileTool::new();
         let ctx = ToolContext {
             run_id: crate::run::RunId::new(),
+            run_depth: 0,
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: None,
@@ -184,6 +186,7 @@ mod tests {
         let tool = ReadFileTool::new();
         let ctx = ToolContext {
             run_id: crate::run::RunId::new(),
+            run_depth: 0,
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: None,
@@ -210,6 +213,7 @@ mod tests {
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(16);
         let ctx = ToolContext {
             run_id: crate::run::RunId::new(),
+            run_depth: 0,
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: Some(event_tx),
@@ -248,6 +252,7 @@ mod tests {
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(16);
         let ctx = ToolContext {
             run_id: crate::run::RunId::new(),
+            run_depth: 0,
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: Some(event_tx),
