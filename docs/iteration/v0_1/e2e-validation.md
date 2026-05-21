@@ -2,6 +2,24 @@
 
 This checklist records operator-visible validation notes that must be called out when running the v0.1 demos or E2E suite.
 
+## Validation Commands
+
+Run the standard Rust checks:
+
+```bash
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+cargo fmt --check
+```
+
+Run the TypeScript-facing RuntimeEvent wire naming guard:
+
+```bash
+./scripts/check-ts-event-wire-naming.sh
+```
+
+This guard is intentionally narrow: TypeScript API fields may remain idiomatic camelCase, but `RuntimeEvent.type` wire discriminants must stay snake_case.
+
 ## Known Limitations
 
 ### `read_file` path boundary
