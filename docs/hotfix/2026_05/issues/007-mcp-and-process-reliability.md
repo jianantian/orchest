@@ -36,3 +36,5 @@ Make failure handling conservative for side effects and ensure timed-out child p
 ## Notes
 
 Use conservative defaults. A side-effectful remote call that may or may not have executed should not be retried automatically without an idempotency key.
+
+**Current status:** As of this writing, the codebase contains no retry logic for MCP HTTP calls. The acceptance criteria here are partly preventive — ensuring that when retry is added (e.g., for `initialize` and `tools/list`), `tools/call` is explicitly excluded by default. Tests should still verify the single-attempt behavior to prevent future regressions.

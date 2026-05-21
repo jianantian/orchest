@@ -89,22 +89,21 @@ Hotfix 完成后：
 
 ## Issues 拆解
 
-| Issue | 标题 |
-|-------|------|
-| [001](./issues/001-permission-boundary.md) | Enforce permission boundaries |
-| [002](./issues/002-tool-execution-contract.md) | Enforce tool execution metadata |
-| [003](./issues/003-skill-entrypoint.md) | Wire skill loading into SDK/runtime entrypoints |
-| [004](./issues/004-sdk-contracts.md) | Repair Python and TypeScript SDK contracts |
-| [005](./issues/005-provider-tool-protocol.md) | Repair provider tool protocol mappings |
-| [006](./issues/006-sub-agent-routing.md) | Repair sub-agent routing, events, and budget |
-| [007](./issues/007-mcp-and-process-reliability.md) | Fix MCP retry and child process timeout behavior |
-| [008](./issues/008-hotfix-e2e-validation.md) | Add hotfix regression validation |
+| Issue | 标题 | Severity |
+|-------|------|----------|
+| [001](./issues/001-permission-boundary.md) | Enforce permission boundaries | security |
+| [002](./issues/002-tool-execution-contract.md) | Enforce tool execution metadata | broken |
+| [003](./issues/003-skill-entrypoint.md) | Wire skill loading into SDK/runtime entrypoints | broken |
+| [004](./issues/004-sdk-contracts.md) | Repair Python and TypeScript SDK contracts | broken |
+| [005](./issues/005-provider-tool-protocol.md) | Repair provider tool protocol mappings | broken |
+| [006](./issues/006-sub-agent-routing.md) | Repair sub-agent routing, events, and budget | broken |
+| [007](./issues/007-mcp-and-process-reliability.md) | Fix MCP retry and child process timeout behavior | hardening |
+| [008](./issues/008-hotfix-e2e-validation.md) | Add hotfix regression validation | hardening |
 
 ## 建议执行顺序
 
-1. 001 + 002：先修权限和 tool contract，减少后续测试误判
+1. 001 + 002 + 005（可并行）：001/002 修权限和 tool contract；005 修 OpenAI adapter 序列化，与前两者无代码依赖，可同时进行
 2. 003 + 004：接通真实 SDK/skill 入口
-3. 005：修 provider adapter，使 SDK smoke tests 能覆盖 OpenAI
-4. 006：修 sub-agent 的跨 run 行为
-5. 007：收敛可靠性风险
-6. 008：补齐防回归验证，并将 hotfix 标记完成
+3. 006：修 sub-agent 的跨 run 行为
+4. 007：收敛可靠性风险
+5. 008：补齐防回归验证，并将 hotfix 标记完成

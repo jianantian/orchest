@@ -35,3 +35,5 @@ Make `ToolMetadata` behavior consistent across all tool sources.
 ## Notes
 
 Keep backend-local timeouts if they provide stronger cleanup, but runtime-level enforcement is still required as the cross-source contract.
+
+**Scope boundary with 007:** This issue owns the `tokio::time::timeout` wrapper at the runtime dispatch layer (in-process tools, SDK callbacks). Issue 007 owns subprocess/child-process kill-on-timeout and MCP process lifecycle cleanup. The two layers are complementary — runtime timeout fires first, then 007's cleanup ensures the underlying process is terminated.

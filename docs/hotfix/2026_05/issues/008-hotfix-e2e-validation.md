@@ -37,6 +37,10 @@ Add regression tests and validation commands that prevent the hotfix issues from
 - [ ] Python demo smoke test with local mock provider
 - [ ] TypeScript demo smoke test with local mock provider
 
+**CI integration:**
+- [ ] All validation commands above run in CI (GitHub Actions or equivalent), not only locally
+- [ ] CI failure blocks merge for hotfix branches
+
 **Documentation:**
 - [ ] Update the relevant iteration issue checklists or add a hotfix completion note linking back to these issues
 - [ ] Document any intentionally deferred behavior in this hotfix PRD before closing the hotfix

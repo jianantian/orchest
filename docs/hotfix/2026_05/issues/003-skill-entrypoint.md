@@ -31,6 +31,12 @@ Make `skills_dir` functional from Python and TypeScript SDK runs, and keep the s
 - [ ] A Python example or test calls a bundled skill tool through `agent.run(...)`
 - [ ] A TypeScript example or test calls a bundled skill tool through `agent.run(...)`
 
+**SDK injection for skill scripts:**
+- [ ] Python `orchest_sdk` is available to bundled Python skill scripts even when the skill declares no Python dependencies
+- [ ] Node `orchest-sdk` remains available through `NODE_PATH` for bundled Node skill scripts
+
 ## Notes
 
 Do not load full `SKILL.md` bodies into the model automatically. The existing design remains progressive disclosure: expose a compact skill/tool list, and let the agent read `SKILL.md` via `read_file` when needed.
+
+SDK injection criteria were moved here from issue 006 because they concern skill loading infrastructure, not sub-agent routing.

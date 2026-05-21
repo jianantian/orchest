@@ -35,3 +35,5 @@ Make configured tool and skill restrictions authoritative for root agents and in
 Prefer filtering the registry before building model-visible tool definitions, and still keep an execution-time guard. Visibility filtering alone is not sufficient because models can guess tool names.
 
 This issue owns the permission set semantics. Sub-agent work should reuse these rules rather than redefining a separate filtering model.
+
+**`None` vs `Some([])` semantics:** `allowed_tools = None` means no restriction (all registered tools are permitted). `allowed_tools = Some([])` means no tools are permitted. The same applies to `allowed_skills`. Tests must cover both cases explicitly.

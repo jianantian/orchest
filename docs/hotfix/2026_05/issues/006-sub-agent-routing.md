@@ -8,7 +8,6 @@ Sub-agent support currently starts child runs and forwards events, but several d
 - parent budget is updated only after child completion
 - events do not carry true `run_depth` / `child_run_id` metadata
 - sub-agent tool/skill permissions can be narrowed only partially and expansion is not explicitly rejected
-- Python `orchest_sdk` injection only happens when a venv is created for Python dependencies
 
 ## Goal
 
@@ -39,10 +38,8 @@ Make sub-agent behavior safe, observable, and non-blocking in approval and budge
 - [ ] Tests cover attempted expansion of both tools and skills
 - [ ] The filtering behavior reuses the permission semantics defined in hotfix issue 001
 
-**SDK injection:**
-- [ ] Python `orchest_sdk` is available to bundled Python skill scripts even when the skill declares no Python dependencies
-- [ ] Node `orchest-sdk` remains available through `NODE_PATH` for bundled Node skill scripts
-
 ## Notes
+
+SDK injection criteria (`orchest_sdk` / `orchest-sdk` availability for skill scripts) have been moved to issue 003 where they belong with skill loading infrastructure.
 
 Avoid representing child metadata only in lifecycle wrapper events. Consumers need to correlate ordinary child `ModelStreamChunk`, tool, approval, and completion events too.
