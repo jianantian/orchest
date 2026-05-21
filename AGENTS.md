@@ -39,7 +39,10 @@ docs/
 ├── iteration/
 │   ├── v0_1/                  # Minimum viable: Rust core + dual-language SDK
 │   ├── v0_2/                  # MCP integration + OpenAI adapter + context compaction
-│   └── v0_3/                  # Production readiness: skill deps + code exec + sub-agent + sandbox architecture
+│   ├── v0_3/                  # Production readiness: skill deps + code exec + sub-agent + sandbox architecture
+│   └── v0_4/                  # Acceptance + SDK docs + unified extension package skeleton
+└── hotfix/
+    └── 2026_05/               # Runtime contract repair between v0.3 and v0.4
 └── research/
     └── claw-landscape.md      # Architecture research across 7 comparable products (SDK-layer takeaways)
 ```
@@ -58,9 +61,11 @@ Each iteration has two layers:
 
 | Iteration | Status | Core Scope |
 |-----------|--------|-----------|
-| **v0.1** | Docs complete, not yet implemented | Rust core run loop, skill loading, async jobs, budget guard, approval gate, Python/TS SDK |
-| **v0.2** | Docs complete, not yet implemented | MCP stdio/HTTP, Tool Search Tool, OpenAI adapter, context compaction, webhook async tool |
-| **v0.3** | Docs complete, not yet implemented | Skill dependency management, Code Execution MCP, sub-agent, ScriptExecutor abstraction + capability declaration |
+| **v0.1** | Implemented (with contract gaps — see Hotfix 2026-05) | Rust core run loop, skill loading, async jobs, budget guard, approval gate, Python/TS SDK |
+| **v0.2** | Implemented (with contract gaps — see Hotfix 2026-05) | MCP stdio/HTTP, Tool Search Tool, OpenAI adapter, context compaction, webhook async tool |
+| **v0.3** | Implemented (with contract gaps — see Hotfix 2026-05) | Skill dependency management, Code Execution MCP, sub-agent, ScriptExecutor abstraction + capability declaration |
+| **Hotfix 2026-05** | Planning | Runtime contract repair: permission boundaries, tool metadata enforcement, SDK contracts, provider tool protocol, sub-agent routing, MCP reliability (see `docs/hotfix/2026_05/`) |
+| **v0.4** | Planning (depends on Hotfix 2026-05) | Acceptance playground (CLI), SDK docs, unified extension package `orchest-tools` (+ Python/Node bindings), first file-based skill |
 
 ---
 
