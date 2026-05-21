@@ -148,6 +148,27 @@ Issues must be completed roughly in this order due to type and trait dependencie
 
 006–011 have some flexibility and can be interleaved once 005 is done.
 
+### Dependency / Cadence in v0.2
+
+v0.2 issues are partially parallelizable. Recommended cadence:
+
+```
+001 (MCP stdio)
+  └── 002 (MCP HTTP)
+        └── 003 (Tool Search Tool)
+
+004 (OpenAI adapter)  // can run in parallel with 001/002/003 after core model interface is stable
+005 (Context compaction) // can run in parallel with 004; touches run-loop/message management
+006 (Webhook async tool) // after async job path is validated; avoid overlapping edits with 005 where possible
+```
+
+Suggested execution rhythm:
+
+1. **MCP lane first**: complete 001 → 002 to unblock all transport-dependent tests.
+2. **Parallel lane**: develop 004 and 005 in separate branches/worktrees.
+3. **Finalize async reliability**: complete 006 after 005 merge to reduce run-loop conflicts.
+4. **Iteration closeout**: run full workspace checks and one end-to-end pass for all v0.2 acceptance criteria.
+
 ---
 
 ## Quick Reference

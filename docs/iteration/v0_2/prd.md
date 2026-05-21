@@ -73,3 +73,20 @@ v0.2 结束时，开发者应该能够：
 | [004](./issues/004-openai-adapter.md) | OpenAI Model Adapter |
 | [005](./issues/005-context-compaction.md) | Context Compaction |
 | [006](./issues/006-webhook-async-tool.md) | Webhook 模式异步 Tool |
+
+## 推荐执行节奏（按 WORKFLOW.md）
+
+为降低冲突并尽快形成可验证里程碑，建议按以下顺序推进：
+
+1. **001 → 002（MCP 主链路）**  
+   先打通 stdio，再补齐 Streamable HTTP。两者完成后，MCP tool 生命周期完整可测。
+2. **003（Tool Search Tool）**  
+   在 MCP 工具接入稳定后，引入渐进式 tool schema 暴露策略，便于做 context 对比测试。
+3. **004 与 005 并行**  
+   - 004 聚焦模型适配层（OpenAI adapter）  
+   - 005 聚焦 run-loop 上下文治理（compaction）  
+   两者改动面相对独立，适合用 worktree 并行开发。
+4. **006 收尾**  
+   在 async job 基础路径稳定后补 webhook 唤醒与 fallback 逻辑，减少与 005 的并发冲突。
+
+完成标准以各 issue 的 Acceptance Criteria 为准；`spec.md` 仅作历史参考，冲突时以 `docs/iteration/` 为准。
