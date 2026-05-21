@@ -12,7 +12,7 @@
 
 ### 目录骨架
 
-- [ ] 新建 `docs/sdk/` 目录
+- [ ] `docs/sdk/` 目录**由 issue 001 创建**（issue 001 把 `extension-promotion-criteria.md` 直接写入该目录）；本 issue 在此目录下新增其余文档
 - [ ] 创建以下文件并写入至少 2 级标题大纲：
   - `getting-started.md`
   - `authoring-tools.md`
@@ -21,19 +21,20 @@
   - `code-execution.md`
   - `sub-agent.md`
   - `api-reference.md`
-  - `extension-promotion-criteria.md`（由 issue 001 产出，本 issue 仅占位）
-- [ ] 在 `docs/sdk/README.md` 或 index 中列出目录树和每篇文档目的
+- [ ] `extension-promotion-criteria.md` 已由 issue 001 产出，本 issue 仅在 `docs/sdk/README.md`（或 index）中引用
+- [ ] 在 `docs/sdk/README.md` 中列出目录树（包含 001 产出的 `extension-promotion-criteria.md`）和每篇文档目的
 
 ### getting-started.md 完整内容
 
 - [ ] 三语言各一节（Rust / Python / TS），每节包含：
-  - 安装命令（cargo add / pip install / npm install）
+  - 安装命令（实际可执行的 `cargo add` / `pip install` / `npm install`）
   - 创建 agent
-  - 注册一个 in-process tool
+  - 注册一个 in-process tool（注意：Python 当前 API 是 `@agent.tool` 装饰器；TS 当前 API 是 `agent.registerTool({ name, description, inputSchema, ... })`）
   - 发送一条 user message
   - 处理 event 流并打印结果
-  - 完整可运行代码（最多 50 行）
-- [ ] 每节代码与 `playground/` 或 `examples/` 中实际可跑的版本对应；脚注链接对应文件
+  - 完整可运行代码片段
+- [ ] 每节代码块**逐字**对应 `examples/` 下一个真实文件（如 Python 节对应 `examples/python_basic.py`，TS 节对应 `examples/ts_basic.ts`，Rust 节对应 `playground/examples/getting_started.rs` 或类似）；用脚注 / 链接指明对应文件路径
+- [ ] CI 在 issue 002 创建的 workflow 中追加 step：执行每节对应的 `examples/` 文件，exit code 0 视为通过
 - [ ] 末尾"Next Steps"链接到其它 `docs/sdk/*.md`
 
 ### 其它文档大纲
@@ -51,6 +52,11 @@
 
 - [ ] **不**引入 mdBook、docusaurus、mkdocs 等；本迭代以 markdown 文件为终态
 - [ ] 文档链接用相对路径，能在 GitHub 上渲染正确即可
+
+### 禁伪代码验收
+
+- [ ] `docs/sdk/` 下所有 markdown 文件的代码块（rust / python / ts / bash）通过 grep 检查：不包含 `// 略`、`# 略`、`# TODO 实现`、`<placeholder>`、`<your-...>`、独立成行的 `...` 这类省略符
+- [ ] 添加一个 `scripts/check-sdk-docs-pseudocode.sh` 脚本执行上述检查（grep 命令组合），并在 issue 002 创建的 workflow 中追加 step 调用该脚本
 
 ## 注意
 

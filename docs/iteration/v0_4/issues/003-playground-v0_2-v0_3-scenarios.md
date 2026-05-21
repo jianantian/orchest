@@ -13,22 +13,26 @@ Issue 002 把 playground 骨架和 v0.1 scenario 跑通了。本 issue 补齐 v0
 ### `v0_2_mcp_and_compaction` scenario
 
 - [ ] 启动一个内置的 mock MCP server（stdio 子进程或同进程内的 in-memory transport），暴露 2 个 tool
-- [ ] 注册该 MCP server，验证 `tools/list` 流程，事件流中出现 `ToolRegistered { source: McpServer { ... } }`
-- [ ] 启用 `tool_search_enabled: true`，注册 30+ 个 fake tool，让 mock model 调用 `search_tools`，验证渐进式 schema 暴露
-- [ ] 配置极小 `compaction_threshold`，让 mock model 输出超过阈值的 token，验证 `ContextCompacted` 事件
-- [ ] 可选：通过环境变量 `PLAYGROUND_USE_OPENAI=1` 切换 mock provider 到 OpenAI shape，验证两个 adapter 行为一致
+- [ ] 注册该 MCP server，scenario 完成后通过 `ToolRegistry` 公开 API 断言 2 个 MCP tool 的 `ToolSource` 为 `ToolSource::McpServer { .. }`（**runtime 当前没有 `ToolRegistered` 事件，不要预期该事件**）
+- [ ] 启用 `tool_search_enabled: true`，注册 30+ 个 fake tool，让 mock model 调用内置 `search_tools` tool，scenario 断言：
+  - `ToolCallStarted { tool: "search_tools", .. }` 事件出现
+  - 后续 model 输入的 system tools 列表（通过 mock provider 的请求 captor 取得）token 数小于"全量暴露"基线的 50%
+- [ ] 配置极小 `compaction_threshold`，让 mock model 输出超过阈值的 token，断言事件流中出现 `ContextCompacted { removed_messages, summary_tokens }`，且 `removed_messages > 0`
+- [ ] 可选：通过环境变量 `PLAYGROUND_USE_OPENAI=1` 切换 mock provider 到 OpenAI shape，断言两个 adapter 在同样脚本下产生同样的 `ToolCallStarted` / `ToolCallCompleted` 序列
 
 ### `v0_3_subagent_and_codeexec` scenario
 
-- [ ] 加载 fixture skill（`playground/fixtures/skills/echo-skill/`），验证 `SkillScanner` discovery
-- [ ] 验证 `CapabilityValidator` 行为：fixture skill 含 `scripts/` 目录且声明 `capabilities`，未声明的环境变量不应进入子进程
-- [ ] 触发该 skill 的 bundled tool（Python 或 shell script），断言 `ScriptExecutor` 执行成功
-- [ ] 在 skill 脚本中通过 SDK 启动 sub-agent，验证：
-  - 事件流中出现 `SubAgentStarted` / `SubAgentCompleted`
-  - 父 run 的 `budget_used` 累计了子 run 的消耗
-  - 子 run 的事件带 `parent_run_id` / `child_run_id` 字段
-- [ ] 触发 Code Execution MCP 的 `execute_python` tool，验证 stdout 通过 `ToolCallUpdate` 流式输出
-- [ ] 触发超时路径：`execute_python` input 中 sleep 超过指定 timeout，断言 tool 返回错误
+- [ ] 加载 issue 007 产出的 `skills/code-review/`（**这是 v0.4 唯一的真实 skill**；本 scenario 既验证 skill 基础设施，也验证 code-review skill 自身可加载）
+- [ ] 断言 `SkillScanner::scan("skills/")` 返回的 `SkillManifest` 列表包含 `name == "code-review"`，且其 `capabilities` 非 None
+- [ ] 验证 `CapabilityValidator::execution_env`：scenario 启动前在父进程注入 `ORCHEST_DECLARED=visible` 与 `ORCHEST_UNDECLARED=hidden`，code-review skill 的 capabilities.env 只声明 `ORCHEST_DECLARED`；脚本执行时通过 stdout 回显环境变量，断言子进程能看到 `visible` 但拿不到 `hidden`
+- [ ] 触发 code-review skill 的 `summarize_diff` bundled tool（input 包含一段固定 diff），断言：
+  - 事件流出现 `ToolCallStarted { tool: "summarize_diff", source: ToolSource::Skill { skill_name: "code-review" }, .. }`
+  - `ToolCallCompleted` 的 output JSON 包含 `files_changed` / `insertions` / `deletions` 字段
+- [ ] 在 mock model 的脚本中安排让 model 请求启动 sub-agent（具体机制：mock model 输出一个调用 sub-agent 触发 tool 的 tool call，或在 skill 脚本中通过 orchest_sdk 发出 sub-agent 请求），断言：
+  - 事件流中按顺序出现 `SubAgentStarted { parent_run_id, child_run_id, .. }` 与 `SubAgentCompleted { child_run_id, budget_used, .. }`
+  - 父 run 结束时的 `BudgetUsage.tokens_used` ≥ 子 run 上报的 `BudgetUsage.tokens_used`
+- [ ] 触发 Code Execution MCP 的 `execute_python`（input：`print(1); time.sleep(0.05); print(2)`），断言事件流中出现 ≥ 2 条 `ToolCallUpdate { tool: "execute_python", .. }`
+- [ ] 触发超时路径：`execute_python` input 为 `import time; time.sleep(10)`，timeout 设为 1s；断言事件流以 `ToolCallFailed { tool: "execute_python", error }` 收尾，且 error 字符串包含 "timeout"
 
 ### REPL
 
@@ -44,11 +48,13 @@ Issue 002 把 playground 骨架和 v0.1 scenario 跑通了。本 issue 补齐 v0
 
 ### CI
 
-- [ ] 三个 scenario 都加入 CI（`cargo run -p playground -- scenario <name>`，exit code 0 视为通过）
+- [ ] 在 issue 002 创建的 `.github/workflows/v0_4-playground.yml` 中追加 step：`v0_2_mcp_and_compaction` 与 `v0_3_subagent_and_codeexec`
+- [ ] 两个 scenario 在该 workflow 中各自 exit code 0 即视为通过
 - [ ] REPL 不进入 CI（交互工具）
 
 ## 注意
 
 - v0.2 / v0.3 scenario 中如果需要 Python / Node 运行时（bundled script 测试、code exec），CI 必须保证这些可用；不行则 scenario 中跳过对应 step 并打印 `SKIP: <reason>` 而非失败
-- fixture skill 越简单越好；不要在 fixture 里塞太多业务逻辑，那是 issue 007 的事
+- v0.3 scenario **直接消费 issue 007 产出的 `skills/code-review/`**，不再单独造 echo-skill fixture；issue 007 完成前本 issue 的 v0.3 scenario step 留 `SKIP`
+- mock provider 在 issue 002 已定下复用契约；本 issue 仅扩展 mock provider 的预设脚本，不重写其 API
 - 不要用真实外部 MCP server（如官方 filesystem server）作为 CI 依赖；内置一个 fake mcp server 进程

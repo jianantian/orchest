@@ -29,28 +29,34 @@ skills/code-review/
 
 ### SKILL.md 内容
 
-- [ ] frontmatter 包含以下字段：
+- [ ] frontmatter 包含以下字段（通过 `SkillScanner::scan` 解析后断言）：
   - `name: code-review`
-  - `description`：≤ 200 字，让模型能判断何时触发本 skill
-  - `allowed_tools`：明确声明本 skill 期望可用的 tool（如 `read_file`、`web_fetch`），不依赖未声明的 tool
-  - `bundled_tools`：声明 `summarize_diff` bundled tool，给出 input schema
-  - `dependencies`：若 bundled 脚本依赖 Python 包，列出依赖（保持最少；首选无依赖）
-  - `capabilities`：完整声明 `network`、`filesystem.read`、`filesystem.write`、`env`、`max_memory_mb`
-- [ ] markdown body 包含 procedural 指引：检查清单、何时调用 `web_fetch` 查规范、何时启动 sub-agent 处理大 diff、输出格式约定
-- [ ] 至少有一个"反例"小节：说明本 skill **不**做什么（避免被滥用）
+  - `description`：长度 ≤ 200 字符
+  - `allowed_tools`：明确声明本 skill 期望可用的 tool（包含 `read_file`，可选 `web_fetch`）
+  - `bundled_tools`：声明 `summarize_diff` bundled tool，input schema 至少含 `diff: string`
+  - `dependencies`：若需 Python 包则列出，否则字段为空 / 缺省（首选无依赖）
+  - `capabilities`：声明 `network`、`filesystem.read`、`filesystem.write`、`env`、`max_memory_mb` 五个子项（值可为空数组 / false / null，但字段须存在）
+- [ ] markdown body 满足以下可测约束：
+  - 总字符数 ≥ 500
+  - 包含至少 3 个 markdown 列表项形式的步骤指引
+  - 包含至少 1 个明确的 "不做" / "不适用于" 段落（用 grep 检测形如 "本 skill 不"、"不要用本 skill"、"## 不适用" 的字符串）
+  - 包含至少 1 处对 `summarize_diff` bundled tool 的调用说明
+  - 包含至少 1 处对 `web_fetch`（来自 `orchest-tools`）的使用条件说明（"当需要查官方规范时调用 web_fetch"等）
 
 ### bundled script
 
-- [ ] `scripts/summarize_diff.py` 读取标准输入中的 JSON（包含 diff 文本），输出 JSON 摘要（变更文件数、新增/删除行数、按文件分组的变更预览）
-- [ ] 脚本无 Python 依赖（仅标准库）；如必须引入 dep，写入 SKILL.md 的 `dependencies.python`
-- [ ] 脚本不读环境变量、不访问网络、不写文件系统——保证 capability 校验通过即可运行
+- [ ] `scripts/summarize_diff.py` 从 stdin 读取 JSON `{"diff": "<unified-diff-text>"}`，向 stdout 输出 JSON `{"files_changed": N, "insertions": N, "deletions": N, "files": [{"path": "...", "insertions": N, "deletions": N}]}`
+- [ ] 脚本仅使用 Python 标准库；如必须引入 dep，写入 SKILL.md 的 `dependencies.python` 并对应更新 capabilities
+- [ ] 脚本本身的单元测试 `skills/code-review/tests/test_summarize_diff.py` 覆盖：空 diff、单文件 diff、多文件 diff、纯新增、纯删除、混合修改 6 个用例
+- [ ] CI workflow 中追加 step：`python -m unittest discover skills/code-review/tests/`，exit code 0 视为通过
 
 ### 与 playground 集成
 
-- [ ] Issue 003 的 `v0_3_subagent_and_codeexec` scenario 中加载 `skills/code-review/`，验证：
-  - `SkillScanner::scan(workspace_root.join("skills"))` 发现该 skill
-  - `CapabilityValidator` 成功构造 `ExecutionContext.env`
-  - mock model 调用 `summarize_diff` bundled tool，事件流中出现 `ToolCallStarted { source: Skill { skill_name: "code-review" } }`
+- [ ] 本 skill 是 issue 003 `v0_3_subagent_and_codeexec` scenario **唯一**加载的 skill；issue 003 的 v0.3 step 直接消费本 skill，断言条目见 issue 003：
+  - `SkillScanner::scan(workspace_root.join("skills"))` 返回的 manifest 含 `name == "code-review"`
+  - `CapabilityValidator::execution_env` 仅传入声明的环境变量
+  - `summarize_diff` bundled tool 被调用并返回结构化结果
+- [ ] 本 issue 在 `skills/code-review/` 下提供 `tests/sample_diff.txt` 作为 issue 003 scenario 复用的固定 input
 
 ### 与 SDK 文档集成
 

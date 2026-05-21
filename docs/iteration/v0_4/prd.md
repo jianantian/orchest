@@ -11,7 +11,7 @@ v0.1–v0.3 的 runtime 规划能力已全部实现。v0.4 不引入新的 runti
 v0.4 结束时，开发者应该能够：
 1. 通过一个 Rust CLI playground 二进制，分别跑通 v0.1、v0.2、v0.3 的端到端 scenario
 2. 在 `docs/sdk/` 阅读到三语言的 getting started、tool / skill 作者指南、MCP / code-exec / sub-agent 使用说明
-3. 在 Python 通过 `pip install orchest-tools`、在 Node 通过 `npm i @orchest/tools` 获得统一的基础扩展工具包（含 `WebFetchTool` 等）
+3. 通过本地构建产物安装 `orchest-tools`（Python wheel / npm tarball），获得统一的基础扩展工具包（含 `WebFetchTool` 等）。**v0.4 不做正式 PyPI / npm 发包**；包的可安装性在 CI 中通过本地 install 验证
 4. 在 `skills/` 看到至少 1 个文件型 skill 参考实现，并能在 playground 中被加载执行
 5. 阅读 `docs/sdk/extension-promotion-criteria.md` 了解什么算 core、什么留在 extension、文件型 skill 与语言原生 tool 的边界
 
@@ -19,7 +19,7 @@ v0.4 结束时，开发者应该能够：
 
 - Playground 三个 scenario 在 CI 中可执行，不依赖外部 API key（mock provider 或 fixture）
 - `docs/sdk/getting-started.md` 能让一个新开发者在 30 分钟内跑通"注册自定义 tool + 与模型对话"的 hello-world
-- `orchest-tools` 三语言入口能在示例工程中通过 `register_tool(WebFetchTool())` 一行注册成功
+- `orchest-tools` 三语言入口能在示例工程中通过 `register_native_tool(WebFetchTool().handle())`（Python）/ `registerNativeTool(new WebFetchTool().handle())`（TS）一行注册成功（详见 issue 006）
 - 至少 1 个文件型 skill 在 playground 的 v0.3 scenario 中被发现、加载、执行
 - `docs/iteration/v0_4/inventory.md` 完整列出 v0.1–v0.3 已实现能力并标注 core / extension 归属
 
@@ -87,6 +87,7 @@ v0.4 结束时，开发者应该能够：
 - 多 agent 编排
 - skill 版本与依赖锁定
 - 文档站点构建（mdBook / docusaurus 等）；v0.4 文档以 markdown 文件为最终交付
+- 正式 PyPI / npm 发包（仅做本地构建 + 安装验证；正式发包列入 v0.5）
 
 ## Issues 拆解
 
@@ -102,11 +103,27 @@ v0.4 结束时，开发者应该能够：
 
 ## 推荐执行节奏
 
-1. **001 先做完**：把"哪些算 core / 哪些留 extension / 各类扩展的边界"定下来，后续所有动作有锚点
-2. **002 与 005 并行**：playground 骨架和 `orchest-tools` Rust crate 改动面互不冲突，可在 worktree 中分头推进
-3. **004（文档骨架）依赖 002**：getting-started 的示例代码要能在 playground 中跑通；先有 playground 再写示例
-4. **003（v0.2 / v0.3 scenarios）依赖 002 + 005**：v0.3 scenario 中用 `orchest-tools` 演示扩展接入路径
-5. **006（三语言 binding）紧跟 005**：Rust 侧稳定后再封 binding，避免反复重制 PyO3 / napi 类型映射
-6. **007（code-review skill）放到最后**：消费 playground、消费 `orchest-tools`，作为整迭代的 vertical slice 收尾
+1. **001 先做完**：能力清单 + 扩展晋升标准 + 建立 `docs/sdk/` 目录；后续所有动作的锚点
+2. **002 与 005 并行**：playground 骨架（含 CI workflow yaml、mock provider 契约）与 `orchest-tools` Rust crate 改动面不冲突，可在 worktree 中分头推进
+3. **004 依赖 001**（不是仅依赖 002）：004 的 `extension-promotion-criteria.md` 引用来自 001；004 的 getting-started 代码需要 002 的 playground 已就位
+4. **006 紧跟 005**：Rust 侧稳定后再封 binding；**006 还会顺带为 `agent-runtime-py` / `agent-runtime-node` 增加 `register_native_tool` 入口**（参见 issue 006"现状与 API 缺口"）
+5. **003（v0.2 / v0.3 scenarios）依赖 002 + 005**：v0.3 scenario 直接消费 issue 007 的 code-review skill；但 005 的 Rust tool 已可在 Rust 层直接被 playground 使用，不必等 006
+6. **007 收尾**：code-review skill 消费 005 的 `web_fetch`、被 003 的 v0.3 scenario 加载、被 004 的文档引用，是整迭代的 vertical slice
+
+### 依赖图（DAG）
+
+```
+001 ──┬──> 002 ──┬──> 003 (v0.2 部分)
+      │         └──> 004 (getting-started)
+      └──> 004 (extension-promotion-criteria 引用)
+      └──> 005 ──┬──> 006
+                 └──> 007 ──> 003 (v0.3 部分)
+```
 
 完成标准以各 issue 的 Acceptance Criteria 为准；`spec.md` 仅作历史参考，冲突时以 `docs/iteration/` 为准。
+
+## CI 与发包策略
+
+- 单一 workflow 入口：`.github/workflows/v0_4-playground.yml`，由 issue 002 创建，后续 issue 在同一个文件中追加 step（避免碎片化）
+- v0.4 **不**做正式 PyPI / npm 发包；构建产物的"可装"验证在 CI 中完成（`pip install <wheel>` / `npm install <tgz>`）
+- 正式发包计划列入 v0.5 PRD，与"第二个基础扩展 tool"一同决策

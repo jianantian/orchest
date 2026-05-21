@@ -26,19 +26,23 @@
 
 - [ ] 注册一个 in-process tool（如 `get_weather`），用 Rust 实现
 - [ ] 注册一个 builtin `read_file` tool，准备一个 fixture 文件
-- [ ] 使用 mock model provider（不依赖 ANTHROPIC_API_KEY）：本 issue 内在 `playground/src/mock/` 实现一个最小 `ModelAdapter`，按预设脚本返回 tool call 与文本
+- [ ] 使用 mock model provider（不依赖 ANTHROPIC_API_KEY）：本 issue 内在 `playground/src/mock/` 实现一个 `ScriptedModelAdapter`，按预设脚本返回 tool call、文本、`stop_reason`。Mock provider **契约**（issue 003 / 007 复用）：
+  - 支持按"轮"返回不同响应（构造时传入 `Vec<MockTurn>`）
+  - 每个 `MockTurn` 可以是：文本输出（含 stream chunk 序列）、单个 tool call、`stop`
+  - 支持 token usage 上报，以便 budget 路径可触发
+  - 公共构造器在 `playground/src/mock/mod.rs` 暴露，issue 003 直接复用
 - [ ] 运行 agent，让模型依次：调用 `read_file` → 调用 `get_weather` → 输出最终文本
 - [ ] 所有 `RuntimeEvent` 实时打印到 stdout（结构化文本，不是 JSON dump）
-- [ ] 触发以下三条路径并验证：
+- [ ] 触发以下三条路径并验证（事件名以 `crates/agent-runtime-core/src/events.rs` 为准）：
   - 正常 tool 调用：`ToolCallStarted` → `ToolCallCompleted` 事件成对出现
-  - Approval gate：scenario 内将某 tool 标记为 `requires_approval`，stdout 模拟用户输入 `y`/`n`，验证拒绝路径输出 `ToolCallDenied`
-  - Budget 上限：scenario 配置极小 `BudgetConfig`，验证触发 `BudgetExceeded` 后 run 终止
+  - Approval gate：scenario 内将某 tool 标记为 `requires_approval`，事件流中观察到 `ApprovalRequested`；scenario 模拟拒绝，观察 `ApprovalDenied` 事件，且**该 tool 不产生 `ToolCallStarted`**
+  - Budget 上限：scenario 配置极小 `BudgetConfig`，观察 `BudgetWarning` 事件出现，并在超额时 run 终止（事件流以 `RunFailed { error }` 收尾，error 字符串包含 "budget"）
 
 ### 验收可重放
 
-- [ ] `cargo run -p playground -- scenario v0_1_basic_loop` 在 clean checkout（无任何 API key）下成功
-- [ ] CI 配置中新增一个 step 运行该 scenario（exit code 0 即视为通过）
-- [ ] scenario 跑完输出一行 `Scenario v0_1_basic_loop: OK`（失败时输出 `FAIL: <reason>`）
+- [ ] `cargo run -p playground -- scenario v0_1_basic_loop` 在 clean checkout（无任何 API key）下成功，进程 exit code 0
+- [ ] scenario 跑完输出一行 `Scenario v0_1_basic_loop: OK`（失败时输出 `FAIL: <reason>` 并 exit code 非 0）
+- [ ] 本 issue 同时创建 `.github/workflows/v0_4-playground.yml`（如 `.github/workflows/` 不存在则一并创建），包含运行 `cargo run -p playground -- scenario v0_1_basic_loop` 的 step；该 workflow 是后续 issue 003 / 006 追加 CI step 的统一入口
 
 ## 注意
 

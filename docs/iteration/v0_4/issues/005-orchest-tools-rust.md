@@ -34,19 +34,21 @@
 ### WebFetchTool
 
 - [ ] Input schema：`{ url: string, method?: "GET"|"POST"|..., headers?: object, body?: string, timeout_ms?: number }`
-- [ ] 默认超时 30s，上限 5min
-- [ ] 返回结构化结果：`{ status: number, headers: object, body: string }`
-- [ ] 大 body 截断（默认 1MB，可配置），截断时在响应中标注 `truncated: true`
-- [ ] 网络错误 / DNS 失败 / 超时返回 `ToolOutput::Error`，不 panic
-- [ ] 实现 `requires_approval: true` 的 metadata（network egress 是有副作用的操作）
+- [ ] 默认超时 30s，上限 5min（超过上限的 `timeout_ms` 输入返回输入校验错误）
+- [ ] 返回结构化 JSON：`{ status: number, headers: object, body: string }`
+- [ ] 大 body 截断（默认 1MB，构造时可配置），截断时响应中加入 `truncated: true`
+- [ ] 网络错误 / DNS 失败 / 超时返回 `ToolOutput::Error { message }`，message 含可识别字符串（`network`/`dns`/`timeout`），不 panic
+- [ ] tool metadata 的 `requires_approval: true`、`side_effect: true`（network egress）
+- [ ] **以上各条均有对应单元测试**（见下文测试小节）
 
 ### WebSearchTool
 
-- [ ] Input schema：`{ query: string, max_results?: number }`，默认 max_results=5，上限 20
-- [ ] 内部使用 `SearchBackend` trait，trait 包含：`async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchHit>, SearchError>`
+- [ ] Input schema：`{ query: string, max_results?: number }`，默认 max_results=5，上限 20（超出返回输入校验错误）
+- [ ] 内部使用 `SearchBackend` trait：`async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchHit>, SearchError>`
 - [ ] 默认实现 `DuckDuckGoBackend`：scrape `https://duckduckgo.com/html/?q=...`，解析为 `SearchHit { title, url, snippet }`
-- [ ] backend 可由用户通过 `WebSearchTool::with_backend(Box<dyn SearchBackend>)` 替换，便于接入 SerpAPI / Brave
-- [ ] HTML 解析失败、网络失败均返回结构化错误，不 panic
+- [ ] backend 可由用户通过 `WebSearchTool::with_backend(Box<dyn SearchBackend>)` 替换
+- [ ] HTML 解析失败 / 网络失败均返回结构化错误（不 panic），错误 message 包含 `search_backend` / `network` 字段以便区分
+- [ ] **以上各条均有对应单元测试**
 
 ### 测试
 
