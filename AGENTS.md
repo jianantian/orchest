@@ -39,7 +39,8 @@ docs/
 ├── iteration/
 │   ├── v0_1/                  # Minimum viable: Rust core + dual-language SDK
 │   ├── v0_2/                  # MCP integration + OpenAI adapter + context compaction
-│   └── v0_3/                  # Production readiness: skill deps + code exec + sub-agent + sandbox architecture
+│   ├── v0_3/                  # Production readiness: skill deps + code exec + sub-agent + sandbox architecture
+│   └── v0_4/                  # Acceptance + SDK docs + unified extension package skeleton
 └── research/
     └── claw-landscape.md      # Architecture research across 7 comparable products (SDK-layer takeaways)
 ```
@@ -58,9 +59,10 @@ Each iteration has two layers:
 
 | Iteration | Status | Core Scope |
 |-----------|--------|-----------|
-| **v0.1** | Docs complete, not yet implemented | Rust core run loop, skill loading, async jobs, budget guard, approval gate, Python/TS SDK |
-| **v0.2** | Docs complete, not yet implemented | MCP stdio/HTTP, Tool Search Tool, OpenAI adapter, context compaction, webhook async tool |
-| **v0.3** | Docs complete, not yet implemented | Skill dependency management, Code Execution MCP, sub-agent, ScriptExecutor abstraction + capability declaration |
+| **v0.1** | Implemented | Rust core run loop, skill loading, async jobs, budget guard, approval gate, Python/TS SDK |
+| **v0.2** | Implemented | MCP stdio/HTTP, Tool Search Tool, OpenAI adapter, context compaction, webhook async tool |
+| **v0.3** | Implemented | Skill dependency management, Code Execution MCP, sub-agent, ScriptExecutor abstraction + capability declaration |
+| **v0.4** | Planning | Acceptance playground (CLI), SDK docs, unified extension package `orchest-tools` (+ Python/Node bindings), first file-based skill |
 
 ---
 
