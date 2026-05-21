@@ -20,6 +20,7 @@ Issues 001-013 各自有单元级验收标准，但需要一个明确的集成�
 
 **RuntimeEvent 覆盖检查：**
 - [ ] Python 和 TypeScript demos 观测到的 `RuntimeEvent.type` 均使用 canonical snake_case wire format，不出现 camelCase 事件 discriminant
+- [ ] `./scripts/check-ts-event-wire-naming.sh` 通过，防止 TS-facing contract/example/doc 文件重新引入 camelCase event discriminant
 - [ ] Validation 输出或说明引用 [v0.1 E2E Validation Notes](../e2e-validation.md)，并明确标记 `read_file` path boundary 是 v0.1 known limitation
 - [ ] 以下事件在至少一个 demo 中均可观测到：
   - `run_started`
