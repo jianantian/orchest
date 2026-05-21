@@ -151,6 +151,17 @@ impl SubAgentRuntime {
     }
 }
 
+fn narrow_permission_list(parent: &Option<Vec<String>>, requested: &[String]) -> Vec<String> {
+    match parent {
+        None => requested.to_vec(),
+        Some(parent_list) => requested
+            .iter()
+            .filter(|name| parent_list.contains(name))
+            .cloned()
+            .collect(),
+    }
+}
+
 fn min_option<T: Ord + Copy>(requested: Option<T>, remaining: Option<T>) -> Option<T> {
     match (requested, remaining) {
         (Some(a), Some(b)) => Some(a.min(b)),
@@ -253,6 +264,10 @@ async fn run_loop(
             }
         }
     }
+
+    // Enforce allowed_tools: filter registry so only permitted tools are visible and executable
+    let unfiltered_registry = registry.clone();
+    let mut registry = registry.filter_by_allowed(&config.allowed_tools);
 
     let mut messages = vec![
         Message {
@@ -416,17 +431,22 @@ async fn run_loop(
             let tool = match registry.get(&tool_call.name) {
                 Some(t) => t,
                 None => {
+                    let error = if unfiltered_registry.contains(&tool_call.name) {
+                        "tool not allowed".to_string()
+                    } else {
+                        format!("tool '{}' not found", tool_call.name)
+                    };
                     emit(
                         &tx,
                         RuntimeEvent::ToolCallFailed {
                             tool: tool_call.name.clone(),
-                            error: format!("tool '{}' not found", tool_call.name),
+                            error: error.clone(),
                         },
                     )
                     .await;
                     tool_results.push(ContentBlock::ToolResult {
                         tool_use_id: tool_call.id.clone(),
-                        content: json!({"error": format!("tool '{}' not found", tool_call.name)}),
+                        content: json!({"error": error}),
                     });
                     continue;
                 }
@@ -618,18 +638,31 @@ async fn execute_sub_agent_request(
     let mut child_config = parent_config.clone();
     child_config.budget = SubAgentRuntime::cap_budget(&requested_budget, &remaining);
     child_config.run_depth = parent_config.run_depth + 1;
-    if let Some(allowed_tools) = request
+    if let Some(requested_tools) = request
         .get("config")
         .and_then(|config| config.get("allowed_tools"))
         .and_then(Value::as_array)
     {
-        child_config.allowed_tools = Some(
-            allowed_tools
-                .iter()
-                .filter_map(Value::as_str)
-                .map(String::from)
-                .collect(),
-        );
+        let requested: Vec<String> = requested_tools
+            .iter()
+            .filter_map(Value::as_str)
+            .map(String::from)
+            .collect();
+        child_config.allowed_tools =
+            Some(narrow_permission_list(&parent_config.allowed_tools, &requested));
+    }
+    if let Some(requested_skills) = request
+        .get("config")
+        .and_then(|config| config.get("allowed_skills"))
+        .and_then(Value::as_array)
+    {
+        let requested: Vec<String> = requested_skills
+            .iter()
+            .filter_map(Value::as_str)
+            .map(String::from)
+            .collect();
+        child_config.allowed_skills =
+            Some(narrow_permission_list(&parent_config.allowed_skills, &requested));
     }
     let input = request
         .get("input")
@@ -1976,5 +2009,198 @@ mod tests {
         }
         handle.wait().await;
         assert!(completed);
+    }
+
+    struct AllowedToolsModel {
+        target_tool: String,
+    }
+
+    #[async_trait::async_trait]
+    impl ModelAdapter for AllowedToolsModel {
+        async fn stream(
+            &self,
+            messages: &[Message],
+            tools: &[ToolDef],
+            tx: mpsc::Sender<ModelStreamChunk>,
+        ) -> Result<ModelResponse, ModelError> {
+            let has_tool_result = messages.iter().any(|m| {
+                m.content
+                    .iter()
+                    .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
+            });
+            let usage = TokenUsage {
+                input_tokens: 5,
+                output_tokens: 5,
+            };
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+
+            if has_tool_result {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text("done".into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                })
+            } else {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "call_1".into(),
+                        name: self.target_tool.clone(),
+                        input: json!({}),
+                    }],
+                    usage,
+                    stop_reason: StopReason::ToolUse,
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn allowed_tools_filters_visibility_and_permits_execution() {
+        let mut config = test_config();
+        config.allowed_tools = Some(vec!["echo".into()]);
+
+        let model = Arc::new(AllowedToolsModel {
+            target_tool: "echo".into(),
+        });
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(FakeTool::echo())).unwrap();
+        registry
+            .register(Arc::new(FakeTool {
+                name: "secret",
+                requires_approval: false,
+            }))
+            .unwrap();
+
+        let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        handle.wait().await;
+
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ToolCallCompleted { tool, .. } if tool == "echo")));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+    }
+
+    #[tokio::test]
+    async fn allowed_tools_denies_disallowed_tool_by_name() {
+        let mut config = test_config();
+        config.allowed_tools = Some(vec!["echo".into()]);
+
+        let model = Arc::new(AllowedToolsModel {
+            target_tool: "secret".into(),
+        });
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(FakeTool::echo())).unwrap();
+        registry
+            .register(Arc::new(FakeTool {
+                name: "secret",
+                requires_approval: false,
+            }))
+            .unwrap();
+
+        let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        handle.wait().await;
+
+        assert!(
+            events.iter().any(
+                |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error == "tool not allowed")
+            ),
+            "should emit ToolCallFailed with 'tool not allowed'"
+        );
+        assert!(
+            !events.iter().any(
+                |e| matches!(e, RuntimeEvent::ToolCallStarted { tool, .. } if tool == "secret")
+            ),
+            "ToolCallStarted must not be emitted for denied-by-policy tools"
+        );
+    }
+
+    #[tokio::test]
+    async fn allowed_tools_empty_list_denies_all() {
+        let mut config = test_config();
+        config.allowed_tools = Some(vec![]);
+
+        let model = Arc::new(AllowedToolsModel {
+            target_tool: "echo".into(),
+        });
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(FakeTool::echo())).unwrap();
+
+        let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        handle.wait().await;
+
+        assert!(
+            events.iter().any(
+                |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error == "tool not allowed")
+            ),
+        );
+    }
+
+    #[tokio::test]
+    async fn allowed_tools_none_permits_all() {
+        let mut config = test_config();
+        config.allowed_tools = None;
+
+        let model = Arc::new(AllowedToolsModel {
+            target_tool: "echo".into(),
+        });
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(FakeTool::echo())).unwrap();
+
+        let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        handle.wait().await;
+
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ToolCallCompleted { tool, .. } if tool == "echo")));
+    }
+
+    #[test]
+    fn narrow_permission_list_intersects_with_parent() {
+        let parent = Some(vec!["a".into(), "b".into()]);
+        let requested = vec!["b".into(), "c".into()];
+        let result = narrow_permission_list(&parent, &requested);
+        assert_eq!(result, vec!["b".to_string()]);
+    }
+
+    #[test]
+    fn narrow_permission_list_none_parent_allows_all_requested() {
+        let parent = None;
+        let requested = vec!["x".into(), "y".into()];
+        let result = narrow_permission_list(&parent, &requested);
+        assert_eq!(result, vec!["x".to_string(), "y".to_string()]);
+    }
+
+    #[test]
+    fn narrow_permission_list_expansion_rejected() {
+        let parent = Some(vec!["a".into()]);
+        let requested = vec!["a".into(), "b".into()];
+        let result = narrow_permission_list(&parent, &requested);
+        assert_eq!(result, vec!["a".to_string()]);
     }
 }
