@@ -151,12 +151,17 @@ impl Agent {
                 api_key_env: None,
                 api_url: self.api_url.clone(),
                 max_tokens: Some(4096),
+                context_window_size: None,
             },
             budget: budget_config,
             max_steps: 20,
             allowed_skills: None,
             allowed_tools: None,
             mcp_servers: vec![],
+            tool_search_enabled: false,
+            compaction_threshold: None,
+            compaction_recent_messages: 10,
+            webhook_enabled: false,
         };
 
         let mut registry = ToolRegistry::new();

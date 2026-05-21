@@ -27,6 +27,7 @@ fn test_config() -> AgentConfig {
             api_key_env: None,
             api_url: None,
             max_tokens: Some(100),
+            context_window_size: None,
         },
         budget: BudgetConfig {
             max_tokens: Some(100_000),
@@ -38,6 +39,10 @@ fn test_config() -> AgentConfig {
         allowed_skills: None,
         allowed_tools: None,
         mcp_servers: vec![],
+        tool_search_enabled: false,
+        compaction_threshold: None,
+        compaction_recent_messages: 10,
+        webhook_enabled: false,
     }
 }
 
@@ -206,6 +211,8 @@ async fn e2e_event_coverage() {
             RuntimeEvent::ApprovalGranted { .. } => "ApprovalGranted",
             RuntimeEvent::ApprovalDenied { .. } => "ApprovalDenied",
             RuntimeEvent::BudgetWarning { .. } => "BudgetWarning",
+            RuntimeEvent::RuntimeWarning { .. } => "RuntimeWarning",
+            RuntimeEvent::ContextCompacted { .. } => "ContextCompacted",
             RuntimeEvent::RunCompleted { .. } => "RunCompleted",
             RuntimeEvent::RunFailed { .. } => "RunFailed",
         })
@@ -342,9 +349,10 @@ async fn e2e_run_state_serialization() {
             tool_call: tool_call.clone(),
             job_handle: JobHandle {
                 job_id: "job_state".into(),
-                poll,
+                poll: Some(poll),
                 poll_interval: Duration::from_millis(25),
                 timeout: Some(Duration::from_secs(5)),
+                webhook: None,
             },
             since: std::time::Instant::now(),
         },
@@ -434,6 +442,7 @@ async fn e2e_skill_content_read_event() {
         tool_call_id: "read_skill".into(),
         on_update: None,
         event_tx: Some(event_tx),
+        webhook_base_url: None,
     };
 
     tool.execute(json!({"path": skill_md.to_str().unwrap()}), &ctx)
@@ -467,6 +476,7 @@ async fn e2e_read_file_known_risk_boundary_is_visible() {
         tool_call_id: "read_non_skill".into(),
         on_update: None,
         event_tx: Some(event_tx),
+        webhook_base_url: None,
     };
 
     let output = tool
@@ -603,9 +613,10 @@ impl Tool for AsyncEchoTool {
 
         Ok(ToolOutput::AsyncJob(JobHandle {
             job_id: "job_e2e_1".into(),
-            poll: Arc::new(poll_fn),
+            poll: Some(Arc::new(poll_fn)),
             poll_interval: Duration::from_millis(10),
             timeout: Some(Duration::from_secs(5)),
+            webhook: None,
         }))
     }
 }

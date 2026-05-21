@@ -146,6 +146,7 @@ mod tests {
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: None,
+            webhook_base_url: None,
         };
 
         let result = tool
@@ -168,6 +169,7 @@ mod tests {
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: None,
+            webhook_base_url: None,
         };
 
         let result = tool
@@ -185,6 +187,7 @@ mod tests {
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: None,
+            webhook_base_url: None,
         };
 
         let result = tool.execute(json!({}), &ctx).await;
@@ -210,6 +213,7 @@ mod tests {
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: Some(event_tx),
+            webhook_base_url: None,
         };
 
         let result = tool
@@ -247,6 +251,7 @@ mod tests {
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: Some(event_tx),
+            webhook_base_url: None,
         };
 
         let result = tool

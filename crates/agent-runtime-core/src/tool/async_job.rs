@@ -19,19 +19,10 @@ pub type PollFn =
 /// after a cross-process restore.
 pub struct JobHandle {
     pub job_id: String,
-    pub poll: Arc<PollFn>,
+    pub poll: Option<Arc<PollFn>>,
     pub poll_interval: Duration,
     pub timeout: Option<Duration>,
-}
-
-fn lost_poll_fn() -> Arc<PollFn> {
-    Arc::new(|| {
-        Box::pin(async {
-            Ok(JobStatus::Failed(
-                "job poll function was not restored".into(),
-            ))
-        })
-    })
+    pub webhook: Option<WebhookConfig>,
 }
 
 impl Serialize for JobHandle {
@@ -44,12 +35,14 @@ impl Serialize for JobHandle {
             job_id: &'a str,
             poll_interval: Duration,
             timeout: Option<Duration>,
+            webhook: Option<&'a WebhookConfig>,
         }
 
         SerializableJobHandle {
             job_id: &self.job_id,
             poll_interval: self.poll_interval,
             timeout: self.timeout,
+            webhook: self.webhook.as_ref(),
         }
         .serialize(serializer)
     }
@@ -65,14 +58,16 @@ impl<'de> Deserialize<'de> for JobHandle {
             job_id: String,
             poll_interval: Duration,
             timeout: Option<Duration>,
+            webhook: Option<WebhookConfig>,
         }
 
         let value = SerializableJobHandle::deserialize(deserializer)?;
         Ok(Self {
             job_id: value.job_id,
-            poll: lost_poll_fn(),
+            poll: None,
             poll_interval: value.poll_interval,
             timeout: value.timeout,
+            webhook: value.webhook,
         })
     }
 }
@@ -83,6 +78,7 @@ impl std::fmt::Debug for JobHandle {
             .field("job_id", &self.job_id)
             .field("poll_interval", &self.poll_interval)
             .field("timeout", &self.timeout)
+            .field("webhook", &self.webhook)
             .finish_non_exhaustive()
     }
 }
@@ -91,11 +87,17 @@ impl Clone for JobHandle {
     fn clone(&self) -> Self {
         Self {
             job_id: self.job_id.clone(),
-            poll: Arc::clone(&self.poll),
+            poll: self.poll.as_ref().map(Arc::clone),
             poll_interval: self.poll_interval,
             timeout: self.timeout,
+            webhook: self.webhook.clone(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookConfig {
+    pub expected_job_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

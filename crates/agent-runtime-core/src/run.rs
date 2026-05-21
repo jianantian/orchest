@@ -1,9 +1,12 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::sync::mpsc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::budget::{BudgetConfig, BudgetGuard, BudgetUsage};
 use crate::events::RuntimeEvent;
@@ -12,8 +15,12 @@ use crate::model::{
     StopReason,
 };
 use crate::tool::async_job::{JobHandle, JobStatus};
+use crate::tool::mcp::{
+    McpClient, McpHttpClient, McpServerConfig, McpStdioClient, McpTool, McpTransport,
+};
 use crate::tool::registry::ToolRegistry;
-use crate::tool::{Tool, ToolCall, ToolContext, ToolOutput};
+use crate::tool::search::SearchToolsTool;
+use crate::tool::{Tool, ToolCall, ToolContext, ToolDef, ToolOutput};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RunId(pub uuid::Uuid);
@@ -39,7 +46,19 @@ pub struct AgentConfig {
     pub allowed_skills: Option<Vec<String>>,
     pub allowed_tools: Option<Vec<String>>,
     #[serde(default)]
-    pub mcp_servers: Vec<Value>,
+    pub mcp_servers: Vec<McpServerConfig>,
+    #[serde(default)]
+    pub tool_search_enabled: bool,
+    #[serde(default)]
+    pub compaction_threshold: Option<f32>,
+    #[serde(default = "default_recent_messages")]
+    pub compaction_recent_messages: usize,
+    #[serde(default)]
+    pub webhook_enabled: bool,
+}
+
+fn default_recent_messages() -> usize {
+    10
 }
 
 #[derive(Serialize, Deserialize)]
@@ -77,6 +96,18 @@ pub enum RunStatus {
 }
 
 pub type EventReceiver = mpsc::Receiver<RuntimeEvent>;
+
+struct WebhookRuntime {
+    base_url: String,
+    waiters: Arc<Mutex<HashMap<String, oneshot::Sender<JobStatus>>>>,
+    abort_handle: tokio::task::AbortHandle,
+}
+
+impl Drop for WebhookRuntime {
+    fn drop(&mut self) {
+        self.abort_handle.abort();
+    }
+}
 
 pub struct RunHandle {
     pub run_id: RunId,
@@ -138,11 +169,34 @@ async fn run_loop(
     config: AgentConfig,
     input: String,
     model: Arc<dyn ModelAdapter>,
-    registry: ToolRegistry,
+    mut registry: ToolRegistry,
     tx: mpsc::Sender<RuntimeEvent>,
     mut approval_rx: mpsc::Receiver<bool>,
 ) {
     emit(&tx, RuntimeEvent::RunStarted { run_id }).await;
+
+    let webhook_runtime = if config.webhook_enabled {
+        match start_webhook_server().await {
+            Ok(runtime) => Some(runtime),
+            Err(error) => {
+                emit(&tx, RuntimeEvent::RuntimeWarning { message: error }).await;
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Err(error) = connect_mcp_servers(&config, &mut registry).await {
+        emit(
+            &tx,
+            RuntimeEvent::RunFailed {
+                error: error.message,
+            },
+        )
+        .await;
+        return;
+    }
 
     let mut messages = vec![
         Message {
@@ -155,9 +209,31 @@ async fn run_loop(
         },
     ];
 
-    let tool_defs = registry.list();
+    let all_tool_defs = registry.list();
+    let mut tool_defs = if config.tool_search_enabled {
+        let search_tool = Arc::new(SearchToolsTool::new(all_tool_defs));
+        let search_def = ToolDef {
+            name: search_tool.name().to_string(),
+            description: search_tool.description().to_string(),
+            input_schema: search_tool.input_schema().clone(),
+        };
+        if let Err(error) = registry.register(search_tool) {
+            emit(
+                &tx,
+                RuntimeEvent::RunFailed {
+                    error: error.to_string(),
+                },
+            )
+            .await;
+            return;
+        }
+        vec![search_def]
+    } else {
+        all_tool_defs
+    };
     let mut step: u32 = 0;
     let mut budget = BudgetGuard::new(config.budget.clone());
+    let mut last_compaction_step: Option<u32> = None;
 
     loop {
         if step >= config.max_steps {
@@ -226,6 +302,17 @@ async fn run_loop(
             RuntimeEvent::ModelCallCompleted {
                 tokens: response.usage.clone(),
             },
+        )
+        .await;
+
+        maybe_compact_context(
+            &config,
+            &model,
+            &mut messages,
+            &tx,
+            &mut last_compaction_step,
+            step,
+            &response.usage,
         )
         .await;
 
@@ -340,6 +427,9 @@ async fn run_loop(
                 tool_call_id: tool_call.id.clone(),
                 on_update: None,
                 event_tx: Some(tx.clone()),
+                webhook_base_url: webhook_runtime
+                    .as_ref()
+                    .map(|runtime| runtime.base_url.clone()),
             };
 
             let start_time = Instant::now();
@@ -347,6 +437,9 @@ async fn run_loop(
 
             match result {
                 Ok(ToolOutput::Immediate(value)) => {
+                    if config.tool_search_enabled && tool_call.name == "search_tools" {
+                        append_searched_tool_defs(&mut tool_defs, &value);
+                    }
                     let duration = start_time.elapsed();
                     emit(
                         &tx,
@@ -373,7 +466,8 @@ async fn run_loop(
                     .await;
 
                     let async_result =
-                        poll_async_job(&tx, &tool_call.name, &handle, start_time).await;
+                        poll_async_job(&tx, &tool_call.name, &handle, start_time, &webhook_runtime)
+                            .await;
 
                     tool_results.push(ContentBlock::ToolResult {
                         tool_use_id: tool_call.id.clone(),
@@ -408,13 +502,202 @@ async fn run_loop(
     }
 }
 
+async fn maybe_compact_context(
+    config: &AgentConfig,
+    model: &Arc<dyn ModelAdapter>,
+    messages: &mut Vec<Message>,
+    tx: &mpsc::Sender<RuntimeEvent>,
+    last_compaction_step: &mut Option<u32>,
+    step: u32,
+    usage: &crate::model::TokenUsage,
+) {
+    let Some(threshold) = config.compaction_threshold else {
+        return;
+    };
+    let Some(context_window_size) = config.model.context_window_size else {
+        return;
+    };
+    if !(0.0..=1.0).contains(&threshold) || context_window_size == 0 {
+        return;
+    }
+    if let Some(last) = *last_compaction_step {
+        if step.saturating_sub(last) < 5 {
+            return;
+        }
+    }
+    let used = usage.input_tokens.saturating_add(usage.output_tokens);
+    if (used as f32 / context_window_size as f32) < threshold {
+        return;
+    }
+    let recent_count = config.compaction_recent_messages;
+    if messages.len() <= recent_count + 1 {
+        return;
+    }
+
+    let system = messages
+        .iter()
+        .find(|message| matches!(message.role, Role::System))
+        .cloned();
+    let non_system: Vec<Message> = messages
+        .iter()
+        .filter(|message| !matches!(message.role, Role::System))
+        .cloned()
+        .collect();
+    if non_system.len() <= recent_count {
+        return;
+    }
+    let split_at = non_system.len() - recent_count;
+    let old_messages = &non_system[..split_at];
+    let recent_messages = non_system[split_at..].to_vec();
+    let history = old_messages
+        .iter()
+        .map(|message| serde_json::to_string(message).unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let prompt = format!(
+        "以下是一次 AI agent 任务的历史对话记录。请用简洁的中文总结这段历史中发生的关键事件：\n完成了哪些工具调用、获取了哪些信息、做出了哪些决策。保留足够细节让 agent 能够继续任务。\n\n{history}"
+    );
+    let summary_response = model
+        .call(
+            &[Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text(prompt)],
+            }],
+            &[],
+        )
+        .await;
+
+    let response = match summary_response {
+        Ok(response) => response,
+        Err(error) => {
+            emit(
+                tx,
+                RuntimeEvent::RuntimeWarning {
+                    message: format!("context compaction failed: {}", error.message),
+                },
+            )
+            .await;
+            return;
+        }
+    };
+    let summary = response
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    let mut compacted = Vec::new();
+    if let Some(system) = system {
+        compacted.push(system);
+    }
+    compacted.push(Message {
+        role: Role::User,
+        content: vec![ContentBlock::Text(format!("历史摘要：{summary}"))],
+    });
+    compacted.extend(recent_messages);
+    let removed_messages = messages.len().saturating_sub(compacted.len());
+    *messages = compacted;
+    *last_compaction_step = Some(step);
+    emit(
+        tx,
+        RuntimeEvent::ContextCompacted {
+            removed_messages,
+            summary_tokens: response.usage.output_tokens as u32,
+        },
+    )
+    .await;
+}
+
+fn append_searched_tool_defs(tool_defs: &mut Vec<ToolDef>, value: &Value) {
+    let Some(results) = value.as_array() else {
+        return;
+    };
+    for result in results {
+        let Some(name) = result.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        if tool_defs.iter().any(|tool| tool.name == name) {
+            continue;
+        }
+        tool_defs.push(ToolDef {
+            name: name.to_string(),
+            description: result
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            input_schema: result
+                .get("input_schema")
+                .cloned()
+                .unwrap_or_else(|| json!({"type": "object"})),
+        });
+    }
+}
+
 async fn poll_async_job(
     tx: &mpsc::Sender<RuntimeEvent>,
     tool_name: &str,
     handle: &JobHandle,
     start_time: Instant,
+    webhook_runtime: &Option<WebhookRuntime>,
 ) -> Value {
     let timeout = handle.timeout;
+
+    if let (Some(webhook), Some(runtime)) = (&handle.webhook, webhook_runtime) {
+        let (webhook_tx, webhook_rx) = oneshot::channel();
+        runtime
+            .waiters
+            .lock()
+            .await
+            .insert(webhook.expected_job_id.clone(), webhook_tx);
+        let wait_for = handle.poll_interval * 3;
+        match tokio::time::timeout(wait_for, webhook_rx).await {
+            Ok(Ok(JobStatus::Completed(value))) => {
+                emit(
+                    tx,
+                    RuntimeEvent::AsyncToolCompleted {
+                        tool: tool_name.to_string(),
+                        job_id: handle.job_id.clone(),
+                        output: value.clone(),
+                        elapsed: start_time.elapsed(),
+                    },
+                )
+                .await;
+                return value;
+            }
+            Ok(Ok(JobStatus::Failed(error))) => {
+                emit(
+                    tx,
+                    RuntimeEvent::ToolCallFailed {
+                        tool: tool_name.to_string(),
+                        error: error.clone(),
+                    },
+                )
+                .await;
+                return json!({"error": error});
+            }
+            Ok(Ok(JobStatus::Pending { progress, message })) => {
+                emit(
+                    tx,
+                    RuntimeEvent::AsyncToolProgress {
+                        tool: tool_name.to_string(),
+                        job_id: handle.job_id.clone(),
+                        status: JobStatus::Pending { progress, message },
+                    },
+                )
+                .await;
+            }
+            Ok(Err(_)) | Err(_) => {}
+        }
+        runtime
+            .waiters
+            .lock()
+            .await
+            .remove(&webhook.expected_job_id);
+    }
 
     loop {
         tokio::time::sleep(handle.poll_interval).await;
@@ -433,7 +716,19 @@ async fn poll_async_job(
             }
         }
 
-        match (handle.poll)().await {
+        let Some(poll) = &handle.poll else {
+            emit(
+                tx,
+                RuntimeEvent::ToolCallFailed {
+                    tool: tool_name.to_string(),
+                    error: "async job has no polling fallback".into(),
+                },
+            )
+            .await;
+            return json!({"error": "async job has no polling fallback"});
+        };
+
+        match (poll)().await {
             Ok(JobStatus::Pending { progress, message }) => {
                 emit(
                     tx,
@@ -483,6 +778,191 @@ async fn poll_async_job(
             }
         }
     }
+}
+
+async fn start_webhook_server() -> Result<WebhookRuntime, String> {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| format!("failed to bind webhook server: {e}"))?;
+    let address = listener
+        .local_addr()
+        .map_err(|e| format!("failed to read webhook address: {e}"))?;
+    let waiters: Arc<Mutex<HashMap<String, oneshot::Sender<JobStatus>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let waiters_for_task = Arc::clone(&waiters);
+
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            let waiters = Arc::clone(&waiters_for_task);
+            tokio::spawn(async move {
+                let mut buffer = vec![0; 16 * 1024];
+                let mut read_total = 0usize;
+                loop {
+                    let Ok(read) = socket.read(&mut buffer[read_total..]).await else {
+                        return;
+                    };
+                    if read == 0 {
+                        break;
+                    }
+                    read_total += read;
+                    let request = String::from_utf8_lossy(&buffer[..read_total]);
+                    if let Some(header_end) =
+                        request.find("\r\n\r\n").or_else(|| request.find("\n\n"))
+                    {
+                        let header = &request[..header_end];
+                        let body_start = if request[header_end..].starts_with("\r\n\r\n") {
+                            header_end + 4
+                        } else {
+                            header_end + 2
+                        };
+                        let content_length = header
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                if name.eq_ignore_ascii_case("content-length") {
+                                    value.trim().parse::<usize>().ok()
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(0);
+                        if read_total >= body_start + content_length {
+                            break;
+                        }
+                    }
+                    if read_total == buffer.len() {
+                        break;
+                    }
+                }
+                let request = String::from_utf8_lossy(&buffer[..read_total]);
+                let Some(first_line) = request.lines().next() else {
+                    return;
+                };
+                let parts: Vec<&str> = first_line.split_whitespace().collect();
+                if parts.len() < 2 || parts[0] != "POST" {
+                    let _ = write_http_response(&mut socket, 405, "method not allowed").await;
+                    return;
+                }
+                let Some(job_id) = parts[1].strip_prefix("/webhooks/async-job/") else {
+                    let _ = write_http_response(&mut socket, 404, "not found").await;
+                    return;
+                };
+                let body = request
+                    .split("\r\n\r\n")
+                    .nth(1)
+                    .or_else(|| request.split("\n\n").nth(1))
+                    .unwrap_or_default();
+                let parsed: Value = match serde_json::from_str(body) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let _ = write_http_response(&mut socket, 400, "bad request").await;
+                        return;
+                    }
+                };
+                let status = match parsed.get("status").and_then(Value::as_str) {
+                    Some("completed") => {
+                        JobStatus::Completed(parsed.get("result").cloned().unwrap_or(Value::Null))
+                    }
+                    Some("failed") => JobStatus::Failed(
+                        parsed
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .unwrap_or("webhook job failed")
+                            .to_string(),
+                    ),
+                    _ => JobStatus::Pending {
+                        progress: parsed
+                            .get("progress")
+                            .and_then(Value::as_f64)
+                            .map(|value| value as f32),
+                        message: parsed
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .map(String::from),
+                    },
+                };
+                if let Some(waiter) = waiters.lock().await.remove(job_id) {
+                    let _ = waiter.send(status);
+                }
+                let _ = write_http_response(&mut socket, 200, "ok").await;
+            });
+        }
+    });
+
+    Ok(WebhookRuntime {
+        base_url: format!("http://{address}"),
+        waiters,
+        abort_handle: task.abort_handle(),
+    })
+}
+
+async fn write_http_response(
+    socket: &mut tokio::net::TcpStream,
+    status: u16,
+    body: &str,
+) -> std::io::Result<()> {
+    let reason = match status {
+        200 => "OK",
+        400 => "Bad Request",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        _ => "Internal Server Error",
+    };
+    socket
+        .write_all(
+            format!(
+                "HTTP/1.1 {status} {reason}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await
+}
+
+async fn connect_mcp_servers(
+    config: &AgentConfig,
+    registry: &mut ToolRegistry,
+) -> Result<(), crate::tool::mcp::McpError> {
+    for server in &config.mcp_servers {
+        match &server.transport {
+            McpTransport::Stdio { command, args } => {
+                let client = Arc::new(McpStdioClient::connect_owned(command, args).await?);
+                let tools = client.list_tools().await?;
+                for def in tools {
+                    registry
+                        .register(Arc::new(McpTool::new(
+                            server.server_id.clone(),
+                            def,
+                            McpClient::Stdio(Arc::clone(&client)),
+                        )))
+                        .map_err(|e| crate::tool::mcp::McpError {
+                            message: e.to_string(),
+                            code: Some("registry_error".into()),
+                        })?;
+                }
+            }
+            McpTransport::StreamableHttp { url, auth } => {
+                let client = Arc::new(McpHttpClient::connect(url, auth.clone()).await?);
+                let tools = client.list_tools().await?;
+                for def in tools {
+                    registry
+                        .register(Arc::new(McpTool::new(
+                            server.server_id.clone(),
+                            def,
+                            McpClient::Http(Arc::clone(&client)),
+                        )))
+                        .map_err(|e| crate::tool::mcp::McpError {
+                            message: e.to_string(),
+                            code: Some("registry_error".into()),
+                        })?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -554,6 +1034,7 @@ mod tests {
                 api_key_env: None,
                 api_url: None,
                 max_tokens: None,
+                context_window_size: None,
             },
             budget: BudgetConfig {
                 max_tokens: None,
@@ -565,6 +1046,10 @@ mod tests {
             allowed_skills: None,
             allowed_tools: None,
             mcp_servers: vec![],
+            tool_search_enabled: false,
+            compaction_threshold: None,
+            compaction_recent_messages: default_recent_messages(),
+            webhook_enabled: false,
         }
     }
 
@@ -930,9 +1415,10 @@ mod tests {
             };
             Ok(ToolOutput::AsyncJob(JobHandle {
                 job_id: "job-1".into(),
-                poll: Arc::new(poll_fn),
+                poll: Some(Arc::new(poll_fn)),
                 poll_interval: std::time::Duration::from_millis(1),
                 timeout: None,
+                webhook: None,
             }))
         }
     }
@@ -1012,5 +1498,264 @@ mod tests {
         assert!(events
             .iter()
             .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+    }
+
+    struct ToolSearchModel {
+        call_count: AtomicU32,
+    }
+
+    #[async_trait::async_trait]
+    impl ModelAdapter for ToolSearchModel {
+        async fn stream(
+            &self,
+            _messages: &[Message],
+            tools: &[ToolDef],
+            tx: mpsc::Sender<ModelStreamChunk>,
+        ) -> Result<ModelResponse, ModelError> {
+            let count = self.call_count.fetch_add(1, Ordering::SeqCst);
+            let usage = TokenUsage {
+                input_tokens: 5,
+                output_tokens: 5,
+            };
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+            if count == 0 {
+                assert_eq!(tools.len(), 1);
+                assert_eq!(tools[0].name, "search_tools");
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "search_1".into(),
+                        name: "search_tools".into(),
+                        input: json!({"query": "async operation"}),
+                    }],
+                    usage,
+                    stop_reason: StopReason::ToolUse,
+                })
+            } else {
+                assert!(tools.iter().any(|tool| tool.name == "async_op"));
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text("done".into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_search_enabled_loads_schemas_progressively() {
+        let mut config = test_config();
+        config.tool_search_enabled = true;
+        let mut registry = ToolRegistry::new();
+        registry
+            .register(Arc::new(AsyncTool {
+                polls_until_done: AtomicU32::new(1),
+            }))
+            .unwrap();
+        let model = Arc::new(ToolSearchModel {
+            call_count: AtomicU32::new(0),
+        });
+        let (handle, mut rx) = AgentRun::start(config, "find tool".into(), model, registry);
+        while rx.recv().await.is_some() {}
+        handle.wait().await;
+    }
+
+    struct CompactingModel {
+        call_count: AtomicU32,
+    }
+
+    #[async_trait::async_trait]
+    impl ModelAdapter for CompactingModel {
+        async fn stream(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDef],
+            tx: mpsc::Sender<ModelStreamChunk>,
+        ) -> Result<ModelResponse, ModelError> {
+            let count = self.call_count.fetch_add(1, Ordering::SeqCst);
+            let usage = if count == 0 {
+                TokenUsage {
+                    input_tokens: 90,
+                    output_tokens: 20,
+                }
+            } else {
+                TokenUsage {
+                    input_tokens: 1,
+                    output_tokens: 3,
+                }
+            };
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+            if messages
+                .iter()
+                .any(|message| matches!(message.role, Role::User)
+                    && message.content.iter().any(|block| matches!(block, ContentBlock::Text(text) if text.contains("历史对话记录"))))
+            {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text("摘要".into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                })
+            } else {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text("done".into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn context_compaction_emits_event() {
+        let mut config = test_config();
+        config.compaction_threshold = Some(0.5);
+        config.compaction_recent_messages = 0;
+        config.model.context_window_size = Some(100);
+        let model = Arc::new(CompactingModel {
+            call_count: AtomicU32::new(0),
+        });
+        let registry = ToolRegistry::new();
+        let (handle, mut rx) = AgentRun::start(config, "compact".into(), model, registry);
+        let mut saw_compacted = false;
+        while let Some(event) = rx.recv().await {
+            if matches!(event, RuntimeEvent::ContextCompacted { .. }) {
+                saw_compacted = true;
+            }
+        }
+        handle.wait().await;
+        assert!(saw_compacted);
+    }
+
+    struct WebhookTool;
+
+    #[async_trait::async_trait]
+    impl Tool for WebhookTool {
+        fn name(&self) -> &str {
+            "webhook_tool"
+        }
+        fn description(&self) -> &str {
+            "webhook async tool"
+        }
+        fn input_schema(&self) -> &JsonSchema {
+            &serde_json::Value::Null
+        }
+        fn output_schema(&self) -> Option<&JsonSchema> {
+            None
+        }
+        fn metadata(&self) -> &ToolMetadata {
+            &ToolMetadata {
+                side_effect: false,
+                requires_approval: false,
+                cost_hint: None,
+                timeout: None,
+                max_output_tokens: None,
+                source: ToolSource::InProcess,
+            }
+        }
+        async fn execute(
+            &self,
+            _input: serde_json::Value,
+            ctx: &ToolContext,
+        ) -> Result<ToolOutput, ToolError> {
+            let job_id = uuid::Uuid::new_v4().to_string();
+            let url = format!(
+                "{}/webhooks/async-job/{}",
+                ctx.webhook_base_url.as_ref().ok_or_else(|| ToolError {
+                    message: "missing webhook base url".into(),
+                    code: None,
+                })?,
+                job_id
+            );
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                let _ = reqwest::Client::new()
+                    .post(url)
+                    .json(&json!({"status": "completed", "result": {"ok": true}}))
+                    .send()
+                    .await;
+            });
+            Ok(ToolOutput::AsyncJob(JobHandle {
+                job_id: job_id.clone(),
+                poll: None,
+                poll_interval: std::time::Duration::from_secs(1),
+                timeout: Some(std::time::Duration::from_secs(5)),
+                webhook: Some(crate::tool::async_job::WebhookConfig {
+                    expected_job_id: job_id,
+                }),
+            }))
+        }
+    }
+
+    struct WebhookModel {
+        call_count: AtomicU32,
+    }
+
+    #[async_trait::async_trait]
+    impl ModelAdapter for WebhookModel {
+        async fn stream(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDef],
+            tx: mpsc::Sender<ModelStreamChunk>,
+        ) -> Result<ModelResponse, ModelError> {
+            let usage = TokenUsage {
+                input_tokens: 5,
+                output_tokens: 5,
+            };
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+            if self.call_count.fetch_add(1, Ordering::SeqCst) == 0 {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "webhook_1".into(),
+                        name: "webhook_tool".into(),
+                        input: json!({}),
+                    }],
+                    usage,
+                    stop_reason: StopReason::ToolUse,
+                })
+            } else {
+                assert!(messages.iter().any(|message| {
+                    message.content.iter().any(|block| {
+                        matches!(block, ContentBlock::ToolResult { content, .. } if content["ok"] == true)
+                    })
+                }));
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text("done".into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn webhook_async_job_completes_without_polling() {
+        let mut config = test_config();
+        config.webhook_enabled = true;
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(WebhookTool)).unwrap();
+        let model = Arc::new(WebhookModel {
+            call_count: AtomicU32::new(0),
+        });
+        let (handle, mut rx) = AgentRun::start(config, "run webhook".into(), model, registry);
+        let mut completed = false;
+        while let Some(event) = rx.recv().await {
+            if matches!(event, RuntimeEvent::AsyncToolCompleted { .. }) {
+                completed = true;
+            }
+        }
+        handle.wait().await;
+        assert!(completed);
     }
 }

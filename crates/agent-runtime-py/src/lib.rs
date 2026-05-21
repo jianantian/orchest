@@ -198,9 +198,10 @@ fn py_async_job_handle(result: &Py<PyAny>) -> Result<Option<JobHandle>, ToolErro
 
         Ok(Some(JobHandle {
             job_id,
-            poll: Arc::new(poll_fn),
+            poll: Some(Arc::new(poll_fn)),
             poll_interval: Duration::from_millis(poll_interval_ms),
             timeout: None,
+            webhook: None,
         }))
     })
     .map_err(|e| ToolError {
@@ -397,12 +398,17 @@ impl Agent {
                 api_key_env: None,
                 api_url: self.api_url.clone(),
                 max_tokens: Some(4096),
+                context_window_size: None,
             },
             budget: budget_config,
             max_steps: 20,
             allowed_skills: None,
             allowed_tools: None,
             mcp_servers: vec![],
+            tool_search_enabled: false,
+            compaction_threshold: None,
+            compaction_recent_messages: 10,
+            webhook_enabled: false,
         };
 
         let mut registry = ToolRegistry::new();
