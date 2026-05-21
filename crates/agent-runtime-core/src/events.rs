@@ -81,6 +81,13 @@ pub enum RuntimeEvent {
         used: BudgetUsage,
         limit: BudgetConfig,
     },
+    RuntimeWarning {
+        message: String,
+    },
+    ContextCompacted {
+        removed_messages: usize,
+        summary_tokens: u32,
+    },
 
     RunCompleted {
         output: Value,

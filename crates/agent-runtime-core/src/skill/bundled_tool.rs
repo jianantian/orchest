@@ -306,9 +306,10 @@ impl Tool for SkillBundledTool {
 
             return Ok(ToolOutput::AsyncJob(JobHandle {
                 job_id,
-                poll: Arc::new(poll_fn),
+                poll: Some(Arc::new(poll_fn)),
                 poll_interval: Duration::from_secs(poll_interval_secs),
                 timeout: self.metadata.timeout,
+                webhook: None,
             }));
         }
 
@@ -408,6 +409,7 @@ echo '{"greeting": "hello"}'
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: None,
+            webhook_base_url: None,
         };
         let result = tool
             .execute(serde_json::json!({"name": "world"}), &ctx)
@@ -445,6 +447,7 @@ echo '{"greeting": "hello"}'
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: None,
+            webhook_base_url: None,
         };
         let result = tool.execute(serde_json::json!({}), &ctx).await;
         assert!(result.is_err());
@@ -482,6 +485,7 @@ fi
             tool_call_id: "tc_1".into(),
             on_update: None,
             event_tx: None,
+            webhook_base_url: None,
         };
         let result = tool.execute(serde_json::json!({}), &ctx).await;
         assert!(result.is_ok());
@@ -491,7 +495,7 @@ fi
                 assert_eq!(handle.poll_interval, Duration::from_secs(1));
 
                 // Poll the job
-                let status = (handle.poll)().await;
+                let status = (handle.poll.as_ref().expect("poll should exist"))().await;
                 assert!(status.is_ok());
                 match status.unwrap() {
                     JobStatus::Completed(v) => {

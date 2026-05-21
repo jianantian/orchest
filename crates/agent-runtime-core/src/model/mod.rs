@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod openai;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -57,6 +58,8 @@ pub struct ModelSpec {
     #[serde(default)]
     pub api_url: Option<String>,
     pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub context_window_size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
