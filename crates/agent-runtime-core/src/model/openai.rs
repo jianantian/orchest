@@ -74,28 +74,108 @@ impl OpenAiAdapter {
     }
 
     fn build_request_body(&self, messages: &[Message], tools: &[ToolDef]) -> Value {
-        let api_messages: Vec<Value> = messages
-            .iter()
-            .map(|message| {
-                let role = match message.role {
-                    Role::System => "system",
-                    Role::User => "user",
-                    Role::Assistant => "assistant",
-                    Role::Tool => "tool",
-                };
-                let text = message
-                    .content
-                    .iter()
-                    .filter_map(|block| match block {
-                        ContentBlock::Text(text) => Some(text.clone()),
-                        ContentBlock::ToolResult { content, .. } => Some(content.to_string()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                json!({"role": role, "content": text})
-            })
-            .collect();
+        let mut api_messages: Vec<Value> = Vec::new();
+
+        for message in messages {
+            match message.role {
+                Role::System => {
+                    let text = message
+                        .content
+                        .iter()
+                        .filter_map(|b| match b {
+                            ContentBlock::Text(t) => Some(t.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    api_messages.push(json!({"role": "system", "content": text}));
+                }
+                Role::User => {
+                    // User messages may contain ToolResult blocks (runtime sends them as User role)
+                    let mut text_parts = Vec::new();
+                    let mut tool_results = Vec::new();
+                    for block in &message.content {
+                        match block {
+                            ContentBlock::Text(t) => text_parts.push(t.clone()),
+                            ContentBlock::ToolResult {
+                                tool_use_id,
+                                content,
+                            } => {
+                                tool_results.push((tool_use_id.clone(), content.clone()));
+                            }
+                            _ => {}
+                        }
+                    }
+                    if !tool_results.is_empty() {
+                        // Emit each tool result as a separate "tool" role message
+                        for (tool_call_id, content) in tool_results {
+                            let content_str = match &content {
+                                Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            };
+                            api_messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "content": content_str
+                            }));
+                        }
+                    } else {
+                        let text = text_parts.join("\n");
+                        api_messages.push(json!({"role": "user", "content": text}));
+                    }
+                }
+                Role::Assistant => {
+                    let mut text_parts = Vec::new();
+                    let mut tool_calls = Vec::new();
+                    for block in &message.content {
+                        match block {
+                            ContentBlock::Text(t) => text_parts.push(t.clone()),
+                            ContentBlock::ToolUse { id, name, input } => {
+                                tool_calls.push(json!({
+                                    "id": id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": name,
+                                        "arguments": input.to_string()
+                                    }
+                                }));
+                            }
+                            _ => {}
+                        }
+                    }
+                    let mut msg = json!({"role": "assistant"});
+                    if !text_parts.is_empty() {
+                        msg["content"] = json!(text_parts.join("\n"));
+                    } else if tool_calls.is_empty() {
+                        msg["content"] = json!("");
+                    }
+                    if !tool_calls.is_empty() {
+                        msg["tool_calls"] = Value::Array(tool_calls);
+                    }
+                    api_messages.push(msg);
+                }
+                Role::Tool => {
+                    for block in &message.content {
+                        if let ContentBlock::ToolResult {
+                            tool_use_id,
+                            content,
+                        } = block
+                        {
+                            let content_str = match content {
+                                Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            };
+                            api_messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": tool_use_id,
+                                "content": content_str
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
         let mut body = json!({
             "model": self.model,
             "max_tokens": self.max_tokens,
@@ -266,7 +346,18 @@ impl ModelAdapter for OpenAiAdapter {
             if name.is_empty() {
                 continue;
             }
-            let input = serde_json::from_str(&arguments).unwrap_or_else(|_| json!({}));
+            let input = match serde_json::from_str(&arguments) {
+                Ok(v) => v,
+                Err(_) => {
+                    return Err(ModelError {
+                        message: format!(
+                            "invalid tool call arguments for '{}': {}",
+                            name, arguments
+                        ),
+                        code: Some("invalid_tool_arguments".into()),
+                    });
+                }
+            };
             content.push(ContentBlock::ToolUse { id, name, input });
         }
         let _ = tx
@@ -345,6 +436,92 @@ data: [DONE]
             ContentBlock::ToolUse { id, name, input }
                 if id == "call_1" && name == "echo" && input["text"] == "hello"
         ));
+    }
+
+    #[test]
+    fn build_request_body_serializes_tool_calls_and_results() {
+        let adapter = OpenAiAdapter::from_config(OpenAiConfig {
+            model: "gpt-4o-mini".into(),
+            max_tokens: 128,
+            api_key: Some("key".into()),
+            api_url: Some("http://localhost/v1/chat/completions".into()),
+        })
+        .expect("adapter");
+
+        let messages = vec![
+            Message {
+                role: Role::System,
+                content: vec![ContentBlock::Text("You are helpful.".into())],
+            },
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text("Hello".into())],
+            },
+            Message {
+                role: Role::Assistant,
+                content: vec![
+                    ContentBlock::Text("Let me check.".into()),
+                    ContentBlock::ToolUse {
+                        id: "call_1".into(),
+                        name: "get_weather".into(),
+                        input: json!({"city": "NYC"}),
+                    },
+                ],
+            },
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "call_1".into(),
+                    content: json!({"temp": 72}),
+                }],
+            },
+        ];
+
+        let body = adapter.build_request_body(&messages, &[]);
+        let api_msgs = body["messages"].as_array().unwrap();
+
+        // System message
+        assert_eq!(api_msgs[0]["role"], "system");
+        assert_eq!(api_msgs[0]["content"], "You are helpful.");
+
+        // User message
+        assert_eq!(api_msgs[1]["role"], "user");
+        assert_eq!(api_msgs[1]["content"], "Hello");
+
+        // Assistant message with tool_calls
+        assert_eq!(api_msgs[2]["role"], "assistant");
+        assert_eq!(api_msgs[2]["content"], "Let me check.");
+        let tool_calls = api_msgs[2]["tool_calls"].as_array().unwrap();
+        assert_eq!(tool_calls[0]["id"], "call_1");
+        assert_eq!(tool_calls[0]["function"]["name"], "get_weather");
+
+        // Tool result message
+        assert_eq!(api_msgs[3]["role"], "tool");
+        assert_eq!(api_msgs[3]["tool_call_id"], "call_1");
+    }
+
+    #[tokio::test]
+    async fn stream_rejects_invalid_tool_arguments() {
+        let api_url = serve_sse_once(
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"echo","arguments":"not valid json"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}
+
+data: [DONE]
+
+"#,
+        )
+        .await;
+        let adapter = OpenAiAdapter::from_config(OpenAiConfig {
+            model: "gpt-4o-mini".into(),
+            max_tokens: 128,
+            api_key: Some("key".into()),
+            api_url: Some(api_url),
+        })
+        .expect("adapter");
+        let (tx, _rx) = mpsc::channel(16);
+        let result = adapter.stream(&[], &[], tx).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.code.as_deref(), Some("invalid_tool_arguments"));
     }
 
     async fn serve_sse_once(body: &'static str) -> String {
