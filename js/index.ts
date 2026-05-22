@@ -28,6 +28,15 @@ export interface ToolRegistration {
   sideEffect?: boolean;
 }
 
+export interface ToolWithHandler {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  handler: (input: any) => any;
+  requiresApproval?: boolean;
+  sideEffect?: boolean;
+}
+
 export type RuntimeEvent =
   | { type: "run_started"; run_id: string }
   | { type: "model_call_started"; step: number }

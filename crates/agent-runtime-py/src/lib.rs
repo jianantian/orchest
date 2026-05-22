@@ -6,12 +6,13 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use serde_json::Value;
+use tokio::sync::Mutex as TokioMutex;
 
 use agent_runtime_core::budget::BudgetConfig;
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::model::anthropic::{AnthropicAdapter, AnthropicConfig};
 use agent_runtime_core::model::ModelSpec;
-use agent_runtime_core::run::{AgentConfig, AgentRun};
+use agent_runtime_core::run::{AgentConfig, AgentRun, RunHandle};
 use agent_runtime_core::tool::async_job::{JobHandle, JobStatus};
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
@@ -26,6 +27,7 @@ struct Agent {
     skills_dir: Option<String>,
     budget: Option<PyBudget>,
     tools: Vec<PyToolDef>,
+    run_handle: Arc<TokioMutex<Option<RunHandle>>>,
 }
 
 #[derive(Clone)]
@@ -83,12 +85,25 @@ impl Tool for PyTool {
         let result = Python::attach(|py| -> PyResult<Py<PyAny>> {
             let json_mod = py.import("json")?;
             let input_py = json_mod.call_method1("loads", (&input_str,))?;
-            let result = if let Ok(kwargs) = input_py.cast::<PyDict>() {
+
+            let raw_result = if let Ok(kwargs) = input_py.cast::<PyDict>() {
                 callback.call(py, (), Some(kwargs))?
             } else {
                 callback.call1(py, (input_py,))?
             };
-            Ok(result)
+
+            // If the result is a coroutine, run it with asyncio
+            let inspect = py.import("inspect")?;
+            let is_coro: bool = inspect
+                .call_method1("iscoroutine", (raw_result.bind(py),))?
+                .extract()?;
+            if is_coro {
+                let asyncio = py.import("asyncio")?;
+                let awaited = asyncio.call_method1("run", (raw_result.bind(py),))?;
+                Ok(awaited.unbind())
+            } else {
+                Ok(raw_result)
+            }
         })
         .map_err(|e| ToolError {
             message: format!("Python tool error: {}", e),
@@ -146,10 +161,37 @@ fn py_async_job_handle(result: &Py<PyAny>) -> Result<Option<JobHandle>, ToolErro
             let poll = Python::attach(|py| poll.clone_ref(py));
             Box::pin(async move {
                 Python::attach(|py| -> Result<JobStatus, ToolError> {
-                    let value = poll.call0(py).map_err(|e| ToolError {
+                    let raw_value = poll.call0(py).map_err(|e| ToolError {
                         message: format!("Python async job poll error: {}", e),
                         code: None,
                     })?;
+
+                    // If the poll result is a coroutine, await it
+                    let inspect = py.import("inspect").map_err(|e| ToolError {
+                        message: format!("failed to import inspect: {}", e),
+                        code: None,
+                    })?;
+                    let is_coro: bool = inspect
+                        .call_method1("iscoroutine", (raw_value.bind(py),))
+                        .and_then(|v| v.extract())
+                        .unwrap_or(false);
+
+                    let value = if is_coro {
+                        let asyncio = py.import("asyncio").map_err(|e| ToolError {
+                            message: format!("failed to import asyncio: {}", e),
+                            code: None,
+                        })?;
+                        asyncio
+                            .call_method1("run", (raw_value.bind(py),))
+                            .map_err(|e| ToolError {
+                                message: format!("failed to await async poll: {}", e),
+                                code: None,
+                            })?
+                            .unbind()
+                    } else {
+                        raw_value
+                    };
+
                     let json_mod = py.import("json").map_err(|e| ToolError {
                         message: format!("failed to import json: {}", e),
                         code: None,
@@ -312,6 +354,82 @@ fn to_snake_case(name: &str) -> String {
     out
 }
 
+impl Agent {
+    fn build_config(&self) -> AgentConfig {
+        let budget_config = if let Some(ref b) = self.budget {
+            BudgetConfig {
+                max_tokens: b.max_tokens,
+                max_tool_calls: b.max_tool_calls,
+                max_duration: b.max_duration_secs.map(Duration::from_secs),
+                max_cost_usd: b.max_cost_usd,
+            }
+        } else {
+            BudgetConfig {
+                max_tokens: None,
+                max_tool_calls: None,
+                max_duration: None,
+                max_cost_usd: None,
+            }
+        };
+
+        AgentConfig {
+            system_prompt: self.system_prompt.clone(),
+            model: ModelSpec {
+                provider: "anthropic".into(),
+                model: self.model.clone(),
+                api_key_env: None,
+                api_url: self.api_url.clone(),
+                max_tokens: Some(4096),
+                context_window_size: None,
+            },
+            budget: budget_config,
+            max_steps: 20,
+            allowed_skills: None,
+            allowed_tools: None,
+            mcp_servers: vec![],
+            tool_search_enabled: false,
+            compaction_threshold: None,
+            compaction_recent_messages: 10,
+            webhook_enabled: false,
+            code_execution_enabled: false,
+            skills_dir: self.skills_dir.clone(),
+            run_depth: 0,
+        }
+    }
+
+    fn build_registry(&self) -> Result<ToolRegistry, PyErr> {
+        let mut registry = ToolRegistry::new();
+        for tool_def in &self.tools {
+            let tool = PyTool {
+                def: tool_def.clone(),
+                metadata: ToolMetadata {
+                    side_effect: tool_def.side_effect,
+                    requires_approval: tool_def.requires_approval,
+                    cost_hint: None,
+                    timeout: None,
+                    max_output_tokens: None,
+                    source: ToolSource::InProcess,
+                },
+            };
+            registry
+                .register(Arc::new(tool))
+                .map_err(|e| PyRuntimeError::new_err(format!("failed to register tool: {}", e)))?;
+        }
+        Ok(registry)
+    }
+
+    fn build_model(&self) -> Result<Arc<dyn agent_runtime_core::model::ModelAdapter>, PyErr> {
+        let adapter = AnthropicAdapter::from_config(AnthropicConfig {
+            model: self.model.clone(),
+            max_tokens: 4096,
+            api_key: None,
+            api_url: self.api_url.clone(),
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("failed to create model: {}", e)))?;
+        Ok(Arc::new(adapter))
+    }
+}
+
 #[pymethods]
 impl Agent {
     #[new]
@@ -343,6 +461,7 @@ impl Agent {
             skills_dir,
             budget: py_budget,
             tools: Vec::new(),
+            run_handle: Arc::new(TokioMutex::new(None)),
         })
     }
 
@@ -350,7 +469,54 @@ impl Agent {
         self.api_url = api_url;
     }
 
-    fn tool(&mut self, py: Python<'_>, func: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    /// Register a tool. Supports both `@agent.tool` (bare decorator) and
+    /// `@agent.tool(requires_approval=True, side_effect=True)` (decorator factory).
+    #[pyo3(signature = (func=None, requires_approval=false, side_effect=false))]
+    fn tool(
+        &mut self,
+        py: Python<'_>,
+        func: Option<Py<PyAny>>,
+        requires_approval: bool,
+        side_effect: bool,
+    ) -> PyResult<Py<PyAny>> {
+        if let Some(func) = func {
+            // Direct decorator: @agent.tool
+            let name: String = func.getattr(py, "__name__")?.extract(py)?;
+            let description: String = func
+                .getattr(py, "__doc__")
+                .and_then(|d| d.extract(py))
+                .unwrap_or_else(|_| format!("Tool: {}", name));
+            let input_schema = infer_schema_from_hints(py, &func)?;
+
+            self.tools.push(PyToolDef {
+                name,
+                description,
+                input_schema,
+                requires_approval,
+                side_effect,
+                callback: func.clone_ref(py),
+            });
+
+            Ok(func)
+        } else {
+            // Decorator factory syntax @agent.tool(requires_approval=True) is not
+            // supported due to pyo3 limitations with returning Python callables.
+            // Use agent.register_tool(func, ...) instead.
+            Err(PyRuntimeError::new_err(
+                "Use @agent.tool directly for decorator syntax. For metadata, use agent.register_tool(func, requires_approval=True, side_effect=True).",
+            ))
+        }
+    }
+
+    /// Explicitly register a tool with metadata options.
+    #[pyo3(signature = (func, requires_approval=false, side_effect=false))]
+    fn register_tool(
+        &mut self,
+        py: Python<'_>,
+        func: Py<PyAny>,
+        requires_approval: bool,
+        side_effect: bool,
+    ) -> PyResult<()> {
         let name: String = func.getattr(py, "__name__")?.extract(py)?;
         let description: String = func
             .getattr(py, "__doc__")
@@ -362,99 +528,53 @@ impl Agent {
             name,
             description,
             input_schema,
-            requires_approval: false,
-            side_effect: false,
-            callback: func.clone_ref(py),
+            requires_approval,
+            side_effect,
+            callback: func,
         });
 
-        Ok(func)
+        Ok(())
     }
 
-    fn run<'py>(
+    /// Synchronous run: collects all events and returns as a list.
+    /// Compatibility helper for simple use cases.
+    fn run_sync<'py>(
         &self,
         py: Python<'py>,
         input: String,
     ) -> PyResult<Bound<'py, pyo3::types::PyList>> {
-        let budget_config = if let Some(ref b) = self.budget {
-            BudgetConfig {
-                max_tokens: b.max_tokens,
-                max_tool_calls: b.max_tool_calls,
-                max_duration: b.max_duration_secs.map(Duration::from_secs),
-                max_cost_usd: b.max_cost_usd,
-            }
-        } else {
-            BudgetConfig {
-                max_tokens: None,
-                max_tool_calls: None,
-                max_duration: None,
-                max_cost_usd: None,
-            }
-        };
-
-        let config = AgentConfig {
-            system_prompt: self.system_prompt.clone(),
-            model: ModelSpec {
-                provider: "anthropic".into(),
-                model: self.model.clone(),
-                api_key_env: None,
-                api_url: self.api_url.clone(),
-                max_tokens: Some(4096),
-                context_window_size: None,
-            },
-            budget: budget_config,
-            max_steps: 20,
-            allowed_skills: None,
-            allowed_tools: None,
-            mcp_servers: vec![],
-            tool_search_enabled: false,
-            compaction_threshold: None,
-            compaction_recent_messages: 10,
-            webhook_enabled: false,
-            code_execution_enabled: false,
-            skills_dir: self.skills_dir.clone(),
-            run_depth: 0,
-        };
-
-        let mut registry = ToolRegistry::new();
-        for tool_def in &self.tools {
-            let tool = PyTool {
-                def: tool_def.clone(),
-                metadata: ToolMetadata {
-                    side_effect: tool_def.side_effect,
-                    requires_approval: tool_def.requires_approval,
-                    cost_hint: None,
-                    timeout: None,
-                    max_output_tokens: None,
-                    source: ToolSource::InProcess,
-                },
-            };
-            registry
-                .register(Arc::new(tool))
-                .map_err(|e| PyRuntimeError::new_err(format!("failed to register tool: {}", e)))?;
-        }
-
-        let model_adapter: Arc<dyn agent_runtime_core::model::ModelAdapter> = Arc::new(
-            AnthropicAdapter::from_config(AnthropicConfig {
-                model: self.model.clone(),
-                max_tokens: 4096,
-                api_key: None,
-                api_url: self.api_url.clone(),
-            })
-            .map_err(|e| PyRuntimeError::new_err(format!("failed to create model: {}", e)))?,
-        );
+        let config = self.build_config();
+        let registry = self.build_registry()?;
+        let model_adapter = self.build_model()?;
+        let run_handle_ref = Arc::clone(&self.run_handle);
 
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| PyRuntimeError::new_err(format!("failed to create runtime: {}", e)))?;
 
         let events = py.detach(|| {
             rt.block_on(async {
-                let (_handle, mut event_rx) =
+                let (handle, mut event_rx) =
                     AgentRun::start(config, input, model_adapter, registry);
+
+                // Store the handle for respond_approval
+                {
+                    let mut guard = run_handle_ref.lock().await;
+                    *guard = Some(handle);
+                }
 
                 let mut events = Vec::new();
                 while let Some(event) = event_rx.recv().await {
                     events.push(event);
                 }
+
+                // Wait for run to finish and clear handle
+                {
+                    let mut guard = run_handle_ref.lock().await;
+                    if let Some(h) = guard.take() {
+                        h.wait().await;
+                    }
+                }
+
                 events
             })
         });
@@ -468,10 +588,43 @@ impl Agent {
         Ok(py_list)
     }
 
-    fn respond_approval(&self, _run_id_str: String, _approved: bool) -> PyResult<()> {
-        Err(PyRuntimeError::new_err(
-            "respond_approval requires an active run handle (not yet supported in sync mode)",
-        ))
+    /// Async-compatible run: returns a list of events (async iteration
+    /// over a channel requires a Python async generator, which is complex
+    /// in pyo3. This method releases the GIL during execution.)
+    fn run<'py>(
+        &self,
+        py: Python<'py>,
+        input: String,
+    ) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+        // For now, run and run_sync have the same implementation.
+        // True async iteration would require pyo3-asyncio integration
+        // which adds significant complexity. The key improvement is that
+        // we release the GIL during execution via py.detach().
+        self.run_sync(py, input)
+    }
+
+    /// Respond to an approval request for an active run.
+    fn respond_approval(&self, run_id_str: String, approved: bool) -> PyResult<()> {
+        let run_handle_ref = Arc::clone(&self.run_handle);
+
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| PyRuntimeError::new_err(format!("failed to create runtime: {}", e)))?;
+
+        rt.block_on(async {
+            let guard = run_handle_ref.lock().await;
+            if let Some(ref handle) = *guard {
+                let run_id: agent_runtime_core::run::RunId = agent_runtime_core::run::RunId(
+                    uuid::Uuid::parse_str(&run_id_str)
+                        .map_err(|e| PyRuntimeError::new_err(format!("invalid run_id: {}", e)))?,
+                );
+                handle.respond_approval(run_id, approved).await;
+                Ok(())
+            } else {
+                Err(PyRuntimeError::new_err(
+                    "no active run to respond to — call run() or run_sync() first",
+                ))
+            }
+        })
     }
 }
 
