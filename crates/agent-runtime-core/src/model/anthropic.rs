@@ -245,7 +245,10 @@ impl ModelAdapter for AnthropicAdapter {
                     continue;
                 }
 
-                let data: Value = serde_json::from_str(&event_data).unwrap_or_default();
+                let data: Value = serde_json::from_str(&event_data).map_err(|e| ModelError {
+                    message: format!("malformed SSE JSON: {e}"),
+                    code: Some("invalid_json".into()),
+                })?;
 
                 match event_type.as_str() {
                     "content_block_start" => {
@@ -500,6 +503,37 @@ data: {}
         assert!(matches!(chunks[4], ModelStreamChunk::Done { .. }));
         assert_eq!(response.usage.input_tokens, 3);
         assert_eq!(response.usage.output_tokens, 5);
+    }
+
+    #[tokio::test]
+    async fn stream_rejects_malformed_sse_json() {
+        let api_url = serve_sse_once(
+            r#"event: message_start
+data: {"message":{"usage":{"input_tokens":3}}}
+
+event: content_block_delta
+data: {NOT VALID JSON!!!}
+
+"#,
+        )
+        .await;
+
+        let adapter = AnthropicAdapter::from_config(AnthropicConfig {
+            model: "claude-test".into(),
+            max_tokens: 128,
+            api_key: Some("key".into()),
+            api_url: Some(api_url),
+        })
+        .expect("adapter should be created");
+
+        let (tx, _rx) = mpsc::channel(16);
+        let err = adapter
+            .stream(&[], &[], tx)
+            .await
+            .expect_err("malformed JSON should produce an error");
+
+        assert_eq!(err.code.as_deref(), Some("invalid_json"));
+        assert!(err.message.contains("malformed SSE JSON"));
     }
 
     async fn serve_sse_once(body: &'static str) -> String {

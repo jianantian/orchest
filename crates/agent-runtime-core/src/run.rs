@@ -715,8 +715,10 @@ async fn execute_sub_agent_request(
             .filter_map(Value::as_str)
             .map(String::from)
             .collect();
-        child_config.allowed_tools =
-            Some(narrow_permission_list(&parent_config.allowed_tools, &requested));
+        child_config.allowed_tools = Some(narrow_permission_list(
+            &parent_config.allowed_tools,
+            &requested,
+        ));
     }
     if let Some(requested_skills) = request
         .get("config")
@@ -728,8 +730,10 @@ async fn execute_sub_agent_request(
             .filter_map(Value::as_str)
             .map(String::from)
             .collect();
-        child_config.allowed_skills =
-            Some(narrow_permission_list(&parent_config.allowed_skills, &requested));
+        child_config.allowed_skills = Some(narrow_permission_list(
+            &parent_config.allowed_skills,
+            &requested,
+        ));
     }
     let input = request
         .get("input")
@@ -2382,7 +2386,9 @@ mod tests {
             "should emit ToolCallFailed with timeout error"
         );
         assert!(
-            events.iter().any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+            events
+                .iter()
+                .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
             "run should continue after timeout"
         );
     }
@@ -2528,7 +2534,10 @@ mod tests {
         let budget_exceeded = events.iter().any(
             |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error == "tool call budget exceeded"),
         );
-        assert!(budget_exceeded, "third tool call should be denied by budget");
+        assert!(
+            budget_exceeded,
+            "third tool call should be denied by budget"
+        );
     }
 
     #[test]
