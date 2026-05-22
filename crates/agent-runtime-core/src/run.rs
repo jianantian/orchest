@@ -15,6 +15,7 @@ use crate::model::{
     StopReason,
 };
 use crate::tool::async_job::{JobHandle, JobStatus};
+use crate::tool::builtin::ReadFileTool;
 use crate::tool::code_exec::CodeExecutionMcpServer;
 use crate::tool::mcp::{
     McpClient, McpHttpClient, McpServerConfig, McpStdioClient, McpTool, McpTransport,
@@ -22,6 +23,10 @@ use crate::tool::mcp::{
 use crate::tool::registry::ToolRegistry;
 use crate::tool::search::SearchToolsTool;
 use crate::tool::{Tool, ToolCall, ToolContext, ToolDef, ToolOutput};
+
+use crate::skill::bundled_tool::SkillBundledTool;
+use crate::skill::executor::BareSubprocessExecutor;
+use crate::skill::{CapabilityValidator, SkillScanner};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RunId(pub uuid::Uuid);
@@ -64,6 +69,8 @@ pub struct AgentConfig {
     pub webhook_enabled: bool,
     #[serde(default)]
     pub code_execution_enabled: bool,
+    #[serde(default)]
+    pub skills_dir: Option<String>,
     #[serde(default)]
     pub run_depth: u32,
 }
@@ -201,6 +208,85 @@ fn min_option_f64(requested: Option<f64>, remaining: Option<f64>) -> Option<f64>
     }
 }
 
+async fn register_skills(
+    skills_dir: &str,
+    allowed_skills: &Option<Vec<String>>,
+    registry: &mut ToolRegistry,
+    tx: &mpsc::Sender<RuntimeEvent>,
+) -> Result<Option<Arc<ReadFileTool>>, String> {
+    use std::path::Path;
+
+    let dir = Path::new(skills_dir);
+    let manifests = SkillScanner::scan(dir).map_err(|e| format!("skill scan failed: {e}"))?;
+    if manifests.is_empty() {
+        return Ok(None);
+    }
+
+    let read_file_tool = Arc::new(ReadFileTool::new());
+    let executor: Arc<dyn crate::skill::executor::ScriptExecutor> =
+        Arc::new(BareSubprocessExecutor::new());
+
+    for manifest in &manifests {
+        // Filter by allowed_skills
+        if let Some(ref allowed) = allowed_skills {
+            if !allowed.contains(&manifest.name) {
+                continue;
+            }
+        }
+
+        // Emit SkillMissingCapabilities warning if applicable
+        if CapabilityValidator::missing_capabilities_warning(manifest) {
+            emit(
+                tx,
+                RuntimeEvent::SkillMissingCapabilities {
+                    skill_name: manifest.name.clone(),
+                },
+            )
+            .await;
+        }
+
+        // Register SKILL.md path with read_file for telemetry
+        let skill_md_path = manifest.path.join("SKILL.md");
+        if skill_md_path.exists() {
+            read_file_tool
+                .register_skill(manifest.name.clone(), skill_md_path)
+                .await;
+        }
+
+        // Register each bundled tool
+        for tool_def in &manifest.bundled_tools {
+            let bundled = SkillBundledTool::new_with_options(
+                tool_def,
+                manifest.path.clone(),
+                manifest.name.clone(),
+                manifest.dependencies.clone(),
+                manifest.capabilities.clone(),
+                Arc::clone(&executor),
+            )
+            .map_err(|e| {
+                format!(
+                    "failed to create bundled tool '{}' for skill '{}': {}",
+                    tool_def.name, manifest.name, e.message
+                )
+            })?;
+
+            registry.register(Arc::new(bundled)).map_err(|e| {
+                format!(
+                    "duplicate tool name '{}' from skill '{}': {}",
+                    tool_def.name, manifest.name, e
+                )
+            })?;
+        }
+    }
+
+    // Register read_file tool for skill telemetry
+    registry
+        .register(read_file_tool.clone() as Arc<dyn Tool>)
+        .map_err(|e| format!("failed to register read_file tool: {e}"))?;
+
+    Ok(Some(read_file_tool))
+}
+
 impl AgentRun {
     pub fn start(
         config: AgentConfig,
@@ -283,6 +369,22 @@ async fn run_loop(
                 )
                 .await;
             }
+        }
+    }
+
+    // Register skill bundled tools when skills_dir is provided
+    if let Some(ref skills_dir) = config.skills_dir {
+        if let Err(error) =
+            register_skills(skills_dir, &config.allowed_skills, &mut registry, &tx).await
+        {
+            emit(
+                &tx,
+                RuntimeEvent::RunFailed {
+                    error: format!("skill loading failed: {error}"),
+                },
+            )
+            .await;
+            return;
         }
     }
 
@@ -1372,6 +1474,7 @@ mod tests {
             compaction_recent_messages: default_recent_messages(),
             webhook_enabled: false,
             code_execution_enabled: false,
+            skills_dir: None,
             run_depth: 0,
         }
     }
@@ -2562,5 +2665,321 @@ mod tests {
         let value = json!("hello");
         let result = truncate_output(value.clone(), 100);
         assert_eq!(result, value);
+    }
+
+    #[tokio::test]
+    async fn register_skills_scans_and_registers_bundled_tools() {
+        use std::fs;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("greet_skill");
+        fs::create_dir_all(skill_dir.join("scripts")).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: greet_skill
+description: A greeting skill
+bundled_tools:
+  - name: greet
+    description: Greets someone
+    executable: bash
+    script: scripts/greet.sh
+    input_schema:
+      type: object
+      properties:
+        name:
+          type: string
+---
+
+# Greeting Skill
+"#,
+        )
+        .unwrap();
+        let script = "#!/bin/sh\nread input\necho '{\"greeting\": \"hello\"}'";
+        fs::write(skill_dir.join("scripts/greet.sh"), script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                skill_dir.join("scripts/greet.sh"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut registry = ToolRegistry::new();
+
+        let result = register_skills(tmp.path().to_str().unwrap(), &None, &mut registry, &tx).await;
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some()); // read_file tool returned
+        assert!(registry.contains("greet"));
+        assert!(registry.contains("read_file"));
+
+        // No warnings expected (no scripts/ without capabilities, since we have bundled_tools)
+        drop(tx);
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        // Skill has scripts/ dir but no capabilities → SkillMissingCapabilities warning
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::SkillMissingCapabilities { .. })));
+    }
+
+    #[tokio::test]
+    async fn register_skills_filters_by_allowed_skills() {
+        use std::fs;
+
+        let tmp = tempfile::tempdir().unwrap();
+        // Create two skills
+        for name in &["skill_a", "skill_b"] {
+            let skill_dir = tmp.path().join(name);
+            fs::create_dir_all(skill_dir.join("scripts")).unwrap();
+            fs::write(
+                skill_dir.join("SKILL.md"),
+                format!(
+                    r#"---
+name: {name}
+description: {name}
+bundled_tools:
+  - name: tool_{name}
+    description: tool for {name}
+    executable: bash
+    script: scripts/run.sh
+---
+"#
+                ),
+            )
+            .unwrap();
+            fs::write(skill_dir.join("scripts/run.sh"), "#!/bin/sh\necho '{}'").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(
+                    skill_dir.join("scripts/run.sh"),
+                    fs::Permissions::from_mode(0o755),
+                )
+                .unwrap();
+            }
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let mut registry = ToolRegistry::new();
+        let allowed = Some(vec!["skill_a".to_string()]);
+
+        register_skills(tmp.path().to_str().unwrap(), &allowed, &mut registry, &tx)
+            .await
+            .unwrap();
+
+        assert!(registry.contains("tool_skill_a"));
+        assert!(!registry.contains("tool_skill_b"));
+    }
+
+    #[tokio::test]
+    async fn register_skills_duplicate_tool_name_errors() {
+        use std::fs;
+
+        let tmp = tempfile::tempdir().unwrap();
+        // Create two skills with the same bundled tool name
+        for name in &["skill_x", "skill_y"] {
+            let skill_dir = tmp.path().join(name);
+            fs::create_dir_all(skill_dir.join("scripts")).unwrap();
+            fs::write(
+                skill_dir.join("SKILL.md"),
+                format!(
+                    r#"---
+name: {name}
+description: {name}
+bundled_tools:
+  - name: same_tool
+    description: duplicated tool
+    executable: bash
+    script: scripts/run.sh
+---
+"#
+                ),
+            )
+            .unwrap();
+            fs::write(skill_dir.join("scripts/run.sh"), "#!/bin/sh\necho '{}'").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(
+                    skill_dir.join("scripts/run.sh"),
+                    fs::Permissions::from_mode(0o755),
+                )
+                .unwrap();
+            }
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let mut registry = ToolRegistry::new();
+
+        let result = register_skills(tmp.path().to_str().unwrap(), &None, &mut registry, &tx).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("duplicate tool name"));
+    }
+
+    #[tokio::test]
+    async fn register_skills_no_warning_when_capabilities_declared() {
+        use std::fs;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("cap_skill");
+        fs::create_dir_all(skill_dir.join("scripts")).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: cap_skill
+description: A skill with capabilities
+capabilities:
+  network: true
+bundled_tools:
+  - name: cap_tool
+    description: tool
+    executable: bash
+    script: scripts/run.sh
+---
+"#,
+        )
+        .unwrap();
+        fs::write(skill_dir.join("scripts/run.sh"), "#!/bin/sh\necho '{}'").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                skill_dir.join("scripts/run.sh"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut registry = ToolRegistry::new();
+
+        register_skills(tmp.path().to_str().unwrap(), &None, &mut registry, &tx)
+            .await
+            .unwrap();
+
+        drop(tx);
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        // No SkillMissingCapabilities expected because capabilities are declared
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::SkillMissingCapabilities { .. })));
+    }
+
+    #[tokio::test]
+    async fn skills_dir_config_runs_skill_scan() {
+        use std::fs;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("run_skill");
+        fs::create_dir_all(skill_dir.join("scripts")).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: run_skill
+description: A skill
+bundled_tools:
+  - name: run_tool
+    description: runs
+    executable: bash
+    script: scripts/run.sh
+    input_schema:
+      type: object
+---
+"#,
+        )
+        .unwrap();
+        fs::write(
+            skill_dir.join("scripts/run.sh"),
+            "#!/bin/sh\nread input\necho '{\"result\": \"ok\"}'",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                skill_dir.join("scripts/run.sh"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+
+        // Use a model that calls run_tool then gives final answer
+        struct SkillToolModel {
+            call_count: std::sync::atomic::AtomicU32,
+        }
+
+        #[async_trait::async_trait]
+        impl ModelAdapter for SkillToolModel {
+            async fn stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolDef],
+                tx: mpsc::Sender<ModelStreamChunk>,
+            ) -> Result<ModelResponse, ModelError> {
+                let count = self
+                    .call_count
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let usage = crate::model::TokenUsage {
+                    input_tokens: 5,
+                    output_tokens: 5,
+                };
+                let _ = tx
+                    .send(ModelStreamChunk::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+                if count == 0 {
+                    Ok(ModelResponse {
+                        content: vec![ContentBlock::ToolUse {
+                            id: "call_1".into(),
+                            name: "run_tool".into(),
+                            input: json!({}),
+                        }],
+                        usage,
+                        stop_reason: StopReason::ToolUse,
+                    })
+                } else {
+                    Ok(ModelResponse {
+                        content: vec![ContentBlock::Text("done".into())],
+                        usage,
+                        stop_reason: StopReason::EndTurn,
+                    })
+                }
+            }
+        }
+
+        let mut config = test_config();
+        config.skills_dir = Some(tmp.path().to_str().unwrap().to_string());
+
+        let model = Arc::new(SkillToolModel {
+            call_count: std::sync::atomic::AtomicU32::new(0),
+        });
+        let registry = ToolRegistry::new();
+
+        let (handle, mut rx) = AgentRun::start(config, "test".into(), model, registry);
+
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        handle.wait().await;
+
+        // Should have ToolCallCompleted for run_tool
+        let tool_completed = events.iter().any(
+            |e| matches!(e, RuntimeEvent::ToolCallCompleted { tool, .. } if tool == "run_tool"),
+        );
+        assert!(tool_completed, "run_tool should execute via skill loading");
     }
 }

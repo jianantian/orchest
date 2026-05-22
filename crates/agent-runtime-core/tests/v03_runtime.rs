@@ -42,6 +42,7 @@ fn test_config() -> AgentConfig {
         compaction_recent_messages: 10,
         webhook_enabled: false,
         code_execution_enabled: true,
+        skills_dir: None,
         run_depth: 0,
     }
 }

@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 use crate::events::RuntimeEvent;
 use crate::tool::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
 
+#[derive(Debug)]
 pub struct ReadFileTool {
     metadata: ToolMetadata,
     input_schema: JsonSchema,

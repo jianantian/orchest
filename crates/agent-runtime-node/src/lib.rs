@@ -85,7 +85,6 @@ pub struct Agent {
     model: String,
     system_prompt: String,
     api_url: Option<String>,
-    #[allow(dead_code)]
     skills_dir: Option<String>,
     budget: Option<BudgetOptions>,
     tools: Vec<Arc<dyn Tool>>,
@@ -163,6 +162,7 @@ impl Agent {
             compaction_recent_messages: 10,
             webhook_enabled: false,
             code_execution_enabled: false,
+            skills_dir: self.skills_dir.clone(),
             run_depth: 0,
         };
 
