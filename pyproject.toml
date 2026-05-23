@@ -6,7 +6,7 @@ build-backend = "maturin"
 name = "agent-runtime-py"
 version = "0.1.0"
 description = "Python SDK for Orchest Agent Runtime"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
