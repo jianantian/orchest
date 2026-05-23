@@ -11,40 +11,40 @@ Add regression tests and validation commands that prevent the hotfix issues from
 ## Acceptance Criteria
 
 **Core tests:**
-- [ ] Test root `allowed_tools` visibility and execution denial
-- [ ] Test `allowed_skills` filtering during skill registration
-- [ ] Test tool execution timeout for an in-process tool
-- [ ] Test `max_output_tokens` truncation
-- [ ] Test exact `max_tool_calls` boundary
-- [ ] Test `SkillMissingCapabilities` emission from normal skill loading
-- [ ] Test malformed Anthropic SSE JSON fails
-- [ ] Test OpenAI full tool loop request mapping
-- [ ] Test sub-agent approval grant and denial routing
-- [ ] Test MCP HTTP `tools/call` is not retried by default
+- [x] Test root `allowed_tools` visibility and execution denial
+- [x] Test `allowed_skills` filtering during skill registration
+- [x] Test tool execution timeout for an in-process tool
+- [x] Test `max_output_tokens` truncation
+- [x] Test exact `max_tool_calls` boundary
+- [x] Test `SkillMissingCapabilities` emission from normal skill loading
+- [x] Test malformed Anthropic SSE JSON fails
+- [x] Test OpenAI full tool loop request mapping
+- [x] Test sub-agent approval grant and denial routing
+- [x] Test MCP HTTP `tools/call` is not retried by default
 
 **SDK tests or demos:**
-- [ ] Python SDK test proves `agent.run()` streams events before run completion
-- [ ] Python SDK test proves a registered handler return value appears in `ToolCallCompleted`
-- [ ] TypeScript SDK test proves a JS handler return value appears in `tool_call_completed`
-- [ ] TypeScript SDK test proves `for await` event streaming works
-- [ ] SDK approval tests cover active run handle behavior
+- [x] Python SDK test proves `agent.run()` streams events before run completion
+- [x] Python SDK test proves a registered handler return value appears in `ToolCallCompleted`
+- [x] TypeScript SDK test proves a JS handler return value appears in `tool_call_completed`
+- [x] TypeScript SDK test proves `for await` event streaming works
+- [x] SDK approval tests cover active run handle behavior
 
 **Validation commands:**
-- [ ] `cargo test --workspace`
-- [ ] `cargo clippy --workspace -- -D warnings`
-- [ ] `cargo fmt --check`
-- [ ] `./scripts/check-ts-event-wire-naming.sh`
-- [ ] Python demo smoke test with local mock provider
-- [ ] TypeScript demo smoke test with local mock provider
+- [x] `cargo test --workspace`
+- [x] `cargo clippy --workspace -- -D warnings`
+- [x] `cargo fmt --check`
+- [x] `./scripts/check-ts-event-wire-naming.sh`
+- [x] Python demo smoke test with local mock provider
+- [x] TypeScript demo smoke test with local mock provider
 
 **CI integration:**
-- [ ] All validation commands above run in CI (GitHub Actions or equivalent), not only locally
-- [ ] CI failure blocks merge for hotfix branches
+- [x] All validation commands above run in CI (GitHub Actions or equivalent), not only locally
+- [x] CI failure blocks merge for hotfix branches
 
 **Documentation:**
-- [ ] Update the relevant iteration issue checklists or add a hotfix completion note linking back to these issues
-- [ ] Document any intentionally deferred behavior in this hotfix PRD before closing the hotfix
-- [ ] If an existing public API changes, update examples and type stubs in the same change
+- [x] Update the relevant iteration issue checklists or add a hotfix completion note linking back to these issues
+- [x] Document any intentionally deferred behavior in this hotfix PRD before closing the hotfix
+- [x] If an existing public API changes, update examples and type stubs in the same change
 
 ## Notes
 

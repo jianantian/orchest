@@ -13,24 +13,24 @@ Make Anthropic and OpenAI adapters fail clearly and preserve tool-call history a
 ## Acceptance Criteria
 
 **OpenAI request mapping:**
-- [ ] Assistant messages containing `ContentBlock::ToolUse` serialize to OpenAI assistant messages with `tool_calls`
-- [ ] Tool results serialize to OpenAI `role: "tool"` messages with the matching `tool_call_id`
-- [ ] Mixed assistant text + tool calls are serialized according to OpenAI Chat Completions expectations
-- [ ] System/user text messages continue to serialize correctly
+- [x] Assistant messages containing `ContentBlock::ToolUse` serialize to OpenAI assistant messages with `tool_calls`
+- [x] Tool results serialize to OpenAI `role: "tool"` messages with the matching `tool_call_id`
+- [x] Mixed assistant text + tool calls are serialized according to OpenAI Chat Completions expectations
+- [x] System/user text messages continue to serialize correctly
 
 **OpenAI response mapping:**
-- [ ] Streaming tool call chunks continue to normalize into `ContentBlock::ToolUse`
-- [ ] Invalid function argument JSON returns `ModelError { code: Some("invalid_tool_arguments") }` or an equivalent stable error code, and no tool call is executed for those arguments
-- [ ] Usage mapping remains covered
+- [x] Streaming tool call chunks continue to normalize into `ContentBlock::ToolUse`
+- [x] Invalid function argument JSON returns `ModelError { code: Some("invalid_tool_arguments") }` or an equivalent stable error code, and no tool call is executed for those arguments
+- [x] Usage mapping remains covered
 
 **Anthropic robustness:**
-- [ ] Malformed SSE JSON returns `ModelError { code: Some("invalid_json") }` or equivalent, not an empty successful response
-- [ ] Tests cover malformed `data:` payloads
-- [ ] Existing thinking-boundary and tool-use parsing tests continue to pass
+- [x] Malformed SSE JSON returns `ModelError { code: Some("invalid_json") }` or equivalent, not an empty successful response
+- [x] Tests cover malformed `data:` payloads
+- [x] Existing thinking-boundary and tool-use parsing tests continue to pass
 
 **Cross-provider integration:**
-- [ ] A shared adapter smoke test covers: model requests tool -> runtime executes tool -> adapter sends tool result -> model returns final text
-- [ ] The smoke test runs for both Anthropic-compatible mock and OpenAI-compatible mock
+- [x] A shared adapter smoke test covers: model requests tool -> runtime executes tool -> adapter sends tool result -> model returns final text
+- [x] The smoke test runs for both Anthropic-compatible mock and OpenAI-compatible mock
 
 ## Notes
 

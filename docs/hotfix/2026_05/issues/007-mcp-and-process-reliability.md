@@ -14,24 +14,24 @@ Make failure handling conservative for side effects and ensure timed-out child p
 ## Acceptance Criteria
 
 **MCP HTTP retry safety:**
-- [ ] `initialize` and `tools/list` may retry because they are discovery/control operations
-- [ ] `tools/call` does not retry by default
-- [ ] If retry for `tools/call` is ever enabled, it requires an explicit idempotency signal from tool metadata or config
-- [ ] A test simulates first-request timeout/connection close and verifies `tools/call` is sent once
+- [x] `initialize` and `tools/list` may retry because they are discovery/control operations
+- [x] `tools/call` does not retry by default
+- [x] If retry for `tools/call` is ever enabled, it requires an explicit idempotency signal from tool metadata or config
+- [x] A test simulates first-request timeout/connection close and verifies `tools/call` is sent once
 
 **MCP process lifecycle:**
-- [ ] Stdio MCP child process is terminated when the client is dropped, unless documented otherwise
-- [ ] Tests do not leave MCP child processes behind
+- [x] Stdio MCP child process is terminated when the client is dropped, unless documented otherwise
+- [x] Tests do not leave MCP child processes behind
 
 **Skill subprocess timeout cleanup:**
-- [ ] `BareSubprocessExecutor` kills the child process on timeout
-- [ ] Timeout cleanup is covered by a test using a long-running script
-- [ ] The test verifies the process is not still alive after timeout where feasible
+- [x] `BareSubprocessExecutor` kills the child process on timeout
+- [x] Timeout cleanup is covered by a test using a long-running script
+- [x] The test verifies the process is not still alive after timeout where feasible
 
 **Code execution timeout cleanup:**
-- [ ] JavaScript execution kills child runtime on timeout
-- [ ] Python persistent session is killed and reset on timeout, preserving existing behavior
-- [ ] Follow-up calls after timeout create a fresh working session
+- [x] JavaScript execution kills child runtime on timeout
+- [x] Python persistent session is killed and reset on timeout, preserving existing behavior
+- [x] Follow-up calls after timeout create a fresh working session
 
 ## Notes
 
