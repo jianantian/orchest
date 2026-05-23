@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod async_job;
 pub mod builtin;
 pub mod code_exec;
@@ -13,7 +14,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
+use crate::model::ModelAdapter;
+use crate::run::AgentConfig;
 use crate::run::RunId;
+use crate::tool::registry::ToolRegistry;
 use async_job::JobHandle;
 
 pub type JsonSchema = serde_json::Value;
@@ -31,7 +35,29 @@ pub trait Tool: Send + Sync {
 #[derive(Debug)]
 pub enum ToolOutput {
     Immediate(Value),
+    Structured { model_output: Value, details: Value },
+    AgentDelegate(Box<AgentDelegate>),
     AsyncJob(JobHandle),
+}
+
+#[derive(Clone)]
+pub struct AgentDelegate {
+    pub input: String,
+    pub config: AgentConfig,
+    pub model: std::sync::Arc<dyn ModelAdapter>,
+    pub registry: ToolRegistry,
+    pub output_mapper: std::sync::Arc<dyn Fn(Value) -> Value + Send + Sync>,
+}
+
+impl std::fmt::Debug for AgentDelegate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentDelegate")
+            .field("input", &self.input)
+            .field("config", &self.config)
+            .field("registry", &"<tool registry>")
+            .field("output_mapper", &"<output mapper>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

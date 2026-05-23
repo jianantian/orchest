@@ -9,6 +9,7 @@ use agent_runtime_core::model::{
 };
 use agent_runtime_core::run::{AgentConfig, AgentRun};
 use agent_runtime_core::skill::{SkillDependencies, SkillEnvManager, SkillManifest};
+use agent_runtime_core::tool::agent::AgentTool;
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
     JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
@@ -330,4 +331,54 @@ async fn sub_agent_request_forwards_events_and_completes_parent_tool_result() {
     assert!(saw_started);
     assert!(saw_child_completion);
     assert!(saw_lifecycle_completion);
+}
+
+#[tokio::test]
+async fn agent_tool_runs_child_agent_with_isolated_context() {
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(AgentTool::new(
+            "spawn_child".into(),
+            "delegates to a child agent".into(),
+            json!({"type": "object", "properties": {}}),
+            test_config(),
+            Arc::new(SubAgentModel),
+            ToolRegistry::new(),
+            Arc::new(|_| Ok("child task".into())),
+            Arc::new(|details| details.get("output").cloned().unwrap_or(details)),
+        )))
+        .unwrap();
+
+    let (handle, mut rx) = AgentRun::start(
+        test_config(),
+        "parent task".into(),
+        Arc::new(SubAgentModel),
+        registry,
+    );
+
+    let mut saw_child_done = false;
+    let mut saw_parent_tool_details = false;
+    let mut final_output = None;
+    while let Some(event) = rx.recv().await {
+        match event {
+            RuntimeEvent::ChildRunEvent { event, .. } if matches!(event.as_ref(), RuntimeEvent::RunCompleted { output } if output == "child done") =>
+            {
+                saw_child_done = true;
+            }
+            RuntimeEvent::ToolCallCompleted { tool, output, .. } if tool == "spawn_child" => {
+                saw_parent_tool_details = true;
+                assert_eq!(output["output"], "child done");
+                assert!(output.get("child_run_id").is_some());
+            }
+            RuntimeEvent::RunCompleted { output } => {
+                final_output = Some(output);
+            }
+            _ => {}
+        }
+    }
+    handle.wait().await;
+
+    assert!(saw_child_done);
+    assert!(saw_parent_tool_details);
+    assert_eq!(final_output, Some(json!("parent done")));
 }

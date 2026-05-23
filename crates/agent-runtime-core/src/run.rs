@@ -22,7 +22,7 @@ use crate::tool::mcp::{
 };
 use crate::tool::registry::ToolRegistry;
 use crate::tool::search::SearchToolsTool;
-use crate::tool::{Tool, ToolCall, ToolContext, ToolDef, ToolOutput};
+use crate::tool::{AgentDelegate, Tool, ToolCall, ToolContext, ToolDef, ToolOutput};
 
 use crate::skill::bundled_tool::SkillBundledTool;
 use crate::skill::executor::BareSubprocessExecutor;
@@ -781,6 +781,56 @@ async fn run_loop(
                         content: value,
                     });
                 }
+                Ok(ToolOutput::Structured {
+                    model_output,
+                    details,
+                }) => {
+                    let mut model_output = model_output;
+                    let mut details = details;
+                    if let Some(max_tokens) = max_output_tokens {
+                        model_output = truncate_output(model_output, max_tokens);
+                        details = truncate_output(details, max_tokens);
+                    }
+                    let duration = start_time.elapsed();
+                    emit(
+                        &tx,
+                        RuntimeEvent::ToolCallCompleted {
+                            tool: tool_call.name.clone(),
+                            output: details,
+                            duration,
+                        },
+                    )
+                    .await;
+                    tool_results.push(ContentBlock::ToolResult {
+                        tool_use_id: tool_call.id.clone(),
+                        content: model_output,
+                    });
+                }
+                Ok(ToolOutput::AgentDelegate(delegate)) => {
+                    let (model_output, details) = execute_agent_delegate(
+                        run_id,
+                        &config,
+                        &tx,
+                        &mut budget,
+                        *delegate,
+                        &active_children,
+                    )
+                    .await;
+                    let duration = start_time.elapsed();
+                    emit(
+                        &tx,
+                        RuntimeEvent::ToolCallCompleted {
+                            tool: tool_call.name.clone(),
+                            output: details,
+                            duration,
+                        },
+                    )
+                    .await;
+                    tool_results.push(ContentBlock::ToolResult {
+                        tool_use_id: tool_call.id.clone(),
+                        content: model_output,
+                    });
+                }
                 Ok(ToolOutput::AsyncJob(handle)) => {
                     emit(
                         &tx,
@@ -1018,6 +1068,131 @@ async fn execute_sub_agent_request(
         .await;
         output
     }
+}
+
+async fn execute_agent_delegate(
+    parent_run_id: RunId,
+    parent_config: &AgentConfig,
+    tx: &mpsc::Sender<RuntimeEvent>,
+    parent_budget: &mut BudgetGuard,
+    delegate: AgentDelegate,
+    active_children: &Arc<Mutex<HashMap<RunId, ApprovalSlot>>>,
+) -> (Value, Value) {
+    let mut child_config = delegate.config.clone();
+    let remaining = parent_budget.remaining_config();
+    child_config.budget = SubAgentRuntime::cap_budget(&child_config.budget, &remaining);
+    child_config.run_depth = parent_config.run_depth + 1;
+
+    let (handle, mut child_rx) = AgentRun::start(
+        child_config,
+        delegate.input.clone(),
+        Arc::clone(&delegate.model),
+        delegate.registry.clone(),
+    );
+    let child_run_id = handle.run_id;
+
+    {
+        let mut children = active_children.lock().await;
+        children.insert(child_run_id, Arc::clone(&handle.pending_approval));
+    }
+
+    emit(
+        tx,
+        RuntimeEvent::SubAgentStarted {
+            parent_run_id,
+            child_run_id,
+            config_summary: json!({
+                "run_depth": parent_config.run_depth + 1,
+                "input": delegate.input,
+            }),
+        },
+    )
+    .await;
+
+    let mut child_usage = BudgetUsage::default();
+    let mut output = Value::Null;
+    let mut failed = None;
+    let child_depth = parent_config.run_depth + 1;
+
+    while let Some(event) = child_rx.recv().await {
+        match &event {
+            RuntimeEvent::ModelCallCompleted { tokens } => {
+                let tokens_used = tokens.input_tokens + tokens.output_tokens;
+                child_usage.tokens_used += tokens_used;
+                parent_budget.record_external_usage(&BudgetUsage {
+                    tokens_used,
+                    tool_calls_used: 0,
+                    cost_usd: 0.0,
+                });
+            }
+            RuntimeEvent::ToolCallCompleted { .. } => {
+                child_usage.tool_calls_used += 1;
+                parent_budget.record_external_usage(&BudgetUsage {
+                    tokens_used: 0,
+                    tool_calls_used: 1,
+                    cost_usd: 0.0,
+                });
+            }
+            RuntimeEvent::RunCompleted {
+                output: child_output,
+            } => {
+                output = child_output.clone();
+            }
+            RuntimeEvent::RunFailed { error } => {
+                failed = Some(error.clone());
+            }
+            _ => {}
+        }
+        emit(
+            tx,
+            RuntimeEvent::ChildRunEvent {
+                child_run_id,
+                run_depth: child_depth,
+                event: Box::new(event),
+            },
+        )
+        .await;
+    }
+    handle.wait().await;
+
+    {
+        let mut children = active_children.lock().await;
+        children.remove(&child_run_id);
+    }
+
+    let details = if let Some(error) = failed {
+        emit(
+            tx,
+            RuntimeEvent::SubAgentFailed {
+                child_run_id,
+                error: error.clone(),
+            },
+        )
+        .await;
+        json!({
+            "child_run_id": child_run_id,
+            "error": error,
+            "budget_used": child_usage,
+        })
+    } else {
+        emit(
+            tx,
+            RuntimeEvent::SubAgentCompleted {
+                child_run_id,
+                output: output.clone(),
+                budget_used: child_usage.clone(),
+            },
+        )
+        .await;
+        json!({
+            "child_run_id": child_run_id,
+            "output": output,
+            "budget_used": child_usage,
+        })
+    };
+
+    let model_output = (delegate.output_mapper)(details.clone());
+    (model_output, details)
 }
 
 fn parse_budget_config(value: &Value) -> BudgetConfig {
@@ -1768,6 +1943,124 @@ mod tests {
         assert!(events
             .iter()
             .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+    }
+
+    struct StructuredToolModelAdapter;
+
+    #[async_trait::async_trait]
+    impl ModelAdapter for StructuredToolModelAdapter {
+        async fn stream(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDef],
+            tx: mpsc::Sender<ModelStreamChunk>,
+        ) -> Result<ModelResponse, ModelError> {
+            let usage = TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+            };
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+
+            let tool_result = messages.iter().find_map(|message| {
+                message.content.iter().find_map(|block| match block {
+                    ContentBlock::ToolResult { content, .. } => Some(content.clone()),
+                    _ => None,
+                })
+            });
+
+            if let Some(content) = tool_result {
+                assert_eq!(content, json!({"summary": "compact for model"}));
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text("done".into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                })
+            } else {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "call_1".into(),
+                        name: "research".into(),
+                        input: json!({"question": "q"}),
+                    }],
+                    usage,
+                    stop_reason: StopReason::ToolUse,
+                })
+            }
+        }
+    }
+
+    struct StructuredTool;
+
+    #[async_trait::async_trait]
+    impl Tool for StructuredTool {
+        fn name(&self) -> &str {
+            "research"
+        }
+        fn description(&self) -> &str {
+            "structured output tool"
+        }
+        fn input_schema(&self) -> &JsonSchema {
+            &serde_json::Value::Null
+        }
+        fn output_schema(&self) -> Option<&JsonSchema> {
+            None
+        }
+        fn metadata(&self) -> &ToolMetadata {
+            &ToolMetadata {
+                side_effect: false,
+                requires_approval: false,
+                cost_hint: None,
+                timeout: None,
+                max_output_tokens: None,
+                source: ToolSource::InProcess,
+            }
+        }
+        async fn execute(
+            &self,
+            _input: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::Structured {
+                model_output: json!({"summary": "compact for model"}),
+                details: json!({
+                    "summary": "compact for model",
+                    "raw_results": ["large detail only for events"]
+                }),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn structured_tool_output_sends_details_to_events_and_model_output_to_model() {
+        let model = Arc::new(StructuredToolModelAdapter);
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(StructuredTool)).unwrap();
+
+        let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
+
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        handle.wait().await;
+
+        let detail_output = events.iter().find_map(|event| match event {
+            RuntimeEvent::ToolCallCompleted { tool, output, .. } if tool == "research" => {
+                Some(output)
+            }
+            _ => None,
+        });
+        assert_eq!(
+            detail_output,
+            Some(&json!({
+                "summary": "compact for model",
+                "raw_results": ["large detail only for events"]
+            }))
+        );
     }
 
     struct ApprovalModelAdapter;

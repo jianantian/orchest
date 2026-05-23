@@ -13,7 +13,9 @@ use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::model::anthropic::{AnthropicAdapter, AnthropicConfig};
 use agent_runtime_core::model::ModelSpec;
 use agent_runtime_core::run::{AgentConfig, AgentRun, RunHandle};
+use agent_runtime_core::tool::agent::AgentTool;
 use agent_runtime_core::tool::async_job::{JobHandle, JobStatus};
+use agent_runtime_core::tool::builtin::WriteFileTool;
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
     JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
@@ -27,6 +29,7 @@ struct Agent {
     skills_dir: Option<String>,
     budget: Option<PyBudget>,
     tools: Vec<PyToolDef>,
+    native_tools: Vec<Arc<dyn Tool>>,
     run_handle: Arc<TokioMutex<Option<RunHandle>>>,
 }
 
@@ -399,6 +402,11 @@ impl Agent {
 
     fn build_registry(&self) -> Result<ToolRegistry, PyErr> {
         let mut registry = ToolRegistry::new();
+        for tool in &self.native_tools {
+            registry
+                .register(Arc::clone(tool))
+                .map_err(|e| PyRuntimeError::new_err(format!("failed to register tool: {}", e)))?;
+        }
         for tool_def in &self.tools {
             let tool = PyTool {
                 def: tool_def.clone(),
@@ -461,6 +469,7 @@ impl Agent {
             skills_dir,
             budget: py_budget,
             tools: Vec::new(),
+            native_tools: Vec::new(),
             run_handle: Arc::new(TokioMutex::new(None)),
         })
     }
@@ -533,6 +542,69 @@ impl Agent {
             callback: func,
         });
 
+        Ok(())
+    }
+
+    #[pyo3(signature = (name, description, agent, input_key=None))]
+    fn register_agent_tool(
+        &mut self,
+        name: String,
+        description: String,
+        agent: &Agent,
+        input_key: Option<String>,
+    ) -> PyResult<()> {
+        let input_key = input_key.unwrap_or_else(|| "question".to_string());
+        let child_config = agent.build_config();
+        let child_registry = agent.build_registry()?;
+        let child_model = agent.build_model()?;
+        let input_schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                input_key.clone(): {
+                    "type": "string",
+                    "description": "Task or question to delegate to the child agent"
+                }
+            },
+            "required": [input_key.clone()]
+        });
+        let mapper_key = input_key.clone();
+        let input_mapper = Arc::new(move |value: Value| {
+            value
+                .get(&mapper_key)
+                .and_then(Value::as_str)
+                .map(String::from)
+                .ok_or_else(|| ToolError {
+                    message: format!("missing required parameter '{mapper_key}'"),
+                    code: Some("MISSING_PARAM".into()),
+                })
+        });
+        let output_mapper = Arc::new(|details: Value| {
+            details
+                .get("output")
+                .cloned()
+                .unwrap_or_else(|| details.clone())
+        });
+
+        self.native_tools.push(Arc::new(AgentTool::new(
+            name,
+            description,
+            input_schema,
+            child_config,
+            child_model,
+            child_registry,
+            input_mapper,
+            output_mapper,
+        )));
+
+        Ok(())
+    }
+
+    #[pyo3(signature = (requires_approval=true))]
+    fn register_write_file_tool(&mut self, requires_approval: bool) -> PyResult<()> {
+        self.native_tools
+            .push(Arc::new(WriteFileTool::new_with_approval(
+                requires_approval,
+            )));
         Ok(())
     }
 

@@ -15,6 +15,12 @@ pub struct ReadFileTool {
     skill_paths: Arc<RwLock<Vec<SkillPathEntry>>>,
 }
 
+#[derive(Debug)]
+pub struct WriteFileTool {
+    metadata: ToolMetadata,
+    input_schema: JsonSchema,
+}
+
 #[derive(Debug, Clone)]
 pub struct SkillPathEntry {
     pub skill_name: String,
@@ -62,6 +68,45 @@ impl ReadFileTool {
             skill_name,
             skill_md_path,
         });
+    }
+}
+
+impl Default for WriteFileTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WriteFileTool {
+    pub fn new() -> Self {
+        Self::new_with_approval(true)
+    }
+
+    pub fn new_with_approval(requires_approval: bool) -> Self {
+        Self {
+            metadata: ToolMetadata {
+                side_effect: true,
+                requires_approval,
+                cost_hint: None,
+                timeout: None,
+                max_output_tokens: None,
+                source: ToolSource::Builtin,
+            },
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path to write"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "UTF-8 text content to write"
+                    }
+                },
+                "required": ["path", "content"]
+            }),
+        }
     }
 }
 
@@ -127,6 +172,71 @@ impl Tool for ReadFileTool {
         }
 
         Ok(ToolOutput::Immediate(Value::String(content)))
+    }
+}
+
+#[async_trait]
+impl Tool for WriteFileTool {
+    fn name(&self) -> &str {
+        "write_file"
+    }
+
+    fn description(&self) -> &str {
+        "Write UTF-8 text content to a file, creating parent directories if needed"
+    }
+
+    fn input_schema(&self) -> &JsonSchema {
+        &self.input_schema
+    }
+
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
+
+    fn metadata(&self) -> &ToolMetadata {
+        &self.metadata
+    }
+
+    async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+        let path_str = input
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ToolError {
+                message: "missing required parameter 'path'".into(),
+                code: Some("MISSING_PARAM".into()),
+            })?;
+        let content = input
+            .get("content")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ToolError {
+                message: "missing required parameter 'content'".into(),
+                code: Some("MISSING_PARAM".into()),
+            })?;
+
+        let path = PathBuf::from(path_str);
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|e| ToolError {
+                        message: format!(
+                            "failed to create parent directories for '{path_str}': {e}"
+                        ),
+                        code: Some("WRITE_ERROR".into()),
+                    })?;
+            }
+        }
+        tokio::fs::write(&path, content)
+            .await
+            .map_err(|e| ToolError {
+                message: format!("failed to write '{path_str}': {e}"),
+                code: Some("WRITE_ERROR".into()),
+            })?;
+
+        Ok(ToolOutput::Immediate(json!({
+            "path": path_str,
+            "bytes_written": content.len()
+        })))
     }
 }
 
@@ -267,5 +377,64 @@ mod tests {
 
         let event = event_rx.try_recv();
         assert!(event.is_err());
+    }
+
+    #[tokio::test]
+    async fn write_file_creates_parent_dirs_and_writes_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file_path = tmp.path().join("reports").join("final.md");
+
+        let tool = WriteFileTool::new();
+        let ctx = ToolContext {
+            run_id: crate::run::RunId::new(),
+            run_depth: 0,
+            tool_call_id: "tc_1".into(),
+            on_update: None,
+            event_tx: None,
+            webhook_base_url: None,
+        };
+
+        let result = tool
+            .execute(
+                json!({
+                    "path": file_path.to_str().unwrap(),
+                    "content": "# Final report\n\nEvidence summary."
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(
+            fs::read_to_string(&file_path).unwrap(),
+            "# Final report\n\nEvidence summary."
+        );
+        match result.unwrap() {
+            ToolOutput::Immediate(value) => {
+                assert_eq!(value["path"], file_path.to_str().unwrap());
+                assert_eq!(value["bytes_written"], 33);
+            }
+            other => panic!("expected Immediate(Object), got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn write_file_rejects_missing_content() {
+        let tool = WriteFileTool::new();
+        let ctx = ToolContext {
+            run_id: crate::run::RunId::new(),
+            run_depth: 0,
+            tool_call_id: "tc_1".into(),
+            on_update: None,
+            event_tx: None,
+            webhook_base_url: None,
+        };
+
+        let result = tool.execute(json!({"path": "report.md"}), &ctx).await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code.as_deref(), Some("MISSING_PARAM"));
+        assert!(error.message.contains("content"));
     }
 }
