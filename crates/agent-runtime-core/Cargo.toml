@@ -17,4 +17,7 @@ which = "7"
 sha2 = "0.10"
 tempfile = "3"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
