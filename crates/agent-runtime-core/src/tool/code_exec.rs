@@ -290,7 +290,8 @@ impl Tool for ExecuteJavaScriptTool {
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
         let mut child = command.spawn().map_err(|e| ToolError {
             message: format!("failed to spawn JavaScript runtime: {e}"),
             code: Some("SPAWN_ERROR".into()),

@@ -56,6 +56,16 @@ pub struct McpStdioClient {
     inner: Mutex<McpStdioInner>,
 }
 
+impl Drop for McpStdioClient {
+    fn drop(&mut self) {
+        // Kill the child process so we don't leave zombie MCP servers.
+        // We use try_lock since we're in synchronous Drop.
+        if let Ok(mut inner) = self.inner.try_lock() {
+            let _ = inner.child.start_kill();
+        }
+    }
+}
+
 struct McpStdioInner {
     child: Child,
     stdin: ChildStdin,
@@ -290,21 +300,33 @@ impl McpHttpClient {
         .await
     }
 
+    /// Whether a method is safe to retry.  Only discovery and control
+    /// operations (`initialize`, `tools/list`) may be retried because
+    /// they are idempotent.  `tools/call` is never retried by default
+    /// because it may trigger side effects and duplicating a call after
+    /// a transient failure is unsafe without an idempotency signal.
+    fn is_retryable(method: &str) -> bool {
+        matches!(method, "initialize" | "tools/list")
+    }
+
     async fn request(
         &self,
         method: &str,
         params: Value,
         timeout: Option<Duration>,
     ) -> Result<Value, McpError> {
+        let max_attempts = if Self::is_retryable(method) { 4 } else { 1 };
         let mut delay = Duration::from_millis(50);
         let mut last_error = None;
-        for _ in 0..=3 {
+        for _ in 0..max_attempts {
             match self.request_once(method, params.clone(), timeout).await {
                 Ok(value) => return Ok(value),
                 Err(error) => {
                     last_error = Some(error);
-                    tokio::time::sleep(delay).await;
-                    delay *= 2;
+                    if max_attempts > 1 {
+                        tokio::time::sleep(delay).await;
+                        delay *= 2;
+                    }
                 }
             }
         }
@@ -567,5 +589,125 @@ for line in sys.stdin:
             .await
             .expect("call tool");
         assert_eq!(output["content"][0]["text"], "pong");
+    }
+
+    /// Verify that `tools/call` is sent exactly once even when the
+    /// first attempt fails (no retry for side-effectful methods).
+    #[tokio::test]
+    async fn http_tools_call_does_not_retry() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        let call_count = Arc::new(AtomicU32::new(0));
+        let call_count_spawn = Arc::clone(&call_count);
+
+        tokio::spawn(async move {
+            // Accept initialize (index 0), then tools/call (index 1).
+            // tools/call deliberately returns an error to see if the
+            // client retries.
+            for _ in 0..4 {
+                let (mut socket, _) = listener.accept().await.expect("accept");
+                let call_count = Arc::clone(&call_count_spawn);
+                tokio::spawn(async move {
+                    let mut buffer = vec![0; 4096];
+                    let n = socket.read(&mut buffer).await.expect("read");
+                    let request_text = String::from_utf8_lossy(&buffer[..n]);
+                    let is_tools_call = request_text.contains("tools/call");
+                    if is_tools_call {
+                        call_count.fetch_add(1, Ordering::SeqCst);
+                    }
+                    // Return an error so retryable methods would retry.
+                    let body = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"transient failure"}}"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    socket.write_all(response.as_bytes()).await.expect("write");
+                });
+            }
+        });
+
+        // Build client manually to skip initialize (which would also
+        // hit the error server).
+        let client = McpHttpClient {
+            url: format!("http://{address}"),
+            auth: None,
+            client: reqwest::Client::new(),
+            timeout: Duration::from_secs(5),
+        };
+
+        let result = client.call_tool("do_something", json!({})).await;
+        assert!(result.is_err(), "tools/call should fail");
+
+        // Give a moment for any (incorrect) retries to land
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let count = call_count.load(Ordering::SeqCst);
+        assert_eq!(
+            count, 1,
+            "tools/call should be sent exactly once, not retried (got {count})"
+        );
+    }
+
+    #[tokio::test]
+    async fn stdio_client_kills_child_on_drop() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pid_file = tmp.path().join("mcp_pid.txt");
+        let server = tmp.path().join("mcp_long_server.py");
+        let pid_path_str = pid_file.to_str().unwrap().replace('\\', "\\\\");
+        fs::write(
+            &server,
+            format!(
+                r#"
+import json, sys, os, time
+# Write our PID so the test can check if we're still alive
+with open("{pid_path_str}", "w") as f:
+    f.write(str(os.getpid()))
+for line in sys.stdin:
+    req = json.loads(line)
+    result = {{"capabilities": {{"tools": {{}}}}}}
+    sys.stdout.write(json.dumps({{"jsonrpc": "2.0", "id": req["id"], "result": result}}) + "\n")
+    sys.stdout.flush()
+# If stdin closes, sleep long enough for the test to check
+time.sleep(60)
+"#,
+            ),
+        )
+        .expect("server write");
+
+        let client = McpStdioClient::connect("python3", &[server.to_str().unwrap()])
+            .await
+            .expect("stdio client connects");
+
+        // Read the PID
+        let pid_str = fs::read_to_string(&pid_file).expect("read pid file");
+        let pid: u32 = pid_str.trim().parse().expect("parse pid");
+
+        // Verify the process is alive
+        assert!(
+            is_process_alive(pid),
+            "MCP child should be alive before drop"
+        );
+
+        // Drop the client — this should kill the child
+        drop(client);
+
+        // Give the OS a moment to deliver the kill signal
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        assert!(
+            !is_process_alive(pid),
+            "MCP child should be dead after client drop"
+        );
+    }
+
+    #[cfg(unix)]
+    fn is_process_alive(pid: u32) -> bool {
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+
+    #[cfg(not(unix))]
+    fn is_process_alive(_pid: u32) -> bool {
+        // On non-unix, just return true to skip assertion
+        true
     }
 }
