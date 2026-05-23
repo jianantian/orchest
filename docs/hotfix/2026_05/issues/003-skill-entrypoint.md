@@ -11,29 +11,29 @@ Make `skills_dir` functional from Python and TypeScript SDK runs, and keep the s
 ## Acceptance Criteria
 
 **Skill scanning and registration:**
-- [ ] Python SDK run scans `skills_dir` when provided
-- [ ] TypeScript SDK run scans `skillsDir` when provided
-- [ ] Each allowed `SkillManifest.bundled_tools` entry is registered as a `SkillBundledTool`
-- [ ] Skill dependencies and capabilities from the manifest are passed into `SkillBundledTool::new_with_options`
-- [ ] Duplicate tool names produce a clear run failure or SDK error before model execution begins
+- [x] Python SDK run scans `skills_dir` when provided
+- [x] TypeScript SDK run scans `skillsDir` when provided
+- [x] Each allowed `SkillManifest.bundled_tools` entry is registered as a `SkillBundledTool`
+- [x] Skill dependencies and capabilities from the manifest are passed into `SkillBundledTool::new_with_options`
+- [x] Duplicate tool names produce a clear run failure or SDK error before model execution begins
 
 **Skill telemetry:**
-- [ ] Builtin `read_file` is registered by SDK/runtime when skill support is enabled
-- [ ] Each allowed skill `SKILL.md` path is registered with `ReadFileTool::register_skill`
-- [ ] Reading an allowed skill `SKILL.md` emits `SkillContentRead`
+- [x] Builtin `read_file` is registered by SDK/runtime when skill support is enabled
+- [x] Each allowed skill `SKILL.md` path is registered with `ReadFileTool::register_skill`
+- [x] Reading an allowed skill `SKILL.md` emits `SkillContentRead`
 
 **Capability warnings:**
-- [ ] A skill with `scripts/` and no `capabilities` emits `SkillMissingCapabilities { skill_name }`
-- [ ] The warning does not block execution
-- [ ] A skill with declared `capabilities` does not emit the warning
+- [x] A skill with `scripts/` and no `capabilities` emits `SkillMissingCapabilities { skill_name }`
+- [x] The warning does not block execution
+- [x] A skill with declared `capabilities` does not emit the warning
 
 **SDK-visible behavior:**
-- [ ] A Python example or test calls a bundled skill tool through `agent.run(...)`
-- [ ] A TypeScript example or test calls a bundled skill tool through `agent.run(...)`
+- [x] A Python example or test calls a bundled skill tool through `agent.run(...)`
+- [x] A TypeScript example or test calls a bundled skill tool through `agent.run(...)`
 
 **SDK injection for skill scripts:**
-- [ ] Python `orchest_sdk` is available to bundled Python skill scripts even when the skill declares no Python dependencies
-- [ ] Node `orchest-sdk` remains available through `NODE_PATH` for bundled Node skill scripts
+- [x] Python `orchest_sdk` is available to bundled Python skill scripts even when the skill declares no Python dependencies
+- [x] Node `orchest-sdk` remains available through `NODE_PATH` for bundled Node skill scripts
 
 ## Notes
 

@@ -127,11 +127,19 @@ impl Drop for WebhookRuntime {
     }
 }
 
+/// Shared slot for a pending approval oneshot sender.  When a tool
+/// requires approval, the run loop creates a oneshot pair, stores the
+/// sender here, emits `ApprovalRequested`, and awaits the receiver.
+/// `respond_approval` takes the sender out of the slot and sends the
+/// verdict.  This guarantees that an approval response can only be
+/// consumed by the request it was intended for.
+type ApprovalSlot = Arc<Mutex<Option<oneshot::Sender<bool>>>>;
+
 pub struct RunHandle {
     pub run_id: RunId,
     task: tokio::task::JoinHandle<()>,
-    approval_tx: mpsc::Sender<bool>,
-    active_children: Arc<Mutex<HashMap<RunId, mpsc::Sender<bool>>>>,
+    pending_approval: ApprovalSlot,
+    active_children: Arc<Mutex<HashMap<RunId, ApprovalSlot>>>,
 }
 
 impl RunHandle {
@@ -143,27 +151,32 @@ impl RunHandle {
     ///
     /// If `run_id` matches this handle's own `run_id`, the approval goes
     /// to the root run.  If it matches a currently-active child run, the
-    /// approval is forwarded there.  Otherwise a warning event is emitted
-    /// and the call returns `Err`.
+    /// approval is forwarded there.  Returns `Err` if no approval is
+    /// pending for the given `run_id` or the run is unknown.
     pub async fn respond_approval(&self, run_id: RunId, approved: bool) -> Result<(), String> {
-        if run_id == self.run_id {
-            self.approval_tx
-                .send(approved)
-                .await
-                .map_err(|_| "root run has already finished".to_string())
+        let slot = if run_id == self.run_id {
+            &self.pending_approval
         } else {
             let children = self.active_children.lock().await;
-            if let Some(child_tx) = children.get(&run_id) {
-                child_tx
-                    .send(approved)
-                    .await
-                    .map_err(|_| format!("child run {run_id} has already finished"))
-            } else {
-                Err(format!(
+            let child_slot = children.get(&run_id).cloned();
+            return match child_slot {
+                Some(slot) => take_and_send(&slot, approved, run_id).await,
+                None => Err(format!(
                     "unknown run_id {run_id}: no active run or child with that id"
-                ))
-            }
-        }
+                )),
+            };
+        };
+        take_and_send(slot, approved, run_id).await
+    }
+}
+
+async fn take_and_send(slot: &ApprovalSlot, approved: bool, run_id: RunId) -> Result<(), String> {
+    let sender = slot.lock().await.take();
+    match sender {
+        Some(tx) => tx
+            .send(approved)
+            .map_err(|_| format!("run {run_id} is no longer waiting for approval")),
+        None => Err(format!("no approval pending for run {run_id}")),
     }
 }
 
@@ -183,24 +196,38 @@ impl SubAgentRuntime {
 }
 
 fn truncate_output(value: Value, max_tokens: u64) -> Value {
-    let max_chars = max_tokens as usize * 4;
+    let max_bytes = max_tokens as usize * 4;
     match value {
-        Value::String(s) if s.len() > max_chars => {
-            let truncated = &s[..max_chars.min(s.len())];
+        Value::String(s) if s.len() > max_bytes => {
+            let truncated = truncate_str_utf8_safe(&s, max_bytes);
             Value::String(format!("{truncated}\n[output truncated]"))
         }
         other => {
             let serialized = serde_json::to_string(&other).unwrap_or_default();
-            if serialized.len() > max_chars {
-                Value::String(format!(
-                    "{}\n[output truncated]",
-                    &serialized[..max_chars.min(serialized.len())]
-                ))
+            if serialized.len() > max_bytes {
+                let truncated = truncate_str_utf8_safe(&serialized, max_bytes);
+                Value::String(format!("{truncated}\n[output truncated]"))
             } else {
                 other
             }
         }
     }
+}
+
+/// Truncate a string to at most `max_bytes` bytes without splitting a
+/// multi-byte UTF-8 character.  The returned slice always ends on a
+/// valid char boundary.
+fn truncate_str_utf8_safe(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    // floor_char_boundary stabilised in Rust 1.82 — we inline the logic
+    // for toolchain compatibility.
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 fn narrow_permission_list(parent: &Option<Vec<String>>, requested: &[String]) -> Vec<String> {
@@ -320,10 +347,11 @@ impl AgentRun {
     ) -> (RunHandle, EventReceiver) {
         let run_id = RunId::new();
         let (event_tx, event_rx) = mpsc::channel(256);
-        let (approval_tx, approval_rx) = mpsc::channel(1);
-        let active_children: Arc<Mutex<HashMap<RunId, mpsc::Sender<bool>>>> =
+        let pending_approval: ApprovalSlot = Arc::new(Mutex::new(None));
+        let active_children: Arc<Mutex<HashMap<RunId, ApprovalSlot>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
+        let approval_for_loop = Arc::clone(&pending_approval);
         let children_for_loop = Arc::clone(&active_children);
         let task = tokio::spawn(async move {
             run_loop(
@@ -333,7 +361,7 @@ impl AgentRun {
                 model,
                 registry,
                 event_tx,
-                approval_rx,
+                approval_for_loop,
                 children_for_loop,
             )
             .await;
@@ -342,7 +370,7 @@ impl AgentRun {
         let handle = RunHandle {
             run_id,
             task,
-            approval_tx,
+            pending_approval,
             active_children,
         };
         (handle, event_rx)
@@ -361,8 +389,8 @@ async fn run_loop(
     model: Arc<dyn ModelAdapter>,
     mut registry: ToolRegistry,
     tx: mpsc::Sender<RuntimeEvent>,
-    mut approval_rx: mpsc::Receiver<bool>,
-    active_children: Arc<Mutex<HashMap<RunId, mpsc::Sender<bool>>>>,
+    pending_approval: ApprovalSlot,
+    active_children: Arc<Mutex<HashMap<RunId, ApprovalSlot>>>,
 ) {
     emit(&tx, RuntimeEvent::RunStarted { run_id }).await;
 
@@ -607,6 +635,13 @@ async fn run_loop(
             };
 
             if tool.metadata().requires_approval {
+                // Create a oneshot for this specific approval request
+                // and store the sender so RunHandle can deliver it.
+                let (atx, arx) = oneshot::channel();
+                {
+                    let mut slot = pending_approval.lock().await;
+                    *slot = Some(atx);
+                }
                 emit(
                     &tx,
                     RuntimeEvent::ApprovalRequested {
@@ -615,7 +650,7 @@ async fn run_loop(
                 )
                 .await;
 
-                let approved = approval_rx.recv().await.unwrap_or(false);
+                let approved = arx.await.unwrap_or(false);
 
                 if approved {
                     emit(
@@ -802,7 +837,7 @@ async fn execute_sub_agent_request(
     tx: &mpsc::Sender<RuntimeEvent>,
     parent_budget: &mut BudgetGuard,
     request: &Value,
-    active_children: &Arc<Mutex<HashMap<RunId, mpsc::Sender<bool>>>>,
+    active_children: &Arc<Mutex<HashMap<RunId, ApprovalSlot>>>,
 ) -> Value {
     let child_run_id = RunId::new();
     if parent_config.run_depth >= 3 {
@@ -882,11 +917,11 @@ async fn execute_sub_agent_request(
         AgentRun::start(child_config, input, Arc::clone(model), child_registry);
     let actual_child_run_id = handle.run_id;
 
-    // Register child approval channel so parent RunHandle can route
+    // Register child approval slot so parent RunHandle can route
     // approval responses to the child run.
     {
         let mut children = active_children.lock().await;
-        children.insert(actual_child_run_id, handle.approval_tx.clone());
+        children.insert(actual_child_run_id, Arc::clone(&handle.pending_approval));
     }
 
     emit(
@@ -910,9 +945,23 @@ async fn execute_sub_agent_request(
         match &event {
             RuntimeEvent::ModelCallCompleted { tokens } => {
                 child_usage.tokens_used += tokens.input_tokens + tokens.output_tokens;
+                // Propagate to parent budget immediately so the parent
+                // guard reflects child consumption in real time.
+                let incremental = BudgetUsage {
+                    tokens_used: tokens.input_tokens + tokens.output_tokens,
+                    tool_calls_used: 0,
+                    cost_usd: 0.0,
+                };
+                parent_budget.record_external_usage(&incremental);
             }
             RuntimeEvent::ToolCallCompleted { .. } => {
                 child_usage.tool_calls_used += 1;
+                let incremental = BudgetUsage {
+                    tokens_used: 0,
+                    tool_calls_used: 1,
+                    cost_usd: 0.0,
+                };
+                parent_budget.record_external_usage(&incremental);
             }
             RuntimeEvent::RunCompleted {
                 output: child_output,
@@ -944,7 +993,8 @@ async fn execute_sub_agent_request(
         children.remove(&actual_child_run_id);
     }
 
-    parent_budget.record_external_usage(&child_usage);
+    // Note: parent_budget was already updated incrementally above.
+    // child_usage is kept for the SubAgentCompleted event payload.
 
     if let Some(error) = failed {
         emit(
@@ -2725,6 +2775,52 @@ mod tests {
         let value = json!("hello");
         let result = truncate_output(value.clone(), 100);
         assert_eq!(result, value);
+    }
+
+    #[test]
+    fn truncate_output_multibyte_utf8_safe() {
+        // 4-byte emoji repeated — the byte boundary must not land in
+        // the middle of a character.
+        let emoji = "🦀".repeat(20); // 80 bytes
+        let value = Value::String(emoji);
+        // max_tokens=5 → max_bytes=20, which is 5 crab emojis exactly
+        let result = truncate_output(value, 5);
+        let s = result.as_str().unwrap();
+        assert!(s.contains("[output truncated]"));
+        // Must be valid UTF-8 (no panic, no partial chars)
+        assert!(s.starts_with("🦀"));
+
+        // Mix of 1-byte and 3-byte chars: "aé" is 3 bytes
+        let mixed = "aé".repeat(30); // 90 bytes
+        let value2 = Value::String(mixed);
+        // max_tokens=2 → max_bytes=8; 'a'=1byte, 'é'=2bytes, "aé"=3bytes
+        // 8 bytes fits "aé" twice (6 bytes) + "a" (7) + can't fit "é" (9 > 8)
+        // so we get 7 bytes: "aéaéa" — but boundary must be clean
+        let result2 = truncate_output(value2, 2);
+        let s2 = result2.as_str().unwrap();
+        assert!(s2.contains("[output truncated]"));
+    }
+
+    #[tokio::test]
+    async fn respond_approval_without_pending_returns_error() {
+        let model = Arc::new(ToolCallModelAdapter);
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(FakeTool::echo())).unwrap();
+
+        let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
+
+        // Drain events — no approval-requiring tools, so no pending
+        while rx.recv().await.is_some() {}
+
+        // Sending approval when nothing is pending should fail
+        let result = handle.respond_approval(handle.run_id, true).await;
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().contains("no approval pending"),
+            "should report no pending approval"
+        );
+
+        handle.wait().await;
     }
 
     #[tokio::test]
