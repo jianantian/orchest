@@ -3,5 +3,7 @@ target/
 *.so
 *.dylib
 *.dll
+*.node
+*.tgz
 __pycache__/
 node_modules/

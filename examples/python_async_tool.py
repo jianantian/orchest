@@ -3,7 +3,7 @@
 import os
 import threading
 
-from agent_runtime_py import Agent
+from agent_runtime import Agent
 
 from mock_anthropic_provider import serve
 

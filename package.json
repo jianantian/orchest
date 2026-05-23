@@ -1,0 +1,36 @@
+{
+  "name": "@orchest/agent-runtime",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Orchest Agent Runtime",
+  "type": "commonjs",
+  "main": "js/index.js",
+  "types": "js/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./js/index.d.ts",
+      "require": "./js/index.js",
+      "default": "./js/index.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "*": [
+        "js/index.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "agent_runtime_node.node",
+    "js/index.js",
+    "js/index.d.ts",
+    "js/native.d.ts"
+  ],
+  "scripts": {
+    "build:native": "cargo build -p agent-runtime-node --release && node scripts/copy-node-addon.mjs",
+    "pack:local": "npm run build:native && npm pack"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED"
+}
