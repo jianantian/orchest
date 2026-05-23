@@ -131,6 +131,7 @@ pub struct RunHandle {
     pub run_id: RunId,
     task: tokio::task::JoinHandle<()>,
     approval_tx: mpsc::Sender<bool>,
+    active_children: Arc<Mutex<HashMap<RunId, mpsc::Sender<bool>>>>,
 }
 
 impl RunHandle {
@@ -138,8 +139,31 @@ impl RunHandle {
         let _ = self.task.await;
     }
 
-    pub async fn respond_approval(&self, _run_id: RunId, approved: bool) {
-        let _ = self.approval_tx.send(approved).await;
+    /// Route an approval response to the matching active run.
+    ///
+    /// If `run_id` matches this handle's own `run_id`, the approval goes
+    /// to the root run.  If it matches a currently-active child run, the
+    /// approval is forwarded there.  Otherwise a warning event is emitted
+    /// and the call returns `Err`.
+    pub async fn respond_approval(&self, run_id: RunId, approved: bool) -> Result<(), String> {
+        if run_id == self.run_id {
+            self.approval_tx
+                .send(approved)
+                .await
+                .map_err(|_| "root run has already finished".to_string())
+        } else {
+            let children = self.active_children.lock().await;
+            if let Some(child_tx) = children.get(&run_id) {
+                child_tx
+                    .send(approved)
+                    .await
+                    .map_err(|_| format!("child run {run_id} has already finished"))
+            } else {
+                Err(format!(
+                    "unknown run_id {run_id}: no active run or child with that id"
+                ))
+            }
+        }
     }
 }
 
@@ -297,7 +321,10 @@ impl AgentRun {
         let run_id = RunId::new();
         let (event_tx, event_rx) = mpsc::channel(256);
         let (approval_tx, approval_rx) = mpsc::channel(1);
+        let active_children: Arc<Mutex<HashMap<RunId, mpsc::Sender<bool>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
+        let children_for_loop = Arc::clone(&active_children);
         let task = tokio::spawn(async move {
             run_loop(
                 run_id,
@@ -307,6 +334,7 @@ impl AgentRun {
                 registry,
                 event_tx,
                 approval_rx,
+                children_for_loop,
             )
             .await;
         });
@@ -315,6 +343,7 @@ impl AgentRun {
             run_id,
             task,
             approval_tx,
+            active_children,
         };
         (handle, event_rx)
     }
@@ -324,6 +353,7 @@ async fn emit(tx: &mpsc::Sender<RuntimeEvent>, event: RuntimeEvent) {
     let _ = tx.send(event).await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_loop(
     run_id: RunId,
     config: AgentConfig,
@@ -332,6 +362,7 @@ async fn run_loop(
     mut registry: ToolRegistry,
     tx: mpsc::Sender<RuntimeEvent>,
     mut approval_rx: mpsc::Receiver<bool>,
+    active_children: Arc<Mutex<HashMap<RunId, mpsc::Sender<bool>>>>,
 ) {
     emit(&tx, RuntimeEvent::RunStarted { run_id }).await;
 
@@ -693,6 +724,7 @@ async fn run_loop(
                             &tx,
                             &mut budget,
                             &value,
+                            &active_children,
                         )
                         .await;
                     }
@@ -761,6 +793,7 @@ async fn run_loop(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_sub_agent_request(
     parent_run_id: RunId,
     parent_config: &AgentConfig,
@@ -769,6 +802,7 @@ async fn execute_sub_agent_request(
     tx: &mpsc::Sender<RuntimeEvent>,
     parent_budget: &mut BudgetGuard,
     request: &Value,
+    active_children: &Arc<Mutex<HashMap<RunId, mpsc::Sender<bool>>>>,
 ) -> Value {
     let child_run_id = RunId::new();
     if parent_config.run_depth >= 3 {
@@ -847,6 +881,14 @@ async fn execute_sub_agent_request(
     let (handle, mut child_rx) =
         AgentRun::start(child_config, input, Arc::clone(model), child_registry);
     let actual_child_run_id = handle.run_id;
+
+    // Register child approval channel so parent RunHandle can route
+    // approval responses to the child run.
+    {
+        let mut children = active_children.lock().await;
+        children.insert(actual_child_run_id, handle.approval_tx.clone());
+    }
+
     emit(
         tx,
         RuntimeEvent::SubAgentStarted {
@@ -863,6 +905,7 @@ async fn execute_sub_agent_request(
     let mut output = Value::Null;
     let mut failed = None;
 
+    let child_depth = parent_config.run_depth + 1;
     while let Some(event) = child_rx.recv().await {
         match &event {
             RuntimeEvent::ModelCallCompleted { tokens } => {
@@ -881,9 +924,26 @@ async fn execute_sub_agent_request(
             }
             _ => {}
         }
-        emit(tx, event).await;
+        // Wrap child events with identity metadata so consumers can
+        // distinguish root vs child run events
+        emit(
+            tx,
+            RuntimeEvent::ChildRunEvent {
+                child_run_id: actual_child_run_id,
+                run_depth: child_depth,
+                event: Box::new(event),
+            },
+        )
+        .await;
     }
     handle.wait().await;
+
+    // Deregister child from active children map
+    {
+        let mut children = active_children.lock().await;
+        children.remove(&actual_child_run_id);
+    }
+
     parent_budget.record_external_usage(&child_usage);
 
     if let Some(error) = failed {
@@ -1726,7 +1786,7 @@ mod tests {
                             input: json!(null),
                         },
                     });
-                    handle.respond_approval(handle.run_id, true).await;
+                    handle.respond_approval(handle.run_id, true).await.unwrap();
                 }
                 Some(event) => events.push(event),
                 None => break,
@@ -1766,7 +1826,7 @@ mod tests {
                             input: json!(null),
                         },
                     });
-                    handle.respond_approval(handle.run_id, false).await;
+                    handle.respond_approval(handle.run_id, false).await.unwrap();
                 }
                 Some(event) => events.push(event),
                 None => break,
@@ -2194,7 +2254,7 @@ mod tests {
         async fn stream(
             &self,
             messages: &[Message],
-            tools: &[ToolDef],
+            _tools: &[ToolDef],
             tx: mpsc::Sender<ModelStreamChunk>,
         ) -> Result<ModelResponse, ModelError> {
             let has_tool_result = messages.iter().any(|m| {
@@ -2981,5 +3041,319 @@ bundled_tools:
             |e| matches!(e, RuntimeEvent::ToolCallCompleted { tool, .. } if tool == "run_tool"),
         );
         assert!(tool_completed, "run_tool should execute via skill loading");
+    }
+
+    // ── Sub-agent approval routing tests ──────────────────────────
+
+    /// Model shared by parent and child.  The parent calls `spawn_sub`
+    /// which returns a `__sub_agent_request` with input "child with
+    /// approval".  The child sees that text in its first user message
+    /// and calls `write_file` (which requires approval).
+    struct SubAgentApprovalModel;
+
+    #[async_trait::async_trait]
+    impl ModelAdapter for SubAgentApprovalModel {
+        async fn stream(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDef],
+            tx: mpsc::Sender<ModelStreamChunk>,
+        ) -> Result<ModelResponse, ModelError> {
+            let usage = TokenUsage {
+                input_tokens: 2,
+                output_tokens: 3,
+            };
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+
+            let is_child = messages.iter().any(|m| {
+                m.content.iter().any(
+                    |c| matches!(c, ContentBlock::Text(t) if t.contains("child with approval")),
+                )
+            });
+
+            let has_tool_result = messages.iter().any(|m| {
+                m.content
+                    .iter()
+                    .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
+            });
+
+            if has_tool_result {
+                let text = if is_child {
+                    "child done"
+                } else {
+                    "parent done"
+                };
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text(text.into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                })
+            } else if is_child {
+                // Child calls write_file which requires approval
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "wf".into(),
+                        name: "write_file".into(),
+                        input: json!({"path": "test.txt"}),
+                    }],
+                    usage,
+                    stop_reason: StopReason::ToolUse,
+                })
+            } else {
+                // Parent calls spawn_sub
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "sub".into(),
+                        name: "spawn_sub".into(),
+                        input: json!({}),
+                    }],
+                    usage,
+                    stop_reason: StopReason::ToolUse,
+                })
+            }
+        }
+    }
+
+    /// Tool that returns a __sub_agent_request for a child that will
+    /// call write_file (which requires approval).
+    struct SpawnSubTool;
+
+    #[async_trait::async_trait]
+    impl Tool for SpawnSubTool {
+        fn name(&self) -> &str {
+            "spawn_sub"
+        }
+        fn description(&self) -> &str {
+            "spawn a sub-agent"
+        }
+        fn input_schema(&self) -> &JsonSchema {
+            &serde_json::Value::Null
+        }
+        fn output_schema(&self) -> Option<&JsonSchema> {
+            None
+        }
+        fn metadata(&self) -> &ToolMetadata {
+            &ToolMetadata {
+                side_effect: false,
+                requires_approval: false,
+                cost_hint: None,
+                timeout: None,
+                max_output_tokens: None,
+                source: ToolSource::InProcess,
+            }
+        }
+        async fn execute(
+            &self,
+            _input: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::Immediate(json!({
+                "__sub_agent_request": true,
+                "input": "child with approval",
+                "config": {
+                    "budget": { "max_tokens": 50, "max_tool_calls": 5, "max_duration_secs": 10 }
+                }
+            })))
+        }
+    }
+
+    #[tokio::test]
+    async fn sub_agent_approval_routed_to_child() {
+        let model = Arc::new(SubAgentApprovalModel);
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(SpawnSubTool)).unwrap();
+        // Register the guarded tool that the child model will call
+        registry
+            .register(Arc::new(FakeTool::guarded("write_file")))
+            .unwrap();
+
+        let (handle, mut rx) = AgentRun::start(test_config(), "go".into(), model, registry);
+
+        let mut events = Vec::new();
+        let mut child_approval_granted = false;
+        let mut child_tool_completed = false;
+
+        loop {
+            match rx.recv().await {
+                Some(RuntimeEvent::ChildRunEvent {
+                    child_run_id,
+                    event,
+                    ..
+                }) => {
+                    if matches!(event.as_ref(), RuntimeEvent::ApprovalRequested { .. }) {
+                        // Route approval to the child run
+                        handle
+                            .respond_approval(child_run_id, true)
+                            .await
+                            .expect("approval routing to child should succeed");
+                    }
+                    if matches!(event.as_ref(), RuntimeEvent::ApprovalGranted { .. }) {
+                        child_approval_granted = true;
+                    }
+                    if matches!(event.as_ref(), RuntimeEvent::ToolCallCompleted { .. }) {
+                        child_tool_completed = true;
+                    }
+                    events.push(RuntimeEvent::ChildRunEvent {
+                        child_run_id,
+                        run_depth: 1,
+                        event,
+                    });
+                }
+                Some(event) => events.push(event),
+                None => break,
+            }
+        }
+        handle.wait().await;
+
+        assert!(child_approval_granted, "child approval should be granted");
+        assert!(
+            child_tool_completed,
+            "child tool should complete after approval"
+        );
+        // Should also have SubAgentCompleted
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::SubAgentCompleted { .. })));
+    }
+
+    #[tokio::test]
+    async fn sub_agent_approval_denied_completes_child() {
+        let model = Arc::new(SubAgentApprovalModel);
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(SpawnSubTool)).unwrap();
+        registry
+            .register(Arc::new(FakeTool::guarded("write_file")))
+            .unwrap();
+
+        let (handle, mut rx) = AgentRun::start(test_config(), "go".into(), model, registry);
+
+        let mut events = Vec::new();
+        let mut child_approval_denied = false;
+
+        loop {
+            match rx.recv().await {
+                Some(RuntimeEvent::ChildRunEvent {
+                    child_run_id,
+                    event,
+                    ..
+                }) => {
+                    if matches!(event.as_ref(), RuntimeEvent::ApprovalRequested { .. }) {
+                        // Deny the approval
+                        handle
+                            .respond_approval(child_run_id, false)
+                            .await
+                            .expect("approval routing to child should succeed");
+                    }
+                    if matches!(event.as_ref(), RuntimeEvent::ApprovalDenied { .. }) {
+                        child_approval_denied = true;
+                    }
+                    events.push(RuntimeEvent::ChildRunEvent {
+                        child_run_id,
+                        run_depth: 1,
+                        event,
+                    });
+                }
+                Some(event) => events.push(event),
+                None => break,
+            }
+        }
+        handle.wait().await;
+
+        assert!(
+            child_approval_denied,
+            "child approval should have been denied"
+        );
+        // Parent should still complete (SubAgentCompleted or SubAgentFailed)
+        let parent_completed = events.iter().any(|e| {
+            matches!(e, RuntimeEvent::SubAgentCompleted { .. })
+                || matches!(e, RuntimeEvent::SubAgentFailed { .. })
+        });
+        assert!(
+            parent_completed,
+            "parent should complete after child denial"
+        );
+    }
+
+    #[tokio::test]
+    async fn respond_approval_unknown_run_id_returns_error() {
+        let model = Arc::new(ToolCallModelAdapter);
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(FakeTool::echo())).unwrap();
+
+        let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
+
+        // Drain events so the run completes
+        while rx.recv().await.is_some() {}
+
+        let unknown_id = RunId::new();
+        let result = handle.respond_approval(unknown_id, true).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("unknown run_id"),
+            "expected error about unknown run_id, got: {err}"
+        );
+
+        handle.wait().await;
+    }
+
+    #[tokio::test]
+    async fn child_run_events_carry_run_depth_and_child_id() {
+        let model = Arc::new(SubAgentApprovalModel);
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(SpawnSubTool)).unwrap();
+        registry.register(Arc::new(FakeTool::echo())).unwrap();
+        // Register write_file so the child doesn't fail on missing tool
+        registry
+            .register(Arc::new(FakeTool::guarded("write_file")))
+            .unwrap();
+
+        let (handle, mut rx) = AgentRun::start(test_config(), "go".into(), model, registry);
+        let parent_run_id = handle.run_id;
+
+        let mut child_run_ids = Vec::new();
+        let mut child_depths = Vec::new();
+
+        loop {
+            match rx.recv().await {
+                Some(RuntimeEvent::ChildRunEvent {
+                    child_run_id,
+                    run_depth,
+                    event,
+                    ..
+                }) => {
+                    if matches!(event.as_ref(), RuntimeEvent::ApprovalRequested { .. }) {
+                        handle.respond_approval(child_run_id, true).await.unwrap();
+                    }
+                    child_run_ids.push(child_run_id);
+                    child_depths.push(run_depth);
+                }
+                Some(_) => {}
+                None => break,
+            }
+        }
+        handle.wait().await;
+
+        assert!(!child_run_ids.is_empty(), "should have child run events");
+        // All child events should carry the same child_run_id
+        let first_id = child_run_ids[0];
+        assert!(
+            child_run_ids.iter().all(|id| *id == first_id),
+            "all child events should have same child_run_id"
+        );
+        // run_depth should be 1 (parent is depth 0)
+        assert!(
+            child_depths.iter().all(|d| *d == 1),
+            "child run_depth should be 1"
+        );
+        // child_run_id should differ from parent run_id
+        assert_ne!(
+            first_id, parent_run_id,
+            "child_run_id must differ from parent run_id"
+        );
     }
 }
