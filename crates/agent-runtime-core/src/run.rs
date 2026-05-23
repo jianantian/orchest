@@ -2938,6 +2938,60 @@ bundled_tools:
     }
 
     #[tokio::test]
+    async fn register_skills_emits_missing_capabilities_warning() {
+        use std::fs;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("no_cap_skill");
+        fs::create_dir_all(skill_dir.join("scripts")).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: no_cap_skill
+description: A skill WITHOUT capabilities declared
+bundled_tools:
+  - name: no_cap_tool
+    description: tool
+    executable: bash
+    script: scripts/run.sh
+---
+"#,
+        )
+        .unwrap();
+        fs::write(skill_dir.join("scripts/run.sh"), "#!/bin/sh\necho '{}'").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                skill_dir.join("scripts/run.sh"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut registry = ToolRegistry::new();
+
+        register_skills(tmp.path().to_str().unwrap(), &None, &mut registry, &tx)
+            .await
+            .unwrap();
+
+        drop(tx);
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        // Should emit SkillMissingCapabilities because no capabilities
+        // section is declared in the manifest.
+        assert!(
+            events.iter().any(
+                |e| matches!(e, RuntimeEvent::SkillMissingCapabilities { skill_name, .. } if skill_name == "no_cap_skill")
+            ),
+            "expected SkillMissingCapabilities for no_cap_skill"
+        );
+    }
+
+    #[tokio::test]
     async fn skills_dir_config_runs_skill_scan() {
         use std::fs;
 
