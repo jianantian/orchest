@@ -384,7 +384,10 @@ impl Agent {
                     uuid::Uuid::parse_str(&run_id)
                         .map_err(|e| napi::Error::from_reason(format!("invalid run_id: {}", e)))?,
                 );
-                handle.respond_approval(run_id, approved).await;
+                handle
+                    .respond_approval(run_id, approved)
+                    .await
+                    .map_err(napi::Error::from_reason)?;
                 Ok(())
             } else {
                 Err(napi::Error::from_reason(

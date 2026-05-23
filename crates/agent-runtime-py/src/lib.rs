@@ -617,7 +617,10 @@ impl Agent {
                     uuid::Uuid::parse_str(&run_id_str)
                         .map_err(|e| PyRuntimeError::new_err(format!("invalid run_id: {}", e)))?,
                 );
-                handle.respond_approval(run_id, approved).await;
+                handle
+                    .respond_approval(run_id, approved)
+                    .await
+                    .map_err(PyRuntimeError::new_err)?;
                 Ok(())
             } else {
                 Err(PyRuntimeError::new_err(

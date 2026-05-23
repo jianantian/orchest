@@ -111,6 +111,12 @@ pub enum RuntimeEvent {
         error: String,
     },
 
+    ChildRunEvent {
+        child_run_id: RunId,
+        run_depth: u32,
+        event: Box<RuntimeEvent>,
+    },
+
     RunCompleted {
         output: Value,
     },

@@ -223,6 +223,7 @@ async fn e2e_event_coverage() {
             RuntimeEvent::SubAgentFailed { .. } => "SubAgentFailed",
             RuntimeEvent::RunCompleted { .. } => "RunCompleted",
             RuntimeEvent::RunFailed { .. } => "RunFailed",
+            RuntimeEvent::ChildRunEvent { .. } => "ChildRunEvent",
         })
         .collect();
 
@@ -787,7 +788,7 @@ async fn e2e_approval_flow() {
     while let Some(event) = rx.recv().await {
         if matches!(event, RuntimeEvent::ApprovalRequested { .. }) {
             saw_approval_requested = true;
-            handle.respond_approval(handle.run_id, true).await;
+            let _ = handle.respond_approval(handle.run_id, true).await;
         }
         events.push(event);
     }
@@ -822,7 +823,7 @@ async fn e2e_approval_denied_flow_completes_without_executing_tool() {
     while let Some(event) = rx.recv().await {
         if matches!(event, RuntimeEvent::ApprovalRequested { .. }) {
             saw_approval_requested = true;
-            handle.respond_approval(handle.run_id, false).await;
+            let _ = handle.respond_approval(handle.run_id, false).await;
         }
         events.push(event);
     }

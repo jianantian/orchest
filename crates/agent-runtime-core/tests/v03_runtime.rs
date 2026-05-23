@@ -309,7 +309,8 @@ async fn sub_agent_request_forwards_events_and_completes_parent_tool_result() {
                 saw_started = true;
                 assert_ne!(parent_run_id, child_run_id);
             }
-            RuntimeEvent::RunCompleted { output } if output == "child done" => {
+            RuntimeEvent::ChildRunEvent { event, .. } if matches!(event.as_ref(), RuntimeEvent::RunCompleted { output } if output == "child done") =>
+            {
                 saw_child_completion = true;
             }
             RuntimeEvent::SubAgentCompleted {
