@@ -42,13 +42,21 @@ git checkout -b issue-<N>-<slug>
 
 Branch naming: `issue-<N>-<slug>` where slug matches the issue filename (e.g. `run-loop`, `core-types`).
 
-### 4. Develop
+### 4. Develop From the Issue Plan
 
-Keep commits focused. Reference the issue's acceptance criteria in `docs/iteration/` as your definition of done.
+Keep commits focused. Each issue is implemented from its own documentation bundle:
+
+- `docs/iteration/<version>/prd.md` defines iteration scope and dependency order.
+- `docs/iteration/<version>/issues/<NNN-slug>/spec.md` defines the issue contract and acceptance criteria.
+- `docs/iteration/<version>/issues/<NNN-slug>/plan.md` defines the implementation sequence for that issue.
+
+Use the issue's `plan.md` as the step-by-step implementation guide. Use the issue's `spec.md` and acceptance criteria as the definition of done. If the plan and spec conflict, stop and update the docs first so the plan, spec, and PRD stay consistent before implementation continues.
 
 ```bash
-# Check the spec
-cat docs/iteration/v0_1/issues/005-run-loop.md
+# Check the iteration scope, issue contract, and implementation plan
+cat docs/iteration/v0_5/prd.md
+cat docs/iteration/v0_5/issues/005-openrouter-adapter/spec.md
+cat docs/iteration/v0_5/issues/005-openrouter-adapter/plan.md
 
 # Commit as you go
 git add -p
