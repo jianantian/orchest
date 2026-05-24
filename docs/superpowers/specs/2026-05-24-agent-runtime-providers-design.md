@@ -293,14 +293,14 @@ pub enum StreamEvent {
     /// Callers that build ContentBlock::Thinking from stream events
     /// should store this signature alongside the accumulated text.
     ThinkingEnd { signature: Option<String> },
-    ToolCallStart { id: String, name: String },
-    ToolCallArgsChunk { id: String, delta: String },
-    /// Signals all arguments for this tool call have been received.
+    ToolUseStart { id: String, name: String },
+    ToolUseArgsChunk { id: String, delta: String },
+    /// Signals all arguments for this tool use have been received.
     /// The accumulated JSON args are now complete and can be parsed.
     /// Anthropic: maps to `content_block_stop` for tool_use blocks.
-    /// OpenAI-compat: emitted for each accumulated tool call when
+    /// OpenAI-compat: emitted for each accumulated tool use when
     /// `finish_reason: "tool_calls"` arrives.
-    ToolCallEnd { id: String },
+    ToolUseEnd { id: String },
     Done { usage: TokenUsage },
 }
 ```
@@ -717,8 +717,8 @@ Migrated from core and extended:
 | `deepseek::cache_hit_tokens_reported` | **new** | prompt_cache_hit_tokens → TokenUsage |
 | `openrouter::reasoning_object_from_thinking_level` | **new** | ThinkingLevel → reasoning.effort |
 | `complete::tx_none_skips_events` | **new** | complete(tx=None) returns response without streaming |
-| `stream::tool_call_end_emitted` | **new** | ToolCallEnd emitted after tool call args are complete |
-| `stream::parallel_tool_calls_end_each` | **new** | Each parallel tool call gets its own ToolCallEnd |
+| `stream::tool_use_end_emitted` | **new** | ToolUseEnd emitted after tool use args are complete |
+| `stream::parallel_tool_uses_end_each` | **new** | Each parallel tool use gets its own ToolUseEnd |
 | `anthropic::temperature_forwarded` | **new** | RequestOptions::temperature → API `temperature` |
 | `openai::temperature_forwarded` | **new** | RequestOptions::temperature → API `temperature` |
 | `anthropic::adaptive_vs_enabled_mode` | **new** | Newer models use adaptive, older use enabled |
