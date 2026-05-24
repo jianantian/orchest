@@ -268,7 +268,12 @@ pub enum StreamEvent {
     Text { delta: String },
     ThinkingStart,
     Thinking { delta: String },
-    ThinkingEnd,
+    /// Signals the end of a thinking block. `signature` carries the
+    /// opaque token needed for multi-turn thinking continuity (Anthropic).
+    /// Callers that build ContentBlock::Thinking from stream events
+    /// should store this signature alongside the accumulated text.
+    ThinkingEnd { signature: Option<String> },
+    ToolCallStart { id: String, name: String },
     ToolCallArgsChunk { id: String, delta: String },
     Done { usage: TokenUsage },
 }
@@ -728,7 +733,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 StreamEvent::Text { delta } => print!("{delta}"),
                 StreamEvent::ThinkingStart => print!("[thinking] "),
                 StreamEvent::Thinking { delta } => print!("{delta}"),
-                StreamEvent::ThinkingEnd => println!(" [/thinking]"),
+                StreamEvent::ThinkingEnd { .. } => println!(" [/thinking]"),
                 StreamEvent::Done { usage } => {
                     println!("\n(in:{} out:{} cache_read:{} cache_write:{})",
                         usage.input_tokens, usage.output_tokens,
