@@ -3,7 +3,20 @@ export class Agent {
     model: string;
     systemPrompt: string;
     skillsDir?: string;
+    apiKey?: string;
+    apiKeyEnv?: string;
     apiUrl?: string;
+    maxTokens?: number;
+    requestOptions?: {
+      thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+      thinkingBudgetTokens?: number;
+      includeThinking?: boolean;
+      compatibilityPolicy?: "coerce" | "strict";
+      maxTokens?: number;
+      temperature?: number;
+      topP?: number;
+      cachePolicy?: "none" | "auto" | "long";
+    };
     budget?: {
       maxTokens?: number;
       maxToolCalls?: number;

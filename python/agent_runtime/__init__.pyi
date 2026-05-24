@@ -21,9 +21,42 @@ class BudgetOptions(TypedDict, total=False):
     max_cost_usd: float
 
 
+class RequestOptions(TypedDict, total=False):
+    thinking: Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+    thinking_budget_tokens: int
+    include_thinking: bool
+    compatibility_policy: Literal["coerce", "strict"]
+    max_tokens: int
+    temperature: float
+    top_p: float
+    cache_policy: Literal["none", "auto", "long"]
+
+
+class OptionAdjustment(TypedDict):
+    option: str
+    requested: JsonValue
+    applied: JsonValue
+    reason: str
+
+
 class TokenUsage(TypedDict):
     input_tokens: int
     output_tokens: int
+    reasoning_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    details: dict[str, int]
+
+
+class TextStreamEvent(TypedDict):
+    Text: dict[str, str]
+
+
+class ThinkingEndStreamEvent(TypedDict):
+    ThinkingEnd: dict[str, JsonValue]
+
+
+StreamEvent: TypeAlias = JsonValue
 
 
 class ToolCall(TypedDict):
@@ -56,7 +89,7 @@ class ModelCallStartedEvent(TypedDict):
 
 class ModelStreamChunkEvent(TypedDict):
     type: Literal["model_stream_chunk"]
-    delta: JsonValue
+    delta: StreamEvent
     run_depth: int
     child_run_id: str | None
 
@@ -64,6 +97,7 @@ class ModelStreamChunkEvent(TypedDict):
 class ModelCallCompletedEvent(TypedDict):
     type: Literal["model_call_completed"]
     tokens: TokenUsage
+    option_adjustments: NotRequired[list[OptionAdjustment]]
     run_depth: int
     child_run_id: str | None
 
@@ -279,6 +313,10 @@ class Agent:
         skills_dir: str | None = None,
         budget: BudgetOptions | None = None,
         api_url: str | None = None,
+        api_key: str | None = None,
+        api_key_env: str | None = None,
+        max_tokens: int | None = None,
+        request_options: RequestOptions | None = None,
     ) -> None: ...
     def set_api_url(self, api_url: str | None) -> None: ...
     def tool(
