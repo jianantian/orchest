@@ -39,6 +39,7 @@ pub trait ModelAdapter: Send + Sync {
         &self,
         messages: &[Message],
         tools: &[ToolDef],
+        options: &StreamOptions,
         tx: mpsc::Sender<StreamEvent>,
     ) -> Result<ModelResponse, ModelError>;
 
@@ -48,9 +49,10 @@ pub trait ModelAdapter: Send + Sync {
         &self,
         messages: &[Message],
         tools: &[ToolDef],
+        options: &StreamOptions,
     ) -> Result<ModelResponse, ModelError> {
         let (tx, _rx) = mpsc::channel(64);
-        self.stream(messages, tools, tx).await
+        self.stream(messages, tools, options, tx).await
     }
 }
 ```
@@ -86,6 +88,52 @@ pub enum ContentBlock {
 - Context compaction that preserves reasoning traces
 - Sub-agent message forwarding that includes thinking
 - Session persistence of thinking blocks
+
+### Thinking configuration
+
+```rust
+/// Primary way to control thinking/reasoning depth. Each adapter maps
+/// these levels to provider-specific parameters. Not all providers
+/// support all levels — adapters clamp to the nearest supported value.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub enum ThinkingLevel {
+    Off,
+    Minimal,
+    Low,
+    #[default]
+    Medium,
+    High,
+    XHigh,
+}
+
+/// Per-request options passed to `ModelAdapter::stream()` / `call()`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StreamOptions {
+    /// Thinking depth. Default: `Medium`.
+    pub thinking: ThinkingLevel,
+
+    /// Advanced: override the provider's default token budget for this
+    /// thinking level. Most models do not support this — only providers
+    /// with explicit budget_tokens support (e.g., Anthropic) will honor it.
+    /// Ignored when `thinking` is `Off`.
+    pub thinking_budget_tokens: Option<u32>,
+
+    /// Per-request max output tokens override. Falls back to the
+    /// adapter's configured default when `None`.
+    pub max_tokens: Option<u32>,
+}
+```
+
+ThinkingLevel is the user-facing control. Each adapter maps it to provider-specific API parameters:
+
+| Provider   | Mapping                                                                 |
+|------------|-------------------------------------------------------------------------|
+| Anthropic  | Maps to `thinking.type` + `thinking.budget_tokens`. Supports `budget_tokens` override. `Off` → no thinking block. |
+| OpenAI     | Maps to `reasoning_effort`: Off→none, Minimal/Low→low, Medium→medium, High/XHigh→high. `budget_tokens` ignored. |
+| DeepSeek   | Off→disable reasoning, all others→enable reasoning. No granular levels. `budget_tokens` ignored. |
+| OpenRouter | Passes through to underlying model's native thinking parameters.        |
+
+When a provider doesn't support a requested level, the adapter clamps silently to the nearest supported value (e.g., DeepSeek only has on/off, so Minimal through XHigh all map to "on").
 
 ### Tool definition
 
@@ -229,6 +277,8 @@ SSE event types: `message_start`, `content_block_start`, `content_block_delta`, 
 
 Thinking support: maps `content_block_start` with `type: "thinking"` and `thinking_delta` to `StreamEvent::ThinkingStart/Thinking/ThinkingEnd` and `ContentBlock::Thinking`.
 
+ThinkingLevel mapping: Anthropic is the only provider that supports explicit `budget_tokens`. The adapter maps levels to token budgets (e.g., Off→omit thinking block, Minimal→1024, Low→4096, Medium→10240, High→32768, XHigh→max allowed). When `StreamOptions::thinking_budget_tokens` is set, it overrides the level's default budget.
+
 ### OpenAI
 
 Migrated from `core/src/model/openai.rs`. Uses the OpenAI Chat Completions API with SSE streaming.
@@ -248,6 +298,8 @@ Protocol: `POST /v1/chat/completions` with `Authorization: Bearer` header, `stre
 
 SSE format: `data: {...}` lines with `choices[0].delta` containing `content`, `tool_calls`, or `role`. `data: [DONE]` signals end.
 
+ThinkingLevel mapping: maps to OpenAI's `reasoning_effort` parameter. Off→omit parameter, Minimal/Low→"low", Medium→"medium", High/XHigh→"high". `budget_tokens` is ignored (OpenAI does not support it).
+
 ### DeepSeek
 
 New adapter. OpenAI-compatible protocol with DeepSeek-specific defaults and reasoning support.
@@ -266,6 +318,8 @@ pub struct DeepSeekConfig {
 Protocol: same as OpenAI Chat Completions. Base URL defaults to `https://api.deepseek.com`.
 
 Reasoning support: DeepSeek's `reasoning_content` field in streamed deltas maps to `StreamEvent::Thinking` events and `ContentBlock::Thinking` in the final response.
+
+ThinkingLevel mapping: DeepSeek only supports on/off for reasoning. Off→disable reasoning, Minimal through XHigh→enable reasoning. `budget_tokens` is ignored.
 
 Internally reuses SSE parsing from `sse.rs`. The adapter handles:
 - URL normalization (append `/v1/chat/completions` if needed)
@@ -296,6 +350,8 @@ OpenRouter-specific headers:
 - `X-OpenRouter-Title`: set from `app_title` config or `OPENROUTER_APP_TITLE` env var
 
 Reasoning support: when the underlying model supports reasoning, OpenRouter includes `reasoning` content in the response. Mapped to `StreamEvent::Thinking` and `ContentBlock::Thinking` using the same pattern as DeepSeek.
+
+ThinkingLevel mapping: OpenRouter forwards thinking parameters to the underlying model. The adapter translates ThinkingLevel to the appropriate provider-specific format based on the model prefix (e.g., `anthropic/` models get Anthropic-style thinking config, `openai/` models get `reasoning_effort`). `budget_tokens` is forwarded when the underlying model supports it.
 
 Model names pass through unchanged (e.g., `anthropic/claude-sonnet-4`, `openai/gpt-4o`). OpenRouter handles routing internally.
 
@@ -409,7 +465,8 @@ pub fn create_adapter(model: &str, api_key: Option<String>) -> Result<Box<dyn Mo
    pub use agent_runtime_providers::{
        ModelAdapter, Message, Role, ContentBlock,
        ToolDef, JsonSchema, ModelResponse, ModelError,
-       StreamEvent, TokenUsage, StopReason, ModelSpec,
+       StreamEvent, StreamOptions, ThinkingLevel,
+       TokenUsage, StopReason, ModelSpec,
        AnthropicAdapter, AnthropicConfig,
        OpenAiAdapter, OpenAiConfig,
        DeepSeekAdapter, DeepSeekConfig,
@@ -473,6 +530,10 @@ Migrated from core and extended:
 | `factory::routes_by_provider` | **new** | create_adapter routing |
 | `factory::rejects_unknown_provider` | **new** | Error for unsupported provider |
 | `factory::openrouter_preserves_full_model` | **new** | "openrouter/anthropic/claude-sonnet-4" |
+| `anthropic::thinking_level_maps_to_budget` | **new** | ThinkingLevel → budget_tokens mapping |
+| `anthropic::thinking_budget_override` | **new** | StreamOptions::thinking_budget_tokens overrides level default |
+| `openai::thinking_level_maps_to_reasoning_effort` | **new** | ThinkingLevel → reasoning_effort |
+| `deepseek::thinking_off_disables_reasoning` | **new** | ThinkingLevel::Off suppresses reasoning |
 
 All SSE tests use the existing `serve_sse_once` pattern (bind to `127.0.0.1:0`, serve one HTTP response with SSE body).
 
@@ -486,7 +547,8 @@ All SSE tests use the existing `serve_sse_once` pattern (bind to `127.0.0.1:0`, 
 
 ```rust
 use agent_runtime_providers::{
-    create_adapter, Message, ContentBlock, Role, ToolDef, StreamEvent,
+    create_adapter, Message, ContentBlock, Role, StreamEvent,
+    StreamOptions, ThinkingLevel,
 };
 use tokio::sync::mpsc;
 
@@ -507,6 +569,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     ];
 
+    // Configure thinking level (primary API)
+    let options = StreamOptions {
+        thinking: ThinkingLevel::High,
+        ..Default::default()
+    };
+
+    // Or with advanced budget_tokens override (only honored by Anthropic)
+    let _advanced = StreamOptions {
+        thinking: ThinkingLevel::High,
+        thinking_budget_tokens: Some(16384),
+        ..Default::default()
+    };
+
     // Stream response
     let (tx, mut rx) = mpsc::channel(64);
     let handle = tokio::spawn(async move {
@@ -524,7 +599,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let response = adapter.stream(&messages, &[], tx).await?;
+    let response = adapter.stream(&messages, &[], &options, tx).await?;
     handle.await?;
 
     println!("Stop reason: {:?}", response.stop_reason);
