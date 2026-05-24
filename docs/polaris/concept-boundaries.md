@@ -51,3 +51,13 @@ my-skill/
 - Skill 在**知识层**——组织过程性知识 + 可选 bundled tool 的文件系统包
 
 三者不是并列的"功能模块"，而是不同抽象层次的设施。
+
+## 与可观测性的关系
+
+可观测性不改变 Tool / MCP / Skill 的定义，也不是第四种 capability。
+
+- `RuntimeEvent`、`tracing`、`metrics` 只描述 runtime 中发生了什么，不提供新的模型可调用能力
+- MCP tool 和 in-process tool 的观测字段可以不同（例如 `mcp_transport`），但它们在能力层仍然都是 Tool
+- Skill 的 discovery、activation、script execution 可以被观测，但 Skill 仍然是过程性知识包，不因为有日志或指标而变成 Tool 集合
+
+日志、指标、token 归因和错误可观测性的统一规范见 [observability.md](./observability.md)。

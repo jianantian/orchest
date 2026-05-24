@@ -32,6 +32,8 @@ Runtime 只做"循环 + 状态管理 + 事件流"，所有能力外移到 tool �
 
 每一步发出事件，包括 token 级流式输出。事件流是一等公民，不是调试附加。用户消费事件做日志、UI、审计——不应该有"黑盒"步骤。
 
+SDK 级日志、指标、token 归因和错误可观测性遵循 [observability.md](./observability.md)。迭代文档可以定义落地方式，但不应另起一套 span / metric / token 语义。
+
 ## AI 时代友好
 
 设计假设是 AI 写大部分代码。因此偏好：
@@ -59,3 +61,4 @@ SKILL.md 格式与 Anthropic Agent Skills 开放标准（agentskills.io）兼容
 2. 这个抽象让 agent 的行为更可见，还是更隐藏？
 3. 这个设计偏离了 Anthropic Agent Skills 开放标准吗？如果是，代价是什么？
 4. 一个不熟悉这个 runtime 的 AI 能否通过强类型和错误信息自己推断出正确用法？
+5. 这个设计复用了统一的可观测性规范，还是引入了另一套 span / metric / token 语义？

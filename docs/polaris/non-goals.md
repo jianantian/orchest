@@ -18,6 +18,11 @@
 - SKILL.md 格式不得与官方标准不兼容
 - 不创造与标准并行的私有 skill 格式
 
+**内置观测平台**
+- 不内置日志后端、metrics exporter、OpenTelemetry collector、Prometheus server 或 Web dashboard
+- SDK 只通过 `RuntimeEvent`、`tracing`、`metrics` 暴露统一观测信号；采集、存储、告警、展示由宿主应用负责
+- 不为了 dashboard 便利而把高基数字段塞进默认 metric label
+
 ## v0.1 明确不做（留给 v0.2+）
 
 | 功能 | 原因 |
@@ -46,4 +51,4 @@ v0.1–v0.3 不做进程级沙箱，在此期间建议遵守以下约束以降�
 - **含 `scripts/` 的 skill 须手动审核**：bundled script 会以当前进程权限执行，审核方式与审查第三方 shell 脚本相同
 - **`side_effect: true` 的 tool 默认开启 `requires_approval`**：这是 v0.1 就支持的控制手段，对 skill bundled tool 同样适用，不应跳过
 - **通过 `capabilities.env` 收缩环境变量暴露**：v0.3 起 `ExecutionContext` 只向子进程传递 skill 声明的变量，不继承完整父进程环境；对包含密钥的进程尤为重要
-- **审计 `SkillContentRead` 和 `ToolCallStarted` 事件**：所有 skill 文件读取和 tool 调用已记录在事件流中，可接入日志系统检测异常访问模式
+- **审计 `SkillContentRead` 和 `ToolCallStarted` 事件**：所有 skill 文件读取和 tool 调用都应通过 `RuntimeEvent` 可见，并可按 [observability.md](./observability.md) 接入 `tracing` / `metrics` 体系检测异常访问模式

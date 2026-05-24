@@ -35,6 +35,7 @@ docs/
 ├── polaris/
 │   ├── concept-boundaries.md  # Tool/MCP/Skill boundary definitions (authoritative)
 │   ├── design-principles.md   # Design principles and decision heuristics
+│   ├── observability.md       # SDK-wide logging, metrics, token, and error observability contract
 │   └── non-goals.md           # Hard boundaries + minimum security guidance for sandboxless environments
 ├── iteration/
 │   ├── v0_1/                  # Minimum viable: Rust core + dual-language SDK
@@ -77,7 +78,7 @@ The following decisions are settled. Do not propose alternatives without a compe
 - **Skill-first** — full alignment with the Anthropic Agent Skills open standard; SKILL.md format must remain compatible with the official spec
 - **MCP is a transport protocol, not a tool type** — tools arriving via MCP are handled through the same `Tool` trait as in-process tools
 - **Minimal core** — the runtime only handles "loop + state management + event stream"; all capabilities live in tools and skills
-- **Streaming output is a v0.1 first-class concern** — not optional; `ModelAdapter::stream()` is the primary path
+- **Streaming output is a first-class concern** — not optional; model adapters use the unified `ModelAdapter::complete()` contract with streaming events delivered through the optional event channel, and `stream_chat()` is the convenience helper
 - **Sequential tool execution in v0.1** — keeps the approval gate simple; parallelism is a v0.2 optimization
 - **No sandbox until v0.3+** — but v0.3 must complete the `ScriptExecutor` trait abstraction and `capabilities` declaration
 
