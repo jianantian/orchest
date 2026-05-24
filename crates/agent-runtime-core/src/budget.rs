@@ -143,6 +143,7 @@ mod tests {
         guard.record_model_call(&TokenUsage {
             input_tokens: 60,
             output_tokens: 50,
+            ..Default::default()
         });
         assert!(matches!(
             guard.check(),
@@ -179,6 +180,7 @@ mod tests {
         guard.record_model_call(&TokenUsage {
             input_tokens: 1_000_000,
             output_tokens: 0,
+            ..Default::default()
         });
         assert!(guard.usage().cost_usd > 2.9);
         assert!(matches!(
