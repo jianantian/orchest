@@ -8,3 +8,6 @@ pub(crate) mod sse;
 
 pub mod openai;
 pub use openai::{OpenAiAdapter, OpenAiConfig};
+
+pub mod deepseek;
+pub use deepseek::{DeepSeekAdapter, DeepSeekConfig};
