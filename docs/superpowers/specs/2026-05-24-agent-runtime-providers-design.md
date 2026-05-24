@@ -204,6 +204,16 @@ pub struct StreamOptions {
     /// adapter's configured default when `None`.
     pub max_tokens: Option<u32>,
 
+    /// Sampling temperature (0.0 – 2.0 for most providers).
+    /// Higher values increase randomness. When `None`, the provider's
+    /// default applies. Not all providers support the full range.
+    pub temperature: Option<f32>,
+
+    /// Nucleus sampling. Only consider tokens whose cumulative
+    /// probability exceeds `top_p`. Mutually exclusive with
+    /// `temperature` adjustments on some providers.
+    pub top_p: Option<f32>,
+
     /// Prompt cache policy. Default: `Auto` (provider-managed caching).
     pub cache_policy: CachePolicy,
 }
@@ -215,6 +225,8 @@ impl Default for StreamOptions {
             thinking_budget_tokens: None,
             include_thinking: true,
             max_tokens: None,
+            temperature: None,
+            top_p: None,
             cache_policy: CachePolicy::default(),
         }
     }
@@ -227,7 +239,7 @@ ThinkingLevel is the user-facing control for dimensions #1 and #2. Each adapter 
 
 | Provider   | API parameter | Level mapping | budget_tokens |
 |------------|--------------|---------------|---------------|
-| **Anthropic** | `thinking.type` + `thinking.budget_tokens` | Off→`disabled`, Minimal-High→`adaptive` with effort mapping, XHigh→`adaptive` max effort. Opus 4.7+ requires `adaptive` (adapter uses it automatically). | ✅ Supported. Overrides level default when set. |
+| **Anthropic** | `thinking.type` + `thinking.budget_tokens` | Off→`disabled`, Minimal-XHigh→`adaptive` (newer models) or `enabled` (older), with budget_tokens mapped per level. See adapter section for details. | ✅ Supported. Overrides level default when set. |
 | **OpenAI** | `reasoning_effort` | Off→omit param, Minimal/Low→"low", Medium→"medium", High/XHigh→"high" | ❌ Ignored |
 | **DeepSeek** | Model-level (deepseek-reasoner) | Off→no reasoning, all others→enable reasoning. Binary on/off only. | ❌ Ignored |
 | **OpenRouter** | `reasoning: { effort, max_tokens }` | Passes `effort` string directly (none/minimal/low/medium/high/xhigh). | ✅ Forwarded as `reasoning.max_tokens` when underlying model supports it. |
@@ -275,6 +287,12 @@ pub enum StreamEvent {
     ThinkingEnd { signature: Option<String> },
     ToolCallStart { id: String, name: String },
     ToolCallArgsChunk { id: String, delta: String },
+    /// Signals all arguments for this tool call have been received.
+    /// The accumulated JSON args are now complete and can be parsed.
+    /// Anthropic: maps to `content_block_stop` for tool_use blocks.
+    /// OpenAI-compat: emitted for each accumulated tool call when
+    /// `finish_reason: "tool_calls"` arrives.
+    ToolCallEnd { id: String },
     Done { usage: TokenUsage },
 }
 ```
@@ -406,7 +424,12 @@ SSE event types: `message_start`, `content_block_start`, `content_block_delta`, 
 
 Thinking support: maps `content_block_start` with `type: "thinking"` and `thinking_delta` to `StreamEvent::ThinkingStart/Thinking/ThinkingEnd` and `ContentBlock::Thinking`.
 
-ThinkingLevel mapping: Uses `thinking.type: "adaptive"` for models that support it (Opus 4.7+, Sonnet 4.6+), falls back to `"enabled"` for older models. Level maps to budget_tokens (Off→`disabled`, Minimal→1024, Low→4096, Medium→10240, High→32768, XHigh→max allowed). `StreamOptions::thinking_budget_tokens` overrides the level's default budget.
+ThinkingLevel mapping: Two Anthropic thinking modes, selected by adapter based on model:
+
+- **`adaptive`** (Opus 4.7+, Sonnet 4.6+): model decides whether to think per turn. `budget_tokens` is the ceiling — model may use less or skip entirely if the query is simple. This is preferred.
+- **`enabled`** (older models fallback): forces thinking on every turn. `budget_tokens` is a fixed budget.
+
+Both modes use `budget_tokens`, mapped from ThinkingLevel: Off→`thinking.type: "disabled"`, Minimal→1024, Low→4096, Medium→10240, High→32768, XHigh→max allowed. `StreamOptions::thinking_budget_tokens` overrides the level's default budget.
 
 Output control: `include_thinking` maps to `thinking.display` — `true`→"summarized", `false`→"omitted".
 
@@ -686,6 +709,11 @@ Migrated from core and extended:
 | `deepseek::cache_hit_tokens_reported` | **new** | prompt_cache_hit_tokens → TokenUsage |
 | `openrouter::reasoning_object_from_thinking_level` | **new** | ThinkingLevel → reasoning.effort |
 | `complete::tx_none_skips_events` | **new** | complete(tx=None) returns response without streaming |
+| `stream::tool_call_end_emitted` | **new** | ToolCallEnd emitted after tool call args are complete |
+| `stream::parallel_tool_calls_end_each` | **new** | Each parallel tool call gets its own ToolCallEnd |
+| `anthropic::temperature_forwarded` | **new** | StreamOptions::temperature → API `temperature` |
+| `openai::temperature_forwarded` | **new** | StreamOptions::temperature → API `temperature` |
+| `anthropic::adaptive_vs_enabled_mode` | **new** | Newer models use adaptive, older use enabled |
 
 All SSE tests use the existing `serve_sse_once` pattern (bind to `127.0.0.1:0`, serve one HTTP response with SSE body).
 
