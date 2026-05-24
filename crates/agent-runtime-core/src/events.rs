@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::budget::{BudgetConfig, BudgetUsage};
-use crate::model::{ModelStreamChunk, TokenUsage};
+use crate::model::{ModelStreamChunk, OptionAdjustment, TokenUsage};
 use crate::run::RunId;
 use crate::tool::async_job::JobStatus;
 use crate::tool::{ToolCall, ToolSource};
@@ -23,6 +23,8 @@ pub enum RuntimeEvent {
     },
     ModelCallCompleted {
         tokens: TokenUsage,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        option_adjustments: Vec<OptionAdjustment>,
     },
 
     ToolCallStarted {

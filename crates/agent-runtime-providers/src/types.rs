@@ -220,7 +220,7 @@ pub struct TokenUsage {
     pub reasoning_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default)]
     pub details: HashMap<String, u64>,
 }
 
@@ -295,6 +295,31 @@ pub struct ModelSpec {
     pub max_tokens: Option<u32>,
     #[serde(default)]
     pub context_window_size: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ProviderRuntimeConfig {
+    pub model: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    #[serde(default)]
+    pub api_url: Option<String>,
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
+impl From<ModelSpec> for ProviderRuntimeConfig {
+    fn from(value: ModelSpec) -> Self {
+        Self {
+            model: format!("{}/{}", value.provider, value.model),
+            api_key: None,
+            api_key_env: value.api_key_env,
+            api_url: value.api_url,
+            max_tokens: value.max_tokens,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -385,6 +385,7 @@ impl Agent {
                 max_tokens: Some(4096),
                 context_window_size: None,
             },
+            request_options: agent_runtime_core::model::RequestOptions::default(),
             budget: budget_config,
             max_steps: 20,
             allowed_skills: None,
