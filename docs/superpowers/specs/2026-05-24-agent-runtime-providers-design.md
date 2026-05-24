@@ -33,6 +33,14 @@ All types below are defined and owned by providers. Core re-exports them.
 ```rust
 #[async_trait]
 pub trait ModelAdapter: Send + Sync {
+    /// The provider name (e.g. "anthropic", "openai", "deepseek", "openrouter").
+    /// Used for logging, telemetry, and token usage attribution.
+    fn provider_name(&self) -> &str;
+
+    /// The model identifier this adapter was configured with
+    /// (e.g. "claude-sonnet-4-20250514", "gpt-4o").
+    fn model_name(&self) -> &str;
+
     /// Send a model request. Always returns the complete ModelResponse.
     ///
     /// When `tx` is `Some`, emits StreamEvent items during streaming
@@ -47,7 +55,7 @@ pub trait ModelAdapter: Send + Sync {
         &self,
         messages: &[Message],
         tools: &[ToolDef],
-        options: &StreamOptions,
+        options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError>;
 }
@@ -61,7 +69,7 @@ pub fn stream(
     adapter: &dyn ModelAdapter,
     messages: &[Message],
     tools: &[ToolDef],
-    options: &StreamOptions,
+    options: &RequestOptions,
 ) -> (impl Future<Output = Result<ModelResponse, ModelError>> + '_, mpsc::Receiver<StreamEvent>) {
     let (tx, rx) = mpsc::channel(64);
     let fut = adapter.complete(messages, tools, options, Some(tx));
@@ -73,7 +81,7 @@ pub async fn call(
     adapter: &dyn ModelAdapter,
     messages: &[Message],
     tools: &[ToolDef],
-    options: &StreamOptions,
+    options: &RequestOptions,
 ) -> Result<ModelResponse, ModelError> {
     adapter.complete(messages, tools, options, None).await
 }
@@ -160,13 +168,13 @@ pub enum CachePolicy {
 }
 ```
 
-### StreamOptions
+### RequestOptions
 
 ```rust
 /// Per-request options passed to `ModelAdapter::complete()`.
 /// The same options struct is used for both streaming and non-streaming calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StreamOptions {
+pub struct RequestOptions {
     // --- 是否思考 + 怎么思考 (thinking behavior) ---
 
     /// Thinking depth. Default: `Medium`.
@@ -218,7 +226,7 @@ pub struct StreamOptions {
     pub cache_policy: CachePolicy,
 }
 
-impl Default for StreamOptions {
+impl Default for RequestOptions {
     fn default() -> Self {
         Self {
             thinking: ThinkingLevel::default(),
@@ -429,7 +437,7 @@ ThinkingLevel mapping: Two Anthropic thinking modes, selected by adapter based o
 - **`adaptive`** (Opus 4.7+, Sonnet 4.6+): model decides whether to think per turn. `budget_tokens` is the ceiling — model may use less or skip entirely if the query is simple. This is preferred.
 - **`enabled`** (older models fallback): forces thinking on every turn. `budget_tokens` is a fixed budget.
 
-Both modes use `budget_tokens`, mapped from ThinkingLevel: Off→`thinking.type: "disabled"`, Minimal→1024, Low→4096, Medium→10240, High→32768, XHigh→max allowed. `StreamOptions::thinking_budget_tokens` overrides the level's default budget.
+Both modes use `budget_tokens`, mapped from ThinkingLevel: Off→`thinking.type: "disabled"`, Minimal→1024, Low→4096, Medium→10240, High→32768, XHigh→max allowed. `RequestOptions::thinking_budget_tokens` overrides the level's default budget.
 
 Output control: `include_thinking` maps to `thinking.display` — `true`→"summarized", `false`→"omitted".
 
@@ -630,7 +638,7 @@ pub fn create_adapter(model: &str, api_key: Option<String>) -> Result<Box<dyn Mo
    pub use agent_runtime_providers::{
        ModelAdapter, Message, Role, ContentBlock,
        ToolDef, JsonSchema, ModelResponse, ModelError,
-       StreamEvent, StreamOptions,
+       StreamEvent, RequestOptions,
        ThinkingLevel, CachePolicy,
        TokenUsage, StopReason, ModelSpec,
        AnthropicAdapter, AnthropicConfig,
@@ -697,7 +705,7 @@ Migrated from core and extended:
 | `factory::rejects_unknown_provider` | **new** | Error for unsupported provider |
 | `factory::openrouter_preserves_full_model` | **new** | "openrouter/anthropic/claude-sonnet-4" |
 | `anthropic::thinking_level_maps_to_budget` | **new** | ThinkingLevel → budget_tokens mapping |
-| `anthropic::thinking_budget_override` | **new** | StreamOptions::thinking_budget_tokens overrides level default |
+| `anthropic::thinking_budget_override` | **new** | RequestOptions::thinking_budget_tokens overrides level default |
 | `anthropic::include_thinking_false_maps_to_omitted` | **new** | include_thinking=false → display: "omitted" |
 | `anthropic::cache_policy_auto_adds_cache_control` | **new** | CachePolicy::Auto adds top-level cache_control |
 | `anthropic::cache_policy_long_sets_1h_ttl` | **new** | CachePolicy::Long → ttl: "1h" |
@@ -711,8 +719,8 @@ Migrated from core and extended:
 | `complete::tx_none_skips_events` | **new** | complete(tx=None) returns response without streaming |
 | `stream::tool_call_end_emitted` | **new** | ToolCallEnd emitted after tool call args are complete |
 | `stream::parallel_tool_calls_end_each` | **new** | Each parallel tool call gets its own ToolCallEnd |
-| `anthropic::temperature_forwarded` | **new** | StreamOptions::temperature → API `temperature` |
-| `openai::temperature_forwarded` | **new** | StreamOptions::temperature → API `temperature` |
+| `anthropic::temperature_forwarded` | **new** | RequestOptions::temperature → API `temperature` |
+| `openai::temperature_forwarded` | **new** | RequestOptions::temperature → API `temperature` |
 | `anthropic::adaptive_vs_enabled_mode` | **new** | Newer models use adaptive, older use enabled |
 
 All SSE tests use the existing `serve_sse_once` pattern (bind to `127.0.0.1:0`, serve one HTTP response with SSE body).
@@ -729,7 +737,7 @@ All SSE tests use the existing `serve_sse_once` pattern (bind to `127.0.0.1:0`, 
 use agent_runtime_providers::{
     create_adapter, stream, call,
     Message, ContentBlock, Role, StreamEvent,
-    StreamOptions, ThinkingLevel, CachePolicy,
+    RequestOptions, ThinkingLevel, CachePolicy,
 };
 
 #[tokio::main]
@@ -748,7 +756,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     // -- Streaming example --
-    let options = StreamOptions {
+    let options = RequestOptions {
         thinking: ThinkingLevel::High,
         cache_policy: CachePolicy::Auto,
         ..Default::default()
@@ -781,14 +789,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Got {} content blocks", response.content.len());
 
     // -- Think deeply but hide thinking from output (lower latency) --
-    let _fast = StreamOptions {
+    let _fast = RequestOptions {
         thinking: ThinkingLevel::High,   // 怎么思考: deep
         include_thinking: false,          // 输出不包含思考
         ..Default::default()
     };
 
     // -- Advanced: explicit budget_tokens + long cache (Anthropic-only) --
-    let _advanced = StreamOptions {
+    let _advanced = RequestOptions {
         thinking: ThinkingLevel::High,
         thinking_budget_tokens: Some(16384),
         include_thinking: true,
