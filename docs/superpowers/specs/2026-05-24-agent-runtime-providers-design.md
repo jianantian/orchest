@@ -99,17 +99,26 @@ pub enum Role {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ContentBlock {
     Text(String),
-    Thinking { text: String },
+    Thinking {
+        text: String,
+        /// Opaque signature for multi-turn thinking continuity.
+        /// Anthropic requires thinking blocks to be passed back unchanged
+        /// with their signature intact. Other providers may use this for
+        /// similar purposes (e.g., OpenAI encrypted_content).
+        /// Must be preserved exactly when replaying assistant messages.
+        signature: Option<String>,
+    },
     ToolUse { id: String, name: String, input: Value },
     ToolResult { tool_use_id: String, content: Value },
 }
 ```
 
-`ContentBlock::Thinking` is new compared to the current core types. It persists thinking content in the message history rather than only surfacing it through streaming events. This enables:
+`ContentBlock::Thinking` is new compared to the current core types. It persists thinking content in the message history rather than only surfacing it through streaming events. The `signature` field is critical for Anthropic multi-turn conversations — thinking blocks must be passed back to the API with their signature intact to maintain reasoning continuity. This enables:
 
 - Context compaction that preserves reasoning traces
 - Sub-agent message forwarding that includes thinking
 - Session persistence of thinking blocks
+- Multi-turn thinking continuity (via signature preservation)
 
 ### Thinking, output, and caching configuration
 
@@ -290,6 +299,11 @@ pub struct TokenUsage {
     /// Anthropic: `cache_creation_input_tokens`, DeepSeek: implicit,
     /// OpenAI: free. Zero when provider doesn't report separately.
     pub cache_write_tokens: u64,
+    /// Provider-specific usage details that don't fit the typed fields.
+    /// Examples: audio tokens, reasoning tokens breakdown, etc.
+    /// Keys are provider-defined (e.g., "reasoning_tokens", "audio_input_tokens").
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub details: HashMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
