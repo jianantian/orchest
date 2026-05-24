@@ -778,6 +778,30 @@ data: [DONE]
         assert_eq!(response.usage.cache_write_tokens, 0);
     }
 
+    #[tokio::test]
+    async fn official_cache_hit_and_miss_tokens_reported() {
+        let api_url = serve_sse_once(
+            r#"data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":37,"prompt_cache_miss_tokens":63}}
+
+data: [DONE]
+
+"#,
+        )
+        .await;
+
+        let adapter = make_adapter(&api_url);
+        let response = adapter
+            .complete(&[], &[], &default_options(), None)
+            .await
+            .expect("should parse");
+
+        assert_eq!(response.usage.cache_read_tokens, 37);
+        assert_eq!(
+            response.usage.details.get("prompt_cache_miss_tokens"),
+            Some(&63)
+        );
+    }
+
     #[test]
     fn provider_name_and_model_name() {
         let adapter = make_adapter("http://localhost");

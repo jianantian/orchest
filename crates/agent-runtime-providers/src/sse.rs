@@ -94,6 +94,20 @@ pub(crate) async fn parse_openai_sse_stream(
                         usage.cache_read_tokens = cached;
                     }
                 }
+                if let Some(cached) = usage_value
+                    .get("prompt_cache_hit_tokens")
+                    .and_then(Value::as_u64)
+                {
+                    usage.cache_read_tokens = cached;
+                }
+                if let Some(missed) = usage_value
+                    .get("prompt_cache_miss_tokens")
+                    .and_then(Value::as_u64)
+                {
+                    usage
+                        .details
+                        .insert("prompt_cache_miss_tokens".into(), missed);
+                }
                 if let Some(details) = usage_value.get("completion_tokens_details") {
                     if let Some(rt) = details.get("reasoning_tokens").and_then(Value::as_u64) {
                         usage.reasoning_tokens = rt;

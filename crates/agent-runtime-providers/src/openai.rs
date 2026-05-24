@@ -77,7 +77,7 @@ impl OpenAiAdapter {
     }
 
     fn supports_reasoning(&self) -> bool {
-        self.model.starts_with("o1") || self.model.starts_with("o3") || self.model.starts_with("o4")
+        supports_reasoning_model(&self.model)
     }
 
     fn build_request_body(
@@ -218,7 +218,7 @@ impl OpenAiAdapter {
         }
 
         // ThinkingLevel → reasoning_effort
-        if self.supports_reasoning() && options.thinking != ThinkingLevel::Off {
+        if options.thinking != ThinkingLevel::Off && self.supports_reasoning() {
             let effort = match options.thinking {
                 ThinkingLevel::Off => unreachable!(),
                 ThinkingLevel::Minimal => "low",
@@ -229,6 +229,13 @@ impl OpenAiAdapter {
                 ThinkingLevel::Max => "high",
             };
             body["reasoning_effort"] = json!(effort);
+        } else if options.thinking != ThinkingLevel::Off {
+            adjustments.push(OptionAdjustment {
+                option: "thinking".into(),
+                requested: json!(format!("{:?}", options.thinking)),
+                applied: json!("Off"),
+                reason: "unsupported_reasoning_model".into(),
+            });
         }
 
         // thinking_budget_tokens is not supported by OpenAI
@@ -274,6 +281,16 @@ fn normalize_chat_url(value: &str) -> String {
     } else {
         format!("{trimmed}/v1/chat/completions")
     }
+}
+
+fn supports_reasoning_model(model: &str) -> bool {
+    matches!(
+        model.split_once('/').map_or(model, |(_, model)| model),
+        name if name.starts_with("o1")
+            || name.starts_with("o3")
+            || name.starts_with("o4")
+            || name.starts_with("gpt-5")
+    )
 }
 
 #[async_trait]
@@ -332,6 +349,18 @@ impl ModelAdapter for OpenAiAdapter {
             return Err(ModelError::internal(
                 "thinking_budget_tokens is not supported by OpenAI",
                 "unsupported_thinking_budget",
+            ));
+        }
+        if options.compatibility_policy == CompatibilityPolicy::Strict
+            && options.thinking != ThinkingLevel::Off
+            && !self.supports_reasoning()
+        {
+            return Err(ModelError::internal(
+                format!(
+                    "model '{}' does not declare OpenAI reasoning support",
+                    self.model
+                ),
+                "unsupported_reasoning_model",
             ));
         }
 
@@ -585,6 +614,48 @@ data: [DONE]
         };
         let (body, _) = adapter.build_request_body(&[], &[], &opts);
         assert_eq!(body["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn unsupported_reasoning_coerce_reports_adjustment() {
+        let adapter = make_adapter("http://localhost");
+        let opts = RequestOptions {
+            thinking: ThinkingLevel::High,
+            compatibility_policy: CompatibilityPolicy::Coerce,
+            ..Default::default()
+        };
+
+        let (body, adjustments) = adapter.build_request_body(&[], &[], &opts);
+
+        assert!(body.get("reasoning_effort").is_none());
+        assert!(adjustments.iter().any(|adjustment| {
+            adjustment.option == "thinking" && adjustment.reason == "unsupported_reasoning_model"
+        }));
+    }
+
+    #[tokio::test]
+    async fn unsupported_reasoning_strict_errors_before_request() {
+        let api_url = serve_sse_once(
+            r#"data: {"choices":[{"delta":{"content":"should not be requested"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}
+
+data: [DONE]
+
+"#,
+        )
+        .await;
+        let adapter = make_adapter(&api_url);
+        let opts = RequestOptions {
+            thinking: ThinkingLevel::High,
+            compatibility_policy: CompatibilityPolicy::Strict,
+            ..Default::default()
+        };
+
+        let err = adapter
+            .complete(&[], &[], &opts, None)
+            .await
+            .expect_err("unsupported reasoning should fail before request");
+
+        assert_eq!(err.code.as_deref(), Some("unsupported_reasoning_model"));
     }
 
     #[test]
