@@ -62,6 +62,11 @@ Anthropic 使用自己的 SSE 协议（`event: type` + `data: json`），与 Ope
 - [ ] `CachePolicy::None` → 不发 cache_control
 - [ ] 如需 beta header，自动添加 `anthropic-beta` 值
 
+### max_tokens 覆盖
+
+- [ ] `RequestOptions::max_tokens` 有值时 override adapter 构造时的 `config.max_tokens`
+- [ ] `RequestOptions::max_tokens` 为 None 时使用 adapter 的配置默认值
+
 ### temperature / top_p
 
 - [ ] `RequestOptions::temperature` 有值时加入请求 body
@@ -80,6 +85,9 @@ Anthropic 使用自己的 SSE 协议（`event: type` + `data: json`），与 Ope
 - [ ] 解析 `content_block_stop` for tool_use → emit `StreamEvent::ToolUseEnd { id }`
 - [ ] 解析 `message_delta`：提取 stop_reason 和 output_tokens
 - [ ] 流结束时 emit `StreamEvent::Done { usage }`
+- [ ] SSE 流中断（连接断开且未收到 `message_stop`）→ 返回 `ModelError { code: "stream_interrupted" }`，不 emit 含默认 usage 的 Done
+- [ ] Provider 成功完成但未报告 usage → `TokenUsage::default()` + `OptionAdjustment { option: "usage", reason: "usage_not_reported" }`
+- [ ] `StreamEvent::Done { usage }` 和 `ModelResponse.usage` 必须一致
 - [ ] `tx` 为 None 时跳过所有 event emit，仍然解析并构建 `ModelResponse`
 
 ### ContentBlock::Thinking 构建
@@ -131,8 +139,13 @@ Anthropic 使用自己的 SSE 协议（`event: type` + `data: json`），与 Ope
 - [ ] `temperature_forwarded`：temperature → API body
 - [ ] `adaptive_vs_enabled_mode`：根据 model 选择不同模式
 - [ ] `tool_use_start_and_end_emitted`：tool_use block → ToolUseStart + ToolUseArgsChunk + ToolUseEnd 事件
+- [ ] `parallel_tool_uses_end_each`：多个并行 tool use 各自 emit ToolUseEnd
 - [ ] `tx_none_skips_events`：complete(tx=None) 不 emit 事件但返回正确 ModelResponse
-- [ ] 所有 SSE 测试使用现有的 `serve_sse_once` 模式（bind 127.0.0.1:0）
+- [ ] `max_tokens_override`：RequestOptions::max_tokens 有值时 override config default
+- [ ] `stream_interrupted_returns_error`：SSE 流中断 → ModelError { code: "stream_interrupted" }
+- [ ] `missing_usage_reports_adjustment`：成功完成但无 usage → adjustment + default usage
+- [ ] `done_usage_matches_model_response`：Done event 和 ModelResponse 的 usage 一致
+- [ ] 所有 SSE 测试使用共享的 `test_util::serve_sse_once` 模式（bind 127.0.0.1:0）
 - [ ] `cargo test -p agent-runtime-providers` 全绿
 
 ## 依赖

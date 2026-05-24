@@ -103,3 +103,4 @@
 - 类型定义以 spec 的 "Public types" 章节为 source of truth，但 spec 是设计意图——Rust 编译器说了算。如果某处 derive 不通过，修复后记录差异
 - `ToolDef` 从 core 的 `tool` 模块拆出，在 providers 中独立定义。core 后续通过 re-export 使用（issue 007）
 - 不要在此 issue 引入任何 adapter 逻辑或 HTTP 调用——这个 issue 纯粹是类型 + 编译
+- 后续 adapter issue 会共享 `serve_sse_once` 等 test utility——共享 helper 在 issue 006 中统一抽取，adapter issue 先各自定义、后续统一

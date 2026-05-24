@@ -74,14 +74,34 @@ pub async fn chat(
 - [ ] 对外公开：`create_adapter`、`stream_chat`、`chat`、各 Adapter/Config 类型、所有 types
 - [ ] `pub(crate)` 不公开：`sse` 模块
 
+### 共享测试工具
+
+- [ ] `src/test_util.rs`（`#[cfg(test)]` 模块或 `#[doc(hidden)]`）提供 `serve_sse_once` helper，issue 002–005 的 SSE 测试统一复用，避免四份重复
+
 ### 测试
+
+**Factory 测试：**
 
 - [ ] `factory::routes_by_provider`：anthropic / openai / deepseek / openrouter 各创建成功（需要设置 env var 或传 api_key）
 - [ ] `factory::rejects_unknown_provider`：`"gemini/..."` → error
 - [ ] `factory::rejects_no_slash`：`"claude-sonnet-4"` → error
 - [ ] `factory::openrouter_preserves_full_model`：`"openrouter/anthropic/claude-sonnet-4"` → model_name() == `"anthropic/claude-sonnet-4"`
+
+**便利函数测试：**
+
 - [ ] `helpers::stream_chat_returns_pair`：stream_chat 返回 (future, receiver)
 - [ ] `helpers::chat_returns_response`：chat 返回 ModelResponse
+- [ ] `runtime_contract::stream_chat_and_chat_are_semantically_equivalent`：chat() 返回的 ModelResponse 与 stream_chat() 一致
+- [ ] `runtime_contract::helpers_use_model_adapter_complete`：两个 helper 都调用底层 complete()
+- [ ] `runtime_contract::stream_chat_requires_receiver_drain`：bounded channel 不 drain 时 backpressure 行为正确
+
+**跨 adapter 集成测试：**
+
+- [ ] `capabilities::all_adapters_report_normalized_capabilities`：所有 adapter 的 capabilities() 使用 Orchest 概念，不含 provider API 参数名
+- [ ] `capabilities::strict_rejects_assumed_capability`：Strict mode + Assumed capability → `ModelError { code: "unknown_model_capability" }`
+
+**Telemetry 测试：**
+
 - [ ] `telemetry::model_complete_span_has_canonical_fields`：span 包含 provider/model/streaming 属性
 - [ ] `telemetry::provider_request_metrics_are_low_cardinality`：metric labels 不含高基数字段
 

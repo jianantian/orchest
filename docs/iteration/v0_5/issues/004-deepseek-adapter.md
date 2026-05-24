@@ -37,6 +37,7 @@ DeepSeek 使用 OpenAI-compatible 协议，但 thinking mode 实现方式不同�
 - [ ] XHigh / Max → `thinking: { "type": "enabled" }` + `reasoning_effort: "max"`
 - [ ] `thinking_budget_tokens` 忽略——Coerce 记录 OptionAdjustment
 - [ ] `thinking` 是 top-level 请求字段，**不是** `extra_body`（因为是直接构建 HTTP JSON，不走 OpenAI SDK）
+- [ ] `RequestOptions::max_tokens` 有值时 override config default
 
 ### Sampling 参数抑制
 

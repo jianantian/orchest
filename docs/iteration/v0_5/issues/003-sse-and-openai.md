@@ -36,6 +36,8 @@ pub(crate) async fn parse_openai_sse_stream(
 - [ ] Stop reason 映射：`stop` → EndTurn, `tool_calls` → ToolUse, `length` → MaxTokens, `content_filter` → ContentFilter, 其他 → `Other(raw)`
 - [ ] `data: [DONE]` 和空行跳过
 - [ ] Malformed JSON → `ModelError { code: "invalid_json" }` 含原始 data 行
+- [ ] 流中断（连接断开且未收到 `data: [DONE]`）→ 返回 `ModelError { code: "stream_interrupted" }`
+- [ ] 成功完成但 usage 为空 → `TokenUsage::default()` + `OptionAdjustment { option: "usage", reason: "usage_not_reported" }`
 - [ ] `tx` 为 None 时跳过所有 event emit
 
 ### OpenAI Adapter
@@ -64,6 +66,7 @@ pub(crate) async fn parse_openai_sse_stream(
 - [ ] Tool role → `role: "tool"` + `tool_call_id`
 - [ ] Assistant ToolUse → `tool_calls` 数组中的 `{ id, type: "function", function: { name, arguments } }`
 - [ ] `ContentBlock::Thinking` 在序列化时跳过（OpenAI 不需要 replay）
+- [ ] `RequestOptions::max_tokens` 有值时 override config default
 - [ ] `stream: true` + `stream_options: { include_usage: true }`
 
 **ThinkingLevel 映射：**
@@ -82,6 +85,7 @@ pub(crate) async fn parse_openai_sse_stream(
 - [ ] `Long` → `prompt_cache_retention: "24h"` when model supports，否则 Coerce 记录 adjustment
 - [ ] Cache tokens：`usage.prompt_tokens_details.cached_tokens` → `TokenUsage::cache_read_tokens`
 - [ ] `cache_write_tokens` 始终为 0
+- [ ] Reasoning tokens：`usage.completion_tokens_details.reasoning_tokens` → `TokenUsage::reasoning_tokens`
 
 **Error 保留：**
 
@@ -98,6 +102,8 @@ pub(crate) async fn parse_openai_sse_stream(
 - [ ] `parse_tool_calls`：多个 tool call 正确累积 + ToolUseStart/ArgsChunk/ToolUseEnd 事件
 - [ ] `parse_done_signal`：`data: [DONE]` 被正确跳过
 - [ ] `parse_malformed_json`：返回 ModelError
+- [ ] `parse_stream_interrupted`：流中断 → ModelError { code: "stream_interrupted" }
+- [ ] `parse_missing_usage_reports_adjustment`：成功完成无 usage → adjustment
 
 **OpenAI adapter 测试：**
 
@@ -110,6 +116,8 @@ pub(crate) async fn parse_openai_sse_stream(
 - [ ] `cache_policy_long_maps_to_24h_when_supported`：Long → prompt_cache_retention=24h
 - [ ] `cache_tokens_reported`：cached_tokens → cache_read_tokens
 - [ ] `temperature_forwarded`：temperature → API body
+- [ ] `max_tokens_override`：RequestOptions::max_tokens override config default
+- [ ] `reasoning_tokens_reported`：completion_tokens_details.reasoning_tokens → TokenUsage
 - [ ] `tx_none_skips_events`：complete(tx=None) 返回正确 ModelResponse
 
 ## 依赖

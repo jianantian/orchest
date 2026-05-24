@@ -37,7 +37,7 @@ OpenRouter 是 OpenAI-compatible 协议的代理层，转发请求到多个底�
 - [ ] `provider_name()` → `"openrouter"`
 - [ ] `model_name()` → 构造时的完整 model string（含 provider prefix，如 `anthropic/claude-sonnet-4`）
 - [ ] `capabilities()` → conservative `Assumed` fallback（OpenRouter 路由多种 model，能力不可静态确定）
-- [ ] `complete()` 使用 `sse.rs`，reasoning_field = `Some("reasoning")`（当底层 model 支持时），reasoning_details_field = `Some("reasoning_details")`
+- [ ] `complete()` 使用 `sse.rs`，reasoning_field 需要根据 OpenRouter 实际 SSE delta 格式确认（可能是 `"reasoning_content"` 或 `"reasoning"`——实现时需参考 OpenRouter 文档验证），reasoning_details_field = `Some("reasoning_details")`
 
 ### Model 名称透传
 
@@ -51,6 +51,7 @@ OpenRouter 是 OpenAI-compatible 协议的代理层，转发请求到多个底�
 - [ ] 当 `thinking_budget_tokens` 有值时：发 `reasoning: { max_tokens: N }`，不发 `effort`
 - [ ] 当 `thinking_budget_tokens` 无值时：发 `reasoning: { effort: "<level>" }`，直接映射 ThinkingLevel → none / minimal / low / medium / high / xhigh / max
 - [ ] 如果路由的 model 不支持所选形式，行为由 `CompatibilityPolicy` 决定
+- [ ] `RequestOptions::max_tokens` 有值时 override config default
 
 ### include_thinking 映射
 
