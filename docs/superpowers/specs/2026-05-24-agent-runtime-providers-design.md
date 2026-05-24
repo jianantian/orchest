@@ -191,6 +191,7 @@ pub enum ThinkingLevel {
     Medium,
     High,
     XHigh,
+    Max,
 }
 
 /// Cache policy hint. Adapters map to provider-specific mechanisms.
@@ -359,9 +360,9 @@ ThinkingLevel is the user-facing control for dimensions #1 and #2. Each adapter 
 | Provider   | API parameter | Level mapping | budget_tokens |
 |------------|--------------|---------------|---------------|
 | **Anthropic** | `thinking.type`, `thinking.budget_tokens`, `thinking.display`, `output_config.effort` | Off→`disabled`; newer models use `adaptive` + `output_config.effort`; older extended-thinking models use `enabled` + budget tokens. See adapter section for details. | ✅ Supported only in `enabled` mode. Ignored in `adaptive` mode with an `OptionAdjustment`. |
-| **OpenAI** | `reasoning_effort` | Off→`"none"` when supported; Minimal→`"minimal"` when supported else `"low"`; Low→`"low"`; Medium→`"medium"`; High→`"high"`; XHigh→`"xhigh"` when supported else `"high"` | ❌ Ignored |
-| **DeepSeek** | `thinking.type` + `reasoning_effort` | Off→`thinking.type: "disabled"`; Minimal/Low/Medium/High→`enabled` + `"high"`; XHigh→`enabled` + `"max"` | ❌ Ignored |
-| **OpenRouter** | `reasoning.effort` or `reasoning.max_tokens` | Sends exactly one of `effort` or `max_tokens`: explicit `thinking_budget_tokens` wins, otherwise effort maps directly (none/minimal/low/medium/high/xhigh). | ✅ Sent as `reasoning.max_tokens`; cannot be combined with `reasoning.effort`. |
+| **OpenAI** | `reasoning_effort` | Off→`"none"` when supported; Minimal→`"minimal"` when supported else `"low"`; Low→`"low"`; Medium→`"medium"`; High→`"high"`; XHigh→`"xhigh"` when supported else `"high"`; Max→`"max"` when supported else `"xhigh"` or `"high"` | ❌ Ignored |
+| **DeepSeek** | `thinking.type` + `reasoning_effort` | Off→`thinking.type: "disabled"`; Minimal/Low/Medium/High→`enabled` + `"high"`; XHigh/Max→`enabled` + `"max"` | ❌ Ignored |
+| **OpenRouter** | `reasoning.effort` or `reasoning.max_tokens` | Sends exactly one of `effort` or `max_tokens`: explicit `thinking_budget_tokens` wins, otherwise effort maps directly (none/minimal/low/medium/high/xhigh/max). | ✅ Sent as `reasoning.max_tokens`; cannot be combined with `reasoning.effort`. |
 
 ### include_thinking provider mapping
 
@@ -679,7 +680,8 @@ ThinkingLevel maps differently per mode:
 | Low | `"low"` | 4096 |
 | Medium | `"medium"` | 10240 |
 | High | `"high"` | 32768 |
-| XHigh | `"xhigh"` | max allowed |
+| XHigh | `"xhigh"` | 65536 |
+| Max | `"max"` | max allowed |
 
 `RequestOptions::thinking_budget_tokens` only applies in `enabled` mode — it overrides the level's default budget. In `adaptive` mode this field is ignored because direct Anthropic adaptive thinking uses `output_config.effort`; when `CompatibilityPolicy::Coerce` is active, this produces an `OptionAdjustment { option: "thinking_budget_tokens", reason: "unsupported_in_adaptive_thinking", ... }`.
 
@@ -712,7 +714,7 @@ Protocol: `POST /v1/chat/completions` with `Authorization: Bearer` header, `stre
 
 SSE format: `data: {...}` lines with `choices[0].delta` containing `content`, `tool_calls`, or `role`. `data: [DONE]` signals end.
 
-ThinkingLevel mapping: maps to OpenAI's `reasoning_effort` parameter. Off→`"none"` when the configured model supports it; Minimal→`"minimal"` when supported, otherwise `"low"`; Low→`"low"`; Medium→`"medium"`; High→`"high"`; XHigh→`"xhigh"` when supported, otherwise `"high"`. `thinking_budget_tokens` is ignored because OpenAI Chat Completions does not expose explicit reasoning token budgets.
+ThinkingLevel mapping: maps to OpenAI's `reasoning_effort` parameter. Off→`"none"` when the configured model supports it; Minimal→`"minimal"` when supported, otherwise `"low"`; Low→`"low"`; Medium→`"medium"`; High→`"high"`; XHigh→`"xhigh"` when supported, otherwise `"high"`; Max→`"max"` when supported, otherwise falls back to `"xhigh"` or `"high"`. `thinking_budget_tokens` is ignored because OpenAI Chat Completions does not expose explicit reasoning token budgets.
 
 Prompt caching: OpenAI prompt caching is automatic for supported models and reports cached tokens in `usage.prompt_tokens_details.cached_tokens` → `TokenUsage::cache_read_tokens`. `CachePolicy::Auto` uses the provider default. `CachePolicy::Long` maps to `prompt_cache_retention: "24h"` when the configured model supports extended prompt cache retention; otherwise `Coerce` records an `OptionAdjustment` and uses the default retention, while `Strict` returns `ModelError { code: Some("unsupported_cache_retention") }`. `cache_write_tokens` is always 0 because OpenAI does not charge for cache writes.
 
@@ -739,7 +741,7 @@ ThinkingLevel mapping:
 
 - Off → top-level `thinking: { "type": "disabled" }`; omit `reasoning_effort`
 - Minimal / Low / Medium / High → top-level `thinking: { "type": "enabled" }` + `reasoning_effort: "high"`
-- XHigh → top-level `thinking: { "type": "enabled" }` + `reasoning_effort: "max"`
+- XHigh / Max → top-level `thinking: { "type": "enabled" }` + `reasoning_effort: "max"`
 
 `thinking_budget_tokens` is ignored. DeepSeek documents `low` and `medium` compatibility as mapping to `high`, and `xhigh` as mapping to `max`; the adapter normalizes Orchest levels directly to the documented `high` / `max` values.
 
@@ -792,7 +794,7 @@ Reasoning support: when the underlying model supports reasoning, OpenRouter incl
 ThinkingLevel mapping: Uses OpenRouter's unified `reasoning` object, but sends exactly one of `reasoning.effort` or `reasoning.max_tokens`:
 
 - If `thinking_budget_tokens` is `Some`, send `reasoning.max_tokens` and omit `reasoning.effort`. OpenRouter passes the budget through to providers/models that support explicit reasoning token allocation, or maps it to an effort level for effort-only models.
-- Otherwise, send `reasoning.effort`, mapping `ThinkingLevel` directly to `none` / `minimal` / `low` / `medium` / `high` / `xhigh`.
+- Otherwise, send `reasoning.effort`, mapping `ThinkingLevel` directly to `none` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`.
 - If the routed model cannot support the selected form, behavior follows `CompatibilityPolicy`.
 
 Prompt caching: OpenRouter uses provider sticky routing to maximize cache hits. Anthropic models via OpenRouter support `cache_control` breakpoints. When `CachePolicy::Auto`, the adapter adds top-level `cache_control` for Anthropic-backed models. Other providers are automatic. Reports `prompt_tokens_details.cached_tokens` → mapped to `TokenUsage::cache_read_tokens`.
