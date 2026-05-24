@@ -11,3 +11,6 @@ pub use openai::{OpenAiAdapter, OpenAiConfig};
 
 pub mod deepseek;
 pub use deepseek::{DeepSeekAdapter, DeepSeekConfig};
+
+pub mod openrouter;
+pub use openrouter::{OpenRouterAdapter, OpenRouterConfig};
