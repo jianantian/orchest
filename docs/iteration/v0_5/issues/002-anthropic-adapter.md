@@ -23,7 +23,7 @@ Anthropic 使用自己的 SSE 协议（`event: type` + `data: json`），与 Ope
 - [ ] `AnthropicConfig { model, max_tokens, api_key, api_url }` 结构体公开
 - [ ] `AnthropicAdapter::from_config(config) -> Result<Self, ModelError>`
 - [ ] API key fallback 顺序：config.api_key → `ANTHROPIC_API_KEY` → `ANTHROPIC_AUTH_TOKEN`（不再 fallback 到 `OPENROUTER_API_KEY`，那是 OpenRouter adapter 的事）
-- [ ] API URL fallback：config.api_url → `ANTHROPIC_API_URL` → `ANTHROPIC_BASE_URL` → 默认 `https://api.anthropic.com/v1/messages`
+- [ ] API URL fallback：config.api_url → `ANTHROPIC_API_URL` → 默认 `https://api.anthropic.com/v1/messages`
 - [ ] URL 自动归一化到 `/v1/messages`
 - [ ] 空 URL 返回 `ModelError { code: "invalid_api_url" }`
 

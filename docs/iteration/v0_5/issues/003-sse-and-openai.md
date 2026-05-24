@@ -33,7 +33,7 @@ pub(crate) async fn parse_openai_sse_stream(
 - [ ] 当 `reasoning_field` 非 None 时，从 `choices[0].delta.{field}` 提取 thinking → emit `ThinkingStart` / `Thinking` / `ThinkingEnd`
 - [ ] 当 `reasoning_details_field` 非 None 时，保留 provider-native reasoning details → `ContentBlock::Thinking.provider_details`
 - [ ] 从最后一个 chunk 的 `usage` 提取 token usage
-- [ ] Stop reason 映射：`stop` → EndTurn, `tool_calls` → ToolUse, `length` → MaxTokens, `content_filter` → ContentFilter, 其他 → `Other(raw)`
+- [ ] Stop reason 映射：`stop` → EndTurn, `tool_calls` / deprecated `function_call` → ToolUse, `length` → MaxTokens, `content_filter` → ContentFilter, 其他 → `Other(raw)`
 - [ ] `data: [DONE]` 和空行跳过
 - [ ] Malformed JSON → `ModelError { code: "invalid_json" }` 含原始 data 行
 - [ ] 流中断（连接断开且未收到 `data: [DONE]`）→ 返回 `ModelError { code: "stream_interrupted" }`

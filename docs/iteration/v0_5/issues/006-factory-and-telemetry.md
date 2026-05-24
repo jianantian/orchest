@@ -100,10 +100,20 @@ pub async fn chat(
 - [ ] `capabilities::all_adapters_report_normalized_capabilities`：所有 adapter 的 capabilities() 使用 Orchest 概念，不含 provider API 参数名
 - [ ] `capabilities::strict_rejects_assumed_capability`：Strict mode + Assumed capability → `ModelError { code: "unknown_model_capability" }`
 
+**跨 adapter options / 序列化 / stop reason 测试：**
+
+- [ ] `options::coerce_reports_adjustment`：CompatibilityPolicy::Coerce 跨 adapter 一致地记录 OptionAdjustment
+- [ ] `options::strict_rejects_unsupported_option`：CompatibilityPolicy::Strict 跨 adapter 返回稳定 ModelError
+- [ ] `message_serialization::system_role_maps_per_provider`：Role::System 在 Anthropic 序列化为 top-level system，OpenAI-compat 序列化为 system/developer 消息
+- [ ] `message_serialization::tool_results_map_per_provider`：ToolResult 在 Anthropic 序列化为 user tool_result block，OpenAI-compat 序列化为 role=tool 消息
+- [ ] `stop_reason::provider_reasons_are_not_lost`：refusal / content_filter / context_exceeded / interrupted 等 provider 特有 stop reason 映射到稳定 StopReason 变体，不坍缩为 EndTurn
+
 **Telemetry 测试：**
 
 - [ ] `telemetry::model_complete_span_has_canonical_fields`：span 包含 provider/model/streaming 属性
 - [ ] `telemetry::provider_request_metrics_are_low_cardinality`：metric labels 不含高基数字段
+- [ ] `telemetry::provider_error_metrics_preserve_failure_status`：provider 请求失败时 status=error metric 递增，不 emit Done
+- [ ] `telemetry::first_token_latency_recorded_for_streams`：streaming 路径在首个 text/thinking/tool delta 到达时记录 first-token histogram
 
 ## 依赖
 
