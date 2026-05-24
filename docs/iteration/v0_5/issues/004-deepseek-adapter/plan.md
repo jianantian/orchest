@@ -17,18 +17,18 @@
      - `thinking` 是 top-level JSON 字段，直接 `body["thinking"] = ...`
    - Sampling 抑制：thinking enabled 时不写 `temperature` / `top_p` 到 body
    - include_thinking false：在 `complete()` 入口处处理——Coerce 时改 thinking 为 Off 并记录 adjustment，Strict 时直接返回 error
-   - Reasoning replay：序列化 assistant 消息时，如果含 `ContentBlock::ToolUse`，必须在消息 JSON 中添加 `reasoning_content` 字段（从 `ContentBlock::Thinking.text` 提取）
+   - Reasoning replay：序列化 assistant 消息时，如果含 `ContentBlock::ToolUse`，必须在消息 JSON 中添加 canonical `reasoning` 字段（可按兼容策略附带 `reasoning_content`）
 
 3. **调用 SSE 解析器**
-   - `complete()` 内部：构建 HTTP 请求 → `client.post()` → 获取 byte stream → 调用 `sse::parse_openai_sse_stream(stream, tx.as_ref(), Some("reasoning_content"), None)`
+   - `complete()` 内部：构建 HTTP 请求 → `client.post()` → 获取 byte stream → 调用 `sse::parse_openai_sse_stream(stream, tx.as_ref(), Some("reasoning"), None)`，并兼容 `reasoning_content` alias
    - 解析器返回 `(content, usage, stop_reason)` → 组装 `ModelResponse`
    - DeepSeek cache tokens 映射：从 usage 的 `prompt_cache_hit_tokens` 提取到 `TokenUsage::cache_read_tokens`
 
 4. **写测试（11 个）**
    - URL / env var 测试简单
    - Thinking 映射测试：构造 `RequestOptions` 验证生成的 request body JSON
-   - Reasoning replay 测试：构造含 ToolUse 的 assistant message，验证序列化输出含 `reasoning_content`
-   - SSE 集成测试：`serve_sse_once` 模拟 DeepSeek 响应（含 `reasoning_content` 字段的 delta）
+   - Reasoning replay 测试：构造含 ToolUse 的 assistant message，验证序列化输出含 canonical `reasoning`（兼容模式下允许附带 `reasoning_content`）
+   - SSE 集成测试：`serve_sse_once` 模拟 DeepSeek 响应（覆盖 `reasoning` 与 alias `reasoning_content`）
 
 ## 要读的现有代码
 

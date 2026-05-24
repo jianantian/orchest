@@ -59,8 +59,8 @@ v0.5 结束时，开发者应该能够：
 ### DeepSeek Adapter（新）
 
 - OpenAI-compat 协议 + DeepSeek 特有的 thinking mode
-- `reasoning_content` → `StreamEvent::Thinking` / `ContentBlock::Thinking`
-- Reasoning replay：assistant tool-call turns 必须回传 `reasoning_content`
+- canonical `reasoning`（兼容读取 `reasoning_content` alias）→ `StreamEvent::Thinking` / `ContentBlock::Thinking`
+- Reasoning replay：assistant tool-call turns 必须回传 canonical `reasoning`（实现层可同时携带 `reasoning_content` 以兼容 provider 历史行为）
 - Thinking 启用时忽略 temperature / top_p
 
 ### OpenRouter Adapter（新）
@@ -69,6 +69,7 @@ v0.5 结束时，开发者应该能够：
 - `reasoning.effort` / `reasoning.max_tokens` 互斥
 - `reasoning_details` 精确保留（不可重排 / 摘要 / 过滤）
 - `include_thinking: false` → `reasoning.exclude: true`
+- SSE reasoning 字段 canonical 使用 `reasoning`（`reasoning_content` 仅作为解码 alias）
 
 ### Factory 与 Telemetry
 
@@ -126,3 +127,10 @@ v0.5 结束时，开发者应该能够：
 ## 设计参考
 
 详细的类型定义、adapter 映射表、provider 协议细节见 [agent-runtime-providers 设计文档](../superpowers/specs/2026-05-24-agent-runtime-providers-design.md)。issues 中不重复 spec 已有的完整代码；验收标准引用 spec 中的类型和映射作为 source of truth。
+
+## v0.5 权威顺序（避免冲突）
+
+1. `docs/iteration/v0_5/issues/*/spec.md` 与 `plan.md` 是 v0.5 实施与验收的第一权威。
+2. `docs/iteration/v0_5/prd.md` 约束范围、依赖和优先级；与 issue 细节冲突时，以 issue spec 的可测试条款为准。
+3. `docs/iteration/superpowers/specs/2026-05-24-agent-runtime-providers-design.md` 是设计映射参考；若与 issue 验收条款冲突，需要先回写 issue/prd 再执行实现。
+4. `docs/spec.md` 为历史参考，不作为 v0.5 决策与验收依据。

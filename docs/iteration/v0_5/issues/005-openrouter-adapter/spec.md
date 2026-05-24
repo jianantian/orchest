@@ -37,7 +37,7 @@ OpenRouter 是 OpenAI-compatible 协议的代理层，转发请求到多个底�
 - [ ] `provider_name()` → `"openrouter"`
 - [ ] `model_name()` → 构造时的完整 model string（含 provider prefix，如 `anthropic/claude-sonnet-4`）
 - [ ] `capabilities()` → conservative `Assumed` fallback（OpenRouter 路由多种 model，能力不可静态确定）
-- [ ] `complete()` 使用 `sse.rs`，reasoning_field 需要根据 OpenRouter 实际 SSE delta 格式确认（可能是 `"reasoning_content"` 或 `"reasoning"`——实现时需参考 OpenRouter 文档验证），reasoning_details_field = `Some("reasoning_details")`
+- [ ] `complete()` 使用 `sse.rs`，reasoning_field = `Some("reasoning")`，并兼容 alias `"reasoning_content"`；`reasoning_details_field = Some("reasoning_details")`
 
 ### Model 名称透传
 
@@ -63,6 +63,7 @@ OpenRouter 是 OpenAI-compatible 协议的代理层，转发请求到多个底�
 - [ ] OpenRouter 返回的 `reasoning_details` 必须精确保留到 `ContentBlock::Thinking.provider_details`
 - [ ] 不可重排、摘要、过滤、重构
 - [ ] Replay 时必须原样传回
+- [ ] Tool-call continuation 场景中必须保序回传完整 consecutive reasoning blocks；缺失或篡改需返回可诊断错误（或至少 emit warning event）
 
 ### Prompt caching
 

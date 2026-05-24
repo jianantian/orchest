@@ -2,7 +2,7 @@
 
 ## 背景
 
-DeepSeek 使用 OpenAI-compatible 协议，但 thinking mode 实现方式不同：通过 top-level `thinking` 字段（不是 `extra_body`）控制，`reasoning_content` 在 delta 中流式返回。另有两个关键差异：thinking 启用时忽略 sampling 参数、tool-call turns 必须 replay `reasoning_content`。
+DeepSeek 使用 OpenAI-compatible 协议，但 thinking mode 实现方式不同：通过 top-level `thinking` 字段（不是 `extra_body`）控制，delta 中返回 canonical `reasoning`（兼容 `reasoning_content` alias）。另有两个关键差异：thinking 启用时忽略 sampling 参数、tool-call turns 必须 replay reasoning。
 
 ## 目标
 
@@ -28,7 +28,7 @@ DeepSeek 使用 OpenAI-compatible 协议，但 thinking mode 实现方式不同�
 - [ ] `provider_name()` → `"deepseek"`
 - [ ] `model_name()` → 构造时传入的 model string
 - [ ] `capabilities()` → `ReasoningCapability { supported: true, budget_tokens: false, output_exclusion: false, replay_metadata_required: true }`
-- [ ] `complete()` 使用 `sse.rs` 的 `parse_openai_sse_stream`，reasoning_field = `Some("reasoning_content")`，reasoning_details_field = None
+- [ ] `complete()` 使用 `sse.rs` 的 `parse_openai_sse_stream`，reasoning_field = `Some("reasoning")`（兼容 alias `reasoning_content`），reasoning_details_field = None
 
 ### ThinkingLevel 映射
 
@@ -52,8 +52,8 @@ DeepSeek 使用 OpenAI-compatible 协议，但 thinking mode 实现方式不同�
 
 ### Reasoning replay
 
-- [ ] Assistant 消息含 `ContentBlock::ToolUse` 时，序列化必须包含 `reasoning_content`（从 `ContentBlock::Thinking.text` 或 `provider_details` 提取）
-- [ ] Assistant 消息不含 tool call 时，`reasoning_content` 可省略
+- [ ] Assistant 消息含 `ContentBlock::ToolUse` 时，序列化必须包含 canonical `reasoning`（并按 provider 兼容策略可附带 `reasoning_content`）
+- [ ] Assistant 消息不含 tool call 时，reasoning 字段可省略
 - [ ] **不可**盲目 strip 所有 thinking blocks——必须检查是否有 tool call
 
 ### Prompt caching
@@ -73,13 +73,13 @@ DeepSeek 使用 OpenAI-compatible 协议，但 thinking mode 实现方式不同�
 
 - [ ] `default_api_url`：默认 URL 正确
 - [ ] `env_var_fallback`：DEEPSEEK_API_KEY 环境变量 fallback
-- [ ] `reasoning_content_maps_to_thinking`：`reasoning_content` → StreamEvent::Thinking + ContentBlock::Thinking
+- [ ] `reasoning_maps_to_thinking`：canonical `reasoning`（含 alias `reasoning_content`）→ StreamEvent::Thinking + ContentBlock::Thinking
 - [ ] `thinking_off_disables_reasoning`：Off → thinking.type disabled，omit reasoning_effort
 - [ ] `thinking_levels_map_to_high_and_max`：Minimal/Low/Medium/High → high; XHigh/Max → max
 - [ ] `thinking_is_top_level_not_extra_body`：验证 thinking 字段在请求 body top-level
 - [ ] `omits_sampling_when_thinking_enabled`：thinking enabled → 不发 temperature/top_p
 - [ ] `include_thinking_false_reports_or_errors`：Coerce → adjustment, Strict → error
-- [ ] `replays_reasoning_for_tool_call_turns`：assistant + tool_call → reasoning_content 保留
+- [ ] `replays_reasoning_for_tool_call_turns`：assistant + tool_call → canonical reasoning 保留（兼容模式下可同时含 `reasoning_content`）
 - [ ] `omits_reasoning_for_non_tool_call_turns`：assistant without tool_call → 可省略
 - [ ] `cache_hit_tokens_reported`：prompt_cache_hit_tokens → TokenUsage
 

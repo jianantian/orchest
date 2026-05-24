@@ -8,8 +8,8 @@
    - 提取 `parse_openai_sse_stream()` 函数——核心签名见 spec
    - 参数化差异点：`reasoning_field: Option<&str>` 和 `reasoning_details_field: Option<&str>`
    - OpenAI 调用时：`reasoning_field = None, reasoning_details_field = None`
-   - DeepSeek（issue 004）：`reasoning_field = Some("reasoning_content"), reasoning_details_field = None`
-   - OpenRouter（issue 005）：`reasoning_field = Some("reasoning_content")` 或 `Some("reasoning")`（需验证），`reasoning_details_field = Some("reasoning_details")`
+   - DeepSeek（issue 004）：`reasoning_field = Some("reasoning")`（并兼容 alias `reasoning_content`），`reasoning_details_field = None`
+   - OpenRouter（issue 005）：`reasoning_field = Some("reasoning")`（并兼容 alias `reasoning_content`），`reasoning_details_field = Some("reasoning_details")`
 
 2. **实现 SSE 行缓冲**
    - 现有 openai.rs 的 `bytes_stream.next().await` 逐 chunk 读取，按 `\n` 分行，处理 `data: ` 前缀

@@ -18,8 +18,9 @@
    - Model name 透传：不做任何处理
 
 3. **reasoning_details 保留**
-   - 调用 `sse::parse_openai_sse_stream(stream, tx, reasoning_field, Some("reasoning_details"))`
+   - 调用 `sse::parse_openai_sse_stream(stream, tx, Some("reasoning"), Some("reasoning_details"))`，并在解码层兼容 `reasoning_content` alias
    - SSE 解析器会把 `reasoning_details` 存入 `ContentBlock::Thinking.provider_details`
+   - Tool-call continuation 时保序透传完整 consecutive reasoning blocks；若缺失或篡改，返回可诊断错误（或 warning event）
    - `capabilities()` 返回 `CapabilitySource::Assumed`（OpenRouter 路由多种 model，能力不可静态确定）
 
 4. **写测试（9 个）**
@@ -35,5 +36,5 @@
 
 ## 关键决策
 
-- `reasoning_field` 参数值：OpenRouter SSE delta 中的 reasoning 字段名需要实现时查 OpenRouter 文档确认（可能是 `"reasoning_content"` 或 `"reasoning"`）。先用 `"reasoning_content"` 实现，如不匹配在测试中调整
+- OpenRouter reasoning 字段 canonical 使用 `"reasoning"`；`"reasoning_content"` 仅作为兼容 alias（解码层处理，不作为主字段）
 - Prompt caching 对 Anthropic-backed models 的特殊处理：可以通过检查 `model` 字符串是否以 `anthropic/` 开头来判断
