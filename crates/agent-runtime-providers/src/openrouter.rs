@@ -83,12 +83,24 @@ impl OpenRouterAdapter {
         })
     }
 
+    #[cfg(test)]
     fn build_request_body(
         &self,
         messages: &[Message],
         tools: &[ToolDef],
         options: &RequestOptions,
     ) -> (Value, Vec<OptionAdjustment>) {
+        self.try_build_request_body(messages, tools, options)
+            .expect("valid OpenRouter reasoning replay")
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn try_build_request_body(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        options: &RequestOptions,
+    ) -> Result<(Value, Vec<OptionAdjustment>), ModelError> {
         let mut api_messages: Vec<Value> = Vec::new();
         let adjustments = Vec::new();
 
@@ -146,7 +158,8 @@ impl OpenRouterAdapter {
 
                     let mut text_parts = Vec::new();
                     let mut tool_calls_arr = Vec::new();
-                    let mut reasoning_blocks: Vec<Value> = Vec::new();
+                    let mut reasoning_text: Option<String> = None;
+                    let mut reasoning_details: Vec<Value> = Vec::new();
 
                     for block in &message.content {
                         match block {
@@ -166,14 +179,16 @@ impl OpenRouterAdapter {
                                 provider_details,
                                 ..
                             } if has_tool_calls => {
-                                let mut block_json = json!({});
-                                if let Some(t) = text {
-                                    block_json["reasoning"] = json!(t);
-                                }
                                 if let Some(details) = provider_details {
-                                    block_json["reasoning_details"] = details.clone();
+                                    append_reasoning_details(&mut reasoning_details, details)?;
+                                } else if reasoning_details.is_empty() {
+                                    if let Some(t) = text {
+                                        reasoning_text = Some(match reasoning_text {
+                                            Some(existing) => format!("{existing}{t}"),
+                                            None => t.clone(),
+                                        });
+                                    }
                                 }
-                                reasoning_blocks.push(block_json);
                             }
                             _ => {}
                         }
@@ -188,18 +203,10 @@ impl OpenRouterAdapter {
                     if !tool_calls_arr.is_empty() {
                         msg["tool_calls"] = Value::Array(tool_calls_arr);
                     }
-                    if !reasoning_blocks.is_empty() {
-                        if reasoning_blocks.len() == 1 {
-                            let rb = &reasoning_blocks[0];
-                            if let Some(r) = rb.get("reasoning") {
-                                msg["reasoning"] = r.clone();
-                            }
-                            if let Some(rd) = rb.get("reasoning_details") {
-                                msg["reasoning_details"] = rd.clone();
-                            }
-                        } else {
-                            msg["reasoning_blocks"] = Value::Array(reasoning_blocks);
-                        }
+                    if !reasoning_details.is_empty() {
+                        msg["reasoning_details"] = Value::Array(reasoning_details);
+                    } else if let Some(reasoning) = reasoning_text {
+                        msg["reasoning"] = json!(reasoning);
                     }
                     api_messages.push(msg);
                 }
@@ -287,7 +294,32 @@ impl OpenRouterAdapter {
             body["top_p"] = json!(tp);
         }
 
-        (body, adjustments)
+        Ok((body, adjustments))
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn append_reasoning_details(target: &mut Vec<Value>, details: &Value) -> Result<(), ModelError> {
+    match details {
+        Value::Array(items) => {
+            target.extend(items.iter().cloned());
+            Ok(())
+        }
+        Value::Object(_) => {
+            target.push(details.clone());
+            Ok(())
+        }
+        other => Err(ModelError {
+            message: format!(
+                "OpenRouter reasoning replay details must be object or array, got {other}"
+            ),
+            code: Some("invalid_reasoning_replay".into()),
+            provider: Some("openrouter".into()),
+            status: None,
+            upstream_code: None,
+            upstream_message: None,
+            upstream_body: Some(other.clone()),
+        }),
     }
 }
 
@@ -349,7 +381,8 @@ impl ModelAdapter for OpenRouterAdapter {
         options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
-        let (body, mut option_adjustments) = self.build_request_body(messages, tools, options);
+        let (body, mut option_adjustments) =
+            self.try_build_request_body(messages, tools, options)?;
 
         let mut request = self
             .client
@@ -727,6 +760,74 @@ data: [DONE]
         };
         let (body, _) = adapter.build_request_body(&[], &[], &opts);
         assert!(body["reasoning"].get("exclude").is_none());
+    }
+
+    #[test]
+    fn replays_multiple_reasoning_detail_blocks_without_reasoning_blocks() {
+        let adapter = make_adapter("http://localhost");
+        let messages = vec![Message {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Thinking {
+                    text: None,
+                    signature: None,
+                    provider_details: Some(json!([
+                        {"type": "reasoning.text", "text": "first"},
+                        {"type": "reasoning.signature", "signature": "sig1"}
+                    ])),
+                },
+                ContentBlock::Thinking {
+                    text: Some("fallback plaintext should not be sent".into()),
+                    signature: None,
+                    provider_details: Some(json!({"type": "reasoning.text", "text": "second"})),
+                },
+                ContentBlock::ToolUse {
+                    id: "call_1".into(),
+                    name: "lookup".into(),
+                    input: json!({"q": "orchest"}),
+                },
+            ],
+        }];
+
+        let (body, _) = adapter.build_request_body(&messages, &[], &default_options());
+        let msg = &body["messages"][0];
+
+        assert!(msg.get("reasoning_blocks").is_none());
+        assert!(msg.get("reasoning").is_none());
+        assert_eq!(
+            msg["reasoning_details"],
+            json!([
+                {"type": "reasoning.text", "text": "first"},
+                {"type": "reasoning.signature", "signature": "sig1"},
+                {"type": "reasoning.text", "text": "second"}
+            ])
+        );
+    }
+
+    #[test]
+    fn invalid_reasoning_replay_details_return_error() {
+        let adapter = make_adapter("http://localhost");
+        let messages = vec![Message {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Thinking {
+                    text: None,
+                    signature: None,
+                    provider_details: Some(json!("not valid replay metadata")),
+                },
+                ContentBlock::ToolUse {
+                    id: "call_1".into(),
+                    name: "lookup".into(),
+                    input: json!({"q": "orchest"}),
+                },
+            ],
+        }];
+
+        let err = adapter
+            .try_build_request_body(&messages, &[], &default_options())
+            .expect_err("invalid replay metadata should fail");
+
+        assert_eq!(err.code.as_deref(), Some("invalid_reasoning_replay"));
     }
 
     #[test]

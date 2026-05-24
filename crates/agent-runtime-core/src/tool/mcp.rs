@@ -608,9 +608,7 @@ for line in sys.stdin:
                 let (mut socket, _) = listener.accept().await.expect("accept");
                 let call_count = Arc::clone(&call_count_spawn);
                 tokio::spawn(async move {
-                    let mut buffer = vec![0; 4096];
-                    let n = socket.read(&mut buffer).await.expect("read");
-                    let request_text = String::from_utf8_lossy(&buffer[..n]);
+                    let request_text = read_http_request(&mut socket).await;
                     let is_tools_call = request_text.contains("tools/call");
                     if is_tools_call {
                         call_count.fetch_add(1, Ordering::SeqCst);
@@ -646,6 +644,39 @@ for line in sys.stdin:
             count, 1,
             "tools/call should be sent exactly once, not retried (got {count})"
         );
+    }
+
+    async fn read_http_request(socket: &mut tokio::net::TcpStream) -> String {
+        let mut buffer = Vec::new();
+        let mut chunk = vec![0; 1024];
+        loop {
+            let n = socket.read(&mut chunk).await.expect("read");
+            if n == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&chunk[..n]);
+            let Some(header_end) = find_header_end(&buffer) else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&buffer[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            if buffer.len() >= header_end + 4 + content_length {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&buffer).into_owned()
+    }
+
+    fn find_header_end(buffer: &[u8]) -> Option<usize> {
+        buffer.windows(4).position(|window| window == b"\r\n\r\n")
     }
 
     #[tokio::test]
