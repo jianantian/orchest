@@ -4,8 +4,8 @@ use std::time::Duration;
 use agent_runtime_core::budget::BudgetConfig;
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::model::{
-    ContentBlock, Message, ModelAdapter, ModelError, ModelResponse, ModelSpec, ModelStreamChunk,
-    StopReason, TokenUsage,
+    ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
+    RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
 use agent_runtime_core::run::{AgentConfig, AgentRun};
 use agent_runtime_core::skill::{SkillDependencies, SkillEnvManager, SkillManifest};
@@ -52,15 +52,26 @@ struct CodeExecModel;
 
 #[async_trait::async_trait]
 impl ModelAdapter for CodeExecModel {
-    async fn stream(
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
         &self,
         messages: &[Message],
         _tools: &[agent_runtime_core::tool::ToolDef],
-        _tx: mpsc::Sender<ModelStreamChunk>,
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let usage = TokenUsage {
             input_tokens: 1,
             output_tokens: 1,
+            ..Default::default()
         };
         let tool_results = messages
             .iter()
@@ -76,6 +87,7 @@ impl ModelAdapter for CodeExecModel {
                 }],
                 usage,
                 stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
             })
         } else if tool_results == 1 {
             Ok(ModelResponse {
@@ -86,12 +98,14 @@ impl ModelAdapter for CodeExecModel {
                 }],
                 usage,
                 stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
             })
         } else {
             Ok(ModelResponse {
                 content: vec![ContentBlock::Text("done".into())],
                 usage,
                 stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
             })
         }
     }
@@ -101,15 +115,26 @@ struct SubAgentModel;
 
 #[async_trait::async_trait]
 impl ModelAdapter for SubAgentModel {
-    async fn stream(
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
         &self,
         messages: &[Message],
         _tools: &[agent_runtime_core::tool::ToolDef],
-        _tx: mpsc::Sender<ModelStreamChunk>,
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let usage = TokenUsage {
             input_tokens: 2,
             output_tokens: 3,
+            ..Default::default()
         };
         let has_child_task = messages.iter().any(|message| {
             message
@@ -127,6 +152,7 @@ impl ModelAdapter for SubAgentModel {
                 content: vec![ContentBlock::Text("child done".into())],
                 usage,
                 stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
             });
         }
         if has_tool_result {
@@ -134,6 +160,7 @@ impl ModelAdapter for SubAgentModel {
                 content: vec![ContentBlock::Text("parent done".into())],
                 usage,
                 stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
             })
         } else {
             Ok(ModelResponse {
@@ -144,6 +171,7 @@ impl ModelAdapter for SubAgentModel {
                 }],
                 usage,
                 stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
             })
         }
     }

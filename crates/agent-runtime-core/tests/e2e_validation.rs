@@ -5,8 +5,8 @@ use std::time::Duration;
 use agent_runtime_core::budget::BudgetConfig;
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::model::{
-    ContentBlock, Message, ModelAdapter, ModelError, ModelResponse, ModelSpec, ModelStreamChunk,
-    StopReason, TokenUsage,
+    ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
+    RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
 use agent_runtime_core::run::{AgentConfig, AgentRun};
 use agent_runtime_core::tool::async_job::{JobHandle, JobStatus};
@@ -53,15 +53,26 @@ struct E2EModelAdapter;
 
 #[async_trait::async_trait]
 impl ModelAdapter for E2EModelAdapter {
-    async fn stream(
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
         &self,
         messages: &[Message],
         _tools: &[ToolDef],
-        tx: mpsc::Sender<ModelStreamChunk>,
+        _options: &RequestOptions,
+        tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let usage = TokenUsage {
             input_tokens: 10,
             output_tokens: 20,
+            ..Default::default()
         };
 
         let has_tool_result = messages.iter().any(|m| {
@@ -71,32 +82,41 @@ impl ModelAdapter for E2EModelAdapter {
         });
 
         if has_tool_result {
-            let _ = tx
-                .send(ModelStreamChunk::Text {
-                    delta: "Task ".into(),
-                })
-                .await;
-            let _ = tx
-                .send(ModelStreamChunk::Text {
-                    delta: "complete.".into(),
-                })
-                .await;
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(StreamEvent::Text {
+                        delta: "Task ".into(),
+                    })
+                    .await;
+            }
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(StreamEvent::Text {
+                        delta: "complete.".into(),
+                    })
+                    .await;
+            }
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(StreamEvent::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
             Ok(ModelResponse {
                 content: vec![ContentBlock::Text("Task complete.".into())],
                 usage,
                 stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
             })
         } else {
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(StreamEvent::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
             Ok(ModelResponse {
                 content: vec![ContentBlock::ToolUse {
                     id: "call_1".into(),
@@ -105,6 +125,7 @@ impl ModelAdapter for E2EModelAdapter {
                 }],
                 usage,
                 stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
             })
         }
     }
@@ -145,38 +166,65 @@ struct ThinkingBoundaryModel;
 
 #[async_trait::async_trait]
 impl ModelAdapter for ThinkingBoundaryModel {
-    async fn stream(
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
         &self,
         _messages: &[Message],
         _tools: &[ToolDef],
-        tx: mpsc::Sender<ModelStreamChunk>,
+        _options: &RequestOptions,
+        tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let usage = TokenUsage {
             input_tokens: 4,
             output_tokens: 8,
+            ..Default::default()
         };
-        let _ = tx.send(ModelStreamChunk::ThinkingStart).await;
-        let _ = tx
-            .send(ModelStreamChunk::Thinking {
-                delta: "checking".into(),
-            })
-            .await;
-        let _ = tx.send(ModelStreamChunk::ThinkingEnd).await;
-        let _ = tx
-            .send(ModelStreamChunk::Text {
-                delta: "done".into(),
-            })
-            .await;
-        let _ = tx
-            .send(ModelStreamChunk::Done {
-                usage: usage.clone(),
-            })
-            .await;
+        if let Some(ref tx) = tx {
+            let _ = tx.send(StreamEvent::ThinkingStart).await;
+        }
+        if let Some(ref tx) = tx {
+            let _ = tx
+                .send(StreamEvent::Thinking {
+                    delta: "checking".into(),
+                })
+                .await;
+        }
+        if let Some(ref tx) = tx {
+            let _ = tx
+                .send(StreamEvent::ThinkingEnd {
+                    signature: None,
+                    provider_details: None,
+                })
+                .await;
+        }
+        if let Some(ref tx) = tx {
+            let _ = tx
+                .send(StreamEvent::Text {
+                    delta: "done".into(),
+                })
+                .await;
+        }
+        if let Some(ref tx) = tx {
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+        }
 
         Ok(ModelResponse {
             content: vec![ContentBlock::Text("done".into())],
             usage,
             stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
         })
     }
 }
@@ -277,17 +325,17 @@ async fn e2e_thinking_boundaries_preserve_order() {
     }
     handle.wait().await;
 
-    assert!(matches!(chunks[0], ModelStreamChunk::ThinkingStart));
+    assert!(matches!(chunks[0], StreamEvent::ThinkingStart));
     assert!(matches!(
         &chunks[1],
-        ModelStreamChunk::Thinking { delta } if delta == "checking"
+        StreamEvent::Thinking { delta } if delta == "checking"
     ));
-    assert!(matches!(chunks[2], ModelStreamChunk::ThinkingEnd));
+    assert!(matches!(chunks[2], StreamEvent::ThinkingEnd { .. }));
     assert!(matches!(
         &chunks[3],
-        ModelStreamChunk::Text { delta } if delta == "done"
+        StreamEvent::Text { delta } if delta == "done"
     ));
-    assert!(matches!(chunks[4], ModelStreamChunk::Done { .. }));
+    assert!(matches!(chunks[4], StreamEvent::Done { .. }));
 }
 
 #[tokio::test]
@@ -524,15 +572,26 @@ struct AsyncToolAdapter;
 
 #[async_trait::async_trait]
 impl ModelAdapter for AsyncToolAdapter {
-    async fn stream(
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
         &self,
         messages: &[Message],
         _tools: &[ToolDef],
-        tx: mpsc::Sender<ModelStreamChunk>,
+        _options: &RequestOptions,
+        tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let usage = TokenUsage {
             input_tokens: 10,
             output_tokens: 20,
+            ..Default::default()
         };
 
         let has_tool_result = messages.iter().any(|m| {
@@ -542,27 +601,34 @@ impl ModelAdapter for AsyncToolAdapter {
         });
 
         if has_tool_result {
-            let _ = tx
-                .send(ModelStreamChunk::Text {
-                    delta: "Done.".into(),
-                })
-                .await;
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(StreamEvent::Text {
+                        delta: "Done.".into(),
+                    })
+                    .await;
+            }
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(StreamEvent::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
             Ok(ModelResponse {
                 content: vec![ContentBlock::Text("Done.".into())],
                 usage,
                 stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
             })
         } else {
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(StreamEvent::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
             Ok(ModelResponse {
                 content: vec![ContentBlock::ToolUse {
                     id: "call_1".into(),
@@ -571,6 +637,7 @@ impl ModelAdapter for AsyncToolAdapter {
                 }],
                 usage,
                 stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
             })
         }
     }
@@ -679,15 +746,26 @@ struct ApprovalAdapter;
 
 #[async_trait::async_trait]
 impl ModelAdapter for ApprovalAdapter {
-    async fn stream(
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
         &self,
         messages: &[Message],
         _tools: &[ToolDef],
-        tx: mpsc::Sender<ModelStreamChunk>,
+        _options: &RequestOptions,
+        tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let usage = TokenUsage {
             input_tokens: 10,
             output_tokens: 20,
+            ..Default::default()
         };
 
         let has_tool_result = messages.iter().any(|m| {
@@ -707,27 +785,34 @@ impl ModelAdapter for ApprovalAdapter {
                 })
             });
             let output = if denied { "Denied." } else { "Approved." };
-            let _ = tx
-                .send(ModelStreamChunk::Text {
-                    delta: output.into(),
-                })
-                .await;
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(StreamEvent::Text {
+                        delta: output.into(),
+                    })
+                    .await;
+            }
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(StreamEvent::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
             Ok(ModelResponse {
                 content: vec![ContentBlock::Text(output.into())],
                 usage,
                 stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
             })
         } else {
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(StreamEvent::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
             Ok(ModelResponse {
                 content: vec![ContentBlock::ToolUse {
                     id: "call_1".into(),
@@ -736,6 +821,7 @@ impl ModelAdapter for ApprovalAdapter {
                 }],
                 usage,
                 stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
             })
         }
     }

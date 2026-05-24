@@ -11,8 +11,8 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use crate::budget::{BudgetConfig, BudgetGuard, BudgetUsage};
 use crate::events::RuntimeEvent;
 use crate::model::{
-    ContentBlock, Message, ModelAdapter, ModelResponse, ModelSpec, ModelStreamChunk, Role,
-    StopReason,
+    ContentBlock, Message, ModelAdapter, ModelResponse, ModelSpec, ModelStreamChunk,
+    RequestOptions, Role, StopReason,
 };
 use crate::tool::async_job::{JobHandle, JobStatus};
 use crate::tool::builtin::ReadFileTool;
@@ -531,7 +531,10 @@ async fn run_loop(
             }
         });
 
-        let response = model.stream(&messages, &tool_defs, stream_tx).await;
+        let options = RequestOptions::default();
+        let response = model
+            .complete(&messages, &tool_defs, &options, Some(stream_tx))
+            .await;
         let _ = forward_task.await;
 
         let response: ModelResponse = match response {
@@ -1266,12 +1269,14 @@ async fn maybe_compact_context(
         "以下是一次 AI agent 任务的历史对话记录。请用简洁的中文总结这段历史中发生的关键事件：\n完成了哪些工具调用、获取了哪些信息、做出了哪些决策。保留足够细节让 agent 能够继续任务。\n\n{history}"
     );
     let summary_response = model
-        .call(
+        .complete(
             &[Message {
                 role: Role::User,
                 content: vec![ContentBlock::Text(prompt)],
             }],
             &[],
+            &RequestOptions::default(),
+            None,
         )
         .await;
 
@@ -1677,7 +1682,7 @@ async fn connect_mcp_servers(
 mod tests {
     use super::*;
     use crate::budget::BudgetConfig;
-    use crate::model::{ModelError, TokenUsage};
+    use crate::model::{ModelCapabilities, ModelError, RequestOptions, StreamEvent, TokenUsage};
     use crate::tool::{JsonSchema, ToolDef, ToolError, ToolMetadata, ToolSource};
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -1695,39 +1700,56 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ModelAdapter for FakeModelAdapter {
-        async fn stream(
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
             &self,
             _messages: &[Message],
             _tools: &[ToolDef],
-            tx: mpsc::Sender<ModelStreamChunk>,
+            _options: &RequestOptions,
+            tx: Option<mpsc::Sender<StreamEvent>>,
         ) -> Result<ModelResponse, ModelError> {
             let count = self.call_count.fetch_add(1, Ordering::SeqCst);
-            let _ = tx
-                .send(ModelStreamChunk::Text {
-                    delta: "hello".into(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(ModelStreamChunk::Text {
+                        delta: "hello".into(),
+                    })
+                    .await;
+            }
             let usage = TokenUsage {
                 input_tokens: 10,
                 output_tokens: 5,
+                ..Default::default()
             };
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(ModelStreamChunk::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
 
             if count == 0 {
                 Ok(ModelResponse {
                     content: vec![ContentBlock::Text("hello".into())],
                     usage,
                     stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
                 })
             } else {
                 Ok(ModelResponse {
                     content: vec![ContentBlock::Text("done".into())],
                     usage,
                     stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
                 })
             }
         }
@@ -1813,11 +1835,21 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ModelAdapter for ToolCallModelAdapter {
-        async fn stream(
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
             &self,
             messages: &[Message],
             _tools: &[ToolDef],
-            tx: mpsc::Sender<ModelStreamChunk>,
+            _options: &RequestOptions,
+            tx: Option<mpsc::Sender<StreamEvent>>,
         ) -> Result<ModelResponse, ModelError> {
             let has_tool_result = messages.iter().any(|m| {
                 m.content
@@ -1828,18 +1860,22 @@ mod tests {
             let usage = TokenUsage {
                 input_tokens: 10,
                 output_tokens: 5,
+                ..Default::default()
             };
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(ModelStreamChunk::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
 
             if has_tool_result {
                 Ok(ModelResponse {
                     content: vec![ContentBlock::Text("done".into())],
                     usage,
                     stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
                 })
             } else {
                 Ok(ModelResponse {
@@ -1850,6 +1886,7 @@ mod tests {
                     }],
                     usage,
                     stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
                 })
             }
         }
@@ -1949,21 +1986,34 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ModelAdapter for StructuredToolModelAdapter {
-        async fn stream(
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
             &self,
             messages: &[Message],
             _tools: &[ToolDef],
-            tx: mpsc::Sender<ModelStreamChunk>,
+            _options: &RequestOptions,
+            tx: Option<mpsc::Sender<StreamEvent>>,
         ) -> Result<ModelResponse, ModelError> {
             let usage = TokenUsage {
                 input_tokens: 10,
                 output_tokens: 5,
+                ..Default::default()
             };
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(ModelStreamChunk::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
 
             let tool_result = messages.iter().find_map(|message| {
                 message.content.iter().find_map(|block| match block {
@@ -1978,6 +2028,7 @@ mod tests {
                     content: vec![ContentBlock::Text("done".into())],
                     usage,
                     stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
                 })
             } else {
                 Ok(ModelResponse {
@@ -1988,6 +2039,7 @@ mod tests {
                     }],
                     usage,
                     stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
                 })
             }
         }
@@ -2067,11 +2119,21 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ModelAdapter for ApprovalModelAdapter {
-        async fn stream(
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
             &self,
             messages: &[Message],
             _tools: &[ToolDef],
-            tx: mpsc::Sender<ModelStreamChunk>,
+            _options: &RequestOptions,
+            tx: Option<mpsc::Sender<StreamEvent>>,
         ) -> Result<ModelResponse, ModelError> {
             let has_tool_result = messages.iter().any(|m| {
                 m.content
@@ -2081,18 +2143,22 @@ mod tests {
             let usage = TokenUsage {
                 input_tokens: 5,
                 output_tokens: 5,
+                ..Default::default()
             };
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(ModelStreamChunk::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
 
             if has_tool_result {
                 Ok(ModelResponse {
                     content: vec![ContentBlock::Text("done".into())],
                     usage,
                     stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
                 })
             } else {
                 Ok(ModelResponse {
@@ -2103,6 +2169,7 @@ mod tests {
                     }],
                     usage,
                     stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
                 })
             }
         }
@@ -2256,11 +2323,21 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ModelAdapter for AsyncToolModelAdapter {
-        async fn stream(
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
             &self,
             messages: &[Message],
             _tools: &[ToolDef],
-            tx: mpsc::Sender<ModelStreamChunk>,
+            _options: &RequestOptions,
+            tx: Option<mpsc::Sender<StreamEvent>>,
         ) -> Result<ModelResponse, ModelError> {
             let has_tool_result = messages.iter().any(|m| {
                 m.content
@@ -2270,18 +2347,22 @@ mod tests {
             let usage = TokenUsage {
                 input_tokens: 5,
                 output_tokens: 5,
+                ..Default::default()
             };
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(ModelStreamChunk::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
 
             if has_tool_result {
                 Ok(ModelResponse {
                     content: vec![ContentBlock::Text("done".into())],
                     usage,
                     stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
                 })
             } else {
                 Ok(ModelResponse {
@@ -2292,6 +2373,7 @@ mod tests {
                     }],
                     usage,
                     stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
                 })
             }
         }
@@ -2335,22 +2417,35 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ModelAdapter for ToolSearchModel {
-        async fn stream(
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
             &self,
             _messages: &[Message],
             tools: &[ToolDef],
-            tx: mpsc::Sender<ModelStreamChunk>,
+            _options: &RequestOptions,
+            tx: Option<mpsc::Sender<StreamEvent>>,
         ) -> Result<ModelResponse, ModelError> {
             let count = self.call_count.fetch_add(1, Ordering::SeqCst);
             let usage = TokenUsage {
                 input_tokens: 5,
                 output_tokens: 5,
+                ..Default::default()
             };
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(ModelStreamChunk::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
             if count == 0 {
                 assert_eq!(tools.len(), 1);
                 assert_eq!(tools[0].name, "search_tools");
@@ -2362,6 +2457,7 @@ mod tests {
                     }],
                     usage,
                     stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
                 })
             } else {
                 assert!(tools.iter().any(|tool| tool.name == "async_op"));
@@ -2369,6 +2465,7 @@ mod tests {
                     content: vec![ContentBlock::Text("done".into())],
                     usage,
                     stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
                 })
             }
         }
@@ -2398,29 +2495,43 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ModelAdapter for CompactingModel {
-        async fn stream(
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
             &self,
             messages: &[Message],
             _tools: &[ToolDef],
-            tx: mpsc::Sender<ModelStreamChunk>,
+            _options: &RequestOptions,
+            tx: Option<mpsc::Sender<StreamEvent>>,
         ) -> Result<ModelResponse, ModelError> {
             let count = self.call_count.fetch_add(1, Ordering::SeqCst);
             let usage = if count == 0 {
                 TokenUsage {
                     input_tokens: 90,
                     output_tokens: 20,
+                    ..Default::default()
                 }
             } else {
                 TokenUsage {
                     input_tokens: 1,
                     output_tokens: 3,
+                    ..Default::default()
                 }
             };
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(ModelStreamChunk::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
             if messages
                 .iter()
                 .any(|message| matches!(message.role, Role::User)
@@ -2430,12 +2541,14 @@ mod tests {
                     content: vec![ContentBlock::Text("摘要".into())],
                     usage,
                     stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
                 })
             } else {
                 Ok(ModelResponse {
                     content: vec![ContentBlock::Text("done".into())],
                     usage,
                     stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
                 })
             }
         }
@@ -2528,21 +2641,34 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ModelAdapter for WebhookModel {
-        async fn stream(
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
             &self,
             messages: &[Message],
             _tools: &[ToolDef],
-            tx: mpsc::Sender<ModelStreamChunk>,
+            _options: &RequestOptions,
+            tx: Option<mpsc::Sender<StreamEvent>>,
         ) -> Result<ModelResponse, ModelError> {
             let usage = TokenUsage {
                 input_tokens: 5,
                 output_tokens: 5,
+                ..Default::default()
             };
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(ModelStreamChunk::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
             if self.call_count.fetch_add(1, Ordering::SeqCst) == 0 {
                 Ok(ModelResponse {
                     content: vec![ContentBlock::ToolUse {
@@ -2552,6 +2678,7 @@ mod tests {
                     }],
                     usage,
                     stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
                 })
             } else {
                 assert!(messages.iter().any(|message| {
@@ -2563,6 +2690,7 @@ mod tests {
                     content: vec![ContentBlock::Text("done".into())],
                     usage,
                     stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
                 })
             }
         }
@@ -2594,11 +2722,21 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ModelAdapter for AllowedToolsModel {
-        async fn stream(
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
             &self,
             messages: &[Message],
             _tools: &[ToolDef],
-            tx: mpsc::Sender<ModelStreamChunk>,
+            _options: &RequestOptions,
+            tx: Option<mpsc::Sender<StreamEvent>>,
         ) -> Result<ModelResponse, ModelError> {
             let has_tool_result = messages.iter().any(|m| {
                 m.content
@@ -2608,18 +2746,22 @@ mod tests {
             let usage = TokenUsage {
                 input_tokens: 5,
                 output_tokens: 5,
+                ..Default::default()
             };
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(ModelStreamChunk::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
 
             if has_tool_result {
                 Ok(ModelResponse {
                     content: vec![ContentBlock::Text("done".into())],
                     usage,
                     stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
                 })
             } else {
                 Ok(ModelResponse {
@@ -2630,6 +2772,7 @@ mod tests {
                     }],
                     usage,
                     stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
                 })
             }
         }
@@ -2831,11 +2974,21 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ModelAdapter for SlowToolModel {
-        async fn stream(
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
             &self,
             messages: &[Message],
             _tools: &[ToolDef],
-            tx: mpsc::Sender<ModelStreamChunk>,
+            _options: &RequestOptions,
+            tx: Option<mpsc::Sender<StreamEvent>>,
         ) -> Result<ModelResponse, ModelError> {
             let has_tool_result = messages.iter().any(|m| {
                 m.content
@@ -2845,17 +2998,21 @@ mod tests {
             let usage = TokenUsage {
                 input_tokens: 5,
                 output_tokens: 5,
+                ..Default::default()
             };
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(ModelStreamChunk::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
             if has_tool_result {
                 Ok(ModelResponse {
                     content: vec![ContentBlock::Text("done".into())],
                     usage,
                     stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
                 })
             } else {
                 Ok(ModelResponse {
@@ -2866,6 +3023,7 @@ mod tests {
                     }],
                     usage,
                     stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
                 })
             }
         }
@@ -2976,22 +3134,35 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ModelAdapter for MultiToolCallModel {
-        async fn stream(
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
             &self,
             _messages: &[Message],
             _tools: &[ToolDef],
-            tx: mpsc::Sender<ModelStreamChunk>,
+            _options: &RequestOptions,
+            tx: Option<mpsc::Sender<StreamEvent>>,
         ) -> Result<ModelResponse, ModelError> {
             let count = self.call_count.fetch_add(1, Ordering::SeqCst);
             let usage = TokenUsage {
                 input_tokens: 5,
                 output_tokens: 5,
+                ..Default::default()
             };
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(ModelStreamChunk::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
             if count < 5 {
                 Ok(ModelResponse {
                     content: vec![ContentBlock::ToolUse {
@@ -3001,12 +3172,14 @@ mod tests {
                     }],
                     usage,
                     stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
                 })
             } else {
                 Ok(ModelResponse {
                     content: vec![ContentBlock::Text("done".into())],
                     usage,
                     stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
                 })
             }
         }
@@ -3425,11 +3598,21 @@ bundled_tools:
 
         #[async_trait::async_trait]
         impl ModelAdapter for SkillToolModel {
-            async fn stream(
+            fn provider_name(&self) -> &str {
+                "mock"
+            }
+            fn model_name(&self) -> &str {
+                "mock"
+            }
+            fn capabilities(&self) -> ModelCapabilities {
+                ModelCapabilities::default()
+            }
+            async fn complete(
                 &self,
                 _messages: &[Message],
                 _tools: &[ToolDef],
-                tx: mpsc::Sender<ModelStreamChunk>,
+                _options: &RequestOptions,
+                tx: Option<mpsc::Sender<StreamEvent>>,
             ) -> Result<ModelResponse, ModelError> {
                 let count = self
                     .call_count
@@ -3437,12 +3620,15 @@ bundled_tools:
                 let usage = crate::model::TokenUsage {
                     input_tokens: 5,
                     output_tokens: 5,
+                    ..Default::default()
                 };
-                let _ = tx
-                    .send(ModelStreamChunk::Done {
-                        usage: usage.clone(),
-                    })
-                    .await;
+                if let Some(ref tx) = tx {
+                    let _ = tx
+                        .send(ModelStreamChunk::Done {
+                            usage: usage.clone(),
+                        })
+                        .await;
+                }
                 if count == 0 {
                     Ok(ModelResponse {
                         content: vec![ContentBlock::ToolUse {
@@ -3452,12 +3638,14 @@ bundled_tools:
                         }],
                         usage,
                         stop_reason: StopReason::ToolUse,
+                        option_adjustments: vec![],
                     })
                 } else {
                     Ok(ModelResponse {
                         content: vec![ContentBlock::Text("done".into())],
                         usage,
                         stop_reason: StopReason::EndTurn,
+                        option_adjustments: vec![],
                     })
                 }
             }
@@ -3496,21 +3684,34 @@ bundled_tools:
 
     #[async_trait::async_trait]
     impl ModelAdapter for SubAgentApprovalModel {
-        async fn stream(
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
             &self,
             messages: &[Message],
             _tools: &[ToolDef],
-            tx: mpsc::Sender<ModelStreamChunk>,
+            _options: &RequestOptions,
+            tx: Option<mpsc::Sender<StreamEvent>>,
         ) -> Result<ModelResponse, ModelError> {
             let usage = TokenUsage {
                 input_tokens: 2,
                 output_tokens: 3,
+                ..Default::default()
             };
-            let _ = tx
-                .send(ModelStreamChunk::Done {
-                    usage: usage.clone(),
-                })
-                .await;
+            if let Some(ref tx) = tx {
+                let _ = tx
+                    .send(ModelStreamChunk::Done {
+                        usage: usage.clone(),
+                    })
+                    .await;
+            }
 
             let is_child = messages.iter().any(|m| {
                 m.content.iter().any(
@@ -3534,6 +3735,7 @@ bundled_tools:
                     content: vec![ContentBlock::Text(text.into())],
                     usage,
                     stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
                 })
             } else if is_child {
                 // Child calls write_file which requires approval
@@ -3545,6 +3747,7 @@ bundled_tools:
                     }],
                     usage,
                     stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
                 })
             } else {
                 // Parent calls spawn_sub
@@ -3556,6 +3759,7 @@ bundled_tools:
                     }],
                     usage,
                     stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
                 })
             }
         }

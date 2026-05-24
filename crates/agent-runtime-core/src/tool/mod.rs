@@ -20,7 +20,7 @@ use crate::run::RunId;
 use crate::tool::registry::ToolRegistry;
 use async_job::JobHandle;
 
-pub type JsonSchema = serde_json::Value;
+pub use crate::model::{JsonSchema, ToolDef};
 
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -108,11 +108,4 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub input: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolDef {
-    pub name: String,
-    pub description: String,
-    pub input_schema: JsonSchema,
 }

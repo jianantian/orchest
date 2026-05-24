@@ -10,8 +10,8 @@ use serde_json::Value;
 use tokio::sync::Mutex as TokioMutex;
 
 use agent_runtime_core::budget::BudgetConfig;
-use agent_runtime_core::model::anthropic::{AnthropicAdapter, AnthropicConfig};
 use agent_runtime_core::model::ModelSpec;
+use agent_runtime_core::model::{AnthropicAdapter, AnthropicConfig};
 use agent_runtime_core::run::{AgentConfig, AgentRun, RunHandle};
 use agent_runtime_core::tool::async_job::JobHandle;
 use agent_runtime_core::tool::registry::ToolRegistry;
