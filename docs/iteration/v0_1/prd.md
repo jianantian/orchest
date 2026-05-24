@@ -69,17 +69,17 @@ v0.1 结束时，开发者应该能够：
 
 | Issue | 标题 |
 |-------|------|
-| [001](./issues/001-project-setup.md) | 项目结构与 Cargo workspace 初始化 |
-| [002](./issues/002-core-types.md) | 核心类型定义（Tool trait、RunState、RuntimeEvent 等） |
-| [003](./issues/003-tool-registry.md) | Tool registry 与 InProcess tool |
-| [004](./issues/004-model-adapter.md) | ModelAdapter trait 与 Anthropic streaming adapter |
-| [005](./issues/005-run-loop.md) | Agent run loop（顺序执行、事件流） |
-| [006](./issues/006-budget-guard.md) | Budget guard |
-| [007](./issues/007-approval-gate.md) | Approval gate（oneshot channel 暂停/恢复） |
-| [008](./issues/008-async-job.md) | 异步 job 轮询（ToolOutput::AsyncJob） |
-| [009](./issues/009-skill.md) | Skill 目录扫描与 manifest 加载 |
-| [010](./issues/010-skill-bundled-tool.md) | Skill bundled script 执行与 async job 协议解析 |
-| [011](./issues/011-builtin-read-file.md) | Builtin read_file tool |
-| [012](./issues/012-python-sdk.md) | Python SDK（PyO3 binding） |
-| [013](./issues/013-typescript-sdk.md) | TypeScript SDK（napi-rs binding） |
-| [014](./issues/014-e2e-validation.md) | 端到端验收（4 个 demo 全部跑通） |
+| [001](./issues/001-project-setup/spec.md) | 项目结构与 Cargo workspace 初始化 |
+| [002](./issues/002-core-types/spec.md) | 核心类型定义（Tool trait、RunState、RuntimeEvent 等） |
+| [003](./issues/003-tool-registry/spec.md) | Tool registry 与 InProcess tool |
+| [004](./issues/004-model-adapter/spec.md) | ModelAdapter trait 与 Anthropic streaming adapter |
+| [005](./issues/005-run-loop/spec.md) | Agent run loop（顺序执行、事件流） |
+| [006](./issues/006-budget-guard/spec.md) | Budget guard |
+| [007](./issues/007-approval-gate/spec.md) | Approval gate（oneshot channel 暂停/恢复） |
+| [008](./issues/008-async-job/spec.md) | 异步 job 轮询（ToolOutput::AsyncJob） |
+| [009](./issues/009-skill/spec.md) | Skill 目录扫描与 manifest 加载 |
+| [010](./issues/010-skill-bundled-tool/spec.md) | Skill bundled script 执行与 async job 协议解析 |
+| [011](./issues/011-builtin-read-file/spec.md) | Builtin read_file tool |
+| [012](./issues/012-python-sdk/spec.md) | Python SDK（PyO3 binding） |
+| [013](./issues/013-typescript-sdk/spec.md) | TypeScript SDK（napi-rs binding） |
+| [014](./issues/014-e2e-validation/spec.md) | 端到端验收（4 个 demo 全部跑通） |

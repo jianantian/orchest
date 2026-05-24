@@ -98,13 +98,13 @@ v0.5 结束时，开发者应该能够：
 
 | Issue | 标题 |
 |-------|------|
-| [001](./issues/001-types-and-scaffold.md) | Crate 骨架与公共类型 |
-| [002](./issues/002-anthropic-adapter.md) | Anthropic Adapter |
-| [003](./issues/003-sse-and-openai.md) | SSE 共享解析器与 OpenAI Adapter |
-| [004](./issues/004-deepseek-adapter.md) | DeepSeek Adapter |
-| [005](./issues/005-openrouter-adapter.md) | OpenRouter Adapter |
-| [006](./issues/006-factory-and-telemetry.md) | Factory 函数与 Telemetry |
-| [007](./issues/007-core-migration.md) | Core 迁移与 workspace 验证 |
+| [001](./issues/001-types-and-scaffold/spec.md) | Crate 骨架与公共类型 |
+| [002](./issues/002-anthropic-adapter/spec.md) | Anthropic Adapter |
+| [003](./issues/003-sse-and-openai/spec.md) | SSE 共享解析器与 OpenAI Adapter |
+| [004](./issues/004-deepseek-adapter/spec.md) | DeepSeek Adapter |
+| [005](./issues/005-openrouter-adapter/spec.md) | OpenRouter Adapter |
+| [006](./issues/006-factory-and-telemetry/spec.md) | Factory 函数与 Telemetry |
+| [007](./issues/007-core-migration/spec.md) | Core 迁移与 workspace 验证 |
 
 ## 推荐执行节奏
 

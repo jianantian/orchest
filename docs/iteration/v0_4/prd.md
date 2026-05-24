@@ -108,13 +108,13 @@ v0.4 结束时，开发者应该能够：
 
 | Issue | 标题 |
 |-------|------|
-| [001](./issues/001-capability-inventory.md) | 能力清单与扩展晋升标准 |
-| [002](./issues/002-playground-skeleton.md) | Playground crate 骨架 + v0.1 scenario |
-| [003](./issues/003-playground-v0_2-v0_3-scenarios.md) | Playground v0.2 / v0.3 scenarios |
-| [004](./issues/004-sdk-docs.md) | SDK 文档骨架与 getting-started |
-| [005](./issues/005-orchest-tools-rust.md) | `orchest-tools` Rust crate（含 WebFetch / WebSearch） |
-| [006](./issues/006-orchest-tools-bindings.md) | `orchest-tools` 三语言 binding |
-| [007](./issues/007-file-skill-code-review.md) | 文件型 skill：code-review 参考实现 |
+| [001](./issues/001-capability-inventory/spec.md) | 能力清单与扩展晋升标准 |
+| [002](./issues/002-playground-skeleton/spec.md) | Playground crate 骨架 + v0.1 scenario |
+| [003](./issues/003-playground-v0_2-v0_3-scenarios/spec.md) | Playground v0.2 / v0.3 scenarios |
+| [004](./issues/004-sdk-docs/spec.md) | SDK 文档骨架与 getting-started |
+| [005](./issues/005-orchest-tools-rust/spec.md) | `orchest-tools` Rust crate（含 WebFetch / WebSearch） |
+| [006](./issues/006-orchest-tools-bindings/spec.md) | `orchest-tools` 三语言 binding |
+| [007](./issues/007-file-skill-code-review/spec.md) | 文件型 skill：code-review 参考实现 |
 
 ## 推荐执行节奏
 

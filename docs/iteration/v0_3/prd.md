@@ -91,10 +91,10 @@ v0.3 的 `CapabilityValidator` 行为：
 
 | Issue | 标题 |
 |-------|------|
-| [001](./issues/001-skill-deps-python.md) | Skill 依赖管理：Python venv 隔离 |
-| [002](./issues/002-skill-deps-node.md) | Skill 依赖管理：Node npm 隔离 |
-| [003](./issues/003-code-execution-mcp.md) | Code Execution as MCP（内置 code exec server） |
-| [004](./issues/004-sub-agent-protocol.md) | Sub-Agent 协议与 budget 继承 |
-| [005](./issues/005-sub-agent-event-nesting.md) | Sub-Agent 事件流嵌套与透传 |
-| [006](./issues/006-script-executor-abstraction.md) | ScriptExecutor 抽象层与 ExecutionContext |
-| [007](./issues/007-skill-capability-declaration.md) | SKILL.md capability 声明与 CapabilityValidator |
+| [001](./issues/001-skill-deps-python/spec.md) | Skill 依赖管理：Python venv 隔离 |
+| [002](./issues/002-skill-deps-node/spec.md) | Skill 依赖管理：Node npm 隔离 |
+| [003](./issues/003-code-execution-mcp/spec.md) | Code Execution as MCP（内置 code exec server） |
+| [004](./issues/004-sub-agent-protocol/spec.md) | Sub-Agent 协议与 budget 继承 |
+| [005](./issues/005-sub-agent-event-nesting/spec.md) | Sub-Agent 事件流嵌套与透传 |
+| [006](./issues/006-script-executor-abstraction/spec.md) | ScriptExecutor 抽象层与 ExecutionContext |
+| [007](./issues/007-skill-capability-declaration/spec.md) | SKILL.md capability 声明与 CapabilityValidator |

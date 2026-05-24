@@ -67,12 +67,12 @@ v0.2 结束时，开发者应该能够：
 
 | Issue | 标题 |
 |-------|------|
-| [001](./issues/001-mcp-stdio.md) | MCP stdio transport 集成 |
-| [002](./issues/002-mcp-http.md) | MCP Streamable HTTP transport 集成 |
-| [003](./issues/003-tool-search-tool.md) | Tool Search Tool（渐进式 tool 加载） |
-| [004](./issues/004-openai-adapter.md) | OpenAI Model Adapter |
-| [005](./issues/005-context-compaction.md) | Context Compaction |
-| [006](./issues/006-webhook-async-tool.md) | Webhook 模式异步 Tool |
+| [001](./issues/001-mcp-stdio/spec.md) | MCP stdio transport 集成 |
+| [002](./issues/002-mcp-http/spec.md) | MCP Streamable HTTP transport 集成 |
+| [003](./issues/003-tool-search-tool/spec.md) | Tool Search Tool（渐进式 tool 加载） |
+| [004](./issues/004-openai-adapter/spec.md) | OpenAI Model Adapter |
+| [005](./issues/005-context-compaction/spec.md) | Context Compaction |
+| [006](./issues/006-webhook-async-tool/spec.md) | Webhook 模式异步 Tool |
 
 ## 推荐执行节奏（按 WORKFLOW.md）
 

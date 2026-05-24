@@ -91,14 +91,14 @@ Hotfix 完成后：
 
 | Issue | 标题 | Severity |
 |-------|------|----------|
-| [001](./issues/001-permission-boundary.md) | Enforce permission boundaries | security |
-| [002](./issues/002-tool-execution-contract.md) | Enforce tool execution metadata | broken |
-| [003](./issues/003-skill-entrypoint.md) | Wire skill loading into SDK/runtime entrypoints | broken |
-| [004](./issues/004-sdk-contracts.md) | Repair Python and TypeScript SDK contracts | broken |
-| [005](./issues/005-provider-tool-protocol.md) | Repair provider tool protocol mappings | broken |
-| [006](./issues/006-sub-agent-routing.md) | Repair sub-agent routing, events, and budget | broken |
-| [007](./issues/007-mcp-and-process-reliability.md) | Fix MCP retry and child process timeout behavior | hardening |
-| [008](./issues/008-hotfix-e2e-validation.md) | Add hotfix regression validation | hardening |
+| [001](./issues/001-permission-boundary/spec.md) | Enforce permission boundaries | security |
+| [002](./issues/002-tool-execution-contract/spec.md) | Enforce tool execution metadata | broken |
+| [003](./issues/003-skill-entrypoint/spec.md) | Wire skill loading into SDK/runtime entrypoints | broken |
+| [004](./issues/004-sdk-contracts/spec.md) | Repair Python and TypeScript SDK contracts | broken |
+| [005](./issues/005-provider-tool-protocol/spec.md) | Repair provider tool protocol mappings | broken |
+| [006](./issues/006-sub-agent-routing/spec.md) | Repair sub-agent routing, events, and budget | broken |
+| [007](./issues/007-mcp-and-process-reliability/spec.md) | Fix MCP retry and child process timeout behavior | hardening |
+| [008](./issues/008-hotfix-e2e-validation/spec.md) | Add hotfix regression validation | hardening |
 
 ## 建议执行顺序
 

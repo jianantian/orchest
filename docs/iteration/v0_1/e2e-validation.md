@@ -36,4 +36,4 @@ Relevant rationale:
 
 - [Polaris non-goals: v0.1 sandbox limitations](../../polaris/non-goals.md#v01-明确不做留给-v02)
 - [Polaris non-goals: minimum guidance for sandboxless environments](../../polaris/non-goals.md#无沙箱环境的最低运营建议)
-- [Issue 011: Builtin read_file Tool](./issues/011-builtin-read-file.md)
+- [Issue 011: Builtin read_file Tool](./issues/011-builtin-read-file/spec.md)
