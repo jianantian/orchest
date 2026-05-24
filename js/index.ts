@@ -9,8 +9,23 @@ export interface AgentOptions {
   model: string;
   systemPrompt: string;
   skillsDir?: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
   apiUrl?: string;
+  maxTokens?: number;
+  requestOptions?: RequestOptions;
   budget?: BudgetOptions;
+}
+
+export interface RequestOptions {
+  thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  thinkingBudgetTokens?: number;
+  includeThinking?: boolean;
+  compatibilityPolicy?: "coerce" | "strict";
+  maxTokens?: number;
+  temperature?: number;
+  topP?: number;
+  cachePolicy?: "none" | "auto" | "long";
 }
 
 export interface BudgetOptions {
@@ -37,11 +52,38 @@ export interface ToolWithHandler {
   sideEffect?: boolean;
 }
 
+export interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  details: Record<string, number>;
+}
+
+export interface OptionAdjustment {
+  option: string;
+  requested: unknown;
+  applied: unknown;
+  reason: string;
+}
+
+export type StreamEvent =
+  | { Text: { delta: string } }
+  | "ThinkingStart"
+  | { Thinking: { delta: string } }
+  | { ThinkingEnd: { signature?: string | null; provider_details?: unknown } }
+  | { ToolUseStart: { id: string; name: string } }
+  | { ToolUseArgsChunk: { id: string; delta: string } }
+  | { ToolUseEnd: { id: string } }
+  | { Done: { usage: TokenUsage } }
+  | unknown;
+
 export type RuntimeEvent =
   | { type: "run_started"; run_id: string }
   | { type: "model_call_started"; step: number }
-  | { type: "model_stream_chunk"; delta: unknown }
-  | { type: "model_call_completed"; tokens: { input_tokens: number; output_tokens: number } }
+  | { type: "model_stream_chunk"; delta: StreamEvent }
+  | { type: "model_call_completed"; tokens: TokenUsage; option_adjustments?: OptionAdjustment[] }
   | { type: "tool_call_started"; tool: string; source: unknown; input: unknown }
   | { type: "tool_call_update"; tool: string; tool_call_id: string; partial: unknown }
   | { type: "tool_call_completed"; tool: string; output: unknown; duration: unknown }

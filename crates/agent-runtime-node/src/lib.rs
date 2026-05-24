@@ -10,8 +10,10 @@ use serde_json::Value;
 use tokio::sync::Mutex as TokioMutex;
 
 use agent_runtime_core::budget::BudgetConfig;
-use agent_runtime_core::model::ModelSpec;
-use agent_runtime_core::model::{AnthropicAdapter, AnthropicConfig};
+use agent_runtime_core::model::{
+    create_adapter_from_config, normalize_provider_model, CachePolicy, CompatibilityPolicy,
+    ModelSpec, ProviderRuntimeConfig, RequestOptions as RustRequestOptions, ThinkingLevel,
+};
 use agent_runtime_core::run::{AgentConfig, AgentRun, RunHandle};
 use agent_runtime_core::tool::async_job::JobHandle;
 use agent_runtime_core::tool::registry::ToolRegistry;
@@ -24,8 +26,24 @@ pub struct AgentOptions {
     pub model: String,
     pub system_prompt: String,
     pub skills_dir: Option<String>,
+    pub api_key: Option<String>,
+    pub api_key_env: Option<String>,
     pub api_url: Option<String>,
+    pub max_tokens: Option<u32>,
+    pub request_options: Option<RequestOptions>,
     pub budget: Option<BudgetOptions>,
+}
+
+#[napi(object)]
+pub struct RequestOptions {
+    pub thinking: Option<String>,
+    pub thinking_budget_tokens: Option<u32>,
+    pub include_thinking: Option<bool>,
+    pub compatibility_policy: Option<String>,
+    pub max_tokens: Option<u32>,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub cache_policy: Option<String>,
 }
 
 #[napi(object)]
@@ -177,7 +195,11 @@ impl Tool for StaticTool {
 pub struct Agent {
     model: String,
     system_prompt: String,
+    api_key: Option<String>,
+    api_key_env: Option<String>,
     api_url: Option<String>,
+    max_tokens: Option<u32>,
+    request_options: RustRequestOptions,
     skills_dir: Option<String>,
     budget: Option<BudgetOptions>,
     tools: Vec<Arc<dyn Tool>>,
@@ -187,16 +209,25 @@ pub struct Agent {
 #[napi]
 impl Agent {
     #[napi(constructor)]
-    pub fn new(options: AgentOptions) -> Self {
-        Self {
+    pub fn new(options: AgentOptions) -> napi::Result<Self> {
+        Ok(Self {
             model: options.model,
             system_prompt: options.system_prompt,
+            api_key: options.api_key,
+            api_key_env: options.api_key_env,
             api_url: options.api_url,
+            max_tokens: options.max_tokens,
+            request_options: options
+                .request_options
+                .map(rust_request_options_from_js)
+                .transpose()
+                .map_err(napi::Error::from_reason)?
+                .unwrap_or_default(),
             skills_dir: options.skills_dir,
             budget: options.budget,
             tools: Vec::new(),
             run_handle: Arc::new(TokioMutex::new(None)),
-        }
+        })
     }
 
     /// Register a tool with schema only (no handler — tool calls will error).
@@ -273,46 +304,7 @@ impl Agent {
 
     #[napi]
     pub fn run_sync(&self, input: String) -> napi::Result<Vec<serde_json::Value>> {
-        let budget_config = if let Some(ref b) = self.budget {
-            BudgetConfig {
-                max_tokens: b.max_tokens.map(|v| v as u64),
-                max_tool_calls: b.max_tool_calls.map(|v| v as u32),
-                max_duration: b.max_duration_secs.map(|v| Duration::from_secs(v as u64)),
-                max_cost_usd: b.max_cost_usd,
-            }
-        } else {
-            BudgetConfig {
-                max_tokens: None,
-                max_tool_calls: None,
-                max_duration: None,
-                max_cost_usd: None,
-            }
-        };
-
-        let config = AgentConfig {
-            system_prompt: self.system_prompt.clone(),
-            model: ModelSpec {
-                provider: "anthropic".into(),
-                model: self.model.clone(),
-                api_key_env: None,
-                api_url: self.api_url.clone(),
-                max_tokens: Some(4096),
-                context_window_size: None,
-            },
-            request_options: agent_runtime_core::model::RequestOptions::default(),
-            budget: budget_config,
-            max_steps: 20,
-            allowed_skills: None,
-            allowed_tools: None,
-            mcp_servers: vec![],
-            tool_search_enabled: false,
-            compaction_threshold: None,
-            compaction_recent_messages: 10,
-            webhook_enabled: false,
-            code_execution_enabled: false,
-            skills_dir: self.skills_dir.clone(),
-            run_depth: 0,
-        };
+        let config = self.build_config()?;
 
         let mut registry = ToolRegistry::new();
         for tool in &self.tools {
@@ -321,14 +313,9 @@ impl Agent {
                 .map_err(|e| napi::Error::from_reason(format!("{}", e)))?;
         }
 
-        let model: Arc<dyn agent_runtime_core::model::ModelAdapter> = Arc::new(
-            AnthropicAdapter::from_config(AnthropicConfig {
-                model: self.model.clone(),
-                max_tokens: 4096,
-                api_key: None,
-                api_url: self.api_url.clone(),
-            })
-            .map_err(|e| napi::Error::from_reason(format!("{}", e)))?,
+        let model: Arc<dyn agent_runtime_core::model::ModelAdapter> = Arc::from(
+            create_adapter_from_config(self.provider_config())
+                .map_err(|e| napi::Error::from_reason(format!("failed to create model: {e}")))?,
         );
 
         let run_handle_ref = Arc::clone(&self.run_handle);
@@ -396,6 +383,121 @@ impl Agent {
                 ))
             }
         })
+    }
+}
+
+impl Agent {
+    fn provider_config(&self) -> ProviderRuntimeConfig {
+        ProviderRuntimeConfig {
+            model: self.model.clone(),
+            api_key: self.api_key.clone(),
+            api_key_env: self.api_key_env.clone(),
+            api_url: self.api_url.clone(),
+            max_tokens: self.max_tokens,
+        }
+    }
+
+    fn build_config(&self) -> napi::Result<AgentConfig> {
+        let budget_config = if let Some(ref b) = self.budget {
+            BudgetConfig {
+                max_tokens: b.max_tokens.map(|v| v as u64),
+                max_tool_calls: b.max_tool_calls.map(|v| v as u32),
+                max_duration: b.max_duration_secs.map(|v| Duration::from_secs(v as u64)),
+                max_cost_usd: b.max_cost_usd,
+            }
+        } else {
+            BudgetConfig {
+                max_tokens: None,
+                max_tool_calls: None,
+                max_duration: None,
+                max_cost_usd: None,
+            }
+        };
+
+        let normalized = normalize_provider_model(&self.model)
+            .map_err(|e| napi::Error::from_reason(format!("invalid model config: {e}")))?;
+
+        Ok(AgentConfig {
+            system_prompt: self.system_prompt.clone(),
+            model: ModelSpec {
+                provider: normalized.provider.into(),
+                model: normalized.model.into(),
+                api_key_env: self.api_key_env.clone(),
+                api_url: self.api_url.clone(),
+                max_tokens: self.max_tokens,
+                context_window_size: None,
+            },
+            request_options: self.request_options.clone(),
+            budget: budget_config,
+            max_steps: 20,
+            allowed_skills: None,
+            allowed_tools: None,
+            mcp_servers: vec![],
+            tool_search_enabled: false,
+            compaction_threshold: None,
+            compaction_recent_messages: 10,
+            webhook_enabled: false,
+            code_execution_enabled: false,
+            skills_dir: self.skills_dir.clone(),
+            run_depth: 0,
+        })
+    }
+}
+
+fn rust_request_options_from_js(options: RequestOptions) -> Result<RustRequestOptions, String> {
+    let mut rust = RustRequestOptions::default();
+    if let Some(value) = options.thinking {
+        rust.thinking = parse_thinking_level(&value)?;
+    }
+    rust.thinking_budget_tokens = options.thinking_budget_tokens;
+    if let Some(value) = options.include_thinking {
+        rust.include_thinking = value;
+    }
+    if let Some(value) = options.compatibility_policy {
+        rust.compatibility_policy = parse_compatibility_policy(&value)?;
+    }
+    rust.max_tokens = options.max_tokens;
+    rust.temperature = options.temperature.map(|value| value as f32);
+    rust.top_p = options.top_p.map(|value| value as f32);
+    if let Some(value) = options.cache_policy {
+        rust.cache_policy = parse_cache_policy(&value)?;
+    }
+    Ok(rust)
+}
+
+fn parse_thinking_level(value: &str) -> Result<ThinkingLevel, String> {
+    match value {
+        "off" => Ok(ThinkingLevel::Off),
+        "minimal" => Ok(ThinkingLevel::Minimal),
+        "low" => Ok(ThinkingLevel::Low),
+        "medium" => Ok(ThinkingLevel::Medium),
+        "high" => Ok(ThinkingLevel::High),
+        "xhigh" => Ok(ThinkingLevel::XHigh),
+        "max" => Ok(ThinkingLevel::Max),
+        _ => Err(format!(
+            "invalid thinking value '{value}'; expected off|minimal|low|medium|high|xhigh|max"
+        )),
+    }
+}
+
+fn parse_compatibility_policy(value: &str) -> Result<CompatibilityPolicy, String> {
+    match value {
+        "coerce" => Ok(CompatibilityPolicy::Coerce),
+        "strict" => Ok(CompatibilityPolicy::Strict),
+        _ => Err(format!(
+            "invalid compatibilityPolicy value '{value}'; expected coerce|strict"
+        )),
+    }
+}
+
+fn parse_cache_policy(value: &str) -> Result<CachePolicy, String> {
+    match value {
+        "none" => Ok(CachePolicy::None),
+        "auto" => Ok(CachePolicy::Auto),
+        "long" => Ok(CachePolicy::Long),
+        _ => Err(format!(
+            "invalid cachePolicy value '{value}'; expected none|auto|long"
+        )),
     }
 }
 
@@ -469,5 +571,81 @@ mod tests {
         assert_eq!(to_snake_case("RunStarted"), "run_started");
         assert_eq!(to_snake_case("ApprovalDenied"), "approval_denied");
         assert_eq!(to_snake_case("AsyncToolProgress"), "async_tool_progress");
+    }
+
+    #[test]
+    fn node_request_options_maps_to_rust_request_options() {
+        let options = rust_request_options_from_js(RequestOptions {
+            thinking: Some("xhigh".into()),
+            thinking_budget_tokens: Some(1024),
+            include_thinking: Some(false),
+            compatibility_policy: Some("strict".into()),
+            max_tokens: Some(2048),
+            temperature: Some(0.3),
+            top_p: Some(0.7),
+            cache_policy: Some("long".into()),
+        })
+        .expect("request options should parse");
+
+        assert_eq!(options.thinking, ThinkingLevel::XHigh);
+        assert_eq!(options.thinking_budget_tokens, Some(1024));
+        assert!(!options.include_thinking);
+        assert_eq!(options.compatibility_policy, CompatibilityPolicy::Strict);
+        assert_eq!(options.max_tokens, Some(2048));
+        assert_eq!(options.cache_policy, CachePolicy::Long);
+    }
+
+    #[test]
+    fn node_request_options_rejects_invalid_enum() {
+        let err = rust_request_options_from_js(RequestOptions {
+            thinking: Some("very".into()),
+            thinking_budget_tokens: None,
+            include_thinking: None,
+            compatibility_policy: None,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            cache_policy: None,
+        })
+        .expect_err("invalid enum should fail");
+        assert!(err.contains("off|minimal|low|medium|high|xhigh|max"));
+    }
+
+    #[test]
+    fn node_agent_provider_config_preserves_canonical_model() {
+        let agent = Agent::new(AgentOptions {
+            model: "openrouter/anthropic/claude-sonnet-4".into(),
+            system_prompt: "test".into(),
+            skills_dir: None,
+            api_key: Some("key".into()),
+            api_key_env: None,
+            api_url: Some("http://localhost".into()),
+            max_tokens: Some(123),
+            request_options: None,
+            budget: None,
+        })
+        .expect("agent should construct");
+        let config = agent.provider_config();
+        assert_eq!(config.model, "openrouter/anthropic/claude-sonnet-4");
+        assert_eq!(config.max_tokens, Some(123));
+    }
+
+    #[test]
+    fn node_agent_config_normalizes_legacy_shorthand() {
+        let agent = Agent::new(AgentOptions {
+            model: "claude-sonnet-4".into(),
+            system_prompt: "test".into(),
+            skills_dir: None,
+            api_key: Some("key".into()),
+            api_key_env: None,
+            api_url: None,
+            max_tokens: None,
+            request_options: None,
+            budget: None,
+        })
+        .expect("agent should construct");
+        let config = agent.build_config().expect("config should build");
+        assert_eq!(config.model.provider, "anthropic");
+        assert_eq!(config.model.model, "claude-sonnet-4");
     }
 }

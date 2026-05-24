@@ -10,8 +10,10 @@ use tokio::sync::Mutex as TokioMutex;
 
 use agent_runtime_core::budget::BudgetConfig;
 use agent_runtime_core::events::RuntimeEvent;
-use agent_runtime_core::model::ModelSpec;
-use agent_runtime_core::model::{AnthropicAdapter, AnthropicConfig};
+use agent_runtime_core::model::{
+    create_adapter_from_config, normalize_provider_model, CachePolicy, CompatibilityPolicy,
+    ModelSpec, ProviderRuntimeConfig, RequestOptions, ThinkingLevel,
+};
 use agent_runtime_core::run::{AgentConfig, AgentRun, RunHandle};
 use agent_runtime_core::tool::agent::AgentTool;
 use agent_runtime_core::tool::async_job::{JobHandle, JobStatus};
@@ -25,7 +27,11 @@ use agent_runtime_core::tool::{
 struct Agent {
     model: String,
     system_prompt: String,
+    api_key: Option<String>,
+    api_key_env: Option<String>,
     api_url: Option<String>,
+    max_tokens: Option<u32>,
+    request_options: RequestOptions,
     skills_dir: Option<String>,
     budget: Option<PyBudget>,
     tools: Vec<PyToolDef>,
@@ -357,8 +363,86 @@ fn to_snake_case(name: &str) -> String {
     out
 }
 
+fn parse_request_options_value(value: Option<Value>) -> Result<RequestOptions, String> {
+    let Some(Value::Object(map)) = value else {
+        return Ok(RequestOptions::default());
+    };
+    let mut options = RequestOptions::default();
+    if let Some(value) = map.get("thinking").and_then(Value::as_str) {
+        options.thinking = parse_thinking_level(value)?;
+    }
+    if let Some(value) = map.get("thinking_budget_tokens").and_then(Value::as_u64) {
+        options.thinking_budget_tokens = Some(value as u32);
+    }
+    if let Some(value) = map.get("include_thinking").and_then(Value::as_bool) {
+        options.include_thinking = value;
+    }
+    if let Some(value) = map.get("compatibility_policy").and_then(Value::as_str) {
+        options.compatibility_policy = parse_compatibility_policy(value)?;
+    }
+    if let Some(value) = map.get("max_tokens").and_then(Value::as_u64) {
+        options.max_tokens = Some(value as u32);
+    }
+    if let Some(value) = map.get("temperature").and_then(Value::as_f64) {
+        options.temperature = Some(value as f32);
+    }
+    if let Some(value) = map.get("top_p").and_then(Value::as_f64) {
+        options.top_p = Some(value as f32);
+    }
+    if let Some(value) = map.get("cache_policy").and_then(Value::as_str) {
+        options.cache_policy = parse_cache_policy(value)?;
+    }
+    Ok(options)
+}
+
+fn parse_thinking_level(value: &str) -> Result<ThinkingLevel, String> {
+    match value {
+        "off" => Ok(ThinkingLevel::Off),
+        "minimal" => Ok(ThinkingLevel::Minimal),
+        "low" => Ok(ThinkingLevel::Low),
+        "medium" => Ok(ThinkingLevel::Medium),
+        "high" => Ok(ThinkingLevel::High),
+        "xhigh" => Ok(ThinkingLevel::XHigh),
+        "max" => Ok(ThinkingLevel::Max),
+        _ => Err(format!(
+            "invalid thinking value '{value}'; expected off|minimal|low|medium|high|xhigh|max"
+        )),
+    }
+}
+
+fn parse_compatibility_policy(value: &str) -> Result<CompatibilityPolicy, String> {
+    match value {
+        "coerce" => Ok(CompatibilityPolicy::Coerce),
+        "strict" => Ok(CompatibilityPolicy::Strict),
+        _ => Err(format!(
+            "invalid compatibility_policy value '{value}'; expected coerce|strict"
+        )),
+    }
+}
+
+fn parse_cache_policy(value: &str) -> Result<CachePolicy, String> {
+    match value {
+        "none" => Ok(CachePolicy::None),
+        "auto" => Ok(CachePolicy::Auto),
+        "long" => Ok(CachePolicy::Long),
+        _ => Err(format!(
+            "invalid cache_policy value '{value}'; expected none|auto|long"
+        )),
+    }
+}
+
 impl Agent {
-    fn build_config(&self) -> AgentConfig {
+    fn provider_config(&self) -> ProviderRuntimeConfig {
+        ProviderRuntimeConfig {
+            model: self.model.clone(),
+            api_key: self.api_key.clone(),
+            api_key_env: self.api_key_env.clone(),
+            api_url: self.api_url.clone(),
+            max_tokens: self.max_tokens,
+        }
+    }
+
+    fn build_config(&self) -> PyResult<AgentConfig> {
         let budget_config = if let Some(ref b) = self.budget {
             BudgetConfig {
                 max_tokens: b.max_tokens,
@@ -375,17 +459,20 @@ impl Agent {
             }
         };
 
-        AgentConfig {
+        let normalized = normalize_provider_model(&self.model)
+            .map_err(|e| PyRuntimeError::new_err(format!("invalid model config: {e}")))?;
+
+        Ok(AgentConfig {
             system_prompt: self.system_prompt.clone(),
             model: ModelSpec {
-                provider: "anthropic".into(),
-                model: self.model.clone(),
-                api_key_env: None,
+                provider: normalized.provider.into(),
+                model: normalized.model.into(),
+                api_key_env: self.api_key_env.clone(),
                 api_url: self.api_url.clone(),
-                max_tokens: Some(4096),
+                max_tokens: self.max_tokens,
                 context_window_size: None,
             },
-            request_options: agent_runtime_core::model::RequestOptions::default(),
+            request_options: self.request_options.clone(),
             budget: budget_config,
             max_steps: 20,
             allowed_skills: None,
@@ -398,7 +485,7 @@ impl Agent {
             code_execution_enabled: false,
             skills_dir: self.skills_dir.clone(),
             run_depth: 0,
-        }
+        })
     }
 
     fn build_registry(&self) -> Result<ToolRegistry, PyErr> {
@@ -428,27 +515,27 @@ impl Agent {
     }
 
     fn build_model(&self) -> Result<Arc<dyn agent_runtime_core::model::ModelAdapter>, PyErr> {
-        let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-            model: self.model.clone(),
-            max_tokens: 4096,
-            api_key: None,
-            api_url: self.api_url.clone(),
-        })
-        .map_err(|e| PyRuntimeError::new_err(format!("failed to create model: {}", e)))?;
-        Ok(Arc::new(adapter))
+        let adapter = create_adapter_from_config(self.provider_config())
+            .map_err(|e| PyRuntimeError::new_err(format!("failed to create model: {}", e)))?;
+        Ok(Arc::from(adapter))
     }
 }
 
 #[pymethods]
 impl Agent {
     #[new]
-    #[pyo3(signature = (model, system_prompt, skills_dir=None, budget=None, api_url=None))]
+    #[pyo3(signature = (model, system_prompt, skills_dir=None, budget=None, api_url=None, api_key=None, api_key_env=None, max_tokens=None, request_options=None))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         model: String,
         system_prompt: String,
         skills_dir: Option<String>,
         budget: Option<Bound<'_, PyDict>>,
         api_url: Option<String>,
+        api_key: Option<String>,
+        api_key_env: Option<String>,
+        max_tokens: Option<u32>,
+        request_options: Option<Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let py_budget = if let Some(b) = budget {
             Some(PyBudget {
@@ -463,10 +550,25 @@ impl Agent {
             None
         };
 
+        let request_options = if let Some(options) = request_options {
+            let json_mod = options.py().import("json")?;
+            let json_str: String = json_mod.call_method1("dumps", (&options,))?.extract()?;
+            let value: Value = serde_json::from_str(&json_str).map_err(|e| {
+                PyRuntimeError::new_err(format!("failed to parse request_options: {e}"))
+            })?;
+            parse_request_options_value(Some(value)).map_err(PyRuntimeError::new_err)?
+        } else {
+            RequestOptions::default()
+        };
+
         Ok(Self {
             model,
             system_prompt,
+            api_key,
+            api_key_env,
             api_url,
+            max_tokens,
+            request_options,
             skills_dir,
             budget: py_budget,
             tools: Vec::new(),
@@ -555,7 +657,7 @@ impl Agent {
         input_key: Option<String>,
     ) -> PyResult<()> {
         let input_key = input_key.unwrap_or_else(|| "question".to_string());
-        let child_config = agent.build_config();
+        let child_config = agent.build_config()?;
         let child_registry = agent.build_registry()?;
         let child_model = agent.build_model()?;
         let input_schema = serde_json::json!({
@@ -616,7 +718,7 @@ impl Agent {
         py: Python<'py>,
         input: String,
     ) -> PyResult<Bound<'py, pyo3::types::PyList>> {
-        let config = self.build_config();
+        let config = self.build_config()?;
         let registry = self.build_registry()?;
         let model_adapter = self.build_model()?;
         let run_handle_ref = Arc::clone(&self.run_handle);
