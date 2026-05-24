@@ -33,27 +33,49 @@ All types below are defined and owned by providers. Core re-exports them.
 ```rust
 #[async_trait]
 pub trait ModelAdapter: Send + Sync {
-    /// Stream a model response. Emits StreamEvent items to tx during streaming,
-    /// then returns the complete ModelResponse.
-    async fn stream(
+    /// Send a model request. Always returns the complete ModelResponse.
+    ///
+    /// When `tx` is `Some`, emits StreamEvent items during streaming
+    /// (text deltas, thinking deltas, tool call chunks, done).
+    /// When `tx` is `None`, still processes the full response internally
+    /// and returns ModelResponse — no streaming events are emitted.
+    ///
+    /// This unified signature ensures stream and non-stream paths share
+    /// the same implementation. Callers choose behavior by passing or
+    /// omitting the channel.
+    async fn complete(
         &self,
         messages: &[Message],
         tools: &[ToolDef],
         options: &StreamOptions,
-        tx: mpsc::Sender<StreamEvent>,
+        tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError>;
+}
+```
 
-    /// Non-streaming convenience method. Default implementation creates a
-    /// channel and discards the receiver.
-    async fn call(
-        &self,
-        messages: &[Message],
-        tools: &[ToolDef],
-        options: &StreamOptions,
-    ) -> Result<ModelResponse, ModelError> {
-        let (tx, _rx) = mpsc::channel(64);
-        self.stream(messages, tools, options, tx).await
-    }
+Both streaming and non-streaming go through `complete()`. Convenience free functions are provided:
+
+```rust
+/// Streaming helper — creates a channel and returns (response_future, receiver).
+pub fn stream(
+    adapter: &dyn ModelAdapter,
+    messages: &[Message],
+    tools: &[ToolDef],
+    options: &StreamOptions,
+) -> (impl Future<Output = Result<ModelResponse, ModelError>> + '_, mpsc::Receiver<StreamEvent>) {
+    let (tx, rx) = mpsc::channel(64);
+    let fut = adapter.complete(messages, tools, options, Some(tx));
+    (fut, rx)
+}
+
+/// Non-streaming helper — discards events, returns only the final response.
+pub async fn call(
+    adapter: &dyn ModelAdapter,
+    messages: &[Message],
+    tools: &[ToolDef],
+    options: &StreamOptions,
+) -> Result<ModelResponse, ModelError> {
+    adapter.complete(messages, tools, options, None).await
 }
 ```
 
@@ -106,32 +128,69 @@ pub enum ThinkingLevel {
     XHigh,
 }
 
-/// Per-request options passed to `ModelAdapter::stream()` / `call()`.
+/// Controls whether thinking content is included in streamed output.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub enum ThinkingDisplay {
+    /// Stream summarized thinking content (default).
+    #[default]
+    Summarized,
+    /// Omit thinking from stream; faster time-to-first-text-token.
+    /// Thinking tokens are still billed. Only honored by providers
+    /// that support display control (Anthropic). Others ignore it.
+    Omitted,
+}
+
+/// Cache policy hint. Adapters map to provider-specific mechanisms.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub enum CachePolicy {
+    /// No caching preference.
+    None,
+    /// Short-lived cache (Anthropic: 5-min ephemeral; others: automatic).
+    #[default]
+    Auto,
+    /// Long-lived cache (Anthropic: 1-hour TTL; others: best-effort).
+    Long,
+}
+```
+
+### StreamOptions
+
+```rust
+/// Per-request options passed to `ModelAdapter::complete()`.
+/// The same options struct is used for both streaming and non-streaming calls.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StreamOptions {
     /// Thinking depth. Default: `Medium`.
     pub thinking: ThinkingLevel,
 
     /// Advanced: override the provider's default token budget for this
-    /// thinking level. Most models do not support this — only providers
-    /// with explicit budget_tokens support (e.g., Anthropic) will honor it.
-    /// Ignored when `thinking` is `Off`.
+    /// thinking level. Most models do not support explicit budget control
+    /// — only Anthropic honors this. Ignored when `thinking` is `Off`.
     pub thinking_budget_tokens: Option<u32>,
+
+    /// Controls whether thinking content appears in streamed output.
+    /// Default: `Summarized`. Only Anthropic supports `Omitted`.
+    pub thinking_display: ThinkingDisplay,
 
     /// Per-request max output tokens override. Falls back to the
     /// adapter's configured default when `None`.
     pub max_tokens: Option<u32>,
+
+    /// Prompt cache policy. Default: `Auto` (provider-managed caching).
+    pub cache_policy: CachePolicy,
 }
 ```
 
+### ThinkingLevel provider mapping
+
 ThinkingLevel is the user-facing control. Each adapter maps it to provider-specific API parameters:
 
-| Provider   | Mapping                                                                 |
-|------------|-------------------------------------------------------------------------|
-| Anthropic  | Maps to `thinking.type` + `thinking.budget_tokens`. Supports `budget_tokens` override. `Off` → no thinking block. |
-| OpenAI     | Maps to `reasoning_effort`: Off→none, Minimal/Low→low, Medium→medium, High/XHigh→high. `budget_tokens` ignored. |
-| DeepSeek   | Off→disable reasoning, all others→enable reasoning. No granular levels. `budget_tokens` ignored. |
-| OpenRouter | Passes through to underlying model's native thinking parameters.        |
+| Provider   | API parameter | Level mapping | budget_tokens | display |
+|------------|--------------|---------------|---------------|---------|
+| **Anthropic** | `thinking.type` + `thinking.budget_tokens` | Off→`disabled`, Minimal-High→`adaptive` with effort mapping, XHigh→`adaptive` max effort. Opus 4.7+ requires `adaptive` (adapter uses it automatically). | ✅ Supported. Overrides level default when set. | ✅ `thinking.display` = "summarized" / "omitted" |
+| **OpenAI** | `reasoning_effort` | Off→omit param, Minimal/Low→"low", Medium→"medium", High/XHigh→"high" | ❌ Ignored | ❌ Ignored |
+| **DeepSeek** | Model-level (deepseek-reasoner) | Off→no reasoning, all others→enable reasoning. Binary on/off only. | ❌ Ignored | ❌ Ignored |
+| **OpenRouter** | `reasoning: { effort, max_tokens }` | Passes `effort` string directly (none/minimal/low/medium/high/xhigh). | ✅ Forwarded as `reasoning.max_tokens` when underlying model supports it. | ❌ Not supported via OpenRouter |
 
 When a provider doesn't support a requested level, the adapter clamps silently to the nearest supported value (e.g., DeepSeek only has on/off, so Minimal through XHigh all map to "on").
 
@@ -176,10 +235,19 @@ pub struct ModelResponse {
     pub stop_reason: StopReason,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TokenUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Tokens read from prompt cache (cost reduced). Reported by all providers
+    /// under different names — adapters normalize to this field.
+    /// Anthropic: `cache_read_input_tokens`, DeepSeek: `prompt_cache_hit_tokens`,
+    /// OpenAI: automatic (in cached_tokens), OpenRouter: `prompt_tokens_details.cached_tokens`.
+    pub cache_read_tokens: u64,
+    /// Tokens written to prompt cache (may cost more on first write).
+    /// Anthropic: `cache_creation_input_tokens`, DeepSeek: implicit,
+    /// OpenAI: free. Zero when provider doesn't report separately.
+    pub cache_write_tokens: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,7 +345,9 @@ SSE event types: `message_start`, `content_block_start`, `content_block_delta`, 
 
 Thinking support: maps `content_block_start` with `type: "thinking"` and `thinking_delta` to `StreamEvent::ThinkingStart/Thinking/ThinkingEnd` and `ContentBlock::Thinking`.
 
-ThinkingLevel mapping: Anthropic is the only provider that supports explicit `budget_tokens`. The adapter maps levels to token budgets (e.g., Off→omit thinking block, Minimal→1024, Low→4096, Medium→10240, High→32768, XHigh→max allowed). When `StreamOptions::thinking_budget_tokens` is set, it overrides the level's default budget.
+ThinkingLevel mapping: Uses `thinking.type: "adaptive"` for models that support it (Opus 4.7+, Sonnet 4.6+), falls back to `"enabled"` for older models. Level maps to budget_tokens (Off→`disabled`, Minimal→1024, Low→4096, Medium→10240, High→32768, XHigh→max allowed). `StreamOptions::thinking_budget_tokens` overrides the level's default budget. `ThinkingDisplay` maps directly to `thinking.display` ("summarized"/"omitted").
+
+Prompt caching: Anthropic requires explicit `cache_control` markers. When `CachePolicy::Auto` or `Long`, the adapter adds `cache_control: { type: "ephemeral" }` to the top-level request (automatic caching mode). `Long` adds `ttl: "1h"`. `None` omits cache_control entirely. Reports `cache_read_input_tokens` and `cache_creation_input_tokens` in usage → mapped to `TokenUsage::cache_read_tokens` / `cache_write_tokens`.
 
 ### OpenAI
 
@@ -300,6 +370,8 @@ SSE format: `data: {...}` lines with `choices[0].delta` containing `content`, `t
 
 ThinkingLevel mapping: maps to OpenAI's `reasoning_effort` parameter. Off→omit parameter, Minimal/Low→"low", Medium→"medium", High/XHigh→"high". `budget_tokens` is ignored (OpenAI does not support it).
 
+Prompt caching: fully automatic (≥1024 tokens), no configuration needed. `CachePolicy` is ignored. OpenAI reports cached tokens in usage → mapped to `TokenUsage::cache_read_tokens`. `cache_write_tokens` is always 0 (OpenAI doesn't charge for cache writes).
+
 ### DeepSeek
 
 New adapter. OpenAI-compatible protocol with DeepSeek-specific defaults and reasoning support.
@@ -321,10 +393,15 @@ Reasoning support: DeepSeek's `reasoning_content` field in streamed deltas maps 
 
 ThinkingLevel mapping: DeepSeek only supports on/off for reasoning. Off→disable reasoning, Minimal through XHigh→enable reasoning. `budget_tokens` is ignored.
 
+Prompt caching: fully automatic (disk-based KV cache), no configuration needed. `CachePolicy` is ignored. Reports `prompt_cache_hit_tokens` and `prompt_cache_miss_tokens` → mapped to `TokenUsage::cache_read_tokens`. `cache_write_tokens` is 0 (DeepSeek doesn't separate write cost).
+
+Note: `reasoning_content` must NOT be included in input messages for subsequent turns (API returns 400). The adapter strips thinking content from assistant messages when building the request body.
+
 Internally reuses SSE parsing from `sse.rs`. The adapter handles:
 - URL normalization (append `/v1/chat/completions` if needed)
 - `DEEPSEEK_API_KEY` env var fallback
 - `reasoning_content` delta extraction
+- Stripping `reasoning_content` from input assistant messages
 
 ### OpenRouter
 
@@ -349,9 +426,11 @@ OpenRouter-specific headers:
 - `HTTP-Referer`: set from `site_url` config or `OPENROUTER_SITE_URL` env var
 - `X-OpenRouter-Title`: set from `app_title` config or `OPENROUTER_APP_TITLE` env var
 
-Reasoning support: when the underlying model supports reasoning, OpenRouter includes `reasoning` content in the response. Mapped to `StreamEvent::Thinking` and `ContentBlock::Thinking` using the same pattern as DeepSeek.
+Reasoning support: when the underlying model supports reasoning, OpenRouter includes `reasoning` content in the response. Mapped to `StreamEvent::Thinking` and `ContentBlock::Thinking`.
 
-ThinkingLevel mapping: OpenRouter forwards thinking parameters to the underlying model. The adapter translates ThinkingLevel to the appropriate provider-specific format based on the model prefix (e.g., `anthropic/` models get Anthropic-style thinking config, `openai/` models get `reasoning_effort`). `budget_tokens` is forwarded when the underlying model supports it.
+ThinkingLevel mapping: Uses OpenRouter's unified `reasoning` object: `{ effort: "none"|"minimal"|"low"|"medium"|"high"|"xhigh", max_tokens: ... }`. ThinkingLevel maps directly to the `effort` string. `thinking_budget_tokens` is forwarded as `reasoning.max_tokens` (OpenRouter passes it to the underlying provider when supported).
+
+Prompt caching: OpenRouter uses provider sticky routing to maximize cache hits. Anthropic models via OpenRouter support `cache_control` breakpoints. When `CachePolicy::Auto`, the adapter adds top-level `cache_control` for Anthropic-backed models. Other providers are automatic. Reports `prompt_tokens_details.cached_tokens` → mapped to `TokenUsage::cache_read_tokens`.
 
 Model names pass through unchanged (e.g., `anthropic/claude-sonnet-4`, `openai/gpt-4o`). OpenRouter handles routing internally.
 
@@ -366,7 +445,7 @@ OpenAI, DeepSeek, and OpenRouter all use the same SSE line format. `sse.rs` prov
 /// comment lines.
 pub(crate) async fn parse_openai_sse_stream(
     stream: impl Stream<Item = Result<Bytes, reqwest::Error>>,
-    tx: &mpsc::Sender<StreamEvent>,
+    tx: Option<&mpsc::Sender<StreamEvent>>,  // None = skip streaming events
     reasoning_field: Option<&str>,  // "reasoning_content" for DeepSeek, "reasoning" for OpenRouter, None for OpenAI
 ) -> Result<(Vec<ContentBlock>, TokenUsage, StopReason), ModelError>
 ```
@@ -465,13 +544,14 @@ pub fn create_adapter(model: &str, api_key: Option<String>) -> Result<Box<dyn Mo
    pub use agent_runtime_providers::{
        ModelAdapter, Message, Role, ContentBlock,
        ToolDef, JsonSchema, ModelResponse, ModelError,
-       StreamEvent, StreamOptions, ThinkingLevel,
+       StreamEvent, StreamOptions,
+       ThinkingLevel, ThinkingDisplay, CachePolicy,
        TokenUsage, StopReason, ModelSpec,
        AnthropicAdapter, AnthropicConfig,
        OpenAiAdapter, OpenAiConfig,
        DeepSeekAdapter, DeepSeekConfig,
        OpenRouterAdapter, OpenRouterConfig,
-       create_adapter,
+       create_adapter, stream, call,
    };
 
    /// Backward-compatible alias.
@@ -532,8 +612,17 @@ Migrated from core and extended:
 | `factory::openrouter_preserves_full_model` | **new** | "openrouter/anthropic/claude-sonnet-4" |
 | `anthropic::thinking_level_maps_to_budget` | **new** | ThinkingLevel → budget_tokens mapping |
 | `anthropic::thinking_budget_override` | **new** | StreamOptions::thinking_budget_tokens overrides level default |
+| `anthropic::thinking_display_omitted` | **new** | ThinkingDisplay::Omitted maps to display: "omitted" |
+| `anthropic::cache_policy_auto_adds_cache_control` | **new** | CachePolicy::Auto adds top-level cache_control |
+| `anthropic::cache_policy_long_sets_1h_ttl` | **new** | CachePolicy::Long → ttl: "1h" |
+| `anthropic::cache_usage_mapped_to_token_usage` | **new** | cache_read/write_input_tokens → TokenUsage |
 | `openai::thinking_level_maps_to_reasoning_effort` | **new** | ThinkingLevel → reasoning_effort |
+| `openai::cache_tokens_reported` | **new** | cached_tokens → TokenUsage::cache_read_tokens |
 | `deepseek::thinking_off_disables_reasoning` | **new** | ThinkingLevel::Off suppresses reasoning |
+| `deepseek::strips_reasoning_from_input` | **new** | reasoning_content stripped from input messages |
+| `deepseek::cache_hit_tokens_reported` | **new** | prompt_cache_hit_tokens → TokenUsage |
+| `openrouter::reasoning_object_from_thinking_level` | **new** | ThinkingLevel → reasoning.effort |
+| `complete::tx_none_skips_events` | **new** | complete(tx=None) returns response without streaming |
 
 All SSE tests use the existing `serve_sse_once` pattern (bind to `127.0.0.1:0`, serve one HTTP response with SSE body).
 
@@ -547,17 +636,15 @@ All SSE tests use the existing `serve_sse_once` pattern (bind to `127.0.0.1:0`, 
 
 ```rust
 use agent_runtime_providers::{
-    create_adapter, Message, ContentBlock, Role, StreamEvent,
-    StreamOptions, ThinkingLevel,
+    create_adapter, stream, call,
+    Message, ContentBlock, Role, StreamEvent,
+    StreamOptions, ThinkingLevel, CachePolicy,
 };
-use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create adapter from model string
-    let adapter = create_adapter("deepseek/deepseek-chat", None)?;
+    let adapter = create_adapter("anthropic/claude-sonnet-4-20250514", None)?;
 
-    // Build messages
     let messages = vec![
         Message {
             role: Role::System,
@@ -565,25 +652,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         Message {
             role: Role::User,
-            content: vec![ContentBlock::Text("Hello!".into())],
+            content: vec![ContentBlock::Text("Explain Rust's ownership model.".into())],
         },
     ];
 
-    // Configure thinking level (primary API)
+    // -- Streaming example --
     let options = StreamOptions {
         thinking: ThinkingLevel::High,
+        cache_policy: CachePolicy::Auto,
         ..Default::default()
     };
 
-    // Or with advanced budget_tokens override (only honored by Anthropic)
-    let _advanced = StreamOptions {
-        thinking: ThinkingLevel::High,
-        thinking_budget_tokens: Some(16384),
-        ..Default::default()
-    };
-
-    // Stream response
-    let (tx, mut rx) = mpsc::channel(64);
+    let (fut, mut rx) = stream(adapter.as_ref(), &messages, &[], &options);
     let handle = tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             match event {
@@ -592,17 +672,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 StreamEvent::Thinking { delta } => print!("{delta}"),
                 StreamEvent::ThinkingEnd => println!(" [/thinking]"),
                 StreamEvent::Done { usage } => {
-                    println!("\n({} in, {} out)", usage.input_tokens, usage.output_tokens);
+                    println!("\n(in:{} out:{} cache_read:{} cache_write:{})",
+                        usage.input_tokens, usage.output_tokens,
+                        usage.cache_read_tokens, usage.cache_write_tokens);
                 }
                 _ => {}
             }
         }
     });
 
-    let response = adapter.stream(&messages, &[], &options, tx).await?;
+    let response = fut.await?;
     handle.await?;
-
     println!("Stop reason: {:?}", response.stop_reason);
+
+    // -- Non-streaming example (same interface, just use call()) --
+    let response = call(adapter.as_ref(), &messages, &[], &options).await?;
+    println!("Got {} content blocks", response.content.len());
+
+    // -- Advanced: explicit budget_tokens (Anthropic-only) --
+    let _advanced = StreamOptions {
+        thinking: ThinkingLevel::High,
+        thinking_budget_tokens: Some(16384),
+        cache_policy: CachePolicy::Long,  // 1-hour cache
+        ..Default::default()
+    };
+
     Ok(())
 }
 ```
