@@ -28,6 +28,7 @@ fn test_config() -> AgentConfig {
             max_tokens: None,
             context_window_size: None,
         },
+        request_options: RequestOptions::default(),
         budget: BudgetConfig {
             max_tokens: Some(1_000),
             max_tool_calls: Some(20),

@@ -53,6 +53,8 @@ impl std::fmt::Display for RunId {
 pub struct AgentConfig {
     pub system_prompt: String,
     pub model: ModelSpec,
+    #[serde(default)]
+    pub request_options: RequestOptions,
     pub budget: BudgetConfig,
     pub max_steps: u32,
     pub allowed_skills: Option<Vec<String>>,
@@ -531,9 +533,13 @@ async fn run_loop(
             }
         });
 
-        let options = RequestOptions::default();
         let response = model
-            .complete(&messages, &tool_defs, &options, Some(stream_tx))
+            .complete(
+                &messages,
+                &tool_defs,
+                &config.request_options,
+                Some(stream_tx),
+            )
             .await;
         let _ = forward_task.await;
 
@@ -557,6 +563,7 @@ async fn run_loop(
             &tx,
             RuntimeEvent::ModelCallCompleted {
                 tokens: response.usage.clone(),
+                option_adjustments: response.option_adjustments.clone(),
             },
         )
         .await;
@@ -996,7 +1003,7 @@ async fn execute_sub_agent_request(
     let child_depth = parent_config.run_depth + 1;
     while let Some(event) = child_rx.recv().await {
         match &event {
-            RuntimeEvent::ModelCallCompleted { tokens } => {
+            RuntimeEvent::ModelCallCompleted { tokens, .. } => {
                 child_usage.tokens_used += tokens.input_tokens + tokens.output_tokens;
                 // Propagate to parent budget immediately so the parent
                 // guard reflects child consumption in real time.
@@ -1119,7 +1126,7 @@ async fn execute_agent_delegate(
 
     while let Some(event) = child_rx.recv().await {
         match &event {
-            RuntimeEvent::ModelCallCompleted { tokens } => {
+            RuntimeEvent::ModelCallCompleted { tokens, .. } => {
                 let tokens_used = tokens.input_tokens + tokens.output_tokens;
                 child_usage.tokens_used += tokens_used;
                 parent_budget.record_external_usage(&BudgetUsage {
@@ -1275,7 +1282,7 @@ async fn maybe_compact_context(
                 content: vec![ContentBlock::Text(prompt)],
             }],
             &[],
-            &RequestOptions::default(),
+            &config.request_options,
             None,
         )
         .await;
@@ -1766,6 +1773,7 @@ mod tests {
                 max_tokens: None,
                 context_window_size: None,
             },
+            request_options: RequestOptions::default(),
             budget: BudgetConfig {
                 max_tokens: None,
                 max_tool_calls: None,

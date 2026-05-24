@@ -27,59 +27,175 @@ pub fn create_adapter(
     model: &str,
     api_key: Option<String>,
 ) -> Result<Box<dyn ModelAdapter>, ModelError> {
-    let (provider, model_name) = model.split_once('/').ok_or_else(|| {
-        ModelError::internal(
-            format!("invalid model string '{model}': expected 'provider/model'"),
-            "invalid_model",
-        )
-    })?;
+    create_adapter_from_config(ProviderRuntimeConfig {
+        model: model.to_string(),
+        api_key,
+        api_key_env: None,
+        api_url: None,
+        max_tokens: None,
+    })
+}
 
-    match provider {
+#[allow(clippy::result_large_err)]
+pub fn create_adapter_from_config(
+    config: ProviderRuntimeConfig,
+) -> Result<Box<dyn ModelAdapter>, ModelError> {
+    let normalized = normalize_provider_model(&config.model)?;
+    let api_key = resolve_api_key(
+        normalized.provider,
+        config.api_key.as_deref(),
+        config.api_key_env.as_deref(),
+    )?;
+    let max_tokens = config.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
+
+    match normalized.provider {
         "anthropic" => {
             let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-                model: model_name.to_string(),
-                max_tokens: DEFAULT_MAX_TOKENS,
-                api_key,
-                api_url: None,
+                model: normalized.model.to_string(),
+                max_tokens,
+                api_key: Some(api_key),
+                api_url: config.api_url,
             })?;
             Ok(Box::new(adapter))
         }
         "openai" => {
             let adapter = OpenAiAdapter::from_config(OpenAiConfig {
-                model: model_name.to_string(),
-                max_tokens: DEFAULT_MAX_TOKENS,
-                api_key,
-                api_url: None,
+                model: normalized.model.to_string(),
+                max_tokens,
+                api_key: Some(api_key),
+                api_url: config.api_url,
             })?;
             Ok(Box::new(adapter))
         }
         "deepseek" => {
             let adapter = DeepSeekAdapter::from_config(DeepSeekConfig {
-                model: model_name.to_string(),
-                max_tokens: DEFAULT_MAX_TOKENS,
-                api_key,
-                api_url: None,
+                model: normalized.model.to_string(),
+                max_tokens,
+                api_key: Some(api_key),
+                api_url: config.api_url,
             })?;
             Ok(Box::new(adapter))
         }
         "openrouter" => {
             let adapter = OpenRouterAdapter::from_config(OpenRouterConfig {
-                model: model_name.to_string(),
-                max_tokens: DEFAULT_MAX_TOKENS,
-                api_key,
-                api_url: None,
+                model: normalized.model.to_string(),
+                max_tokens,
+                api_key: Some(api_key),
+                api_url: config.api_url,
                 app_title: None,
                 site_url: None,
             })?;
             Ok(Box::new(adapter))
         }
-        _ => Err(ModelError::internal(
-            format!(
-                "unknown provider '{provider}': supported providers are anthropic, openai, deepseek, openrouter"
-            ),
-            "unknown_provider",
+        _ => Err(unknown_provider(normalized.provider)),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NormalizedProviderModel<'a> {
+    pub provider: &'a str,
+    pub model: &'a str,
+}
+
+#[allow(clippy::result_large_err)]
+pub fn normalize_provider_model(model: &str) -> Result<NormalizedProviderModel<'_>, ModelError> {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        return Err(ModelError::internal(
+            "model string cannot be empty",
+            "invalid_model",
+        ));
+    }
+
+    let Some((provider, model_name)) = trimmed.split_once('/') else {
+        return Ok(NormalizedProviderModel {
+            provider: "anthropic",
+            model: trimmed,
+        });
+    };
+
+    if provider.is_empty() || model_name.is_empty() {
+        return Err(ModelError::internal(
+            format!("invalid model string '{model}': expected 'provider/model'"),
+            "invalid_model",
+        ));
+    }
+
+    match provider {
+        "anthropic" | "openai" | "deepseek" | "openrouter" => Ok(NormalizedProviderModel {
+            provider,
+            model: model_name,
+        }),
+        _ => Err(unknown_provider(provider)),
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn resolve_api_key(
+    provider: &str,
+    explicit: Option<&str>,
+    api_key_env: Option<&str>,
+) -> Result<String, ModelError> {
+    if let Some(value) = explicit {
+        return non_empty_api_key(value);
+    }
+    if let Some(env_name) = api_key_env {
+        if env_name.trim().is_empty() {
+            return Err(ModelError::internal(
+                "api_key_env cannot be empty",
+                "invalid_api_key_env",
+            ));
+        }
+        return match std::env::var(env_name) {
+            Ok(value) => non_empty_api_key(&value),
+            Err(_) => Err(ModelError::internal(
+                format!("API key env var '{env_name}' is not set"),
+                "missing_api_key",
+            )),
+        };
+    }
+
+    let env_name = default_api_key_env(provider)?;
+    match std::env::var(env_name) {
+        Ok(value) => non_empty_api_key(&value),
+        Err(_) => Err(ModelError::internal(
+            format!("{env_name} not set and no api_key provided"),
+            "missing_api_key",
         )),
     }
+}
+
+#[allow(clippy::result_large_err)]
+fn non_empty_api_key(value: &str) -> Result<String, ModelError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Err(ModelError::internal(
+            "API key cannot be empty",
+            "invalid_api_key",
+        ))
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn default_api_key_env(provider: &str) -> Result<&'static str, ModelError> {
+    match provider {
+        "anthropic" => Ok("ANTHROPIC_API_KEY"),
+        "openai" => Ok("OPENAI_API_KEY"),
+        "deepseek" => Ok("DEEPSEEK_API_KEY"),
+        "openrouter" => Ok("OPENROUTER_API_KEY"),
+        _ => Err(unknown_provider(provider)),
+    }
+}
+
+fn unknown_provider(provider: &str) -> ModelError {
+    ModelError::internal(
+        format!(
+            "unknown provider '{provider}': supported providers are anthropic, openai, deepseek, openrouter"
+        ),
+        "unknown_provider",
+    )
 }
 
 pub fn stream_chat<'a>(
@@ -111,6 +227,8 @@ mod tests {
     use serde_json::json;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     // -----------------------------------------------------------------------
     // MockAdapter for helper / runtime_contract tests
@@ -217,10 +335,183 @@ mod tests {
     #[test]
     fn factory_rejects_no_slash() {
         let result = create_adapter("claude-sonnet-4", Some("key".into()));
-        match result {
-            Err(err) => assert_eq!(err.code.as_deref(), Some("invalid_model")),
-            Ok(_) => panic!("should have failed"),
+        let adapter = result.expect("legacy Anthropic shorthand should be accepted");
+        assert_eq!(adapter.provider_name(), "anthropic");
+        assert_eq!(adapter.model_name(), "claude-sonnet-4");
+    }
+
+    #[test]
+    fn provider_config_normalizes_legacy_anthropic_model() {
+        let normalized = normalize_provider_model("claude-sonnet-4").expect("normalizes");
+        assert_eq!(normalized.provider, "anthropic");
+        assert_eq!(normalized.model, "claude-sonnet-4");
+    }
+
+    #[test]
+    fn provider_config_preserves_canonical_provider_model() {
+        let normalized = normalize_provider_model("deepseek/deepseek-chat").expect("normalizes");
+        assert_eq!(normalized.provider, "deepseek");
+        assert_eq!(normalized.model, "deepseek-chat");
+    }
+
+    #[test]
+    fn provider_config_openrouter_preserves_nested_model_name() {
+        let normalized =
+            normalize_provider_model("openrouter/anthropic/claude-sonnet-4").expect("normalizes");
+        assert_eq!(normalized.provider, "openrouter");
+        assert_eq!(normalized.model, "anthropic/claude-sonnet-4");
+    }
+
+    #[test]
+    fn provider_config_api_key_precedence_explicit_then_env() {
+        let env_name = "ORCHEST_TEST_PROVIDER_API_KEY_PRECEDENCE";
+        std::env::set_var(env_name, "env-key");
+
+        let explicit = resolve_api_key("openai", Some("explicit-key"), Some(env_name))
+            .expect("explicit key wins");
+        let from_env = resolve_api_key("openai", None, Some(env_name)).expect("env key resolves");
+
+        assert_eq!(explicit, "explicit-key");
+        assert_eq!(from_env, "env-key");
+        std::env::remove_var(env_name);
+    }
+
+    #[test]
+    fn provider_config_api_key_empty_string_rejected() {
+        let result = create_adapter_from_config(ProviderRuntimeConfig {
+            model: "openai/gpt-4o".into(),
+            api_key: Some(" ".into()),
+            api_key_env: None,
+            api_url: None,
+            max_tokens: None,
+        });
+        let err = match result {
+            Ok(_) => panic!("empty api key should fail"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.code.as_deref(), Some("invalid_api_key"));
+    }
+
+    #[tokio::test]
+    async fn provider_config_api_url_override_reaches_adapter_config() {
+        let api_url = crate::anthropic::test_util::serve_sse_once(
+            r#"data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}
+
+data: [DONE]
+
+"#,
+        )
+        .await;
+
+        let adapter = create_adapter_from_config(ProviderRuntimeConfig {
+            model: "openai/gpt-4o".into(),
+            api_key: Some("test-key".into()),
+            api_key_env: None,
+            api_url: Some(api_url),
+            max_tokens: None,
+        })
+        .expect("adapter should create");
+
+        let response = adapter
+            .complete(&[], &[], &RequestOptions::default(), None)
+            .await
+            .expect("api_url should point to test server");
+        assert_eq!(response.usage.input_tokens, 1);
+    }
+
+    #[tokio::test]
+    async fn provider_config_max_tokens_default_and_override() {
+        let (api_url, capture_rx) = serve_openai_sse_capture_full_request().await;
+
+        let adapter = create_adapter_from_config(ProviderRuntimeConfig {
+            model: "openai/gpt-4o".into(),
+            api_key: Some("test-key".into()),
+            api_key_env: None,
+            api_url: Some(api_url),
+            max_tokens: Some(1234),
+        })
+        .expect("adapter should create");
+
+        let mut options = RequestOptions::default();
+        options.max_tokens = Some(5678);
+        let _ = adapter
+            .complete(&[], &[], &options, None)
+            .await
+            .expect("request succeeds");
+
+        let raw_request = capture_rx.await.expect("request captured");
+        assert!(
+            raw_request.contains(r#""max_tokens":5678"#),
+            "request max_tokens should override provider config: {raw_request}"
+        );
+    }
+
+    async fn serve_openai_sse_capture_full_request(
+    ) -> (String, tokio::sync::oneshot::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test server should bind");
+        let address = listener
+            .local_addr()
+            .expect("test server should have local address");
+        let (capture_tx, capture_rx) = tokio::sync::oneshot::channel();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept one request");
+            let request = read_http_request(&mut socket).await;
+            let _ = capture_tx.send(request);
+
+            let body = r#"data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}
+
+data: [DONE]
+
+"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("test server should write response");
+        });
+
+        (format!("http://{address}"), capture_rx)
+    }
+
+    async fn read_http_request(socket: &mut tokio::net::TcpStream) -> String {
+        let mut buffer = Vec::new();
+        let mut chunk = vec![0; 1024];
+        loop {
+            let n = socket.read(&mut chunk).await.expect("read");
+            if n == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&chunk[..n]);
+            let Some(header_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n")
+            else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&buffer[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            if buffer.len() >= header_end + 4 + content_length {
+                break;
+            }
         }
+        String::from_utf8_lossy(&buffer).into_owned()
     }
 
     #[test]

@@ -6,7 +6,7 @@ use agent_runtime_core::budget::BudgetConfig;
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
-    RequestOptions, StopReason, StreamEvent, TokenUsage,
+    OptionAdjustment, RequestOptions, StopReason, StreamEvent, ThinkingLevel, TokenUsage,
 };
 use agent_runtime_core::run::{AgentConfig, AgentRun};
 use agent_runtime_core::tool::async_job::{JobHandle, JobStatus};
@@ -17,6 +17,7 @@ use agent_runtime_core::tool::{
 };
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 
 fn test_config() -> AgentConfig {
     AgentConfig {
@@ -29,6 +30,7 @@ fn test_config() -> AgentConfig {
             max_tokens: Some(100),
             context_window_size: None,
         },
+        request_options: RequestOptions::default(),
         budget: BudgetConfig {
             max_tokens: Some(100_000),
             max_tool_calls: Some(10),
@@ -128,6 +130,43 @@ impl ModelAdapter for E2EModelAdapter {
                 option_adjustments: vec![],
             })
         }
+    }
+}
+
+struct CapturingOptionsModel {
+    seen_options: Arc<Mutex<Option<RequestOptions>>>,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for CapturingOptionsModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        *self.seen_options.lock().await = Some(options.clone());
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("done".into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![OptionAdjustment {
+                option: "thinking".into(),
+                requested: json!("high"),
+                applied: json!("off"),
+                reason: "test_adjustment".into(),
+            }],
+        })
     }
 }
 
@@ -308,6 +347,82 @@ async fn e2e_event_coverage() {
     let last = event_types.last().unwrap();
     assert_eq!(*first, "RunStarted");
     assert_eq!(*last, "RunCompleted");
+}
+
+#[tokio::test]
+async fn agent_config_request_options_reach_model_complete() {
+    let seen_options = Arc::new(Mutex::new(None));
+    let model = Arc::new(CapturingOptionsModel {
+        seen_options: Arc::clone(&seen_options),
+    });
+    let registry = ToolRegistry::new();
+    let mut config = test_config();
+    config.request_options.thinking = ThinkingLevel::High;
+    config.request_options.max_tokens = Some(777);
+
+    let (handle, mut rx) = AgentRun::start(config, "test request options".into(), model, registry);
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let options = seen_options
+        .lock()
+        .await
+        .clone()
+        .expect("model should receive request options");
+    assert_eq!(options.thinking, ThinkingLevel::High);
+    assert_eq!(options.max_tokens, Some(777));
+}
+
+#[tokio::test]
+async fn runtime_event_model_call_completed_includes_option_adjustments() {
+    let model = Arc::new(CapturingOptionsModel {
+        seen_options: Arc::new(Mutex::new(None)),
+    });
+    let registry = ToolRegistry::new();
+
+    let (handle, mut rx) = AgentRun::start(
+        test_config(),
+        "test option adjustments".into(),
+        model,
+        registry,
+    );
+    let mut adjustments = None;
+    while let Some(event) = rx.recv().await {
+        if let RuntimeEvent::ModelCallCompleted {
+            option_adjustments, ..
+        } = event
+        {
+            adjustments = Some(option_adjustments);
+        }
+    }
+    handle.wait().await;
+
+    let adjustments = adjustments.expect("model completion event should be emitted");
+    assert_eq!(adjustments.len(), 1);
+    assert_eq!(adjustments[0].reason, "test_adjustment");
+}
+
+#[test]
+fn serialization_token_usage_contains_extended_fields() {
+    let value = serde_json::to_value(TokenUsage::default()).expect("serialize TokenUsage");
+    assert!(value.get("input_tokens").is_some());
+    assert!(value.get("output_tokens").is_some());
+    assert!(value.get("reasoning_tokens").is_some());
+    assert!(value.get("cache_read_tokens").is_some());
+    assert!(value.get("cache_write_tokens").is_some());
+    assert!(value.get("details").is_some());
+}
+
+#[test]
+fn serialization_stream_event_thinking_end_preserves_signature_and_details() {
+    let event = StreamEvent::ThinkingEnd {
+        signature: Some("sig".into()),
+        provider_details: Some(json!({"type": "reasoning"})),
+    };
+    let restored: StreamEvent =
+        serde_json::from_value(serde_json::to_value(&event).expect("serialize"))
+            .expect("deserialize");
+    assert_eq!(restored, event);
 }
 
 #[tokio::test]
