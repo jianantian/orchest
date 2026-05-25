@@ -10,7 +10,7 @@ use agent_runtime_core::model::{
     create_adapter_from_config, normalize_provider_model, ModelSpec, ProviderRuntimeConfig,
     RequestOptions,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun};
+use agent_runtime_core::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
 use agent_runtime_core::tool::agent::AgentTool;
 use agent_runtime_core::tool::builtin::WriteFileTool;
 use agent_runtime_core::tool::registry::ToolRegistry;
@@ -306,32 +306,28 @@ fn agent_config(
     let normalized = normalize_provider_model(model_ref)?;
     Ok(AgentConfig {
         system_prompt,
-        model: ModelSpec {
-            provider: normalized.provider.into(),
-            model: normalized.model.into(),
-            api_key_env: None,
-            api_url: provider_url(),
-            max_tokens: None,
-            context_window_size: None,
+        model: ModelConfig {
+            spec: ModelSpec {
+                provider: normalized.provider.into(),
+                model: normalized.model.into(),
+                api_key_env: None,
+                api_url: provider_url(),
+                max_tokens: None,
+                context_window_size: None,
+            },
+            options: RequestOptions::default(),
         },
-        request_options: RequestOptions::default(),
         budget: BudgetConfig {
             max_tokens: None,
             max_tool_calls: None,
             max_duration: None,
             max_cost_usd: None,
         },
-        max_steps,
-        allowed_skills: None,
-        allowed_tools: None,
-        mcp_servers: vec![],
-        tool_search_enabled: false,
-        compaction_threshold: None,
-        compaction_recent_messages: 10,
-        webhook_enabled: false,
-        code_execution_enabled: false,
-        skills_dir: None,
-        run_depth: 0,
+        skills: SkillsConfig::default(),
+        runtime: RuntimeConfig {
+            max_steps,
+            ..RuntimeConfig::default()
+        },
     })
 }
 

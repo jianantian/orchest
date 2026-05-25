@@ -40,7 +40,7 @@ pub(crate) async fn run_loop(
 ) {
     emit(&tx, RuntimeEvent::RunStarted { run_id }).await;
 
-    let webhook_runtime = if config.webhook_enabled {
+    let webhook_runtime = if config.runtime.webhook_enabled {
         match start_webhook_server().await {
             Ok(runtime) => Some(runtime),
             Err(error) => {
@@ -63,7 +63,7 @@ pub(crate) async fn run_loop(
         return;
     }
 
-    if config.code_execution_enabled {
+    if config.runtime.code_execution_enabled {
         for tool in CodeExecutionMcpServer::tools() {
             if let Err(error) = registry.register(tool) {
                 emit(
@@ -78,9 +78,9 @@ pub(crate) async fn run_loop(
     }
 
     // Register skill bundled tools when skills_dir is provided
-    if let Some(ref skills_dir) = config.skills_dir {
+    if let Some(ref skills_dir) = config.skills.dir {
         if let Err(error) =
-            register_skills(skills_dir, &config.allowed_skills, &mut registry, &tx).await
+            register_skills(skills_dir, &config.skills.allowed, &mut registry, &tx).await
         {
             emit(
                 &tx,
@@ -95,7 +95,7 @@ pub(crate) async fn run_loop(
 
     // Enforce allowed_tools: filter registry so only permitted tools are visible and executable
     let unfiltered_registry = registry.clone();
-    let mut registry = registry.filter_by_allowed(&config.allowed_tools);
+    let mut registry = registry.filter_by_allowed(&config.runtime.allowed_tools);
 
     let mut messages = vec![
         Message {
@@ -109,7 +109,7 @@ pub(crate) async fn run_loop(
     ];
 
     let all_tool_defs = registry.list();
-    let mut tool_defs = if config.tool_search_enabled {
+    let mut tool_defs = if config.runtime.tool_search_enabled {
         let search_tool = Arc::new(SearchToolsTool::new(all_tool_defs));
         let search_def = ToolDef {
             name: search_tool.name().to_string(),
@@ -135,7 +135,7 @@ pub(crate) async fn run_loop(
     let mut last_compaction_step: Option<u32> = None;
 
     loop {
-        if step >= config.max_steps {
+        if step >= config.runtime.max_steps {
             emit(
                 &tx,
                 RuntimeEvent::RunFailed {
@@ -181,7 +181,7 @@ pub(crate) async fn run_loop(
             .complete(
                 &messages,
                 &tool_defs,
-                &config.request_options,
+                &config.model.options,
                 Some(stream_tx),
             )
             .await;
@@ -369,7 +369,7 @@ pub(crate) async fn run_loop(
 
             let ctx = ToolContext {
                 run_id,
-                run_depth: config.run_depth,
+                run_depth: config.runtime.run_depth,
                 tool_call_id: tool_call.id.clone(),
                 on_update: None,
                 event_tx: Some(tx.clone()),
@@ -430,7 +430,7 @@ pub(crate) async fn run_loop(
                         )
                         .await;
                     }
-                    if config.tool_search_enabled && tool_call.name == "search_tools" {
+                    if config.runtime.tool_search_enabled && tool_call.name == "search_tools" {
                         append_searched_tool_defs(&mut tool_defs, &value);
                     }
                     let duration = start_time.elapsed();

@@ -7,7 +7,7 @@ use agent_runtime_core::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun};
+use agent_runtime_core::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
 use agent_runtime_core::skill::{SkillDependencies, SkillEnvManager, SkillManifest};
 use agent_runtime_core::tool::agent::AgentTool;
 use agent_runtime_core::tool::registry::ToolRegistry;
@@ -20,32 +20,29 @@ use tokio::sync::mpsc;
 fn test_config() -> AgentConfig {
     AgentConfig {
         system_prompt: "test".into(),
-        model: ModelSpec {
-            provider: "test".into(),
-            model: "test".into(),
-            api_key_env: None,
-            api_url: None,
-            max_tokens: None,
-            context_window_size: None,
+        model: ModelConfig {
+            spec: ModelSpec {
+                provider: "test".into(),
+                model: "test".into(),
+                api_key_env: None,
+                api_url: None,
+                max_tokens: None,
+                context_window_size: None,
+            },
+            options: RequestOptions::default(),
         },
-        request_options: RequestOptions::default(),
         budget: BudgetConfig {
             max_tokens: Some(1_000),
             max_tool_calls: Some(20),
             max_duration: Some(Duration::from_secs(30)),
             max_cost_usd: None,
         },
-        max_steps: 4,
-        allowed_skills: None,
-        allowed_tools: None,
-        mcp_servers: vec![],
-        tool_search_enabled: false,
-        compaction_threshold: None,
-        compaction_recent_messages: 10,
-        webhook_enabled: false,
-        code_execution_enabled: true,
-        skills_dir: None,
-        run_depth: 0,
+        skills: SkillsConfig::default(),
+        runtime: RuntimeConfig {
+            max_steps: 4,
+            code_execution_enabled: true,
+            ..RuntimeConfig::default()
+        },
     }
 }
 

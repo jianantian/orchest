@@ -29,7 +29,7 @@ pub(crate) async fn execute_sub_agent_request(
     active_children: &Arc<Mutex<HashMap<RunId, ApprovalSlot>>>,
 ) -> Value {
     let child_run_id = RunId::new();
-    if parent_config.run_depth >= 3 {
+    if parent_config.runtime.run_depth >= 3 {
         emit(
             tx,
             RuntimeEvent::SubAgentFailed {
@@ -64,7 +64,7 @@ pub(crate) async fn execute_sub_agent_request(
         .unwrap_or_else(|| remaining.clone());
     let mut child_config = parent_config.clone();
     child_config.budget = SubAgentRuntime::cap_budget(&requested_budget, &remaining);
-    child_config.run_depth = parent_config.run_depth + 1;
+    child_config.runtime.run_depth = parent_config.runtime.run_depth + 1;
     if let Some(requested_tools) = request
         .get("config")
         .and_then(|config| config.get("allowed_tools"))
@@ -75,8 +75,8 @@ pub(crate) async fn execute_sub_agent_request(
             .filter_map(Value::as_str)
             .map(String::from)
             .collect();
-        child_config.allowed_tools = Some(narrow_permission_list(
-            &parent_config.allowed_tools,
+        child_config.runtime.allowed_tools = Some(narrow_permission_list(
+            &parent_config.runtime.allowed_tools,
             &requested,
         ));
     }
@@ -90,8 +90,8 @@ pub(crate) async fn execute_sub_agent_request(
             .filter_map(Value::as_str)
             .map(String::from)
             .collect();
-        child_config.allowed_skills = Some(narrow_permission_list(
-            &parent_config.allowed_skills,
+        child_config.skills.allowed = Some(narrow_permission_list(
+            &parent_config.skills.allowed,
             &requested,
         ));
     }
@@ -101,7 +101,7 @@ pub(crate) async fn execute_sub_agent_request(
         .unwrap_or_default()
         .to_string();
 
-    let child_registry = registry.filter_by_allowed(&child_config.allowed_tools);
+    let child_registry = registry.filter_by_allowed(&child_config.runtime.allowed_tools);
     let (handle, mut child_rx) =
         AgentRun::start(child_config, input, Arc::clone(model), child_registry);
     let actual_child_run_id = handle.run_id;
@@ -119,7 +119,7 @@ pub(crate) async fn execute_sub_agent_request(
             parent_run_id,
             child_run_id: actual_child_run_id,
             config_summary: json!({
-                "run_depth": parent_config.run_depth + 1,
+                "run_depth": parent_config.runtime.run_depth + 1,
                 "budget": request.get("config").and_then(|config| config.get("budget")).cloned().unwrap_or(Value::Null),
             }),
         },
@@ -129,7 +129,7 @@ pub(crate) async fn execute_sub_agent_request(
     let mut output = Value::Null;
     let mut failed = None;
 
-    let child_depth = parent_config.run_depth + 1;
+    let child_depth = parent_config.runtime.run_depth + 1;
     while let Some(event) = child_rx.recv().await {
         match &event {
             RuntimeEvent::ModelCallCompleted { tokens, .. } => {
@@ -220,7 +220,7 @@ pub(crate) async fn execute_agent_delegate(
     let mut child_config = delegate.config.clone();
     let remaining = parent_budget.remaining_config();
     child_config.budget = SubAgentRuntime::cap_budget(&child_config.budget, &remaining);
-    child_config.run_depth = parent_config.run_depth + 1;
+    child_config.runtime.run_depth = parent_config.runtime.run_depth + 1;
 
     let (handle, mut child_rx) = AgentRun::start(
         child_config,
@@ -241,7 +241,7 @@ pub(crate) async fn execute_agent_delegate(
             parent_run_id,
             child_run_id,
             config_summary: json!({
-                "run_depth": parent_config.run_depth + 1,
+                "run_depth": parent_config.runtime.run_depth + 1,
                 "input": delegate.input,
             }),
         },
@@ -251,7 +251,7 @@ pub(crate) async fn execute_agent_delegate(
     let mut child_usage = BudgetUsage::default();
     let mut output = Value::Null;
     let mut failed = None;
-    let child_depth = parent_config.run_depth + 1;
+    let child_depth = parent_config.runtime.run_depth + 1;
 
     while let Some(event) = child_rx.recv().await {
         match &event {
