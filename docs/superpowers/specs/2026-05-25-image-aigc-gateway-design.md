@@ -234,25 +234,68 @@ pub trait ImageProvider: Send + Sync {
     async fn create_image_generation(
         &self,
         request: ImageGenerationRequest,
-        tx: Option<mpsc::Sender<ImageGenerationEvent>>,
-    ) -> Result<ImageGenerationJob, AigcError>;
+        tx: Option<mpsc::Sender<ProviderImageEvent>>,
+    ) -> Result<ProviderImageJob, AigcError>;
 
     async fn get_image_generation(
         &self,
         provider_job_id: &str,
-    ) -> Result<ImageGenerationJob, AigcError>;
+    ) -> Result<ProviderImageJob, AigcError>;
 }
 ```
 
-`create_image_generation()` may return a completed job for synchronous providers or a running job for async providers. `get_image_generation()` polls provider-native task state when the provider supports async tasks. Providers without async tasks return a stable `unsupported_operation` error when polled.
+`ImageProvider` is the adapter boundary. It returns provider-normalized jobs and provider asset references, not public `GeneratedImage` values. Provider adapters must not persist assets, sign URLs, or know storage credentials. `create_image_generation()` may return a completed provider job for synchronous providers or a running provider job for async providers. `get_image_generation()` polls provider-native task state when the provider supports async tasks. Providers without async tasks return a stable `unsupported_operation` error when polled.
+
+Provider-layer types:
+
+```rust
+pub struct ProviderImageJob {
+    pub id: String,
+    pub provider: String,
+    pub model: String,
+    pub provider_job_id: Option<String>,
+    pub status: ProviderGenerationStatus,
+    pub assets: Vec<ProviderAsset>,
+    pub usage: ImageUsage,
+    pub option_adjustments: Vec<OptionAdjustment>,
+    pub provider_metadata: Value,
+}
+
+pub struct ProviderAsset {
+    pub kind: AssetKind,
+    pub source: AssetIngestSource,
+    pub mime_type: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub source_expires_at: Option<DateTime<Utc>>,
+    pub is_partial: bool,
+    pub metadata: Value,
+}
+
+pub enum ProviderImageEvent {
+    Queued { provider_job_id: String },
+    Running { provider_job_id: Option<String> },
+    PartialAsset { asset: ProviderAsset },
+    Completed { job: ProviderImageJob },
+    Failed { error: AigcError },
+}
+
+pub enum ProviderGenerationStatus {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+```
 
 Convenience helpers:
 
 ```rust
 pub async fn generate_image(
-    provider: &dyn ImageProvider,
+    gateway: &ImageGateway,
     request: ImageGenerationRequest,
-) -> Result<ImageGenerationJob, AigcError>;
+) -> Result<ImageGenerationResponse, AigcError>;
 
 pub async fn run_image_generation(
     gateway: &ImageGateway,
@@ -261,7 +304,7 @@ pub async fn run_image_generation(
 ) -> Result<ImageGenerationResponse, AigcError>;
 ```
 
-The gateway helper waits for provider completion and asset persistence before returning final outputs.
+Gateway helpers wait for provider completion and asset persistence before returning final outputs.
 
 ### Gateway orchestration
 
@@ -269,18 +312,51 @@ Provider adapters should not know about storage credentials or public delivery p
 
 1. Validate request against provider/model capabilities.
 2. Call the selected provider adapter.
-3. Drain stream events when present.
+3. Drain provider stream events when present.
 4. Poll async provider tasks when needed.
-5. Persist assets through `AssetStore` or return base64 according to `ImageOutputDelivery`.
-6. Return only normalized outputs.
+5. Persist provider assets through `AssetStore` or encode base64 according to `ImageOutputDelivery`.
+6. Emit public `ImageGenerationEvent` values.
+7. Return only normalized public outputs.
 
 ```rust
 pub struct ImageGateway {
     provider: Box<dyn ImageProvider>,
     asset_store: Arc<dyn AssetStore>,
+    asset_registry: Arc<dyn AssetRegistry>,
     config: ImageGatewayConfig,
 }
 ```
+
+### Provider runtime config
+
+```rust
+pub struct AigcProviderRuntimeConfig {
+    pub provider: String,
+    pub model: String,
+    pub api_key: Option<String>,
+    pub api_key_env: Option<String>,
+    pub api_url: Option<String>,
+    pub region: Option<String>,
+    pub timeout: Option<Duration>,
+    pub provider_options: Value,
+}
+```
+
+Provider construction should go through a single factory:
+
+```rust
+pub fn create_image_provider_from_config(
+    config: AigcProviderRuntimeConfig,
+) -> Result<Box<dyn ImageProvider>, AigcError>;
+```
+
+API key resolution follows the same hierarchy as LLM providers:
+
+1. explicit `api_key`
+2. explicit local `api_key_env`
+3. provider default environment variable
+
+If `api_key_env` is configured, a missing or empty value is an error and must not fall back to the provider default. Provider-specific adapter configs are constructed only inside the factory. SDKs and tool wrappers should not duplicate provider routing or credential resolution.
 
 ## Request types
 
@@ -601,6 +677,7 @@ pub struct ImageGenerationResponse {
 ```rust
 pub struct GeneratedImage {
     pub id: String,
+    pub asset_id: String,
     pub mime_type: String,
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -618,7 +695,6 @@ pub enum ImageOutput {
 pub struct ImageUrlOutput {
     pub url: String,
     pub expires_at: Option<DateTime<Utc>>,
-    pub asset_id: String,
 }
 
 pub struct ImageBase64Output {
@@ -627,7 +703,11 @@ pub struct ImageBase64Output {
 }
 ```
 
-`ImageUrlOutput.url` is an Orchest-controlled URL generated by the configured `AssetStore`. The first production store is Alibaba Cloud OSS, but the public response contract is storage-provider-neutral. It is not a provider URL.
+`GeneratedImage.asset_id` is the stable identity for conversation history, later URL refresh, and future edit requests. It is present for both `Url` and `Base64` delivery. By default, gateway outputs are persisted even when `delivery=Base64`; base64 controls the immediate delivery shape, not whether the asset receives a durable identity.
+
+`ImageUrlOutput.url` is an immediately usable Orchest-controlled URL generated by the configured `AssetStore`. The first production store is Alibaba Cloud OSS, but the public response contract is storage-provider-neutral. It is not a provider URL.
+
+Callers must not need bucket names, storage endpoints, regions, object keys, storage credentials, IAM policies, or provider-specific signing logic to use generated assets. The gateway owns all storage permissions and returns a URL that the caller can fetch directly until `expires_at`.
 
 `expires_at` describes the returned URL if it is signed. It may be `None` for public or CDN URLs. The underlying stored object is controlled by Orchest regardless of signed URL expiry.
 
@@ -660,7 +740,7 @@ pub enum ImageGenerationEvent {
 }
 ```
 
-Partial images follow the same public output rule. If a partial image is emitted publicly, it must be base64 or an Orchest-controlled URL. To keep latency low, first implementation may emit provider partial metadata internally and expose only final images unless `delivery=Base64` and size limits are satisfied.
+These are gateway-public events, not provider adapter events. Partial images follow the same public output rule. If a partial image is emitted publicly, it must be base64 or an Orchest-controlled URL. To keep latency low, first implementation should keep provider partial assets internal and expose only final persisted images unless `delivery=Base64` and size limits are satisfied.
 
 ## Asset persistence
 
@@ -672,6 +752,8 @@ The gateway public API returns only:
 2. Orchest-controlled URL backed by the configured asset store.
 
 Provider URLs are internal ingestion sources. They may be stored in internal metadata for debugging and audit, but should not be serialized in public SDK responses by default.
+
+The returned URL is a delivery URL, not a storage descriptor. Public SDK and tool responses must not expose bucket, endpoint, object key, access key, or provider-specific ACL details as fields required for normal asset use. Storage metadata may exist in internal registry records only.
 
 ### AssetStore
 
@@ -688,13 +770,58 @@ pub trait AssetStore: Send + Sync {
 
     async fn signed_url(
         &self,
-        asset_id: &str,
+        stored: &StoredAsset,
         ttl: Duration,
-    ) -> Result<String, AssetStoreError>;
+    ) -> Result<AssetAccessUrl, AssetStoreError>;
 }
 ```
 
 The storage API is intentionally not named after OSS. Alibaba Cloud OSS is the first production implementation, but the trait must be able to support S3-compatible storage, Cloudflare R2, MinIO, local development storage, or future internal asset services without changing the image gateway public API.
+
+`asset_id` is the stable identity used by clients, conversation history, and future edit requests. A signed or CDN URL is only a currently usable access URL. When a URL expires, callers refresh it by resolving the `asset_id` through the gateway instead of depending on the original URL. The refresh API must return another directly usable URL; it must not require the caller to know storage topology or obtain storage permissions.
+
+```rust
+pub struct AssetScope {
+    pub tenant_id: Option<String>,
+    pub workspace_id: Option<String>,
+    pub app_id: Option<String>,
+    pub namespace: Option<String>,
+}
+
+#[async_trait]
+pub trait AssetRegistry: Send + Sync {
+    async fn save(&self, scope: &AssetScope, asset: StoredAsset) -> Result<(), AssetStoreError>;
+    async fn get(&self, scope: &AssetScope, asset_id: &str) -> Result<StoredAsset, AssetStoreError>;
+}
+
+pub struct AssetAccessUrl {
+    pub url: String,
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+pub async fn resolve_asset_url(
+    registry: &dyn AssetRegistry,
+    store: &dyn AssetStore,
+    scope: &AssetScope,
+    asset_id: &str,
+    ttl: Duration,
+) -> Result<ImageUrlOutput, AssetStoreError> {
+    let stored = registry.get(scope, asset_id).await?;
+    let access = store.signed_url(&stored, ttl).await?;
+    Ok(ImageUrlOutput {
+        url: access.url,
+        expires_at: access.expires_at,
+    })
+}
+```
+
+The registry scope is the gateway-level authorization boundary. The exact tenant/workspace/app model belongs to the embedding application, but asset resolution must not be global by bare `asset_id`. The gateway must verify the caller's scope before returning a directly usable URL.
+
+The initial response returns both `GeneratedImage.asset_id` and a usable URL when `delivery=Url`; it returns `asset_id` and base64 payload when `delivery=Base64`. Long-lived clients should persist `asset_id`; UI surfaces may use the returned URL until it expires, then call a refresh/resolve API. The usage model is:
+
+1. For immediate display/download, use `ImageUrlOutput.url` directly.
+2. For conversation history, persist `asset_id`.
+3. When redisplaying old history, call gateway asset resolution with `asset_id` and receive a fresh directly usable URL.
 
 Initial production implementation:
 
@@ -844,15 +971,20 @@ Examples:
 
 ```rust
 pub struct ImageModelCapabilities {
-    pub operations: Vec<ImageOperation>,
+    pub operations: Vec<ImageOperationCapability>,
+    pub source: CapabilitySource,
+    pub provider_metadata: Value,
+}
+
+pub struct ImageOperationCapability {
+    pub operation: ImageOperation,
     pub input_roles: Vec<ImageInputRole>,
     pub max_input_images: Option<u32>,
     pub max_outputs: Option<u32>,
     pub sizes: ImageSizeCapabilities,
     pub formats: Vec<ImageFormat>,
     pub quality: Vec<ImageQuality>,
-    pub supports_streaming: bool,
-    pub supports_async: bool,
+    pub execution_modes: Vec<GenerationExecutionMode>,
     pub supports_webhook: bool,
     pub supports_seed: bool,
     pub supports_negative_prompt: bool,
@@ -860,10 +992,17 @@ pub struct ImageModelCapabilities {
     pub supports_watermark: bool,
     pub supports_mask: bool,
     pub supports_regions: bool,
-    pub source: CapabilitySource,
     pub provider_metadata: Value,
 }
+
+pub enum GenerationExecutionMode {
+    Sync,
+    Async,
+    Stream,
+}
 ```
+
+Capabilities are scoped per operation because providers frequently support different limits for text-to-image and image editing. For example, Crazyrouter generation does not take image inputs, while Crazyrouter edit accepts multiple reference images and an optional mask. Strict compatibility checks must validate against the selected operation's capability entry, not global model-level booleans.
 
 Capability sources:
 
@@ -925,7 +1064,8 @@ Response:
 Request:
 
 - endpoint `/api/v1/chat/completions` for first implementation
-- prompt and inputs are serialized into `messages`
+- prompt is serialized into `messages`
+- image input / image-to-image request shape is model-specific and must be verified against official model docs before being promoted to typed mapping; until then, pass only documented model-specific controls through `provider_options`
 - `modalities` includes `"image"` and may include `"text"` when the model is known text+image
 - `stream` maps directly
 - `AspectRatio` and `ResolutionTier` map to `image_config.aspect_ratio` and `image_config.image_size`
@@ -1027,8 +1167,16 @@ Unit tests:
 - Response parsing per provider.
 - Compatibility policy adjustment behavior.
 - Capability metadata for documented models.
+- Per-operation capability validation.
 - Asset output public contract: only URL or base64.
 - Provider raw URL is not serialized in public response.
+- URL outputs are directly fetchable without bucket, endpoint, object key, or storage credentials.
+- Public responses do not require storage-provider metadata for normal asset use.
+- Provider adapter events do not expose public `GeneratedImage` values.
+- Asset registry resolves `asset_id` to stored asset metadata.
+- Asset registry resolution is scoped and rejects wrong-scope `asset_id` access.
+- Expired signed URLs can be refreshed from `asset_id`.
+- Base64 delivery still persists the asset and returns `GeneratedImage.asset_id`.
 - Base64 max size enforcement.
 
 Integration tests:
