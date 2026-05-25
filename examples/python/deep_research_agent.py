@@ -2,14 +2,20 @@
 
 Required environment:
 
-    ANTHROPIC_API_KEY=...
     EXA_API_KEY=...
+    DEEP_RESEARCH_MODEL=...      # Main synthesis model
+    WEB_SEARCH_MODEL=...         # Query rewrite/search model
+
+Also set the provider API key for each configured model, for example:
+
+    ANTHROPIC_API_KEY=...
+    OPENAI_API_KEY=...
+    DEEPSEEK_API_KEY=...
+    OPENROUTER_API_KEY=...
 
 Optional environment:
 
     ANTHROPIC_API_URL=...        # Anthropic-compatible /v1/messages endpoint
-    DEEP_RESEARCH_MODEL=...      # Main synthesis model, required
-    WEB_SEARCH_MODEL=...         # Query rewrite/search model, required
     EXA_SEARCH_TYPE=auto|fast|deep-lite|deep
     EXA_NUM_RESULTS=5
     EXA_LIVECRAWL=1
@@ -319,7 +325,6 @@ def parse_args() -> tuple[str, str, int]:
 if __name__ == "__main__":
     question, report_path, min_calls = parse_args()
 
-    require_env("ANTHROPIC_API_KEY")
     require_env("EXA_API_KEY")
     deep_research_model = require_env("DEEP_RESEARCH_MODEL")
     web_search_model = require_env("WEB_SEARCH_MODEL")
