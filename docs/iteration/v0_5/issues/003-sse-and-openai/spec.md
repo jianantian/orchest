@@ -48,8 +48,8 @@ pub(crate) async fn parse_openai_sse_stream(
 **OpenAiConfig：**
 
 - [ ] `OpenAiConfig { model, max_tokens, api_key, api_url }`
-- [ ] API key fallback：config.api_key → `OPENAI_API_KEY`
-- [ ] API URL fallback：config.api_url → `OPENAI_API_URL` → `OPENAI_BASE_URL` → 默认 `https://api.openai.com/v1/chat/completions`
+- [ ] API key env resolution：config.api_key → `OPENAI_API_KEY`
+- [ ] API URL env resolution：config.api_url → `OPENAI_API_URL` → `OPENAI_BASE_URL` → 默认 `https://api.openai.com/v1/chat/completions`
 - [ ] URL 自动归一化到 `/v1/chat/completions`
 - [ ] Model string 自动 strip `openai/` prefix
 

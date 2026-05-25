@@ -20,11 +20,11 @@ OpenRouter 是 OpenAI-compatible 协议的代理层，转发请求到多个底�
 ### OpenRouterConfig
 
 - [ ] `OpenRouterConfig { model, max_tokens, api_key, api_url, app_title, site_url }`
-- [ ] API key fallback：config.api_key → `OPENROUTER_API_KEY`
+- [ ] API key env resolution：config.api_key → `OPENROUTER_API_KEY`
 - [ ] API URL 默认：`https://openrouter.ai/api`
 - [ ] URL 自动归一化到 `/v1/chat/completions`（注意 OpenRouter 也用 `/v1/chat/completions`）
-- [ ] `app_title` fallback → `OPENROUTER_APP_TITLE` env var
-- [ ] `site_url` fallback → `OPENROUTER_SITE_URL` env var
+- [ ] `app_title` env resolution → config value, otherwise `OPENROUTER_APP_TITLE` env var
+- [ ] `site_url` env resolution → config value, otherwise `OPENROUTER_SITE_URL` env var
 
 ### 自定义 headers
 
@@ -81,7 +81,7 @@ OpenRouter 是 OpenAI-compatible 协议的代理层，转发请求到多个底�
 - [ ] `reasoning_object_from_thinking_level`：ThinkingLevel → reasoning.effort
 - [ ] `reasoning_effort_and_max_tokens_are_exclusive`：budget_tokens 有值 → 只发 max_tokens，不发 effort
 - [ ] `include_thinking_false_sends_exclude`：include_thinking=false → reasoning.exclude=true
-- [ ] `env_var_fallback`：OPENROUTER_API_KEY / OPENROUTER_APP_TITLE / OPENROUTER_SITE_URL 环境变量
+- [ ] `env_var_resolution`：OPENROUTER_API_KEY / OPENROUTER_APP_TITLE / OPENROUTER_SITE_URL 环境变量读取
 
 ## 依赖
 

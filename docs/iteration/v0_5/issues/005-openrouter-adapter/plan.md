@@ -6,7 +6,7 @@
    - 创建 `crates/agent-runtime-providers/src/openrouter.rs`
    - 结构参照 DeepSeek adapter（同为 OpenAI-compat + 额外字段）
    - `OpenRouterConfig` 比其他 adapter 多两个字段：`app_title` / `site_url`
-   - `from_config()` 中处理 3 个 env var fallback：`OPENROUTER_API_KEY` / `OPENROUTER_APP_TITLE` / `OPENROUTER_SITE_URL`
+   - `from_config()` 中处理 3 个 env var resolution：`OPENROUTER_API_KEY` / `OPENROUTER_APP_TITLE` / `OPENROUTER_SITE_URL`
    - `lib.rs` 添加 `pub mod openrouter;` 和 re-export
 
 2. **实现自定义 headers 和请求构建**

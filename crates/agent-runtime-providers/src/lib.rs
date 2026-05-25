@@ -146,6 +146,8 @@ fn resolve_api_key(
                 "invalid_api_key_env",
             ));
         }
+        // api_key_env is an explicit local override. If it is configured, do not
+        // silently use the matching provider's default key.
         return match std::env::var(env_name) {
             Ok(value) => non_empty_api_key(&value),
             Err(_) => Err(ModelError::internal(
@@ -374,6 +376,50 @@ mod tests {
         assert_eq!(explicit, "explicit-key");
         assert_eq!(from_env, "env-key");
         std::env::remove_var(env_name);
+    }
+
+    #[test]
+    fn provider_config_api_key_env_override_does_not_fall_back_to_provider_default() {
+        let local_env_name = "ORCHEST_TEST_MISSING_LOCAL_PROVIDER_API_KEY";
+        let previous_openai_key = std::env::var("OPENAI_API_KEY").ok();
+        std::env::remove_var(local_env_name);
+        std::env::set_var("OPENAI_API_KEY", "global-openai-key");
+
+        let err = match resolve_api_key("openai", None, Some(local_env_name)) {
+            Ok(_) => {
+                panic!("missing local api_key_env should fail instead of using OPENAI_API_KEY")
+            }
+            Err(err) => err,
+        };
+
+        assert_eq!(err.code.as_deref(), Some("missing_api_key"));
+        match previous_openai_key {
+            Some(value) => std::env::set_var("OPENAI_API_KEY", value),
+            None => std::env::remove_var("OPENAI_API_KEY"),
+        }
+    }
+
+    #[test]
+    fn provider_config_missing_provider_key_does_not_use_other_provider_env() {
+        let previous_openai_key = std::env::var("OPENAI_API_KEY").ok();
+        let previous_anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok();
+        std::env::remove_var("OPENAI_API_KEY");
+        std::env::set_var("ANTHROPIC_API_KEY", "anthropic-key");
+
+        let err = match resolve_api_key("openai", None, None) {
+            Ok(_) => panic!("openai config should not use ANTHROPIC_API_KEY"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.code.as_deref(), Some("missing_api_key"));
+        match previous_openai_key {
+            Some(value) => std::env::set_var("OPENAI_API_KEY", value),
+            None => std::env::remove_var("OPENAI_API_KEY"),
+        }
+        match previous_anthropic_key {
+            Some(value) => std::env::set_var("ANTHROPIC_API_KEY", value),
+            None => std::env::remove_var("ANTHROPIC_API_KEY"),
+        }
     }
 
     #[test]

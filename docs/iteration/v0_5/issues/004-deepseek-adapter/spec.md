@@ -19,7 +19,7 @@ DeepSeek 使用 OpenAI-compatible 协议，但 thinking mode 实现方式不同�
 
 - [ ] `DeepSeekConfig { model, max_tokens, api_key, api_url }`
 - [ ] Model 默认值：`"deepseek-chat"`
-- [ ] API key fallback：config.api_key → `DEEPSEEK_API_KEY`
+- [ ] API key env resolution：config.api_key → `DEEPSEEK_API_KEY`
 - [ ] API URL 默认：`https://api.deepseek.com`
 - [ ] URL 自动归一化到 `/v1/chat/completions`
 
@@ -72,7 +72,7 @@ DeepSeek 使用 OpenAI-compatible 协议，但 thinking mode 实现方式不同�
 ### 测试
 
 - [ ] `default_api_url`：默认 URL 正确
-- [ ] `env_var_fallback`：DEEPSEEK_API_KEY 环境变量 fallback
+- [ ] `env_var_resolution`：DEEPSEEK_API_KEY 环境变量读取
 - [ ] `reasoning_maps_to_thinking`：canonical `reasoning`（含 alias `reasoning_content`）→ StreamEvent::Thinking + ContentBlock::Thinking
 - [ ] `thinking_off_disables_reasoning`：Off → thinking.type disabled，omit reasoning_effort
 - [ ] `thinking_levels_map_to_high_and_max`：Minimal/Low/Medium/High → high; XHigh/Max → max

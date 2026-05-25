@@ -655,8 +655,8 @@ pub struct AnthropicAdapter { ... }
 pub struct AnthropicConfig {
     pub model: String,
     pub max_tokens: u32,
-    pub api_key: Option<String>,     // fallback: ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN
-    pub api_url: Option<String>,     // fallback: ANTHROPIC_API_URL; default: https://api.anthropic.com/v1/messages
+    pub api_key: Option<String>,     // env resolution: ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN
+    pub api_url: Option<String>,     // env resolution: ANTHROPIC_API_URL; default: https://api.anthropic.com/v1/messages
 }
 ```
 
@@ -705,8 +705,8 @@ pub struct OpenAiAdapter { ... }
 pub struct OpenAiConfig {
     pub model: String,
     pub max_tokens: u32,
-    pub api_key: Option<String>,     // fallback: OPENAI_API_KEY
-    pub api_url: Option<String>,     // fallback: OPENAI_API_URL, OPENAI_BASE_URL; default: https://api.openai.com/v1/chat/completions
+    pub api_key: Option<String>,     // env resolution: OPENAI_API_KEY
+    pub api_url: Option<String>,     // env resolution: OPENAI_API_URL, OPENAI_BASE_URL; default: https://api.openai.com/v1/chat/completions
 }
 ```
 
@@ -728,7 +728,7 @@ pub struct DeepSeekAdapter { ... }
 pub struct DeepSeekConfig {
     pub model: String,               // default: "deepseek-chat"
     pub max_tokens: u32,
-    pub api_key: Option<String>,     // fallback: DEEPSEEK_API_KEY
+    pub api_key: Option<String>,     // env resolution: DEEPSEEK_API_KEY
     pub api_url: Option<String>,     // default: https://api.deepseek.com
 }
 ```
@@ -760,7 +760,7 @@ The adapter must therefore preserve DeepSeek thinking content in `ContentBlock::
 
 Internally reuses SSE parsing from `sse.rs`. The adapter handles:
 - URL normalization (append `/v1/chat/completions` if needed)
-- `DEEPSEEK_API_KEY` env var fallback
+- `DEEPSEEK_API_KEY` env var resolution
 - `reasoning_content` delta extraction
 - Replaying `reasoning_content` for assistant tool-call turns, omitting it only when the protocol allows omission
 
@@ -776,7 +776,7 @@ pub struct OpenRouterAdapter { ... }
 pub struct OpenRouterConfig {
     pub model: String,               // e.g. "anthropic/claude-sonnet-4"
     pub max_tokens: u32,
-    pub api_key: Option<String>,     // fallback: OPENROUTER_API_KEY
+    pub api_key: Option<String>,     // env resolution: OPENROUTER_API_KEY
     pub api_url: Option<String>,     // default: https://openrouter.ai/api
     pub app_title: Option<String>,   // X-OpenRouter-Title header
     pub site_url: Option<String>,    // HTTP-Referer header
@@ -839,6 +839,8 @@ Anthropic uses its own SSE parsing because the Anthropic protocol is structurall
 
 The preferred construction path is a normalized model reference. Provider-specific config structs are escape hatches for tests, custom endpoints, or advanced deployment controls; application code should usually not need to import `AnthropicConfig`, `OpenAiConfig`, etc.
 
+API key environment handling is a configuration loading hierarchy, not provider/model fallback. Explicit `api_key` values win. If a caller configures a local `api_key_env`, that env var is the only environment source for that runtime config and a missing value is an error. Provider default env vars such as `OPENAI_API_KEY` are read only for the matching provider and only when no local env override is configured. If the user-provided `provider/model` cannot resolve an API key for that provider, runtime code must return `missing_api_key`; it must not guess a different provider, model, tenant, or key mapping.
+
 ```rust
 /// Create a model adapter from a "provider/model" string.
 ///
@@ -852,7 +854,7 @@ The preferred construction path is a normalized model reference. Provider-specif
 /// For OpenRouter, the full model path after "openrouter/" is preserved
 /// (e.g., "openrouter/anthropic/claude-sonnet-4" -> model = "anthropic/claude-sonnet-4").
 ///
-/// `api_key` overrides the environment variable fallback.
+/// `api_key` overrides environment variable resolution.
 /// `max_tokens` defaults to 4096.
 pub fn create_adapter(
     model: &str,
@@ -999,7 +1001,7 @@ Migrated from core and extended:
 | `openai::stream_rejects_invalid_tool_args` | migrated | Error handling |
 | `deepseek::default_api_url` | **new** | https://api.deepseek.com default |
 | `deepseek::reasoning_content_maps_to_thinking` | **new** | DeepSeek thinking support |
-| `deepseek::env_var_fallback` | **new** | DEEPSEEK_API_KEY |
+| `deepseek::env_var_resolution` | **new** | DEEPSEEK_API_KEY |
 | `openrouter::default_api_url` | **new** | https://openrouter.ai/api default |
 | `openrouter::sends_custom_headers` | **new** | X-OpenRouter-Title, HTTP-Referer |
 | `openrouter::model_passthrough` | **new** | Full model path preserved |
