@@ -6,7 +6,7 @@
 
 ## 目标
 
-实现 `agent_runtime` Python 包，完成 `examples/python_basic.py` 和 `examples/python_async_tool.py` 两个 demo。
+实现 `agent_runtime` Python 包，完成 `examples/python/python_basic.py` 和 `examples/python/python_async_tool.py` 两个 demo。
 
 ## 验收标准
 

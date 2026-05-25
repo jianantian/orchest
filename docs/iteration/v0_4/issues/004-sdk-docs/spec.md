@@ -33,7 +33,7 @@
   - 发送一条 user message
   - 处理 event 流并打印结果
   - 完整可运行代码片段
-- [ ] 每节代码块**逐字**对应 `examples/` 下一个真实文件（如 Python 节对应 `examples/python_basic.py`，TS 节对应 `examples/ts_basic.ts`，Rust 节对应 `playground/examples/getting_started.rs` 或类似）；用脚注 / 链接指明对应文件路径
+- [ ] 每节代码块**逐字**对应 `examples/` 下一个真实文件（如 Python 节对应 `examples/python/python_basic.py`，TS 节对应 `examples/typescript/ts_basic.ts`，Rust 节对应 `examples/rust/rust_provider_runtime_deepseek.rs` 或类似）；用脚注 / 链接指明对应文件路径
 - [ ] CI 在 issue 002 创建的 workflow 中追加 step：执行每节对应的 `examples/` 文件，exit code 0 视为通过
 - [ ] 末尾"Next Steps"链接到其它 `docs/sdk/*.md`
 

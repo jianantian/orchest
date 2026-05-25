@@ -43,8 +43,8 @@
 - `js/index.d.ts`
 - `js/native.d.ts`
 - `js/index.ts`
-- `examples/python_basic.py`
-- `examples/ts_basic.ts`
+- `examples/python/python_basic.py`
+- `examples/typescript/ts_basic.ts`
 
 ## 关键决策
 

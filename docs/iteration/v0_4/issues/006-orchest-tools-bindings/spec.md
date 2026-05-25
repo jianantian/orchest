@@ -37,7 +37,7 @@
 
 - [ ] `Cargo.toml`：workspace member，依赖 `pyo3`（`extension-module`）、`orchest-tools`、`agent-runtime-core`
 - [ ] `pyproject.toml`：使用 `maturin` 构建，PyPI 包名 `orchest-tools`，Python 模块名 `orchest_tools`（pyproject 中用 `module-name = "orchest_tools"`）
-- [ ] Python API 最小可用形态（必须**字面**对应 `examples/python_with_orchest_tools.py` 中可运行的代码）：
+- [ ] Python API 最小可用形态（必须**字面**对应 `examples/python/python_with_orchest_tools.py` 中可运行的代码）：
   ```python
   from agent_runtime import Agent
   from orchest_tools import WebFetchTool, WebSearchTool, register_all
@@ -51,13 +51,13 @@
 - [ ] `tool.handle()` 返回一个不透明对象，可被 `Agent.register_native_tool()` 接受
 - [ ] `register_all(agent)` 一次注册全部 `orchest-tools` 工具
 - [ ] 错误以 Python 异常形式抛出（不是 Rust panic 透传），异常基类 `OrchestToolError`，子类至少 `OrchestNetworkError`、`OrchestTimeoutError`
-- [ ] `examples/python_with_orchest_tools.py` 存在，且在 issue 002 创建的 CI workflow 中以 `python examples/python_with_orchest_tools.py` step 跑通（mock provider，exit code 0）
+- [ ] `examples/python/python_with_orchest_tools.py` 存在，且在 issue 002 创建的 CI workflow 中以 `python examples/python/python_with_orchest_tools.py` step 跑通（mock provider，exit code 0）
 
 ### Node binding (`crates/orchest-tools-node/`)
 
 - [ ] `Cargo.toml`：workspace member，依赖 `napi`、`napi-derive`、`orchest-tools`
 - [ ] `package.json`：npm 包名 `@orchest/tools`，napi-rs 标准构建配置（`napi build` 输出 `.node`）
-- [ ] TypeScript API 最小可用形态（**字面**对应 `examples/ts_with_orchest_tools.ts`）：
+- [ ] TypeScript API 最小可用形态（**字面**对应 `examples/typescript/ts_with_orchest_tools.ts`）：
   ```ts
   import { Agent } from "@orchest/runtime";
   import { WebFetchTool, WebSearchTool, registerAll } from "@orchest/tools";
@@ -69,7 +69,7 @@
   ```
 - [ ] `.d.ts` 由 napi-rs 自动生成，包含 `WebFetchTool`、`WebSearchTool`、`registerAll`、tool 构造配置类型、错误类型
 - [ ] 错误以 JS Error 子类抛出（`OrchestToolError`、`OrchestNetworkError`、`OrchestTimeoutError`），名称与 Python 端 1:1 对应
-- [ ] `examples/ts_with_orchest_tools.ts` 存在，且在 CI workflow 中以 `tsx examples/ts_with_orchest_tools.ts`（或等价命令）跑通
+- [ ] `examples/typescript/ts_with_orchest_tools.ts` 存在，且在 CI workflow 中以 `tsx examples/typescript/ts_with_orchest_tools.ts`（或等价命令）跑通
 
 ### 一致性约束
 
@@ -89,7 +89,7 @@
 
 - [ ] `docs/sdk/authoring-tools.md`（由 issue 004 创建）新增一节"使用基础扩展包"，写出 `pip install` / `npm install` + import + 注册的完整代码片段（字面对应 examples/ 中文件）
 - [ ] `crates/orchest-tools-py/README.md` 与 `crates/orchest-tools-node/README.md` 各自有 ≤ 50 行的 quickstart
-- [ ] examples/ 所有权约定：本 issue 负责 `examples/python_with_orchest_tools.py` 与 `examples/ts_with_orchest_tools.ts`（专门演示基础扩展用法）；issue 004 负责 `examples/python_basic.py` 等通用 getting-started 示例的核对，两者引用边界写入各自 README
+- [ ] examples/ 所有权约定：本 issue 负责 `examples/python/python_with_orchest_tools.py` 与 `examples/typescript/ts_with_orchest_tools.ts`（专门演示基础扩展用法）；issue 004 负责 `examples/python/python_basic.py` 等通用 getting-started 示例的核对，两者引用边界写入各自 README
 
 ## 注意
 

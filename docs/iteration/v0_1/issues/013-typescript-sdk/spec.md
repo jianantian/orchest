@@ -6,7 +6,7 @@
 
 ## 目标
 
-实现 `@orchest/agent-runtime` npm 包，完成 `examples/ts_basic.ts` 和 `examples/ts_streaming.ts` 两个 demo。
+实现 `@orchest/agent-runtime` npm 包，完成 `examples/typescript/ts_basic.ts` 和 `examples/typescript/ts_streaming.ts` 两个 demo。
 
 ## 验收标准
 

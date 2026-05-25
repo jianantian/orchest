@@ -703,10 +703,14 @@ skills/                     # 示例 skill（兼容 agentskills.io 标准）
   format_data/
 
 examples/
-  python_basic.py
-  python_async_tool.py      # 长时异步 tool 示例（视频生成）
-  ts_basic.ts
-  ts_streaming.ts           # 流式输出示例
+  python/
+    python_basic.py
+    python_async_tool.py    # 长时异步 tool 示例（视频生成）
+  typescript/
+    ts_basic.ts
+    ts_streaming.ts         # 流式输出示例
+  rust/
+    rust_provider_runtime_deepseek.rs
 ```
 
 ## 设计决策记录

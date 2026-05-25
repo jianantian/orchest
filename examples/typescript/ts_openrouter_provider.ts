@@ -1,4 +1,4 @@
-import { Agent } from "../js";
+import { Agent } from "../../js";
 
 const agent = new Agent({
   model: "openrouter/anthropic/claude-sonnet-4",

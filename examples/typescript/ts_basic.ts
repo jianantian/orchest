@@ -3,14 +3,18 @@
  *
  * Usage:
  *   cargo build -p agent-runtime-node
- *   npx ts-node --compiler-options '{"module":"CommonJS"}' examples/ts_basic.ts
+ *   npx ts-node --compiler-options '{"module":"CommonJS"}' examples/typescript/ts_basic.ts
  */
+
+declare const __dirname: string;
+declare const process: any;
+declare function require(name: string): any;
 
 const { spawn } = require("node:child_process");
 const { copyFileSync, existsSync } = require("node:fs");
 const { join, resolve } = require("node:path");
 
-const repoRoot = resolve(__dirname, "..");
+const repoRoot = resolve(__dirname, "../..");
 const nativeSource = join(repoRoot, "target/debug/libagent_runtime_node.dylib");
 const nativeAddon = join(repoRoot, "target/debug/agent_runtime_node.node");
 
@@ -21,7 +25,7 @@ if (!existsSync(nativeAddon)) {
 const { Agent } = require(nativeAddon);
 
 function startProvider(port: number) {
-  const child = spawn("python3", ["examples/mock_anthropic_provider.py", String(port)], {
+  const child = spawn("python3", ["examples/python/mock_anthropic_provider.py", String(port)], {
     cwd: repoRoot,
     stdio: "ignore",
   });

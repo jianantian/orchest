@@ -11,12 +11,12 @@ Issues 001-013 各自有单元级验收标准，但需要一个明确的集成�
 ## 验收标准
 
 **Python：**
-- [ ] `examples/python_basic.py` 成功运行，agent 完成任务，流式 token 输出正常
-- [ ] `examples/python_async_tool.py` 成功运行，`async_tool_progress` 事件出现在输出中
+- [ ] `examples/python/python_basic.py` 成功运行，agent 完成任务，流式 token 输出正常
+- [ ] `examples/python/python_async_tool.py` 成功运行，`async_tool_progress` 事件出现在输出中
 
 **TypeScript：**
-- [ ] `examples/ts_basic.ts` 成功运行，tool 调用事件正常打印
-- [ ] `examples/ts_streaming.ts` 成功运行，逐 token 流式输出正常
+- [ ] `examples/typescript/ts_basic.ts` 成功运行，tool 调用事件正常打印
+- [ ] `examples/typescript/ts_streaming.ts` 成功运行，逐 token 流式输出正常
 
 **RuntimeEvent 覆盖检查：**
 - [ ] Python 和 TypeScript demos 观测到的 `RuntimeEvent.type` 均使用 canonical snake_case wire format，不出现 camelCase 事件 discriminant

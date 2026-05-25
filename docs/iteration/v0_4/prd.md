@@ -57,7 +57,7 @@ v0.4 结束时，开发者应该能够：
   - `v0_1_basic_loop`：基础 run loop、event 流、tool 调用、approval gate、budget 上限触发
   - `v0_2_mcp_and_compaction`：MCP server 集成 + Tool Search Tool + context compaction + OpenAI adapter（可切换）
   - `v0_3_subagent_and_codeexec`：sub-agent 启动与 budget 继承 + code execution MCP + skill capabilities 校验
-- 不依赖外部 API key：scenario 默认使用 mock provider（复用 `examples/mock_anthropic_provider.py` 的能力，或在 Rust 侧重写一个最小版）
+- 不依赖外部 API key：scenario 默认使用 mock provider（复用 `examples/python/mock_anthropic_provider.py` 的能力，或在 Rust 侧重写一个最小版）
 - `repl` 模式让人手动验收：能交互式注册 tool、加载 skill、发消息
 
 ### SDK 文档
