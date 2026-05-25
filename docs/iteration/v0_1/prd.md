@@ -60,10 +60,10 @@ v0.1 结束时，开发者应该能够：
 - `crates/agent-runtime-core/`：Rust 核心 crate
 - `crates/agent-runtime-py/`：Python binding + `agent_runtime` Python 包
 - `crates/agent-runtime-node/`：TypeScript binding + `@orchest/agent-runtime` npm 包
-- `examples/python/python_basic.py`：Python 基础 demo
-- `examples/python/python_async_tool.py`：Python 长时异步 tool demo（视频生成场景）
-- `examples/typescript/ts_basic.ts`：TypeScript 基础 demo
-- `examples/typescript/ts_streaming.ts`：TypeScript 流式输出 demo
+- `examples/python/basic.py`：Python 基础 demo
+- `examples/python/async_tool.py`：Python 长时异步 tool demo（视频生成场景）
+- `examples/typescript/basic.ts`：TypeScript 基础 demo
+- `examples/typescript/streaming.ts`：TypeScript 流式输出 demo
 
 ## Issues 拆解
 

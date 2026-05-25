@@ -6,7 +6,7 @@
 
 ## 目标
 
-实现 `agent_runtime` Python 包，完成 `examples/python/python_basic.py` 和 `examples/python/python_async_tool.py` 两个 demo。
+实现 `agent_runtime` Python 包，完成 `examples/python/basic.py` 和 `examples/python/async_tool.py` 两个 demo。
 
 ## 验收标准
 
@@ -30,8 +30,8 @@
 - [ ] `python/agent_runtime/__init__.py` 提供顶层导出
 
 **Demo 验证：**
-- [ ] `python_basic.py`：注册两个 tool，运行 agent，打印流式输出和 tool 调用事件
-- [ ] `python_async_tool.py`：模拟视频生成（`asyncio.sleep` 替代真实 API），打印进度事件
+- [ ] `basic.py`：注册两个 tool，运行 agent，打印流式输出和 tool 调用事件
+- [ ] `async_tool.py`：模拟视频生成（`asyncio.sleep` 替代真实 API），打印进度事件
 
 ## 类型推断说明
 

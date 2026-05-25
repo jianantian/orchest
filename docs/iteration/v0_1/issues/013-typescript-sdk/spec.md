@@ -6,7 +6,7 @@
 
 ## 目标
 
-实现 `@orchest/agent-runtime` npm 包，完成 `examples/typescript/ts_basic.ts` 和 `examples/typescript/ts_streaming.ts` 两个 demo。
+实现 `@orchest/agent-runtime` npm 包，完成 `examples/typescript/basic.ts` 和 `examples/typescript/streaming.ts` 两个 demo。
 
 ## 验收标准
 
@@ -33,8 +33,8 @@
 - [ ] 支持 CommonJS 和 ESM 双模式
 
 **Demo 验证：**
-- [ ] `ts_basic.ts`：注册两个 tool，运行 agent，打印事件
-- [ ] `ts_streaming.ts`：实时打印 token 流式输出，展示 snake_case `model_stream_chunk` 处理
+- [ ] `basic.ts`：注册两个 tool，运行 agent，打印事件
+- [ ] `streaming.ts`：实时打印 token 流式输出，展示 snake_case `model_stream_chunk` 处理
 
 ## 说明
 

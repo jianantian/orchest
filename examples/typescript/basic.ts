@@ -3,7 +3,7 @@
  *
  * Usage:
  *   cargo build -p agent-runtime-node
- *   npx ts-node --compiler-options '{"module":"CommonJS"}' examples/typescript/ts_basic.ts
+ *   npx ts-node --compiler-options '{"module":"CommonJS"}' examples/typescript/basic.ts
  */
 
 declare const __dirname: string;
