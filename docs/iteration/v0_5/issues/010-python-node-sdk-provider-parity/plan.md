@@ -24,6 +24,7 @@
 
 5. **更新 examples**
    - Python DeepSeek + thinking options
+   - Python OpenRouter nested model + request_options
    - Python canonical Anthropic provider model + request_options
    - Node OpenRouter nested model + requestOptions
    - Node canonical Anthropic provider model + requestOptions

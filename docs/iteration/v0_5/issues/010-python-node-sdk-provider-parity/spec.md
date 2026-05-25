@@ -75,6 +75,7 @@ Issue 009 定义 Rust SDK provider runtime API 后，Python 和 Node.js 绑定�
 ### Examples
 
 - [ ] Python example 展示 DeepSeek model + thinking options
+- [ ] Python example 展示 OpenRouter nested model + reasoning options
 - [ ] Python example 展示 canonical Anthropic provider model + request_options
 - [ ] Node.js example 展示 OpenRouter nested model + reasoning options
 - [ ] Node.js example 展示 canonical Anthropic provider model + requestOptions
