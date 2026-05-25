@@ -10,6 +10,7 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::budget::{BudgetConfig, BudgetGuard, BudgetUsage};
 use crate::events::RuntimeEvent;
+use crate::telemetry;
 use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelResponse, ModelSpec, ModelStreamChunk,
     RequestOptions, Role, StopReason,
@@ -705,6 +706,12 @@ async fn run_loop(
             }
 
             let source = tool.metadata().source.clone();
+            let source_label = match &source {
+                crate::tool::ToolSource::Builtin => "builtin",
+                crate::tool::ToolSource::InProcess => "in_process",
+                crate::tool::ToolSource::McpServer { .. } => "mcp_server",
+                crate::tool::ToolSource::Skill { .. } => "skill",
+            };
             emit(
                 &tx,
                 RuntimeEvent::ToolCallStarted {
@@ -714,6 +721,9 @@ async fn run_loop(
                 },
             )
             .await;
+
+            let _tool_span =
+                telemetry::tool_execute_span(&tool_call.name, source_label);
 
             let ctx = ToolContext {
                 run_id,
@@ -734,6 +744,11 @@ async fn run_loop(
                 match tokio::time::timeout(timeout, execute_fut).await {
                     Ok(r) => r,
                     Err(_) => {
+                        telemetry::record_tool_timeout(
+                            &tool_call.name,
+                            source_label,
+                            start_time.elapsed(),
+                        );
                         emit(
                             &tx,
                             RuntimeEvent::ToolCallFailed {
@@ -786,6 +801,7 @@ async fn run_loop(
                         },
                     )
                     .await;
+                    telemetry::record_tool_success(&tool_call.name, source_label, duration);
                     tool_results.push(ContentBlock::ToolResult {
                         tool_use_id: tool_call.id.clone(),
                         content: value,
@@ -811,6 +827,7 @@ async fn run_loop(
                         },
                     )
                     .await;
+                    telemetry::record_tool_success(&tool_call.name, source_label, duration);
                     tool_results.push(ContentBlock::ToolResult {
                         tool_use_id: tool_call.id.clone(),
                         content: model_output,
@@ -836,6 +853,7 @@ async fn run_loop(
                         },
                     )
                     .await;
+                    telemetry::record_tool_success(&tool_call.name, source_label, duration);
                     tool_results.push(ContentBlock::ToolResult {
                         tool_use_id: tool_call.id.clone(),
                         content: model_output,
@@ -855,12 +873,19 @@ async fn run_loop(
                         poll_async_job(&tx, &tool_call.name, &handle, start_time, &webhook_runtime)
                             .await;
 
+                    let duration = start_time.elapsed();
+                    if async_result.get("error").is_some() {
+                        telemetry::record_tool_error(&tool_call.name, source_label, duration);
+                    } else {
+                        telemetry::record_tool_success(&tool_call.name, source_label, duration);
+                    }
                     tool_results.push(ContentBlock::ToolResult {
                         tool_use_id: tool_call.id.clone(),
                         content: async_result,
                     });
                 }
                 Err(e) => {
+                    let duration = start_time.elapsed();
                     emit(
                         &tx,
                         RuntimeEvent::ToolCallFailed {
@@ -869,6 +894,7 @@ async fn run_loop(
                         },
                     )
                     .await;
+                    telemetry::record_tool_error(&tool_call.name, source_label, duration);
                     tool_results.push(ContentBlock::ToolResult {
                         tool_use_id: tool_call.id.clone(),
                         content: json!({"error": e.message}),

@@ -1,4 +1,5 @@
 use std::env;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -10,7 +11,7 @@ use crate::{
     ReasoningCapability, RequestOptions, Role, StreamEvent, ThinkingLevel, ToolDef,
 };
 
-const DEFAULT_API_URL: &str = "https://api.openai.com/v1/chat/completions";
+use crate::{defaults, telemetry};
 
 pub struct OpenAiAdapter {
     api_key: String,
@@ -54,7 +55,7 @@ impl OpenAiAdapter {
             .api_url
             .or_else(|| env::var("OPENAI_API_URL").ok())
             .or_else(|| env::var("OPENAI_BASE_URL").ok())
-            .unwrap_or_else(|| DEFAULT_API_URL.to_string());
+            .unwrap_or_else(|| defaults::openai::API_URL.to_string());
 
         if api_url.trim().is_empty() {
             return Err(ModelError::internal(
@@ -343,6 +344,9 @@ impl ModelAdapter for OpenAiAdapter {
         options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
+        let _span =
+            telemetry::model_complete_span("openai", &self.model, tx.is_some());
+
         if options.compatibility_policy == CompatibilityPolicy::Strict
             && options.thinking_budget_tokens.is_some()
         {
@@ -366,6 +370,7 @@ impl ModelAdapter for OpenAiAdapter {
 
         let (body, mut option_adjustments) = self.build_request_body(messages, tools, options);
 
+        let start = Instant::now();
         let response = self
             .client
             .post(&self.api_url)
@@ -373,14 +378,17 @@ impl ModelAdapter for OpenAiAdapter {
             .json(&body)
             .send()
             .await
-            .map_err(|e| ModelError {
-                message: e.to_string(),
-                code: Some("request_failed".into()),
-                provider: Some("openai".into()),
-                status: None,
-                upstream_code: None,
-                upstream_message: None,
-                upstream_body: None,
+            .map_err(|e| {
+                telemetry::record_model_error("openai", &self.model, start.elapsed());
+                ModelError {
+                    message: e.to_string(),
+                    code: Some("request_failed".into()),
+                    provider: Some("openai".into()),
+                    status: None,
+                    upstream_code: None,
+                    upstream_message: None,
+                    upstream_body: None,
+                }
             })?;
 
         if !response.status().is_success() {
@@ -400,6 +408,7 @@ impl ModelAdapter for OpenAiAdapter {
                 })
                 .unwrap_or((None, None));
 
+            telemetry::record_model_error("openai", &self.model, start.elapsed());
             return Err(ModelError {
                 message: format!("API returned {status}: {body_text}"),
                 code: Some(status.to_string()),
@@ -414,16 +423,22 @@ impl ModelAdapter for OpenAiAdapter {
         let stream = response.bytes_stream();
         let tx_ref = tx.as_ref();
 
-        let (content, usage, stop_reason) =
-            crate::sse::parse_openai_sse_stream(stream, tx_ref, None, None)
-                .await
-                .map_err(|mut e| {
-                    e.provider = Some("openai".into());
-                    e
-                })?;
+        let sse = crate::sse::parse_openai_sse_stream(stream, tx_ref, None, None, start)
+            .await
+            .map_err(|mut e| {
+                telemetry::record_model_error("openai", &self.model, start.elapsed());
+                e.provider = Some("openai".into());
+                e
+            })?;
+
+        let content = sse.content;
+        let usage = sse.usage;
+        let stop_reason = sse.stop_reason;
+        let first_token_latency = sse.first_token_latency;
 
         let has_usage = usage.input_tokens > 0 || usage.output_tokens > 0;
         if !has_usage {
+            telemetry::record_usage_missing("openai", &self.model);
             option_adjustments.push(OptionAdjustment {
                 option: "usage".into(),
                 requested: json!(null),
@@ -439,6 +454,17 @@ impl ModelAdapter for OpenAiAdapter {
                 })
                 .await;
         }
+
+        let duration = start.elapsed();
+        telemetry::record_model_success(
+            "openai",
+            &self.model,
+            duration,
+            usage.input_tokens,
+            usage.output_tokens,
+            first_token_latency,
+            Some(duration),
+        );
 
         Ok(ModelResponse {
             content,

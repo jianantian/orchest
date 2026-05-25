@@ -1,4 +1,5 @@
 use std::env;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -12,8 +13,7 @@ use crate::{
     ToolDef,
 };
 
-const DEFAULT_API_URL: &str = "https://api.anthropic.com/v1/messages";
-const API_VERSION: &str = "2023-06-01";
+use crate::{defaults, telemetry};
 
 pub struct AnthropicAdapter {
     api_key: String,
@@ -45,8 +45,8 @@ impl AnthropicAdapter {
     pub fn from_config(config: AnthropicConfig) -> Result<Self, ModelError> {
         let api_key = config
             .api_key
-            .or_else(|| env::var("ANTHROPIC_API_KEY").ok())
-            .or_else(|| env::var("ANTHROPIC_AUTH_TOKEN").ok())
+            .or_else(|| env::var(defaults::anthropic::API_KEY_ENV).ok())
+            .or_else(|| env::var(defaults::anthropic::AUTH_TOKEN_ENV).ok())
             .ok_or_else(|| {
                 ModelError::internal(
                     "ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN not set and no api_key provided",
@@ -56,8 +56,12 @@ impl AnthropicAdapter {
 
         let api_url = config
             .api_url
-            .or_else(|| env::var("ANTHROPIC_API_URL").ok())
-            .unwrap_or_else(|| DEFAULT_API_URL.to_string());
+            .or_else(|| {
+                env::var(defaults::anthropic::API_URL_ENV)
+                    .ok()
+                    .filter(|s| !s.trim().is_empty())
+            })
+            .unwrap_or_else(|| defaults::anthropic::API_URL.to_string());
 
         if api_url.trim().is_empty() {
             return Err(ModelError::internal(
@@ -326,6 +330,9 @@ impl ModelAdapter for AnthropicAdapter {
         options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
+        let _span =
+            telemetry::model_complete_span("anthropic", &self.model, tx.is_some());
+
         let (body, mut option_adjustments) = self.build_request_body(messages, tools, options);
 
         if options.compatibility_policy == CompatibilityPolicy::Strict
@@ -339,23 +346,27 @@ impl ModelAdapter for AnthropicAdapter {
             ));
         }
 
+        let start = Instant::now();
         let response = self
             .client
             .post(&self.api_url)
             .header("x-api-key", &self.api_key)
-            .header("anthropic-version", API_VERSION)
+            .header("anthropic-version", defaults::anthropic::API_VERSION)
             .header("content-type", "application/json")
             .json(&body)
             .send()
             .await
-            .map_err(|e| ModelError {
-                message: e.to_string(),
-                code: Some("request_failed".into()),
-                provider: Some("anthropic".into()),
-                status: None,
-                upstream_code: None,
-                upstream_message: None,
-                upstream_body: None,
+            .map_err(|e| {
+                telemetry::record_model_error("anthropic", &self.model, start.elapsed());
+                ModelError {
+                    message: e.to_string(),
+                    code: Some("request_failed".into()),
+                    provider: Some("anthropic".into()),
+                    status: None,
+                    upstream_code: None,
+                    upstream_message: None,
+                    upstream_body: None,
+                }
             })?;
 
         if !response.status().is_success() {
@@ -375,6 +386,7 @@ impl ModelAdapter for AnthropicAdapter {
                 })
                 .unwrap_or((None, None));
 
+            telemetry::record_model_error("anthropic", &self.model, start.elapsed());
             return Err(ModelError {
                 message: format!("API returned {status}: {body_text}"),
                 code: Some(status.to_string()),
@@ -399,6 +411,7 @@ impl ModelAdapter for AnthropicAdapter {
         let mut usage = TokenUsage::default();
         let mut stop_reason = StopReason::EndTurn;
         let mut got_message_stop = false;
+        let mut first_token_latency: Option<std::time::Duration> = None;
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result.map_err(|e| ModelError {
@@ -485,6 +498,7 @@ impl ModelAdapter for AnthropicAdapter {
                             match delta_type {
                                 "text_delta" => {
                                     if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                                        first_token_latency.get_or_insert_with(|| start.elapsed());
                                         current_text.push_str(text);
                                         if let Some(ref tx) = tx {
                                             let _ = tx
@@ -499,6 +513,7 @@ impl ModelAdapter for AnthropicAdapter {
                                     if let Some(partial) =
                                         delta.get("partial_json").and_then(|v| v.as_str())
                                     {
+                                        first_token_latency.get_or_insert_with(|| start.elapsed());
                                         current_tool_input_json.push_str(partial);
                                         if let Some(ref tx) = tx {
                                             if let Some(id) = &current_block_id {
@@ -636,6 +651,7 @@ impl ModelAdapter for AnthropicAdapter {
 
         let has_usage = usage.input_tokens > 0 || usage.output_tokens > 0;
         if !has_usage {
+            telemetry::record_usage_missing("anthropic", &self.model);
             option_adjustments.push(OptionAdjustment {
                 option: "usage".into(),
                 requested: json!(null),
@@ -651,6 +667,17 @@ impl ModelAdapter for AnthropicAdapter {
                 })
                 .await;
         }
+
+        let duration = start.elapsed();
+        telemetry::record_model_success(
+            "anthropic",
+            &self.model,
+            duration,
+            usage.input_tokens,
+            usage.output_tokens,
+            first_token_latency,
+            Some(duration),
+        );
 
         Ok(ModelResponse {
             content: content_blocks,
@@ -856,7 +883,7 @@ data: {}
         })
         .expect("adapter should be created");
 
-        assert_eq!(adapter.api_url, DEFAULT_API_URL);
+        assert_eq!(adapter.api_url, defaults::anthropic::API_URL);
     }
 
     #[test]

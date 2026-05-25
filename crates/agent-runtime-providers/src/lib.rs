@@ -1,3 +1,4 @@
+pub mod defaults;
 pub mod types;
 pub use types::*;
 
@@ -20,7 +21,6 @@ pub mod telemetry;
 use std::future::Future;
 use tokio::sync::mpsc;
 
-const DEFAULT_MAX_TOKENS: u32 = 4096;
 
 #[allow(clippy::result_large_err)]
 pub fn create_adapter(
@@ -46,7 +46,7 @@ pub fn create_adapter_from_config(
         config.api_key.as_deref(),
         config.api_key_env.as_deref(),
     )?;
-    let max_tokens = config.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
+    let max_tokens = config.max_tokens.unwrap_or(defaults::MAX_TOKENS);
 
     match normalized.provider {
         "anthropic" => {
@@ -183,10 +183,10 @@ fn non_empty_api_key(value: &str) -> Result<String, ModelError> {
 #[allow(clippy::result_large_err)]
 fn default_api_key_env(provider: &str) -> Result<&'static str, ModelError> {
     match provider {
-        "anthropic" => Ok("ANTHROPIC_API_KEY"),
-        "openai" => Ok("OPENAI_API_KEY"),
-        "deepseek" => Ok("DEEPSEEK_API_KEY"),
-        "openrouter" => Ok("OPENROUTER_API_KEY"),
+        "anthropic" => Ok(defaults::anthropic::API_KEY_ENV),
+        "openai" => Ok(defaults::openai::API_KEY_ENV),
+        "deepseek" => Ok(defaults::deepseek::API_KEY_ENV),
+        "openrouter" => Ok(defaults::openrouter::API_KEY_ENV),
         _ => Err(unknown_provider(provider)),
     }
 }

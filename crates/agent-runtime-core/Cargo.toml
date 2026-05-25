@@ -17,6 +17,8 @@ which = "7"
 sha2 = "0.10"
 tempfile = "3"
 agent-runtime-providers = { path = "../agent-runtime-providers" }
+tracing = "0.1"
+metrics = "0.24"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

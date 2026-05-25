@@ -3,4 +3,5 @@ pub mod events;
 pub mod model;
 pub mod run;
 pub mod skill;
+pub mod telemetry;
 pub mod tool;

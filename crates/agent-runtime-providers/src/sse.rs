@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
 use serde_json::Value;
@@ -22,12 +24,21 @@ fn map_stop_reason(raw: &str) -> StopReason {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct SseParseResult {
+    pub content: Vec<ContentBlock>,
+    pub usage: TokenUsage,
+    pub stop_reason: StopReason,
+    pub first_token_latency: Option<Duration>,
+}
+
 pub(crate) async fn parse_openai_sse_stream(
     stream: impl Stream<Item = Result<Bytes, reqwest::Error>>,
     tx: Option<&mpsc::Sender<StreamEvent>>,
     reasoning_field: Option<&str>,
     reasoning_details_field: Option<&str>,
-) -> Result<(Vec<ContentBlock>, TokenUsage, StopReason), ModelError> {
+    start: Instant,
+) -> Result<SseParseResult, ModelError> {
     tokio::pin!(stream);
 
     let mut buffer = String::new();
@@ -39,6 +50,7 @@ pub(crate) async fn parse_openai_sse_stream(
     let mut thinking_text = String::new();
     let mut thinking_active = false;
     let mut thinking_details: Option<Value> = None;
+    let mut first_token_latency: Option<Duration> = None;
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result.map_err(|e| ModelError {
@@ -206,6 +218,7 @@ pub(crate) async fn parse_openai_sse_stream(
                             .await;
                     }
                 }
+                first_token_latency.get_or_insert_with(|| start.elapsed());
                 text.push_str(content);
                 if let Some(tx) = tx {
                     let _ = tx
@@ -239,6 +252,7 @@ pub(crate) async fn parse_openai_sse_stream(
                             // Emit ToolUseStart on first chunk
                             if !tool_calls[idx].started {
                                 tool_calls[idx].started = true;
+                                first_token_latency.get_or_insert_with(|| start.elapsed());
                                 if let Some(tx) = tx {
                                     let _ = tx
                                         .send(StreamEvent::ToolUseStart {
@@ -323,7 +337,12 @@ pub(crate) async fn parse_openai_sse_stream(
         });
     }
 
-    Ok((content, usage, stop_reason))
+    Ok(SseParseResult {
+        content,
+        usage,
+        stop_reason,
+        first_token_latency,
+    })
 }
 
 #[cfg(test)]
@@ -360,9 +379,10 @@ mod tests {
             "\ndata: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\ndata: [DONE]\n\n",
         ]);
         let (tx, mut rx) = mpsc::channel(16);
-        let (content, _, _) = parse_openai_sse_stream(s, Some(&tx), None, None)
+        let r = parse_openai_sse_stream(s, Some(&tx), None, None, Instant::now())
             .await
             .unwrap();
+        let content = r.content;
         drop(tx);
 
         let mut events = Vec::new();
@@ -383,10 +403,14 @@ mod tests {
                    data: [DONE]\n\n";
         let s = make_stream(vec![sse]);
         let (tx, mut rx) = mpsc::channel(16);
-        let (content, usage, stop) =
-            parse_openai_sse_stream(s, Some(&tx), Some("reasoning_content"), None)
-                .await
-                .unwrap();
+        let SseParseResult {
+            content,
+            usage,
+            stop_reason: stop,
+            ..
+        } = parse_openai_sse_stream(s, Some(&tx), Some("reasoning_content"), None, Instant::now())
+            .await
+            .unwrap();
         drop(tx);
 
         let mut events = Vec::new();
@@ -415,9 +439,10 @@ mod tests {
                    data: [DONE]\n\n";
         let s = make_stream(vec![sse]);
         let (tx, mut rx) = mpsc::channel(16);
-        let (content, _, _) = parse_openai_sse_stream(s, Some(&tx), None, None)
+        let r = parse_openai_sse_stream(s, Some(&tx), None, None, Instant::now())
             .await
             .unwrap();
+        let content = r.content;
         drop(tx);
 
         let mut events = Vec::new();
@@ -438,7 +463,11 @@ mod tests {
         let sse = format!("{chunk1}\n\n{chunk2}\n\ndata: [DONE]\n\n");
         let s = make_stream_owned(vec![sse]);
         let (tx, mut rx) = mpsc::channel(16);
-        let (content, _, stop) = parse_openai_sse_stream(s, Some(&tx), None, None)
+        let SseParseResult {
+            content,
+            stop_reason: stop,
+            ..
+        } = parse_openai_sse_stream(s, Some(&tx), None, None, Instant::now())
             .await
             .unwrap();
         drop(tx);
@@ -465,7 +494,7 @@ mod tests {
     async fn parse_done_signal() {
         let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\ndata: [DONE]\n\n";
         let s = make_stream(vec![sse]);
-        let result = parse_openai_sse_stream(s, None, None, None).await;
+        let result = parse_openai_sse_stream(s, None, None, None, Instant::now()).await;
         assert!(result.is_ok());
     }
 
@@ -473,7 +502,7 @@ mod tests {
     async fn parse_malformed_json() {
         let sse = "data: {NOT VALID}\n\ndata: [DONE]\n\n";
         let s = make_stream(vec![sse]);
-        let err = parse_openai_sse_stream(s, None, None, None)
+        let err = parse_openai_sse_stream(s, None, None, None, Instant::now())
             .await
             .unwrap_err();
         assert_eq!(err.code.as_deref(), Some("invalid_json"));
@@ -483,7 +512,7 @@ mod tests {
     async fn parse_stream_interrupted() {
         let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n";
         let s = make_stream(vec![sse]);
-        let err = parse_openai_sse_stream(s, None, None, None)
+        let err = parse_openai_sse_stream(s, None, None, None, Instant::now())
             .await
             .unwrap_err();
         assert_eq!(err.code.as_deref(), Some("stream_interrupted"));
@@ -495,7 +524,8 @@ mod tests {
             "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n\
                    data: [DONE]\n\n";
         let s = make_stream(vec![sse]);
-        let (_, usage, _) = parse_openai_sse_stream(s, None, None, None).await.unwrap();
+        let r = parse_openai_sse_stream(s, None, None, None, Instant::now()).await.unwrap();
+        let usage = r.usage;
         assert_eq!(usage.input_tokens, 0);
         assert_eq!(usage.output_tokens, 0);
     }

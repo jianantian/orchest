@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use tracing::Span;
 
 pub const METRIC_REQUEST_DURATION: &str = "model.request.duration";
@@ -13,11 +15,86 @@ pub fn model_complete_span(provider: &str, model: &str, streaming: bool) -> Span
         provider = provider,
         model = model,
         streaming = streaming,
+        status = tracing::field::Empty,
+        input_tokens = tracing::field::Empty,
+        output_tokens = tracing::field::Empty,
     )
 }
 
 pub fn model_family(model: &str) -> &str {
     model.split('-').next().unwrap_or(model)
+}
+
+pub fn record_model_success(
+    provider: &str,
+    model: &str,
+    duration: Duration,
+    input_tokens: u64,
+    output_tokens: u64,
+    first_token_latency: Option<Duration>,
+    stream_duration: Option<Duration>,
+) {
+    let family = model_family(model).to_string();
+    let provider = provider.to_string();
+
+    metrics::histogram!(
+        METRIC_REQUEST_DURATION,
+        "provider" => provider.clone(),
+        "model_family" => family.clone(),
+        "status" => "ok"
+    )
+    .record(duration.as_secs_f64());
+
+    metrics::counter!(
+        METRIC_TOKENS_INPUT,
+        "provider" => provider.clone(),
+        "model_family" => family.clone()
+    )
+    .increment(input_tokens);
+
+    metrics::counter!(
+        METRIC_TOKENS_OUTPUT,
+        "provider" => provider.clone(),
+        "model_family" => family.clone()
+    )
+    .increment(output_tokens);
+
+    if let Some(latency) = first_token_latency {
+        metrics::histogram!(
+            METRIC_FIRST_TOKEN_LATENCY,
+            "provider" => provider.clone(),
+            "model_family" => family.clone()
+        )
+        .record(latency.as_secs_f64());
+    }
+
+    if let Some(dur) = stream_duration {
+        metrics::histogram!(
+            METRIC_STREAM_DURATION,
+            "provider" => provider,
+            "model_family" => family
+        )
+        .record(dur.as_secs_f64());
+    }
+}
+
+pub fn record_model_error(provider: &str, model: &str, duration: Duration) {
+    metrics::histogram!(
+        METRIC_REQUEST_DURATION,
+        "provider" => provider.to_string(),
+        "model_family" => model_family(model).to_string(),
+        "status" => "error"
+    )
+    .record(duration.as_secs_f64());
+}
+
+pub fn record_usage_missing(provider: &str, model: &str) {
+    metrics::counter!(
+        METRIC_USAGE_MISSING,
+        "provider" => provider.to_string(),
+        "model_family" => model_family(model).to_string()
+    )
+    .increment(1);
 }
 
 #[cfg(test)]

@@ -45,13 +45,13 @@ from typing import Any
 
 from agent_runtime import Agent, RuntimeEvent
 
-
 EXA_SEARCH_URL = "https://api.exa.ai/search"
 DEFAULT_REPORT_PATH = "target/deep-research-report.md"
 PROMPT_DIR = Path(__file__).resolve().parents[1] / "support" / "deep_research_prompts"
 ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 MAX_HIGHLIGHT_CHARS = 900
 DEFAULT_MIN_RESEARCH_CALLS = 6
+DEFAULT_MAX_TOKENS = 16000
 SUPPORTED_EXA_CATEGORIES = {
     "company",
     "people",
@@ -73,7 +73,10 @@ def load_dotenv(path: Path = ENV_PATH) -> None:
         key = key.strip()
         if not key or key in os.environ:
             continue
-        os.environ[key] = value.strip().strip('"').strip("'")
+        stripped = value.strip().strip('"').strip("'")
+        if not stripped:
+            continue
+        os.environ[key] = stripped
 
 
 def prompt_template(name: str, **values: object) -> str:
@@ -177,25 +180,32 @@ def final_output(events: list[RuntimeEvent]) -> Any:
     return None
 
 
-def print_trace(events: list[RuntimeEvent]) -> None:
-    for event in events:
-        event_type = event.get("type")
-        if event_type == "tool_call_started":
-            print(f"[tool] {event.get('tool')} input={event.get('input')}")
-        elif event_type == "tool_call_completed":
-            print(f"[tool:done] {event.get('tool')}")
-        elif event_type == "sub_agent_started":
-            print(f"[sub-agent] started {event.get('config_summary')}")
-        elif event_type == "sub_agent_completed":
-            print(f"[sub-agent] completed child={event.get('child_run_id')}")
-        elif event_type == "child_run_event":
-            child = event.get("event", {})
-            if isinstance(child, dict) and child.get("type") == "tool_call_started":
-                print(f"[sub-agent:tool] {child.get('tool')} input={child.get('input')}")
-        elif event_type == "run_completed":
-            print(f"\n[final]\n{event.get('output')}")
-        elif event_type == "run_failed":
-            print(f"\n[error] {event.get('error')}")
+def collect_and_print(event: RuntimeEvent, events: list[RuntimeEvent]) -> None:
+    events.append(event)
+    print_event(event)
+
+
+def print_event(event: RuntimeEvent) -> None:
+    event_type = event.get("type")
+    if event_type == "tool_call_started":
+        print(f"[tool] {event.get('tool')} input={event.get('input')}", flush=True)
+    elif event_type == "tool_call_completed":
+        print(f"[tool:done] {event.get('tool')}", flush=True)
+    elif event_type == "sub_agent_started":
+        print(f"[sub-agent] started {event.get('config_summary')}", flush=True)
+    elif event_type == "sub_agent_completed":
+        print(f"[sub-agent] completed child={event.get('child_run_id')}", flush=True)
+    elif event_type == "child_run_event":
+        child = event.get("event", {})
+        if isinstance(child, dict) and child.get("type") == "tool_call_started":
+            print(
+                f"[sub-agent:tool] {child.get('tool')} input={child.get('input')}",
+                flush=True,
+            )
+    elif event_type == "run_completed":
+        print(f"\n[final]\n{event.get('output')}", flush=True)
+    elif event_type == "run_failed":
+        print(f"\n[error] {event.get('error')}", flush=True)
 
 
 def build_web_search_agent() -> Agent:
@@ -226,6 +236,7 @@ def build_deep_research_agent(
     min_calls: int,
 ) -> Agent:
     today = current_date_label()
+    max_tokens = int(os.environ.get("DEEP_RESEARCH_MAX_TOKENS", DEFAULT_MAX_TOKENS))
     agent = Agent(
         model=require_env("DEEP_RESEARCH_MODEL"),
         system_prompt=prompt_template(
@@ -235,6 +246,7 @@ def build_deep_research_agent(
             min_calls=min_calls,
         ),
         api_url=provider_url(),
+        max_tokens=max_tokens,
     )
     agent.register_agent_tool(
         name="web_research",
@@ -281,7 +293,10 @@ if __name__ == "__main__":
     print(f"[web:model] {web_search_model}")
     print(f"[min-research-calls] {min_calls}")
     print(f"[question] {question}")
-    events = deep_agent.run(research_instructions(question, report_path, min_calls))
-    print_trace(events)
+    events: list[RuntimeEvent] = []
+    deep_agent.run_stream(
+        research_instructions(question, report_path, min_calls),
+        lambda event: collect_and_print(event, events),
+    )
     print(f"\n[report] {report_path}")
     print(f"[raw-output] {final_output(events)}")

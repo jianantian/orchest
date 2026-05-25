@@ -1,4 +1,5 @@
 use std::env;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -10,7 +11,7 @@ use crate::{
     ReasoningCapability, RequestOptions, Role, StreamEvent, ThinkingLevel, ToolDef,
 };
 
-const DEFAULT_API_URL: &str = "https://api.deepseek.com";
+use crate::{defaults, telemetry};
 
 pub struct DeepSeekAdapter {
     api_key: String,
@@ -52,7 +53,7 @@ impl DeepSeekAdapter {
 
         let api_url = config
             .api_url
-            .unwrap_or_else(|| DEFAULT_API_URL.to_string());
+            .unwrap_or_else(|| defaults::deepseek::API_URL.to_string());
 
         if api_url.trim().is_empty() {
             return Err(ModelError::internal(
@@ -330,6 +331,8 @@ impl ModelAdapter for DeepSeekAdapter {
         options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
+        let _span =
+            telemetry::model_complete_span("deepseek", &self.model, tx.is_some());
         let thinking_enabled = options.thinking != ThinkingLevel::Off;
 
         // Handle include_thinking: false when thinking is enabled
@@ -364,6 +367,7 @@ impl ModelAdapter for DeepSeekAdapter {
             });
         }
 
+        let start = Instant::now();
         let response = self
             .client
             .post(&self.api_url)
@@ -371,14 +375,17 @@ impl ModelAdapter for DeepSeekAdapter {
             .json(&body)
             .send()
             .await
-            .map_err(|e| ModelError {
-                message: e.to_string(),
-                code: Some("request_failed".into()),
-                provider: Some("deepseek".into()),
-                status: None,
-                upstream_code: None,
-                upstream_message: None,
-                upstream_body: None,
+            .map_err(|e| {
+                telemetry::record_model_error("deepseek", &self.model, start.elapsed());
+                ModelError {
+                    message: e.to_string(),
+                    code: Some("request_failed".into()),
+                    provider: Some("deepseek".into()),
+                    status: None,
+                    upstream_code: None,
+                    upstream_message: None,
+                    upstream_body: None,
+                }
             })?;
 
         if !response.status().is_success() {
@@ -398,6 +405,7 @@ impl ModelAdapter for DeepSeekAdapter {
                 })
                 .unwrap_or((None, None));
 
+            telemetry::record_model_error("deepseek", &self.model, start.elapsed());
             return Err(ModelError {
                 message: format!("API returned {status}: {body_text}"),
                 code: Some(status.to_string()),
@@ -412,13 +420,19 @@ impl ModelAdapter for DeepSeekAdapter {
         let stream = response.bytes_stream();
         let tx_ref = tx.as_ref();
 
-        let (content, mut usage, stop_reason) =
-            crate::sse::parse_openai_sse_stream(stream, tx_ref, Some("reasoning"), None)
+        let sse =
+            crate::sse::parse_openai_sse_stream(stream, tx_ref, Some("reasoning"), None, start)
                 .await
                 .map_err(|mut e| {
+                    telemetry::record_model_error("deepseek", &self.model, start.elapsed());
                     e.provider = Some("deepseek".into());
                     e
                 })?;
+
+        let content = sse.content;
+        let mut usage = sse.usage;
+        let stop_reason = sse.stop_reason;
+        let first_token_latency = sse.first_token_latency;
 
         // Remap stop reason using DeepSeek-specific mapping
         let stop_reason = match &stop_reason {
@@ -426,18 +440,11 @@ impl ModelAdapter for DeepSeekAdapter {
             _ => stop_reason,
         };
 
-        // Extract DeepSeek-specific cache tokens from raw usage
-        // The SSE parser doesn't know about prompt_cache_hit_tokens / prompt_cache_miss_tokens,
-        // so we handle them here via the standard usage fields that the parser already extracted.
-        // DeepSeek reports prompt_cache_hit_tokens and prompt_cache_miss_tokens at the usage level.
-        // Since these come through the SSE stream, we need to re-parse if the parser didn't capture them.
-        // However, the SSE parser already handles prompt_tokens_details.cached_tokens.
-        // DeepSeek uses a different field name, so cache_read_tokens may be 0.
-        // We set cache_write_tokens to 0 as specified.
         usage.cache_write_tokens = 0;
 
         let has_usage = usage.input_tokens > 0 || usage.output_tokens > 0;
         if !has_usage {
+            telemetry::record_usage_missing("deepseek", &self.model);
             option_adjustments.push(OptionAdjustment {
                 option: "usage".into(),
                 requested: json!(null),
@@ -453,6 +460,17 @@ impl ModelAdapter for DeepSeekAdapter {
                 })
                 .await;
         }
+
+        let duration = start.elapsed();
+        telemetry::record_model_success(
+            "deepseek",
+            &self.model,
+            duration,
+            usage.input_tokens,
+            usage.output_tokens,
+            first_token_latency,
+            Some(duration),
+        );
 
         Ok(ModelResponse {
             content,

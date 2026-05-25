@@ -778,6 +778,59 @@ impl Agent {
         self.run_sync(py, input)
     }
 
+    /// Streaming run: calls `on_event(dict)` for each event as it arrives.
+    ///
+    /// Runs the agent in a background thread and processes events on the
+    /// Python side with periodic signal checks so Ctrl+C works.
+    fn run_stream<'py>(
+        &self,
+        py: Python<'py>,
+        input: String,
+        on_event: Py<PyAny>,
+    ) -> PyResult<()> {
+        let config = self.build_config()?;
+        let registry = self.build_registry()?;
+        let model_adapter = self.build_model()?;
+        let run_handle_ref = Arc::clone(&self.run_handle);
+
+        let (tx, rx) = std::sync::mpsc::channel::<RuntimeEvent>();
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            rt.block_on(async move {
+                let (handle, mut event_rx) =
+                    AgentRun::start(config, input, model_adapter, registry);
+                {
+                    let mut guard = run_handle_ref.lock().await;
+                    *guard = Some(handle);
+                }
+                while let Some(event) = event_rx.recv().await {
+                    if tx.send(event).is_err() {
+                        break;
+                    }
+                }
+                // channel drop signals Python side we are done
+            });
+        });
+
+        loop {
+            py.check_signals()?;
+            match rx.try_recv() {
+                Ok(event) => {
+                    let dict = runtime_event_to_dict(py, &event)?;
+                    on_event.call1(py, (dict,))?;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Release GIL while sleeping so Python signal handlers can run.
+                    py.detach(|| std::thread::sleep(Duration::from_millis(10)));
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+
+        Ok(())
+    }
+
     /// Respond to an approval request for an active run.
     fn respond_approval(&self, run_id_str: String, approved: bool) -> PyResult<()> {
         let run_handle_ref = Arc::clone(&self.run_handle);

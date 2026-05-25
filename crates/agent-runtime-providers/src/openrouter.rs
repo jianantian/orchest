@@ -1,4 +1,5 @@
 use std::env;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -10,7 +11,7 @@ use crate::{
     StreamEvent, ThinkingLevel, ToolDef,
 };
 
-const DEFAULT_API_URL: &str = "https://openrouter.ai/api";
+use crate::{defaults, telemetry};
 
 pub struct OpenRouterAdapter {
     api_key: String,
@@ -46,7 +47,7 @@ impl OpenRouterAdapter {
     pub fn from_config(config: OpenRouterConfig) -> Result<Self, ModelError> {
         let api_key = config
             .api_key
-            .or_else(|| env::var("OPENROUTER_API_KEY").ok())
+            .or_else(|| env::var(defaults::openrouter::API_KEY_ENV).ok())
             .ok_or_else(|| {
                 ModelError::internal(
                     "OPENROUTER_API_KEY not set and no api_key provided",
@@ -56,7 +57,7 @@ impl OpenRouterAdapter {
 
         let api_url = config
             .api_url
-            .unwrap_or_else(|| DEFAULT_API_URL.to_string());
+            .unwrap_or_else(|| defaults::openrouter::API_URL.to_string());
 
         if api_url.trim().is_empty() {
             return Err(ModelError::internal(
@@ -381,6 +382,9 @@ impl ModelAdapter for OpenRouterAdapter {
         options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
+        let _span =
+            telemetry::model_complete_span("openrouter", &self.model, tx.is_some());
+
         let (body, mut option_adjustments) =
             self.try_build_request_body(messages, tools, options)?;
 
@@ -397,14 +401,18 @@ impl ModelAdapter for OpenRouterAdapter {
             request = request.header("HTTP-Referer", url);
         }
 
-        let response = request.send().await.map_err(|e| ModelError {
-            message: e.to_string(),
-            code: Some("request_failed".into()),
-            provider: Some("openrouter".into()),
-            status: None,
-            upstream_code: None,
-            upstream_message: None,
-            upstream_body: None,
+        let start = Instant::now();
+        let response = request.send().await.map_err(|e| {
+            telemetry::record_model_error("openrouter", &self.model, start.elapsed());
+            ModelError {
+                message: e.to_string(),
+                code: Some("request_failed".into()),
+                provider: Some("openrouter".into()),
+                status: None,
+                upstream_code: None,
+                upstream_message: None,
+                upstream_body: None,
+            }
         })?;
 
         if !response.status().is_success() {
@@ -424,6 +432,7 @@ impl ModelAdapter for OpenRouterAdapter {
                 })
                 .unwrap_or((None, None));
 
+            telemetry::record_model_error("openrouter", &self.model, start.elapsed());
             return Err(ModelError {
                 message: format!("API returned {status}: {body_text}"),
                 code: Some(status.to_string()),
@@ -438,20 +447,28 @@ impl ModelAdapter for OpenRouterAdapter {
         let stream = response.bytes_stream();
         let tx_ref = tx.as_ref();
 
-        let (content, usage, stop_reason) = crate::sse::parse_openai_sse_stream(
+        let sse = crate::sse::parse_openai_sse_stream(
             stream,
             tx_ref,
             Some("reasoning"),
             Some("reasoning_details"),
+            start,
         )
         .await
         .map_err(|mut e| {
+            telemetry::record_model_error("openrouter", &self.model, start.elapsed());
             e.provider = Some("openrouter".into());
             e
         })?;
 
+        let content = sse.content;
+        let usage = sse.usage;
+        let stop_reason = sse.stop_reason;
+        let first_token_latency = sse.first_token_latency;
+
         let has_usage = usage.input_tokens > 0 || usage.output_tokens > 0;
         if !has_usage {
+            telemetry::record_usage_missing("openrouter", &self.model);
             option_adjustments.push(OptionAdjustment {
                 option: "usage".into(),
                 requested: json!(null),
@@ -467,6 +484,17 @@ impl ModelAdapter for OpenRouterAdapter {
                 })
                 .await;
         }
+
+        let duration = start.elapsed();
+        telemetry::record_model_success(
+            "openrouter",
+            &self.model,
+            duration,
+            usage.input_tokens,
+            usage.output_tokens,
+            first_token_latency,
+            Some(duration),
+        );
 
         Ok(ModelResponse {
             content,
