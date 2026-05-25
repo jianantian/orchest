@@ -1,3 +1,4 @@
+pub mod prompts;
 pub mod budget;
 pub mod events;
 pub mod model;

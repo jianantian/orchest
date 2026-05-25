@@ -63,9 +63,7 @@ pub(crate) async fn maybe_compact_context(
         .map(|message| serde_json::to_string(message).unwrap_or_default())
         .collect::<Vec<_>>()
         .join("\n");
-    let prompt = format!(
-        "以下是一次 AI agent 任务的历史对话记录。请用简洁的中文总结这段历史中发生的关键事件：\n完成了哪些工具调用、获取了哪些信息、做出了哪些决策。保留足够细节让 agent 能够继续任务。\n\n{history}"
-    );
+    let prompt = crate::prompts::COMPACTION_SUMMARY_PROMPT.replace("{history}", &history);
     let summary_response = model
         .complete(
             &[Message {
@@ -106,7 +104,10 @@ pub(crate) async fn maybe_compact_context(
     }
     compacted.push(Message {
         role: Role::User,
-        content: vec![ContentBlock::Text(format!("历史摘要：{summary}"))],
+        content: vec![ContentBlock::Text(format!(
+            "{}{summary}",
+            crate::prompts::COMPACTION_SUMMARY_PREFIX
+        ))],
     });
     compacted.extend(recent_messages);
     let removed_messages = messages.len().saturating_sub(compacted.len());
