@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,8 +9,8 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::Mutex;
+use tokio::process::{Child, ChildStdin, Command};
+use tokio::sync::{oneshot, Mutex};
 
 use super::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
 
@@ -53,24 +55,22 @@ impl From<McpError> for ToolError {
 }
 
 pub struct McpStdioClient {
-    inner: Mutex<McpStdioInner>,
+    stdin: Arc<Mutex<ChildStdin>>,
+    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
+    next_id: Arc<AtomicU64>,
+    child: Arc<Mutex<Child>>,
+    reader_abort: tokio::task::AbortHandle,
 }
 
 impl Drop for McpStdioClient {
     fn drop(&mut self) {
+        self.reader_abort.abort();
         // Kill the child process so we don't leave zombie MCP servers.
         // We use try_lock since we're in synchronous Drop.
-        if let Ok(mut inner) = self.inner.try_lock() {
-            let _ = inner.child.start_kill();
+        if let Ok(mut child) = self.child.try_lock() {
+            let _ = child.start_kill();
         }
     }
-}
-
-struct McpStdioInner {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    next_id: u64,
 }
 
 impl McpStdioClient {
@@ -94,18 +94,37 @@ impl McpStdioClient {
             message: "MCP server stdout was not captured".into(),
             code: Some("missing_stdout".into()),
         })?;
+        let stdin = Arc::new(Mutex::new(stdin));
+        let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>> = Default::default();
+        let pending_for_reader = Arc::clone(&pending);
+        let reader_task = tokio::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let response = match serde_json::from_str::<Value>(&line) {
+                    Ok(response) => response,
+                    Err(_) => {
+                        pending_for_reader.lock().await.clear();
+                        break;
+                    }
+                };
+                let Some(id) = response.get("id").and_then(Value::as_u64) else {
+                    continue;
+                };
+                if let Some(tx) = pending_for_reader.lock().await.remove(&id) {
+                    let _ = tx.send(response);
+                }
+            }
+            pending_for_reader.lock().await.clear();
+        });
 
         let client = Self {
-            inner: Mutex::new(McpStdioInner {
-                child,
-                stdin,
-                stdout: BufReader::new(stdout),
-                next_id: 1,
-            }),
+            stdin,
+            pending,
+            next_id: Arc::new(AtomicU64::new(1)),
+            child: Arc::new(Mutex::new(child)),
+            reader_abort: reader_task.abort_handle(),
         };
-        client
-            .request("initialize", json!({"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "orchest", "version": "0.2.0"}}))
-            .await?;
+        client.initialize().await?;
         Ok(client)
     }
 
@@ -114,8 +133,16 @@ impl McpStdioClient {
         Self::connect(command, &refs).await
     }
 
+    async fn initialize(&self) -> Result<Value, McpError> {
+        self.send_request(
+            "initialize",
+            json!({"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "orchest", "version": "0.2.0"}}),
+        )
+        .await
+    }
+
     pub async fn list_tools(&self) -> Result<Vec<McpToolDef>, McpError> {
-        let result = self.request("tools/list", json!({})).await?;
+        let result = self.send_request("tools/list", json!({})).await?;
         let tools = result
             .get("tools")
             .and_then(Value::as_array)
@@ -152,72 +179,50 @@ impl McpStdioClient {
     }
 
     pub async fn call_tool(&self, name: &str, input: Value) -> Result<Value, McpError> {
-        self.request("tools/call", json!({"name": name, "arguments": input}))
+        self.send_request("tools/call", json!({"name": name, "arguments": input}))
             .await
     }
 
-    async fn request(&self, method: &str, params: Value) -> Result<Value, McpError> {
-        let mut inner = self.inner.lock().await;
-        if let Ok(Some(status)) = inner.child.try_wait() {
-            return Err(McpError {
-                message: format!("MCP server process exited with {status}"),
-                code: Some("process_exited".into()),
-            });
-        }
-
-        let id = inner.next_id;
-        inner.next_id += 1;
+    async fn send_request(&self, method: &str, params: Value) -> Result<Value, McpError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().await.insert(id, tx);
         let request = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-        let mut line = serde_json::to_vec(&request).map_err(|e| McpError {
-            message: format!("failed to serialize MCP request: {e}"),
-            code: Some("serialize_failed".into()),
-        })?;
+        let mut line = match serde_json::to_vec(&request) {
+            Ok(line) => line,
+            Err(error) => {
+                self.pending.lock().await.remove(&id);
+                return Err(McpError {
+                    message: format!("failed to serialize MCP request: {error}"),
+                    code: Some("serialize_failed".into()),
+                });
+            }
+        };
         line.push(b'\n');
-        inner.stdin.write_all(&line).await.map_err(|e| McpError {
-            message: format!("failed to write MCP request: {e}"),
-            code: Some("write_failed".into()),
-        })?;
-        inner.stdin.flush().await.map_err(|e| McpError {
-            message: format!("failed to flush MCP request: {e}"),
-            code: Some("write_failed".into()),
-        })?;
 
-        loop {
-            let mut response_line = String::new();
-            let read = inner
-                .stdout
-                .read_line(&mut response_line)
-                .await
-                .map_err(|e| McpError {
-                    message: format!("failed to read MCP response: {e}"),
-                    code: Some("read_failed".into()),
-                })?;
-            if read == 0 {
+        {
+            let mut stdin = self.stdin.lock().await;
+            if let Err(error) = stdin.write_all(&line).await {
+                self.pending.lock().await.remove(&id);
                 return Err(McpError {
-                    message: "MCP server closed stdout".into(),
-                    code: Some("process_exited".into()),
+                    message: format!("failed to write MCP request: {error}"),
+                    code: Some("write_failed".into()),
                 });
             }
-            let value: Value =
-                serde_json::from_str(response_line.trim()).map_err(|e| McpError {
-                    message: format!("invalid MCP JSON response: {e}"),
-                    code: Some("invalid_json".into()),
-                })?;
-            if value.get("id").and_then(Value::as_u64) != Some(id) {
-                continue;
-            }
-            if let Some(error) = value.get("error") {
+            if let Err(error) = stdin.flush().await {
+                self.pending.lock().await.remove(&id);
                 return Err(McpError {
-                    message: error
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("MCP request failed")
-                        .to_string(),
-                    code: error.get("code").map(ToString::to_string),
+                    message: format!("failed to flush MCP request: {error}"),
+                    code: Some("write_failed".into()),
                 });
             }
-            return Ok(value.get("result").cloned().unwrap_or(Value::Null));
         }
+
+        let response = rx.await.map_err(|_| McpError {
+            message: "MCP server disconnected before responding".into(),
+            code: Some("process_exited".into()),
+        })?;
+        parse_rpc_response(response)
     }
 }
 
@@ -502,6 +507,27 @@ mod tests {
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn pending_map_routes_responses_by_id() {
+        let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>> = Default::default();
+        let (tx1, rx1) = oneshot::channel::<Value>();
+        let (tx2, rx2) = oneshot::channel::<Value>();
+        pending.lock().await.insert(1, tx1);
+        pending.lock().await.insert(2, tx2);
+
+        let resp1 = json!({"jsonrpc": "2.0", "id": 1, "result": "a"});
+        let resp2 = json!({"jsonrpc": "2.0", "id": 2, "result": "b"});
+        if let Some(tx) = pending.lock().await.remove(&resp2["id"].as_u64().unwrap()) {
+            let _ = tx.send(resp2);
+        }
+        if let Some(tx) = pending.lock().await.remove(&resp1["id"].as_u64().unwrap()) {
+            let _ = tx.send(resp1);
+        }
+
+        assert_eq!(rx1.await.unwrap()["result"], "a");
+        assert_eq!(rx2.await.unwrap()["result"], "b");
+    }
 
     #[tokio::test]
     async fn stdio_client_lists_and_calls_tools() {
