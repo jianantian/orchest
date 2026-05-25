@@ -10,7 +10,10 @@ pub(crate) mod sub_agent;
 pub(crate) mod tool_exec;
 pub(crate) mod webhook;
 
-pub use config::{AgentConfig, AgentRun, RunId, RunState, RunStatus, SubAgentRuntime};
+pub use config::{
+    AgentConfig, AgentConfigBuilder, AgentRun, CompactionConfig, ModelConfig, RunId, RunState,
+    RunStatus, RuntimeConfig, SkillsConfig, SubAgentRuntime,
+};
 pub use handle::{EventReceiver, RunHandle};
 
 use std::collections::HashMap;

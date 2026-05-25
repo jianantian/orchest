@@ -8,8 +8,8 @@ use crate::model::{
 use crate::tool::async_job::{JobHandle, JobStatus};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{
-    AgentDelegate, JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolMetadata,
-    ToolOutput, ToolSource,
+    JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput,
+    ToolSource,
 };
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -89,32 +89,28 @@ impl ModelAdapter for FakeModelAdapter {
 fn test_config() -> AgentConfig {
     AgentConfig {
         system_prompt: "you are helpful".into(),
-        model: ModelSpec {
-            provider: "test".into(),
-            model: "test".into(),
-            api_key_env: None,
-            api_url: None,
-            max_tokens: None,
-            context_window_size: None,
+        model: config::ModelConfig {
+            spec: ModelSpec {
+                provider: "test".into(),
+                model: "test".into(),
+                api_key_env: None,
+                api_url: None,
+                max_tokens: None,
+                context_window_size: None,
+            },
+            options: RequestOptions::default(),
         },
-        request_options: RequestOptions::default(),
         budget: BudgetConfig {
             max_tokens: None,
             max_tool_calls: None,
             max_duration: None,
             max_cost_usd: None,
         },
-        max_steps: 10,
-        allowed_skills: None,
-        allowed_tools: None,
-        mcp_servers: vec![],
-        tool_search_enabled: false,
-        compaction_threshold: None,
-        compaction_recent_messages: config::default_recent_messages_value(),
-        webhook_enabled: false,
-        code_execution_enabled: false,
-        skills_dir: None,
-        run_depth: 0,
+        skills: config::SkillsConfig::default(),
+        runtime: config::RuntimeConfig {
+            max_steps: 10,
+            ..config::RuntimeConfig::default()
+        },
     }
 }
 
@@ -147,7 +143,7 @@ async fn run_loop_max_steps() {
     let registry = ToolRegistry::new();
 
     let mut config = test_config();
-    config.max_steps = 0;
+    config.runtime.max_steps = 0;
 
     let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
 
@@ -801,7 +797,7 @@ impl ModelAdapter for ToolSearchModel {
 #[tokio::test]
 async fn tool_search_enabled_loads_schemas_progressively() {
     let mut config = test_config();
-    config.tool_search_enabled = true;
+    config.runtime.tool_search_enabled = true;
     let mut registry = ToolRegistry::new();
     registry
         .register(Arc::new(AsyncTool {
@@ -884,9 +880,11 @@ impl ModelAdapter for CompactingModel {
 #[tokio::test]
 async fn context_compaction_emits_event() {
     let mut config = test_config();
-    config.compaction_threshold = Some(0.5);
-    config.compaction_recent_messages = 0;
-    config.model.context_window_size = Some(100);
+    config.runtime.compaction = Some(config::CompactionConfig {
+        threshold: 0.5,
+        recent_messages: 0,
+    });
+    config.model.spec.context_window_size = Some(100);
     let model = Arc::new(CompactingModel {
         call_count: AtomicU32::new(0),
     });
@@ -1026,7 +1024,7 @@ impl ModelAdapter for WebhookModel {
 #[tokio::test]
 async fn webhook_async_job_completes_without_polling() {
     let mut config = test_config();
-    config.webhook_enabled = true;
+    config.runtime.webhook_enabled = true;
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(WebhookTool)).unwrap();
     let model = Arc::new(WebhookModel {
@@ -1108,7 +1106,7 @@ impl ModelAdapter for AllowedToolsModel {
 #[tokio::test]
 async fn allowed_tools_filters_visibility_and_permits_execution() {
     let mut config = test_config();
-    config.allowed_tools = Some(vec!["echo".into()]);
+    config.runtime.allowed_tools = Some(vec!["echo".into()]);
 
     let model = Arc::new(AllowedToolsModel {
         target_tool: "echo".into(),
@@ -1141,7 +1139,7 @@ async fn allowed_tools_filters_visibility_and_permits_execution() {
 #[tokio::test]
 async fn allowed_tools_denies_disallowed_tool_by_name() {
     let mut config = test_config();
-    config.allowed_tools = Some(vec!["echo".into()]);
+    config.runtime.allowed_tools = Some(vec!["echo".into()]);
 
     let model = Arc::new(AllowedToolsModel {
         target_tool: "secret".into(),
@@ -1180,7 +1178,7 @@ async fn allowed_tools_denies_disallowed_tool_by_name() {
 #[tokio::test]
 async fn allowed_tools_empty_list_denies_all() {
     let mut config = test_config();
-    config.allowed_tools = Some(vec![]);
+    config.runtime.allowed_tools = Some(vec![]);
 
     let model = Arc::new(AllowedToolsModel {
         target_tool: "echo".into(),
@@ -1204,7 +1202,7 @@ async fn allowed_tools_empty_list_denies_all() {
 #[tokio::test]
 async fn allowed_tools_none_permits_all() {
     let mut config = test_config();
-    config.allowed_tools = None;
+    config.runtime.allowed_tools = None;
 
     let model = Arc::new(AllowedToolsModel {
         target_tool: "echo".into(),
@@ -1979,7 +1977,7 @@ bundled_tools:
     }
 
     let mut config = test_config();
-    config.skills_dir = Some(tmp.path().to_str().unwrap().to_string());
+    config.skills.dir = Some(tmp.path().to_str().unwrap().to_string());
 
     let model = Arc::new(SkillToolModel {
         call_count: std::sync::atomic::AtomicU32::new(0),

@@ -19,10 +19,11 @@ pub(crate) async fn maybe_compact_context(
     step: u32,
     usage: &TokenUsage,
 ) {
-    let Some(threshold) = config.compaction_threshold else {
+    let Some(ref compaction) = config.runtime.compaction else {
         return;
     };
-    let Some(context_window_size) = config.model.context_window_size else {
+    let threshold = compaction.threshold;
+    let Some(context_window_size) = config.model.spec.context_window_size else {
         return;
     };
     if !(0.0..=1.0).contains(&threshold) || context_window_size == 0 {
@@ -37,7 +38,7 @@ pub(crate) async fn maybe_compact_context(
     if (used as f32 / context_window_size as f32) < threshold {
         return;
     }
-    let recent_count = config.compaction_recent_messages;
+    let recent_count = compaction.recent_messages;
     if messages.len() <= recent_count + 1 {
         return;
     }
@@ -72,7 +73,7 @@ pub(crate) async fn maybe_compact_context(
                 content: vec![ContentBlock::Text(prompt)],
             }],
             &[],
-            &config.request_options,
+            &config.model.options,
             None,
         )
         .await;

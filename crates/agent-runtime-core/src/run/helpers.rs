@@ -130,7 +130,7 @@ pub(crate) async fn connect_mcp_servers(
     config: &AgentConfig,
     registry: &mut ToolRegistry,
 ) -> Result<(), crate::tool::mcp::McpError> {
-    for server in &config.mcp_servers {
+    for server in &config.runtime.mcp_servers {
         match &server.transport {
             McpTransport::Stdio { command, args } => {
                 let client = Arc::new(McpStdioClient::connect_owned(command, args).await?);

@@ -8,7 +8,7 @@ use agent_runtime_core::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
     OptionAdjustment, RequestOptions, StopReason, StreamEvent, ThinkingLevel, TokenUsage,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun};
+use agent_runtime_core::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
 use agent_runtime_core::tool::async_job::{JobHandle, JobStatus};
 use agent_runtime_core::tool::builtin::ReadFileTool;
 use agent_runtime_core::tool::registry::ToolRegistry;
@@ -22,32 +22,28 @@ use tokio::sync::Mutex;
 fn test_config() -> AgentConfig {
     AgentConfig {
         system_prompt: "You are a test assistant.".into(),
-        model: ModelSpec {
-            provider: "test".into(),
-            model: "test-model".into(),
-            api_key_env: None,
-            api_url: None,
-            max_tokens: Some(100),
-            context_window_size: None,
+        model: ModelConfig {
+            spec: ModelSpec {
+                provider: "test".into(),
+                model: "test-model".into(),
+                api_key_env: None,
+                api_url: None,
+                max_tokens: Some(100),
+                context_window_size: None,
+            },
+            options: RequestOptions::default(),
         },
-        request_options: RequestOptions::default(),
         budget: BudgetConfig {
             max_tokens: Some(100_000),
             max_tool_calls: Some(10),
             max_duration: Some(Duration::from_secs(30)),
             max_cost_usd: Some(1.0),
         },
-        max_steps: 10,
-        allowed_skills: None,
-        allowed_tools: None,
-        mcp_servers: vec![],
-        tool_search_enabled: false,
-        compaction_threshold: None,
-        compaction_recent_messages: 10,
-        webhook_enabled: false,
-        code_execution_enabled: false,
-        skills_dir: None,
-        run_depth: 0,
+        skills: SkillsConfig::default(),
+        runtime: RuntimeConfig {
+            max_steps: 10,
+            ..RuntimeConfig::default()
+        },
     }
 }
 
@@ -357,8 +353,8 @@ async fn agent_config_request_options_reach_model_complete() {
     });
     let registry = ToolRegistry::new();
     let mut config = test_config();
-    config.request_options.thinking = ThinkingLevel::High;
-    config.request_options.max_tokens = Some(777);
+    config.model.options.thinking = ThinkingLevel::High;
+    config.model.options.max_tokens = Some(777);
 
     let (handle, mut rx) = AgentRun::start(config, "test request options".into(), model, registry);
     while rx.recv().await.is_some() {}
@@ -485,8 +481,8 @@ async fn e2e_config_serialization() {
     let json = serde_json::to_string(&config).expect("config should serialize");
     let deserialized: AgentConfig = serde_json::from_str(&json).expect("config should deserialize");
     assert_eq!(deserialized.system_prompt, config.system_prompt);
-    assert_eq!(deserialized.model.model, config.model.model);
-    assert_eq!(deserialized.max_steps, config.max_steps);
+    assert_eq!(deserialized.model.spec.model, config.model.spec.model);
+    assert_eq!(deserialized.runtime.max_steps, config.runtime.max_steps);
 }
 
 #[tokio::test]

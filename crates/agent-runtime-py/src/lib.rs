@@ -14,7 +14,9 @@ use agent_runtime_core::model::{
     create_adapter_from_config, normalize_provider_model, CachePolicy, CompatibilityPolicy,
     ModelSpec, ProviderRuntimeConfig, RequestOptions, ThinkingLevel,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun, RunHandle};
+use agent_runtime_core::run::{
+    AgentConfig, AgentRun, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
+};
 use agent_runtime_core::tool::agent::AgentTool;
 use agent_runtime_core::tool::async_job::{JobHandle, JobStatus};
 use agent_runtime_core::tool::builtin::WriteFileTool;
@@ -464,27 +466,23 @@ impl Agent {
 
         Ok(AgentConfig {
             system_prompt: self.system_prompt.clone(),
-            model: ModelSpec {
-                provider: normalized.provider.into(),
-                model: normalized.model.into(),
-                api_key_env: self.api_key_env.clone(),
-                api_url: self.api_url.clone(),
-                max_tokens: self.max_tokens,
-                context_window_size: None,
+            model: ModelConfig {
+                spec: ModelSpec {
+                    provider: normalized.provider.into(),
+                    model: normalized.model.into(),
+                    api_key_env: self.api_key_env.clone(),
+                    api_url: self.api_url.clone(),
+                    max_tokens: self.max_tokens,
+                    context_window_size: None,
+                },
+                options: self.request_options.clone(),
             },
-            request_options: self.request_options.clone(),
             budget: budget_config,
-            max_steps: 20,
-            allowed_skills: None,
-            allowed_tools: None,
-            mcp_servers: vec![],
-            tool_search_enabled: false,
-            compaction_threshold: None,
-            compaction_recent_messages: 10,
-            webhook_enabled: false,
-            code_execution_enabled: false,
-            skills_dir: self.skills_dir.clone(),
-            run_depth: 0,
+            skills: SkillsConfig {
+                dir: self.skills_dir.clone(),
+                ..SkillsConfig::default()
+            },
+            runtime: RuntimeConfig::default(),
         })
     }
 
