@@ -80,9 +80,11 @@ pub struct ReadFileTool {
 ```
 
 - Default: `vec![]` → no restriction (backward compatible).
-- When configured: resolve `path` to canonical form, check `starts_with(any allowed_root)`.
+- When configured: resolve `path` via `canonicalize()` before checking `starts_with(any allowed_root)`. Symlinks pointing outside the root are blocked because `canonicalize()` resolves them.
 - Reject with `ToolError { code: "PATH_NOT_ALLOWED" }` before any I/O.
-- Same mechanism for `WriteFileTool`.
+- Same mechanism for `WriteFileTool`. `file_read_roots` and `file_write_roots` are separate config keys; no implicit fallback from one to the other.
+
+
 
 Configuration via `AgentConfig`:
 
@@ -108,6 +110,10 @@ When non-empty: `.env_clear()` then pass only listed vars + `PATH`. When empty: 
 - Default: `tempfile::tempdir()` per execution (same as `SkillBundledTool::spawn_script`).
 - This prevents the subprocess from even seeing the agent's cwd.
 - Cost: one `mkdir` + `rmdir` per `execute_python` call. Negligible.
+
+**Interaction with persistent sessions**: `ExecutePythonTool` reuses a single Python process across calls. If each call gets a new tempdir, `os.getcwd()` changes between invocations — user code that writes files to cwd and reads them in a subsequent call breaks. Mitigation: use the **same** tempdir for the lifetime of the session, not per-call. The tempdir is created on first `execute()` and cleaned up when the session is dropped (or killed on timeout).
+
+**Network access**: v0.7 does not restrict outbound network from code exec subprocesses. `subprocess.run("curl ...")` remains possible. Full network sandbox requires OS support (seccomp/Landlock) and is deferred to v0.8+ — see section 4. Users who need network isolation today should not enable `code_execution_enabled` with untrusted input.
 
 ### 3.4 Canonical path resolution everywhere
 
