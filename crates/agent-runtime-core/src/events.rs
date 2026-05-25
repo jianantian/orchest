@@ -118,6 +118,11 @@ pub enum RuntimeEvent {
         run_depth: u32,
         event: Box<RuntimeEvent>,
     },
+    SubAgentEvent {
+        parent_run_id: RunId,
+        child_run_id: RunId,
+        event: Box<RuntimeEvent>,
+    },
 
     RunCompleted {
         output: Value,
@@ -125,4 +130,43 @@ pub enum RuntimeEvent {
     RunFailed {
         error: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn sub_agent_event_round_trips_through_serde() {
+        let parent_run_id = RunId::new();
+        let child_run_id = RunId::new();
+        let event = RuntimeEvent::SubAgentEvent {
+            parent_run_id,
+            child_run_id,
+            event: Box::new(RuntimeEvent::RunCompleted {
+                output: json!("done"),
+            }),
+        };
+
+        let serialized = serde_json::to_string(&event).expect("serialize event");
+        let deserialized: RuntimeEvent =
+            serde_json::from_str(&serialized).expect("deserialize event");
+
+        match deserialized {
+            RuntimeEvent::SubAgentEvent {
+                parent_run_id: parent,
+                child_run_id: child,
+                event,
+            } => {
+                assert_eq!(parent, parent_run_id);
+                assert_eq!(child, child_run_id);
+                assert!(matches!(
+                    event.as_ref(),
+                    RuntimeEvent::RunCompleted { output } if output == "done"
+                ));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
 }

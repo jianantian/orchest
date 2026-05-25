@@ -1,11 +1,10 @@
 // Main agent run loop.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use serde_json::{json, Value};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use serde_json::json;
+use tokio::sync::mpsc;
 
 use crate::budget::BudgetGuard;
 use crate::events::RuntimeEvent;
@@ -20,23 +19,44 @@ use crate::tool::{Tool, ToolCall, ToolContext, ToolDef, ToolOutput};
 
 use super::compaction::maybe_compact_context;
 use super::config::{AgentConfig, RunId};
-use super::handle::ApprovalSlot;
+use super::handle::ApprovalBus;
 use super::helpers::{append_searched_tool_defs, connect_mcp_servers, emit, truncate_output};
 use super::skills::register_skills;
-use super::sub_agent::{execute_agent_delegate, execute_sub_agent_request};
+use super::sub_agent::execute_agent_delegate;
 use super::tool_exec::poll_async_job;
 use super::webhook::start_webhook_server;
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_loop(
+    run_id: RunId,
+    config: AgentConfig,
+    input: String,
+    model: Arc<dyn ModelAdapter>,
+    registry: ToolRegistry,
+    tx: mpsc::Sender<RuntimeEvent>,
+    approval_bus: ApprovalBus,
+) {
+    run_loop_inner(
+        run_id,
+        config,
+        input,
+        model,
+        registry,
+        tx,
+        approval_bus.clone(),
+    )
+    .await;
+    approval_bus.cancel(run_id).await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_loop_inner(
     run_id: RunId,
     config: AgentConfig,
     input: String,
     model: Arc<dyn ModelAdapter>,
     mut registry: ToolRegistry,
     tx: mpsc::Sender<RuntimeEvent>,
-    pending_approval: ApprovalSlot,
-    active_children: Arc<Mutex<HashMap<RunId, ApprovalSlot>>>,
+    approval_bus: ApprovalBus,
 ) {
     emit(&tx, RuntimeEvent::RunStarted { run_id }).await;
 
@@ -289,13 +309,7 @@ pub(crate) async fn run_loop(
             };
 
             if tool.metadata().requires_approval {
-                // Create a oneshot for this specific approval request
-                // and store the sender so RunHandle can deliver it.
-                let (atx, arx) = oneshot::channel();
-                {
-                    let mut slot = pending_approval.lock().await;
-                    *slot = Some(atx);
-                }
+                let approval_rx = approval_bus.request(run_id).await;
                 emit(
                     &tx,
                     RuntimeEvent::ApprovalRequested {
@@ -304,7 +318,8 @@ pub(crate) async fn run_loop(
                 )
                 .await;
 
-                let approved = arx.await.unwrap_or(false);
+                let approved = approval_rx.await.unwrap_or(false);
+                approval_bus.cancel(run_id).await;
 
                 if approved {
                     emit(
@@ -417,19 +432,6 @@ pub(crate) async fn run_loop(
                     if let Some(max_tokens) = max_output_tokens {
                         value = truncate_output(value, max_tokens);
                     }
-                    if value.get("__sub_agent_request").and_then(Value::as_bool) == Some(true) {
-                        value = execute_sub_agent_request(
-                            run_id,
-                            &config,
-                            &model,
-                            &registry,
-                            &tx,
-                            &mut budget,
-                            &value,
-                            &active_children,
-                        )
-                        .await;
-                    }
                     if config.runtime.tool_search_enabled && tool_call.name == "search_tools" {
                         append_searched_tool_defs(&mut tool_defs, &value);
                     }
@@ -482,7 +484,7 @@ pub(crate) async fn run_loop(
                         &tx,
                         &mut budget,
                         *delegate,
-                        &active_children,
+                        approval_bus.clone(),
                     )
                     .await;
                     let duration = start_time.elapsed();

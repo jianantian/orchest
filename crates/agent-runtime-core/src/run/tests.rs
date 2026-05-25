@@ -8,8 +8,8 @@ use crate::model::{
 use crate::tool::async_job::{JobHandle, JobStatus};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{
-    JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput,
-    ToolSource,
+    AgentDelegate, JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolMetadata,
+    ToolOutput, ToolSource,
 };
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -1223,30 +1223,6 @@ async fn allowed_tools_none_permits_all() {
         .any(|e| matches!(e, RuntimeEvent::ToolCallCompleted { tool, .. } if tool == "echo")));
 }
 
-#[test]
-fn narrow_permission_list_intersects_with_parent() {
-    let parent = Some(vec!["a".into(), "b".into()]);
-    let requested = vec!["b".into(), "c".into()];
-    let result = helpers::narrow_permission_list(&parent, &requested);
-    assert_eq!(result, vec!["b".to_string()]);
-}
-
-#[test]
-fn narrow_permission_list_none_parent_allows_all_requested() {
-    let parent = None;
-    let requested = vec!["x".into(), "y".into()];
-    let result = helpers::narrow_permission_list(&parent, &requested);
-    assert_eq!(result, vec!["x".to_string(), "y".to_string()]);
-}
-
-#[test]
-fn narrow_permission_list_expansion_rejected() {
-    let parent = Some(vec!["a".into()]);
-    let requested = vec!["a".into(), "b".into()];
-    let result = helpers::narrow_permission_list(&parent, &requested);
-    assert_eq!(result, vec!["a".to_string()]);
-}
-
 struct SlowTool {
     metadata: ToolMetadata,
 }
@@ -1605,7 +1581,7 @@ async fn respond_approval_without_pending_returns_error() {
     let result = handle.respond_approval(handle.run_id, true).await;
     assert!(result.is_err());
     assert!(
-        result.unwrap_err().contains("no approval pending"),
+        result.unwrap_err().contains("no pending approval"),
         "should report no pending approval"
     );
 
@@ -2002,9 +1978,9 @@ bundled_tools:
 // ── Sub-agent approval routing tests ──────────────────────────
 
 /// Model shared by parent and child.  The parent calls `spawn_sub`
-/// which returns a `__sub_agent_request` with input "child with
-/// approval".  The child sees that text in its first user message
-/// and calls `write_file` (which requires approval).
+/// which returns an AgentDelegate with input "child with approval".
+/// The child sees that text in its first user message and calls
+/// `write_file` (which requires approval).
 struct SubAgentApprovalModel;
 
 #[async_trait::async_trait]
@@ -2090,9 +2066,25 @@ impl ModelAdapter for SubAgentApprovalModel {
     }
 }
 
-/// Tool that returns a __sub_agent_request for a child that will
-/// call write_file (which requires approval).
-struct SpawnSubTool;
+/// Tool that returns an AgentDelegate for a child that will call
+/// write_file (which requires approval).
+struct SpawnSubTool {
+    model: Arc<dyn ModelAdapter>,
+    registry: ToolRegistry,
+}
+
+impl SpawnSubTool {
+    fn new() -> Self {
+        let mut registry = ToolRegistry::new();
+        registry
+            .register(Arc::new(FakeTool::guarded("write_file")))
+            .unwrap();
+        Self {
+            model: Arc::new(SubAgentApprovalModel),
+            registry,
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl Tool for SpawnSubTool {
@@ -2123,12 +2115,16 @@ impl Tool for SpawnSubTool {
         _input: serde_json::Value,
         _ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        Ok(ToolOutput::Immediate(json!({
-            "__sub_agent_request": true,
-            "input": "child with approval",
-            "config": {
-                "budget": { "max_tokens": 50, "max_tool_calls": 5, "max_duration_secs": 10 }
-            }
+        let mut config = test_config();
+        config.budget.max_tokens = Some(50);
+        config.budget.max_tool_calls = Some(5);
+        config.budget.max_duration = Some(Duration::from_secs(10));
+        Ok(ToolOutput::AgentDelegate(Box::new(AgentDelegate {
+            input: "child with approval".into(),
+            config,
+            model: Arc::clone(&self.model),
+            registry: self.registry.clone(),
+            output_mapper: Arc::new(|details| details.get("output").cloned().unwrap_or(details)),
         })))
     }
 }
@@ -2137,11 +2133,7 @@ impl Tool for SpawnSubTool {
 async fn sub_agent_approval_routed_to_child() {
     let model = Arc::new(SubAgentApprovalModel);
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(SpawnSubTool)).unwrap();
-    // Register the guarded tool that the child model will call
-    registry
-        .register(Arc::new(FakeTool::guarded("write_file")))
-        .unwrap();
+    registry.register(Arc::new(SpawnSubTool::new())).unwrap();
 
     let (handle, mut rx) = AgentRun::start(test_config(), "go".into(), model, registry);
 
@@ -2152,6 +2144,11 @@ async fn sub_agent_approval_routed_to_child() {
     loop {
         match rx.recv().await {
             Some(RuntimeEvent::ChildRunEvent {
+                child_run_id,
+                event,
+                ..
+            })
+            | Some(RuntimeEvent::SubAgentEvent {
                 child_run_id,
                 event,
                 ..
@@ -2169,9 +2166,9 @@ async fn sub_agent_approval_routed_to_child() {
                 if matches!(event.as_ref(), RuntimeEvent::ToolCallCompleted { .. }) {
                     child_tool_completed = true;
                 }
-                events.push(RuntimeEvent::ChildRunEvent {
+                events.push(RuntimeEvent::SubAgentEvent {
+                    parent_run_id: handle.run_id,
                     child_run_id,
-                    run_depth: 1,
                     event,
                 });
             }
@@ -2196,10 +2193,7 @@ async fn sub_agent_approval_routed_to_child() {
 async fn sub_agent_approval_denied_completes_child() {
     let model = Arc::new(SubAgentApprovalModel);
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(SpawnSubTool)).unwrap();
-    registry
-        .register(Arc::new(FakeTool::guarded("write_file")))
-        .unwrap();
+    registry.register(Arc::new(SpawnSubTool::new())).unwrap();
 
     let (handle, mut rx) = AgentRun::start(test_config(), "go".into(), model, registry);
 
@@ -2209,6 +2203,11 @@ async fn sub_agent_approval_denied_completes_child() {
     loop {
         match rx.recv().await {
             Some(RuntimeEvent::ChildRunEvent {
+                child_run_id,
+                event,
+                ..
+            })
+            | Some(RuntimeEvent::SubAgentEvent {
                 child_run_id,
                 event,
                 ..
@@ -2223,9 +2222,9 @@ async fn sub_agent_approval_denied_completes_child() {
                 if matches!(event.as_ref(), RuntimeEvent::ApprovalDenied { .. }) {
                     child_approval_denied = true;
                 }
-                events.push(RuntimeEvent::ChildRunEvent {
+                events.push(RuntimeEvent::SubAgentEvent {
+                    parent_run_id: handle.run_id,
                     child_run_id,
-                    run_depth: 1,
                     event,
                 });
             }
@@ -2266,8 +2265,8 @@ async fn respond_approval_unknown_run_id_returns_error() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
-        err.contains("unknown run_id"),
-        "expected error about unknown run_id, got: {err}"
+        err.contains("no pending approval"),
+        "expected error about pending approval, got: {err}"
     );
 
     handle.wait().await;
@@ -2277,12 +2276,7 @@ async fn respond_approval_unknown_run_id_returns_error() {
 async fn child_run_events_carry_run_depth_and_child_id() {
     let model = Arc::new(SubAgentApprovalModel);
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(SpawnSubTool)).unwrap();
-    registry.register(Arc::new(FakeTool::echo())).unwrap();
-    // Register write_file so the child doesn't fail on missing tool
-    registry
-        .register(Arc::new(FakeTool::guarded("write_file")))
-        .unwrap();
+    registry.register(Arc::new(SpawnSubTool::new())).unwrap();
 
     let (handle, mut rx) = AgentRun::start(test_config(), "go".into(), model, registry);
     let parent_run_id = handle.run_id;
@@ -2303,6 +2297,16 @@ async fn child_run_events_carry_run_depth_and_child_id() {
                 }
                 child_run_ids.push(child_run_id);
                 child_depths.push(run_depth);
+            }
+            Some(RuntimeEvent::SubAgentEvent {
+                child_run_id,
+                event,
+                ..
+            }) => {
+                if matches!(event.as_ref(), RuntimeEvent::ApprovalRequested { .. }) {
+                    handle.respond_approval(child_run_id, true).await.unwrap();
+                }
+                child_run_ids.push(child_run_id);
             }
             Some(_) => {}
             None => break,

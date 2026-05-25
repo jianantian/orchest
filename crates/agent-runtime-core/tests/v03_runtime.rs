@@ -12,7 +12,7 @@ use agent_runtime_core::skill::{SkillDependencies, SkillEnvManager, SkillManifes
 use agent_runtime_core::tool::agent::AgentTool;
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
-    JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
+    AgentDelegate, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -175,7 +175,17 @@ impl ModelAdapter for SubAgentModel {
     }
 }
 
-struct SpawnChildTool;
+struct SpawnChildTool {
+    model: Arc<dyn ModelAdapter>,
+}
+
+impl SpawnChildTool {
+    fn new() -> Self {
+        Self {
+            model: Arc::new(SubAgentModel),
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl Tool for SpawnChildTool {
@@ -211,16 +221,16 @@ impl Tool for SpawnChildTool {
         _input: serde_json::Value,
         _ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        Ok(ToolOutput::Immediate(json!({
-            "__sub_agent_request": true,
-            "input": "child task",
-            "config": {
-                "budget": {
-                    "max_tokens": 20,
-                    "max_tool_calls": 3,
-                    "max_duration_secs": 5
-                }
-            }
+        let mut config = test_config();
+        config.budget.max_tokens = Some(20);
+        config.budget.max_tool_calls = Some(3);
+        config.budget.max_duration = Some(Duration::from_secs(5));
+        Ok(ToolOutput::AgentDelegate(Box::new(AgentDelegate {
+            input: "child task".into(),
+            config,
+            model: Arc::clone(&self.model),
+            registry: ToolRegistry::new(),
+            output_mapper: Arc::new(|details| details.get("output").cloned().unwrap_or(details)),
         })))
     }
 }
@@ -315,7 +325,7 @@ fn sub_agent_budget_is_capped_by_parent_remaining() {
 #[tokio::test]
 async fn sub_agent_request_forwards_events_and_completes_parent_tool_result() {
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(SpawnChildTool)).unwrap();
+    registry.register(Arc::new(SpawnChildTool::new())).unwrap();
     let (handle, mut rx) = AgentRun::start(
         test_config(),
         "parent task".into(),
@@ -336,7 +346,7 @@ async fn sub_agent_request_forwards_events_and_completes_parent_tool_result() {
                 saw_started = true;
                 assert_ne!(parent_run_id, child_run_id);
             }
-            RuntimeEvent::ChildRunEvent { event, .. } if matches!(event.as_ref(), RuntimeEvent::RunCompleted { output } if output == "child done") =>
+            RuntimeEvent::SubAgentEvent { event, .. } if matches!(event.as_ref(), RuntimeEvent::RunCompleted { output } if output == "child done") =>
             {
                 saw_child_completion = true;
             }
@@ -387,7 +397,7 @@ async fn agent_tool_runs_child_agent_with_isolated_context() {
     let mut final_output = None;
     while let Some(event) = rx.recv().await {
         match event {
-            RuntimeEvent::ChildRunEvent { event, .. } if matches!(event.as_ref(), RuntimeEvent::RunCompleted { output } if output == "child done") =>
+            RuntimeEvent::SubAgentEvent { event, .. } if matches!(event.as_ref(), RuntimeEvent::RunCompleted { output } if output == "child done") =>
             {
                 saw_child_done = true;
             }
