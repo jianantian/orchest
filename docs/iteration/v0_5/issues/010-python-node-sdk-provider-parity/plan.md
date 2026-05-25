@@ -24,9 +24,9 @@
 
 5. **更新 examples**
    - Python DeepSeek + thinking options
-   - Python legacy Anthropic shorthand
+   - Python canonical Anthropic provider model + request_options
    - Node OpenRouter nested model + requestOptions
-   - Node legacy Anthropic shorthand
+   - Node canonical Anthropic provider model + requestOptions
 
 6. **测试与验证**
    - Python/Node 分别测试 config mapping、legacy shorthand、request options mapping
