@@ -18,7 +18,6 @@ pub struct OpenAiAdapter {
     api_url: String,
     model: String,
     max_tokens: u32,
-    client: reqwest::Client,
 }
 
 impl std::fmt::Debug for OpenAiAdapter {
@@ -73,7 +72,6 @@ impl OpenAiAdapter {
                 .unwrap_or(&config.model)
                 .to_string(),
             max_tokens: config.max_tokens,
-            client: reqwest::Client::new(),
         })
     }
 
@@ -371,8 +369,7 @@ impl ModelAdapter for OpenAiAdapter {
         let (body, mut option_adjustments) = self.build_request_body(messages, tools, options);
 
         let start = Instant::now();
-        let response = self
-            .client
+        let response = crate::http::shared_client()
             .post(&self.api_url)
             .bearer_auth(&self.api_key)
             .json(&body)

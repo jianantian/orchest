@@ -18,7 +18,6 @@ pub struct DeepSeekAdapter {
     api_url: String,
     model: String,
     max_tokens: u32,
-    client: reqwest::Client,
 }
 
 impl std::fmt::Debug for DeepSeekAdapter {
@@ -67,7 +66,6 @@ impl DeepSeekAdapter {
             api_url: normalize_chat_url(&api_url),
             model: config.model,
             max_tokens: config.max_tokens,
-            client: reqwest::Client::new(),
         })
     }
 
@@ -368,8 +366,7 @@ impl ModelAdapter for DeepSeekAdapter {
         }
 
         let start = Instant::now();
-        let response = self
-            .client
+        let response = crate::http::shared_client()
             .post(&self.api_url)
             .bearer_auth(&self.api_key)
             .json(&body)

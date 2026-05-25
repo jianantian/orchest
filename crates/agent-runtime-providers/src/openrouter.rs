@@ -20,7 +20,6 @@ pub struct OpenRouterAdapter {
     max_tokens: u32,
     app_title: Option<String>,
     site_url: Option<String>,
-    client: reqwest::Client,
 }
 
 impl std::fmt::Debug for OpenRouterAdapter {
@@ -80,7 +79,6 @@ impl OpenRouterAdapter {
             max_tokens: config.max_tokens,
             app_title,
             site_url,
-            client: reqwest::Client::new(),
         })
     }
 
@@ -388,8 +386,7 @@ impl ModelAdapter for OpenRouterAdapter {
         let (body, mut option_adjustments) =
             self.try_build_request_body(messages, tools, options)?;
 
-        let mut request = self
-            .client
+        let mut request = crate::http::shared_client()
             .post(&self.api_url)
             .bearer_auth(&self.api_key)
             .json(&body);

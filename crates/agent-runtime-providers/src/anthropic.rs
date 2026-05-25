@@ -20,7 +20,6 @@ pub struct AnthropicAdapter {
     api_url: String,
     model: String,
     max_tokens: u32,
-    client: reqwest::Client,
 }
 
 impl std::fmt::Debug for AnthropicAdapter {
@@ -75,7 +74,6 @@ impl AnthropicAdapter {
             api_url: normalize_messages_url(&api_url),
             model: config.model,
             max_tokens: config.max_tokens,
-            client: reqwest::Client::new(),
         })
     }
 
@@ -378,8 +376,7 @@ impl ModelAdapter for AnthropicAdapter {
         }
 
         let start = Instant::now();
-        let response = self
-            .client
+        let response = crate::http::shared_client()
             .post(&self.api_url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", defaults::anthropic::API_VERSION)
