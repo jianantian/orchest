@@ -331,8 +331,7 @@ impl ModelAdapter for DeepSeekAdapter {
         options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
-        let _span =
-            telemetry::model_complete_span("deepseek", &self.model, tx.is_some());
+        let _span = telemetry::model_complete_span("deepseek", &self.model, tx.is_some());
         let thinking_enabled = options.thinking != ThinkingLevel::Off;
 
         // Handle include_thinking: false when thinking is enabled

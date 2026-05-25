@@ -330,8 +330,7 @@ impl ModelAdapter for AnthropicAdapter {
         options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
-        let _span =
-            telemetry::model_complete_span("anthropic", &self.model, tx.is_some());
+        let _span = telemetry::model_complete_span("anthropic", &self.model, tx.is_some());
 
         let (body, mut option_adjustments) = self.build_request_body(messages, tools, options);
 

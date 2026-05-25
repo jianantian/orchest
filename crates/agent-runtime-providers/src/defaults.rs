@@ -1,5 +1,5 @@
-/// Per-provider configuration defaults. All provider constants live here so
-/// they can be found and updated in one place.
+//! Per-provider configuration defaults. All provider constants live here so
+//! they can be found and updated in one place.
 
 pub const MAX_TOKENS: u32 = 4096;
 

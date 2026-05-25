@@ -782,12 +782,7 @@ impl Agent {
     ///
     /// Runs the agent in a background thread and processes events on the
     /// Python side with periodic signal checks so Ctrl+C works.
-    fn run_stream<'py>(
-        &self,
-        py: Python<'py>,
-        input: String,
-        on_event: Py<PyAny>,
-    ) -> PyResult<()> {
+    fn run_stream<'py>(&self, py: Python<'py>, input: String, on_event: Py<PyAny>) -> PyResult<()> {
         let config = self.build_config()?;
         let registry = self.build_registry()?;
         let model_adapter = self.build_model()?;
