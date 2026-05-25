@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,6 +35,33 @@ const WEB_SEARCH_SYSTEM_PROMPT: &str =
 const MAIN_SYSTEM_PROMPT: &str = include_str!("../support/deep_research_prompts/main_system.md");
 const RESEARCH_INSTRUCTIONS_PROMPT: &str =
     include_str!("../support/deep_research_prompts/research_instructions.md");
+
+fn load_dotenv() -> Result<(), Box<dyn std::error::Error>> {
+    let path = Path::new(".env");
+    if !path.exists() {
+        return Ok(());
+    }
+    for raw_line in fs::read_to_string(path)?.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((raw_key, raw_value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = raw_key.trim();
+        if key.is_empty() || env::var_os(key).is_some() {
+            continue;
+        }
+        let value = raw_value
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string();
+        env::set_var(key, value);
+    }
+    Ok(())
+}
 
 fn require_env(name: &str) -> Result<String, Box<dyn std::error::Error>> {
     env::var(name).map_err(|_| format!("{name} is required for this non-mock example").into())
@@ -472,6 +500,7 @@ fn parse_args() -> (String, String, u32) {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    load_dotenv()?;
     require_env("EXA_API_KEY")?;
     let (question, report_path, min_calls) = parse_args();
     if let Some(parent) = Path::new(&report_path).parent() {

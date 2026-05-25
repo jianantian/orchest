@@ -2,6 +2,8 @@
 
 Required environment:
 
+    cp examples/support/deep_research.env.example .env
+
     EXA_API_KEY=...
     DEEP_RESEARCH_MODEL=...      # Main synthesis model
     WEB_SEARCH_MODEL=...         # Query rewrite/search model
@@ -47,6 +49,7 @@ from agent_runtime import Agent, RuntimeEvent
 EXA_SEARCH_URL = "https://api.exa.ai/search"
 DEFAULT_REPORT_PATH = "target/deep-research-report.md"
 PROMPT_DIR = Path(__file__).resolve().parents[1] / "support" / "deep_research_prompts"
+ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 MAX_HIGHLIGHT_CHARS = 900
 DEFAULT_MIN_RESEARCH_CALLS = 6
 SUPPORTED_EXA_CATEGORIES = {
@@ -57,6 +60,20 @@ SUPPORTED_EXA_CATEGORIES = {
     "personal site",
     "financial report",
 }
+
+
+def load_dotenv(path: Path = ENV_PATH) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value.strip().strip('"').strip("'")
 
 
 def prompt_template(name: str, **values: object) -> str:
@@ -249,6 +266,7 @@ def parse_args() -> tuple[str, str, int]:
 
 
 if __name__ == "__main__":
+    load_dotenv()
     question, report_path, min_calls = parse_args()
 
     require_env("EXA_API_KEY")

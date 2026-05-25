@@ -2,6 +2,8 @@
  * Deep research example using real models, Exa, and agent-as-tool.
  *
  * Required environment:
+ *   cp examples/support/deep_research.env.example .env
+ *
  *   EXA_API_KEY=...
  *   DEEP_RESEARCH_MODEL=...
  *   WEB_SEARCH_MODEL=...
@@ -22,6 +24,7 @@ const repoRoot = resolve(__dirname, "../..");
 const nativeSource = join(repoRoot, "target/debug/libagent_runtime_node.dylib");
 const nativeAddon = join(repoRoot, "target/debug/agent_runtime_node.node");
 const promptDir = join(repoRoot, "examples/support/deep_research_prompts");
+const envPath = join(repoRoot, ".env");
 
 if (!existsSync(nativeAddon)) {
   copyFileSync(nativeSource, nativeAddon);
@@ -41,6 +44,24 @@ const SUPPORTED_EXA_CATEGORIES = new Set([
   "personal site",
   "financial report",
 ]);
+
+function loadDotenv(): void {
+  if (!existsSync(envPath)) {
+    return;
+  }
+  for (const rawLine of readFileSync(envPath, "utf8").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#") || !line.includes("=")) {
+      continue;
+    }
+    const [rawKey, ...rawValue] = line.split("=");
+    const key = rawKey.trim();
+    if (!key || process.env[key] !== undefined) {
+      continue;
+    }
+    process.env[key] = rawValue.join("=").trim().replace(/^['"]|['"]$/g, "");
+  }
+}
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -269,6 +290,8 @@ function parseArgs(): { question: string; reportPath: string; minCalls: number }
   }
   return { question, reportPath, minCalls };
 }
+
+loadDotenv();
 
 const { question, reportPath, minCalls } = parseArgs();
 requireEnv("EXA_API_KEY");
