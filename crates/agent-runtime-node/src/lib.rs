@@ -358,6 +358,63 @@ impl Agent {
         Ok(result)
     }
 
+    #[napi(
+        ts_args_type = "input: string, onEvent: (event: Record<string, unknown>) => void"
+    )]
+    pub fn run_stream(&self, input: String, on_event: napi::JsFunction) -> napi::Result<()> {
+        let config = self.build_config()?;
+
+        let mut registry = ToolRegistry::new();
+        for tool in &self.tools {
+            registry
+                .register(Arc::clone(tool))
+                .map_err(|e| napi::Error::from_reason(format!("{}", e)))?;
+        }
+
+        let model: Arc<dyn agent_runtime_core::model::ModelAdapter> = Arc::from(
+            create_adapter_from_config(self.provider_config())
+                .map_err(|e| napi::Error::from_reason(format!("failed to create model: {e}")))?,
+        );
+
+        let tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = on_event
+            .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<Value>| {
+                let js_value = ctx.env.to_js_value(&ctx.value)?;
+                Ok(vec![js_value])
+            })?;
+
+        let run_handle_ref = Arc::clone(&self.run_handle);
+
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| napi::Error::from_reason(format!("failed to create runtime: {}", e)))?;
+
+        rt.block_on(async {
+            let (handle, mut event_rx) = AgentRun::start(config, input, model, registry);
+
+            {
+                let mut guard = run_handle_ref.lock().await;
+                *guard = Some(handle);
+            }
+
+            while let Some(event) = event_rx.recv().await {
+                let value = serde_json::to_value(&event)
+                    .map_err(|e| napi::Error::from_reason(format!("serialize error: {}", e)))?;
+                let value = runtime_event_to_value(value);
+                tsfn.call(value, ThreadsafeFunctionCallMode::NonBlocking);
+            }
+
+            {
+                let mut guard = run_handle_ref.lock().await;
+                if let Some(h) = guard.take() {
+                    h.wait().await;
+                }
+            }
+
+            Ok::<(), napi::Error>(())
+        })?;
+
+        Ok(())
+    }
+
     #[napi]
     pub fn respond_approval(&self, run_id: String, approved: bool) -> napi::Result<()> {
         let run_handle_ref = Arc::clone(&self.run_handle);

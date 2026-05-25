@@ -35,6 +35,7 @@ const { Agent } = require(nativeAddon);
 const EXA_SEARCH_URL = "https://api.exa.ai/search";
 const DEFAULT_REPORT_PATH = "target/deep-research-report.md";
 const DEFAULT_MIN_RESEARCH_CALLS = 6;
+const DEFAULT_MAX_TOKENS = 16000;
 const MAX_HIGHLIGHT_CHARS = 900;
 const SUPPORTED_EXA_CATEGORIES = new Set([
   "company",
@@ -59,7 +60,11 @@ function loadDotenv(): void {
     if (!key || process.env[key] !== undefined) {
       continue;
     }
-    process.env[key] = rawValue.join("=").trim().replace(/^['"]|['"]$/g, "");
+    const value = rawValue.join("=").trim().replace(/^['"]|['"]$/g, "");
+    if (!value) {
+      continue;
+    }
+    process.env[key] = value;
   }
 }
 
@@ -175,17 +180,24 @@ function finalOutput(events: Array<Record<string, unknown>>): unknown {
   return null;
 }
 
-function printTrace(events: Array<Record<string, unknown>>): void {
-  for (const event of events) {
-    if (event.type === "tool_call_started") {
-      console.log(`[tool] ${event.tool} input=${JSON.stringify(event.input)}`);
-    } else if (event.type === "tool_call_completed") {
-      console.log(`[tool:done] ${event.tool}`);
-    } else if (event.type === "run_completed") {
-      console.log(`\n[final]\n${event.output}`);
-    } else if (event.type === "run_failed") {
-      console.log(`\n[error] ${event.error}`);
+function printEvent(event: Record<string, unknown>): void {
+  if (event.type === "tool_call_started") {
+    console.log(`[tool] ${event.tool} input=${JSON.stringify(event.input)}`);
+  } else if (event.type === "tool_call_completed") {
+    console.log(`[tool:done] ${event.tool}`);
+  } else if (event.type === "sub_agent_started") {
+    console.log(`[sub-agent] started ${JSON.stringify(event.config_summary)}`);
+  } else if (event.type === "sub_agent_completed") {
+    console.log(`[sub-agent] completed child=${event.child_run_id}`);
+  } else if (event.type === "child_run_event") {
+    const child = event.event as Record<string, unknown> | undefined;
+    if (child?.type === "tool_call_started") {
+      console.log(`[sub-agent:tool] ${child.tool} input=${JSON.stringify(child.input)}`);
     }
+  } else if (event.type === "run_completed") {
+    console.log(`\n[final]\n${event.output}`);
+  } else if (event.type === "run_failed") {
+    console.log(`\n[error] ${event.error}`);
   }
 }
 
@@ -193,7 +205,7 @@ function buildWebSearchAgent(): any {
   const agent = new Agent({
     model: requireEnv("WEB_SEARCH_MODEL"),
     systemPrompt: promptTemplate("web_search_system", { today: currentDateLabel() }),
-    apiUrl: process.env.ANTHROPIC_API_URL,
+    apiUrl: process.env.ANTHROPIC_API_URL || undefined,
   });
   agent.registerToolWithHandler(
     "exa_search",
@@ -224,6 +236,7 @@ function researchInstructions(question: string, reportPath: string, minCalls: nu
 }
 
 function buildDeepResearchAgent(webSearchAgent: any, reportPath: string, minCalls: number): any {
+  const maxTokens = Number(process.env.DEEP_RESEARCH_MAX_TOKENS || DEFAULT_MAX_TOKENS);
   const agent = new Agent({
     model: requireEnv("DEEP_RESEARCH_MODEL"),
     systemPrompt: promptTemplate("main_system", {
@@ -231,7 +244,8 @@ function buildDeepResearchAgent(webSearchAgent: any, reportPath: string, minCall
       report_path: reportPath,
       min_calls: minCalls,
     }),
-    apiUrl: process.env.ANTHROPIC_API_URL,
+    apiUrl: process.env.ANTHROPIC_API_URL || undefined,
+    maxTokens,
   });
 
   agent.registerToolWithHandler(
@@ -302,7 +316,13 @@ console.log(`[question] ${question}`);
 
 const webAgent = buildWebSearchAgent();
 const deepAgent = buildDeepResearchAgent(webAgent, reportPath, minCalls);
-const events = deepAgent.runSync(researchInstructions(question, reportPath, minCalls));
-printTrace(events);
+const events: Array<Record<string, unknown>> = [];
+deepAgent.runStream(
+  researchInstructions(question, reportPath, minCalls),
+  (event: Record<string, unknown>) => {
+    events.push(event);
+    printEvent(event);
+  },
+);
 console.log(`\n[report] ${reportPath}`);
 console.log(`[raw-output] ${JSON.stringify(finalOutput(events))}`);

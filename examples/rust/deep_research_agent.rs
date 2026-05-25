@@ -29,6 +29,7 @@ type ExampleAgentParts = (
 const EXA_SEARCH_URL: &str = "https://api.exa.ai/search";
 const DEFAULT_REPORT_PATH: &str = "target/deep-research-report.md";
 const DEFAULT_MIN_RESEARCH_CALLS: u32 = 6;
+const DEFAULT_MAX_TOKENS: u32 = 16_000;
 const MAX_HIGHLIGHT_CHARS: usize = 900;
 const WEB_SEARCH_SYSTEM_PROMPT: &str =
     include_str!("../support/deep_research_prompts/web_search_system.md");
@@ -58,6 +59,9 @@ fn load_dotenv() -> Result<(), Box<dyn std::error::Error>> {
             .trim_matches('"')
             .trim_matches('\'')
             .to_string();
+        if value.is_empty() {
+            continue;
+        }
         env::set_var(key, value);
     }
     Ok(())
@@ -68,7 +72,7 @@ fn require_env(name: &str) -> Result<String, Box<dyn std::error::Error>> {
 }
 
 fn provider_url() -> Option<String> {
-    env::var("ANTHROPIC_API_URL").ok()
+    env::var("ANTHROPIC_API_URL").ok().filter(|s| !s.is_empty())
 }
 
 fn current_date_label() -> String {
@@ -333,13 +337,14 @@ fn agent_config(
 
 fn provider_model(
     model_ref: String,
+    max_tokens: Option<u32>,
 ) -> Result<Arc<dyn agent_runtime_core::model::ModelAdapter>, Box<dyn std::error::Error>> {
     let adapter = create_adapter_from_config(ProviderRuntimeConfig {
         model: model_ref,
         api_key: None,
         api_key_env: None,
         api_url: provider_url(),
-        max_tokens: None,
+        max_tokens,
     })?;
     Ok(Arc::from(adapter))
 }
@@ -352,7 +357,7 @@ fn build_web_search_agent() -> Result<ExampleAgentParts, Box<dyn std::error::Err
         prompt_template("web_search_system", &[("today", today)])?,
         10,
     )?;
-    let model = provider_model(model_ref)?;
+    let model = provider_model(model_ref, None)?;
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(ExaSearchTool::new()))?;
     Ok((config, model, registry))
@@ -379,7 +384,11 @@ fn build_deep_research_agent(
         )?,
         40,
     )?;
-    let model = provider_model(model_ref)?;
+    let max_tokens = env::var("DEEP_RESEARCH_MAX_TOKENS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_MAX_TOKENS);
+    let model = provider_model(model_ref, Some(max_tokens))?;
     let mut registry = ToolRegistry::new();
     let input_schema = json!({
         "type": "object",
@@ -437,34 +446,32 @@ fn final_output(events: &[RuntimeEvent]) -> Option<Value> {
     })
 }
 
-fn print_trace(events: &[RuntimeEvent]) {
-    for event in events {
-        match event {
-            RuntimeEvent::ToolCallStarted { tool, input, .. } => {
-                println!("[tool] {tool} input={input}");
-            }
-            RuntimeEvent::ToolCallCompleted { tool, .. } => {
-                println!("[tool:done] {tool}");
-            }
-            RuntimeEvent::SubAgentStarted { config_summary, .. } => {
-                println!("[sub-agent] started {config_summary}");
-            }
-            RuntimeEvent::SubAgentCompleted { child_run_id, .. } => {
-                println!("[sub-agent] completed child={child_run_id}");
-            }
-            RuntimeEvent::ChildRunEvent { event, .. } => {
-                if let RuntimeEvent::ToolCallStarted { tool, input, .. } = event.as_ref() {
-                    println!("[sub-agent:tool] {tool} input={input}");
-                }
-            }
-            RuntimeEvent::RunCompleted { output, .. } => {
-                println!("\n[final]\n{output}");
-            }
-            RuntimeEvent::RunFailed { error, .. } => {
-                println!("\n[error] {error}");
-            }
-            _ => {}
+fn print_event(event: &RuntimeEvent) {
+    match event {
+        RuntimeEvent::ToolCallStarted { tool, input, .. } => {
+            println!("[tool] {tool} input={input}");
         }
+        RuntimeEvent::ToolCallCompleted { tool, .. } => {
+            println!("[tool:done] {tool}");
+        }
+        RuntimeEvent::SubAgentStarted { config_summary, .. } => {
+            println!("[sub-agent] started {config_summary}");
+        }
+        RuntimeEvent::SubAgentCompleted { child_run_id, .. } => {
+            println!("[sub-agent] completed child={child_run_id}");
+        }
+        RuntimeEvent::ChildRunEvent { event, .. } => {
+            if let RuntimeEvent::ToolCallStarted { tool, input, .. } = event.as_ref() {
+                println!("[sub-agent:tool] {tool} input={input}");
+            }
+        }
+        RuntimeEvent::RunCompleted { output, .. } => {
+            println!("\n[final]\n{output}");
+        }
+        RuntimeEvent::RunFailed { error, .. } => {
+            println!("\n[error] {error}");
+        }
+        _ => {}
     }
 }
 
@@ -524,11 +531,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (handle, mut event_rx) = AgentRun::start(deep_config, input, deep_model, deep_registry);
     let mut events = Vec::new();
     while let Some(event) = event_rx.recv().await {
+        print_event(&event);
         events.push(event);
     }
     handle.wait().await;
 
-    print_trace(&events);
     println!("\n[report] {report_path}");
     println!(
         "[raw-output] {}",
