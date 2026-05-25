@@ -344,8 +344,7 @@ impl ModelAdapter for OpenAiAdapter {
         options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
-        let _span =
-            telemetry::model_complete_span("openai", &self.model, tx.is_some());
+        let _span = telemetry::model_complete_span("openai", &self.model, tx.is_some());
 
         if options.compatibility_policy == CompatibilityPolicy::Strict
             && options.thinking_budget_tokens.is_some()

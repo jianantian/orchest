@@ -382,8 +382,7 @@ impl ModelAdapter for OpenRouterAdapter {
         options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
-        let _span =
-            telemetry::model_complete_span("openrouter", &self.model, tx.is_some());
+        let _span = telemetry::model_complete_span("openrouter", &self.model, tx.is_some());
 
         let (body, mut option_adjustments) =
             self.try_build_request_body(messages, tools, options)?;

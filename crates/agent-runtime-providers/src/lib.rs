@@ -21,7 +21,6 @@ pub mod telemetry;
 use std::future::Future;
 use tokio::sync::mpsc;
 
-
 #[allow(clippy::result_large_err)]
 pub fn create_adapter(
     model: &str,

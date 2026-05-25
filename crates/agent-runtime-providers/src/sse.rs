@@ -408,9 +408,15 @@ mod tests {
             usage,
             stop_reason: stop,
             ..
-        } = parse_openai_sse_stream(s, Some(&tx), Some("reasoning_content"), None, Instant::now())
-            .await
-            .unwrap();
+        } = parse_openai_sse_stream(
+            s,
+            Some(&tx),
+            Some("reasoning_content"),
+            None,
+            Instant::now(),
+        )
+        .await
+        .unwrap();
         drop(tx);
 
         let mut events = Vec::new();
@@ -524,7 +530,9 @@ mod tests {
             "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n\
                    data: [DONE]\n\n";
         let s = make_stream(vec![sse]);
-        let r = parse_openai_sse_stream(s, None, None, None, Instant::now()).await.unwrap();
+        let r = parse_openai_sse_stream(s, None, None, None, Instant::now())
+            .await
+            .unwrap();
         let usage = r.usage;
         assert_eq!(usage.input_tokens, 0);
         assert_eq!(usage.output_tokens, 0);

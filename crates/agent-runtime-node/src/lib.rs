@@ -358,9 +358,7 @@ impl Agent {
         Ok(result)
     }
 
-    #[napi(
-        ts_args_type = "input: string, onEvent: (event: Record<string, unknown>) => void"
-    )]
+    #[napi(ts_args_type = "input: string, onEvent: (event: Record<string, unknown>) => void")]
     pub fn run_stream(&self, input: String, on_event: napi::JsFunction) -> napi::Result<()> {
         let config = self.build_config()?;
 
