@@ -206,6 +206,13 @@ skills/                          # example skills
 - **Test helpers** are named with a `Fake` prefix: `FakeModelAdapter`, `FakeScriptExecutor`; place them in a `#[cfg(test)]` module or `tests/helpers/`
 - CI must pass: `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`, `cargo fmt --check`
 
+### Python / PyO3 Build Verification
+
+- `agent-runtime-py` is a PyO3 `extension-module` crate. On macOS, `cargo build -p agent-runtime-py` may fail at link time with missing Python symbols; do **not** treat that command as the authoritative Python binding build check.
+- Use `maturin develop` or `maturin build` from the workspace root to verify the Python extension package. If `maturin` is not installed globally, `uvx maturin develop` is the preferred local command.
+- After `maturin develop`, verify Python package behavior with the project virtualenv, for example: `.venv/bin/python -m pytest python/tests/test_run_sync.py -v`.
+- Rust workspace checks still use `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`, and `cargo fmt --check`; those commands exercise the PyO3 crate in test/check mode without replacing the `maturin` packaging verification.
+
 ### Naming Conventions
 
 | Context | Convention | Examples |
