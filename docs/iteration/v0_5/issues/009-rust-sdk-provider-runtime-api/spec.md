@@ -91,6 +91,7 @@ v0.5 的 001–007 建立了独立 `agent-runtime-providers` crate，并让 core
 - Rust SDK contract 是 Python / Node.js SDK 的上游设计，不把语言绑定限制带入这里。
 - 不允许 Python / Node.js 绑定层各自实现 provider routing 或 provider-specific config construction。
 - API key/env resolution 是配置加载层级，不是 provider/model 智能 fallback。用户传入的 `provider/model` 对应 provider 没有找到 API key 时，runtime 必须报错；不得猜测或改用其他 provider/model/tenant 的 key。跨 provider、跨模型、跨 tenant 的 key 映射由调用方显式配置。
+- Provider adapter 尽可能单纯：只负责统一 API 调用接口、provider-specific protocol 管理、错误/usage/streaming 归一化；retry、failover、跨 provider routing 等策略属于 agent core 或更上层 policy，不放进 provider adapter。
 - 不要求发布 crates.io；本 issue 只稳定 workspace 内 public API。
 - `ProviderRuntimeConfig` 是唯一 canonical Rust provider config；`ModelSpec` 旧字段只能通过 conversion/backward compatibility 维护。
 

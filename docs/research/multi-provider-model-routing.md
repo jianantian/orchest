@@ -35,9 +35,23 @@ The key property is that routing is explicit and config-driven. Runtime should
 not infer that two provider/model pairs are interchangeable just because their
 names look similar.
 
+## Layering Boundary
+
+Provider adapters should stay as simple as possible. Their job is to provide a
+uniform API calling interface and manage provider-specific protocol details:
+request shape, streaming parse, error preservation, usage mapping, prompt cache
+metadata, and provider-native replay requirements.
+
+Retry, cross-provider route selection, failover, health policy, and cost/latency
+tradeoffs should live in agent core or a higher-level policy layer. Provider
+code should expose enough structured errors and telemetry for those layers to
+make decisions, but it should not make routing decisions itself.
+
 ## Design Principles
 
 - Availability and prompt cache behavior are the first-order goals.
+- Provider adapters stay single-purpose: API call normalization and
+  provider-specific management, not routing policy.
 - The selected provider must be stable for the duration of a run/session unless
   the caller explicitly starts a new routing boundary.
 - Do not switch providers mid-run based on retry, latency, rate limit, or cost
