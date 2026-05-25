@@ -27,10 +27,6 @@ pub enum BudgetViolation {
     MaxCostExceeded,
 }
 
-// Hardcoded Anthropic pricing (per million tokens), v0.1 only
-const INPUT_COST_PER_MILLION: f64 = 3.0;
-const OUTPUT_COST_PER_MILLION: f64 = 15.0;
-
 pub struct BudgetGuard {
     config: BudgetConfig,
     usage: BudgetUsage,
@@ -48,9 +44,9 @@ impl BudgetGuard {
 
     pub fn record_model_call(&mut self, token_usage: &TokenUsage) {
         self.usage.tokens_used += token_usage.input_tokens + token_usage.output_tokens;
-        self.usage.cost_usd += (token_usage.input_tokens as f64 * INPUT_COST_PER_MILLION
-            + token_usage.output_tokens as f64 * OUTPUT_COST_PER_MILLION)
-            / 1_000_000.0;
+        if let Some(cost) = token_usage.cost_usd {
+            self.usage.cost_usd += cost;
+        }
     }
 
     pub fn record_tool_call(&mut self) {
@@ -180,6 +176,7 @@ mod tests {
         guard.record_model_call(&TokenUsage {
             input_tokens: 1_000_000,
             output_tokens: 0,
+            cost_usd: Some(3.0),
             ..Default::default()
         });
         assert!(guard.usage().cost_usd > 2.9);
@@ -187,5 +184,41 @@ mod tests {
             guard.check(),
             Some(BudgetViolation::MaxCostExceeded)
         ));
+    }
+
+    #[test]
+    fn budget_skips_cost_when_adapter_reports_none() {
+        let mut guard = BudgetGuard::new(BudgetConfig {
+            max_tokens: None,
+            max_tool_calls: None,
+            max_duration: None,
+            max_cost_usd: Some(1.0),
+        });
+        guard.record_model_call(&TokenUsage {
+            input_tokens: 1000,
+            output_tokens: 500,
+            cost_usd: None,
+            ..Default::default()
+        });
+        assert_eq!(guard.usage().cost_usd, 0.0);
+    }
+
+    #[test]
+    fn budget_accumulates_reported_cost() {
+        let mut guard = BudgetGuard::new(BudgetConfig {
+            max_tokens: None,
+            max_tool_calls: None,
+            max_duration: None,
+            max_cost_usd: None,
+        });
+        guard.record_model_call(&TokenUsage {
+            cost_usd: Some(0.01),
+            ..Default::default()
+        });
+        guard.record_model_call(&TokenUsage {
+            cost_usd: Some(0.02),
+            ..Default::default()
+        });
+        assert!((guard.usage().cost_usd - 0.03).abs() < 1e-10);
     }
 }

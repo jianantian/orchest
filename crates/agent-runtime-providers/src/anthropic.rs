@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     CacheCapability, CachePolicy, CapabilitySource, CompatibilityPolicy, ContentBlock, Message,
-    ModelAdapter, ModelCapabilities, ModelError, ModelResponse, OptionAdjustment,
+    ModelAdapter, ModelCapabilities, ModelError, ModelPricing, ModelResponse, OptionAdjustment,
     ReasoningCapability, RequestOptions, Role, StopReason, StreamEvent, ThinkingLevel, TokenUsage,
     ToolDef,
 };
@@ -270,6 +270,37 @@ fn map_stop_reason(raw: &str) -> StopReason {
     }
 }
 
+impl AnthropicAdapter {
+    fn pricing(&self) -> ModelPricing {
+        match self.model.as_str() {
+            m if m.contains("claude-opus-4") => ModelPricing {
+                input_per_million_usd: 15.0,
+                output_per_million_usd: 75.0,
+                cache_read_per_million_usd: Some(1.5),
+                cache_write_per_million_usd: Some(18.75),
+            },
+            m if m.contains("claude-sonnet-4") => ModelPricing {
+                input_per_million_usd: 3.0,
+                output_per_million_usd: 15.0,
+                cache_read_per_million_usd: Some(0.3),
+                cache_write_per_million_usd: Some(3.75),
+            },
+            m if m.contains("claude-haiku-4") => ModelPricing {
+                input_per_million_usd: 0.8,
+                output_per_million_usd: 4.0,
+                cache_read_per_million_usd: Some(0.08),
+                cache_write_per_million_usd: Some(1.0),
+            },
+            _ => ModelPricing {
+                input_per_million_usd: 3.0,
+                output_per_million_usd: 15.0,
+                cache_read_per_million_usd: None,
+                cache_write_per_million_usd: None,
+            },
+        }
+    }
+}
+
 #[async_trait]
 impl ModelAdapter for AnthropicAdapter {
     fn provider_name(&self) -> &str {
@@ -320,6 +351,7 @@ impl ModelAdapter for AnthropicAdapter {
             max_output_tokens: Some(self.max_tokens),
             context_window_size: Some(200_000),
             source: CapabilitySource::Static,
+            pricing: Some(self.pricing()),
         }
     }
 
@@ -677,6 +709,8 @@ impl ModelAdapter for AnthropicAdapter {
             first_token_latency,
             Some(duration),
         );
+
+        usage.cost_usd = Some(self.pricing().calculate(&usage));
 
         Ok(ModelResponse {
             content: content_blocks,
@@ -1508,7 +1542,12 @@ data: {}
         }
 
         let done_usage = done_usage.expect("should have Done event");
-        assert_eq!(done_usage, response.usage);
+        assert_eq!(done_usage.input_tokens, response.usage.input_tokens);
+        assert_eq!(done_usage.output_tokens, response.usage.output_tokens);
+        assert!(
+            response.usage.cost_usd.is_some(),
+            "response should have cost_usd filled by adapter"
+        );
     }
 
     #[test]

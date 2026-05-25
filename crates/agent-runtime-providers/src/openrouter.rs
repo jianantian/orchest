@@ -372,6 +372,7 @@ impl ModelAdapter for OpenRouterAdapter {
             max_output_tokens: Some(self.max_tokens),
             context_window_size: None,
             source: CapabilitySource::Assumed,
+            pricing: None,
         }
     }
 
