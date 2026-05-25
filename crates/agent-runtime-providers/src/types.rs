@@ -141,6 +141,32 @@ pub struct ModelCapabilities {
     pub max_output_tokens: Option<u32>,
     pub context_window_size: Option<u64>,
     pub source: CapabilitySource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<ModelPricing>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelPricing {
+    pub input_per_million_usd: f64,
+    pub output_per_million_usd: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_per_million_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_per_million_usd: Option<f64>,
+}
+
+impl ModelPricing {
+    pub fn calculate(&self, usage: &TokenUsage) -> f64 {
+        let base = usage.input_tokens as f64 * self.input_per_million_usd / 1_000_000.0
+            + usage.output_tokens as f64 * self.output_per_million_usd / 1_000_000.0;
+        let cache_read = usage.cache_read_tokens as f64
+            * self.cache_read_per_million_usd.unwrap_or(0.0)
+            / 1_000_000.0;
+        let cache_write = usage.cache_write_tokens as f64
+            * self.cache_write_per_million_usd.unwrap_or(0.0)
+            / 1_000_000.0;
+        base + cache_read + cache_write
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -222,6 +248,8 @@ pub struct TokenUsage {
     pub cache_write_tokens: u64,
     #[serde(default)]
     pub details: HashMap<String, u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -385,6 +413,46 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, 0);
         assert_eq!(usage.cache_write_tokens, 0);
         assert!(usage.details.is_empty());
+    }
+
+    #[test]
+    fn model_pricing_calculate_sonnet() {
+        let pricing = ModelPricing {
+            input_per_million_usd: 3.0,
+            output_per_million_usd: 15.0,
+            cache_read_per_million_usd: None,
+            cache_write_per_million_usd: None,
+        };
+        let usage = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            ..Default::default()
+        };
+        let cost = pricing.calculate(&usage);
+        assert!((cost - 18.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn model_pricing_calculate_with_cache() {
+        let pricing = ModelPricing {
+            input_per_million_usd: 3.0,
+            output_per_million_usd: 15.0,
+            cache_read_per_million_usd: Some(0.3),
+            cache_write_per_million_usd: Some(3.75),
+        };
+        let usage = TokenUsage {
+            input_tokens: 500_000,
+            output_tokens: 100_000,
+            cache_read_tokens: 200_000,
+            cache_write_tokens: 50_000,
+            ..Default::default()
+        };
+        let cost = pricing.calculate(&usage);
+        let expected = 500_000.0 * 3.0 / 1_000_000.0
+            + 100_000.0 * 15.0 / 1_000_000.0
+            + 200_000.0 * 0.3 / 1_000_000.0
+            + 50_000.0 * 3.75 / 1_000_000.0;
+        assert!((cost - expected).abs() < 1e-10);
     }
 
     #[test]

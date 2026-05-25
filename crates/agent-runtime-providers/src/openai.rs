@@ -334,6 +334,7 @@ impl ModelAdapter for OpenAiAdapter {
             max_output_tokens: Some(self.max_tokens),
             context_window_size: Some(128_000),
             source: CapabilitySource::Static,
+            pricing: None,
         }
     }
 
