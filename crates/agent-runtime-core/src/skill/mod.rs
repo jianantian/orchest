@@ -293,18 +293,8 @@ async fn install_python_orchest_sdk(env_dir: &Path) -> Result<(), EnvError> {
             tokio::fs::write(
                 package_dir.join("__init__.py"),
                 r#"
-import os
-
 def create_sub_agent(parent_run_id=None, config=None, input=None):
-    parent_run_id = parent_run_id or os.environ.get("ORCHEST_PARENT_RUN_ID")
-    if not parent_run_id:
-        return {"error": "missing_parent_run_id"}
-    return {
-        "__sub_agent_request": True,
-        "parent_run_id": parent_run_id,
-        "config": config or {},
-        "input": input
-    }
+    return {"error": "sub_agent_requests_require_agent_delegate_tool"}
 "#,
             )
             .await
@@ -327,11 +317,7 @@ async fn install_node_orchest_sdk(cache_dir: &Path) -> Result<(), EnvError> {
         package_dir.join("index.js"),
         r#"
 function create_sub_agent(parentRunId, config, input) {
-  const parent_run_id = parentRunId || process.env.ORCHEST_PARENT_RUN_ID;
-  if (!parent_run_id) {
-    return { error: "missing_parent_run_id" };
-  }
-  return { __sub_agent_request: true, parent_run_id, config: config || {}, input };
+  return { error: "sub_agent_requests_require_agent_delegate_tool" };
 }
 
 module.exports = { create_sub_agent };

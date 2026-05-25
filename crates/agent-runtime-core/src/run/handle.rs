@@ -1,4 +1,4 @@
-// RunHandle, ApprovalSlot, EventReceiver, and approval routing logic.
+// RunHandle, ApprovalBus, EventReceiver, and approval routing logic.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,19 +11,38 @@ use super::config::RunId;
 
 pub type EventReceiver = mpsc::Receiver<RuntimeEvent>;
 
-/// Shared slot for a pending approval oneshot sender.  When a tool
-/// requires approval, the run loop creates a oneshot pair, stores the
-/// sender here, emits `ApprovalRequested`, and awaits the receiver.
-/// `respond_approval` takes the sender out of the slot and sends the
-/// verdict.  This guarantees that an approval response can only be
-/// consumed by the request it was intended for.
-pub(crate) type ApprovalSlot = Arc<Mutex<Option<oneshot::Sender<bool>>>>;
+/// Shared approval registry for an entire agent-run tree.
+/// All runs (root and sub-agents at any depth) share the same instance.
+#[derive(Clone, Default)]
+pub struct ApprovalBus {
+    pending: Arc<Mutex<HashMap<RunId, oneshot::Sender<bool>>>>,
+}
+
+impl ApprovalBus {
+    pub async fn request(&self, run_id: RunId) -> oneshot::Receiver<bool> {
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().await.insert(run_id, tx);
+        rx
+    }
+
+    pub async fn respond(&self, run_id: RunId, approved: bool) -> Result<(), String> {
+        match self.pending.lock().await.remove(&run_id) {
+            Some(tx) => tx
+                .send(approved)
+                .map_err(|_| format!("run {run_id} is no longer waiting for approval")),
+            None => Err(format!("no pending approval for run {run_id}")),
+        }
+    }
+
+    pub async fn cancel(&self, run_id: RunId) {
+        self.pending.lock().await.remove(&run_id);
+    }
+}
 
 pub struct RunHandle {
     pub run_id: RunId,
     pub(crate) task: tokio::task::JoinHandle<()>,
-    pub(crate) pending_approval: ApprovalSlot,
-    pub(crate) active_children: Arc<Mutex<HashMap<RunId, ApprovalSlot>>>,
+    pub(crate) approval_bus: ApprovalBus,
 }
 
 impl RunHandle {
@@ -31,39 +50,39 @@ impl RunHandle {
         let _ = self.task.await;
     }
 
-    /// Route an approval response to the matching active run.
-    ///
-    /// If `run_id` matches this handle's own `run_id`, the approval goes
-    /// to the root run.  If it matches a currently-active child run, the
-    /// approval is forwarded there.  Returns `Err` if no approval is
-    /// pending for the given `run_id` or the run is unknown.
+    /// Route an approval response to any run in this run tree.
     pub async fn respond_approval(&self, run_id: RunId, approved: bool) -> Result<(), String> {
-        let slot = if run_id == self.run_id {
-            &self.pending_approval
-        } else {
-            let children = self.active_children.lock().await;
-            let child_slot = children.get(&run_id).cloned();
-            return match child_slot {
-                Some(slot) => take_and_send(&slot, approved, run_id).await,
-                None => Err(format!(
-                    "unknown run_id {run_id}: no active run or child with that id"
-                )),
-            };
-        };
-        take_and_send(slot, approved, run_id).await
+        self.approval_bus.respond(run_id, approved).await
     }
 }
 
-pub(crate) async fn take_and_send(
-    slot: &ApprovalSlot,
-    approved: bool,
-    run_id: RunId,
-) -> Result<(), String> {
-    let sender = slot.lock().await.take();
-    match sender {
-        Some(tx) => tx
-            .send(approved)
-            .map_err(|_| format!("run {run_id} is no longer waiting for approval")),
-        None => Err(format!("no approval pending for run {run_id}")),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn approval_bus_round_trip() {
+        let bus = ApprovalBus::default();
+        let run_id = RunId::new();
+        let rx = bus.request(run_id).await;
+        bus.respond(run_id, true).await.unwrap();
+        assert!(rx.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn approval_bus_unknown_run_id_returns_err() {
+        let bus = ApprovalBus::default();
+        let result = bus.respond(RunId::new(), true).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn approval_bus_cancel_clears_slot() {
+        let bus = ApprovalBus::default();
+        let run_id = RunId::new();
+        let _rx = bus.request(run_id).await;
+        bus.cancel(run_id).await;
+        let result = bus.respond(run_id, true).await;
+        assert!(result.is_err());
     }
 }

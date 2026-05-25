@@ -1,12 +1,10 @@
 // Utility functions shared across run submodules.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
-use crate::budget::BudgetConfig;
 use crate::events::RuntimeEvent;
 use crate::tool::mcp::{McpClient, McpHttpClient, McpStdioClient, McpTool, McpTransport};
 use crate::tool::registry::ToolRegistry;
@@ -53,20 +51,6 @@ pub(crate) fn truncate_str_utf8_safe(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
-pub(crate) fn narrow_permission_list(
-    parent: &Option<Vec<String>>,
-    requested: &[String],
-) -> Vec<String> {
-    match parent {
-        None => requested.to_vec(),
-        Some(parent_list) => requested
-            .iter()
-            .filter(|name| parent_list.contains(name))
-            .cloned()
-            .collect(),
-    }
-}
-
 pub(crate) fn min_option<T: Ord + Copy>(requested: Option<T>, remaining: Option<T>) -> Option<T> {
     match (requested, remaining) {
         (Some(a), Some(b)) => Some(a.min(b)),
@@ -82,21 +66,6 @@ pub(crate) fn min_option_f64(requested: Option<f64>, remaining: Option<f64>) -> 
         (Some(a), None) => Some(a),
         (None, Some(b)) => Some(b),
         (None, None) => None,
-    }
-}
-
-pub(crate) fn parse_budget_config(value: &Value) -> BudgetConfig {
-    BudgetConfig {
-        max_tokens: value.get("max_tokens").and_then(Value::as_u64),
-        max_tool_calls: value
-            .get("max_tool_calls")
-            .and_then(Value::as_u64)
-            .map(|value| value as u32),
-        max_duration: value
-            .get("max_duration_secs")
-            .and_then(Value::as_u64)
-            .map(Duration::from_secs),
-        max_cost_usd: value.get("max_cost_usd").and_then(Value::as_f64),
     }
 }
 
