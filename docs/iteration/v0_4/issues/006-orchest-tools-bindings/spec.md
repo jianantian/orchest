@@ -42,7 +42,7 @@
   from agent_runtime import Agent
   from orchest_tools import WebFetchTool, WebSearchTool, register_all
 
-  agent = Agent(model="claude-sonnet-4-20250514")
+  agent = Agent(model="anthropic/claude-sonnet-4-20250514")
   agent.register_native_tool(WebFetchTool().handle())
   # 或一键注册所有：
   register_all(agent)
@@ -62,7 +62,7 @@
   import { Agent } from "@orchest/runtime";
   import { WebFetchTool, WebSearchTool, registerAll } from "@orchest/tools";
 
-  const agent = new Agent({ model: "claude-sonnet-4-20250514", systemPrompt: "..." });
+  const agent = new Agent({ model: "anthropic/claude-sonnet-4-20250514", systemPrompt: "..." });
   agent.registerNativeTool(new WebFetchTool({ timeoutMs: 10000 }).handle());
   // 或一键注册：
   registerAll(agent);

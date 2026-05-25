@@ -1,10 +1,13 @@
 """Async tool example: simulate a video generation task with progress."""
 
 import os
+import sys
 import threading
+from pathlib import Path
 
 from agent_runtime import Agent
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "support"))
 from mock_anthropic_provider import serve
 
 
@@ -20,7 +23,7 @@ def configure_demo_provider() -> str | None:
 
 
 agent = Agent(
-    model="claude-sonnet-4-20250514",
+    model="anthropic/claude-sonnet-4-20250514",
     system_prompt="You are a helpful assistant that can generate videos.",
     api_url=configure_demo_provider(),
     budget={"max_tool_calls": 5},

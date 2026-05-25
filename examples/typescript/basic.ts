@@ -25,7 +25,7 @@ if (!existsSync(nativeAddon)) {
 const { Agent } = require(nativeAddon);
 
 function startProvider(port: number) {
-  const child = spawn("python3", ["examples/python/mock_anthropic_provider.py", String(port)], {
+  const child = spawn("python3", ["examples/support/mock_anthropic_provider.py", String(port)], {
     cwd: repoRoot,
     stdio: "ignore",
   });
@@ -45,7 +45,7 @@ process.env.ANTHROPIC_API_KEY ||= "local-demo-key";
 
 setTimeout(() => {
   const agent = new Agent({
-    model: "claude-sonnet-4-20250514",
+    model: "anthropic/claude-sonnet-4-20250514",
     systemPrompt: "You are a helpful assistant with access to tools.",
     apiUrl: process.env.ANTHROPIC_API_URL || `http://127.0.0.1:${port}/v1/messages`,
   });
