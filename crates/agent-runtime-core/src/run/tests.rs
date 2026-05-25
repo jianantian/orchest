@@ -1548,19 +1548,14 @@ fn truncate_output_multibyte_utf8_safe() {
     // the middle of a character.
     let emoji = "🦀".repeat(20); // 80 bytes
     let value = Value::String(emoji);
-    // max_tokens=5 → max_bytes=20, which is 5 crab emojis exactly
     let result = helpers::truncate_output(value, 5);
     let s = result.as_str().unwrap();
     assert!(s.contains("[output truncated]"));
-    // Must be valid UTF-8 (no panic, no partial chars)
-    assert!(s.starts_with("🦀"));
+    assert!(crate::tokenizer::count_tokens(s) <= 5);
 
     // Mix of 1-byte and 3-byte chars: "aé" is 3 bytes
     let mixed = "aé".repeat(30); // 90 bytes
     let value2 = Value::String(mixed);
-    // max_tokens=2 → max_bytes=8; 'a'=1byte, 'é'=2bytes, "aé"=3bytes
-    // 8 bytes fits "aé" twice (6 bytes) + "a" (7) + can't fit "é" (9 > 8)
-    // so we get 7 bytes: "aéaéa" — but boundary must be clean
     let result2 = helpers::truncate_output(value2, 2);
     let s2 = result2.as_str().unwrap();
     assert!(s2.contains("[output truncated]"));

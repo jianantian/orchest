@@ -17,38 +17,7 @@ pub(crate) async fn emit(tx: &mpsc::Sender<RuntimeEvent>, event: RuntimeEvent) {
 }
 
 pub(crate) fn truncate_output(value: Value, max_tokens: u64) -> Value {
-    let max_bytes = max_tokens as usize * 4;
-    match value {
-        Value::String(s) if s.len() > max_bytes => {
-            let truncated = truncate_str_utf8_safe(&s, max_bytes);
-            Value::String(format!("{truncated}\n[output truncated]"))
-        }
-        other => {
-            let serialized = serde_json::to_string(&other).unwrap_or_default();
-            if serialized.len() > max_bytes {
-                let truncated = truncate_str_utf8_safe(&serialized, max_bytes);
-                Value::String(format!("{truncated}\n[output truncated]"))
-            } else {
-                other
-            }
-        }
-    }
-}
-
-/// Truncate a string to at most `max_bytes` bytes without splitting a
-/// multi-byte UTF-8 character.  The returned slice always ends on a
-/// valid char boundary.
-pub(crate) fn truncate_str_utf8_safe(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    // floor_char_boundary stabilised in Rust 1.82 — we inline the logic
-    // for toolchain compatibility.
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
+    crate::tokenizer::truncate_to_tokens(value, max_tokens as usize)
 }
 
 pub(crate) fn min_option<T: Ord + Copy>(requested: Option<T>, remaining: Option<T>) -> Option<T> {

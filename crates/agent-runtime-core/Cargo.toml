@@ -19,6 +19,7 @@ tempfile = "3"
 agent-runtime-providers = { path = "../agent-runtime-providers" }
 tracing = "0.1"
 metrics = "0.24"
+tiktoken-rs = "0.6"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
