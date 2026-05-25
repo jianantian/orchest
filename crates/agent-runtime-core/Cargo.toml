@@ -22,3 +22,7 @@ agent-runtime-providers = { path = "../agent-runtime-providers" }
 libc = "0.2"
 
 [dev-dependencies]
+
+[[example]]
+name = "rust_deep_research_agent"
+path = "../../examples/rust/deep_research_agent.rs"

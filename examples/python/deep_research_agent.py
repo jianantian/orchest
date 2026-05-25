@@ -46,6 +46,7 @@ from agent_runtime import Agent, RuntimeEvent
 
 EXA_SEARCH_URL = "https://api.exa.ai/search"
 DEFAULT_REPORT_PATH = "target/deep-research-report.md"
+PROMPT_DIR = Path(__file__).resolve().parents[1] / "support" / "deep_research_prompts"
 MAX_HIGHLIGHT_CHARS = 900
 DEFAULT_MIN_RESEARCH_CALLS = 6
 SUPPORTED_EXA_CATEGORIES = {
@@ -56,6 +57,13 @@ SUPPORTED_EXA_CATEGORIES = {
     "personal site",
     "financial report",
 }
+
+
+def prompt_template(name: str, **values: object) -> str:
+    prompt = (PROMPT_DIR / f"{name}.md").read_text(encoding="utf-8").strip()
+    for key, value in values.items():
+        prompt = prompt.replace(f"{{{{{key}}}}}", str(value))
+    return prompt
 
 
 def require_env(name: str) -> str:
@@ -177,33 +185,7 @@ def build_web_search_agent() -> Agent:
     today = current_date_label()
     agent = Agent(
         model=require_env("WEB_SEARCH_MODEL"),
-        system_prompt=f"""
-You are the isolated web-search sub-agent for a deep-research workflow.
-Current date: {today}.
-
-Your job is narrow:
-1. Read the delegated research assignment.
-2. Rewrite it into one high-signal Exa query. Use the actual current year/date
-   when freshness matters.
-3. Call exa_search exactly once.
-4. Return a compact, source-grounded evidence brief.
-
-Use these Exa parameters only when useful:
-- category: one of "news", "research paper", "company", "people",
-  "personal site", "financial report".
-- include_domains: comma-separated domains when the assignment asks for
-  official or named-source coverage.
-- start_published_date: ISO date when recency is required.
-
-Return markdown with these sections:
-- Rewritten query
-- Angle researched
-- Findings: 3-6 bullets, each tied to at least one source URL
-- Source list: title, URL, publication date if available
-- Gaps / next queries
-
-Do not answer from memory. If Exa returns weak evidence, say what is missing.
-""".strip(),
+        system_prompt=prompt_template("web_search_system", today=today),
         api_url=provider_url(),
     )
     agent.register_tool(exa_search)
@@ -212,49 +194,13 @@ Do not answer from memory. If Exa returns weak evidence, say what is missing.
 
 def research_instructions(question: str, report_path: str, min_calls: int) -> str:
     today = current_date_label()
-    return f"""
-Research question:
-{question}
-
-Current date: {today}
-Report path: {report_path}
-
-Run a real deep-research workflow before answering. Use web_research as an
-isolated sub-agent; each call should delegate exactly one research angle.
-
-Required phases:
-1. Broad exploration
-   - Call web_research for an initial landscape survey.
-   - Call web_research again to identify dimensions, stakeholders, or schools
-     of thought.
-2. Targeted deep dives
-   - Choose the most important dimensions.
-   - Call web_research separately for concrete data/statistics, examples or
-     case studies, and expert/authoritative views.
-3. Diversity and validation
-   - Call web_research for challenges, limitations, criticism, or conflicting
-     evidence.
-   - If the topic is current, include a recency-focused query using {today}.
-4. Synthesis check
-   - Do not write the final report until you have at least {min_calls}
-     web_research calls unless the question is clearly too narrow. If you use
-     fewer, explicitly justify why in the report.
-   - Verify coverage includes facts/data, examples, expert or authoritative
-     sources, trends/current context, and limitations.
-
-Write a markdown report to {report_path} using write_file. The report must
-include:
-- Executive summary
-- Research method: list the search angles used
-- Key findings with citations as URLs
-- Evidence table: claim, source URL, date, confidence
-- Limitations / contradictory evidence
-- Remaining open questions
-- Final answer
-
-After write_file succeeds, return a concise final message with the report path
-and the most important source URLs.
-""".strip()
+    return prompt_template(
+        "research_instructions",
+        question=question,
+        today=today,
+        report_path=report_path,
+        min_calls=min_calls,
+    )
 
 
 def build_deep_research_agent(
@@ -265,32 +211,12 @@ def build_deep_research_agent(
     today = current_date_label()
     agent = Agent(
         model=require_env("DEEP_RESEARCH_MODEL"),
-        system_prompt=f"""
-You are the main deep-research agent.
-Current date: {today}.
-
-Architecture:
-- web_research is an agent-as-tool. It has its own model, prompt, Exa tool,
-  and isolated context. Use it for evidence gathering and query rewriting.
-- write_file is a core tool. Use it once to persist the final markdown report.
-
-Research standard:
-- Never synthesize from general memory when current or factual claims matter.
-- A single search is insufficient for broad questions.
-- Search from multiple angles, then validate with criticism or contradictory
-  evidence before writing.
-- Prefer primary, official, research, reputable news, or expert sources.
-- Keep raw search context inside the web-search sub-agent; only use its compact
-  briefs in your main synthesis.
-
-Operational rule:
-- For normal broad research, perform at least {min_calls} web_research calls
-  across broad survey, dimensions, data, cases, expert/official views, and
-  limitations. For narrow questions, fewer calls are allowed only if the report
-  explains why.
-- The report path is {report_path}. Always call write_file before the final
-  answer.
-""".strip(),
+        system_prompt=prompt_template(
+            "main_system",
+            today=today,
+            report_path=report_path,
+            min_calls=min_calls,
+        ),
         api_url=provider_url(),
     )
     agent.register_agent_tool(
