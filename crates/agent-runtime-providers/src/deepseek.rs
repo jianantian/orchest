@@ -501,14 +501,14 @@ mod tests {
     }
 
     #[test]
-    fn env_var_fallback() {
+    fn env_var_resolution() {
         let result = DeepSeekAdapter::from_config(DeepSeekConfig {
             model: "deepseek-chat".into(),
             max_tokens: 4096,
             api_key: None,
             api_url: Some("http://localhost".into()),
         });
-        // Without DEEPSEEK_API_KEY set, this should fail
+        // Without DEEPSEEK_API_KEY set, this should fail.
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.code.as_deref(), Some("missing_api_key"));

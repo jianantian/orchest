@@ -2,7 +2,7 @@
 
 ## 背景
 
-Issue 009 定义 Rust SDK provider runtime API 后，Python 和 Node.js 绑定层应只做语言习惯映射。两端不能各自实现 provider routing、api key/env fallback、api_url override 或 provider-specific config construction。
+Issue 009 定义 Rust SDK provider runtime API 后，Python 和 Node.js 绑定层应只做语言习惯映射。两端不能各自实现 provider routing、API key/env resolution、api_url override 或 provider-specific config construction。
 
 当前 Python 和 Node.js SDK 都 hardcode Anthropic adapter。v0.5 provider runtime API 就位后，两端需要暴露同等能力：provider/model 选择、request options、extended usage、stream event typing 和 examples。
 

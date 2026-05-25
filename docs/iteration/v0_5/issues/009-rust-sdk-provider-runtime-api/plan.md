@@ -6,12 +6,12 @@
    - 读取 `agent-runtime-providers` 的 `create_adapter()`、各 adapter config、`ModelSpec`、`AgentConfig`
    - 新增 `ProviderRuntimeConfig`，集中表达 model/api_key/api_key_env/api_url/max_tokens
    - 实现 `normalize_model()`：canonical provider string 原样处理；无 prefix 时映射为 Anthropic shorthand
-   - 实现 API key resolution：explicit api_key > api_key_env env var > provider default env var；空字符串报错
+   - 实现 API key resolution：explicit api_key > api_key_env local env var > 当前 provider 对应的默认 env var；设置了 api_key_env 但读取失败时直接报错；当前 provider/model 找不到 key 时直接报错，不跨 provider/model/tenant 猜测；空字符串报错
 
 2. **扩展统一 factory**
    - 将现有 `create_adapter(model, api_key)` 保留为 convenience wrapper 或标为 legacy helper
    - 新增 config-first factory，例如 `create_adapter_from_config(config)`
-   - factory 内部统一处理 provider routing、env fallback、api_url、max_tokens
+   - factory 内部统一处理 provider routing、env resolution、api_url、max_tokens
    - 保证 SDK/core 外部不需要构造 provider-specific config
 
 3. **接入 AgentConfig / run loop**

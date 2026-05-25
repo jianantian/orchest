@@ -24,14 +24,16 @@ v0.5 的 001–007 建立了独立 `agent-runtime-providers` crate，并让 core
 - [ ] `model` 支持 canonical provider string：`anthropic/...`、`openai/...`、`deepseek/...`、`openrouter/...`
 - [ ] 未带 provider prefix 的 model string 作为 backward-compatible Anthropic shorthand，内部规范化为 `anthropic/<model>`
 - [ ] normalization helper 可单测，且不依赖 Python / Node.js 绑定层
-- [ ] API key resolution 优先级固定：`api_key` 显式值 > `api_key_env` 指向的 env var > provider 默认 env var
+- [ ] API key resolution 优先级固定：`api_key` 显式值 > `api_key_env` 指向的 local env var > 当前 provider 对应的默认 env var
+- [ ] 如果设置了 `api_key_env`，只读取该 local env var；该变量不存在或为空时直接返回错误，不得继续读取当前 provider 的默认 env var
 - [ ] 空字符串 API key 视为 missing / invalid，返回稳定 `ModelError { code: "missing_api_key" }` 或 `ModelError { code: "invalid_api_key" }`
-- [ ] provider 默认 env var 固定为：`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`
+- [ ] 当前 provider 对应的默认 env var 固定为：`anthropic`→`ANTHROPIC_API_KEY`、`openai`→`OPENAI_API_KEY`、`deepseek`→`DEEPSEEK_API_KEY`、`openrouter`→`OPENROUTER_API_KEY`，仅在未配置 `api_key_env` 时读取
+- [ ] 如果用户传入的 `provider/model` 对应 provider 没有找到 API key，返回该 provider 的 `missing_api_key` 错误；不得跨 provider、跨 model、跨 tenant 猜测或使用其他 key
 
 ### Unified Factory
 
 - [ ] 新增或扩展 factory，使其接收统一 config，而不是只接收 `(model, api_key)`
-- [ ] factory 负责 provider routing、api key/env fallback、api_url override、max_tokens default
+- [ ] factory 负责 provider routing、API key/env resolution、api_url override、max_tokens default
 - [ ] provider-specific adapter config 只在 factory 内部构造
 - [ ] SDK / core 调用方不需要 import `AnthropicConfig`、`OpenAiConfig`、`DeepSeekConfig`、`OpenRouterConfig`
 - [ ] 未知 provider 返回稳定 `ModelError { code: "unknown_provider" }`
@@ -72,6 +74,8 @@ v0.5 的 001–007 建立了独立 `agent-runtime-providers` crate，并让 core
 - [ ] `provider_config::preserves_canonical_provider_model`
 - [ ] `provider_config::openrouter_preserves_nested_model_name`
 - [ ] `provider_config::api_key_precedence_explicit_then_env`
+- [ ] `provider_config::api_key_env_override_does_not_fall_back_to_provider_default`
+- [ ] `provider_config::missing_provider_key_does_not_use_other_provider_env`
 - [ ] `provider_config::api_key_empty_string_rejected`
 - [ ] `provider_config::api_url_override_reaches_adapter_config`
 - [ ] `provider_config::max_tokens_default_and_override`
@@ -86,6 +90,8 @@ v0.5 的 001–007 建立了独立 `agent-runtime-providers` crate，并让 core
 
 - Rust SDK contract 是 Python / Node.js SDK 的上游设计，不把语言绑定限制带入这里。
 - 不允许 Python / Node.js 绑定层各自实现 provider routing 或 provider-specific config construction。
+- API key/env resolution 是配置加载层级，不是 provider/model 智能 fallback。用户传入的 `provider/model` 对应 provider 没有找到 API key 时，runtime 必须报错；不得猜测或改用其他 provider/model/tenant 的 key。跨 provider、跨模型、跨 tenant 的 key 映射由调用方显式配置。
+- Provider adapter 尽可能单纯：只负责统一 API 调用接口、provider-specific protocol 管理、错误/usage/streaming 归一化；retry、failover、跨 provider routing 等策略属于 agent core 或更上层 policy，不放进 provider adapter。
 - 不要求发布 crates.io；本 issue 只稳定 workspace 内 public API。
 - `ProviderRuntimeConfig` 是唯一 canonical Rust provider config；`ModelSpec` 旧字段只能通过 conversion/backward compatibility 维护。
 

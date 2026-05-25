@@ -146,6 +146,8 @@ fn resolve_api_key(
                 "invalid_api_key_env",
             ));
         }
+        // api_key_env is an explicit local override. If it is configured, do not
+        // silently use the matching provider's default key.
         return match std::env::var(env_name) {
             Ok(value) => non_empty_api_key(&value),
             Err(_) => Err(ModelError::internal(
@@ -226,13 +228,47 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, MutexGuard};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     // -----------------------------------------------------------------------
     // MockAdapter for helper / runtime_contract tests
     // -----------------------------------------------------------------------
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvVarGuard {
+        name: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(name: &'static str, value: &str) -> Self {
+            let previous = std::env::var(name).ok();
+            std::env::set_var(name, value);
+            Self { name, previous }
+        }
+
+        fn remove(name: &'static str) -> Self {
+            let previous = std::env::var(name).ok();
+            std::env::remove_var(name);
+            Self { name, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.name, value),
+                None => std::env::remove_var(self.name),
+            }
+        }
+    }
+
+    fn lock_env() -> MutexGuard<'static, ()> {
+        ENV_LOCK.lock().expect("env lock poisoned")
+    }
+
     struct MockAdapter {
         call_count: Arc<AtomicU32>,
     }
@@ -364,8 +400,9 @@ mod tests {
 
     #[test]
     fn provider_config_api_key_precedence_explicit_then_env() {
+        let _env_lock = lock_env();
         let env_name = "ORCHEST_TEST_PROVIDER_API_KEY_PRECEDENCE";
-        std::env::set_var(env_name, "env-key");
+        let _env_guard = EnvVarGuard::set(env_name, "env-key");
 
         let explicit = resolve_api_key("openai", Some("explicit-key"), Some(env_name))
             .expect("explicit key wins");
@@ -373,7 +410,37 @@ mod tests {
 
         assert_eq!(explicit, "explicit-key");
         assert_eq!(from_env, "env-key");
-        std::env::remove_var(env_name);
+    }
+
+    #[test]
+    fn provider_config_api_key_env_override_does_not_fall_back_to_provider_default() {
+        let _env_lock = lock_env();
+        let local_env_name = "ORCHEST_TEST_MISSING_LOCAL_PROVIDER_API_KEY";
+        let _local_env_guard = EnvVarGuard::remove(local_env_name);
+        let _openai_env_guard = EnvVarGuard::set("OPENAI_API_KEY", "global-openai-key");
+
+        let err = match resolve_api_key("openai", None, Some(local_env_name)) {
+            Ok(_) => {
+                panic!("missing local api_key_env should fail instead of using OPENAI_API_KEY")
+            }
+            Err(err) => err,
+        };
+
+        assert_eq!(err.code.as_deref(), Some("missing_api_key"));
+    }
+
+    #[test]
+    fn provider_config_missing_provider_key_does_not_use_other_provider_env() {
+        let _env_lock = lock_env();
+        let _openai_env_guard = EnvVarGuard::remove("OPENAI_API_KEY");
+        let _anthropic_env_guard = EnvVarGuard::set("ANTHROPIC_API_KEY", "anthropic-key");
+
+        let err = match resolve_api_key("openai", None, None) {
+            Ok(_) => panic!("openai config should not use ANTHROPIC_API_KEY"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.code.as_deref(), Some("missing_api_key"));
     }
 
     #[test]
