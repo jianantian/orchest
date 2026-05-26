@@ -135,7 +135,7 @@ v0.4 结束时，开发者应该能够：
                  └──> 007 ──> 003 (v0.3 部分)
 ```
 
-完成标准以各 issue 的 Acceptance Criteria 为准；`spec.md` 仅作历史参考，冲突时以 `docs/iteration/` 为准。
+完成标准以各 issue 的 Acceptance Criteria 为准；冲突时以 `docs/iteration/` 下的 PRD 与 issue spec 为准。
 
 ## CI 与发包策略
 

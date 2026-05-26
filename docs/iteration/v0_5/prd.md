@@ -133,4 +133,4 @@ v0.5 结束时，开发者应该能够：
 1. `docs/iteration/v0_5/issues/*/spec.md` 与 `plan.md` 是 v0.5 实施与验收的第一权威。
 2. `docs/iteration/v0_5/prd.md` 约束范围、依赖和优先级；与 issue 细节冲突时，以 issue spec 的可测试条款为准。
 3. `docs/iteration/superpowers/specs/2026-05-24-agent-runtime-providers-design.md` 是设计映射参考；若与 issue 验收条款冲突，需要先回写 issue/prd 再执行实现。
-4. `docs/spec.md` 为历史参考，不作为 v0.5 决策与验收依据。
+4. 旧的根技术设计文档已删除，不作为 v0.5 决策与验收依据。

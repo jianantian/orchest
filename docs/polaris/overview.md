@@ -1,5 +1,11 @@
 # Skill-First Agent Runtime: 核心概念与定位
 
+> **文档状态：Polaris 总体参考。**
+>
+> 本文用于说明 Orchest 的产品定位、核心概念和长期设计哲学，不作为当前实现规格或验收标准。涉及 Tool / MCP / Skill 的永久边界时，以 [concept-boundaries.md](./concept-boundaries.md) 为准；涉及具体版本范围、API、验收条件和实施计划时，以 [iteration/](../iteration/) 与 [hotfix/](../hotfix/) 下的 PRD / issue spec 为准。
+>
+> 本文中的实现示例用于解释概念，不应单独作为开发任务的 source of truth。
+
 ## 引言
 
 这是一个为 AI agent 设计的 runtime——核心简单、可观测、语言无关。它服务于一个具体的判断：在 AI 大量参与代码生成的时代，agent 系统的设计重心从"runtime 多聪明"转向"context 多可塑"，从"框架封装多少能力"转向"用户和 AI 能否清晰看到每一步发生了什么"。

@@ -89,4 +89,4 @@ v0.2 结束时，开发者应该能够：
 4. **006 收尾**  
    在 async job 基础路径稳定后补 webhook 唤醒与 fallback 逻辑，减少与 005 的并发冲突。
 
-完成标准以各 issue 的 Acceptance Criteria 为准；`spec.md` 仅作历史参考，冲突时以 `docs/iteration/` 为准。
+完成标准以各 issue 的 Acceptance Criteria 为准；冲突时以 `docs/iteration/` 下的 PRD 与 issue spec 为准。

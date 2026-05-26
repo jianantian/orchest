@@ -30,9 +30,8 @@ For any question about these boundaries, defer to `docs/polaris/concept-boundari
 
 ```
 docs/
-├── overview.md                # Product positioning, core concepts, design philosophy (external-facing)
-├── spec.md                    # Original technical design reference (partially superseded — see authority rules)
 ├── polaris/
+│   ├── overview.md            # Product positioning, core concepts, design philosophy (overall reference; not an implementation contract)
 │   ├── concept-boundaries.md  # Tool/MCP/Skill boundary definitions (authoritative)
 │   ├── design-principles.md   # Design principles and decision heuristics
 │   ├── observability.md       # SDK-wide logging, metrics, token, and error observability contract
@@ -50,7 +49,7 @@ docs/
 
 ### Authority Rules (Important)
 
-**Iteration docs override spec.md.** `docs/spec.md` is the original design; parts of it have been superseded by iteration documents. When there is a conflict, the `docs/iteration/` files are authoritative. `spec.md` is kept as a historical reference — do not make authoritative changes there.
+**Iteration, hotfix, and polaris docs are authoritative.** The old root technical design document was removed because it was superseded and no longer represented the current implementation contract. When there is a conflict, the `docs/iteration/`, `docs/hotfix/`, and `docs/polaris/` files are authoritative.
 
 Each iteration has two layers:
 - `prd.md` — iteration goals, success metrics, scope, and explicit out-of-scope items
@@ -92,11 +91,12 @@ The following decisions are settled. Do not propose alternatives without a compe
 2. Must include: Background, Goal, Acceptance Criteria (checkbox list), Notes (optional)
 3. Acceptance criteria must be concrete and testable — write "when Y, Z holds" not just "implement X"
 
-### Editing spec.md
+### Editing Issue Specs
 
-The type definitions in spec.md (`ToolMetadata`, `ModelStreamChunk`, `RunStatus`, etc.) are the implementation contract for v0.1. When editing:
-- Sync any affected issue acceptance criteria
-- Append the rationale to the `## Design Decision Log` section at the bottom
+When changing behavior, API shape, or acceptance criteria:
+- Update the corresponding iteration or hotfix issue spec / PRD first
+- Keep issue specs concrete and testable
+- Do not introduce a new root-level replacement for the removed technical design document
 
 ### Editing Polaris Docs
 
@@ -105,7 +105,7 @@ Polaris documents record **constraints that do not change across iterations**. E
 ### Things to Avoid
 
 - Do not make authoritative changes to spec.md without updating the corresponding issues
-- Do not add implementation details to overview.md (it is external-facing)
+- Do not add implementation details to `docs/polaris/overview.md` (it is a high-level reference, not an implementation contract)
 - Do not bring multi-channel routing, user management, or Web UI concerns into SDK design
 - Do not add a Non-Goal without grounding it in an existing polaris rationale
 
