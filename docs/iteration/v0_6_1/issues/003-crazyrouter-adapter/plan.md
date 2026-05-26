@@ -2,7 +2,7 @@
 
 ## v0.7 依赖判断
 
-不依赖 v0.7。Crazyrouter adapter 只依赖 v0.6.1 的 001/002 类型与 storage ingest 类型，不接入 runtime Hook 或 tool registry。
+不依赖 v0.7。Crazyrouter adapter 只依赖 v0.6.1 的 001 公共类型与 `AssetIngestSource` provider 边界，不接入 runtime Hook、tool registry 或 storage 实现。
 
 ## 步骤
 

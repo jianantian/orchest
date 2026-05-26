@@ -2,7 +2,7 @@
 
 ## v0.7 依赖判断
 
-不依赖 v0.7。Aliyun adapter 是独立 provider adapter，只依赖 v0.6.1 类型、shared HTTP client 和 asset ingest 类型。
+不依赖 v0.7。Aliyun adapter 是独立 provider adapter，只依赖 v0.6.1 的 001 公共类型、shared HTTP client 和 `AssetIngestSource` provider 边界。
 
 ## 步骤
 

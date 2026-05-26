@@ -2,7 +2,7 @@
 
 ## v0.7 依赖判断
 
-不依赖 v0.7。资产存储是 AIGC gateway crate 内部能力，不需要 Hook 框架、core runtime 或 tool registry。未来 core tool 调用 gateway 时只使用公开 API 和 `asset_id`。
+不依赖 v0.7。资产存储是 AIGC gateway crate 内部能力，不需要 Hook 框架、core runtime 或 tool registry。未来 core tool 调用 gateway 时只使用公开 API 和 `asset_id`。Provider adapter 只依赖 001 的 `AssetIngestSource` 类型，不依赖本 issue 的具体 store/registry。
 
 ## 步骤
 
@@ -17,7 +17,7 @@
    - `AssetRegistry` 定义 `save(scope, asset)` 和 `get(scope, asset_id)`
    - 定义 `AssetScope`，字段覆盖 tenant/workspace/app/namespace 类 scope
    - 定义 `StoredAsset`、`StorageLocation`、`OssObjectLocation`、`LocalObjectLocation`
-   - 定义 `AssetIngestSource::{Url, DataUrl, Base64, Bytes}`
+   - `AssetStore::put_stream()` 使用 001 定义的 `AssetIngestSource`
    - 定义 `PutAssetOptions`，包含 namespace/key_prefix、content type hints、persistence options
 
 3. **实现 public resolution helper**
@@ -42,13 +42,17 @@
    - 环境变量命名使用 storage scope，不能复用 DashScope API key
    - 没有真实凭证时，真实网络测试用 ignored test 或 feature-gated integration test
 
-7. **实现低开销与安全约束**
+7. **补充 storage-only 依赖**
+   - 如实现 SHA-256 需要 `sha2`，Base64 decode 需要 `base64`，MIME 探测需要 `mime_guess`/`infer`，OSS 签名需要签名相关 crate，可在本 issue 中追加
+   - 每个新增依赖都要在 PR 或 commit body 写清楚用途和替代方案
+
+8. **实现低开销与安全约束**
    - ingest 过程计算 SHA-256、byte count、MIME type
    - 不做图片解码
    - Base64 ingest 按配置 max bytes 拒绝超限
    - tracing 字段不能包含大 payload、base64、signed URL、secret
 
-8. **写测试**
+9. **写测试**
    - local store put/resolve
    - in-memory registry save/get
    - file-backed registry 跨实例持久化
@@ -57,7 +61,7 @@
    - base64 max-size failure
    - public response helper 不暴露 storage descriptor
 
-9. **验收**
+10. **验收**
    - `cargo test -p agent-runtime-aigc-providers storage`
    - `cargo clippy -p agent-runtime-aigc-providers -- -D warnings`
 

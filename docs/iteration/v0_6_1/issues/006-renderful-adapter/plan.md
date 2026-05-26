@@ -24,7 +24,8 @@
    - `TextToImage` 映射 `type: "text-to-image"`
    - `ImageToImage` 和 `EditImage` 仅在所选模型文档支持时映射对应 task type
    - prompt、model、webhook URL 直接映射
-   - 需要 URL 的 inputs 先 upload 或 resolve
+   - 需要 URL 的 inputs 只接受 gateway/input preprocessing 后的 provider-usable URL 或 data URL
+   - unresolved `LocalPath` 或 `Stored` refs 返回稳定 adapter error，不在 adapter 内调用 `AssetStore`
    - `Upscale`、`FaceSwap` 保留类型能力，但第一里程碑不默认暴露，除非显式启用
 
 4. **实现 task lifecycle**
@@ -33,16 +34,16 @@
    - completed `outputs[]` URLs 转为 provider asset ingest sources
    - failed task 保留 provider error details
 
-5. **实现 upload/resolve 支持**
-   - local input 和 stored asset input 转为 Renderful 可接受 URL
-   - stored asset 使用 v0.6.1 storage resolution，不暴露 storage descriptor
-   - 上传/解析失败返回稳定 provider error
+5. **实现 input preprocessing 边界**
+   - adapter 接受 URL/data URL 输入并映射到 Renderful 请求
+   - adapter 遇到 unresolved local input 或 stored asset input 时返回稳定错误
+   - local/stored 到 provider-usable URL 的转换由 gateway 负责，不在 adapter 内实现
 
 6. **写测试**
    - model metadata parsing：text-to-image 和 image-to-image fixtures
    - create mapping：text-to-image、image-to-image
    - polling：queued、processing、completed、failed、timeout
-   - upload/resolve：local input 和 stored input
+   - input preprocessing：已解析 URL/data URL 输入成功，unresolved local/stored 输入稳定失败
 
 7. **验收**
    - `cargo test -p agent-runtime-aigc-providers renderful`

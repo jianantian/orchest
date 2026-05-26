@@ -11,7 +11,7 @@
    - 在根 `Cargo.toml` 的 workspace members 中加入 `"crates/agent-runtime-aigc-providers"`
    - 新建 `src/lib.rs`、`src/types.rs`、`src/image.rs`、`src/http.rs`、`src/telemetry.rs`
    - 新建空模块目录：`src/providers/mod.rs`、`src/storage/mod.rs`
-   - 依赖只放 spec 允许的外部 crate：`tokio`、`serde`、`serde_json`、`async-trait`、`thiserror`、`reqwest`、`bytes`、`chrono`、`tracing`、`metrics`
+   - 001 只加入公共类型和 shared HTTP client 需要的基础依赖：`tokio`、`serde`、`serde_json`、`async-trait`、`thiserror`、`reqwest`、`bytes`、`chrono`、`tracing`、`metrics`
    - 运行 `cargo check -p agent-runtime-aigc-providers`
 
 2. **定义 provider 边界**
@@ -24,6 +24,7 @@
    - 按 spec 覆盖：operation、prompt、negative prompt、inputs、generation config、execution config、output config、compatibility policy、provider options
    - `ImageOperation` 至少包含 `TextToImage`、`ImageToImage`、`EditImage`、`Upscale`、`FaceSwap`
    - `AssetRef` 覆盖 URL、data URL、base64、bytes、local path、stored asset
+   - 定义 `AssetIngestSource::{Url, DataUrl, Base64, Bytes}`，作为 provider adapter 返回资产时使用的 provider-boundary 类型
 
 4. **定义公共响应类型**
    - 定义 `ImageGenerationResponse`、`GeneratedImage`、`ImageOutput`

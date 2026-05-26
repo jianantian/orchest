@@ -17,6 +17,7 @@
    - Coerce compatibility 对安全调整记录 `OptionAdjustment`
 
 3. **实现 provider 调用和 async polling**
+   - gateway 先把 provider 需要 URL 的 `LocalPath` 和 `Stored` inputs 预处理为 provider-usable URL 或 data URL
    - gateway 调用 `ImageProvider::create_image_generation()`
    - 对 async job 按 poll interval 轮询 `get_image_generation()`
    - timeout/failure 返回 public error，同时保留 provider error details
