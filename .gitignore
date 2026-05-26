@@ -1,4 +1,5 @@
 target/
+.worktrees/
 .venv/
 *.so
 *.dylib
