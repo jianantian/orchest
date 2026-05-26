@@ -98,7 +98,7 @@ After push:
 
 ## Parallel Work with Worktrees
 
-For v0.1, issues are mostly sequential — a single branch is enough. From v0.2 onward, some issues can be developed in parallel (e.g. MCP stdio and OpenAI adapter are independent). Use worktrees then:
+Use worktrees:
 
 ```bash
 # Set up two parallel workspaces
