@@ -23,6 +23,8 @@ pub enum ConfigError {
     InvalidMaxCost(f64),
     #[error("max_tokens must be > 0, got {0}")]
     InvalidMaxTokens(u64),
+    #[error("max_tool_calls must be > 0, got {0}")]
+    InvalidMaxToolCalls(u32),
 }
 ```
 

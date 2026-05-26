@@ -53,6 +53,6 @@ loop {
 - [ ] `run_loop` 每次迭代顶部检查 `cancel_token.is_cancelled()`
 - [ ] 取消后发出 `RuntimeEvent::RunAborted` 事件（不复用 `RunFailed`）
 - [ ] 子 agent 使用 `cancel_token.child_token()`，父取消时子也终止
-- [ ] 测试覆盖：启动 run → 调 abort → 验证收到 `RunFailed` 事件
+- [ ] 测试覆盖：启动 run → 调 abort → 验证收到 `RunAborted` 事件
 - [ ] 测试覆盖：父 agent abort → 子 agent 也终止
 - [ ] `cargo test --workspace` 全绿

@@ -73,7 +73,7 @@ if read == 0 {
 ```rust
 if read == 0 {
     if let Some(mut session) = guard.take() {
-        let _ = session.child.kill().await;
+        let _ = session.child.kill();  // kill() 是同步的（发送 SIGKILL）
     }
     return Err(ToolError { ... });
 }

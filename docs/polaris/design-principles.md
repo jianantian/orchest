@@ -22,7 +22,7 @@
 2. **Activation（按需）**：当 agent 判断某个 skill 相关时，通过 file read tool 读取完整 SKILL.md（typical 500-2000 tokens）
 3. **Execution（深入）**：如果任务需要更详细的信息，agent 进一步读取 `references/` 文件，或调用 `scripts/` 里的脚本
 
-**Tool 的渐进披露（v0.2 考虑）：** Anthropic 已推出 Tool Search Tool，把渐进披露应用到 tool 本身。v0.1 不实现，但 tool registry 设计要为后续扩展留口。
+**Tool 的渐进披露：** 当 tool 数量增长时，runtime 应支持按需披露 tool 定义，而不是把所有完整 schema 一次性塞进上下文。Tool registry 的设计应为 Tool Search Tool 等机制保留扩展空间。
 
 ## 极简 Core
 

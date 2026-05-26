@@ -72,7 +72,8 @@ fi
 echo ""
 echo "=== Blocking I/O in async code ==="
 BLOCKING=$(grep -rn 'std::fs::' crates/ --include='*.rs' \
-  | grep -v '/target/' | grep -v '#\[cfg(test)\]' | grep -v '// allow-blocking-io' || true)
+  | grep -v '/target/' | grep -v '/tests\.rs:' | grep -v '/_test\.rs:' | grep -v '/tests/' \
+  | grep -v '// allow-blocking-io' || true)
 if [ -n "$BLOCKING" ]; then
     echo "FAIL: std::fs usage in non-test code (use tokio::fs or spawn_blocking):"
     echo "$BLOCKING"

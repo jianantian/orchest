@@ -1,54 +1,58 @@
 # 不做什么（Non-Goals）
 
-明确不做什么，与明确要做什么同等重要。以下是本 runtime 的硬性边界，遇到需求冲动时应回来核对。
+明确不做什么，与明确要做什么同等重要。本文只记录 Orchest 的全局边界，不记录版本范围；具体迭代取舍写在对应的 `docs/iteration/` 或 `docs/hotfix/` 文档中。
 
-## 永久 Non-Goals
+## 不是完整 Agent 产品
 
-**"什么都能做"的 agent 框架**
+Orchest 是底层 runtime SDK，不是 OpenClaw、Claude Code、Cursor、Devin 这类面向终端用户的完整 agent 产品。
+
+- 不提供面向 C 端用户的完整 UI、账号、工作区、权限、计费或协作系统
+- 不内置产品级 agent 角色、任务管理、会话管理或用户工作流
+- 不替宿主应用决定交互模式、部署形态、数据治理或商业策略
+- 不把 SDK 设计绑定到某个具体 agent 产品的用户体验
+
+## 不绑定特定模型或厂商
+
+Orchest 的目标是模型无关、供应商无关。
+
+- 不绑定 Anthropic、OpenAI 或任何单一模型 provider
+- 不假设某个 provider 的 tool calling、thinking、cache、streaming 语义是唯一标准
+- 不假设用户使用特定云平台、数据库、队列、日志后端或部署环境
+- 不把 provider-specific 能力泄漏成 core runtime 的唯一抽象
+
+## 不做重型应用框架
+
+Orchest 追求通用性、泛用性、性能、可扩展性和易用性，但这些目标服务于 runtime SDK，而不是把它扩张成全栈框架。
+
 - 不内置复杂工作流引擎（DAG、条件分支、循环编排）
-- 不提供预制 agent 模板和角色系统
-- 不提供 skill marketplace 或内置 skill 库
+- 不提供预制业务模板、垂直行业 agent 套件或内置 skill marketplace
 - 不试图替代 LangChain / LangGraph 的全部功能
+- 不把 one-off 应用逻辑沉入 core；应用能力应通过 tool、skill、extension 或宿主应用实现
 
-**绑定特定厂商**
-- 不绑定 Anthropic 作为唯一模型 provider（v0.1 只实现 Anthropic 是务实选择，不是设计约束）
-- 不假设用户使用特定云平台或基础设施
+## 不偏离开放标准
 
-**偏离 Anthropic Agent Skills 开放标准**
-- SKILL.md 格式不得与官方标准不兼容
-- 不创造与标准并行的私有 skill 格式
+Orchest 优先对齐 Anthropic Agent Skills 与 MCP 等开放生态边界。
 
-**内置观测平台**
+- 不创造与 SKILL.md 标准并行的私有 skill 格式
+- 不把 MCP 当成特殊 tool 类型；MCP 是 tool provider 的协议层
+- 不把 Skill 简化成 tool 集合；Skill 的核心是过程性知识
+- 不为了短期便利破坏 Tool / MCP / Skill 的分层边界
+
+## 不内置运营平台
+
+Orchest 必须可观测，但不内置观测、审计或运营平台。
+
 - 不内置日志后端、metrics exporter、OpenTelemetry collector、Prometheus server 或 Web dashboard
+- 不替宿主应用决定日志保留、告警、审计、trace 采样或数据脱敏策略
 - SDK 只通过 `RuntimeEvent`、`tracing`、`metrics` 暴露统一观测信号；采集、存储、告警、展示由宿主应用负责
 - 不为了 dashboard 便利而把高基数字段塞进默认 metric label
 
-## v0.1 明确不做（留给 v0.2+）
+## 不牺牲核心质量目标
 
-| 功能 | 原因 |
-|------|------|
-| MCP server 集成 | 独立功能模块，v0.1 先验证核心架构 |
-| Tool Search Tool（渐进式 tool 加载） | tool 数量不是 v0.1 的实际瓶颈 |
-| Context compaction | 超长 session 是 v0.2 才面对的问题 |
-| 多 model adapter（OpenAI 等） | 一个 adapter 足以验证架构 |
-| Multi-agent 协作 | sub-agent 的 budget 继承和事件嵌套是独立复杂度 |
-| Skill 沙箱（firejail/bubblewrap） | v0.3 完成 ScriptExecutor 抽象和 capability 声明；实际进程隔离留后续 |
-| 并行 tool call | 顺序执行保持审批门简单，并行是 v0.2 优化项 |
-| Webhook 模式异步 tool | polling 模式先验证，webhook 是补充 |
-| Persistent script mode | 只在冷启动成为实测瓶颈后才值得做 |
+以下目标是设计约束，不是可选优化项：
 
-## v0.3 解决的生产化问题
-
-- **Skill 依赖管理**：skill 的 Python/Node 脚本通过 SKILL.md frontmatter 声明依赖，runtime 准备按 skill 隔离的缓存环境
-- **Code Execution as MCP**：启用 `AgentConfig.code_execution_enabled` 后，runtime 提供内置 `execute_python` / `execute_javascript` tool
-- **Skill sub-agent**：runtime 提供 sub-agent budget 继承、深度限制和生命周期事件；多 agent 协作编排仍不属于 SDK core
-
-## 无沙箱环境的最低运营建议
-
-v0.1–v0.3 不做进程级沙箱，在此期间建议遵守以下约束以降低误用风险：
-
-- **只加载来自受信目录的 skill**：通过 `AgentConfig.skills_dir` 指向受你控制的路径；不自动加载来自网络或未知来源的 skill
-- **含 `scripts/` 的 skill 须手动审核**：bundled script 会以当前进程权限执行，审核方式与审查第三方 shell 脚本相同
-- **`side_effect: true` 的 tool 默认开启 `requires_approval`**：这是 v0.1 就支持的控制手段，对 skill bundled tool 同样适用，不应跳过
-- **通过 `capabilities.env` 收缩环境变量暴露**：v0.3 起 `ExecutionContext` 只向子进程传递 skill 声明的变量，不继承完整父进程环境；对包含密钥的进程尤为重要
-- **审计 `SkillContentRead` 和 `ToolCallStarted` 事件**：所有 skill 文件读取和 tool 调用都应通过 `RuntimeEvent` 可见，并可按 [observability.md](./observability.md) 接入 `tracing` / `metrics` 体系检测异常访问模式
+- **通用性**：同一 runtime core 应支持多语言 SDK、多 provider、多 tool 来源和多种宿主应用形态
+- **泛用性**：core 抽象要服务广泛 agent 产品，而不是只服务单一内部 demo
+- **性能**：runtime 不能引入不必要的 IPC、后台服务或重型依赖；热路径应保持可预测
+- **可扩展性**：新 provider、tool source、skill executor、observability sink 应能在既有边界内扩展
+- **易用性**：SDK API 应直接、明确、可测试；复杂能力可以分层暴露，但不能依赖隐式魔法

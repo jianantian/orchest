@@ -65,7 +65,13 @@ crates/agent-runtime-model/
 # agent-runtime-model/Cargo.toml
 [package]
 name = "agent-runtime-model"
-# 零 workspace-internal 依赖
+# 零 workspace-internal 依赖，外部依赖最小化
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"          # Value 类型（UpstreamErrorDetail.body）
+thiserror = "2"           # ModelError derive
+async-trait = "0.1"       # ModelAdapter trait（如 trait 含 async fn 则需要）
 
 # agent-runtime-core/Cargo.toml
 [dependencies]

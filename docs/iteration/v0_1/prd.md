@@ -53,7 +53,17 @@ v0.1 结束时，开发者应该能够：
 
 ## 不在范围内
 
-见 [non-goals.md](../../polaris/non-goals.md) 的"v0.1 明确不做"部分。
+| 功能 | 原因 |
+|------|------|
+| MCP server 集成 | 独立功能模块，v0.1 先验证核心架构 |
+| Tool Search Tool（渐进式 tool 加载） | tool 数量不是 v0.1 的实际瓶颈 |
+| Context compaction | 超长 session 是 v0.2 才面对的问题 |
+| 多 model adapter（OpenAI 等） | 一个 adapter 足以验证架构 |
+| Multi-agent 协作 | sub-agent 的 budget 继承和事件嵌套是独立复杂度 |
+| Skill 沙箱（firejail/bubblewrap） | v0.3 完成 ScriptExecutor 抽象和 capability 声明；实际进程隔离留后续 |
+| 并行 tool call | 顺序执行保持审批门简单，并行是 v0.2 优化项 |
+| Webhook 模式异步 tool | polling 模式先验证，webhook 是补充 |
+| Persistent script mode | 只在冷启动成为实测瓶颈后才值得做 |
 
 ## 交付物
 

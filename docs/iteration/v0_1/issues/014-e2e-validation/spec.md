@@ -42,7 +42,7 @@ Issues 001-013 各自有单元级验收标准，但需要一个明确的集成�
 **Known-risk visibility：**
 - [ ] `read_file` 读取已注册 skill `SKILL.md` 时可观测到 `SkillContentRead`
 - [ ] `read_file` 读取非 skill 文件在 v0.1 被允许，但不会产生 `SkillContentRead`；该行为在 validation notes 中标为 accepted known risk
-- [ ] 该 known risk cross-link 到 Polaris non-goals / 无沙箱运行建议
+- [ ] 该 known risk cross-link 到 v0.1 PRD 的不在范围内说明和 E2E validation notes
 
 ## 依赖
 

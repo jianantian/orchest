@@ -94,26 +94,7 @@ pub fn build_request_body(messages: &[Message], tools: &[ToolDef], options: &Req
 
 原始 TCP socket + 字符串匹配 `"POST /webhook"` 和 `"Content-Length:"`。不支持 chunked、keep-alive、大小写不敏感 header。
 
-**修复**：用 `hyper` 或 `axum` 替代手动解析。165 行的手写 HTTP 不值得维护。
-
-```rust
-// 最小方案：用 hyper::server::conn::http1
-async fn start_webhook_server(addr: SocketAddr, tx: mpsc::Sender<Value>) {
-    let listener = TcpListener::bind(addr).await.unwrap();
-    loop {
-        let (stream, _) = listener.accept().await.unwrap();
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            hyper::server::conn::http1::Builder::new()
-                .serve_connection(stream, service_fn(move |req| {
-                    handle_webhook(req, tx.clone())
-                }))
-                .await
-                .ok();
-        });
-    }
-}
-```
+**修复**：用标准 HTTP 解析库替代手动字符串匹配。165 行的手写 HTTP 不值得维护。
 
 依赖选择：
 
