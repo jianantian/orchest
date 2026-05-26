@@ -133,6 +133,19 @@ Before picking up the first issue of a new iteration:
 2. Re-read the new iteration's `prd.md` to refresh scope and success metrics
 3. Start with issue `001` — it sets up the scaffolding everything else depends on
 
+### Completing an Iteration
+
+After the last issue of an iteration is merged and all acceptance criteria are met:
+
+1. Update `docs/iteration/roadmap.md` — move the iteration from **规划中** → **已完成** (add a table row under 已完成, remove the entry from 规划中)
+2. If the iteration fills a gap listed in the 能力缺口全景 table, update the 当前状态 column accordingly
+3. Commit the roadmap update:
+
+```bash
+git add docs/iteration/roadmap.md
+git commit -m "docs: mark v0.X as completed in roadmap"
+```
+
 ### Dependency Order in v0.1
 
 Issues must be completed roughly in this order due to type and trait dependencies:
