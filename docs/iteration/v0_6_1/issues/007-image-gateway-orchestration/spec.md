@@ -15,6 +15,7 @@ Implement `ImageGateway` orchestration so callers can submit normalized image re
 - [ ] `ImageGateway` owns an `ImageProvider`, `AssetStore`, `AssetRegistry`, and gateway config.
 - [ ] Gateway validates requests against per-operation capabilities.
 - [ ] Gateway calls provider adapters and drains provider events.
+- [ ] Gateway preprocesses local and stored image inputs into provider-usable URLs or data URLs before calling adapters that require URL inputs.
 - [ ] Gateway polls async provider jobs until completion/failure/timeout.
 - [ ] Gateway maps provider statuses into public `GenerationStatus`, including `PersistingAssets`.
 - [ ] Gateway persists provider assets before returning `Completed`.
@@ -50,4 +51,3 @@ Implement `ImageGateway` orchestration so callers can submit normalized image re
 
 - Issue 001
 - Issue 002
-

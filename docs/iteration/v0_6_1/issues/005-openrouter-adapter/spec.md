@@ -52,5 +52,3 @@ Implement an OpenRouter `ImageProvider` adapter for documented image-output gene
 ## Blocked By
 
 - Issue 001
-- Issue 002
-

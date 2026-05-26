@@ -4,7 +4,7 @@
 
 Generated provider URLs may expire and provider output shapes differ. The gateway public contract requires generated assets to be returned either as base64 or as an immediately usable Orchest-controlled URL. Long-lived clients store `asset_id`, not provider URLs or storage descriptors.
 
-This issue builds the storage foundation that all provider and gateway slices depend on.
+This issue builds the storage foundation that gateway slices depend on. Provider adapters use the `AssetIngestSource` type from issue 001 but do not depend on concrete storage implementations.
 
 ## Goal
 
@@ -19,7 +19,7 @@ Implement `AssetStore`, `AssetRegistry`, local/noop stores, and the OSS-backed p
 - [ ] `AssetRegistry` exists with `save(scope, asset)` and `get(scope, asset_id)`.
 - [ ] `AssetScope` exists and includes tenant/workspace/app/namespace-style scope fields.
 - [ ] `StoredAsset`, `StorageLocation`, `OssObjectLocation`, and `LocalObjectLocation` exist.
-- [ ] `AssetIngestSource` supports provider URL, data URL, base64, and bytes ingestion.
+- [ ] `AssetStore::put_stream()` accepts `AssetIngestSource` values defined by issue 001.
 - [ ] `PutAssetOptions` carries namespace/key-prefix, content type hints, and any relevant persistence options.
 
 ### Public contract
@@ -38,6 +38,7 @@ Implement `AssetStore`, `AssetRegistry`, local/noop stores, and the OSS-backed p
 - [ ] `OssAssetStore` exists as the first production implementation.
 - [ ] `OssStorageConfig` includes endpoint, bucket, region, access key id, access key secret, optional public base URL, signed URL TTL, and key prefix.
 - [ ] OSS configuration uses storage-scoped environment names and does not reuse DashScope API keys.
+- [ ] Any additional storage-only dependency, such as SHA-256, base64 decode, MIME sniffing, or OSS signing support, is justified in the implementation PR or commit body.
 
 ### Low-overhead behavior
 

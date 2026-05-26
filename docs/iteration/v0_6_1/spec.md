@@ -1,8 +1,8 @@
-# v0.7.1 Spec：Image AIGC Gateway
+# v0.6.1 Spec：Image AIGC Gateway
 
 ## 类型
 
-卫星迭代——与 v0.7 主线并行，独立 crate，不阻塞也不依赖主线进度。
+卫星迭代——从 v0.6 后切出，独立 crate，不阻塞也不依赖 v0.7 主线进度。
 
 ## 背景
 
@@ -74,29 +74,30 @@ Agent 应用场景中图像生成/编辑是高频需求。当前 runtime 没有�
 | [005](./issues/005-openrouter-adapter/spec.md) | OpenRouter Image Adapter | Chat Completions 图像输出、`image_config`、stream `delta.images` |
 | [006](./issues/006-renderful-adapter/spec.md) | Renderful Image Adapter | Renderful async generation、model metadata、upload/outputs |
 | [007](./issues/007-image-gateway-orchestration/spec.md) | Image Gateway Orchestration and Public Output Contract | Gateway 端到端编排、持久化、公共输出 contract |
-| [008](./issues/008-factory-telemetry-and-validation/spec.md) | Factory, Telemetry, and End-to-End Validation | Provider factory、共享 HTTP、telemetry、examples、最终验证 |
+| [008](./issues/008-factory-telemetry-and-validation/spec.md) | Factory, Telemetry, and End-to-End Validation | Provider factory、HTTP client 统一使用校验、telemetry、examples、最终验证 |
 
 ## 推荐执行顺序
 
 1. **001 先做**：稳定所有后续 issue 依赖的公共类型和 crate 骨架。
-2. **002 紧跟**：资产持久化是 gateway 公共输出 contract 的核心，provider/gateway 测试都需要它。
-3. **003-006 可并行**：四个 provider adapter 都依赖 001/002，但彼此独立。
+2. **002 紧跟**：资产持久化是 gateway 公共输出 contract 的核心，gateway 测试需要它。
+3. **003-006 可并行**：四个 provider adapter 只依赖 001 的公共类型和 provider 边界，彼此独立。
 4. **007 在 001/002 后即可启动**：可先用 mock provider 做 gateway 竖切；真实 provider 接入随 003-006 合入扩展测试。
 5. **008 收尾**：需要所有 provider 和 gateway 可用后统一 factory、telemetry、examples 和全量验证。
 
 依赖图：
 
 ```text
-001 ──┬──> 002 ──┬──> 003 ─────┐
-      │          ├──> 004 ─────┤
-      │          ├──> 005 ─────┤
-      │          ├──> 006 ─────┤
-      │          └──> 007 ─────┤
-      └────────────────────────┴──> 008
+001 ──┬──> 002 ───> 007 ─────┐
+      ├──> 003 ──────────────┤
+      ├──> 004 ──────────────┤
+      ├──> 005 ──────────────┤
+      └──> 006 ──────────────┴──> 008
 ```
 
-## v0.7.1 权威顺序
+008 is blocked by 001-007.
 
-1. `docs/iteration/v0_7_1/issues/*/spec.md` 是实施与验收的第一权威。
+## v0.6.1 权威顺序
+
+1. `docs/iteration/v0_6_1/issues/*/spec.md` 是实施与验收的第一权威。
 2. 本文件约束迭代范围、依赖和成功指标。
 3. `docs/superpowers/specs/2026-05-25-image-aigc-gateway-design.md` 是设计参考；若与 issue 验收标准冲突，先更新 issue/spec 再实现。

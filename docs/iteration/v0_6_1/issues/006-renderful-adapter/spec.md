@@ -30,7 +30,8 @@ Implement a Renderful `ImageProvider` adapter for text-to-image, image-to-image,
 - [ ] `TextToImage` maps to `type: "text-to-image"`.
 - [ ] `ImageToImage` and `EditImage` map to documented Renderful image task types when supported by the selected model.
 - [ ] Prompt, model, and webhook URL map directly.
-- [ ] Inputs that need URLs are uploaded or resolved before create.
+- [ ] Inputs that need URLs are accepted only after gateway/input preprocessing has converted them to provider-usable URLs or data URLs.
+- [ ] Unresolved local paths or stored asset refs return a stable adapter error instead of making the adapter call `AssetStore`.
 - [ ] Unsupported operations such as `Upscale` and `FaceSwap` are represented but not exposed as first milestone tools unless explicitly enabled.
 
 ### Task lifecycle
@@ -45,11 +46,9 @@ Implement a Renderful `ImageProvider` adapter for text-to-image, image-to-image,
 - [ ] Model metadata parsing tests cover text-to-image and image-to-image fixtures.
 - [ ] Create request mapping tests cover text-to-image and image-to-image.
 - [ ] Polling tests cover queued, processing, completed, failed, and timeout flows.
-- [ ] Upload/resolve tests cover local and stored inputs.
+- [ ] Input preprocessing tests cover already-resolved URL/data URL inputs and stable rejection of unresolved local or stored inputs.
 - [ ] `cargo test -p agent-runtime-aigc-providers renderful` passes.
 
 ## Blocked By
 
 - Issue 001
-- Issue 002
-

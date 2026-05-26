@@ -6,7 +6,7 @@ After the storage foundation, provider adapters, and gateway orchestration exist
 
 ## Goal
 
-Add provider factory/config APIs, shared HTTP plumbing, telemetry helpers, examples, and final validation across all implemented image providers and gateway paths.
+Add provider factory/config APIs, shared HTTP client usage validation, telemetry helpers, examples, and final validation across all implemented image providers and gateway paths.
 
 ## Acceptance Criteria
 

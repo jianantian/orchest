@@ -53,5 +53,3 @@ Implement an Aliyun DashScope `ImageProvider` adapter for Qwen-Image, Z-Image, a
 ## Blocked By
 
 - Issue 001
-- Issue 002
-

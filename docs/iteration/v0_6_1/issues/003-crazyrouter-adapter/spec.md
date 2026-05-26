@@ -54,5 +54,3 @@ Implement a Crazyrouter `ImageProvider` adapter that maps normalized generation/
 ## Blocked By
 
 - Issue 001
-- Issue 002
-

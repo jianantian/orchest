@@ -2,7 +2,7 @@
 
 ## Background
 
-v0.7.1 introduces a standalone image AIGC provider crate. All later storage, provider adapter, and gateway orchestration work depends on one stable type contract. This issue creates the crate and defines the public request, response, capability, event, error, and provider-boundary types without implementing provider HTTP calls or asset storage.
+v0.6.1 introduces a standalone image AIGC provider crate. All later storage, provider adapter, and gateway orchestration work depends on one stable type contract. This issue creates the crate and defines the public request, response, capability, event, error, and provider-boundary types without implementing provider HTTP calls or asset storage.
 
 The source of truth is the Image AIGC Gateway design document at `docs/superpowers/specs/2026-05-25-image-aigc-gateway-design.md`.
 
@@ -35,6 +35,7 @@ Create `agent-runtime-aigc-providers` with zero workspace-internal dependencies 
 - [ ] `ImageGenerationRequest` includes operation, prompt, negative prompt, inputs, generation config, execution config, output config, compatibility policy, and provider options.
 - [ ] `ImageOperation` includes `TextToImage`, `ImageToImage`, `EditImage`, `Upscale`, and `FaceSwap`.
 - [ ] `ImageInput`, `ImageInputRole`, and `AssetRef` represent source images, references, masks, fonts, super-resolution references, URLs, data URLs, base64, bytes, local paths, and stored assets.
+- [ ] `AssetIngestSource` exists as a provider-boundary type and supports provider URL, data URL, base64, and bytes ingestion sources.
 - [ ] `ImageGenerationConfig`, `ImageSize`, `ImageQuality`, `ImageFormat`, `ImageBackground`, `SafetyConfig`, `ImageEditConfig`, `ImageRegion`, and `ImageStyleConfig` exist.
 - [ ] `GenerationExecutionConfig` represents async preference, streaming, partial image count, poll interval, timeout, webhook URL, and user identifier.
 - [ ] `ImageOutputConfig` and `ImageOutputDelivery` represent `Url` and `Base64` delivery.
