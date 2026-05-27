@@ -6,14 +6,9 @@
 
 ## 步骤
 
-### Step 1: A14 — SkillEnvManager derive Clone
+### ~~Step 1: A14 — SkillEnvManager derive Clone~~
 
-**文件**：`crates/agent-runtime-core/src/skill/mod.rs:129`（grep `struct SkillEnvManager`）
-
-1. 在 `SkillEnvManager` 的 derive 列表中添加 `Clone`
-2. 确认所有字段都 impl Clone（当前只有 `PathBuf`，是 Clone 的）
-
-**1 行改动，低风险。**
+**已完成，skip。** `mod.rs:139` 已有 `#[derive(Debug, Clone)]`。
 
 ### Step 2: A12 — ToolContext derive Clone
 
@@ -47,7 +42,21 @@
    - `openai.rs`
    - `deepseek.rs`
    - `openrouter.rs`
-4. 删除 `loop_.rs:51` 和 `tool/agent.rs:26` 的 `#[allow(clippy::too_many_arguments)]`
+4. 删除 `tool/agent.rs:26` 的 `#[allow(clippy::too_many_arguments)]`
+5. `loop_.rs:51` 的 `#[allow(clippy::too_many_arguments)]` 需要同步处理——`run_loop_inner` 当前 7 个参数，004 加 `cancel_token` 后变成 8 个。应将参数收束为 `RunContext` 结构体：
+   ```rust
+   struct RunContext {
+       run_id: RunId,
+       config: AgentConfig,
+       model: Arc<dyn ModelAdapter>,
+       registry: ToolRegistry,
+       tx: mpsc::Sender<RuntimeEvent>,
+       approval_bus: ApprovalBus,
+       cancel_token: CancellationToken,  // 004 新增
+   }
+   ```
+   注意：此步骤与 004 有交叉，建议 004 完成后一起处理。`input: String` 不入 struct（是一次性消费的）。
+6. 注意：`agent-runtime-py/src/lib.rs:526` 也有此 allow，但那是 PyO3 `Agent::new` 的 9 个参数（Python API 设计），不在 A8 范围内。需要加 `// justified: PyO3 constructor mirrors Python API`
 
 ### Step 5: A15 — MCP HTTP JSON-RPC ID 递增
 

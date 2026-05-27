@@ -40,7 +40,8 @@
    ```
 2. 确认 `guard` 类型是 `MutexGuard<Option<PythonSession>>`，`take()` 会将其置为 None
 3. 确认 `child.kill()` 是同步的（tokio::process::Child::kill 返回 `io::Result<()>`，不是 async）
-4. 添加测试：模拟 EOF → 验证下次调用重建 session
+4. 顺带修复超时路径（code_exec.rs:103）的 `session.child.kill().await` —— `.await` 是多余的，kill 是同步方法
+5. 添加测试：模拟 EOF → 验证下次调用重建 session
 
 ### Step 4: S1 — Python 环境变量隔离
 

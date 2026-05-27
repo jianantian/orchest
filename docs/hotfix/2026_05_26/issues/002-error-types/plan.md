@@ -10,7 +10,7 @@
 
 **文件**：`crates/agent-runtime-core/src/budget.rs:22-28`
 
-1. 添加 `thiserror` 到 `agent-runtime-core/Cargo.toml`（如果尚未存在）
+1. `thiserror = "2"` 已在 `agent-runtime-core/Cargo.toml` 中，无需添加
 2. 将 `BudgetViolation` 改为 thiserror 派生：
    ```rust
    #[derive(Debug, Clone, thiserror::Error)]
@@ -36,7 +36,7 @@
    - `providers/deepseek.rs`
    - `providers/openrouter.rs`
    - `providers/lib.rs`
-5. 删除全部 `#[allow(clippy::result_large_err)]`（当前 15 处）
+5. 删除全部 `#[allow(clippy::result_large_err)]`（当前 12 处：lib.rs×6, openrouter.rs×3, anthropic.rs×1, deepseek.rs×1, openai.rs×1）
 6. 运行 `cargo clippy -- -D warnings` 确认 `result_large_err` 不再触发
 
 ### Step 3: A6 — ToolError 错误链
