@@ -1,7 +1,7 @@
 // Main agent run loop.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -25,6 +25,8 @@ use super::skills::register_skills;
 use super::sub_agent::execute_agent_delegate;
 use super::tool_exec::poll_async_job;
 use super::webhook::start_webhook_server;
+
+const APPROVAL_TIMEOUT: Duration = Duration::from_secs(3600);
 
 pub(crate) async fn run_loop(
     run_id: RunId,
@@ -166,7 +168,7 @@ async fn run_loop_inner(
             return;
         }
 
-        if let Some(_violation) = budget.check() {
+        if let Some(violation) = budget.check() {
             emit(
                 &tx,
                 RuntimeEvent::BudgetWarning {
@@ -178,7 +180,7 @@ async fn run_loop_inner(
             emit(
                 &tx,
                 RuntimeEvent::RunFailed {
-                    error: "budget_exceeded".into(),
+                    error: format!("budget_exceeded: {violation:?}"),
                 },
             )
             .await;
@@ -318,7 +320,19 @@ async fn run_loop_inner(
                 )
                 .await;
 
-                let approved = approval_rx.await.unwrap_or(false);
+                let approved = match tokio::time::timeout(APPROVAL_TIMEOUT, approval_rx).await {
+                    Ok(result) => result.unwrap_or(false),
+                    Err(_) => {
+                        emit(
+                            &tx,
+                            RuntimeEvent::RunFailed {
+                                error: "approval_timeout".into(),
+                            },
+                        )
+                        .await;
+                        return;
+                    }
+                };
                 approval_bus.cancel(run_id).await;
 
                 if approved {

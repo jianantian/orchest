@@ -167,6 +167,9 @@ print("{sentinel}" + json.dumps({{"stdout": __orchest_stdout.getvalue(), "stderr
             .await
             .map_err(io_tool_error)?;
         if read == 0 {
+            if let Some(mut dead) = guard.take() {
+                let _ = dead.child.kill().await;
+            }
             return Err(ToolError {
                 message: "python session exited".into(),
                 code: Some("SESSION_EXITED".into()),
@@ -193,6 +196,9 @@ async fn spawn_python_session() -> Result<PythonSession, ToolError> {
         .arg("-u")
         .arg("-i")
         .arg("-q")
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("HOME", std::env::var("HOME").unwrap_or_default())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
