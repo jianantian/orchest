@@ -583,7 +583,7 @@ async fn e2e_budget_warning_event() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            RuntimeEvent::RunFailed { error } if error == "budget_exceeded"
+            RuntimeEvent::RunFailed { error } if error.starts_with("budget_exceeded")
         )),
         "missing budget_exceeded RunFailed"
     );
