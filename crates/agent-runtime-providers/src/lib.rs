@@ -1,4 +1,5 @@
 pub mod defaults;
+pub mod registry;
 pub mod types;
 pub use types::*;
 
@@ -19,6 +20,8 @@ pub use openrouter::{OpenRouterAdapter, OpenRouterConfig};
 
 pub mod telemetry;
 
+pub use registry::{ProviderFactory, ProviderRegistry};
+
 use std::future::Future;
 use tokio::sync::mpsc;
 
@@ -38,55 +41,21 @@ pub fn create_adapter(
 pub fn create_adapter_from_config(
     config: ProviderRuntimeConfig,
 ) -> Result<Box<dyn ModelAdapter>, ModelError> {
+    let registry = ProviderRegistry::new();
     let normalized = normalize_provider_model(&config.model)?;
+
+    let factory = registry
+        .get(normalized.provider)
+        .ok_or_else(|| unknown_provider(normalized.provider, &registry))?;
+
     let api_key = resolve_api_key(
-        normalized.provider,
+        factory,
         config.api_key.as_deref(),
         config.api_key_env.as_deref(),
     )?;
     let max_tokens = config.max_tokens.unwrap_or(defaults::MAX_TOKENS);
 
-    match normalized.provider {
-        "anthropic" => {
-            let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-                model: normalized.model.to_string(),
-                max_tokens,
-                api_key: Some(api_key),
-                api_url: config.api_url,
-            })?;
-            Ok(Box::new(adapter))
-        }
-        "openai" => {
-            let adapter = OpenAiAdapter::from_config(OpenAiConfig {
-                model: normalized.model.to_string(),
-                max_tokens,
-                api_key: Some(api_key),
-                api_url: config.api_url,
-            })?;
-            Ok(Box::new(adapter))
-        }
-        "deepseek" => {
-            let adapter = DeepSeekAdapter::from_config(DeepSeekConfig {
-                model: normalized.model.to_string(),
-                max_tokens,
-                api_key: Some(api_key),
-                api_url: config.api_url,
-            })?;
-            Ok(Box::new(adapter))
-        }
-        "openrouter" => {
-            let adapter = OpenRouterAdapter::from_config(OpenRouterConfig {
-                model: normalized.model.to_string(),
-                max_tokens,
-                api_key: Some(api_key),
-                api_url: config.api_url,
-                app_title: None,
-                site_url: None,
-            })?;
-            Ok(Box::new(adapter))
-        }
-        _ => Err(unknown_provider(normalized.provider)),
-    }
+    factory.create_adapter(normalized.model, max_tokens, api_key, config.api_url)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +65,7 @@ pub struct NormalizedProviderModel<'a> {
 }
 
 pub fn normalize_provider_model(model: &str) -> Result<NormalizedProviderModel<'_>, ModelError> {
+    let registry = ProviderRegistry::new();
     let trimmed = model.trim();
     if trimmed.is_empty() {
         return Err(ModelError::internal(
@@ -118,17 +88,18 @@ pub fn normalize_provider_model(model: &str) -> Result<NormalizedProviderModel<'
         ));
     }
 
-    match provider {
-        "anthropic" | "openai" | "deepseek" | "openrouter" => Ok(NormalizedProviderModel {
+    if registry.get(provider).is_some() {
+        Ok(NormalizedProviderModel {
             provider,
             model: model_name,
-        }),
-        _ => Err(unknown_provider(provider)),
+        })
+    } else {
+        Err(unknown_provider(provider, &registry))
     }
 }
 
 fn resolve_api_key(
-    provider: &str,
+    factory: &dyn ProviderFactory,
     explicit: Option<&str>,
     api_key_env: Option<&str>,
 ) -> Result<String, ModelError> {
@@ -142,8 +113,6 @@ fn resolve_api_key(
                 "invalid_api_key_env",
             ));
         }
-        // api_key_env is an explicit local override. If it is configured, do not
-        // silently use the matching provider's default key.
         return match std::env::var(env_name) {
             Ok(value) => non_empty_api_key(&value),
             Err(_) => Err(ModelError::internal(
@@ -153,7 +122,7 @@ fn resolve_api_key(
         };
     }
 
-    let env_name = default_api_key_env(provider)?;
+    let env_name = factory.default_api_key_env();
     match std::env::var(env_name) {
         Ok(value) => non_empty_api_key(&value),
         Err(_) => Err(ModelError::internal(
@@ -175,21 +144,10 @@ fn non_empty_api_key(value: &str) -> Result<String, ModelError> {
     }
 }
 
-fn default_api_key_env(provider: &str) -> Result<&'static str, ModelError> {
-    match provider {
-        "anthropic" => Ok(defaults::anthropic::API_KEY_ENV),
-        "openai" => Ok(defaults::openai::API_KEY_ENV),
-        "deepseek" => Ok(defaults::deepseek::API_KEY_ENV),
-        "openrouter" => Ok(defaults::openrouter::API_KEY_ENV),
-        _ => Err(unknown_provider(provider)),
-    }
-}
-
-fn unknown_provider(provider: &str) -> ModelError {
+fn unknown_provider(provider: &str, registry: &ProviderRegistry) -> ModelError {
+    let supported = registry.supported_providers().join(", ");
     ModelError::internal(
-        format!(
-            "unknown provider '{provider}': supported providers are anthropic, openai, deepseek, openrouter"
-        ),
+        format!("unknown provider '{provider}': supported providers are {supported}"),
         "unknown_provider",
     )
 }
@@ -398,9 +356,11 @@ mod tests {
         let env_name = "ORCHEST_TEST_PROVIDER_API_KEY_PRECEDENCE";
         let _env_guard = EnvVarGuard::set(env_name, "env-key");
 
-        let explicit = resolve_api_key("openai", Some("explicit-key"), Some(env_name))
+        let registry = ProviderRegistry::new();
+        let factory = registry.get("openai").unwrap();
+        let explicit = resolve_api_key(factory, Some("explicit-key"), Some(env_name))
             .expect("explicit key wins");
-        let from_env = resolve_api_key("openai", None, Some(env_name)).expect("env key resolves");
+        let from_env = resolve_api_key(factory, None, Some(env_name)).expect("env key resolves");
 
         assert_eq!(explicit, "explicit-key");
         assert_eq!(from_env, "env-key");
@@ -413,7 +373,9 @@ mod tests {
         let _local_env_guard = EnvVarGuard::remove(local_env_name);
         let _openai_env_guard = EnvVarGuard::set("OPENAI_API_KEY", "global-openai-key");
 
-        let err = match resolve_api_key("openai", None, Some(local_env_name)) {
+        let registry = ProviderRegistry::new();
+        let factory = registry.get("openai").unwrap();
+        let err = match resolve_api_key(factory, None, Some(local_env_name)) {
             Ok(_) => {
                 panic!("missing local api_key_env should fail instead of using OPENAI_API_KEY")
             }
@@ -429,7 +391,9 @@ mod tests {
         let _openai_env_guard = EnvVarGuard::remove("OPENAI_API_KEY");
         let _anthropic_env_guard = EnvVarGuard::set("ANTHROPIC_API_KEY", "anthropic-key");
 
-        let err = match resolve_api_key("openai", None, None) {
+        let registry = ProviderRegistry::new();
+        let factory = registry.get("openai").unwrap();
+        let err = match resolve_api_key(factory, None, None) {
             Ok(_) => panic!("openai config should not use ANTHROPIC_API_KEY"),
             Err(err) => err,
         };
@@ -729,8 +693,6 @@ data: [DONE]
                 "{} should support tool_use",
                 adapter.provider_name()
             );
-            // Capabilities use Orchest types (ThinkingLevel, CacheCapability, etc.)
-            // not provider API parameter names
             let _ = caps.reasoning.efforts;
             let _ = caps.prompt_cache.supported;
         }
@@ -760,8 +722,6 @@ data: [DONE]
 
     #[test]
     fn system_role_maps_per_provider() {
-        // Anthropic uses top-level system parameter (tested in anthropic.rs)
-        // OpenAI-compat uses role=system message
         let adapter = OpenAiAdapter::from_config(OpenAiConfig {
             model: "gpt-4o".into(),
             max_tokens: 4096,
@@ -779,9 +739,6 @@ data: [DONE]
             ..Default::default()
         };
 
-        // Access build_request_body via the openai module's internal method
-        // We verify through the public interface: the adapter accepts system messages
-        // without error. The actual serialization is tested in each adapter's own tests.
         assert_eq!(adapter.provider_name(), "openai");
         assert!(!messages.is_empty());
         assert_eq!(options.thinking, ThinkingLevel::Off);
@@ -793,7 +750,6 @@ data: [DONE]
             tool_use_id: "call_1".into(),
             content: json!({"result": "success"}),
         };
-        // Verify ToolResult roundtrips through serde
         let json = serde_json::to_string(&tool_result).unwrap();
         let restored: ContentBlock = serde_json::from_str(&json).unwrap();
         assert_eq!(tool_result, restored);
@@ -801,7 +757,6 @@ data: [DONE]
 
     #[test]
     fn coerce_reports_adjustment() {
-        // Verify OptionAdjustment type is usable across providers
         let adj = OptionAdjustment {
             option: "thinking_budget_tokens".into(),
             requested: json!(10000),
@@ -811,5 +766,15 @@ data: [DONE]
         let json = serde_json::to_string(&adj).unwrap();
         let restored: OptionAdjustment = serde_json::from_str(&json).unwrap();
         assert_eq!(adj, restored);
+    }
+
+    #[test]
+    fn registry_lists_all_built_in_providers() {
+        let registry = ProviderRegistry::new();
+        let providers = registry.supported_providers();
+        assert!(providers.contains(&"anthropic"));
+        assert!(providers.contains(&"openai"));
+        assert!(providers.contains(&"deepseek"));
+        assert!(providers.contains(&"openrouter"));
     }
 }

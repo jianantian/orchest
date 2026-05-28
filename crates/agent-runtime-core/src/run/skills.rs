@@ -22,8 +22,11 @@ pub(crate) async fn register_skills(
 ) -> Result<Option<Arc<ReadFileTool>>, String> {
     use std::path::Path;
 
-    let dir = Path::new(skills_dir);
-    let manifests = SkillScanner::scan(dir).map_err(|e| format!("skill scan failed: {e}"))?;
+    let dir = Path::new(skills_dir).to_path_buf();
+    let manifests = tokio::task::spawn_blocking(move || SkillScanner::scan(&dir))
+        .await
+        .map_err(|e| format!("skill scan join error: {e}"))?
+        .map_err(|e| format!("skill scan failed: {e}"))?;
     if manifests.is_empty() {
         return Ok(None);
     }

@@ -473,6 +473,36 @@ impl ModelAdapter for OpenAiAdapter {
     }
 }
 
+// ProviderFactory implementation
+
+pub struct OpenAiFactory;
+
+impl crate::registry::ProviderFactory for OpenAiFactory {
+    fn provider_name(&self) -> &'static str {
+        "openai"
+    }
+
+    fn create_adapter(
+        &self,
+        model: &str,
+        max_tokens: u32,
+        api_key: String,
+        api_url: Option<String>,
+    ) -> Result<Box<dyn ModelAdapter>, ModelError> {
+        let adapter = OpenAiAdapter::from_config(OpenAiConfig {
+            model: model.to_string(),
+            max_tokens,
+            api_key: Some(api_key),
+            api_url,
+        })?;
+        Ok(Box::new(adapter))
+    }
+
+    fn default_api_key_env(&self) -> &'static str {
+        crate::defaults::openai::API_KEY_ENV
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
