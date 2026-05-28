@@ -11,8 +11,8 @@ pub(crate) mod tool_exec;
 pub(crate) mod webhook;
 
 pub use config::{
-    AgentConfig, AgentConfigBuilder, AgentRun, CompactionConfig, ModelConfig, RunId, RunState,
-    RunStatus, RuntimeConfig, SkillsConfig, SubAgentRuntime,
+    AgentConfig, AgentConfigBuilder, AgentRun, CompactionConfig, ConfigError, ModelConfig, RunId,
+    RunState, RunStatus, RuntimeConfig, SkillsConfig, SubAgentRuntime,
 };
 pub use handle::{ApprovalBus, EventReceiver, RunHandle};
 

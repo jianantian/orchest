@@ -29,6 +29,7 @@ use tokio_util::sync::CancellationToken;
 
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(3600);
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_loop(
     run_id: RunId,
     config: AgentConfig,
