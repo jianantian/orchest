@@ -6,10 +6,7 @@ use std::time::Duration;
 
 use agent_runtime_core::budget::BudgetConfig;
 use agent_runtime_core::events::RuntimeEvent;
-use agent_runtime_core::model::{
-    create_adapter_from_config, normalize_provider_model, ModelSpec, ProviderRuntimeConfig,
-    RequestOptions,
-};
+use agent_runtime_core::model::{ModelSpec, ProviderRuntimeConfig, RequestOptions};
 use agent_runtime_core::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
 use agent_runtime_core::tool::agent::AgentTool;
 use agent_runtime_core::tool::builtin::WriteFileTool;
@@ -17,6 +14,7 @@ use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
     JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
+use agent_runtime_providers::{create_adapter_from_config, normalize_provider_model};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 

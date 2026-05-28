@@ -8,6 +8,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 agent-runtime-core = { path = "../agent-runtime-core" }
+agent-runtime-providers = { path = "../agent-runtime-providers" }
 napi = { version = "2", features = ["napi8", "serde-json"] }
 napi-derive = "2"
 async-trait = "0.1"

@@ -11,8 +11,8 @@ use tokio::sync::Mutex as TokioMutex;
 
 use agent_runtime_core::budget::BudgetConfig;
 use agent_runtime_core::model::{
-    create_adapter_from_config, normalize_provider_model, CachePolicy, CompatibilityPolicy,
-    ModelSpec, ProviderRuntimeConfig, RequestOptions as RustRequestOptions, ThinkingLevel,
+    CachePolicy, CompatibilityPolicy, ModelSpec, ProviderRuntimeConfig,
+    RequestOptions as RustRequestOptions, ThinkingLevel,
 };
 use agent_runtime_core::run::{
     AgentConfig, AgentRun, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
@@ -22,6 +22,7 @@ use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
     JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
+use agent_runtime_providers::{create_adapter_from_config, normalize_provider_model};
 
 fn shared_runtime() -> &'static tokio::runtime::Runtime {
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
