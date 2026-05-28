@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -5,7 +6,7 @@ use futures_util::{Stream, StreamExt};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::{ContentBlock, ModelError, StopReason, StreamEvent, TokenUsage};
+use crate::{ContentBlock, ModelError, StopReason, StreamEvent, TokenUsage, UpstreamErrorDetail};
 
 struct ToolCallAccum {
     id: String,
@@ -58,9 +59,7 @@ pub(crate) async fn parse_openai_sse_stream(
             code: Some("stream_error".into()),
             provider: None,
             status: None,
-            upstream_code: None,
-            upstream_message: None,
-            upstream_body: None,
+            upstream: None,
         })?;
 
         buffer.push_str(&String::from_utf8_lossy(&chunk));
@@ -86,9 +85,11 @@ pub(crate) async fn parse_openai_sse_stream(
                 code: Some("invalid_json".into()),
                 provider: None,
                 status: None,
-                upstream_code: None,
-                upstream_message: None,
-                upstream_body: Some(Value::String(data.to_string())),
+                upstream: Some(Arc::new(UpstreamErrorDetail {
+                    code: None,
+                    message: None,
+                    body: Some(Value::String(data.to_string())),
+                })),
             })?;
 
             if let Some(usage_value) = value.get("usage").filter(|u| !u.is_null()) {
@@ -296,9 +297,7 @@ pub(crate) async fn parse_openai_sse_stream(
             code: Some("stream_interrupted".into()),
             provider: None,
             status: None,
-            upstream_code: None,
-            upstream_message: None,
-            upstream_body: None,
+            upstream: None,
         });
     }
 
@@ -326,9 +325,7 @@ pub(crate) async fn parse_openai_sse_stream(
             code: Some("invalid_tool_arguments".into()),
             provider: None,
             status: None,
-            upstream_code: None,
-            upstream_message: None,
-            upstream_body: None,
+            upstream: None,
         })?;
         content.push(ContentBlock::ToolUse {
             id: tc.id,
