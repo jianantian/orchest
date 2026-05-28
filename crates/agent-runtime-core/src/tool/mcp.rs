@@ -231,6 +231,7 @@ pub struct McpHttpClient {
     auth: Option<McpAuth>,
     client: reqwest::Client,
     timeout: Duration,
+    next_id: AtomicU64,
 }
 
 impl McpHttpClient {
@@ -246,6 +247,7 @@ impl McpHttpClient {
             auth,
             client: reqwest::Client::new(),
             timeout: Duration::from_secs(30),
+            next_id: AtomicU64::new(1),
         };
         client
             .request("initialize", json!({"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "orchest", "version": "0.2.0"}}), None)
@@ -347,7 +349,8 @@ impl McpHttpClient {
         params: Value,
         timeout: Option<Duration>,
     ) -> Result<Value, McpError> {
-        let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let body = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         let mut request = self
             .client
             .post(&self.url)
@@ -658,6 +661,7 @@ for line in sys.stdin:
             auth: None,
             client: reqwest::Client::new(),
             timeout: Duration::from_secs(5),
+            next_id: AtomicU64::new(1),
         };
 
         let result = client.call_tool("do_something", json!({})).await;
