@@ -7,8 +7,9 @@ use reqwest::multipart::{Form, Part};
 use serde_json::{json, Value};
 
 use crate::{
-    AigcError, AssetIngestSource, AssetRef, ImageGenerationRequest, ImageInputRole, ImageOperation,
-    ImageProvider, ProviderAsset, ProviderGenerationStatus, ProviderImageJob,
+    AigcError, AssetIngestSource, AssetRef, CompatibilityPolicy, ImageBackground, ImageFormat,
+    ImageGenerationRequest, ImageInputRole, ImageOperation, ImageProvider, ImageQuality,
+    ProviderAsset, ProviderGenerationStatus, ProviderImageJob,
 };
 
 #[derive(Debug, Clone)]
@@ -64,6 +65,7 @@ impl CrazyrouterImageAdapter {
         if let Some(user) = &request.execution_config.user {
             body["user"] = json!(user);
         }
+        self.apply_generation_options(request, &mut body)?;
         if request.execution_config.stream {
             body["stream"] = json!(true);
         }
@@ -71,6 +73,98 @@ impl CrazyrouterImageAdapter {
             body["partial_images"] = json!(partials);
         }
         Ok((format!("{}{}", self.api_url, endpoint), body))
+    }
+
+    fn apply_generation_options(
+        &self,
+        request: &ImageGenerationRequest,
+        body: &mut Value,
+    ) -> Result<(), AigcError> {
+        if let Some(count) = request.generation_config.count {
+            if !(1..=10).contains(&count) {
+                return Err(AigcError::new(
+                    "unsupported_option",
+                    "Crazyrouter n must be between 1 and 10",
+                )
+                .provider("crazyrouter"));
+            }
+        }
+        if let Some(quality) = &request.generation_config.quality {
+            let value = match quality {
+                ImageQuality::Low => "low",
+                ImageQuality::Medium => "medium",
+                ImageQuality::High | ImageQuality::Hd => "high",
+                ImageQuality::Auto => "auto",
+                ImageQuality::Standard => {
+                    if request.compatibility_policy == CompatibilityPolicy::Strict {
+                        return Err(AigcError::new(
+                            "unsupported_option",
+                            "Crazyrouter rejects quality=standard",
+                        )
+                        .provider("crazyrouter"));
+                    }
+                    "auto"
+                }
+            };
+            body["quality"] = json!(value);
+        }
+        if let Some(background) = &request.generation_config.background {
+            let value = match background {
+                ImageBackground::Auto => "auto",
+                ImageBackground::Opaque => "opaque",
+                ImageBackground::Transparent => {
+                    if request.compatibility_policy == CompatibilityPolicy::Strict {
+                        return Err(AigcError::new(
+                            "unsupported_option",
+                            "Crazyrouter rejects transparent background",
+                        )
+                        .provider("crazyrouter"));
+                    }
+                    "auto"
+                }
+            };
+            body["background"] = json!(value);
+        }
+        if let Some(format) = &request.generation_config.format {
+            body["output_format"] = json!(match format {
+                ImageFormat::Png => "png",
+                ImageFormat::Jpeg => "jpeg",
+                ImageFormat::Webp => "webp",
+            });
+        }
+        if let Some(compression) = request
+            .provider_options
+            .get("output_compression")
+            .and_then(|value| value.as_u64())
+        {
+            if compression > 100 {
+                return Err(AigcError::new(
+                    "unsupported_option",
+                    "Crazyrouter output_compression must be 0-100",
+                )
+                .provider("crazyrouter"));
+            }
+            if matches!(request.generation_config.format, Some(ImageFormat::Png)) {
+                if request.compatibility_policy == CompatibilityPolicy::Strict {
+                    return Err(AigcError::new(
+                        "unsupported_option",
+                        "Crazyrouter rejects png output_compression",
+                    )
+                    .provider("crazyrouter"));
+                }
+            } else {
+                body["output_compression"] = json!(compression);
+            }
+        }
+        if let Some(moderation) = request
+            .generation_config
+            .safety
+            .as_ref()
+            .and_then(|safety| safety.moderation.as_ref())
+        {
+            body["moderation"] = json!(moderation);
+        }
+        Ok(())
     }
 
     async fn build_edit_form(&self, request: &ImageGenerationRequest) -> Result<Form, AigcError> {
@@ -356,7 +450,10 @@ fn parse_data_url(data_url: &str) -> Result<(Bytes, String), AigcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ImageGenerationConfig, ImageInput, ImageOutputConfig};
+    use crate::{
+        CompatibilityPolicy, ImageBackground, ImageFormat, ImageGenerationConfig, ImageInput,
+        ImageOutputConfig, ImageQuality,
+    };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -396,6 +493,48 @@ mod tests {
             .unwrap();
         assert_eq!(job.assets.len(), 1);
         assert!(matches!(job.assets[0].source, AssetIngestSource::Url(_)));
+    }
+
+    #[test]
+    fn generation_maps_documented_options_and_rejects_standard_quality() {
+        let mut request = ImageGenerationRequest {
+            operation: ImageOperation::TextToImage,
+            prompt: "cat".into(),
+            negative_prompt: None,
+            inputs: vec![],
+            generation_config: ImageGenerationConfig {
+                count: Some(2),
+                quality: Some(ImageQuality::Hd),
+                format: Some(ImageFormat::Jpeg),
+                background: Some(ImageBackground::Opaque),
+                safety: Some(crate::SafetyConfig {
+                    moderation: Some("low".into()),
+                }),
+                ..Default::default()
+            },
+            execution_config: crate::GenerationExecutionConfig {
+                stream: true,
+                partial_image_count: Some(2),
+                user: Some("user-1".into()),
+                ..Default::default()
+            },
+            output_config: ImageOutputConfig::default(),
+            compatibility_policy: CompatibilityPolicy::Coerce,
+            provider_options: json!({ "output_compression": 80 }),
+        };
+        let (_, body) = adapter().build_request(&request).unwrap();
+        assert_eq!(body["quality"], "high");
+        assert_eq!(body["output_format"], "jpeg");
+        assert_eq!(body["output_compression"], 80);
+        assert_eq!(body["background"], "opaque");
+        assert_eq!(body["moderation"], "low");
+        assert_eq!(body["partial_images"], 2);
+        assert_eq!(body["user"], "user-1");
+
+        request.generation_config.quality = Some(ImageQuality::Standard);
+        request.compatibility_policy = CompatibilityPolicy::Strict;
+        let err = adapter().build_request(&request).unwrap_err();
+        assert_eq!(err.code, "unsupported_option");
     }
 
     #[tokio::test]

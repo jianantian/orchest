@@ -332,6 +332,8 @@ pub struct ImageOperationCapability {
     pub supports_transparent_background: bool,
     #[serde(default)]
     pub supported_formats: Vec<ImageFormat>,
+    #[serde(default)]
+    pub metadata: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -618,6 +620,7 @@ mod tests {
                 supports_streaming: false,
                 supports_transparent_background: true,
                 supported_formats: vec![ImageFormat::Png],
+                metadata: Value::Null,
             },
         );
         let caps = ImageModelCapabilities {

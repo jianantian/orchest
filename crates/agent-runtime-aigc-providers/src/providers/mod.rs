@@ -3,10 +3,10 @@ mod crazyrouter;
 mod openrouter;
 mod renderful;
 
-pub use aliyun::{AliyunImageAdapter, AliyunImageConfig};
-pub use crazyrouter::{CrazyrouterImageAdapter, CrazyrouterImageConfig};
-pub use openrouter::{OpenRouterImageAdapter, OpenRouterImageConfig};
-pub use renderful::{RenderfulImageAdapter, RenderfulImageConfig};
+pub(crate) use aliyun::{AliyunImageAdapter, AliyunImageConfig};
+pub(crate) use crazyrouter::{CrazyrouterImageAdapter, CrazyrouterImageConfig};
+pub(crate) use openrouter::{OpenRouterImageAdapter, OpenRouterImageConfig};
+pub(crate) use renderful::{RenderfulImageAdapter, RenderfulImageConfig};
 
 use std::collections::HashMap;
 
@@ -33,6 +33,7 @@ fn basic_capabilities(
                 supports_streaming: false,
                 supports_transparent_background: true,
                 supported_formats: vec![ImageFormat::Png, ImageFormat::Jpeg, ImageFormat::Webp],
+                metadata: Value::Null,
             },
         );
     }

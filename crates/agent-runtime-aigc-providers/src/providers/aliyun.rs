@@ -69,7 +69,7 @@ impl AliyunImageAdapter {
             }
         }
         let mut parameters = json!({
-            "size": super::size_to_string(&request.generation_config.size),
+            "size": aliyun_size_to_string(&request.generation_config.size),
         });
         if let Some(count) = request.generation_config.count {
             parameters["n"] = json!(count);
@@ -79,6 +79,35 @@ impl AliyunImageAdapter {
         }
         if let Some(seed) = request.generation_config.seed {
             parameters["seed"] = json!(seed);
+        }
+        for key in [
+            "prompt_extend",
+            "watermark",
+            "enable_sequential",
+            "thinking_mode",
+            "color_palette",
+        ] {
+            if let Some(value) = request.provider_options.get(key) {
+                parameters[key] = value.clone();
+            }
+        }
+        if let Some(edit) = &request.generation_config.edit {
+            let boxes = edit
+                .regions
+                .iter()
+                .filter_map(|region| match region {
+                    crate::ImageRegion::BoundingBox {
+                        x,
+                        y,
+                        width,
+                        height,
+                    } => Some(json!([x, y, x + width, y + height])),
+                    crate::ImageRegion::Mask => None,
+                })
+                .collect::<Vec<_>>();
+            if !boxes.is_empty() {
+                parameters["bbox_list"] = json!(boxes);
+            }
         }
         Ok(json!({
             "model": self.config.model,
@@ -118,6 +147,13 @@ impl AliyunImageAdapter {
             usage: None,
             option_adjustments: vec![],
         }
+    }
+}
+
+fn aliyun_size_to_string(size: &crate::ImageSize) -> String {
+    match size {
+        crate::ImageSize::Pixels { width, height } => format!("{width}*{height}"),
+        other => super::size_to_string(other),
     }
 }
 
@@ -251,7 +287,9 @@ impl AliyunImageAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ImageGenerationConfig, ImageOutputConfig};
+    use crate::{
+        ImageEditConfig, ImageGenerationConfig, ImageOutputConfig, ImageRegion, ImageSize,
+    };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -283,6 +321,55 @@ mod tests {
             "mountain"
         );
         assert_eq!(body["parameters"]["negative_prompt"], "fog");
+    }
+
+    #[test]
+    fn request_maps_prompt_extend_watermark_wan_options_and_bbox() {
+        let adapter = AliyunImageAdapter::from_config(AliyunImageConfig {
+            model: "wan2.7-image-pro".into(),
+            api_key: "key".into(),
+            region: None,
+            api_url: None,
+            timeout: None,
+        })
+        .unwrap();
+        let body = adapter
+            .build_request(&ImageGenerationRequest {
+                operation: ImageOperation::EditImage,
+                prompt: "replace object".into(),
+                negative_prompt: None,
+                inputs: vec![],
+                generation_config: ImageGenerationConfig {
+                    size: ImageSize::ResolutionTier("2K".into()),
+                    edit: Some(ImageEditConfig {
+                        regions: vec![ImageRegion::BoundingBox {
+                            x: 10,
+                            y: 20,
+                            width: 30,
+                            height: 40,
+                        }],
+                    }),
+                    ..Default::default()
+                },
+                execution_config: Default::default(),
+                output_config: ImageOutputConfig::default(),
+                compatibility_policy: Default::default(),
+                provider_options: json!({
+                    "prompt_extend": true,
+                    "watermark": false,
+                    "enable_sequential": true,
+                    "thinking_mode": false,
+                    "color_palette": [{"color": "#ff0000", "ratio": 100.0}]
+                }),
+            })
+            .unwrap();
+        assert_eq!(body["parameters"]["size"], "2K");
+        assert_eq!(body["parameters"]["prompt_extend"], true);
+        assert_eq!(body["parameters"]["watermark"], false);
+        assert_eq!(body["parameters"]["enable_sequential"], true);
+        assert_eq!(body["parameters"]["thinking_mode"], false);
+        assert_eq!(body["parameters"]["color_palette"][0]["color"], "#ff0000");
+        assert_eq!(body["parameters"]["bbox_list"], json!([[10, 20, 40, 60]]));
     }
 
     #[tokio::test]

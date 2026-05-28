@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::{
-    AigcError, AssetIngestSource, ImageGenerationRequest, ImageOperation, ImageProvider,
-    ProviderAsset, ProviderGenerationStatus, ProviderImageJob,
+    AigcError, AssetIngestSource, CapabilitySource, GenerationExecutionMode,
+    ImageGenerationRequest, ImageModelCapabilities, ImageOperation, ImageOperationCapability,
+    ImageProvider, ProviderAsset, ProviderGenerationStatus, ProviderImageJob,
 };
 
 #[derive(Debug, Clone)]
@@ -155,6 +156,84 @@ impl RenderfulImageAdapter {
             option_adjustments: vec![],
         }
     }
+
+    #[allow(dead_code)]
+    pub fn parse_models_metadata(
+        model: &str,
+        task_type: &str,
+        response: Value,
+    ) -> Result<ImageModelCapabilities, AigcError> {
+        let models = response
+            .get("models")
+            .or_else(|| response.get("data"))
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| {
+                AigcError::new(
+                    "provider_response_parse_failed",
+                    "Renderful models response must contain models or data array",
+                )
+                .provider("renderful")
+            })?;
+        let model_metadata = models
+            .iter()
+            .find(|item| {
+                item.get("id")
+                    .or_else(|| item.get("name"))
+                    .and_then(|value| value.as_str())
+                    == Some(model)
+            })
+            .cloned()
+            .ok_or_else(|| {
+                AigcError::new(
+                    "model_metadata_not_found",
+                    format!("Renderful metadata for model '{model}' was not returned"),
+                )
+                .provider("renderful")
+            })?;
+        let operation = match task_type {
+            "image-to-image" => ImageOperation::ImageToImage,
+            _ => ImageOperation::TextToImage,
+        };
+        let mut operations = std::collections::HashMap::new();
+        operations.insert(
+            format!("{:?}", operation).to_ascii_lowercase(),
+            ImageOperationCapability {
+                operation,
+                execution_modes: vec![GenerationExecutionMode::Async],
+                max_outputs: model_metadata
+                    .get("max_outputs")
+                    .and_then(|value| value.as_u64())
+                    .map(|value| value as u32),
+                supports_streaming: false,
+                supports_transparent_background: false,
+                supported_formats: vec![],
+                metadata: json!({
+                    "aspect_ratios": model_metadata
+                        .get("aspect_ratios")
+                        .cloned()
+                        .unwrap_or_else(|| json!([])),
+                    "resolutions": model_metadata
+                        .get("resolutions")
+                        .cloned()
+                        .unwrap_or_else(|| json!([])),
+                    "cost": model_metadata
+                        .get("cost")
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                    "supports_webhook": model_metadata
+                        .get("supports_webhook")
+                        .cloned()
+                        .unwrap_or(Value::Bool(false)),
+                }),
+            },
+        );
+        Ok(ImageModelCapabilities {
+            provider: "renderful".into(),
+            model: model.into(),
+            operations,
+            source: CapabilitySource::ProviderMetadata,
+        })
+    }
 }
 
 #[async_trait]
@@ -285,6 +364,49 @@ mod tests {
 
         assert_eq!(body["type"], "image-to-image");
         assert_eq!(body["image_url"], "https://assets.example/input.png");
+    }
+
+    #[test]
+    fn model_metadata_parser_records_renderful_capabilities() {
+        let caps = RenderfulImageAdapter::parse_models_metadata(
+            "flux-dev",
+            "text-to-image",
+            json!({
+                "models": [{
+                    "id": "flux-dev",
+                    "max_outputs": 4,
+                    "aspect_ratios": ["1:1", "16:9"],
+                    "resolutions": ["1024x1024"],
+                    "cost": {"min": 0.01, "max": 0.04},
+                    "supports_webhook": true
+                }]
+            }),
+        )
+        .unwrap();
+        let op = caps.operations.get("texttoimage").unwrap();
+        assert_eq!(caps.source, crate::CapabilitySource::ProviderMetadata);
+        assert_eq!(op.max_outputs, Some(4));
+        assert_eq!(op.metadata["aspect_ratios"], json!(["1:1", "16:9"]));
+        assert_eq!(op.metadata["supports_webhook"], true);
+    }
+
+    #[test]
+    fn failed_poll_response_preserves_provider_error_details() {
+        let adapter = RenderfulImageAdapter::from_config(RenderfulImageConfig {
+            model: "flux".into(),
+            api_key: "key".into(),
+            api_url: None,
+            timeout: None,
+            webhook: None,
+        })
+        .unwrap();
+        let job = adapter.parse_poll_response(json!({
+            "id": "gen_failed",
+            "status": "failed",
+            "error": {"code": "bad_prompt", "message": "prompt rejected"}
+        }));
+        assert_eq!(job.status, ProviderGenerationStatus::Failed);
+        assert_eq!(job.metadata["error"]["code"], "bad_prompt");
     }
 
     #[tokio::test]

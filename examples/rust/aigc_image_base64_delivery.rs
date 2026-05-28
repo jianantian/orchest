@@ -63,6 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             scope: AssetScope::test(),
             signed_url_ttl: None,
             max_base64_bytes: Some(1024 * 1024),
+            emit_partial_images: false,
         },
     );
 

@@ -386,6 +386,52 @@ impl OssAssetStore {
     }
 }
 
+impl OssStorageConfig {
+    pub fn from_env() -> Result<Self, AssetStoreError> {
+        Self::from_env_prefix("AIGC_OSS")
+    }
+
+    pub fn from_env_prefix(prefix: &str) -> Result<Self, AssetStoreError> {
+        let read_required = |suffix: &str| -> Result<String, AssetStoreError> {
+            let name = format!("{prefix}_{suffix}");
+            std::env::var(&name)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| value.trim().to_string())
+                .ok_or_else(|| {
+                    AssetStoreError::new(
+                        "missing_storage_config",
+                        format!("storage environment variable {name} is required"),
+                    )
+                })
+        };
+        let read_optional = |suffix: &str| -> Option<String> {
+            std::env::var(format!("{prefix}_{suffix}"))
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        };
+        let signed_url_ttl = read_optional("SIGNED_URL_TTL_SECONDS")
+            .map(|value| {
+                value
+                    .parse::<u64>()
+                    .map(Duration::from_secs)
+                    .map_err(|err| AssetStoreError::new("invalid_storage_config", err.to_string()))
+            })
+            .transpose()?;
+        Ok(Self {
+            endpoint: read_required("ENDPOINT")?,
+            bucket: read_required("BUCKET")?,
+            region: read_required("REGION")?,
+            access_key_id: read_required("ACCESS_KEY_ID")?,
+            access_key_secret: read_required("ACCESS_KEY_SECRET")?,
+            public_base_url: read_optional("PUBLIC_BASE_URL"),
+            signed_url_ttl,
+            key_prefix: read_optional("KEY_PREFIX"),
+        })
+    }
+}
+
 #[async_trait]
 impl AssetStore for OssAssetStore {
     async fn put_stream(
@@ -875,6 +921,47 @@ mod tests {
         server.await.unwrap();
         assert!(matches!(asset.location, StorageLocation::Oss(_)));
         assert_eq!(asset.byte_count, 3);
+    }
+
+    #[test]
+    fn oss_config_loads_storage_scoped_environment_names() {
+        let prefix = "AIGC_STORAGE_OSS_TEST";
+        for suffix in [
+            "ENDPOINT",
+            "BUCKET",
+            "REGION",
+            "ACCESS_KEY_ID",
+            "ACCESS_KEY_SECRET",
+            "PUBLIC_BASE_URL",
+            "SIGNED_URL_TTL_SECONDS",
+            "KEY_PREFIX",
+        ] {
+            std::env::remove_var(format!("{prefix}_{suffix}"));
+        }
+        std::env::set_var(format!("{prefix}_ENDPOINT"), "oss-cn-test.aliyuncs.com");
+        std::env::set_var(format!("{prefix}_BUCKET"), "orchest-aigc-test");
+        std::env::set_var(format!("{prefix}_REGION"), "cn-test");
+        std::env::set_var(format!("{prefix}_ACCESS_KEY_ID"), "storage-ak");
+        std::env::set_var(format!("{prefix}_ACCESS_KEY_SECRET"), "storage-sk");
+        std::env::set_var(
+            format!("{prefix}_PUBLIC_BASE_URL"),
+            "https://assets.example",
+        );
+        std::env::set_var(format!("{prefix}_SIGNED_URL_TTL_SECONDS"), "60");
+        std::env::set_var(format!("{prefix}_KEY_PREFIX"), "generated");
+        std::env::set_var("DASHSCOPE_API_KEY", "dashscope-key");
+
+        let config = OssStorageConfig::from_env_prefix(prefix).unwrap();
+
+        assert_eq!(config.access_key_id, "storage-ak");
+        assert_eq!(config.access_key_secret, "storage-sk");
+        assert_eq!(
+            config.public_base_url.as_deref(),
+            Some("https://assets.example")
+        );
+        assert_eq!(config.signed_url_ttl, Some(Duration::from_secs(60)));
+        assert_eq!(config.key_prefix.as_deref(), Some("generated"));
+        assert_ne!(config.access_key_secret, "dashscope-key");
     }
 
     fn request_is_complete(request: &[u8]) -> bool {

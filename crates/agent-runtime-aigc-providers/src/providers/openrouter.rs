@@ -4,8 +4,10 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::{
-    AigcError, AssetIngestSource, ImageGenerationRequest, ImageOperation, ImageProvider,
-    ProviderAsset, ProviderGenerationStatus, ProviderImageJob,
+    AigcError, AssetIngestSource, CapabilitySource, GenerationExecutionMode,
+    ImageGenerationRequest, ImageModelCapabilities, ImageOperation, ImageOperationCapability,
+    ImageProvider, ImageSize, ProviderAsset, ProviderGenerationStatus, ProviderImageEvent,
+    ProviderImageJob,
 };
 
 #[derive(Debug, Clone)]
@@ -54,24 +56,53 @@ impl OpenRouterImageAdapter {
             .provider_options
             .get("include_text")
             .and_then(|v| v.as_bool())
-            .unwrap_or(false)
+            .unwrap_or_else(|| self.config.model.contains("gemini"))
         {
             modalities.push("text");
+        }
+        let mut image_config = json!({
+            "aspect_ratio": match &request.generation_config.size {
+                ImageSize::AspectRatio(value) => value.clone(),
+                _ => "1:1".into(),
+            },
+            "image_size": match &request.generation_config.size {
+                ImageSize::ResolutionTier(value) => value.clone(),
+                _ => "1K".into(),
+            }
+        });
+        for key in [
+            "strength",
+            "text_layout",
+            "font_inputs",
+            "super_resolution_references",
+        ] {
+            if let Some(value) = request.provider_options.get(key) {
+                image_config[key] = value.clone();
+            }
+        }
+        if let Some(style) = request
+            .generation_config
+            .style
+            .as_ref()
+            .and_then(|style| style.style.as_ref())
+        {
+            image_config["style"] = json!(style);
+        }
+        if let Some(style) = &request.generation_config.style {
+            let colors = style
+                .colors
+                .iter()
+                .filter_map(|color| parse_hex_rgb(color))
+                .collect::<Vec<_>>();
+            if !colors.is_empty() {
+                image_config["rgb_colors"] = json!(colors);
+            }
         }
         Ok(json!({
             "model": self.config.model,
             "modalities": modalities,
             "messages": [{ "role": "user", "content": request.prompt }],
-            "image_config": {
-                "aspect_ratio": match &request.generation_config.size {
-                    crate::ImageSize::AspectRatio(value) => value.clone(),
-                    _ => "1:1".into(),
-                },
-                "image_size": match &request.generation_config.size {
-                    crate::ImageSize::ResolutionTier(value) => value.clone(),
-                    _ => "1024x1024".into(),
-                }
-            }
+            "image_config": image_config
         }))
     }
 
@@ -110,6 +141,98 @@ impl OpenRouterImageAdapter {
             option_adjustments: vec![],
         }
     }
+
+    #[allow(dead_code)]
+    pub fn parse_stream_delta(&self, response: Value) -> Vec<ProviderImageEvent> {
+        response
+            .pointer("/choices/0/delta/images")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                item.get("image_url")
+                    .and_then(|v| v.get("url"))
+                    .and_then(|v| v.as_str())
+            })
+            .map(|url| ProviderImageEvent::PartialAsset {
+                asset: ProviderAsset {
+                    source: AssetIngestSource::DataUrl(url.into()),
+                    mime_type: Some("image/png".into()),
+                    width: None,
+                    height: None,
+                    expires_at: None,
+                    metadata: json!({}),
+                },
+            })
+            .collect()
+    }
+
+    #[allow(dead_code)]
+    pub fn parse_model_metadata(
+        model: &str,
+        metadata: Value,
+    ) -> Result<ImageModelCapabilities, AigcError> {
+        let output_modalities = metadata
+            .pointer("/architecture/output_modalities")
+            .or_else(|| metadata.get("output_modalities"))
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+        let output_has_image = output_modalities
+            .as_array()
+            .map(|values| values.iter().any(|value| value.as_str() == Some("image")))
+            .unwrap_or(false);
+        if !output_has_image {
+            return Err(AigcError::new(
+                "unsupported_model",
+                "OpenRouter model metadata does not advertise image output",
+            )
+            .provider("openrouter"));
+        }
+        let mut operations = std::collections::HashMap::new();
+        operations.insert(
+            "texttoimage".into(),
+            ImageOperationCapability {
+                operation: ImageOperation::TextToImage,
+                execution_modes: vec![
+                    GenerationExecutionMode::Sync,
+                    GenerationExecutionMode::Stream,
+                ],
+                max_outputs: None,
+                supports_streaming: true,
+                supports_transparent_background: false,
+                supported_formats: vec![],
+                metadata: json!({
+                    "output_modalities": output_modalities,
+                    "input_modalities": metadata
+                        .pointer("/architecture/input_modalities")
+                        .or_else(|| metadata.get("input_modalities"))
+                        .cloned()
+                        .unwrap_or_else(|| json!([])),
+                    "supported_parameters": metadata
+                        .get("supported_parameters")
+                        .cloned()
+                        .unwrap_or_else(|| json!([]))
+                }),
+            },
+        );
+        Ok(ImageModelCapabilities {
+            provider: "openrouter".into(),
+            model: model.into(),
+            operations,
+            source: CapabilitySource::ProviderMetadata,
+        })
+    }
+}
+
+fn parse_hex_rgb(color: &str) -> Option<[u8; 3]> {
+    let color = color.strip_prefix('#').unwrap_or(color);
+    if color.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&color[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&color[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&color[4..6], 16).ok()?;
+    Some([r, g, b])
 }
 
 #[async_trait]
@@ -241,6 +364,80 @@ mod tests {
         assert_eq!(err.code, "unsupported_operation");
     }
 
+    #[test]
+    fn image_config_maps_model_specific_provider_options_and_stream_deltas() {
+        let adapter = OpenRouterImageAdapter::from_config(OpenRouterImageConfig {
+            model: "recraft/recraft-v3".into(),
+            api_key: "key".into(),
+            api_url: None,
+            timeout: None,
+            app_title: None,
+            site_url: None,
+        })
+        .unwrap();
+        let body = adapter
+            .build_request(&ImageGenerationRequest {
+                operation: ImageOperation::TextToImage,
+                prompt: "poster".into(),
+                negative_prompt: None,
+                inputs: vec![],
+                generation_config: ImageGenerationConfig {
+                    size: ImageSize::ResolutionTier("4K".into()),
+                    style: Some(crate::ImageStyleConfig {
+                        style: Some("Photorealism".into()),
+                        colors: vec!["#ff0000".into(), "#008000".into()],
+                    }),
+                    ..Default::default()
+                },
+                execution_config: Default::default(),
+                output_config: ImageOutputConfig::default(),
+                compatibility_policy: Default::default(),
+                provider_options: json!({
+                    "include_text": true,
+                    "strength": 0.7,
+                    "text_layout": [{"text": "SALE", "bbox": [0, 0, 100, 100]}]
+                }),
+            })
+            .unwrap();
+        assert_eq!(body["modalities"], json!(["image", "text"]));
+        assert_eq!(body["image_config"]["image_size"], "4K");
+        assert_eq!(body["image_config"]["strength"], 0.7);
+        assert_eq!(body["image_config"]["style"], "Photorealism");
+        assert_eq!(
+            body["image_config"]["rgb_colors"],
+            json!([[255, 0, 0], [0, 128, 0]])
+        );
+        assert_eq!(body["image_config"]["text_layout"][0]["text"], "SALE");
+
+        let events = adapter.parse_stream_delta(json!({
+            "choices": [{"delta": {"images": [{"image_url": {"url": "data:image/png;base64,cG5n"}}]}}]
+        }));
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            crate::ProviderImageEvent::PartialAsset { .. }
+        ));
+    }
+
+    #[test]
+    fn model_metadata_parser_records_image_modalities() {
+        let caps = OpenRouterImageAdapter::parse_model_metadata(
+            "google/gemini-2.5-flash-image",
+            json!({
+                "id": "google/gemini-2.5-flash-image",
+                "architecture": {
+                    "input_modalities": ["text"],
+                    "output_modalities": ["image", "text"]
+                },
+                "supported_parameters": ["image_config"]
+            }),
+        )
+        .unwrap();
+        let op = caps.operations.get("texttoimage").unwrap();
+        assert_eq!(caps.source, crate::CapabilitySource::ProviderMetadata);
+        assert_eq!(op.metadata["output_modalities"], json!(["image", "text"]));
+    }
+
     #[tokio::test]
     async fn create_generation_posts_to_openrouter_api() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -251,7 +448,7 @@ mod tests {
             let lower_request = request.to_ascii_lowercase();
             assert!(request.starts_with("POST /api/v1/chat/completions "));
             assert!(lower_request.contains("authorization: bearer key"));
-            assert!(request.contains("\"modalities\":[\"image\"]"));
+            assert!(request.contains("\"modalities\":[\"image\",\"text\"]"));
             let body = r#"{"id":"or-1","choices":[{"message":{"images":[{"image_url":{"url":"data:image/png;base64,cG5n"}}]}}]}"#;
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",

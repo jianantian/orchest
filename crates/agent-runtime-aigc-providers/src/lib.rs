@@ -8,9 +8,13 @@ pub mod storage;
 pub mod telemetry;
 pub mod types;
 
+use crate::providers::{
+    AliyunImageAdapter, AliyunImageConfig, CrazyrouterImageAdapter, CrazyrouterImageConfig,
+    OpenRouterImageAdapter, OpenRouterImageConfig, RenderfulImageAdapter, RenderfulImageConfig,
+};
+
 pub use gateway::*;
 pub use image::*;
-pub use providers::*;
 pub use storage::*;
 pub use types::*;
 
