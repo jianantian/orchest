@@ -1,4 +1,4 @@
-// Context compaction: summarize old messages to reduce context window usage.
+//! Context compaction: summarize old messages to reduce context window usage.
 
 use std::sync::Arc;
 
@@ -10,6 +10,9 @@ use crate::model::{ContentBlock, Message, ModelAdapter, Role, TokenUsage};
 use super::config::AgentConfig;
 use super::helpers::emit;
 
+/// Compact the conversation context if the token usage ratio exceeds the
+/// configured threshold.  Old messages (minus `recent_messages`) are
+/// summarised by the model and replaced with a single summary message.
 pub(crate) async fn maybe_compact_context(
     config: &AgentConfig,
     model: &Arc<dyn ModelAdapter>,
@@ -121,4 +124,295 @@ pub(crate) async fn maybe_compact_context(
         },
     )
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+
+    use crate::model::{
+        ModelCapabilities, ModelError, ModelResponse, RequestOptions, StopReason, StreamEvent,
+        ToolDef,
+    };
+
+    use crate::run::CompactionConfig;
+
+    /// Minimal mock that returns a fixed summary text.
+    struct SummaryMock {
+        call_count: Arc<AtomicU32>,
+    }
+
+    #[async_trait]
+    impl ModelAdapter for SummaryMock {
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock-model"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDef],
+            _options: &RequestOptions,
+            _tx: Option<mpsc::Sender<StreamEvent>>,
+        ) -> Result<ModelResponse, ModelError> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("test summary".into())],
+                usage: TokenUsage {
+                    output_tokens: 5,
+                    ..Default::default()
+                },
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+
+    fn budget_none() -> crate::budget::BudgetConfig {
+        crate::budget::BudgetConfig {
+            max_tokens: None,
+            max_tool_calls: None,
+            max_duration: None,
+            max_cost_usd: None,
+        }
+    }
+
+    fn make_config(threshold: f32, recent: usize, context_window: Option<u64>) -> AgentConfig {
+        AgentConfig {
+            system_prompt: "system".into(),
+            model: crate::run::ModelConfig {
+                spec: crate::model::ModelSpec {
+                    provider: "mock".into(),
+                    model: "mock".into(),
+                    api_key_env: None,
+                    api_url: None,
+                    max_tokens: None,
+                    context_window_size: context_window,
+                },
+                options: RequestOptions::default(),
+            },
+            budget: budget_none(),
+            skills: crate::run::SkillsConfig::default(),
+            runtime: crate::run::RuntimeConfig {
+                compaction: Some(CompactionConfig {
+                    threshold,
+                    recent_messages: recent,
+                }),
+                ..Default::default()
+            },
+        }
+    }
+
+    fn user_msg(text: &str) -> Message {
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text(text.into())],
+        }
+    }
+
+    fn assistant_msg(text: &str) -> Message {
+        Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::Text(text.into())],
+        }
+    }
+
+    #[tokio::test]
+    async fn no_compaction_when_disabled() {
+        let config = AgentConfig {
+            system_prompt: "s".into(),
+            model: crate::run::ModelConfig::default(),
+            budget: budget_none(),
+            skills: crate::run::SkillsConfig::default(),
+            runtime: crate::run::RuntimeConfig {
+                compaction: None,
+                ..Default::default()
+            },
+        };
+        let call_count = Arc::new(AtomicU32::new(0));
+        let model: Arc<dyn ModelAdapter> = Arc::new(SummaryMock {
+            call_count: call_count.clone(),
+        });
+        let (tx, _rx) = mpsc::channel(16);
+        let mut messages = vec![user_msg("a"), assistant_msg("b")];
+        let mut last = None;
+        let usage = TokenUsage {
+            input_tokens: 900,
+            output_tokens: 100,
+            ..Default::default()
+        };
+
+        maybe_compact_context(&config, &model, &mut messages, &tx, &mut last, 10, &usage).await;
+
+        assert_eq!(messages.len(), 2, "messages should be unchanged");
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            0,
+            "model should not be called"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_compaction_below_threshold() {
+        let config = make_config(0.8, 2, Some(1000));
+        let call_count = Arc::new(AtomicU32::new(0));
+        let model: Arc<dyn ModelAdapter> = Arc::new(SummaryMock {
+            call_count: call_count.clone(),
+        });
+        let (tx, _rx) = mpsc::channel(16);
+        let mut messages = vec![
+            user_msg("a"),
+            assistant_msg("b"),
+            user_msg("c"),
+            assistant_msg("d"),
+        ];
+        let mut last = None;
+        // 30% usage — below 80% threshold
+        let usage = TokenUsage {
+            input_tokens: 200,
+            output_tokens: 100,
+            ..Default::default()
+        };
+
+        maybe_compact_context(&config, &model, &mut messages, &tx, &mut last, 10, &usage).await;
+
+        assert_eq!(
+            messages.len(),
+            4,
+            "messages should be unchanged below threshold"
+        );
+        assert_eq!(call_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn compaction_triggers_above_threshold() {
+        let config = make_config(0.8, 2, Some(1000));
+        let call_count = Arc::new(AtomicU32::new(0));
+        let model: Arc<dyn ModelAdapter> = Arc::new(SummaryMock {
+            call_count: call_count.clone(),
+        });
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut messages = vec![
+            user_msg("a"),
+            assistant_msg("b"),
+            user_msg("c"),
+            assistant_msg("d"),
+            user_msg("e"),
+        ];
+        let mut last = None;
+        // 90% usage — above 80% threshold
+        let usage = TokenUsage {
+            input_tokens: 800,
+            output_tokens: 100,
+            ..Default::default()
+        };
+
+        maybe_compact_context(&config, &model, &mut messages, &tx, &mut last, 10, &usage).await;
+
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "model should be called once"
+        );
+        // Should keep recent_messages=2 non-system messages + 1 summary
+        // Original: 5 non-system messages, keep last 2, add 1 summary = 3
+        assert_eq!(messages.len(), 3);
+        // First message should be the summary
+        let summary_text = match &messages[0].content[0] {
+            ContentBlock::Text(t) => t.clone(),
+            _ => panic!("expected text"),
+        };
+        assert!(
+            summary_text.contains("test summary"),
+            "summary should contain mock text"
+        );
+        assert_eq!(last, Some(10));
+
+        // Should emit ContextCompacted event
+        let event = rx.try_recv().expect("should have event");
+        assert!(matches!(event, RuntimeEvent::ContextCompacted { .. }));
+    }
+
+    #[tokio::test]
+    async fn no_compaction_too_few_messages() {
+        // recent_messages=5, only 3 non-system messages → not enough to compact
+        let config = make_config(0.5, 5, Some(1000));
+        let call_count = Arc::new(AtomicU32::new(0));
+        let model: Arc<dyn ModelAdapter> = Arc::new(SummaryMock {
+            call_count: call_count.clone(),
+        });
+        let (tx, _rx) = mpsc::channel(16);
+        let mut messages = vec![user_msg("a"), assistant_msg("b"), user_msg("c")];
+        let mut last = None;
+        let usage = TokenUsage {
+            input_tokens: 900,
+            output_tokens: 100,
+            ..Default::default()
+        };
+
+        maybe_compact_context(&config, &model, &mut messages, &tx, &mut last, 10, &usage).await;
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(call_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn no_compaction_within_cooldown() {
+        let config = make_config(0.5, 1, Some(1000));
+        let call_count = Arc::new(AtomicU32::new(0));
+        let model: Arc<dyn ModelAdapter> = Arc::new(SummaryMock {
+            call_count: call_count.clone(),
+        });
+        let (tx, _rx) = mpsc::channel(16);
+        let mut messages = vec![
+            user_msg("a"),
+            assistant_msg("b"),
+            user_msg("c"),
+            assistant_msg("d"),
+        ];
+        // Last compaction was at step 8, current step is 10 → only 2 steps apart (< 5)
+        let mut last = Some(8);
+        let usage = TokenUsage {
+            input_tokens: 900,
+            output_tokens: 100,
+            ..Default::default()
+        };
+
+        maybe_compact_context(&config, &model, &mut messages, &tx, &mut last, 10, &usage).await;
+
+        assert_eq!(messages.len(), 4);
+        assert_eq!(call_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn empty_messages_no_crash() {
+        let config = make_config(0.5, 2, Some(1000));
+        let call_count = Arc::new(AtomicU32::new(0));
+        let model: Arc<dyn ModelAdapter> = Arc::new(SummaryMock {
+            call_count: call_count.clone(),
+        });
+        let (tx, _rx) = mpsc::channel(16);
+        let mut messages: Vec<Message> = vec![];
+        let mut last = None;
+        let usage = TokenUsage {
+            input_tokens: 900,
+            output_tokens: 100,
+            ..Default::default()
+        };
+
+        maybe_compact_context(&config, &model, &mut messages, &tx, &mut last, 10, &usage).await;
+
+        assert!(messages.is_empty());
+        assert_eq!(call_count.load(Ordering::SeqCst), 0);
+    }
 }

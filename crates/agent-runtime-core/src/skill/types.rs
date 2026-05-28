@@ -1,3 +1,5 @@
+//! Skill manifest, dependency, and capability data types.
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 

@@ -1,4 +1,4 @@
-// Agent run orchestration, split into single-responsibility modules.
+//! Agent run orchestration, split into single-responsibility modules.
 
 pub(crate) mod compaction;
 pub(crate) mod config;

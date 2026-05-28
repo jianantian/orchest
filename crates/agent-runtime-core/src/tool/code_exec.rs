@@ -1,3 +1,5 @@
+//! Code execution tools: persistent Python sessions and one-shot JavaScript.
+
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,6 +16,12 @@ use crate::tool::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOu
 const DEFAULT_TIMEOUT_SECONDS: u64 = 30;
 const MAX_TIMEOUT_SECONDS: u64 = 300;
 const SENTINEL_PREFIX: &str = "__ORCHEST_DONE__";
+const DEFAULT_PYTHON_BIN: &str = "python3";
+
+/// Return the Python binary path, allowing override via `PYTHON_BIN`.
+fn python_bin() -> String {
+    std::env::var("PYTHON_BIN").unwrap_or_else(|_| DEFAULT_PYTHON_BIN.into())
+}
 
 pub struct CodeExecutionMcpServer;
 
@@ -192,7 +200,8 @@ print("{sentinel}" + json.dumps({{"stdout": __orchest_stdout.getvalue(), "stderr
 }
 
 async fn spawn_python_session() -> Result<PythonSession, ToolError> {
-    let mut child = Command::new("python3")
+    let bin = python_bin();
+    let mut child = Command::new(&bin)
         .arg("-u")
         .arg("-i")
         .arg("-q")
@@ -204,7 +213,7 @@ async fn spawn_python_session() -> Result<PythonSession, ToolError> {
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| ToolError {
-            message: format!("failed to spawn python3: {e}"),
+            message: format!("failed to spawn {bin}: {e}"),
             code: Some("SPAWN_ERROR".into()),
         })?;
     let stdin = child.stdin.take().ok_or_else(|| ToolError {

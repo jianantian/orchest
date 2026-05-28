@@ -1,4 +1,4 @@
-// Utility functions shared across run submodules.
+//! Utility functions shared across run submodules.
 
 use std::sync::Arc;
 

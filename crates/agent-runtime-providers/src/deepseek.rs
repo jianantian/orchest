@@ -1,3 +1,5 @@
+//! DeepSeek adapter implementation (OpenAI-compatible).
+
 use std::env;
 use std::sync::Arc;
 use std::time::Instant;

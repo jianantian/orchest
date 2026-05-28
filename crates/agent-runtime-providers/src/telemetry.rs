@@ -1,3 +1,5 @@
+//! Provider-level telemetry: request metrics and span instrumentation.
+
 use std::time::Duration;
 
 use tracing::Span;

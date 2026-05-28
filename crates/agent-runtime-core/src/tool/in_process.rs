@@ -1,3 +1,5 @@
+//! In-process tool wrapper for closure-based tool implementations.
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;

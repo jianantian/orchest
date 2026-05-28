@@ -1,3 +1,5 @@
+//! Script executors for running skill bundled-tool scripts.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;

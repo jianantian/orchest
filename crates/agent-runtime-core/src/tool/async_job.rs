@@ -1,3 +1,5 @@
+//! Async job handle and polling types for long-running tool executions.
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;

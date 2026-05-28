@@ -1,4 +1,4 @@
-// Main agent run loop.
+//! Main agent run loop: step execution, tool dispatch, and termination.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

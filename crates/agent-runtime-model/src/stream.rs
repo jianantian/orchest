@@ -1,3 +1,5 @@
+//! Streaming event types for incremental model responses.
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

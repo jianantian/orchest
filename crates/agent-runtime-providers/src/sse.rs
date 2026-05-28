@@ -1,3 +1,5 @@
+//! Server-Sent Events (SSE) stream parser for OpenAI-compatible APIs.
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

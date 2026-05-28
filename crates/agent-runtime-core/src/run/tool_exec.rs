@@ -1,4 +1,4 @@
-// Async job polling for tool execution.
+//! Tool execution helpers: sync dispatch, async job polling, and webhook waits.
 
 use std::time::Instant;
 

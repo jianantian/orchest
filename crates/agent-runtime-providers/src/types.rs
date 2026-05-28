@@ -1,4 +1,4 @@
-// All model types are defined in the agent-runtime-model crate.
+//! Re-exported model types from `agent-runtime-model`.
 // Re-exported here for backward compatibility.
 pub use agent_runtime_model::*;
 

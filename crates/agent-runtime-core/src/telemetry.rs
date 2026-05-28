@@ -1,3 +1,5 @@
+//! Runtime telemetry: metrics counters and span helpers.
+
 use std::time::Duration;
 
 use tracing::Span;

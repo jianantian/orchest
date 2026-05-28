@@ -1,3 +1,5 @@
+//! MCP (Model Context Protocol) client and tool implementations.
+
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -759,6 +761,68 @@ time.sleep(60)
             !is_process_alive(pid),
             "MCP child should be dead after client drop"
         );
+    }
+
+    /// HTTP 4xx/5xx responses surface the status code in the error.
+    #[tokio::test]
+    async fn http_error_status_codes_surface_in_mcp_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+            let body = "Forbidden";
+            let response = format!(
+                "HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(response.as_bytes()).await.expect("write");
+        });
+
+        // Build client manually to skip initialize
+        let client = McpHttpClient {
+            url: format!("http://{address}"),
+            auth: None,
+            client: reqwest::Client::new(),
+            timeout: Duration::from_secs(5),
+            next_id: AtomicU64::new(1),
+        };
+
+        let err = client
+            .call_tool("test_tool", json!({}))
+            .await
+            .expect_err("should fail with 403");
+        assert!(
+            err.message.contains("403"),
+            "error should mention HTTP status: {}",
+            err.message
+        );
+        assert_eq!(err.code.as_deref(), Some("403"));
+    }
+
+    /// Connection failure includes useful error context.
+    #[tokio::test]
+    async fn http_connection_failure_includes_error_message() {
+        let client = McpHttpClient {
+            url: "http://127.0.0.1:1".to_string(), // port 1 should refuse
+            auth: None,
+            client: reqwest::Client::new(),
+            timeout: Duration::from_secs(1),
+            next_id: AtomicU64::new(1),
+        };
+
+        let err = client
+            .call_tool("anything", json!({}))
+            .await
+            .expect_err("should fail to connect");
+        assert!(
+            !err.message.is_empty(),
+            "error should have a descriptive message"
+        );
+        assert_eq!(err.code.as_deref(), Some("request_failed"));
     }
 
     #[cfg(unix)]

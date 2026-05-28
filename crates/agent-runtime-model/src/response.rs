@@ -1,3 +1,5 @@
+//! Model response types: content blocks, token usage, and stop reasons.
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};

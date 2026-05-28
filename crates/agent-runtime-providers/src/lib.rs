@@ -1,4 +1,7 @@
+//! LLM provider adapters: Anthropic, OpenAI, DeepSeek, OpenRouter.
+
 pub mod defaults;
+pub mod pricing;
 pub mod registry;
 pub mod types;
 pub use types::*;

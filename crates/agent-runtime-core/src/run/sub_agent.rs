@@ -1,4 +1,4 @@
-// Sub-agent execution through AgentDelegate.
+//! Sub-agent execution through AgentDelegate.
 
 use std::sync::Arc;
 

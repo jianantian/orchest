@@ -1,3 +1,5 @@
+//! Tool registry: name-indexed collection of available tools.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 

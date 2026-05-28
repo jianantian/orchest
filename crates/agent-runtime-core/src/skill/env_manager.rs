@@ -1,3 +1,5 @@
+//! Skill environment management: dependency installation and capability validation.
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 

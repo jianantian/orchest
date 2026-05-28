@@ -1,4 +1,4 @@
-// Run configuration types: RunId, AgentConfig, RunState, RunStatus, SubAgentRuntime.
+//! Run configuration types: RunId, AgentConfig, RunState, RunStatus, SubAgentRuntime.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -86,6 +86,11 @@ pub struct RuntimeConfig {
     pub compaction: Option<CompactionConfig>,
     #[serde(default)]
     pub webhook_enabled: bool,
+    /// Whether Python/JavaScript code execution is enabled for this agent.
+    ///
+    /// **Security note**: Code runs in a bare subprocess without sandboxing.
+    /// Do not enable for untrusted user input without additional isolation
+    /// (e.g., containers, `nsjail`, or a remote execution backend).
     #[serde(default)]
     pub code_execution_enabled: bool,
     #[serde(default)]

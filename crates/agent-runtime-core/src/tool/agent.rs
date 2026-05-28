@@ -1,3 +1,5 @@
+//! AgentTool: tool implementation that delegates to a sub-agent.
+
 use std::sync::Arc;
 
 use async_trait::async_trait;

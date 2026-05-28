@@ -1,3 +1,5 @@
+//! Budget tracking and enforcement for agent runs.
+
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
