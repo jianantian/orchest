@@ -1,4 +1,4 @@
-// RunHandle, ApprovalBus, EventReceiver, and approval routing logic.
+//! RunHandle, ApprovalBus, EventReceiver, and approval routing logic.
 
 use std::collections::HashMap;
 use std::sync::Arc;

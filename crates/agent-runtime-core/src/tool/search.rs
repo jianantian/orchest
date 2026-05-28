@@ -1,3 +1,5 @@
+//! Dynamic tool search and discovery across registries.
+
 use std::collections::HashSet;
 
 use async_trait::async_trait;

@@ -1,3 +1,5 @@
+//! ModelAdapter trait: async LLM completion interface.
+
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 

@@ -1,3 +1,5 @@
+//! Core message, content, role, and tool definition types.
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

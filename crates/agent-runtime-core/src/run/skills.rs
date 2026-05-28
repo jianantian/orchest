@@ -1,4 +1,4 @@
-// Skill scanning and bundled tool registration.
+//! Skill scanning and bundled tool registration.
 
 use std::sync::Arc;
 

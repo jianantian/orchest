@@ -1,3 +1,5 @@
+//! Anthropic Claude adapter implementation.
+
 use std::env;
 use std::sync::Arc;
 use std::time::Instant;
@@ -270,32 +272,7 @@ fn map_stop_reason(raw: &str) -> StopReason {
 
 impl AnthropicAdapter {
     fn pricing(&self) -> ModelPricing {
-        match self.model.as_str() {
-            m if m.contains("claude-opus-4") => ModelPricing {
-                input_per_million_usd: 15.0,
-                output_per_million_usd: 75.0,
-                cache_read_per_million_usd: Some(1.5),
-                cache_write_per_million_usd: Some(18.75),
-            },
-            m if m.contains("claude-sonnet-4") => ModelPricing {
-                input_per_million_usd: 3.0,
-                output_per_million_usd: 15.0,
-                cache_read_per_million_usd: Some(0.3),
-                cache_write_per_million_usd: Some(3.75),
-            },
-            m if m.contains("claude-haiku-4") => ModelPricing {
-                input_per_million_usd: 0.8,
-                output_per_million_usd: 4.0,
-                cache_read_per_million_usd: Some(0.08),
-                cache_write_per_million_usd: Some(1.0),
-            },
-            _ => ModelPricing {
-                input_per_million_usd: 3.0,
-                output_per_million_usd: 15.0,
-                cache_read_per_million_usd: None,
-                cache_write_per_million_usd: None,
-            },
-        }
+        crate::pricing::anthropic_pricing(&self.model)
     }
 }
 

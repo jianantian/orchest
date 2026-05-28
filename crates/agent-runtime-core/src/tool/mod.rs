@@ -1,3 +1,5 @@
+//! Tool trait, types, and submodules for all tool implementations.
+
 pub mod agent;
 pub mod async_job;
 pub mod builtin;
@@ -40,6 +42,12 @@ pub enum ToolOutput {
     AsyncJob(JobHandle),
 }
 
+/// Configuration for delegating work to a sub-agent.
+///
+/// Note: `input_mapper` is intentionally omitted — the caller constructs
+/// the input string directly.  `output_mapper` exists because sub-agent
+/// output needs provider-specific formatting back to the parent model.
+/// If `input_mapper` proves necessary, it will be added in v0.7.
 #[derive(Clone)]
 pub struct AgentDelegate {
     pub input: String,

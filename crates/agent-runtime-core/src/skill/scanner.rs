@@ -1,3 +1,5 @@
+//! SKILL.md scanner: discovers and parses skill manifests from the filesystem.
+
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;

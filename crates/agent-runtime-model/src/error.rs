@@ -1,3 +1,5 @@
+//! Model error types for LLM provider failures.
+
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};

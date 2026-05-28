@@ -12,7 +12,7 @@ from .exceptions import (
     ToolError,
 )
 
-JsonValue: TypeAlias = Any
+JsonValue: TypeAlias = dict[str, Any] | list[Any] | str | int | float | bool | None
 JsonSchema: TypeAlias = dict[str, Any]
 BudgetOptions: TypeAlias = dict[str, Any]
 RequestOptions: TypeAlias = dict[str, Any]

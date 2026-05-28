@@ -1,3 +1,5 @@
+//! Built-in tools: read_file, write_file, and similar filesystem utilities.
+
 use std::path::PathBuf;
 use std::sync::Arc;
 

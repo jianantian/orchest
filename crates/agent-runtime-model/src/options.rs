@@ -1,3 +1,5 @@
+//! Request options, capabilities, and pricing for model interactions.
+
 use serde::{Deserialize, Serialize};
 
 use crate::response::TokenUsage;

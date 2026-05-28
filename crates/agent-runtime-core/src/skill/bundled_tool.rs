@@ -1,3 +1,5 @@
+//! Bundled tool wrapper: executes skill scripts as tool implementations.
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;

@@ -1,3 +1,5 @@
+//! ProviderFactory trait and ProviderRegistry for adapter creation.
+
 use std::collections::HashMap;
 
 use agent_runtime_model::{ModelAdapter, ModelError};

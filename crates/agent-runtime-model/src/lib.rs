@@ -1,3 +1,5 @@
+//! Shared model types for the agent runtime (leaf crate, no runtime deps).
+
 pub mod adapter;
 pub mod error;
 pub mod options;
