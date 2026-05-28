@@ -23,6 +23,8 @@ use tokio::sync::mpsc;
 use crate::model::ModelAdapter;
 use crate::tool::registry::ToolRegistry;
 
+const EVENT_CHANNEL_CAPACITY: usize = 256;
+
 impl AgentRun {
     pub fn start(
         config: AgentConfig,
@@ -41,7 +43,7 @@ impl AgentRun {
         approval_bus: ApprovalBus,
     ) -> (RunHandle, EventReceiver) {
         let run_id = RunId::new();
-        let (event_tx, event_rx) = mpsc::channel(256);
+        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
 
         let bus_for_loop = approval_bus.clone();
         let task = tokio::spawn(async move {

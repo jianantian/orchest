@@ -86,7 +86,7 @@ pub enum CostHint {
     High,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ToolContext {
     pub run_id: RunId,
     pub run_depth: u32,

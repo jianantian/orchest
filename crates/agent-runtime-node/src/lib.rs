@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -22,6 +22,11 @@ use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
     JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
+
+fn shared_runtime() -> &'static tokio::runtime::Runtime {
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RT.get_or_init(|| tokio::runtime::Runtime::new().expect("failed to create tokio runtime"))
+}
 
 #[napi(object)]
 pub struct AgentOptions {
@@ -322,8 +327,7 @@ impl Agent {
 
         let run_handle_ref = Arc::clone(&self.run_handle);
 
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| napi::Error::from_reason(format!("failed to create runtime: {}", e)))?;
+        let rt = shared_runtime();
 
         let events = rt.block_on(async {
             let (handle, mut event_rx) = AgentRun::start(config, input, model, registry);
@@ -384,8 +388,7 @@ impl Agent {
 
         let run_handle_ref = Arc::clone(&self.run_handle);
 
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| napi::Error::from_reason(format!("failed to create runtime: {}", e)))?;
+        let rt = shared_runtime();
 
         rt.block_on(async {
             let (handle, mut event_rx) = AgentRun::start(config, input, model, registry);
@@ -419,8 +422,7 @@ impl Agent {
     pub fn respond_approval(&self, run_id: String, approved: bool) -> napi::Result<()> {
         let run_handle_ref = Arc::clone(&self.run_handle);
 
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| napi::Error::from_reason(format!("failed to create runtime: {}", e)))?;
+        let rt = shared_runtime();
 
         rt.block_on(async {
             let guard = run_handle_ref.lock().await;
