@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -270,6 +271,13 @@ pub enum StopReason {
 // Error type
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamErrorDetail {
+    pub code: Option<String>,
+    pub message: Option<String>,
+    pub body: Option<Value>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
 #[error("{message}")]
 pub struct ModelError {
@@ -277,9 +285,8 @@ pub struct ModelError {
     pub code: Option<String>,
     pub provider: Option<String>,
     pub status: Option<u16>,
-    pub upstream_code: Option<String>,
-    pub upstream_message: Option<String>,
-    pub upstream_body: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<Arc<UpstreamErrorDetail>>,
 }
 
 impl ModelError {
@@ -289,9 +296,7 @@ impl ModelError {
             code: Some(code.into()),
             provider: None,
             status: None,
-            upstream_code: None,
-            upstream_message: None,
-            upstream_body: None,
+            upstream: None,
         }
     }
 }
@@ -393,9 +398,7 @@ mod tests {
         assert_eq!(err.code.as_deref(), Some("test_error"));
         assert!(err.provider.is_none());
         assert!(err.status.is_none());
-        assert!(err.upstream_code.is_none());
-        assert!(err.upstream_message.is_none());
-        assert!(err.upstream_body.is_none());
+        assert!(err.upstream.is_none());
     }
 
     #[test]

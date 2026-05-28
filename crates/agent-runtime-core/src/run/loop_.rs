@@ -180,7 +180,7 @@ async fn run_loop_inner(
             emit(
                 &tx,
                 RuntimeEvent::RunFailed {
-                    error: format!("budget_exceeded: {violation:?}"),
+                    error: format!("budget_exceeded: {violation}"),
                 },
             )
             .await;

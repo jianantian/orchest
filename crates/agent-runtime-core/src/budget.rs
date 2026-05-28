@@ -19,11 +19,15 @@ pub struct BudgetUsage {
     pub cost_usd: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum BudgetViolation {
+    #[error("token limit exceeded")]
     MaxTokensExceeded,
+    #[error("tool call limit exceeded")]
     MaxToolCallsExceeded,
+    #[error("duration limit exceeded")]
     MaxDurationExceeded,
+    #[error("cost limit exceeded")]
     MaxCostExceeded,
 }
 

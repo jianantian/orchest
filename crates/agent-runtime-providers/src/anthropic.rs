@@ -1,4 +1,5 @@
 use std::env;
+use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -10,7 +11,7 @@ use crate::{
     CacheCapability, CachePolicy, CapabilitySource, CompatibilityPolicy, ContentBlock, Message,
     ModelAdapter, ModelCapabilities, ModelError, ModelPricing, ModelResponse, OptionAdjustment,
     ReasoningCapability, RequestOptions, Role, StopReason, StreamEvent, ThinkingLevel, TokenUsage,
-    ToolDef,
+    ToolDef, UpstreamErrorDetail,
 };
 
 use crate::{defaults, telemetry};
@@ -40,7 +41,6 @@ pub struct AnthropicConfig {
 }
 
 impl AnthropicAdapter {
-    #[allow(clippy::result_large_err)]
     pub fn from_config(config: AnthropicConfig) -> Result<Self, ModelError> {
         let api_key = config
             .api_key
@@ -391,9 +391,7 @@ impl ModelAdapter for AnthropicAdapter {
                     code: Some("request_failed".into()),
                     provider: Some("anthropic".into()),
                     status: None,
-                    upstream_code: None,
-                    upstream_message: None,
-                    upstream_body: None,
+                    upstream: None,
                 }
             })?;
 
@@ -401,7 +399,7 @@ impl ModelAdapter for AnthropicAdapter {
             let status = response.status().as_u16();
             let body_text = response.text().await.unwrap_or_default();
             let upstream_body: Option<Value> = serde_json::from_str(&body_text).ok();
-            let (upstream_code, upstream_message) = upstream_body
+            let (upstream_code, upstream_msg) = upstream_body
                 .as_ref()
                 .and_then(|b| b.get("error"))
                 .map(|err| {
@@ -420,9 +418,11 @@ impl ModelAdapter for AnthropicAdapter {
                 code: Some(status.to_string()),
                 provider: Some("anthropic".into()),
                 status: Some(status),
-                upstream_code,
-                upstream_message,
-                upstream_body,
+                upstream: Some(Arc::new(UpstreamErrorDetail {
+                    code: upstream_code,
+                    message: upstream_msg,
+                    body: upstream_body,
+                })),
             });
         }
 
@@ -447,9 +447,7 @@ impl ModelAdapter for AnthropicAdapter {
                 code: Some("stream_error".into()),
                 provider: Some("anthropic".into()),
                 status: None,
-                upstream_code: None,
-                upstream_message: None,
-                upstream_body: None,
+                upstream: None,
             })?;
 
             buffer.push_str(&String::from_utf8_lossy(&chunk));
@@ -478,9 +476,11 @@ impl ModelAdapter for AnthropicAdapter {
                     code: Some("invalid_json".into()),
                     provider: Some("anthropic".into()),
                     status: None,
-                    upstream_code: None,
-                    upstream_message: None,
-                    upstream_body: Some(json!(event_data)),
+                    upstream: Some(Arc::new(UpstreamErrorDetail {
+                        code: None,
+                        message: None,
+                        body: Some(json!(event_data)),
+                    })),
                 })?;
 
                 match event_type.as_str() {
@@ -671,9 +671,7 @@ impl ModelAdapter for AnthropicAdapter {
                 code: Some("stream_interrupted".into()),
                 provider: Some("anthropic".into()),
                 status: None,
-                upstream_code: None,
-                upstream_message: None,
-                upstream_body: None,
+                upstream: None,
             });
         }
 
@@ -1028,7 +1026,7 @@ data: {NOT VALID JSON!!!}
 
         assert_eq!(err.code.as_deref(), Some("invalid_json"));
         assert!(err.message.contains("malformed SSE JSON"));
-        assert!(err.upstream_body.is_some());
+        assert!(err.upstream.is_some());
     }
 
     #[tokio::test]

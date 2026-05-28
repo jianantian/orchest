@@ -22,7 +22,6 @@ pub mod telemetry;
 use std::future::Future;
 use tokio::sync::mpsc;
 
-#[allow(clippy::result_large_err)]
 pub fn create_adapter(
     model: &str,
     api_key: Option<String>,
@@ -36,7 +35,6 @@ pub fn create_adapter(
     })
 }
 
-#[allow(clippy::result_large_err)]
 pub fn create_adapter_from_config(
     config: ProviderRuntimeConfig,
 ) -> Result<Box<dyn ModelAdapter>, ModelError> {
@@ -97,7 +95,6 @@ pub struct NormalizedProviderModel<'a> {
     pub model: &'a str,
 }
 
-#[allow(clippy::result_large_err)]
 pub fn normalize_provider_model(model: &str) -> Result<NormalizedProviderModel<'_>, ModelError> {
     let trimmed = model.trim();
     if trimmed.is_empty() {
@@ -130,7 +127,6 @@ pub fn normalize_provider_model(model: &str) -> Result<NormalizedProviderModel<'
     }
 }
 
-#[allow(clippy::result_large_err)]
 fn resolve_api_key(
     provider: &str,
     explicit: Option<&str>,
@@ -167,7 +163,6 @@ fn resolve_api_key(
     }
 }
 
-#[allow(clippy::result_large_err)]
 fn non_empty_api_key(value: &str) -> Result<String, ModelError> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -180,7 +175,6 @@ fn non_empty_api_key(value: &str) -> Result<String, ModelError> {
     }
 }
 
-#[allow(clippy::result_large_err)]
 fn default_api_key_env(provider: &str) -> Result<&'static str, ModelError> {
     match provider {
         "anthropic" => Ok(defaults::anthropic::API_KEY_ENV),

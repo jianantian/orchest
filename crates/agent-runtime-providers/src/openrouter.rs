@@ -1,4 +1,5 @@
 use std::env;
+use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -8,7 +9,7 @@ use tokio::sync::mpsc;
 use crate::{
     CacheCapability, CapabilitySource, ContentBlock, Message, ModelAdapter, ModelCapabilities,
     ModelError, ModelResponse, OptionAdjustment, ReasoningCapability, RequestOptions, Role,
-    StreamEvent, ThinkingLevel, ToolDef,
+    StreamEvent, ThinkingLevel, ToolDef, UpstreamErrorDetail,
 };
 
 use crate::{defaults, telemetry};
@@ -42,7 +43,6 @@ pub struct OpenRouterConfig {
 }
 
 impl OpenRouterAdapter {
-    #[allow(clippy::result_large_err)]
     pub fn from_config(config: OpenRouterConfig) -> Result<Self, ModelError> {
         let api_key = config
             .api_key
@@ -93,7 +93,6 @@ impl OpenRouterAdapter {
             .expect("valid OpenRouter reasoning replay")
     }
 
-    #[allow(clippy::result_large_err)]
     fn try_build_request_body(
         &self,
         messages: &[Message],
@@ -297,7 +296,6 @@ impl OpenRouterAdapter {
     }
 }
 
-#[allow(clippy::result_large_err)]
 fn append_reasoning_details(target: &mut Vec<Value>, details: &Value) -> Result<(), ModelError> {
     match details {
         Value::Array(items) => {
@@ -315,9 +313,11 @@ fn append_reasoning_details(target: &mut Vec<Value>, details: &Value) -> Result<
             code: Some("invalid_reasoning_replay".into()),
             provider: Some("openrouter".into()),
             status: None,
-            upstream_code: None,
-            upstream_message: None,
-            upstream_body: Some(other.clone()),
+            upstream: Some(Arc::new(UpstreamErrorDetail {
+                code: None,
+                message: None,
+                body: Some(other.clone()),
+            })),
         }),
     }
 }
@@ -406,9 +406,7 @@ impl ModelAdapter for OpenRouterAdapter {
                 code: Some("request_failed".into()),
                 provider: Some("openrouter".into()),
                 status: None,
-                upstream_code: None,
-                upstream_message: None,
-                upstream_body: None,
+                upstream: None,
             }
         })?;
 
@@ -416,7 +414,7 @@ impl ModelAdapter for OpenRouterAdapter {
             let status = response.status().as_u16();
             let body_text = response.text().await.unwrap_or_default();
             let upstream_body: Option<Value> = serde_json::from_str(&body_text).ok();
-            let (upstream_code, upstream_message) = upstream_body
+            let (upstream_code, upstream_msg) = upstream_body
                 .as_ref()
                 .and_then(|b| b.get("error"))
                 .map(|err| {
@@ -435,9 +433,11 @@ impl ModelAdapter for OpenRouterAdapter {
                 code: Some(status.to_string()),
                 provider: Some("openrouter".into()),
                 status: Some(status),
-                upstream_code,
-                upstream_message,
-                upstream_body,
+                upstream: Some(Arc::new(UpstreamErrorDetail {
+                    code: upstream_code,
+                    message: upstream_msg,
+                    body: upstream_body,
+                })),
             });
         }
 
