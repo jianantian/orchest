@@ -21,6 +21,7 @@ agent-runtime-model = { path = "../agent-runtime-model" }
 tracing = "0.1"
 metrics = "0.24"
 tiktoken-rs = "0.6"
+httparse = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -42,6 +42,8 @@ pub(crate) async fn start_webhook_server() -> Result<WebhookRuntime, String> {
             tokio::spawn(async move {
                 let mut buffer = vec![0; 16 * 1024];
                 let mut read_total = 0usize;
+
+                // Read until we have the full request (headers + body).
                 loop {
                     let Ok(read) = socket.read(&mut buffer[read_total..]).await else {
                         return;
@@ -50,28 +52,9 @@ pub(crate) async fn start_webhook_server() -> Result<WebhookRuntime, String> {
                         break;
                     }
                     read_total += read;
-                    let request = String::from_utf8_lossy(&buffer[..read_total]);
-                    if let Some(header_end) =
-                        request.find("\r\n\r\n").or_else(|| request.find("\n\n"))
-                    {
-                        let header = &request[..header_end];
-                        let body_start = if request[header_end..].starts_with("\r\n\r\n") {
-                            header_end + 4
-                        } else {
-                            header_end + 2
-                        };
-                        let content_length = header
-                            .lines()
-                            .find_map(|line| {
-                                let (name, value) = line.split_once(':')?;
-                                if name.eq_ignore_ascii_case("content-length") {
-                                    value.trim().parse::<usize>().ok()
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or(0);
-                        if read_total >= body_start + content_length {
+                    if let Some(body_offset) = header_body_split(&buffer[..read_total]) {
+                        let content_length = parse_content_length(&buffer[..read_total]);
+                        if read_total >= body_offset + content_length {
                             break;
                         }
                     }
@@ -79,25 +62,26 @@ pub(crate) async fn start_webhook_server() -> Result<WebhookRuntime, String> {
                         break;
                     }
                 }
-                let request = String::from_utf8_lossy(&buffer[..read_total]);
-                let Some(first_line) = request.lines().next() else {
-                    return;
+
+                let mut headers = [httparse::EMPTY_HEADER; 32];
+                let mut req = httparse::Request::new(&mut headers);
+                let body_offset = match req.parse(&buffer[..read_total]) {
+                    Ok(httparse::Status::Complete(offset)) => offset,
+                    _ => return,
                 };
-                let parts: Vec<&str> = first_line.split_whitespace().collect();
-                if parts.len() < 2 || parts[0] != "POST" {
+
+                if req.method != Some("POST") {
                     let _ = write_http_response(&mut socket, 405, "method not allowed").await;
                     return;
                 }
-                let Some(job_id) = parts[1].strip_prefix("/webhooks/async-job/") else {
+                let path = req.path.unwrap_or("");
+                let Some(job_id) = path.strip_prefix("/webhooks/async-job/") else {
                     let _ = write_http_response(&mut socket, 404, "not found").await;
                     return;
                 };
-                let body = request
-                    .split("\r\n\r\n")
-                    .nth(1)
-                    .or_else(|| request.split("\n\n").nth(1))
-                    .unwrap_or_default();
-                let parsed: Value = match serde_json::from_str(body) {
+
+                let body = &buffer[body_offset..read_total];
+                let parsed: Value = match serde_json::from_slice(body) {
                     Ok(value) => value,
                     Err(_) => {
                         let _ = write_http_response(&mut socket, 400, "bad request").await;
@@ -139,6 +123,29 @@ pub(crate) async fn start_webhook_server() -> Result<WebhookRuntime, String> {
         waiters,
         abort_handle: task.abort_handle(),
     })
+}
+
+/// Find the byte offset where the HTTP body begins (after \r\n\r\n).
+fn header_body_split(data: &[u8]) -> Option<usize> {
+    data.windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|pos| pos + 4)
+}
+
+/// Parse Content-Length from raw HTTP bytes using httparse.
+fn parse_content_length(data: &[u8]) -> usize {
+    let mut headers = [httparse::EMPTY_HEADER; 32];
+    let mut req = httparse::Request::new(&mut headers);
+    if req.parse(data).is_ok() {
+        for header in req.headers.iter() {
+            if header.name.eq_ignore_ascii_case("content-length") {
+                if let Ok(s) = std::str::from_utf8(header.value) {
+                    return s.trim().parse().unwrap_or(0);
+                }
+            }
+        }
+    }
+    0
 }
 
 async fn write_http_response(

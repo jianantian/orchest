@@ -716,6 +716,36 @@ impl ModelAdapter for AnthropicAdapter {
     }
 }
 
+// ProviderFactory implementation
+
+pub struct AnthropicFactory;
+
+impl crate::registry::ProviderFactory for AnthropicFactory {
+    fn provider_name(&self) -> &'static str {
+        "anthropic"
+    }
+
+    fn create_adapter(
+        &self,
+        model: &str,
+        max_tokens: u32,
+        api_key: String,
+        api_url: Option<String>,
+    ) -> Result<Box<dyn ModelAdapter>, ModelError> {
+        let adapter = AnthropicAdapter::from_config(AnthropicConfig {
+            model: model.to_string(),
+            max_tokens,
+            api_key: Some(api_key),
+            api_url,
+        })?;
+        Ok(Box::new(adapter))
+    }
+
+    fn default_api_key_env(&self) -> &'static str {
+        defaults::anthropic::API_KEY_ENV
+    }
+}
+
 #[cfg(test)]
 #[allow(dead_code)]
 pub(crate) mod test_util {

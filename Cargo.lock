@@ -33,6 +33,7 @@ dependencies = [
  "agent-runtime-providers",
  "async-trait",
  "futures-util",
+ "httparse",
  "libc",
  "metrics",
  "reqwest",
