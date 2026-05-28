@@ -306,6 +306,7 @@ async fn e2e_event_coverage() {
             RuntimeEvent::SubAgentFailed { .. } => "SubAgentFailed",
             RuntimeEvent::RunCompleted { .. } => "RunCompleted",
             RuntimeEvent::RunFailed { .. } => "RunFailed",
+            RuntimeEvent::RunAborted => "RunAborted",
             RuntimeEvent::ChildRunEvent { .. } => "ChildRunEvent",
             RuntimeEvent::SubAgentEvent { .. } => "SubAgentEvent",
         })
