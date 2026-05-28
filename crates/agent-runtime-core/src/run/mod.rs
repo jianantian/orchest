@@ -19,6 +19,7 @@ pub use handle::{ApprovalBus, EventReceiver, RunHandle};
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::model::ModelAdapter;
 use crate::tool::registry::ToolRegistry;
@@ -42,10 +43,29 @@ impl AgentRun {
         registry: ToolRegistry,
         approval_bus: ApprovalBus,
     ) -> (RunHandle, EventReceiver) {
+        Self::start_with_bus_and_token(
+            config,
+            input,
+            model,
+            registry,
+            approval_bus,
+            CancellationToken::new(),
+        )
+    }
+
+    pub(crate) fn start_with_bus_and_token(
+        config: AgentConfig,
+        input: String,
+        model: Arc<dyn ModelAdapter>,
+        registry: ToolRegistry,
+        approval_bus: ApprovalBus,
+        cancel_token: CancellationToken,
+    ) -> (RunHandle, EventReceiver) {
         let run_id = RunId::new();
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
 
         let bus_for_loop = approval_bus.clone();
+        let token_for_loop = cancel_token.clone();
         let task = tokio::spawn(async move {
             loop_::run_loop(
                 run_id,
@@ -55,6 +75,7 @@ impl AgentRun {
                 registry,
                 event_tx,
                 bus_for_loop,
+                token_for_loop,
             )
             .await;
         });
@@ -63,6 +84,7 @@ impl AgentRun {
             run_id,
             task,
             approval_bus,
+            cancel_token,
         };
         (handle, event_rx)
     }

@@ -130,6 +130,7 @@ pub enum RuntimeEvent {
     RunFailed {
         error: String,
     },
+    RunAborted,
 }
 
 #[cfg(test)]

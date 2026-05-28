@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio_util::sync::CancellationToken;
 
 use crate::events::RuntimeEvent;
 
@@ -43,11 +44,16 @@ pub struct RunHandle {
     pub run_id: RunId,
     pub(crate) task: tokio::task::JoinHandle<()>,
     pub(crate) approval_bus: ApprovalBus,
+    pub(crate) cancel_token: CancellationToken,
 }
 
 impl RunHandle {
     pub async fn wait(self) {
         let _ = self.task.await;
+    }
+
+    pub fn abort(&self) {
+        self.cancel_token.cancel();
     }
 
     /// Route an approval response to any run in this run tree.

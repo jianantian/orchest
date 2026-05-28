@@ -43,6 +43,7 @@ dependencies = [
  "thiserror",
  "tiktoken-rs",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
  "which",
@@ -1976,6 +1977,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

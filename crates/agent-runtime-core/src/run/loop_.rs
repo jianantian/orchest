@@ -25,6 +25,7 @@ use super::skills::register_skills;
 use super::sub_agent::execute_agent_delegate;
 use super::tool_exec::poll_async_job;
 use super::webhook::start_webhook_server;
+use tokio_util::sync::CancellationToken;
 
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(3600);
 
@@ -36,6 +37,7 @@ pub(crate) async fn run_loop(
     registry: ToolRegistry,
     tx: mpsc::Sender<RuntimeEvent>,
     approval_bus: ApprovalBus,
+    cancel_token: CancellationToken,
 ) {
     run_loop_inner(
         run_id,
@@ -45,6 +47,7 @@ pub(crate) async fn run_loop(
         registry,
         tx,
         approval_bus.clone(),
+        cancel_token,
     )
     .await;
     approval_bus.cancel(run_id).await;
@@ -59,6 +62,7 @@ async fn run_loop_inner(
     mut registry: ToolRegistry,
     tx: mpsc::Sender<RuntimeEvent>,
     approval_bus: ApprovalBus,
+    cancel_token: CancellationToken,
 ) {
     emit(&tx, RuntimeEvent::RunStarted { run_id }).await;
 
@@ -157,6 +161,11 @@ async fn run_loop_inner(
     let mut last_compaction_step: Option<u32> = None;
 
     loop {
+        if cancel_token.is_cancelled() {
+            emit(&tx, RuntimeEvent::RunAborted).await;
+            return;
+        }
+
         if step >= config.runtime.max_steps {
             emit(
                 &tx,
@@ -499,6 +508,7 @@ async fn run_loop_inner(
                         &mut budget,
                         *delegate,
                         approval_bus.clone(),
+                        cancel_token.clone(),
                     )
                     .await;
                     let duration = start_time.elapsed();

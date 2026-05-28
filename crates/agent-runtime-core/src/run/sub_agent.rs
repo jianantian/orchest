@@ -12,6 +12,7 @@ use crate::tool::AgentDelegate;
 use super::config::{AgentConfig, AgentRun, RunId, SubAgentRuntime};
 use super::handle::ApprovalBus;
 use super::helpers::emit;
+use tokio_util::sync::CancellationToken;
 
 pub(crate) async fn execute_agent_delegate(
     parent_run_id: RunId,
@@ -20,6 +21,7 @@ pub(crate) async fn execute_agent_delegate(
     parent_budget: &mut BudgetGuard,
     delegate: AgentDelegate,
     approval_bus: ApprovalBus,
+    cancel_token: CancellationToken,
 ) -> (Value, Value) {
     let placeholder_child_run_id = RunId::new();
     if parent_config.runtime.run_depth >= 3 {
@@ -45,12 +47,13 @@ pub(crate) async fn execute_agent_delegate(
     child_config.budget = SubAgentRuntime::cap_budget(&child_config.budget, &remaining);
     child_config.runtime.run_depth = parent_config.runtime.run_depth + 1;
 
-    let (handle, mut child_rx) = AgentRun::start_with_bus(
+    let (handle, mut child_rx) = AgentRun::start_with_bus_and_token(
         child_config,
         delegate.input.clone(),
         Arc::clone(&delegate.model),
         delegate.registry.clone(),
         approval_bus,
+        cancel_token.child_token(),
     );
     let child_run_id = handle.run_id;
 
