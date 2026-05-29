@@ -1,5 +1,7 @@
 # Audio-Native Agent 产品横向研究
 
+**Status**: draft — 音频原生 agent 产品与平台横向研究。
+
 > **阅读前提**：本文分析的是业界 audio-native / voice agent 产品与平台，覆盖从模型级 API 到全栈平台。Orchest 是底层 agent runtime SDK，两者的关系是：Orchest 可以成为这些平台中 "LLM reasoning + tool calling" 那一层的引擎，但 Orchest 本身不做音频处理。
 >
 > 本文聚焦于架构模式、集成点、以及 Orchest 作为 runtime 在这些栈中的定位。

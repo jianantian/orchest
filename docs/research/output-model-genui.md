@@ -110,6 +110,8 @@ pub enum RenderOutputKind {
 
 ### 两层架构
 
+> **术语**：**Showroom** 是 Orchest 输出模型的渲染/展示层——消费 `ContentBlock` 和 `RenderOutput` 的外部引擎（Web、移动端、桌面）。它不是 Orchest 的一部分，但 Orchest 的输出协议（`StreamEvent`, `ContentBlock`, `RenderOutput`）为它设计。Showroom Engine 负责将平台无关的 `ContentBlock` 映射到平台原生 UI（React/SwiftUI/Jetpack Compose）。
+
 ```
 ┌─────────────────────────────────────────┐
 │  Orchest Runtime (Rust)                 │
@@ -157,7 +159,7 @@ pub trait OutputComponent {
     fn name(&self) -> &str;                 // 组件名
     fn description(&self) -> &str;          // 给模型看的描述
     fn props_schema(&self) -> JsonSchema;   // props schema
-    async fn render(&self, props: Value) -> RenderOutput;
+    async fn render(&self, props: Value, ctx: &RenderContext) -> Result<RenderOutput, RenderError>;
 }
 ```
 
@@ -168,6 +170,8 @@ pub trait OutputComponent {
 ## 修订后的 ContentBlock
 
 有了 OutputComponent 后，`ContentBlock` 就变简单了——它是**叶子节点**的集合：
+
+> **注意**：以下 ContentBlock 是 2.0+ 的形态。1.0 阶段 `ToolResult.content` 为 `String`，2.0 升级为 `Vec<ContentBlock>`——详见下方演进路线表。
 
 ```rust
 pub enum ContentBlock {

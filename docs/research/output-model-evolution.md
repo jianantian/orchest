@@ -1,6 +1,8 @@
 # Orchest Output Model — 从 Markdown 到 Showroom 的演进设计
 
-**Status**: draft — 输出模型的四级演进路线图，从纯文本到全模态可交互内容。
+> **⚠️ 已被替代**：本文的 Widget/Canvas 演进路线已被 [output-model-genui.md](./output-model-genui.md) 中的 OutputComponent trait 模型替代。genui.md 吸收了业界 Generative UI 实践后提出的组件声明式方案是当前推荐方向。本文保留作为演进背景和设计决策记录。
+
+**Status**: deprecated — superseded by [output-model-genui.md](./output-model-genui.md)。保留本文档作为四级演化路径的背景参考和 Widget/Canvas 原语的设计记录。
 **原则**: 每级向后兼容，原语可组合，渲染与推理解耦。
 
 ---
@@ -248,7 +250,7 @@ pub enum WidgetKind {
     Map,                           // 可拖动的地图
     Timeline,                      // 时间线
     Kanban,                        // 看板
-    Custom(String),                // 自定义 widget type
+    Custom(String),                // 自定义 widget type（开发者注册的扩展组件）
 }
 
 pub enum ChartType {
