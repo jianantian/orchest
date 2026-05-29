@@ -1,19 +1,19 @@
-# v0.8 Spec：持久化与安全
+# v0.8 Spec：持久化 + 安全 + Supervised Delegation 基础
 
 ## 背景
 
-v0.7 建立了 Hook 框架和 Handoff 两层语义。runtime 具备了扩展能力，但仍缺少两个产品级 agent 应用的关键能力：
+v0.7 建立了 Hook 框架、Handoff 两层语义，并通过 Ractor PoC 决定了 runtime 的通信架构走向。runtime 具备了扩展能力，但仍缺少产品级 agent 应用的关键能力：
 
-1. **Session 持久化**：当前 run 的状态纯内存，进程退出即丢失。长时间运行的 agent、多轮对话场景无法恢复。三份竞品研究中 pi-agent 对比标记为 🔴 级缺口
-2. **安全层**：`requires_approval: bool` 是唯一的安全机制。产品级应用需要 guardrail（输入/输出/工具级审查）和多模式权限控制
-
-这两个能力都可以基于 v0.7 的 Hook 框架实现，不需要在 core loop 中硬编码。
+1. **Session 持久化**：当前 run 的状态纯内存，进程退出即丢失。长时间运行的 agent、多轮对话场景无法恢复。竞品对比标记为 🔴 级缺口
+2. **安全层**：`requires_approval: bool` 是唯一的安全机制。产品级应用需要 guardrail 和多模式权限控制
+3. **Supervised Delegation 基础通信层**：[Actor Model 评估](../../research/actor-model-evaluation.md) 识别的核心验证 case，需要双向通信、多方事件订阅、watcher 注册等基础能力。这些基础在 v0.8 建好后，v0.9 的 Mid-run Steering 和 Supervised Delegation 完整实现就变成"已有能力的 API 暴露"而不是"从零搭建通信层"
 
 ## 目标
 
 1. 提供可插拔的 `SessionStore` trait，支持 run 状态的持久化和恢复
 2. 提供 Guardrail 框架（Input / Output / Tool 三层），作为 Hook 实现
 3. 权限模型从布尔值扩展为多模式
+4. 建立 Supervised Delegation 所需的双向通信和多方事件订阅基础
 
 ## 范围
 
@@ -78,17 +78,74 @@ pub trait SessionStore: Send + Sync {
 竞品参考：
 - Craft Agents 5 种模式（Safe / AcceptEdits / Plan / Ask / Admin）
 
+### Supervised Delegation 基础通信层
+
+这是 v0.9 Supervised Delegation 完整实现和 Mid-run Steering 的前置基础。[Actor Model 评估](../../research/actor-model-evaluation.md) 识别了当前 runtime 在这个场景下的四项能力缺失，v0.8 解决其中的通信基础问题。
+
+#### 双向通信
+
+扩展 RunHandle 内部通信机制，支持向运行中的 agent 注入消息。v0.8 建立内部通道，v0.9 在其上暴露面向用户的 `inject_message()` / `steer()` 公共 API。
+
+```rust
+// v0.8 内部机制（不直接暴露为公共 API）
+
+// PoC 通过（Ractor 方案）
+// RunHandle 内部持有 ActorRef<AgentMsg>，通过 cast! 发送消息
+
+// PoC 未通过（Channel 方案）
+// RunHandle 内部持有 mpsc::Sender<AgentMessage>
+```
+
+Run loop 在每次迭代前检查消息队列（Ractor：actor mailbox 天然支持；Channel：手动 `try_recv`）。
+
+#### 多方事件订阅
+
+当前 `mpsc::Receiver` 是 single-consumer，watcher 无法独立消费事件流。
+
+```rust
+// PoC 通过（Ractor 方案）
+// 方案 A：Ractor ProcessGroup 广播——worker 事件 cast 到 pg，所有注册的 watcher actor 收到
+// 方案 B：worker actor 内部维护 subscriber list，事件逐个转发给 watcher ActorRef
+
+// PoC 未通过（Channel 方案）
+// mpsc → broadcast channel
+impl RunHandle {
+    pub fn subscribe_events(&self) -> broadcast::Receiver<RuntimeEvent> { ... }
+}
+```
+
+#### Watcher 注册 API
+
+允许注册 watcher 函数或 watcher agent，监听 worker 事件流并在满足条件时触发干预：
+
+```rust
+pub trait Watcher: Send + Sync {
+    async fn on_event(&self, event: &RuntimeEvent) -> WatcherAction;
+}
+
+pub enum WatcherAction {
+    Continue,
+    Steer(String),
+    Abort(String),
+}
+```
+
+v0.8 只提供注册和事件分发机制，不实现 watcher LLM（v0.9 交付）。
+
 ## 不在范围内
 
 - Session 的跨进程同步 / 分布式存储（用户可自行实现 `SessionStore`）
-- 内置的 LLM-based guardrail（如用另一个模型审查输出）——用户可基于 guardrail API 自行实现
-- Mid-run Steering → v0.9
+- 内置的 LLM-based guardrail（用户可基于 guardrail API 自行实现）
+- Watcher LLM 实现（watcher 回调中调用另一个模型做判断）→ v0.9
+- Mid-run Steering 的 `RunHandle::steer()` / `inject_message()` 公共 API → v0.9
+- Supervised Delegation 完整实现（watcher 中途干预、崩溃恢复完整流程）→ v0.9
 - Provider 扩展 → v0.9
 
 ## 依赖
 
 - v0.7 Hook 框架（guardrail 和 session 自动保存都基于 hook 实现）
 - v0.7 Handoff 重构（session snapshot 需要包含 handoff 状态）
+- v0.7 PoC 结论（决定双向通信和事件订阅的实现方式：Ractor actor vs channel）
 
 ## 验收标准
 
@@ -99,5 +156,9 @@ pub trait SessionStore: Send + Sync {
 - [ ] Guardrail `Reject` 结果正确回传模型，`Abort` 正确终止 run
 - [ ] `ApprovalMode` 枚举替代 `requires_approval: bool`
 - [ ] 向后兼容：`requires_approval: true/false` 的现有行为不变
+- [ ] RunHandle 内部双向通道可用——向运行中的 agent 注入消息后，run loop 在下一轮迭代响应
+- [ ] 事件订阅支持多 consumer（broadcast channel 或 actor 多引用）
+- [ ] `Watcher` trait 定义完整，可注册 watcher 并接收事件
 - [ ] `cargo test --workspace` 全绿
+- [ ] `cargo clippy --workspace -- -D warnings` 全绿
 - [ ] `bash scripts/lint-check.sh` 全 PASS
