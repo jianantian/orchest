@@ -146,9 +146,28 @@ git add docs/iteration/roadmap.md
 git commit -m "docs: mark v0.X as completed in roadmap"
 ```
 
-### Dependency Order in v0.1
+### Archiving Completed Iterations and Hotfixes
 
-Issues must be completed roughly in this order due to type and trait dependencies:
+After an iteration or hotfix is closed (all issues merged, acceptance criteria met, roadmap updated), move its documentation directory to `docs/archive/`:
+
+```bash
+# Archive a completed iteration
+mv docs/iteration/v0_5 docs/archive/v0_5
+
+# Archive a completed hotfix
+mv docs/hotfix/2026_05_26 docs/archive/hotfix/2026_05_26
+```
+
+This keeps the active `docs/iteration/` and `docs/hotfix/` trees focused on in-progress and upcoming work. Completed work remains accessible under `docs/archive/` for reference.
+
+After archiving:
+
+```bash
+git add docs/archive/ docs/iteration/ docs/hotfix/
+git commit -m "docs: archive completed v0.X docs"
+```
+
+### Dependency Order in v0.1
 
 ```
 001 (workspace setup)
