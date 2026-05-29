@@ -34,7 +34,7 @@
 | # | 验证项 | 成功标准 |
 |---|--------|---------|
 | V1 | actor 消息流与 run_loop 集成 | WorkerAgent 的 `handle()` 能自然封装 "检查 mailbox → model call → tool exec → emit event" 循环 |
-| V2 | Kill/Stop 优先级 | 当 worker mailbox 积压 100+ 模拟事件时，发送 Kill signal 后 actor 在 <100ms 内停止（不需要处理完积压消息） |
+| V2 | Kill/Stop 优先级 | 当 worker mailbox 积压 100+ 模拟事件时，Kill signal 优先于所有 pending user messages 被处理，actor 不需要 drain 积压消息即可停止 |
 | V3 | supervision event | parent 通过 `handle_supervisor_evt` 收到 child 的 `ActorPanicked` 事件，并能决定 restart 或 stop |
 | V4 | typed API 封装层 | `AgentRef::steer()` / `AgentRef::cancel()` 方法 → `AgentMsg` enum → Ractor `handle()` 的封装自然、类型安全 |
 
@@ -71,7 +71,15 @@ async fn handle(&self, myself: ActorRef<Msg>, msg: Msg, state: &mut State) {
 
 **模式 C：`handle()` 中启动长时 task，通过 select! 同时监听 mailbox**
 
-PoC 需要验证哪种模式最适合 Orchest 的 run loop 结构。模式 B 最可能成功（消息优先级天然生效），但需要验证 self-message 的 overhead 是否可接受。
+PoC 需要验证哪种模式最适合 Orchest 的 run loop 结构。
+
+**模式选择标准**：
+1. **Cancel 响应性**：Steer/Cancel 消息是否能在当前 step 完成后立即被处理（模式 A 不满足——整个 loop 是一次 handle()）
+2. **代码自然度**：run loop 逻辑拆分为 step 粒度后是否仍然可读（模式 B 要求将 loop 拆为 state machine）
+3. **self-message overhead**：模式 B 每步一条 self-message，需要验证在 100+ step run 中开销是否可忽略
+4. **与 tokio select! 的兼容性**：模式 C 需要在 handle() 内 select!，需要验证是否与 Ractor 的 mailbox 冲突
+
+如果多个模式都通过验证，优先选消息优先级最自然生效的（模式 B > C > A）。
 
 ### Gate 规则
 

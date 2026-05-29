@@ -37,20 +37,21 @@ struct ToolCallPattern {
 
 1. 维护一个 `VecDeque<ToolCallPattern>`，容量为 `window_size`
 2. 每次 `after_tool` 时 push 新 pattern
-3. 统计窗口内相同 pattern 出现次数
-4. 达到 `warn_threshold` → 返回 `HookAction::Continue`，但同时向 messages 注入一条系统消息警告模型
+3. 统计窗口内相同 pattern 出现次数——**hash 匹配时做 `Value` 全量比较**（消除 u64 哈希碰撞导致的误终止）
+4. 达到 `warn_threshold` → 返回 `HookAction::Continue`，但同时向 messages 注入警告
 5. 达到 `stop_threshold` → 返回 `HookAction::Abort("loop detected")`
 
 ### 警告消息注入
 
-当检测到循环但未达到 stop 阈值时，通过 `after_tool` 的 `ToolHookContext` 注入警告：
+当检测到循环但未达到 stop 阈值时，通过 `after_tool` 的 `ToolHookContext` 注入警告。
+
+警告作为 **developer 角色消息 append 到 messages 末尾**（不是 system message——system message 在对话开头，模型对位置敏感；末尾的 developer message 是最近的上下文，模型更容易注意到）：
 
 ```
-Warning: You have called the tool '{tool_name}' with similar arguments {count} times 
-in the last {window_size} calls. This suggests a loop. Please try a different approach.
+[Warning] You have called the tool '{tool_name}' with similar arguments {count} times 
+in the last {window_size} calls. This suggests a loop. Please try a different approach 
+or use a different tool.
 ```
-
-警告作为系统消息附加到 messages 中，模型在下一轮迭代时看到。
 
 ### 配置
 
@@ -98,7 +99,8 @@ Tool input 的 `Value` 需要稳定哈希（不受 JSON key 顺序影响）：
 - [ ] 滑动窗口正确维护最近 N 次 tool call pattern
 - [ ] 相同 tool + input 达到 warn_threshold 时注入警告消息
 - [ ] 相同 tool + input 达到 stop_threshold 时返回 `HookAction::Abort`
-- [ ] Tool input 哈希不受 JSON key 顺序影响
+- [ ] Tool input 哈希不受 JSON key 顺序影响，hash 匹配时做 Value 全量比较消除碰撞
+- [ ] 警告消息作为 developer 角色 append 到 messages 末尾
 - [ ] `AgentConfig::with_loop_detection()` builder 可用
 - [ ] 测试：模拟循环调用 → 先警告后终止
 - [ ] 测试：不同 input 的同一工具不触发检测

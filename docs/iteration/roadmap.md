@@ -31,7 +31,7 @@
 
 ## 规划中
 
-### [v0.7 — 扩展性地基 + Actor PoC](./v0_7/spec.md)
+### [v0.7 — 扩展性地基 + Actor PoC](./v0_7/prd.md)
 
 **Phase 1（gate）**：Ractor PoC——用 Ractor 实现最小 WorkerAgent + WatcherAgent，验证 actor 消息流与 run_loop 集成、Kill 优先级、typed API 封装。PoC 结论决定后续所有架构走向。
 
@@ -41,7 +41,7 @@
 
 **研究输入**：[Actor Model 评估](../research/actor-model-evaluation.md)、[Sub-agent Handoff vs Agent-as-Tool](../research/sub-agent-handoff-vs-agent-as-tool.md)
 
-### [v0.8 — 持久化 + 安全 + Supervised Delegation 基础](./v0_8/spec.md)
+### [v0.8 — 持久化 + 安全 + Supervised Delegation 基础](./v0_8/prd.md)
 
 Session 持久化 + Guardrails + 权限模型扩展 + Supervised Delegation 基础通信层。
 
@@ -49,7 +49,7 @@ Session 持久化 + Guardrails + 权限模型扩展 + Supervised Delegation 基�
 
 **依赖**：v0.7 Hook 框架 + Handoff 重构
 
-### [v0.9 — 产品成熟度 + Supervised Delegation](./v0_9/spec.md)
+### [v0.9 — 产品成熟度 + Supervised Delegation](./v0_9/prd.md)
 
 Mid-run Steering（基于 v0.8 双向通信基础暴露 API）+ Supervised Delegation 完整实现（watcher LLM 中途干预、崩溃恢复）+ Provider 扩展 + 文档 + 发布准备。
 

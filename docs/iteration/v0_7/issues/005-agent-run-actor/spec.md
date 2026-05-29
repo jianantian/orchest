@@ -125,7 +125,7 @@ impl AgentRef {
 }
 ```
 
-`AgentRef` 在 v0.8 暴露给用户，本 issue 先建立类型。
+`AgentRef` 在本 issue 中定义为 `pub(crate)`，v0.8 暴露为 `pub` 并添加集成测试。这是前向声明——类型在 v0.7 就位，v0.8 有调用者后才验证完整 API。
 
 ### 事件分发
 
@@ -134,6 +134,8 @@ impl AgentRef {
 - WorkerActor 内部维护 `Vec<mpsc::Sender<RuntimeEvent>>` subscriber list
 - `RunHandle` 创建时获得一个 `mpsc::Receiver`（保持现有事件消费 API）
 - v0.8 的 `subscribe_events()` 可以向 subscriber list 添加新 consumer
+
+**Backpressure 策略**：subscriber channel 使用 bounded mpsc（容量 256）。当某个 subscriber 的 channel 满时，使用 `try_send`——满则丢弃该事件并发出 `RuntimeEvent::EventsDropped { subscriber_id, count }` 警告。慢 consumer 不能拖死 actor。这是 event stream 的标准做法（lossy > blocking）
 
 ### Ractor 依赖引入
 
@@ -176,7 +178,8 @@ ractor = { version = "0.15", features = ["message_span_propagation"] }
 - [ ] `AgentMsg` enum 包含 RunStep / Steer / Inject / Cancel
 - [ ] `RunHandle` 公共 API 不变（`wait()` / `abort()` / `respond_approval()`）
 - [ ] `RunHandle` 内部使用 `ActorRef<AgentMsg>`
-- [ ] `AgentRef` typed API 可用（steer / cancel）
+- [ ] `AgentRef` typed API 定义为 `pub(crate)`（steer / cancel 方法签名就位）
+- [ ] 事件 subscriber backpressure：慢 consumer 不阻塞 actor，满时丢弃并发出 EventsDropped
 - [ ] 现有所有 `run/tests.rs` 测试在 actor 架构下通过（行为不变）
 - [ ] hook 调用点在 actor handle() 中正确触发
 - [ ] Cancel 通过 `AgentMsg::Cancel` 生效，不再依赖 `CancellationToken`

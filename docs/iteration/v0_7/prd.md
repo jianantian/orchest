@@ -1,4 +1,4 @@
-# v0.7 Spec：扩展性地基 + Actor PoC
+# v0.7 PRD：扩展性地基 + Actor PoC
 
 ## 背景
 
@@ -19,9 +19,7 @@ v0.1–v0.6 + 两轮 hotfix 完成了核心 runtime、多 provider、MCP、sub-a
 
 ## Phase 1：Ractor PoC（gate 决策点）
 
-**时长**：1-2 天
-
-**目标**：用 Ractor 实现最小 Supervised Delegation 场景，验证 actor 框架是否满足 Orchest runtime 需求。
+**目标**：用 Ractor 实现最小 Supervised Delegation 场景，验证 actor 框架是否满足 Orchest runtime 需求。验证周期取决于集成复杂度——PoC 是轻量验证，不是完整实现。
 
 ### 验证项
 
@@ -97,9 +95,9 @@ impl AgentConfig {
 }
 ```
 
-- 内部同步调用子 run（不 spawn tokio task）
-- 子 run 事件通过 `ChildRunEvent` 向上传播
+- 内部同步调用子 run（不 spawn tokio task），子 run 事件实时通过 `ChildRunEvent` 向上传播（父 agent 事件流不静默）
 - 结构化输入 schema + 可选 `output_extractor`
+- **Budget**：始终继承父 run 剩余预算，不支持独立预算——Agent-as-Tool 是工具调用，语义上与普通 tool 一致，tool 不应有独立于调用者的预算
 
 **Handoff**：路由会话到另一个 agent，当前 agent 退出。run loop 层面的控制流切换。
 
@@ -115,7 +113,7 @@ pub struct Handoff {
 
 pub enum HandoffTarget {
     Static(AgentConfig),
-    Dynamic(Arc<dyn Fn(Value) -> AgentConfig + Send + Sync>),
+    Dynamic(Arc<dyn HandoffResolver>),  // async trait，支持 I/O
 }
 
 pub struct HandoffInputData {
@@ -259,11 +257,11 @@ v0.6 deferred。Hook、Handoff、Retry 的 API 稳定后补齐使用示例。
 | [005](./issues/005-agent-run-actor/spec.md) | AgentRun Actor Refactor | Phase 2 | WorkerActor（Ractor）、AgentRef typed API、RunHandle 内部重构。**条件执行：仅 001 通过时** |
 | [006](./issues/006-llm-retry/spec.md) | LLM Retry | Phase 2 | RetryPolicy / BackoffStrategy、429/5xx 自动重试、ModelRetry 事件 |
 | [007](./issues/007-loop-detection/spec.md) | Loop Detection | Phase 2 | LoopDetectionHook（Hook 实现）、滑动窗口、warn + hard stop 两级防御 |
-| [008](./issues/008-examples-validation/spec.md) | Examples + Final Validation | Phase 2 | 7 个使用示例、5 个集成验证场景、最终 lint + CI |
+| [008](./issues/008-examples-validation/spec.md) | Examples + Final Validation | Phase 2 | 8 个使用示例（含 3 个 error path）、5 个集成验证场景、最终 lint + CI |
 
 ## 推荐执行顺序
 
-1. **001 + 002 并行启动**：001 是 PoC（1-2 天），002 是 Phase 2 基础，互不依赖
+1. **001 + 002 并行启动**：001 是轻量 PoC，002 是 Phase 2 基础，互不依赖
 2. **001 完成后**：gate 决策。通过 → 005 可启动；未通过 → 跳过 005
 3. **002 完成后**：003 / 004 / 006 / 007 可并行启动
 4. **003 先于 004**：003 清理旧路径并在 ToolOutput 中占位 Handoff variant，004 实现 Handoff 逻辑

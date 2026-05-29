@@ -49,10 +49,10 @@ impl Tool for AgentAsTool {
 ```
 
 关键设计决策：
-- **不 spawn tokio task**：与 OpenAI 一致，子 run 在当前 task 中执行。避免审批路由的复杂性
-- **事件转发**：子 run 的 `RuntimeEvent` 通过 `SubAgentEvent` wrapper 向上传播
+- **不 spawn tokio task**：子 run 在当前 task 中同步执行。避免审批路由和 child tracking 的复杂性。**但父 agent 的事件流不会静默**——子 run 的每个 `RuntimeEvent` 实时通过 `SubAgentEvent` wrapper 向上传播到父 agent 的 event channel，消费者看到连续的事件流（只是 wrapped），而不是长时间的空白
+- **超时保护**：Agent-as-Tool 继承 `ToolMetadata.timeout`。如果 timeout 被设置，子 run 在 `tokio::time::timeout` 内执行，超时返回 `ToolError::Timeout`。如果 timeout 未设置，使用 `AgentConfig.budget` 的 step/token/cost 上限作为隐式保护
 - **结构化输入**：可选 `input_schema` 提供 JSON Schema，自动构建 prompt
-- **预算继承**：从 `ToolContext` 中获取剩余预算，传递给子 run
+- **预算继承**：始终继承父 run 剩余预算——Agent-as-Tool 是工具调用，语义上与普通 tool 一致，tool 不应有独立于调用者的预算
 
 ### 新增：`AgentConfig::as_tool()` builder
 
@@ -121,6 +121,7 @@ pub enum ToolOutput {
 - [ ] `AgentAsTool::execute()` 同步执行子 run，不 spawn tokio task
 - [ ] 子 run 事件通过 `SubAgentEvent` 正确向上传播
 - [ ] 子 run 继承父 run 剩余预算
+- [ ] ToolMetadata.timeout 被尊重——超时时子 run 终止并返回 ToolError::Timeout
 - [ ] `crates/` 中无 `AgentDelegate` 字符串（import、struct、variant 全部清除）
 - [ ] `crates/` 中无 `__sub_agent_request` 字符串
 - [ ] `tool/agent.rs` 文件删除

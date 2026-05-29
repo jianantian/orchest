@@ -30,7 +30,12 @@ pub struct Handoff {
 
 pub enum HandoffTarget {
     Static(AgentConfig),
-    Dynamic(Arc<dyn Fn(Value) -> AgentConfig + Send + Sync>),
+    Dynamic(Arc<dyn HandoffResolver>),
+}
+
+#[async_trait]
+pub trait HandoffResolver: Send + Sync {
+    async fn resolve(&self, input: Value) -> Result<AgentConfig, HandoffError>;
 }
 
 #[async_trait]
@@ -138,6 +143,12 @@ if handoff.target_agent.budget == BudgetConfig::default() {
     budget_guard = BudgetGuard::new(handoff.target_agent.budget.clone());
 }
 ```
+
+### 嵌套 Handoff 作用域
+
+如果 Agent-as-Tool 调用的子 agent 内部触发了 Handoff，handoff 作用于**子 agent 的 run loop scope**，不冒泡到父 agent 的 session。父 agent 看到的仍然是一个普通 tool call 的结果——子 agent 内部的 agent 切换对父 agent 透明。
+
+这与 Agent-as-Tool 的"工具级委托"语义一致：子 run 是一个黑盒，内部实现（包括 handoff）不泄漏到外层。
 
 ### 多 Handoff 检测
 

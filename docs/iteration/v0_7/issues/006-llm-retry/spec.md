@@ -20,7 +20,7 @@ pub struct RetryPolicy {
 
 pub enum BackoffStrategy {
     Fixed(Duration),
-    Exponential { base: Duration, max: Duration },
+    Exponential { base: Duration, max: Duration, jitter: bool },
 }
 
 impl Default for RetryPolicy {
@@ -30,11 +30,14 @@ impl Default for RetryPolicy {
             backoff: BackoffStrategy::Exponential {
                 base: Duration::from_secs(1),
                 max: Duration::from_secs(30),
+                jitter: true,
             },
         }
     }
 }
 ```
+
+**Jitter**：`jitter: true`（默认）时在计算出的退避时间上加 ±25% 随机偏移，防止多 agent 同时命中 429 后同步重试（thundering herd）。标准做法，AWS SDK / Stripe SDK / gRPC 均使用。
 
 ### 错误分类
 
@@ -82,9 +85,13 @@ RuntimeEvent::ModelRetry {
 
 ### 与 Hook 框架的关系
 
-重试逻辑在 `before_model` 和 `after_model` hook 之间执行。如果 hook 返回 `Abort`，不重试。
+**每次重试是完整的 hook 周期**：before_model → model.complete() → after_model。Hook 看到每一次尝试（包括失败的），可以记录 metrics、修改 messages 等。这是最不令人意外的行为——重试对 hook 链完全透明。
 
-重试也可以作为 Hook 实现（`after_model` 拦截错误并重试），但考虑到重试是 loop 层面的关注点（需要重新调用 `model.complete()`），直接在 loop 中实现更自然。
+- 如果 `before_model` hook 返回 `Abort` → 不执行 model call，不重试
+- 如果 `after_model` hook 返回 `Abort` → 不重试，直接终止 run
+- `after_model` hook 的副作用（如 metrics 记录）在每次重试时都会执行——这是预期行为
+
+重试逻辑在 loop 层实现（不作为 Hook），因为重试需要重新调用 `model.complete()`，这不是 hook 能做的事。
 
 ## 需要修改的文件
 
@@ -109,8 +116,10 @@ RuntimeEvent::ModelRetry {
 
 - [ ] `RetryPolicy` 和 `BackoffStrategy` 类型定义完整
 - [ ] `AgentConfig` 支持 `retry_policy` 配置
-- [ ] 429 错误自动重试，使用指数退避
+- [ ] 429 错误自动重试，使用指数退避 + jitter
 - [ ] 5xx 错误自动重试，使用固定间隔
+- [ ] jitter 默认启用，退避时间有随机偏移
+- [ ] 每次重试完整走 before_model → model → after_model hook 链
 - [ ] 400/401/403 错误不重试
 - [ ] `Retry-After` header 被尊重（如果 model error 携带）
 - [ ] 超过 max_retries 后返回最后一个错误

@@ -21,7 +21,7 @@ pub trait Hook: Send + Sync {
     async fn on_run_end(&self, ctx: &RunHookContext, result: &RunResult) {}
     async fn on_run_error(&self, ctx: &RunHookContext, error: &RuntimeError) {}
 
-    async fn before_model(&self, ctx: &mut ModelHookContext) -> HookAction { HookAction::Continue }
+    async fn before_model(&self, ctx: &mut ModelHookContext) -> ModelHookAction { ModelHookAction::Continue }
     async fn after_model(&self, ctx: &mut ModelHookContext, response: &ModelResponse) -> HookAction { HookAction::Continue }
 
     async fn before_tool(&self, ctx: &mut ToolHookContext) -> HookAction { HookAction::Continue }
@@ -37,9 +37,27 @@ pub enum HookAction {
     Skip,
     Abort(String),
 }
+
+pub enum ModelHookAction {
+    Continue,
+    Abort(String),
+}
 ```
 
-所有方法有默认空实现。`HookAction::Skip` 跳过当前步骤（如 `before_tool` 返回 Skip 则不执行该 tool call）。`Abort` 终止整个 run。
+所有方法有默认空实现。
+
+**HookAction 语义**：
+- `Skip`：跳过当前步骤。`before_tool` 返回 Skip → 不执行该 tool call，向模型返回 `"tool call skipped by hook"` 作为 tool result。`before_compact` 返回 Skip → 跳过本次 compaction。
+- `Abort(reason)`：终止整个 run。
+
+**before_model 不支持 Skip**：跳过 model call 后 run loop 没有 response 无法继续（没有 tool_uses、没有 text_parts）。`before_model` 使用 `ModelHookAction`（只有 Continue / Abort），如需修改发送给模型的内容，通过 `&mut ModelHookContext` 修改 messages。
+
+### Hook Panic 恢复
+
+Hook 实现可能 panic（用户代码）。Runtime 用 `catch_unwind` 包裹每个 hook 调用：
+- panic 被捕获并转化为 `on_run_error` 回调（只通知其他 hook，不递归调用 panic 的 hook）
+- panic 信息记录到 `RuntimeEvent::HookPanicked { hook_name, message }`
+- run 继续执行（不 abort）——单个 hook panic 不应终止用户的 agent run。如果用户希望 panic 终止 run，应在 hook 中显式返回 Abort
 
 ### Hook Context 类型
 
@@ -123,13 +141,16 @@ impl AgentConfig {
 ## 验收标准
 
 - [ ] `Hook` trait 定义完整，9 个 hook 点均有默认空实现
-- [ ] `HookAction` 枚举包含 Continue / Skip / Abort
+- [ ] `HookAction`（Continue / Skip / Abort）和 `ModelHookAction`（Continue / Abort）枚举定义
+- [ ] `before_model` 返回 `ModelHookAction`（不支持 Skip）
 - [ ] `AgentConfig` 支持 `hooks: Vec<Arc<dyn Hook>>` 和 `with_hook()` builder
 - [ ] `run/loop_.rs` 在正确位置调用 hook 链
 - [ ] 多 hook 按注册顺序执行，Abort 短路生效
 - [ ] `before_model` hook 可修改 messages（通过 `&mut ModelHookContext`）
-- [ ] `before_tool` hook 返回 Skip 时跳过 tool 执行
+- [ ] `before_tool` hook 返回 Skip 时跳过 tool 执行，向模型返回 skip tool result
+- [ ] Hook panic 被 `catch_unwind` 捕获，不终止 run，发出 `HookPanicked` 事件
 - [ ] 测试：注册两个 hook，验证调用顺序和 context 数据正确
 - [ ] 测试：hook 返回 Abort 时 run 正确终止
+- [ ] 测试：hook panic 后 run 继续执行
 - [ ] `cargo test --workspace` 全绿
 - [ ] `cargo clippy --workspace -- -D warnings` 全绿
