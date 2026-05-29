@@ -247,3 +247,44 @@ v0.6 deferred。Hook、Handoff、Retry 的 API 稳定后补齐使用示例。
 - [ ] `cargo test --workspace` 全绿
 - [ ] `cargo clippy --workspace -- -D warnings` 全绿
 - [ ] `bash scripts/lint-check.sh` 全 PASS
+
+## Issues 拆解
+
+| Issue | 标题 | Phase | 核心交付 |
+|-------|------|-------|---------|
+| [001](./issues/001-ractor-poc/spec.md) | Ractor PoC | Phase 1 | Ractor WorkerAgent + WatcherAgent PoC，验证 4 项集成指标，gate 决策 |
+| [002](./issues/002-hook-framework/spec.md) | Hook Framework | Phase 2 | Hook trait（9 hook 点）、HookAction、Context 类型、AgentConfig 集成、run loop 调用链 |
+| [003](./issues/003-agent-as-tool/spec.md) | Agent-as-Tool + Old Path Cleanup | Phase 2 | AgentAsTool、AgentConfig::as_tool()、删除 AgentDelegate / __sub_agent_request 双路径 |
+| [004](./issues/004-handoff/spec.md) | Handoff + AgentUpdated Event | Phase 2 | Handoff / HandoffTarget / HandoffInputFilter、run loop 控制流切换、AgentUpdated 事件、budget 继承 |
+| [005](./issues/005-agent-run-actor/spec.md) | AgentRun Actor Refactor | Phase 2 | WorkerActor（Ractor）、AgentRef typed API、RunHandle 内部重构。**条件执行：仅 001 通过时** |
+| [006](./issues/006-llm-retry/spec.md) | LLM Retry | Phase 2 | RetryPolicy / BackoffStrategy、429/5xx 自动重试、ModelRetry 事件 |
+| [007](./issues/007-loop-detection/spec.md) | Loop Detection | Phase 2 | LoopDetectionHook（Hook 实现）、滑动窗口、warn + hard stop 两级防御 |
+| [008](./issues/008-examples-validation/spec.md) | Examples + Final Validation | Phase 2 | 7 个使用示例、5 个集成验证场景、最终 lint + CI |
+
+## 推荐执行顺序
+
+1. **001 + 002 并行启动**：001 是 PoC（1-2 天），002 是 Phase 2 基础，互不依赖
+2. **001 完成后**：gate 决策。通过 → 005 可启动；未通过 → 跳过 005
+3. **002 完成后**：003 / 004 / 006 / 007 可并行启动
+4. **003 先于 004**：003 清理旧路径并在 ToolOutput 中占位 Handoff variant，004 实现 Handoff 逻辑
+5. **008 收尾**：所有 issue 完成后
+
+依赖图：
+
+```
+001 (PoC) ──────────────────────────────────> 005 (条件)
+                                                │
+002 (Hook) ──┬──> 003 (Agent-as-Tool) ──> 004 (Handoff)
+             │                                  │
+             ├──> 006 (LLM Retry)               │
+             │                                  │
+             └──> 007 (Loop Detection)          │
+                                                │
+                              005 + 004 + 006 + 007 ──> 008
+```
+
+## v0.7 权威顺序
+
+1. `docs/iteration/v0_7/issues/*/spec.md` 是实施与验收的第一权威。
+2. 本文件约束迭代范围、依赖和成功指标。
+3. 研究文档（actor-model-evaluation.md、sub-agent-handoff-vs-agent-as-tool.md）是设计参考；若与 issue 验收标准冲突，先更新 issue/spec 再实现。
