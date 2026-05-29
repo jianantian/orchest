@@ -181,9 +181,13 @@ time.sleep(300)
 
         // Give the OS a moment to reap
         tokio::time::sleep(Duration::from_millis(200)).await;
-
         #[cfg(unix)]
         {
+            // SAFETY: pid is a valid child process ID obtained from the child
+            // that was spawned and later killed by `kill_on_drop`. Sending
+            // signal 0 checks only whether the process still exists without
+            // delivering a real signal. This is test-only, platform-gated
+            // behind `#[cfg(unix)]`.
             let alive = unsafe { libc::kill(pid as i32, 0) == 0 };
             assert!(!alive, "child process {pid} should be dead after timeout");
         }

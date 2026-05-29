@@ -826,6 +826,9 @@ time.sleep(60)
     }
 
     #[cfg(unix)]
+    // SAFETY: pid is the MCP child process ID obtained before dropping
+    // the client.  Signal 0 is a no-op existence check — it never
+    // terminates the process.  Test-only, gated behind `#[cfg(unix)]`.
     fn is_process_alive(pid: u32) -> bool {
         unsafe { libc::kill(pid as i32, 0) == 0 }
     }

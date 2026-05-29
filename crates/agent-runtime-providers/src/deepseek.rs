@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use crate::{
     CacheCapability, CachePolicy, CapabilitySource, CompatibilityPolicy, ContentBlock, Message,
     ModelAdapter, ModelCapabilities, ModelError, ModelResponse, OptionAdjustment,
-    ReasoningCapability, RequestOptions, Role, StreamEvent, ThinkingLevel, ToolDef,
+    ReasoningCapability, RequestOptions, Role, StopReason, StreamEvent, ThinkingLevel, ToolDef,
     UpstreamErrorDetail,
 };
 
@@ -290,7 +290,6 @@ fn map_stop_reason(raw: &str) -> StopReason {
     }
 }
 
-use crate::StopReason;
 
 #[async_trait]
 impl ModelAdapter for DeepSeekAdapter {
@@ -547,7 +546,13 @@ mod tests {
     }
 
     #[test]
+
     fn env_var_resolution() {
+        // Remove DEEPSEEK_API_KEY from the environment so the test is
+        // deterministic regardless of ambient shell configuration.
+        let saved = std::env::var("DEEPSEEK_API_KEY").ok();
+        std::env::remove_var("DEEPSEEK_API_KEY");
+
         let result = DeepSeekAdapter::from_config(DeepSeekConfig {
             model: "deepseek-chat".into(),
             max_tokens: 4096,
@@ -558,8 +563,12 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.code.as_deref(), Some("missing_api_key"));
-    }
 
+        // Restore the env var if it was previously set.
+        if let Some(val) = saved {
+            std::env::set_var("DEEPSEEK_API_KEY", val);
+        }
+    }
     #[test]
     fn thinking_off_disables_reasoning() {
         let adapter = make_adapter("http://localhost");
