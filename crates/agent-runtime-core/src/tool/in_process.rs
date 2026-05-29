@@ -28,6 +28,7 @@ pub struct InProcessTool {
 }
 
 impl InProcessTool {
+    #[allow(clippy::too_many_arguments)] // justified: tool construction requires all field values; builder pattern would be over-engineering
     pub fn new(
         name: String,
         description: String,

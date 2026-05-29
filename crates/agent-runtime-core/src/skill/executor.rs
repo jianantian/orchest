@@ -37,6 +37,7 @@ pub struct ScriptError {
 
 #[async_trait]
 pub trait ScriptExecutor: Send + Sync {
+    #[allow(clippy::too_many_arguments)] // justified: executor trait needs tool def, path, args, stdin, and context
     async fn execute(
         &self,
         tool: &BundledToolDef,
@@ -137,6 +138,7 @@ mod tests {
         let pid_path_str = pid_file.to_str().unwrap().replace('\\', "\\\\");
 
         std::fs::write(
+            // allow-blocking-io: test-only setup
             &script,
             format!(
                 r#"
@@ -174,7 +176,7 @@ time.sleep(300)
         assert_eq!(err.code.as_deref(), Some("TIMEOUT"));
 
         // Read the PID and verify the child was killed
-        let pid_str = std::fs::read_to_string(&pid_file).expect("read pid");
+        let pid_str = std::fs::read_to_string(&pid_file).expect("read pid"); // allow-blocking-io: test-only
         let pid: u32 = pid_str.trim().parse().expect("parse pid");
 
         // Give the OS a moment to reap

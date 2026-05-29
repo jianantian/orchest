@@ -13,6 +13,7 @@ use super::helpers::emit;
 /// Compact the conversation context if the token usage ratio exceeds the
 /// configured threshold.  Old messages (minus `recent_messages`) are
 /// summarised by the model and replaced with a single summary message.
+#[allow(clippy::too_many_arguments)] // justified: compaction logic needs full runtime context; will refactor with CompactionState struct in v0.7
 pub(crate) async fn maybe_compact_context(
     config: &AgentConfig,
     model: &Arc<dyn ModelAdapter>,

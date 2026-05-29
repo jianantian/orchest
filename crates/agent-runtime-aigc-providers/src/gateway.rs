@@ -49,7 +49,7 @@ impl ImageGateway {
         }
     }
 
-    #[allow(clippy::result_large_err)]
+    #[allow(clippy::result_large_err)] // justified: AigcError carries diagnostic context needed for user-facing messages
     pub async fn generate(
         &self,
         request: ImageGenerationRequest,
@@ -57,7 +57,7 @@ impl ImageGateway {
         self.generate_inner(request, None).await
     }
 
-    #[allow(clippy::result_large_err)]
+    #[allow(clippy::result_large_err)] // justified: same AigcError used throughout for consistency
     pub async fn generate_with_events(
         &self,
         request: ImageGenerationRequest,
@@ -173,7 +173,7 @@ impl ImageGateway {
         Ok(response)
     }
 
-    #[allow(clippy::result_large_err)]
+    #[allow(clippy::result_large_err)] // justified: same AigcError used throughout for consistency
     pub async fn resolve_asset_url(
         &self,
         asset_id: &str,

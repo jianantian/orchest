@@ -14,6 +14,7 @@ use super::handle::ApprovalBus;
 use super::helpers::emit;
 use tokio_util::sync::CancellationToken;
 
+#[allow(clippy::too_many_arguments)] // justified: sub-agent delegation requires parent context, budget, and cancellation; planned struct in v0.7
 pub(crate) async fn execute_agent_delegate(
     parent_run_id: RunId,
     parent_config: &AgentConfig,

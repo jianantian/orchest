@@ -266,6 +266,7 @@ impl Agent {
     #[napi(
         ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => any, options?: { requiresApproval?: boolean, sideEffect?: boolean }"
     )]
+    #[allow(clippy::too_many_arguments)] // justified: NAPI binding mirrors JS API surface; cannot reduce without breaking TypeScript contract
     pub fn register_tool_with_handler(
         &mut self,
         name: String,

@@ -29,7 +29,7 @@ use tokio_util::sync::CancellationToken;
 
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(3600);
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // justified: orchestration entry point, structifying would add indirection without benefit
 pub(crate) async fn run_loop(
     run_id: RunId,
     config: AgentConfig,
@@ -54,7 +54,8 @@ pub(crate) async fn run_loop(
     approval_bus.cancel(run_id).await;
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // justified: orchestration entry point, structifying would add indirection without benefit
+#[allow(clippy::too_many_lines)] // justified: main agent loop with tool dispatch; splitting would fragment control flow
 async fn run_loop_inner(
     run_id: RunId,
     config: AgentConfig,
