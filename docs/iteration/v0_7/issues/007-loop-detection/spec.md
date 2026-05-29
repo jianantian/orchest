@@ -33,19 +33,21 @@ struct ToolCallPattern {
 }
 ```
 
-使用滑动窗口（最近 N 次 tool call）检测重复：
+使用滑动窗口（最近 N 次 tool call）检测重复，采用**两阶段设计**（`after_tool` 记录 + `before_model` 注入）：
 
 1. 维护一个 `VecDeque<ToolCallPattern>`，容量为 `window_size`
-2. 每次 `after_tool` 时 push 新 pattern
-3. 统计窗口内相同 pattern 出现次数——**hash 匹配时做 `Value` 全量比较**（消除 u64 哈希碰撞导致的误终止）
-4. 达到 `warn_threshold` → 返回 `HookAction::Continue`，但同时向 messages 注入警告
-5. 达到 `stop_threshold` → 返回 `HookAction::Abort("loop detected")`
+2. 每次 `after_tool` 时 push 新 pattern，统计窗口内相同 pattern 出现次数——**hash 匹配时做 `Value` 全量比较**（消除 u64 哈希碰撞导致的误终止）
+3. 达到 `warn_threshold` → 设置内部 `pending_warning: Option<String>` flag（不在此处直接注入——`ToolHookContext` 不持有 `messages`）
+4. 达到 `stop_threshold` → 返回 `HookAction::Abort("loop detected")`
+5. `before_model` 时检查 `pending_warning`：若有待注入警告，通过 `ModelHookContext.messages` append developer 角色消息，然后清除 flag
+
+`LoopDetectionHook` 使用 `Mutex<LoopState>` 保证内部状态线程安全。
 
 ### 警告消息注入
 
-当检测到循环但未达到 stop 阈值时，通过 `after_tool` 的 `ToolHookContext` 注入警告。
+当 `before_model` 检测到 `pending_warning` 时，在 `ModelHookContext.messages` 末尾 append：
 
-警告作为 **developer 角色消息 append 到 messages 末尾**（不是 system message——system message 在对话开头，模型对位置敏感；末尾的 developer message 是最近的上下文，模型更容易注意到）：
+警告作为 **developer 角色消息**（不是 system message——system message 在对话开头，模型对位置敏感；末尾的 developer message 是最近的上下文，模型更容易注意到）：
 
 ```
 [Warning] You have called the tool '{tool_name}' with similar arguments {count} times 

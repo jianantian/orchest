@@ -99,11 +99,35 @@ pub enum ToolOutput {
 
 `Handoff` variant 在本 issue 中先声明但不实现处理逻辑（004 的事）。
 
+### 新增：`RuntimeEvent::SubAgentEvent`
+
+在 `events.rs` 中新增：
+
+```rust
+RuntimeEvent::SubAgentEvent {
+    parent_run_id: RunId,
+    inner: Box<RuntimeEvent>,
+},
+```
+
+`AgentAsTool::execute()` 在子 run 执行期间，将子 run 发出的每个 `RuntimeEvent` 包装为 `SubAgentEvent` 发送到父 run 的 event channel，保持消费者的事件流连续可见（不会因子 run 执行而长时间静默）。
+
 ### 修改：测试
 
 `run/tests.rs` 中使用 `AgentDelegate` 的测试（约 L1976-L2120）需要迁移为使用 `AgentAsTool`：
 - `DelegatingTool` → 改为返回 `ToolOutput::Immediate`，通过 `AgentConfig::as_tool()` 注册子 agent
 - 审批路由测试保持覆盖
+
+## 需要修改的文件
+
+| 文件 | 变更 |
+|------|------|
+| `run/config.rs` | `AgentConfig::as_tool()` builder |
+| 新增 `tool/agent_as_tool.rs` | `AgentAsTool` 实现 |
+| `tool/mod.rs` | `ToolOutput::AgentDelegate` 删除 + `Handoff` variant 占位 |
+| `events.rs` | 新增 `RuntimeEvent::SubAgentEvent` variant |
+| `run/loop_.rs` | `AgentDelegate` 处理分支删除 |
+| `run/tests.rs` | sub-agent 测试迁移 |
 
 ## 不在范围内
 

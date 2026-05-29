@@ -54,7 +54,7 @@ v0.6 deferred 了 examples。v0.7 引入了多个新 API（Hook、Agent-as-Tool�
 
 | 文件 | 变更 |
 |------|------|
-| `examples/` 目录 | 7 个新示例 |
+| `examples/` 目录 | 8 个新示例 |
 | 可能的集成测试 | 组合场景验证 |
 
 ## 不在范围内
