@@ -53,6 +53,7 @@ impl AgentRun {
         )
     }
 
+    #[allow(clippy::too_many_arguments)] // justified: full runtime wiring for run loop; public API uses start() with fewer args
     pub(crate) fn start_with_bus_and_token(
         config: AgentConfig,
         input: String,

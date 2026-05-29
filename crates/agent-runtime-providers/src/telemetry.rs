@@ -27,6 +27,7 @@ pub fn model_family(model: &str) -> &str {
     model.split('-').next().unwrap_or(model)
 }
 
+#[allow(clippy::too_many_arguments)] // justified: telemetry recording needs all metric dimensions; a struct would add boilerplate for a single call site
 pub fn record_model_success(
     provider: &str,
     model: &str,

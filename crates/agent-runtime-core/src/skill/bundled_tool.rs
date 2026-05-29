@@ -62,6 +62,7 @@ impl SkillBundledTool {
         )
     }
 
+    #[allow(clippy::too_many_arguments)] // justified: skill tool needs definition, paths, deps, capabilities, and executor
     pub fn new_with_options(
         def: &BundledToolDef,
         skill_dir: PathBuf,
@@ -132,6 +133,7 @@ impl SkillBundledTool {
         })
     }
 
+    #[allow(clippy::too_many_arguments)] // justified: script execution needs IO + context params; internal method
     async fn spawn_script(
         &self,
         input_json: &[u8],

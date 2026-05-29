@@ -35,6 +35,7 @@ pub(crate) struct SseParseResult {
     pub first_token_latency: Option<Duration>,
 }
 
+#[allow(clippy::too_many_lines)] // justified: SSE state-machine parser, splitting mid-stream logic would reduce readability
 pub(crate) async fn parse_openai_sse_stream(
     stream: impl Stream<Item = Result<Bytes, reqwest::Error>>,
     tx: Option<&mpsc::Sender<StreamEvent>>,

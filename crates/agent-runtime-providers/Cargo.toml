@@ -28,3 +28,6 @@ path = "../../examples/rust/provider_runtime_deepseek.rs"
 [[example]]
 name = "rust_provider_runtime_openrouter"
 path = "../../examples/rust/provider_runtime_openrouter.rs"
+
+[lints]
+workspace = true

@@ -277,6 +277,7 @@ impl AnthropicAdapter {
 }
 
 #[async_trait]
+#[allow(clippy::too_many_lines)] // justified: streaming SSE + tool-use mapping in one impl block, splitting would fragment cohesive logic
 impl ModelAdapter for AnthropicAdapter {
     fn provider_name(&self) -> &str {
         "anthropic"

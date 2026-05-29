@@ -25,7 +25,7 @@ pub struct AgentTool {
 }
 
 impl AgentTool {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // justified: constructor mirrors AgentDelegate fields; builder pattern planned for v0.7
     pub fn new(
         name: String,
         description: String,

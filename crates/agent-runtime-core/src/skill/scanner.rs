@@ -69,6 +69,7 @@ impl SkillScanner {
 
     fn scan_recursive(dir: &Path, manifests: &mut Vec<SkillManifest>) {
         let entries = match std::fs::read_dir(dir) {
+            // allow-blocking-io: called inside spawn_blocking
             Ok(e) => e,
             Err(_) => return,
         };
@@ -99,13 +100,13 @@ impl SkillScanner {
     }
 
     fn parse_skill_md(md_path: &Path, skill_dir: &Path) -> Option<SkillManifest> {
-        let content = std::fs::read_to_string(md_path).ok()?;
+        let content = std::fs::read_to_string(md_path).ok()?; // allow-blocking-io: called inside spawn_blocking
 
         let frontmatter = Self::extract_frontmatter(&content)?;
         let raw: RawFrontmatter = serde_yaml::from_str(&frontmatter).ok()?;
         let raw_value: Value = serde_yaml::from_str(&frontmatter).ok()?;
 
-        let abs_dir = std::fs::canonicalize(skill_dir).unwrap_or_else(|_| skill_dir.to_path_buf());
+        let abs_dir = std::fs::canonicalize(skill_dir).unwrap_or_else(|_| skill_dir.to_path_buf()); // allow-blocking-io: called inside spawn_blocking
 
         let bundled_tools = raw
             .bundled_tools

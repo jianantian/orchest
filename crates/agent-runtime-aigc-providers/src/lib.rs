@@ -18,7 +18,7 @@ pub use image::*;
 pub use storage::*;
 pub use types::*;
 
-#[allow(clippy::result_large_err)]
+#[allow(clippy::result_large_err)] // justified: AigcError carries diagnostic context needed for user-facing messages
 pub fn create_image_provider_from_config(
     config: AigcProviderRuntimeConfig,
 ) -> Result<Box<dyn ImageProvider>, AigcError> {
@@ -94,7 +94,7 @@ pub fn create_image_provider_from_config(
     }
 }
 
-#[allow(clippy::result_large_err)]
+#[allow(clippy::result_large_err)] // justified: same AigcError used throughout for consistency
 fn resolve_api_key(
     provider: &str,
     explicit: Option<&str>,

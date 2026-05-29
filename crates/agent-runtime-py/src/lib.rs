@@ -524,7 +524,7 @@ impl Agent {
 impl Agent {
     #[new]
     #[pyo3(signature = (model, system_prompt, skills_dir=None, budget=None, api_url=None, api_key=None, api_key_env=None, max_tokens=None, request_options=None))]
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // justified: pyo3 constructor maps Python kwargs 1:1
     fn new(
         model: String,
         system_prompt: String,
