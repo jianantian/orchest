@@ -62,6 +62,7 @@ pub(crate) async fn parse_openai_sse_stream(
             code: Some("stream_error".into()),
             provider: None,
             status: None,
+            retry_after_secs: None,
             upstream: None,
         })?;
 
@@ -88,6 +89,7 @@ pub(crate) async fn parse_openai_sse_stream(
                 code: Some("invalid_json".into()),
                 provider: None,
                 status: None,
+                retry_after_secs: None,
                 upstream: Some(Arc::new(UpstreamErrorDetail {
                     code: None,
                     message: None,
@@ -300,6 +302,7 @@ pub(crate) async fn parse_openai_sse_stream(
             code: Some("stream_interrupted".into()),
             provider: None,
             status: None,
+            retry_after_secs: None,
             upstream: None,
         });
     }
@@ -328,6 +331,7 @@ pub(crate) async fn parse_openai_sse_stream(
             code: Some("invalid_tool_arguments".into()),
             provider: None,
             status: None,
+            retry_after_secs: None,
             upstream: None,
         })?;
         content.push(ContentBlock::ToolUse {

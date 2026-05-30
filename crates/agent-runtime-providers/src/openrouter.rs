@@ -315,6 +315,7 @@ fn append_reasoning_details(target: &mut Vec<Value>, details: &Value) -> Result<
             code: Some("invalid_reasoning_replay".into()),
             provider: Some("openrouter".into()),
             status: None,
+            retry_after_secs: None,
             upstream: Some(Arc::new(UpstreamErrorDetail {
                 code: None,
                 message: None,
@@ -408,6 +409,7 @@ impl ModelAdapter for OpenRouterAdapter {
                 code: Some("request_failed".into()),
                 provider: Some("openrouter".into()),
                 status: None,
+                retry_after_secs: None,
                 upstream: None,
             }
         })?;
@@ -435,6 +437,7 @@ impl ModelAdapter for OpenRouterAdapter {
                 code: Some(status.to_string()),
                 provider: Some("openrouter".into()),
                 status: Some(status),
+                retry_after_secs: None,
                 upstream: Some(Arc::new(UpstreamErrorDetail {
                     code: upstream_code,
                     message: upstream_msg,

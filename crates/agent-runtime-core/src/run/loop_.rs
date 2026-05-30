@@ -212,80 +212,121 @@ async fn run_loop_inner(
 
         emit(&tx, RuntimeEvent::ModelCallStarted { step }).await;
 
-        {
-            let mut model_ctx = crate::hook::ModelHookContext {
-                run_id,
-                messages: messages.clone(),
-                model_spec: config.model.spec.clone(),
-            };
-            match crate::hook::runner::run_before_model(&config.hooks, &mut model_ctx, &tx).await {
-                crate::hook::ModelHookAction::Abort(reason) => {
+        // Each attempt runs the full before_model → model → after_model cycle.
+        let pre_retry_messages = messages.clone();
+        let mut retry_attempt: u32 = 0;
+        let response: ModelResponse = loop {
+            // before_model hook (per attempt)
+            {
+                let mut model_ctx = crate::hook::ModelHookContext {
+                    run_id,
+                    messages: pre_retry_messages.clone(),
+                    model_spec: config.model.spec.clone(),
+                };
+                match crate::hook::runner::run_before_model(&config.hooks, &mut model_ctx, &tx)
+                    .await
+                {
+                    crate::hook::ModelHookAction::Abort(reason) => {
+                        run_hook_ctx.step = step;
+                        crate::hook::runner::run_on_run_error(
+                            &config.hooks,
+                            &run_hook_ctx,
+                            &reason,
+                            &tx,
+                        )
+                        .await;
+                        emit(&tx, RuntimeEvent::RunFailed { error: reason }).await;
+                        return;
+                    }
+                    crate::hook::ModelHookAction::Continue => {}
+                }
+                messages = model_ctx.messages;
+            }
+
+            let (stream_tx, mut stream_rx) = mpsc::channel::<ModelStreamChunk>(64);
+            let event_tx_clone = tx.clone();
+            let forward_task = tokio::spawn(async move {
+                while let Some(chunk) = stream_rx.recv().await {
+                    let _ = event_tx_clone
+                        .send(RuntimeEvent::ModelStreamChunk { delta: chunk })
+                        .await;
+                }
+            });
+
+            let raw_response = model
+                .complete(
+                    &messages,
+                    &tool_defs,
+                    &config.model.options,
+                    Some(stream_tx),
+                )
+                .await;
+            let _ = forward_task.await;
+
+            match raw_response {
+                Ok(r) => {
+                    // after_model hook on success
+                    {
+                        let mut model_ctx = crate::hook::ModelHookContext {
+                            run_id,
+                            messages: messages.clone(),
+                            model_spec: config.model.spec.clone(),
+                        };
+                        if let crate::hook::HookAction::Abort(reason) =
+                            crate::hook::runner::run_after_model(&config.hooks, &mut model_ctx, &tx)
+                                .await
+                        {
+                            run_hook_ctx.step = step;
+                            crate::hook::runner::run_on_run_error(
+                                &config.hooks,
+                                &run_hook_ctx,
+                                &reason,
+                                &tx,
+                            )
+                            .await;
+                            emit(&tx, RuntimeEvent::RunFailed { error: reason }).await;
+                            return;
+                        }
+                    }
+                    break r;
+                }
+                Err(e) => {
+                    let class = super::retry::classify(&e);
+                    if super::retry::should_retry(&class, retry_attempt, &config.retry_policy) {
+                        let delay = super::retry::compute_delay(
+                            retry_attempt,
+                            &e,
+                            config.retry_policy.as_ref().unwrap(),
+                        );
+                        emit(
+                            &tx,
+                            RuntimeEvent::ModelRetry {
+                                attempt: retry_attempt + 1,
+                                error: e.message.clone(),
+                                next_delay: delay,
+                            },
+                        )
+                        .await;
+                        tokio::time::sleep(delay).await;
+                        retry_attempt += 1;
+                        continue;
+                    }
+                    let error = e.to_string();
                     run_hook_ctx.step = step;
                     crate::hook::runner::run_on_run_error(
                         &config.hooks,
                         &run_hook_ctx,
-                        &reason,
+                        &error,
                         &tx,
                     )
                     .await;
-                    emit(&tx, RuntimeEvent::RunFailed { error: reason }).await;
+                    emit(&tx, RuntimeEvent::RunFailed { error }).await;
                     return;
                 }
-                crate::hook::ModelHookAction::Continue => {}
-            }
-            messages = model_ctx.messages;
-        }
-
-        let (stream_tx, mut stream_rx) = mpsc::channel::<ModelStreamChunk>(64);
-        let event_tx_clone = tx.clone();
-        let forward_task = tokio::spawn(async move {
-            while let Some(chunk) = stream_rx.recv().await {
-                let _ = event_tx_clone
-                    .send(RuntimeEvent::ModelStreamChunk { delta: chunk })
-                    .await;
-            }
-        });
-
-        let response = model
-            .complete(
-                &messages,
-                &tool_defs,
-                &config.model.options,
-                Some(stream_tx),
-            )
-            .await;
-        let _ = forward_task.await;
-
-        let response: ModelResponse = match response {
-            Ok(r) => r,
-            Err(e) => {
-                let error = e.to_string();
-                run_hook_ctx.step = step;
-                crate::hook::runner::run_on_run_error(&config.hooks, &run_hook_ctx, &error, &tx)
-                    .await;
-                emit(&tx, RuntimeEvent::RunFailed { error }).await;
-                return;
             }
         };
 
         budget.record_model_call(&response.usage);
-
-        {
-            let mut model_ctx = crate::hook::ModelHookContext {
-                run_id,
-                messages: messages.clone(),
-                model_spec: config.model.spec.clone(),
-            };
-            if let crate::hook::HookAction::Abort(reason) =
-                crate::hook::runner::run_after_model(&config.hooks, &mut model_ctx, &tx).await
-            {
-                run_hook_ctx.step = step;
-                crate::hook::runner::run_on_run_error(&config.hooks, &run_hook_ctx, &reason, &tx)
-                    .await;
-                emit(&tx, RuntimeEvent::RunFailed { error: reason }).await;
-                return;
-            }
-        }
 
         emit(
             &tx,

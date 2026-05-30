@@ -45,6 +45,8 @@ pub struct AgentConfig {
     pub runtime: RuntimeConfig,
     #[serde(skip)]
     pub hooks: Vec<std::sync::Arc<dyn crate::hook::Hook>>,
+    #[serde(skip)]
+    pub retry_policy: Option<super::retry::RetryPolicy>,
 }
 
 impl std::fmt::Debug for AgentConfig {
@@ -193,6 +195,7 @@ pub struct AgentConfigBuilder {
     skills: SkillsConfig,
     runtime: RuntimeConfig,
     hooks: Vec<std::sync::Arc<dyn crate::hook::Hook>>,
+    retry_policy: Option<super::retry::RetryPolicy>,
 }
 
 impl AgentConfigBuilder {
@@ -220,7 +223,13 @@ impl AgentConfigBuilder {
             skills: SkillsConfig::default(),
             runtime: RuntimeConfig::default(),
             hooks: vec![],
+            retry_policy: None,
         }
+    }
+
+    pub fn retry_policy(mut self, policy: super::retry::RetryPolicy) -> Self {
+        self.retry_policy = Some(policy);
+        self
     }
 
     pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
@@ -300,6 +309,7 @@ impl AgentConfigBuilder {
             skills: self.skills,
             runtime: self.runtime,
             hooks: self.hooks,
+            retry_policy: self.retry_policy,
         })
     }
 }

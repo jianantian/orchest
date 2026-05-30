@@ -369,6 +369,7 @@ impl ModelAdapter for AnthropicAdapter {
                     code: Some("request_failed".into()),
                     provider: Some("anthropic".into()),
                     status: None,
+                    retry_after_secs: None,
                     upstream: None,
                 }
             })?;
@@ -396,6 +397,7 @@ impl ModelAdapter for AnthropicAdapter {
                 code: Some(status.to_string()),
                 provider: Some("anthropic".into()),
                 status: Some(status),
+                retry_after_secs: None,
                 upstream: Some(Arc::new(UpstreamErrorDetail {
                     code: upstream_code,
                     message: upstream_msg,
@@ -425,6 +427,7 @@ impl ModelAdapter for AnthropicAdapter {
                 code: Some("stream_error".into()),
                 provider: Some("anthropic".into()),
                 status: None,
+                retry_after_secs: None,
                 upstream: None,
             })?;
 
@@ -454,6 +457,7 @@ impl ModelAdapter for AnthropicAdapter {
                     code: Some("invalid_json".into()),
                     provider: Some("anthropic".into()),
                     status: None,
+                    retry_after_secs: None,
                     upstream: Some(Arc::new(UpstreamErrorDetail {
                         code: None,
                         message: None,
@@ -649,6 +653,7 @@ impl ModelAdapter for AnthropicAdapter {
                 code: Some("stream_interrupted".into()),
                 provider: Some("anthropic".into()),
                 status: None,
+                retry_after_secs: None,
                 upstream: None,
             });
         }

@@ -28,6 +28,11 @@ pub enum RuntimeEvent {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         option_adjustments: Vec<OptionAdjustment>,
     },
+    ModelRetry {
+        attempt: u32,
+        error: String,
+        next_delay: Duration,
+    },
 
     ToolCallStarted {
         tool: String,
