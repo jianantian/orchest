@@ -186,6 +186,18 @@ impl AgentConfig {
         self.hooks.push(hook);
         self
     }
+
+    pub fn with_loop_detection(self) -> Self {
+        self.with_hook(std::sync::Arc::new(
+            crate::hook::LoopDetectionHook::default(),
+        ))
+    }
+
+    pub fn with_loop_detection_config(self, config: crate::hook::LoopDetectionConfig) -> Self {
+        self.with_hook(std::sync::Arc::new(crate::hook::LoopDetectionHook::from(
+            config,
+        )))
+    }
 }
 
 pub struct AgentConfigBuilder {

@@ -78,7 +78,10 @@ pub trait Hook: Send + Sync {
     }
 }
 
+pub mod loop_detection;
 pub(crate) mod runner;
+
+pub use loop_detection::{LoopDetectionConfig, LoopDetectionHook};
 
 /// Helper: build a typed AgentRef wrapper from a raw arc.
 pub fn with_hook(hooks: &mut Vec<Arc<dyn Hook>>, hook: Arc<dyn Hook>) {
