@@ -68,6 +68,14 @@ async fn run_loop_inner(
 ) {
     emit(&tx, RuntimeEvent::RunStarted { run_id }).await;
 
+    let agent_name = config.system_prompt[..config.system_prompt.len().min(60)].to_string();
+    let mut run_hook_ctx = crate::hook::RunHookContext {
+        run_id,
+        agent_name,
+        step: 0,
+    };
+    crate::hook::runner::run_on_run_start(&config.hooks, &mut run_hook_ctx, &tx).await;
+
     let webhook_runtime = if config.runtime.webhook_enabled {
         match start_webhook_server().await {
             Ok(runtime) => Some(runtime),
@@ -169,6 +177,14 @@ async fn run_loop_inner(
         }
 
         if step >= config.runtime.max_steps {
+            run_hook_ctx.step = step;
+            crate::hook::runner::run_on_run_error(
+                &config.hooks,
+                &run_hook_ctx,
+                "max_steps_reached",
+                &tx,
+            )
+            .await;
             emit(
                 &tx,
                 RuntimeEvent::RunFailed {
@@ -188,17 +204,38 @@ async fn run_loop_inner(
                 },
             )
             .await;
-            emit(
-                &tx,
-                RuntimeEvent::RunFailed {
-                    error: format!("budget_exceeded: {violation}"),
-                },
-            )
-            .await;
+            let error = format!("budget_exceeded: {violation}");
+            run_hook_ctx.step = step;
+            crate::hook::runner::run_on_run_error(&config.hooks, &run_hook_ctx, &error, &tx).await;
+            emit(&tx, RuntimeEvent::RunFailed { error }).await;
             return;
         }
 
         emit(&tx, RuntimeEvent::ModelCallStarted { step }).await;
+
+        {
+            let mut model_ctx = crate::hook::ModelHookContext {
+                run_id,
+                messages: messages.clone(),
+                model_spec: config.model.spec.clone(),
+            };
+            match crate::hook::runner::run_before_model(&config.hooks, &mut model_ctx, &tx).await {
+                crate::hook::ModelHookAction::Abort(reason) => {
+                    run_hook_ctx.step = step;
+                    crate::hook::runner::run_on_run_error(
+                        &config.hooks,
+                        &run_hook_ctx,
+                        &reason,
+                        &tx,
+                    )
+                    .await;
+                    emit(&tx, RuntimeEvent::RunFailed { error: reason }).await;
+                    return;
+                }
+                crate::hook::ModelHookAction::Continue => {}
+            }
+            messages = model_ctx.messages;
+        }
 
         let (stream_tx, mut stream_rx) = mpsc::channel::<ModelStreamChunk>(64);
         let event_tx_clone = tx.clone();
@@ -223,18 +260,33 @@ async fn run_loop_inner(
         let response: ModelResponse = match response {
             Ok(r) => r,
             Err(e) => {
-                emit(
-                    &tx,
-                    RuntimeEvent::RunFailed {
-                        error: e.to_string(),
-                    },
-                )
-                .await;
+                let error = e.to_string();
+                run_hook_ctx.step = step;
+                crate::hook::runner::run_on_run_error(&config.hooks, &run_hook_ctx, &error, &tx)
+                    .await;
+                emit(&tx, RuntimeEvent::RunFailed { error }).await;
                 return;
             }
         };
 
         budget.record_model_call(&response.usage);
+
+        {
+            let mut model_ctx = crate::hook::ModelHookContext {
+                run_id,
+                messages: messages.clone(),
+                model_spec: config.model.spec.clone(),
+            };
+            if let crate::hook::HookAction::Abort(reason) =
+                crate::hook::runner::run_after_model(&config.hooks, &mut model_ctx, &tx).await
+            {
+                run_hook_ctx.step = step;
+                crate::hook::runner::run_on_run_error(&config.hooks, &run_hook_ctx, &reason, &tx)
+                    .await;
+                emit(&tx, RuntimeEvent::RunFailed { error: reason }).await;
+                return;
+            }
+        }
 
         emit(
             &tx,
@@ -253,6 +305,7 @@ async fn run_loop_inner(
             &mut last_compaction_step,
             step,
             &response.usage,
+            run_id,
         )
         .await;
 
@@ -278,11 +331,15 @@ async fn run_loop_inner(
         match response.stop_reason {
             StopReason::EndTurn if tool_uses.is_empty() => {
                 let output = json!(text_parts.join(""));
+                run_hook_ctx.step = step;
+                crate::hook::runner::run_on_run_end(&config.hooks, &run_hook_ctx, &tx).await;
                 emit(&tx, RuntimeEvent::RunCompleted { output }).await;
                 return;
             }
             StopReason::MaxTokens if tool_uses.is_empty() => {
                 let output = json!(text_parts.join(""));
+                run_hook_ctx.step = step;
+                crate::hook::runner::run_on_run_end(&config.hooks, &run_hook_ctx, &tx).await;
                 emit(&tx, RuntimeEvent::RunCompleted { output }).await;
                 return;
             }
@@ -388,7 +445,8 @@ async fn run_loop_inner(
                 }
             }
 
-            let source = tool.metadata().source.clone();
+            let tool_meta = tool.metadata().clone();
+            let source = tool_meta.source.clone();
             let source_label = match &source {
                 crate::tool::ToolSource::Builtin => "builtin",
                 crate::tool::ToolSource::InProcess => "in_process",
@@ -405,6 +463,29 @@ async fn run_loop_inner(
             )
             .await;
 
+            let mut tool_ctx = crate::hook::ToolHookContext {
+                run_id,
+                tool_name: tool_call.name.clone(),
+                tool_input: tool_call.input.clone(),
+                tool_metadata: tool_meta.clone(),
+            };
+            match crate::hook::runner::run_before_tool(&config.hooks, &mut tool_ctx, &tx).await {
+                crate::hook::HookAction::Skip => {
+                    tool_results.push(ContentBlock::ToolResult {
+                        tool_use_id: tool_call.id.clone(),
+                        content: json!("tool call skipped by hook"),
+                    });
+                    budget.record_tool_call();
+                    continue;
+                }
+                crate::hook::HookAction::Abort(reason) => {
+                    emit(&tx, RuntimeEvent::RunFailed { error: reason }).await;
+                    return;
+                }
+                crate::hook::HookAction::Continue => {}
+            }
+            let tool_input = tool_ctx.tool_input;
+
             let _tool_span = telemetry::tool_execute_span(&tool_call.name, source_label);
 
             let ctx = ToolContext {
@@ -419,9 +500,9 @@ async fn run_loop_inner(
             };
 
             let start_time = Instant::now();
-            let metadata_timeout = tool.metadata().timeout;
-            let max_output_tokens = tool.metadata().max_output_tokens;
-            let execute_fut = tool.execute(tool_call.input.clone(), &ctx);
+            let metadata_timeout = tool_meta.timeout;
+            let max_output_tokens = tool_meta.max_output_tokens;
+            let execute_fut = tool.execute(tool_input.clone(), &ctx);
             let result = if let Some(timeout) = metadata_timeout {
                 match tokio::time::timeout(timeout, execute_fut).await {
                     Ok(r) => r,
@@ -475,6 +556,25 @@ async fn run_loop_inner(
                         tool_use_id: tool_call.id.clone(),
                         content: value,
                     });
+                    {
+                        let mut tool_out_ctx = crate::hook::ToolHookContext {
+                            run_id,
+                            tool_name: tool_call.name.clone(),
+                            tool_input: tool_input.clone(),
+                            tool_metadata: tool_meta.clone(),
+                        };
+                        if let crate::hook::HookAction::Abort(reason) =
+                            crate::hook::runner::run_after_tool(
+                                &config.hooks,
+                                &mut tool_out_ctx,
+                                &tx,
+                            )
+                            .await
+                        {
+                            emit(&tx, RuntimeEvent::RunFailed { error: reason }).await;
+                            return;
+                        }
+                    }
                 }
                 Ok(ToolOutput::Structured {
                     model_output,
@@ -501,6 +601,25 @@ async fn run_loop_inner(
                         tool_use_id: tool_call.id.clone(),
                         content: model_output,
                     });
+                    {
+                        let mut tool_out_ctx = crate::hook::ToolHookContext {
+                            run_id,
+                            tool_name: tool_call.name.clone(),
+                            tool_input: tool_input.clone(),
+                            tool_metadata: tool_meta.clone(),
+                        };
+                        if let crate::hook::HookAction::Abort(reason) =
+                            crate::hook::runner::run_after_tool(
+                                &config.hooks,
+                                &mut tool_out_ctx,
+                                &tx,
+                            )
+                            .await
+                        {
+                            emit(&tx, RuntimeEvent::RunFailed { error: reason }).await;
+                            return;
+                        }
+                    }
                 }
                 Ok(ToolOutput::AgentDelegate(delegate)) => {
                     let (model_output, details) = execute_agent_delegate(
@@ -528,6 +647,25 @@ async fn run_loop_inner(
                         tool_use_id: tool_call.id.clone(),
                         content: model_output,
                     });
+                    {
+                        let mut tool_out_ctx = crate::hook::ToolHookContext {
+                            run_id,
+                            tool_name: tool_call.name.clone(),
+                            tool_input: tool_input.clone(),
+                            tool_metadata: tool_meta.clone(),
+                        };
+                        if let crate::hook::HookAction::Abort(reason) =
+                            crate::hook::runner::run_after_tool(
+                                &config.hooks,
+                                &mut tool_out_ctx,
+                                &tx,
+                            )
+                            .await
+                        {
+                            emit(&tx, RuntimeEvent::RunFailed { error: reason }).await;
+                            return;
+                        }
+                    }
                 }
                 Ok(ToolOutput::AsyncJob(handle)) => {
                     emit(
@@ -553,6 +691,25 @@ async fn run_loop_inner(
                         tool_use_id: tool_call.id.clone(),
                         content: async_result,
                     });
+                    {
+                        let mut tool_out_ctx = crate::hook::ToolHookContext {
+                            run_id,
+                            tool_name: tool_call.name.clone(),
+                            tool_input: tool_input.clone(),
+                            tool_metadata: tool_meta.clone(),
+                        };
+                        if let crate::hook::HookAction::Abort(reason) =
+                            crate::hook::runner::run_after_tool(
+                                &config.hooks,
+                                &mut tool_out_ctx,
+                                &tx,
+                            )
+                            .await
+                        {
+                            emit(&tx, RuntimeEvent::RunFailed { error: reason }).await;
+                            return;
+                        }
+                    }
                 }
                 Err(e) => {
                     let duration = start_time.elapsed();

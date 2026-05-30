@@ -111,6 +111,7 @@ fn test_config() -> AgentConfig {
             max_steps: 10,
             ..config::RuntimeConfig::default()
         },
+        hooks: vec![],
     }
 }
 
@@ -2325,5 +2326,352 @@ async fn child_run_events_carry_run_depth_and_child_id() {
     assert_ne!(
         first_id, parent_run_id,
         "child_run_id must differ from parent run_id"
+    );
+}
+
+// ── Hook framework tests ──────────────────────────────────────────────────────
+
+use crate::hook::{
+    CompactHookContext, HandoffHookContext, Hook, HookAction, ModelHookAction, ModelHookContext,
+    RunHookContext, ToolHookContext,
+};
+use std::sync::Mutex;
+
+/// Records every hook invocation so tests can assert call order / count.
+struct RecordingHook {
+    label: &'static str,
+    log: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl Hook for RecordingHook {
+    async fn on_run_start(&self, _ctx: &mut RunHookContext) {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:on_run_start", self.label));
+    }
+    async fn on_run_end(&self, _ctx: &RunHookContext) {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:on_run_end", self.label));
+    }
+    async fn on_run_error(&self, _ctx: &RunHookContext, _error: &str) {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:on_run_error", self.label));
+    }
+    async fn before_model(&self, _ctx: &mut ModelHookContext) -> ModelHookAction {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:before_model", self.label));
+        ModelHookAction::Continue
+    }
+    async fn after_model(&self, _ctx: &mut ModelHookContext) -> HookAction {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:after_model", self.label));
+        HookAction::Continue
+    }
+    async fn before_tool(&self, _ctx: &mut ToolHookContext) -> HookAction {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:before_tool", self.label));
+        HookAction::Continue
+    }
+    async fn after_tool(&self, _ctx: &mut ToolHookContext) -> HookAction {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:after_tool", self.label));
+        HookAction::Continue
+    }
+    async fn on_handoff(&self, _ctx: &HandoffHookContext) {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:on_handoff", self.label));
+    }
+    async fn before_compact(&self, _ctx: &mut CompactHookContext) -> HookAction {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:before_compact", self.label));
+        HookAction::Continue
+    }
+}
+
+/// Test A – two hooks are called in registration order.
+#[tokio::test]
+async fn hooks_called_in_order_and_lifecycle_events_recorded() {
+    let log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let hook_a = Arc::new(RecordingHook {
+        label: "A",
+        log: Arc::clone(&log),
+    });
+    let hook_b = Arc::new(RecordingHook {
+        label: "B",
+        log: Arc::clone(&log),
+    });
+
+    let mut config = test_config();
+    config.hooks.push(hook_a);
+    config.hooks.push(hook_b);
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let registry = ToolRegistry::new();
+
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let log = log.lock().unwrap();
+    // Both hooks must have fired on_run_start in order A then B
+    let start_a = log.iter().position(|s| s == "A:on_run_start").unwrap();
+    let start_b = log.iter().position(|s| s == "B:on_run_start").unwrap();
+    assert!(start_a < start_b, "A should fire before B");
+
+    // Both hooks must have fired on_run_end
+    assert!(log.iter().any(|s| s == "A:on_run_end"));
+    assert!(log.iter().any(|s| s == "B:on_run_end"));
+
+    // before_model and after_model must appear
+    assert!(log.iter().any(|s| s == "A:before_model"));
+    assert!(log.iter().any(|s| s == "B:before_model"));
+    assert!(log.iter().any(|s| s == "A:after_model"));
+    assert!(log.iter().any(|s| s == "B:after_model"));
+}
+
+/// Aborts the run from `before_model`.
+struct AbortBeforeModelHook {
+    second_called: Arc<AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl Hook for AbortBeforeModelHook {
+    async fn before_model(&self, _ctx: &mut ModelHookContext) -> ModelHookAction {
+        ModelHookAction::Abort("abort-reason".into())
+    }
+}
+
+/// Second hook to verify it is NOT reached after an Abort.
+struct WitnessHook {
+    called: Arc<AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl Hook for WitnessHook {
+    async fn before_model(&self, _ctx: &mut ModelHookContext) -> ModelHookAction {
+        self.called.store(true, Ordering::SeqCst);
+        ModelHookAction::Continue
+    }
+}
+
+use std::sync::atomic::AtomicBool;
+
+/// Test B – `before_model` returning Abort stops the run; second hook not called.
+#[tokio::test]
+async fn hook_abort_before_model_stops_run_and_skips_subsequent_hooks() {
+    let second_called = Arc::new(AtomicBool::new(false));
+
+    let mut config = test_config();
+    config.hooks.push(Arc::new(AbortBeforeModelHook {
+        second_called: Arc::clone(&second_called),
+    }));
+    config.hooks.push(Arc::new(WitnessHook {
+        called: Arc::clone(&second_called),
+    }));
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunFailed { error } if error == "abort-reason")),
+        "expected RunFailed with abort-reason"
+    );
+    assert!(
+        !second_called.load(Ordering::SeqCst),
+        "second hook must not be called after Abort"
+    );
+}
+
+/// Returns `HookAction::Skip` from `before_tool`, preventing tool execution.
+struct SkipToolHook;
+
+#[async_trait::async_trait]
+impl Hook for SkipToolHook {
+    async fn before_tool(&self, _ctx: &mut ToolHookContext) -> HookAction {
+        HookAction::Skip
+    }
+}
+
+/// A tool that panics if executed — used to assert skip actually skips execution.
+struct MustNotRunTool;
+
+#[async_trait::async_trait]
+impl Tool for MustNotRunTool {
+    fn name(&self) -> &str {
+        "must_not_run"
+    }
+    fn description(&self) -> &str {
+        "panics on execute"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &serde_json::Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
+    fn metadata(&self) -> &ToolMetadata {
+        &ToolMetadata {
+            side_effect: false,
+            requires_approval: false,
+            cost_hint: None,
+            timeout: None,
+            max_output_tokens: None,
+            source: ToolSource::InProcess,
+        }
+    }
+    async fn execute(
+        &self,
+        _input: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        panic!("must_not_run was executed");
+    }
+}
+
+/// Model that calls `must_not_run` once then returns end-turn.
+struct SkipToolModel;
+
+#[async_trait::async_trait]
+impl ModelAdapter for SkipToolModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let has_tool_result = messages
+            .iter()
+            .flat_map(|m| &m.content)
+            .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
+        let usage = TokenUsage {
+            input_tokens: 1,
+            output_tokens: 1,
+            ..Default::default()
+        };
+        if has_tool_result {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("done".into())],
+                usage,
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        } else {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "t1".into(),
+                    name: "must_not_run".into(),
+                    input: json!({}),
+                }],
+                usage,
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+/// Test C – `before_tool` Skip prevents execution; run still completes.
+#[tokio::test]
+async fn hook_skip_before_tool_prevents_execution_run_completes() {
+    let mut config = test_config();
+    config.hooks.push(Arc::new(SkipToolHook));
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(MustNotRunTool)).unwrap();
+
+    let (handle, mut rx) = AgentRun::start(config, "go".into(), Arc::new(SkipToolModel), registry);
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        "run should complete even when tool is skipped"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunFailed { .. })),
+        "run must not fail"
+    );
+}
+
+/// Panics inside `before_model`.
+struct PanickingHook;
+
+#[async_trait::async_trait]
+impl Hook for PanickingHook {
+    async fn before_model(&self, _ctx: &mut ModelHookContext) -> ModelHookAction {
+        panic!("deliberate hook panic");
+    }
+}
+
+/// Test D – a panicking hook emits `HookPanicked` and run continues.
+#[tokio::test]
+async fn hook_panic_emits_event_and_run_continues() {
+    let mut config = test_config();
+    config.hooks.push(Arc::new(PanickingHook));
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::HookPanicked { hook_name, .. } if hook_name == "before_model")),
+        "expected HookPanicked event for before_model"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        "run should still complete after hook panic"
     );
 }

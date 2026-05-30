@@ -326,6 +326,7 @@ fn agent_config(
             max_steps,
             ..RuntimeConfig::default()
         },
+        hooks: vec![],
     })
 }
 

@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use crate::events::RuntimeEvent;
 use crate::model::{ContentBlock, Message, ModelAdapter, Role, TokenUsage};
 
-use super::config::AgentConfig;
+use super::config::{AgentConfig, RunId};
 use super::helpers::emit;
 
 /// Compact the conversation context if the token usage ratio exceeds the
@@ -22,6 +22,7 @@ pub(crate) async fn maybe_compact_context(
     last_compaction_step: &mut Option<u32>,
     step: u32,
     usage: &TokenUsage,
+    run_id: RunId,
 ) {
     let Some(ref compaction) = config.runtime.compaction else {
         return;
@@ -46,6 +47,17 @@ pub(crate) async fn maybe_compact_context(
     if messages.len() <= recent_count + 1 {
         return;
     }
+
+    let mut compact_ctx = crate::hook::CompactHookContext {
+        run_id,
+        messages: messages.clone(),
+        token_count: usage.input_tokens as u32,
+    };
+    match crate::hook::runner::run_before_compact(&config.hooks, &mut compact_ctx, tx).await {
+        crate::hook::HookAction::Skip | crate::hook::HookAction::Abort(_) => return,
+        crate::hook::HookAction::Continue => {}
+    }
+    *messages = compact_ctx.messages;
 
     let system = messages
         .iter()
@@ -211,6 +223,7 @@ mod tests {
                 }),
                 ..Default::default()
             },
+            hooks: vec![],
         }
     }
 
@@ -239,6 +252,7 @@ mod tests {
                 compaction: None,
                 ..Default::default()
             },
+            hooks: vec![],
         };
         let call_count = Arc::new(AtomicU32::new(0));
         let model: Arc<dyn ModelAdapter> = Arc::new(SummaryMock {
@@ -253,7 +267,17 @@ mod tests {
             ..Default::default()
         };
 
-        maybe_compact_context(&config, &model, &mut messages, &tx, &mut last, 10, &usage).await;
+        maybe_compact_context(
+            &config,
+            &model,
+            &mut messages,
+            &tx,
+            &mut last,
+            10,
+            &usage,
+            crate::run::RunId::new(),
+        )
+        .await;
 
         assert_eq!(messages.len(), 2, "messages should be unchanged");
         assert_eq!(
@@ -285,7 +309,17 @@ mod tests {
             ..Default::default()
         };
 
-        maybe_compact_context(&config, &model, &mut messages, &tx, &mut last, 10, &usage).await;
+        maybe_compact_context(
+            &config,
+            &model,
+            &mut messages,
+            &tx,
+            &mut last,
+            10,
+            &usage,
+            crate::run::RunId::new(),
+        )
+        .await;
 
         assert_eq!(
             messages.len(),
@@ -318,7 +352,17 @@ mod tests {
             ..Default::default()
         };
 
-        maybe_compact_context(&config, &model, &mut messages, &tx, &mut last, 10, &usage).await;
+        maybe_compact_context(
+            &config,
+            &model,
+            &mut messages,
+            &tx,
+            &mut last,
+            10,
+            &usage,
+            crate::run::RunId::new(),
+        )
+        .await;
 
         assert_eq!(
             call_count.load(Ordering::SeqCst),
@@ -361,7 +405,17 @@ mod tests {
             ..Default::default()
         };
 
-        maybe_compact_context(&config, &model, &mut messages, &tx, &mut last, 10, &usage).await;
+        maybe_compact_context(
+            &config,
+            &model,
+            &mut messages,
+            &tx,
+            &mut last,
+            10,
+            &usage,
+            crate::run::RunId::new(),
+        )
+        .await;
 
         assert_eq!(messages.len(), 3);
         assert_eq!(call_count.load(Ordering::SeqCst), 0);
@@ -389,7 +443,17 @@ mod tests {
             ..Default::default()
         };
 
-        maybe_compact_context(&config, &model, &mut messages, &tx, &mut last, 10, &usage).await;
+        maybe_compact_context(
+            &config,
+            &model,
+            &mut messages,
+            &tx,
+            &mut last,
+            10,
+            &usage,
+            crate::run::RunId::new(),
+        )
+        .await;
 
         assert_eq!(messages.len(), 4);
         assert_eq!(call_count.load(Ordering::SeqCst), 0);
@@ -411,7 +475,17 @@ mod tests {
             ..Default::default()
         };
 
-        maybe_compact_context(&config, &model, &mut messages, &tx, &mut last, 10, &usage).await;
+        maybe_compact_context(
+            &config,
+            &model,
+            &mut messages,
+            &tx,
+            &mut last,
+            10,
+            &usage,
+            crate::run::RunId::new(),
+        )
+        .await;
 
         assert!(messages.is_empty());
         assert_eq!(call_count.load(Ordering::SeqCst), 0);

@@ -2,6 +2,7 @@
 
 pub mod budget;
 pub mod events;
+pub mod hook;
 pub mod model;
 pub mod prompts;
 pub mod run;
