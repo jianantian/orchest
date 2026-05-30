@@ -136,6 +136,11 @@ pub enum RuntimeEvent {
         message: String,
     },
 
+    AgentUpdated {
+        previous_agent: String,
+        new_agent: String,
+    },
+
     RunCompleted {
         output: Value,
     },

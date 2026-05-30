@@ -4,6 +4,7 @@ pub mod agent_as_tool;
 pub mod async_job;
 pub mod builtin;
 pub mod code_exec;
+pub mod handoff_tool;
 pub mod in_process;
 pub mod mcp;
 pub mod registry;
@@ -33,20 +34,9 @@ pub trait Tool: Send + Sync {
 #[derive(Debug)]
 pub enum ToolOutput {
     Immediate(Value),
-    Structured {
-        model_output: Value,
-        details: Value,
-    },
+    Structured { model_output: Value, details: Value },
     AsyncJob(JobHandle),
-    /// Placeholder for issue #004 (Handoff).  Not yet handled by the run loop.
-    Handoff(HandoffResult),
-}
-
-/// Placeholder result type for agent handoffs (implemented in issue #004).
-#[derive(Debug)]
-pub struct HandoffResult {
-    pub agent_name: String,
-    pub input: Value,
+    Handoff(Box<crate::handoff::HandoffResult>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

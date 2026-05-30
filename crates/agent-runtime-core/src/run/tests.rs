@@ -113,6 +113,7 @@ fn test_config() -> AgentConfig {
         },
         hooks: vec![],
         retry_policy: None,
+        handoffs: vec![],
     }
 }
 
@@ -2748,5 +2749,214 @@ async fn retry_exhausted_results_in_run_failed() {
             .iter()
             .any(|e| matches!(e, RuntimeEvent::RunFailed { .. })),
         "run should fail after retries exhausted"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Handoff tests
+// ---------------------------------------------------------------------------
+
+/// Model that calls `transfer_to_billing` on the first turn, then completes.
+struct HandoffModel {
+    call_count: AtomicU32,
+}
+
+impl HandoffModel {
+    fn new() -> Self {
+        Self {
+            call_count: AtomicU32::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for HandoffModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[crate::tool::ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "h1".into(),
+                    name: "transfer_to_billing".into(),
+                    input: json!({}),
+                }],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        } else {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("hello from billing".into())],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+/// Test G – static handoff switches agent and the run completes under the new agent.
+#[tokio::test]
+async fn static_handoff_switches_agent_and_completes() {
+    use crate::handoff::{Handoff, HandoffTarget};
+
+    let billing_config = test_config();
+
+    let mut config = test_config();
+    config = config.with_handoff(Handoff {
+        tool_name: "transfer_to_billing".into(),
+        tool_description: "Transfer to billing agent".into(),
+        input_schema: json!({"type": "object", "properties": {}}),
+        target: HandoffTarget::Static(Box::new(billing_config)),
+        input_filter: None,
+        nest_history: false,
+    });
+
+    let model = Arc::new(HandoffModel::new());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::AgentUpdated { .. })),
+        "expected AgentUpdated event"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("hello from billing"))),
+        "run should complete under billing agent"
+    );
+}
+
+/// Test H – multiple handoff calls in one turn: only the first is executed.
+struct MultiHandoffModel {
+    call_count: AtomicU32,
+}
+
+impl MultiHandoffModel {
+    fn new() -> Self {
+        Self {
+            call_count: AtomicU32::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for MultiHandoffModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[crate::tool::ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            // Return two handoff calls in one turn.
+            Ok(ModelResponse {
+                content: vec![
+                    ContentBlock::ToolUse {
+                        id: "h1".into(),
+                        name: "transfer_to_billing".into(),
+                        input: json!({}),
+                    },
+                    ContentBlock::ToolUse {
+                        id: "h2".into(),
+                        name: "transfer_to_billing".into(),
+                        input: json!({}),
+                    },
+                ],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        } else {
+            // Second call sees the error for the second handoff.
+            let has_error = messages.iter().flat_map(|m| &m.content).any(|b| match b {
+                ContentBlock::ToolResult { content, .. } => {
+                    content.as_object().and_then(|o| o.get("error")).is_some()
+                }
+                _ => false,
+            });
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text(
+                    if has_error { "got_error" } else { "no_error" }.into(),
+                )],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+#[tokio::test]
+async fn multi_handoff_in_one_turn_only_first_executed() {
+    use crate::handoff::{Handoff, HandoffTarget};
+
+    let billing_config = test_config();
+
+    let mut config = test_config();
+    config = config.with_handoff(Handoff {
+        tool_name: "transfer_to_billing".into(),
+        tool_description: "Transfer to billing agent".into(),
+        input_schema: json!({"type": "object", "properties": {}}),
+        target: HandoffTarget::Static(Box::new(billing_config)),
+        input_filter: None,
+        nest_history: false,
+    });
+
+    let model = Arc::new(MultiHandoffModel::new());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    // Exactly one AgentUpdated event.
+    let updates: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, RuntimeEvent::AgentUpdated { .. }))
+        .collect();
+    assert_eq!(updates.len(), 1, "only one handoff should execute");
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("got_error"))),
+        "second handoff should produce an error result visible to the model"
     );
 }

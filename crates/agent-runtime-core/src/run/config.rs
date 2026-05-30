@@ -47,6 +47,8 @@ pub struct AgentConfig {
     pub hooks: Vec<std::sync::Arc<dyn crate::hook::Hook>>,
     #[serde(skip)]
     pub retry_policy: Option<super::retry::RetryPolicy>,
+    #[serde(skip)]
+    pub handoffs: Vec<crate::handoff::Handoff>,
 }
 
 impl std::fmt::Debug for AgentConfig {
@@ -57,6 +59,7 @@ impl std::fmt::Debug for AgentConfig {
             .field("budget", &self.budget)
             .field("skills", &self.skills)
             .field("runtime", &self.runtime)
+            .field("handoffs", &self.handoffs.len())
             .finish_non_exhaustive()
     }
 }
@@ -187,6 +190,11 @@ impl AgentConfig {
         self
     }
 
+    pub fn with_handoff(mut self, handoff: crate::handoff::Handoff) -> Self {
+        self.handoffs.push(handoff);
+        self
+    }
+
     pub fn with_loop_detection(self) -> Self {
         self.with_hook(std::sync::Arc::new(
             crate::hook::LoopDetectionHook::default(),
@@ -208,6 +216,7 @@ pub struct AgentConfigBuilder {
     runtime: RuntimeConfig,
     hooks: Vec<std::sync::Arc<dyn crate::hook::Hook>>,
     retry_policy: Option<super::retry::RetryPolicy>,
+    handoffs: Vec<crate::handoff::Handoff>,
 }
 
 impl AgentConfigBuilder {
@@ -236,6 +245,7 @@ impl AgentConfigBuilder {
             runtime: RuntimeConfig::default(),
             hooks: vec![],
             retry_policy: None,
+            handoffs: vec![],
         }
     }
 
@@ -322,6 +332,7 @@ impl AgentConfigBuilder {
             runtime: self.runtime,
             hooks: self.hooks,
             retry_policy: self.retry_policy,
+            handoffs: self.handoffs,
         })
     }
 }

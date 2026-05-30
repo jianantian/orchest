@@ -10,8 +10,8 @@ use crate::events::RuntimeEvent;
 use crate::run::helpers::emit;
 
 use super::{
-    CompactHookContext, Hook, HookAction, ModelHookAction, ModelHookContext, RunHookContext,
-    ToolHookContext,
+    CompactHookContext, HandoffHookContext, Hook, HookAction, ModelHookAction, ModelHookContext,
+    RunHookContext, ToolHookContext,
 };
 
 pub(crate) async fn run_on_run_start(
@@ -180,6 +180,26 @@ pub(crate) async fn run_after_tool(
         }
     }
     HookAction::Continue
+}
+
+pub(crate) async fn run_on_handoff(
+    hooks: &[Arc<dyn Hook>],
+    ctx: &HandoffHookContext,
+    tx: &mpsc::Sender<RuntimeEvent>,
+) {
+    for hook in hooks {
+        let result = AssertUnwindSafe(hook.on_handoff(ctx)).catch_unwind().await;
+        if let Err(panic) = result {
+            emit(
+                tx,
+                RuntimeEvent::HookPanicked {
+                    hook_name: "on_handoff".to_string(),
+                    message: format!("{panic:?}"),
+                },
+            )
+            .await;
+        }
+    }
 }
 
 pub(crate) async fn run_before_compact(
