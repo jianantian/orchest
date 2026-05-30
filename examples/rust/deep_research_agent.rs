@@ -327,6 +327,7 @@ fn agent_config(
         },
         hooks: vec![],
         retry_policy: None,
+        handoffs: vec![],
     })
 }
 

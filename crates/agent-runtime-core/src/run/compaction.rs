@@ -225,6 +225,7 @@ mod tests {
             },
             hooks: vec![],
             retry_policy: None,
+            handoffs: vec![],
         }
     }
 
@@ -255,6 +256,7 @@ mod tests {
             },
             hooks: vec![],
             retry_policy: None,
+            handoffs: vec![],
         };
         let call_count = Arc::new(AtomicU32::new(0));
         let model: Arc<dyn ModelAdapter> = Arc::new(SummaryMock {

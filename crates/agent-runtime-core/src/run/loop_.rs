@@ -57,7 +57,7 @@ pub(crate) async fn run_loop(
 #[allow(clippy::too_many_lines)] // justified: main agent loop with tool dispatch; splitting would fragment control flow
 async fn run_loop_inner(
     run_id: RunId,
-    config: AgentConfig,
+    mut config: AgentConfig,
     input: String,
     model: Arc<dyn ModelAdapter>,
     mut registry: ToolRegistry,
@@ -125,6 +125,20 @@ async fn run_loop_inner(
             )
             .await;
             return;
+        }
+    }
+
+    // Register handoff tools from config so the model can call them.
+    for handoff in config.handoffs.drain(..) {
+        let tool: Arc<dyn Tool> = Arc::new(crate::tool::handoff_tool::HandoffTool::new(handoff));
+        if let Err(e) = registry.register(tool) {
+            emit(
+                &tx,
+                RuntimeEvent::RuntimeWarning {
+                    message: format!("failed to register handoff tool: {e}"),
+                },
+            )
+            .await;
         }
     }
 
@@ -392,6 +406,8 @@ async fn run_loop_inner(
         });
 
         let mut tool_results = Vec::new();
+        let mut handoff_triggered = false;
+        let mut pending_handoff: Option<(String, crate::handoff::HandoffResult)> = None;
 
         for tool_call in &tool_uses {
             let tool = match registry.get(&tool_call.name) {
@@ -662,16 +678,23 @@ async fn run_loop_inner(
                         }
                     }
                 }
-                Ok(ToolOutput::Handoff(_)) => {
-                    // Handoff handling is implemented in issue #004.
-                    emit(
-                        &tx,
-                        RuntimeEvent::RunFailed {
-                            error: "handoff_not_yet_implemented".into(),
-                        },
-                    )
-                    .await;
-                    return;
+                Ok(ToolOutput::Handoff(result)) => {
+                    budget.record_tool_call();
+                    if handoff_triggered {
+                        // Only the first handoff per turn is honoured.
+                        tool_results.push(ContentBlock::ToolResult {
+                            tool_use_id: tool_call.id.clone(),
+                            content: json!({"error": "Only one handoff per turn is allowed"}),
+                        });
+                    } else {
+                        handoff_triggered = true;
+                        tool_results.push(ContentBlock::ToolResult {
+                            tool_use_id: tool_call.id.clone(),
+                            content: json!({"result": result.transfer_message}),
+                        });
+                        pending_handoff = Some((tool_call.name.clone(), *result));
+                    }
+                    continue;
                 }
                 Ok(ToolOutput::AsyncJob(handle)) => {
                     emit(
@@ -742,6 +765,98 @@ async fn run_loop_inner(
             role: Role::User,
             content: tool_results,
         });
+
+        // Process a pending handoff: switch agent and continue the run loop.
+        if let Some((tool_name, handoff_result)) = pending_handoff {
+            let previous_agent =
+                config.system_prompt[..config.system_prompt.len().min(60)].to_string();
+            let new_agent = handoff_result.target_agent.system_prompt
+                [..handoff_result.target_agent.system_prompt.len().min(60)]
+                .to_string();
+
+            crate::hook::runner::run_on_handoff(
+                &config.hooks,
+                &crate::hook::HandoffHookContext {
+                    run_id,
+                    previous_agent: previous_agent.clone(),
+                    new_agent: new_agent.clone(),
+                    handoff_input: json!({"tool": tool_name}),
+                },
+                &tx,
+            )
+            .await;
+
+            emit(
+                &tx,
+                RuntimeEvent::AgentUpdated {
+                    previous_agent,
+                    new_agent: new_agent.clone(),
+                },
+            )
+            .await;
+
+            // Apply input filter / nest_history to produce messages for the new agent.
+            let mut next_messages = handoff_result
+                .apply_filter(messages.clone(), json!({"tool": tool_name}))
+                .await;
+
+            // Ensure the new agent's system prompt is the first message.
+            if next_messages
+                .first()
+                .map(|m| !matches!(m.role, Role::System))
+                .unwrap_or(true)
+            {
+                next_messages.insert(
+                    0,
+                    Message {
+                        role: Role::System,
+                        content: vec![ContentBlock::Text(
+                            handoff_result.target_agent.system_prompt.clone(),
+                        )],
+                    },
+                );
+            } else {
+                // Replace the existing system message with the new agent's.
+                if let Some(first) = next_messages.first_mut() {
+                    first.content = vec![ContentBlock::Text(
+                        handoff_result.target_agent.system_prompt.clone(),
+                    )];
+                }
+            }
+            messages = next_messages;
+
+            // Build the new agent's registry (handoff tools only for now; MCP servers
+            // from the parent agent's registry remain registered).
+            registry = ToolRegistry::new();
+            let mut new_config = handoff_result.target_agent;
+            for handoff in new_config.handoffs.drain(..) {
+                let tool: Arc<dyn Tool> =
+                    Arc::new(crate::tool::handoff_tool::HandoffTool::new(handoff));
+                let _ = registry.register(tool);
+            }
+            registry = registry.filter_by_allowed(&new_config.runtime.allowed_tools);
+            tool_defs = registry.list();
+
+            // Budget: inherit remaining if the new agent has no explicit limits.
+            let new_budget = if new_config.budget.max_tokens.is_none()
+                && new_config.budget.max_tool_calls.is_none()
+                && new_config.budget.max_duration.is_none()
+                && new_config.budget.max_cost_usd.is_none()
+            {
+                budget.remaining_config()
+            } else {
+                new_config.budget.clone()
+            };
+            budget = BudgetGuard::new(new_budget);
+
+            // Update hook context for the new agent.
+            run_hook_ctx.agent_name = new_agent;
+
+            config = new_config;
+
+            step += 1;
+            continue;
+        }
 
         step += 1;
     }
