@@ -497,6 +497,7 @@ impl Agent {
                 ..SkillsConfig::default()
             },
             runtime: RuntimeConfig::default(),
+            hooks: vec![],
         })
     }
 }

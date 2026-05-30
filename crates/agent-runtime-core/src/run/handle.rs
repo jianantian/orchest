@@ -14,7 +14,7 @@ pub type EventReceiver = mpsc::Receiver<RuntimeEvent>;
 
 /// Shared approval registry for an entire agent-run tree.
 /// All runs (root and sub-agents at any depth) share the same instance.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct ApprovalBus {
     pending: Arc<Mutex<HashMap<RunId, oneshot::Sender<bool>>>>,
 }

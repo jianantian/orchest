@@ -6,7 +6,6 @@ pub(crate) mod handle;
 pub(crate) mod helpers;
 pub(crate) mod loop_;
 pub(crate) mod skills;
-pub(crate) mod sub_agent;
 pub(crate) mod tool_exec;
 pub(crate) mod webhook;
 

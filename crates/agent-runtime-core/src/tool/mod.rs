@@ -1,6 +1,6 @@
 //! Tool trait, types, and submodules for all tool implementations.
 
-pub mod agent;
+pub mod agent_as_tool;
 pub mod async_job;
 pub mod builtin;
 pub mod code_exec;
@@ -16,10 +16,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::model::ModelAdapter;
-use crate::run::AgentConfig;
-use crate::run::RunId;
-use crate::tool::registry::ToolRegistry;
 use async_job::JobHandle;
 
 pub use crate::model::{JsonSchema, ToolDef};
@@ -37,35 +33,20 @@ pub trait Tool: Send + Sync {
 #[derive(Debug)]
 pub enum ToolOutput {
     Immediate(Value),
-    Structured { model_output: Value, details: Value },
-    AgentDelegate(Box<AgentDelegate>),
+    Structured {
+        model_output: Value,
+        details: Value,
+    },
     AsyncJob(JobHandle),
+    /// Placeholder for issue #004 (Handoff).  Not yet handled by the run loop.
+    Handoff(HandoffResult),
 }
 
-/// Configuration for delegating work to a sub-agent.
-///
-/// Note: `input_mapper` is intentionally omitted — the caller constructs
-/// the input string directly.  `output_mapper` exists because sub-agent
-/// output needs provider-specific formatting back to the parent model.
-/// If `input_mapper` proves necessary, it will be added in v0.7.
-#[derive(Clone)]
-pub struct AgentDelegate {
-    pub input: String,
-    pub config: AgentConfig,
-    pub model: std::sync::Arc<dyn ModelAdapter>,
-    pub registry: ToolRegistry,
-    pub output_mapper: std::sync::Arc<dyn Fn(Value) -> Value + Send + Sync>,
-}
-
-impl std::fmt::Debug for AgentDelegate {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AgentDelegate")
-            .field("input", &self.input)
-            .field("config", &self.config)
-            .field("registry", &"<tool registry>")
-            .field("output_mapper", &"<output mapper>")
-            .finish()
-    }
+/// Placeholder result type for agent handoffs (implemented in issue #004).
+#[derive(Debug)]
+pub struct HandoffResult {
+    pub agent_name: String,
+    pub input: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,12 +77,15 @@ pub enum CostHint {
 
 #[derive(Debug, Clone)]
 pub struct ToolContext {
-    pub run_id: RunId,
+    pub run_id: crate::run::RunId,
     pub run_depth: u32,
     pub tool_call_id: String,
     pub on_update: Option<mpsc::Sender<Value>>,
     pub event_tx: Option<mpsc::Sender<crate::events::RuntimeEvent>>,
     pub webhook_base_url: Option<String>,
+    /// Shared approval bus for the entire run tree; used by AgentAsTool to forward
+    /// child approval requests to the parent's RunHandle.
+    pub approval_bus: crate::run::handle::ApprovalBus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]

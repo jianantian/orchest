@@ -261,6 +261,7 @@ mod tests {
             on_update: None,
             event_tx: None,
             webhook_base_url: None,
+            approval_bus: crate::run::handle::ApprovalBus::default(),
         };
 
         let result = tool
@@ -285,6 +286,7 @@ mod tests {
             on_update: None,
             event_tx: None,
             webhook_base_url: None,
+            approval_bus: crate::run::handle::ApprovalBus::default(),
         };
 
         let result = tool
@@ -304,6 +306,7 @@ mod tests {
             on_update: None,
             event_tx: None,
             webhook_base_url: None,
+            approval_bus: crate::run::handle::ApprovalBus::default(),
         };
 
         let result = tool.execute(json!({}), &ctx).await;
@@ -331,6 +334,7 @@ mod tests {
             on_update: None,
             event_tx: Some(event_tx),
             webhook_base_url: None,
+            approval_bus: crate::run::handle::ApprovalBus::default(),
         };
 
         let result = tool
@@ -370,6 +374,7 @@ mod tests {
             on_update: None,
             event_tx: Some(event_tx),
             webhook_base_url: None,
+            approval_bus: crate::run::handle::ApprovalBus::default(),
         };
 
         let result = tool
@@ -394,6 +399,7 @@ mod tests {
             on_update: None,
             event_tx: None,
             webhook_base_url: None,
+            approval_bus: crate::run::handle::ApprovalBus::default(),
         };
 
         let result = tool
@@ -430,6 +436,7 @@ mod tests {
             on_update: None,
             event_tx: None,
             webhook_base_url: None,
+            approval_bus: crate::run::handle::ApprovalBus::default(),
         };
 
         let result = tool.execute(json!({"path": "report.md"}), &ctx).await;

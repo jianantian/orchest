@@ -8,8 +8,8 @@ use crate::model::{
 use crate::tool::async_job::{JobHandle, JobStatus};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{
-    AgentDelegate, JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolMetadata,
-    ToolOutput, ToolSource,
+    JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput,
+    ToolSource,
 };
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -1974,7 +1974,7 @@ bundled_tools:
 // ── Sub-agent approval routing tests ──────────────────────────
 
 /// Model shared by parent and child.  The parent calls `spawn_sub`
-/// which returns an AgentDelegate with input "child with approval".
+/// (an AgentAsTool that sends "child with approval" as the child prompt).
 /// The child sees that text in its first user message and calls
 /// `write_file` (which requires approval).
 struct SubAgentApprovalModel;
@@ -2062,74 +2062,30 @@ impl ModelAdapter for SubAgentApprovalModel {
     }
 }
 
-/// Tool that returns an AgentDelegate for a child that will call
-/// write_file (which requires approval).
-struct SpawnSubTool {
-    model: Arc<dyn ModelAdapter>,
-    registry: ToolRegistry,
-}
-
-impl SpawnSubTool {
-    fn new() -> Self {
-        let mut registry = ToolRegistry::new();
-        registry
-            .register(Arc::new(FakeTool::guarded("write_file")))
-            .unwrap();
-        Self {
-            model: Arc::new(SubAgentApprovalModel),
-            registry,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl Tool for SpawnSubTool {
-    fn name(&self) -> &str {
-        "spawn_sub"
-    }
-    fn description(&self) -> &str {
-        "spawn a sub-agent"
-    }
-    fn input_schema(&self) -> &JsonSchema {
-        &serde_json::Value::Null
-    }
-    fn output_schema(&self) -> Option<&JsonSchema> {
-        None
-    }
-    fn metadata(&self) -> &ToolMetadata {
-        &ToolMetadata {
-            side_effect: false,
-            requires_approval: false,
-            cost_hint: None,
-            timeout: None,
-            max_output_tokens: None,
-            source: ToolSource::InProcess,
-        }
-    }
-    async fn execute(
-        &self,
-        _input: serde_json::Value,
-        _ctx: &ToolContext,
-    ) -> Result<ToolOutput, ToolError> {
-        let mut config = test_config();
-        config.budget.max_tokens = Some(50);
-        config.budget.max_tool_calls = Some(5);
-        config.budget.max_duration = Some(Duration::from_secs(10));
-        Ok(ToolOutput::AgentDelegate(Box::new(AgentDelegate {
-            input: "child with approval".into(),
-            config,
-            model: Arc::clone(&self.model),
-            registry: self.registry.clone(),
-            output_mapper: Arc::new(|details| details.get("output").cloned().unwrap_or(details)),
-        })))
-    }
+fn make_spawn_sub_tool() -> Arc<dyn Tool> {
+    let mut child_registry = ToolRegistry::new();
+    child_registry
+        .register(Arc::new(FakeTool::guarded("write_file")))
+        .unwrap();
+    let mut config = test_config();
+    config.budget.max_tokens = Some(50);
+    config.budget.max_tool_calls = Some(5);
+    config.budget.max_duration = Some(Duration::from_secs(10));
+    config.as_tool(
+        "spawn_sub",
+        "spawn a sub-agent",
+        Arc::new(SubAgentApprovalModel),
+        child_registry,
+        Arc::new(|_| Ok("child with approval".into())),
+        Arc::new(|details| details.get("output").cloned().unwrap_or(details.clone())),
+    )
 }
 
 #[tokio::test]
 async fn sub_agent_approval_routed_to_child() {
     let model = Arc::new(SubAgentApprovalModel);
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(SpawnSubTool::new())).unwrap();
+    registry.register(make_spawn_sub_tool()).unwrap();
 
     let (handle, mut rx) = AgentRun::start(test_config(), "go".into(), model, registry);
 
@@ -2189,7 +2145,7 @@ async fn sub_agent_approval_routed_to_child() {
 async fn sub_agent_approval_denied_completes_child() {
     let model = Arc::new(SubAgentApprovalModel);
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(SpawnSubTool::new())).unwrap();
+    registry.register(make_spawn_sub_tool()).unwrap();
 
     let (handle, mut rx) = AgentRun::start(test_config(), "go".into(), model, registry);
 
@@ -2272,7 +2228,7 @@ async fn respond_approval_unknown_run_id_returns_error() {
 async fn child_run_events_carry_run_depth_and_child_id() {
     let model = Arc::new(SubAgentApprovalModel);
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(SpawnSubTool::new())).unwrap();
+    registry.register(make_spawn_sub_tool()).unwrap();
 
     let (handle, mut rx) = AgentRun::start(test_config(), "go".into(), model, registry);
     let parent_run_id = handle.run_id;

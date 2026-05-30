@@ -78,6 +78,7 @@ impl Tool for InProcessTool {
             on_update: ctx.on_update.clone(),
             event_tx: ctx.event_tx.clone(),
             webhook_base_url: ctx.webhook_base_url.clone(),
+            approval_bus: ctx.approval_bus.clone(),
         };
         (self.callback)(input, ctx_owned).await
     }
