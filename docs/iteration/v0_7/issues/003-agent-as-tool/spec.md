@@ -99,18 +99,19 @@ pub enum ToolOutput {
 
 `Handoff` variant 在本 issue 中先声明但不实现处理逻辑（004 的事）。
 
-### 新增：`RuntimeEvent::SubAgentEvent`
+### 事件传播（复用已有类型）
 
-在 `events.rs` 中新增：
+`events.rs` 中已有以下事件，`AgentAsTool::execute()` 直接复用，**无需新增 variant**：
 
 ```rust
-RuntimeEvent::SubAgentEvent {
-    parent_run_id: RunId,
-    inner: Box<RuntimeEvent>,
-},
+// 已有（events.rs 中已存在）：
+SubAgentStarted { parent_run_id, child_run_id, config_summary }
+SubAgentCompleted { child_run_id, output, budget_used }
+SubAgentFailed { child_run_id, error }
+SubAgentEvent { parent_run_id, child_run_id, event }  // 子 run 每个事件的 wrapper
 ```
 
-`AgentAsTool::execute()` 在子 run 执行期间，将子 run 发出的每个 `RuntimeEvent` 包装为 `SubAgentEvent` 发送到父 run 的 event channel，保持消费者的事件流连续可见（不会因子 run 执行而长时间静默）。
+`AgentAsTool::execute()` 将现有 `execute_agent_delegate()` 的事件传播逻辑迁移进来：子 run 每个 `RuntimeEvent` 包装为 `SubAgentEvent` 向上传播，消费者看到连续事件流。
 
 ### 修改：测试
 
@@ -123,10 +124,10 @@ RuntimeEvent::SubAgentEvent {
 | 文件 | 变更 |
 |------|------|
 | `run/config.rs` | `AgentConfig::as_tool()` builder |
-| 新增 `tool/agent_as_tool.rs` | `AgentAsTool` 实现 |
+| 新增 `tool/agent_as_tool.rs` | `AgentAsTool` 实现（复用已有 SubAgentEvent 等事件） |
 | `tool/mod.rs` | `ToolOutput::AgentDelegate` 删除 + `Handoff` variant 占位 |
-| `events.rs` | 新增 `RuntimeEvent::SubAgentEvent` variant |
-| `run/loop_.rs` | `AgentDelegate` 处理分支删除 |
+| `run/sub_agent.rs` | `execute_agent_delegate()` 删除，逻辑迁入 `AgentAsTool::execute()` |
+| `run/loop_.rs` | `AgentDelegate` 处理分支删除（L505-530） |
 | `run/tests.rs` | sub-agent 测试迁移 |
 
 ## 不在范围内
