@@ -328,7 +328,7 @@ impl Actor for WorkerActor {
 // ── Per-step logic ────────────────────────────────────────────────────────────
 
 /// Execute one outer-loop iteration. Returns true to continue, false to stop.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // justified: single-function orchestration loop; splitting would obscure control flow
 async fn run_one_step(state: &mut AgentRunState) -> bool {
     let subs = state.event_subs.clone();
     let step = state.step;
