@@ -28,6 +28,11 @@ libc = "0.2"
 
 [dev-dependencies]
 agent-runtime-providers = { path = "../agent-runtime-providers" }
+ractor = { version = "0.15", features = ["message_span_propogation"] }
+
+[[test]]
+name = "ractor_poc"
+path = "tests/ractor_poc.rs"
 
 [[example]]
 name = "rust_deep_research_agent"
