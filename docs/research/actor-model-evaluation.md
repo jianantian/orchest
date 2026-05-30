@@ -459,8 +459,57 @@ impl AgentRef {
 
 ## 下一步
 
-1. [ ] 在 v0.7 启动前完成 Ractor PoC
-2. [ ] PoC 交付物：用 Ractor 实现 `WorkerAgent` + `WatcherAgent`，验证 steering 注入 + 事件消费 + 崩溃重启 + Kill 优先级
-3. [ ] PoC 同时验证 typed API 封装层的可行性（AgentRef 方法 → AgentMsg enum → Ractor handler）
-4. [ ] PoC 结论写入本文档的附录
-5. [ ] 基于 PoC 结论决定 v0.7 的 AgentRun 实现方式
+1. [x] 在 v0.7 启动前完成 Ractor PoC
+2. [x] PoC 交付物：用 Ractor 实现 `WorkerAgent` + `WatcherAgent`，验证 steering 注入 + 事件消费 + 崩溃重启 + Kill 优先级
+3. [x] PoC 同时验证 typed API 封装层的可行性（AgentRef 方法 → AgentMsg enum → Ractor handler）
+4. [x] PoC 结论写入本文档的附录
+5. [x] 基于 PoC 结论决定 v0.7 的 AgentRun 实现方式
+
+---
+
+## PoC 结论（issue #81）
+
+**测试日期**：2026-05-30
+**Ractor 版本**：0.15（dev-dependency）
+**测试文件**：`crates/agent-runtime-core/tests/ractor_poc.rs`
+
+### V1-V4 验证结果
+
+| 标准 | 结论 | 备注 |
+|------|------|------|
+| **V1：模式 B self-message 步进** | ✅ 通过 | `pre_start` 中 `myself.cast(RunStep)` → `handle` 执行一步再 cast 下一步；5 步精确执行 |
+| **V2：Cancel 优先于积压 RunStep** | ✅ 通过 | max_steps=50（~500ms 完整运行），50ms 后发 Cancel，实际步数 < 50，actor 在 3s 内停止 |
+| **V3：panic 通过 JoinHandle 浮现** | ✅ 通过 | `PanickingActor.handle()` 触发 panic，actor 在 2s 内终止（不 hang），JoinHandle resolve |
+| **V4：typed AgentRef 封装** | ✅ 通过 | `AgentRef.steer()` 返回 `"ack:redirect"`，`cancel()` 后 actor 停止，事件正确 emit |
+
+**所有 4 项验收标准全部通过，gate 结论：✅ 通过**。
+
+### 关键发现（与评估文档的修正）
+
+1. **Ractor 0.15 不使用 `async_trait`**：文档中的 `#[async_trait]` 写法已过时。0.15 使用 RPITIT（return-position impl trait in trait），`impl Actor for X` 中直接写 `async fn` 即可，无需 `async_trait` 依赖。
+
+2. **`Message` blanket impl，勿手动实现**：非 cluster 模式下，`Message` 已对所有 `Any + Send + Sized + 'static` 做了 blanket impl，手动加 `impl ractor::Message for WorkerMsg {}` 会导致 "conflicting implementations" 编译错误。
+
+3. **`call!` 宏语法**：正确语法为 `ractor::call!(actor_ref, Variant, args...)` （变体名后直接跟参数），而非 `call!(actor_ref, Variant(args, _))` 的 partial application 语法。
+
+4. **actor 必须显式停止**：`handle()` 返回 `Ok(())` 不会停止 actor，actor 会继续等待消息。当工作完成或收到 Cancel 时，必须显式调用 `myself.stop(None)` 才能让 JoinHandle resolve。这是 PoC 过程中最关键的发现——忽略此点会导致 V1/V2 永久 hang。
+
+5. **Cancel 实际表现**：由于 actor 邮箱是普通 FIFO（用户消息均同级），Cancel 到达时邮箱中的积压 RunStep 已被消耗一部分。Cancel 通过 `state.cancelled = true` + `myself.stop(None)` 实现中止，而非通过消息优先级抢占。实测 50ms 后发 Cancel，约 5 步后停止（符合预期）。评估文档中"Kill 立即终止当前 async work"的描述适用于 Signal 级别的 Kill，与 Cancel 消息不同。
+
+### 集成模式选择
+
+**选择模式 B（self-message 每步一条）** 用于 v0.7 后续 actor refactor。理由：
+
+- actor 生命周期（pre_start/post_stop）天然对应 AgentRun 的启动/停止生命周期
+- `call!` / `cast!` 与现有 mpsc 模型语义对等，但无需手写 oneshot channel
+- mid-run steering（V4 验证的 `steer()` 方法）可直接映射到生产代码中的 `AgentRef.steer()`
+- 每步 RunStep self-message 模式使 cancel 中止点粒度等于一个工具调用，与 run_loop 的自然步边界吻合
+
+### Gate 决策
+
+**✅ 通过**：Ractor 0.15 满足所有 4 项集成标准，actor refactor（issue #87）可在 issue #81 合并后继续推进。
+
+v0.7 issue #87（Actor Refactor）将基于本 PoC 中验证的模式实现生产代码：
+- `AgentRun` 重构为 `impl Actor`
+- `RunHandle` 内部用 `ActorRef<AgentMsg>` 实现，对外保持现有公共 API
+- `AgentRef` typed wrapper 模式已通过 V4 验证

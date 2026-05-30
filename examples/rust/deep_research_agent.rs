@@ -8,7 +8,6 @@ use agent_runtime_core::budget::BudgetConfig;
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::model::{ModelSpec, ProviderRuntimeConfig, RequestOptions};
 use agent_runtime_core::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
-use agent_runtime_core::tool::agent::AgentTool;
 use agent_runtime_core::tool::builtin::WriteFileTool;
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
@@ -326,6 +325,9 @@ fn agent_config(
             max_steps,
             ..RuntimeConfig::default()
         },
+        hooks: vec![],
+        retry_policy: None,
+        handoffs: vec![],
     })
 }
 
@@ -384,35 +386,25 @@ fn build_deep_research_agent(
         .unwrap_or(DEFAULT_MAX_TOKENS);
     let model = provider_model(model_ref, Some(max_tokens))?;
     let mut registry = ToolRegistry::new();
-    let input_schema = json!({
-        "type": "object",
-        "properties": {
-            "question": {
-                "type": "string",
-                "description": "Task or question to delegate to the child agent"
-            }
-        },
-        "required": ["question"]
-    });
-    registry.register(Arc::new(AgentTool::new(
-        "web_research".into(),
-        "Delegate web research to an isolated web-search sub-agent.".into(),
-        input_schema,
-        web_config,
+    registry.register(web_config.as_tool(
+        "web_research",
+        "Delegate web research to an isolated web-search sub-agent.",
         web_model,
         web_registry,
-        Arc::new(|value| {
+        Arc::new(|value: serde_json::Value| {
             value
                 .get("question")
-                .and_then(Value::as_str)
+                .and_then(serde_json::Value::as_str)
                 .map(str::to_string)
                 .ok_or_else(|| ToolError {
                     message: "missing required parameter 'question'".into(),
                     code: Some("MISSING_PARAM".into()),
                 })
         }),
-        Arc::new(|details| details.get("output").cloned().unwrap_or(details)),
-    )))?;
+        Arc::new(|details: serde_json::Value| {
+            details.get("output").cloned().unwrap_or(details.clone())
+        }),
+    ))?;
     registry.register(Arc::new(WriteFileTool::new_with_approval(false)))?;
     Ok((config, model, registry))
 }

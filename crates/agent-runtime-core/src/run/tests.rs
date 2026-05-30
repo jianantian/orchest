@@ -8,8 +8,8 @@ use crate::model::{
 use crate::tool::async_job::{JobHandle, JobStatus};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{
-    AgentDelegate, JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolMetadata,
-    ToolOutput, ToolSource,
+    JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput,
+    ToolSource,
 };
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -111,6 +111,9 @@ fn test_config() -> AgentConfig {
             max_steps: 10,
             ..config::RuntimeConfig::default()
         },
+        hooks: vec![],
+        retry_policy: None,
+        handoffs: vec![],
     }
 }
 
@@ -1973,7 +1976,7 @@ bundled_tools:
 // ── Sub-agent approval routing tests ──────────────────────────
 
 /// Model shared by parent and child.  The parent calls `spawn_sub`
-/// which returns an AgentDelegate with input "child with approval".
+/// (an AgentAsTool that sends "child with approval" as the child prompt).
 /// The child sees that text in its first user message and calls
 /// `write_file` (which requires approval).
 struct SubAgentApprovalModel;
@@ -2061,74 +2064,30 @@ impl ModelAdapter for SubAgentApprovalModel {
     }
 }
 
-/// Tool that returns an AgentDelegate for a child that will call
-/// write_file (which requires approval).
-struct SpawnSubTool {
-    model: Arc<dyn ModelAdapter>,
-    registry: ToolRegistry,
-}
-
-impl SpawnSubTool {
-    fn new() -> Self {
-        let mut registry = ToolRegistry::new();
-        registry
-            .register(Arc::new(FakeTool::guarded("write_file")))
-            .unwrap();
-        Self {
-            model: Arc::new(SubAgentApprovalModel),
-            registry,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl Tool for SpawnSubTool {
-    fn name(&self) -> &str {
-        "spawn_sub"
-    }
-    fn description(&self) -> &str {
-        "spawn a sub-agent"
-    }
-    fn input_schema(&self) -> &JsonSchema {
-        &serde_json::Value::Null
-    }
-    fn output_schema(&self) -> Option<&JsonSchema> {
-        None
-    }
-    fn metadata(&self) -> &ToolMetadata {
-        &ToolMetadata {
-            side_effect: false,
-            requires_approval: false,
-            cost_hint: None,
-            timeout: None,
-            max_output_tokens: None,
-            source: ToolSource::InProcess,
-        }
-    }
-    async fn execute(
-        &self,
-        _input: serde_json::Value,
-        _ctx: &ToolContext,
-    ) -> Result<ToolOutput, ToolError> {
-        let mut config = test_config();
-        config.budget.max_tokens = Some(50);
-        config.budget.max_tool_calls = Some(5);
-        config.budget.max_duration = Some(Duration::from_secs(10));
-        Ok(ToolOutput::AgentDelegate(Box::new(AgentDelegate {
-            input: "child with approval".into(),
-            config,
-            model: Arc::clone(&self.model),
-            registry: self.registry.clone(),
-            output_mapper: Arc::new(|details| details.get("output").cloned().unwrap_or(details)),
-        })))
-    }
+fn make_spawn_sub_tool() -> Arc<dyn Tool> {
+    let mut child_registry = ToolRegistry::new();
+    child_registry
+        .register(Arc::new(FakeTool::guarded("write_file")))
+        .unwrap();
+    let mut config = test_config();
+    config.budget.max_tokens = Some(50);
+    config.budget.max_tool_calls = Some(5);
+    config.budget.max_duration = Some(Duration::from_secs(10));
+    config.as_tool(
+        "spawn_sub",
+        "spawn a sub-agent",
+        Arc::new(SubAgentApprovalModel),
+        child_registry,
+        Arc::new(|_| Ok("child with approval".into())),
+        Arc::new(|details| details.get("output").cloned().unwrap_or(details.clone())),
+    )
 }
 
 #[tokio::test]
 async fn sub_agent_approval_routed_to_child() {
     let model = Arc::new(SubAgentApprovalModel);
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(SpawnSubTool::new())).unwrap();
+    registry.register(make_spawn_sub_tool()).unwrap();
 
     let (handle, mut rx) = AgentRun::start(test_config(), "go".into(), model, registry);
 
@@ -2188,7 +2147,7 @@ async fn sub_agent_approval_routed_to_child() {
 async fn sub_agent_approval_denied_completes_child() {
     let model = Arc::new(SubAgentApprovalModel);
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(SpawnSubTool::new())).unwrap();
+    registry.register(make_spawn_sub_tool()).unwrap();
 
     let (handle, mut rx) = AgentRun::start(test_config(), "go".into(), model, registry);
 
@@ -2271,7 +2230,7 @@ async fn respond_approval_unknown_run_id_returns_error() {
 async fn child_run_events_carry_run_depth_and_child_id() {
     let model = Arc::new(SubAgentApprovalModel);
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(SpawnSubTool::new())).unwrap();
+    registry.register(make_spawn_sub_tool()).unwrap();
 
     let (handle, mut rx) = AgentRun::start(test_config(), "go".into(), model, registry);
     let parent_run_id = handle.run_id;
@@ -2325,5 +2284,679 @@ async fn child_run_events_carry_run_depth_and_child_id() {
     assert_ne!(
         first_id, parent_run_id,
         "child_run_id must differ from parent run_id"
+    );
+}
+
+// ── Hook framework tests ──────────────────────────────────────────────────────
+
+use crate::hook::{
+    CompactHookContext, HandoffHookContext, Hook, HookAction, ModelHookAction, ModelHookContext,
+    RunHookContext, ToolHookContext,
+};
+use std::sync::Mutex;
+
+/// Records every hook invocation so tests can assert call order / count.
+struct RecordingHook {
+    label: &'static str,
+    log: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl Hook for RecordingHook {
+    async fn on_run_start(&self, _ctx: &mut RunHookContext) {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:on_run_start", self.label));
+    }
+    async fn on_run_end(&self, _ctx: &RunHookContext) {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:on_run_end", self.label));
+    }
+    async fn on_run_error(&self, _ctx: &RunHookContext, _error: &str) {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:on_run_error", self.label));
+    }
+    async fn before_model(&self, _ctx: &mut ModelHookContext) -> ModelHookAction {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:before_model", self.label));
+        ModelHookAction::Continue
+    }
+    async fn after_model(&self, _ctx: &mut ModelHookContext) -> HookAction {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:after_model", self.label));
+        HookAction::Continue
+    }
+    async fn before_tool(&self, _ctx: &mut ToolHookContext) -> HookAction {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:before_tool", self.label));
+        HookAction::Continue
+    }
+    async fn after_tool(&self, _ctx: &mut ToolHookContext) -> HookAction {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:after_tool", self.label));
+        HookAction::Continue
+    }
+    async fn on_handoff(&self, _ctx: &HandoffHookContext) {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:on_handoff", self.label));
+    }
+    async fn before_compact(&self, _ctx: &mut CompactHookContext) -> HookAction {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{}:before_compact", self.label));
+        HookAction::Continue
+    }
+}
+
+/// Test A – two hooks are called in registration order.
+#[tokio::test]
+async fn hooks_called_in_order_and_lifecycle_events_recorded() {
+    let log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let hook_a = Arc::new(RecordingHook {
+        label: "A",
+        log: Arc::clone(&log),
+    });
+    let hook_b = Arc::new(RecordingHook {
+        label: "B",
+        log: Arc::clone(&log),
+    });
+
+    let mut config = test_config();
+    config.hooks.push(hook_a);
+    config.hooks.push(hook_b);
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let registry = ToolRegistry::new();
+
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let log = log.lock().unwrap();
+    // Both hooks must have fired on_run_start in order A then B
+    let start_a = log.iter().position(|s| s == "A:on_run_start").unwrap();
+    let start_b = log.iter().position(|s| s == "B:on_run_start").unwrap();
+    assert!(start_a < start_b, "A should fire before B");
+
+    // Both hooks must have fired on_run_end
+    assert!(log.iter().any(|s| s == "A:on_run_end"));
+    assert!(log.iter().any(|s| s == "B:on_run_end"));
+
+    // before_model and after_model must appear
+    assert!(log.iter().any(|s| s == "A:before_model"));
+    assert!(log.iter().any(|s| s == "B:before_model"));
+    assert!(log.iter().any(|s| s == "A:after_model"));
+    assert!(log.iter().any(|s| s == "B:after_model"));
+}
+
+/// Aborts the run from `before_model`.
+struct AbortBeforeModelHook;
+
+#[async_trait::async_trait]
+impl Hook for AbortBeforeModelHook {
+    async fn before_model(&self, _ctx: &mut ModelHookContext) -> ModelHookAction {
+        ModelHookAction::Abort("abort-reason".into())
+    }
+}
+
+/// Second hook to verify it is NOT reached after an Abort.
+struct WitnessHook {
+    called: Arc<AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl Hook for WitnessHook {
+    async fn before_model(&self, _ctx: &mut ModelHookContext) -> ModelHookAction {
+        self.called.store(true, Ordering::SeqCst);
+        ModelHookAction::Continue
+    }
+}
+
+use std::sync::atomic::AtomicBool;
+
+/// Test B – `before_model` returning Abort stops the run; second hook not called.
+#[tokio::test]
+async fn hook_abort_before_model_stops_run_and_skips_subsequent_hooks() {
+    let second_called = Arc::new(AtomicBool::new(false));
+
+    let mut config = test_config();
+    config.hooks.push(Arc::new(AbortBeforeModelHook));
+    config.hooks.push(Arc::new(WitnessHook {
+        called: Arc::clone(&second_called),
+    }));
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunFailed { error } if error == "abort-reason")),
+        "expected RunFailed with abort-reason"
+    );
+    assert!(
+        !second_called.load(Ordering::SeqCst),
+        "second hook must not be called after Abort"
+    );
+}
+
+/// Returns `HookAction::Skip` from `before_tool`, preventing tool execution.
+struct SkipToolHook;
+
+#[async_trait::async_trait]
+impl Hook for SkipToolHook {
+    async fn before_tool(&self, _ctx: &mut ToolHookContext) -> HookAction {
+        HookAction::Skip
+    }
+}
+
+/// A tool that panics if executed — used to assert skip actually skips execution.
+struct MustNotRunTool;
+
+#[async_trait::async_trait]
+impl Tool for MustNotRunTool {
+    fn name(&self) -> &str {
+        "must_not_run"
+    }
+    fn description(&self) -> &str {
+        "panics on execute"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &serde_json::Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
+    fn metadata(&self) -> &ToolMetadata {
+        &ToolMetadata {
+            side_effect: false,
+            requires_approval: false,
+            cost_hint: None,
+            timeout: None,
+            max_output_tokens: None,
+            source: ToolSource::InProcess,
+        }
+    }
+    async fn execute(
+        &self,
+        _input: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        panic!("must_not_run was executed");
+    }
+}
+
+/// Model that calls `must_not_run` once then returns end-turn.
+struct SkipToolModel;
+
+#[async_trait::async_trait]
+impl ModelAdapter for SkipToolModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let has_tool_result = messages
+            .iter()
+            .flat_map(|m| &m.content)
+            .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
+        let usage = TokenUsage {
+            input_tokens: 1,
+            output_tokens: 1,
+            ..Default::default()
+        };
+        if has_tool_result {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("done".into())],
+                usage,
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        } else {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "t1".into(),
+                    name: "must_not_run".into(),
+                    input: json!({}),
+                }],
+                usage,
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+/// Test C – `before_tool` Skip prevents execution; run still completes.
+#[tokio::test]
+async fn hook_skip_before_tool_prevents_execution_run_completes() {
+    let mut config = test_config();
+    config.hooks.push(Arc::new(SkipToolHook));
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(MustNotRunTool)).unwrap();
+
+    let (handle, mut rx) = AgentRun::start(config, "go".into(), Arc::new(SkipToolModel), registry);
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        "run should complete even when tool is skipped"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunFailed { .. })),
+        "run must not fail"
+    );
+}
+
+/// Panics inside `before_model`.
+struct PanickingHook;
+
+#[async_trait::async_trait]
+impl Hook for PanickingHook {
+    async fn before_model(&self, _ctx: &mut ModelHookContext) -> ModelHookAction {
+        panic!("deliberate hook panic");
+    }
+}
+
+/// Test D – a panicking hook emits `HookPanicked` and run continues.
+#[tokio::test]
+async fn hook_panic_emits_event_and_run_continues() {
+    let mut config = test_config();
+    config.hooks.push(Arc::new(PanickingHook));
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::HookPanicked { hook_name, .. } if hook_name == "before_model")),
+        "expected HookPanicked event for before_model"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        "run should still complete after hook panic"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Retry tests
+// ---------------------------------------------------------------------------
+
+/// Returns 429 for the first N calls, then a successful final answer.
+struct RetryModel {
+    fail_count: u32,
+    call_count: AtomicU32,
+}
+
+impl RetryModel {
+    fn new(fail_count: u32) -> Self {
+        Self {
+            fail_count,
+            call_count: AtomicU32::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for RetryModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[crate::tool::ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if n < self.fail_count {
+            return Err(ModelError {
+                message: "rate limited".into(),
+                code: None,
+                provider: None,
+                status: Some(429),
+                retry_after_secs: None,
+                upstream: None,
+            });
+        }
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("done".into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+/// Test E – a 429 that resolves on the next attempt completes successfully and
+/// emits a `ModelRetry` event.
+#[tokio::test]
+async fn retry_on_429_succeeds_after_one_failure() {
+    let mut config = test_config();
+    config.retry_policy = Some(super::retry::RetryPolicy {
+        max_retries: 3,
+        backoff: super::retry::BackoffStrategy::Fixed(Duration::from_millis(0)),
+    });
+
+    let model = Arc::new(RetryModel::new(1));
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ModelRetry { attempt: 1, .. })),
+        "expected ModelRetry event for attempt 1"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        "run should complete after retry succeeds"
+    );
+}
+
+/// Test F – exhausting all retries results in `RunFailed`.
+#[tokio::test]
+async fn retry_exhausted_results_in_run_failed() {
+    let mut config = test_config();
+    config.retry_policy = Some(super::retry::RetryPolicy {
+        max_retries: 2,
+        backoff: super::retry::BackoffStrategy::Fixed(Duration::from_millis(0)),
+    });
+
+    // always 429 → will exhaust max_retries
+    let model = Arc::new(RetryModel::new(10));
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    let retry_events: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, RuntimeEvent::ModelRetry { .. }))
+        .collect();
+    assert_eq!(retry_events.len(), 2, "expected exactly 2 retry events");
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunFailed { .. })),
+        "run should fail after retries exhausted"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Handoff tests
+// ---------------------------------------------------------------------------
+
+/// Model that calls `transfer_to_billing` on the first turn, then completes.
+struct HandoffModel {
+    call_count: AtomicU32,
+}
+
+impl HandoffModel {
+    fn new() -> Self {
+        Self {
+            call_count: AtomicU32::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for HandoffModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[crate::tool::ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "h1".into(),
+                    name: "transfer_to_billing".into(),
+                    input: json!({}),
+                }],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        } else {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("hello from billing".into())],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+/// Test G – static handoff switches agent and the run completes under the new agent.
+#[tokio::test]
+async fn static_handoff_switches_agent_and_completes() {
+    use crate::handoff::{Handoff, HandoffTarget};
+
+    let billing_config = test_config();
+
+    let mut config = test_config();
+    config = config.with_handoff(Handoff {
+        tool_name: "transfer_to_billing".into(),
+        tool_description: "Transfer to billing agent".into(),
+        input_schema: json!({"type": "object", "properties": {}}),
+        target: HandoffTarget::Static(Box::new(billing_config)),
+        input_filter: None,
+        nest_history: false,
+    });
+
+    let model = Arc::new(HandoffModel::new());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::AgentUpdated { .. })),
+        "expected AgentUpdated event"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("hello from billing"))),
+        "run should complete under billing agent"
+    );
+}
+
+/// Test H – multiple handoff calls in one turn: only the first is executed.
+struct MultiHandoffModel {
+    call_count: AtomicU32,
+}
+
+impl MultiHandoffModel {
+    fn new() -> Self {
+        Self {
+            call_count: AtomicU32::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for MultiHandoffModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[crate::tool::ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            // Return two handoff calls in one turn.
+            Ok(ModelResponse {
+                content: vec![
+                    ContentBlock::ToolUse {
+                        id: "h1".into(),
+                        name: "transfer_to_billing".into(),
+                        input: json!({}),
+                    },
+                    ContentBlock::ToolUse {
+                        id: "h2".into(),
+                        name: "transfer_to_billing".into(),
+                        input: json!({}),
+                    },
+                ],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        } else {
+            // Second call sees the error for the second handoff.
+            let has_error = messages.iter().flat_map(|m| &m.content).any(|b| match b {
+                ContentBlock::ToolResult { content, .. } => {
+                    content.as_object().and_then(|o| o.get("error")).is_some()
+                }
+                _ => false,
+            });
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text(
+                    if has_error { "got_error" } else { "no_error" }.into(),
+                )],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+#[tokio::test]
+async fn multi_handoff_in_one_turn_only_first_executed() {
+    use crate::handoff::{Handoff, HandoffTarget};
+
+    let billing_config = test_config();
+
+    let mut config = test_config();
+    config = config.with_handoff(Handoff {
+        tool_name: "transfer_to_billing".into(),
+        tool_description: "Transfer to billing agent".into(),
+        input_schema: json!({"type": "object", "properties": {}}),
+        target: HandoffTarget::Static(Box::new(billing_config)),
+        input_filter: None,
+        nest_history: false,
+    });
+
+    let model = Arc::new(MultiHandoffModel::new());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    // Exactly one AgentUpdated event.
+    let updates: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, RuntimeEvent::AgentUpdated { .. }))
+        .collect();
+    assert_eq!(updates.len(), 1, "only one handoff should execute");
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("got_error"))),
+        "second handoff should produce an error result visible to the model"
     );
 }

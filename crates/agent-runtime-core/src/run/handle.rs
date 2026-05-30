@@ -1,22 +1,25 @@
 //! RunHandle, ApprovalBus, EventReceiver, and approval routing logic.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use tokio::sync::{mpsc, oneshot, Mutex};
-use tokio_util::sync::CancellationToken;
+use ractor::ActorRef;
+use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
 
 use crate::events::RuntimeEvent;
 
+use super::actor::{AgentMsg, CancelCmd};
 use super::config::RunId;
 
 pub type EventReceiver = mpsc::Receiver<RuntimeEvent>;
 
 /// Shared approval registry for an entire agent-run tree.
 /// All runs (root and sub-agents at any depth) share the same instance.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct ApprovalBus {
-    pending: Arc<Mutex<HashMap<RunId, oneshot::Sender<bool>>>>,
+    pending: Arc<AsyncMutex<HashMap<RunId, oneshot::Sender<bool>>>>,
 }
 
 impl ApprovalBus {
@@ -42,18 +45,24 @@ impl ApprovalBus {
 
 pub struct RunHandle {
     pub run_id: RunId,
-    pub(crate) task: tokio::task::JoinHandle<()>,
+    /// Actor reference — set once `Actor::spawn` completes inside the background task.
+    pub(crate) actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
+    /// Background task that owns the actor lifecycle.
+    pub(crate) actor_join: JoinHandle<()>,
     pub(crate) approval_bus: ApprovalBus,
-    pub(crate) cancel_token: CancellationToken,
 }
 
 impl RunHandle {
     pub async fn wait(self) {
-        let _ = self.task.await;
+        let _ = self.actor_join.await;
     }
 
     pub fn abort(&self) {
-        self.cancel_token.cancel();
+        if let Ok(guard) = self.actor_ref.lock() {
+            if let Some(ref aref) = *guard {
+                let _ = aref.cast(AgentMsg::Cancel(CancelCmd));
+            }
+        }
     }
 
     /// Route an approval response to any run in this run tree.

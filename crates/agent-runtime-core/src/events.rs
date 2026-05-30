@@ -28,6 +28,11 @@ pub enum RuntimeEvent {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         option_adjustments: Vec<OptionAdjustment>,
     },
+    ModelRetry {
+        attempt: u32,
+        error: String,
+        next_delay: Duration,
+    },
 
     ToolCallStarted {
         tool: String,
@@ -124,6 +129,21 @@ pub enum RuntimeEvent {
         parent_run_id: RunId,
         child_run_id: RunId,
         event: Box<RuntimeEvent>,
+    },
+
+    HookPanicked {
+        hook_name: String,
+        message: String,
+    },
+
+    AgentUpdated {
+        previous_agent: String,
+        new_agent: String,
+    },
+
+    EventsDropped {
+        subscriber_id: u64,
+        count: u64,
     },
 
     RunCompleted {

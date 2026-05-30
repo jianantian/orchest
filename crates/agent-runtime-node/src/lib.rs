@@ -497,6 +497,9 @@ impl Agent {
                 ..SkillsConfig::default()
             },
             runtime: RuntimeConfig::default(),
+            hooks: vec![],
+            retry_policy: None,
+            handoffs: vec![],
         })
     }
 }

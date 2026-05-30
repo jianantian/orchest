@@ -1,10 +1,10 @@
 //! Re-exported model types from `agent-runtime-model`.
 // Re-exported here for backward compatibility.
 pub use agent_runtime_model::{
-    CacheCapability, CachePolicy, CapabilitySource, CompatibilityPolicy, ContentBlock,
-    JsonSchema, Message, ModelAdapter, ModelCapabilities, ModelError, ModelPricing, ModelResponse,
-    ModelSpec, OptionAdjustment, ProviderRuntimeConfig, ReasoningCapability, RequestOptions,
-    Role, StopReason, StreamEvent, ThinkingLevel, TokenUsage, ToolDef, UpstreamErrorDetail,
+    CacheCapability, CachePolicy, CapabilitySource, CompatibilityPolicy, ContentBlock, JsonSchema,
+    Message, ModelAdapter, ModelCapabilities, ModelError, ModelPricing, ModelResponse, ModelSpec,
+    OptionAdjustment, ProviderRuntimeConfig, ReasoningCapability, RequestOptions, Role, StopReason,
+    StreamEvent, ThinkingLevel, TokenUsage, ToolDef, UpstreamErrorDetail,
 };
 
 #[cfg(test)]

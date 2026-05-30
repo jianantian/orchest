@@ -44,6 +44,9 @@ fn test_config() -> AgentConfig {
             max_steps: 10,
             ..RuntimeConfig::default()
         },
+        hooks: vec![],
+        retry_policy: None,
+        handoffs: vec![],
     }
 }
 
@@ -309,6 +312,10 @@ async fn e2e_event_coverage() {
             RuntimeEvent::RunAborted => "RunAborted",
             RuntimeEvent::ChildRunEvent { .. } => "ChildRunEvent",
             RuntimeEvent::SubAgentEvent { .. } => "SubAgentEvent",
+            RuntimeEvent::HookPanicked { .. } => "HookPanicked",
+            RuntimeEvent::ModelRetry { .. } => "ModelRetry",
+            RuntimeEvent::AgentUpdated { .. } => "AgentUpdated",
+            RuntimeEvent::EventsDropped { .. } => "EventsDropped",
         })
         .collect();
 
@@ -614,6 +621,7 @@ async fn e2e_skill_content_read_event() {
         on_update: None,
         event_tx: Some(event_tx),
         webhook_base_url: None,
+        approval_bus: agent_runtime_core::run::ApprovalBus::default(),
     };
 
     tool.execute(json!({"path": skill_md.to_str().unwrap()}), &ctx)
@@ -649,6 +657,7 @@ async fn e2e_read_file_known_risk_boundary_is_visible() {
         on_update: None,
         event_tx: Some(event_tx),
         webhook_base_url: None,
+        approval_bus: agent_runtime_core::run::ApprovalBus::default(),
     };
 
     let output = tool

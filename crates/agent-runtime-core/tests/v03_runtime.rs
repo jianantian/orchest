@@ -9,11 +9,8 @@ use agent_runtime_core::model::{
 };
 use agent_runtime_core::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
 use agent_runtime_core::skill::{SkillDependencies, SkillEnvManager, SkillManifest};
-use agent_runtime_core::tool::agent::AgentTool;
 use agent_runtime_core::tool::registry::ToolRegistry;
-use agent_runtime_core::tool::{
-    AgentDelegate, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
-};
+use agent_runtime_core::tool::{Tool, ToolError, ToolMetadata, ToolOutput, ToolSource};
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -43,6 +40,9 @@ fn test_config() -> AgentConfig {
             code_execution_enabled: true,
             ..RuntimeConfig::default()
         },
+        hooks: vec![],
+        retry_policy: None,
+        handoffs: vec![],
     }
 }
 
@@ -175,64 +175,19 @@ impl ModelAdapter for SubAgentModel {
     }
 }
 
-struct SpawnChildTool {
-    model: Arc<dyn ModelAdapter>,
-}
-
-impl SpawnChildTool {
-    fn new() -> Self {
-        Self {
-            model: Arc::new(SubAgentModel),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl Tool for SpawnChildTool {
-    fn name(&self) -> &str {
-        "spawn_child"
-    }
-
-    fn description(&self) -> &str {
-        "requests a sub-agent"
-    }
-
-    fn input_schema(&self) -> &JsonSchema {
-        &serde_json::Value::Null
-    }
-
-    fn output_schema(&self) -> Option<&JsonSchema> {
-        None
-    }
-
-    fn metadata(&self) -> &ToolMetadata {
-        &ToolMetadata {
-            side_effect: false,
-            requires_approval: false,
-            cost_hint: None,
-            timeout: None,
-            max_output_tokens: None,
-            source: ToolSource::InProcess,
-        }
-    }
-
-    async fn execute(
-        &self,
-        _input: serde_json::Value,
-        _ctx: &ToolContext,
-    ) -> Result<ToolOutput, ToolError> {
-        let mut config = test_config();
-        config.budget.max_tokens = Some(20);
-        config.budget.max_tool_calls = Some(3);
-        config.budget.max_duration = Some(Duration::from_secs(5));
-        Ok(ToolOutput::AgentDelegate(Box::new(AgentDelegate {
-            input: "child task".into(),
-            config,
-            model: Arc::clone(&self.model),
-            registry: ToolRegistry::new(),
-            output_mapper: Arc::new(|details| details.get("output").cloned().unwrap_or(details)),
-        })))
-    }
+fn make_spawn_child_tool() -> Arc<dyn Tool> {
+    let mut config = test_config();
+    config.budget.max_tokens = Some(20);
+    config.budget.max_tool_calls = Some(3);
+    config.budget.max_duration = Some(Duration::from_secs(5));
+    config.as_tool(
+        "spawn_child",
+        "requests a sub-agent",
+        Arc::new(SubAgentModel),
+        ToolRegistry::new(),
+        Arc::new(|_| Ok("child task".into())),
+        Arc::new(|details| details.get("output").cloned().unwrap_or(details.clone())),
+    )
 }
 
 #[test]
@@ -325,7 +280,7 @@ fn sub_agent_budget_is_capped_by_parent_remaining() {
 #[tokio::test]
 async fn sub_agent_request_forwards_events_and_completes_parent_tool_result() {
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(SpawnChildTool::new())).unwrap();
+    registry.register(make_spawn_child_tool()).unwrap();
     let (handle, mut rx) = AgentRun::start(
         test_config(),
         "parent task".into(),
@@ -373,16 +328,14 @@ async fn sub_agent_request_forwards_events_and_completes_parent_tool_result() {
 async fn agent_tool_runs_child_agent_with_isolated_context() {
     let mut registry = ToolRegistry::new();
     registry
-        .register(Arc::new(AgentTool::new(
-            "spawn_child".into(),
-            "delegates to a child agent".into(),
-            json!({"type": "object", "properties": {}}),
-            test_config(),
+        .register(test_config().as_tool(
+            "spawn_child",
+            "delegates to a child agent",
             Arc::new(SubAgentModel),
             ToolRegistry::new(),
             Arc::new(|_| Ok("child task".into())),
-            Arc::new(|details| details.get("output").cloned().unwrap_or(details)),
-        )))
+            Arc::new(|details| details.get("output").cloned().unwrap_or(details.clone())),
+        ))
         .unwrap();
 
     let (handle, mut rx) = AgentRun::start(

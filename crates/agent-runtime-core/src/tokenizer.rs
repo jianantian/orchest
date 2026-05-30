@@ -12,7 +12,9 @@ fn tokenizer() -> &'static CoreBPE {
     // crate.  Its `get_bpe_from_tokenizer` call can only fail if the crate's
     // embedded data files are corrupt or missing — a fatal linker-level error
     // that warrants an immediate panic rather than silent degradation.
-    TOKENIZER.get_or_init(|| cl100k_base().expect("tiktoken cl100k_base init should never fail: data files corrupt"))
+    TOKENIZER.get_or_init(|| {
+        cl100k_base().expect("tiktoken cl100k_base init should never fail: data files corrupt")
+    })
 }
 
 pub fn count_tokens(text: &str) -> usize {

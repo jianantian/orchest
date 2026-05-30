@@ -17,7 +17,6 @@ use agent_runtime_core::model::{
 use agent_runtime_core::run::{
     AgentConfig, AgentRun, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
 };
-use agent_runtime_core::tool::agent::AgentTool;
 use agent_runtime_core::tool::async_job::{JobHandle, JobStatus};
 use agent_runtime_core::tool::builtin::WriteFileTool;
 use agent_runtime_core::tool::registry::ToolRegistry;
@@ -484,6 +483,9 @@ impl Agent {
                 ..SkillsConfig::default()
             },
             runtime: RuntimeConfig::default(),
+            hooks: vec![],
+            retry_policy: None,
+            handoffs: vec![],
         })
     }
 
@@ -659,7 +661,7 @@ impl Agent {
         let child_config = agent.build_config()?;
         let child_registry = agent.build_registry()?;
         let child_model = agent.build_model()?;
-        let input_schema = serde_json::json!({
+        let _input_schema = serde_json::json!({
             "type": "object",
             "properties": {
                 input_key.clone(): {
@@ -687,16 +689,14 @@ impl Agent {
                 .unwrap_or_else(|| details.clone())
         });
 
-        self.native_tools.push(Arc::new(AgentTool::new(
-            name,
-            description,
-            input_schema,
-            child_config,
+        self.native_tools.push(child_config.as_tool(
+            &name,
+            &description,
             child_model,
             child_registry,
             input_mapper,
             output_mapper,
-        )));
+        ));
 
         Ok(())
     }

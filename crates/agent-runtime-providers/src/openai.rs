@@ -385,6 +385,7 @@ impl ModelAdapter for OpenAiAdapter {
                     code: Some("request_failed".into()),
                     provider: Some("openai".into()),
                     status: None,
+                    retry_after_secs: None,
                     upstream: None,
                 }
             })?;
@@ -412,6 +413,7 @@ impl ModelAdapter for OpenAiAdapter {
                 code: Some(status.to_string()),
                 provider: Some("openai".into()),
                 status: Some(status),
+                retry_after_secs: None,
                 upstream: Some(Arc::new(UpstreamErrorDetail {
                     code: upstream_code,
                     message: upstream_msg,

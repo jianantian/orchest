@@ -34,7 +34,7 @@ impl std::fmt::Display for RunId {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub system_prompt: String,
     pub model: ModelConfig,
@@ -43,6 +43,57 @@ pub struct AgentConfig {
     pub skills: SkillsConfig,
     #[serde(default)]
     pub runtime: RuntimeConfig,
+    #[serde(skip)]
+    pub hooks: Vec<std::sync::Arc<dyn crate::hook::Hook>>,
+    #[serde(skip)]
+    pub retry_policy: Option<super::retry::RetryPolicy>,
+    #[serde(skip)]
+    pub handoffs: Vec<crate::handoff::Handoff>,
+}
+
+impl std::fmt::Debug for AgentConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentConfig")
+            .field("system_prompt", &self.system_prompt)
+            .field("model", &self.model)
+            .field("budget", &self.budget)
+            .field("skills", &self.skills)
+            .field("runtime", &self.runtime)
+            .field("handoffs", &self.handoffs.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl AgentConfig {
+    /// Wraps this config as a `Tool` that runs a child agent when called.
+    ///
+    /// - `input_mapper` converts the tool's JSON input to the child agent's prompt string.
+    /// - `output_extractor` converts the child's result `Value` to the tool's return value.
+    #[allow(clippy::too_many_arguments)] // justified: all parameters are required to instantiate AgentAsTool; a builder is planned for v0.8
+    pub fn as_tool(
+        &self,
+        name: &str,
+        description: &str,
+        model: std::sync::Arc<dyn crate::model::ModelAdapter>,
+        registry: crate::tool::registry::ToolRegistry,
+        input_mapper: std::sync::Arc<
+            dyn Fn(serde_json::Value) -> Result<String, crate::tool::ToolError> + Send + Sync,
+        >,
+        output_extractor: std::sync::Arc<
+            dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync,
+        >,
+    ) -> std::sync::Arc<dyn crate::tool::Tool> {
+        std::sync::Arc::new(crate::tool::agent_as_tool::AgentAsTool::new(
+            self.clone(),
+            name.to_string(),
+            description.to_string(),
+            serde_json::json!({"type": "object", "properties": {"input": {"type": "string"}}}),
+            model,
+            registry,
+            input_mapper,
+            output_extractor,
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,6 +184,28 @@ impl AgentConfig {
     pub fn builder(model: impl Into<String>) -> AgentConfigBuilder {
         AgentConfigBuilder::new(model)
     }
+
+    pub fn with_hook(mut self, hook: std::sync::Arc<dyn crate::hook::Hook>) -> Self {
+        self.hooks.push(hook);
+        self
+    }
+
+    pub fn with_handoff(mut self, handoff: crate::handoff::Handoff) -> Self {
+        self.handoffs.push(handoff);
+        self
+    }
+
+    pub fn with_loop_detection(self) -> Self {
+        self.with_hook(std::sync::Arc::new(
+            crate::hook::LoopDetectionHook::default(),
+        ))
+    }
+
+    pub fn with_loop_detection_config(self, config: crate::hook::LoopDetectionConfig) -> Self {
+        self.with_hook(std::sync::Arc::new(crate::hook::LoopDetectionHook::from(
+            config,
+        )))
+    }
 }
 
 pub struct AgentConfigBuilder {
@@ -141,6 +214,9 @@ pub struct AgentConfigBuilder {
     budget: BudgetConfig,
     skills: SkillsConfig,
     runtime: RuntimeConfig,
+    hooks: Vec<std::sync::Arc<dyn crate::hook::Hook>>,
+    retry_policy: Option<super::retry::RetryPolicy>,
+    handoffs: Vec<crate::handoff::Handoff>,
 }
 
 impl AgentConfigBuilder {
@@ -167,7 +243,15 @@ impl AgentConfigBuilder {
             },
             skills: SkillsConfig::default(),
             runtime: RuntimeConfig::default(),
+            hooks: vec![],
+            retry_policy: None,
+            handoffs: vec![],
         }
+    }
+
+    pub fn retry_policy(mut self, policy: super::retry::RetryPolicy) -> Self {
+        self.retry_policy = Some(policy);
+        self
     }
 
     pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
@@ -246,6 +330,9 @@ impl AgentConfigBuilder {
             budget: self.budget,
             skills: self.skills,
             runtime: self.runtime,
+            hooks: self.hooks,
+            retry_policy: self.retry_policy,
+            handoffs: self.handoffs,
         })
     }
 }

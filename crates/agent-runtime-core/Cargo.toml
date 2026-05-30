@@ -22,6 +22,7 @@ tracing = "0.1"
 metrics = "0.24"
 tiktoken-rs = "0.6"
 httparse = "1"
+ractor = { version = "0.15", features = ["message_span_propogation"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -29,9 +30,45 @@ libc = "0.2"
 [dev-dependencies]
 agent-runtime-providers = { path = "../agent-runtime-providers" }
 
+[[test]]
+name = "ractor_poc"
+path = "tests/ractor_poc.rs"
+
 [[example]]
 name = "rust_deep_research_agent"
 path = "../../examples/rust/deep_research_agent.rs"
+
+[[example]]
+name = "hook_logging"
+path = "../../examples/rust/hook_logging.rs"
+
+[[example]]
+name = "hook_modifier"
+path = "../../examples/rust/hook_modifier.rs"
+
+[[example]]
+name = "hook_abort"
+path = "../../examples/rust/hook_abort.rs"
+
+[[example]]
+name = "agent_as_tool"
+path = "../../examples/rust/agent_as_tool.rs"
+
+[[example]]
+name = "handoff_routing"
+path = "../../examples/rust/handoff_routing.rs"
+
+[[example]]
+name = "handoff_input_filter"
+path = "../../examples/rust/handoff_input_filter.rs"
+
+[[example]]
+name = "retry_exhausted"
+path = "../../examples/rust/retry_exhausted.rs"
+
+[[example]]
+name = "loop_detection"
+path = "../../examples/rust/loop_detection.rs"
 
 [lints]
 workspace = true
