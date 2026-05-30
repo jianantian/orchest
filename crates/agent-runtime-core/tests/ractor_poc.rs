@@ -125,11 +125,7 @@ impl Actor for PanickingActor {
     type State = ();
     type Arguments = ();
 
-    async fn pre_start(
-        &self,
-        _: ActorRef<PanicMsg>,
-        _: (),
-    ) -> Result<(), ActorProcessingErr> {
+    async fn pre_start(&self, _: ActorRef<PanicMsg>, _: ()) -> Result<(), ActorProcessingErr> {
         Ok(())
     }
 

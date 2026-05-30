@@ -290,7 +290,6 @@ fn map_stop_reason(raw: &str) -> StopReason {
     }
 }
 
-
 #[async_trait]
 impl ModelAdapter for DeepSeekAdapter {
     fn provider_name(&self) -> &str {
