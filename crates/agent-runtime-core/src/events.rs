@@ -126,6 +126,11 @@ pub enum RuntimeEvent {
         event: Box<RuntimeEvent>,
     },
 
+    HookPanicked {
+        hook_name: String,
+        message: String,
+    },
+
     RunCompleted {
         output: Value,
     },

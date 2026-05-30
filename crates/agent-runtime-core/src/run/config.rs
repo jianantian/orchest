@@ -34,7 +34,7 @@ impl std::fmt::Display for RunId {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub system_prompt: String,
     pub model: ModelConfig,
@@ -43,6 +43,20 @@ pub struct AgentConfig {
     pub skills: SkillsConfig,
     #[serde(default)]
     pub runtime: RuntimeConfig,
+    #[serde(skip)]
+    pub hooks: Vec<std::sync::Arc<dyn crate::hook::Hook>>,
+}
+
+impl std::fmt::Debug for AgentConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentConfig")
+            .field("system_prompt", &self.system_prompt)
+            .field("model", &self.model)
+            .field("budget", &self.budget)
+            .field("skills", &self.skills)
+            .field("runtime", &self.runtime)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,6 +147,11 @@ impl AgentConfig {
     pub fn builder(model: impl Into<String>) -> AgentConfigBuilder {
         AgentConfigBuilder::new(model)
     }
+
+    pub fn with_hook(mut self, hook: std::sync::Arc<dyn crate::hook::Hook>) -> Self {
+        self.hooks.push(hook);
+        self
+    }
 }
 
 pub struct AgentConfigBuilder {
@@ -141,6 +160,7 @@ pub struct AgentConfigBuilder {
     budget: BudgetConfig,
     skills: SkillsConfig,
     runtime: RuntimeConfig,
+    hooks: Vec<std::sync::Arc<dyn crate::hook::Hook>>,
 }
 
 impl AgentConfigBuilder {
@@ -167,6 +187,7 @@ impl AgentConfigBuilder {
             },
             skills: SkillsConfig::default(),
             runtime: RuntimeConfig::default(),
+            hooks: vec![],
         }
     }
 
@@ -246,6 +267,7 @@ impl AgentConfigBuilder {
             budget: self.budget,
             skills: self.skills,
             runtime: self.runtime,
+            hooks: self.hooks,
         })
     }
 }

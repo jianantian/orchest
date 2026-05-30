@@ -44,6 +44,7 @@ fn test_config() -> AgentConfig {
             max_steps: 10,
             ..RuntimeConfig::default()
         },
+        hooks: vec![],
     }
 }
 
@@ -309,6 +310,7 @@ async fn e2e_event_coverage() {
             RuntimeEvent::RunAborted => "RunAborted",
             RuntimeEvent::ChildRunEvent { .. } => "ChildRunEvent",
             RuntimeEvent::SubAgentEvent { .. } => "SubAgentEvent",
+            RuntimeEvent::HookPanicked { .. } => "HookPanicked",
         })
         .collect();
 

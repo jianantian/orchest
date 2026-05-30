@@ -43,6 +43,7 @@ fn test_config() -> AgentConfig {
             code_execution_enabled: true,
             ..RuntimeConfig::default()
         },
+        hooks: vec![],
     }
 }
 
