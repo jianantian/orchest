@@ -59,6 +59,38 @@ impl std::fmt::Debug for AgentConfig {
     }
 }
 
+impl AgentConfig {
+    /// Wraps this config as a `Tool` that runs a child agent when called.
+    ///
+    /// - `input_mapper` converts the tool's JSON input to the child agent's prompt string.
+    /// - `output_extractor` converts the child's result `Value` to the tool's return value.
+    #[allow(clippy::too_many_arguments)] // justified: all parameters are required to instantiate AgentAsTool; a builder is planned for v0.8
+    pub fn as_tool(
+        &self,
+        name: &str,
+        description: &str,
+        model: std::sync::Arc<dyn crate::model::ModelAdapter>,
+        registry: crate::tool::registry::ToolRegistry,
+        input_mapper: std::sync::Arc<
+            dyn Fn(serde_json::Value) -> Result<String, crate::tool::ToolError> + Send + Sync,
+        >,
+        output_extractor: std::sync::Arc<
+            dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync,
+        >,
+    ) -> std::sync::Arc<dyn crate::tool::Tool> {
+        std::sync::Arc::new(crate::tool::agent_as_tool::AgentAsTool::new(
+            self.clone(),
+            name.to_string(),
+            description.to_string(),
+            serde_json::json!({"type": "object", "properties": {"input": {"type": "string"}}}),
+            model,
+            registry,
+            input_mapper,
+            output_extractor,
+        ))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
     pub spec: ModelSpec,

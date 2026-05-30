@@ -22,7 +22,6 @@ use super::config::{AgentConfig, RunId};
 use super::handle::ApprovalBus;
 use super::helpers::{append_searched_tool_defs, connect_mcp_servers, emit, truncate_output};
 use super::skills::register_skills;
-use super::sub_agent::execute_agent_delegate;
 use super::tool_exec::poll_async_job;
 use super::webhook::start_webhook_server;
 use tokio_util::sync::CancellationToken;
@@ -497,6 +496,7 @@ async fn run_loop_inner(
                 webhook_base_url: webhook_runtime
                     .as_ref()
                     .map(|runtime| runtime.base_url.clone()),
+                approval_bus: approval_bus.clone(),
             };
 
             let start_time = Instant::now();
@@ -621,51 +621,16 @@ async fn run_loop_inner(
                         }
                     }
                 }
-                Ok(ToolOutput::AgentDelegate(delegate)) => {
-                    let (model_output, details) = execute_agent_delegate(
-                        run_id,
-                        &config,
-                        &tx,
-                        &mut budget,
-                        *delegate,
-                        approval_bus.clone(),
-                        cancel_token.clone(),
-                    )
-                    .await;
-                    let duration = start_time.elapsed();
+                Ok(ToolOutput::Handoff(_)) => {
+                    // Handoff handling is implemented in issue #004.
                     emit(
                         &tx,
-                        RuntimeEvent::ToolCallCompleted {
-                            tool: tool_call.name.clone(),
-                            output: details,
-                            duration,
+                        RuntimeEvent::RunFailed {
+                            error: "handoff_not_yet_implemented".into(),
                         },
                     )
                     .await;
-                    telemetry::record_tool_success(&tool_call.name, source_label, duration);
-                    tool_results.push(ContentBlock::ToolResult {
-                        tool_use_id: tool_call.id.clone(),
-                        content: model_output,
-                    });
-                    {
-                        let mut tool_out_ctx = crate::hook::ToolHookContext {
-                            run_id,
-                            tool_name: tool_call.name.clone(),
-                            tool_input: tool_input.clone(),
-                            tool_metadata: tool_meta.clone(),
-                        };
-                        if let crate::hook::HookAction::Abort(reason) =
-                            crate::hook::runner::run_after_tool(
-                                &config.hooks,
-                                &mut tool_out_ctx,
-                                &tx,
-                            )
-                            .await
-                        {
-                            emit(&tx, RuntimeEvent::RunFailed { error: reason }).await;
-                            return;
-                        }
-                    }
+                    return;
                 }
                 Ok(ToolOutput::AsyncJob(handle)) => {
                     emit(

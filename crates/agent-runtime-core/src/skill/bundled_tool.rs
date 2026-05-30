@@ -517,6 +517,7 @@ echo '{"greeting": "hello"}'
             on_update: None,
             event_tx: None,
             webhook_base_url: None,
+            approval_bus: crate::run::handle::ApprovalBus::default(),
         };
         let result = tool
             .execute(serde_json::json!({"name": "world"}), &ctx)
@@ -556,6 +557,7 @@ echo '{"greeting": "hello"}'
             on_update: None,
             event_tx: None,
             webhook_base_url: None,
+            approval_bus: crate::run::handle::ApprovalBus::default(),
         };
         let result = tool.execute(serde_json::json!({}), &ctx).await;
         assert!(result.is_err());
@@ -595,6 +597,7 @@ fi
             on_update: None,
             event_tx: None,
             webhook_base_url: None,
+            approval_bus: crate::run::handle::ApprovalBus::default(),
         };
         let result = tool.execute(serde_json::json!({}), &ctx).await;
         assert!(result.is_ok());
@@ -662,6 +665,7 @@ echo "{\"visible\":\"$ORCHEST_VISIBLE_ENV\",\"hidden\":\"$ORCHEST_HIDDEN_ENV\",\
             on_update: None,
             event_tx: None,
             webhook_base_url: None,
+            approval_bus: crate::run::handle::ApprovalBus::default(),
         };
         let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
         let ToolOutput::Immediate(value) = result else {
