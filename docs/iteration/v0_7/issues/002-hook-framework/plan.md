@@ -262,18 +262,28 @@ let tool_call_input = tool_ctx.tool_input; // 应用 hook 可能修改的 input
 let execute_fut = tool.execute(tool_call_input, &ctx);
 ```
 
-**5.5** `after_tool`：在各 `Ok(ToolOutput::*)` 分支 push `tool_results` 之后，统一处理：在 `budget.record_tool_call();`（L575）之前追加：
+**5.5** `after_tool`：需要在每个 `Ok(ToolOutput::*)` arm 内独立调用，不能统一放在循环底部——因为各分支的异步操作（`poll_async_job` 对 `AsyncJob` 分支可能阻塞数秒）和 `output` 值的生命周期不同。
+
+在 `Ok(ToolOutput::Immediate(value))` arm 末尾（`tool_results.push(...)` 之后）：
 
 ```rust
-let mut tool_out_ctx = crate::hook::ToolHookContext { ... };
-// 注意：after_tool 也传入 ToolOutput 引用（需要在各分支捕获 output 值）
+let mut tool_out_ctx = crate::hook::ToolHookContext {
+    run_id, tool_name: tool_call.name.clone(),
+    tool_input: tool_call.input.clone(),
+    tool_metadata: tool.metadata().clone(),
+};
 if let crate::hook::HookAction::Abort(reason) =
-    crate::hook::runner::run_after_tool(&config.hooks, &mut tool_out_ctx, &output, &tx).await
+    crate::hook::runner::run_after_tool(
+        &config.hooks, &mut tool_out_ctx,
+        &crate::tool::ToolOutput::Immediate(value.clone()), &tx
+    ).await
 {
     emit(&tx, RuntimeEvent::RunFailed { error: reason }).await;
     return;
 }
 ```
+
+对 `Ok(ToolOutput::AsyncJob(handle))` 和 `Ok(ToolOutput::Structured {...})` arm 做同样处理（各自在 `tool_results.push` 之后，`budget.record_tool_call()` 之前插入）。`Err(e)` arm 不调用 `after_tool`（tool 失败时没有 output）。
 
 **5.6** `on_run_end`：在 `RunCompleted` emit（L281/L286）之前：
 

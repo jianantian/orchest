@@ -166,9 +166,12 @@ impl Hook for LoopDetectionHook {
         };
 
         if let Some(msg) = warning {
-            // Append developer 角色警告消息（末尾，模型最容易注意到）
+            // 当前 Role 枚举只有 System/User/Assistant/Tool（无 Developer）
+            // 使用 Role::User 注入警告——位置在 messages 末尾，模型最容易注意到。
+            // 已知限制：User 角色的警告消息与真实用户消息在对话结构上无法区分。
+            // 后续可在 agent-runtime-model 添加 Role::Developer 并修改此处。
             ctx.messages.push(Message {
-                role: Role::User,  // 若 model crate 无 Developer role，用 User
+                role: Role::User,
                 content: vec![ContentBlock::Text(msg)],
             });
         }
@@ -251,4 +254,4 @@ grep -n "with_loop_detection" crates/agent-runtime-core/src/run/config.rs
 - **两阶段设计（`after_tool` 记录 + `before_model` 注入）**：`ToolHookContext` 不含 `messages`，无法在 `after_tool` 直接注入消息。`pending_warning` flag 在 `before_model` 时才注入到 `ModelHookContext.messages`。
 - **`Mutex<LoopState>` 线程安全**：`Hook` 要求 `Send + Sync`，内部可变状态必须用 `Mutex`；每次调用只在临界区内 push/count，锁持有时间极短
 - **hash + 全量比较双重验证**：u64 哈希碰撞概率低但非零；hash 匹配后做 `serde_json::Value` 全量比较消除误报，避免误终止用户 run
-- **警告用 User role 而非 Developer role**：若 model crate 无 `Role::Developer`，用 `Role::User` 保持兼容；末尾位置保证模型注意到（比 system 消息更近）
+- **警告用 `Role::User` 而非 `Role::Developer`**：`agent-runtime-model` 的 `Role` 枚举当前无 `Developer` variant（只有 System/User/Assistant/Tool）。使用 `Role::User` 是当前唯一可行选项；已知限制是警告消息与真实用户消息无法区分。后续扩展路径：在 model crate 添加 `Role::Developer` variant，更新此处注入逻辑，无破坏性变更

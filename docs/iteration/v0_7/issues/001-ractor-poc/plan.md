@@ -51,6 +51,7 @@ impl ractor::Message for WorkerMsg {}
 ```rust
 pub struct WorkerState {
     pub steps_done: u32,
+    pub max_steps: u32,
     pub cancelled: bool,
     pub event_tx: mpsc::Sender<String>,
 }
@@ -65,13 +66,14 @@ pub struct WorkerAgent;
 impl Actor for WorkerAgent {
     type Msg = WorkerMsg;
     type State = WorkerState;
-    type Arguments = mpsc::Sender<String>;
+    // Arguments: (event_tx, max_steps)
+    type Arguments = (mpsc::Sender<String>, u32);
 
-    async fn pre_start(&self, myself: ActorRef<WorkerMsg>, tx: mpsc::Sender<String>)
+    async fn pre_start(&self, myself: ActorRef<WorkerMsg>, (tx, max_steps): (mpsc::Sender<String>, u32))
         -> Result<WorkerState, ActorProcessingErr>
     {
         myself.cast(WorkerMsg::RunStep)?;
-        Ok(WorkerState { steps_done: 0, cancelled: false, event_tx: tx })
+        Ok(WorkerState { steps_done: 0, max_steps, cancelled: false, event_tx: tx })
     }
 
     async fn handle(
@@ -79,10 +81,11 @@ impl Actor for WorkerAgent {
     ) -> Result<(), ActorProcessingErr> {
         match msg {
             WorkerMsg::RunStep => {
-                if state.cancelled || state.steps_done >= 5 {
+                if state.cancelled || state.steps_done >= state.max_steps {
                     return Ok(());
                 }
-                // 模拟一步：emit event，self-send 下一步
+                // 模拟一步：sleep 10ms（模拟 LLM latency），emit event，self-send 下一步
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 let _ = state.event_tx.send(format!("step:{}", state.steps_done)).await;
                 state.steps_done += 1;
                 myself.cast(WorkerMsg::RunStep)?;
@@ -94,6 +97,7 @@ impl Actor for WorkerAgent {
             WorkerMsg::Cancel => {
                 state.cancelled = true;
                 let _ = state.event_tx.send("cancelled".to_string()).await;
+                // 不 self-send RunStep → actor 自然停止
             }
         }
         Ok(())
@@ -107,11 +111,11 @@ impl Actor for WorkerAgent {
 #[tokio::test]
 async fn v1_self_message_step_pattern() {
     let (tx, mut rx) = mpsc::channel(64);
-    let (actor_ref, handle) = Actor::spawn(None, WorkerAgent, tx).await.unwrap();
+    let (actor_ref, handle) = Actor::spawn(None, WorkerAgent, (tx, 5)).await.unwrap();
     let _ = handle.await;
     let mut events = Vec::new();
     while let Ok(e) = rx.try_recv() { events.push(e); }
-    assert!(events.iter().any(|e| e.starts_with("step:")));
+    assert_eq!(events.iter().filter(|e| e.starts_with("step:")).count(), 5);
 }
 ```
 
@@ -120,19 +124,25 @@ async fn v1_self_message_step_pattern() {
 ```rust
 #[tokio::test]
 async fn v2_cancel_priority() {
-    // 向 mailbox 注入 100 个 RunStep，然后 Cancel
-    // 验证 actor 在处理积压消息前响应 Cancel
+    // max_steps=50，每步 sleep 10ms，总完整运行需 ~500ms
+    // 在 actor 启动后 50ms（约 5 步）时发 Cancel
+    // 验证实际执行步数 < 50（cancel 在积压 RunStep 处理前生效）
     let (tx, mut rx) = mpsc::channel(256);
-    let (actor_ref, handle) = Actor::spawn(None, WorkerAgent, tx).await.unwrap();
-    // 注入积压消息
-    for _ in 0..100 {
-        let _ = actor_ref.cast(WorkerMsg::RunStep);
-    }
+    let (actor_ref, handle) = Actor::spawn(None, WorkerAgent, (tx, 50)).await.unwrap();
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
     let _ = actor_ref.cast(WorkerMsg::Cancel);
-    let _ = handle.await;
+
+    tokio::time::timeout(Duration::from_secs(2), handle)
+        .await
+        .expect("actor did not stop after cancel")
+        .expect("actor join failed");
+
     let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-    assert!(events.contains(&"cancelled".to_string()));
-    // steps_done 应 < 100（cancel 提前生效）
+    let steps = events.iter().filter(|e| e.starts_with("step:")).count();
+    assert!(events.contains(&"cancelled".to_string()), "Cancel was never processed");
+    // actor 应在 50 步完成前停止；若 cancel 被积压 RunStep 阻塞则 steps == 50
+    assert!(steps < 50, "Cancel did not preempt queued RunStep messages (steps={})", steps);
 }
 ```
 

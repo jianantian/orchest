@@ -15,7 +15,7 @@
 
 现有 `run/tests.rs` 中已有多种 mock model（`FakeModelAdapter`、`ToolCallModelAdapter` 等），可在示例中复用相同模式：每个示例自定义简单 mock model，不依赖真实 API key。
 
-在 `crates/agent-runtime-core/Cargo.toml` 中为每个新示例添加 `[[example]]` 条目：
+在 `crates/agent-runtime-core/Cargo.toml` 中为每个新示例添加 `[[example]]` 条目（紧接现有 `rust_deep_research_agent` 条目之后）：
 
 ```toml
 [[example]]
@@ -26,7 +26,29 @@ path = "../../examples/rust/hook_logging.rs"
 name = "hook_modifier"
 path = "../../examples/rust/hook_modifier.rs"
 
-# ... 其余 6 个示例
+[[example]]
+name = "hook_abort"
+path = "../../examples/rust/hook_abort.rs"
+
+[[example]]
+name = "agent_as_tool"
+path = "../../examples/rust/agent_as_tool.rs"
+
+[[example]]
+name = "handoff_routing"
+path = "../../examples/rust/handoff_routing.rs"
+
+[[example]]
+name = "handoff_input_filter"
+path = "../../examples/rust/handoff_input_filter.rs"
+
+[[example]]
+name = "retry_exhausted"
+path = "../../examples/rust/retry_exhausted.rs"
+
+[[example]]
+name = "loop_detection"
+path = "../../examples/rust/loop_detection.rs"
 ```
 
 ---
