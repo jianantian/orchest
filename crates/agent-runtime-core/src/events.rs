@@ -141,6 +141,11 @@ pub enum RuntimeEvent {
         new_agent: String,
     },
 
+    EventsDropped {
+        subscriber_id: u64,
+        count: u64,
+    },
+
     RunCompleted {
         output: Value,
     },

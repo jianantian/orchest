@@ -22,13 +22,13 @@ tracing = "0.1"
 metrics = "0.24"
 tiktoken-rs = "0.6"
 httparse = "1"
+ractor = { version = "0.15", features = ["message_span_propogation"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]
 agent-runtime-providers = { path = "../agent-runtime-providers" }
-ractor = { version = "0.15", features = ["message_span_propogation"] }
 
 [[test]]
 name = "ractor_poc"
