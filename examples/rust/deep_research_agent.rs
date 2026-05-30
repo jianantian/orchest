@@ -326,6 +326,7 @@ fn agent_config(
             ..RuntimeConfig::default()
         },
         hooks: vec![],
+        retry_policy: None,
     })
 }
 

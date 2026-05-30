@@ -45,6 +45,7 @@ fn test_config() -> AgentConfig {
             ..RuntimeConfig::default()
         },
         hooks: vec![],
+        retry_policy: None,
     }
 }
 
@@ -311,6 +312,7 @@ async fn e2e_event_coverage() {
             RuntimeEvent::ChildRunEvent { .. } => "ChildRunEvent",
             RuntimeEvent::SubAgentEvent { .. } => "SubAgentEvent",
             RuntimeEvent::HookPanicked { .. } => "HookPanicked",
+            RuntimeEvent::ModelRetry { .. } => "ModelRetry",
         })
         .collect();
 

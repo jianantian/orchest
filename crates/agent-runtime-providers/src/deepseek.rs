@@ -343,6 +343,7 @@ impl ModelAdapter for DeepSeekAdapter {
                         code: Some("unsupported_reasoning_output_exclusion".into()),
                         provider: Some("deepseek".into()),
                         status: None,
+                        retry_after_secs: None,
                         upstream: None,
                     });
                 }
@@ -378,6 +379,7 @@ impl ModelAdapter for DeepSeekAdapter {
                     code: Some("request_failed".into()),
                     provider: Some("deepseek".into()),
                     status: None,
+                    retry_after_secs: None,
                     upstream: None,
                 }
             })?;
@@ -405,6 +407,7 @@ impl ModelAdapter for DeepSeekAdapter {
                 code: Some(status.to_string()),
                 provider: Some("deepseek".into()),
                 status: Some(status),
+                retry_after_secs: None,
                 upstream: Some(Arc::new(UpstreamErrorDetail {
                     code: upstream_code,
                     message: upstream_msg,

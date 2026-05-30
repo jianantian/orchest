@@ -112,6 +112,7 @@ fn test_config() -> AgentConfig {
             ..config::RuntimeConfig::default()
         },
         hooks: vec![],
+        retry_policy: None,
     }
 }
 
@@ -2404,9 +2405,7 @@ async fn hooks_called_in_order_and_lifecycle_events_recorded() {
 }
 
 /// Aborts the run from `before_model`.
-struct AbortBeforeModelHook {
-    second_called: Arc<AtomicBool>,
-}
+struct AbortBeforeModelHook;
 
 #[async_trait::async_trait]
 impl Hook for AbortBeforeModelHook {
@@ -2436,9 +2435,7 @@ async fn hook_abort_before_model_stops_run_and_skips_subsequent_hooks() {
     let second_called = Arc::new(AtomicBool::new(false));
 
     let mut config = test_config();
-    config.hooks.push(Arc::new(AbortBeforeModelHook {
-        second_called: Arc::clone(&second_called),
-    }));
+    config.hooks.push(Arc::new(AbortBeforeModelHook));
     config.hooks.push(Arc::new(WitnessHook {
         called: Arc::clone(&second_called),
     }));
@@ -2629,5 +2626,127 @@ async fn hook_panic_emits_event_and_run_continues() {
             .iter()
             .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
         "run should still complete after hook panic"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Retry tests
+// ---------------------------------------------------------------------------
+
+/// Returns 429 for the first N calls, then a successful final answer.
+struct RetryModel {
+    fail_count: u32,
+    call_count: AtomicU32,
+}
+
+impl RetryModel {
+    fn new(fail_count: u32) -> Self {
+        Self {
+            fail_count,
+            call_count: AtomicU32::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for RetryModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[crate::tool::ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if n < self.fail_count {
+            return Err(ModelError {
+                message: "rate limited".into(),
+                code: None,
+                provider: None,
+                status: Some(429),
+                retry_after_secs: None,
+                upstream: None,
+            });
+        }
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("done".into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+/// Test E – a 429 that resolves on the next attempt completes successfully and
+/// emits a `ModelRetry` event.
+#[tokio::test]
+async fn retry_on_429_succeeds_after_one_failure() {
+    let mut config = test_config();
+    config.retry_policy = Some(super::retry::RetryPolicy {
+        max_retries: 3,
+        backoff: super::retry::BackoffStrategy::Fixed(Duration::from_millis(0)),
+    });
+
+    let model = Arc::new(RetryModel::new(1));
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ModelRetry { attempt: 1, .. })),
+        "expected ModelRetry event for attempt 1"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        "run should complete after retry succeeds"
+    );
+}
+
+/// Test F – exhausting all retries results in `RunFailed`.
+#[tokio::test]
+async fn retry_exhausted_results_in_run_failed() {
+    let mut config = test_config();
+    config.retry_policy = Some(super::retry::RetryPolicy {
+        max_retries: 2,
+        backoff: super::retry::BackoffStrategy::Fixed(Duration::from_millis(0)),
+    });
+
+    // always 429 → will exhaust max_retries
+    let model = Arc::new(RetryModel::new(10));
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    let retry_events: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, RuntimeEvent::ModelRetry { .. }))
+        .collect();
+    assert_eq!(retry_events.len(), 2, "expected exactly 2 retry events");
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunFailed { .. })),
+        "run should fail after retries exhausted"
     );
 }

@@ -5,6 +5,7 @@ pub(crate) mod config;
 pub(crate) mod handle;
 pub(crate) mod helpers;
 pub(crate) mod loop_;
+pub(crate) mod retry;
 pub(crate) mod skills;
 pub(crate) mod tool_exec;
 pub(crate) mod webhook;
@@ -14,6 +15,7 @@ pub use config::{
     RunState, RunStatus, RuntimeConfig, SkillsConfig, SubAgentRuntime,
 };
 pub use handle::{ApprovalBus, EventReceiver, RunHandle};
+pub use retry::{BackoffStrategy, RetryPolicy};
 
 use std::sync::Arc;
 

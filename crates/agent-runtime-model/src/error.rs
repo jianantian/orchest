@@ -23,6 +23,9 @@ pub struct ModelError {
     pub code: Option<String>,
     pub provider: Option<String>,
     pub status: Option<u16>,
+    /// Value of the `Retry-After` HTTP header in seconds, if present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream: Option<Arc<UpstreamErrorDetail>>,
 }
@@ -34,6 +37,7 @@ impl ModelError {
             code: Some(code.into()),
             provider: None,
             status: None,
+            retry_after_secs: None,
             upstream: None,
         }
     }

@@ -41,6 +41,7 @@ fn test_config() -> AgentConfig {
             ..RuntimeConfig::default()
         },
         hooks: vec![],
+        retry_policy: None,
     }
 }
 
