@@ -315,6 +315,7 @@ async fn e2e_event_coverage() {
             RuntimeEvent::HookPanicked { .. } => "HookPanicked",
             RuntimeEvent::ModelRetry { .. } => "ModelRetry",
             RuntimeEvent::AgentUpdated { .. } => "AgentUpdated",
+            RuntimeEvent::EventsDropped { .. } => "EventsDropped",
         })
         .collect();
 
