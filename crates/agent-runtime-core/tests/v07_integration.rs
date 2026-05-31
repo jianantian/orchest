@@ -25,7 +25,11 @@ use tokio::sync::mpsc;
 fn ok_response(text: &str) -> ModelResponse {
     ModelResponse {
         content: vec![ContentBlock::Text(text.into())],
-        usage: TokenUsage { input_tokens: 5, output_tokens: 3, ..Default::default() },
+        usage: TokenUsage {
+            input_tokens: 5,
+            output_tokens: 3,
+            ..Default::default()
+        },
         stop_reason: StopReason::EndTurn,
         option_adjustments: vec![],
     }
@@ -56,9 +60,15 @@ struct AlwaysRateLimitModel;
 
 #[async_trait]
 impl ModelAdapter for AlwaysRateLimitModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "rate-limited" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "rate-limited"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
     async fn complete(
         &self,
         _messages: &[Message],
@@ -82,8 +92,12 @@ async fn retry_policy_fires_retry_events_then_run_failed() {
         .build()
         .unwrap();
 
-    let (handle, rx) =
-        AgentRun::start(config, "go".into(), Arc::new(AlwaysRateLimitModel), ToolRegistry::new());
+    let (handle, rx) = AgentRun::start(
+        config,
+        "go".into(),
+        Arc::new(AlwaysRateLimitModel),
+        ToolRegistry::new(),
+    );
     let events = collect_events(rx).await;
     handle.wait().await;
 
@@ -109,10 +123,18 @@ struct EchoSearchTool;
 
 #[async_trait]
 impl Tool for EchoSearchTool {
-    fn name(&self) -> &str { "search" }
-    fn description(&self) -> &str { "search the web" }
-    fn input_schema(&self) -> &JsonSchema { &Value::Null }
-    fn output_schema(&self) -> Option<&JsonSchema> { None }
+    fn name(&self) -> &str {
+        "search"
+    }
+    fn description(&self) -> &str {
+        "search the web"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
@@ -134,9 +156,15 @@ struct RepeatedToolModel {
 
 #[async_trait]
 impl ModelAdapter for RepeatedToolModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "repeating" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "repeating"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
     async fn complete(
         &self,
         _messages: &[Message],
@@ -145,9 +173,17 @@ impl ModelAdapter for RepeatedToolModel {
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let n = self.call_count.fetch_add(1, Ordering::SeqCst);
-        let usage = TokenUsage { input_tokens: 3, output_tokens: 1, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 3,
+            output_tokens: 1,
+            ..Default::default()
+        };
         if let Some(ref tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
         Ok(ModelResponse {
             content: vec![ContentBlock::ToolUse {
@@ -178,8 +214,14 @@ async fn loop_detection_aborts_on_repeated_tool_calls() {
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(EchoSearchTool)).unwrap();
 
-    let (handle, rx) =
-        AgentRun::start(config, "search".into(), Arc::new(RepeatedToolModel { call_count: Default::default() }), registry);
+    let (handle, rx) = AgentRun::start(
+        config,
+        "search".into(),
+        Arc::new(RepeatedToolModel {
+            call_count: Default::default(),
+        }),
+        registry,
+    );
     let events = collect_events(rx).await;
     handle.wait().await;
 
@@ -207,9 +249,15 @@ struct NeverCalledModel;
 
 #[async_trait]
 impl ModelAdapter for NeverCalledModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "never-called" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "never-called"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
     async fn complete(
         &self,
         _messages: &[Message],
@@ -230,8 +278,12 @@ async fn hook_abort_before_model_emits_run_failed() {
         .unwrap()
         .with_hook(Arc::new(AbortHook));
 
-    let (handle, rx) =
-        AgentRun::start(config, "go".into(), Arc::new(NeverCalledModel), ToolRegistry::new());
+    let (handle, rx) = AgentRun::start(
+        config,
+        "go".into(),
+        Arc::new(NeverCalledModel),
+        ToolRegistry::new(),
+    );
     let events = collect_events(rx).await;
     handle.wait().await;
 
@@ -252,9 +304,15 @@ struct HandoffRoutingModel {
 
 #[async_trait]
 impl ModelAdapter for HandoffRoutingModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "routing" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "routing"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
     async fn complete(
         &self,
         _messages: &[Message],
@@ -263,9 +321,17 @@ impl ModelAdapter for HandoffRoutingModel {
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let n = self.call_count.fetch_add(1, Ordering::SeqCst);
-        let usage = TokenUsage { input_tokens: 5, output_tokens: 2, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 5,
+            output_tokens: 2,
+            ..Default::default()
+        };
         if let Some(ref tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
         if n == 0 {
             Ok(ModelResponse {
@@ -311,10 +377,16 @@ async fn handoff_routing_emits_agent_updated() {
             nest_history: false,
         });
 
-    let model = Arc::new(HandoffRoutingModel { call_count: Default::default() });
+    let model = Arc::new(HandoffRoutingModel {
+        call_count: Default::default(),
+    });
 
-    let (handle, rx) =
-        AgentRun::start(triage_config, "billing question".into(), model, ToolRegistry::new());
+    let (handle, rx) = AgentRun::start(
+        triage_config,
+        "billing question".into(),
+        model,
+        ToolRegistry::new(),
+    );
     let events = collect_events(rx).await;
     handle.wait().await;
 
@@ -340,9 +412,15 @@ struct ParentAgentModel {
 
 #[async_trait]
 impl ModelAdapter for ParentAgentModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "parent" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "parent"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
     async fn complete(
         &self,
         messages: &[Message],
@@ -351,9 +429,17 @@ impl ModelAdapter for ParentAgentModel {
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let n = self.call_count.fetch_add(1, Ordering::SeqCst);
-        let usage = TokenUsage { input_tokens: 8, output_tokens: 4, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 8,
+            output_tokens: 4,
+            ..Default::default()
+        };
         if let Some(ref tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
         if n == 0 {
             Ok(ModelResponse {
@@ -371,9 +457,10 @@ impl ModelAdapter for ParentAgentModel {
                 .iter()
                 .find_map(|m| {
                     m.content.iter().find_map(|b| match b {
-                        ContentBlock::ToolResult { content, .. } => {
-                            content.get("output").and_then(Value::as_str).map(str::to_string)
-                        }
+                        ContentBlock::ToolResult { content, .. } => content
+                            .get("output")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
                         _ => None,
                     })
                 })
@@ -392,9 +479,15 @@ struct ChildAgentModel;
 
 #[async_trait]
 impl ModelAdapter for ChildAgentModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "child" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "child"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
     async fn complete(
         &self,
         _messages: &[Message],
@@ -402,9 +495,17 @@ impl ModelAdapter for ChildAgentModel {
         _options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
-        let usage = TokenUsage { input_tokens: 4, output_tokens: 2, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 4,
+            output_tokens: 2,
+            ..Default::default()
+        };
         if let Some(tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
         Ok(ok_response("summary"))
     }
@@ -444,10 +545,16 @@ async fn agent_as_tool_emits_sub_agent_events() {
     let mut parent_registry = ToolRegistry::new();
     parent_registry.register(summariser_tool).unwrap();
 
-    let model = Arc::new(ParentAgentModel { call_count: Default::default() });
+    let model = Arc::new(ParentAgentModel {
+        call_count: Default::default(),
+    });
 
-    let (handle, rx) =
-        AgentRun::start(parent_config, "summarise this".into(), model, parent_registry);
+    let (handle, rx) = AgentRun::start(
+        parent_config,
+        "summarise this".into(),
+        model,
+        parent_registry,
+    );
     let events = collect_events(rx).await;
     handle.wait().await;
 

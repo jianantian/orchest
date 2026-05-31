@@ -130,7 +130,9 @@ async fn main() {
     let (handle, mut rx) = AgentRun::start(
         config,
         "search for something".into(),
-        Arc::new(LoopingModel { call_count: Default::default() }),
+        Arc::new(LoopingModel {
+            call_count: Default::default(),
+        }),
         registry,
     );
 
