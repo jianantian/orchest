@@ -9,12 +9,47 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::budget::BudgetUsage;
+use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::events::RuntimeEvent;
 use crate::model::ModelAdapter;
 use crate::run::{AgentConfig, AgentRun};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
+
+/// Returns a `BudgetConfig` whose each limit is the tightest of `configured` and `remaining`.
+/// A `None` on either side means "no limit from that side", so the other side wins.
+fn cap_budget(configured: BudgetConfig, remaining: &BudgetConfig) -> BudgetConfig {
+    fn min_opt<T: Ord>(a: Option<T>, b: Option<T>) -> Option<T> {
+        match (a, b) {
+            (Some(x), Some(y)) => Some(x.min(y)),
+            (Some(x), None) | (None, Some(x)) => Some(x),
+            (None, None) => None,
+        }
+    }
+    fn min_opt_f64(a: Option<f64>, b: Option<f64>) -> Option<f64> {
+        match (a, b) {
+            (Some(x), Some(y)) => Some(x.min(y)),
+            (Some(x), None) | (None, Some(x)) => Some(x),
+            (None, None) => None,
+        }
+    }
+    fn min_opt_dur(
+        a: Option<std::time::Duration>,
+        b: Option<std::time::Duration>,
+    ) -> Option<std::time::Duration> {
+        match (a, b) {
+            (Some(x), Some(y)) => Some(x.min(y)),
+            (Some(x), None) | (None, Some(x)) => Some(x),
+            (None, None) => None,
+        }
+    }
+    BudgetConfig {
+        max_tokens: min_opt(configured.max_tokens, remaining.max_tokens),
+        max_tool_calls: min_opt(configured.max_tool_calls, remaining.max_tool_calls),
+        max_duration: min_opt_dur(configured.max_duration, remaining.max_duration),
+        max_cost_usd: min_opt_f64(configured.max_cost_usd, remaining.max_cost_usd),
+    }
+}
 
 pub struct AgentAsTool {
     config: AgentConfig,
@@ -107,6 +142,9 @@ impl Tool for AgentAsTool {
 
         let mut child_config = self.config.clone();
         child_config.runtime.run_depth = ctx.run_depth + 1;
+        // Cap child budget to parent's remaining so a child cannot exceed what
+        // the parent has left. Uses the tightest bound from both configs.
+        child_config.budget = cap_budget(child_config.budget, &ctx.remaining_budget);
 
         let (handle, mut child_rx) = AgentRun::start_with_bus(
             child_config,
@@ -202,6 +240,7 @@ impl Tool for AgentAsTool {
         Ok(ToolOutput::Structured {
             model_output,
             details,
+            external_usage: Some(child_usage),
         })
     }
 }

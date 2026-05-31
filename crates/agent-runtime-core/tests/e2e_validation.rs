@@ -622,6 +622,7 @@ async fn e2e_skill_content_read_event() {
         event_tx: Some(event_tx),
         webhook_base_url: None,
         approval_bus: agent_runtime_core::run::ApprovalBus::default(),
+        remaining_budget: agent_runtime_core::budget::BudgetConfig::default(),
     };
 
     tool.execute(json!({"path": skill_md.to_str().unwrap()}), &ctx)
@@ -658,6 +659,7 @@ async fn e2e_read_file_known_risk_boundary_is_visible() {
         event_tx: Some(event_tx),
         webhook_base_url: None,
         approval_bus: agent_runtime_core::run::ApprovalBus::default(),
+        remaining_budget: agent_runtime_core::budget::BudgetConfig::default(),
     };
 
     let output = tool

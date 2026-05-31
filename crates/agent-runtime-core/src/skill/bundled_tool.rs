@@ -518,6 +518,7 @@ echo '{"greeting": "hello"}'
             event_tx: None,
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
         };
         let result = tool
             .execute(serde_json::json!({"name": "world"}), &ctx)
@@ -558,6 +559,7 @@ echo '{"greeting": "hello"}'
             event_tx: None,
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
         };
         let result = tool.execute(serde_json::json!({}), &ctx).await;
         assert!(result.is_err());
@@ -598,6 +600,7 @@ fi
             event_tx: None,
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
         };
         let result = tool.execute(serde_json::json!({}), &ctx).await;
         assert!(result.is_ok());
@@ -666,6 +669,7 @@ echo "{\"visible\":\"$ORCHEST_VISIBLE_ENV\",\"hidden\":\"$ORCHEST_HIDDEN_ENV\",\
             event_tx: None,
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
         };
         let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
         let ToolOutput::Immediate(value) = result else {

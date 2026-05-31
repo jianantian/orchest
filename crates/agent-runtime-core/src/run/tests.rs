@@ -413,6 +413,7 @@ impl Tool for StructuredTool {
                 "summary": "compact for model",
                 "raw_results": ["large detail only for events"]
             }),
+            external_usage: None,
         })
     }
 }

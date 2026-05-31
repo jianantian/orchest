@@ -34,7 +34,15 @@ pub trait Tool: Send + Sync {
 #[derive(Debug)]
 pub enum ToolOutput {
     Immediate(Value),
-    Structured { model_output: Value, details: Value },
+    /// `model_output` is what the model sees as the tool result.
+    /// `details` is the full structured payload forwarded to events.
+    /// `external_usage` carries child-run budget consumed by this call so
+    /// the parent `BudgetGuard` can account for it.
+    Structured {
+        model_output: Value,
+        details: Value,
+        external_usage: Option<crate::budget::BudgetUsage>,
+    },
     AsyncJob(JobHandle),
     Handoff(Box<crate::handoff::HandoffResult>),
 }
@@ -76,6 +84,10 @@ pub struct ToolContext {
     /// Shared approval bus for the entire run tree; used by AgentAsTool to forward
     /// child approval requests to the parent's RunHandle.
     pub approval_bus: crate::run::handle::ApprovalBus,
+    /// Remaining budget in the parent run at the time this tool is called.
+    /// AgentAsTool uses this to cap the child run so it cannot exceed what
+    /// the parent has left.
+    pub remaining_budget: crate::budget::BudgetConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]

@@ -299,9 +299,23 @@ impl Actor for WorkerActor {
                 }
             }
             AgentMsg::Steer(_, reply) => {
+                emit(
+                    &state.event_subs,
+                    RuntimeEvent::RuntimeWarning {
+                        message: "Steer is not yet implemented (planned for v0.8)".into(),
+                    },
+                )
+                .await;
                 let _ = reply.send(SteerResult);
             }
             AgentMsg::Inject(_, reply) => {
+                emit(
+                    &state.event_subs,
+                    RuntimeEvent::RuntimeWarning {
+                        message: "Inject is not yet implemented (planned for v0.8)".into(),
+                    },
+                )
+                .await;
                 let _ = reply.send(());
             }
             AgentMsg::Cancel(_) => {
@@ -377,14 +391,20 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
 
     emit(&subs, RuntimeEvent::ModelCallStarted { step }).await;
 
-    // Model call with retry loop
+    // Snapshot the message history before this step's hooks.
+    // Each before_model invocation (including retries) receives a fresh clone
+    // of this snapshot, so hook injections are ephemeral: they are passed to
+    // the model for this call but never accumulate in the durable conversation
+    // history stored in state.messages.
+    let pre_step_messages = state.messages.clone();
     let mut retry_attempt: u32 = 0;
     let response = loop {
-        // before_model hook (per attempt)
-        {
+        // Build per-attempt call context from the clean pre-step snapshot.
+        // Hook mutations stay inside call_messages; state.messages is untouched.
+        let call_messages = {
             let mut model_ctx = crate::hook::ModelHookContext {
                 run_id,
-                messages: state.messages.clone(),
+                messages: pre_step_messages.clone(),
                 model_spec: state.config.model.spec.clone(),
             };
             match crate::hook::runner::run_before_model(
@@ -408,8 +428,8 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 }
                 crate::hook::ModelHookAction::Continue => {}
             }
-            state.messages = model_ctx.messages;
-        }
+            model_ctx.messages
+        };
 
         let (stream_tx, mut stream_rx) = mpsc::channel::<ModelStreamChunk>(64);
         let event_tx_clone = primary(&subs).clone();
@@ -424,7 +444,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         let raw_response = state
             .model
             .complete(
-                &state.messages,
+                &call_messages,
                 &state.tool_defs,
                 &state.config.model.options,
                 Some(stream_tx),
@@ -435,9 +455,10 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         match raw_response {
             Ok(r) => {
                 {
+                    // after_model sees the same call-time context that was sent to the model.
                     let mut model_ctx = crate::hook::ModelHookContext {
                         run_id,
-                        messages: state.messages.clone(),
+                        messages: call_messages,
                         model_spec: state.config.model.spec.clone(),
                     };
                     if let crate::hook::HookAction::Abort(reason) =
@@ -726,6 +747,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             event_tx: Some(primary(&subs).clone()),
             webhook_base_url: state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone()),
             approval_bus: state.approval_bus.clone(),
+            remaining_budget: state.budget.remaining_config(),
         };
 
         let start_time = Instant::now();
@@ -808,7 +830,11 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             Ok(ToolOutput::Structured {
                 model_output,
                 details,
+                external_usage,
             }) => {
+                if let Some(usage) = external_usage {
+                    state.budget.record_external_usage(&usage);
+                }
                 let mut model_output = model_output;
                 let mut details = details;
                 if let Some(max_tokens) = max_output_tokens {
@@ -950,6 +976,25 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     tool_use_id: tool_call.id.clone(),
                     content: json!({"error": e.message}),
                 });
+                {
+                    let mut tool_out_ctx = crate::hook::ToolHookContext {
+                        run_id,
+                        tool_name: tool_call.name.clone(),
+                        tool_input: tool_input.clone(),
+                        tool_metadata: tool_meta.clone(),
+                    };
+                    if let crate::hook::HookAction::Abort(reason) =
+                        crate::hook::runner::run_after_tool(
+                            &state.config.hooks,
+                            &mut tool_out_ctx,
+                            primary(&subs),
+                        )
+                        .await
+                    {
+                        emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                        return false;
+                    }
+                }
             }
         }
 

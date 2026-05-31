@@ -262,6 +262,7 @@ mod tests {
             event_tx: None,
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
         };
 
         let result = tool
@@ -287,6 +288,7 @@ mod tests {
             event_tx: None,
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
         };
 
         let result = tool
@@ -307,6 +309,7 @@ mod tests {
             event_tx: None,
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
         };
 
         let result = tool.execute(json!({}), &ctx).await;
@@ -335,6 +338,7 @@ mod tests {
             event_tx: Some(event_tx),
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
         };
 
         let result = tool
@@ -375,6 +379,7 @@ mod tests {
             event_tx: Some(event_tx),
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
         };
 
         let result = tool
@@ -400,6 +405,7 @@ mod tests {
             event_tx: None,
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
         };
 
         let result = tool
@@ -437,6 +443,7 @@ mod tests {
             event_tx: None,
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
         };
 
         let result = tool.execute(json!({"path": "report.md"}), &ctx).await;
