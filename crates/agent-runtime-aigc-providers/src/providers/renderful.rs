@@ -422,7 +422,7 @@ mod tests {
             assert!(create_request.contains("\"type\":\"text-to-image\""));
             let create_body = r#"{"id":"gen_1","status":"processing","outputs":[]}"#;
             let create_response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                "HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
                 create_body.len(),
                 create_body
             );
