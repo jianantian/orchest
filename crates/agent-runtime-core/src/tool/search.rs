@@ -158,6 +158,7 @@ mod tests {
             event_tx: None,
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
         };
         let output = tool
             .execute(json!({"query": "read disk file", "top_k": 1}), &ctx)

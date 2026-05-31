@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::TokenUsage;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BudgetConfig {
     pub max_tokens: Option<u64>,
     pub max_tool_calls: Option<u32>,
