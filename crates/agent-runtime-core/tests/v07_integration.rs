@@ -77,7 +77,7 @@ async fn retry_policy_fires_retry_events_then_run_failed() {
         .max_steps(5)
         .retry_policy(RetryPolicy {
             max_retries: 2,
-            backoff: BackoffStrategy::Fixed(Duration::from_millis(1)),
+            backoff: BackoffStrategy::Fixed(Duration::ZERO),
         })
         .build()
         .unwrap();
@@ -128,7 +128,9 @@ impl Tool for EchoSearchTool {
     }
 }
 
-struct RepeatedToolModel;
+struct RepeatedToolModel {
+    call_count: AtomicU32,
+}
 
 #[async_trait]
 impl ModelAdapter for RepeatedToolModel {
@@ -142,13 +144,14 @@ impl ModelAdapter for RepeatedToolModel {
         _options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
         let usage = TokenUsage { input_tokens: 3, output_tokens: 1, ..Default::default() };
         if let Some(ref tx) = tx {
             let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
         }
         Ok(ModelResponse {
             content: vec![ContentBlock::ToolUse {
-                id: "c1".into(),
+                id: format!("c{n}"),
                 name: "search".into(),
                 input: json!({"q": "same query"}),
             }],
@@ -176,15 +179,16 @@ async fn loop_detection_aborts_on_repeated_tool_calls() {
     registry.register(Arc::new(EchoSearchTool)).unwrap();
 
     let (handle, rx) =
-        AgentRun::start(config, "search".into(), Arc::new(RepeatedToolModel), registry);
+        AgentRun::start(config, "search".into(), Arc::new(RepeatedToolModel { call_count: Default::default() }), registry);
     let events = collect_events(rx).await;
     handle.wait().await;
 
     assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, RuntimeEvent::RunFailed { .. })),
-        "loop detection must emit RunFailed"
+        events.iter().any(|e| match e {
+            RuntimeEvent::RunFailed { error } => error.contains("loop"),
+            _ => false,
+        }),
+        "loop detection must emit RunFailed with loop message"
     );
 }
 
@@ -363,9 +367,19 @@ impl ModelAdapter for ParentAgentModel {
                 option_adjustments: vec![],
             })
         } else {
-            let _ = messages; // use tool result in real impl
+            let child_summary = messages
+                .iter()
+                .find_map(|m| {
+                    m.content.iter().find_map(|b| match b {
+                        ContentBlock::ToolResult { content, .. } => {
+                            content.get("output").and_then(Value::as_str).map(str::to_string)
+                        }
+                        _ => None,
+                    })
+                })
+                .unwrap_or_else(|| "(no result)".into());
             Ok(ModelResponse {
-                content: vec![ContentBlock::Text("parent done".into())],
+                content: vec![ContentBlock::Text(format!("parent done: {child_summary}"))],
                 usage,
                 stop_reason: StopReason::EndTurn,
                 option_adjustments: vec![],
@@ -416,7 +430,9 @@ async fn agent_as_tool_emits_sub_agent_events() {
                 .map(str::to_string)
                 .ok_or_else(|| ToolError { message: "missing input".into(), code: None })
         }),
-        Arc::new(|output: Value| json!({"output": output})),
+        Arc::new(|details: Value| {
+            json!({"output": details.get("output").cloned().unwrap_or_else(|| details.clone())})
+        }),
     );
 
     let parent_config = AgentConfig::builder("mock/parent")
@@ -452,5 +468,12 @@ async fn agent_as_tool_emits_sub_agent_events() {
             .iter()
             .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
         "expected RunCompleted"
+    );
+    assert!(
+        events.iter().any(|e| match e {
+            RuntimeEvent::RunCompleted { output } => output.to_string().contains("summary"),
+            _ => false,
+        }),
+        "parent output must include the child agent's summary result"
     );
 }

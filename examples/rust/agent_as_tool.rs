@@ -168,7 +168,9 @@ async fn main() {
                     code: None,
                 })
         }),
-        Arc::new(|output: Value| json!({"output": output})),
+        Arc::new(|details: Value| {
+            json!({"output": details.get("output").cloned().unwrap_or_else(|| details.clone())})
+        }),
     );
 
     let parent_config = AgentConfig::builder("mock/parent")

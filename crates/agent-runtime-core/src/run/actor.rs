@@ -378,14 +378,13 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
     emit(&subs, RuntimeEvent::ModelCallStarted { step }).await;
 
     // Model call with retry loop
-    let pre_retry_messages = state.messages.clone();
     let mut retry_attempt: u32 = 0;
     let response = loop {
         // before_model hook (per attempt)
         {
             let mut model_ctx = crate::hook::ModelHookContext {
                 run_id,
-                messages: pre_retry_messages.clone(),
+                messages: state.messages.clone(),
                 model_spec: state.config.model.spec.clone(),
             };
             match crate::hook::runner::run_before_model(
@@ -865,6 +864,25 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                         content: json!({"result": result.transfer_message}),
                     });
                     pending_handoff = Some((tool_call.name.clone(), *result));
+                }
+                {
+                    let mut tool_out_ctx = crate::hook::ToolHookContext {
+                        run_id,
+                        tool_name: tool_call.name.clone(),
+                        tool_input: tool_input.clone(),
+                        tool_metadata: tool_meta.clone(),
+                    };
+                    if let crate::hook::HookAction::Abort(reason) =
+                        crate::hook::runner::run_after_tool(
+                            &state.config.hooks,
+                            &mut tool_out_ctx,
+                            primary(&subs),
+                        )
+                        .await
+                    {
+                        emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                        return false;
+                    }
                 }
                 continue;
             }

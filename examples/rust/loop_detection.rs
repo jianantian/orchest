@@ -6,6 +6,7 @@
 //!
 //! Run with: cargo run --example loop_detection
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use agent_runtime_core::events::RuntimeEvent;
@@ -59,7 +60,9 @@ impl Tool for SearchTool {
 // ── Looping model ─────────────────────────────────────────────────────────────
 // Always calls "search" with the same arguments, provoking the loop detector.
 
-struct LoopingModel;
+struct LoopingModel {
+    call_count: AtomicU32,
+}
 
 #[async_trait]
 impl ModelAdapter for LoopingModel {
@@ -80,6 +83,7 @@ impl ModelAdapter for LoopingModel {
         _options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
         let usage = TokenUsage {
             input_tokens: 5,
             output_tokens: 2,
@@ -94,7 +98,7 @@ impl ModelAdapter for LoopingModel {
         }
         Ok(ModelResponse {
             content: vec![ContentBlock::ToolUse {
-                id: "call_1".into(),
+                id: format!("call_{n}"),
                 name: "search".into(),
                 input: json!({"q": "rust loops"}),
             }],
@@ -126,7 +130,7 @@ async fn main() {
     let (handle, mut rx) = AgentRun::start(
         config,
         "search for something".into(),
-        Arc::new(LoopingModel),
+        Arc::new(LoopingModel { call_count: Default::default() }),
         registry,
     );
 

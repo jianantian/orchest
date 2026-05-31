@@ -84,14 +84,14 @@ struct ContextInjectorHook {
 #[async_trait]
 impl Hook for ContextInjectorHook {
     async fn before_model(&self, ctx: &mut ModelHookContext) -> ModelHookAction {
-        // Inject a system-like context message before the model call
-        ctx.messages.insert(
-            1, // after the System message
-            Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text(format!("[injected] {}", self.context))],
-            },
-        );
+        // Append injected context to the system message to avoid consecutive same-role messages
+        if let Some(system_msg) = ctx.messages.first_mut() {
+            if matches!(system_msg.role, Role::System) {
+                system_msg
+                    .content
+                    .push(ContentBlock::Text(format!("[injected] {}", self.context)));
+            }
+        }
         println!("[hook] injected context into message list");
         ModelHookAction::Continue
     }
