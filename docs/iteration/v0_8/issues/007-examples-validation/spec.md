@@ -30,7 +30,7 @@
 
 每个示例：
 - 顶部注释说明演示内容和运行方式
-- 使用 `FakeModelAdapter` 或 `EchoModelAdapter`，不调用真实模型
+- 不调用真实模型——examples 不能用 `#[cfg(test)]` 下的 `FakeModelAdapter`（examples 是独立编译单元，看不到测试模块）。沿用 v0.7 examples 的既有模式：每个 example 在文件内**内联定义**一个最小 mock `ModelAdapter`（按预设脚本返回 tool_call / text），参考 `examples/rust/hook_logging.rs` 的 `// ── Mock model ──` 段
 - 能 `cargo run --example <name>` 成功执行并输出预期结果
 
 ### 集成验证场景（v08_integration.rs）

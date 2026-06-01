@@ -120,7 +120,7 @@ pub struct AgentConfig {
 }
 ```
 
-`AgentConfigBuilder` 新增：
+`AgentConfigBuilder` 新增（build 前设置）：
 ```rust
 pub fn session_store(mut self, store: Arc<dyn crate::session::SessionStore>, session_id: impl Into<String>) -> Self {
     self.session_store = Some(store);
@@ -129,9 +129,18 @@ pub fn session_store(mut self, store: Arc<dyn crate::session::SessionStore>, ses
 }
 ```
 
-### 步骤 4：`run/mod.rs` — start 自动注册 + resume API
+`AgentConfig` 新增（build 后链式，与 `with_hook` 对称，供 resume 重注册）：
+```rust
+pub fn with_session_store(mut self, store: Arc<dyn crate::session::SessionStore>, session_id: impl Into<String>) -> Self {
+    self.session_store = Some(store);
+    self.session_id = Some(session_id.into());
+    self
+}
+```
 
-**自动注册**：在 `AgentRun::start_with_bus` 构建 `args` 前，若 `config.session_store` 非空，将 `SessionPersistenceHook` push 到 `config.hooks`。
+### 步骤 4：`run/mod.rs` — start / resume 自动注册 + resume API
+
+**自动注册**：抽取 helper `maybe_register_persistence(config: &mut AgentConfig)`：若 `config.session_store` 非空且 `config.session_id` 非空，构造 `SessionPersistenceHook::new(store, session_id, config.clone())` 并 push 到 `config.hooks`。`start_with_bus` 和 `resume` 在构建 args 前都调用它。注意：克隆 config 作为 `original_config` 须在 push hook **之前**（避免把 persistence hook 自身计入 original_config 的 hooks，虽然 hooks 是 serde-skip 不影响 snapshot，但语义上更干净）。
 
 **AgentRun::resume**：
 

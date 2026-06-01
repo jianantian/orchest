@@ -37,11 +37,34 @@ Ok(HookAction::Reject(reason)) => return HookAction::Reject(reason),
   }
   ```
 
-### 步骤 3：`run/actor.rs` — 处理 Reject + tool_output 替换
+### 步骤 3：`run/actor.rs` — 重排 before_tool / approval 顺序 + 处理 Reject + tool_output 替换
 
 **文件**：`crates/agent-runtime-core/src/run/actor.rs`
 
-**before_tool 的 Reject 处理**（在现有 match arm 后新增）：
+**步骤 3a：重排执行顺序**
+
+当前顺序（行号近似）：
+```
+:626  approval check (if tool.metadata().requires_approval { ... })
+:680  budget(max_tool_calls) check
+:717  before_tool hooks（match run_before_tool { ... }）
+:740+ execute tool
+```
+
+重排为：
+```
+1. before_tool hooks（match run_before_tool）→ 得到 effective_input = tool_hook_ctx.tool_input
+2. approval check（使用 effective_input 构建 ApprovalRequested / Granted / Denied 事件）
+3. budget(max_tool_calls) check
+4. execute tool（使用 effective_input）
+```
+
+把整个 approval block（`:626`–`:673` 附近）移到 before_tool match（`:717`+）之后。注意：
+- before_tool 的 `Continue` arm 之后，提取 `let effective_input = tool_hook_ctx.tool_input;`
+- approval block 中所有引用 `tool_call.input` / `tool_call.clone()` 处，改用携带 `effective_input` 的 tool_call（clone tool_call 后替换其 input 字段，或构造事件时直接用 effective_input）
+- 工具执行处原本就用 before_tool 后的 input，重排后保持一致
+
+**步骤 3b：before_tool 的 Reject 处理**（在 before_tool match 中新增 arm）：
 
 ```rust
 crate::hook::HookAction::Reject(reason) => {
@@ -92,6 +115,8 @@ if let Some(modified) = tool_out_ctx.tool_output {
 1. `before_tool_reject_skips_execution_and_injects_reason`：FakeModelAdapter 触发 tool call，注册返回 `Reject("blocked")` 的 hook，验证 tool_results 含 `{"error": "blocked"}`，run 继续完成（不 abort）
 2. `after_tool_hook_modifies_output`：注册 after_tool hook 修改 `ctx.tool_output`，验证最终 tool_result content 被替换
 3. `after_tool_reject_treated_as_skip_with_warning`：注册 after_tool 返回 `Reject` 的 hook，验证发出 RuntimeWarning，run 继续
+4. `before_tool_runs_before_approval`：注册一个 before_tool hook 修改 `ctx.tool_input`，且工具 `requires_approval: true`；验证 `ApprovalRequested` 事件携带的是修改后的 input（证明顺序正确）
+5. `before_tool_reject_skips_approval`：工具 `requires_approval: true` + before_tool 返回 Reject；验证**没有** ApprovalRequested 事件发出，直接得到 reject 结果
 
 ### 步骤 5：确认基线不退化
 

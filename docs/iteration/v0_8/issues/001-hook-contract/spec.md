@@ -86,13 +86,45 @@ crate::hook::HookAction::Reject(reason) => {
 
 在各 `after_tool` 调用后，若 `tool_out_ctx.tool_output` 被修改，替换已推入 `tool_results` 的最后一项 content。
 
+### 执行顺序重排：`before_tool` 必须先于 approval
+
+当前 `actor.rs` 工具调用顺序为：
+
+```
+① approval check（:626）→ ② budget(max_tool_calls) check → ③ before_tool hooks（:717）→ ④ execute
+```
+
+这个顺序有一个**正确性缺陷**：`before_tool` 通过 `&mut ctx.tool_input` 修改输入（002 的 `ToolInputGuardrail::Modify` 即基于此），但审批发生在修改之前——用户审批的是**原始**输入，实际执行的是**修改后**输入。审批失去意义，且是安全隐患。
+
+001 将顺序重排为：
+
+```
+① before_tool hooks → ② approval check → ③ budget(max_tool_calls) check → ④ execute
+```
+
+重排后的语义：
+- `before_tool` 返回 `Skip` / `Reject` / `Abort` → 不进入审批（跳过/拒绝/终止的工具无需审批）
+- `before_tool` 返回 `Continue` → 用 **处理后的** `tool_hook_ctx.tool_input` 构建后续审批事件和执行输入
+- 审批事件 `ApprovalRequested` 携带的 tool_call 反映 before_tool 修改后的最终输入
+
+实现要点：在 before_tool 处理完后，令 `let effective_input = tool_hook_ctx.tool_input;`，审批的 `ApprovalRequested` 事件、`ApprovalGranted/Denied` 事件、以及最终工具执行都使用 `effective_input`（而非原始 `tool_call.input`）。
+
+> 这是 003（ApprovalMode）的前置：003 只替换审批判定条件，依赖本 issue 已把 before_tool 移到 approval 之前。
+
+### Reject 与 budget 计数
+
+`before_tool` 返回 `Reject` 时调用 `state.budget.record_tool_call()`，**与 Skip 一致**。理由：被拒绝的调用仍是模型发起的一次工具调用尝试，计入 `max_tool_calls` 预算可防止模型在 guardrail 拒绝后无限重试同一工具耗尽循环。Abort 则不计数（直接终止 run）。
+
 ## 验收标准
 
 - [ ] `HookAction::Reject(String)` 变体存在，编译通过
-- [ ] `before_tool` 返回 `Reject(reason)` 时，tool 不执行，`{"error": reason}` 作为 tool result 推入 tool_results，run loop 继续（不 abort）
-- [ ] `after_tool` 返回 `Reject` 时，runner 当作 `Skip` 处理并发出 RuntimeWarning event
+- [ ] `before_tool` 返回 `Reject(reason)` 时，tool 不执行，`{"error": reason}` 作为 tool result 推入 tool_results，run loop 继续（不 abort），且 `budget.record_tool_call()` 被调用
+- [ ] `after_tool` / `before_compact` 返回 `Reject` 时，runner 当作 `Skip` 处理并发出 RuntimeWarning event（Reject 仅在 before_tool 有效）
 - [ ] `ToolHookContext.tool_output` 字段存在：before_tool 时为 `None`，after_tool 时为实际输出值
 - [ ] `after_tool` hook 修改 `ctx.tool_output` 后，tool_results 中对应 content 被替换
+- [ ] **执行顺序**：`before_tool` 在 approval check 之前执行
+- [ ] **审批针对最终输入**：before_tool 修改 `tool_input` 后，approval 事件和工具执行都使用修改后的输入
+- [ ] before_tool 返回 Skip / Reject / Abort 时不进入审批流程
 - [ ] 现有使用 `HookAction::Skip` / `HookAction::Continue` / `HookAction::Abort` 的代码不受影响
 - [ ] `LoopDetectionHook`（唯一现有 Hook 实现）不需要修改（默认实现覆盖）
 - [ ] `cargo test --workspace` 全绿

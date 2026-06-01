@@ -173,36 +173,42 @@ Core 只提供框架；不内置任何具体 guardrail 实现（极简 Core 原�
 当前实现：`ToolMetadata.requires_approval: bool`（per-tool）决定是否触发审批。
 v0.8 扩展：`RuntimeConfig` 新增 `approval_mode: ApprovalMode`，作为 run 级**覆盖策略**：
 
+`Custom` 不作为枚举 variant——serde 对 variant 级 `#[serde(skip)]` 是"序列化报错"而非静默降级。枚举只含 4 个可序列化 variant，custom 逻辑由独立的 skip 字段承载：
+
 ```rust
-#[derive(Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
 pub enum ApprovalMode {
     #[default]
-    PerTool,                              // 沿用 tool.metadata().requires_approval（向后兼容默认）
-    None,                                 // 永不审批
-    All,                                  // 所有工具调用都审批
-    SideEffectOnly,                       // side_effect: true 的工具审批（ToolMetadata 已有此字段）
-    #[serde(skip)]
-    Custom(Arc<dyn Fn(&ToolMetadata) -> bool + Send + Sync>),
+    PerTool,         // 沿用 tool.metadata().requires_approval（向后兼容默认）
+    None,            // 永不审批
+    All,             // 所有工具调用都审批
+    SideEffectOnly,  // side_effect: true 的工具审批（ToolMetadata 已有此字段）
 }
 
-impl ApprovalMode {
+// RuntimeConfig 新增两个字段：
+//   #[serde(default)] pub approval_mode: ApprovalMode,
+//   #[serde(skip)]    pub custom_approval_fn: Option<Arc<dyn Fn(&ToolMetadata) -> bool + Send + Sync>>,
+
+impl RuntimeConfig {
     pub fn should_approve(&self, meta: &ToolMetadata) -> bool {
-        match self {
-            Self::PerTool => meta.requires_approval,
-            Self::None => false,
-            Self::All => true,
-            Self::SideEffectOnly => meta.side_effect,
-            Self::Custom(f) => f(meta),
+        if let Some(f) = &self.custom_approval_fn {
+            return f(meta);  // custom 优先
+        }
+        match self.approval_mode {
+            ApprovalMode::PerTool => meta.requires_approval,
+            ApprovalMode::None => false,
+            ApprovalMode::All => true,
+            ApprovalMode::SideEffectOnly => meta.side_effect,
         }
     }
 }
 ```
 
-Run loop 中原来的 `if tool.metadata().requires_approval {` 替换为 `if state.config.runtime.approval_mode.should_approve(tool.metadata()) {`。
+`should_approve` 是 `RuntimeConfig` 的方法（需同时考虑 `custom_approval_fn` 和 `approval_mode`）。Run loop 中原来的 `if tool.metadata().requires_approval {` 替换为 `if state.config.runtime.should_approve(tool.metadata()) {`。
 
-**向后兼容**：`ApprovalMode` 默认为 `PerTool`，行为与当前完全一致；现有代码设置 `tool.metadata().requires_approval = true` 的工具在默认模式下行为不变。
+**向后兼容**：默认 `PerTool` + `custom_approval_fn: None`，行为与当前完全一致。
 
-**`Custom` 的 serde 处理**：标 `#[serde(skip)]`，`AgentConfig` 反序列化后 `approval_mode` 恢复为 `PerTool`，与 hooks/retry_policy 处理方式一致。`Custom` 只通过代码路径设置，不支持配置文件序列化。
+**serde 语义**：`approval_mode` 永远可序列化；`custom_approval_fn` 永远 `#[serde(skip)]`（与 hooks/retry_policy 一致）。设置 custom 函数不阻止 config 序列化，只是反序列化端拿不到该函数。
 
 **与 `ToolGuardrail` 的关系**：`ApprovalMode` 走审批总线（异步等待用户响应）；`ToolInputGuardrail::Reject` 是同步拒绝（不需要用户响应）。两者语义不同，可同时使用：审批通过后 guardrail 仍可拒绝。
 
@@ -237,10 +243,12 @@ broadcast channel 方案在 v0.7 actor 实现时已评估并未选用，PRD 不�
 
 #### 双向通信（内部通道 + InjectCmd payload 落地）
 
-v0.7 已在 `AgentMsg` 中 forward-declare `Inject(InjectCmd, RpcReplyPort<()>)` 和 `Steer(SteerCmd, RpcReplyPort<SteerResult>)`，handler 返回"not yet implemented"。v0.8 实现 `Inject` 路径（`Steer` 保留 stub，完整实现待 v0.9）：
+v0.7 已在 `AgentMsg` 中 forward-declare `Inject(InjectCmd, RpcReplyPort<()>)` 和 `Steer(SteerCmd, RpcReplyPort<SteerResult>)`，handler 返回"not yet implemented"。v0.8 实现 `Inject` 路径，并**将 `Inject` 改为单向 cast**（去掉 RpcReplyPort）——注入是 fire-and-forget 软干预，不需回复确认；背压控制留待 v0.9 升级为 call。`Steer` 保留 stub（v0.9）。
 
 ```rust
-// v0.7 已存在的空结构体，v0.8 补充 payload
+// AgentMsg 中：
+//   Inject(InjectCmd),                            // v0.8：单向 cast
+//   Steer(SteerCmd, RpcReplyPort<SteerResult>),   // 保留 call 语义（v0.9）
 pub struct InjectCmd {
     pub message: String,     // 注入到下一轮 model messages
 }
@@ -273,9 +281,12 @@ impl RunHandle {
 }
 ```
 
-`attach_watcher` 内部：调用 `subscribe_events(capacity)` 获取事件流，spawn 一个 watcher task（`tokio::spawn`）消费事件流并根据 `WatcherAction` 向 actor 发送 `Inject` 或 `Cancel`。watcher task 的生命周期与 RunHandle 关联，RunHandle drop 时 channel 关闭 watcher task 自然退出。
+`attach_watcher` 内部：调用 `subscribe_events(capacity)` 获取事件流，spawn 一个 watcher task（`tokio::spawn`）消费事件流并根据 `WatcherAction` 向 actor `cast` `Inject` 或 `Cancel`（均单向，与 `RunHandle::abort()` 一致）。watcher task 的生命周期与 RunHandle 关联，channel 关闭时 watcher task 自然退出。
 
-`WatcherAction::Inject(msg)` → `cast!(actor_ref, AgentMsg::Inject(InjectCmd { message: msg }, reply))` → actor 在下一个 RunStep 消费并插入 messages。
+- `WatcherAction::Inject(msg)` → `cast(AgentMsg::Inject(InjectCmd { message: msg }))` → actor 在下一个 RunStep 消费并插入 messages
+- `WatcherAction::Abort(reason)` → `cast(AgentMsg::Cancel(CancelCmd { reason: Some(reason) }))` → reason 透传到 `RuntimeEvent::RunAborted { reason }`
+
+**Cancel/Abort reason**：`CancelCmd` 携带 `Option<String>`，`RunAborted` 携带 `Option<String>`。`RunHandle::abort()`（手动）传 `None`，watcher abort 传 `Some(reason)`，使事件流可区分终止来源。
 
 **Steer vs Inject 的区别**：v0.8 只提供 `Inject`（向 messages 注入内容，软干预）；`Steer`（中断当前步骤并强制导航，硬干预）是 v0.9 能力。
 
@@ -325,21 +336,23 @@ impl RunHandle {
 
 ### 权限模型
 
-- [ ] `RuntimeConfig.approval_mode: ApprovalMode` 存在
+- [ ] `RuntimeConfig.approval_mode: ApprovalMode`（4 variant）和 `custom_approval_fn`（skip）字段存在
+- [ ] `RuntimeConfig::should_approve()` 正确，`custom_approval_fn` 优先于 `approval_mode`
 - [ ] `ApprovalMode::PerTool` 为默认值，行为与现有 `requires_approval` 完全一致（向后兼容）
 - [ ] `ApprovalMode::None / All / SideEffectOnly` 各自行为正确
-- [ ] `ApprovalMode::Custom(f)` 可用，`f` 可访问完整 `ToolMetadata`
-- [ ] `Custom` 标 `#[serde(skip)]`，反序列化后退化为 `PerTool`
+- [ ] `custom_approval` builder 可用，函数访问完整 `ToolMetadata` 且优先于 mode
+- [ ] 设置 custom 函数后 config 仍可序列化；反序列化后 `custom_approval_fn` 为 `None`
 
 ### Supervised Delegation 基础
 
 - [ ] `RunHandle::subscribe_events(capacity)` 存在，返回次级 EventReceiver
 - [ ] 多订阅者并发消费同一 run 的事件流（主 + 至少一个次级）
 - [ ] 次级订阅者满时发出 `EventsDropped` 事件，不阻塞 run loop
-- [ ] `InjectCmd.message: String` 字段存在，actor 在下一 RunStep 将消息插入 messages
+- [ ] `InjectCmd.message: String` 字段存在，`AgentMsg::Inject` 为单向 cast，actor 在下一 RunStep 将消息插入 messages
+- [ ] `CancelCmd.reason` 与 `RuntimeEvent::RunAborted { reason }` 携带 reason；手动 abort 为 `None`
 - [ ] `Watcher` trait 定义完整（`#[async_trait]`），含 `on_event` 方法
 - [ ] `WatcherAction::Inject(msg)` 使用内部 `InjectCmd` 向 run loop 注入消息，下一轮 model call 可见
-- [ ] `WatcherAction::Abort(reason)` 正确终止 run
+- [ ] `WatcherAction::Abort(reason)` 终止 run，reason 出现在 `RunAborted` 事件
 - [ ] `RunHandle::attach_watcher(watcher, capacity)` 存在，watcher 可接收 run 事件
 
 ### 通用
@@ -348,39 +361,44 @@ impl RunHandle {
 - [ ] `cargo test --workspace --features agent-runtime-core/sqlite-session` 全绿
 - [ ] `cargo clippy --workspace -- -D warnings` 全绿
 - [ ] `bash scripts/lint-check.sh` 全 PASS
+- [ ] sqlite-session feature 下构建不破坏 agent-runtime-py / agent-runtime-node 的默认构建（feature 不 propagate）
 
 ## Issues 拆解
 
 | Issue | 标题 | 依赖 | 核心交付 |
 |-------|------|------|---------|
-| [001](./issues/001-hook-contract/spec.md) | Hook Contract Extension | — | `HookAction::Reject(String)`、`ToolHookContext.tool_output`、runner/loop 更新 |
-| [002](./issues/002-guardrail-framework/spec.md) | Guardrail Framework | 001 | 4 层 guardrail trait + adapter、`AgentConfig::with_*_guardrail()` |
-| [003](./issues/003-approval-mode/spec.md) | ApprovalMode | — | `ApprovalMode` 枚举、`RuntimeConfig.approval_mode`、py/node binding |
-| [004](./issues/004-session-store/spec.md) | SessionStore + InMemory + resume | — | `SessionStore` trait、`SessionSnapshot`、`InMemorySessionStore`、`SessionPersistenceHook`、`AgentRun::resume()` |
+| [001](./issues/001-hook-contract/spec.md) | Hook Contract Extension | — | `HookAction::Reject(String)`、`ToolHookContext.tool_output`、**before_tool → approval 顺序重排**、runner/loop 更新 |
+| [002](./issues/002-guardrail-framework/spec.md) | Guardrail Framework | 001 | 4 层 guardrail trait（只读 `&ctx`）+ adapter、`AgentConfig::with_*_guardrail()` |
+| [003](./issues/003-approval-mode/spec.md) | ApprovalMode | 001 | `ApprovalMode`（4 variant）+ `custom_approval_fn`、`RuntimeConfig::should_approve()`、py/node binding |
+| [004](./issues/004-session-store/spec.md) | SessionStore + InMemory + resume | — | `SessionStore` trait、`SessionSnapshot`、`InMemorySessionStore`、`SessionPersistenceHook`、`RunHookContext` 扩展、`AgentRun::resume()` |
 | [005](./issues/005-sqlite-session/spec.md) | SqliteSessionStore | 004 | `sqlite-session` feature、`rusqlite` 可选依赖、`SqliteSessionStore` 实现 |
-| [006](./issues/006-watcher-comms/spec.md) | Multi-subscriber + Watcher + InjectCmd | — | `RunHandle::subscribe_events()`、`InjectCmd.message`、`Watcher` trait、`attach_watcher()` |
+| [006](./issues/006-watcher-comms/spec.md) | Multi-subscriber + Watcher + InjectCmd | — | `RunHandle::subscribe_events()`、`InjectCmd.message`（单向 cast）、`CancelCmd`/`RunAborted` 携带 reason、`Watcher` trait、`attach_watcher()` |
 | [007](./issues/007-examples-validation/spec.md) | Examples + Final Validation | 001–006 | 6 个使用示例、`v08_integration.rs`（5 个场景）、最终 CI 全绿 |
 
 ## 推荐执行顺序
 
-001 / 003 / 004 / 006 可并行启动（互不依赖）。002 依赖 001，005 依赖 004。
-
 ```
-001 (Hook Contract) ──> 002 (Guardrail) ──┐
-003 (ApprovalMode) ───────────────────────┤
-004 (SessionStore) ──> 005 (SQLite) ──────┤──> 007 (Examples + Validation)
-006 (Watcher) ────────────────────────────┘
+001 (Hook Contract) ──┬──> 002 (Guardrail) ──┐
+                      └──> 003 (ApprovalMode) ┤
+004 (SessionStore) ──────> 005 (SQLite) ──────┤──> 007 (Examples + Validation)
+006 (Watcher) ────────────────────────────────┘
 ```
 
 建议节奏：
-1. **并行启动**：001 + 003 + 004 + 006
-2. **001 完成后**：启动 002
+1. **首发**：001（其重排 before_tool/approval 是 002、003 的基础）；004、006 可与 001 并行
+2. **001 完成后**：启动 002 和 003
 3. **004 完成后**：启动 005
 4. **001-006 全部合入后**：007 收尾
+
+### actor.rs 修改冲突提示
+
+001（重排 + Reject）、003（审批条件）、004（RunHookContext 填充 + resume）、006（AgentMsg/Cancel/Inject）都改 `run/actor.rs`。为降低冲突：
+- 003 在 001 合入后再开（同区域）
+- 004 与 006 改 actor.rs 的不同区域（004 改 on_run_end/start 区，006 改 handle/AgentMsg 区），可并行但合入时注意 rebase
+- 建议 001 → (003 / 004 / 006) → 002 → 005 → 007 的整体合入顺序，最大化并行同时减少 actor.rs 三方冲突
 
 ## v0.8 权威顺序
 
 1. `docs/iteration/v0_8/issues/*/spec.md` 是实施与验收的第一权威
 2. 本文件约束迭代范围、依赖和成功指标
 3. 若 spec 与 PRD 冲突，先更新 spec/PRD 再实现
-- [ ] sqlite-session feature 下构建不破坏 agent-runtime-py / agent-runtime-node 的默认构建（feature 不 propagate）

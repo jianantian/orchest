@@ -56,25 +56,27 @@ pub enum ToolOutputGuardrailAction {
 
 ### Guardrail Trait
 
+`check` 接受**只读** `&ctx`：guardrail 只负责"审查 + 表达意图"，所有上下文修改由 adapter 根据返回值统一执行。这消除了"直接改 ctx"和"返回 Modify/Replace"两条修改路径并存导致的歧义——guardrail 读 ctx 决策，adapter 写 ctx 落地，职责单一。
+
 ```rust
 #[async_trait]
 pub trait InputGuardrail: Send + Sync {
-    async fn check(&self, ctx: &mut crate::hook::ModelHookContext) -> InputGuardrailAction;
+    async fn check(&self, ctx: &crate::hook::ModelHookContext) -> InputGuardrailAction;
 }
 
 #[async_trait]
 pub trait OutputGuardrail: Send + Sync {
-    async fn check(&self, ctx: &mut crate::hook::ModelHookContext) -> OutputGuardrailAction;
+    async fn check(&self, ctx: &crate::hook::ModelHookContext) -> OutputGuardrailAction;
 }
 
 #[async_trait]
 pub trait ToolInputGuardrail: Send + Sync {
-    async fn check(&self, ctx: &mut crate::hook::ToolHookContext) -> ToolInputGuardrailAction;
+    async fn check(&self, ctx: &crate::hook::ToolHookContext) -> ToolInputGuardrailAction;
 }
 
 #[async_trait]
 pub trait ToolOutputGuardrail: Send + Sync {
-    async fn check(&self, ctx: &mut crate::hook::ToolHookContext) -> ToolOutputGuardrailAction;
+    async fn check(&self, ctx: &crate::hook::ToolHookContext) -> ToolOutputGuardrailAction;
 }
 ```
 
@@ -135,8 +137,10 @@ impl AgentConfig {
 - [ ] `ToolInputGuardrail::Reject(reason)` 工具不执行，reason 作为 tool result 内容回传给模型
 - [ ] `ToolOutputGuardrail::Modify` 正确替换工具输出（模型看到修改后的结果）
 - [ ] 各层 `Abort` 正确终止 run（与 Hook::Abort 行为一致）
+- [ ] `guardrail::check` 签名为只读 `&ctx`，guardrail 不能直接修改 ctx，仅通过返回值表达意图
 - [ ] `AgentConfig::with_input_guardrail` 等 4 个注册方法可用
-- [ ] Guardrail adapter 实现 `Hook` trait，与手写 Hook 共用 hooks 列表，执行顺序正确
+- [ ] Guardrail adapter 实现 `Hook` trait，与手写 Hook 共用 hooks 列表
+- [ ] **链式执行**：同层注册多个 guardrail 时按注册顺序执行；前一个返回 Reject/Abort 时，后续同层 guardrail 不再执行（短路，由 hook runner 的现有链式语义保证）
 - [ ] `cargo test --workspace` 全绿
 - [ ] `cargo clippy --workspace -- -D warnings` 全绿
 

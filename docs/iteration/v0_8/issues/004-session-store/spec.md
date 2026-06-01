@@ -72,8 +72,6 @@ pub enum SessionError {
     Storage(String),
     #[error("schema version mismatch: expected {expected}, got {found}")]
     SchemaMismatch { expected: String, found: String },
-    #[error("session not found: {0}")]
-    NotFound(String),
 }
 ```
 
@@ -90,51 +88,61 @@ pub struct InMemorySessionStore {
 
 `save` 序列化为 JSON 再反序列化，确保 round-trip 语义与 SQLite 实现一致（避免引用共享导致测试与生产行为不同）。
 
-`load` 检查 `schema_version`，不匹配时返回 `SessionError::SchemaMismatch`。
+`load` 检查 `schema_version`，不匹配时返回 `SessionError::SchemaMismatch`；session 不存在时返回 `Ok(None)`。`delete` 对不存在的 session 返回 `Ok(())`（幂等）。所有后端遵循同一语义。
 
-### SessionPersistenceHook
+### RunHookContext 扩展
 
-```rust
-// session/persistence_hook.rs
+`on_run_end` / `on_run_error` 当前的 `ctx: &RunHookContext` 只含 `run_id / agent_name / step`，**不含** messages 和 budget——hook 无法构建完整 snapshot。
 
-pub struct SessionPersistenceHook {
-    pub store: Arc<dyn SessionStore>,
-    pub session_id: String,
-}
-```
-
-实现 `Hook::on_run_end` 和 `Hook::on_run_error`（两条路径都保存），在保存前从当前运行状态构建 `SessionSnapshot`。
-
-**问题**：`on_run_end` 和 `on_run_error` 的 `ctx: &RunHookContext` 只含 `run_id / agent_name / step`，**不含** messages 和 budget_used。Hook 无法访问完整运行状态。
-
-**解决方案**：`SessionPersistenceHook` 内部持有一个 `Arc<Mutex<Option<SessionSnapshot>>>`，通过 `before_model` hook 点（每轮 model call 前）更新快照（此时 messages 和 step 信息在 `ModelHookContext` 中）。`on_run_end` / `on_run_error` 时，保存最后一次 `before_model` 时记录的快照。
-
-这意味着快照最多落后一个 step，但能覆盖崩溃恢复场景（crash 发生在 model call 和下一个 `on_run_end` 之间时，恢复到上一轮 model call 之前的状态）。
-
-```rust
-impl SessionPersistenceHook {
-    // 内部持有最新快照
-    snapshot_cache: Arc<Mutex<Option<SessionSnapshot>>>,
-}
-```
-
-**注意**：`before_model` 没有 `budget_used`。可将 `BudgetUsage` 的 update 也通过 `after_model` 近似（after_model 的 ctx 也只有 messages，没有 budget）。最简方案：`RunHookContext` 在 v0.8 扩展，增加 `budget_used: BudgetUsage` 字段（on_run_end 时 run loop 可以填入）。这样 `on_run_end` / `on_run_error` 的 ctx 包含最终预算信息，hook 可直接构建 snapshot。
-
-**最终方案**：v0.8 中扩展 `RunHookContext`，新增 `budget_used: BudgetUsage` 字段，run loop 在调用 `on_run_end` / `on_run_error` 前填入当前预算使用量。同时在 `on_run_end`/`on_run_error` 的 ctx 中也需要 messages——再新增 `final_messages: Vec<Message>` 字段。两个字段共同构成完整 snapshot。
+v0.8 扩展 `RunHookContext`，新增三个字段，run loop 在调用 `on_run_end` / `on_run_error` 前填入。这些字段在 `on_run_start` 时为零值/空（彼时尚无终态）：
 
 ```rust
 pub struct RunHookContext {
     pub run_id: RunId,
     pub agent_name: String,
     pub step: u32,
-    // v0.8 新增（仅在 on_run_end / on_run_error 调用时有意义；on_run_start 时为空/零值）
+    // v0.8 新增：仅在 on_run_end / on_run_error 调用时有意义
     pub budget_used: crate::budget::BudgetUsage,
     pub final_messages: Vec<crate::model::Message>,
-    pub active_config: Option<crate::run::AgentConfig>,  // handoff 后当前 agent，无 handoff 时为 None
+    /// handoff 后当前生效的 agent config；无 handoff 时为 None。
+    pub active_config: Option<crate::run::AgentConfig>,
 }
 ```
 
-`SessionPersistenceHook::on_run_end` / `on_run_error` 直接从 `ctx` 构建 snapshot 并调用 `store.save`。
+### SessionPersistenceHook
+
+实现 `Hook::on_run_end` 和 `Hook::on_run_error` 两条路径，从扩展后的 `ctx` 直接构建 `SessionSnapshot` 并保存：
+
+```rust
+// session/persistence_hook.rs
+
+pub struct SessionPersistenceHook {
+    store: Arc<dyn SessionStore>,
+    session_id: String,
+    /// start 时的初始 config，用于 ctx.active_config 为 None（无 handoff）的情况。
+    original_config: AgentConfig,
+}
+
+impl SessionPersistenceHook {
+    pub fn new(store: Arc<dyn SessionStore>, session_id: String, original_config: AgentConfig) -> Self { ... }
+
+    fn build_snapshot(&self, ctx: &RunHookContext) -> SessionSnapshot {
+        SessionSnapshot {
+            schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
+            session_id: self.session_id.clone(),
+            run_id: ctx.run_id,
+            messages: ctx.final_messages.clone(),
+            step: ctx.step,
+            budget_used: ctx.budget_used.clone(),
+            active_config: ctx.active_config.clone().unwrap_or_else(|| self.original_config.clone()),
+        }
+    }
+}
+```
+
+`on_run_end` / `on_run_error` 是 fire-and-forget：保存失败仅 `tracing::error!`，不影响 run 的终态（run 已结束）。
+
+保存触发点选择 `on_run_end` + `on_run_error` 而非 step 级 checkpoint：覆盖正常结束和错误结束两条路径。进程崩溃（panic/SIGKILL）中途的更细粒度 checkpoint 是 v0.9 范围。
 
 ### AgentConfig 新增 session 字段
 
@@ -147,7 +155,11 @@ pub struct AgentConfig {
 }
 ```
 
-若 `session_store` 非空，`AgentRun::start` 自动注册 `SessionPersistenceHook`（用户也可手动注册，但自动注册更便利）。
+提供两种设置方式，与现有 `with_hook` / builder 模式对称：
+- `AgentConfigBuilder::session_store(store, session_id)` — build 前设置
+- `AgentConfig::with_session_store(self, store, session_id) -> Self` — build 后链式设置（resume 重注册时使用）
+
+若 `session_store` 非空，`AgentRun::start` 和 `AgentRun::resume` 都自动注册 `SessionPersistenceHook`（用户也可手动注册，但自动注册更便利）。自动注册时用当前 `config`（的克隆）作为 `SessionPersistenceHook::original_config`。
 
 ### AgentRun::resume API
 
@@ -167,7 +179,26 @@ impl AgentRun {
 - 用 `snapshot.run_id` 保持 RunId 一致性（event stream 中 run_id 连续）
 - 从 `snapshot.step` 继续计步
 - 从 `snapshot.budget_used` 恢复预算状态
-- 用 `snapshot.active_config` 作为 AgentConfig（hooks/retry_policy/handoffs 需调用方在 `active_config` 上重新注册后传入，或在 `registry` 中预配置）
+- 用 `snapshot.active_config` 作为 AgentConfig
+
+#### 重新注册 hooks 的协议
+
+`snapshot.active_config` 的 `#[serde(skip)]` 字段（hooks / retry_policy / handoffs）反序列化后为空。`resume` 不额外接收 config 参数——因为 `SessionSnapshot` 是 owned 值，调用方在传入前直接在 `active_config` 上重建运行时资源：
+
+```rust
+let mut snapshot = store.load("my-session").await?.expect("session exists");
+
+// 重新注册运行时资源（持久化时被 skip 的字段）
+snapshot.active_config = snapshot.active_config
+    .with_hook(my_logging_hook)
+    .with_loop_detection()
+    // 若希望继续自动持久化，重新挂上 persistence hook：
+    .with_session_store(store.clone(), "my-session".into());
+
+let (handle, mut events) = AgentRun::resume(snapshot, model, registry);
+```
+
+这一约定与 `start` 对称（`start` 时 hooks 也在 config 上注册），无需为 resume 引入额外 config 参数。`AgentRun::resume` 内部若检测到 `active_config.session_store` 非空，同样自动注册 `SessionPersistenceHook`（与 `start` 行为一致）。
 
 ## 验收标准
 

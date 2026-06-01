@@ -18,15 +18,18 @@ pub(crate) struct InjectCmd {
 }
 ```
 
-**AgentMsg 新增 Subscribe**：
+**AgentMsg 调整**（新增 Subscribe；Inject 去掉 RpcReplyPort 改为单向；Cancel 携带 reason）：
 ```rust
 pub(crate) enum AgentMsg {
     RunStep,
-    Subscribe(mpsc::Sender<RuntimeEvent>),  // 新增
-    Steer(SteerCmd, RpcReplyPort<SteerResult>),
-    Inject(InjectCmd, RpcReplyPort<()>),
-    Cancel(CancelCmd),
+    Subscribe(mpsc::Sender<RuntimeEvent>),         // 新增
+    Steer(SteerCmd, RpcReplyPort<SteerResult>),    // 保留（v0.9）
+    Inject(InjectCmd),                             // v0.8：去掉 RpcReplyPort，单向 cast
+    Cancel(CancelCmd),                             // CancelCmd 新增 reason 字段
 }
+
+pub(crate) struct InjectCmd { pub message: String }
+pub(crate) struct CancelCmd { pub reason: Option<String> }
 ```
 
 **handle() 中处理 Subscribe**：
@@ -41,9 +44,9 @@ AgentMsg::Subscribe(tx) => {
 
 （actor.rs 的 handle 方法，参考现有 Cancel 的处理结构）
 
-**handle() 中处理 Inject**（替换 "not yet implemented" stub）：
+**handle() 中处理 Inject**（替换 "not yet implemented" stub，单向无 reply）：
 ```rust
-AgentMsg::Inject(cmd, reply) => {
+AgentMsg::Inject(cmd) => {
     if let Some(state) = self.state.as_mut() {
         use crate::model::{Message, Role, ContentBlock};
         state.messages.push(Message {
@@ -51,10 +54,15 @@ AgentMsg::Inject(cmd, reply) => {
             content: vec![ContentBlock::Text { text: cmd.message }],
         });
     }
-    let _ = reply.send(());
     Ok(())
 }
 ```
+
+**handle() 中处理 Cancel**（透传 reason 到 RunAborted）：现有 Cancel handler 在发出 `RuntimeEvent::RunAborted` 时改为 `RunAborted { reason: cmd.reason }`（需先把 reason 从 CancelCmd 取出）。
+
+**events.rs**：`RunAborted` 从 unit variant 改为 `RunAborted { reason: Option<String> }`，更新所有构造点。
+
+**handle.rs `abort()`**：`aref.cast(AgentMsg::Cancel(CancelCmd { reason: None }))`。
 
 ### 步骤 2：`run/handle.rs` — subscribe_events
 
@@ -91,49 +99,27 @@ pub trait Watcher: Send + Sync {
 
 ### 步骤 4：`run/handle.rs` — attach_watcher
 
-考虑到 `Inject` 有 `RpcReplyPort`，watcher 中使用 `ractor::call_t!` 或将 Inject 改为 cast。
+`Inject` 和 `Cancel` 都用单向 `cast`（与现有 `RunHandle::abort()` 写法一致），watcher task 不阻塞等待回复。完整实现见 spec：
 
-**推荐改法**：Inject 保持 `RpcReplyPort<()>` 用于 v0.9 背压，watcher 中用 `call_t!` 加 100ms 超时。`call_t!` 宏来自 ractor，参考 v0.7 actor test 中的用法。
-
-完整 `attach_watcher` 实现（参见 spec）。
-
-注意 `actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>` — Ractor 的 `ActorRef` 需要在 tokio 上下文中使用；watcher task 是 `tokio::spawn`，可以调用 `call_t!`。
-
-若 `call_t!` 宏在 watcher task 中调用有复杂性（需要 ractor runtime），可改为：
-
-```rust
-// 简化方案：Inject 改为无 reply 的 cast 消息（不等待确认）
-// 在 AgentMsg 中改 Inject 为 cast 语义，或新增 InjectCast 变体
-```
-
-v0.8 使用简化方案（InjectCast，无 reply），v0.9 再升级为有背压的 call。
-
-**简化方案的 AgentMsg 调整**：
-```rust
-// 将 Inject 的 RpcReplyPort 去掉，改为 fire-and-forget
-Inject(InjectCmd),  // 去掉 RpcReplyPort<()>
-```
-
-handle() 相应修改：
-```rust
-AgentMsg::Inject(cmd) => {
-    if let Some(state) = self.state.as_mut() {
-        state.messages.push( /* ... */ );
-    }
-    Ok(())
-}
-```
-
-watcher 中 cast：
 ```rust
 WatcherAction::Inject(msg) => {
-    if let Some(ref aref) = *guard {
-        let _ = aref.cast(AgentMsg::Inject(InjectCmd { message: msg }));
+    if let Ok(guard) = actor_ref.lock() {
+        if let Some(ref aref) = *guard {
+            let _ = aref.cast(AgentMsg::Inject(InjectCmd { message: msg }));
+        }
     }
+}
+WatcherAction::Abort(reason) => {
+    if let Ok(guard) = actor_ref.lock() {
+        if let Some(ref aref) = *guard {
+            let _ = aref.cast(AgentMsg::Cancel(CancelCmd { reason: Some(reason) }));
+        }
+    }
+    break;
 }
 ```
 
-> **注**：若 spec 要求保留 RpcReplyPort（为 v0.9 背压），则使用 call_t! 方案。在 plan 中保留两种方案，实现时选简化方案，commit 中注明。
+`actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>` — watcher task 是 `tokio::spawn`，cast 不需要等待 ractor runtime 回复。run 结束后 Option 变 None，发送时检查。
 
 ### 步骤 5：`run/mod.rs` 和 `src/lib.rs` — 声明和 re-export
 
@@ -154,8 +140,9 @@ pub use run::{Watcher, WatcherAction};
 2. `multiple_subscribers_each_receive_events`：attach 两个次级 subscriber，验证各自独立接收
 3. `secondary_subscriber_full_channel_emits_events_dropped`：次级 capacity=1，产生多事件，验证主 subscriber 收到 EventsDropped
 4. `inject_message_appears_in_next_model_call`：FakeModelAdapter 记录收到的 messages，attach_watcher 在 RunStarted 时注入消息，验证 FakeModelAdapter 在下一轮收到注入的 user message
-5. `watcher_abort_terminates_run`：watcher 在某事件后返回 Abort，验证 run 以 RunAborted 结束
-6. `watcher_task_exits_after_run_completes`：run 完成，验证 watcher task channel 关闭（通过 rx.recv() 返回 None 验证）
+5. `watcher_abort_terminates_run_with_reason`：watcher 在某事件后返回 `Abort("policy violation")`，验证 run 以 `RunAborted { reason: Some("policy violation") }` 结束
+6. `manual_abort_has_no_reason`：`RunHandle::abort()` 触发，验证 `RunAborted { reason: None }`
+7. `watcher_task_exits_after_run_completes`：run 完成，验证 watcher task channel 关闭（通过 rx.recv() 返回 None 验证）
 
 ```bash
 cargo test --workspace
