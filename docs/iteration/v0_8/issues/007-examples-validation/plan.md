@@ -11,7 +11,7 @@
 
 ### 步骤 1：新建 Rust examples
 
-每个 example 独立文件，使用 `FakeModelAdapter`（来自测试 helpers）或内联实现简单 EchoAdapter。
+每个 example 独立文件，**文件内联**一个最小 mock `ModelAdapter`（examples 看不到 `#[cfg(test)]` 的 `FakeModelAdapter`，见 spec；参考 `examples/rust/hook_logging.rs` 的 `// ── Mock model ──` 段）。
 
 **示例：`examples/rust/guardrail_keyword_filter.rs`**
 
@@ -25,7 +25,8 @@ struct KeywordBlockGuardrail { banned: Vec<String> }
 
 #[async_trait]
 impl ToolInputGuardrail for KeywordBlockGuardrail {
-    async fn check(&self, ctx: &mut ToolHookContext) -> ToolInputGuardrailAction {
+    // 注意：check 是只读 &ctx（不是 &mut）——guardrail 只决策，adapter 负责改 ctx
+    async fn check(&self, ctx: &ToolHookContext) -> ToolInputGuardrailAction {
         let input_str = ctx.tool_input.to_string();
         for word in &self.banned {
             if input_str.contains(word.as_str()) {

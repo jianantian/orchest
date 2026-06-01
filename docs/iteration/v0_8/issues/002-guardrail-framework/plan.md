@@ -72,8 +72,9 @@ pub fn with_input_guardrail(mut self, g: Arc<dyn crate::guardrail::InputGuardrai
 2. `tool_input_guardrail_reject_returns_reason_to_model`：注册 Reject guardrail，验证 tool 不执行，tool_result content 含 reason 字符串
 3. `tool_input_guardrail_modify_changes_input`：注册 Modify guardrail，FakeTool 记录收到的 input，验证 input 被替换
 4. `tool_output_guardrail_modify_changes_result`：注册 Modify guardrail，验证 tool_result content 被替换
-5. `guardrail_abort_terminates_run`：任意层返回 Abort，验证 run 以 RunFailed 结束
-6. `chained_tool_input_guardrails_short_circuit`：注册两个 ToolInputGuardrail，第一个 Reject；验证第二个的 `check` 未被调用（用 AtomicBool 标记），且 tool_result 是第一个的 reason
+5. `output_guardrail_replace_changes_response`：注册 OutputGuardrail Replace（如把响应文本替换为脱敏版），验证 run 完成后 state.messages 中 assistant message 为替换后内容（依赖 001 的 ctx.response 回流）
+6. `guardrail_abort_terminates_run`：任意层返回 Abort，验证 run 以 RunFailed 结束
+7. `chained_tool_input_guardrails_short_circuit`：注册两个 ToolInputGuardrail，第一个 Reject；验证第二个的 `check` 未被调用（用 AtomicBool 标记），且 tool_result 是第一个的 reason
 
 注：步骤 2-4 各 guardrail 的 `check` 签名是只读 `&ctx`（步骤 2 的 adapter 在 Hook impl 内有 `&mut`，但传给 `check` 时自动 reborrow 成 `&`）。测试中的 fake guardrail 实现 `check(&self, ctx: &XxxHookContext)`。
 

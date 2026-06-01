@@ -25,7 +25,7 @@ pub struct RunHookContext {
 }
 ```
 
-`RunHookContext` 构造点（`actor.rs`）新增字段填 `Default`：
+`RunHookContext` 构造点（`actor.rs:~110`）新增字段填 `Default`：
 ```rust
 let mut run_hook_ctx = RunHookContext {
     run_id,
@@ -37,13 +37,22 @@ let mut run_hook_ctx = RunHookContext {
 };
 ```
 
-在 `actor.rs` 的 `on_run_end` / `on_run_error` 调用前填充：
+**填充时机——共有 7 个终态调用点**（`on_run_end` 在 `actor.rs:568`、`580`；`on_run_error` 在 `353`、`381`、`419`、`473`、`509`）。每个调用点前都需要刷新这三个字段，逐个手填易漏。抽一个 helper 在 `state` 上统一刷新：
+
 ```rust
-state.run_hook_ctx.budget_used = state.budget.usage().clone();
-state.run_hook_ctx.final_messages = state.messages.clone();
-state.run_hook_ctx.active_config = Some(state.config.clone());
-// 然后调用 run_on_run_end / run_on_run_error
+impl AgentRunState {
+    fn refresh_terminal_hook_ctx(&mut self, step: u32) {
+        self.run_hook_ctx.step = step;
+        self.run_hook_ctx.budget_used = self.budget.usage().clone();
+        self.run_hook_ctx.final_messages = self.messages.clone();
+        self.run_hook_ctx.active_config = Some(self.config.clone());
+    }
+}
 ```
+
+在每个 `run_on_run_end` / `run_on_run_error` 调用前替换现有的 `state.run_hook_ctx.step = step;`（现有代码已在 error 路径设 step，改为调用 helper 即可一并设满）。
+
+> 注意：`active_config` 始终填 `Some(self.config.clone())`——handoff 后 `state.config` 已是切换后的 agent，所以 `Some(state.config)` 天然就是"当前生效配置"。spec 中"无 handoff 时为 None"的语义由 `SessionPersistenceHook::build_snapshot` 的 `unwrap_or(original_config)` 兜底，但既然 actor 总能提供当前 config，直接填 `Some` 更准确，hook 端的 `unwrap_or` 仅作防御。
 
 ### 步骤 2：新建 `src/session/` 模块
 
