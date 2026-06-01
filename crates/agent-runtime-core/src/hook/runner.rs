@@ -115,6 +115,15 @@ pub(crate) async fn run_after_model(
         let result = AssertUnwindSafe(hook.after_model(ctx)).catch_unwind().await;
         match result {
             Ok(HookAction::Abort(reason)) => return HookAction::Abort(reason),
+            Ok(HookAction::Reject(_)) => {
+                emit(
+                    tx,
+                    RuntimeEvent::RuntimeWarning {
+                        message: "HookAction::Reject returned from after_model; ignored".into(),
+                    },
+                )
+                .await;
+            }
             Ok(HookAction::Skip | HookAction::Continue) => {}
             Err(panic) => {
                 emit(
@@ -140,6 +149,7 @@ pub(crate) async fn run_before_tool(
         let result = AssertUnwindSafe(hook.before_tool(ctx)).catch_unwind().await;
         match result {
             Ok(HookAction::Abort(reason)) => return HookAction::Abort(reason),
+            Ok(HookAction::Reject(reason)) => return HookAction::Reject(reason),
             Ok(HookAction::Skip) => return HookAction::Skip,
             Ok(HookAction::Continue) => {}
             Err(panic) => {
@@ -166,6 +176,16 @@ pub(crate) async fn run_after_tool(
         let result = AssertUnwindSafe(hook.after_tool(ctx)).catch_unwind().await;
         match result {
             Ok(HookAction::Abort(reason)) => return HookAction::Abort(reason),
+            Ok(HookAction::Reject(_)) => {
+                emit(
+                    tx,
+                    RuntimeEvent::RuntimeWarning {
+                        message: "HookAction::Reject returned from after_tool; treated as no-op"
+                            .into(),
+                    },
+                )
+                .await;
+            }
             Ok(HookAction::Skip | HookAction::Continue) => {}
             Err(panic) => {
                 emit(
@@ -213,6 +233,17 @@ pub(crate) async fn run_before_compact(
             .await;
         match result {
             Ok(HookAction::Abort(reason)) => return HookAction::Abort(reason),
+            Ok(HookAction::Reject(_)) => {
+                emit(
+                    tx,
+                    RuntimeEvent::RuntimeWarning {
+                        message: "HookAction::Reject returned from before_compact; treated as Skip"
+                            .into(),
+                    },
+                )
+                .await;
+                return HookAction::Skip;
+            }
             Ok(HookAction::Skip) => return HookAction::Skip,
             Ok(HookAction::Continue) => {}
             Err(panic) => {

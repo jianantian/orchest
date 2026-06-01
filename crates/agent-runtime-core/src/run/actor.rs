@@ -341,6 +341,46 @@ impl Actor for WorkerActor {
 
 // ── Per-step logic ────────────────────────────────────────────────────────────
 
+/// Runs `after_tool` hooks for the just-pushed tool result and applies any
+/// rewrite the hooks made to `ctx.tool_output`. Returns `Err(reason)` if a hook
+/// aborted the run. The current output is read from (and written back to) the
+/// last entry of `tool_results`.
+#[allow(clippy::too_many_arguments)] // justified: per-call context for the after_tool hook chain
+async fn finalize_after_tool(
+    hooks: &[std::sync::Arc<dyn crate::hook::Hook>],
+    subs: &[mpsc::Sender<RuntimeEvent>],
+    run_id: RunId,
+    tool_name: &str,
+    tool_input: &serde_json::Value,
+    tool_meta: &crate::tool::ToolMetadata,
+    tool_results: &mut [ContentBlock],
+) -> Result<(), String> {
+    let current_output = tool_results.last().and_then(|b| match b {
+        ContentBlock::ToolResult { content, .. } => Some(content.clone()),
+        _ => None,
+    });
+    let mut ctx = crate::hook::ToolHookContext {
+        run_id,
+        tool_name: tool_name.to_string(),
+        tool_input: tool_input.clone(),
+        tool_metadata: tool_meta.clone(),
+        tool_output: current_output.clone(),
+    };
+    if let crate::hook::HookAction::Abort(reason) =
+        crate::hook::runner::run_after_tool(hooks, &mut ctx, primary(subs)).await
+    {
+        return Err(reason);
+    }
+    if let Some(modified) = ctx.tool_output {
+        if Some(&modified) != current_output.as_ref() {
+            if let Some(ContentBlock::ToolResult { content, .. }) = tool_results.last_mut() {
+                *content = modified;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Execute one outer-loop iteration. Returns true to continue, false to stop.
 #[allow(clippy::too_many_lines)] // justified: single-function orchestration loop; splitting would obscure control flow
 async fn run_one_step(state: &mut AgentRunState) -> bool {
@@ -406,6 +446,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 run_id,
                 messages: pre_step_messages.clone(),
                 model_spec: state.config.model.spec.clone(),
+                response: None,
             };
             match crate::hook::runner::run_before_model(
                 &state.config.hooks,
@@ -454,12 +495,15 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
 
         match raw_response {
             Ok(r) => {
+                let mut r = r;
                 {
-                    // after_model sees the same call-time context that was sent to the model.
+                    // after_model sees the call-time context that was sent to the model,
+                    // plus the model's response (which the hook may rewrite).
                     let mut model_ctx = crate::hook::ModelHookContext {
                         run_id,
                         messages: call_messages,
                         model_spec: state.config.model.spec.clone(),
+                        response: Some(r.content.clone()),
                     };
                     if let crate::hook::HookAction::Abort(reason) =
                         crate::hook::runner::run_after_model(
@@ -479,6 +523,10 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                         .await;
                         emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
                         return false;
+                    }
+                    // Read back any rewrite the hook applied to the response.
+                    if let Some(modified) = model_ctx.response.take() {
+                        r.content = modified;
                     }
                 }
                 break r;
@@ -623,12 +671,67 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             }
         };
 
+        let tool_meta = tool.metadata().clone();
+        let source_label = match &tool_meta.source {
+            crate::tool::ToolSource::Builtin => "builtin",
+            crate::tool::ToolSource::InProcess => "in_process",
+            crate::tool::ToolSource::McpServer { .. } => "mcp_server",
+            crate::tool::ToolSource::Skill { .. } => "skill",
+        };
+
+        // before_tool runs BEFORE approval so that approval (and execution) act on
+        // the final, hook-modified input — never the pre-modification input.
+        let mut tool_hook_ctx = crate::hook::ToolHookContext {
+            run_id,
+            tool_name: tool_call.name.clone(),
+            tool_input: tool_call.input.clone(),
+            tool_metadata: tool_meta.clone(),
+            tool_output: None,
+        };
+        match crate::hook::runner::run_before_tool(
+            &state.config.hooks,
+            &mut tool_hook_ctx,
+            primary(&subs),
+        )
+        .await
+        {
+            crate::hook::HookAction::Skip => {
+                tool_results.push(ContentBlock::ToolResult {
+                    tool_use_id: tool_call.id.clone(),
+                    content: json!("tool call skipped by hook"),
+                });
+                state.budget.record_tool_call();
+                continue;
+            }
+            crate::hook::HookAction::Reject(reason) => {
+                tool_results.push(ContentBlock::ToolResult {
+                    tool_use_id: tool_call.id.clone(),
+                    content: json!({"error": reason}),
+                });
+                state.budget.record_tool_call();
+                continue;
+            }
+            crate::hook::HookAction::Abort(reason) => {
+                emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                return false;
+            }
+            crate::hook::HookAction::Continue => {}
+        }
+        let tool_input = tool_hook_ctx.tool_input;
+
+        // Effective call carries the hook-modified input for approval / started events.
+        let effective_call = ToolCall {
+            id: tool_call.id.clone(),
+            name: tool_call.name.clone(),
+            input: tool_input.clone(),
+        };
+
         if tool.metadata().requires_approval {
             let approval_rx = state.approval_bus.request(run_id).await;
             emit(
                 &subs,
                 RuntimeEvent::ApprovalRequested {
-                    tool_call: tool_call.clone(),
+                    tool_call: effective_call.clone(),
                 },
             )
             .await;
@@ -652,7 +755,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 emit(
                     &subs,
                     RuntimeEvent::ApprovalGranted {
-                        tool_call: tool_call.clone(),
+                        tool_call: effective_call.clone(),
                     },
                 )
                 .await;
@@ -660,7 +763,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 emit(
                     &subs,
                     RuntimeEvent::ApprovalDenied {
-                        tool_call: tool_call.clone(),
+                        tool_call: effective_call.clone(),
                     },
                 )
                 .await;
@@ -690,52 +793,17 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             }
         }
 
-        let tool_meta = tool.metadata().clone();
-        let source = tool_meta.source.clone();
-        let source_label = match &source {
-            crate::tool::ToolSource::Builtin => "builtin",
-            crate::tool::ToolSource::InProcess => "in_process",
-            crate::tool::ToolSource::McpServer { .. } => "mcp_server",
-            crate::tool::ToolSource::Skill { .. } => "skill",
-        };
+        // ToolCallStarted fires only once we are committed to executing the tool
+        // (after before_tool, approval, and budget checks all pass).
         emit(
             &subs,
             RuntimeEvent::ToolCallStarted {
                 tool: tool_call.name.clone(),
-                source,
-                input: tool_call.input.clone(),
+                source: tool_meta.source.clone(),
+                input: tool_input.clone(),
             },
         )
         .await;
-
-        let mut tool_hook_ctx = crate::hook::ToolHookContext {
-            run_id,
-            tool_name: tool_call.name.clone(),
-            tool_input: tool_call.input.clone(),
-            tool_metadata: tool_meta.clone(),
-        };
-        match crate::hook::runner::run_before_tool(
-            &state.config.hooks,
-            &mut tool_hook_ctx,
-            primary(&subs),
-        )
-        .await
-        {
-            crate::hook::HookAction::Skip => {
-                tool_results.push(ContentBlock::ToolResult {
-                    tool_use_id: tool_call.id.clone(),
-                    content: json!("tool call skipped by hook"),
-                });
-                state.budget.record_tool_call();
-                continue;
-            }
-            crate::hook::HookAction::Abort(reason) => {
-                emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
-                return false;
-            }
-            crate::hook::HookAction::Continue => {}
-        }
-        let tool_input = tool_hook_ctx.tool_input;
 
         let _tool_span = telemetry::tool_execute_span(&tool_call.name, source_label);
 
@@ -807,24 +875,19 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     tool_use_id: tool_call.id.clone(),
                     content: value,
                 });
+                if let Err(reason) = finalize_after_tool(
+                    &state.config.hooks,
+                    &subs,
+                    run_id,
+                    &tool_call.name,
+                    &tool_input,
+                    &tool_meta,
+                    &mut tool_results,
+                )
+                .await
                 {
-                    let mut tool_out_ctx = crate::hook::ToolHookContext {
-                        run_id,
-                        tool_name: tool_call.name.clone(),
-                        tool_input: tool_input.clone(),
-                        tool_metadata: tool_meta.clone(),
-                    };
-                    if let crate::hook::HookAction::Abort(reason) =
-                        crate::hook::runner::run_after_tool(
-                            &state.config.hooks,
-                            &mut tool_out_ctx,
-                            primary(&subs),
-                        )
-                        .await
-                    {
-                        emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
-                        return false;
-                    }
+                    emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    return false;
                 }
             }
             Ok(ToolOutput::Structured {
@@ -856,24 +919,19 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     tool_use_id: tool_call.id.clone(),
                     content: model_output,
                 });
+                if let Err(reason) = finalize_after_tool(
+                    &state.config.hooks,
+                    &subs,
+                    run_id,
+                    &tool_call.name,
+                    &tool_input,
+                    &tool_meta,
+                    &mut tool_results,
+                )
+                .await
                 {
-                    let mut tool_out_ctx = crate::hook::ToolHookContext {
-                        run_id,
-                        tool_name: tool_call.name.clone(),
-                        tool_input: tool_input.clone(),
-                        tool_metadata: tool_meta.clone(),
-                    };
-                    if let crate::hook::HookAction::Abort(reason) =
-                        crate::hook::runner::run_after_tool(
-                            &state.config.hooks,
-                            &mut tool_out_ctx,
-                            primary(&subs),
-                        )
-                        .await
-                    {
-                        emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
-                        return false;
-                    }
+                    emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    return false;
                 }
             }
             Ok(ToolOutput::Handoff(result)) => {
@@ -891,24 +949,19 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     });
                     pending_handoff = Some((tool_call.name.clone(), *result));
                 }
+                if let Err(reason) = finalize_after_tool(
+                    &state.config.hooks,
+                    &subs,
+                    run_id,
+                    &tool_call.name,
+                    &tool_input,
+                    &tool_meta,
+                    &mut tool_results,
+                )
+                .await
                 {
-                    let mut tool_out_ctx = crate::hook::ToolHookContext {
-                        run_id,
-                        tool_name: tool_call.name.clone(),
-                        tool_input: tool_input.clone(),
-                        tool_metadata: tool_meta.clone(),
-                    };
-                    if let crate::hook::HookAction::Abort(reason) =
-                        crate::hook::runner::run_after_tool(
-                            &state.config.hooks,
-                            &mut tool_out_ctx,
-                            primary(&subs),
-                        )
-                        .await
-                    {
-                        emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
-                        return false;
-                    }
+                    emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    return false;
                 }
                 continue;
             }
@@ -941,24 +994,19 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     tool_use_id: tool_call.id.clone(),
                     content: async_result,
                 });
+                if let Err(reason) = finalize_after_tool(
+                    &state.config.hooks,
+                    &subs,
+                    run_id,
+                    &tool_call.name,
+                    &tool_input,
+                    &tool_meta,
+                    &mut tool_results,
+                )
+                .await
                 {
-                    let mut tool_out_ctx = crate::hook::ToolHookContext {
-                        run_id,
-                        tool_name: tool_call.name.clone(),
-                        tool_input: tool_input.clone(),
-                        tool_metadata: tool_meta.clone(),
-                    };
-                    if let crate::hook::HookAction::Abort(reason) =
-                        crate::hook::runner::run_after_tool(
-                            &state.config.hooks,
-                            &mut tool_out_ctx,
-                            primary(&subs),
-                        )
-                        .await
-                    {
-                        emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
-                        return false;
-                    }
+                    emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    return false;
                 }
             }
             Err(e) => {
@@ -976,24 +1024,19 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     tool_use_id: tool_call.id.clone(),
                     content: json!({"error": e.message}),
                 });
+                if let Err(reason) = finalize_after_tool(
+                    &state.config.hooks,
+                    &subs,
+                    run_id,
+                    &tool_call.name,
+                    &tool_input,
+                    &tool_meta,
+                    &mut tool_results,
+                )
+                .await
                 {
-                    let mut tool_out_ctx = crate::hook::ToolHookContext {
-                        run_id,
-                        tool_name: tool_call.name.clone(),
-                        tool_input: tool_input.clone(),
-                        tool_metadata: tool_meta.clone(),
-                    };
-                    if let crate::hook::HookAction::Abort(reason) =
-                        crate::hook::runner::run_after_tool(
-                            &state.config.hooks,
-                            &mut tool_out_ctx,
-                            primary(&subs),
-                        )
-                        .await
-                    {
-                        emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
-                        return false;
-                    }
+                    emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    return false;
                 }
             }
         }
