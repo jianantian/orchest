@@ -49,6 +49,28 @@ pub struct ToolHookContext {
 - `before_tool` 调用时：`tool_output = None`
 - `after_tool` 调用时：`tool_output = Some(actual_output)`；hook 可修改此值；run loop 在 hook 链完成后，若 `ctx.tool_output` 与传入值不同（or 任意 hook 写入过），用修改后的值替换 tool_results 中对应条目的 content
 
+### ModelHookContext 新增 response 载体（after_model 输出可见 + 可改）
+
+当前 `after_model` 的 `ModelHookContext` 只携带 `messages`（发给模型的**输入** `call_messages`），不含模型的**响应**；且对 `model_ctx` 的修改在 `break r` 后被丢弃（loop 用原始 `r`）。结果是 `after_model` hook 既看不到也改不了模型输出——002 的 `OutputGuardrail`（无论"检查输出后 Abort"还是"Replace 输出"）都无法实现。
+
+对称于 `before_model`（其 `ctx.messages` 已被 loop 在 line 431 读回作为 `call_messages`），v0.8 给 `ModelHookContext` 增加响应载体：
+
+```rust
+// crates/agent-runtime-core/src/hook/mod.rs
+pub struct ModelHookContext {
+    pub run_id: crate::run::RunId,
+    pub messages: Vec<crate::model::Message>,
+    pub model_spec: crate::model::ModelSpec,
+    pub response: Option<Vec<crate::model::ContentBlock>>,  // 新增
+}
+```
+
+- `before_model` 调用时：`response = None`（响应尚不存在）
+- `after_model` 调用时：`response = Some(r.content.clone())`（模型输出）；hook 可修改此值
+- run loop 在 `after_model` hook 链完成后读回 `model_ctx.response`，若为 `Some(modified)`，用 `modified` 替换 `r.content`，**再** append 到 `state.messages`（line 592）
+
+这样 `after_model` hook（含 OutputGuardrail）既能审查模型输出、也能改写它，且改写真正落到对话历史。`messages` 字段在 after_model 时仍为输入上下文（只读参考），`response` 字段是输出。
+
 ### runner.rs 更新
 
 `run_before_tool` 新增 `Reject` arm：
@@ -122,6 +144,8 @@ crate::hook::HookAction::Reject(reason) => {
 - [ ] `after_tool` / `before_compact` 返回 `Reject` 时，runner 当作 `Skip` 处理并发出 RuntimeWarning event（Reject 仅在 before_tool 有效）
 - [ ] `ToolHookContext.tool_output` 字段存在：before_tool 时为 `None`，after_tool 时为实际输出值
 - [ ] `after_tool` hook 修改 `ctx.tool_output` 后，tool_results 中对应 content 被替换
+- [ ] `ModelHookContext.response` 字段存在：before_model 时为 `None`，after_model 时为 `Some(模型输出 content)`
+- [ ] `after_model` hook 修改 `ctx.response` 后，append 到 state.messages 的 assistant content 为修改后的值（回流生效）
 - [ ] **执行顺序**：`before_tool` 在 approval check 之前执行
 - [ ] **审批针对最终输入**：before_tool 修改 `tool_input` 后，approval 事件和工具执行都使用修改后的输入
 - [ ] before_tool 返回 Skip / Reject / Abort 时不进入审批流程

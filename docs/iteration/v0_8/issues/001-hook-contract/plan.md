@@ -9,12 +9,14 @@
 
 ## 步骤
 
-### 步骤 1：`hook/mod.rs` — 扩展 HookAction 和 ToolHookContext
+### 步骤 1：`hook/mod.rs` — 扩展 HookAction / ToolHookContext / ModelHookContext
 
 **文件**：`crates/agent-runtime-core/src/hook/mod.rs`
 
 1. `HookAction` 枚举新增 `Reject(String)` 变体，放在 `Skip` 之后
 2. `ToolHookContext` 新增 `pub tool_output: Option<serde_json::Value>` 字段，默认 `None`
+3. `ModelHookContext` 新增 `pub response: Option<Vec<crate::model::ContentBlock>>` 字段
+4. 更新所有 `ModelHookContext` / `ToolHookContext` 构造点（actor.rs 现有 line 405、459 等，以及测试中的构造），新增字段填默认值（`response: None` / `tool_output: None`）
 
 ### 步骤 2：`hook/runner.rs` — 更新 run_before_tool 和 run_after_tool
 
@@ -56,13 +58,15 @@ Ok(HookAction::Reject(reason)) => return HookAction::Reject(reason),
 1. before_tool hooks（match run_before_tool）→ 得到 effective_input = tool_hook_ctx.tool_input
 2. approval check（使用 effective_input 构建 ApprovalRequested / Granted / Denied 事件）
 3. budget(max_tool_calls) check
-4. execute tool（使用 effective_input）
+4. ToolCallStarted 事件（committed 到执行时才发）
+5. execute tool（使用 effective_input）
 ```
 
 把整个 approval block（`:626`–`:673` 附近）移到 before_tool match（`:717`+）之后。注意：
 - before_tool 的 `Continue` arm 之后，提取 `let effective_input = tool_hook_ctx.tool_input;`
 - approval block 中所有引用 `tool_call.input` / `tool_call.clone()` 处，改用携带 `effective_input` 的 tool_call（clone tool_call 后替换其 input 字段，或构造事件时直接用 effective_input）
 - 工具执行处原本就用 before_tool 后的 input，重排后保持一致
+- `ToolCallStarted` 事件当前在 before_tool 之前发出；重排后它应位于 approval 通过、budget 检查之后、execute 之前（即"确定要执行该工具"时才发），避免对被 Reject/拒批的工具发出误导性的 started 事件
 
 **步骤 3b：before_tool 的 Reject 处理**（在 before_tool match 中新增 arm）：
 
@@ -106,7 +110,32 @@ if let Some(modified) = tool_out_ctx.tool_output {
 }
 ```
 
-提取 helper `invoke_after_tool_hooks(...)` 消除各分支重复，入参：`hooks, run_id, tool_call, tool_input, tool_meta, output_value, event_tx`，返回 `(HookAction, Option<Value>)`（action + 最终 output）。
+提取 helper `invoke_after_tool_hooks(...)` 消除各分支重复，入参：`hooks, run_id, tool_call, tool_input, tool_meta, output_value, event_tx`，返回 `(HookAction, Option<Value>)`（action + 最终 output）。`output_value` 取该分支推入 tool_results 的值——对 `Structured` 分支即 `model_output`（模型可见的内容），不是 `details`（仅事件用）。
+
+**步骤 3c：after_model 的 response 填充 + 回流**
+
+`after_model` 的 model_ctx 构造点（line 459 附近）新增 `response: Some(r.content.clone())`：
+
+```rust
+let mut model_ctx = crate::hook::ModelHookContext {
+    run_id,
+    messages: call_messages,
+    model_spec: state.config.model.spec.clone(),
+    response: Some(r.content.clone()),   // ← 新增
+};
+```
+
+`run_after_model` 返回后（在 `break r` 之前），读回 `model_ctx.response` 并应用到 `r`：
+
+```rust
+let mut r = r;
+if let Some(modified) = model_ctx.response.take() {
+    r.content = modified;
+}
+break r;
+```
+
+before_model 的构造点（line 405）新增 `response: None`。这样 line 592 `state.messages.push(... response.content.clone())` append 的就是 after_model hook 改写后的内容。
 
 ### 步骤 4：单元测试
 
@@ -117,6 +146,8 @@ if let Some(modified) = tool_out_ctx.tool_output {
 3. `after_tool_reject_treated_as_skip_with_warning`：注册 after_tool 返回 `Reject` 的 hook，验证发出 RuntimeWarning，run 继续
 4. `before_tool_runs_before_approval`：注册一个 before_tool hook 修改 `ctx.tool_input`，且工具 `requires_approval: true`；验证 `ApprovalRequested` 事件携带的是修改后的 input（证明顺序正确）
 5. `before_tool_reject_skips_approval`：工具 `requires_approval: true` + before_tool 返回 Reject；验证**没有** ApprovalRequested 事件发出，直接得到 reject 结果
+6. `after_model_can_inspect_response`：注册 after_model hook 断言 `ctx.response` 为 `Some` 且等于模型输出
+7. `after_model_modifies_response_flows_to_history`：注册 after_model hook 改写 `ctx.response`（如脱敏文本），验证后续 state.messages 中 assistant message 为改写后的内容
 
 ### 步骤 5：确认基线不退化
 

@@ -4,7 +4,7 @@
 
 v0.7 Hook 框架提供了原始扩展点，但对"审查并拦截"场景来说接口过于底层：用户需要自行处理 `ModelHookContext` 的消息替换、`ToolHookContext.tool_input` 的修改等细节。Guardrail 是 Hook 的**便利封装层**，为四个常见审查位置提供意图明确的 API。
 
-依赖：001（HookAction::Reject + ToolHookContext.tool_output 先落地）。
+依赖：001（`HookAction::Reject`、`ToolHookContext.tool_output`、`ModelHookContext.response` 先落地——四层 guardrail 分别依赖这三者中的对应项）。
 
 ## 目标
 
@@ -16,7 +16,7 @@ v0.7 Hook 框架提供了原始扩展点，但对"审查并拦截"场景来说�
 
 ```
 crates/agent-runtime-core/src/guardrail/
-├── mod.rs          # Guardrail trait + 各层 Action 类型 + with_guardrail 辅助
+├── mod.rs          # 4 个 Guardrail trait + 4 个 Action 类型，声明子模块并 re-export adapter
 ├── input.rs        # InputGuardrail — before_model hook adapter
 ├── output.rs       # OutputGuardrail — after_model hook adapter
 ├── tool_input.rs   # ToolInputGuardrail — before_tool hook adapter
@@ -36,7 +36,7 @@ pub enum InputGuardrailAction {
 
 pub enum OutputGuardrailAction {
     Allow,
-    Replace(serde_json::Value),   // 替换最后一条 assistant message 的 content
+    Replace(Vec<crate::model::ContentBlock>),  // 替换模型响应 content（写入 ctx.response，由 001 回流到历史）
     Abort(String),
 }
 
@@ -104,9 +104,9 @@ impl Hook for InputGuardrailHook {
 ```
 
 类似地：
-- `OutputGuardrailHook` → `after_model`，`Replace(v)` 时修改 `ctx.messages` 最后一条 assistant content
+- `OutputGuardrailHook` → `after_model`，`check` 读 `ctx.response`（001 已填模型输出），`Replace(blocks)` 时写 `ctx.response = Some(blocks)`（001 负责回流到 state.messages）
 - `ToolInputGuardrailHook` → `before_tool`，`Modify(v)` 写 `ctx.tool_input`，`Reject(r)` 返回 `HookAction::Reject(r)`
-- `ToolOutputGuardrailHook` → `after_tool`，`Modify(v)` 写 `ctx.tool_output`
+- `ToolOutputGuardrailHook` → `after_tool`，`check` 读 `ctx.tool_output`，`Modify(v)` 写 `ctx.tool_output`
 
 ### AgentConfig 注册 API
 
@@ -146,6 +146,6 @@ impl AgentConfig {
 
 ## 注意事项
 
-- `OutputGuardrail::Replace(v)` 的具体实现：`ctx.messages` 最后一条应为 `Role::Assistant`；若不是（run loop 出现非预期顺序），记录 RuntimeWarning 并 Allow 继续
-- `ToolOutputGuardrailHook` 依赖 001 的 `ToolHookContext.tool_output`，必须 001 先合入
+- `OutputGuardrail` 依赖 001 的 `ModelHookContext.response`：`check` 从 `ctx.response`（after_model 时为 `Some`）读模型输出，`Replace(blocks)` 写回 `ctx.response`，由 001 的 after_model 回流逻辑落到 state.messages。adapter 无需自己 append 历史
+- `ToolOutputGuardrailHook` 依赖 001 的 `ToolHookContext.tool_output`，`InputGuardrailHook` 用既有的 `ModelHookContext.messages`（before_model 已支持回流）——必须 001 先合入
 - 各 adapter 的 panic recovery 由 `hook/runner.rs` 统一 `catch_unwind` 处理，无需每个 adapter 自己处理

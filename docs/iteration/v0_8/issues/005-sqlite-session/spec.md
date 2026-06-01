@@ -37,10 +37,12 @@ sqlite-session = ["dep:rusqlite"]
 
 use rusqlite::{params, Connection};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub struct SqliteSessionStore {
-    conn: Mutex<Connection>,
+    // Arc<Mutex<Connection>>：Connection 非 Send，async 方法用 spawn_blocking
+    // 在阻塞线程操作，需要 clone Arc 进 closure。
+    conn: Arc<Mutex<Connection>>,
 }
 
 impl SqliteSessionStore {
@@ -70,7 +72,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 **list**：`SELECT session_id FROM sessions ORDER BY saved_at DESC`
 
-**并发安全**：`rusqlite::Connection` 不是 `Send`，使用 `Mutex<Connection>` 包裹，`async fn` 通过 `tokio::task::spawn_blocking` 在阻塞线程执行。
+**并发安全**：`rusqlite::Connection` 不是 `Send`，用 `Arc<Mutex<Connection>>` 包裹；每个 async 方法 clone Arc 后 `tokio::task::spawn_blocking` 在阻塞线程内 `lock()` 并执行 SQL：
 
 ```rust
 #[async_trait]
@@ -79,28 +81,28 @@ impl SessionStore for SqliteSessionStore {
         let json = serde_json::to_string(snapshot)?;
         let schema = snapshot.schema_version.clone();
         let id = session_id.to_string();
-        let conn = &self.conn;
+        let conn = Arc::clone(&self.conn);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
         tokio::task::spawn_blocking(move || {
-            // 需要访问 conn，但 Mutex 不能 move 进 spawn_blocking
-            // 实际实现：用 Arc<Mutex<Connection>> 而非 Mutex<Connection>
-        }).await.map_err(|e| SessionError::Storage(e.to_string()))?
+            let c = conn.lock().map_err(|e| SessionError::Storage(e.to_string()))?;
+            c.execute(
+                "INSERT OR REPLACE INTO sessions \
+                 (session_id, schema_version, snapshot_json, saved_at) VALUES (?1, ?2, ?3, ?4)",
+                params![id, schema, json, now as i64],
+            )
+            .map_err(|e| SessionError::Storage(e.to_string()))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| SessionError::Storage(e.to_string()))?
     }
 }
 ```
 
-修正：使用 `Arc<Mutex<Connection>>`：
-
-```rust
-pub struct SqliteSessionStore {
-    conn: Arc<std::sync::Mutex<Connection>>,
-}
-```
-
-`spawn_blocking` 时 clone Arc 并 move 进 closure。
+`load` / `delete` / `list` 同结构。
 
 ### 模块组织
 

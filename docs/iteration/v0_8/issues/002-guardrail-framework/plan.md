@@ -28,8 +28,9 @@ crates/agent-runtime-core/src/guardrail/mod.rs
 
 **`guardrail/output.rs`** — `OutputGuardrailHook`：
 - 实现 `Hook::after_model`
-- `Replace(v)` → 找 ctx.messages 最后一条 assistant message，替换其 content；若最后一条不是 assistant，`try_send` RuntimeWarning 并 Continue
-- 需要 `mpsc::Sender<RuntimeEvent>` 用于警告；通过 `after_model(&self, ctx, tx)` 签名传入（当前签名为 `after_model(&self, ctx: &mut ModelHookContext) -> HookAction`，没有 tx）—— **注意**：当前 `Hook::after_model` 没有 tx 参数，发不了 event。选择：(a) 静默忽略警告，(b) 改 `after_model` 签名。选 (a)，保持签名不变，警告仅记录到 log（tracing::warn!）
+- `check` 传入只读 ctx；guardrail 从 `ctx.response`（001 已填 `Some(模型输出)`）读取输出做决策
+- `Replace(blocks)` → `ctx.response = Some(blocks)`（001 的 after_model 回流逻辑负责落到 state.messages）；`Allow` → Continue；`Abort` 透传
+- 不需要 tx：无 message-ordering 兜底逻辑（response 一定存在），实现简洁
 
 **`guardrail/tool_input.rs`** — `ToolInputGuardrailHook`：
 - 实现 `Hook::before_tool`

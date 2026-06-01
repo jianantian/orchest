@@ -101,9 +101,9 @@ step 级 checkpoint（每步保存）推迟到 v0.9。
 
 #### 与 Hook trait 的关系
 
-Guardrail 是 Hook 的**便利封装层**，底层注册为 Hook 实现，不修改 Hook trait 的结构——但需要两处最小扩展以支持"拒绝并回传"语义：
+Guardrail 是 Hook 的**便利封装层**，底层注册为 Hook 实现，不修改 Hook trait 的结构——但需要三处最小扩展（均在 001 落地）以支持"审查 + 拒绝 + 改写"语义：
 
-**Hook 契约变更（v0.8 引入）：**
+**Hook 契约变更（v0.8 引入，见 issue 001）：**
 
 1. `HookAction` 新增 `Reject(String)` 变体：
    ```rust
@@ -116,7 +116,9 @@ Guardrail 是 Hook 的**便利封装层**，底层注册为 Hook 实现，不修
    ```
    `Reject` 与 `Skip` 的区别：`Skip` 回传固定字符串，`Reject` 回传用户指定的 reason，语义上是"拒绝并告知模型原因，让模型换策略"。
 
-2. `ToolHookContext` 新增 `tool_output` 字段：
+2. `ModelHookContext` 新增 `response: Option<Vec<ContentBlock>>` 字段：before_model 时为 `None`，after_model 时为模型输出。**当前 after_model 既看不到模型响应（ctx 只有输入 messages）也无法改写它（修改被丢弃）**——OutputGuardrail 因此完全失效。001 增加 response 载体并在 after_model hook 链后回流到 state.messages，对称于 before_model 对 messages 的处理。
+
+3. `ToolHookContext` 新增 `tool_output` 字段：
    ```rust
    pub struct ToolHookContext {
        pub run_id: RunId,
@@ -135,16 +137,18 @@ Run loop 中 `Reject` 的处理：不调用工具执行，将 reason 作为 tool
 | 层 | 对应 hook 点 | 可用操作 |
 |---|---|---|
 | `InputGuardrail` | `before_model` | Allow / Replace(Vec\<Message\>) / Abort(reason) |
-| `OutputGuardrail` | `after_model` | Allow / Replace(response_content: Value) / Abort(reason) |
-| `ToolInputGuardrail` | `before_tool` | Allow / Modify(new_input: Value) / Reject(reason) / Abort(reason) |
-| `ToolOutputGuardrail` | `after_tool` | Allow / Modify(new_output: Value) / Abort(reason) |
+| `OutputGuardrail` | `after_model` | Allow / Replace(Vec\<ContentBlock\>) / Abort(reason) |
+| `ToolInputGuardrail` | `before_tool` | Allow / Modify(Value) / Reject(reason) / Abort(reason) |
+| `ToolOutputGuardrail` | `after_tool` | Allow / Modify(Value) / Abort(reason) |
+
+guardrail `check` 接受**只读** `&ctx`，只通过返回值表达意图；adapter 据此修改 ctx（消除双修改路径）。
 
 **语义实现映射：**
-- `InputGuardrail::Replace(msgs)` → 写入 `ctx.messages`，返回 `ModelHookAction::Continue`（`before_model` 已有 `&mut ModelHookContext`）
-- `OutputGuardrail::Replace(content)` → 修改 `ctx.messages` 最后一条 assistant message，返回 `HookAction::Continue`
-- `ToolInputGuardrail::Modify(input)` → 写入 `ctx.tool_input`，返回 `HookAction::Continue`（`before_tool` 已有 `&mut ToolHookContext`，且 loop 已用 `tool_hook_ctx.tool_input` 作为实际调用输入）
+- `InputGuardrail::Replace(msgs)` → adapter 写入 `ctx.messages`，返回 `ModelHookAction::Continue`（before_model 的 messages 已回流）
+- `OutputGuardrail::Replace(blocks)` → adapter 写入 `ctx.response`，返回 `HookAction::Continue`（after_model 的 response 由 001 回流到 state.messages）
+- `ToolInputGuardrail::Modify(input)` → adapter 写入 `ctx.tool_input`，返回 `HookAction::Continue`（loop 用处理后的 tool_input 执行）
 - `ToolInputGuardrail::Reject(reason)` → 返回 `HookAction::Reject(reason)`
-- `ToolOutputGuardrail::Modify(output)` → 写入 `ctx.tool_output`，返回 `HookAction::Continue`
+- `ToolOutputGuardrail::Modify(output)` → adapter 写入 `ctx.tool_output`，返回 `HookAction::Continue`
 
 #### 用户 API
 

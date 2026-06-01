@@ -17,7 +17,7 @@
 
 ### Rust Examples
 
-在 `examples/rust/` 中新增以下示例（`cargo run --example <name>`，含 FakeModelAdapter 或 mock，不依赖真实 API key）：
+在 `examples/rust/` 中新增以下示例（`cargo run --example <name>`，文件内联 mock model，不依赖真实 API key）：
 
 | 文件 | 演示内容 |
 |------|---------|
