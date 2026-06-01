@@ -345,6 +345,42 @@ impl RunHandle {
 ### 通用
 
 - [ ] `cargo test --workspace` 全绿
+- [ ] `cargo test --workspace --features agent-runtime-core/sqlite-session` 全绿
 - [ ] `cargo clippy --workspace -- -D warnings` 全绿
 - [ ] `bash scripts/lint-check.sh` 全 PASS
+
+## Issues 拆解
+
+| Issue | 标题 | 依赖 | 核心交付 |
+|-------|------|------|---------|
+| [001](./issues/001-hook-contract/spec.md) | Hook Contract Extension | — | `HookAction::Reject(String)`、`ToolHookContext.tool_output`、runner/loop 更新 |
+| [002](./issues/002-guardrail-framework/spec.md) | Guardrail Framework | 001 | 4 层 guardrail trait + adapter、`AgentConfig::with_*_guardrail()` |
+| [003](./issues/003-approval-mode/spec.md) | ApprovalMode | — | `ApprovalMode` 枚举、`RuntimeConfig.approval_mode`、py/node binding |
+| [004](./issues/004-session-store/spec.md) | SessionStore + InMemory + resume | — | `SessionStore` trait、`SessionSnapshot`、`InMemorySessionStore`、`SessionPersistenceHook`、`AgentRun::resume()` |
+| [005](./issues/005-sqlite-session/spec.md) | SqliteSessionStore | 004 | `sqlite-session` feature、`rusqlite` 可选依赖、`SqliteSessionStore` 实现 |
+| [006](./issues/006-watcher-comms/spec.md) | Multi-subscriber + Watcher + InjectCmd | — | `RunHandle::subscribe_events()`、`InjectCmd.message`、`Watcher` trait、`attach_watcher()` |
+| [007](./issues/007-examples-validation/spec.md) | Examples + Final Validation | 001–006 | 6 个使用示例、`v08_integration.rs`（5 个场景）、最终 CI 全绿 |
+
+## 推荐执行顺序
+
+001 / 003 / 004 / 006 可并行启动（互不依赖）。002 依赖 001，005 依赖 004。
+
+```
+001 (Hook Contract) ──> 002 (Guardrail) ──┐
+003 (ApprovalMode) ───────────────────────┤
+004 (SessionStore) ──> 005 (SQLite) ──────┤──> 007 (Examples + Validation)
+006 (Watcher) ────────────────────────────┘
+```
+
+建议节奏：
+1. **并行启动**：001 + 003 + 004 + 006
+2. **001 完成后**：启动 002
+3. **004 完成后**：启动 005
+4. **001-006 全部合入后**：007 收尾
+
+## v0.8 权威顺序
+
+1. `docs/iteration/v0_8/issues/*/spec.md` 是实施与验收的第一权威
+2. 本文件约束迭代范围、依赖和成功指标
+3. 若 spec 与 PRD 冲突，先更新 spec/PRD 再实现
 - [ ] sqlite-session feature 下构建不破坏 agent-runtime-py / agent-runtime-node 的默认构建（feature 不 propagate）
