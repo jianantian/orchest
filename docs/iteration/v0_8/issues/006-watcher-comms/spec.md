@@ -28,13 +28,11 @@ v0.7 已在 `AgentRunState` 内部预埋了 `event_subs: Vec<mpsc::Sender<Runtim
 AgentMsg::Subscribe(mpsc::Sender<RuntimeEvent>),
 ```
 
-Actor `handle()` 中处理 `Subscribe`：将 tx 追加到 `state.event_subs`（按 actor 现有访问 state 的方式，如 `self.state.as_mut()`）：
+Actor `handle()` 中处理 `Subscribe`：将 tx 追加到 `state.event_subs`。注意 Ractor 的 `handle()` 签名为 `async fn handle(&self, myself, msg, state: &mut AgentRunState)`——state 是**参数**，直接用，不是 `self.state`：
 
 ```rust
 AgentMsg::Subscribe(tx) => {
-    if let Some(state) = self.state.as_mut() {
-        state.event_subs.push(tx);
-    }
+    state.event_subs.push(tx);
     Ok(())
 }
 ```
@@ -59,6 +57,17 @@ impl RunHandle {
 
 **投递保证（文档）**：次级订阅者是有损的——channel 满时 emit() 用 try_send，满时丢弃并向主订阅者发出 `RuntimeEvent::EventsDropped { subscriber_id, count }`。调用方应选择足够大的 `capacity`（建议 >= 1024）。
 
+#### actor_ref 就绪时序（必须处理）
+
+`AgentRun::start` 内部 `actor_ref` 初值为 `None`，在 spawn 的后台任务里 `Actor::spawn().await` 完成后才被设置（`run/mod.rs:69-77`）。这带来两个时序问题：
+
+1. **订阅可能静默丢失**：紧跟 `start()` 调用 `subscribe_events()` 时 `actor_ref` 可能仍是 `None`，`if let Some(aref)` 直接跳过，订阅丢失。`RunHandle::abort()` 有同样的既有竞态，但对 abort 影响小；对 watcher 是致命的（核心功能不可靠）。
+2. **错过订阅前事件**：`pre_start` 在 `Actor::spawn` 期间就 emit 了 `RunStarted`，即 actor_ref 就绪时 `RunStarted` 已发出。次级订阅者**必然错过 RunStarted 及订阅前的事件**——这与"次级订阅有损"的契约一致，但意味着 watcher / 测试不应依赖收到 `RunStarted`。
+
+**解决（针对问题 1）**：`subscribe_events` 在 cast 前 await actor_ref 就绪。`start_with_bus` 增加就绪信号（`Arc<tokio::sync::Notify>` 或 `watch<bool>`），在 `*guard = Some(aref)` 后 `notify_waiters()`；`subscribe_events` 循环 `while actor_ref 为 None { 等待就绪信号 }` 再 cast。这样 `attach_watcher` 紧随 `start()` 也能可靠订阅（仍可能错过 RunStarted，属问题 2 的预期语义）。
+
+> 问题 2 不修（符合有损契约）。Supervised Delegation 的 watcher 关注的是运行中的事件流，错过 RunStarted 可接受。
+
 ### InjectCmd — 补充 payload，改为单向 cast
 
 v0.7 中 `Inject` 带 `RpcReplyPort<()>`（call 语义）。v0.8 **改为单向 `cast`**（无 reply）：注入是 fire-and-forget 软干预，不需要回复确认；watcher task 也不应阻塞等待 actor 回复。背压控制（若 v0.9 需要）届时再升级为 call。
@@ -75,17 +84,15 @@ pub(crate) struct InjectCmd {
 //   Steer(SteerCmd, RpcReplyPort<SteerResult>),  // 保留 call 语义（v0.9 实现）
 ```
 
-Actor `handle()` 中处理 `Inject`（替换现有"not yet implemented" stub）：
+Actor `handle()` 中处理 `Inject`（替换现有"not yet implemented" stub；`state` 同为 handle 参数）：
 
 ```rust
 AgentMsg::Inject(cmd) => {
     // 将消息插入 messages，以 User role 注入，下一个 RunStep 时模型可见
-    if let Some(state) = self.state.as_mut() {
-        state.messages.push(crate::model::Message {
-            role: crate::model::Role::User,
-            content: vec![crate::model::ContentBlock::Text { text: cmd.message }],
-        });
-    }
+    state.messages.push(crate::model::Message {
+        role: crate::model::Role::User,
+        content: vec![crate::model::ContentBlock::Text { text: cmd.message }],
+    });
     Ok(())
 }
 ```
@@ -110,9 +117,23 @@ RuntimeEvent::RunAborted { reason: Option<String> },
 
 - `RunHandle::abort()`（用户手动）→ `CancelCmd { reason: None }`
 - watcher `Abort(r)` → `CancelCmd { reason: Some(r) }`
-- actor 处理 Cancel 时，将 `reason` 透传到 `RuntimeEvent::RunAborted { reason }`
+- actor 的 Cancel handler（`actor.rs:321`，当前为 `AgentMsg::Cancel(_)`）改为提取 reason 并透传：
 
-这是对现有公共类型的小幅扩展，触及 `events.rs`（RunAborted variant）和 `handle.rs`（abort 方法）。检查 binding crates（py/node）是否匹配 RunAborted 的事件序列化。
+```rust
+AgentMsg::Cancel(cmd) => {
+    if !state.cancelled {
+        state.cancelled = true;
+        emit(&state.event_subs, RuntimeEvent::RunAborted { reason: cmd.reason }).await;
+    }
+    myself.stop(None);
+}
+```
+
+**需同步更新的 RunAborted 站点（unit variant → 带字段）：**
+- `events.rs:155`：`RunAborted,` → `RunAborted { reason: Option<String> },`
+- `actor.rs:324`：emit 处改为 `RunAborted { reason: cmd.reason }`（如上）
+- `tests/e2e_validation.rs:312`：match arm `RuntimeEvent::RunAborted =>` → `RuntimeEvent::RunAborted { .. } =>`
+- binding crates（py/node）：检查事件序列化/匹配是否覆盖 RunAborted，补 reason 字段
 
 ### Watcher Trait
 
@@ -189,7 +210,8 @@ pub use run::{Watcher, WatcherAction};
 ## 验收标准
 
 - [ ] `RunHandle::subscribe_events(capacity)` 存在，返回 `EventReceiver`
-- [ ] 多个次级订阅者可同时接收事件
+- [ ] `subscribe_events` / `attach_watcher` 在 `actor_ref` 未就绪时 await 至就绪再 cast（紧随 `start()` 调用不丢订阅）
+- [ ] 多个次级订阅者可同时接收（订阅后发出的）事件
 - [ ] 次级订阅者 channel 满时，`EventsDropped` 事件发到主订阅者（不阻塞 run loop）
 - [ ] `InjectCmd.message: String` 字段存在；`AgentMsg::Inject(InjectCmd)` 为单向 cast（无 RpcReplyPort）
 - [ ] `Inject` 处理不再返回"not yet implemented"；注入的消息在下一轮 model call 前出现在 messages 中

@@ -32,43 +32,65 @@ pub(crate) struct InjectCmd { pub message: String }
 pub(crate) struct CancelCmd { pub reason: Option<String> }
 ```
 
+> **重要**：Ractor `handle()` 签名为 `async fn handle(&self, myself, msg: AgentMsg, state: &mut AgentRunState)`（`actor.rs:282`）。`state` 是参数，直接用——**不是** `self.state.as_mut()`。
+
 **handle() 中处理 Subscribe**：
 ```rust
 AgentMsg::Subscribe(tx) => {
-    if let Some(state) = self.state.as_mut() {
-        state.event_subs.push(tx);
-    }
+    state.event_subs.push(tx);
     Ok(())
 }
 ```
-
-（actor.rs 的 handle 方法，参考现有 Cancel 的处理结构）
 
 **handle() 中处理 Inject**（替换 "not yet implemented" stub，单向无 reply）：
 ```rust
 AgentMsg::Inject(cmd) => {
-    if let Some(state) = self.state.as_mut() {
-        use crate::model::{Message, Role, ContentBlock};
-        state.messages.push(Message {
-            role: Role::User,
-            content: vec![ContentBlock::Text { text: cmd.message }],
-        });
-    }
+    use crate::model::{Message, Role, ContentBlock};
+    state.messages.push(Message {
+        role: Role::User,
+        content: vec![ContentBlock::Text { text: cmd.message }],
+    });
     Ok(())
 }
 ```
 
-**handle() 中处理 Cancel**（透传 reason 到 RunAborted）：现有 Cancel handler 在发出 `RuntimeEvent::RunAborted` 时改为 `RunAborted { reason: cmd.reason }`（需先把 reason 从 CancelCmd 取出）。
+**handle() 中处理 Cancel**（现有 `actor.rs:321` 为 `AgentMsg::Cancel(_)`，改为提取 reason）：
+```rust
+AgentMsg::Cancel(cmd) => {
+    if !state.cancelled {
+        state.cancelled = true;
+        emit(&state.event_subs, RuntimeEvent::RunAborted { reason: cmd.reason }).await;
+    }
+    myself.stop(None);
+}
+```
 
-**events.rs**：`RunAborted` 从 unit variant 改为 `RunAborted { reason: Option<String> }`，更新所有构造点。
+**RunAborted unit→struct 的三个站点（缺一不可，否则编译失败）**：
+- `events.rs:155`：`RunAborted,` → `RunAborted { reason: Option<String> },`
+- `actor.rs:324`：emit 处如上
+- `tests/e2e_validation.rs:312`：`RuntimeEvent::RunAborted =>` → `RuntimeEvent::RunAborted { .. } =>`
+- binding crates（py/node）：grep `RunAborted`，若有匹配/序列化补 reason
 
 **handle.rs `abort()`**：`aref.cast(AgentMsg::Cancel(CancelCmd { reason: None }))`。
 
-### 步骤 2：`run/handle.rs` — subscribe_events
+### 步骤 2：actor_ref 就绪信号 + subscribe_events
+
+**先解决 actor_ref 就绪竞态**（见 spec）：`start_with_bus`（`run/mod.rs`）的 `actor_ref` 在后台任务里才设置，紧随 `start()` 的 subscribe 会撞到 `None` 而静默丢订阅。
+
+在 `RunHandle` 增加就绪信号。最简：`Arc<tokio::sync::Notify>`，`start_with_bus` 在 `*guard = Some(aref)` 后调用 `ready.notify_waiters()`；`RunHandle` 持有 `ready: Arc<Notify>`。`subscribe_events` 先确保就绪再 cast：
 
 ```rust
 pub async fn subscribe_events(&self, capacity: usize) -> crate::run::EventReceiver {
     let (tx, rx) = tokio::sync::mpsc::channel(capacity);
+    // 等待 actor_ref 就绪（避免紧随 start() 时为 None 而丢订阅）
+    loop {
+        // 先登记 notified()，再检查，避免错过通知
+        let notified = self.ready.notified();
+        if self.actor_ref.lock().ok().and_then(|g| g.clone()).is_some() {
+            break;
+        }
+        notified.await;
+    }
     if let Ok(guard) = self.actor_ref.lock() {
         if let Some(ref aref) = *guard {
             let _ = aref.cast(AgentMsg::Subscribe(tx));
@@ -77,6 +99,8 @@ pub async fn subscribe_events(&self, capacity: usize) -> crate::run::EventReceiv
     rx
 }
 ```
+
+> `ActorRef` 是 `Clone`，`g.clone()` 取出判断就绪即可。`notified()` 必须在检查前登记以避免 notify 在检查与 await 之间丢失。`start_with_bus` 中即使 spawn 失败也应 `notify_waiters()`（或设超时）防止 subscribe 永久挂起——简单起见可在后台任务的 spawn 结果分支都通知。
 
 ### 步骤 3：新建 `run/watcher.rs`
 
@@ -136,10 +160,10 @@ pub use run::{Watcher, WatcherAction};
 
 在 `crates/agent-runtime-core/tests/v08_integration.rs` 或 `run/tests.rs`：
 
-1. `subscribe_events_receives_all_events`：attach 一个次级 subscriber，验证收到 RunStarted 等事件
-2. `multiple_subscribers_each_receive_events`：attach 两个次级 subscriber，验证各自独立接收
+1. `subscribe_events_receives_subsequent_events`：attach 一个次级 subscriber，验证收到订阅后发出的事件（如 `RunCompleted`）。**不要**断言 `RunStarted`——次级订阅者必然错过它（见 spec actor_ref 就绪时序）
+2. `multiple_subscribers_each_receive_events`：attach 两个次级 subscriber，验证各自独立接收后续事件
 3. `secondary_subscriber_full_channel_emits_events_dropped`：次级 capacity=1，产生多事件，验证主 subscriber 收到 EventsDropped
-4. `inject_message_appears_in_next_model_call`：FakeModelAdapter 记录收到的 messages，attach_watcher 在 RunStarted 时注入消息，验证 FakeModelAdapter 在下一轮收到注入的 user message
+4. `inject_message_appears_in_next_model_call`：FakeModelAdapter 多轮脚本，watcher 在**运行中事件**（如首个 `ModelCallCompleted` 或 `ToolCallCompleted`，非 RunStarted）触发 Inject，验证 FakeModelAdapter 在后续轮收到注入的 user message
 5. `watcher_abort_terminates_run_with_reason`：watcher 在某事件后返回 `Abort("policy violation")`，验证 run 以 `RunAborted { reason: Some("policy violation") }` 结束
 6. `manual_abort_has_no_reason`：`RunHandle::abort()` 触发，验证 `RunAborted { reason: None }`
 7. `watcher_task_exits_after_run_completes`：run 完成，验证 watcher task channel 关闭（通过 rx.recv() 返回 None 验证）

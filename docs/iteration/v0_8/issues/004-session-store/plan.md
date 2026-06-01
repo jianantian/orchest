@@ -151,7 +151,42 @@ pub fn with_session_store(mut self, store: Arc<dyn crate::session::SessionStore>
 
 **自动注册**：抽取 helper `maybe_register_persistence(config: &mut AgentConfig)`：若 `config.session_store` 非空且 `config.session_id` 非空，构造 `SessionPersistenceHook::new(store, session_id, config.clone())` 并 push 到 `config.hooks`。`start_with_bus` 和 `resume` 在构建 args 前都调用它。注意：克隆 config 作为 `original_config` 须在 push hook **之前**（避免把 persistence hook 自身计入 original_config 的 hooks，虽然 hooks 是 serde-skip 不影响 snapshot，但语义上更干净）。
 
-**AgentRun::resume**：
+**AgentRun::resume** — 需要把 run_id / messages / step / budget_used 注入 actor 的 `pre_start`。
+
+**(a) AgentRunArgs 增加 resume 载体**（区分 "start from input" vs "resume from snapshot"）：
+
+```rust
+pub(crate) struct ResumeState {
+    pub run_id: RunId,
+    pub messages: Vec<Message>,
+    pub step: u32,
+    pub budget_used: BudgetUsage,
+}
+
+pub(crate) struct AgentRunArgs {
+    // ... 现有字段 ...
+    pub resume: Option<ResumeState>,   // 新增；start 路径为 None
+}
+```
+
+**(b) `pre_start` 分支**：
+- `resume` 为 `None`（start）：现有行为——`RunId::new()`、把 `input` 构建为首条 user message、`step = 0`、`BudgetGuard::new(config.budget)`
+- `resume` 为 `Some(rs)`：用 `rs.run_id`；`state.messages = rs.messages`（不再从 input 构建）；`state.step = rs.step`；budget 用既有用量 seed（见 c）
+
+**(c) BudgetGuard seed**：`BudgetGuard::new()` 总是零用量，需新增构造（`budget.rs`）：
+
+```rust
+impl BudgetGuard {
+    pub fn with_usage(config: BudgetConfig, usage: BudgetUsage) -> Self {
+        Self { config, usage }
+    }
+}
+```
+
+resume 时 `BudgetGuard::with_usage(config.budget.clone(), rs.budget_used)`。
+> 限制：`max_duration` 是 wall-clock，不在 `BudgetUsage` 内，resume 后从 0 重新计时（可接受，spec 已隐含——snapshot 不含 duration）。
+
+**(d) run_id 来源**：`start_with_bus` 现在 `let run_id = RunId::new()`；resume 路径改用 `snapshot.run_id`。可让 `resume` 走独立的 `resume_with_bus`，或给 `start_with_bus` 增加 `resume: Option<ResumeState>` 参数并据此决定 run_id。
 
 ```rust
 pub fn resume(
@@ -159,13 +194,18 @@ pub fn resume(
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
 ) -> (RunHandle, EventReceiver) {
-    let config = snapshot.active_config.clone();
-    // ... 构建 AgentRunArgs，但 messages 从 snapshot 来，run_id 固定 ...
-    Self::resume_with_bus(snapshot, model, registry, ApprovalBus::default())
+    let mut config = snapshot.active_config.clone();
+    maybe_register_persistence(&mut config);  // 与 start 一致
+    let resume = ResumeState {
+        run_id: snapshot.run_id,
+        messages: snapshot.messages,
+        step: snapshot.step,
+        budget_used: snapshot.budget_used,
+    };
+    // 构建 args（input 置空，resume: Some(resume)），spawn actor，run_id = snapshot.run_id
+    // ...（与 start_with_bus 共用 spawn 逻辑，仅 run_id 和 args.resume 不同）
 }
 ```
-
-`AgentRunArgs` 或 actor 内部需要区分 "start from input" vs "resume from snapshot"。可添加一个 `initial_messages: Option<Vec<Message>>` 字段到 `AgentRunArgs`：非空时跳过 input → first user message 的构建。
 
 ### 步骤 5：`src/lib.rs` — re-export
 
@@ -181,7 +221,8 @@ pub use session::{SessionSnapshot, SessionStore, SessionError, InMemorySessionSt
 3. `in_memory_store_schema_mismatch`：save schema_version="0.1" 的 snapshot，手动修改为 "0.0" 后 load 返回 SchemaMismatch
 4. `persistence_hook_saves_on_run_end`：FakeModelAdapter 完成一轮 run，验证 InMemorySessionStore 中有 session
 5. `persistence_hook_saves_on_run_error`：FakeModelAdapter 返回错误，验证 store 仍保存了 snapshot
-6. `resume_continues_from_snapshot`：start → 完成若干步 → snapshot → resume，验证 run_id 一致、messages 从 snapshot 继续
+6. `resume_continues_from_snapshot`：start → 完成若干步 → snapshot → resume，验证 run_id 一致、messages 从 snapshot 继续、step 从 snapshot.step 起算、budget 用量从 snapshot.budget_used 起算（再跑一步后用量是"恢复值 + 新增"而非从零）
+7. `budget_guard_with_usage_seeds_prior_usage`：单测 `BudgetGuard::with_usage` 的 usage 正确（直接断言 `usage()`）
 
 ```bash
 cargo test --workspace

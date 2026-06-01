@@ -16,7 +16,9 @@
 1. `HookAction` 枚举新增 `Reject(String)` 变体，放在 `Skip` 之后
 2. `ToolHookContext` 新增 `pub tool_output: Option<serde_json::Value>` 字段，默认 `None`
 3. `ModelHookContext` 新增 `pub response: Option<Vec<crate::model::ContentBlock>>` 字段
-4. 更新所有 `ModelHookContext` / `ToolHookContext` 构造点（actor.rs 现有 line 405、459 等，以及测试中的构造），新增字段填默认值（`response: None` / `tool_output: None`）
+4. 更新所有 `ModelHookContext` / `ToolHookContext` 构造点，新增字段填默认值（`response: None` / `tool_output: None`）：
+   - `actor.rs`：before_model（line ~405）、after_model（line ~459）、before_tool / after_tool 各分支
+   - `hook/loop_detection.rs`（`#[cfg(test)]`）：`make_ctx`（line ~185 构造 ToolHookContext）、`make_model_ctx`（line ~201 构造 ModelHookContext）——不加字段会编译失败
 
 ### 步骤 2：`hook/runner.rs` — 更新 run_before_tool 和 run_after_tool
 
@@ -125,14 +127,30 @@ let mut model_ctx = crate::hook::ModelHookContext {
 };
 ```
 
-`run_after_model` 返回后（在 `break r` 之前），读回 `model_ctx.response` 并应用到 `r`：
+**注意当前结构**：`after_model` 的 `model_ctx` 在一个内层 `{ ... }` 块里构造，块结束 `model_ctx` 即被 drop，而 `break r;` 在块外。要读回 `model_ctx.response`，必须把读回放在**同一个块内**（model_ctx 仍存活时）、并在块内改写 `r`，再于块外 `break r`：
 
 ```rust
-let mut r = r;
-if let Some(modified) = model_ctx.response.take() {
-    r.content = modified;
+Ok(r) => {
+    let mut r = r;
+    {
+        let mut model_ctx = crate::hook::ModelHookContext {
+            run_id,
+            messages: call_messages,
+            model_spec: state.config.model.spec.clone(),
+            response: Some(r.content.clone()),   // ← 新增
+        };
+        if let crate::hook::HookAction::Abort(reason) =
+            crate::hook::runner::run_after_model(&state.config.hooks, &mut model_ctx, primary(&subs)).await
+        {
+            // ... 现有 on_run_error + RunFailed + return false ...
+        }
+        // 读回（在 model_ctx 仍存活的块内）
+        if let Some(modified) = model_ctx.response.take() {
+            r.content = modified;
+        }
+    }
+    break r;
 }
-break r;
 ```
 
 before_model 的构造点（line 405）新增 `response: None`。这样 line 592 `state.messages.push(... response.content.clone())` append 的就是 after_model hook 改写后的内容。
