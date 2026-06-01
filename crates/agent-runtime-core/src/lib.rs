@@ -2,6 +2,7 @@
 
 pub mod budget;
 pub mod events;
+pub mod guardrail;
 pub mod handoff;
 pub mod hook;
 pub mod model;

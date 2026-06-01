@@ -195,6 +195,52 @@ impl AgentConfig {
         self
     }
 
+    /// Register an input guardrail (reviews messages at `before_model`).
+    pub fn with_input_guardrail(
+        mut self,
+        guardrail: std::sync::Arc<dyn crate::guardrail::InputGuardrail>,
+    ) -> Self {
+        self.hooks
+            .push(std::sync::Arc::new(crate::guardrail::InputGuardrailHook(
+                guardrail,
+            )));
+        self
+    }
+
+    /// Register an output guardrail (reviews the model response at `after_model`).
+    pub fn with_output_guardrail(
+        mut self,
+        guardrail: std::sync::Arc<dyn crate::guardrail::OutputGuardrail>,
+    ) -> Self {
+        self.hooks
+            .push(std::sync::Arc::new(crate::guardrail::OutputGuardrailHook(
+                guardrail,
+            )));
+        self
+    }
+
+    /// Register a tool-input guardrail (reviews tool input at `before_tool`).
+    pub fn with_tool_input_guardrail(
+        mut self,
+        guardrail: std::sync::Arc<dyn crate::guardrail::ToolInputGuardrail>,
+    ) -> Self {
+        self.hooks.push(std::sync::Arc::new(
+            crate::guardrail::ToolInputGuardrailHook(guardrail),
+        ));
+        self
+    }
+
+    /// Register a tool-output guardrail (reviews tool output at `after_tool`).
+    pub fn with_tool_output_guardrail(
+        mut self,
+        guardrail: std::sync::Arc<dyn crate::guardrail::ToolOutputGuardrail>,
+    ) -> Self {
+        self.hooks.push(std::sync::Arc::new(
+            crate::guardrail::ToolOutputGuardrailHook(guardrail),
+        ));
+        self
+    }
+
     pub fn with_loop_detection(self) -> Self {
         self.with_hook(std::sync::Arc::new(
             crate::hook::LoopDetectionHook::default(),
