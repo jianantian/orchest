@@ -15,7 +15,7 @@ use agent_runtime_core::model::{
     ThinkingLevel,
 };
 use agent_runtime_core::run::{
-    AgentConfig, AgentRun, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
+    AgentConfig, AgentRun, ApprovalMode, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
 };
 use agent_runtime_core::tool::async_job::{JobHandle, JobStatus};
 use agent_runtime_core::tool::builtin::WriteFileTool;
@@ -36,6 +36,7 @@ struct Agent {
     request_options: RequestOptions,
     skills_dir: Option<String>,
     budget: Option<PyBudget>,
+    approval_mode: Option<String>,
     tools: Vec<PyToolDef>,
     native_tools: Vec<Arc<dyn Tool>>,
     run_handle: Arc<TokioMutex<Option<RunHandle>>>,
@@ -412,6 +413,18 @@ fn parse_thinking_level(value: &str) -> Result<ThinkingLevel, String> {
     }
 }
 
+fn parse_approval_mode(value: Option<&str>) -> PyResult<ApprovalMode> {
+    match value {
+        None | Some("per_tool") | Some("PerTool") => Ok(ApprovalMode::PerTool),
+        Some("none") | Some("None") => Ok(ApprovalMode::None),
+        Some("all") | Some("All") => Ok(ApprovalMode::All),
+        Some("side_effect_only") | Some("SideEffectOnly") => Ok(ApprovalMode::SideEffectOnly),
+        Some(other) => Err(PyRuntimeError::new_err(format!(
+            "invalid approval_mode '{other}'; expected per_tool|none|all|side_effect_only"
+        ))),
+    }
+}
+
 fn parse_compatibility_policy(value: &str) -> Result<CompatibilityPolicy, String> {
     match value {
         "coerce" => Ok(CompatibilityPolicy::Coerce),
@@ -482,7 +495,10 @@ impl Agent {
                 dir: self.skills_dir.clone(),
                 ..SkillsConfig::default()
             },
-            runtime: RuntimeConfig::default(),
+            runtime: RuntimeConfig {
+                approval_mode: parse_approval_mode(self.approval_mode.as_deref())?,
+                ..RuntimeConfig::default()
+            },
             hooks: vec![],
             retry_policy: None,
             handoffs: vec![],
@@ -525,7 +541,7 @@ impl Agent {
 #[pymethods]
 impl Agent {
     #[new]
-    #[pyo3(signature = (model, system_prompt, skills_dir=None, budget=None, api_url=None, api_key=None, api_key_env=None, max_tokens=None, request_options=None))]
+    #[pyo3(signature = (model, system_prompt, skills_dir=None, budget=None, api_url=None, api_key=None, api_key_env=None, max_tokens=None, request_options=None, approval_mode=None))]
     #[allow(clippy::too_many_arguments)] // justified: pyo3 constructor maps Python kwargs 1:1
     fn new(
         model: String,
@@ -537,6 +553,7 @@ impl Agent {
         api_key_env: Option<String>,
         max_tokens: Option<u32>,
         request_options: Option<Bound<'_, PyDict>>,
+        approval_mode: Option<String>,
     ) -> PyResult<Self> {
         let py_budget = if let Some(b) = budget {
             Some(PyBudget {
@@ -572,6 +589,7 @@ impl Agent {
             request_options,
             skills_dir,
             budget: py_budget,
+            approval_mode,
             tools: Vec::new(),
             native_tools: Vec::new(),
             run_handle: Arc::new(TokioMutex::new(None)),

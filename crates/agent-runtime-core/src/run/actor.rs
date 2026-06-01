@@ -726,7 +726,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             input: tool_input.clone(),
         };
 
-        if tool.metadata().requires_approval {
+        if state.config.runtime.should_approve(tool.metadata()) {
             let approval_rx = state.approval_bus.request(run_id).await;
             emit(
                 &subs,

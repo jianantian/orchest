@@ -125,7 +125,27 @@ pub struct SkillsConfig {
     pub allowed: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Custom approval predicate: given a tool's metadata, decide whether the call
+/// requires approval. Takes priority over [`ApprovalMode`] when set.
+pub type CustomApprovalFn = Arc<dyn Fn(&crate::tool::ToolMetadata) -> bool + Send + Sync>;
+
+/// Run-level approval strategy. Overrides the per-tool
+/// [`ToolMetadata::requires_approval`](crate::tool::ToolMetadata) flag.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApprovalMode {
+    /// Use each tool's `requires_approval` flag (default; backwards compatible).
+    #[default]
+    PerTool,
+    /// Never request approval.
+    None,
+    /// Request approval for every tool call.
+    All,
+    /// Request approval only for tools with `side_effect: true`.
+    SideEffectOnly,
+}
+
+// RuntimeConfig holds a non-Debug `Arc<dyn Fn>`, so Debug is implemented manually.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RuntimeConfig {
     pub max_steps: u32,
     pub allowed_tools: Option<Vec<String>>,
@@ -146,6 +166,45 @@ pub struct RuntimeConfig {
     pub code_execution_enabled: bool,
     #[serde(default)]
     pub run_depth: u32,
+    #[serde(default)]
+    pub approval_mode: ApprovalMode,
+    /// Custom approval predicate. Takes priority over `approval_mode` when set.
+    /// Not serialized (like hooks/retry_policy); only set via code.
+    #[serde(skip)]
+    pub custom_approval_fn: Option<CustomApprovalFn>,
+}
+
+impl RuntimeConfig {
+    /// Resolves whether a tool call requires approval under this run's policy.
+    /// `custom_approval_fn` takes priority; otherwise `approval_mode` decides.
+    pub fn should_approve(&self, meta: &crate::tool::ToolMetadata) -> bool {
+        if let Some(f) = &self.custom_approval_fn {
+            return f(meta);
+        }
+        match self.approval_mode {
+            ApprovalMode::PerTool => meta.requires_approval,
+            ApprovalMode::None => false,
+            ApprovalMode::All => true,
+            ApprovalMode::SideEffectOnly => meta.side_effect,
+        }
+    }
+}
+
+impl std::fmt::Debug for RuntimeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeConfig")
+            .field("max_steps", &self.max_steps)
+            .field("allowed_tools", &self.allowed_tools)
+            .field("mcp_servers", &self.mcp_servers)
+            .field("tool_search_enabled", &self.tool_search_enabled)
+            .field("compaction", &self.compaction)
+            .field("webhook_enabled", &self.webhook_enabled)
+            .field("code_execution_enabled", &self.code_execution_enabled)
+            .field("run_depth", &self.run_depth)
+            .field("approval_mode", &self.approval_mode)
+            .field("custom_approval_fn", &self.custom_approval_fn.is_some())
+            .finish()
+    }
 }
 
 impl Default for RuntimeConfig {
@@ -159,6 +218,8 @@ impl Default for RuntimeConfig {
             webhook_enabled: false,
             code_execution_enabled: false,
             run_depth: 0,
+            approval_mode: ApprovalMode::PerTool,
+            custom_approval_fn: None,
         }
     }
 }
@@ -346,6 +407,17 @@ impl AgentConfigBuilder {
     }
     pub fn run_depth(mut self, depth: u32) -> Self {
         self.runtime.run_depth = depth;
+        self
+    }
+    pub fn approval_mode(mut self, mode: ApprovalMode) -> Self {
+        self.runtime.approval_mode = mode;
+        self
+    }
+    pub fn custom_approval<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&crate::tool::ToolMetadata) -> bool + Send + Sync + 'static,
+    {
+        self.runtime.custom_approval_fn = Some(Arc::new(f));
         self
     }
     pub fn build(self) -> Result<AgentConfig, ConfigError> {

@@ -3213,3 +3213,99 @@ impl Tool for GuardedNamedTool {
         Ok(ToolOutput::Immediate(input))
     }
 }
+
+// ── v0.8-003: ApprovalMode tests ────────────────────────────────────────────
+
+use crate::run::ApprovalMode;
+
+fn meta(requires_approval: bool, side_effect: bool) -> ToolMetadata {
+    ToolMetadata {
+        side_effect,
+        requires_approval,
+        cost_hint: None,
+        timeout: None,
+        max_output_tokens: None,
+        source: ToolSource::InProcess,
+    }
+}
+
+#[test]
+fn approval_mode_per_tool_uses_flag() {
+    let mut rc = config::RuntimeConfig::default();
+    rc.approval_mode = ApprovalMode::PerTool;
+    assert!(rc.should_approve(&meta(true, false)));
+    assert!(!rc.should_approve(&meta(false, false)));
+}
+
+#[test]
+fn approval_mode_none_never_approves() {
+    let rc = config::RuntimeConfig {
+        approval_mode: ApprovalMode::None,
+        ..Default::default()
+    };
+    assert!(!rc.should_approve(&meta(true, true)));
+}
+
+#[test]
+fn approval_mode_all_always_approves() {
+    let rc = config::RuntimeConfig {
+        approval_mode: ApprovalMode::All,
+        ..Default::default()
+    };
+    assert!(rc.should_approve(&meta(false, false)));
+}
+
+#[test]
+fn approval_mode_side_effect_only() {
+    let rc = config::RuntimeConfig {
+        approval_mode: ApprovalMode::SideEffectOnly,
+        ..Default::default()
+    };
+    assert!(rc.should_approve(&meta(false, true)));
+    assert!(!rc.should_approve(&meta(true, false)));
+}
+
+#[test]
+fn custom_approval_fn_takes_priority() {
+    let rc = config::RuntimeConfig {
+        approval_mode: ApprovalMode::None,
+        custom_approval_fn: Some(Arc::new(|m: &ToolMetadata| m.side_effect)),
+        ..Default::default()
+    };
+    // custom says approve side-effect tools even though mode is None
+    assert!(rc.should_approve(&meta(false, true)));
+    assert!(!rc.should_approve(&meta(false, false)));
+}
+
+#[test]
+fn runtime_config_serde_skips_custom_fn() {
+    let rc = config::RuntimeConfig {
+        approval_mode: ApprovalMode::All,
+        custom_approval_fn: Some(Arc::new(|_: &ToolMetadata| true)),
+        ..Default::default()
+    };
+    let json = serde_json::to_string(&rc).expect("serialize");
+    let back: config::RuntimeConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(back.approval_mode, ApprovalMode::All);
+    assert!(back.custom_approval_fn.is_none());
+}
+
+#[tokio::test]
+async fn approval_mode_all_forces_approval_for_unguarded_tool() {
+    let model = Arc::new(ToolCallModelAdapter);
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeTool::echo())).unwrap(); // requires_approval=false
+    let mut cfg = test_config();
+    cfg.runtime.approval_mode = ApprovalMode::All;
+
+    let (handle, mut rx) = AgentRun::start(cfg, "hi".into(), model, registry);
+    let mut saw_approval = false;
+    while let Some(e) = rx.recv().await {
+        if matches!(e, RuntimeEvent::ApprovalRequested { .. }) {
+            saw_approval = true;
+            handle.respond_approval(handle.run_id, true).await.unwrap();
+        }
+    }
+    handle.wait().await;
+    assert!(saw_approval, "ApprovalMode::All should force approval");
+}
