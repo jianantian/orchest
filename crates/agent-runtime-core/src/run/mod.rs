@@ -133,11 +133,9 @@ fn spawn_actor(
         if let Ok(mut guard) = actor_ref_for_task.lock() {
             *guard = Some(aref);
         }
-        // Signal that actor_ref is now set; wake any pending subscribe_events calls.
         ready_for_task.notify_waiters();
         let _ = actor_handle.await;
     });
-
     let handle = RunHandle {
         run_id,
         actor_ref: actor_ref_shared,
