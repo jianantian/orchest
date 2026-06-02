@@ -48,6 +48,16 @@ impl BudgetGuard {
         }
     }
 
+    /// Seed a guard with prior usage, e.g. when resuming a persisted session.
+    /// The duration budget restarts from now (wall-clock state is not serializable).
+    pub fn with_usage(config: BudgetConfig, usage: BudgetUsage) -> Self {
+        Self {
+            config,
+            usage,
+            start: Instant::now(),
+        }
+    }
+
     pub fn record_model_call(&mut self, token_usage: &TokenUsage) {
         self.usage.tokens_used += token_usage.input_tokens + token_usage.output_tokens;
         if let Some(cost) = token_usage.cost_usd {

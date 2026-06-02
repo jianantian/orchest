@@ -8,6 +8,7 @@ pub mod hook;
 pub mod model;
 pub mod prompts;
 pub mod run;
+pub mod session;
 pub mod skill;
 pub mod telemetry;
 pub mod tokenizer;

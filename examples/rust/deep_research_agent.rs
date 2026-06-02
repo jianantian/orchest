@@ -328,6 +328,8 @@ fn agent_config(
         hooks: vec![],
         retry_policy: None,
         handoffs: vec![],
+        session_store: None,
+        session_id: None,
     })
 }
 

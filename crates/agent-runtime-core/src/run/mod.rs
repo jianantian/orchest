@@ -26,9 +26,20 @@ use tokio::sync::mpsc;
 use crate::model::ModelAdapter;
 use crate::tool::registry::ToolRegistry;
 
-use actor::{AgentRunArgs, WorkerActor};
+use actor::{AgentRunArgs, ResumeState, WorkerActor};
 
 const EVENT_CHANNEL_CAPACITY: usize = 256;
+
+fn maybe_register_persistence(config: &mut AgentConfig) {
+    if let (Some(store), Some(session_id)) = (config.session_store.clone(), config.session_id.clone()) {
+        let hook = Arc::new(crate::session::SessionPersistenceHook::new(
+            store,
+            session_id,
+            config.clone(),
+        ));
+        config.hooks.push(hook);
+    }
+}
 
 impl AgentRun {
     pub fn start(
@@ -41,12 +52,14 @@ impl AgentRun {
     }
 
     pub(crate) fn start_with_bus(
-        config: AgentConfig,
+        mut config: AgentConfig,
         input: String,
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
         approval_bus: ApprovalBus,
     ) -> (RunHandle, EventReceiver) {
+        maybe_register_persistence(&mut config);
+
         let run_id = RunId::new();
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
 
@@ -58,32 +71,75 @@ impl AgentRun {
             registry,
             event_tx,
             approval_bus: approval_bus.clone(),
+            resume: None,
         };
 
-        // actor_ref is shared between the background task and RunHandle.
-        // It is set once Actor::spawn() completes (after pre_start returns).
-        let actor_ref_shared: Arc<Mutex<Option<ractor::ActorRef<actor::AgentMsg>>>> =
-            Arc::new(Mutex::new(None));
-        let actor_ref_for_task = actor_ref_shared.clone();
-
-        let actor_join = tokio::spawn(async move {
-            let (aref, actor_handle) = Actor::spawn(None, WorkerActor, args)
-                .await
-                .expect("WorkerActor spawn failed");
-            if let Ok(mut guard) = actor_ref_for_task.lock() {
-                *guard = Some(aref);
-            }
-            let _ = actor_handle.await;
-        });
-
-        let handle = RunHandle {
-            run_id,
-            actor_ref: actor_ref_shared,
-            actor_join,
-            approval_bus,
-        };
-        (handle, event_rx)
+        spawn_actor(run_id, args, approval_bus, event_rx)
     }
+
+    /// Resume a previous run from a persisted snapshot.
+    pub fn resume(
+        snapshot: crate::session::SessionSnapshot,
+        model: Arc<dyn ModelAdapter>,
+        registry: ToolRegistry,
+    ) -> (RunHandle, EventReceiver) {
+        let mut config = snapshot.active_config.clone();
+        maybe_register_persistence(&mut config);
+
+        let run_id = snapshot.run_id;
+        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
+        let approval_bus = ApprovalBus::default();
+
+        let resume = ResumeState {
+            messages: snapshot.messages,
+            step: snapshot.step,
+            budget_used: snapshot.budget_used,
+        };
+
+        let args = AgentRunArgs {
+            run_id,
+            config,
+            input: String::new(),
+            model,
+            registry,
+            event_tx,
+            approval_bus: approval_bus.clone(),
+            resume: Some(resume),
+        };
+
+        spawn_actor(run_id, args, approval_bus, event_rx)
+    }
+}
+
+fn spawn_actor(
+    run_id: RunId,
+    args: AgentRunArgs,
+    approval_bus: ApprovalBus,
+    event_rx: mpsc::Receiver<crate::events::RuntimeEvent>,
+) -> (RunHandle, EventReceiver) {
+    // actor_ref is shared between the background task and RunHandle.
+    // It is set once Actor::spawn() completes (after pre_start returns).
+    let actor_ref_shared: Arc<Mutex<Option<ractor::ActorRef<actor::AgentMsg>>>> =
+        Arc::new(Mutex::new(None));
+    let actor_ref_for_task = actor_ref_shared.clone();
+
+    let actor_join = tokio::spawn(async move {
+        let (aref, actor_handle) = Actor::spawn(None, WorkerActor, args)
+            .await
+            .expect("WorkerActor spawn failed");
+        if let Ok(mut guard) = actor_ref_for_task.lock() {
+            *guard = Some(aref);
+        }
+        let _ = actor_handle.await;
+    });
+
+    let handle = RunHandle {
+        run_id,
+        actor_ref: actor_ref_shared,
+        actor_join,
+        approval_bus,
+    };
+    (handle, event_rx)
 }
 
 #[cfg(test)]

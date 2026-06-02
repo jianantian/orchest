@@ -47,6 +47,8 @@ fn test_config() -> AgentConfig {
         hooks: vec![],
         retry_policy: None,
         handoffs: vec![],
+        session_store: None,
+        session_id: None,
     }
 }
 

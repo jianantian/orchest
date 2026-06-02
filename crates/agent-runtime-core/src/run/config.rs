@@ -49,6 +49,9 @@ pub struct AgentConfig {
     pub retry_policy: Option<super::retry::RetryPolicy>,
     #[serde(skip)]
     pub handoffs: Vec<crate::handoff::Handoff>,
+    #[serde(skip)]
+    pub session_store: Option<Arc<dyn crate::session::SessionStore>>,
+    pub session_id: Option<String>,
 }
 
 impl std::fmt::Debug for AgentConfig {
@@ -60,6 +63,8 @@ impl std::fmt::Debug for AgentConfig {
             .field("skills", &self.skills)
             .field("runtime", &self.runtime)
             .field("handoffs", &self.handoffs.len())
+            .field("session_id", &self.session_id)
+            .field("session_store", &self.session_store.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -313,6 +318,17 @@ impl AgentConfig {
             config,
         )))
     }
+
+    /// Attach a session store (post-build chainable form; mirrors `AgentConfigBuilder::session_store`).
+    pub fn with_session_store(
+        mut self,
+        store: Arc<dyn crate::session::SessionStore>,
+        session_id: impl Into<String>,
+    ) -> Self {
+        self.session_store = Some(store);
+        self.session_id = Some(session_id.into());
+        self
+    }
 }
 
 pub struct AgentConfigBuilder {
@@ -324,6 +340,8 @@ pub struct AgentConfigBuilder {
     hooks: Vec<std::sync::Arc<dyn crate::hook::Hook>>,
     retry_policy: Option<super::retry::RetryPolicy>,
     handoffs: Vec<crate::handoff::Handoff>,
+    session_store: Option<Arc<dyn crate::session::SessionStore>>,
+    session_id: Option<String>,
 }
 
 impl AgentConfigBuilder {
@@ -353,6 +371,8 @@ impl AgentConfigBuilder {
             hooks: vec![],
             retry_policy: None,
             handoffs: vec![],
+            session_store: None,
+            session_id: None,
         }
     }
 
@@ -420,6 +440,15 @@ impl AgentConfigBuilder {
         self.runtime.custom_approval_fn = Some(Arc::new(f));
         self
     }
+    pub fn session_store(
+        mut self,
+        store: Arc<dyn crate::session::SessionStore>,
+        session_id: impl Into<String>,
+    ) -> Self {
+        self.session_store = Some(store);
+        self.session_id = Some(session_id.into());
+        self
+    }
     pub fn build(self) -> Result<AgentConfig, ConfigError> {
         if self.model.spec.model.is_empty() {
             return Err(ConfigError::MissingModel);
@@ -451,6 +480,8 @@ impl AgentConfigBuilder {
             hooks: self.hooks,
             retry_policy: self.retry_policy,
             handoffs: self.handoffs,
+            session_store: self.session_store,
+            session_id: self.session_id,
         })
     }
 }

@@ -23,6 +23,14 @@ pub struct RunHookContext {
     pub run_id: crate::run::RunId,
     pub agent_name: String,
     pub step: u32,
+    /// Budget consumed so far. Meaningful only at `on_run_end` / `on_run_error`
+    /// (zero-valued at `on_run_start`).
+    pub budget_used: crate::budget::BudgetUsage,
+    /// Final conversation history. Populated at `on_run_end` / `on_run_error`.
+    pub final_messages: Vec<crate::model::Message>,
+    /// The currently active agent config (reflects the post-handoff agent).
+    /// `None` until populated at run termination.
+    pub active_config: Option<crate::run::AgentConfig>,
 }
 
 pub struct ModelHookContext {

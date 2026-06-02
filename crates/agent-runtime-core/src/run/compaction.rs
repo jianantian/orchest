@@ -228,6 +228,8 @@ mod tests {
             hooks: vec![],
             retry_policy: None,
             handoffs: vec![],
+            session_store: None,
+            session_id: None,
         }
     }
 
@@ -259,6 +261,8 @@ mod tests {
             hooks: vec![],
             retry_policy: None,
             handoffs: vec![],
+            session_store: None,
+            session_id: None,
         };
         let call_count = Arc::new(AtomicU32::new(0));
         let model: Arc<dyn ModelAdapter> = Arc::new(SummaryMock {

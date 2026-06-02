@@ -69,7 +69,25 @@ pub(crate) struct AgentRunState {
     pub webhook_runtime: Option<WebhookRuntime>,
 }
 
+impl AgentRunState {
+    /// Refresh the terminal fields of `run_hook_ctx` before calling
+    /// `on_run_end` or `on_run_error`. Must be called at all 7 exit points.
+    fn refresh_terminal_hook_ctx(&mut self, step: u32) {
+        self.run_hook_ctx.step = step;
+        self.run_hook_ctx.budget_used = self.budget.usage().clone();
+        self.run_hook_ctx.final_messages = self.messages.clone();
+        self.run_hook_ctx.active_config = Some(self.config.clone());
+    }
+}
+
 // ── Constructor args ──────────────────────────────────────────────────────────
+
+/// Resume payload: injected by `AgentRun::resume` to restore prior run state.
+pub(crate) struct ResumeState {
+    pub messages: Vec<crate::model::Message>,
+    pub step: u32,
+    pub budget_used: crate::budget::BudgetUsage,
+}
 
 pub(crate) struct AgentRunArgs {
     pub run_id: RunId,
@@ -79,6 +97,8 @@ pub(crate) struct AgentRunArgs {
     pub registry: ToolRegistry,
     pub event_tx: mpsc::Sender<RuntimeEvent>,
     pub approval_bus: ApprovalBus,
+    /// `None` on a fresh start; `Some` when resuming from a persisted snapshot.
+    pub resume: Option<ResumeState>,
 }
 
 // ── WorkerActor ───────────────────────────────────────────────────────────────
@@ -103,6 +123,7 @@ impl Actor for WorkerActor {
             mut registry,
             event_tx,
             approval_bus,
+            resume,
         } = args;
         let event_subs = vec![event_tx];
 
@@ -113,6 +134,9 @@ impl Actor for WorkerActor {
             run_id,
             agent_name,
             step: 0,
+            budget_used: crate::budget::BudgetUsage::default(),
+            final_messages: vec![],
+            active_config: None,
         };
         crate::hook::runner::run_on_run_start(
             &config.hooks,
@@ -213,16 +237,21 @@ impl Actor for WorkerActor {
         let unfiltered_registry = registry.clone();
         let mut registry = registry.filter_by_allowed(&config.runtime.allowed_tools);
 
-        let messages = vec![
-            Message {
-                role: Role::System,
-                content: vec![ContentBlock::Text(config.system_prompt.clone())],
-            },
-            Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text(input)],
-            },
-        ];
+        let (messages, initial_step, initial_budget_used) = if let Some(rs) = resume {
+            (rs.messages, rs.step, Some(rs.budget_used))
+        } else {
+            let msgs = vec![
+                Message {
+                    role: Role::System,
+                    content: vec![ContentBlock::Text(config.system_prompt.clone())],
+                },
+                Message {
+                    role: Role::User,
+                    content: vec![ContentBlock::Text(input)],
+                },
+            ];
+            (msgs, 0, None)
+        };
 
         let all_tool_defs = registry.list();
         let tool_defs = if config.runtime.tool_search_enabled {
@@ -256,7 +285,11 @@ impl Actor for WorkerActor {
             all_tool_defs
         };
 
-        let budget = BudgetGuard::new(config.budget.clone());
+        let budget = if let Some(used) = initial_budget_used {
+            BudgetGuard::with_usage(config.budget.clone(), used)
+        } else {
+            BudgetGuard::new(config.budget.clone())
+        };
 
         myself.cast(AgentMsg::RunStep)?;
 
@@ -268,7 +301,7 @@ impl Actor for WorkerActor {
             registry,
             messages,
             tool_defs,
-            step: 0,
+            step: initial_step,
             budget,
             last_compaction_step: None,
             cancelled: false,
@@ -389,7 +422,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
     let run_id = state.run_id;
 
     if step >= state.config.runtime.max_steps {
-        state.run_hook_ctx.step = step;
+        state.refresh_terminal_hook_ctx(step);
         crate::hook::runner::run_on_run_error(
             &state.config.hooks,
             &state.run_hook_ctx,
@@ -417,7 +450,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         )
         .await;
         let error = format!("budget_exceeded: {violation}");
-        state.run_hook_ctx.step = step;
+        state.refresh_terminal_hook_ctx(step);
         crate::hook::runner::run_on_run_error(
             &state.config.hooks,
             &state.run_hook_ctx,
@@ -456,7 +489,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             .await
             {
                 crate::hook::ModelHookAction::Abort(reason) => {
-                    state.run_hook_ctx.step = step;
+                    state.refresh_terminal_hook_ctx(step);
                     crate::hook::runner::run_on_run_error(
                         &state.config.hooks,
                         &state.run_hook_ctx,
@@ -513,7 +546,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                         )
                         .await
                     {
-                        state.run_hook_ctx.step = step;
+                        state.refresh_terminal_hook_ctx(step);
                         crate::hook::runner::run_on_run_error(
                             &state.config.hooks,
                             &state.run_hook_ctx,
@@ -553,7 +586,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     continue;
                 }
                 let error = e.to_string();
-                state.run_hook_ctx.step = step;
+                state.refresh_terminal_hook_ctx(step);
                 crate::hook::runner::run_on_run_error(
                     &state.config.hooks,
                     &state.run_hook_ctx,
@@ -612,7 +645,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
     match response.stop_reason {
         StopReason::EndTurn if tool_uses.is_empty() => {
             let output = json!(text_parts.join(""));
-            state.run_hook_ctx.step = step;
+            state.refresh_terminal_hook_ctx(step);
             crate::hook::runner::run_on_run_end(
                 &state.config.hooks,
                 &state.run_hook_ctx,
@@ -624,7 +657,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         }
         StopReason::MaxTokens if tool_uses.is_empty() => {
             let output = json!(text_parts.join(""));
-            state.run_hook_ctx.step = step;
+            state.refresh_terminal_hook_ctx(step);
             crate::hook::runner::run_on_run_end(
                 &state.config.hooks,
                 &state.run_hook_ctx,
