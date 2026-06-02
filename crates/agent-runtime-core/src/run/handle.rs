@@ -5,13 +5,14 @@ use std::sync::{Arc, Mutex};
 
 use ractor::ActorRef;
 use tokio::sync::Mutex as AsyncMutex;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Notify};
 use tokio::task::JoinHandle;
 
 use crate::events::RuntimeEvent;
 
-use super::actor::{AgentMsg, CancelCmd};
+use super::actor::{AgentMsg, CancelCmd, InjectCmd};
 use super::config::RunId;
+use super::watcher::{Watcher, WatcherAction};
 
 pub type EventReceiver = mpsc::Receiver<RuntimeEvent>;
 
@@ -47,6 +48,9 @@ pub struct RunHandle {
     pub run_id: RunId,
     /// Actor reference — set once `Actor::spawn` completes inside the background task.
     pub(crate) actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
+    /// Fires once after `actor_ref` is set; used by `subscribe_events` to avoid
+    /// a race where the subscriber cast hits `None`.
+    pub(crate) ready: Arc<Notify>,
     /// Background task that owns the actor lifecycle.
     pub(crate) actor_join: JoinHandle<()>,
     pub(crate) approval_bus: ApprovalBus,
@@ -60,9 +64,67 @@ impl RunHandle {
     pub fn abort(&self) {
         if let Ok(guard) = self.actor_ref.lock() {
             if let Some(ref aref) = *guard {
-                let _ = aref.cast(AgentMsg::Cancel(CancelCmd));
+                let _ = aref.cast(AgentMsg::Cancel(CancelCmd { reason: None }));
             }
         }
+    }
+
+    /// Subscribe to events emitted after this call. Returns a lossy receiver:
+    /// when the channel is full, events are dropped and
+    /// `RuntimeEvent::EventsDropped` is sent to the primary subscriber.
+    /// Recommend `capacity >= 1024`.
+    pub async fn subscribe_events(&self, capacity: usize) -> EventReceiver {
+        let (tx, rx) = mpsc::channel(capacity);
+        // Wait until actor_ref is populated so the cast is never silently lost.
+        loop {
+            let notified = self.ready.notified();
+            if self
+                .actor_ref
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+                .is_some()
+            {
+                break;
+            }
+            notified.await;
+        }
+        if let Ok(guard) = self.actor_ref.lock() {
+            if let Some(ref aref) = *guard {
+                let _ = aref.cast(AgentMsg::Subscribe(tx));
+            }
+        }
+        rx
+    }
+
+    /// Attach a watcher that receives events and can inject messages or abort the run.
+    pub async fn attach_watcher(&self, watcher: Arc<dyn Watcher>, capacity: usize) {
+        let mut rx = self.subscribe_events(capacity).await;
+        let actor_ref = Arc::clone(&self.actor_ref);
+        tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                match watcher.on_event(&event).await {
+                    WatcherAction::Continue => {}
+                    WatcherAction::Inject(msg) => {
+                        if let Ok(guard) = actor_ref.lock() {
+                            if let Some(ref aref) = *guard {
+                                let _ = aref.cast(AgentMsg::Inject(InjectCmd { message: msg }));
+                            }
+                        }
+                    }
+                    WatcherAction::Abort(reason) => {
+                        if let Ok(guard) = actor_ref.lock() {
+                            if let Some(ref aref) = *guard {
+                                let _ = aref.cast(AgentMsg::Cancel(CancelCmd {
+                                    reason: Some(reason),
+                                }));
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        });
     }
 
     /// Route an approval response to any run in this run tree.

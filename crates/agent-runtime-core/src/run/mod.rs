@@ -10,6 +10,7 @@ pub(crate) mod retry;
 pub(crate) mod skills;
 pub(crate) mod tool_exec;
 pub(crate) mod webhook;
+pub mod watcher;
 
 pub use config::{
     AgentConfig, AgentConfigBuilder, AgentRun, ApprovalMode, CompactionConfig, ConfigError,
@@ -17,11 +18,12 @@ pub use config::{
 };
 pub use handle::{ApprovalBus, EventReceiver, RunHandle};
 pub use retry::{BackoffStrategy, RetryPolicy};
+pub use watcher::{Watcher, WatcherAction};
 
 use std::sync::{Arc, Mutex};
 
 use ractor::Actor;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 use crate::model::ModelAdapter;
 use crate::tool::registry::ToolRegistry;
@@ -117,11 +119,12 @@ fn spawn_actor(
     approval_bus: ApprovalBus,
     event_rx: mpsc::Receiver<crate::events::RuntimeEvent>,
 ) -> (RunHandle, EventReceiver) {
-    // actor_ref is shared between the background task and RunHandle.
-    // It is set once Actor::spawn() completes (after pre_start returns).
     let actor_ref_shared: Arc<Mutex<Option<ractor::ActorRef<actor::AgentMsg>>>> =
         Arc::new(Mutex::new(None));
     let actor_ref_for_task = actor_ref_shared.clone();
+
+    let ready = Arc::new(Notify::new());
+    let ready_for_task = Arc::clone(&ready);
 
     let actor_join = tokio::spawn(async move {
         let (aref, actor_handle) = Actor::spawn(None, WorkerActor, args)
@@ -130,12 +133,15 @@ fn spawn_actor(
         if let Ok(mut guard) = actor_ref_for_task.lock() {
             *guard = Some(aref);
         }
+        // Signal that actor_ref is now set; wake any pending subscribe_events calls.
+        ready_for_task.notify_waiters();
         let _ = actor_handle.await;
     });
 
     let handle = RunHandle {
         run_id,
         actor_ref: actor_ref_shared,
+        ready,
         actor_join,
         approval_bus,
     };

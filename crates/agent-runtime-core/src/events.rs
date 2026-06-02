@@ -152,7 +152,9 @@ pub enum RuntimeEvent {
     RunFailed {
         error: String,
     },
-    RunAborted,
+    RunAborted {
+        reason: Option<String>,
+    },
 }
 
 #[cfg(test)]

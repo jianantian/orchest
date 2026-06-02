@@ -13,3 +13,5 @@ pub mod skill;
 pub mod telemetry;
 pub mod tokenizer;
 pub mod tool;
+
+pub use run::{Watcher, WatcherAction};

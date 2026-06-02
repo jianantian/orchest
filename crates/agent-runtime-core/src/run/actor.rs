@@ -35,16 +35,20 @@ pub(crate) struct SteerCmd;
 pub(crate) struct SteerResult;
 
 #[derive(Debug, Clone)]
-pub(crate) struct InjectCmd;
+pub(crate) struct InjectCmd {
+    pub message: String,
+}
 
 #[derive(Debug, Clone)]
-pub(crate) struct CancelCmd;
+pub(crate) struct CancelCmd {
+    pub reason: Option<String>,
+}
 
-#[allow(dead_code)] // Steer/Inject are v0.8 forward declarations
 pub(crate) enum AgentMsg {
     RunStep,
+    Subscribe(mpsc::Sender<RuntimeEvent>),
     Steer(SteerCmd, RpcReplyPort<SteerResult>),
-    Inject(InjectCmd, RpcReplyPort<()>),
+    Inject(InjectCmd),
     Cancel(CancelCmd),
 }
 
@@ -331,30 +335,33 @@ impl Actor for WorkerActor {
                     myself.stop(None);
                 }
             }
+            AgentMsg::Subscribe(tx) => {
+                state.event_subs.push(tx);
+            }
             AgentMsg::Steer(_, reply) => {
                 emit(
                     &state.event_subs,
                     RuntimeEvent::RuntimeWarning {
-                        message: "Steer is not yet implemented (planned for v0.8)".into(),
+                        message: "Steer is not yet implemented (planned for v0.9)".into(),
                     },
                 )
                 .await;
                 let _ = reply.send(SteerResult);
             }
-            AgentMsg::Inject(_, reply) => {
-                emit(
-                    &state.event_subs,
-                    RuntimeEvent::RuntimeWarning {
-                        message: "Inject is not yet implemented (planned for v0.8)".into(),
-                    },
-                )
-                .await;
-                let _ = reply.send(());
+            AgentMsg::Inject(cmd) => {
+                state.messages.push(Message {
+                    role: Role::User,
+                    content: vec![ContentBlock::Text(cmd.message)],
+                });
             }
-            AgentMsg::Cancel(_) => {
+            AgentMsg::Cancel(cmd) => {
                 if !state.cancelled {
                     state.cancelled = true;
-                    emit(&state.event_subs, RuntimeEvent::RunAborted).await;
+                    emit(
+                        &state.event_subs,
+                        RuntimeEvent::RunAborted { reason: cmd.reason },
+                    )
+                    .await;
                 }
                 myself.stop(None);
             }
