@@ -23,6 +23,10 @@ metrics = "0.24"
 tiktoken-rs = "0.6"
 httparse = "1"
 ractor = { version = "0.15", features = ["message_span_propogation"] }
+rusqlite = { version = "0.31", features = ["bundled"], optional = true }
+
+[features]
+sqlite-session = ["dep:rusqlite"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
