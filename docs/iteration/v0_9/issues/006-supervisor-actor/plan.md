@@ -46,6 +46,8 @@
 - `load_latest_snapshot(store, session_id)` — 从 SessionStore 加载
 - `rebuild_args_from_snapshot(snapshot, template)` — 用 snapshot 数据 + template 的 model/registry 重建 AgentRunArgs
 
+**`rebuild_args_from_snapshot` 与 `AgentRun::resume()` 共享逻辑**：当前 `resume()` 内部组装 `ResumeState` + `AgentRunArgs` 的逻辑应提取为独立函数，supervisor restart 和公共 `resume()` API 共享，避免重复实现。具体做法：将 `resume()` 中 `ResumeState { messages, step, budget_used }` 的构造 + `AgentRunArgs` 组装提取到 `fn build_resume_args(snapshot, model, registry, approval_bus) -> AgentRunArgs`。
+
 ### 8. 测试
 - 集成测试：注入一个会 panic 的 tool → 验证 restart + snapshot 恢复
 - 集成测试：max_retries = 0 → 立即 Stop

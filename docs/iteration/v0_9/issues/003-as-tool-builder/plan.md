@@ -19,14 +19,17 @@
 文件：`crates/agent-runtime-core/src/tool/mod.rs`
 - `ToolContext` 新增 `pub parent_messages: Vec<Message>`
 
-### 4. 修改 ToolMetadata
+### 4. Tool trait 扩展：needs_parent_context
 文件：`crates/agent-runtime-core/src/tool/mod.rs`
-- 新增 `pub needs_parent_context: bool`（默认 `false`）
-- `AgentAsTool` 的 metadata 设为 `true`
+- `Tool` trait 新增默认方法：`fn needs_parent_context(&self) -> bool { false }`
+- **不在 `ToolMetadata` 上加字段**——`ToolMetadata` 是 Serialize/Deserialize 的公共类型，加内部实现细节会污染序列化输出
+
+文件：`crates/agent-runtime-core/src/tool/agent_as_tool.rs`
+- `AgentAsTool` override：当 `inherit_context_count.is_some()` 时返回 `true`
 
 ### 5. 修改 run loop 的 ToolContext 构造
 文件：`crates/agent-runtime-core/src/run/actor.rs`（和/或 `tool_exec.rs`）
-- 构造 `ToolContext` 时：检查 `tool_meta.needs_parent_context`
+- 构造 `ToolContext` 时：调用 `tool.needs_parent_context()`
   - `true` → `parent_messages: state.messages.clone()`
   - `false` → `parent_messages: vec![]`
 

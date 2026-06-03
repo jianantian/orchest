@@ -27,7 +27,7 @@
 
 ## 设计决策
 
-- `parent_messages` 性能：run loop 仅在调用 `AgentAsTool` 时才填充（通过 `ToolMetadata` 标记 `needs_parent_context: bool` 或 tool 类型检查）；其他 tool 填 empty vec
+- `parent_messages` 性能：run loop 仅在调用 `AgentAsTool` 时才填充；通过 `Tool` trait 默认方法 `fn needs_parent_context(&self) -> bool { false }` 判断（不在 `ToolMetadata` 上加字段，避免污染公共序列化类型）；其他 tool 填 empty vec
 - `model` 和 `registry` 在 builder 上必填（无默认值），保持与旧 API 语义一致
 - `input_mapper` / `output_extractor` 有默认实现（identity mapper），只在需要自定义时调用
 
