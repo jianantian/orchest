@@ -33,11 +33,23 @@
 
 ## 规划中
 
-### [v0.9 — 产品成熟度 + Supervised Delegation](./v0_9/prd.md)
+### [v0.9 — Supervised Delegation 端到端](./v0_9/prd.md)
 
-Mid-run Steering（基于 v0.8 双向通信基础暴露 API）+ Supervised Delegation 完整实现（watcher LLM 中途干预、崩溃恢复）+ Provider 扩展 + 文档 + 发布准备。
+Mid-run Steering API（补齐 v0.8 stub）+ LlmWatcher + Ractor 崩溃恢复 + 多 Watcher FIFO 协调 + 端到端示例。
 
-**依赖**：v0.8 Session 持久化 + Supervised Delegation 基础
+**依赖**：v0.8 Session 持久化 + Watcher trait + AgentMsg 通路
+
+### [v0.9.1 — Provider 扩展](./v0_9_1/prd.md)（卫星）
+
+Google Gemini + Ollama + Mistral adapter。与 v0.9 并行，不阻塞主线。
+
+**依赖**：ProviderFactory trait（hotfix-0526）
+
+### [v0.9.2 — 文档 + 发布准备](./v0_9_2/prd.md)（卫星）
+
+API 文档、入门教程、SDK 文档、CHANGELOG、CI release workflow、crates.io 发布。
+
+**依赖**：v0.9 + v0.9.1（示例和文档需要 SD API 和新 provider 就绪）
 
 ### 依赖图
 
@@ -48,9 +60,13 @@ Mid-run Steering（基于 v0.8 双向通信基础暴露 API）+ Supervised Deleg
 ✅ v0.8: Session + Guardrail
         + SD 基础通信层
             │
-            ▼
-   v0.9: Steering + SD 完整
-        + Provider + 发布
+            ├──────────────────────┐
+            ▼                      ▼
+   v0.9: Steering + SD 完整    v0.9.1: Provider 扩展
+            │                      │
+            └──────────┬───────────┘
+                       ▼
+              v0.9.2: 文档 + 发布
 ```
 
 ## 能力缺口全景
@@ -71,5 +87,5 @@ Mid-run Steering（基于 v0.8 双向通信基础暴露 API）+ Supervised Deleg
 | Supervised Delegation 基础 | ~~无~~ → Watcher trait + InjectCmd 双向通信 | ✅ v0.8 |
 | Mid-run Steering | 只有 approval | **v0.9** |
 | Supervised Delegation 完整 | 无 | **v0.9** |
-| Provider 扩展 | 2 个 | **v0.9** |
+| Provider 扩展 | 4 个（Anthropic/OpenAI/DeepSeek/OpenRouter） | **v0.9.1** |
 | Image AIGC Gateway | ~~无~~ → **v0.6.1 已完成** | ✅ |
