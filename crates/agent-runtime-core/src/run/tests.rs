@@ -3327,9 +3327,15 @@ impl MultiStepModel {
 
 #[async_trait::async_trait]
 impl ModelAdapter for MultiStepModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "mock" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
     async fn complete(
         &self,
         messages: &[Message],
@@ -3337,13 +3343,26 @@ impl ModelAdapter for MultiStepModel {
         _options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
-        let tool_result_count = messages.iter().filter(|m| {
-            m.content.iter().any(|c| matches!(c, ContentBlock::ToolResult { .. }))
-        }).count();
+        let tool_result_count = messages
+            .iter()
+            .filter(|m| {
+                m.content
+                    .iter()
+                    .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
+            })
+            .count();
 
-        let usage = TokenUsage { input_tokens: 10, output_tokens: 5, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Default::default()
+        };
         if let Some(ref tx) = tx {
-            let _ = tx.send(ModelStreamChunk::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
 
         if tool_result_count < self.tool_calls as usize {
@@ -3406,9 +3425,13 @@ async fn multiple_subscribers_each_receive_events() {
 
     // Both receivers should be closeable (channels closed after actor stops)
     let mut count1 = 0u32;
-    while rx1.try_recv().is_ok() { count1 += 1; }
+    while rx1.try_recv().is_ok() {
+        count1 += 1;
+    }
     let mut count2 = 0u32;
-    while rx2.try_recv().is_ok() { count2 += 1; }
+    while rx2.try_recv().is_ok() {
+        count2 += 1;
+    }
     // Both got at least 0 events; we just verify no panic and both work independently
     let _ = (count1, count2);
 }
@@ -3453,7 +3476,9 @@ async fn watcher_abort_terminates_run_with_reason() {
     let registry = ToolRegistry::new();
     let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
 
-    handle.attach_watcher(Arc::new(AbortOnFirstEvent), 256).await;
+    handle
+        .attach_watcher(Arc::new(AbortOnFirstEvent), 256)
+        .await;
 
     let mut events = Vec::new();
     while let Some(e) = rx.recv().await {
@@ -3499,9 +3524,15 @@ async fn inject_message_reaches_model() {
     }
     #[async_trait::async_trait]
     impl ModelAdapter for RecordingModel {
-        fn provider_name(&self) -> &str { "mock" }
-        fn model_name(&self) -> &str { "mock" }
-        fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
         async fn complete(
             &self,
             messages: &[Message],
@@ -3510,9 +3541,9 @@ async fn inject_message_reaches_model() {
             tx: Option<mpsc::Sender<StreamEvent>>,
         ) -> Result<ModelResponse, ModelError> {
             if messages.iter().any(|m| {
-                m.content.iter().any(|c| {
-                    matches!(c, ContentBlock::Text(t) if t.contains("injected-user-message"))
-                })
+                m.content.iter().any(
+                    |c| matches!(c, ContentBlock::Text(t) if t.contains("injected-user-message")),
+                )
             }) {
                 SAW_INJECT.store(true, Ordering::SeqCst);
             }
@@ -3520,7 +3551,9 @@ async fn inject_message_reaches_model() {
         }
     }
 
-    let model = Arc::new(RecordingModel { inner: FakeModelAdapter::final_answer() });
+    let model = Arc::new(RecordingModel {
+        inner: FakeModelAdapter::final_answer(),
+    });
     let registry = ToolRegistry::new();
     let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
     handle.attach_watcher(Arc::new(InjectOnTool), 256).await;
@@ -3544,7 +3577,10 @@ fn budget_guard_with_usage_seeds_prior_usage() {
         cost_usd: 0.05,
     };
     let guard = BudgetGuard::with_usage(
-        BudgetConfig { max_tokens: Some(1000), ..Default::default() },
+        BudgetConfig {
+            max_tokens: Some(1000),
+            ..Default::default()
+        },
         prior.clone(),
     );
     assert_eq!(guard.usage().tokens_used, 500);
@@ -3689,13 +3725,18 @@ async fn resume_continues_from_snapshot() {
     handle.wait().await;
 
     // Load snapshot
-    let mut snap = store.load("resume-test").await.expect("load").expect("some");
+    let mut snap = store
+        .load("resume-test")
+        .await
+        .expect("load")
+        .expect("some");
     assert!(!snap.messages.is_empty(), "snapshot should have messages");
     let snap_step = snap.step;
     let snap_tokens = snap.budget_used.tokens_used;
 
     // Re-attach session store to config for continued persistence
-    snap.active_config = snap.active_config
+    snap.active_config = snap
+        .active_config
         .with_session_store(store.clone() as Arc<dyn SessionStore>, "resume-test");
 
     // === Resume phase ===
@@ -3704,7 +3745,10 @@ async fn resume_continues_from_snapshot() {
     let (handle2, mut rx2) = AgentRun::resume(snap, model2, registry2);
 
     // run_id should be the same as original
-    assert_eq!(handle2.run_id, original_run_id, "run_id must be consistent across resume");
+    assert_eq!(
+        handle2.run_id, original_run_id,
+        "run_id must be consistent across resume"
+    );
 
     let mut events = Vec::new();
     while let Some(e) = rx2.recv().await {
@@ -3713,10 +3757,16 @@ async fn resume_continues_from_snapshot() {
     handle2.wait().await;
 
     // Resumed run should complete successfully
-    assert!(events.iter().any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
 
     // Snapshot should be updated with accumulated budget (>= original)
-    let snap2 = store.load("resume-test").await.expect("load").expect("some");
+    let snap2 = store
+        .load("resume-test")
+        .await
+        .expect("load")
+        .expect("some");
     assert!(
         snap2.budget_used.tokens_used >= snap_tokens,
         "resumed run should accumulate budget from prior usage"

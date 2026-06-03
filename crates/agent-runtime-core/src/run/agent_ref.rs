@@ -32,6 +32,8 @@ impl AgentRef {
 
     /// Cancel the running agent.
     pub(crate) fn cancel(&self) {
-        let _ = self.inner.cast(AgentMsg::Cancel(CancelCmd { reason: None }));
+        let _ = self
+            .inner
+            .cast(AgentMsg::Cancel(CancelCmd { reason: None }));
     }
 }

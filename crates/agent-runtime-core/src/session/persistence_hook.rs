@@ -18,8 +18,16 @@ pub struct SessionPersistenceHook {
 }
 
 impl SessionPersistenceHook {
-    pub fn new(store: Arc<dyn SessionStore>, session_id: String, original_config: AgentConfig) -> Self {
-        Self { store, session_id, original_config }
+    pub fn new(
+        store: Arc<dyn SessionStore>,
+        session_id: String,
+        original_config: AgentConfig,
+    ) -> Self {
+        Self {
+            store,
+            session_id,
+            original_config,
+        }
     }
 
     fn build_snapshot(&self, ctx: &RunHookContext) -> SessionSnapshot {

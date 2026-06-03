@@ -53,7 +53,9 @@ impl SessionStore for SqliteSessionStore {
             .unwrap_or_default()
             .as_secs();
         tokio::task::spawn_blocking(move || {
-            let c = conn.lock().map_err(|e| SessionError::Storage(e.to_string()))?;
+            let c = conn
+                .lock()
+                .map_err(|e| SessionError::Storage(e.to_string()))?;
             c.execute(
                 "INSERT OR REPLACE INTO sessions \
                  (session_id, schema_version, snapshot_json, saved_at) \
@@ -71,22 +73,27 @@ impl SessionStore for SqliteSessionStore {
         let id = session_id.to_string();
         let conn = Arc::clone(&self.conn);
         tokio::task::spawn_blocking(move || {
-            let c = conn.lock().map_err(|e| SessionError::Storage(e.to_string()))?;
+            let c = conn
+                .lock()
+                .map_err(|e| SessionError::Storage(e.to_string()))?;
             let mut stmt = c
-                .prepare(
-                    "SELECT snapshot_json, schema_version FROM sessions WHERE session_id = ?1",
-                )
+                .prepare("SELECT snapshot_json, schema_version FROM sessions WHERE session_id = ?1")
                 .map_err(|e| SessionError::Storage(e.to_string()))?;
             let mut rows = stmt
                 .query(params![id])
                 .map_err(|e| SessionError::Storage(e.to_string()))?;
-            match rows.next().map_err(|e| SessionError::Storage(e.to_string()))? {
+            match rows
+                .next()
+                .map_err(|e| SessionError::Storage(e.to_string()))?
+            {
                 None => Ok(None),
                 Some(row) => {
-                    let json: String =
-                        row.get(0).map_err(|e| SessionError::Storage(e.to_string()))?;
-                    let row_schema: String =
-                        row.get(1).map_err(|e| SessionError::Storage(e.to_string()))?;
+                    let json: String = row
+                        .get(0)
+                        .map_err(|e| SessionError::Storage(e.to_string()))?;
+                    let row_schema: String = row
+                        .get(1)
+                        .map_err(|e| SessionError::Storage(e.to_string()))?;
                     if row_schema != SessionSnapshot::CURRENT_SCHEMA_VERSION {
                         return Err(SessionError::SchemaMismatch {
                             expected: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
@@ -106,7 +113,9 @@ impl SessionStore for SqliteSessionStore {
         let id = session_id.to_string();
         let conn = Arc::clone(&self.conn);
         tokio::task::spawn_blocking(move || {
-            let c = conn.lock().map_err(|e| SessionError::Storage(e.to_string()))?;
+            let c = conn
+                .lock()
+                .map_err(|e| SessionError::Storage(e.to_string()))?;
             c.execute("DELETE FROM sessions WHERE session_id = ?1", params![id])
                 .map_err(|e| SessionError::Storage(e.to_string()))?;
             Ok(())
@@ -118,7 +127,9 @@ impl SessionStore for SqliteSessionStore {
     async fn list(&self) -> Result<Vec<String>, SessionError> {
         let conn = Arc::clone(&self.conn);
         tokio::task::spawn_blocking(move || {
-            let c = conn.lock().map_err(|e| SessionError::Storage(e.to_string()))?;
+            let c = conn
+                .lock()
+                .map_err(|e| SessionError::Storage(e.to_string()))?;
             let mut stmt = c
                 .prepare("SELECT session_id FROM sessions ORDER BY saved_at DESC")
                 .map_err(|e| SessionError::Storage(e.to_string()))?;
