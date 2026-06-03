@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
@@ -15,6 +14,7 @@ use agent_runtime_core::tool::{
     registry::ToolRegistry, JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata,
     ToolOutput, ToolSource,
 };
+use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -25,14 +25,24 @@ struct ToolThenEndModel {
 }
 
 impl ToolThenEndModel {
-    fn new() -> Self { Self { call: std::sync::atomic::AtomicU32::new(0) } }
+    fn new() -> Self {
+        Self {
+            call: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
 }
 
 #[async_trait]
 impl ModelAdapter for ToolThenEndModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "mock" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
 
     async fn complete(
         &self,
@@ -42,13 +52,23 @@ impl ModelAdapter for ToolThenEndModel {
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let count = self.call.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let usage = TokenUsage { input_tokens: 10, output_tokens: 5, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Default::default()
+        };
         if let Some(ref tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
 
         let has_tool_result = messages.iter().any(|m| {
-            m.content.iter().any(|c| matches!(c, ContentBlock::ToolResult { .. }))
+            m.content
+                .iter()
+                .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
         });
 
         if count == 0 {
@@ -66,9 +86,9 @@ impl ModelAdapter for ToolThenEndModel {
         } else if has_tool_result {
             // After tool result (possibly with injected message): finish
             let injected = messages.iter().any(|m| {
-                m.content.iter().any(|c| {
-                    matches!(c, ContentBlock::Text(t) if t.contains("injected"))
-                })
+                m.content
+                    .iter()
+                    .any(|c| matches!(c, ContentBlock::Text(t) if t.contains("injected")))
             });
             if injected {
                 println!("[model] received injected message from watcher");
@@ -96,18 +116,33 @@ struct QueryTool;
 
 #[async_trait]
 impl Tool for QueryTool {
-    fn name(&self) -> &str { "query" }
-    fn description(&self) -> &str { "query data" }
-    fn input_schema(&self) -> &JsonSchema { &serde_json::Value::Null }
-    fn output_schema(&self) -> Option<&JsonSchema> { None }
+    fn name(&self) -> &str {
+        "query"
+    }
+    fn description(&self) -> &str {
+        "query data"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &serde_json::Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false, requires_approval: false,
-            cost_hint: None, timeout: None, max_output_tokens: None,
+            side_effect: false,
+            requires_approval: false,
+            cost_hint: None,
+            timeout: None,
+            max_output_tokens: None,
             source: ToolSource::InProcess,
         }
     }
-    async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+    async fn execute(
+        &self,
+        _input: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::Immediate(json!({"status": "ok"})))
     }
 }
@@ -143,10 +178,15 @@ async fn main() {
     registry.register(Arc::new(QueryTool)).unwrap();
 
     let (handle, mut rx) = AgentRun::start(
-        config, "Query the status.".into(), Arc::new(ToolThenEndModel::new()), registry,
+        config,
+        "Query the status.".into(),
+        Arc::new(ToolThenEndModel::new()),
+        registry,
     );
 
-    handle.attach_watcher(Arc::new(InjectOnToolComplete), 1024).await;
+    handle
+        .attach_watcher(Arc::new(InjectOnToolComplete), 1024)
+        .await;
 
     while let Some(event) = rx.recv().await {
         match event {

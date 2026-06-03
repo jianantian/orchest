@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
@@ -15,6 +14,7 @@ use agent_runtime_core::tool::{
     registry::ToolRegistry, JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata,
     ToolOutput, ToolSource,
 };
+use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -25,14 +25,24 @@ struct TwoToolModel {
 }
 
 impl TwoToolModel {
-    fn new() -> Self { Self { call: std::sync::atomic::AtomicU32::new(0) } }
+    fn new() -> Self {
+        Self {
+            call: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
 }
 
 #[async_trait]
 impl ModelAdapter for TwoToolModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "mock" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
 
     async fn complete(
         &self,
@@ -42,14 +52,27 @@ impl ModelAdapter for TwoToolModel {
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let count = self.call.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let usage = TokenUsage { input_tokens: 10, output_tokens: 5, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Default::default()
+        };
         if let Some(ref tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
 
-        let tool_results = messages.iter().filter(|m| {
-            m.content.iter().any(|c| matches!(c, ContentBlock::ToolResult { .. }))
-        }).count();
+        let tool_results = messages
+            .iter()
+            .filter(|m| {
+                m.content
+                    .iter()
+                    .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
+            })
+            .count();
 
         match (count, tool_results) {
             (0, _) => Ok(ModelResponse {
@@ -89,39 +112,69 @@ struct WriteFileTool;
 
 #[async_trait]
 impl Tool for ReadFileTool {
-    fn name(&self) -> &str { "read_file" }
-    fn description(&self) -> &str { "Read a file (no side effects)" }
-    fn input_schema(&self) -> &JsonSchema { &serde_json::Value::Null }
-    fn output_schema(&self) -> Option<&JsonSchema> { None }
+    fn name(&self) -> &str {
+        "read_file"
+    }
+    fn description(&self) -> &str {
+        "Read a file (no side effects)"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &serde_json::Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
             requires_approval: false,
-            cost_hint: None, timeout: None, max_output_tokens: None,
+            cost_hint: None,
+            timeout: None,
+            max_output_tokens: None,
             source: ToolSource::InProcess,
         }
     }
-    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+    async fn execute(
+        &self,
+        input: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
         println!("[tool] read_file: {input} (no approval needed)");
-        Ok(ToolOutput::Immediate(json!({"content": "file contents here"})))
+        Ok(ToolOutput::Immediate(
+            json!({"content": "file contents here"}),
+        ))
     }
 }
 
 #[async_trait]
 impl Tool for WriteFileTool {
-    fn name(&self) -> &str { "write_file" }
-    fn description(&self) -> &str { "Write a file (has side effects)" }
-    fn input_schema(&self) -> &JsonSchema { &serde_json::Value::Null }
-    fn output_schema(&self) -> Option<&JsonSchema> { None }
+    fn name(&self) -> &str {
+        "write_file"
+    }
+    fn description(&self) -> &str {
+        "Write a file (has side effects)"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &serde_json::Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: true,
             requires_approval: false, // approval_mode overrides this
-            cost_hint: None, timeout: None, max_output_tokens: None,
+            cost_hint: None,
+            timeout: None,
+            max_output_tokens: None,
             source: ToolSource::InProcess,
         }
     }
-    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+    async fn execute(
+        &self,
+        input: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
         println!("[tool] write_file: {input} (approved!)");
         Ok(ToolOutput::Immediate(json!({"written": true})))
     }
@@ -143,7 +196,10 @@ async fn main() {
     registry.register(Arc::new(WriteFileTool)).unwrap();
 
     let (handle, mut rx) = AgentRun::start(
-        config, "Process some files.".into(), Arc::new(TwoToolModel::new()), registry,
+        config,
+        "Process some files.".into(),
+        Arc::new(TwoToolModel::new()),
+        registry,
     );
 
     let mut saw_approval = false;
@@ -161,6 +217,9 @@ async fn main() {
     }
     handle.wait().await;
 
-    assert!(saw_approval, "write_file (side_effect=true) should require approval");
+    assert!(
+        saw_approval,
+        "write_file (side_effect=true) should require approval"
+    );
     println!("Done. write_file required approval; read_file did not.");
 }

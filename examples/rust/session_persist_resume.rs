@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
@@ -14,6 +13,7 @@ use agent_runtime_core::model::{
 use agent_runtime_core::run::{AgentConfig, AgentRun};
 use agent_runtime_core::session::{InMemorySessionStore, SessionStore};
 use agent_runtime_core::tool::{registry::ToolRegistry, ToolDef};
+use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 // ── Mock model ────────────────────────────────────────────────────────────────
@@ -22,9 +22,15 @@ struct EndModel;
 
 #[async_trait]
 impl ModelAdapter for EndModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "mock" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
 
     async fn complete(
         &self,
@@ -33,9 +39,17 @@ impl ModelAdapter for EndModel {
         _options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
-        let usage = TokenUsage { input_tokens: 10, output_tokens: 5, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Default::default()
+        };
         if let Some(ref tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
         Ok(ModelResponse {
             content: vec![ContentBlock::Text("Task complete.".into())],
@@ -63,7 +77,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     let (handle, mut rx) = AgentRun::start(
-        config, "Hello, what can you do?".into(), Arc::new(EndModel), ToolRegistry::new(),
+        config,
+        "Hello, what can you do?".into(),
+        Arc::new(EndModel),
+        ToolRegistry::new(),
     );
     let first_run_id = handle.run_id;
 
@@ -87,23 +104,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[snapshot] run_id: {}", snapshot.run_id);
     println!("[snapshot] step: {}", snapshot.step);
     println!("[snapshot] messages: {}", snapshot.messages.len());
-    println!("[snapshot] tokens used: {}", snapshot.budget_used.tokens_used);
+    println!(
+        "[snapshot] tokens used: {}",
+        snapshot.budget_used.tokens_used
+    );
 
-    assert_eq!(snapshot.run_id, first_run_id, "snapshot run_id should match");
-    assert!(!snapshot.messages.is_empty(), "snapshot should have messages");
+    assert_eq!(
+        snapshot.run_id, first_run_id,
+        "snapshot run_id should match"
+    );
+    assert!(
+        !snapshot.messages.is_empty(),
+        "snapshot should have messages"
+    );
 
     // ── Phase 3: Resume ───────────────────────────────────────────────────────
 
     println!("\n=== Phase 3: Resuming run ===");
     // Re-attach session store so persistence continues on resume
     let mut snap = snapshot;
-    snap.active_config = snap.active_config
+    snap.active_config = snap
+        .active_config
         .with_session_store(store.clone() as Arc<dyn SessionStore>, SESSION_ID);
 
     let (handle2, mut rx2) = AgentRun::resume(snap, Arc::new(EndModel), ToolRegistry::new());
 
-    println!("[resume] run_id: {} (same as original: {})", handle2.run_id, first_run_id);
-    assert_eq!(handle2.run_id, first_run_id, "resumed run_id must match original");
+    println!(
+        "[resume] run_id: {} (same as original: {})",
+        handle2.run_id, first_run_id
+    );
+    assert_eq!(
+        handle2.run_id, first_run_id,
+        "resumed run_id must match original"
+    );
 
     while let Some(event) = rx2.recv().await {
         match event {
@@ -116,7 +149,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Verify snapshot was updated by the resumed run
     let snap2 = store.load(SESSION_ID).await?.unwrap();
-    println!("\n[final snapshot] tokens used: {}", snap2.budget_used.tokens_used);
+    println!(
+        "\n[final snapshot] tokens used: {}",
+        snap2.budget_used.tokens_used
+    );
 
     println!("\nDone. Session persisted and resumed successfully.");
     Ok(())

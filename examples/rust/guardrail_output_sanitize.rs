@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::guardrail::{OutputGuardrail, OutputGuardrailAction};
 use agent_runtime_core::hook::ModelHookContext;
@@ -14,6 +13,7 @@ use agent_runtime_core::model::{
 };
 use agent_runtime_core::run::{AgentConfig, AgentRun};
 use agent_runtime_core::tool::{registry::ToolRegistry, ToolDef};
+use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 // ── Mock model ────────────────────────────────────────────────────────────────
@@ -22,9 +22,15 @@ struct SensitiveModel;
 
 #[async_trait]
 impl ModelAdapter for SensitiveModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "mock" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
 
     async fn complete(
         &self,
@@ -33,9 +39,17 @@ impl ModelAdapter for SensitiveModel {
         _options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
-        let usage = TokenUsage { input_tokens: 10, output_tokens: 20, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 20,
+            ..Default::default()
+        };
         if let Some(ref tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
         Ok(ModelResponse {
             content: vec![ContentBlock::Text(

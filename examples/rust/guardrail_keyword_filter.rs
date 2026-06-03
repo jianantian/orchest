@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::guardrail::{ToolInputGuardrail, ToolInputGuardrailAction};
 use agent_runtime_core::hook::ToolHookContext;
@@ -17,6 +16,7 @@ use agent_runtime_core::tool::{
     registry::ToolRegistry, JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata,
     ToolOutput, ToolSource,
 };
+use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -28,15 +28,23 @@ struct MockModel {
 
 impl MockModel {
     fn new() -> Self {
-        Self { call: std::sync::atomic::AtomicU32::new(0) }
+        Self {
+            call: std::sync::atomic::AtomicU32::new(0),
+        }
     }
 }
 
 #[async_trait]
 impl ModelAdapter for MockModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "mock" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
 
     async fn complete(
         &self,
@@ -46,14 +54,24 @@ impl ModelAdapter for MockModel {
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let count = self.call.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let usage = TokenUsage { input_tokens: 10, output_tokens: 5, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Default::default()
+        };
         if let Some(ref tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
 
         // If there's a ToolResult (after the rejected call), end the run
         let has_result = messages.iter().any(|m| {
-            m.content.iter().any(|c| matches!(c, ContentBlock::ToolResult { .. }))
+            m.content
+                .iter()
+                .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
         });
 
         if count == 0 {
@@ -123,10 +141,18 @@ struct SearchTool;
 
 #[async_trait]
 impl Tool for SearchTool {
-    fn name(&self) -> &str { "search" }
-    fn description(&self) -> &str { "search the web" }
-    fn input_schema(&self) -> &JsonSchema { &serde_json::Value::Null }
-    fn output_schema(&self) -> Option<&JsonSchema> { None }
+    fn name(&self) -> &str {
+        "search"
+    }
+    fn description(&self) -> &str {
+        "search the web"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &serde_json::Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
@@ -137,9 +163,15 @@ impl Tool for SearchTool {
             source: ToolSource::InProcess,
         }
     }
-    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+    async fn execute(
+        &self,
+        input: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
         println!("[tool] search called with: {input}");
-        Ok(ToolOutput::Immediate(json!({"results": ["result1", "result2"]})))
+        Ok(ToolOutput::Immediate(
+            json!({"results": ["result1", "result2"]}),
+        ))
     }
 }
 
@@ -159,7 +191,12 @@ async fn main() {
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(SearchTool)).unwrap();
 
-    let (handle, mut rx) = AgentRun::start(config, "Search for something.".into(), Arc::new(MockModel::new()), registry);
+    let (handle, mut rx) = AgentRun::start(
+        config,
+        "Search for something.".into(),
+        Arc::new(MockModel::new()),
+        registry,
+    );
 
     while let Some(event) = rx.recv().await {
         match event {

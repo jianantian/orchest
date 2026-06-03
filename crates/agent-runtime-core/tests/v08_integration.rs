@@ -27,7 +27,11 @@ use tokio::sync::mpsc;
 fn end_response() -> ModelResponse {
     ModelResponse {
         content: vec![ContentBlock::Text("done".into())],
-        usage: TokenUsage { input_tokens: 5, output_tokens: 3, ..Default::default() },
+        usage: TokenUsage {
+            input_tokens: 5,
+            output_tokens: 3,
+            ..Default::default()
+        },
         stop_reason: StopReason::EndTurn,
         option_adjustments: vec![],
     }
@@ -45,9 +49,15 @@ struct SimpleEndModel;
 
 #[async_trait]
 impl ModelAdapter for SimpleEndModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "mock" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
     async fn complete(
         &self,
         _messages: &[Message],
@@ -55,9 +65,17 @@ impl ModelAdapter for SimpleEndModel {
         _options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
-        let usage = TokenUsage { input_tokens: 5, output_tokens: 3, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 5,
+            output_tokens: 3,
+            ..Default::default()
+        };
         if let Some(tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
         Ok(end_response())
     }
@@ -71,14 +89,24 @@ struct TwoCallModel {
 }
 
 impl TwoCallModel {
-    fn new() -> Self { Self { call: AtomicU32::new(0) } }
+    fn new() -> Self {
+        Self {
+            call: AtomicU32::new(0),
+        }
+    }
 }
 
 #[async_trait]
 impl ModelAdapter for TwoCallModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "mock" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
 
     async fn complete(
         &self,
@@ -88,14 +116,27 @@ impl ModelAdapter for TwoCallModel {
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let n = self.call.fetch_add(1, Ordering::SeqCst);
-        let usage = TokenUsage { input_tokens: 5, output_tokens: 3, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 5,
+            output_tokens: 3,
+            ..Default::default()
+        };
         if let Some(ref tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
         // Count distinct tool-result messages to decide which phase we're in
-        let results = messages.iter().filter(|m| {
-            m.content.iter().any(|c| matches!(c, ContentBlock::ToolResult { .. }))
-        }).count();
+        let results = messages
+            .iter()
+            .filter(|m| {
+                m.content
+                    .iter()
+                    .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
+            })
+            .count();
 
         match (n, results) {
             // Phase 1: call banned tool → guardrail rejects it (ToolResult with error back)
@@ -135,10 +176,18 @@ struct WriteFileTool;
 
 #[async_trait]
 impl Tool for WriteFileTool {
-    fn name(&self) -> &str { "write_file" }
-    fn description(&self) -> &str { "writes a file (has side effects)" }
-    fn input_schema(&self) -> &JsonSchema { &Value::Null }
-    fn output_schema(&self) -> Option<&JsonSchema> { None }
+    fn name(&self) -> &str {
+        "write_file"
+    }
+    fn description(&self) -> &str {
+        "writes a file (has side effects)"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: true,
@@ -192,8 +241,15 @@ async fn guardrail_and_approval_coexist() {
         match &event {
             RuntimeEvent::ApprovalRequested { tool_call } => {
                 // Verify the approved call is the SAFE one (not the banned one)
-                let path = tool_call.input.get("path").and_then(Value::as_str).unwrap_or("");
-                assert!(!path.contains("DROP"), "banned call must not reach approval");
+                let path = tool_call
+                    .input
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                assert!(
+                    !path.contains("DROP"),
+                    "banned call must not reach approval"
+                );
                 saw_approval = true;
                 handle.respond_approval(handle.run_id, true).await.unwrap();
             }
@@ -203,7 +259,10 @@ async fn guardrail_and_approval_coexist() {
     }
     handle.wait().await;
 
-    assert!(saw_approval, "write_file (side_effect=true) should trigger approval");
+    assert!(
+        saw_approval,
+        "write_file (side_effect=true) should trigger approval"
+    );
 }
 
 // ── Test 2: session_resume_with_hooks ─────────────────────────────────────────
@@ -232,7 +291,9 @@ async fn session_resume_with_hooks() {
         .session_store(store.clone() as Arc<dyn SessionStore>, SID)
         .build()
         .unwrap()
-        .with_hook(Arc::new(RunEndCounterHook { count: Arc::clone(&hook_count) }));
+        .with_hook(Arc::new(RunEndCounterHook {
+            count: Arc::clone(&hook_count),
+        }));
 
     let (handle, rx) = AgentRun::start(
         config,
@@ -243,26 +304,45 @@ async fn session_resume_with_hooks() {
     collect(rx).await;
     handle.wait().await;
 
-    assert_eq!(hook_count.load(Ordering::SeqCst), 1, "hook should fire once after first run");
+    assert_eq!(
+        hook_count.load(Ordering::SeqCst),
+        1,
+        "hook should fire once after first run"
+    );
 
-    let snap = store.load(SID).await.unwrap().expect("snapshot must be saved");
+    let snap = store
+        .load(SID)
+        .await
+        .unwrap()
+        .expect("snapshot must be saved");
     assert!(!snap.messages.is_empty(), "snapshot must have messages");
     let tokens_after_first = snap.budget_used.tokens_used;
 
     // ── Resume ──
     let mut snap = snap;
     // Re-attach session store (serde(skip)) and re-attach the hook (also serde(skip))
-    snap.active_config = snap.active_config
+    snap.active_config = snap
+        .active_config
         .with_session_store(store.clone() as Arc<dyn SessionStore>, SID)
-        .with_hook(Arc::new(RunEndCounterHook { count: Arc::clone(&hook_count) }));
+        .with_hook(Arc::new(RunEndCounterHook {
+            count: Arc::clone(&hook_count),
+        }));
 
     let (handle2, rx2) = AgentRun::resume(snap, Arc::new(SimpleEndModel), ToolRegistry::new());
     collect(rx2).await;
     handle2.wait().await;
 
-    assert_eq!(hook_count.load(Ordering::SeqCst), 2, "hook should fire again on resumed run");
+    assert_eq!(
+        hook_count.load(Ordering::SeqCst),
+        2,
+        "hook should fire again on resumed run"
+    );
 
-    let snap2 = store.load(SID).await.unwrap().expect("snapshot must be updated after resume");
+    let snap2 = store
+        .load(SID)
+        .await
+        .unwrap()
+        .expect("snapshot must be updated after resume");
     assert!(
         snap2.budget_used.tokens_used >= tokens_after_first,
         "resumed snapshot must accumulate token usage"
@@ -315,19 +395,31 @@ async fn session_resume_after_handoff() {
 
     // Resume from the post-handoff snapshot
     let (handle, rx) = AgentRun::resume(snapshot, Arc::new(SimpleEndModel), ToolRegistry::new());
-    assert_eq!(handle.run_id, run_id, "resumed run_id must match snapshot run_id");
+    assert_eq!(
+        handle.run_id, run_id,
+        "resumed run_id must match snapshot run_id"
+    );
 
     let events = collect(rx).await;
     handle.wait().await;
 
     assert!(
-        events.iter().any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
         "resumed run must complete"
     );
 
     // Session was updated during resumed run
-    let snap2 = store.load(SID).await.unwrap().expect("snapshot must exist after resume");
-    assert_eq!(snap2.run_id, run_id, "persisted snapshot must retain run_id");
+    let snap2 = store
+        .load(SID)
+        .await
+        .unwrap()
+        .expect("snapshot must exist after resume");
+    assert_eq!(
+        snap2.run_id, run_id,
+        "persisted snapshot must retain run_id"
+    );
     assert!(
         snap2.active_config.system_prompt.contains("Agent B"),
         "persisted snapshot must reflect post-handoff config"
@@ -347,15 +439,24 @@ struct FixedCallCountModel {
 
 impl FixedCallCountModel {
     fn new(tool_calls: u32) -> Self {
-        Self { call: AtomicU32::new(0), tool_calls }
+        Self {
+            call: AtomicU32::new(0),
+            tool_calls,
+        }
     }
 }
 
 #[async_trait]
 impl ModelAdapter for FixedCallCountModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "mock" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
 
     async fn complete(
         &self,
@@ -365,11 +466,19 @@ impl ModelAdapter for FixedCallCountModel {
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let n = self.call.fetch_add(1, Ordering::SeqCst);
-        let usage = TokenUsage { input_tokens: 5, output_tokens: 3, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 5,
+            output_tokens: 3,
+            ..Default::default()
+        };
         // Yield to allow watcher tasks to be scheduled between model calls.
         tokio::task::yield_now().await;
         if let Some(ref tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
         if n < self.tool_calls {
             Ok(ModelResponse {
@@ -397,14 +506,25 @@ struct PingTool;
 
 #[async_trait]
 impl Tool for PingTool {
-    fn name(&self) -> &str { "ping" }
-    fn description(&self) -> &str { "pings" }
-    fn input_schema(&self) -> &JsonSchema { &Value::Null }
-    fn output_schema(&self) -> Option<&JsonSchema> { None }
+    fn name(&self) -> &str {
+        "ping"
+    }
+    fn description(&self) -> &str {
+        "pings"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false, requires_approval: false,
-            cost_hint: None, timeout: None, max_output_tokens: None,
+            side_effect: false,
+            requires_approval: false,
+            cost_hint: None,
+            timeout: None,
+            max_output_tokens: None,
             source: ToolSource::InProcess,
         }
     }
@@ -449,16 +569,22 @@ async fn watcher_inject_during_tool_loop() {
         registry,
     );
 
-    handle.attach_watcher(
-        Arc::new(CountAndInjectWatcher { completions_seen: Arc::clone(&completions_seen) }),
-        512,
-    ).await;
+    handle
+        .attach_watcher(
+            Arc::new(CountAndInjectWatcher {
+                completions_seen: Arc::clone(&completions_seen),
+            }),
+            512,
+        )
+        .await;
 
     let events = collect(rx).await;
     handle.wait().await;
 
     assert!(
-        events.iter().any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
         "run must complete"
     );
     // Watcher must have seen at least one ToolCallCompleted (exact count depends on
@@ -477,14 +603,24 @@ struct CombinedModel {
 }
 
 impl CombinedModel {
-    fn new() -> Self { Self { call: AtomicU32::new(0) } }
+    fn new() -> Self {
+        Self {
+            call: AtomicU32::new(0),
+        }
+    }
 }
 
 #[async_trait]
 impl ModelAdapter for CombinedModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "mock" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
 
     async fn complete(
         &self,
@@ -494,11 +630,19 @@ impl ModelAdapter for CombinedModel {
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let n = self.call.fetch_add(1, Ordering::SeqCst);
-        let usage = TokenUsage { input_tokens: 5, output_tokens: 3, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 5,
+            output_tokens: 3,
+            ..Default::default()
+        };
         // Yield so watcher tasks can be scheduled between model calls.
         tokio::task::yield_now().await;
         if let Some(ref tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
 
         match n {
@@ -575,10 +719,14 @@ async fn all_v08_features_combined() {
         registry,
     );
 
-    handle.attach_watcher(
-        Arc::new(CountingWatcher { tool_completions: Arc::clone(&tool_completions) }),
-        512,
-    ).await;
+    handle
+        .attach_watcher(
+            Arc::new(CountingWatcher {
+                tool_completions: Arc::clone(&tool_completions),
+            }),
+            512,
+        )
+        .await;
 
     let mut saw_approval = false;
     while let Some(event) = rx.recv().await {
@@ -601,9 +749,16 @@ async fn all_v08_features_combined() {
     assert!(saw_approval, "side_effect write_file must require approval");
 
     // Session: snapshot was persisted
-    let snap = store.load(SID).await.unwrap().expect("snapshot must be saved");
+    let snap = store
+        .load(SID)
+        .await
+        .unwrap()
+        .expect("snapshot must be saved");
     assert!(!snap.messages.is_empty(), "snapshot must have messages");
-    assert!(snap.budget_used.tokens_used > 0, "snapshot must record token usage");
+    assert!(
+        snap.budget_used.tokens_used > 0,
+        "snapshot must record token usage"
+    );
 
     // Watcher: the safe write_file's ToolCallCompleted should have fired the watcher
     // (the banned call is rejected before ToolCallStarted so it doesn't emit ToolCallCompleted)
@@ -625,8 +780,7 @@ mod sqlite_tests {
     async fn sqlite_session_store_persist_and_load() {
         let db_file = NamedTempFile::new().expect("tempfile");
         let store = Arc::new(
-            SqliteSessionStore::open(db_file.path().to_str().unwrap())
-                .expect("open sqlite store"),
+            SqliteSessionStore::open(db_file.path().to_str().unwrap()).expect("open sqlite store"),
         );
         const SID: &str = "sqlite-test";
 
@@ -664,8 +818,7 @@ mod sqlite_tests {
     async fn sqlite_session_resume_round_trip() {
         let db_file = NamedTempFile::new().expect("tempfile");
         let store = Arc::new(
-            SqliteSessionStore::open(db_file.path().to_str().unwrap())
-                .expect("open sqlite store"),
+            SqliteSessionStore::open(db_file.path().to_str().unwrap()).expect("open sqlite store"),
         );
         const SID: &str = "sqlite-resume";
 
@@ -689,7 +842,8 @@ mod sqlite_tests {
         let mut snap = store.load(SID).await.expect("load").expect("snapshot");
         assert_eq!(snap.run_id, first_run_id);
 
-        snap.active_config = snap.active_config
+        snap.active_config = snap
+            .active_config
             .with_session_store(store.clone() as Arc<dyn SessionStore>, SID);
 
         let (handle2, rx2) = AgentRun::resume(snap, Arc::new(SimpleEndModel), ToolRegistry::new());
@@ -697,7 +851,11 @@ mod sqlite_tests {
         collect(rx2).await;
         handle2.wait().await;
 
-        let snap2 = store.load(SID).await.expect("load").expect("snapshot after resume");
+        let snap2 = store
+            .load(SID)
+            .await
+            .expect("load")
+            .expect("snapshot after resume");
         assert_eq!(snap2.run_id, first_run_id);
         assert!(
             snap2.budget_used.tokens_used > 0,

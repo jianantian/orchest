@@ -2,10 +2,9 @@
 //!
 //! Run with: cargo run --example watcher_abort_on_pattern
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
-use async_trait::async_trait;
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
@@ -16,6 +15,7 @@ use agent_runtime_core::tool::{
     registry::ToolRegistry, JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata,
     ToolOutput, ToolSource,
 };
+use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -26,14 +26,24 @@ struct AlwaysFailToolModel {
 }
 
 impl AlwaysFailToolModel {
-    fn new() -> Self { Self { call: AtomicU32::new(0) } }
+    fn new() -> Self {
+        Self {
+            call: AtomicU32::new(0),
+        }
+    }
 }
 
 #[async_trait]
 impl ModelAdapter for AlwaysFailToolModel {
-    fn provider_name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "mock" }
-    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities::default() }
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
 
     async fn complete(
         &self,
@@ -43,14 +53,24 @@ impl ModelAdapter for AlwaysFailToolModel {
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let count = self.call.fetch_add(1, Ordering::SeqCst);
-        let usage = TokenUsage { input_tokens: 10, output_tokens: 5, ..Default::default() };
+        let usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Default::default()
+        };
         if let Some(ref tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
 
         // Keep calling the failing tool unless a ToolResult message exists
         let has_result = messages.iter().any(|m| {
-            m.content.iter().any(|c| matches!(c, ContentBlock::ToolResult { .. }))
+            m.content
+                .iter()
+                .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
         });
 
         if !has_result || count < 5 {
@@ -81,10 +101,18 @@ struct FlakyTool;
 
 #[async_trait]
 impl Tool for FlakyTool {
-    fn name(&self) -> &str { "flaky_tool" }
-    fn description(&self) -> &str { "A tool that always fails" }
-    fn input_schema(&self) -> &JsonSchema { &serde_json::Value::Null }
-    fn output_schema(&self) -> Option<&JsonSchema> { None }
+    fn name(&self) -> &str {
+        "flaky_tool"
+    }
+    fn description(&self) -> &str {
+        "A tool that always fails"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &serde_json::Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
@@ -95,8 +123,15 @@ impl Tool for FlakyTool {
             source: ToolSource::InProcess,
         }
     }
-    async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        Err(ToolError { message: "tool unavailable".into(), code: None })
+    async fn execute(
+        &self,
+        _input: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        Err(ToolError {
+            message: "tool unavailable".into(),
+            code: None,
+        })
     }
 }
 
@@ -109,7 +144,10 @@ struct AbortOnRepeatedFailure {
 
 impl AbortOnRepeatedFailure {
     fn new(threshold: u32) -> Self {
-        Self { threshold, failures: AtomicU32::new(0) }
+        Self {
+            threshold,
+            failures: AtomicU32::new(0),
+        }
     }
 }
 
@@ -118,12 +156,13 @@ impl Watcher for AbortOnRepeatedFailure {
     async fn on_event(&self, event: &RuntimeEvent) -> WatcherAction {
         if let RuntimeEvent::ToolCallFailed { tool, error } = event {
             let count = self.failures.fetch_add(1, Ordering::SeqCst) + 1;
-            println!("[watcher] tool '{tool}' failed ({count}/{}) — {error}", self.threshold);
+            println!(
+                "[watcher] tool '{tool}' failed ({count}/{}) — {error}",
+                self.threshold
+            );
             if count >= self.threshold {
                 println!("[watcher] threshold reached — aborting run");
-                return WatcherAction::Abort(
-                    format!("too many tool failures ({count}): aborting"),
-                );
+                return WatcherAction::Abort(format!("too many tool failures ({count}): aborting"));
             }
         }
         WatcherAction::Continue
@@ -150,7 +189,9 @@ async fn main() {
         registry,
     );
 
-    handle.attach_watcher(Arc::new(AbortOnRepeatedFailure::new(3)), 1024).await;
+    handle
+        .attach_watcher(Arc::new(AbortOnRepeatedFailure::new(3)), 1024)
+        .await;
 
     let mut aborted = false;
     while let Some(event) = rx.recv().await {
@@ -158,7 +199,10 @@ async fn main() {
             RuntimeEvent::RunCompleted { output } => println!("[run] completed: {output}"),
             RuntimeEvent::RunFailed { error } => println!("[run] failed: {error}"),
             RuntimeEvent::RunAborted { reason } => {
-                println!("[run] aborted: {}", reason.as_deref().unwrap_or("no reason"));
+                println!(
+                    "[run] aborted: {}",
+                    reason.as_deref().unwrap_or("no reason")
+                );
                 aborted = true;
             }
             RuntimeEvent::ToolCallFailed { tool, error } => {

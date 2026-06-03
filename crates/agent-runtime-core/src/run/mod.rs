@@ -9,8 +9,8 @@ pub(crate) mod helpers;
 pub(crate) mod retry;
 pub(crate) mod skills;
 pub(crate) mod tool_exec;
-pub(crate) mod webhook;
 pub mod watcher;
+pub(crate) mod webhook;
 
 pub use config::{
     AgentConfig, AgentConfigBuilder, AgentRun, ApprovalMode, CompactionConfig, ConfigError,
@@ -32,17 +32,6 @@ use actor::{AgentRunArgs, ResumeState, WorkerActor};
 
 const EVENT_CHANNEL_CAPACITY: usize = 256;
 
-fn maybe_register_persistence(config: &mut AgentConfig) {
-    if let (Some(store), Some(session_id)) = (config.session_store.clone(), config.session_id.clone()) {
-        let hook = Arc::new(crate::session::SessionPersistenceHook::new(
-            store,
-            session_id,
-            config.clone(),
-        ));
-        config.hooks.push(hook);
-    }
-}
-
 impl AgentRun {
     pub fn start(
         config: AgentConfig,
@@ -60,7 +49,7 @@ impl AgentRun {
         registry: ToolRegistry,
         approval_bus: ApprovalBus,
     ) -> (RunHandle, EventReceiver) {
-        maybe_register_persistence(&mut config);
+        config.register_persistence_hook();
 
         let run_id = RunId::new();
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
@@ -86,7 +75,7 @@ impl AgentRun {
         registry: ToolRegistry,
     ) -> (RunHandle, EventReceiver) {
         let mut config = snapshot.active_config.clone();
-        maybe_register_persistence(&mut config);
+        config.register_persistence_hook();
 
         let run_id = snapshot.run_id;
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);

@@ -78,13 +78,7 @@ impl RunHandle {
         // Wait until actor_ref is populated so the cast is never silently lost.
         loop {
             let notified = self.ready.notified();
-            if self
-                .actor_ref
-                .lock()
-                .ok()
-                .and_then(|g| g.clone())
-                .is_some()
-            {
+            if self.actor_ref.lock().ok().and_then(|g| g.clone()).is_some() {
                 break;
             }
             notified.await;

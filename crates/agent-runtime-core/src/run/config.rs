@@ -329,6 +329,21 @@ impl AgentConfig {
         self.session_id = Some(session_id.into());
         self
     }
+
+    /// If a session store is configured, push a `SessionPersistenceHook` onto `self.hooks`.
+    /// Called automatically by `AgentRun::start` and `AgentRun::resume`.
+    pub(crate) fn register_persistence_hook(&mut self) {
+        if let (Some(store), Some(session_id)) =
+            (self.session_store.clone(), self.session_id.clone())
+        {
+            self.hooks
+                .push(Arc::new(crate::session::SessionPersistenceHook::new(
+                    store,
+                    session_id,
+                    self.clone(),
+                )));
+        }
+    }
 }
 
 pub struct AgentConfigBuilder {
