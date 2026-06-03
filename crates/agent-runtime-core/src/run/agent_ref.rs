@@ -1,8 +1,4 @@
 //! AgentRef: typed pub(crate) API wrapping ActorRef<AgentMsg>.
-//!
-//! v0.7: definition and method signatures are in place; full logic is wired
-//! for cancel(). steer() is a stub (returns immediately) — implementation
-//! ships in v0.8 when callers exist.
 
 use ractor::ActorRef;
 
@@ -23,20 +19,21 @@ pub(crate) struct AgentRef {
 
 #[allow(dead_code)] // v0.8 forward declaration
 impl AgentRef {
-    /// Request a steering redirect (v0.8 implementation).
+    /// Request a steering redirect (v0.9 implementation).
     pub(crate) async fn steer(&self, _cmd: SteerCmd) -> Result<SteerResult, AgentError> {
         ractor::call!(self.inner, AgentMsg::Steer, _cmd)
             .map_err(|e| AgentError::Communication(e.to_string()))
     }
 
-    /// Inject a message into the running agent (v0.8 implementation).
-    pub(crate) async fn inject(&self, _cmd: InjectCmd) -> Result<(), AgentError> {
-        ractor::call!(self.inner, AgentMsg::Inject, _cmd)
-            .map_err(|e| AgentError::Communication(e.to_string()))
+    /// Inject a message into the running agent (fire-and-forget).
+    pub(crate) fn inject(&self, cmd: InjectCmd) {
+        let _ = self.inner.cast(AgentMsg::Inject(cmd));
     }
 
     /// Cancel the running agent.
     pub(crate) fn cancel(&self) {
-        let _ = self.inner.cast(AgentMsg::Cancel(CancelCmd));
+        let _ = self
+            .inner
+            .cast(AgentMsg::Cancel(CancelCmd { reason: None }));
     }
 }

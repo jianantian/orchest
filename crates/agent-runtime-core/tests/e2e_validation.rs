@@ -47,6 +47,8 @@ fn test_config() -> AgentConfig {
         hooks: vec![],
         retry_policy: None,
         handoffs: vec![],
+        session_store: None,
+        session_id: None,
     }
 }
 
@@ -309,7 +311,7 @@ async fn e2e_event_coverage() {
             RuntimeEvent::SubAgentFailed { .. } => "SubAgentFailed",
             RuntimeEvent::RunCompleted { .. } => "RunCompleted",
             RuntimeEvent::RunFailed { .. } => "RunFailed",
-            RuntimeEvent::RunAborted => "RunAborted",
+            RuntimeEvent::RunAborted { .. } => "RunAborted",
             RuntimeEvent::ChildRunEvent { .. } => "ChildRunEvent",
             RuntimeEvent::SubAgentEvent { .. } => "SubAgentEvent",
             RuntimeEvent::HookPanicked { .. } => "HookPanicked",

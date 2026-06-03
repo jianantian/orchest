@@ -54,7 +54,9 @@ pub(crate) async fn maybe_compact_context(
         token_count: usage.input_tokens as u32,
     };
     match crate::hook::runner::run_before_compact(&config.hooks, &mut compact_ctx, tx).await {
-        crate::hook::HookAction::Skip | crate::hook::HookAction::Abort(_) => return,
+        crate::hook::HookAction::Skip
+        | crate::hook::HookAction::Abort(_)
+        | crate::hook::HookAction::Reject(_) => return,
         crate::hook::HookAction::Continue => {}
     }
     *messages = compact_ctx.messages;
@@ -226,6 +228,8 @@ mod tests {
             hooks: vec![],
             retry_policy: None,
             handoffs: vec![],
+            session_store: None,
+            session_id: None,
         }
     }
 
@@ -257,6 +261,8 @@ mod tests {
             hooks: vec![],
             retry_policy: None,
             handoffs: vec![],
+            session_store: None,
+            session_id: None,
         };
         let call_count = Arc::new(AtomicU32::new(0));
         let model: Arc<dyn ModelAdapter> = Arc::new(SummaryMock {

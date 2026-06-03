@@ -23,6 +23,10 @@ metrics = "0.24"
 tiktoken-rs = "0.6"
 httparse = "1"
 ractor = { version = "0.15", features = ["message_span_propogation"] }
+rusqlite = { version = "0.31", features = ["bundled"], optional = true }
+
+[features]
+sqlite-session = ["dep:rusqlite"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -69,6 +73,30 @@ path = "../../examples/rust/retry_exhausted.rs"
 [[example]]
 name = "loop_detection"
 path = "../../examples/rust/loop_detection.rs"
+
+[[example]]
+name = "guardrail_keyword_filter"
+path = "../../examples/rust/guardrail_keyword_filter.rs"
+
+[[example]]
+name = "guardrail_output_sanitize"
+path = "../../examples/rust/guardrail_output_sanitize.rs"
+
+[[example]]
+name = "approval_mode_side_effect"
+path = "../../examples/rust/approval_mode_side_effect.rs"
+
+[[example]]
+name = "session_persist_resume"
+path = "../../examples/rust/session_persist_resume.rs"
+
+[[example]]
+name = "watcher_inject_message"
+path = "../../examples/rust/watcher_inject_message.rs"
+
+[[example]]
+name = "watcher_abort_on_pattern"
+path = "../../examples/rust/watcher_abort_on_pattern.rs"
 
 [lints]
 workspace = true

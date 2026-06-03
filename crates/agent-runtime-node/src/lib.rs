@@ -15,7 +15,7 @@ use agent_runtime_core::model::{
     RequestOptions as RustRequestOptions, ThinkingLevel,
 };
 use agent_runtime_core::run::{
-    AgentConfig, AgentRun, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
+    AgentConfig, AgentRun, ApprovalMode, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
 };
 use agent_runtime_core::tool::async_job::JobHandle;
 use agent_runtime_core::tool::registry::ToolRegistry;
@@ -29,6 +29,18 @@ fn shared_runtime() -> &'static tokio::runtime::Runtime {
     RT.get_or_init(|| tokio::runtime::Runtime::new().expect("failed to create tokio runtime"))
 }
 
+fn parse_approval_mode(value: Option<&str>) -> Result<ApprovalMode, String> {
+    match value {
+        None | Some("perTool") | Some("PerTool") => Ok(ApprovalMode::PerTool),
+        Some("none") | Some("None") => Ok(ApprovalMode::None),
+        Some("all") | Some("All") => Ok(ApprovalMode::All),
+        Some("sideEffectOnly") | Some("SideEffectOnly") => Ok(ApprovalMode::SideEffectOnly),
+        Some(other) => Err(format!(
+            "invalid approvalMode '{other}'; expected perTool|none|all|sideEffectOnly"
+        )),
+    }
+}
+
 #[napi(object)]
 pub struct AgentOptions {
     pub model: String,
@@ -40,6 +52,8 @@ pub struct AgentOptions {
     pub max_tokens: Option<u32>,
     pub request_options: Option<RequestOptions>,
     pub budget: Option<BudgetOptions>,
+    /// Run-level approval policy: "perTool" | "none" | "all" | "sideEffectOnly".
+    pub approval_mode: Option<String>,
 }
 
 #[napi(object)]
@@ -210,6 +224,7 @@ pub struct Agent {
     request_options: RustRequestOptions,
     skills_dir: Option<String>,
     budget: Option<BudgetOptions>,
+    approval_mode: Option<String>,
     tools: Vec<Arc<dyn Tool>>,
     run_handle: Arc<TokioMutex<Option<RunHandle>>>,
 }
@@ -233,6 +248,7 @@ impl Agent {
                 .unwrap_or_default(),
             skills_dir: options.skills_dir,
             budget: options.budget,
+            approval_mode: options.approval_mode,
             tools: Vec::new(),
             run_handle: Arc::new(TokioMutex::new(None)),
         })
@@ -496,10 +512,16 @@ impl Agent {
                 dir: self.skills_dir.clone(),
                 ..SkillsConfig::default()
             },
-            runtime: RuntimeConfig::default(),
+            runtime: RuntimeConfig {
+                approval_mode: parse_approval_mode(self.approval_mode.as_deref())
+                    .map_err(napi::Error::from_reason)?,
+                ..RuntimeConfig::default()
+            },
             hooks: vec![],
             retry_policy: None,
             handoffs: vec![],
+            session_store: None,
+            session_id: None,
         })
     }
 }
@@ -683,6 +705,7 @@ mod tests {
             max_tokens: Some(123),
             request_options: None,
             budget: None,
+            approval_mode: None,
         })
         .expect("agent should construct");
         let config = agent.provider_config();
@@ -702,6 +725,7 @@ mod tests {
             max_tokens: None,
             request_options: None,
             budget: None,
+            approval_mode: None,
         })
         .expect("agent should construct");
         let config = agent.build_config().expect("config should build");

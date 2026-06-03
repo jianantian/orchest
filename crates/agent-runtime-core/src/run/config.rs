@@ -49,6 +49,9 @@ pub struct AgentConfig {
     pub retry_policy: Option<super::retry::RetryPolicy>,
     #[serde(skip)]
     pub handoffs: Vec<crate::handoff::Handoff>,
+    #[serde(skip)]
+    pub session_store: Option<Arc<dyn crate::session::SessionStore>>,
+    pub session_id: Option<String>,
 }
 
 impl std::fmt::Debug for AgentConfig {
@@ -60,6 +63,8 @@ impl std::fmt::Debug for AgentConfig {
             .field("skills", &self.skills)
             .field("runtime", &self.runtime)
             .field("handoffs", &self.handoffs.len())
+            .field("session_id", &self.session_id)
+            .field("session_store", &self.session_store.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -125,7 +130,27 @@ pub struct SkillsConfig {
     pub allowed: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Custom approval predicate: given a tool's metadata, decide whether the call
+/// requires approval. Takes priority over [`ApprovalMode`] when set.
+pub type CustomApprovalFn = Arc<dyn Fn(&crate::tool::ToolMetadata) -> bool + Send + Sync>;
+
+/// Run-level approval strategy. Overrides the per-tool
+/// [`ToolMetadata::requires_approval`](crate::tool::ToolMetadata) flag.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApprovalMode {
+    /// Use each tool's `requires_approval` flag (default; backwards compatible).
+    #[default]
+    PerTool,
+    /// Never request approval.
+    None,
+    /// Request approval for every tool call.
+    All,
+    /// Request approval only for tools with `side_effect: true`.
+    SideEffectOnly,
+}
+
+// RuntimeConfig holds a non-Debug `Arc<dyn Fn>`, so Debug is implemented manually.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RuntimeConfig {
     pub max_steps: u32,
     pub allowed_tools: Option<Vec<String>>,
@@ -146,6 +171,45 @@ pub struct RuntimeConfig {
     pub code_execution_enabled: bool,
     #[serde(default)]
     pub run_depth: u32,
+    #[serde(default)]
+    pub approval_mode: ApprovalMode,
+    /// Custom approval predicate. Takes priority over `approval_mode` when set.
+    /// Not serialized (like hooks/retry_policy); only set via code.
+    #[serde(skip)]
+    pub custom_approval_fn: Option<CustomApprovalFn>,
+}
+
+impl RuntimeConfig {
+    /// Resolves whether a tool call requires approval under this run's policy.
+    /// `custom_approval_fn` takes priority; otherwise `approval_mode` decides.
+    pub fn should_approve(&self, meta: &crate::tool::ToolMetadata) -> bool {
+        if let Some(f) = &self.custom_approval_fn {
+            return f(meta);
+        }
+        match self.approval_mode {
+            ApprovalMode::PerTool => meta.requires_approval,
+            ApprovalMode::None => false,
+            ApprovalMode::All => true,
+            ApprovalMode::SideEffectOnly => meta.side_effect,
+        }
+    }
+}
+
+impl std::fmt::Debug for RuntimeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeConfig")
+            .field("max_steps", &self.max_steps)
+            .field("allowed_tools", &self.allowed_tools)
+            .field("mcp_servers", &self.mcp_servers)
+            .field("tool_search_enabled", &self.tool_search_enabled)
+            .field("compaction", &self.compaction)
+            .field("webhook_enabled", &self.webhook_enabled)
+            .field("code_execution_enabled", &self.code_execution_enabled)
+            .field("run_depth", &self.run_depth)
+            .field("approval_mode", &self.approval_mode)
+            .field("custom_approval_fn", &self.custom_approval_fn.is_some())
+            .finish()
+    }
 }
 
 impl Default for RuntimeConfig {
@@ -159,6 +223,8 @@ impl Default for RuntimeConfig {
             webhook_enabled: false,
             code_execution_enabled: false,
             run_depth: 0,
+            approval_mode: ApprovalMode::PerTool,
+            custom_approval_fn: None,
         }
     }
 }
@@ -195,6 +261,52 @@ impl AgentConfig {
         self
     }
 
+    /// Register an input guardrail (reviews messages at `before_model`).
+    pub fn with_input_guardrail(
+        mut self,
+        guardrail: std::sync::Arc<dyn crate::guardrail::InputGuardrail>,
+    ) -> Self {
+        self.hooks
+            .push(std::sync::Arc::new(crate::guardrail::InputGuardrailHook(
+                guardrail,
+            )));
+        self
+    }
+
+    /// Register an output guardrail (reviews the model response at `after_model`).
+    pub fn with_output_guardrail(
+        mut self,
+        guardrail: std::sync::Arc<dyn crate::guardrail::OutputGuardrail>,
+    ) -> Self {
+        self.hooks
+            .push(std::sync::Arc::new(crate::guardrail::OutputGuardrailHook(
+                guardrail,
+            )));
+        self
+    }
+
+    /// Register a tool-input guardrail (reviews tool input at `before_tool`).
+    pub fn with_tool_input_guardrail(
+        mut self,
+        guardrail: std::sync::Arc<dyn crate::guardrail::ToolInputGuardrail>,
+    ) -> Self {
+        self.hooks.push(std::sync::Arc::new(
+            crate::guardrail::ToolInputGuardrailHook(guardrail),
+        ));
+        self
+    }
+
+    /// Register a tool-output guardrail (reviews tool output at `after_tool`).
+    pub fn with_tool_output_guardrail(
+        mut self,
+        guardrail: std::sync::Arc<dyn crate::guardrail::ToolOutputGuardrail>,
+    ) -> Self {
+        self.hooks.push(std::sync::Arc::new(
+            crate::guardrail::ToolOutputGuardrailHook(guardrail),
+        ));
+        self
+    }
+
     pub fn with_loop_detection(self) -> Self {
         self.with_hook(std::sync::Arc::new(
             crate::hook::LoopDetectionHook::default(),
@@ -205,6 +317,32 @@ impl AgentConfig {
         self.with_hook(std::sync::Arc::new(crate::hook::LoopDetectionHook::from(
             config,
         )))
+    }
+
+    /// Attach a session store (post-build chainable form; mirrors `AgentConfigBuilder::session_store`).
+    pub fn with_session_store(
+        mut self,
+        store: Arc<dyn crate::session::SessionStore>,
+        session_id: impl Into<String>,
+    ) -> Self {
+        self.session_store = Some(store);
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    /// If a session store is configured, push a `SessionPersistenceHook` onto `self.hooks`.
+    /// Called automatically by `AgentRun::start` and `AgentRun::resume`.
+    pub(crate) fn register_persistence_hook(&mut self) {
+        if let (Some(store), Some(session_id)) =
+            (self.session_store.clone(), self.session_id.clone())
+        {
+            self.hooks
+                .push(Arc::new(crate::session::SessionPersistenceHook::new(
+                    store,
+                    session_id,
+                    self.clone(),
+                )));
+        }
     }
 }
 
@@ -217,6 +355,8 @@ pub struct AgentConfigBuilder {
     hooks: Vec<std::sync::Arc<dyn crate::hook::Hook>>,
     retry_policy: Option<super::retry::RetryPolicy>,
     handoffs: Vec<crate::handoff::Handoff>,
+    session_store: Option<Arc<dyn crate::session::SessionStore>>,
+    session_id: Option<String>,
 }
 
 impl AgentConfigBuilder {
@@ -246,6 +386,8 @@ impl AgentConfigBuilder {
             hooks: vec![],
             retry_policy: None,
             handoffs: vec![],
+            session_store: None,
+            session_id: None,
         }
     }
 
@@ -302,6 +444,26 @@ impl AgentConfigBuilder {
         self.runtime.run_depth = depth;
         self
     }
+    pub fn approval_mode(mut self, mode: ApprovalMode) -> Self {
+        self.runtime.approval_mode = mode;
+        self
+    }
+    pub fn custom_approval<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&crate::tool::ToolMetadata) -> bool + Send + Sync + 'static,
+    {
+        self.runtime.custom_approval_fn = Some(Arc::new(f));
+        self
+    }
+    pub fn session_store(
+        mut self,
+        store: Arc<dyn crate::session::SessionStore>,
+        session_id: impl Into<String>,
+    ) -> Self {
+        self.session_store = Some(store);
+        self.session_id = Some(session_id.into());
+        self
+    }
     pub fn build(self) -> Result<AgentConfig, ConfigError> {
         if self.model.spec.model.is_empty() {
             return Err(ConfigError::MissingModel);
@@ -333,6 +495,8 @@ impl AgentConfigBuilder {
             hooks: self.hooks,
             retry_policy: self.retry_policy,
             handoffs: self.handoffs,
+            session_store: self.session_store,
+            session_id: self.session_id,
         })
     }
 }
