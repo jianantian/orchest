@@ -194,6 +194,7 @@ mod tests {
                 max_output_tokens: None,
                 source: crate::tool::ToolSource::Builtin,
             },
+            tool_output: None,
         }
     }
 
@@ -209,6 +210,7 @@ mod tests {
                 max_tokens: None,
                 context_window_size: None,
             },
+            response: None,
         }
     }
 

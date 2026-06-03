@@ -226,25 +226,25 @@ v0.6 deferred。Hook、Handoff、Retry 的 API 稳定后补齐使用示例。
 
 ### Phase 1
 
-- [ ] Ractor PoC 代码存在（可为独立 binary 或 integration test）
-- [ ] PoC 验证结论写入 `docs/research/actor-model-evaluation.md` 附录
-- [ ] Gate 决策明确记录（通过 / 有条件通过 / 未通过）
+- [x] Ractor PoC 代码存在（可为独立 binary 或 integration test）
+- [x] PoC 验证结论写入 `docs/research/actor-model-evaluation.md` 附录
+- [x] Gate 决策明确记录（通过 / 有条件通过 / 未通过）
 
 ### Phase 2
 
-- [ ] `Hook` trait 定义完整，所有 hook 点可注册自定义实现
-- [ ] `AgentConfig` 支持 `hooks: Vec<Arc<dyn Hook>>`
-- [ ] `crates/` 中无 `__sub_agent_request` 字符串
-- [ ] `AgentConfig::as_tool()` 可用，子 run 事件正确向上传播
-- [ ] `Handoff` 可用，run loop 正确切换 agent 并发出 `AgentUpdated` 事件
-- [ ] `HandoffInputFilter` 和 `nest_history` 有测试覆盖
-- [ ] `RetryPolicy` 可配置，rate_limit 错误触发重试
-- [ ] Loop detection hook 可检测重复工具调用并注入警告
-- [ ] 如 PoC 通过：AgentRun 重构为 Ractor actor，typed API 封装层可用
-- [ ] `examples/` 目录包含 hook、handoff、retry 的使用示例
-- [ ] `cargo test --workspace` 全绿
-- [ ] `cargo clippy --workspace -- -D warnings` 全绿
-- [ ] `bash scripts/lint-check.sh` 全 PASS
+- [x] `Hook` trait 定义完整，所有 hook 点可注册自定义实现
+- [x] `AgentConfig` 支持 `hooks: Vec<Arc<dyn Hook>>`
+- [x] `crates/` 中无 `__sub_agent_request` 字符串
+- [x] `AgentConfig::as_tool()` 可用，子 run 事件正确向上传播
+- [x] `Handoff` 可用，run loop 正确切换 agent 并发出 `AgentUpdated` 事件
+- [x] `HandoffInputFilter` 和 `nest_history` 有测试覆盖
+- [x] `RetryPolicy` 可配置，rate_limit 错误触发重试
+- [x] Loop detection hook 可检测重复工具调用并注入警告
+- [x] 如 PoC 通过：AgentRun 重构为 Ractor actor，typed API 封装层可用
+- [x] `examples/` 目录包含 hook、handoff、retry 的使用示例
+- [x] `cargo test --workspace` 全绿
+- [x] `cargo clippy --workspace -- -D warnings` 全绿
+- [x] `bash scripts/lint-check.sh` 全 PASS
 
 ## Issues 拆解
 

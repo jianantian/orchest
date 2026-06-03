@@ -23,6 +23,7 @@
 | v0.6 | 重构 | 架构健壮性改造（run.rs 拆分、BudgetGuard 定价解耦、ApprovalBus、AgentConfig builder、MCP 并发化） |
 | hotfix 05-26 | 重构 | Review 问题清偿（bug 修复、Error 治理、依赖反转、ProviderFactory、CancellationToken、CI 防线） |
 | v0.6.1 | 功能 | Image AIGC Gateway（`agent-runtime-aigc-providers`、4 provider adapter、资产持久化、公共输出 contract） |
+| v0.7 | 功能 | 扩展性地基 + Actor（Ractor PoC → 通过、Hook 框架、Agent-as-Tool + Handoff 两层语义、LLM Retry、Loop Detection、WorkerActor refactor、8 个使用示例） |
 
 ## 迭代编号约定
 
@@ -30,16 +31,6 @@
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
 
 ## 规划中
-
-### [v0.7 — 扩展性地基 + Actor PoC](./v0_7/prd.md)
-
-**Phase 1（gate）**：Ractor PoC——用 Ractor 实现最小 WorkerAgent + WatcherAgent，验证 actor 消息流与 run_loop 集成、Kill 优先级、typed API 封装。PoC 结论决定后续所有架构走向。
-
-**Phase 2**：Hook 框架 + Handoff 重构（Agent-as-Tool / Handoff 两层语义）+ LLM Retry + Loop Detection。根据 PoC 结果决定 AgentRun 用 Ractor actor 还是保持 channel 原语。
-
-**依赖**：hotfix 2026-05-26 完成
-
-**研究输入**：[Actor Model 评估](../research/actor-model-evaluation.md)、[Sub-agent Handoff vs Agent-as-Tool](../research/sub-agent-handoff-vs-agent-as-tool.md)
 
 ### [v0.8 — 持久化 + 安全 + Supervised Delegation 基础](./v0_8/prd.md)
 
@@ -58,15 +49,15 @@ Mid-run Steering（基于 v0.8 双向通信基础暴露 API）+ Supervised Deleg
 ### 依赖图
 
 ```
-v0.7 Phase 1: Ractor PoC ──gate──> v0.7 Phase 2: Hook + Handoff
-                                          │
-                                          ▼
-                                   v0.8: Session + Guardrail
-                                        + SD 基础通信层
-                                          │
-                                          ▼
-                                   v0.9: Steering + SD 完整
-                                        + Provider + 发布
+✅ v0.7: Hook + Handoff + Actor
+            │
+            ▼
+   v0.8: Session + Guardrail
+        + SD 基础通信层
+            │
+            ▼
+   v0.9: Steering + SD 完整
+        + Provider + 发布
 ```
 
 ## 能力缺口全景
@@ -75,11 +66,11 @@ v0.7 Phase 1: Ractor PoC ──gate──> v0.7 Phase 2: Hook + Handoff
 
 | 能力 | 当前状态 | 规划版本 |
 |------|---------|---------|
-| Actor Model（Ractor）PoC | proto-actor（channel 手写） | **v0.7 Phase 1** |
-| Hook / 中间件框架 | 零扩展点 | **v0.7 Phase 2** |
-| Sub-agent 语义统一（Agent-as-Tool + Handoff） | 双路径并行 | **v0.7 Phase 2** |
-| LLM Retry / 容错 | 失败直接 return | **v0.7 Phase 2** |
-| Loop Detection | 无 | **v0.7 Phase 2** |
+| Actor Model（Ractor）PoC | ~~proto-actor~~ → WorkerActor (Ractor) | ✅ v0.7 |
+| Hook / 中间件框架 | ~~零扩展点~~ → Hook trait（9 hook 点） | ✅ v0.7 |
+| Sub-agent 语义统一（Agent-as-Tool + Handoff） | ~~双路径并行~~ → Agent-as-Tool + Handoff 统一 | ✅ v0.7 |
+| LLM Retry / 容错 | ~~失败直接 return~~ → RetryPolicy（指数退避） | ✅ v0.7 |
+| Loop Detection | ~~无~~ → LoopDetectionHook（warn + abort） | ✅ v0.7 |
 | Session 持久化 | 无 | **v0.8** |
 | Guardrails | 无 | **v0.8** |
 | 权限模型扩展 | `requires_approval: bool` | **v0.8** |

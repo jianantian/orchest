@@ -8,6 +8,10 @@ pub enum HookAction {
     Continue,
     Skip,
     Abort(String),
+    /// Reject the current tool call, returning `reason` to the model as the tool
+    /// result content. Only meaningful in `before_tool`; treated as `Skip` (with a
+    /// warning) if returned from `after_tool` or `before_compact`.
+    Reject(String),
 }
 
 pub enum ModelHookAction {
@@ -19,12 +23,24 @@ pub struct RunHookContext {
     pub run_id: crate::run::RunId,
     pub agent_name: String,
     pub step: u32,
+    /// Budget consumed so far. Meaningful only at `on_run_end` / `on_run_error`
+    /// (zero-valued at `on_run_start`).
+    pub budget_used: crate::budget::BudgetUsage,
+    /// Final conversation history. Populated at `on_run_end` / `on_run_error`.
+    pub final_messages: Vec<crate::model::Message>,
+    /// The currently active agent config (reflects the post-handoff agent).
+    /// `None` until populated at run termination.
+    pub active_config: Option<crate::run::AgentConfig>,
 }
 
 pub struct ModelHookContext {
     pub run_id: crate::run::RunId,
     pub messages: Vec<crate::model::Message>,
     pub model_spec: crate::model::ModelSpec,
+    /// Model response content. `None` in `before_model`; `Some(output)` in
+    /// `after_model`. Mutating it in `after_model` rewrites what is appended to
+    /// the durable conversation history.
+    pub response: Option<Vec<crate::model::ContentBlock>>,
 }
 
 pub struct ToolHookContext {
@@ -32,6 +48,9 @@ pub struct ToolHookContext {
     pub tool_name: String,
     pub tool_input: serde_json::Value,
     pub tool_metadata: crate::tool::ToolMetadata,
+    /// Tool output. `None` in `before_tool`; `Some(output)` in `after_tool`.
+    /// Mutating it in `after_tool` rewrites the tool result content seen by the model.
+    pub tool_output: Option<serde_json::Value>,
 }
 
 pub struct HandoffHookContext {
