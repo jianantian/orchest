@@ -51,6 +51,12 @@ API 文档、入门教程、SDK 文档、CHANGELOG、CI release workflow、crate
 
 **依赖**：v0.9 + v0.9.1（示例和文档需要 SD API 和新 provider 就绪）
 
+### [v0.9.3 — ASR Provider Gateway](./v0_9_3/prd.md)（卫星）
+
+新增 `agent-runtime-asr-providers`，提供 ASR/STT provider 统一封装、routing、streaming transcript、telemetry 和 `trace_id` 对齐。与 v0.9 主线并行，不改 core run loop。
+
+**依赖**：`agent-runtime-providers` / `agent-runtime-aigc-providers` 的 provider/gateway 设计模式
+
 ### 依赖图
 
 ```
@@ -67,6 +73,8 @@ API 文档、入门教程、SDK 文档、CHANGELOG、CI release workflow、crate
             └──────────┬───────────┘
                        ▼
               v0.9.2: 文档 + 发布
+
+   v0.9.3: ASR Provider Gateway（卫星，独立并行）
 ```
 
 ## 能力缺口全景
@@ -89,3 +97,4 @@ API 文档、入门教程、SDK 文档、CHANGELOG、CI release workflow、crate
 | Supervised Delegation 完整 | 无 | **v0.9** |
 | Provider 扩展 | 4 个（Anthropic/OpenAI/DeepSeek/OpenRouter） | **v0.9.1** |
 | Image AIGC Gateway | ~~无~~ → **v0.6.1 已完成** | ✅ |
+| ASR Provider Gateway | 无统一 ASR/STT provider crate | **v0.9.3** |
