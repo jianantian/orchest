@@ -24,6 +24,7 @@
 | hotfix 05-26 | 重构 | Review 问题清偿（bug 修复、Error 治理、依赖反转、ProviderFactory、CancellationToken、CI 防线） |
 | v0.6.1 | 功能 | Image AIGC Gateway（`agent-runtime-aigc-providers`、4 provider adapter、资产持久化、公共输出 contract） |
 | v0.7 | 功能 | 扩展性地基 + Actor（Ractor PoC → 通过、Hook 框架、Agent-as-Tool + Handoff 两层语义、LLM Retry、Loop Detection、WorkerActor refactor、8 个使用示例） |
+| v0.8 | 功能 | 持久化 + 安全 + Supervised Delegation 基础（SessionStore + SQLite、Guardrail 四层框架、ApprovalMode、Multi-subscriber Events + Watcher + InjectCmd） |
 
 ## 迭代编号约定
 
@@ -31,14 +32,6 @@
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
 
 ## 规划中
-
-### [v0.8 — 持久化 + 安全 + Supervised Delegation 基础](./v0_8/prd.md)
-
-Session 持久化 + Guardrails + 权限模型扩展 + Supervised Delegation 基础通信层。
-
-基于 v0.7 的 Hook 框架 + AgentRun 重构，补齐状态管理、安全层，并建立 Supervised Delegation 所需的双向通信和多方事件订阅基础。
-
-**依赖**：v0.7 Hook 框架 + Handoff 重构
 
 ### [v0.9 — 产品成熟度 + Supervised Delegation](./v0_9/prd.md)
 
@@ -52,7 +45,7 @@ Mid-run Steering（基于 v0.8 双向通信基础暴露 API）+ Supervised Deleg
 ✅ v0.7: Hook + Handoff + Actor
             │
             ▼
-   v0.8: Session + Guardrail
+✅ v0.8: Session + Guardrail
         + SD 基础通信层
             │
             ▼
@@ -71,11 +64,11 @@ Mid-run Steering（基于 v0.8 双向通信基础暴露 API）+ Supervised Deleg
 | Sub-agent 语义统一（Agent-as-Tool + Handoff） | ~~双路径并行~~ → Agent-as-Tool + Handoff 统一 | ✅ v0.7 |
 | LLM Retry / 容错 | ~~失败直接 return~~ → RetryPolicy（指数退避） | ✅ v0.7 |
 | Loop Detection | ~~无~~ → LoopDetectionHook（warn + abort） | ✅ v0.7 |
-| Session 持久化 | 无 | **v0.8** |
-| Guardrails | 无 | **v0.8** |
-| 权限模型扩展 | `requires_approval: bool` | **v0.8** |
-| 双向通信 + 多方事件订阅 | RunHandle 只有 wait + approval | **v0.8** |
-| Supervised Delegation 基础 | 无 | **v0.8** |
+| Session 持久化 | ~~无~~ → SessionStore trait + InMemory + SQLite | ✅ v0.8 |
+| Guardrails | ~~无~~ → 四层 Guardrail 框架（Input/Output/ToolInput/ToolOutput） | ✅ v0.8 |
+| 权限模型扩展 | ~~`requires_approval: bool`~~ → run 级 ApprovalMode 策略 | ✅ v0.8 |
+| 双向通信 + 多方事件订阅 | ~~RunHandle 只有 wait + approval~~ → Multi-subscriber + Watcher + InjectCmd | ✅ v0.8 |
+| Supervised Delegation 基础 | ~~无~~ → Watcher trait + InjectCmd 双向通信 | ✅ v0.8 |
 | Mid-run Steering | 只有 approval | **v0.9** |
 | Supervised Delegation 完整 | 无 | **v0.9** |
 | Provider 扩展 | 2 个 | **v0.9** |
