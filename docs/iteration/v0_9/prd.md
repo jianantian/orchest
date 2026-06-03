@@ -155,6 +155,8 @@ impl ToolError {
 
 现有 `ToolError { message: "...".into(), code: None }` 迁移为 `ToolError::fatal("...")`。有 `code` 的场景用 `.with_code("...")`。
 
+**Display format**：当前 `#[error("{message}")]` 只展示 message。新增字段后需要决定 `Display` 格式——保持只展示 `message`（简洁，向后兼容日志格式）还是改为包含 `kind`（调试友好）。具体在 issue spec 阶段定。
+
 **影响范围**：`ToolError` 结构体、所有 `Tool` 实现者（built-in、MCP bridge、AgentAsTool、SDK）、`ToolCallFailed` 事件（改为携带 `ToolError` 而非 `String`）。
 
 #### 1C. `as_tool()` Builder 模式
@@ -186,9 +188,11 @@ impl SubAgentBuilder {
 
 `inherit_context(n)` 是延迟绑定——builder 只记录"要继承最近 N 条消息"，实际注入发生在 `AgentAsTool::call()` 执行时：
 
-1. `ToolContext` 新增 `parent_messages: Vec<Message>` 字段（由 run loop 在调用 tool 前填充当前 `state.messages` 的克隆）
+1. `ToolContext` 新增 `parent_messages: Vec<Message>` 字段
 2. `AgentAsTool::call()` 读取 `ctx.parent_messages`，取最后 N 条，prepend 到子 agent 的初始 messages
 3. 不调用 `inherit_context` 时 `parent_messages` 被忽略（与当前行为一致：fresh start）
+
+**性能注意**：`state.messages` 可能很大，每次 tool call 都克隆全量 messages 浪费。run loop 应仅在调用 `AgentAsTool` 类型的 tool 时才填充 `parent_messages`（可通过 `ToolMetadata` 上的标记或 tool 类型判断），其他 tool 填 empty vec。具体策略在 issue spec 阶段定。
 
 ```rust
 // ToolContext 扩展
@@ -303,6 +307,10 @@ pub(crate) struct SupervisorState {
     store: Option<Arc<dyn SessionStore>>,
     worker_args_template: AgentRunArgs,  // 用于 restart 时重建 worker
     event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
+    /// Watcher 持久注册表——restart 后重新 attach，保证 watcher 不因 worker 重建而断连。
+    watchers: Vec<Arc<dyn Watcher>>,
+    /// Shared actor_ref，与 RunHandle 共享同一个 Arc，restart 后更新指向新 worker。
+    actor_ref_shared: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
 }
 
 pub enum SupervisionStrategy {
@@ -347,11 +355,17 @@ impl Actor for SupervisorActor {
                         let (worker_ref, _) = Actor::spawn_linked(
                             None, WorkerActor, new_args, myself.get_cell(),
                         ).await?;
+                        // Update shared actor_ref so RunHandle points to new worker
+                        if let Ok(mut guard) = state.actor_ref_shared.lock() {
+                            *guard = Some(worker_ref.clone());
+                        }
+                        // Re-attach all watchers to new worker's event stream
+                        for watcher in &state.watchers {
+                            reattach_watcher(&worker_ref, Arc::clone(watcher)).await;
+                        }
                         emit(&state.event_subs, RuntimeEvent::RunRestarted {
                             attempt: state.attempts,
                         }).await;
-                        // Update RunHandle's actor_ref to point to new worker
-                        // (via shared Arc<Mutex<Option<ActorRef>>>)
                     }
                 }
             }
@@ -368,10 +382,19 @@ impl Actor for SupervisorActor {
 
 **关键细节：**
 - `AgentRun::start()` 改为先 spawn `SupervisorActor`，supervisor 再 `spawn_linked` `WorkerActor`
-- `RunHandle.actor_ref` 仍指向 `WorkerActor`（steering/inject 直接发给 worker），但 supervisor 持有同一个 `Arc<Mutex<Option<ActorRef>>>` 以便 restart 后更新引用
+- `RunHandle.actor_ref` 仍指向 `WorkerActor`（steering/inject 直接发给 worker），supervisor 持有同一个 `Arc<Mutex<Option<ActorRef>>>` 以便 restart 后更新引用
 - `AgentConfig` 新增 `supervision_strategy` 字段（默认 `SupervisionStrategy::Stop`，与当前行为一致）
 - 每次 restart 后 emit `RuntimeEvent::RunRestarted { attempt }` — watcher 可观察此事件并做出反应
 - `SupervisorActor` 不处理 `AgentMsg`，只处理 supervision events + 少量管理消息（如 shutdown）
+
+**Watcher 跨 restart 存活：**
+
+Worker restart 会导致旧 actor drop、event channel closed，之前 attach 的 watcher task 会因 `rx.recv() == None` 退出。必须在 restart 后重新连接 watcher。
+
+设计：
+- `RunHandle::attach_watcher()` 改为双写——除了 spawn watcher task，还通过 supervisor 消息注册 watcher 到 `SupervisorState.watchers`
+- supervisor restart worker 后，遍历 `watchers` 列表，对每个 watcher 重新 `subscribe_events` + spawn 新的消费 task
+- watcher 注册是持久的（跟随 supervisor 生命周期），不是跟随单个 worker 实例
 
 **前置条件**：`SessionPersistenceHook` 在 `on_run_error` 时已保存 snapshot（v0.8 已实现）。
 
@@ -444,6 +467,7 @@ examples/rust/supervised_delegation.rs
 - [ ] `SupervisorActor` 引入，`AgentRun::start()` 通过 supervisor 间接 spawn worker
 - [ ] 崩溃恢复可用——worker panic 后 supervisor 根据 `SupervisionStrategy` restart from snapshot
 - [ ] `AgentConfig` 支持 `supervision_strategy` 字段（默认 `Stop`）
+- [ ] Watcher 跨 restart 存活——worker restart 后已注册的 watcher 自动重新 attach
 - [ ] 多 watcher FIFO 协调——Inject/Steer 按序到达，Abort 立即生效
 
 ### Phase 3：验证
