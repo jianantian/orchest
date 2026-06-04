@@ -98,5 +98,9 @@ path = "../../examples/rust/watcher_inject_message.rs"
 name = "watcher_abort_on_pattern"
 path = "../../examples/rust/watcher_abort_on_pattern.rs"
 
+[[example]]
+name = "supervised_delegation"
+path = "../../examples/rust/supervised_delegation.rs"
+
 [lints]
 workspace = true
