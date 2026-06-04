@@ -9,7 +9,7 @@ use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::model::{ModelStreamChunk, OptionAdjustment, TokenUsage};
 use crate::run::RunId;
 use crate::tool::async_job::JobStatus;
-use crate::tool::{ToolCall, ToolSource};
+use crate::tool::{ToolCall, ToolError, ToolMetadata};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RuntimeEvent {
@@ -36,7 +36,7 @@ pub enum RuntimeEvent {
 
     ToolCallStarted {
         tool: String,
-        source: ToolSource,
+        metadata: ToolMetadata,
         input: Value,
     },
     ToolCallUpdate {
@@ -51,7 +51,7 @@ pub enum RuntimeEvent {
     },
     ToolCallFailed {
         tool: String,
-        error: String,
+        error: ToolError,
     },
 
     AsyncToolStarted {

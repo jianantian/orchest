@@ -14,7 +14,7 @@ use crate::telemetry;
 use crate::tool::code_exec::CodeExecutionMcpServer;
 use crate::tool::registry::ToolRegistry;
 use crate::tool::search::SearchToolsTool;
-use crate::tool::{Tool, ToolCall, ToolContext, ToolDef, ToolOutput};
+use crate::tool::{Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolOutput};
 
 use super::compaction::maybe_compact_context;
 use super::config::{AgentConfig, RunId};
@@ -693,9 +693,10 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             Some(t) => t,
             None => {
                 let error = if state.unfiltered_registry.contains(&tool_call.name) {
-                    "tool not allowed".to_string()
+                    ToolError::fatal("tool not allowed").with_code("NOT_ALLOWED")
                 } else {
-                    format!("tool '{}' not found", tool_call.name)
+                    ToolError::fatal(format!("tool '{}' not found", tool_call.name))
+                        .with_code("NOT_FOUND")
                 };
                 emit(
                     &subs,
@@ -707,7 +708,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 .await;
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: tool_call.id.clone(),
-                    content: json!({"error": error}),
+                    content: json!({"error": error.message}),
                 });
                 continue;
             }
@@ -823,7 +824,8 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     &subs,
                     RuntimeEvent::ToolCallFailed {
                         tool: tool_call.name.clone(),
-                        error: "tool call budget exceeded".into(),
+                        error: ToolError::fatal("tool call budget exceeded")
+                            .with_code("BUDGET_EXCEEDED"),
                     },
                 )
                 .await;
@@ -841,7 +843,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             &subs,
             RuntimeEvent::ToolCallStarted {
                 tool: tool_call.name.clone(),
-                source: tool_meta.source.clone(),
+                metadata: tool_meta.clone(),
                 input: tool_input.clone(),
             },
         )
@@ -883,7 +885,8 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                         &subs,
                         RuntimeEvent::ToolCallFailed {
                             tool: tool_call.name.clone(),
-                            error: "tool execution timed out".into(),
+                            error: ToolError::transient("tool execution timed out")
+                                .with_code("TIMEOUT"),
                         },
                     )
                     .await;
@@ -1063,7 +1066,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     &subs,
                     RuntimeEvent::ToolCallFailed {
                         tool: tool_call.name.clone(),
-                        error: e.message.clone(),
+                        error: e.clone(),
                     },
                 )
                 .await;

@@ -1167,7 +1167,7 @@ async fn allowed_tools_denies_disallowed_tool_by_name() {
 
     assert!(
             events.iter().any(
-                |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error == "tool not allowed")
+                |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error.message == "tool not allowed")
             ),
             "should emit ToolCallFailed with 'tool not allowed'"
         );
@@ -1199,7 +1199,7 @@ async fn allowed_tools_empty_list_denies_all() {
     handle.wait().await;
 
     assert!(events.iter().any(
-        |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error == "tool not allowed")
+        |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error.message == "tool not allowed")
     ),);
 }
 
@@ -1348,7 +1348,7 @@ async fn tool_metadata_timeout_enforced() {
 
     assert!(
             events.iter().any(
-                |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error == "tool execution timed out")
+                |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error.message == "tool execution timed out")
             ),
             "should emit ToolCallFailed with timeout error"
         );
@@ -1514,7 +1514,7 @@ async fn max_tool_calls_boundary_enforced() {
     assert_eq!(completed_count, 2, "should execute exactly max_tool_calls");
 
     let budget_exceeded = events.iter().any(
-            |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error == "tool call budget exceeded"),
+            |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error.message == "tool call budget exceeded"),
         );
     assert!(
         budget_exceeded,
