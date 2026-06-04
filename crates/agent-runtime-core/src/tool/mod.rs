@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
+use crate::model::Message;
 use async_job::JobHandle;
 
 pub use crate::model::{JsonSchema, ToolDef};
@@ -31,6 +32,9 @@ pub trait Tool: Send + Sync {
     fn output_schema(&self) -> Option<&JsonSchema>;
     fn metadata(&self) -> &ToolMetadata;
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError>;
+    fn needs_parent_context(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug)]
@@ -98,6 +102,8 @@ pub struct ToolContext {
     /// AgentAsTool uses this to cap the child run so it cannot exceed what
     /// the parent has left.
     pub remaining_budget: crate::budget::BudgetConfig,
+    /// Parent run's message history; used by AgentAsTool for context inheritance.
+    pub parent_messages: Vec<Message>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

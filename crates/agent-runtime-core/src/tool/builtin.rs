@@ -249,6 +249,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
 
         let result = tool
@@ -275,6 +276,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
 
         let result = tool
@@ -296,6 +298,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
 
         let result = tool.execute(json!({}), &ctx).await;
@@ -325,6 +328,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
 
         let result = tool
@@ -366,6 +370,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
 
         let result = tool
@@ -392,6 +397,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
 
         let result = tool
@@ -430,6 +436,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
 
         let result = tool.execute(json!({"path": "report.md"}), &ctx).await;

@@ -2074,14 +2074,13 @@ fn make_spawn_sub_tool() -> Arc<dyn Tool> {
     config.budget.max_tokens = Some(50);
     config.budget.max_tool_calls = Some(5);
     config.budget.max_duration = Some(Duration::from_secs(10));
-    config.as_tool(
-        "spawn_sub",
-        "spawn a sub-agent",
-        Arc::new(SubAgentApprovalModel),
-        child_registry,
-        Arc::new(|_| Ok("child with approval".into())),
-        Arc::new(|details| details.get("output").cloned().unwrap_or(details.clone())),
-    )
+    config
+        .as_tool("spawn_sub", "spawn a sub-agent")
+        .model(Arc::new(SubAgentApprovalModel))
+        .registry(child_registry)
+        .input_mapper(|_| Ok("child with approval".into()))
+        .output_extractor(|details| details.get("output").cloned().unwrap_or(details.clone()))
+        .build()
 }
 
 #[tokio::test]

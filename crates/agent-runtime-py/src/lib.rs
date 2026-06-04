@@ -720,14 +720,15 @@ impl Agent {
                 .unwrap_or_else(|| details.clone())
         });
 
-        self.native_tools.push(child_config.as_tool(
-            &name,
-            &description,
-            child_model,
-            child_registry,
-            input_mapper,
-            output_mapper,
-        ));
+        self.native_tools.push(
+            child_config
+                .as_tool(&name, &description)
+                .model(child_model)
+                .registry(child_registry)
+                .input_mapper(move |v| input_mapper(v))
+                .output_extractor(move |v| output_mapper(v))
+                .build(),
+        );
 
         Ok(())
     }

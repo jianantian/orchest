@@ -182,14 +182,13 @@ fn make_spawn_child_tool() -> Arc<dyn Tool> {
     config.budget.max_tokens = Some(20);
     config.budget.max_tool_calls = Some(3);
     config.budget.max_duration = Some(Duration::from_secs(5));
-    config.as_tool(
-        "spawn_child",
-        "requests a sub-agent",
-        Arc::new(SubAgentModel),
-        ToolRegistry::new(),
-        Arc::new(|_| Ok("child task".into())),
-        Arc::new(|details| details.get("output").cloned().unwrap_or(details.clone())),
-    )
+    config
+        .as_tool("spawn_child", "requests a sub-agent")
+        .model(Arc::new(SubAgentModel))
+        .registry(ToolRegistry::new())
+        .input_mapper(|_| Ok("child task".into()))
+        .output_extractor(|details| details.get("output").cloned().unwrap_or(details.clone()))
+        .build()
 }
 
 #[test]
@@ -330,14 +329,17 @@ async fn sub_agent_request_forwards_events_and_completes_parent_tool_result() {
 async fn agent_tool_runs_child_agent_with_isolated_context() {
     let mut registry = ToolRegistry::new();
     registry
-        .register(test_config().as_tool(
-            "spawn_child",
-            "delegates to a child agent",
-            Arc::new(SubAgentModel),
-            ToolRegistry::new(),
-            Arc::new(|_| Ok("child task".into())),
-            Arc::new(|details| details.get("output").cloned().unwrap_or(details.clone())),
-        ))
+        .register(
+            test_config()
+                .as_tool("spawn_child", "delegates to a child agent")
+                .model(Arc::new(SubAgentModel))
+                .registry(ToolRegistry::new())
+                .input_mapper(|_| Ok("child task".into()))
+                .output_extractor(|details| {
+                    details.get("output").cloned().unwrap_or(details.clone())
+                })
+                .build(),
+        )
         .unwrap();
 
     let (handle, mut rx) = AgentRun::start(

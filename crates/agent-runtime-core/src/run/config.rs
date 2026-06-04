@@ -70,12 +70,26 @@ impl std::fmt::Debug for AgentConfig {
 }
 
 impl AgentConfig {
-    /// Wraps this config as a `Tool` that runs a child agent when called.
-    ///
-    /// - `input_mapper` converts the tool's JSON input to the child agent's prompt string.
-    /// - `output_extractor` converts the child's result `Value` to the tool's return value.
-    #[allow(clippy::too_many_arguments)] // justified: all parameters are required to instantiate AgentAsTool; a builder is planned for v0.8
+    /// Returns a `SubAgentBuilder` to wrap this config as a callable tool.
     pub fn as_tool(
+        &self,
+        name: &str,
+        description: &str,
+    ) -> crate::tool::agent_as_tool::SubAgentBuilder {
+        crate::tool::agent_as_tool::SubAgentBuilder::new(
+            self.clone(),
+            name.to_string(),
+            description.to_string(),
+        )
+    }
+
+    /// Legacy 7-parameter version. Prefer the builder returned by `as_tool(name, desc)`.
+    #[deprecated(
+        since = "0.9.0",
+        note = "use as_tool(name, desc).model(m).registry(r).build()"
+    )]
+    #[allow(clippy::too_many_arguments)] // justified: backward-compat; use SubAgentBuilder instead
+    pub fn as_tool_legacy(
         &self,
         name: &str,
         description: &str,
@@ -88,16 +102,14 @@ impl AgentConfig {
             dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync,
         >,
     ) -> std::sync::Arc<dyn crate::tool::Tool> {
-        std::sync::Arc::new(crate::tool::agent_as_tool::AgentAsTool::new(
-            self.clone(),
-            name.to_string(),
-            description.to_string(),
-            serde_json::json!({"type": "object", "properties": {"input": {"type": "string"}}}),
-            model,
-            registry,
-            input_mapper,
-            output_extractor,
-        ))
+        let im = input_mapper;
+        let oe = output_extractor;
+        self.as_tool(name, description)
+            .model(model)
+            .registry(registry)
+            .input_mapper(move |v| im(v))
+            .output_extractor(move |v| oe(v))
+            .build()
     }
 }
 

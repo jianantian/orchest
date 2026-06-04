@@ -381,25 +381,29 @@ fn build_deep_research_agent(
         .unwrap_or(DEFAULT_MAX_TOKENS);
     let model = provider_model(model_ref, Some(max_tokens))?;
     let mut registry = ToolRegistry::new();
-    registry.register(web_config.as_tool(
-        "web_research",
-        "Delegate web research to an isolated web-search sub-agent.",
-        web_model,
-        web_registry,
-        Arc::new(|value: serde_json::Value| {
-            value
-                .get("question")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-                .ok_or_else(|| {
-                    ToolError::fatal("missing required parameter 'question'")
-                        .with_code("MISSING_PARAM")
-                })
-        }),
-        Arc::new(|details: serde_json::Value| {
-            details.get("output").cloned().unwrap_or(details.clone())
-        }),
-    ))?;
+    registry.register(
+        web_config
+            .as_tool(
+                "web_research",
+                "Delegate web research to an isolated web-search sub-agent.",
+            )
+            .model(web_model)
+            .registry(web_registry)
+            .input_mapper(|value: serde_json::Value| {
+                value
+                    .get("question")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| {
+                        ToolError::fatal("missing required parameter 'question'")
+                            .with_code("MISSING_PARAM")
+                    })
+            })
+            .output_extractor(|details: serde_json::Value| {
+                details.get("output").cloned().unwrap_or(details.clone())
+            })
+            .build(),
+    )?;
     registry.register(Arc::new(WriteFileTool::new_with_approval(Approval::Never)))?;
     Ok((config, model, registry))
 }

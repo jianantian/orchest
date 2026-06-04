@@ -155,6 +155,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
         let output = tool
             .execute(json!({"query": "read disk file", "top_k": 1}), &ctx)

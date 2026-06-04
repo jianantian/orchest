@@ -11,10 +11,13 @@ use serde_json::{json, Value};
 
 use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::events::RuntimeEvent;
-use crate::model::ModelAdapter;
+use crate::model::{Message, ModelAdapter};
 use crate::run::{AgentConfig, AgentRun};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
+
+type InputMapperFn = dyn Fn(Value) -> Result<String, ToolError> + Send + Sync;
+type OutputExtractorFn = dyn Fn(Value) -> Value + Send + Sync;
 
 /// Returns a `BudgetConfig` whose each limit is the tightest of `configured` and `remaining`.
 /// A `None` on either side means "no limit from that side", so the other side wins.
@@ -59,12 +62,17 @@ pub struct AgentAsTool {
     metadata: ToolMetadata,
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
-    input_mapper: Arc<dyn Fn(Value) -> Result<String, ToolError> + Send + Sync>,
-    output_extractor: Arc<dyn Fn(Value) -> Value + Send + Sync>,
+    input_mapper: Arc<InputMapperFn>,
+    output_extractor: Arc<OutputExtractorFn>,
+    inherit_context_count: Option<usize>,
 }
 
 impl AgentAsTool {
-    #[allow(clippy::too_many_arguments)] // justified: constructor mirrors all config fields; a builder pattern is planned for v0.8
+    #[deprecated(
+        since = "0.9.0",
+        note = "use AgentConfig::as_tool(name, desc).model(m).registry(r).build()"
+    )]
+    #[allow(clippy::too_many_arguments)] // justified: backward-compat; use SubAgentBuilder instead
     pub fn new(
         config: AgentConfig,
         tool_name: String,
@@ -72,8 +80,8 @@ impl AgentAsTool {
         input_schema: JsonSchema,
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
-        input_mapper: Arc<dyn Fn(Value) -> Result<String, ToolError> + Send + Sync>,
-        output_extractor: Arc<dyn Fn(Value) -> Value + Send + Sync>,
+        input_mapper: Arc<InputMapperFn>,
+        output_extractor: Arc<OutputExtractorFn>,
     ) -> Self {
         Self {
             config,
@@ -92,6 +100,7 @@ impl AgentAsTool {
             registry,
             input_mapper,
             output_extractor,
+            inherit_context_count: None,
         }
     }
 }
@@ -118,6 +127,10 @@ impl Tool for AgentAsTool {
         &self.metadata
     }
 
+    fn needs_parent_context(&self) -> bool {
+        self.inherit_context_count.is_some()
+    }
+
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let child_input = (self.input_mapper)(input)?;
 
@@ -142,13 +155,26 @@ impl Tool for AgentAsTool {
 
         let mut child_config = self.config.clone();
         child_config.runtime.run_depth = ctx.run_depth + 1;
-        // Cap child budget to parent's remaining so a child cannot exceed what
-        // the parent has left. Uses the tightest bound from both configs.
         child_config.budget = cap_budget(child_config.budget, &ctx.remaining_budget);
+
+        // Prepend inherited parent messages if configured.
+        let mut initial_messages: Vec<Message> = Vec::new();
+        if let Some(n) = self.inherit_context_count {
+            let recent: Vec<_> = ctx
+                .parent_messages
+                .iter()
+                .rev()
+                .take(n)
+                .rev()
+                .cloned()
+                .collect();
+            initial_messages.extend(recent);
+        }
 
         let (handle, mut child_rx) = AgentRun::start_with_bus(
             child_config,
             child_input.clone(),
+            initial_messages,
             Arc::clone(&self.model),
             self.registry.clone(),
             ctx.approval_bus.clone(),
@@ -241,6 +267,113 @@ impl Tool for AgentAsTool {
             model_output,
             details,
             external_usage: Some(child_usage),
+        })
+    }
+}
+
+// ── SubAgentBuilder ──────────────────────────────────────────────────────────
+
+pub struct SubAgentBuilder {
+    config: AgentConfig,
+    tool_name: String,
+    tool_description: String,
+    model: Option<Arc<dyn ModelAdapter>>,
+    registry: Option<ToolRegistry>,
+    input_schema: Option<JsonSchema>,
+    input_mapper: Option<Arc<InputMapperFn>>,
+    output_extractor: Option<Arc<OutputExtractorFn>>,
+    inherit_context_count: Option<usize>,
+}
+
+impl SubAgentBuilder {
+    pub(crate) fn new(config: AgentConfig, name: String, description: String) -> Self {
+        Self {
+            config,
+            tool_name: name,
+            tool_description: description,
+            model: None,
+            registry: None,
+            input_schema: None,
+            input_mapper: None,
+            output_extractor: None,
+            inherit_context_count: None,
+        }
+    }
+
+    pub fn model(mut self, model: Arc<dyn ModelAdapter>) -> Self {
+        self.model = Some(model);
+        self
+    }
+
+    pub fn registry(mut self, registry: ToolRegistry) -> Self {
+        self.registry = Some(registry);
+        self
+    }
+
+    pub fn input_schema(mut self, schema: Value) -> Self {
+        self.input_schema = Some(schema);
+        self
+    }
+
+    pub fn input_mapper(
+        mut self,
+        f: impl Fn(Value) -> Result<String, ToolError> + Send + Sync + 'static,
+    ) -> Self {
+        self.input_mapper = Some(Arc::new(f));
+        self
+    }
+
+    pub fn output_extractor(mut self, f: impl Fn(Value) -> Value + Send + Sync + 'static) -> Self {
+        self.output_extractor = Some(Arc::new(f));
+        self
+    }
+
+    pub fn inherit_context(mut self, recent_messages: usize) -> Self {
+        self.inherit_context_count = Some(recent_messages);
+        self
+    }
+
+    pub fn build(self) -> Arc<dyn Tool> {
+        let model = self
+            .model
+            .expect("SubAgentBuilder requires .model() before .build()");
+        let registry = self
+            .registry
+            .expect("SubAgentBuilder requires .registry() before .build()");
+        let input_schema = self.input_schema.unwrap_or_else(
+            || json!({"type": "object", "properties": {"input": {"type": "string"}}}),
+        );
+        let input_mapper = self.input_mapper.unwrap_or_else(|| {
+            Arc::new(|input: Value| {
+                input
+                    .get("input")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| ToolError::fatal("missing 'input' field"))
+            })
+        });
+        let output_extractor = self
+            .output_extractor
+            .unwrap_or_else(|| Arc::new(|details: Value| details));
+
+        Arc::new(AgentAsTool {
+            config: self.config,
+            tool_name: self.tool_name,
+            tool_description: self.tool_description,
+            input_schema,
+            metadata: ToolMetadata {
+                side_effect: false,
+                approval: crate::tool::Approval::Never,
+                cost_hint: None,
+                timeout: None,
+                max_output_tokens: None,
+                source: ToolSource::InProcess,
+            },
+            model,
+            registry,
+            input_mapper,
+            output_extractor,
+            inherit_context_count: self.inherit_context_count,
         })
     }
 }

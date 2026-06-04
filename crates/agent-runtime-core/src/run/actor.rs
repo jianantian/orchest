@@ -103,6 +103,8 @@ pub(crate) struct AgentRunArgs {
     pub approval_bus: ApprovalBus,
     /// `None` on a fresh start; `Some` when resuming from a persisted snapshot.
     pub resume: Option<ResumeState>,
+    /// Extra messages to prepend (between system prompt and user input) on a fresh start.
+    pub initial_messages: Vec<crate::model::Message>,
 }
 
 // ── WorkerActor ───────────────────────────────────────────────────────────────
@@ -128,6 +130,7 @@ impl Actor for WorkerActor {
             event_tx,
             approval_bus,
             resume,
+            initial_messages,
         } = args;
         let event_subs = vec![event_tx];
 
@@ -244,16 +247,15 @@ impl Actor for WorkerActor {
         let (messages, initial_step, initial_budget_used) = if let Some(rs) = resume {
             (rs.messages, rs.step, Some(rs.budget_used))
         } else {
-            let msgs = vec![
-                Message {
-                    role: Role::System,
-                    content: vec![ContentBlock::Text(config.system_prompt.clone())],
-                },
-                Message {
-                    role: Role::User,
-                    content: vec![ContentBlock::Text(input)],
-                },
-            ];
+            let mut msgs = vec![Message {
+                role: Role::System,
+                content: vec![ContentBlock::Text(config.system_prompt.clone())],
+            }];
+            msgs.extend(initial_messages);
+            msgs.push(Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text(input)],
+            });
             (msgs, 0, None)
         };
 
@@ -847,6 +849,11 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
 
         let _tool_span = telemetry::tool_execute_span(&tool_call.name, source_label);
 
+        let parent_messages = if tool.needs_parent_context() {
+            state.messages.clone()
+        } else {
+            vec![]
+        };
         let ctx = ToolContext {
             run_id,
             run_depth: state.config.runtime.run_depth,
@@ -856,6 +863,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             webhook_base_url: state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone()),
             approval_bus: state.approval_bus.clone(),
             remaining_budget: state.budget.remaining_config(),
+            parent_messages,
         };
 
         let start_time = Instant::now();

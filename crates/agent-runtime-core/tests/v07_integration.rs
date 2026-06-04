@@ -519,22 +519,21 @@ async fn agent_as_tool_emits_sub_agent_events() {
         .build()
         .unwrap();
 
-    let summariser_tool = child_config.as_tool(
-        "summariser",
-        "Summarises text",
-        Arc::new(ChildAgentModel),
-        ToolRegistry::new(),
-        Arc::new(|input: Value| {
+    let summariser_tool = child_config
+        .as_tool("summariser", "Summarises text")
+        .model(Arc::new(ChildAgentModel))
+        .registry(ToolRegistry::new())
+        .input_mapper(|input: Value| {
             input
                 .get("input")
                 .and_then(Value::as_str)
                 .map(str::to_string)
                 .ok_or_else(|| ToolError::fatal("missing input"))
-        }),
-        Arc::new(|details: Value| {
+        })
+        .output_extractor(|details: Value| {
             json!({"output": details.get("output").cloned().unwrap_or_else(|| details.clone())})
-        }),
-    );
+        })
+        .build();
 
     let parent_config = AgentConfig::builder("mock/parent")
         .system_prompt("research assistant")

@@ -39,12 +39,21 @@ impl AgentRun {
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
     ) -> (RunHandle, EventReceiver) {
-        Self::start_with_bus(config, input, model, registry, ApprovalBus::default())
+        Self::start_with_bus(
+            config,
+            input,
+            vec![],
+            model,
+            registry,
+            ApprovalBus::default(),
+        )
     }
 
+    #[allow(clippy::too_many_arguments)] // justified: internal API collecting all run params
     pub(crate) fn start_with_bus(
         mut config: AgentConfig,
         input: String,
+        initial_messages: Vec<crate::model::Message>,
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
         approval_bus: ApprovalBus,
@@ -63,6 +72,7 @@ impl AgentRun {
             event_tx,
             approval_bus: approval_bus.clone(),
             resume: None,
+            initial_messages,
         };
 
         spawn_actor(run_id, args, approval_bus, event_rx)
@@ -96,6 +106,7 @@ impl AgentRun {
             event_tx,
             approval_bus: approval_bus.clone(),
             resume: Some(resume),
+            initial_messages: vec![],
         };
 
         spawn_actor(run_id, args, approval_bus, event_rx)
