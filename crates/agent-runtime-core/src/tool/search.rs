@@ -84,13 +84,9 @@ impl Tool for SearchToolsTool {
     }
 
     async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        let query = input
-            .get("query")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ToolError {
-                message: "missing required parameter 'query'".into(),
-                code: Some("MISSING_PARAM".into()),
-            })?;
+        let query = input.get("query").and_then(Value::as_str).ok_or_else(|| {
+            ToolError::fatal("missing required parameter 'query'").with_code("MISSING_PARAM")
+        })?;
         let top_k = input.get("top_k").and_then(Value::as_u64).unwrap_or(5) as usize;
         let results: Vec<Value> = self
             .search(query, top_k)

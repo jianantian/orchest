@@ -160,15 +160,11 @@ impl Tool for JsTool {
             },
         );
 
-        let result = rx.await.map_err(|_| ToolError {
-            message: "JS handler did not return a value".into(),
-            code: Some("JS_HANDLER_ERROR".into()),
+        let result = rx.await.map_err(|_| {
+            ToolError::fatal("JS handler did not return a value").with_code("JS_HANDLER_ERROR")
         })?;
 
-        let value = result.map_err(|e| ToolError {
-            message: e,
-            code: Some("JS_HANDLER_ERROR".into()),
-        })?;
+        let value = result.map_err(|e| ToolError::fatal(e).with_code("JS_HANDLER_ERROR"))?;
 
         // Check for async job return shape
         if let Some(async_job) = value.get("async_job") {
@@ -226,13 +222,11 @@ impl Tool for StaticTool {
         _input: Value,
         _ctx: &ToolContext,
     ) -> std::result::Result<ToolOutput, ToolError> {
-        Err(ToolError {
-            message: format!(
-                "tool '{}' has no handler — register with registerToolWithHandler",
-                self.name
-            ),
-            code: Some("NO_HANDLER".into()),
-        })
+        Err(ToolError::fatal(format!(
+            "tool '{}' has no handler — register with registerToolWithHandler",
+            self.name
+        ))
+        .with_code("NO_HANDLER"))
     }
 }
 

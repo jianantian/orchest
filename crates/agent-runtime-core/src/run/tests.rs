@@ -939,10 +939,9 @@ impl Tool for WebhookTool {
         let job_id = uuid::Uuid::new_v4().to_string();
         let url = format!(
             "{}/webhooks/async-job/{}",
-            ctx.webhook_base_url.as_ref().ok_or_else(|| ToolError {
-                message: "missing webhook base url".into(),
-                code: None,
-            })?,
+            ctx.webhook_base_url
+                .as_ref()
+                .ok_or_else(|| ToolError::fatal("missing webhook base url"))?,
             job_id
         );
         tokio::spawn(async move {

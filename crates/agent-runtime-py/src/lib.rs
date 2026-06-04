@@ -111,10 +111,8 @@ impl Tool for PyTool {
 
     async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let callback = &self.def.callback;
-        let input_str = serde_json::to_string(&input).map_err(|e| ToolError {
-            message: format!("failed to serialize input: {}", e),
-            code: None,
-        })?;
+        let input_str = serde_json::to_string(&input)
+            .map_err(|e| ToolError::fatal(format!("failed to serialize input: {}", e)))?;
 
         let result = Python::attach(|py| -> PyResult<Py<PyAny>> {
             let json_mod = py.import("json")?;
@@ -139,10 +137,7 @@ impl Tool for PyTool {
                 Ok(raw_result)
             }
         })
-        .map_err(|e| ToolError {
-            message: format!("Python tool error: {}", e),
-            code: None,
-        })?;
+        .map_err(|e| ToolError::fatal(format!("Python tool error: {}", e)))?;
 
         if let Some(job_handle) = py_async_job_handle(&result)? {
             return Ok(ToolOutput::AsyncJob(job_handle));
@@ -154,15 +149,10 @@ impl Tool for PyTool {
                 .call_method1("dumps", (result.bind(py),))?
                 .extract()
         })
-        .map_err(|e| ToolError {
-            message: format!("failed to serialize Python return value: {}", e),
-            code: None,
-        })?;
+        .map_err(|e| ToolError::fatal(format!("failed to serialize Python return value: {}", e)))?;
 
-        let value: Value = serde_json::from_str(&result_str).map_err(|e| ToolError {
-            message: format!("failed to parse Python return value: {}", e),
-            code: None,
-        })?;
+        let value: Value = serde_json::from_str(&result_str)
+            .map_err(|e| ToolError::fatal(format!("failed to parse Python return value: {}", e)))?;
 
         Ok(ToolOutput::Immediate(value))
     }
@@ -195,15 +185,13 @@ fn py_async_job_handle(result: &Py<PyAny>) -> Result<Option<JobHandle>, ToolErro
             let poll = Python::attach(|py| poll.clone_ref(py));
             Box::pin(async move {
                 Python::attach(|py| -> Result<JobStatus, ToolError> {
-                    let raw_value = poll.call0(py).map_err(|e| ToolError {
-                        message: format!("Python async job poll error: {}", e),
-                        code: None,
+                    let raw_value = poll.call0(py).map_err(|e| {
+                        ToolError::fatal(format!("Python async job poll error: {}", e))
                     })?;
 
                     // If the poll result is a coroutine, await it
-                    let inspect = py.import("inspect").map_err(|e| ToolError {
-                        message: format!("failed to import inspect: {}", e),
-                        code: None,
+                    let inspect = py.import("inspect").map_err(|e| {
+                        ToolError::fatal(format!("failed to import inspect: {}", e))
                     })?;
                     let is_coro: bool = inspect
                         .call_method1("iscoroutine", (raw_value.bind(py),))
@@ -211,35 +199,30 @@ fn py_async_job_handle(result: &Py<PyAny>) -> Result<Option<JobHandle>, ToolErro
                         .unwrap_or(false);
 
                     let value = if is_coro {
-                        let asyncio = py.import("asyncio").map_err(|e| ToolError {
-                            message: format!("failed to import asyncio: {}", e),
-                            code: None,
+                        let asyncio = py.import("asyncio").map_err(|e| {
+                            ToolError::fatal(format!("failed to import asyncio: {}", e))
                         })?;
                         asyncio
                             .call_method1("run", (raw_value.bind(py),))
-                            .map_err(|e| ToolError {
-                                message: format!("failed to await async poll: {}", e),
-                                code: None,
+                            .map_err(|e| {
+                                ToolError::fatal(format!("failed to await async poll: {}", e))
                             })?
                             .unbind()
                     } else {
                         raw_value
                     };
 
-                    let json_mod = py.import("json").map_err(|e| ToolError {
-                        message: format!("failed to import json: {}", e),
-                        code: None,
-                    })?;
+                    let json_mod = py
+                        .import("json")
+                        .map_err(|e| ToolError::fatal(format!("failed to import json: {}", e)))?;
                     let json_str: String = json_mod
                         .call_method1("dumps", (value.bind(py),))
                         .and_then(|v| v.extract())
-                        .map_err(|e| ToolError {
-                            message: format!("failed to serialize poll result: {}", e),
-                            code: None,
+                        .map_err(|e| {
+                            ToolError::fatal(format!("failed to serialize poll result: {}", e))
                         })?;
-                    let parsed: Value = serde_json::from_str(&json_str).map_err(|e| ToolError {
-                        message: format!("failed to parse poll result: {}", e),
-                        code: None,
+                    let parsed: Value = serde_json::from_str(&json_str).map_err(|e| {
+                        ToolError::fatal(format!("failed to parse poll result: {}", e))
                     })?;
 
                     match parsed.get("status").and_then(|v| v.as_str()) {
@@ -279,10 +262,7 @@ fn py_async_job_handle(result: &Py<PyAny>) -> Result<Option<JobHandle>, ToolErro
             webhook: None,
         }))
     })
-    .map_err(|e| ToolError {
-        message: format!("invalid Python async job return value: {}", e),
-        code: None,
-    })
+    .map_err(|e| ToolError::fatal(format!("invalid Python async job return value: {}", e)))
 }
 
 fn infer_schema_from_hints(py: Python<'_>, func: &Py<PyAny>) -> PyResult<Value> {
@@ -728,9 +708,9 @@ impl Agent {
                 .get(&mapper_key)
                 .and_then(Value::as_str)
                 .map(String::from)
-                .ok_or_else(|| ToolError {
-                    message: format!("missing required parameter '{mapper_key}'"),
-                    code: Some("MISSING_PARAM".into()),
+                .ok_or_else(|| {
+                    ToolError::fatal(format!("missing required parameter '{mapper_key}'"))
+                        .with_code("MISSING_PARAM")
                 })
         });
         let output_mapper = Arc::new(|details: Value| {

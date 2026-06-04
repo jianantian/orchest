@@ -49,10 +49,9 @@ pub struct McpError {
 
 impl From<McpError> for ToolError {
     fn from(value: McpError) -> Self {
-        Self {
-            message: value.message,
-            code: value.code,
-        }
+        let mut err = Self::fatal(value.message);
+        err.code = value.code;
+        err
     }
 }
 

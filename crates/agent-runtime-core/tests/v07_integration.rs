@@ -529,7 +529,7 @@ async fn agent_as_tool_emits_sub_agent_events() {
                 .get("input")
                 .and_then(Value::as_str)
                 .map(str::to_string)
-                .ok_or_else(|| ToolError { message: "missing input".into(), code: None })
+                .ok_or_else(|| ToolError::fatal("missing input"))
         }),
         Arc::new(|details: Value| {
             json!({"output": details.get("output").cloned().unwrap_or_else(|| details.clone())})

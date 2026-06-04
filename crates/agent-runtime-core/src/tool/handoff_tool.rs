@@ -53,15 +53,10 @@ impl Tool for HandoffTool {
     async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let target_agent = match &self.handoff.target {
             HandoffTarget::Static(config) => *config.clone(),
-            HandoffTarget::Dynamic(resolver) => {
-                resolver
-                    .resolve(input.clone())
-                    .await
-                    .map_err(|e| ToolError {
-                        message: e.to_string(),
-                        code: None,
-                    })?
-            }
+            HandoffTarget::Dynamic(resolver) => resolver
+                .resolve(input.clone())
+                .await
+                .map_err(|e| ToolError::fatal(e.to_string()))?,
         };
 
         let transfer_message = format!("Transferring session to '{}'.", &self.handoff.tool_name);

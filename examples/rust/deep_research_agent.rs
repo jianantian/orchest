@@ -175,13 +175,9 @@ impl Tool for ExaSearchTool {
     }
 
     async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        let query = input
-            .get("query")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ToolError {
-                message: "missing required parameter 'query'".into(),
-                code: Some("MISSING_PARAM".into()),
-            })?;
+        let query = input.get("query").and_then(Value::as_str).ok_or_else(|| {
+            ToolError::fatal("missing required parameter 'query'").with_code("MISSING_PARAM")
+        })?;
         let rationale = input.get("rationale").and_then(Value::as_str).unwrap_or("");
         let category = input.get("category").and_then(Value::as_str).unwrap_or("");
         let include_domains = input
@@ -204,10 +200,10 @@ impl Tool for ExaSearchTool {
         });
         if !category.is_empty() {
             if !is_supported_exa_category(category) {
-                return Err(ToolError {
-                    message: format!("unsupported Exa category: {category}"),
-                    code: Some("BAD_CATEGORY".into()),
-                });
+                return Err(
+                    ToolError::fatal(format!("unsupported Exa category: {category}"))
+                        .with_code("BAD_CATEGORY"),
+                );
             }
             payload["category"] = Value::String(category.to_string());
         }
@@ -226,28 +222,25 @@ impl Tool for ExaSearchTool {
             .header("Content-Type", "application/json")
             .header(
                 "x-api-key",
-                env::var("EXA_API_KEY").map_err(|_| ToolError {
-                    message: "EXA_API_KEY is required for this non-mock example".into(),
-                    code: Some("MISSING_ENV".into()),
+                env::var("EXA_API_KEY").map_err(|_| {
+                    ToolError::fatal("EXA_API_KEY is required for this non-mock example")
+                        .with_code("MISSING_ENV")
                 })?,
             )
             .json(&payload)
             .send()
             .await
-            .map_err(|e| ToolError {
-                message: format!("Exa request failed: {e}"),
-                code: Some("EXA_REQUEST".into()),
+            .map_err(|e| {
+                ToolError::fatal(format!("Exa request failed: {e}")).with_code("EXA_REQUEST")
             })?;
         let status = response.status();
-        let data: Value = response.json().await.map_err(|e| ToolError {
-            message: format!("failed to parse Exa response: {e}"),
-            code: Some("EXA_RESPONSE".into()),
+        let data: Value = response.json().await.map_err(|e| {
+            ToolError::fatal(format!("failed to parse Exa response: {e}")).with_code("EXA_RESPONSE")
         })?;
         if !status.is_success() {
-            return Err(ToolError {
-                message: format!("Exa HTTP {status}: {data}"),
-                code: Some("EXA_HTTP".into()),
-            });
+            return Err(
+                ToolError::fatal(format!("Exa HTTP {status}: {data}")).with_code("EXA_HTTP")
+            );
         }
 
         let results = data
@@ -398,9 +391,9 @@ fn build_deep_research_agent(
                 .get("question")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string)
-                .ok_or_else(|| ToolError {
-                    message: "missing required parameter 'question'".into(),
-                    code: Some("MISSING_PARAM".into()),
+                .ok_or_else(|| {
+                    ToolError::fatal("missing required parameter 'question'")
+                        .with_code("MISSING_PARAM")
                 })
         }),
         Arc::new(|details: serde_json::Value| {

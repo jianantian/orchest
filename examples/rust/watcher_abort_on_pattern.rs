@@ -128,10 +128,7 @@ impl Tool for FlakyTool {
         _input: serde_json::Value,
         _ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        Err(ToolError {
-            message: "tool unavailable".into(),
-            code: None,
-        })
+        Err(ToolError::fatal("tool unavailable"))
     }
 }
 

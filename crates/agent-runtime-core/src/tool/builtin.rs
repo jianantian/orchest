@@ -137,21 +137,15 @@ impl Tool for ReadFileTool {
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        let path_str = input
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError {
-                message: "missing required parameter 'path'".into(),
-                code: Some("MISSING_PARAM".into()),
-            })?;
+        let path_str = input.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::fatal("missing required parameter 'path'").with_code("MISSING_PARAM")
+        })?;
 
         let path = PathBuf::from(path_str);
-        let content = tokio::fs::read_to_string(&path)
-            .await
-            .map_err(|e| ToolError {
-                message: format!("failed to read '{}': {}", path_str, e),
-                code: Some("READ_ERROR".into()),
-            })?;
+        let content = tokio::fs::read_to_string(&path).await.map_err(|e| {
+            ToolError::fatal(format!("failed to read '{}': {}", path_str, e))
+                .with_code("READ_ERROR")
+        })?;
 
         let canonical = path.canonicalize().ok();
         if let Some(ref canonical_path) = canonical {
@@ -202,40 +196,30 @@ impl Tool for WriteFileTool {
     }
 
     async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        let path_str = input
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ToolError {
-                message: "missing required parameter 'path'".into(),
-                code: Some("MISSING_PARAM".into()),
-            })?;
+        let path_str = input.get("path").and_then(Value::as_str).ok_or_else(|| {
+            ToolError::fatal("missing required parameter 'path'").with_code("MISSING_PARAM")
+        })?;
         let content = input
             .get("content")
             .and_then(Value::as_str)
-            .ok_or_else(|| ToolError {
-                message: "missing required parameter 'content'".into(),
-                code: Some("MISSING_PARAM".into()),
+            .ok_or_else(|| {
+                ToolError::fatal("missing required parameter 'content'").with_code("MISSING_PARAM")
             })?;
 
         let path = PathBuf::from(path_str);
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|e| ToolError {
-                        message: format!(
-                            "failed to create parent directories for '{path_str}': {e}"
-                        ),
-                        code: Some("WRITE_ERROR".into()),
-                    })?;
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    ToolError::fatal(format!(
+                        "failed to create parent directories for '{path_str}': {e}"
+                    ))
+                    .with_code("WRITE_ERROR")
+                })?;
             }
         }
-        tokio::fs::write(&path, content)
-            .await
-            .map_err(|e| ToolError {
-                message: format!("failed to write '{path_str}': {e}"),
-                code: Some("WRITE_ERROR".into()),
-            })?;
+        tokio::fs::write(&path, content).await.map_err(|e| {
+            ToolError::fatal(format!("failed to write '{path_str}': {e}")).with_code("WRITE_ERROR")
+        })?;
 
         Ok(ToolOutput::Immediate(json!({
             "path": path_str,

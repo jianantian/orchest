@@ -94,13 +94,9 @@ impl Tool for ExecutePythonTool {
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        let code = input
-            .get("code")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ToolError {
-                message: "execute_python input missing code".into(),
-                code: Some("INVALID_INPUT".into()),
-            })?;
+        let code = input.get("code").and_then(Value::as_str).ok_or_else(|| {
+            ToolError::fatal("execute_python input missing code").with_code("INVALID_INPUT")
+        })?;
         let timeout = requested_timeout(&input);
         let fut = execute_python_in_session(&self.session, code, ctx);
         match tokio::time::timeout(timeout, fut).await {
@@ -129,9 +125,8 @@ async fn execute_python_in_session(
     if guard.is_none() {
         *guard = Some(spawn_python_session().await?);
     }
-    let session = guard.as_mut().ok_or_else(|| ToolError {
-        message: "python session was not initialized".into(),
-        code: Some("SESSION_ERROR".into()),
+    let session = guard.as_mut().ok_or_else(|| {
+        ToolError::fatal("python session was not initialized").with_code("SESSION_ERROR")
     })?;
 
     let wrapper_body = format!(
@@ -146,18 +141,18 @@ except Exception:
     traceback.print_exc(file=__orchest_stderr)
 print("{sentinel}" + json.dumps({{"stdout": __orchest_stdout.getvalue(), "stderr": __orchest_stderr.getvalue(), "exit_code": 0 if __orchest_stderr.getvalue() == "" else 1}}), flush=True)
 "#,
-        code_json = serde_json::to_string(code).map_err(|e| ToolError {
-            message: format!("failed to encode python code: {e}"),
-            code: Some("SERIALIZATION_ERROR".into()),
-        })?,
+        code_json = serde_json::to_string(code).map_err(|e| ToolError::fatal(format!(
+            "failed to encode python code: {e}"
+        ))
+        .with_code("SERIALIZATION_ERROR"))?,
         sentinel = SENTINEL_PREFIX
     );
     let wrapper = format!(
         "exec({})\n",
-        serde_json::to_string(&wrapper_body).map_err(|e| ToolError {
-            message: format!("failed to encode python wrapper: {e}"),
-            code: Some("SERIALIZATION_ERROR".into()),
-        })?
+        serde_json::to_string(&wrapper_body).map_err(|e| ToolError::fatal(format!(
+            "failed to encode python wrapper: {e}"
+        ))
+        .with_code("SERIALIZATION_ERROR"))?
     );
 
     session
@@ -178,16 +173,13 @@ print("{sentinel}" + json.dumps({{"stdout": __orchest_stdout.getvalue(), "stderr
             if let Some(mut dead) = guard.take() {
                 let _ = dead.child.kill().await;
             }
-            return Err(ToolError {
-                message: "python session exited".into(),
-                code: Some("SESSION_EXITED".into()),
-            });
+            return Err(ToolError::fatal("python session exited").with_code("SESSION_EXITED"));
         }
         let trimmed = line.trim_end();
         if let Some(payload) = trimmed.strip_prefix(SENTINEL_PREFIX) {
-            let output: Value = serde_json::from_str(payload).map_err(|e| ToolError {
-                message: format!("invalid python sentinel payload: {e}"),
-                code: Some("INVALID_OUTPUT".into()),
+            let output: Value = serde_json::from_str(payload).map_err(|e| {
+                ToolError::fatal(format!("invalid python sentinel payload: {e}"))
+                    .with_code("INVALID_OUTPUT")
             })?;
             if let Some(stdout) = output.get("stdout").and_then(Value::as_str) {
                 for stdout_line in stdout.lines() {
@@ -212,18 +204,17 @@ async fn spawn_python_session() -> Result<PythonSession, ToolError> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| ToolError {
-            message: format!("failed to spawn {bin}: {e}"),
-            code: Some("SPAWN_ERROR".into()),
+        .map_err(|e| {
+            ToolError::fatal(format!("failed to spawn {bin}: {e}")).with_code("SPAWN_ERROR")
         })?;
-    let stdin = child.stdin.take().ok_or_else(|| ToolError {
-        message: "python stdin unavailable".into(),
-        code: Some("SESSION_ERROR".into()),
-    })?;
-    let stdout = child.stdout.take().ok_or_else(|| ToolError {
-        message: "python stdout unavailable".into(),
-        code: Some("SESSION_ERROR".into()),
-    })?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| ToolError::fatal("python stdin unavailable").with_code("SESSION_ERROR"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ToolError::fatal("python stdout unavailable").with_code("SESSION_ERROR"))?;
     Ok(PythonSession {
         child,
         stdin,
@@ -282,13 +273,9 @@ impl Tool for ExecuteJavaScriptTool {
     }
 
     async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        let code = input
-            .get("code")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ToolError {
-                message: "execute_javascript input missing code".into(),
-                code: Some("INVALID_INPUT".into()),
-            })?;
+        let code = input.get("code").and_then(Value::as_str).ok_or_else(|| {
+            ToolError::fatal("execute_javascript input missing code").with_code("INVALID_INPUT")
+        })?;
         let timeout = requested_timeout(&input);
         let mut command = if which::which("deno").is_ok() {
             let mut cmd = Command::new("deno");
@@ -307,9 +294,9 @@ impl Tool for ExecuteJavaScriptTool {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        let mut child = command.spawn().map_err(|e| ToolError {
-            message: format!("failed to spawn JavaScript runtime: {e}"),
-            code: Some("SPAWN_ERROR".into()),
+        let mut child = command.spawn().map_err(|e| {
+            ToolError::fatal(format!("failed to spawn JavaScript runtime: {e}"))
+                .with_code("SPAWN_ERROR")
         })?;
         if which::which("deno").is_ok() {
             if let Some(stdin) = child.stdin.as_mut() {
@@ -361,8 +348,5 @@ async fn emit_update(ctx: &ToolContext, partial: Value) {
 }
 
 fn io_tool_error(error: std::io::Error) -> ToolError {
-    ToolError {
-        message: error.to_string(),
-        code: Some("IO_ERROR".into()),
-    }
+    ToolError::transient(error.to_string()).with_code("IO_ERROR")
 }

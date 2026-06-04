@@ -4,6 +4,7 @@ pub mod agent_as_tool;
 pub mod async_job;
 pub mod builtin;
 pub mod code_exec;
+pub mod error;
 pub mod handoff_tool;
 pub mod in_process;
 pub mod mcp;
@@ -20,6 +21,7 @@ use tokio::sync::mpsc;
 use async_job::JobHandle;
 
 pub use crate::model::{JsonSchema, ToolDef};
+pub use error::{ErrorKind, RetryHint, ToolError};
 
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -96,13 +98,6 @@ pub struct ToolContext {
     /// AgentAsTool uses this to cap the child run so it cannot exceed what
     /// the parent has left.
     pub remaining_budget: crate::budget::BudgetConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
-#[error("{message}")]
-pub struct ToolError {
-    pub message: String,
-    pub code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
