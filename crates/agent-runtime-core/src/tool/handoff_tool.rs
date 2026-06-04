@@ -18,7 +18,7 @@ impl HandoffTool {
     pub fn new(handoff: Handoff) -> Self {
         let metadata = ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: crate::tool::Approval::Never,
             cost_hint: Some(CostHint::Free),
             timeout: Some(Duration::from_secs(30)),
             max_output_tokens: None,

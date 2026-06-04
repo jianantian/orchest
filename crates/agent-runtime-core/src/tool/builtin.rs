@@ -8,7 +8,9 @@ use serde_json::{json, Value};
 use tokio::sync::RwLock;
 
 use crate::events::RuntimeEvent;
-use crate::tool::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
+use crate::tool::{
+    Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
+};
 
 #[derive(Debug)]
 pub struct ReadFileTool {
@@ -40,7 +42,7 @@ impl ReadFileTool {
         Self {
             metadata: ToolMetadata {
                 side_effect: false,
-                requires_approval: false,
+                approval: Approval::Never,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,
@@ -81,14 +83,14 @@ impl Default for WriteFileTool {
 
 impl WriteFileTool {
     pub fn new() -> Self {
-        Self::new_with_approval(true)
+        Self::new_with_approval(Approval::Always)
     }
 
-    pub fn new_with_approval(requires_approval: bool) -> Self {
+    pub fn new_with_approval(approval: Approval) -> Self {
         Self {
             metadata: ToolMetadata {
                 side_effect: true,
-                requires_approval,
+                approval,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,

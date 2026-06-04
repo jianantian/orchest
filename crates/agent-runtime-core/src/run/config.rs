@@ -134,18 +134,21 @@ pub struct SkillsConfig {
 /// requires approval. Takes priority over [`ApprovalMode`] when set.
 pub type CustomApprovalFn = Arc<dyn Fn(&crate::tool::ToolMetadata) -> bool + Send + Sync>;
 
-/// Run-level approval strategy. Overrides the per-tool
-/// [`ToolMetadata::requires_approval`](crate::tool::ToolMetadata) flag.
+/// Run-level approval strategy. Works with the per-tool
+/// [`Approval`](crate::tool::Approval) enum to decide whether a call needs approval.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ApprovalMode {
-    /// Use each tool's `requires_approval` flag (default; backwards compatible).
+    /// Use each tool's `approval` field (default).
     #[default]
     PerTool,
     /// Never request approval.
     None,
     /// Request approval for every tool call.
     All,
-    /// Request approval only for tools with `side_effect: true`.
+    #[deprecated(
+        since = "0.9.0",
+        note = "use Approval::WhenRisky + side_effect instead"
+    )]
     SideEffectOnly,
 }
 
@@ -183,13 +186,19 @@ impl RuntimeConfig {
     /// Resolves whether a tool call requires approval under this run's policy.
     /// `custom_approval_fn` takes priority; otherwise `approval_mode` decides.
     pub fn should_approve(&self, meta: &crate::tool::ToolMetadata) -> bool {
+        use crate::tool::Approval;
         if let Some(f) = &self.custom_approval_fn {
             return f(meta);
         }
         match self.approval_mode {
-            ApprovalMode::PerTool => meta.requires_approval,
+            ApprovalMode::PerTool => match meta.approval {
+                Approval::Never => false,
+                Approval::WhenRisky => meta.side_effect,
+                Approval::Always => true,
+            },
             ApprovalMode::None => false,
             ApprovalMode::All => true,
+            #[allow(deprecated)]
             ApprovalMode::SideEffectOnly => meta.side_effect,
         }
     }

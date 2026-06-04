@@ -11,7 +11,7 @@ use agent_runtime_core::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig,
 use agent_runtime_core::tool::builtin::WriteFileTool;
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
-    JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
+    Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
 use agent_runtime_providers::{create_adapter_from_config, normalize_provider_model};
 use async_trait::async_trait;
@@ -131,7 +131,7 @@ impl ExaSearchTool {
         Self {
             metadata: ToolMetadata {
                 side_effect: false,
-                requires_approval: false,
+                approval: Approval::Never,
                 cost_hint: None,
                 timeout: Some(Duration::from_secs(30)),
                 max_output_tokens: None,
@@ -407,7 +407,7 @@ fn build_deep_research_agent(
             details.get("output").cloned().unwrap_or(details.clone())
         }),
     ))?;
-    registry.register(Arc::new(WriteFileTool::new_with_approval(false)))?;
+    registry.register(Arc::new(WriteFileTool::new_with_approval(Approval::Never)))?;
     Ok((config, model, registry))
 }
 

@@ -20,9 +20,25 @@ use agent_runtime_core::run::{
 use agent_runtime_core::tool::async_job::JobHandle;
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
-    JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
+    Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
 use agent_runtime_providers::{create_adapter_from_config, normalize_provider_model};
+
+fn resolve_approval_node(approval_str: Option<&str>, requires_approval: Option<bool>) -> Approval {
+    match approval_str {
+        Some("never") => Approval::Never,
+        Some("whenRisky") | Some("when_risky") => Approval::WhenRisky,
+        Some("always") => Approval::Always,
+        Some(_) => Approval::WhenRisky,
+        None => {
+            if requires_approval.unwrap_or(false) {
+                Approval::Always
+            } else {
+                Approval::Never
+            }
+        }
+    }
+}
 
 fn shared_runtime() -> &'static tokio::runtime::Runtime {
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -34,7 +50,11 @@ fn parse_approval_mode(value: Option<&str>) -> Result<ApprovalMode, String> {
         None | Some("perTool") | Some("PerTool") => Ok(ApprovalMode::PerTool),
         Some("none") | Some("None") => Ok(ApprovalMode::None),
         Some("all") | Some("All") => Ok(ApprovalMode::All),
-        Some("sideEffectOnly") | Some("SideEffectOnly") => Ok(ApprovalMode::SideEffectOnly),
+        #[allow(deprecated)]
+        Some("sideEffectOnly") | Some("SideEffectOnly") => {
+            eprintln!("warning: sideEffectOnly is deprecated, use perTool with Approval::WhenRisky instead");
+            Ok(ApprovalMode::SideEffectOnly)
+        }
         Some(other) => Err(format!(
             "invalid approvalMode '{other}'; expected perTool|none|all|sideEffectOnly"
         )),
@@ -81,8 +101,11 @@ pub struct ToolRegistration {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
+    /// Deprecated: use `approval` ("never"/"whenRisky"/"always") instead.
     pub requires_approval: Option<bool>,
     pub side_effect: Option<bool>,
+    /// Approval level: "never" | "whenRisky" | "always". Takes priority over `requires_approval`.
+    pub approval: Option<String>,
 }
 
 /// Tool backed by a JavaScript handler function.
@@ -258,13 +281,15 @@ impl Agent {
     /// For tools with handlers, use `registerToolWithHandler`.
     #[napi]
     pub fn register_tool(&mut self, options: ToolRegistration) -> napi::Result<()> {
+        let resolved =
+            resolve_approval_node(options.approval.as_deref(), options.requires_approval);
         let tool = StaticTool {
             name: options.name.clone(),
             description: options.description.clone(),
             input_schema: options.input_schema,
             metadata: ToolMetadata {
                 side_effect: options.side_effect.unwrap_or(false),
-                requires_approval: options.requires_approval.unwrap_or(false),
+                approval: resolved,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,
@@ -280,9 +305,9 @@ impl Agent {
     /// The handler receives the parsed input object and should return a
     /// JSON-serializable value. Errors thrown become ToolCallFailed events.
     #[napi(
-        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => any, options?: { requiresApproval?: boolean, sideEffect?: boolean }"
+        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => any, options?: { requiresApproval?: boolean, sideEffect?: boolean, approval?: string }"
     )]
-    #[allow(clippy::too_many_arguments)] // justified: NAPI binding mirrors JS API surface; cannot reduce without breaking TypeScript contract
+    #[allow(clippy::too_many_arguments)] // justified: NAPI binding mirrors JS API surface
     pub fn register_tool_with_handler(
         &mut self,
         name: String,
@@ -291,16 +316,21 @@ impl Agent {
         handler: napi::JsFunction,
         options: Option<serde_json::Value>,
     ) -> napi::Result<()> {
+        let approval_str = options
+            .as_ref()
+            .and_then(|o| o.get("approval"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let requires_approval = options
             .as_ref()
             .and_then(|o| o.get("requiresApproval"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+            .and_then(|v| v.as_bool());
         let side_effect = options
             .as_ref()
             .and_then(|o| o.get("sideEffect"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let resolved = resolve_approval_node(approval_str.as_deref(), requires_approval);
 
         let tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = handler
             .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<Value>| {
@@ -314,7 +344,7 @@ impl Agent {
             input_schema,
             metadata: ToolMetadata {
                 side_effect,
-                requires_approval,
+                approval: resolved,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,

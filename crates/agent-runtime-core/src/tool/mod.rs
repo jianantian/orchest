@@ -47,10 +47,18 @@ pub enum ToolOutput {
     Handoff(Box<crate::handoff::HandoffResult>),
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub enum Approval {
+    Never,
+    #[default]
+    WhenRisky,
+    Always,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolMetadata {
     pub side_effect: bool,
-    pub requires_approval: bool,
+    pub approval: Approval,
     pub cost_hint: Option<CostHint>,
     pub timeout: Option<Duration>,
     pub max_output_tokens: Option<u64>,

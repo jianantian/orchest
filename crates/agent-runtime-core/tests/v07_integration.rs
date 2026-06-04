@@ -14,7 +14,7 @@ use agent_runtime_core::model::{
 use agent_runtime_core::run::{AgentConfig, AgentRun, BackoffStrategy, RetryPolicy};
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
-    Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
+    Approval, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -138,7 +138,7 @@ impl Tool for EchoSearchTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,

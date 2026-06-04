@@ -458,7 +458,7 @@ impl McpTool {
             input_schema: def.input_schema,
             metadata: ToolMetadata {
                 side_effect: true,
-                requires_approval: false,
+                approval: crate::tool::Approval::Never,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,

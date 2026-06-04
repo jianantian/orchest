@@ -69,8 +69,9 @@ class ToolRegistration(TypedDict):
     name: str
     description: str
     input_schema: JsonSchema
-    requires_approval: NotRequired[bool]
+    requires_approval: NotRequired[bool]  # Deprecated: use approval instead
     side_effect: NotRequired[bool]
+    approval: NotRequired[str]  # "never" | "when_risky" | "always"
 
 
 class RunStartedEvent(TypedDict):
@@ -334,12 +335,14 @@ class Agent:
         func: Callable[..., Any] | None = None,
         requires_approval: bool = False,
         side_effect: bool = False,
+        approval: str | None = None,
     ) -> Callable[..., Any]: ...
     def register_tool(
         self,
         func: Callable[..., Any],
         requires_approval: bool = False,
         side_effect: bool = False,
+        approval: str | None = None,
     ) -> None: ...
     def register_agent_tool(
         self,
@@ -348,7 +351,11 @@ class Agent:
         agent: Agent,
         input_key: str | None = None,
     ) -> None: ...
-    def register_write_file_tool(self, requires_approval: bool = True) -> None: ...
+    def register_write_file_tool(
+        self,
+        requires_approval: bool = True,
+        approval: str | None = None,
+    ) -> None: ...
     def run_sync(self, input: str) -> list[RuntimeEvent]: ...
     def run(self, input: str) -> list[RuntimeEvent]: ...
     def respond_approval(self, run_id_str: str, approved: bool) -> None: ...

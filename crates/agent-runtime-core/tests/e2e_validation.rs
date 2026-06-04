@@ -13,7 +13,8 @@ use agent_runtime_core::tool::async_job::{JobHandle, JobStatus};
 use agent_runtime_core::tool::builtin::ReadFileTool;
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
-    JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput, ToolSource,
+    Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput,
+    ToolSource,
 };
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -190,7 +191,7 @@ impl Tool for EchoTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -788,7 +789,7 @@ impl Tool for AsyncEchoTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -972,7 +973,7 @@ impl Tool for GuardedTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: true,
-            requires_approval: true,
+            approval: Approval::Always,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,

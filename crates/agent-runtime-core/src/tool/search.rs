@@ -27,7 +27,7 @@ impl SearchToolsTool {
             }),
             metadata: ToolMetadata {
                 side_effect: false,
-                requires_approval: false,
+                approval: crate::tool::Approval::Never,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,

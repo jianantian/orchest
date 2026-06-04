@@ -8,8 +8,8 @@ use crate::model::{
 use crate::tool::async_job::{JobHandle, JobStatus};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{
-    JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput,
-    ToolSource,
+    Approval, JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolMetadata,
+    ToolOutput, ToolSource,
 };
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -227,21 +227,21 @@ impl ModelAdapter for ToolCallModelAdapter {
 
 struct FakeTool {
     name: &'static str,
-    requires_approval: bool,
+    approval: Approval,
 }
 
 impl FakeTool {
     fn echo() -> Self {
         Self {
             name: "echo",
-            requires_approval: false,
+            approval: Approval::Never,
         }
     }
 
     fn guarded(name: &'static str) -> Self {
         Self {
             name,
-            requires_approval: true,
+            approval: Approval::Always,
         }
     }
 }
@@ -261,24 +261,23 @@ impl Tool for FakeTool {
         None
     }
     fn metadata(&self) -> &ToolMetadata {
-        if self.requires_approval {
-            &ToolMetadata {
+        match self.approval {
+            Approval::Always => &ToolMetadata {
                 side_effect: true,
-                requires_approval: true,
+                approval: Approval::Always,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,
                 source: ToolSource::InProcess,
-            }
-        } else {
-            &ToolMetadata {
+            },
+            _ => &ToolMetadata {
                 side_effect: false,
-                requires_approval: false,
+                approval: Approval::Never,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,
                 source: ToolSource::InProcess,
-            }
+            },
         }
     }
     async fn execute(
@@ -397,7 +396,7 @@ impl Tool for StructuredTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -605,7 +604,7 @@ impl Tool for AsyncTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -925,7 +924,7 @@ impl Tool for WebhookTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -1122,7 +1121,7 @@ async fn allowed_tools_filters_visibility_and_permits_execution() {
     registry
         .register(Arc::new(FakeTool {
             name: "secret",
-            requires_approval: false,
+            approval: Approval::Never,
         }))
         .unwrap();
 
@@ -1155,7 +1154,7 @@ async fn allowed_tools_denies_disallowed_tool_by_name() {
     registry
         .register(Arc::new(FakeTool {
             name: "secret",
-            requires_approval: false,
+            approval: Approval::Never,
         }))
         .unwrap();
 
@@ -1238,7 +1237,7 @@ impl SlowTool {
         Self {
             metadata: ToolMetadata {
                 side_effect: false,
-                requires_approval: false,
+                approval: Approval::Never,
                 cost_hint: None,
                 timeout: Some(Duration::from_millis(50)),
                 max_output_tokens: None,
@@ -1371,7 +1370,7 @@ impl BigOutputTool {
         Self {
             metadata: ToolMetadata {
                 side_effect: false,
-                requires_approval: false,
+                approval: Approval::Never,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: Some(10),
@@ -2495,7 +2494,7 @@ impl Tool for MustNotRunTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -3200,7 +3199,7 @@ impl Tool for GuardedNamedTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: true,
-            requires_approval: true,
+            approval: Approval::Always,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -3220,10 +3219,10 @@ impl Tool for GuardedNamedTool {
 
 use crate::run::ApprovalMode;
 
-fn meta(requires_approval: bool, side_effect: bool) -> ToolMetadata {
+fn meta(approval: Approval, side_effect: bool) -> ToolMetadata {
     ToolMetadata {
         side_effect,
-        requires_approval,
+        approval,
         cost_hint: None,
         timeout: None,
         max_output_tokens: None,
@@ -3232,11 +3231,13 @@ fn meta(requires_approval: bool, side_effect: bool) -> ToolMetadata {
 }
 
 #[test]
-fn approval_mode_per_tool_uses_flag() {
+fn approval_mode_per_tool_uses_enum() {
     let mut rc = config::RuntimeConfig::default();
     rc.approval_mode = ApprovalMode::PerTool;
-    assert!(rc.should_approve(&meta(true, false)));
-    assert!(!rc.should_approve(&meta(false, false)));
+    assert!(rc.should_approve(&meta(Approval::Always, false)));
+    assert!(!rc.should_approve(&meta(Approval::Never, false)));
+    assert!(rc.should_approve(&meta(Approval::WhenRisky, true)));
+    assert!(!rc.should_approve(&meta(Approval::WhenRisky, false)));
 }
 
 #[test]
@@ -3245,7 +3246,7 @@ fn approval_mode_none_never_approves() {
         approval_mode: ApprovalMode::None,
         ..Default::default()
     };
-    assert!(!rc.should_approve(&meta(true, true)));
+    assert!(!rc.should_approve(&meta(Approval::Always, true)));
 }
 
 #[test]
@@ -3254,17 +3255,18 @@ fn approval_mode_all_always_approves() {
         approval_mode: ApprovalMode::All,
         ..Default::default()
     };
-    assert!(rc.should_approve(&meta(false, false)));
+    assert!(rc.should_approve(&meta(Approval::Never, false)));
 }
 
 #[test]
 fn approval_mode_side_effect_only() {
+    #[allow(deprecated)]
     let rc = config::RuntimeConfig {
         approval_mode: ApprovalMode::SideEffectOnly,
         ..Default::default()
     };
-    assert!(rc.should_approve(&meta(false, true)));
-    assert!(!rc.should_approve(&meta(true, false)));
+    assert!(rc.should_approve(&meta(Approval::Never, true)));
+    assert!(!rc.should_approve(&meta(Approval::Always, false)));
 }
 
 #[test]
@@ -3274,9 +3276,8 @@ fn custom_approval_fn_takes_priority() {
         custom_approval_fn: Some(Arc::new(|m: &ToolMetadata| m.side_effect)),
         ..Default::default()
     };
-    // custom says approve side-effect tools even though mode is None
-    assert!(rc.should_approve(&meta(false, true)));
-    assert!(!rc.should_approve(&meta(false, false)));
+    assert!(rc.should_approve(&meta(Approval::Never, true)));
+    assert!(!rc.should_approve(&meta(Approval::Never, false)));
 }
 
 #[test]
@@ -3296,7 +3297,7 @@ fn runtime_config_serde_skips_custom_fn() {
 async fn approval_mode_all_forces_approval_for_unguarded_tool() {
     let model = Arc::new(ToolCallModelAdapter);
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(FakeTool::echo())).unwrap(); // requires_approval=false
+    registry.register(Arc::new(FakeTool::echo())).unwrap(); // approval=Never
     let mut cfg = test_config();
     cfg.runtime.approval_mode = ApprovalMode::All;
 
