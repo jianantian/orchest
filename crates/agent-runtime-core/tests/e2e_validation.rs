@@ -50,6 +50,7 @@ fn test_config() -> AgentConfig {
         handoffs: vec![],
         session_store: None,
         session_id: None,
+        supervision_strategy: Default::default(),
     }
 }
 
@@ -319,6 +320,7 @@ async fn e2e_event_coverage() {
             RuntimeEvent::ModelRetry { .. } => "ModelRetry",
             RuntimeEvent::AgentUpdated { .. } => "AgentUpdated",
             RuntimeEvent::EventsDropped { .. } => "EventsDropped",
+            RuntimeEvent::RunRestarted { .. } => "RunRestarted",
         })
         .collect();
 

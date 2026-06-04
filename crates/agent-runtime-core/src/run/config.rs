@@ -13,6 +13,15 @@ use crate::tool::Tool;
 
 use super::helpers::{min_option, min_option_f64};
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub enum SupervisionStrategy {
+    #[default]
+    Stop,
+    Restart {
+        max_retries: u32,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RunId(pub uuid::Uuid);
 
@@ -52,6 +61,8 @@ pub struct AgentConfig {
     #[serde(skip)]
     pub session_store: Option<Arc<dyn crate::session::SessionStore>>,
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub supervision_strategy: SupervisionStrategy,
 }
 
 impl std::fmt::Debug for AgentConfig {
@@ -378,6 +389,7 @@ pub struct AgentConfigBuilder {
     handoffs: Vec<crate::handoff::Handoff>,
     session_store: Option<Arc<dyn crate::session::SessionStore>>,
     session_id: Option<String>,
+    supervision_strategy: SupervisionStrategy,
 }
 
 impl AgentConfigBuilder {
@@ -409,7 +421,13 @@ impl AgentConfigBuilder {
             handoffs: vec![],
             session_store: None,
             session_id: None,
+            supervision_strategy: SupervisionStrategy::default(),
         }
+    }
+
+    pub fn supervision_strategy(mut self, strategy: SupervisionStrategy) -> Self {
+        self.supervision_strategy = strategy;
+        self
     }
 
     pub fn retry_policy(mut self, policy: super::retry::RetryPolicy) -> Self {
@@ -518,6 +536,7 @@ impl AgentConfigBuilder {
             handoffs: self.handoffs,
             session_store: self.session_store,
             session_id: self.session_id,
+            supervision_strategy: self.supervision_strategy,
         })
     }
 }

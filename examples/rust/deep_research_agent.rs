@@ -323,6 +323,7 @@ fn agent_config(
         handoffs: vec![],
         session_store: None,
         session_id: None,
+        supervision_strategy: Default::default(),
     })
 }
 

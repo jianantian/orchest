@@ -12,6 +12,7 @@ use crate::events::RuntimeEvent;
 
 use super::actor::{AgentMsg, CancelCmd, InjectCmd, SteerCmd};
 use super::config::RunId;
+use super::supervisor::SupervisorMsg;
 use super::watcher::{Watcher, WatcherAction};
 
 pub type EventReceiver = mpsc::Receiver<RuntimeEvent>;
@@ -54,6 +55,7 @@ pub struct RunHandle {
     /// Background task that owns the actor lifecycle.
     pub(crate) actor_join: JoinHandle<()>,
     pub(crate) approval_bus: ApprovalBus,
+    pub(crate) supervisor_ref: Arc<Mutex<Option<ActorRef<SupervisorMsg>>>>,
 }
 
 impl RunHandle {
@@ -115,6 +117,15 @@ impl RunHandle {
 
     /// Attach a watcher that receives events and can inject messages or abort the run.
     pub async fn attach_watcher(&self, watcher: Arc<dyn Watcher>, capacity: usize) {
+        if let Ok(guard) = self.supervisor_ref.lock() {
+            if let Some(ref sup_ref) = *guard {
+                let _ = sup_ref.cast(SupervisorMsg::RegisterWatcher(
+                    Arc::clone(&watcher),
+                    capacity,
+                ));
+            }
+        }
+
         let mut rx = self.subscribe_events(capacity).await;
         let actor_ref = Arc::clone(&self.actor_ref);
         tokio::spawn(async move {

@@ -146,6 +146,10 @@ pub enum RuntimeEvent {
         count: u64,
     },
 
+    RunRestarted {
+        attempt: u32,
+    },
+
     RunCompleted {
         output: Value,
     },
