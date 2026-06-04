@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 
 use crate::events::RuntimeEvent;
 
-use super::actor::{AgentMsg, CancelCmd, InjectCmd};
+use super::actor::{AgentMsg, CancelCmd, InjectCmd, SteerCmd};
 use super::config::RunId;
 use super::watcher::{Watcher, WatcherAction};
 
@@ -69,6 +69,28 @@ impl RunHandle {
         }
     }
 
+    /// Inject a user-role message into the running agent's conversation.
+    pub fn inject_message(&self, msg: &str) {
+        if let Ok(guard) = self.actor_ref.lock() {
+            if let Some(ref aref) = *guard {
+                let _ = aref.cast(AgentMsg::Inject(InjectCmd {
+                    message: msg.to_string(),
+                }));
+            }
+        }
+    }
+
+    /// Inject a system-role steering instruction into the running agent's conversation.
+    pub fn steer(&self, instruction: &str) {
+        if let Ok(guard) = self.actor_ref.lock() {
+            if let Some(ref aref) = *guard {
+                let _ = aref.cast(AgentMsg::Steer(SteerCmd {
+                    instruction: instruction.to_string(),
+                }));
+            }
+        }
+    }
+
     /// Subscribe to events emitted after this call. Returns a lossy receiver:
     /// when the channel is full, events are dropped and
     /// `RuntimeEvent::EventsDropped` is sent to the primary subscriber.
@@ -103,6 +125,13 @@ impl RunHandle {
                         if let Ok(guard) = actor_ref.lock() {
                             if let Some(ref aref) = *guard {
                                 let _ = aref.cast(AgentMsg::Inject(InjectCmd { message: msg }));
+                            }
+                        }
+                    }
+                    WatcherAction::Steer(instruction) => {
+                        if let Ok(guard) = actor_ref.lock() {
+                            if let Some(ref aref) = *guard {
+                                let _ = aref.cast(AgentMsg::Steer(SteerCmd { instruction }));
                             }
                         }
                     }

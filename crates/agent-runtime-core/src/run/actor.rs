@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
+use ractor::{Actor, ActorProcessingErr, ActorRef};
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -29,10 +29,9 @@ const APPROVAL_TIMEOUT: Duration = Duration::from_secs(3600);
 // ── Message enum ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
-pub(crate) struct SteerCmd;
-
-#[derive(Debug, Clone)]
-pub(crate) struct SteerResult;
+pub(crate) struct SteerCmd {
+    pub instruction: String,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct InjectCmd {
@@ -47,7 +46,7 @@ pub(crate) struct CancelCmd {
 pub(crate) enum AgentMsg {
     RunStep,
     Subscribe(mpsc::Sender<RuntimeEvent>),
-    Steer(SteerCmd, RpcReplyPort<SteerResult>),
+    Steer(SteerCmd),
     Inject(InjectCmd),
     Cancel(CancelCmd),
 }
@@ -340,15 +339,11 @@ impl Actor for WorkerActor {
             AgentMsg::Subscribe(tx) => {
                 state.event_subs.push(tx);
             }
-            AgentMsg::Steer(_, reply) => {
-                emit(
-                    &state.event_subs,
-                    RuntimeEvent::RuntimeWarning {
-                        message: "Steer is not yet implemented (planned for v0.9)".into(),
-                    },
-                )
-                .await;
-                let _ = reply.send(SteerResult);
+            AgentMsg::Steer(cmd) => {
+                state.messages.push(Message {
+                    role: Role::System,
+                    content: vec![ContentBlock::Text(cmd.instruction)],
+                });
             }
             AgentMsg::Inject(cmd) => {
                 state.messages.push(Message {

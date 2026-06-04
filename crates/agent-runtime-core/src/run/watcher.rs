@@ -9,6 +9,8 @@ pub enum WatcherAction {
     Continue,
     /// Inject a user-role message into the run's conversation at the next model call.
     Inject(String),
+    /// Inject a system-role steering instruction into the run's conversation.
+    Steer(String),
     /// Terminate the run; `reason` is surfaced in `RuntimeEvent::RunAborted`.
     Abort(String),
 }
