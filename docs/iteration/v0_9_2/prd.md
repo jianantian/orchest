@@ -66,7 +66,6 @@ v0.9.2 作为卫星迭代，补齐文档和发布基础设施，使 Orchest 可�
 ## 依赖
 
 - v0.9 Supervised Delegation（steering / SD 示例需要 v0.9 API）
-- v0.9.1 Provider 扩展（多 provider 文档需要 adapter 就绪）
 
 ## 验收标准
 

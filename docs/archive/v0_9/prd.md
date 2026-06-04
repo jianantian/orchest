@@ -16,7 +16,7 @@ v0.9 聚焦一件事：**Supervised Delegation 端到端可用**。这是 [Actor
 
 在实现 SD 核心功能之前，先完成一组 API 改造（源自 [外部研究综合分析](../../analysis/external-research-synthesis.md)）。这些改动不是独立的 API 美化，而是 SD 实现的前置依赖——LlmWatcher 需要结构化错误来判断是否干预，`inherit_context` 是 SD 示例的基础能力。
 
-Provider 扩展、文档、发布准备拆到卫星迭代（[v0.9.1](../../iteration/v0_9_1/prd.md)、[v0.9.2](../../iteration/v0_9_2/prd.md)），不阻塞主线。
+文档、发布准备拆到卫星迭代（[v0.9.2](../../iteration/v0_9_2/prd.md)），不阻塞主线。
 
 ## 目标
 
@@ -429,7 +429,6 @@ examples/rust/supervised_delegation.rs
 
 ## 不在范围内
 
-- Provider 扩展（→ [v0.9.1](../../iteration/v0_9_1/prd.md)）
 - 文档、发布准备（→ [v0.9.2](../../iteration/v0_9_2/prd.md)）
 - 分布式 agent 编排（多进程 / 多机）
 - 内置 observability 平台

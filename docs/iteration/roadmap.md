@@ -34,23 +34,23 @@
 
 ## 规划中
 
-### [v0.9.1 — Provider 扩展](./v0_9_1/prd.md)（卫星）
-
-Google Gemini + Ollama + Mistral adapter。与 v0.9 并行，不阻塞主线。
-
-**依赖**：ProviderFactory trait（hotfix-0526）
-
 ### [v0.9.2 — 文档 + 发布准备](./v0_9_2/prd.md)（卫星）
 
 API 文档、入门教程、SDK 文档、CHANGELOG、CI release workflow、crates.io 发布。
 
-**依赖**：v0.9 已完成 + v0.9.1（示例和文档需要 SD API 和新 provider 就绪）
+**依赖**：v0.9 已完成（示例和文档需要 SD API 就绪）
 
-### [v0.9.3 — ASR Provider Gateway](./v0_9_3/prd.md)（卫星）
+### [v0.9.1 — ASR Provider Gateway](./v0_9_1/prd.md)（卫星）
 
 新增 `agent-runtime-asr-providers`，提供 ASR/STT provider 统一封装、routing、streaming transcript、telemetry 和 `trace_id` 对齐。与 v0.9 主线并行，不改 core run loop。
 
 **依赖**：`agent-runtime-providers` / `agent-runtime-aigc-providers` 的 provider/gateway 设计模式
+
+### [v0.9.3 — TTS Provider Gateway](./v0_9_3/prd.md)（卫星）
+
+新增 `agent-runtime-tts-providers`，提供 TTS provider 统一封装、voice catalog、duplex streaming synthesis、audio format、usage、telemetry 和 `trace_id` 对齐。与 v0.9 主线并行，不改 core run loop。
+
+**依赖**：v0.9.1 ASR Provider Gateway 的音频 provider/gateway 设计模式
 
 ### 依赖图
 
@@ -61,15 +61,12 @@ API 文档、入门教程、SDK 文档、CHANGELOG、CI release workflow、crate
 ✅ v0.8: Session + Guardrail
         + SD 基础通信层
             │
-            ├──────────────────────┐
-            ▼                      ▼
-✅ v0.9: Steering + SD 完整    v0.9.1: Provider 扩展
-            │                      │
-            └──────────┬───────────┘
-                       ▼
-              v0.9.2: 文档 + 发布
+            │
+            ▼
+   v0.9.2: 文档 + 发布
 
-   v0.9.3: ASR Provider Gateway（卫星，独立并行）
+   v0.9.1: ASR Provider Gateway（卫星，独立并行）
+   v0.9.3: TTS Provider Gateway（卫星，独立并行）
 ```
 
 ## 能力缺口全景
@@ -90,6 +87,6 @@ API 文档、入门教程、SDK 文档、CHANGELOG、CI release workflow、crate
 | Supervised Delegation 基础 | ~~无~~ → Watcher trait + InjectCmd 双向通信 | ✅ v0.8 |
 | Mid-run Steering | ~~只有 approval~~ → Steering API | ✅ v0.9 |
 | Supervised Delegation 完整 | ~~无~~ → LlmWatcher + supervisor 恢复 + 多 watcher FIFO | ✅ v0.9 |
-| Provider 扩展 | 4 个（Anthropic/OpenAI/DeepSeek/OpenRouter） | **v0.9.1** |
 | Image AIGC Gateway | ~~无~~ → **v0.6.1 已完成** | ✅ |
-| ASR Provider Gateway | 无统一 ASR/STT provider crate | **v0.9.3** |
+| ASR Provider Gateway | 无统一 ASR/STT provider crate | **v0.9.1** |
+| TTS Provider Gateway | 无统一 TTS provider crate | **v0.9.3** |
