@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use ractor::{Actor, ActorProcessingErr, ActorRef, SupervisionEvent};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::events::RuntimeEvent;
 use crate::model::ModelAdapter;
@@ -17,7 +17,7 @@ use super::watcher::Watcher;
 
 #[allow(dead_code)] // justified: Shutdown reserved for graceful supervisor teardown from RunHandle
 pub(crate) enum SupervisorMsg {
-    RegisterWatcher(Arc<dyn Watcher>, usize),
+    RegisterWatcher(Arc<dyn Watcher>, usize, oneshot::Sender<()>),
     Shutdown,
 }
 
@@ -35,6 +35,9 @@ pub(crate) struct SupervisorState {
     approval_bus: ApprovalBus,
     session_store: Option<Arc<dyn SessionStore>>,
     session_id: Option<String>,
+    original_input: String,
+    original_initial_messages: Vec<crate::model::Message>,
+    original_resume: Option<ResumeState>,
     worker_handle: Option<ractor::concurrency::JoinHandle<()>>,
 }
 
@@ -64,6 +67,9 @@ impl Actor for SupervisorActor {
     ) -> Result<SupervisorState, ActorProcessingErr> {
         let session_store = args.config.session_store.clone();
         let session_id = args.config.session_id.clone();
+        let original_input = args.worker_args.input.clone();
+        let original_initial_messages = args.worker_args.initial_messages.clone();
+        let original_resume = args.worker_args.resume.clone();
 
         let (worker_ref, worker_handle) =
             Actor::spawn_linked(None, WorkerActor, args.worker_args, myself.get_cell()).await?;
@@ -87,6 +93,9 @@ impl Actor for SupervisorActor {
             approval_bus: args.approval_bus,
             session_store,
             session_id,
+            original_input,
+            original_initial_messages,
+            original_resume,
             worker_handle: Some(worker_handle),
         })
     }
@@ -98,13 +107,17 @@ impl Actor for SupervisorActor {
         state: &mut SupervisorState,
     ) -> Result<(), ActorProcessingErr> {
         match msg {
-            SupervisorMsg::RegisterWatcher(watcher, capacity) => {
+            SupervisorMsg::RegisterWatcher(watcher, capacity, ack) => {
                 state.watchers.push((watcher.clone(), capacity));
-                if let Ok(guard) = state.actor_ref_shared.lock() {
-                    if let Some(ref aref) = *guard {
-                        reattach_watcher(aref, &watcher, capacity, &state.actor_ref_shared);
-                    }
+                let worker_ref = state
+                    .actor_ref_shared
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.clone());
+                if let Some(aref) = worker_ref {
+                    reattach_watcher(&aref, &watcher, capacity, &state.actor_ref_shared);
                 }
+                let _ = ack.send(());
             }
             SupervisorMsg::Shutdown => {
                 myself.stop(None);
@@ -232,6 +245,7 @@ pub(crate) fn spawn_supervised(
     let supervisor_ref_shared: Arc<Mutex<Option<ActorRef<SupervisorMsg>>>> =
         Arc::new(Mutex::new(None));
     let supervisor_ref_for_handle = supervisor_ref_shared.clone();
+    let ready_for_supervisor_ref = ready.clone();
 
     let sup_args = SupervisorArgs {
         run_id,
@@ -252,6 +266,7 @@ pub(crate) fn spawn_supervised(
         if let Ok(mut guard) = supervisor_ref_shared.lock() {
             *guard = Some(sup_ref);
         }
+        ready_for_supervisor_ref.notify_waiters();
         let _ = sup_handle.await;
     });
 
@@ -275,21 +290,21 @@ async fn build_restart_args(state: &SupervisorState) -> AgentRunArgs {
                 step: snapshot.step,
                 budget_used: snapshot.budget_used,
             }),
-            _ => None,
+            _ => state.original_resume.clone(),
         }
     } else {
-        None
+        state.original_resume.clone()
     };
 
     AgentRunArgs {
         run_id: state.run_id,
         config: state.config.clone(),
-        input: String::new(),
+        input: state.original_input.clone(),
         model: state.model.clone(),
         registry: state.registry.clone(),
         event_tx: state.event_tx.clone(),
         approval_bus: state.approval_bus.clone(),
         resume,
-        initial_messages: vec![],
+        initial_messages: state.original_initial_messages.clone(),
     }
 }

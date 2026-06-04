@@ -231,7 +231,7 @@ impl Watcher for LlmWatcher {
 mod tests {
     use super::*;
     use crate::model::{ModelError, StopReason, TokenUsage};
-    use crate::tool::{ErrorKind, ToolError, ToolMetadata, ToolSource};
+    use crate::tool::{ToolError, ToolMetadata, ToolSource};
     use std::time::Duration;
 
     struct MockModel {

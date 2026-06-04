@@ -13,7 +13,7 @@ use crate::events::RuntimeEvent;
 use super::actor::{AgentMsg, CancelCmd, InjectCmd, SteerCmd};
 use super::config::RunId;
 use super::supervisor::SupervisorMsg;
-use super::watcher::{Watcher, WatcherAction};
+use super::watcher::Watcher;
 
 pub type EventReceiver = mpsc::Receiver<RuntimeEvent>;
 
@@ -117,48 +117,25 @@ impl RunHandle {
 
     /// Attach a watcher that receives events and can inject messages or abort the run.
     pub async fn attach_watcher(&self, watcher: Arc<dyn Watcher>, capacity: usize) {
-        if let Ok(guard) = self.supervisor_ref.lock() {
-            if let Some(ref sup_ref) = *guard {
+        loop {
+            let notified = self.ready.notified();
+            let supervisor_ref = self
+                .supervisor_ref
+                .lock()
+                .ok()
+                .and_then(|guard| guard.clone());
+            if let Some(sup_ref) = supervisor_ref {
+                let (ack_tx, ack_rx) = oneshot::channel();
                 let _ = sup_ref.cast(SupervisorMsg::RegisterWatcher(
                     Arc::clone(&watcher),
                     capacity,
+                    ack_tx,
                 ));
+                let _ = ack_rx.await;
+                return;
             }
+            notified.await;
         }
-
-        let mut rx = self.subscribe_events(capacity).await;
-        let actor_ref = Arc::clone(&self.actor_ref);
-        tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                match watcher.on_event(&event).await {
-                    WatcherAction::Continue => {}
-                    WatcherAction::Inject(msg) => {
-                        if let Ok(guard) = actor_ref.lock() {
-                            if let Some(ref aref) = *guard {
-                                let _ = aref.cast(AgentMsg::Inject(InjectCmd { message: msg }));
-                            }
-                        }
-                    }
-                    WatcherAction::Steer(instruction) => {
-                        if let Ok(guard) = actor_ref.lock() {
-                            if let Some(ref aref) = *guard {
-                                let _ = aref.cast(AgentMsg::Steer(SteerCmd { instruction }));
-                            }
-                        }
-                    }
-                    WatcherAction::Abort(reason) => {
-                        if let Ok(guard) = actor_ref.lock() {
-                            if let Some(ref aref) = *guard {
-                                let _ = aref.cast(AgentMsg::Cancel(CancelCmd {
-                                    reason: Some(reason),
-                                }));
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
-        });
     }
 
     /// Route an approval response to any run in this run tree.

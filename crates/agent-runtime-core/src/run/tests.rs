@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 struct FakeModelAdapter {
     call_count: AtomicU32,
@@ -3314,19 +3314,13 @@ async fn approval_mode_all_forces_approval_for_unguarded_tool() {
 
 // ── Issue 006: Multi-subscriber Events + Watcher + InjectCmd ────────────────
 
-/// Multi-step model: calls `echo` N times, then ends.
-struct MultiStepModel {
+struct GatedMultiStepModel {
     tool_calls: u32,
-}
-
-impl MultiStepModel {
-    fn new(tool_calls: u32) -> Self {
-        Self { tool_calls }
-    }
+    release_first_call: Arc<Notify>,
 }
 
 #[async_trait::async_trait]
-impl ModelAdapter for MultiStepModel {
+impl ModelAdapter for GatedMultiStepModel {
     fn provider_name(&self) -> &str {
         "mock"
     }
@@ -3351,6 +3345,10 @@ impl ModelAdapter for MultiStepModel {
                     .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
             })
             .count();
+
+        if tool_result_count == 0 {
+            self.release_first_call.notified().await;
+        }
 
         let usage = TokenUsage {
             input_tokens: 10,
@@ -3385,6 +3383,221 @@ impl ModelAdapter for MultiStepModel {
             })
         }
     }
+}
+
+async fn wait_for_supervisor_ref(handle: &RunHandle) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if handle
+                .supervisor_ref
+                .lock()
+                .ok()
+                .and_then(|guard| guard.clone())
+                .is_some()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("supervisor ref should become ready");
+}
+
+struct ToolCompletionCountingWatcher {
+    count: Arc<AtomicU32>,
+}
+
+#[async_trait::async_trait]
+impl crate::run::Watcher for ToolCompletionCountingWatcher {
+    async fn on_event(&self, event: &RuntimeEvent) -> crate::run::WatcherAction {
+        if matches!(event, RuntimeEvent::ToolCallCompleted { .. }) {
+            self.count.fetch_add(1, Ordering::SeqCst);
+        }
+        crate::run::WatcherAction::Continue
+    }
+}
+
+#[tokio::test]
+async fn attach_watcher_does_not_duplicate_supervisor_subscription() {
+    let release_first_call = Arc::new(Notify::new());
+    let model: Arc<dyn ModelAdapter> = Arc::new(GatedMultiStepModel {
+        tool_calls: 3,
+        release_first_call: Arc::clone(&release_first_call),
+    });
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeTool::echo())).unwrap();
+    let config = test_config();
+
+    let (handle, mut rx) = AgentRun::start(config, "hello".into(), model, registry);
+    wait_for_supervisor_ref(&handle).await;
+
+    let count = Arc::new(AtomicU32::new(0));
+    handle
+        .attach_watcher(
+            Arc::new(ToolCompletionCountingWatcher {
+                count: Arc::clone(&count),
+            }),
+            256,
+        )
+        .await;
+
+    release_first_call.notify_waiters();
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let observed = count.load(Ordering::SeqCst);
+    assert!(
+        observed > 0,
+        "watcher should observe at least one post-attach tool completion"
+    );
+    assert!(
+        observed <= 3,
+        "watcher must not observe more tool completions than the run actually executed"
+    );
+}
+
+struct RestartInputRecordingModel {
+    calls: AtomicU32,
+    user_inputs: Arc<tokio::sync::Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for RestartInputRecordingModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let mut inputs = self.user_inputs.lock().await;
+        let input = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::User)
+            .and_then(|m| {
+                m.content.iter().find_map(|block| match block {
+                    ContentBlock::Text(text) => Some(text.clone()),
+                    _ => None,
+                })
+            })
+            .unwrap_or_default();
+        inputs.push(input);
+        drop(inputs);
+
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            panic!("simulated worker crash before restart");
+        }
+
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("recovered".into())],
+            usage: TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                ..Default::default()
+            },
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restart_without_snapshot_reuses_original_input() {
+    let user_inputs = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(RestartInputRecordingModel {
+        calls: AtomicU32::new(0),
+        user_inputs: Arc::clone(&user_inputs),
+    });
+    let mut config = test_config();
+    config.supervision_strategy = SupervisionStrategy::Restart { max_retries: 1 };
+
+    let (handle, mut rx) = AgentRun::start(
+        config,
+        "preserve this input".into(),
+        model,
+        ToolRegistry::new(),
+    );
+
+    let mut saw_restart = false;
+    while let Some(event) = rx.recv().await {
+        if matches!(event, RuntimeEvent::RunRestarted { .. }) {
+            saw_restart = true;
+        }
+    }
+    handle.wait().await;
+
+    let inputs = user_inputs.lock().await;
+    assert!(saw_restart, "test must exercise the restart path");
+    assert_eq!(
+        inputs.as_slice(),
+        &[
+            "preserve this input".to_string(),
+            "preserve this input".to_string()
+        ],
+        "fresh restart should reuse the original run input"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restart_after_resume_reuses_original_snapshot_when_store_absent() {
+    use crate::session::SessionSnapshot;
+
+    let user_inputs = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(RestartInputRecordingModel {
+        calls: AtomicU32::new(0),
+        user_inputs: Arc::clone(&user_inputs),
+    });
+    let mut config = test_config();
+    config.supervision_strategy = SupervisionStrategy::Restart { max_retries: 1 };
+    let run_id = RunId::new();
+    let snapshot = SessionSnapshot {
+        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
+        session_id: "resume-restart-no-store".into(),
+        run_id,
+        messages: vec![
+            Message {
+                role: Role::System,
+                content: vec![ContentBlock::Text("system".into())],
+            },
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text("snapshot input".into())],
+            },
+        ],
+        step: 7,
+        budget_used: Default::default(),
+        active_config: config,
+    };
+
+    let (handle, mut rx) = AgentRun::resume(snapshot, model, ToolRegistry::new());
+    assert_eq!(handle.run_id, run_id);
+
+    let mut saw_restart = false;
+    while let Some(event) = rx.recv().await {
+        if matches!(event, RuntimeEvent::RunRestarted { .. }) {
+            saw_restart = true;
+        }
+    }
+    handle.wait().await;
+
+    let inputs = user_inputs.lock().await;
+    assert!(saw_restart, "test must exercise restart after resume");
+    assert_eq!(
+        inputs.as_slice(),
+        &["snapshot input".to_string(), "snapshot input".to_string()],
+        "restart after resume should fall back to the original snapshot"
+    );
 }
 
 #[tokio::test]

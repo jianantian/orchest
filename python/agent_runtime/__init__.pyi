@@ -74,6 +74,23 @@ class ToolRegistration(TypedDict):
     approval: NotRequired[str]  # "never" | "when_risky" | "always"
 
 
+class ToolMetadata(TypedDict):
+    side_effect: bool
+    approval: str
+    cost_hint: JsonValue
+    timeout: JsonValue
+    max_output_tokens: int | None
+    source: JsonValue
+
+
+class ToolExecutionError(TypedDict):
+    message: str
+    kind: str
+    retry: str
+    code: str | None
+    next_step: str | None
+
+
 class RunStartedEvent(TypedDict):
     type: Literal["run_started"]
     run_id: str
@@ -106,7 +123,7 @@ class ModelCallCompletedEvent(TypedDict):
 class ToolCallStartedEvent(TypedDict):
     type: Literal["tool_call_started"]
     tool: str
-    source: JsonValue
+    metadata: ToolMetadata
     input: JsonValue
     run_depth: int
     child_run_id: str | None
@@ -133,7 +150,7 @@ class ToolCallCompletedEvent(TypedDict):
 class ToolCallFailedEvent(TypedDict):
     type: Literal["tool_call_failed"]
     tool: str
-    error: str
+    error: ToolExecutionError
     run_depth: int
     child_run_id: str | None
 
@@ -277,6 +294,13 @@ class RunFailedEvent(TypedDict):
     child_run_id: str | None
 
 
+class RunRestartedEvent(TypedDict):
+    type: Literal["run_restarted"]
+    attempt: int
+    run_depth: int
+    child_run_id: str | None
+
+
 RuntimeEvent: TypeAlias = (
     RunStartedEvent
     | ModelCallStartedEvent
@@ -302,6 +326,7 @@ RuntimeEvent: TypeAlias = (
     | SubAgentStartedEvent
     | SubAgentCompletedEvent
     | SubAgentFailedEvent
+    | RunRestartedEvent
     | RunCompletedEvent
     | RunFailedEvent
 )

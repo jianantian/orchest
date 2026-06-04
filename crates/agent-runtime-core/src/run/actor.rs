@@ -86,12 +86,14 @@ impl AgentRunState {
 // ── Constructor args ──────────────────────────────────────────────────────────
 
 /// Resume payload: injected by `AgentRun::resume` to restore prior run state.
+#[derive(Clone)]
 pub(crate) struct ResumeState {
     pub messages: Vec<crate::model::Message>,
     pub step: u32,
     pub budget_used: crate::budget::BudgetUsage,
 }
 
+#[derive(Clone)]
 pub(crate) struct AgentRunArgs {
     pub run_id: RunId,
     pub config: AgentConfig,
