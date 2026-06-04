@@ -6,6 +6,7 @@ pub(crate) mod compaction;
 pub(crate) mod config;
 pub(crate) mod handle;
 pub(crate) mod helpers;
+pub mod llm_watcher;
 pub(crate) mod retry;
 pub(crate) mod skills;
 pub(crate) mod supervisor;
