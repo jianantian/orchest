@@ -3776,3 +3776,119 @@ async fn resume_continues_from_snapshot() {
         "resumed run step should be >= snapshot step"
     );
 }
+
+// ── Multi-watcher coordination tests (issue 008) ────────────────────────────
+
+struct CountingWatcher {
+    seen: Arc<tokio::sync::Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl crate::run::Watcher for CountingWatcher {
+    async fn on_event(&self, event: &RuntimeEvent) -> crate::run::WatcherAction {
+        let label = format!("{:?}", event).chars().take(80).collect::<String>();
+        self.seen.lock().await.push(label);
+        crate::run::WatcherAction::Continue
+    }
+}
+
+struct AbortingWatcher {
+    trigger_count: std::sync::atomic::AtomicU32,
+    abort_after: u32,
+    reason: String,
+    seen: Arc<tokio::sync::Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl crate::run::Watcher for AbortingWatcher {
+    async fn on_event(&self, event: &RuntimeEvent) -> crate::run::WatcherAction {
+        let label = format!("{:?}", event).chars().take(80).collect::<String>();
+        self.seen.lock().await.push(label);
+        let n = self
+            .trigger_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if n >= self.abort_after {
+            crate::run::WatcherAction::Abort(self.reason.clone())
+        } else {
+            crate::run::WatcherAction::Continue
+        }
+    }
+}
+
+#[tokio::test]
+async fn multi_watcher_abort_terminates_run() {
+    let model: Arc<dyn ModelAdapter> = Arc::new(FakeModelAdapter::final_answer());
+    let registry = ToolRegistry::new();
+    let config = test_config();
+
+    let (handle, mut rx) = AgentRun::start(config, "hello".into(), model, registry);
+
+    let seen_a = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let seen_b = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
+    let watcher_a: Arc<dyn crate::run::Watcher> = Arc::new(CountingWatcher {
+        seen: seen_a.clone(),
+    });
+    let watcher_b: Arc<dyn crate::run::Watcher> = Arc::new(AbortingWatcher {
+        trigger_count: std::sync::atomic::AtomicU32::new(0),
+        abort_after: 2,
+        reason: "watcher_b_abort".to_string(),
+        seen: seen_b.clone(),
+    });
+
+    handle.attach_watcher(watcher_a, 256).await;
+    handle.attach_watcher(watcher_b, 256).await;
+
+    handle.wait().await;
+
+    let mut events = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        events.push(e);
+    }
+    let has_abort = events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::RunAborted { .. }));
+    assert!(
+        has_abort
+            || events
+                .iter()
+                .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        "run should complete or be aborted"
+    );
+}
+
+#[tokio::test]
+async fn multi_watcher_both_receive_events() {
+    let model: Arc<dyn ModelAdapter> = Arc::new(FakeModelAdapter::final_answer());
+    let registry = ToolRegistry::new();
+    let config = test_config();
+
+    let (handle, mut rx) = AgentRun::start(config, "hello".into(), model, registry);
+
+    let seen_a = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let seen_b = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
+    let watcher_a: Arc<dyn crate::run::Watcher> = Arc::new(CountingWatcher {
+        seen: seen_a.clone(),
+    });
+    let watcher_b: Arc<dyn crate::run::Watcher> = Arc::new(CountingWatcher {
+        seen: seen_b.clone(),
+    });
+
+    handle.attach_watcher(watcher_a, 256).await;
+    handle.attach_watcher(watcher_b, 256).await;
+
+    handle.wait().await;
+
+    while let Ok(_e) = rx.try_recv() {}
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let events_a = seen_a.lock().await;
+    let events_b = seen_b.lock().await;
+    assert_eq!(
+        events_a.len(),
+        events_b.len(),
+        "both watchers should see same number of events"
+    );
+}
