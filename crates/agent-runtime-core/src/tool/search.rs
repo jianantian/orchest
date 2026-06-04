@@ -27,7 +27,7 @@ impl SearchToolsTool {
             }),
             metadata: ToolMetadata {
                 side_effect: false,
-                requires_approval: false,
+                approval: crate::tool::Approval::Never,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,
@@ -84,13 +84,9 @@ impl Tool for SearchToolsTool {
     }
 
     async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        let query = input
-            .get("query")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ToolError {
-                message: "missing required parameter 'query'".into(),
-                code: Some("MISSING_PARAM".into()),
-            })?;
+        let query = input.get("query").and_then(Value::as_str).ok_or_else(|| {
+            ToolError::fatal("missing required parameter 'query'").with_code("MISSING_PARAM")
+        })?;
         let top_k = input.get("top_k").and_then(Value::as_u64).unwrap_or(5) as usize;
         let results: Vec<Value> = self
             .search(query, top_k)
@@ -159,6 +155,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
         let output = tool
             .execute(json!({"query": "read disk file", "top_k": 1}), &ctx)

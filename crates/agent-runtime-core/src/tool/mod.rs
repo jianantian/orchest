@@ -4,6 +4,7 @@ pub mod agent_as_tool;
 pub mod async_job;
 pub mod builtin;
 pub mod code_exec;
+pub mod error;
 pub mod handoff_tool;
 pub mod in_process;
 pub mod mcp;
@@ -17,9 +18,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
+use crate::model::Message;
 use async_job::JobHandle;
 
 pub use crate::model::{JsonSchema, ToolDef};
+pub use error::{ErrorKind, RetryHint, ToolError};
 
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -29,6 +32,9 @@ pub trait Tool: Send + Sync {
     fn output_schema(&self) -> Option<&JsonSchema>;
     fn metadata(&self) -> &ToolMetadata;
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError>;
+    fn needs_parent_context(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug)]
@@ -47,10 +53,18 @@ pub enum ToolOutput {
     Handoff(Box<crate::handoff::HandoffResult>),
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub enum Approval {
+    Never,
+    #[default]
+    WhenRisky,
+    Always,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolMetadata {
     pub side_effect: bool,
-    pub requires_approval: bool,
+    pub approval: Approval,
     pub cost_hint: Option<CostHint>,
     pub timeout: Option<Duration>,
     pub max_output_tokens: Option<u64>,
@@ -88,13 +102,8 @@ pub struct ToolContext {
     /// AgentAsTool uses this to cap the child run so it cannot exceed what
     /// the parent has left.
     pub remaining_budget: crate::budget::BudgetConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
-#[error("{message}")]
-pub struct ToolError {
-    pub message: String,
-    pub code: Option<String>,
+    /// Parent run's message history; used by AgentAsTool for context inheritance.
+    pub parent_messages: Vec<Message>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

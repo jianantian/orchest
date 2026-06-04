@@ -2,7 +2,7 @@
 
 use ractor::ActorRef;
 
-use super::actor::{AgentMsg, CancelCmd, InjectCmd, SteerCmd, SteerResult};
+use super::actor::{AgentMsg, CancelCmd, InjectCmd, SteerCmd};
 
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)] // v0.8 forward declaration
@@ -17,17 +17,16 @@ pub(crate) struct AgentRef {
     pub(crate) inner: ActorRef<AgentMsg>,
 }
 
-#[allow(dead_code)] // v0.8 forward declaration
+#[allow(dead_code)] // justified: pub(crate) API used by RunHandle/supervisor, not all methods have callers yet
 impl AgentRef {
-    /// Request a steering redirect (v0.9 implementation).
-    pub(crate) async fn steer(&self, _cmd: SteerCmd) -> Result<SteerResult, AgentError> {
-        ractor::call!(self.inner, AgentMsg::Steer, _cmd)
-            .map_err(|e| AgentError::Communication(e.to_string()))
-    }
-
-    /// Inject a message into the running agent (fire-and-forget).
+    /// Inject a user-role message into the running agent (fire-and-forget).
     pub(crate) fn inject(&self, cmd: InjectCmd) {
         let _ = self.inner.cast(AgentMsg::Inject(cmd));
+    }
+
+    /// Inject a system-role steering instruction (fire-and-forget).
+    pub(crate) fn steer(&self, cmd: SteerCmd) {
+        let _ = self.inner.cast(AgentMsg::Steer(cmd));
     }
 
     /// Cancel the running agent.

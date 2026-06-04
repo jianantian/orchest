@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
+use ractor::{Actor, ActorProcessingErr, ActorRef};
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -14,7 +14,7 @@ use crate::telemetry;
 use crate::tool::code_exec::CodeExecutionMcpServer;
 use crate::tool::registry::ToolRegistry;
 use crate::tool::search::SearchToolsTool;
-use crate::tool::{Tool, ToolCall, ToolContext, ToolDef, ToolOutput};
+use crate::tool::{Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolOutput};
 
 use super::compaction::maybe_compact_context;
 use super::config::{AgentConfig, RunId};
@@ -29,10 +29,9 @@ const APPROVAL_TIMEOUT: Duration = Duration::from_secs(3600);
 // ── Message enum ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
-pub(crate) struct SteerCmd;
-
-#[derive(Debug, Clone)]
-pub(crate) struct SteerResult;
+pub(crate) struct SteerCmd {
+    pub instruction: String,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct InjectCmd {
@@ -47,7 +46,7 @@ pub(crate) struct CancelCmd {
 pub(crate) enum AgentMsg {
     RunStep,
     Subscribe(mpsc::Sender<RuntimeEvent>),
-    Steer(SteerCmd, RpcReplyPort<SteerResult>),
+    Steer(SteerCmd),
     Inject(InjectCmd),
     Cancel(CancelCmd),
 }
@@ -87,12 +86,14 @@ impl AgentRunState {
 // ── Constructor args ──────────────────────────────────────────────────────────
 
 /// Resume payload: injected by `AgentRun::resume` to restore prior run state.
+#[derive(Clone)]
 pub(crate) struct ResumeState {
     pub messages: Vec<crate::model::Message>,
     pub step: u32,
     pub budget_used: crate::budget::BudgetUsage,
 }
 
+#[derive(Clone)]
 pub(crate) struct AgentRunArgs {
     pub run_id: RunId,
     pub config: AgentConfig,
@@ -103,6 +104,8 @@ pub(crate) struct AgentRunArgs {
     pub approval_bus: ApprovalBus,
     /// `None` on a fresh start; `Some` when resuming from a persisted snapshot.
     pub resume: Option<ResumeState>,
+    /// Extra messages to prepend (between system prompt and user input) on a fresh start.
+    pub initial_messages: Vec<crate::model::Message>,
 }
 
 // ── WorkerActor ───────────────────────────────────────────────────────────────
@@ -128,6 +131,7 @@ impl Actor for WorkerActor {
             event_tx,
             approval_bus,
             resume,
+            initial_messages,
         } = args;
         let event_subs = vec![event_tx];
 
@@ -244,16 +248,15 @@ impl Actor for WorkerActor {
         let (messages, initial_step, initial_budget_used) = if let Some(rs) = resume {
             (rs.messages, rs.step, Some(rs.budget_used))
         } else {
-            let msgs = vec![
-                Message {
-                    role: Role::System,
-                    content: vec![ContentBlock::Text(config.system_prompt.clone())],
-                },
-                Message {
-                    role: Role::User,
-                    content: vec![ContentBlock::Text(input)],
-                },
-            ];
+            let mut msgs = vec![Message {
+                role: Role::System,
+                content: vec![ContentBlock::Text(config.system_prompt.clone())],
+            }];
+            msgs.extend(initial_messages);
+            msgs.push(Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text(input)],
+            });
             (msgs, 0, None)
         };
 
@@ -338,15 +341,11 @@ impl Actor for WorkerActor {
             AgentMsg::Subscribe(tx) => {
                 state.event_subs.push(tx);
             }
-            AgentMsg::Steer(_, reply) => {
-                emit(
-                    &state.event_subs,
-                    RuntimeEvent::RuntimeWarning {
-                        message: "Steer is not yet implemented (planned for v0.9)".into(),
-                    },
-                )
-                .await;
-                let _ = reply.send(SteerResult);
+            AgentMsg::Steer(cmd) => {
+                state.messages.push(Message {
+                    role: Role::System,
+                    content: vec![ContentBlock::Text(cmd.instruction)],
+                });
             }
             AgentMsg::Inject(cmd) => {
                 state.messages.push(Message {
@@ -691,9 +690,10 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             Some(t) => t,
             None => {
                 let error = if state.unfiltered_registry.contains(&tool_call.name) {
-                    "tool not allowed".to_string()
+                    ToolError::fatal("tool not allowed").with_code("NOT_ALLOWED")
                 } else {
-                    format!("tool '{}' not found", tool_call.name)
+                    ToolError::fatal(format!("tool '{}' not found", tool_call.name))
+                        .with_code("NOT_FOUND")
                 };
                 emit(
                     &subs,
@@ -705,7 +705,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 .await;
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: tool_call.id.clone(),
-                    content: json!({"error": error}),
+                    content: json!({"error": error.message}),
                 });
                 continue;
             }
@@ -821,7 +821,8 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     &subs,
                     RuntimeEvent::ToolCallFailed {
                         tool: tool_call.name.clone(),
-                        error: "tool call budget exceeded".into(),
+                        error: ToolError::fatal("tool call budget exceeded")
+                            .with_code("BUDGET_EXCEEDED"),
                     },
                 )
                 .await;
@@ -839,7 +840,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             &subs,
             RuntimeEvent::ToolCallStarted {
                 tool: tool_call.name.clone(),
-                source: tool_meta.source.clone(),
+                metadata: tool_meta.clone(),
                 input: tool_input.clone(),
             },
         )
@@ -847,6 +848,11 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
 
         let _tool_span = telemetry::tool_execute_span(&tool_call.name, source_label);
 
+        let parent_messages = if tool.needs_parent_context() {
+            state.messages.clone()
+        } else {
+            vec![]
+        };
         let ctx = ToolContext {
             run_id,
             run_depth: state.config.runtime.run_depth,
@@ -856,6 +862,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             webhook_base_url: state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone()),
             approval_bus: state.approval_bus.clone(),
             remaining_budget: state.budget.remaining_config(),
+            parent_messages,
         };
 
         let start_time = Instant::now();
@@ -875,7 +882,8 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                         &subs,
                         RuntimeEvent::ToolCallFailed {
                             tool: tool_call.name.clone(),
-                            error: "tool execution timed out".into(),
+                            error: ToolError::transient("tool execution timed out")
+                                .with_code("TIMEOUT"),
                         },
                     )
                     .await;
@@ -1055,7 +1063,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     &subs,
                     RuntimeEvent::ToolCallFailed {
                         tool: tool_call.name.clone(),
-                        error: e.message.clone(),
+                        error: e.clone(),
                     },
                 )
                 .await;

@@ -8,7 +8,9 @@ use serde_json::{json, Value};
 use tokio::sync::RwLock;
 
 use crate::events::RuntimeEvent;
-use crate::tool::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
+use crate::tool::{
+    Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
+};
 
 #[derive(Debug)]
 pub struct ReadFileTool {
@@ -40,7 +42,7 @@ impl ReadFileTool {
         Self {
             metadata: ToolMetadata {
                 side_effect: false,
-                requires_approval: false,
+                approval: Approval::Never,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,
@@ -81,14 +83,14 @@ impl Default for WriteFileTool {
 
 impl WriteFileTool {
     pub fn new() -> Self {
-        Self::new_with_approval(true)
+        Self::new_with_approval(Approval::Always)
     }
 
-    pub fn new_with_approval(requires_approval: bool) -> Self {
+    pub fn new_with_approval(approval: Approval) -> Self {
         Self {
             metadata: ToolMetadata {
                 side_effect: true,
-                requires_approval,
+                approval,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,
@@ -135,21 +137,15 @@ impl Tool for ReadFileTool {
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        let path_str = input
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError {
-                message: "missing required parameter 'path'".into(),
-                code: Some("MISSING_PARAM".into()),
-            })?;
+        let path_str = input.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::fatal("missing required parameter 'path'").with_code("MISSING_PARAM")
+        })?;
 
         let path = PathBuf::from(path_str);
-        let content = tokio::fs::read_to_string(&path)
-            .await
-            .map_err(|e| ToolError {
-                message: format!("failed to read '{}': {}", path_str, e),
-                code: Some("READ_ERROR".into()),
-            })?;
+        let content = tokio::fs::read_to_string(&path).await.map_err(|e| {
+            ToolError::fatal(format!("failed to read '{}': {}", path_str, e))
+                .with_code("READ_ERROR")
+        })?;
 
         let canonical = path.canonicalize().ok();
         if let Some(ref canonical_path) = canonical {
@@ -200,40 +196,30 @@ impl Tool for WriteFileTool {
     }
 
     async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        let path_str = input
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ToolError {
-                message: "missing required parameter 'path'".into(),
-                code: Some("MISSING_PARAM".into()),
-            })?;
+        let path_str = input.get("path").and_then(Value::as_str).ok_or_else(|| {
+            ToolError::fatal("missing required parameter 'path'").with_code("MISSING_PARAM")
+        })?;
         let content = input
             .get("content")
             .and_then(Value::as_str)
-            .ok_or_else(|| ToolError {
-                message: "missing required parameter 'content'".into(),
-                code: Some("MISSING_PARAM".into()),
+            .ok_or_else(|| {
+                ToolError::fatal("missing required parameter 'content'").with_code("MISSING_PARAM")
             })?;
 
         let path = PathBuf::from(path_str);
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|e| ToolError {
-                        message: format!(
-                            "failed to create parent directories for '{path_str}': {e}"
-                        ),
-                        code: Some("WRITE_ERROR".into()),
-                    })?;
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    ToolError::fatal(format!(
+                        "failed to create parent directories for '{path_str}': {e}"
+                    ))
+                    .with_code("WRITE_ERROR")
+                })?;
             }
         }
-        tokio::fs::write(&path, content)
-            .await
-            .map_err(|e| ToolError {
-                message: format!("failed to write '{path_str}': {e}"),
-                code: Some("WRITE_ERROR".into()),
-            })?;
+        tokio::fs::write(&path, content).await.map_err(|e| {
+            ToolError::fatal(format!("failed to write '{path_str}': {e}")).with_code("WRITE_ERROR")
+        })?;
 
         Ok(ToolOutput::Immediate(json!({
             "path": path_str,
@@ -263,6 +249,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
 
         let result = tool
@@ -289,6 +276,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
 
         let result = tool
@@ -310,6 +298,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
 
         let result = tool.execute(json!({}), &ctx).await;
@@ -339,6 +328,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
 
         let result = tool
@@ -380,6 +370,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
 
         let result = tool
@@ -406,6 +397,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
 
         let result = tool
@@ -444,6 +436,7 @@ mod tests {
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
 
         let result = tool.execute(json!({"path": "report.md"}), &ctx).await;

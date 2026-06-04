@@ -13,6 +13,15 @@ use crate::tool::Tool;
 
 use super::helpers::{min_option, min_option_f64};
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub enum SupervisionStrategy {
+    #[default]
+    Stop,
+    Restart {
+        max_retries: u32,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RunId(pub uuid::Uuid);
 
@@ -52,6 +61,8 @@ pub struct AgentConfig {
     #[serde(skip)]
     pub session_store: Option<Arc<dyn crate::session::SessionStore>>,
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub supervision_strategy: SupervisionStrategy,
 }
 
 impl std::fmt::Debug for AgentConfig {
@@ -70,12 +81,26 @@ impl std::fmt::Debug for AgentConfig {
 }
 
 impl AgentConfig {
-    /// Wraps this config as a `Tool` that runs a child agent when called.
-    ///
-    /// - `input_mapper` converts the tool's JSON input to the child agent's prompt string.
-    /// - `output_extractor` converts the child's result `Value` to the tool's return value.
-    #[allow(clippy::too_many_arguments)] // justified: all parameters are required to instantiate AgentAsTool; a builder is planned for v0.8
+    /// Returns a `SubAgentBuilder` to wrap this config as a callable tool.
     pub fn as_tool(
+        &self,
+        name: &str,
+        description: &str,
+    ) -> crate::tool::agent_as_tool::SubAgentBuilder {
+        crate::tool::agent_as_tool::SubAgentBuilder::new(
+            self.clone(),
+            name.to_string(),
+            description.to_string(),
+        )
+    }
+
+    /// Legacy 7-parameter version. Prefer the builder returned by `as_tool(name, desc)`.
+    #[deprecated(
+        since = "0.9.0",
+        note = "use as_tool(name, desc).model(m).registry(r).build()"
+    )]
+    #[allow(clippy::too_many_arguments)] // justified: backward-compat; use SubAgentBuilder instead
+    pub fn as_tool_legacy(
         &self,
         name: &str,
         description: &str,
@@ -88,16 +113,14 @@ impl AgentConfig {
             dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync,
         >,
     ) -> std::sync::Arc<dyn crate::tool::Tool> {
-        std::sync::Arc::new(crate::tool::agent_as_tool::AgentAsTool::new(
-            self.clone(),
-            name.to_string(),
-            description.to_string(),
-            serde_json::json!({"type": "object", "properties": {"input": {"type": "string"}}}),
-            model,
-            registry,
-            input_mapper,
-            output_extractor,
-        ))
+        let im = input_mapper;
+        let oe = output_extractor;
+        self.as_tool(name, description)
+            .model(model)
+            .registry(registry)
+            .input_mapper(move |v| im(v))
+            .output_extractor(move |v| oe(v))
+            .build()
     }
 }
 
@@ -134,18 +157,21 @@ pub struct SkillsConfig {
 /// requires approval. Takes priority over [`ApprovalMode`] when set.
 pub type CustomApprovalFn = Arc<dyn Fn(&crate::tool::ToolMetadata) -> bool + Send + Sync>;
 
-/// Run-level approval strategy. Overrides the per-tool
-/// [`ToolMetadata::requires_approval`](crate::tool::ToolMetadata) flag.
+/// Run-level approval strategy. Works with the per-tool
+/// [`Approval`](crate::tool::Approval) enum to decide whether a call needs approval.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ApprovalMode {
-    /// Use each tool's `requires_approval` flag (default; backwards compatible).
+    /// Use each tool's `approval` field (default).
     #[default]
     PerTool,
     /// Never request approval.
     None,
     /// Request approval for every tool call.
     All,
-    /// Request approval only for tools with `side_effect: true`.
+    #[deprecated(
+        since = "0.9.0",
+        note = "use Approval::WhenRisky + side_effect instead"
+    )]
     SideEffectOnly,
 }
 
@@ -183,13 +209,19 @@ impl RuntimeConfig {
     /// Resolves whether a tool call requires approval under this run's policy.
     /// `custom_approval_fn` takes priority; otherwise `approval_mode` decides.
     pub fn should_approve(&self, meta: &crate::tool::ToolMetadata) -> bool {
+        use crate::tool::Approval;
         if let Some(f) = &self.custom_approval_fn {
             return f(meta);
         }
         match self.approval_mode {
-            ApprovalMode::PerTool => meta.requires_approval,
+            ApprovalMode::PerTool => match meta.approval {
+                Approval::Never => false,
+                Approval::WhenRisky => meta.side_effect,
+                Approval::Always => true,
+            },
             ApprovalMode::None => false,
             ApprovalMode::All => true,
+            #[allow(deprecated)]
             ApprovalMode::SideEffectOnly => meta.side_effect,
         }
     }
@@ -357,6 +389,7 @@ pub struct AgentConfigBuilder {
     handoffs: Vec<crate::handoff::Handoff>,
     session_store: Option<Arc<dyn crate::session::SessionStore>>,
     session_id: Option<String>,
+    supervision_strategy: SupervisionStrategy,
 }
 
 impl AgentConfigBuilder {
@@ -388,7 +421,13 @@ impl AgentConfigBuilder {
             handoffs: vec![],
             session_store: None,
             session_id: None,
+            supervision_strategy: SupervisionStrategy::default(),
         }
+    }
+
+    pub fn supervision_strategy(mut self, strategy: SupervisionStrategy) -> Self {
+        self.supervision_strategy = strategy;
+        self
     }
 
     pub fn retry_policy(mut self, policy: super::retry::RetryPolicy) -> Self {
@@ -497,6 +536,7 @@ impl AgentConfigBuilder {
             handoffs: self.handoffs,
             session_store: self.session_store,
             session_id: self.session_id,
+            supervision_strategy: self.supervision_strategy,
         })
     }
 }

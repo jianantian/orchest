@@ -50,6 +50,7 @@ fn test_config() -> AgentConfig {
         handoffs: vec![],
         session_store: None,
         session_id: None,
+        supervision_strategy: Default::default(),
     }
 }
 
@@ -177,7 +178,7 @@ impl Tool for RecordingEcho {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: crate::tool::Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,

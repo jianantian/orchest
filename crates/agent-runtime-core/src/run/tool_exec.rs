@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 
 use crate::events::RuntimeEvent;
 use crate::tool::async_job::{JobHandle, JobStatus};
+use crate::tool::ToolError;
 
 use super::helpers::emit;
 use super::webhook::WebhookRuntime;
@@ -47,7 +48,7 @@ pub(crate) async fn poll_async_job(
                     tx,
                     RuntimeEvent::ToolCallFailed {
                         tool: tool_name.to_string(),
-                        error: error.clone(),
+                        error: ToolError::fatal(error.clone()).with_code("ASYNC_JOB_FAILED"),
                     },
                 )
                 .await;
@@ -82,7 +83,7 @@ pub(crate) async fn poll_async_job(
                     tx,
                     RuntimeEvent::ToolCallFailed {
                         tool: tool_name.to_string(),
-                        error: "async job timed out".into(),
+                        error: ToolError::transient("async job timed out").with_code("TIMEOUT"),
                     },
                 )
                 .await;
@@ -95,7 +96,8 @@ pub(crate) async fn poll_async_job(
                 tx,
                 RuntimeEvent::ToolCallFailed {
                     tool: tool_name.to_string(),
-                    error: "async job has no polling fallback".into(),
+                    error: ToolError::fatal("async job has no polling fallback")
+                        .with_code("NO_POLL"),
                 },
             )
             .await;
@@ -133,7 +135,7 @@ pub(crate) async fn poll_async_job(
                     tx,
                     RuntimeEvent::ToolCallFailed {
                         tool: tool_name.to_string(),
-                        error: err.clone(),
+                        error: ToolError::fatal(err.clone()).with_code("ASYNC_JOB_FAILED"),
                     },
                 )
                 .await;
@@ -144,7 +146,7 @@ pub(crate) async fn poll_async_job(
                     tx,
                     RuntimeEvent::ToolCallFailed {
                         tool: tool_name.to_string(),
-                        error: e.message.clone(),
+                        error: e.clone(),
                     },
                 )
                 .await;
