@@ -25,8 +25,9 @@ metadata:
 - `RetryHint::Caution` → 走 ApprovalBus 询问（复用现有审批流）
 - 重试预算从当前 run 的 BudgetGuard 扣减
 
+**额外注意**: 当前 actor.rs 在 tool 失败时只提取 `error.message` 返回模型，`kind`/`retry`/`next_step` 字段丢失。实现重试的同时，应将结构化错误的完整信息（至少 `kind` + `next_step`）传给模型，否则模型无法区分 Ambiguity 和 Transient。
 **涉及模块**: `agent-runtime-core` 的 tool dispatch 路径（actor.rs 或 tool execution 层）
-**预估范围**: 小，主要是在 dispatch 层加一个重试判断分支
+**预估范围**: 小，主要是在 dispatch 层加一个重试判断分支 + 错误返回格式调整
 
 ### H2. ToolError 增加 Ambiguity 和 SpecGap 分类
 
@@ -91,7 +92,7 @@ metadata:
 **现状**: Hook 框架有 9 个生命周期点，但没有"模式检测"类 hook——重复失败只是一次次返回模型。
 **建议**:
 - 新增 `on_repeated_failure(tool_name, error_history, count)` hook 点
-- 当同一工具连续失败 N 次（可配置）时触发
+- 当同一工具 + 同类 ErrorKind 连续失败 N 次（可配置）时触发（不同 ErrorKind 的失败不算"重复"——先 InvalidInput 再 Transient 不应触发）
 - Hook 实现可以：切换策略、降级到备选工具、上报用户、中止 run
 - 这是 SDK 层面支持上层应用实现"校准循环"的最小接口
 
@@ -148,3 +149,5 @@ metadata:
 4. **M1** (Draft/Commit) → 需要设计讨论，排在 H 系列之后
 5. **M2** (search_tools) → 等 Skill 库规模增长后再做
 6. **M3** (on_repeated_failure hook) → 等有实际校准需求时做
+
+Related: [[project-supervised-delegation]] — H3（ContextMode）和 M3（重复失败 hook）与 Supervised Delegation 场景直接相关
