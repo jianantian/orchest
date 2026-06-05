@@ -30,8 +30,8 @@ ElevenLabs Scribe v2 Realtime 作为接口校准参考，但不进入 v0.9.1 实
 1. 新增 `crates/agent-runtime-asr-providers` 卫星 crate
 2. 定义 `AsrProvider` trait，streaming-first，并预留 one-shot `transcribe()` 接口
 3. 定义 provider-neutral ASR 类型：audio input、options、result、stream handle、stream event、usage、telemetry、error
-4. 提供 `AsrGateway` / `AsrRouter`，支持按语言、地区、成本和延迟策略选择 provider
-5. 提供结构化 observability，至少包含 `trace_id`、latency、duration、confidence、provider 和 cost estimate
+4. 提供 `AsrGateway` / `AsrRouter`，支持显式 `model` 调用；未指定 `model` 时可通过集中路由配置选择 provider
+5. 提供结构化 observability，至少包含 `trace_id`、normalized model、latency、duration、confidence 和 cost estimate
 6. 实现火山引擎和阿里云两个 provider adapter，live tests 通过 env var gated
 7. 保持 core runtime 不变：ASR 输出 transcript 后由调用方传入 `AgentRun`
 
@@ -40,9 +40,10 @@ ElevenLabs Scribe v2 Realtime 作为接口校准参考，但不进入 v0.9.1 实
 - **Capability first**：调用方表达的是转写意图（语言、热词、是否流式、是否需要词级时间戳、是否启用 endpointing），不是某个 provider 的 endpoint 形状。
 - **Standalone crate**：`agent-runtime-asr-providers` 不依赖 `agent-runtime-core` 或绑定 crate。core 可以后续选择 re-export 或包装成 tool，但 ASR crate 本身必须可独立使用。
 - **No silent semantic loss**：provider 无法满足请求字段时，按 compatibility policy 返回 `unsupported_option` 或记录 `OptionAdjustment`。
-- **Provider details are adapter-private by default**：公共返回值归一化；provider 原始响应只保留在 `provider_metadata` / error debug 字段中。
-- **Provider-specific power remains available**：通用稳定字段进入 typed config；少数 provider 特性通过 `provider_options` 透传。
-- **Streaming is first-class**：partial、final、end-of-speech、error 都必须有稳定事件语义。
+- **Provider/model selector is explicit**：调用方可以在 request 上指定 normalized `"provider/model"`。未指定时才由 gateway router 按语言、地区、延迟和成本策略选择默认 route。
+- **Unified ASR semantics stay typed**：`TranscribeOptions`、`AsrStreamEvent` 和 `TranscribeResult` 表达统一 ASR 语义，不把 provider-native 参数摊平成公共字段。
+- **Provider-specific power has one escape hatch**：少数 provider/model 私有参数通过 request-level `provider_options` 传递给已选 adapter；当一个概念被至少两个 provider 稳定支持，或影响公共 ASR 合同时，再提升为 typed option。
+- **Streaming is first-class**：`TranscriptUpdate`、`AsrFinal`、end-of-speech、error 都必须有稳定事件语义。
 - **Core stays text-in/text-out**：实时用户语音是 pre-loop input adapter，不进入 agent loop。
 
 ## 范围
@@ -117,6 +118,10 @@ Streaming is duplex-first: callers send audio chunks into `AsrStream.input` and 
 
 ```rust
 pub struct TranscribeRequest {
+    /// Optional explicit provider/model selector, for example
+    /// "volcengine/bigmodel_async" or "aliyun/fun-asr-realtime".
+    /// If omitted, `AsrGateway` selects a route.
+    pub model: Option<String>,
     pub audio: AudioInput,
     pub options: TranscribeOptions,
     pub compatibility: CompatibilityPolicy,
@@ -124,6 +129,9 @@ pub struct TranscribeRequest {
 }
 
 pub struct StreamingTranscribeRequest {
+    /// Optional explicit provider/model selector. If present, routing is limited
+    /// to this provider/model and capability validation still applies.
+    pub model: Option<String>,
     pub format: StreamingAudioFormat,
     pub options: TranscribeOptions,
     pub compatibility: CompatibilityPolicy,
@@ -152,10 +160,9 @@ pub struct TranscribeResult {
     pub words: Vec<WordTimestamp>,
     pub speakers: Vec<SpeakerSegment>,
     pub audio_duration_ms: u64,
-    pub provider_latency_ms: u64,
+    pub processing_latency_ms: u64,
     pub usage: AsrUsage,
     pub option_adjustments: Vec<OptionAdjustment>,
-    pub provider_metadata: Value,
     pub telemetry: AsrTelemetry,
 }
 
@@ -172,22 +179,54 @@ pub struct AsrStream {
     pub events: mpsc::Receiver<AsrStreamEvent>,
 }
 
+pub enum TranscriptStability {
+    /// Provider may revise this text in a later streaming update.
+    Provisional,
+    /// Provider has committed this segment, but the full ASR session may still
+    /// produce more segments before `AsrFinal`.
+    Committed,
+}
+
+pub enum TranscriptUpdateKind {
+    /// `text` is the provider's current best snapshot for the segment.
+    Snapshot,
+    /// `text` is append-only text for the segment when the provider guarantees it.
+    Append,
+}
+
 pub enum AsrStreamEvent {
-    RouteSelected { trace_id: String, provider: String, model: String },
-    Started { trace_id: String, provider: String, model: String },
-    /// Streaming transcript update. `stable=false` means the text may be
-    /// revised by later events. `stable=true` means the provider marked the
-    /// segment as sentence-end, committed, definite, or equivalent.
-    Partial { trace_id: String, text: String, stable: bool, segment_id: Option<String> },
+    RouteSelected { trace_id: String, model: String },
+    Started { trace_id: String, model: String },
+    /// Low-latency streaming text update for UI and realtime feedback. This is
+    /// not the canonical full transcript and must not be treated as the final
+    /// text to feed into `AgentRun`.
+    TranscriptUpdate {
+        trace_id: String,
+        segment_id: Option<String>,
+        text: String,
+        stability: TranscriptStability,
+        update_kind: TranscriptUpdateKind,
+    },
     EndOfSpeech { trace_id: String },
-    Final { result: TranscribeResult },
+    /// Canonical final ASR result for the stream. Emitted exactly once after
+    /// the provider has produced all transcript text and usage/metadata that it
+    /// can provide. This is the event callers should use as agent input by
+    /// default.
+    AsrFinal { result: TranscribeResult },
     Error { trace_id: String, error: AsrError, fatal: bool },
 }
 ```
 
 `EndOfSpeech` is a normalized ASR/endpointing signal. It does not make Orchest responsible for turn-taking; voice applications may use it to decide when to start an `AgentRun`.
 
-`provider_options` is an explicit escape hatch. It is not a dumping ground for common fields. A field should be promoted into typed config when at least two providers support the concept or when it becomes important to the public ASR contract.
+Streaming output has two distinct layers:
+
+1. `TranscriptUpdate` is the realtime text stream. It may be provisional or committed at segment level, and providers may send either segment snapshots or append-only text. Applications may display it, but it is not the canonical complete transcript.
+2. `AsrFinal` is the final ASR result for the stream. It carries the complete `TranscribeResult`, usage, telemetry and option adjustments. Unless an application has its own turn-taking policy, this is the only transcript event that should be submitted to `AgentRun`.
+
+`TranscriptStability::Committed` is not the same as `AsrFinal`. A provider can commit multiple segments before the whole stream is final. `EndOfSpeech` is also not the same as `AsrFinal`; it is only a normalized speech boundary signal and may arrive before the provider has produced the final transcript.
+
+`provider_options` is a request-level escape hatch for the selected provider/model. It is not a dumping ground for common fields. A field should be promoted into typed config when at least two providers support the concept or when it becomes important to the public ASR contract. Provider adapters must document supported `provider_options` keys and reject unknown or unsupported keys in `Strict` mode.
 
 ### Audio Input Contract
 
@@ -227,12 +266,20 @@ pub struct AudioChunk {
 
 The gateway does not perform general-purpose transcoding in v0.9.1. If a provider cannot accept the supplied format, strict mode returns `unsupported_audio_format`; coerce mode may only adjust metadata or choose a provider that supports the input. Actual audio conversion remains a caller-side concern.
 
+Audio format compatibility must be explicit enough to test. Streaming and complete-audio inputs may have different constraints, so adapters must not collapse them into one coarse `Vec<AudioFormat>`.
+
 ### Gateway and Routing
 
 ```rust
 pub struct AsrGateway {
     router: AsrRouter,
     config: AsrGatewayConfig,
+}
+
+pub struct AsrGatewayConfig {
+    /// Optional centralized route config path. If omitted, requests must provide
+    /// an explicit `model` or the gateway returns `no_matching_provider`.
+    pub route_config_path: Option<PathBuf>,
 }
 
 pub struct AsrRouter {
@@ -256,6 +303,28 @@ pub struct AsrRoute {
 
 Routing is independent from model routing. The only coupling is outside this crate: if a caller chooses a multimodal model that accepts audio directly, the caller may skip ASR entirely.
 
+Automatic ASR routing is optional and must be configured centrally. v0.9.1 must not scatter route tables across provider adapters, examples, or hardcoded match arms. If the caller omits request `model`, `AsrGateway` loads route policy from a single config file and selects from that route set. If no route config is configured, omitting `model` returns `no_matching_provider`.
+
+Suggested config location and shape:
+
+```toml
+# config/asr-routes.toml
+[[routes]]
+model = "volcengine/bigmodel_async"
+priority = 10
+languages = ["zh-CN"]
+regions = ["cn"]
+max_latency_ms = 800
+
+[[routes]]
+model = "aliyun/fun-asr-realtime"
+priority = 20
+languages = ["zh-CN", "en", "ja"]
+regions = ["cn"]
+```
+
+The concrete file path is application configuration, not a global default baked into the crate. The crate owns parsing/validation types, deterministic selection and test coverage; applications own where the file lives.
+
 Gateway helpers provide the public convenience surface:
 
 ```rust
@@ -274,17 +343,22 @@ impl AsrGateway {
 
 If `TranscribeOptions.trace_id` is `None`, the gateway generates one and includes it in `RouteSelected`, `Started`, every transcript event, `TranscribeResult.telemetry`, and all emitted telemetry. Provider adapters should not generate unrelated trace IDs.
 
+Provider/model selection follows one rule everywhere: a model string is a normalized `"provider/model"` selector. ASR reuses the `agent-runtime-providers` convention that the prefix selects the provider factory and the suffix is the provider-native model, but it does not inherit LLM bare-model fallback behavior. If `model` is present, it must contain a provider prefix; bare model strings such as `"fun-asr-realtime"` or `"bigmodel_async"` return `invalid_model`. `TranscribeRequest.model` and `StreamingTranscribeRequest.model` are request-level selectors. `AsrRoute.model` and `AsrProviderRuntimeConfig.model` are configuration-level selectors.
+
 The router must be deterministic:
 
-1. Normalize each route's `model` string with `normalize_asr_provider_model()`
-2. Filter by capability compatibility
-3. Filter by route language/region
-4. Apply latency/cost constraints when configured
-5. Select lowest `priority`, then stable normalized provider/model string sort as tie-breaker
+1. If the request has `model`, normalize it with `normalize_asr_provider_model()` and select only that provider/model.
+2. If the request omits `model`, load the centralized route config, normalize each route's `model` string, and build the route candidate set.
+3. Filter by capability compatibility.
+4. Filter by route language/region when route selection is in use.
+5. Apply latency/cost constraints when configured.
+6. Select lowest `priority`, then stable normalized provider/model string sort as tie-breaker.
 
-If no provider matches, return `no_matching_provider` with the rejected constraints included in `provider_metadata`.
+If no provider matches, or if the request omits `model` and no centralized route config is configured, return `no_matching_provider` with rejected constraints included in the stable error body. Provider/model rejection details may be attached to diagnostic metadata for debugging.
 
-Provider/model naming follows `agent-runtime-providers`: a model string with an explicit prefix is interpreted as `"provider/model"`; the prefix selects the factory, and the suffix is passed to the provider adapter as the provider-native model or service identifier. ASR does not introduce separate request-level `provider` and `model` fields.
+The prefix selects the factory, and the suffix is passed to the provider adapter as the provider-native model or service identifier. ASR does not introduce separate `provider` and `model` request fields; the public selector is always one `model: Option<String>` containing `"provider/model"`.
+
+`provider_options` are interpreted only by the selected adapter and must not influence route selection. A request with non-empty `provider_options` must also provide explicit `model`; otherwise the gateway returns `invalid_request`. Automatic routing requests can only use provider-neutral typed fields in `TranscribeOptions`. In `Strict` mode, unsupported keys or values return `unsupported_option` or `invalid_request`; in `Coerce` mode, adapters may ignore or adjust only documented options and must record `OptionAdjustment`.
 
 ### Provider-Specific Protocol Notes
 
@@ -292,8 +366,8 @@ These notes are implementation constraints from the local vendor docs, not extra
 
 - **Aliyun Fun-ASR / Paraformer realtime** use WebSocket duplex tasks: send `run-task`, wait for `task-started`, stream binary audio chunks, receive `result-generated`, then send `finish-task` and wait for `task-finished`. `task-failed` is fatal for the current stream. Fun-ASR / Paraformer connections can be reused only after `task-finished`; failed tasks must discard the connection.
 - **Aliyun Qwen-ASR realtime** uses a realtime session shape (`session.update`, `input_audio_buffer.append`, `input_audio_buffer.commit`, `session.finish`) and does not share the Fun-ASR connection reuse semantics. v0.9.1 may implement `aliyun/fun-asr-realtime` first, but the Aliyun adapter design must leave room for `aliyun/qwen3-asr-flash-realtime`.
-- **Volcengine** exposes several realtime modes. v0.9.1 should target the optimized duplex streaming mode first (`bigmodel_async` in the local docs) because it returns only changed results and aligns with the gateway's duplex-first API. Provider-specific options such as `resource_id`, `enable_nonstream`, `enable_itn`, `enable_punc`, `enable_speaker_info`, `show_utterances`, `end_window_size`, and corpus/context fields remain in `provider_options` unless promoted later.
-- Both providers use finality signals that must normalize to `AsrStreamEvent::Partial { stable: true, ... }` or `Final`: Aliyun exposes sentence-end / completed task semantics; Volcengine exposes `definite` utterances in supported modes.
+- **Volcengine** exposes several realtime modes. v0.9.1 should target the optimized duplex streaming mode first (`bigmodel_async` in the local docs) because it returns only changed results and aligns with the gateway's duplex-first API. Provider-specific options such as `resource_id`, `enable_nonstream`, `enable_itn`, `enable_punc`, `enable_speaker_info`, `show_utterances`, `end_window_size`, and corpus/context fields remain in request-level `provider_options` unless promoted later.
+- Provider finality signals map to two public layers. Aliyun `result-generated` / Qwen `conversation.item.input_audio_transcription.text` events map to `TranscriptUpdate`; Qwen `conversation.item.input_audio_transcription.completed`, Fun-ASR completed task state, and stream completion synthesis map to one terminal `AsrFinal`. Volcengine `definite` utterances map to `TranscriptUpdate { stability: Committed, ... }`; the adapter still emits one terminal `AsrFinal` after the provider stream is complete.
 - Realtime `speaker_diarization` is not a universal capability. Aliyun Fun-ASR realtime does not support it; Volcengine requires provider-specific settings and compatible modes. Strict compatibility must reject unsupported diarization instead of silently ignoring it.
 - Audio chunk pacing matters. Local docs use roughly 100 ms chunks for Aliyun examples and recommend 100-200 ms chunks for Volcengine. The gateway should document backpressure and chunk pacing but must not sleep internally in a way that prevents callers from controlling realtime capture.
 
@@ -360,10 +434,13 @@ pub struct OptionAdjustment {
 
 ```rust
 pub struct AsrModelCapabilities {
+    /// Normalized "provider/model" selector this capability record describes.
+    pub model: String,
     pub languages: Vec<Language>,
-    pub input_formats: Vec<AudioFormat>,
     pub streaming: bool,
     pub batch: bool,
+    pub streaming_inputs: Vec<AudioInputCapability>,
+    pub batch_inputs: Vec<AudioInputCapability>,
     pub interim_results: bool,
     pub endpointing: bool,
     pub word_timestamps: bool,
@@ -371,29 +448,53 @@ pub struct AsrModelCapabilities {
     pub confidence: bool,
     pub code_switching: bool,
     pub hot_words: bool,
+    pub context_prompt: bool,
+    pub provider_option_keys: Vec<String>,
     pub max_duration_ms: Option<u64>,
     pub source: CapabilitySource,
-    pub provider_metadata: Value,
+    pub diagnostic_metadata: Value,
+}
+
+pub struct AudioInputCapability {
+    pub format: AudioFormat,
+    pub sample_rates_hz: SampleRateSupport,
+    pub channels: ChannelSupport,
+    pub max_duration_ms: Option<u64>,
+    pub max_bytes: Option<u64>,
+}
+
+pub enum SampleRateSupport {
+    Any,
+    Exact(Vec<u32>),
+    Range { min: u32, max: u32 },
+}
+
+pub enum ChannelSupport {
+    Any,
+    Exact(Vec<u16>),
 }
 ```
 
-Capabilities may come from provider metadata, static tables, or conservative assumptions. Strict mode must not rely on assumptions for features that affect transcript semantics.
+Capabilities may come from provider metadata, static tables, or conservative assumptions, but they are exposed in provider-neutral Orchest terms. Strict mode must not rely on assumptions for features that affect transcript semantics. `provider_option_keys` is a documented allow-list for request-level provider-specific options; adapters may keep richer validation internally, but unknown keys must be rejected in `Strict` mode.
+
+`streaming_inputs` validates `StreamingTranscribeRequest.format` and `AudioChunk` stream expectations. `batch_inputs` is reserved for future `transcribe()` implementation, but the field is still part of the public capability contract so downstream SDKs can reason about upcoming complete-audio support without changing type shape.
 
 ### Observability
 
 ```rust
 pub struct AsrTelemetry {
     pub trace_id: String,
-    pub provider: String,
+    /// Normalized "provider/model" selected for this request.
+    pub model: String,
     pub language: Option<String>,
     pub audio_duration_ms: u64,
-    pub latency_first_partial_ms: Option<u64>,
+    pub latency_first_update_ms: Option<u64>,
     pub latency_final_ms: u64,
     pub partial_rollback_count: u32,
     pub confidence_avg: Option<f64>,
     pub cost_estimate_micros: Option<u64>,
     pub network_region: Option<String>,
-    pub provider_status: Option<u16>,
+    pub upstream_status: Option<u16>,
     pub option_adjustment_count: u32,
 }
 ```
@@ -411,10 +512,10 @@ Spans:
 Metrics:
 
 - request duration
-- first partial latency
-- final transcript latency
+- first `TranscriptUpdate` latency
+- `AsrFinal` latency
 - audio duration
-- provider error count by code/status
+- upstream error count by stable code/status
 - partial rollback count
 - option adjustment count
 
@@ -426,11 +527,12 @@ Do not log raw audio bytes, signed URLs, API keys, or full transcripts by defaul
 pub struct AsrError {
     pub message: String,
     pub code: AsrErrorCode,
-    pub provider: Option<String>,
+    pub model: Option<String>,
     pub status: Option<u16>,
     pub upstream_code: Option<String>,
     pub upstream_message: Option<String>,
     pub upstream_body: Option<Value>,
+    pub diagnostic_metadata: Value,
 }
 
 pub enum AsrErrorCode {
@@ -453,7 +555,7 @@ pub enum AsrErrorCode {
 }
 ```
 
-Provider response bodies should be preserved in errors for debugging, with secrets redacted.
+Provider response bodies should be preserved in errors for debugging, with secrets redacted. Application control flow must use stable `AsrErrorCode` values and upstream status/code fields; `model` and diagnostic metadata are for routing/debug context.
 
 ### Provider Scope
 
@@ -502,7 +604,7 @@ A future core wrapper or extension crate may expose ASR as a Tool only for agent
 Real-time user speech flow remains:
 
 ```text
-audio input -> ASR Gateway -> final transcript -> AgentRun
+audio input -> ASR Gateway -> AsrFinal -> AgentRun
 ```
 
 not:
@@ -534,10 +636,13 @@ Unit tests:
 - Fake provider implements streaming paths and the reserved `transcribe()` unsupported-operation behavior
 - Router determinism and tie-break behavior
 - Compatibility policy strict/coerce behavior
-- Capability validation
+- Capability validation, including streaming audio format, sample rate and channel constraints
 - API key resolution hierarchy
 - Error redaction preserves debug payload while removing secrets
-- Streaming event ordering: `RouteSelected` -> `Started` -> zero or more `Partial` / `EndOfSpeech` -> `Final` or fatal `Error`
+- Model normalization rejects bare ASR model strings without provider prefix
+- Requests with non-empty `provider_options` and no explicit `model` return `invalid_request`
+- Streaming event ordering: `RouteSelected` -> `Started` -> zero or more `TranscriptUpdate` / `EndOfSpeech` -> exactly one `AsrFinal` or one fatal `Error`
+- Streaming tests assert `TranscriptUpdate { stability: Committed, ... }` is not treated as terminal and that `AsrFinal` is emitted exactly once on successful streams
 
 Integration tests:
 
@@ -555,7 +660,7 @@ Test fixtures:
 | Issue | Title | Depends on | Scope |
 |-------|-------|------------|-------|
 | 001 | Crate scaffold + public types | -- | Workspace entry, module layout, `AsrProvider`, request/result/usage/error/capability types |
-| 002 | Gateway + router | 001 | `AsrGateway`, deterministic `AsrRouter`, compatibility validation, fake-provider tests |
+| 002 | Gateway + router | 001 | `AsrGateway`, deterministic `AsrRouter`, centralized route config parsing/validation, compatibility validation, fake-provider tests |
 | 003 | Duplex streaming contract | 001, 002 | `AsrStream`, stream event ordering, end-of-speech semantics, backpressure docs |
 | 004 | Observability + trace | 001, 002 | `AsrTelemetry`, `AsrStreamEvent` trace propagation, spans/metrics |
 | 005 | Volcengine adapter | 001, 003, 004 | Feature-gated provider implementation, config factory, live ignored test |
@@ -567,14 +672,25 @@ Test fixtures:
 - [ ] `AsrProvider` trait supports streaming transcription and reserves a one-shot `transcribe()` signature
 - [ ] v0.9.1 adapters may return `AsrErrorCode::UnsupportedOperation` from `transcribe()`; batch/file transcription implementation is deferred to `docs/todo/2026-06-04-asr-provider-backlog.md`
 - [ ] Crate has zero workspace-internal dependencies
-- [ ] Provider/model selection uses the same `"provider/model"` convention and normalization behavior as `agent-runtime-providers`
+- [ ] `TranscribeRequest` and `StreamingTranscribeRequest` expose an optional `model: Option<String>` request selector using the `"provider/model"` convention
+- [ ] ASR model normalization rejects bare model strings without provider prefix instead of applying any default provider fallback
+- [ ] `TranscribeRequest` and `StreamingTranscribeRequest` expose request-level `provider_options: Value` for selected provider/model-specific parameters
+- [ ] Requests with non-empty `provider_options` and no explicit request `model` return `invalid_request`
+- [ ] `TranscribeOptions` remains provider-neutral; provider-native parameters stay in `provider_options` until they are promoted into typed options by the common-field rule
 - [ ] Provider-neutral types exist for audio input, options, result, stream handle, stream event, usage, telemetry, routing, compatibility and errors
 - [ ] `AsrModelCapabilities` exists and strict compatibility checks use it
+- [ ] `AsrModelCapabilities` distinguishes `streaming_inputs` from `batch_inputs` and includes format, sample-rate, channel, duration and byte-size constraints
+- [ ] Strict compatibility rejects unsupported streaming audio format, sample rate or channel count using `unsupported_audio_format`
 - [ ] `TranscribeOptions.hot_words` and `context_prompt` map to provider-native hotword/keyterm/corpus/prompt mechanisms only when supported, otherwise strict mode returns `unsupported_option`
-- [ ] `AsrGateway` can route requests to registered fake providers based on route priority and language
+- [ ] Strict compatibility rejects unsupported or unknown `provider_options` keys/values for the selected provider/model
+- [ ] Automatic routing only runs when request `model` is omitted and a centralized route config file is configured
+- [ ] Route config parsing/validation is centralized in the ASR crate and route definitions are not hardcoded in adapters or scattered across examples
+- [ ] `AsrGateway` can route requests to registered fake providers based on centralized route config priority and language
+- [ ] Omitting request `model` without configured route config returns `no_matching_provider`
 - [ ] Router tie-break behavior is deterministic
 - [ ] Public streaming API is duplex-first: callers send `AudioChunk`s and receive `AsrStreamEvent`s through one `AsrStream` handle
-- [ ] Streaming contract distinguishes route selection, start, partial transcript, final transcript, end-of-speech and fatal/non-fatal errors
+- [ ] Streaming contract distinguishes route selection, start, realtime transcript updates, terminal `AsrFinal`, end-of-speech and fatal/non-fatal errors
+- [ ] Streaming contract treats `TranscriptUpdate` and `AsrFinal` as separate layers: realtime updates are display-oriented, while only `AsrFinal` is the canonical complete ASR result for default `AgentRun` input
 - [ ] Streaming tests assert stable event ordering and no provider-internal channel drain deadlock
 - [ ] Telemetry includes `trace_id` and can be correlated with an external Orchest run
 - [ ] `AsrError` preserves upstream status/code/message/body with secret redaction
@@ -582,7 +698,7 @@ Test fixtures:
 - [ ] Volcengine adapter is implemented behind a feature flag with fake/offline tests and ignored live tests
 - [ ] Aliyun adapter is implemented behind a feature flag with fake/offline tests and ignored live tests
 - [ ] Offline provider tests cover Aliyun task lifecycle events and Volcengine `definite` utterance normalization
-- [ ] Strict compatibility rejects realtime speaker diarization for provider/model combinations that do not support it
+- [ ] Strict compatibility rejects realtime speaker diarization when the selected provider/model capabilities do not support it
 - [ ] `cargo test -p agent-runtime-asr-providers --no-default-features` passes
 - [ ] `cargo test -p agent-runtime-asr-providers --features volcengine` passes without live credentials
 - [ ] `cargo test -p agent-runtime-asr-providers --features aliyun` passes without live credentials

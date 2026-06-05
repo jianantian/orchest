@@ -15,7 +15,7 @@ v0.9.1 intentionally implements only Volcengine and Aliyun for `agent-runtime-as
 - Do not add these providers to v0.9.1 acceptance criteria.
 - Use them as design pressure when reviewing public ASR types, especially `AsrStream`, `AsrStreamEvent`, `TranscribeOptions`, `AsrModelCapabilities`, `OptionAdjustment` and provider/model normalization.
 - Future provider adapters must use the same `"provider/model"` convention as `agent-runtime-providers`.
-- Provider-specific power goes through typed config when it is common across providers, otherwise through `provider_options`.
+- Provider-specific power goes through typed config when it is common across providers, otherwise through request-level `provider_options`.
 
 **API backlog:**
 - **Implement `transcribe()` one-shot transcription**: v0.9.1 reserves the public `transcribe()` signature and request/result/error shape, but does not require provider adapters to implement batch or complete-audio transcription. A follow-up iteration should define provider behavior for file URLs, byte inputs, realtime-only providers, batch-capable providers, timeout/cancellation, and whether realtime-only adapters may implement `transcribe()` by internally driving `start_stream()` to `Final`.
