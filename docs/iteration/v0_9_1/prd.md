@@ -323,6 +323,10 @@ pub enum AsrStreamEvent {
 }
 ```
 
+`EndpointingMode::ProviderDefault` is always implicitly available and does not need to appear in `AsrModelCapabilities.endpointing_modes`. The capability list declares explicit, selectable provider-side endpointing modes beyond default behavior. If `endpointing` is `None` or `EndpointingMode::ProviderDefault`, the adapter uses the provider/model default and records important default behavior in diagnostics only when useful.
+
+`AsrStream` supports two mutually exclusive usage patterns. Callers can keep the owned stream and use convenience methods such as `flush_and_wait_final()` / `end_and_wait_final()`, or call `split()` to move into independent sink/event tasks. `split(self)` consumes the stream; after split, owned convenience methods are unavailable and callers coordinate through `AsrAudioSink` plus `AsrEventStream`.
+
 `EndpointingOptions` controls provider-side endpointing when the selected provider exposes compatible settings. It does not mean Orchest implements, selects, or tunes client-side VAD, microphone capture, noise gates, WebRTC VAD, silence suppression, or turn-taking policy in this crate. If an application uses client-side VAD, that application owns the algorithm and decides when to call `flush_segment()` / `flush_and_wait_final()`.
 
 Client-side silence detection and provider-side endpointing serve different purposes, but provider behavior is not uniform. A common application architecture uses client-side VAD / silence suppression to avoid sending silent audio and reduce bandwidth or ASR billing exposure. Provider-side endpointing may be acoustic silence detection, semantic/end-of-turn detection, provider-defined natural speech segmentation, or absent unless the caller sends a manual commit/end signal. The SDK must represent whether the caller is sending a continuous realtime timeline or sparse speech-only chunks. It must not synthesize silence, drop silence, sleep to emulate realtime pacing, or choose a silence policy for the caller. If an application suppresses silence and still needs an immediate segment final, it should send `AudioChunkBoundary::Flush`; it must not assume the provider can infer speech-end from silence that was never sent.
@@ -390,7 +394,7 @@ The gateway does not perform general-purpose transcoding in v0.9.1. If a provide
 
 `AudioChunk.timestamp_ms` is caller-supplied capture timing metadata. It is useful when applications send sparse speech-only chunks after client-side silence suppression. Adapters may forward timing only when the provider supports it; otherwise they preserve it for telemetry/diagnostics and must not fabricate silent audio to fill gaps. If the selected provider requires a continuous realtime audio timeline for correct endpointing, timeout behavior, or billing semantics, `AudioTimelineMode::SparseSpeechOnly` must fail compatibility in strict mode.
 
-`AudioChunkBoundary::Flush` is caller-initiated EOS for the current ASR segment, not a request to close the `AsrStream`. It exists because providers such as Volcengine require an explicit protocol last-frame to trigger final recognition for the current segment. Dropping the audio sink is cancellation/end-of-client-input behavior and must not be treated as equivalent to a provider protocol flush.
+`AudioChunkBoundary::Flush` is caller-initiated EOS for the current ASR segment, not a request to close the `AsrStream`. It exists because providers such as Volcengine require an explicit protocol last-frame to trigger final recognition for the current segment. Dropping the audio sink without a prior `End` is cancellation behavior and must not be treated as equivalent to a provider protocol flush. On sink-drop cancellation, the adapter closes the provider connection, emits `Error { code: Cancelled, fatal: true }` when the event channel is still open, and pending `next_final()` / owned wait helpers return `AsrErrorCode::Cancelled`.
 
 `AudioChunkBoundary::End` is a final segment boundary plus caller intent to end the stream after finalization. Adapters may map `Flush` and `End` to the same provider last-frame when the provider protocol requires it, but `End` also lets the gateway close local resources after the terminal `AsrFinal`.
 
@@ -822,7 +826,9 @@ Test fixtures:
 | 003 | Duplex streaming contract | 001, 002 | `AsrStream`, application-driven segmentation/full-duplex SDK helpers, stream event ordering, end-of-speech semantics, backpressure docs |
 | 004 | Observability + trace | 001, 002 | `AsrTelemetry`, `AsrStreamEvent` trace propagation, spans/metrics |
 | 005 | Volcengine adapter | 001, 003, 004 | Feature-gated provider implementation, config factory, live ignored test |
-| 006 | Aliyun adapter + examples | 001, 003, 004, 005 | Feature-gated provider implementation, config factory, live ignored test, README/example snippets |
+| 006 | Aliyun adapter + examples | 001, 003, 004 | Feature-gated provider implementation, config factory, live ignored test, README/example snippets |
+
+Volcengine and Aliyun adapters are intentionally parallel after the shared streaming contract and observability work lands. Cross-provider learnings may still feed follow-up PRD/issue edits, but neither adapter should block the other as an implementation dependency.
 
 ## Acceptance Criteria
 
@@ -839,6 +845,7 @@ Test fixtures:
 - [ ] `AsrModelCapabilities` exists and strict compatibility checks use it
 - [ ] `AsrModelCapabilities` distinguishes `streaming_inputs` from `batch_inputs` and includes format, sample-rate, channel, timeline, duration and byte-size constraints
 - [ ] `AsrModelCapabilities.endpointing_modes` declares which provider-side endpointing modes are supported instead of collapsing all provider behavior into one boolean
+- [ ] `EndpointingMode::ProviderDefault` is treated as implicitly available and is not required in `AsrModelCapabilities.endpointing_modes`
 - [ ] `AsrModelCapabilities.connection_reuse` declares whether provider streams are not reusable, reusable after terminal final, or reusable only after provider task-finished events
 - [ ] `EndpointingOptions` only configures provider-side endpointing behavior; client-side VAD, silence suppression, and silence policy remain application-owned and out of scope
 - [ ] `EndpointingOptions.silence_timeout` is applied only for provider/mode combinations that expose a silence threshold; unsupported use returns `unsupported_option` in strict mode
@@ -852,6 +859,7 @@ Test fixtures:
 - [ ] Router tie-break behavior is deterministic
 - [ ] Public streaming API is duplex-first: callers send audio through `AsrAudioSink` and receive `AsrStreamEvent`s through `AsrEventStream`
 - [ ] `AsrStream::split()` supports full-duplex use where audio capture and event consumption run in independent tasks without request-response lockstep
+- [ ] `AsrStream::split()` consumes the stream and is mutually exclusive with owned convenience methods
 - [ ] `AsrStream::flush_and_wait_final()` supports application-driven segmentation by sending a segment flush and returning the corresponding `AsrFinalOutput` while keeping the stream reusable when supported
 - [ ] `StreamingTranscribeRequest.timeline` declares whether the caller sends continuous realtime audio or sparse speech-only chunks
 - [ ] Strict compatibility rejects sparse speech-only timelines for providers/models that require continuous realtime audio
@@ -859,6 +867,7 @@ Test fixtures:
 - [ ] `AudioChunk.timestamp_ms` can preserve caller capture timing for sparse audio streams, but adapters do not fabricate silent audio to fill omitted gaps
 - [ ] Public streaming API distinguishes regular audio, segment flush, and stream end through `AudioChunkBoundary`
 - [ ] `AudioChunkBoundary::Flush` finalizes the current segment without requiring the audio sink to be dropped
+- [ ] Dropping `AsrAudioSink` without prior `End` cancels the stream, closes the provider connection, emits fatal `Cancelled` when events are still open, and causes pending final waits to return `AsrErrorCode::Cancelled`
 - [ ] Flush-to-final timeout is configurable and emits `AsrFinalOutput { reason: Timeout, ... }` instead of leaving callers waiting indefinitely
 - [ ] Late provider final output after timeout does not emit a duplicate `AsrFinal` for the timed-out segment
 - [ ] `TranscribeResult.text` behavior for multi-flush streams is controlled by `FinalResultScope::Segment` vs `FinalResultScope::Stream`
