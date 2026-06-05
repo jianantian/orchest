@@ -1,5 +1,6 @@
 #![allow(clippy::result_large_err)]
 
+pub mod compatibility;
 pub mod config;
 pub mod error;
 pub mod observability;
