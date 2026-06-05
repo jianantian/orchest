@@ -539,6 +539,12 @@ async fn fake_provider_start_stream_succeeds() {
     };
 
     let mut stream = provider.start_stream(request).await.unwrap();
-    let event = stream.events.next().await;
-    assert!(matches!(event, Some(AsrStreamEvent::Started { .. })));
+
+    let ev1 = stream.events.next().await;
+    assert!(matches!(ev1, Some(AsrStreamEvent::RouteSelected { .. })));
+
+    let ev2 = stream.events.next().await;
+    assert!(matches!(ev2, Some(AsrStreamEvent::Started { .. })));
+
+    stream.input.end_stream().await.unwrap();
 }
