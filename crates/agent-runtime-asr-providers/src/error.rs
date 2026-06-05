@@ -66,6 +66,53 @@ impl AsrError {
         self.model = Some(model.into());
         self
     }
+
+    pub fn with_upstream(
+        mut self,
+        status: Option<u16>,
+        upstream_code: Option<String>,
+        upstream_message: Option<String>,
+        upstream_body: Option<Value>,
+    ) -> Self {
+        self.status = status;
+        self.upstream_code = upstream_code;
+        self.upstream_message = upstream_message;
+        self.upstream_body = upstream_body.map(|mut b| {
+            redact_secrets(&mut b);
+            b
+        });
+        self
+    }
+}
+
+fn is_secret_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    lower.contains("key")
+        || lower.contains("secret")
+        || lower.contains("token")
+        || lower.contains("password")
+        || lower.contains("credential")
+        || lower.contains("authorization")
+}
+
+pub fn redact_secrets(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (k, v) in map.iter_mut() {
+                if is_secret_key(k) {
+                    *v = Value::String("[REDACTED]".into());
+                } else {
+                    redact_secrets(v);
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                redact_secrets(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 impl fmt::Display for AsrError {

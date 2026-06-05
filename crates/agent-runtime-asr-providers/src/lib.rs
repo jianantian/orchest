@@ -15,7 +15,7 @@ pub use config::{
     NormalizedAsrProviderModel,
 };
 pub use error::{AsrError, AsrErrorCode};
-pub use observability::AsrTelemetry;
+pub use observability::{AsrTelemetry, AsrTelemetryBuilder};
 pub use routing::{AsrGateway, AsrGatewayConfig, AsrRoute, AsrRouter};
 pub use streaming::{AsrAudioSink, AsrEventStream, AsrStream};
 pub use traits::AsrProvider;

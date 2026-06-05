@@ -3,10 +3,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tracing::Instrument;
 
 use crate::compatibility::validate_streaming_request;
 use crate::config::normalize_asr_provider_model;
 use crate::error::{AsrError, AsrErrorCode};
+use crate::observability;
 use crate::streaming::AsrStream;
 use crate::traits::AsrProvider;
 use crate::types::{
@@ -224,9 +226,26 @@ impl AsrGateway {
         mut request: TranscribeRequest,
     ) -> Result<TranscribeResult, AsrError> {
         Self::validate_provider_options_require_model(&request.provider_options, &request.model)?;
-        let _trace_id = Self::ensure_trace_id(&mut request.options);
-        let provider = self.router.select_for_transcribe(&request)?;
-        provider.transcribe(request).await
+        let trace_id = Self::ensure_trace_id(&mut request.options);
+        let provider = {
+            let _span = observability::router_select_span(&trace_id).entered();
+            self.router.select_for_transcribe(&request)?
+        };
+        let model = provider.model_name().to_string();
+        let span = observability::gateway_transcribe_span(&trace_id, &model);
+        async {
+            let result = provider.transcribe(request).await;
+            if let Ok(ref r) = result {
+                observability::record_request_duration(
+                    &model,
+                    std::time::Duration::from_millis(r.processing_latency_ms),
+                );
+                observability::record_audio_duration(&model, r.audio_duration_ms);
+            }
+            result
+        }
+        .instrument(span)
+        .await
     }
 
     pub async fn start_stream(
@@ -234,11 +253,21 @@ impl AsrGateway {
         mut request: StreamingTranscribeRequest,
     ) -> Result<AsrStream, AsrError> {
         Self::validate_provider_options_require_model(&request.provider_options, &request.model)?;
-        let _trace_id = Self::ensure_trace_id(&mut request.options);
-        let provider = self.router.select_for_streaming(&request)?;
+        let trace_id = Self::ensure_trace_id(&mut request.options);
+        let provider = {
+            let _span = observability::router_select_span(&trace_id).entered();
+            self.router.select_for_streaming(&request)?
+        };
+        let model = provider.model_name().to_string();
         let caps = provider.capabilities();
-        let _compat = validate_streaming_request(&request, &caps)?;
-        provider.start_stream(request).await
+        let compat = validate_streaming_request(&request, &caps)?;
+        if !compat.adjustments.is_empty() {
+            observability::record_option_adjustment_count(&model, compat.adjustments.len() as u32);
+        }
+        let span = observability::gateway_stream_span(&trace_id, &model);
+        async { provider.start_stream(request).await }
+            .instrument(span)
+            .await
     }
 }
 
