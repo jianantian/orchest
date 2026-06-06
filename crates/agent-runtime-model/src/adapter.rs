@@ -9,6 +9,10 @@ use crate::response::ModelResponse;
 use crate::stream::StreamEvent;
 use crate::types::{Message, ToolDef};
 
+/// Provider-agnostic interface to a chat model. Implementations map a unified
+/// request (messages, tools, options) to a provider API and stream
+/// `StreamEvent`s. Anthropic/OpenAI/DeepSeek/OpenRouter adapters live in
+/// `agent-runtime-providers`.
 #[async_trait]
 pub trait ModelAdapter: Send + Sync {
     fn provider_name(&self) -> &str;

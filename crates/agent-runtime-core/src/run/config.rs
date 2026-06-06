@@ -43,6 +43,9 @@ impl std::fmt::Display for RunId {
     }
 }
 
+/// Immutable configuration for a run: model, system prompt, budget, skills,
+/// approval policy, hooks, handoffs, session, and supervision. Build it with
+/// [`AgentConfig::builder`].
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub system_prompt: String,

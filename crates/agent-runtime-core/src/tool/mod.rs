@@ -24,6 +24,9 @@ use async_job::JobHandle;
 pub use crate::model::{JsonSchema, ToolDef};
 pub use error::{ErrorKind, RetryHint, ToolError};
 
+/// A capability the model can invoke: name, schemas, metadata, and an async
+/// `execute`. Implement this trait (or use `InProcessTool`) and register the
+/// `Arc<dyn Tool>` into a [`ToolRegistry`](registry::ToolRegistry).
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &str;

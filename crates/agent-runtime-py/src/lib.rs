@@ -1,3 +1,9 @@
+//! Python (PyO3) bindings for the Orchest agent runtime.
+//!
+//! This crate only does type conversion and FFI glue between Python and
+//! `agent-runtime-core`; all business logic lives in core. The public surface
+//! is the `Agent` class exposed to Python via PyO3.
+
 use std::sync::Arc;
 use std::time::Duration;
 
