@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite;
 
 use crate::error::{AsrError, AsrErrorCode};
-use crate::observability::{self, AsrTelemetry, AsrTelemetryBuilder};
+use crate::observability::{self, AsrTelemetryBuilder};
 use crate::streaming::{AsrAudioSink, AsrEventStream, AsrStream};
 use crate::traits::AsrProvider;
 use crate::types::*;
@@ -357,6 +357,7 @@ async fn adapter_task(
     let mut segment_idx = 0u32;
     let mut last_segment_text = String::new();
     let mut audio_duration_ms: u64 = 0;
+    let mut segment_words: Vec<WordTimestamp> = Vec::new();
 
     loop {
         let flush_timeout_fut = if flush_pending {
@@ -420,14 +421,16 @@ async fn adapter_task(
                                                 if !dedup.is_new(u) {
                                                     continue;
                                                 }
-                                                let words = u.words.as_ref().map(|ws| {
-                                                    ws.iter().map(|w| WordTimestamp {
-                                                        word: w.text.clone(),
-                                                        start_ms: w.start_time as u64,
-                                                        end_ms: w.end_time as u64,
-                                                        confidence: None,
-                                                    }).collect::<Vec<_>>()
-                                                });
+                                                if let Some(ws) = u.words.as_ref() {
+                                                    for w in ws {
+                                                        segment_words.push(WordTimestamp {
+                                                            word: w.text.clone(),
+                                                            start_ms: w.start_time as u64,
+                                                            end_ms: w.end_time as u64,
+                                                            confidence: None,
+                                                        });
+                                                    }
+                                                }
                                                 let _ = event_tx.send(AsrStreamEvent::TranscriptUpdate {
                                                     trace_id: trace_id.clone(),
                                                     segment_id: Some(format!("seg-{segment_idx}")),
@@ -435,7 +438,6 @@ async fn adapter_task(
                                                     stability: TranscriptStability::Committed,
                                                     update_kind: TranscriptUpdateKind::Snapshot,
                                                 }).await;
-                                                let _ = words;
                                                 telemetry.on_transcript_update(None, false);
                                             } else {
                                                 let _ = event_tx.send(AsrStreamEvent::TranscriptUpdate {
@@ -479,6 +481,7 @@ async fn adapter_task(
                                     observability::record_final_latency(&model, telem.latency_final_ms);
                                     observability::record_audio_duration(&model, audio_duration_ms);
 
+                                    let final_words = std::mem::take(&mut segment_words);
                                     let _ = event_tx.send(AsrStreamEvent::AsrFinal {
                                         final_output: Box::new(AsrFinalOutput {
                                             trace_id: trace_id.clone(),
@@ -488,7 +491,7 @@ async fn adapter_task(
                                                 text,
                                                 language: Some(Language::new("zh-CN")),
                                                 confidence: None,
-                                                words: vec![],
+                                                words: final_words,
                                                 speakers: vec![],
                                                 audio_duration_ms,
                                                 processing_latency_ms: telem.latency_final_ms,
@@ -535,10 +538,11 @@ async fn adapter_task(
                     }
                     Some(Ok(tungstenite::Message::Close(_))) | None => {
                         if !segment_finalized && flush_pending {
+                            telemetry.set_audio_duration_ms(audio_duration_ms);
                             emit_timeout_final(
-                                &event_tx, &trace_id, &model, segment_idx,
+                                &event_tx, &trace_id, segment_idx,
                                 &last_segment_text, &mut accumulated_text,
-                                &final_result_scope, audio_duration_ms, &telemetry,
+                                &final_result_scope, audio_duration_ms, telemetry,
                             ).await;
                         }
                         return;
@@ -559,12 +563,14 @@ async fn adapter_task(
             }
             _ = flush_timeout_fut => {
                 if flush_pending && !segment_finalized {
+                    telemetry.set_audio_duration_ms(audio_duration_ms);
                     emit_timeout_final(
-                        &event_tx, &trace_id, &model, segment_idx,
+                        &event_tx, &trace_id, segment_idx,
                         &last_segment_text, &mut accumulated_text,
-                        &final_result_scope, audio_duration_ms, &telemetry,
+                        &final_result_scope, audio_duration_ms, telemetry,
                     ).await;
                     flush_pending = false;
+                    segment_words.clear();
 
                     if end_requested {
                         let _ = ws_write.close().await;
@@ -587,13 +593,12 @@ async fn adapter_task(
 async fn emit_timeout_final(
     event_tx: &mpsc::Sender<AsrStreamEvent>,
     trace_id: &str,
-    model: &str,
     segment_idx: u32,
     last_segment_text: &str,
     accumulated_text: &mut String,
     final_result_scope: &FinalResultScope,
     audio_duration_ms: u64,
-    telemetry: &AsrTelemetryBuilder,
+    telemetry: AsrTelemetryBuilder,
 ) {
     let text = match final_result_scope {
         FinalResultScope::Stream => {
@@ -605,6 +610,8 @@ async fn emit_timeout_final(
         }
         FinalResultScope::Segment => last_segment_text.to_string(),
     };
+
+    let telem = telemetry.build();
 
     let _ = event_tx
         .send(AsrStreamEvent::AsrFinal {
@@ -619,32 +626,17 @@ async fn emit_timeout_final(
                     words: vec![],
                     speakers: vec![],
                     audio_duration_ms,
-                    processing_latency_ms: 0,
+                    processing_latency_ms: telem.latency_final_ms,
                     usage: AsrUsage {
                         audio_duration_ms,
                         ..Default::default()
                     },
                     option_adjustments: vec![],
-                    telemetry: AsrTelemetry {
-                        trace_id: trace_id.to_string(),
-                        model: model.to_string(),
-                        language: Some("zh-CN".into()),
-                        audio_duration_ms,
-                        latency_first_update_ms: None,
-                        latency_final_ms: 0,
-                        update_rollback_count: 0,
-                        confidence_avg: None,
-                        cost_estimate_micros: None,
-                        network_region: None,
-                        upstream_status: None,
-                        option_adjustment_count: 0,
-                    },
+                    telemetry: telem,
                 },
             }),
         })
         .await;
-
-    let _ = telemetry;
 }
 
 // ---------------------------------------------------------------------------

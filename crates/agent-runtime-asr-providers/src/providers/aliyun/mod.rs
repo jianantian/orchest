@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite;
 
 use crate::error::{AsrError, AsrErrorCode};
-use crate::observability::{self, AsrTelemetry, AsrTelemetryBuilder};
+use crate::observability::{self, AsrTelemetryBuilder};
 use crate::streaming::{AsrAudioSink, AsrEventStream, AsrStream};
 use crate::traits::AsrProvider;
 use crate::types::*;
@@ -388,6 +388,14 @@ impl AsrProvider for AliyunAsrAdapter {
             .await
             .ok();
 
+        let task_params = TaskParams {
+            aliyun_model: self.config.model.clone(),
+            sample_rate,
+            audio_format: audio_format.to_string(),
+            max_sentence_silence,
+            provider_options: request.provider_options.clone(),
+        };
+
         tokio::spawn(async move {
             adapter_task(
                 ws_stream,
@@ -399,6 +407,7 @@ impl AsrProvider for AliyunAsrAdapter {
                 adapter_model,
                 flush_timeout,
                 final_result_scope,
+                task_params,
             )
             .await;
         });
@@ -421,6 +430,27 @@ fn extract_host(url: &str) -> &str {
 // Adapter task
 // ---------------------------------------------------------------------------
 
+struct TaskParams {
+    aliyun_model: String,
+    sample_rate: u32,
+    audio_format: String,
+    max_sentence_silence: Option<u64>,
+    provider_options: serde_json::Value,
+}
+
+impl TaskParams {
+    fn build_run_task(&self, task_id: &str) -> String {
+        build_run_task(
+            task_id,
+            &self.aliyun_model,
+            self.sample_rate,
+            &self.audio_format,
+            self.max_sentence_silence,
+            &self.provider_options,
+        )
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn adapter_task(
     ws_stream: tokio_tungstenite::WebSocketStream<
@@ -434,6 +464,7 @@ async fn adapter_task(
     model: String,
     flush_timeout: Duration,
     final_result_scope: FinalResultScope,
+    task_params: TaskParams,
 ) {
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
@@ -623,7 +654,8 @@ async fn adapter_task(
                                     }
                                 }
                                 "task-finished" => {
-                                    flush_pending = false;
+                                    #[allow(unused_assignments)]
+                                    { flush_pending = false; }
 
                                     let text = match final_result_scope {
                                         FinalResultScope::Stream => {
@@ -679,6 +711,48 @@ async fn adapter_task(
                                     segment_idx += 1;
                                     _current_task_id = uuid::Uuid::new_v4().simple().to_string();
                                     last_segment_text.clear();
+                                    flush_pending = false;
+
+                                    let new_run_msg = task_params.build_run_task(&_current_task_id);
+                                    if ws_write.send(tungstenite::Message::Text(new_run_msg)).await.is_err() {
+                                        let _ = event_tx.send(AsrStreamEvent::Error {
+                                            trace_id: trace_id.clone(),
+                                            error: AsrError::new(AsrErrorCode::ProviderStreamError, "failed to send run-task for new segment"),
+                                            fatal: true,
+                                        }).await;
+                                        return;
+                                    }
+
+                                    // Wait for task-started on the reused connection
+                                    let mut reuse_ok = false;
+                                    while let Some(msg) = ws_read.next().await {
+                                        if let Ok(tungstenite::Message::Text(text)) = msg {
+                                            if let Ok(ev) = parse_server_event(&text) {
+                                                match ev.header.event.as_str() {
+                                                    "task-started" => { reuse_ok = true; break; }
+                                                    "task-failed" => {
+                                                        let m = ev.header.error_message.unwrap_or_else(|| "task-failed during reuse".into());
+                                                        let _ = event_tx.send(AsrStreamEvent::Error {
+                                                            trace_id: trace_id.clone(),
+                                                            error: AsrError::new(AsrErrorCode::ProviderTaskFailed, m),
+                                                            fatal: true,
+                                                        }).await;
+                                                        return;
+                                                    }
+                                                    _ => continue,
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if !reuse_ok {
+                                        let _ = event_tx.send(AsrStreamEvent::Error {
+                                            trace_id: trace_id.clone(),
+                                            error: AsrError::new(AsrErrorCode::ProviderStreamError, "WebSocket closed during connection reuse"),
+                                            fatal: true,
+                                        }).await;
+                                        return;
+                                    }
+
                                     telemetry = AsrTelemetryBuilder::new(trace_id.clone(), model.clone());
                                     telemetry.on_started();
                                 }
@@ -697,10 +771,11 @@ async fn adapter_task(
                     }
                     Some(Ok(tungstenite::Message::Close(_))) | None => {
                         if flush_pending {
+                            telemetry.set_audio_duration_ms(audio_duration_ms);
                             emit_timeout_final(
-                                &event_tx, &trace_id, &model, segment_idx,
+                                &event_tx, &trace_id, segment_idx,
                                 &last_segment_text, &mut accumulated_text,
-                                &final_result_scope, audio_duration_ms,
+                                &final_result_scope, audio_duration_ms, telemetry,
                             ).await;
                         }
                         return;
@@ -721,23 +796,24 @@ async fn adapter_task(
             }
             _ = flush_timeout_fut => {
                 if flush_pending {
+                    telemetry.set_audio_duration_ms(audio_duration_ms);
                     emit_timeout_final(
-                        &event_tx, &trace_id, &model, segment_idx,
+                        &event_tx, &trace_id, segment_idx,
                         &last_segment_text, &mut accumulated_text,
-                        &final_result_scope, audio_duration_ms,
+                        &final_result_scope, audio_duration_ms, telemetry,
                     ).await;
-                    flush_pending = false;
 
-                    if end_requested {
-                        let _ = ws_write.close().await;
-                        return;
+                    // After timeout, the previous task may still be in-flight on
+                    // the server side — connection reuse is unsafe. Close and stop.
+                    let _ = ws_write.close().await;
+                    if !end_requested {
+                        let _ = event_tx.send(AsrStreamEvent::Error {
+                            trace_id: trace_id.clone(),
+                            error: AsrError::new(AsrErrorCode::ProviderStreamError, "connection closed after flush timeout; cannot reuse"),
+                            fatal: true,
+                        }).await;
                     }
-
-                    segment_idx += 1;
-                    _current_task_id = uuid::Uuid::new_v4().simple().to_string();
-                    last_segment_text.clear();
-                    telemetry = AsrTelemetryBuilder::new(trace_id.clone(), model.clone());
-                    telemetry.on_started();
+                    return;
                 }
             }
         }
@@ -748,12 +824,12 @@ async fn adapter_task(
 async fn emit_timeout_final(
     event_tx: &mpsc::Sender<AsrStreamEvent>,
     trace_id: &str,
-    model: &str,
     segment_idx: u32,
     last_segment_text: &str,
     accumulated_text: &mut String,
     final_result_scope: &FinalResultScope,
     audio_duration_ms: u64,
+    mut telemetry: AsrTelemetryBuilder,
 ) {
     let text = match final_result_scope {
         FinalResultScope::Stream => {
@@ -765,6 +841,9 @@ async fn emit_timeout_final(
         }
         FinalResultScope::Segment => last_segment_text.to_string(),
     };
+
+    telemetry.set_audio_duration_ms(audio_duration_ms);
+    let telem = telemetry.build();
 
     let _ = event_tx
         .send(AsrStreamEvent::AsrFinal {
@@ -779,26 +858,13 @@ async fn emit_timeout_final(
                     words: vec![],
                     speakers: vec![],
                     audio_duration_ms,
-                    processing_latency_ms: 0,
+                    processing_latency_ms: telem.latency_final_ms,
                     usage: AsrUsage {
                         audio_duration_ms,
                         ..Default::default()
                     },
                     option_adjustments: vec![],
-                    telemetry: AsrTelemetry {
-                        trace_id: trace_id.to_string(),
-                        model: model.to_string(),
-                        language: Some("zh-CN".into()),
-                        audio_duration_ms,
-                        latency_first_update_ms: None,
-                        latency_final_ms: 0,
-                        update_rollback_count: 0,
-                        confidence_avg: None,
-                        cost_estimate_micros: None,
-                        network_region: None,
-                        upstream_status: None,
-                        option_adjustment_count: 0,
-                    },
+                    telemetry: telem,
                 },
             }),
         })
