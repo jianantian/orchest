@@ -115,6 +115,8 @@ pub trait TtsProvider: Send + Sync {
 
 `list_voices()` may return a static catalog for providers whose voice lists are documented but not queryable. The returned `VoiceInfo.source` must identify whether the catalog came from provider metadata, static tables, or caller-provided config.
 
+When a request is routed through `TtsGateway`, the gateway resolves `request.model` to exactly one registered provider/model before invoking the provider. Provider adapters must reject a direct call whose `request.model` is `Some(...)` and does not match their own normalized provider/model. This keeps direct provider use and gateway use consistent without adding separate `provider` and `model` fields.
+
 ### Key Types
 
 ```rust
@@ -127,6 +129,8 @@ pub struct SynthesizeRequest {
     pub voice: VoiceSelection,
     pub output: AudioOutputConfig,
     pub controls: SpeechControls,
+    /// Request-level compatibility policy. Gateway calls use this value directly;
+    /// provider adapters called directly must also honor it.
     pub compatibility: CompatibilityPolicy,
     pub trace_id: Option<String>,
     pub provider_options: Value,
@@ -140,6 +144,8 @@ pub struct StreamSynthesizeRequest {
     pub voice: VoiceSelection,
     pub output: AudioOutputConfig,
     pub controls: SpeechControls,
+    /// Request-level compatibility policy. Gateway calls use this value directly;
+    /// provider adapters called directly must also honor it.
     pub compatibility: CompatibilityPolicy,
     pub trace_id: Option<String>,
     pub provider_options: Value,
@@ -152,6 +158,8 @@ pub struct DuplexSynthesizeRequest {
     pub voice: VoiceSelection,
     pub output: AudioOutputConfig,
     pub controls: SpeechControls,
+    /// Request-level compatibility policy. Gateway calls use this value directly;
+    /// provider adapters called directly must also honor it.
     pub compatibility: CompatibilityPolicy,
     pub trace_id: Option<String>,
     pub provider_options: Value,
@@ -355,9 +363,7 @@ pub struct TtsGateway {
 }
 
 pub struct TtsGatewayConfig {
-    pub compatibility: CompatibilityPolicy,
     pub stream_channel_capacity: usize,
-    pub default_output: Option<AudioOutputConfig>,
     /// If false, coerce mode may only make lossless or format-level adjustments.
     /// Dropping instruction/style/emotion or stripping SSML requires this to be true.
     pub allow_semantic_coercions: bool,
@@ -383,6 +389,8 @@ pub struct TtsRoute {
 }
 ```
 
+`TtsRoute.output_formats` is a routing constraint, not the complete provider capability list. Operation-specific compatibility still comes from `TtsModelCapabilities.batch_output_formats` and `TtsModelCapabilities.stream_output_formats`.
+
 Provider/model naming follows `agent-runtime-providers`: a model string with an explicit prefix is interpreted as `"provider/model"`; the prefix selects the factory, and the suffix is passed to the provider adapter as the provider-native model or service identifier. TTS does not introduce separate request-level `provider` and `model` fields; instead, request-level explicit selection uses the same single `model: Option<String>` selector as route config. Unlike LLM providers, TTS has no implicit default provider for an unprefixed model string in v0.9.3: `normalize_tts_provider_model()` must reject unprefixed strings unless a future TTS default provider is explicitly documented.
 
 Gateway helpers provide the public convenience surface:
@@ -403,6 +411,11 @@ impl TtsGateway {
         &self,
         request: DuplexSynthesizeRequest,
     ) -> Result<TtsDuplexStream, TtsError>;
+
+    pub async fn list_voices(
+        &self,
+        request: ListVoicesRequest,
+    ) -> Result<Vec<VoiceInfo>, TtsError>;
 }
 ```
 
@@ -410,14 +423,14 @@ If `trace_id` is `None`, the gateway generates one and includes it in `RouteSele
 
 The router must be deterministic:
 
-1. Normalize each route's `model` string with `normalize_tts_provider_model()`
-2. If the request has `model: Some(...)`, restrict candidates to that normalized provider/model
-3. Filter by capability compatibility
-4. Filter by voice/language/output format constraints
-5. Apply latency/cost constraints when configured
-6. Select lowest `priority`, then stable normalized provider/model string sort as tie-breaker
+1. Normalize each registered route's `model` string with `normalize_tts_provider_model()`.
+2. If the request has `model: Some(...)`, normalize it and select that registered provider/model directly; route priority is not consulted, but capability validation still applies.
+3. If the request has no explicit model, build candidates from `TtsRoute` entries and filter by voice/language/route output format constraints.
+4. Filter by operation-specific capability compatibility: batch calls use `batch_output_formats`, single-stream calls use `stream_output_formats` + `stream_output`, and duplex calls additionally require `duplex_streaming`.
+5. Apply latency/cost constraints when configured.
+6. Select lowest `priority`, then stable normalized provider/model string sort as tie-breaker.
 
-If no provider matches, return `no_matching_provider` with the rejected constraints included in `provider_metadata`.
+If an explicit provider/model is unknown, return `unknown_provider` or `unknown_model`. If routing has no provider match, return `no_matching_provider` with the rejected constraints included in `provider_metadata`.
 
 ### Provider-Specific Protocol Notes
 
@@ -484,7 +497,7 @@ pub struct OptionAdjustment {
 
 `Strict` returns errors for unsupported or ambiguous options.
 
-`Coerce` prefers a working request and records changes. Examples:
+`Coerce` prefers a working request and records changes. Coerce must still return an error when the only possible adaptation would lose semantics and `TtsGatewayConfig.allow_semantic_coercions` is false. Direct provider calls use the same rule with semantic coercions disabled unless a provider-specific config explicitly enables them. Examples:
 
 - Requested `instruction` on a non-instruct model -> strict returns `unsupported_option`; coerce drops it only if `TtsGatewayConfig.allow_semantic_coercions` is true.
 - Requested `Ssml` on a provider/model without SSML support -> strict returns `unsupported_input`; coerce may convert to plain text only if tags can be safely stripped and adjustment is recorded.
@@ -516,13 +529,12 @@ pub struct TtsModelCapabilities {
 }
 
 pub enum TextEventSourceCapability {
-    None,
     GatewayEcho,
     ProviderDelta,
 }
 ```
 
-Capabilities may come from provider metadata, static tables, or conservative assumptions. Strict mode must not rely on assumptions for fields that affect audio semantics.
+Capabilities may come from provider metadata, static tables, or conservative assumptions. Strict mode must not rely on assumptions for fields that affect audio semantics. Streaming adapters must emit text events even when the provider has no native text delta output; in that case `TextEventSourceCapability::GatewayEcho` means the SDK echoes accepted caller text rather than claiming provider-native deltas.
 
 ### Observability
 
@@ -686,8 +698,8 @@ New provider-specific HTTP/WebSocket dependencies must be feature-gated and just
 Unit tests:
 
 - Fake provider implements batch, single-stream, and duplex-stream paths
-- Voice catalog returns system/custom voice metadata and capability source
-- Router determinism and tie-break behavior
+- Voice catalog returns system/custom voice metadata and capability source through both provider and gateway list APIs
+- Router determinism, explicit provider/model bypass behavior, and tie-break behavior
 - Compatibility policy strict/coerce behavior
 - Capability validation for instruction, SSML, output format, custom voice, single-stream output and duplex streaming
 - API key resolution hierarchy
@@ -710,7 +722,7 @@ Test fixtures:
 | Issue | Title | Depends on | Scope |
 |-------|-------|------------|-------|
 | 001 | Crate scaffold + public types | -- | Workspace entry, module layout, `TtsProvider`, request/result/summary/usage/error/capability/voice types |
-| 002 | Gateway + router | 001 | `TtsGateway`, deterministic `TtsRouter`, request-level provider/model selection, compatibility validation, fake-provider tests |
+| 002 | Gateway + router | 001 | `TtsGateway`, deterministic `TtsRouter`, request-level provider/model selection, gateway voice listing, compatibility validation, fake-provider tests |
 | 003 | Streaming contracts | 001, 002 | `TtsOutputStream`, `TtsDuplexStream`, stream event ordering, text delta semantics, audio chunk output, backpressure docs |
 | 004 | Voice catalog + controls | 001, 002 | `VoiceInfo`, `VoiceSelection`, voice capability validation, instruction/emotion/SSML handling |
 | 005 | Observability + trace | 001, 002, 003 | `TtsTelemetry`, `TtsStreamEvent` trace propagation, spans/metrics |
@@ -723,12 +735,12 @@ Test fixtures:
 - [ ] `TtsProvider` trait supports batch synthesis, single-stream synthesis, duplex streaming synthesis, and voice listing
 - [ ] Crate has zero workspace-internal dependencies
 - [ ] Provider/model selection uses the same explicit `"provider/model"` convention as `agent-runtime-providers`; unprefixed TTS model strings are rejected in v0.9.3
-- [ ] Provider-neutral types exist for provider/model selector, text input, voice selection, voice catalog request, speech controls, output format, stream handle, stream event, stream summary, usage, telemetry, routing, compatibility, semantic coercion policy and errors
+- [ ] Provider-neutral types exist for provider/model selector, text input, voice selection, voice catalog request, speech controls, output format, stream handle, stream event, stream summary, usage, telemetry, routing, operation-specific compatibility, semantic coercion policy and errors
 - [ ] `TtsModelCapabilities` exists and strict compatibility checks use it
 - [ ] `VoiceInfo` distinguishes system, cloned, designed and custom voices
 - [ ] Instruction, SSML, speed, pitch, volume, emotion, voice kind and output format controls map to provider-native fields only when supported; otherwise strict mode returns stable errors
-- [ ] `TtsGateway` can route requests to registered fake providers based on route priority, language, voice kind and output format
-- [ ] Router tie-break behavior is deterministic
+- [ ] `TtsGateway` can route requests to registered fake providers based on route priority, language, voice kind and output format, while explicit request-level `model` bypasses route priority and still validates capabilities
+- [ ] Router tie-break behavior is deterministic and gateway `list_voices()` returns provider/static/caller-config voice sources consistently
 - [ ] Public single-stream API accepts committed text and returns text/audio output events through `TtsOutputStream`
 - [ ] Public duplex-stream API lets callers send `TextChunk`s and receive text/audio output events through `TtsDuplexStream`
 - [ ] Streaming contract distinguishes route selection, start, text delta, accepted text, audio chunk, completion and fatal/non-fatal errors
