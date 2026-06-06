@@ -1,4 +1,4 @@
-# v0.9.3 Spec：TTS Provider Gateway
+# v0.9.3 PRD：TTS Provider Gateway
 
 ## 背景
 
@@ -24,7 +24,7 @@ TTS 在实时 voice agent 中通常是渲染/输出层能力：agent 产出文�
 
 1. 新增 `crates/agent-runtime-tts-providers` 卫星 crate
 2. 定义 `TtsProvider` trait，统一 batch synthesis、单流式 synthesis 和双流式 synthesis
-3. 定义 provider-neutral TTS 类型：text input、voice selection、speech controls、audio format、stream handle、stream event、usage、telemetry、error
+3. 定义 provider-neutral TTS 类型：provider/model selector、text input、voice selection、speech controls、audio format、stream handle、stream event、usage、telemetry、error
 4. 提供 `TtsGateway` / `TtsRouter`，支持按语言、voice capability、格式、延迟和成本策略选择 provider/model
 5. 支持 voice catalog 查询，区分 system voice、custom cloned voice、designed voice
 6. 实现阿里云和火山引擎两个 provider adapter，live tests 通过 env var gated
@@ -34,9 +34,9 @@ TTS 在实时 voice agent 中通常是渲染/输出层能力：agent 产出文�
 
 - **Capability first**：调用方表达的是合成意图（文本、音色、语言、语速、情绪、输出格式、是否流式），不是某个 provider 的 endpoint 形状。
 - **Standalone crate**：`agent-runtime-tts-providers` 不依赖 `agent-runtime-core` 或绑定 crate。它必须可作为独立 TTS library 使用。
-- **Two streaming protocols are first-class**：TTS 首要支持两种协议形态：单流式（完整/已提交文本输入，文本事件 + 音频事件流式输出）和双流式（文本 chunk 流入，文本事件 + 音频事件流式输出）。公共 API 不应把单流式 provider 硬塞进双流式形状。
+- **Two streaming protocols are first-class**：TTS 首要支持两种协议形态：单流式（完整/已提交文本输入，文本事件 + 音频事件流式输出）和双流式（文本 chunk 流入，文本事件 + 音频事件流式输出）。公共 API 不应把单流式 provider 硬塞进双流式形状，也不在 v0.9.3 做隐式 buffered downgrade。
 - **No silent semantic loss**：provider 无法满足请求字段时，按 compatibility policy 返回 `unsupported_option` 或记录 `OptionAdjustment`。
-- **Voice is a first-class capability**：voice id 不是裸字符串。公共类型必须表达 voice 来源、支持语言、是否自定义、是否支持 instruction / emotion / cloning / design。
+- **Voice is a first-class capability**：voice id 不是裸字符串。公共类型必须表达 voice 来源、voice kind、支持语言、是否自定义、是否支持 instruction / emotion / cloning / design。
 - **Provider-specific power remains available**：通用稳定字段进入 typed config；少数 provider 特性通过 `provider_options` 透传。
 - **No playback concerns**：crate 只生成音频 bytes/chunks 和 metadata，不播放音频、不管理设备、不做会话编排。
 - **Core stays text-in/text-out**：TTS 用于输出渲染，不是 agent loop 的一部分。
@@ -119,6 +119,10 @@ pub trait TtsProvider: Send + Sync {
 
 ```rust
 pub struct SynthesizeRequest {
+    /// Optional explicit provider/model selector, for example
+    /// "volcengine/seed-tts-2.0" or "aliyun/qwen3-tts-flash-realtime".
+    /// If None, the gateway router selects a provider/model.
+    pub model: Option<String>,
     pub input: TtsInput,
     pub voice: VoiceSelection,
     pub output: AudioOutputConfig,
@@ -129,6 +133,9 @@ pub struct SynthesizeRequest {
 }
 
 pub struct StreamSynthesizeRequest {
+    /// Optional explicit provider/model selector. If present, routing is limited
+    /// to this provider/model and compatibility validation still applies.
+    pub model: Option<String>,
     pub input: TtsInput,
     pub voice: VoiceSelection,
     pub output: AudioOutputConfig,
@@ -139,6 +146,9 @@ pub struct StreamSynthesizeRequest {
 }
 
 pub struct DuplexSynthesizeRequest {
+    /// Optional explicit provider/model selector. If present, routing is limited
+    /// to this provider/model and compatibility validation still applies.
+    pub model: Option<String>,
     pub voice: VoiceSelection,
     pub output: AudioOutputConfig,
     pub controls: SpeechControls,
@@ -151,6 +161,15 @@ pub enum TtsInput {
     Text(String),
     Ssml(String),
 }
+
+pub enum TtsInputKind {
+    Text,
+    Ssml,
+}
+
+/// BCP-47 language tag, for example "zh-CN", "en-US", "ja-JP".
+/// A string newtype avoids hard-coding provider language catalogs in the SDK.
+pub struct Language(pub String);
 
 pub struct TextChunk {
     pub text: String,
@@ -178,6 +197,15 @@ pub struct TtsUsage {
     pub audio_duration_ms: Option<u64>,
     pub output_bytes: Option<u64>,
     pub cost_estimate_micros: Option<u64>,
+}
+
+pub struct TtsStreamSummary {
+    pub format: AudioFormat,
+    pub duration_ms: Option<u64>,
+    pub usage: TtsUsage,
+    pub option_adjustments: Vec<OptionAdjustment>,
+    pub provider_metadata: Value,
+    pub telemetry: TtsTelemetry,
 }
 ```
 
@@ -207,7 +235,7 @@ pub enum TtsStreamEvent {
     TextDelta { trace_id: String, text: String, sequence: u64, is_final: bool },
     TextAccepted { trace_id: String, chars: u64 },
     AudioChunk { trace_id: String, data: Bytes, format: AudioFormat, sequence: u64 },
-    Completed { trace_id: String, result: SynthesizeResult },
+    Completed { trace_id: String, summary: TtsStreamSummary },
     Error { trace_id: String, error: TtsError, fatal: bool },
 }
 ```
@@ -217,13 +245,16 @@ Single-stream and duplex-stream are separate public protocols:
 - **Single-stream** (`stream_synthesize`) is for providers that accept a complete text request and stream output. The output stream must include text events and audio chunks so a host app can render synchronized text + speech progress.
 - **Duplex-stream** (`start_duplex_stream`) is for providers that accept text chunks over time while streaming audio back. This is the path for feeding LLM text deltas directly into TTS.
 
-For providers that do not support duplex streaming, strict mode must return `unsupported_operation` for `start_duplex_stream`. Coerce mode may degrade duplex to single-stream only after the caller has sent a final text chunk and the gateway records an `OptionAdjustment`; it must not pretend incremental text was synthesized incrementally.
+For providers that do not support duplex streaming, both strict and coerce mode must return `unsupported_operation` for `start_duplex_stream` in v0.9.3. The gateway must not create a fake duplex stream that buffers chunks and later invokes single-stream synthesis. A later iteration may add an explicit buffered fallback option, but it must be opt-in, bounded by max buffered chars / timeout, and reported as an `OptionAdjustment`.
 
 ### Voice and Controls
 
 ```rust
 pub struct VoiceSelection {
     pub voice_id: String,
+    /// Optional caller hint. Strict mode validates this against catalog/capabilities
+    /// when the selected provider exposes enough voice metadata.
+    pub kind: Option<VoiceKind>,
     pub language: Option<Language>,
     pub gender: Option<VoiceGender>,
     pub provider_options: Value,
@@ -251,6 +282,28 @@ pub enum VoiceKind {
     Custom,
 }
 
+pub enum VoiceGender {
+    Male,
+    Female,
+    Neutral,
+    Unknown,
+}
+
+pub struct ListVoicesRequest {
+    pub model: Option<String>,
+    pub language: Option<Language>,
+    pub kind: Option<VoiceKind>,
+    pub include_custom: bool,
+    pub provider_options: Value,
+}
+
+pub enum CapabilitySource {
+    ProviderMetadata,
+    StaticCatalog,
+    CallerConfig,
+    ConservativeAssumption,
+}
+
 pub struct SpeechControls {
     pub speed: Option<f32>,
     pub pitch: Option<f32>,
@@ -263,6 +316,13 @@ pub struct SpeechControls {
 
 Voice cloning and voice design management are out of scope for v0.9.3. This crate may synthesize with an existing custom voice id, but it does not create, enroll, delete, or govern custom voices.
 
+Voice kind resolution is deterministic:
+
+1. If `VoiceSelection.kind` is set, strict mode validates it against the selected provider catalog or capabilities when available.
+2. If `VoiceSelection.kind` is not set, the gateway may resolve it from `list_voices()` for the selected provider/model.
+3. If the kind cannot be resolved, strict mode must not select a route that requires a specific non-system kind. Coerce mode may select a system/default route only when the caller did not request custom/cloned/designed semantics.
+4. `provider_options` must not be the only place where public voice kind semantics are expressed.
+
 ### Audio Output Contract
 
 ```rust
@@ -274,14 +334,17 @@ pub struct AudioOutputConfig {
 }
 
 pub enum AudioFormat {
-    Pcm16,
-    Wav,
+    /// Raw signed 16-bit little-endian PCM.
+    Pcm16Le,
+    /// WAV container carrying signed 16-bit little-endian PCM.
+    WavPcm16Le,
     Mp3,
-    Opus,
+    /// Ogg container carrying Opus frames.
+    OggOpus,
 }
 ```
 
-The gateway does not perform general-purpose transcoding in v0.9.3. If a provider cannot produce the requested format, strict mode returns `unsupported_audio_format`; coerce mode may select another supported format and record an `OptionAdjustment` only when application policy allows it.
+The gateway does not perform general-purpose transcoding in v0.9.3. If a provider cannot produce the requested format, strict mode returns `unsupported_audio_format`; coerce mode may select another supported format and record an `OptionAdjustment` only when application policy allows it. Streaming format support must be validated separately from batch format support because some providers accept WAV for non-streaming calls but produce repeated WAV headers or provider-specific framing in streaming mode.
 
 ### Gateway and Routing
 
@@ -289,6 +352,15 @@ The gateway does not perform general-purpose transcoding in v0.9.3. If a provide
 pub struct TtsGateway {
     router: TtsRouter,
     config: TtsGatewayConfig,
+}
+
+pub struct TtsGatewayConfig {
+    pub compatibility: CompatibilityPolicy,
+    pub stream_channel_capacity: usize,
+    pub default_output: Option<AudioOutputConfig>,
+    /// If false, coerce mode may only make lossless or format-level adjustments.
+    /// Dropping instruction/style/emotion or stripping SSML requires this to be true.
+    pub allow_semantic_coercions: bool,
 }
 
 pub struct TtsRouter {
@@ -311,7 +383,7 @@ pub struct TtsRoute {
 }
 ```
 
-Provider/model naming follows `agent-runtime-providers`: a model string with an explicit prefix is interpreted as `"provider/model"`; the prefix selects the factory, and the suffix is passed to the provider adapter as the provider-native model or service identifier. TTS does not introduce separate request-level `provider` and `model` fields.
+Provider/model naming follows `agent-runtime-providers`: a model string with an explicit prefix is interpreted as `"provider/model"`; the prefix selects the factory, and the suffix is passed to the provider adapter as the provider-native model or service identifier. TTS does not introduce separate request-level `provider` and `model` fields; instead, request-level explicit selection uses the same single `model: Option<String>` selector as route config. Unlike LLM providers, TTS has no implicit default provider for an unprefixed model string in v0.9.3: `normalize_tts_provider_model()` must reject unprefixed strings unless a future TTS default provider is explicitly documented.
 
 Gateway helpers provide the public convenience surface:
 
@@ -334,15 +406,16 @@ impl TtsGateway {
 }
 ```
 
-If `trace_id` is `None`, the gateway generates one and includes it in `RouteSelected`, `Started`, every audio event, `SynthesizeResult.telemetry`, and all emitted telemetry. Provider adapters should not generate unrelated trace IDs.
+If `trace_id` is `None`, the gateway generates one and includes it in `RouteSelected`, `Started`, every audio event, batch `SynthesizeResult.telemetry`, streaming `TtsStreamSummary.telemetry`, and all emitted telemetry. Provider adapters should not generate unrelated trace IDs.
 
 The router must be deterministic:
 
 1. Normalize each route's `model` string with `normalize_tts_provider_model()`
-2. Filter by capability compatibility
-3. Filter by voice/language/output format constraints
-4. Apply latency/cost constraints when configured
-5. Select lowest `priority`, then stable normalized provider/model string sort as tie-breaker
+2. If the request has `model: Some(...)`, restrict candidates to that normalized provider/model
+3. Filter by capability compatibility
+4. Filter by voice/language/output format constraints
+5. Apply latency/cost constraints when configured
+6. Select lowest `priority`, then stable normalized provider/model string sort as tie-breaker
 
 If no provider matches, return `no_matching_provider` with the rejected constraints included in `provider_metadata`.
 
@@ -391,7 +464,7 @@ API key resolution follows the same hierarchy as other provider crates:
 2. explicit local `api_key_env`
 3. provider default environment variable
 
-If `api_key_env` is configured, a missing or empty value is an error and must not fall back to the provider default.
+If `api_key_env` is configured, a missing or empty value is an error and must not fall back to the provider default. `api_key` represents the provider's primary credential, such as DashScope API key or Volcengine X-Api-Key. Legacy or multi-part provider credentials may be carried in typed provider-specific config structs or `provider_options`, but must still use the same redaction and validation rules.
 
 ### Compatibility Policy
 
@@ -413,9 +486,9 @@ pub struct OptionAdjustment {
 
 `Coerce` prefers a working request and records changes. Examples:
 
-- Requested `instruction` on a non-instruct model -> strict returns `unsupported_option`; coerce drops it only if policy explicitly allows expression loss.
+- Requested `instruction` on a non-instruct model -> strict returns `unsupported_option`; coerce drops it only if `TtsGatewayConfig.allow_semantic_coercions` is true.
 - Requested `Ssml` on a provider/model without SSML support -> strict returns `unsupported_input`; coerce may convert to plain text only if tags can be safely stripped and adjustment is recorded.
-- Requested `AudioFormat::Opus` but selected provider supports only MP3/WAV -> strict returns `unsupported_audio_format`; coerce may select MP3 and record adjustment.
+- Requested `AudioFormat::OggOpus` but selected provider supports only MP3/WAV -> strict returns `unsupported_audio_format`; coerce may select MP3 and record adjustment.
 - Requested custom voice kind but route selects a system-only model -> strict returns `unsupported_voice`.
 
 ### Capabilities
@@ -424,11 +497,12 @@ pub struct OptionAdjustment {
 pub struct TtsModelCapabilities {
     pub languages: Vec<Language>,
     pub input_kinds: Vec<TtsInputKind>,
-    pub output_formats: Vec<AudioFormat>,
+    pub batch_output_formats: Vec<AudioFormat>,
+    pub stream_output_formats: Vec<AudioFormat>,
     pub stream_output: bool,
     pub batch: bool,
     pub duplex_streaming: bool,
-    pub text_delta_output: bool,
+    pub text_event_source: TextEventSourceCapability,
     pub voice_kinds: Vec<VoiceKind>,
     pub supports_instruction: bool,
     pub supports_emotion: bool,
@@ -439,6 +513,12 @@ pub struct TtsModelCapabilities {
     pub max_input_chars: Option<u64>,
     pub source: CapabilitySource,
     pub provider_metadata: Value,
+}
+
+pub enum TextEventSourceCapability {
+    None,
+    GatewayEcho,
+    ProviderDelta,
 }
 ```
 
@@ -548,10 +628,10 @@ Live provider tests should be gated behind env vars and ignored by default. Fake
 
 | Feature | Contents |
 |---------|----------|
-| `volcengine` | Volcengine adapter and live tests |
-| `aliyun` | Aliyun adapter and live tests |
+| `volcengine` | Volcengine adapter, optional HTTP/WebSocket dependencies, offline adapter tests, ignored live tests |
+| `aliyun` | Aliyun adapter, optional HTTP/WebSocket dependencies, offline adapter tests, ignored live tests |
 
-The default feature set should include fake/test-safe infrastructure and the two first-party provider adapters unless a provider requires a heavy optional dependency. WebSocket dependencies for streaming providers should be feature-gated if they are not already required by the default adapters.
+The default feature set should include the two first-party provider adapters: `default = ["volcengine", "aliyun"]`. Fake providers and router tests must compile without provider features. Provider-specific HTTP/WebSocket dependencies should be optional dependencies activated by the relevant feature. If an implementation proves that a dependency is lightweight and shared by both default adapters, the implementation PR must justify keeping it non-optional.
 
 ## Not in Scope
 
@@ -592,6 +672,7 @@ Agent output -> model calls speak tool -> audio playback
 - `thiserror`
 - `bytes`
 - `uuid`
+- `chrono`
 - `tracing`
 - `metrics`
 - Existing workspace conventions from `agent-runtime-providers`, `agent-runtime-aigc-providers`, and `agent-runtime-asr-providers`
@@ -611,7 +692,7 @@ Unit tests:
 - Capability validation for instruction, SSML, output format, custom voice, single-stream output and duplex streaming
 - API key resolution hierarchy
 - Error redaction preserves debug payload while removing secrets
-- Streaming event ordering: `RouteSelected` -> `Started` -> zero or more `TextDelta` / `TextAccepted` / `AudioChunk` -> `Completed` or fatal `Error`
+- Streaming event ordering: `RouteSelected` -> `Started` -> zero or more `TextDelta` / `TextAccepted` / `AudioChunk` -> `Completed` with `TtsStreamSummary` or fatal `Error`
 
 Integration tests:
 
@@ -628,8 +709,8 @@ Test fixtures:
 
 | Issue | Title | Depends on | Scope |
 |-------|-------|------------|-------|
-| 001 | Crate scaffold + public types | -- | Workspace entry, module layout, `TtsProvider`, request/result/usage/error/capability/voice types |
-| 002 | Gateway + router | 001 | `TtsGateway`, deterministic `TtsRouter`, compatibility validation, fake-provider tests |
+| 001 | Crate scaffold + public types | -- | Workspace entry, module layout, `TtsProvider`, request/result/summary/usage/error/capability/voice types |
+| 002 | Gateway + router | 001 | `TtsGateway`, deterministic `TtsRouter`, request-level provider/model selection, compatibility validation, fake-provider tests |
 | 003 | Streaming contracts | 001, 002 | `TtsOutputStream`, `TtsDuplexStream`, stream event ordering, text delta semantics, audio chunk output, backpressure docs |
 | 004 | Voice catalog + controls | 001, 002 | `VoiceInfo`, `VoiceSelection`, voice capability validation, instruction/emotion/SSML handling |
 | 005 | Observability + trace | 001, 002, 003 | `TtsTelemetry`, `TtsStreamEvent` trace propagation, spans/metrics |
@@ -641,28 +722,29 @@ Test fixtures:
 - [ ] `crates/agent-runtime-tts-providers` exists and is part of the workspace
 - [ ] `TtsProvider` trait supports batch synthesis, single-stream synthesis, duplex streaming synthesis, and voice listing
 - [ ] Crate has zero workspace-internal dependencies
-- [ ] Provider/model selection uses the same `"provider/model"` convention and normalization behavior as `agent-runtime-providers`
-- [ ] Provider-neutral types exist for text input, voice selection, speech controls, output format, stream handle, stream event, usage, telemetry, routing, compatibility and errors
+- [ ] Provider/model selection uses the same explicit `"provider/model"` convention as `agent-runtime-providers`; unprefixed TTS model strings are rejected in v0.9.3
+- [ ] Provider-neutral types exist for provider/model selector, text input, voice selection, voice catalog request, speech controls, output format, stream handle, stream event, stream summary, usage, telemetry, routing, compatibility, semantic coercion policy and errors
 - [ ] `TtsModelCapabilities` exists and strict compatibility checks use it
 - [ ] `VoiceInfo` distinguishes system, cloned, designed and custom voices
-- [ ] Instruction, SSML, speed, pitch, volume, emotion and output format controls map to provider-native fields only when supported; otherwise strict mode returns stable errors
+- [ ] Instruction, SSML, speed, pitch, volume, emotion, voice kind and output format controls map to provider-native fields only when supported; otherwise strict mode returns stable errors
 - [ ] `TtsGateway` can route requests to registered fake providers based on route priority, language, voice kind and output format
 - [ ] Router tie-break behavior is deterministic
 - [ ] Public single-stream API accepts committed text and returns text/audio output events through `TtsOutputStream`
 - [ ] Public duplex-stream API lets callers send `TextChunk`s and receive text/audio output events through `TtsDuplexStream`
 - [ ] Streaming contract distinguishes route selection, start, text delta, accepted text, audio chunk, completion and fatal/non-fatal errors
-- [ ] Strict compatibility rejects duplex streaming for provider/model combinations that only support single-stream output
-- [ ] Streaming tests assert stable event ordering and no provider-internal channel drain deadlock
+- [ ] Strict and coerce compatibility reject duplex streaming for provider/model combinations that only support single-stream output; v0.9.3 does not implement implicit buffered duplex fallback
+- [ ] Streaming tests assert stable event ordering, `TtsStreamSummary` completion, and no provider-internal channel drain deadlock
 - [ ] Telemetry includes `trace_id` and can be correlated with external ASR and Orchest run traces
 - [ ] `TtsError` preserves upstream status/code/message/body with secret redaction
 - [ ] API key resolution follows explicit key -> explicit env var -> provider default env var
 - [ ] Volcengine adapter is implemented behind a feature flag with fake/offline tests and ignored live tests
 - [ ] Aliyun adapter is implemented behind a feature flag with fake/offline tests and ignored live tests
-- [ ] Offline provider tests cover Volcengine session lifecycle and Aliyun realtime model capability differences
-- [ ] Strict compatibility rejects `instruction`, `SSML`, custom voices or output formats for provider/model combinations that do not support them
+- [ ] Offline provider tests cover Volcengine session lifecycle, old/new credential configuration, and Aliyun realtime model capability differences
+- [ ] Batch and streaming output format compatibility are validated separately, including streaming WAV/header caveats where provider docs require PCM/Ogg/MP3
 - [ ] `cargo test -p agent-runtime-tts-providers --no-default-features` passes
 - [ ] `cargo test -p agent-runtime-tts-providers --features volcengine` passes without live credentials
 - [ ] `cargo test -p agent-runtime-tts-providers --features aliyun` passes without live credentials
+- [ ] `cargo test -p agent-runtime-tts-providers --all-features` passes without live credentials
 - [ ] PRD documents that `TtsTool` is out of scope for this standalone crate
 - [ ] No changes are required in `agent-runtime-core`
 - [ ] `cargo test -p agent-runtime-tts-providers` passes
