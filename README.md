@@ -126,6 +126,7 @@ See [`AGENTS.md`](./AGENTS.md) for conventions, [`WORKFLOW.md`](./WORKFLOW.md) f
 | Document | Audience |
 |----------|----------|
 | [`docs/overview.md`](./docs/overview.md) | Everyone — concepts and philosophy |
+| [`docs/guide/quickstart.md`](./docs/guide/quickstart.md) | New users — zero to a running Rust agent |
 | [`docs/polaris/`](./docs/polaris/) | Contributors — design principles, non-goals, observability contract |
 | [`docs/iteration/`](./docs/iteration/) | Contributors — per-version PRDs and issue specs |
 | [`docs/review/`](./docs/review/) | Contributors — code review findings |
