@@ -22,6 +22,8 @@
 7. **完整代码**：贴出与 `basic_agent_run.rs` 一致的完整文件，并指明 `cargo run --example basic_agent_run`
 8. **下一步**：链接到进阶示例（hook / guardrail / session / SD）和 SDK 文档（issue 004）
 
+并在 `README.md` 的 Documentation 表中新增一行链接到 `docs/guide/quickstart.md`，让新用户从 README 能发现入门教程。
+
 ## 约束
 
 - 代码片段与 `examples/rust/basic_agent_run.rs`**逐字一致**（或直接引用其片段），避免文档漂移
@@ -35,6 +37,7 @@
 - [ ] 完整代码段与 `examples/rust/basic_agent_run.rs` 一致，可对照 `cargo build --example basic_agent_run` 验证
 - [ ] 依赖小节给出 git 依赖示例，并注明 crates.io 版本待 v1.0
 - [ ] 文末链接到进阶示例目录和 SDK 文档
+- [ ] `README.md` Documentation 表新增 quickstart 链接
 - [ ] 无失效内部链接（指向的 example 文件、sdk-*.md 路径存在）
 
 ## 依赖

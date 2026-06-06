@@ -127,9 +127,11 @@ SDK 文档的代码示例与 README.md Quick start 保持一致，README 提供�
 
 | 验证项 | 方法 |
 |--------|------|
-| cargo doc 无 warning | CI 中 `cargo doc --workspace --no-deps 2>&1 \| grep warning` 返回空 |
-| quickstart 可编译 | CI 中 `cargo build --example basic_agent_run` 通过 |
-| examples 全部可编译 | CI 中 `cargo build --examples` 通过 |
+| cargo doc 无 warning | CI 中 `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`（issue 005 接入 CI） |
+| quickstart 可编译 | `cargo build --example basic_agent_run` 通过（被 `cargo build --examples` 覆盖） |
+| examples 全部可编译 | CI 中 `cargo build --examples --workspace`（issue 005 接入 CI） |
+
+doc warning 防线与 examples 编译防线由 **issue 005** 接入 `.github/workflows/ci.yml`；fmt / clippy / test 沿用既有 CI step。
 
 ## Issue Breakdown
 
@@ -137,18 +139,20 @@ SDK 文档的代码示例与 README.md Quick start 保持一致，README 提供�
 |-------|------|------|------|
 | 001 | cargo-doc 清理 | — | 修复 agent_ref.rs rustdoc warning；补 aigc-providers / asr-providers / node / py 四个 crate 的 `//!` module-level doc；pub 类型 doc comment 补齐 |
 | 002 | basic_agent_run 示例 | — | 新增 `examples/rust/basic_agent_run.rs`；注册到 `agent-runtime-core/Cargo.toml [[example]]` |
-| 003 | 入门教程 | 002 | `docs/guide/quickstart.md`，代码示例与 basic_agent_run 对应 |
-| 004 | SDK 文档 | — | `docs/guide/sdk-python.md`、`docs/guide/sdk-typescript.md` |
+| 003 | 入门教程 | 002 | `docs/guide/quickstart.md`，代码示例与 basic_agent_run 对应；README Documentation 表加 quickstart 链接 |
+| 004 | SDK 文档 | — | `docs/guide/sdk-python.md`、`docs/guide/sdk-typescript.md`；README Documentation 表加 SDK 指南链接 |
+| 005 | CI 文档防线 | 001, 002 | `ci.yml` 加 `RUSTDOCFLAGS="-D warnings" cargo doc` + `cargo build --examples`，让 doc/examples 验收标准有 CI 载体 |
 
 **依赖图：**
 
 ```
-001 (cargo-doc)
-002 (basic example) ──► 003 (quickstart)
+001 (cargo-doc) ──────┐
+002 (basic example) ──┼──► 005 (ci-doc-guard)
+        └──► 003 (quickstart)
 004 (sdk-docs)
 ```
 
-001 / 002 / 004 相互独立，可并行开发。003 依赖 002。
+001 / 002 / 004 相互独立，可并行开发。003 依赖 002（代码锚点）。005 依赖 001 + 002（CI 防线启用前 doc 须零 warning、example 须已存在）。
 
 ## 验收标准
 
@@ -162,8 +166,10 @@ SDK 文档的代码示例与 README.md Quick start 保持一致，README 提供�
 - [ ] `docs/guide/sdk-python.md` 存在
 - [ ] `docs/guide/sdk-typescript.md` 存在
 - [ ] `examples/rust/` 覆盖上表全部 9 个场景
+- [ ] README Documentation 表链接到 quickstart 和 SDK 指南
 
 ### CI 基线
+- [ ] `.github/workflows/ci.yml` 含 `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` step（issue 005）
+- [ ] `.github/workflows/ci.yml` 含 `cargo build --examples --workspace` step（issue 005）
 - [ ] `cargo test --workspace` 全绿
 - [ ] `cargo clippy --workspace -- -D warnings` 全绿
-- [ ] `cargo build --examples` 全部通过

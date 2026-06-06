@@ -29,6 +29,10 @@ Orchest 的核心卖点之一是 Python / TypeScript 双语言 SDK（PyO3 / napi
 5. **event type 速查表**
 6. **类型定义**：指向 `js/index.d.ts` / `js/native.d.ts`
 
+### README 链接
+
+在 `README.md` 的 Documentation 表中新增两行，分别链接到 `docs/guide/sdk-python.md` 和 `docs/guide/sdk-typescript.md`。
+
 ## 约束
 
 - 代码片段与 `examples/python/basic.py`、`examples/typescript/basic.ts` 一致
@@ -44,6 +48,7 @@ Orchest 的核心卖点之一是 Python / TypeScript 双语言 SDK（PyO3 / napi
 - [ ] TS 代码片段与 `examples/typescript/basic.ts` 一致（schema 注册 + switch 事件）
 - [ ] 两份文档的 event type 速查表分别与 `__init__.pyi` / `index.d.ts` 的导出一致
 - [ ] 安装小节注明 PyPI / npm 正式发布计划于 v1.0
+- [ ] `README.md` Documentation 表新增 sdk-python / sdk-typescript 两行链接
 - [ ] 无失效内部链接（指向的 .pyi / .d.ts / examples 路径存在）
 
 ## Notes
