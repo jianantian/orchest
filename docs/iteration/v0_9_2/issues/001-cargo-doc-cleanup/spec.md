@@ -6,7 +6,7 @@
 
 ## 目标
 
-`cargo doc --workspace --no-deps` 零 warning；5 个公共 crate 的 `lib.rs` 都有 `//!` module-level 文档（model / core 已有，补 aigc-providers / asr-providers / node / py）。
+`cargo doc --workspace --no-deps` 零 warning；全部 7 个 crate 的 `lib.rs` 都有 `//!` module-level 文档（model / core / providers 已有，补 aigc-providers / asr-providers / node / py 这 4 个）。
 
 ## 当前状态（已核实）
 
@@ -30,7 +30,7 @@ rustdoc 把 `<AgentMsg>` 当作 HTML tag。修复：用反引号包裹 `` `Actor
 | `agent-runtime-node` | 首行为 `use std::sync::...`（无 crate doc） |
 | `agent-runtime-py` | 首行为 `use std::sync::Arc;`（无 crate doc） |
 
-已有 module doc 的 crate（不动）：`agent-runtime-model`、`agent-runtime-core`。
+已有 module doc 的 crate（不动）：`agent-runtime-model`、`agent-runtime-core`、`agent-runtime-providers`。
 
 ## 范围
 
