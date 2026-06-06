@@ -28,14 +28,22 @@ v0.9.2 作为卫星迭代，补齐文档和发布基础设施，使 Orchest 可�
 
 ### License 决策
 
-当前 README 标注"UNLICENSED — internal development"。crates.io 发布要求 `license` 字段非空。本迭代须选定 license 并落地：
+当前 README 标注"UNLICENSED — internal development"。crates.io 发布要求 license 元数据非空。
 
-**推荐**：`MIT OR Apache-2.0`（Rust 生态标准双许可；Apache-2.0 含专利保护条款，MIT 最宽松，双许可覆盖两类用户偏好）。
+**临时决策（待定）**：先用 **PolyForm Noncommercial 1.0.0** 作为占位非商用 license——允许任何非商用使用，明确禁止商业用途。最终 license 待确定后再替换，本迭代不锁定。
+
+选择理由：PolyForm Noncommercial 是专为软件起草的非商用 license（区别于面向内容的 CC BY-NC），措辞清晰。BSL（允许有限生产使用）和 Prosperity（30 天商用试用）都不够"纯非商用"，故排除。
+
+**SPDX 注意**：PolyForm Noncommercial 不在 SPDX 标准标识符列表中，因此 Cargo.toml 用 `license-file` 指向许可证文本，而非 `license = "..."`。`cargo publish --dry-run` 仍可通过。
+
+**workspace 路径注意**：`license-file` 相对各 crate 的 `Cargo.toml` 解析，且 `cargo publish` 只打包 crate 目录内的文件——根目录单个 `LICENSE` 不会被各 crate 收录。因此每个发布 crate 目录内需各有一份 `LICENSE`（复制或 symlink），Cargo.toml 写 `license-file = "LICENSE"`（指向 crate 自身目录内的副本）。
 
 落地清单：
-- 所有发布 crate 的 Cargo.toml 加 `license = "MIT OR Apache-2.0"`
-- 根目录新增 `LICENSE-MIT` 和 `LICENSE-APACHE`
-- README.md 的 License section 由"UNLICENSED"更新为正式许可说明
+- 根目录新增 `LICENSE`（PolyForm Noncommercial 1.0.0 全文）作为权威副本
+- 5 个发布 crate 目录各放一份 `LICENSE`（复制或 symlink 自根目录），Cargo.toml 加 `license-file = "LICENSE"`
+- README.md 的 License section 由"UNLICENSED"更新为非商用许可说明，并注明 license 待最终确定
+
+**⚠️ 发布永久性约束**：crates.io 某个版本号一旦发布，其记录的 license 永久固定（只能 yank 不可删，也不能用同一版本号换 license 重发）。因此：元数据补齐 + `cargo publish --dry-run` 验证（issue 002）现在即可完成；但 issue 007 中**真正 `cargo publish` 到公开 registry 的执行，须等 license 最终定稿后再触发**，避免占位 license 被永久记录在公开版本上。release workflow 本身（dry-run 验证）不受此约束，可正常落地。
 
 ### 版本号决策
 
@@ -99,7 +107,7 @@ crates.io 要求依赖已发布，发布须按顺序执行：
 
 ```toml
 description = "..."            # 一句话描述，≤ 80 字符
-license = "MIT OR Apache-2.0"
+license-file = "LICENSE"       # 占位非商用 license（待最终确定）
 repository = "https://github.com/jianantian/orchest"
 readme = "README.md"           # 指向 crate 自己的 README，或根目录 README
 categories = [...]             # 参见 crates.io/category_slugs，≤ 5 个
@@ -218,6 +226,8 @@ jobs:
 
 **Secret 依赖**：`CARGO_REGISTRY_TOKEN`（crates.io API token），须在 repo settings → secrets 配置（文档说明，workflow 通过 `${{ secrets.CARGO_REGISTRY_TOKEN }}` 引用，不 hardcode）。
 
+**发布执行延后**：受占位 license 的永久性约束（见上文 License 决策），本迭代只让 workflow 通过 dry-run 验证可达性，**不实际 push 正式 tag 触发公开发布**。正式 `cargo publish` 等 license 定稿后由维护者手动触发。
+
 ## 不在范围内
 
 - 完整的 book-style 文档站（mdBook / Docusaurus）——初版用 rustdoc + markdown guide
@@ -248,7 +258,7 @@ release workflow 的 cargo publish 步骤在 CI 验证阶段用 `--dry-run` 替�
 | Issue | 标题 | 依赖 | 范围 |
 |-------|------|------|------|
 | 001 | cargo-doc 清理 | — | 修复 agent_ref.rs rustdoc warning；补 aigc-providers / asr-providers / node / py 四个 crate 的 `//!` module-level doc |
-| 002 | Cargo 元数据 + license | — | 5 个发布 crate 的 description / license / repository / readme / categories / keywords；`LICENSE-MIT` / `LICENSE-APACHE`；binding crate `publish = false`；README License section 更新；版本号决策 + 版本号策略文档 |
+| 002 | Cargo 元数据 + license | — | 5 个发布 crate 的 description / license-file / repository / readme / categories / keywords；根目录 + 各发布 crate 目录 `LICENSE`（PolyForm Noncommercial 占位）；binding crate `publish = false`；README License section 更新；版本号决策 + 版本号策略文档 |
 | 003 | basic_agent_run 示例 | — | 新增 `examples/rust/basic_agent_run.rs`；注册到 `agent-runtime-core/Cargo.toml [[example]]` |
 | 004 | 入门教程 | 003 | `docs/guide/quickstart.md`，代码示例与 basic_agent_run 对应 |
 | 005 | SDK 文档 | — | `docs/guide/sdk-python.md`、`docs/guide/sdk-typescript.md` |
@@ -274,8 +284,8 @@ release workflow 的 cargo publish 步骤在 CI 验证阶段用 `--dry-run` 替�
 - [ ] `agent-runtime-aigc-providers` / `agent-runtime-asr-providers` / `agent-runtime-node` / `agent-runtime-py` 四个 crate 的 `lib.rs` 有 `//!` module-level doc
 
 ### License + 元数据
-- [ ] 根目录有 `LICENSE-MIT` 和 `LICENSE-APACHE`
-- [ ] `agent-runtime-model` / `core` / `providers` / `aigc-providers` / `asr-providers` 的 Cargo.toml 有 description / license / repository / readme
+- [ ] 根目录有 `LICENSE`（PolyForm Noncommercial 1.0.0），5 个发布 crate 目录各有一份 `LICENSE`（复制或 symlink）
+- [ ] `agent-runtime-model` / `core` / `providers` / `aigc-providers` / `asr-providers` 的 Cargo.toml 有 description / license-file / repository / readme
 - [ ] `agent-runtime-py` 和 `agent-runtime-node` 标记 `publish = false`
 - [ ] `docs/guide/versioning.md` 存在，含 semver 策略和迭代编号对应关系
 - [ ] `cargo publish --dry-run -p agent-runtime-model` 通过
@@ -294,7 +304,8 @@ release workflow 的 cargo publish 步骤在 CI 验证阶段用 `--dry-run` 替�
 ### 发布基础设施
 - [ ] `CHANGELOG.md` 存在，含 v0.1–v0.9.2 所有版本块
 - [ ] `.github/workflows/release.yml` 存在，tag push 触发，dry-run 验证通过
-- [ ] README.md License section 更新为正式许可声明
+- [ ] README.md License section 更新为非商用许可声明（注明 license 待最终确定）
+- [ ] 实际 `cargo publish` 到公开 crates.io 的执行**延后至 license 定稿后**（本迭代只验证 dry-run，不真正发布）
 
 ### CI 基线
 - [ ] `cargo test --workspace` 全绿
