@@ -35,9 +35,9 @@
 
 ## 规划中
 
-### [v0.9.2 — 文档 + 发布准备](./v0_9_2/prd.md)（卫星）
+### [v0.9.2 — 文档](./v0_9_2/prd.md)（卫星）
 
-API 文档、入门教程、SDK 文档、CHANGELOG、CI release workflow、crates.io 发布。
+API 文档（rustdoc 清理）、入门教程、进阶示例、Python/TS SDK 指南。纯文档迭代，不含发布准备。
 
 **依赖**：v0.9 已完成（示例和文档需要 SD API 就绪）
 
@@ -46,6 +46,18 @@ API 文档、入门教程、SDK 文档、CHANGELOG、CI release workflow、crate
 新增 `agent-runtime-tts-providers`，提供 TTS provider 统一封装、voice catalog、duplex streaming synthesis、audio format、usage、telemetry 和 `trace_id` 对齐。与 v0.9 主线并行，不改 core run loop。
 
 **依赖**：v0.9.1 ASR Provider Gateway 的音频 provider/gateway 设计模式
+
+### SDK 验证产品迭代（编号待定）
+
+用一个真实的简单产品 dogfood SDK，验证其完备性和易用性。验证结论可能反过来影响 API 形状，因此须排在公开发布之前。SDK 语言（Python / TS / Rust）与产品形态待单独规划。
+
+**依赖**：v0.9.2 文档（验证者参照文档上手）
+
+### v1.0 — 首次公开发布（规划）
+
+第一个公开发布到 crates.io 的版本。包含发布准备的全部内容：Cargo publish 元数据、license 定稿、release workflow、CHANGELOG、版本号策略文档。
+
+**依赖**：SDK 验证产品迭代完成（API 经真实产品验证后才发布）
 
 ### 依赖图
 
@@ -56,9 +68,14 @@ API 文档、入门教程、SDK 文档、CHANGELOG、CI release workflow、crate
 ✅ v0.8: Session + Guardrail
         + SD 基础通信层
             │
+            ▼
+   v0.9.2: 文档
             │
             ▼
-   v0.9.2: 文档 + 发布
+   SDK 验证产品迭代（dogfooding，编号待定）
+            │
+            ▼
+   v1.0: 首次公开发布（crates.io + release workflow + license 定稿）
 
 ✅ v0.9.1: ASR Provider Gateway（卫星，已完成）
    v0.9.3: TTS Provider Gateway（卫星，独立并行）
