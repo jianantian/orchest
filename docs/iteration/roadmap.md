@@ -26,6 +26,7 @@
 | v0.7 | 功能 | 扩展性地基 + Actor（Ractor PoC → 通过、Hook 框架、Agent-as-Tool + Handoff 两层语义、LLM Retry、Loop Detection、WorkerActor refactor、8 个使用示例） |
 | v0.8 | 功能 | 持久化 + 安全 + Supervised Delegation 基础（SessionStore + SQLite、Guardrail 四层框架、ApprovalMode、Multi-subscriber Events + Watcher + InjectCmd） |
 | v0.9 | 功能 | Supervised Delegation 端到端（Approval 枚举、结构化 ToolError、as_tool Builder、Steering API、LlmWatcher、supervisor 恢复、多 watcher FIFO、端到端示例） |
+| v0.9.1 | 卫星 | ASR Provider Gateway（`agent-runtime-asr-providers`、Volcengine/Aliyun adapter、duplex streaming、observability） |
 
 ## 迭代编号约定
 
@@ -39,12 +40,6 @@
 API 文档、入门教程、SDK 文档、CHANGELOG、CI release workflow、crates.io 发布。
 
 **依赖**：v0.9 已完成（示例和文档需要 SD API 就绪）
-
-### [v0.9.1 — ASR Provider Gateway](./v0_9_1/prd.md)（卫星）
-
-新增 `agent-runtime-asr-providers`，提供 ASR/STT provider 统一封装、routing、streaming transcript、telemetry 和 `trace_id` 对齐。与 v0.9 主线并行，不改 core run loop。
-
-**依赖**：`agent-runtime-providers` / `agent-runtime-aigc-providers` 的 provider/gateway 设计模式
 
 ### [v0.9.3 — TTS Provider Gateway](./v0_9_3/prd.md)（卫星）
 
@@ -65,7 +60,7 @@ API 文档、入门教程、SDK 文档、CHANGELOG、CI release workflow、crate
             ▼
    v0.9.2: 文档 + 发布
 
-   v0.9.1: ASR Provider Gateway（卫星，独立并行）
+✅ v0.9.1: ASR Provider Gateway（卫星，已完成）
    v0.9.3: TTS Provider Gateway（卫星，独立并行）
 ```
 
@@ -88,5 +83,5 @@ API 文档、入门教程、SDK 文档、CHANGELOG、CI release workflow、crate
 | Mid-run Steering | ~~只有 approval~~ → Steering API | ✅ v0.9 |
 | Supervised Delegation 完整 | ~~无~~ → LlmWatcher + supervisor 恢复 + 多 watcher FIFO | ✅ v0.9 |
 | Image AIGC Gateway | ~~无~~ → **v0.6.1 已完成** | ✅ |
-| ASR Provider Gateway | 无统一 ASR/STT provider crate | **v0.9.1** |
+| ASR Provider Gateway | ~~无~~ → **v0.9.1 已完成** | ✅ |
 | TTS Provider Gateway | 无统一 TTS provider crate | **v0.9.3** |
