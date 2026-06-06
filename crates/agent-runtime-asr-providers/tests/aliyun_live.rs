@@ -1,45 +1,36 @@
-#![cfg(feature = "volcengine")]
+#![cfg(feature = "aliyun")]
 
-use agent_runtime_asr_providers::providers::volcengine::{
-    VolcengineAsrAdapter, VolcengineAsrConfig,
-};
+use agent_runtime_asr_providers::providers::aliyun::{AliyunAsrAdapter, AliyunAsrConfig};
 use agent_runtime_asr_providers::traits::AsrProvider;
 use agent_runtime_asr_providers::types::*;
 use bytes::Bytes;
 
-fn get_config() -> Option<VolcengineAsrConfig> {
-    let api_key = std::env::var("VOLCENGINE_API_KEY").ok()?;
-    let resource_id = std::env::var("VOLCENGINE_RESOURCE_ID").ok()?;
-    Some(VolcengineAsrConfig {
-        model_name: "bigmodel_async".into(),
-        ws_url: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async".into(),
-        api_key,
-        access_key: std::env::var("VOLCENGINE_ACCESS_KEY").unwrap_or_default(),
-        resource_id,
-    })
+fn get_config() -> Option<AliyunAsrConfig> {
+    let api_key = std::env::var("ALIYUN_ASR_API_KEY").ok()?;
+    Some(AliyunAsrConfig::fun_asr_realtime(api_key))
 }
 
 #[ignore]
 #[tokio::test]
-async fn live_volcengine_streaming_silence() {
+async fn live_aliyun_streaming_silence() {
     let config = match get_config() {
         Some(c) => c,
         None => {
-            eprintln!("skipping: VOLCENGINE_API_KEY and VOLCENGINE_RESOURCE_ID not set");
+            eprintln!("skipping: ALIYUN_ASR_API_KEY not set");
             return;
         }
     };
 
-    let adapter = VolcengineAsrAdapter::new(config);
+    let adapter = AliyunAsrAdapter::new(config);
     let request = StreamingTranscribeRequest {
-        model: Some("volcengine/bigmodel_async".into()),
+        model: Some("aliyun/fun-asr-realtime".into()),
         format: StreamingAudioFormat::Pcm16 {
             sample_rate_hz: 16000,
             channels: 1,
         },
         timeline: AudioTimelineMode::ContinuousRealtime,
         options: TranscribeOptions {
-            trace_id: Some("live-test-silence".into()),
+            trace_id: Some("live-test-aliyun-silence".into()),
             ..Default::default()
         },
         compatibility: CompatibilityPolicy::Coerce,
@@ -51,7 +42,6 @@ async fn live_volcengine_streaming_silence() {
     stream.events.next().await; // RouteSelected
     stream.events.next().await; // Started
 
-    // Send 1 second of 16kHz 16-bit mono silence (32000 bytes)
     let silence = vec![0u8; 32000];
     stream
         .input
@@ -60,10 +50,10 @@ async fn live_volcengine_streaming_silence() {
         .unwrap();
 
     let final_output = stream.end_and_wait_final().await.unwrap();
-    assert_eq!(final_output.trace_id, "live-test-silence");
+    assert_eq!(final_output.trace_id, "live-test-aliyun-silence");
     assert_eq!(
         final_output.result.telemetry.model,
-        "volcengine/bigmodel_async"
+        "aliyun/fun-asr-realtime"
     );
     assert!(final_output.result.telemetry.latency_final_ms > 0);
 }

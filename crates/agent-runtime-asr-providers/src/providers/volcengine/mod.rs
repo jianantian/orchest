@@ -742,8 +742,10 @@ mod tests {
             resource_id: "res".into(),
         };
         let adapter = VolcengineAsrAdapter::new(config);
-        let mut options = TranscribeOptions::default();
-        options.hot_words = vec!["热词1".into(), "热词2".into()];
+        let options = TranscribeOptions {
+            hot_words: vec!["热词1".into(), "热词2".into()],
+            ..Default::default()
+        };
 
         let request = StreamingTranscribeRequest {
             model: Some("volcengine/bigmodel_async".into()),
@@ -774,11 +776,13 @@ mod tests {
             resource_id: "res".into(),
         };
         let adapter = VolcengineAsrAdapter::new(config);
-        let mut options = TranscribeOptions::default();
-        options.endpointing = Some(EndpointingOptions {
-            mode: EndpointingMode::AcousticSilence,
-            silence_timeout: Some(Duration::from_millis(500)),
-        });
+        let options = TranscribeOptions {
+            endpointing: Some(EndpointingOptions {
+                mode: EndpointingMode::AcousticSilence,
+                silence_timeout: Some(Duration::from_millis(500)),
+            }),
+            ..Default::default()
+        };
 
         let request = StreamingTranscribeRequest {
             model: Some("volcengine/bigmodel_async".into()),

@@ -1,3 +1,5 @@
+#![allow(dead_code, clippy::too_many_arguments)]
+
 use agent_runtime_asr_providers::error::{AsrError, AsrErrorCode};
 use agent_runtime_asr_providers::observability::AsrTelemetry;
 use agent_runtime_asr_providers::streaming::{AsrAudioSink, AsrEventStream, AsrStream};
