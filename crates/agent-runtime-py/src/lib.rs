@@ -21,9 +21,31 @@ use agent_runtime_core::tool::async_job::{JobHandle, JobStatus};
 use agent_runtime_core::tool::builtin::WriteFileTool;
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
-    JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
+    Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
 use agent_runtime_providers::{create_adapter_from_config, normalize_provider_model};
+
+fn resolve_approval(approval_str: Option<&str>, requires_approval: bool) -> Approval {
+    match approval_str {
+        Some("never") => Approval::Never,
+        Some("when_risky") => Approval::WhenRisky,
+        Some("always") => Approval::Always,
+        Some(other) => {
+            eprintln!("warning: unknown approval value '{other}', defaulting to WhenRisky");
+            Approval::WhenRisky
+        }
+        None => {
+            if requires_approval {
+                eprintln!(
+                    "warning: requires_approval is deprecated, use approval='always' instead"
+                );
+                Approval::Always
+            } else {
+                Approval::Never
+            }
+        }
+    }
+}
 
 #[pyclass]
 struct Agent {
@@ -55,7 +77,7 @@ struct PyToolDef {
     name: String,
     description: String,
     input_schema: Value,
-    requires_approval: bool,
+    approval: Approval,
     side_effect: bool,
     callback: Py<PyAny>,
 }
@@ -89,10 +111,8 @@ impl Tool for PyTool {
 
     async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let callback = &self.def.callback;
-        let input_str = serde_json::to_string(&input).map_err(|e| ToolError {
-            message: format!("failed to serialize input: {}", e),
-            code: None,
-        })?;
+        let input_str = serde_json::to_string(&input)
+            .map_err(|e| ToolError::fatal(format!("failed to serialize input: {}", e)))?;
 
         let result = Python::attach(|py| -> PyResult<Py<PyAny>> {
             let json_mod = py.import("json")?;
@@ -117,10 +137,7 @@ impl Tool for PyTool {
                 Ok(raw_result)
             }
         })
-        .map_err(|e| ToolError {
-            message: format!("Python tool error: {}", e),
-            code: None,
-        })?;
+        .map_err(|e| ToolError::fatal(format!("Python tool error: {}", e)))?;
 
         if let Some(job_handle) = py_async_job_handle(&result)? {
             return Ok(ToolOutput::AsyncJob(job_handle));
@@ -132,15 +149,10 @@ impl Tool for PyTool {
                 .call_method1("dumps", (result.bind(py),))?
                 .extract()
         })
-        .map_err(|e| ToolError {
-            message: format!("failed to serialize Python return value: {}", e),
-            code: None,
-        })?;
+        .map_err(|e| ToolError::fatal(format!("failed to serialize Python return value: {}", e)))?;
 
-        let value: Value = serde_json::from_str(&result_str).map_err(|e| ToolError {
-            message: format!("failed to parse Python return value: {}", e),
-            code: None,
-        })?;
+        let value: Value = serde_json::from_str(&result_str)
+            .map_err(|e| ToolError::fatal(format!("failed to parse Python return value: {}", e)))?;
 
         Ok(ToolOutput::Immediate(value))
     }
@@ -173,15 +185,13 @@ fn py_async_job_handle(result: &Py<PyAny>) -> Result<Option<JobHandle>, ToolErro
             let poll = Python::attach(|py| poll.clone_ref(py));
             Box::pin(async move {
                 Python::attach(|py| -> Result<JobStatus, ToolError> {
-                    let raw_value = poll.call0(py).map_err(|e| ToolError {
-                        message: format!("Python async job poll error: {}", e),
-                        code: None,
+                    let raw_value = poll.call0(py).map_err(|e| {
+                        ToolError::fatal(format!("Python async job poll error: {}", e))
                     })?;
 
                     // If the poll result is a coroutine, await it
-                    let inspect = py.import("inspect").map_err(|e| ToolError {
-                        message: format!("failed to import inspect: {}", e),
-                        code: None,
+                    let inspect = py.import("inspect").map_err(|e| {
+                        ToolError::fatal(format!("failed to import inspect: {}", e))
                     })?;
                     let is_coro: bool = inspect
                         .call_method1("iscoroutine", (raw_value.bind(py),))
@@ -189,35 +199,30 @@ fn py_async_job_handle(result: &Py<PyAny>) -> Result<Option<JobHandle>, ToolErro
                         .unwrap_or(false);
 
                     let value = if is_coro {
-                        let asyncio = py.import("asyncio").map_err(|e| ToolError {
-                            message: format!("failed to import asyncio: {}", e),
-                            code: None,
+                        let asyncio = py.import("asyncio").map_err(|e| {
+                            ToolError::fatal(format!("failed to import asyncio: {}", e))
                         })?;
                         asyncio
                             .call_method1("run", (raw_value.bind(py),))
-                            .map_err(|e| ToolError {
-                                message: format!("failed to await async poll: {}", e),
-                                code: None,
+                            .map_err(|e| {
+                                ToolError::fatal(format!("failed to await async poll: {}", e))
                             })?
                             .unbind()
                     } else {
                         raw_value
                     };
 
-                    let json_mod = py.import("json").map_err(|e| ToolError {
-                        message: format!("failed to import json: {}", e),
-                        code: None,
-                    })?;
+                    let json_mod = py
+                        .import("json")
+                        .map_err(|e| ToolError::fatal(format!("failed to import json: {}", e)))?;
                     let json_str: String = json_mod
                         .call_method1("dumps", (value.bind(py),))
                         .and_then(|v| v.extract())
-                        .map_err(|e| ToolError {
-                            message: format!("failed to serialize poll result: {}", e),
-                            code: None,
+                        .map_err(|e| {
+                            ToolError::fatal(format!("failed to serialize poll result: {}", e))
                         })?;
-                    let parsed: Value = serde_json::from_str(&json_str).map_err(|e| ToolError {
-                        message: format!("failed to parse poll result: {}", e),
-                        code: None,
+                    let parsed: Value = serde_json::from_str(&json_str).map_err(|e| {
+                        ToolError::fatal(format!("failed to parse poll result: {}", e))
                     })?;
 
                     match parsed.get("status").and_then(|v| v.as_str()) {
@@ -257,10 +262,7 @@ fn py_async_job_handle(result: &Py<PyAny>) -> Result<Option<JobHandle>, ToolErro
             webhook: None,
         }))
     })
-    .map_err(|e| ToolError {
-        message: format!("invalid Python async job return value: {}", e),
-        code: None,
-    })
+    .map_err(|e| ToolError::fatal(format!("invalid Python async job return value: {}", e)))
 }
 
 fn infer_schema_from_hints(py: Python<'_>, func: &Py<PyAny>) -> PyResult<Value> {
@@ -418,7 +420,11 @@ fn parse_approval_mode(value: Option<&str>) -> PyResult<ApprovalMode> {
         None | Some("per_tool") | Some("PerTool") => Ok(ApprovalMode::PerTool),
         Some("none") | Some("None") => Ok(ApprovalMode::None),
         Some("all") | Some("All") => Ok(ApprovalMode::All),
-        Some("side_effect_only") | Some("SideEffectOnly") => Ok(ApprovalMode::SideEffectOnly),
+        #[allow(deprecated)]
+        Some("side_effect_only") | Some("SideEffectOnly") => {
+            eprintln!("warning: side_effect_only is deprecated, use per_tool with approval='when_risky' instead");
+            Ok(ApprovalMode::SideEffectOnly)
+        }
         Some(other) => Err(PyRuntimeError::new_err(format!(
             "invalid approval_mode '{other}'; expected per_tool|none|all|side_effect_only"
         ))),
@@ -504,6 +510,7 @@ impl Agent {
             handoffs: vec![],
             session_store: None,
             session_id: None,
+            supervision_strategy: Default::default(),
         })
     }
 
@@ -519,7 +526,7 @@ impl Agent {
                 def: tool_def.clone(),
                 metadata: ToolMetadata {
                     side_effect: tool_def.side_effect,
-                    requires_approval: tool_def.requires_approval,
+                    approval: tool_def.approval,
                     cost_hint: None,
                     timeout: None,
                     max_output_tokens: None,
@@ -602,53 +609,57 @@ impl Agent {
         self.api_url = api_url;
     }
 
-    /// Register a tool. Supports both `@agent.tool` (bare decorator) and
-    /// `@agent.tool(requires_approval=True, side_effect=True)` (decorator factory).
-    #[pyo3(signature = (func=None, requires_approval=false, side_effect=false))]
+    /// Register a tool. Supports `@agent.tool` (bare decorator).
+    ///
+    /// `requires_approval` is deprecated — use `approval` ("never"/"when_risky"/"always") instead.
+    #[pyo3(signature = (func=None, requires_approval=false, side_effect=false, approval=None))]
+    #[allow(clippy::too_many_arguments)] // justified: backward-compat requires_approval + new approval param
     fn tool(
         &mut self,
         py: Python<'_>,
         func: Option<Py<PyAny>>,
         requires_approval: bool,
         side_effect: bool,
+        approval: Option<String>,
     ) -> PyResult<Py<PyAny>> {
         if let Some(func) = func {
-            // Direct decorator: @agent.tool
             let name: String = func.getattr(py, "__name__")?.extract(py)?;
             let description: String = func
                 .getattr(py, "__doc__")
                 .and_then(|d| d.extract(py))
                 .unwrap_or_else(|_| format!("Tool: {}", name));
             let input_schema = infer_schema_from_hints(py, &func)?;
+            let resolved = resolve_approval(approval.as_deref(), requires_approval);
 
             self.tools.push(PyToolDef {
                 name,
                 description,
                 input_schema,
-                requires_approval,
+                approval: resolved,
                 side_effect,
                 callback: func.clone_ref(py),
             });
 
             Ok(func)
         } else {
-            // Decorator factory syntax @agent.tool(requires_approval=True) is not
-            // supported due to pyo3 limitations with returning Python callables.
-            // Use agent.register_tool(func, ...) instead.
             Err(PyRuntimeError::new_err(
-                "Use @agent.tool directly for decorator syntax. For metadata, use agent.register_tool(func, requires_approval=True, side_effect=True).",
+                "Use @agent.tool directly for decorator syntax. For metadata, use agent.register_tool(func, approval=\"always\", side_effect=True).",
             ))
         }
     }
 
     /// Explicitly register a tool with metadata options.
-    #[pyo3(signature = (func, requires_approval=false, side_effect=false))]
+    ///
+    /// `requires_approval` is deprecated — use `approval` ("never"/"when_risky"/"always") instead.
+    #[pyo3(signature = (func, requires_approval=false, side_effect=false, approval=None))]
+    #[allow(clippy::too_many_arguments)] // justified: backward-compat requires_approval + new approval param
     fn register_tool(
         &mut self,
         py: Python<'_>,
         func: Py<PyAny>,
         requires_approval: bool,
         side_effect: bool,
+        approval: Option<String>,
     ) -> PyResult<()> {
         let name: String = func.getattr(py, "__name__")?.extract(py)?;
         let description: String = func
@@ -656,12 +667,13 @@ impl Agent {
             .and_then(|d| d.extract(py))
             .unwrap_or_else(|_| format!("Tool: {}", name));
         let input_schema = infer_schema_from_hints(py, &func)?;
+        let resolved = resolve_approval(approval.as_deref(), requires_approval);
 
         self.tools.push(PyToolDef {
             name,
             description,
             input_schema,
-            requires_approval,
+            approval: resolved,
             side_effect,
             callback: func,
         });
@@ -697,9 +709,9 @@ impl Agent {
                 .get(&mapper_key)
                 .and_then(Value::as_str)
                 .map(String::from)
-                .ok_or_else(|| ToolError {
-                    message: format!("missing required parameter '{mapper_key}'"),
-                    code: Some("MISSING_PARAM".into()),
+                .ok_or_else(|| {
+                    ToolError::fatal(format!("missing required parameter '{mapper_key}'"))
+                        .with_code("MISSING_PARAM")
                 })
         });
         let output_mapper = Arc::new(|details: Value| {
@@ -709,24 +721,29 @@ impl Agent {
                 .unwrap_or_else(|| details.clone())
         });
 
-        self.native_tools.push(child_config.as_tool(
-            &name,
-            &description,
-            child_model,
-            child_registry,
-            input_mapper,
-            output_mapper,
-        ));
+        self.native_tools.push(
+            child_config
+                .as_tool(&name, &description)
+                .model(child_model)
+                .registry(child_registry)
+                .input_mapper(move |v| input_mapper(v))
+                .output_extractor(move |v| output_mapper(v))
+                .build(),
+        );
 
         Ok(())
     }
 
-    #[pyo3(signature = (requires_approval=true))]
-    fn register_write_file_tool(&mut self, requires_approval: bool) -> PyResult<()> {
+    /// `requires_approval` is deprecated — use `approval` ("never"/"when_risky"/"always") instead.
+    #[pyo3(signature = (requires_approval=true, approval=None))]
+    fn register_write_file_tool(
+        &mut self,
+        requires_approval: bool,
+        approval: Option<String>,
+    ) -> PyResult<()> {
+        let resolved = resolve_approval(approval.as_deref(), requires_approval);
         self.native_tools
-            .push(Arc::new(WriteFileTool::new_with_approval(
-                requires_approval,
-            )));
+            .push(Arc::new(WriteFileTool::new_with_approval(resolved)));
         Ok(())
     }
 

@@ -16,7 +16,8 @@ use agent_runtime_core::run::{AgentConfig, AgentRun, ApprovalMode, RunId, Watche
 use agent_runtime_core::session::{InMemorySessionStore, SessionSnapshot, SessionStore};
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
-    JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput, ToolSource,
+    Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput,
+    ToolSource,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -191,7 +192,7 @@ impl Tool for WriteFileTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: true,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -218,6 +219,7 @@ impl ToolInputGuardrail for BannedKeywordGuardrail {
 
 #[tokio::test]
 async fn guardrail_and_approval_coexist() {
+    #[allow(deprecated)]
     let config = AgentConfig::builder("mock/mock")
         .system_prompt("assistant")
         .max_steps(5)
@@ -521,7 +523,7 @@ impl Tool for PingTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -700,6 +702,7 @@ async fn all_v08_features_combined() {
     const SID: &str = "combined-session";
     let tool_completions = Arc::new(AtomicU32::new(0));
 
+    #[allow(deprecated)]
     let config = AgentConfig::builder("mock/mock")
         .system_prompt("combined feature assistant")
         .max_steps(10)

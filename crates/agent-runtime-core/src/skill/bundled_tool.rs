@@ -72,43 +72,39 @@ impl SkillBundledTool {
         executor: Arc<dyn ScriptExecutor>,
     ) -> Result<Self, ToolError> {
         if !ALLOWED_EXECUTABLES.contains(&def.executable.as_str()) {
-            return Err(ToolError {
-                message: format!(
-                    "executable '{}' not in whitelist: {:?}",
-                    def.executable, ALLOWED_EXECUTABLES
-                ),
-                code: Some("INVALID_EXECUTABLE".into()),
-            });
+            return Err(ToolError::fatal(format!(
+                "executable '{}' not in whitelist: {:?}",
+                def.executable, ALLOWED_EXECUTABLES
+            ))
+            .with_code("INVALID_EXECUTABLE"));
         }
 
         let script_abs = skill_dir.join(&def.script);
-        let script_resolved = script_abs.canonicalize().map_err(|e| ToolError {
-            message: format!(
+        let script_resolved = script_abs.canonicalize().map_err(|e| {
+            ToolError::fatal(format!(
                 "failed to resolve script path '{}': {}",
                 def.script.display(),
                 e
-            ),
-            code: Some("SCRIPT_NOT_FOUND".into()),
+            ))
+            .with_code("SCRIPT_NOT_FOUND")
         })?;
 
-        let skill_dir_resolved = skill_dir.canonicalize().map_err(|e| ToolError {
-            message: format!(
+        let skill_dir_resolved = skill_dir.canonicalize().map_err(|e| {
+            ToolError::fatal(format!(
                 "failed to resolve skill dir '{}': {}",
                 skill_dir.display(),
                 e
-            ),
-            code: Some("SKILL_DIR_ERROR".into()),
+            ))
+            .with_code("SKILL_DIR_ERROR")
         })?;
 
         if !script_resolved.starts_with(&skill_dir_resolved) {
-            return Err(ToolError {
-                message: format!(
-                    "script path '{}' escapes skill directory '{}'",
-                    def.script.display(),
-                    skill_dir.display()
-                ),
-                code: Some("PATH_TRAVERSAL".into()),
-            });
+            return Err(ToolError::fatal(format!(
+                "script path '{}' escapes skill directory '{}'",
+                def.script.display(),
+                skill_dir.display()
+            ))
+            .with_code("PATH_TRAVERSAL"));
         }
 
         Ok(Self {
@@ -120,7 +116,7 @@ impl SkillBundledTool {
             input_schema: def.input_schema.clone(),
             metadata: ToolMetadata {
                 side_effect: false,
-                requires_approval: false,
+                approval: crate::tool::Approval::Never,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,
@@ -142,9 +138,9 @@ impl SkillBundledTool {
         parent_run_id: Option<crate::run::RunId>,
         run_depth: u32,
     ) -> Result<(String, String, i32), ToolError> {
-        let tempdir = tempfile::tempdir().map_err(|e| ToolError {
-            message: format!("failed to create temporary work dir: {e}"),
-            code: Some("TEMP_DIR_ERROR".into()),
+        let tempdir = tempfile::tempdir().map_err(|e| {
+            ToolError::fatal(format!("failed to create temporary work dir: {e}"))
+                .with_code("TEMP_DIR_ERROR")
         })?;
         let mut env = CapabilityValidator::execution_env(self.capabilities.as_ref());
         if let Some(parent_run_id) = parent_run_id {
@@ -173,9 +169,10 @@ impl SkillBundledTool {
                 .env_manager
                 .ensure_python_env(&manifest_for_env)
                 .await
-                .map_err(|e| ToolError {
-                    message: e.message,
-                    code: e.code,
+                .map_err(|e| {
+                    let mut err = ToolError::fatal(e.message);
+                    err.code = e.code;
+                    err
                 })?;
             executable = env_dir
                 .join("bin")
@@ -189,17 +186,19 @@ impl SkillBundledTool {
                 .env_manager
                 .ensure_node_env(&manifest_for_env)
                 .await
-                .map_err(|e| ToolError {
-                    message: e.message,
-                    code: e.code,
+                .map_err(|e| {
+                    let mut err = ToolError::fatal(e.message);
+                    err.code = e.code;
+                    err
                 })?;
             let sdk_dir = self
                 .env_manager
                 .ensure_builtin_node_sdk()
                 .await
-                .map_err(|e| ToolError {
-                    message: e.message,
-                    code: e.code,
+                .map_err(|e| {
+                    let mut err = ToolError::fatal(e.message);
+                    err.code = e.code;
+                    err
                 })?;
             env.insert(
                 "NODE_PATH".into(),
@@ -214,9 +213,10 @@ impl SkillBundledTool {
                 .env_manager
                 .ensure_builtin_node_sdk()
                 .await
-                .map_err(|e| ToolError {
-                    message: e.message,
-                    code: e.code,
+                .map_err(|e| {
+                    let mut err = ToolError::fatal(e.message);
+                    err.code = e.code;
+                    err
                 })?;
             env.insert("NODE_PATH".into(), sdk_dir.to_string_lossy().to_string());
         }
@@ -239,9 +239,10 @@ impl SkillBundledTool {
             .executor
             .execute(&tool, &self.script, extra_args, input_json, &ctx)
             .await
-            .map_err(|e| ToolError {
-                message: e.message,
-                code: e.code,
+            .map_err(|e| {
+                let mut err = ToolError::fatal(e.message);
+                err.code = e.code;
+                err
             })?;
         Ok((output.stdout, output.stderr, output.exit_code))
     }
@@ -270,9 +271,9 @@ impl Tool for SkillBundledTool {
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        let input_json = serde_json::to_vec(&input).map_err(|e| ToolError {
-            message: format!("failed to serialize input: {}", e),
-            code: Some("SERIALIZATION_ERROR".into()),
+        let input_json = serde_json::to_vec(&input).map_err(|e| {
+            ToolError::fatal(format!("failed to serialize input: {}", e))
+                .with_code("SERIALIZATION_ERROR")
         })?;
 
         let (stdout, stderr, exit_code) = self
@@ -290,24 +291,26 @@ impl Tool for SkillBundledTool {
         }
 
         if exit_code != 0 {
-            return Err(ToolError {
-                message: format!("script exited with code {}: {}", exit_code, stderr.trim()),
-                code: Some("NON_ZERO_EXIT".into()),
-            });
+            return Err(ToolError::fatal(format!(
+                "script exited with code {}: {}",
+                exit_code,
+                stderr.trim()
+            ))
+            .with_code("NON_ZERO_EXIT"));
         }
 
-        let parsed: Value = serde_json::from_str(stdout.trim()).map_err(|e| ToolError {
-            message: format!("failed to parse script stdout as JSON: {}", e),
-            code: Some("INVALID_OUTPUT".into()),
+        let parsed: Value = serde_json::from_str(stdout.trim()).map_err(|e| {
+            ToolError::fatal(format!("failed to parse script stdout as JSON: {}", e))
+                .with_code("INVALID_OUTPUT")
         })?;
 
         if parsed.get("__async_job").and_then(|v| v.as_bool()) == Some(true) {
             let job_id = parsed
                 .get("job_id")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError {
-                    message: "async job response missing 'job_id'".into(),
-                    code: Some("MISSING_JOB_ID".into()),
+                .ok_or_else(|| {
+                    ToolError::fatal("async job response missing 'job_id'")
+                        .with_code("MISSING_JOB_ID")
                 })?
                 .to_string();
 
@@ -341,21 +344,18 @@ impl Tool for SkillBundledTool {
                     }
 
                     if exit_code != 0 {
-                        return Err(ToolError {
-                            message: format!(
-                                "poll script exited with code {}: {}",
-                                exit_code,
-                                stderr.trim()
-                            ),
-                            code: Some("NON_ZERO_EXIT".into()),
-                        });
+                        return Err(ToolError::fatal(format!(
+                            "poll script exited with code {}: {}",
+                            exit_code,
+                            stderr.trim()
+                        ))
+                        .with_code("NON_ZERO_EXIT"));
                     }
 
-                    let parsed: Value =
-                        serde_json::from_str(stdout.trim()).map_err(|e| ToolError {
-                            message: format!("failed to parse poll output: {}", e),
-                            code: Some("INVALID_OUTPUT".into()),
-                        })?;
+                    let parsed: Value = serde_json::from_str(stdout.trim()).map_err(|e| {
+                        ToolError::fatal(format!("failed to parse poll output: {}", e))
+                            .with_code("INVALID_OUTPUT")
+                    })?;
 
                     let status = parsed
                         .get("status")
@@ -519,6 +519,7 @@ echo '{"greeting": "hello"}'
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
         let result = tool
             .execute(serde_json::json!({"name": "world"}), &ctx)
@@ -560,6 +561,7 @@ echo '{"greeting": "hello"}'
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
         let result = tool.execute(serde_json::json!({}), &ctx).await;
         assert!(result.is_err());
@@ -601,6 +603,7 @@ fi
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
         let result = tool.execute(serde_json::json!({}), &ctx).await;
         assert!(result.is_ok());
@@ -670,6 +673,7 @@ echo "{\"visible\":\"$ORCHEST_VISIBLE_ENV\",\"hidden\":\"$ORCHEST_HIDDEN_ENV\",\
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
         };
         let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
         let ToolOutput::Immediate(value) = result else {

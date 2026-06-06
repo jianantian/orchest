@@ -10,9 +10,10 @@ use tokio::task::JoinHandle;
 
 use crate::events::RuntimeEvent;
 
-use super::actor::{AgentMsg, CancelCmd, InjectCmd};
+use super::actor::{AgentMsg, CancelCmd, InjectCmd, SteerCmd};
 use super::config::RunId;
-use super::watcher::{Watcher, WatcherAction};
+use super::supervisor::SupervisorMsg;
+use super::watcher::Watcher;
 
 pub type EventReceiver = mpsc::Receiver<RuntimeEvent>;
 
@@ -54,6 +55,7 @@ pub struct RunHandle {
     /// Background task that owns the actor lifecycle.
     pub(crate) actor_join: JoinHandle<()>,
     pub(crate) approval_bus: ApprovalBus,
+    pub(crate) supervisor_ref: Arc<Mutex<Option<ActorRef<SupervisorMsg>>>>,
 }
 
 impl RunHandle {
@@ -65,6 +67,28 @@ impl RunHandle {
         if let Ok(guard) = self.actor_ref.lock() {
             if let Some(ref aref) = *guard {
                 let _ = aref.cast(AgentMsg::Cancel(CancelCmd { reason: None }));
+            }
+        }
+    }
+
+    /// Inject a user-role message into the running agent's conversation.
+    pub fn inject_message(&self, msg: &str) {
+        if let Ok(guard) = self.actor_ref.lock() {
+            if let Some(ref aref) = *guard {
+                let _ = aref.cast(AgentMsg::Inject(InjectCmd {
+                    message: msg.to_string(),
+                }));
+            }
+        }
+    }
+
+    /// Inject a system-role steering instruction into the running agent's conversation.
+    pub fn steer(&self, instruction: &str) {
+        if let Ok(guard) = self.actor_ref.lock() {
+            if let Some(ref aref) = *guard {
+                let _ = aref.cast(AgentMsg::Steer(SteerCmd {
+                    instruction: instruction.to_string(),
+                }));
             }
         }
     }
@@ -93,32 +117,25 @@ impl RunHandle {
 
     /// Attach a watcher that receives events and can inject messages or abort the run.
     pub async fn attach_watcher(&self, watcher: Arc<dyn Watcher>, capacity: usize) {
-        let mut rx = self.subscribe_events(capacity).await;
-        let actor_ref = Arc::clone(&self.actor_ref);
-        tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                match watcher.on_event(&event).await {
-                    WatcherAction::Continue => {}
-                    WatcherAction::Inject(msg) => {
-                        if let Ok(guard) = actor_ref.lock() {
-                            if let Some(ref aref) = *guard {
-                                let _ = aref.cast(AgentMsg::Inject(InjectCmd { message: msg }));
-                            }
-                        }
-                    }
-                    WatcherAction::Abort(reason) => {
-                        if let Ok(guard) = actor_ref.lock() {
-                            if let Some(ref aref) = *guard {
-                                let _ = aref.cast(AgentMsg::Cancel(CancelCmd {
-                                    reason: Some(reason),
-                                }));
-                            }
-                        }
-                        break;
-                    }
-                }
+        loop {
+            let notified = self.ready.notified();
+            let supervisor_ref = self
+                .supervisor_ref
+                .lock()
+                .ok()
+                .and_then(|guard| guard.clone());
+            if let Some(sup_ref) = supervisor_ref {
+                let (ack_tx, ack_rx) = oneshot::channel();
+                let _ = sup_ref.cast(SupervisorMsg::RegisterWatcher(
+                    Arc::clone(&watcher),
+                    capacity,
+                    ack_tx,
+                ));
+                let _ = ack_rx.await;
+                return;
             }
-        });
+            notified.await;
+        }
     }
 
     /// Route an approval response to any run in this run tree.

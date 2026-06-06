@@ -304,7 +304,6 @@ impl RunHandle {
 - Watcher LLM 实现（watcher 回调中调用另一个模型做判断）→ v0.9
 - Mid-run Steering 的 `RunHandle::steer()` / 公共 `inject_message()` API → v0.9（v0.8 的 `Inject` 是内部机制，不作为公共 API 暴露）
 - Supervised Delegation 完整实现（watcher 中途干预、崩溃恢复完整流程）→ v0.9
-- Provider 扩展 → v0.9
 - `AgentMsg::Steer` 实现（保留 stub）→ v0.9
 
 ## 依赖

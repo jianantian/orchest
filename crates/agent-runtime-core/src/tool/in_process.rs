@@ -80,6 +80,7 @@ impl Tool for InProcessTool {
             webhook_base_url: ctx.webhook_base_url.clone(),
             approval_bus: ctx.approval_bus.clone(),
             remaining_budget: ctx.remaining_budget.clone(),
+            parent_messages: ctx.parent_messages.clone(),
         };
         (self.callback)(input, ctx_owned).await
     }

@@ -69,8 +69,26 @@ class ToolRegistration(TypedDict):
     name: str
     description: str
     input_schema: JsonSchema
-    requires_approval: NotRequired[bool]
+    requires_approval: NotRequired[bool]  # Deprecated: use approval instead
     side_effect: NotRequired[bool]
+    approval: NotRequired[str]  # "never" | "when_risky" | "always"
+
+
+class ToolMetadata(TypedDict):
+    side_effect: bool
+    approval: str
+    cost_hint: JsonValue
+    timeout: JsonValue
+    max_output_tokens: int | None
+    source: JsonValue
+
+
+class ToolExecutionError(TypedDict):
+    message: str
+    kind: str
+    retry: str
+    code: str | None
+    next_step: str | None
 
 
 class RunStartedEvent(TypedDict):
@@ -105,7 +123,7 @@ class ModelCallCompletedEvent(TypedDict):
 class ToolCallStartedEvent(TypedDict):
     type: Literal["tool_call_started"]
     tool: str
-    source: JsonValue
+    metadata: ToolMetadata
     input: JsonValue
     run_depth: int
     child_run_id: str | None
@@ -132,7 +150,7 @@ class ToolCallCompletedEvent(TypedDict):
 class ToolCallFailedEvent(TypedDict):
     type: Literal["tool_call_failed"]
     tool: str
-    error: str
+    error: ToolExecutionError
     run_depth: int
     child_run_id: str | None
 
@@ -276,6 +294,13 @@ class RunFailedEvent(TypedDict):
     child_run_id: str | None
 
 
+class RunRestartedEvent(TypedDict):
+    type: Literal["run_restarted"]
+    attempt: int
+    run_depth: int
+    child_run_id: str | None
+
+
 RuntimeEvent: TypeAlias = (
     RunStartedEvent
     | ModelCallStartedEvent
@@ -301,6 +326,7 @@ RuntimeEvent: TypeAlias = (
     | SubAgentStartedEvent
     | SubAgentCompletedEvent
     | SubAgentFailedEvent
+    | RunRestartedEvent
     | RunCompletedEvent
     | RunFailedEvent
 )
@@ -334,12 +360,14 @@ class Agent:
         func: Callable[..., Any] | None = None,
         requires_approval: bool = False,
         side_effect: bool = False,
+        approval: str | None = None,
     ) -> Callable[..., Any]: ...
     def register_tool(
         self,
         func: Callable[..., Any],
         requires_approval: bool = False,
         side_effect: bool = False,
+        approval: str | None = None,
     ) -> None: ...
     def register_agent_tool(
         self,
@@ -348,7 +376,11 @@ class Agent:
         agent: Agent,
         input_key: str | None = None,
     ) -> None: ...
-    def register_write_file_tool(self, requires_approval: bool = True) -> None: ...
+    def register_write_file_tool(
+        self,
+        requires_approval: bool = True,
+        approval: str | None = None,
+    ) -> None: ...
     def run_sync(self, input: str) -> list[RuntimeEvent]: ...
     def run(self, input: str) -> list[RuntimeEvent]: ...
     def respond_approval(self, run_id_str: str, approved: bool) -> None: ...

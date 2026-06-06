@@ -11,8 +11,8 @@ use agent_runtime_core::model::{
 };
 use agent_runtime_core::run::{AgentConfig, AgentRun, Watcher, WatcherAction};
 use agent_runtime_core::tool::{
-    registry::ToolRegistry, JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata,
-    ToolOutput, ToolSource,
+    registry::ToolRegistry, Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError,
+    ToolMetadata, ToolOutput, ToolSource,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -131,7 +131,7 @@ impl Tool for QueryTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,

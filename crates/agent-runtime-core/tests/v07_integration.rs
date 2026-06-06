@@ -14,7 +14,7 @@ use agent_runtime_core::model::{
 use agent_runtime_core::run::{AgentConfig, AgentRun, BackoffStrategy, RetryPolicy};
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
-    Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
+    Approval, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -138,7 +138,7 @@ impl Tool for EchoSearchTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -519,22 +519,21 @@ async fn agent_as_tool_emits_sub_agent_events() {
         .build()
         .unwrap();
 
-    let summariser_tool = child_config.as_tool(
-        "summariser",
-        "Summarises text",
-        Arc::new(ChildAgentModel),
-        ToolRegistry::new(),
-        Arc::new(|input: Value| {
+    let summariser_tool = child_config
+        .as_tool("summariser", "Summarises text")
+        .model(Arc::new(ChildAgentModel))
+        .registry(ToolRegistry::new())
+        .input_mapper(|input: Value| {
             input
                 .get("input")
                 .and_then(Value::as_str)
                 .map(str::to_string)
-                .ok_or_else(|| ToolError { message: "missing input".into(), code: None })
-        }),
-        Arc::new(|details: Value| {
+                .ok_or_else(|| ToolError::fatal("missing input"))
+        })
+        .output_extractor(|details: Value| {
             json!({"output": details.get("output").cloned().unwrap_or_else(|| details.clone())})
-        }),
-    );
+        })
+        .build();
 
     let parent_config = AgentConfig::builder("mock/parent")
         .system_prompt("research assistant")

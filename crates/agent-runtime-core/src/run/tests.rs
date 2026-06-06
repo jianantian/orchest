@@ -8,14 +8,14 @@ use crate::model::{
 use crate::tool::async_job::{JobHandle, JobStatus};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{
-    JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput,
-    ToolSource,
+    Approval, JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolMetadata,
+    ToolOutput, ToolSource,
 };
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 struct FakeModelAdapter {
     call_count: AtomicU32,
@@ -116,6 +116,7 @@ fn test_config() -> AgentConfig {
         handoffs: vec![],
         session_store: None,
         session_id: None,
+        supervision_strategy: Default::default(),
     }
 }
 
@@ -227,21 +228,21 @@ impl ModelAdapter for ToolCallModelAdapter {
 
 struct FakeTool {
     name: &'static str,
-    requires_approval: bool,
+    approval: Approval,
 }
 
 impl FakeTool {
     fn echo() -> Self {
         Self {
             name: "echo",
-            requires_approval: false,
+            approval: Approval::Never,
         }
     }
 
     fn guarded(name: &'static str) -> Self {
         Self {
             name,
-            requires_approval: true,
+            approval: Approval::Always,
         }
     }
 }
@@ -261,24 +262,23 @@ impl Tool for FakeTool {
         None
     }
     fn metadata(&self) -> &ToolMetadata {
-        if self.requires_approval {
-            &ToolMetadata {
+        match self.approval {
+            Approval::Always => &ToolMetadata {
                 side_effect: true,
-                requires_approval: true,
+                approval: Approval::Always,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,
                 source: ToolSource::InProcess,
-            }
-        } else {
-            &ToolMetadata {
+            },
+            _ => &ToolMetadata {
                 side_effect: false,
-                requires_approval: false,
+                approval: Approval::Never,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,
                 source: ToolSource::InProcess,
-            }
+            },
         }
     }
     async fn execute(
@@ -397,7 +397,7 @@ impl Tool for StructuredTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -605,7 +605,7 @@ impl Tool for AsyncTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -925,7 +925,7 @@ impl Tool for WebhookTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -940,10 +940,9 @@ impl Tool for WebhookTool {
         let job_id = uuid::Uuid::new_v4().to_string();
         let url = format!(
             "{}/webhooks/async-job/{}",
-            ctx.webhook_base_url.as_ref().ok_or_else(|| ToolError {
-                message: "missing webhook base url".into(),
-                code: None,
-            })?,
+            ctx.webhook_base_url
+                .as_ref()
+                .ok_or_else(|| ToolError::fatal("missing webhook base url"))?,
             job_id
         );
         tokio::spawn(async move {
@@ -1122,7 +1121,7 @@ async fn allowed_tools_filters_visibility_and_permits_execution() {
     registry
         .register(Arc::new(FakeTool {
             name: "secret",
-            requires_approval: false,
+            approval: Approval::Never,
         }))
         .unwrap();
 
@@ -1155,7 +1154,7 @@ async fn allowed_tools_denies_disallowed_tool_by_name() {
     registry
         .register(Arc::new(FakeTool {
             name: "secret",
-            requires_approval: false,
+            approval: Approval::Never,
         }))
         .unwrap();
 
@@ -1169,7 +1168,7 @@ async fn allowed_tools_denies_disallowed_tool_by_name() {
 
     assert!(
             events.iter().any(
-                |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error == "tool not allowed")
+                |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error.message == "tool not allowed")
             ),
             "should emit ToolCallFailed with 'tool not allowed'"
         );
@@ -1201,7 +1200,7 @@ async fn allowed_tools_empty_list_denies_all() {
     handle.wait().await;
 
     assert!(events.iter().any(
-        |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error == "tool not allowed")
+        |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error.message == "tool not allowed")
     ),);
 }
 
@@ -1238,7 +1237,7 @@ impl SlowTool {
         Self {
             metadata: ToolMetadata {
                 side_effect: false,
-                requires_approval: false,
+                approval: Approval::Never,
                 cost_hint: None,
                 timeout: Some(Duration::from_millis(50)),
                 max_output_tokens: None,
@@ -1350,7 +1349,7 @@ async fn tool_metadata_timeout_enforced() {
 
     assert!(
             events.iter().any(
-                |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error == "tool execution timed out")
+                |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error.message == "tool execution timed out")
             ),
             "should emit ToolCallFailed with timeout error"
         );
@@ -1371,7 +1370,7 @@ impl BigOutputTool {
         Self {
             metadata: ToolMetadata {
                 side_effect: false,
-                requires_approval: false,
+                approval: Approval::Never,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: Some(10),
@@ -1516,7 +1515,7 @@ async fn max_tool_calls_boundary_enforced() {
     assert_eq!(completed_count, 2, "should execute exactly max_tool_calls");
 
     let budget_exceeded = events.iter().any(
-            |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error == "tool call budget exceeded"),
+            |e| matches!(e, RuntimeEvent::ToolCallFailed { error, .. } if error.message == "tool call budget exceeded"),
         );
     assert!(
         budget_exceeded,
@@ -2076,14 +2075,13 @@ fn make_spawn_sub_tool() -> Arc<dyn Tool> {
     config.budget.max_tokens = Some(50);
     config.budget.max_tool_calls = Some(5);
     config.budget.max_duration = Some(Duration::from_secs(10));
-    config.as_tool(
-        "spawn_sub",
-        "spawn a sub-agent",
-        Arc::new(SubAgentApprovalModel),
-        child_registry,
-        Arc::new(|_| Ok("child with approval".into())),
-        Arc::new(|details| details.get("output").cloned().unwrap_or(details.clone())),
-    )
+    config
+        .as_tool("spawn_sub", "spawn a sub-agent")
+        .model(Arc::new(SubAgentApprovalModel))
+        .registry(child_registry)
+        .input_mapper(|_| Ok("child with approval".into()))
+        .output_extractor(|details| details.get("output").cloned().unwrap_or(details.clone()))
+        .build()
 }
 
 #[tokio::test]
@@ -2495,7 +2493,7 @@ impl Tool for MustNotRunTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -3200,7 +3198,7 @@ impl Tool for GuardedNamedTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: true,
-            requires_approval: true,
+            approval: Approval::Always,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -3220,10 +3218,10 @@ impl Tool for GuardedNamedTool {
 
 use crate::run::ApprovalMode;
 
-fn meta(requires_approval: bool, side_effect: bool) -> ToolMetadata {
+fn meta(approval: Approval, side_effect: bool) -> ToolMetadata {
     ToolMetadata {
         side_effect,
-        requires_approval,
+        approval,
         cost_hint: None,
         timeout: None,
         max_output_tokens: None,
@@ -3232,11 +3230,13 @@ fn meta(requires_approval: bool, side_effect: bool) -> ToolMetadata {
 }
 
 #[test]
-fn approval_mode_per_tool_uses_flag() {
+fn approval_mode_per_tool_uses_enum() {
     let mut rc = config::RuntimeConfig::default();
     rc.approval_mode = ApprovalMode::PerTool;
-    assert!(rc.should_approve(&meta(true, false)));
-    assert!(!rc.should_approve(&meta(false, false)));
+    assert!(rc.should_approve(&meta(Approval::Always, false)));
+    assert!(!rc.should_approve(&meta(Approval::Never, false)));
+    assert!(rc.should_approve(&meta(Approval::WhenRisky, true)));
+    assert!(!rc.should_approve(&meta(Approval::WhenRisky, false)));
 }
 
 #[test]
@@ -3245,7 +3245,7 @@ fn approval_mode_none_never_approves() {
         approval_mode: ApprovalMode::None,
         ..Default::default()
     };
-    assert!(!rc.should_approve(&meta(true, true)));
+    assert!(!rc.should_approve(&meta(Approval::Always, true)));
 }
 
 #[test]
@@ -3254,17 +3254,18 @@ fn approval_mode_all_always_approves() {
         approval_mode: ApprovalMode::All,
         ..Default::default()
     };
-    assert!(rc.should_approve(&meta(false, false)));
+    assert!(rc.should_approve(&meta(Approval::Never, false)));
 }
 
 #[test]
 fn approval_mode_side_effect_only() {
+    #[allow(deprecated)]
     let rc = config::RuntimeConfig {
         approval_mode: ApprovalMode::SideEffectOnly,
         ..Default::default()
     };
-    assert!(rc.should_approve(&meta(false, true)));
-    assert!(!rc.should_approve(&meta(true, false)));
+    assert!(rc.should_approve(&meta(Approval::Never, true)));
+    assert!(!rc.should_approve(&meta(Approval::Always, false)));
 }
 
 #[test]
@@ -3274,9 +3275,8 @@ fn custom_approval_fn_takes_priority() {
         custom_approval_fn: Some(Arc::new(|m: &ToolMetadata| m.side_effect)),
         ..Default::default()
     };
-    // custom says approve side-effect tools even though mode is None
-    assert!(rc.should_approve(&meta(false, true)));
-    assert!(!rc.should_approve(&meta(false, false)));
+    assert!(rc.should_approve(&meta(Approval::Never, true)));
+    assert!(!rc.should_approve(&meta(Approval::Never, false)));
 }
 
 #[test]
@@ -3296,7 +3296,7 @@ fn runtime_config_serde_skips_custom_fn() {
 async fn approval_mode_all_forces_approval_for_unguarded_tool() {
     let model = Arc::new(ToolCallModelAdapter);
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(FakeTool::echo())).unwrap(); // requires_approval=false
+    registry.register(Arc::new(FakeTool::echo())).unwrap(); // approval=Never
     let mut cfg = test_config();
     cfg.runtime.approval_mode = ApprovalMode::All;
 
@@ -3314,19 +3314,13 @@ async fn approval_mode_all_forces_approval_for_unguarded_tool() {
 
 // ── Issue 006: Multi-subscriber Events + Watcher + InjectCmd ────────────────
 
-/// Multi-step model: calls `echo` N times, then ends.
-struct MultiStepModel {
+struct GatedMultiStepModel {
     tool_calls: u32,
-}
-
-impl MultiStepModel {
-    fn new(tool_calls: u32) -> Self {
-        Self { tool_calls }
-    }
+    release_first_call: Arc<Notify>,
 }
 
 #[async_trait::async_trait]
-impl ModelAdapter for MultiStepModel {
+impl ModelAdapter for GatedMultiStepModel {
     fn provider_name(&self) -> &str {
         "mock"
     }
@@ -3351,6 +3345,10 @@ impl ModelAdapter for MultiStepModel {
                     .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
             })
             .count();
+
+        if tool_result_count == 0 {
+            self.release_first_call.notified().await;
+        }
 
         let usage = TokenUsage {
             input_tokens: 10,
@@ -3385,6 +3383,221 @@ impl ModelAdapter for MultiStepModel {
             })
         }
     }
+}
+
+async fn wait_for_supervisor_ref(handle: &RunHandle) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if handle
+                .supervisor_ref
+                .lock()
+                .ok()
+                .and_then(|guard| guard.clone())
+                .is_some()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("supervisor ref should become ready");
+}
+
+struct ToolCompletionCountingWatcher {
+    count: Arc<AtomicU32>,
+}
+
+#[async_trait::async_trait]
+impl crate::run::Watcher for ToolCompletionCountingWatcher {
+    async fn on_event(&self, event: &RuntimeEvent) -> crate::run::WatcherAction {
+        if matches!(event, RuntimeEvent::ToolCallCompleted { .. }) {
+            self.count.fetch_add(1, Ordering::SeqCst);
+        }
+        crate::run::WatcherAction::Continue
+    }
+}
+
+#[tokio::test]
+async fn attach_watcher_does_not_duplicate_supervisor_subscription() {
+    let release_first_call = Arc::new(Notify::new());
+    let model: Arc<dyn ModelAdapter> = Arc::new(GatedMultiStepModel {
+        tool_calls: 3,
+        release_first_call: Arc::clone(&release_first_call),
+    });
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeTool::echo())).unwrap();
+    let config = test_config();
+
+    let (handle, mut rx) = AgentRun::start(config, "hello".into(), model, registry);
+    wait_for_supervisor_ref(&handle).await;
+
+    let count = Arc::new(AtomicU32::new(0));
+    handle
+        .attach_watcher(
+            Arc::new(ToolCompletionCountingWatcher {
+                count: Arc::clone(&count),
+            }),
+            256,
+        )
+        .await;
+
+    release_first_call.notify_waiters();
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let observed = count.load(Ordering::SeqCst);
+    assert!(
+        observed > 0,
+        "watcher should observe at least one post-attach tool completion"
+    );
+    assert!(
+        observed <= 3,
+        "watcher must not observe more tool completions than the run actually executed"
+    );
+}
+
+struct RestartInputRecordingModel {
+    calls: AtomicU32,
+    user_inputs: Arc<tokio::sync::Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for RestartInputRecordingModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let mut inputs = self.user_inputs.lock().await;
+        let input = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::User)
+            .and_then(|m| {
+                m.content.iter().find_map(|block| match block {
+                    ContentBlock::Text(text) => Some(text.clone()),
+                    _ => None,
+                })
+            })
+            .unwrap_or_default();
+        inputs.push(input);
+        drop(inputs);
+
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            panic!("simulated worker crash before restart");
+        }
+
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("recovered".into())],
+            usage: TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                ..Default::default()
+            },
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restart_without_snapshot_reuses_original_input() {
+    let user_inputs = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(RestartInputRecordingModel {
+        calls: AtomicU32::new(0),
+        user_inputs: Arc::clone(&user_inputs),
+    });
+    let mut config = test_config();
+    config.supervision_strategy = SupervisionStrategy::Restart { max_retries: 1 };
+
+    let (handle, mut rx) = AgentRun::start(
+        config,
+        "preserve this input".into(),
+        model,
+        ToolRegistry::new(),
+    );
+
+    let mut saw_restart = false;
+    while let Some(event) = rx.recv().await {
+        if matches!(event, RuntimeEvent::RunRestarted { .. }) {
+            saw_restart = true;
+        }
+    }
+    handle.wait().await;
+
+    let inputs = user_inputs.lock().await;
+    assert!(saw_restart, "test must exercise the restart path");
+    assert_eq!(
+        inputs.as_slice(),
+        &[
+            "preserve this input".to_string(),
+            "preserve this input".to_string()
+        ],
+        "fresh restart should reuse the original run input"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restart_after_resume_reuses_original_snapshot_when_store_absent() {
+    use crate::session::SessionSnapshot;
+
+    let user_inputs = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(RestartInputRecordingModel {
+        calls: AtomicU32::new(0),
+        user_inputs: Arc::clone(&user_inputs),
+    });
+    let mut config = test_config();
+    config.supervision_strategy = SupervisionStrategy::Restart { max_retries: 1 };
+    let run_id = RunId::new();
+    let snapshot = SessionSnapshot {
+        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
+        session_id: "resume-restart-no-store".into(),
+        run_id,
+        messages: vec![
+            Message {
+                role: Role::System,
+                content: vec![ContentBlock::Text("system".into())],
+            },
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text("snapshot input".into())],
+            },
+        ],
+        step: 7,
+        budget_used: Default::default(),
+        active_config: config,
+    };
+
+    let (handle, mut rx) = AgentRun::resume(snapshot, model, ToolRegistry::new());
+    assert_eq!(handle.run_id, run_id);
+
+    let mut saw_restart = false;
+    while let Some(event) = rx.recv().await {
+        if matches!(event, RuntimeEvent::RunRestarted { .. }) {
+            saw_restart = true;
+        }
+    }
+    handle.wait().await;
+
+    let inputs = user_inputs.lock().await;
+    assert!(saw_restart, "test must exercise restart after resume");
+    assert_eq!(
+        inputs.as_slice(),
+        &["snapshot input".to_string(), "snapshot input".to_string()],
+        "restart after resume should fall back to the original snapshot"
+    );
 }
 
 #[tokio::test]
@@ -3774,5 +3987,121 @@ async fn resume_continues_from_snapshot() {
     assert!(
         snap2.step >= snap_step,
         "resumed run step should be >= snapshot step"
+    );
+}
+
+// ── Multi-watcher coordination tests (issue 008) ────────────────────────────
+
+struct CountingWatcher {
+    seen: Arc<tokio::sync::Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl crate::run::Watcher for CountingWatcher {
+    async fn on_event(&self, event: &RuntimeEvent) -> crate::run::WatcherAction {
+        let label = format!("{:?}", event).chars().take(80).collect::<String>();
+        self.seen.lock().await.push(label);
+        crate::run::WatcherAction::Continue
+    }
+}
+
+struct AbortingWatcher {
+    trigger_count: std::sync::atomic::AtomicU32,
+    abort_after: u32,
+    reason: String,
+    seen: Arc<tokio::sync::Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl crate::run::Watcher for AbortingWatcher {
+    async fn on_event(&self, event: &RuntimeEvent) -> crate::run::WatcherAction {
+        let label = format!("{:?}", event).chars().take(80).collect::<String>();
+        self.seen.lock().await.push(label);
+        let n = self
+            .trigger_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if n >= self.abort_after {
+            crate::run::WatcherAction::Abort(self.reason.clone())
+        } else {
+            crate::run::WatcherAction::Continue
+        }
+    }
+}
+
+#[tokio::test]
+async fn multi_watcher_abort_terminates_run() {
+    let model: Arc<dyn ModelAdapter> = Arc::new(FakeModelAdapter::final_answer());
+    let registry = ToolRegistry::new();
+    let config = test_config();
+
+    let (handle, mut rx) = AgentRun::start(config, "hello".into(), model, registry);
+
+    let seen_a = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let seen_b = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
+    let watcher_a: Arc<dyn crate::run::Watcher> = Arc::new(CountingWatcher {
+        seen: seen_a.clone(),
+    });
+    let watcher_b: Arc<dyn crate::run::Watcher> = Arc::new(AbortingWatcher {
+        trigger_count: std::sync::atomic::AtomicU32::new(0),
+        abort_after: 2,
+        reason: "watcher_b_abort".to_string(),
+        seen: seen_b.clone(),
+    });
+
+    handle.attach_watcher(watcher_a, 256).await;
+    handle.attach_watcher(watcher_b, 256).await;
+
+    handle.wait().await;
+
+    let mut events = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        events.push(e);
+    }
+    let has_abort = events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::RunAborted { .. }));
+    assert!(
+        has_abort
+            || events
+                .iter()
+                .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        "run should complete or be aborted"
+    );
+}
+
+#[tokio::test]
+async fn multi_watcher_both_receive_events() {
+    let model: Arc<dyn ModelAdapter> = Arc::new(FakeModelAdapter::final_answer());
+    let registry = ToolRegistry::new();
+    let config = test_config();
+
+    let (handle, mut rx) = AgentRun::start(config, "hello".into(), model, registry);
+
+    let seen_a = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let seen_b = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
+    let watcher_a: Arc<dyn crate::run::Watcher> = Arc::new(CountingWatcher {
+        seen: seen_a.clone(),
+    });
+    let watcher_b: Arc<dyn crate::run::Watcher> = Arc::new(CountingWatcher {
+        seen: seen_b.clone(),
+    });
+
+    handle.attach_watcher(watcher_a, 256).await;
+    handle.attach_watcher(watcher_b, 256).await;
+
+    handle.wait().await;
+
+    while let Ok(_e) = rx.try_recv() {}
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let events_a = seen_a.lock().await;
+    let events_b = seen_b.lock().await;
+    assert_eq!(
+        events_a.len(),
+        events_b.len(),
+        "both watchers should see same number of events"
     );
 }

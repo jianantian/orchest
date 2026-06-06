@@ -26,7 +26,7 @@ impl SkillManifest {
     pub fn build_tool_metadata(&self, _tool: &BundledToolDef) -> ToolMetadata {
         ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: crate::tool::Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,

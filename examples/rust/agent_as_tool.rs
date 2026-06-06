@@ -153,25 +153,21 @@ async fn main() {
         .unwrap();
 
     // Wrap child agent as a Tool the parent can call
-    let summariser_tool = child_config.as_tool(
-        "summariser",
-        "Summarises long text",
-        Arc::clone(&child_model),
-        child_registry,
-        Arc::new(|input: Value| {
+    let summariser_tool = child_config
+        .as_tool("summariser", "Summarises long text")
+        .model(Arc::clone(&child_model))
+        .registry(child_registry)
+        .input_mapper(|input: Value| {
             input
                 .get("input")
                 .and_then(Value::as_str)
                 .map(str::to_string)
-                .ok_or_else(|| ToolError {
-                    message: "missing input field".into(),
-                    code: None,
-                })
-        }),
-        Arc::new(|details: Value| {
+                .ok_or_else(|| ToolError::fatal("missing input field"))
+        })
+        .output_extractor(|details: Value| {
             json!({"output": details.get("output").cloned().unwrap_or_else(|| details.clone())})
-        }),
-    );
+        })
+        .build();
 
     let parent_config = AgentConfig::builder("mock/parent")
         .system_prompt("you are a research assistant")

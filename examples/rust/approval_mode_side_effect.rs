@@ -11,8 +11,8 @@ use agent_runtime_core::model::{
 };
 use agent_runtime_core::run::{AgentConfig, AgentRun, ApprovalMode};
 use agent_runtime_core::tool::{
-    registry::ToolRegistry, JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata,
-    ToolOutput, ToolSource,
+    registry::ToolRegistry, Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError,
+    ToolMetadata, ToolOutput, ToolSource,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -127,7 +127,7 @@ impl Tool for ReadFileTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: false,
-            requires_approval: false,
+            approval: Approval::Never,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -163,7 +163,7 @@ impl Tool for WriteFileTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: true,
-            requires_approval: false, // approval_mode overrides this
+            approval: Approval::Never, // approval_mode overrides this
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -187,7 +187,10 @@ async fn main() {
     let config = AgentConfig::builder("mock/mock")
         .system_prompt("You are a file assistant.")
         .max_steps(5)
-        .approval_mode(ApprovalMode::SideEffectOnly)
+        .approval_mode({
+            #[allow(deprecated)]
+            ApprovalMode::SideEffectOnly
+        })
         .build()
         .unwrap();
 

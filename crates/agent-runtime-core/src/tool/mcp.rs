@@ -49,10 +49,9 @@ pub struct McpError {
 
 impl From<McpError> for ToolError {
     fn from(value: McpError) -> Self {
-        Self {
-            message: value.message,
-            code: value.code,
-        }
+        let mut err = Self::fatal(value.message);
+        err.code = value.code;
+        err
     }
 }
 
@@ -458,7 +457,7 @@ impl McpTool {
             input_schema: def.input_schema,
             metadata: ToolMetadata {
                 side_effect: true,
-                requires_approval: false,
+                approval: crate::tool::Approval::Never,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,
