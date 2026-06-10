@@ -27,6 +27,7 @@
 | v0.8 | 功能 | 持久化 + 安全 + Supervised Delegation 基础（SessionStore + SQLite、Guardrail 四层框架、ApprovalMode、Multi-subscriber Events + Watcher + InjectCmd） |
 | v0.9 | 功能 | Supervised Delegation 端到端（Approval 枚举、结构化 ToolError、as_tool Builder、Steering API、LlmWatcher、supervisor 恢复、多 watcher FIFO、端到端示例） |
 | v0.9.1 | 卫星 | ASR Provider Gateway（`agent-runtime-asr-providers`、Volcengine/Aliyun adapter、duplex streaming、observability） |
+| v0.9.2 | 卫星 | 文档（rustdoc 清理、quickstart、Python/TS SDK 指南、basic_agent_run 示例、CI doc/example 防线） |
 
 ## 迭代编号约定
 
@@ -34,12 +35,6 @@
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
 
 ## 规划中
-
-### [v0.9.2 — 文档](./v0_9_2/prd.md)（卫星）
-
-API 文档（rustdoc 清理）、入门教程、进阶示例、Python/TS SDK 指南。纯文档迭代，不含发布准备。
-
-**依赖**：v0.9 已完成（示例和文档需要 SD API 就绪）
 
 ### [v0.9.3 — TTS Provider Gateway](./v0_9_3/prd.md)（卫星）
 
@@ -69,7 +64,7 @@ API 文档（rustdoc 清理）、入门教程、进阶示例、Python/TS SDK 指
         + SD 基础通信层
             │
             ▼
-   v0.9.2: 文档
+✅ v0.9.2: 文档
             │
             ▼
    SDK 验证产品迭代（dogfooding，编号待定）
