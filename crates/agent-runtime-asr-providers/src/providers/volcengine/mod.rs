@@ -305,7 +305,7 @@ impl UtteranceDeduplicator {
 // Adapter task
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)] // justified: single-function duplex WebSocket adapter; splitting would scatter the session state machine across helpers
 async fn adapter_task(
     ws_stream: tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
@@ -589,7 +589,7 @@ async fn adapter_task(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // justified: timeout finalization closes over all active channel senders; extracting a context struct would add boilerplate without clarity
 async fn emit_timeout_final(
     event_tx: &mpsc::Sender<AsrStreamEvent>,
     trace_id: &str,

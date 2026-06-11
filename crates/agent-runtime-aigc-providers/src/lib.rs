@@ -1,3 +1,8 @@
+//! AIGC provider gateway for the Orchest runtime: unified image generation.
+//!
+//! Standalone crate wrapping image-generation providers behind one abstraction,
+//! with asset persistence and a common output contract. Entry points are the
+//! [`gateway`] module and [`create_image_provider_from_config`].
 #![allow(clippy::result_large_err)]
 
 pub mod gateway;

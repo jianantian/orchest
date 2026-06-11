@@ -1,3 +1,9 @@
+//! ASR provider gateway for the Orchest runtime: streaming speech-to-text.
+//!
+//! Standalone crate with zero workspace-internal dependencies. Entry points are
+//! [`AsrGateway`] (routing + convenience surface) and the [`AsrProvider`] trait;
+//! callers stream audio through [`AsrAudioSink`] and consume transcript events
+//! through [`AsrEventStream`].
 #![allow(clippy::result_large_err)]
 
 pub mod compatibility;

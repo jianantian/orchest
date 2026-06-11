@@ -43,6 +43,12 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
+      - name: cargo doc (deny warnings)
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
+      - name: cargo build --examples
+        run: cargo build --examples --workspace
+
       - name: TS event wire naming check
         run: bash scripts/check-ts-event-wire-naming.sh
 
