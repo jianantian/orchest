@@ -758,6 +758,18 @@ Test fixtures:
 | 006 | Volcengine adapter | 001, 003, 004, 005 | Feature-gated provider implementation, config factory, live ignored test |
 | 007 | Aliyun adapter + examples | 001, 003, 004, 005, 006 | Feature-gated provider implementation, config factory, live ignored test, README/example snippets |
 
+### Issue Ownership Rules
+
+The issue specs are the definition of done. A `plan.md` may describe implementation sequence, but it must not contain hidden acceptance requirements that are absent from the corresponding `spec.md`.
+
+Cross-cutting public contracts must be validated at both layers that can break them:
+
+- 002 owns route-level gateway/router behavior only: provider/model selection, operation capability, language, explicit request voice-kind route constraints, output-format compatibility, tie-breaks, and voice-list routing/aggregation. It does not own catalog-based voice resolution or speech/semantic controls.
+- 003 owns the public streaming contract and fake-provider tests for lifecycle, terminal events, cancellation, and backpressure. Real provider adapters in 006/007 must still prove receiver-drop cancellation, provider session/connection cleanup, and no hidden unbounded channel behavior for their own transports.
+- 004 owns voice catalog filtering, unresolved voice-kind resolution, portable speech-control numeric ranges, and semantic controls such as instruction, style, emotion, and SSML.
+- 005 owns shared telemetry, tracing, metrics, and redaction helpers. Real provider adapters in 006/007 must still preserve upstream status/code/message/body and apply redaction to provider-specific payloads.
+- 006 and 007 own adapter compliance with the public contracts, including direct-provider request selector mismatch handling, streaming cancellation/session cleanup, and provider-specific capability calibration.
+
 ## Acceptance Criteria
 
 - [ ] `crates/agent-runtime-tts-providers` exists and is part of the workspace
