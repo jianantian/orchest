@@ -1,4 +1,18 @@
 ---
+## 产品定位
+
+**Multivac 的产品本体是 execution control plane——不是聊天插件，不是 IM bot 框架。**
+
+Session（聊天）只是 task/runtime 的一个视图，不是系统真相的唯一容器。外部 IM（飞书/Slack）是 distribution surface，不是产品定义。当 Session 和 Task 的设计冲突时，Task 的完整性优先。
+
+价值锚定在四个层面：
+- **Task** 是执行真相
+- **Runtime** 是执行宿主
+- **Artifact** 是执行产物，不是聊天附件
+- **Knowledge** 是任务与项目上下文，不是 IM 历史的副产物
+
+---
+
 ## 六、目标架构：双交付形态，同一套 Rust Core + 可远程 Runtime Host
 
 ### 6.1 核心原则
@@ -92,6 +106,7 @@ multivac/
 │   │       ├── session/             # agent run 生命周期
 │   │       │   ├── mod.rs
 │   │       │   ├── manager.rs
+│   │       │   ├── identity.rs      # SessionIdentity：resume 判定
 │   │       │   ├── state.rs
 │   │       │   └── relay.rs
 │   │       ├── auth/                # JWT, OAuth
@@ -263,7 +278,9 @@ pub trait RuntimeBackend: Send + Sync + 'static {
 }
 ```
 
-`RuntimeBackend` 是 Multivac 保留原产品 CLI runtime 能力的关键边界：
+`RuntimeBackend` 是 Multivac 作为 execution control plane 而非聊天插件的根本边界——所有 Task 的 runtime projection、所有 artifact 的产生与消费、所有 workspace 的变更，都通过这个 trait 流入系统真相。
+
+`task_status()` 返回 `RuntimeProjection` 而不是存在 Task 表里——runtime projection 是瞬时执行状态（idle / working / waiting_for_user / processing_tools），由 RuntimeBackend 实时计算。不持久化避免了「数据库状态与实际执行不一致」的问题。
 
 - 对模型暴露的是 `start_agent_task` / `attach_agent_task` / `respond_permission` 等 product tools，不暴露 `run_claude_code` 这种 vendor-specific tool。
 - `cli-task-dispatch` skill 决定何时创建或附加 CLI task；`task-supervisor` skill 决定何时注入指令、批准、暂停或终止。
@@ -461,7 +478,7 @@ pub struct FeatureFlags {
    - `users`, `orgs`, `org_members`
    - `sessions`, `messages`
    - `tasks`, `task_events`
-   - `knowledge_docs`
+   - `knowledge_docs`（source enum `File | TaskOutput | MeetingTranscript` 实现 `Display`/`FromStr`，统一为 `knowledge://` URI——前端和 skill 用同一个字符串引用知识）
    - `meetings`, `meeting_transcripts`
    - 每表 ≤15 个字段
 
@@ -471,6 +488,7 @@ pub struct FeatureFlags {
    - `SessionManager::start_run()` 调用 `orchestr::AgentRun`
    - `WsRelayHook` 将 `RuntimeEvent` 转发到前端
    - `AuditHook` 持久化 transcript 到 `messages` 表
+   - `SessionIdentity` 判定 resume 可行性——scope_id + agent_id + workspace_root 三元组相同才允许 resume，避免运行上下文变化后误续旧 session
    - `PermissionHook` 实现 Explore/Ask/Auto per session
 
 5. **Product Tools**：

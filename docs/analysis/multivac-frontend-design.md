@@ -97,6 +97,8 @@ pending → tool_active → awaiting → streaming → complete
 
 ### 3.2 TurnCard 结构（email-like 模型）
 
+TurnCard 是 Multivac 执行透明度的用户界面——让用户看到 agent 的真实执行过程：每一步调了什么、结果如何、中间失败了几次、为什么需要确认。这是 Multivac 区别于「黑盒 agent 聊天」的根本 UX 差异。
+
 ```
 ┌─────────────────────────────────────────┐
 │  [Plan]  Accept Plan  [collapsed]       │  ← 可选 plan header
@@ -372,7 +374,27 @@ export const panelStackAtom = atom<Panel[]>([])
 export const activeAnnotationAtom = atom<AnnotationState | null>(null)
 ```
 
-### 4.5 WebSocket 事件处理
+### 4.5 Turn 状态模型
+
+每个 turn 的 UI 状态从事件流纯函数推导——可序列化、可重放、可测试。不在 event handler 里散装 mutate atoms。
+
+```typescript
+interface TurnState {
+  turnId: string
+  phase: TurnPhase
+  activities: ActivityRowState[]
+  responseText: string
+  subTasks: SubTaskState[]
+  permissions: PendingPermission[]
+}
+
+// 纯函数：event → TurnState 转换
+function reduceTurnState(prev: TurnState, event: TurnEvent): TurnState
+```
+
+`sessionAtomFamily` 中的 `messages` 数组替换为 `turns: TurnState[]`，每个 turn 从事件流纯函数构建。历史 session 加载时，重放 `task_events` 即可还原完整 UI 状态。
+
+### 4.6 WebSocket 事件处理
 
 ```
 Backend → WS → EventProcessor → Jotai Atom 更新 → React re-render
@@ -386,6 +408,7 @@ Backend → WS → EventProcessor → Jotai Atom 更新 → React re-render
   tool:completed    → 更新 ActivityRow status
   text:delta        → 追加到 ResponseCard buffer
   text:flush        → force flush buffer
+  turn:completed    → 标记当前 TurnState 为最终态，停止接收该 turn 的增量更新（AuditHook 此时写 DB）
   permission:need   → 打开 PermissionDialog
   task:event        → 更新 sub-agent task 状态
   session:error     → 显示错误 + Toast
@@ -403,13 +426,18 @@ Backend → WS → EventProcessor → Jotai Atom 更新 → React re-render
 → pushPanel({ type: 'session', sessionId })
 → SessionViewer mount → 从 sessionAtomFamily(sessionId) 初始化
 → 空 SessionViewer 显示 welcome message + 建议 prompt
-→ 用户输入 → WS send({ type: 'user_message', text })
+→ 用户输入 → POST /api/sessions/:id/messages { text }
+  → 201 { message_id, turn_id }（同步返回，不等 agent）
+  → 前端立即插入 TurnCard skeleton（phase: pending）
+  → 后续 WS 事件通过 turn_id 匹配并填充骨架
 ```
+
+消息发送是同步 HTTP POST，不是 WS 消息。前端在收到 201 后立即渲染 skeleton，不等第一个 WS 事件——避免「用户发送消息后 UI 空白等第一个 event」的延迟感。`api/client.ts` 需同时暴露 `sendMessage()` HTTP 方法和 WS 事件监听。
 
 ### 5.2 Agent 执行中的 UI
 
 ```
-用户消息 → TurnPhase: pending
+用户消息 → POST 返回 turn_id → 前端立即 TurnCard skeleton → TurnPhase: pending
 模型返回 tool_call → TurnPhase: tool_active
   → ActivityRow 显示 "Running search_codebase..."
   → ActivityRow 更新 "✓ Found 3 files"
