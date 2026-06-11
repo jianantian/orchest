@@ -45,6 +45,8 @@ impl ApprovalBus {
     }
 }
 
+/// Handle to a running agent: wait for completion, abort, subscribe to events,
+/// attach watchers, respond to approvals, and steer the run mid-flight.
 pub struct RunHandle {
     pub run_id: RunId,
     /// Actor reference — set once `Actor::spawn` completes inside the background task.

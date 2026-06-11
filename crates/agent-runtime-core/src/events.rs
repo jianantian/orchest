@@ -11,6 +11,9 @@ use crate::run::RunId;
 use crate::tool::async_job::JobStatus;
 use crate::tool::{ToolCall, ToolError, ToolMetadata};
 
+/// An event emitted on the run's event stream: run lifecycle, model calls,
+/// tool calls, approvals, budget, sub-agents, and steering. Consumers receive
+/// these from the `EventReceiver` returned by `AgentRun::start`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RuntimeEvent {
     RunStarted {

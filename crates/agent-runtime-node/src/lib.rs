@@ -1,3 +1,9 @@
+//! Node.js (napi-rs) bindings for the Orchest agent runtime.
+//!
+//! This crate only does type conversion and FFI glue between JavaScript and
+//! `agent-runtime-core`; all business logic lives in core. The public surface
+//! is the `Agent` class exposed to Node via napi.
+
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 

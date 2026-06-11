@@ -1,4 +1,4 @@
-//! AgentRef: typed pub(crate) API wrapping ActorRef<AgentMsg>.
+//! AgentRef: typed pub(crate) API wrapping `ActorRef<AgentMsg>`.
 
 use ractor::ActorRef;
 

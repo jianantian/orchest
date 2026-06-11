@@ -39,6 +39,10 @@ name = "ractor_poc"
 path = "tests/ractor_poc.rs"
 
 [[example]]
+name = "basic_agent_run"
+path = "../../examples/rust/basic_agent_run.rs"
+
+[[example]]
 name = "rust_deep_research_agent"
 path = "../../examples/rust/deep_research_agent.rs"
 

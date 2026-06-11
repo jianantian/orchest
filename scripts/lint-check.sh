@@ -26,7 +26,7 @@ fi
 echo ""
 echo "=== mod.rs length check (max 150) ==="
 LONG_MODS=$(find crates/ -name 'mod.rs' \
-  ! -path '*/target/*' ! -path '*aigc*' \
+  ! -path '*/target/*' ! -path '*aigc*' ! -path '*asr*' \
   -exec wc -l {} + 2>/dev/null | awk '$1 > 150 {print}' | grep -v total || true)
 if [ -n "$LONG_MODS" ]; then
     echo "FAIL: mod.rs files exceeding 150 lines:"

@@ -8,6 +8,8 @@ export interface AgentOptions {
   maxTokens?: number;
   requestOptions?: RequestOptions;
   budget?: BudgetOptions;
+  /** Run-level approval policy: "perTool" | "none" | "all" | "sideEffectOnly". */
+  approvalMode?: string;
 }
 
 export interface RequestOptions {
@@ -32,8 +34,11 @@ export interface ToolRegistration {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** Deprecated: use `approval` instead. */
   requiresApproval?: boolean;
   sideEffect?: boolean;
+  /** "never" | "whenRisky" | "always". Takes priority over `requiresApproval`. */
+  approval?: string;
 }
 
 export interface ToolWithHandler {
@@ -43,6 +48,23 @@ export interface ToolWithHandler {
   handler: (input: any) => any;
   requiresApproval?: boolean;
   sideEffect?: boolean;
+}
+
+export interface ToolMetadata {
+  side_effect: boolean;
+  approval: string;
+  cost_hint: unknown;
+  timeout: unknown;
+  max_output_tokens: number | null;
+  source: unknown;
+}
+
+export interface ToolExecutionError {
+  message: string;
+  kind: string;
+  retry: string;
+  code: string | null;
+  next_step: string | null;
 }
 
 export interface TokenUsage {
@@ -73,28 +95,33 @@ export type StreamEvent =
   | unknown;
 
 export type RuntimeEvent =
-  | { type: "run_started"; run_id: string }
-  | { type: "model_call_started"; step: number }
-  | { type: "model_stream_chunk"; delta: StreamEvent }
-  | { type: "model_call_completed"; tokens: TokenUsage; option_adjustments?: OptionAdjustment[] }
-  | { type: "tool_call_started"; tool: string; source: unknown; input: unknown }
-  | { type: "tool_call_update"; tool: string; tool_call_id: string; partial: unknown }
-  | { type: "tool_call_completed"; tool: string; output: unknown; duration: unknown }
-  | { type: "tool_call_failed"; tool: string; error: string }
-  | { type: "async_tool_started"; tool: string; job_id: string }
-  | { type: "async_tool_progress"; tool: string; job_id: string; status: unknown }
-  | { type: "async_tool_completed"; tool: string; job_id: string; output: unknown; elapsed: unknown }
-  | { type: "skill_content_read"; skill_name: string; file: string; tokens: number }
-  | { type: "approval_requested"; tool_call: unknown }
-  | { type: "approval_granted"; tool_call: unknown }
-  | { type: "approval_denied"; tool_call: unknown }
-  | { type: "budget_warning"; used: unknown; limit: unknown }
+  | { type: "run_started"; run_id: string; run_depth: number }
+  | { type: "model_call_started"; step: number; run_depth: number }
+  | { type: "model_stream_chunk"; delta: StreamEvent; run_depth: number }
+  | { type: "model_call_completed"; tokens: TokenUsage; option_adjustments?: OptionAdjustment[]; run_depth: number }
+  | { type: "tool_call_started"; tool: string; metadata: ToolMetadata; input: unknown; run_depth: number }
+  | { type: "tool_call_update"; tool: string; tool_call_id: string; partial: unknown; run_depth: number }
+  | { type: "tool_call_completed"; tool: string; output: unknown; duration: unknown; run_depth: number }
+  | { type: "tool_call_failed"; tool: string; error: ToolExecutionError; run_depth: number }
+  | { type: "async_tool_started"; tool: string; job_id: string; run_depth: number }
+  | { type: "async_tool_progress"; tool: string; job_id: string; status: unknown; run_depth: number }
+  | { type: "async_tool_completed"; tool: string; job_id: string; output: unknown; elapsed: unknown; run_depth: number }
+  | { type: "skill_content_read"; skill_name: string; file: string; tokens: number; run_depth: number }
+  | { type: "approval_requested"; tool_call: unknown; run_depth: number }
+  | { type: "approval_granted"; tool_call: unknown; run_depth: number }
+  | { type: "approval_denied"; tool_call: unknown; run_depth: number }
+  | { type: "budget_warning"; used: unknown; limit: unknown; run_depth: number }
+  | { type: "runtime_warning"; message: string; run_depth: number }
+  | { type: "skill_dependency_error"; skill_name: string; error: string; run_depth: number }
+  | { type: "skill_missing_capabilities"; skill_name: string; run_depth: number }
+  | { type: "context_compacted"; removed_messages: number; summary_tokens: number; run_depth: number }
   | { type: "child_run_event"; child_run_id: string; run_depth: number; event: RuntimeEvent }
-  | { type: "sub_agent_started"; parent_run_id: string; child_run_id: string; config_summary: unknown }
-  | { type: "sub_agent_completed"; child_run_id: string; output: unknown; budget_used: unknown }
-  | { type: "sub_agent_failed"; child_run_id: string; error: string }
-  | { type: "run_completed"; output: unknown }
-  | { type: "run_failed"; error: string };
+  | { type: "sub_agent_started"; parent_run_id: string; child_run_id: string; config_summary: unknown; run_depth: number }
+  | { type: "sub_agent_completed"; child_run_id: string; output: unknown; budget_used: unknown; run_depth: number }
+  | { type: "sub_agent_failed"; child_run_id: string; error: string; run_depth: number }
+  | { type: "run_restarted"; attempt: number; run_depth: number }
+  | { type: "run_completed"; output: unknown; run_depth: number }
+  | { type: "run_failed"; error: string; run_depth: number };
 
 export class Agent {
   constructor(options: AgentOptions);
@@ -104,8 +131,9 @@ export class Agent {
     description: string,
     inputSchema: Record<string, unknown>,
     handler: (input: any) => any,
-    options?: { requiresApproval?: boolean; sideEffect?: boolean },
+    options?: { requiresApproval?: boolean; sideEffect?: boolean; approval?: string },
   ): void;
   runSync(input: string): RuntimeEvent[];
+  runStream(input: string, onEvent: (event: RuntimeEvent) => void): void;
   respondApproval(runId: string, approved: boolean): void;
 }

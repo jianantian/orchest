@@ -11,6 +11,8 @@ pub enum RegistryError {
     DuplicateName(String),
 }
 
+/// An ordered, name-keyed collection of `Arc<dyn Tool>`. Register tools with
+/// [`ToolRegistry::register`] and pass the registry to `AgentRun::start`.
 #[derive(Default, Clone)]
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
