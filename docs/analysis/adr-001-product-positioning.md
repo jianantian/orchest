@@ -137,6 +137,20 @@ execution control plane → Kernel 底下的 runtime 基础设施（始终是手
 
 Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的路径）——单个创作者自己下载、自己爱用、带进团队。与小团队做桌面应用的现实匹配。
 
+### D9-D14 开工前必须定死的补充决策（2026-06-12 缺口审计：标准是「现在不定，以后改不动」）
+
+**D9 沉淀的安全基线：先脱敏，后落盘。** 「所有上下文可感知 + 永久沉淀」同时是负债：终端回滚区有 API key，.env 会被读，browser 快照含登录态。脱敏器（token/secret/key 模式 + 可配路径黑名单）是 events/objects 持久化管线的 kernel 组件，不是后补功能——明文落盘或发给厂商后无法追回。跨厂商数据流向需要 workspace 级 policy（哪些对象类别允许进入哪个厂商 runtime）：把 Claude transcript 发给 OpenAI（创世卡点 2）必须是用户明示选择，context tray 的逐条勾选不够。
+
+**D10 沉淀的寿命契约：版本化 + 永不破坏重放 + 可导出。** 厚度论的承重墙是数据：TaskEvent 带 schema version，新版本必须能重放全部历史事件；`knowledge://` URI 永久可解析（对象不可变，删除 = 墓碑）；**一键导出（JSONL + 文件）v0 即有**——「用户拥有自己的沉淀」是对抗厂商锁定的产品主张，自己先做到。
+
+**D11 workspace 并发模型：写锁串行，读并行。** v0 同一 workspace 同时只有一个持写权的 run（scope lock，lark-bridge 模型）；并行 session 允许但默认只读（探索/问答），写权需等待或用户显式切换。worktree-per-session（Claude Code desktop 方案）留作 M2 选项——介质论要求「文件面显示的就是真相」，多 worktree 破坏单一真相直觉。影响阶段 0 schema（sessions 与 workspace 的锁关系）。
+
+**D12 撤销故事先于 review 故事。** draft/review 在阶段 3，但 agent 从阶段 1 就写真实文件——每个 run 开始前自动 workspace 快照（git 仓库用 commit/stash 机制，非 git 目录用影子快照），一键回滚到 run 前。信任来自便宜的后悔药；实现为 RuntimeBackend `start_task` 的前置钩子，不是 UI 功能。
+
+**D13 Claude Code 集成走受支持接口。** PtyRuntime 优先使用官方 headless / stream-json（或 Agent SDK），不做 PTY 屏幕抓取——稳定性与 ToS 双重理由。为 JSONL schema 写契约测试，Claude Code 版本升级先跑契约再放行。认证用用户自己的 Claude 订阅/登录，我们不代理计费。
+
+**D14 实验遥测进 v0。** 里程碑靠实验数据解锁（§4.5），故指标采集（指代次数、沉淀引用率、context tray 修改率）是 v0 功能而非运营工具：本地优先、明文可查、不上传——单人阶段不需要任何服务端。
+
 ---
 
 ## 4. v0 范围表
@@ -151,6 +165,7 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
 | deixis 原语 + context tray（含 **session/turn 作为引用对象**——跨 session 上下文移植，创世卡点 2 的 v0 形态） | team plane（scope 共享） | |
 | Locator 对象模型（URI + provenance + scope） | Claude Code 配置导入（v0.x 增长杠杆） | |
 | review / draft 裁决循环 | | |
+| 脱敏器、run 前快照、写锁、本地遥测、一键导出（D9-D14） | | |
 
 ---
 
@@ -240,6 +255,8 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
 2. **文件面编辑的「轻」**到什么程度：只读 + 行内小改，还是完全外链
 3. **Orchest 进入产品的时机与角色**：候选切入点是 Context Composer 的智能化（注意力策略由 agent 决策）与知识投影的提炼 agent（Dream/Distill 的近亲）
 4. **v1 文字创作角色的引擎**：Claude Code 通用化使用，还是 Orchest 原生 agent
+5. **命名与商标**：Multivac 出自阿西莫夫，且有同名既有项目——公开发布前完成商标与重名检查（不阻塞开发）
+6. **仓库组织**：在 orchest monorepo 内孵化还是独立 multivac repo——阶段 0 init 前定，影响 CI 与发布流水线
 
 ---
 

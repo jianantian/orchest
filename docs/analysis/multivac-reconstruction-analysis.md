@@ -605,10 +605,12 @@ pub struct FeatureFlags {
    - `sessions`（runs：SessionIdentity 四元组判定 resume）
    - `events`（normalized TaskEvent，事件溯源，重放还原 UI）
    - `objects`（**Locator 注册表**：`knowledge://` URI + provenance + scope——一切可指代对象在此登记，ADR-001 D4 给团队路线的结构性让步）
+   - 持久化纪律（ADR D9/D10/D11）：events 带 schema_version 且永不破坏重放；持久化管线内置脱敏器（token/secret 模式 + 路径黑名单），先脱敏后落盘；workspace 写锁模型（同 workspace 同时仅一个持写权 run）；一键导出（JSONL + 文件）
 
 3. **RuntimeBackend + Claude Code**：
    - `RuntimeBackend` trait + normalized `TaskEvent`；`StartAgentTask` 按 §6.6 完整契约定型（context_mode / lifecycle / background / gate 即使 v0 不全实现，schema 先锁定）
-   - Claude Code `PtyRuntime`（v0 唯一实现）：spawn CLI，JSONL → TaskEvent 转译
+   - Claude Code `PtyRuntime`（v0 唯一实现）：走官方 headless / stream-json 接口（不做 PTY 屏幕抓取），JSONL → TaskEvent 转译 + 契约测试（版本升级先跑契约，ADR D13）；认证用用户自己的 Claude 订阅
+   - `start_task` 前置钩子：run 前自动 workspace 快照 + 一键回滚（撤销先于 review，ADR D12）
    - 双层权限（§6.8）：Approval 枚举 + shell prefix-depth + workspace deny-list
 
 4. **对话面闭环**：
@@ -623,6 +625,7 @@ pub struct FeatureFlags {
 7. **终端面**：共享 PTY（portable-pty + xterm.js）+ session 持久化 + replay buffer + **sideband input**（agent 注入命令不干扰用户键盘，salvage §6.1）
 8. **Deixis 原语**：四个面统一的「选中 → Locator URI → 引用 chip → 进输入框」；对象写入 `objects` 表。**session/turn 本身也是引用对象**——把一个会话的 normalized transcript 注入另一个会话（v0 为 Claude↔Claude 并行 session 共享上下文；第二 runtime 接入后升级为跨厂商,创世卡点 2）
 9. **Context Composer v1**：环境摘要常驻 + 指代内容精确注入 + `read_file` / `read_terminal` / `git_status` 按需查询工具；前端 context tray（人能看见并勾选 agent 将看到什么）
+   - 随附**本地遥测**（ADR D14）：指代次数、沉淀引用率、context tray 修改率的本地埋点——里程碑 exit criteria 的测量基础；本地明文、不上传
 
 ### 阶段 2：browser 面 + 感知
 
