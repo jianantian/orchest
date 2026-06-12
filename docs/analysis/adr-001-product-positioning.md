@@ -12,6 +12,15 @@
 
 ---
 
+## 0.5 创世卡点（产品的原始需求，所有抽象的检验锚点）
+
+定位的抽象论证之外，记录两个最初让创始用户「不爽」的具体时刻——任何设计如果解决不了这两个卡点，就偏离了原点：
+
+1. **「我想同时拥有 Gemini Canvas 和 Claude Code」**——chat + 实时画布 + coding agent 不该是两个产品。
+   现状（2026-06）：单一厂商内部已在收敛——Claude Code 桌面端的 preview 面板、Claude Design（2026-04，chat 左 + canvas 右 + handoff 给 Claude Code）。**推论：「canvas 挨着 coding agent」正在被厂商商品化，不能作为我们的差异化本体**；它验证了 Surface 区方向，但我们的增量在多介质创作面（超出 web/code）、全工作区 deixis 与 team plane。
+2. **「我希望 Codex 能看到我和 Claude Code 的交互」**——跨厂商的 agent 共享上下文。
+   **这是结构上没有任何厂商会解决的卡点**（Anthropic 不会把 Claude 的 transcript 喂给 OpenAI 的 Codex，反之亦然），天然是第三方工作台的生意。它把介质论推广到完整形态：**工作台是「人 ↔ N 个 agent」以及「agent ↔ agent」的共享介质**。我们的架构已为此成形——normalized TaskEvent（厂商协议不外泄）+ session/turn 作为 Locator 对象 + Context Composer 注入——机制即：把一个 session 作为 deixis 对象引用进另一个 agent 的会话。v0 单 runtime 下表现为 Claude↔Claude（并行 session 共享上下文），第二 runtime 接入即升级为跨厂商。
+
 ## 1. 背景：三个愿景的张力
 
 团队内部对产品定位存在三种表述，导致设计文档 scope 蔓延（Org/Employee/Meeting/Knowledge/多 runtime 全部挤进早期阶段）：
@@ -78,6 +87,8 @@
 
 配套 UX：**context tray**——发送前人能看见并勾选「agent 将看到什么」。信任与权限控制从这里长出，而不是从 Org RBAC 长出。这个注意力策略是介质论真正的技术 crux。
 
+**跨 agent 共享上下文**（创世卡点 2）：WorkbenchContext 的来源不限于五个面——**另一个 agent 的 session/turn 也是可指代、可注入的上下文对象**。一个 session 的 normalized transcript（token-budgeted 摘要 + 按需展开）可以作为引用 chip 进入另一个 agent 的会话。这要求 session 归一化从第一天就厂商中立（TaskEvent 不泄漏 Claude JSONL / Codex 协议细节）。
+
 ### D4 Knowledge = 工作的投影（给团队路线的结构性让步）
 
 v0 的一切对象（session、turn、文件、diff、终端片段、annotation、browser 快照）都是**可寻址、带 provenance、带权限 scope 的上下文对象**（`knowledge://` URI——salvage 文档的 Locator 模式）。
@@ -132,11 +143,11 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
 | 进 v0 | 出 v0（接口保留） | 不做 |
 |-------|------------------|------|
 | 对话面（TurnCard + TurnState） | Cloud / Postgres 模式 | 编辑器内核军备竞赛 |
-| 文件阅读面 + 多媒体预览 | 多 CLI runtime | 知识库作为独立容器产品 |
+| 文件阅读面 + 多媒体预览 | 多 CLI runtime（**Codex 是 v0 后第一扩张项**——创世卡点 2，优先于其他一切后置项） | 知识库作为独立容器产品 |
 | git 面（status / log / diff） | Org / Employee / Meeting / ASR | GenUI 自由布局引擎 |
 | 终端面（共享 PTY + sideband） | MessageIngress（IM 接入） | 和平台打入口层 |
 | browser 面 + 感知适配器 | Orchest 编排深度（§6.7） | 角色档案 / persona 配置 |
-| deixis 原语 + context tray | team plane（scope 共享） | |
+| deixis 原语 + context tray（含 **session/turn 作为引用对象**——跨 session 上下文移植，创世卡点 2 的 v0 形态） | team plane（scope 共享） | |
 | Locator 对象模型（URI + provenance + scope） | Claude Code 配置导入（v0.x 增长杠杆） | |
 | review / draft 裁决循环 | | |
 

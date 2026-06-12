@@ -621,7 +621,7 @@ pub struct FeatureFlags {
 5. **文件面**：树 + 阅读/预览（代码/markdown/图片/PDF；**只读为主——人读审指，agent 写**，ADR-001 D6）
 6. **git 面**：status / log / diff 渲染——diff 是 review 的主视图
 7. **终端面**：共享 PTY（portable-pty + xterm.js）+ session 持久化 + replay buffer + **sideband input**（agent 注入命令不干扰用户键盘，salvage §6.1）
-8. **Deixis 原语**：四个面统一的「选中 → Locator URI → 引用 chip → 进输入框」；对象写入 `objects` 表
+8. **Deixis 原语**：四个面统一的「选中 → Locator URI → 引用 chip → 进输入框」；对象写入 `objects` 表。**session/turn 本身也是引用对象**——把一个会话的 normalized transcript 注入另一个会话（v0 为 Claude↔Claude 并行 session 共享上下文；第二 runtime 接入后升级为跨厂商,创世卡点 2）
 9. **Context Composer v1**：环境摘要常驻 + 指代内容精确注入 + `read_file` / `read_terminal` / `git_status` 按需查询工具；前端 context tray（人能看见并勾选 agent 将看到什么）
 
 ### 阶段 2：browser 面 + 感知
@@ -641,7 +641,8 @@ pub struct FeatureFlags {
 
 17. **Team plane**：`objects` 的 scope 共享——团队知识库路线的兑现，数据模型不变
 18. **文字创作者 / PM surface 深化**：长文档 deixis、文档 artifact 类型
-19. **后置项**（接口已定型，按需启动）：多 runtime（Codex/OpenCode AcpRuntime）、Cloud 模式（Postgres impl + multivac-server + runtime-host）、Orchest 编排深度（§6.7）、MessageIngress（§6.9）、Meeting/ASR、MCP 集成、Product Tools 体系
+19. **第二 runtime：Codex AcpRuntime**——v0 后的第一扩张项（ADR-001 创世卡点 2：跨厂商 agent 共享上下文是没有厂商会做的差异化；session-as-context 机制在 v0 已就位，接入即升级为跨厂商）
+20. **后置项**（接口已定型，按需启动）：更多 runtime（OpenCode 等）、Cloud 模式（Postgres impl + multivac-server + runtime-host）、Orchest 编排深度（§6.7）、MessageIngress（§6.9）、Meeting/ASR、MCP 集成、Product Tools 体系
 
 ---
 

@@ -294,7 +294,7 @@ Craft Agents 的 annotation（选中文本 → Island → 追问）是这个原�
 实现要点：
 - 每个 surface 的指代适配器只做两件事：**选区 → Locator URI**；**URI → 高亮回显**（agent 回复中引用同一 URI 时反向定位到 surface 上）
 - chip 在输入框中可删除、可点击预览——和 context tray 一起构成「人看得见 agent 将看到什么」
-- v0 范围：文本 / 代码 / diff / 终端四种选区；browser 元素指代在阶段 2；时间码 / 波形区域是 v2 surface 的事
+- v0 范围：文本 / 代码 / diff / 终端四种选区 + **session/turn 引用**（把一个会话作为 chip 注入另一个会话——跨 agent 共享上下文的 v0 形态，ADR-001 创世卡点 2）；browser 元素指代在阶段 2；时间码 / 波形区域是 v2 surface 的事
 
 ### 4.2 Context Tray
 
