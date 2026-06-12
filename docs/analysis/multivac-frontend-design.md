@@ -336,36 +336,33 @@ src/types/        → 未来 packages/product-model  （session/turn/task/artifa
 
 组件不直接 import wire 格式（TaskEvent JSON），只消费 `reduceTurnState` 之后的 product model 类型。
 
-### 5.2 色彩体系（借鉴 Epitaxy + 自建）
+### 5.2 色彩体系
+
+> 基调、token 与琥珀纪律以 [multivac-design.md](./multivac-design.md) 为准（墨/纸/琥珀体系，暖中性基底替换原 slate 占位色板）。本节保留派生规则与组件级纪律。
 
 ```css
 :root {
-  /* 语义色 */
-  --color-primary: #3b82f6;
-  --color-primary-rgb: 59, 130, 246;
-  --color-info: #6366f1;
-  --color-info-rgb: 99, 102, 241;
-  --color-success: #22c55e;
-  --color-success-rgb: 34, 197, 94;
-  --color-warning: #f59e0b;
-  --color-warning-rgb: 245, 158, 11;
-  --color-error: #ef4444;
-  --color-error-rgb: 239, 68, 68;
+  /* 基底：墨与纸（暖中性，完整 token 见 multivac-design.md §2.2） */
+  --background: #faf8f4;
+  --foreground: #1c1a17;
+  --surface: #f3f0ea;
+  --border: #e4dfd5;
 
-  /* 表面色 */
-  --background: #ffffff;
-  --foreground: #0f172a;
-  --surface: #f8fafc;
-  --surface-secondary: #f1f5f9;
-  --border: #e2e8f0;
+  /* 品牌色：琥珀——出场率 < 5%（deixis 高亮 / 聚焦态 / 品牌时刻） */
+  --color-primary: #d97917;
 
-  /* 暗色 */
+  /* 语义色：独立状态系统，降饱和 */
+  --color-success: #4d9960;
+  --color-error: #c4554d;
+  --color-warning: #d9a317;
+  --color-info: #5b7e9e;
+
   &[data-theme="dark"] {
-    --background: #0f172a;
-    --foreground: #f1f5f9;
-    --surface: #1e293b;
-    --surface-secondary: #334155;
-    --border: #475569;
+    /* 石墨夜：暖黑微偏褐 */
+    --background: #161411;
+    --foreground: #e8e4dc;
+    --surface: #1f1c18;
+    --border: #353029;
   }
 }
 ```
