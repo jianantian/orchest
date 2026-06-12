@@ -1,6 +1,7 @@
 # Multivac Design——视觉基调与品牌
 
-> 2026-06-12 | 上游：[ADR-001](./adr-001-product-positioning.md)（介质论、人读审指 agent 写、厚度 = 时间 × 沉淀）
+> 2026-06-12 | **状态：概念稿**——基调、隐喻与纪律已定方向；具体色值/字体/logo 均为示意，待第一个 UI spike 铺真实内容（TurnCard + 终端 + diff）后校准细化。
+> 上游：[ADR-001](./adr-001-product-positioning.md)（介质论、人读审指 agent 写、厚度 = 时间 × 沉淀）
 > 本文定义视觉与品牌的「为什么」和基础 token；组件级规则（TurnCard、deixis、布局）见 [multivac-frontend-design.md](./multivac-frontend-design.md)。
 > 原则：视觉基调不是品味问题，是定位的延伸——每个选择都应能从 ADR-001 推导出来。
 
@@ -29,7 +30,9 @@
 
 选琥珀不是因为好看，是因为隐喻精确：**琥珀是把上下文封存千万年的沉淀物**——这就是产品本身（D4：知识是工作的投影）。且它在竞品色谱上是空位（Linear 紫、Cursor 蓝黑、Claude 陶土橙）：暖色家族，色相清晰可分。
 
-### 2.2 Token
+### 2.2 Token（示意值，spike 后校准）
+
+以下 hex 表达的是关系（纸暖、墨深、琥珀克制、语义色降饱和），不是终值：
 
 ```css
 :root {
