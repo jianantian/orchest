@@ -1,6 +1,8 @@
 # Multivac 前端设计参考
 
 > 2026-06-01 | 参考源：Claude macOS app (Epitaxy 设计体系), Craft Agents OSS (组件架构), Codex macOS app (插件系统)
+>
+> 定位与优先级以 [ADR-001](./adr-001-product-positioning.md) 为准：工作台 = **Surface 区（主舞台）+ Chat Lane**；deixis 是第一交互原语；人读审指，agent 写。
 
 ---
 
@@ -11,6 +13,11 @@
 3. **空间即状态** — panel stack 的推入/弹出反映用户的工作深度。不是 tab，不是抽屉——是「我进入了这个 session，现在在这里」。
 4. **动效表达物理关系** — 参考 Craft Agents 的 Island 菜单：从文本选择点发出，速度决定动画距离。不是花哨，是指引注意力。
 5. **每 session 独立** — 状态管理用 Jotai atom family，不是全局 store。不同 session 的状态互相不可见。
+6. **关键动作永远可见** — approval、cancel/interrupt、permission mode 切换、artifact accept/reject 不藏在 hover、context menu 或组合键里。Craft Agents 的反面教训：视觉精致但可发现性差，「UI 好看但 UX 难用」的主要来源就是过多隐式交互。
+7. **固定信息架构先于灵活 panel** — 先让用户形成空间记忆，再逐步引入折叠与推入。v0 布局做死（§四）。
+8. **指代是第一交互原语** — 选中任何 surface 上的任何东西（文本 / file:line / diff hunk / 终端行 / DOM 元素）→ 引用 chip → 指挥 agent。让「指」代替「说」是整个产品的介质论（ADR-001 D3），值得最大的设计投入。
+9. **上下文对人可见** — agent 将看到什么，在发送前可见、可勾选（context tray）。信任来自对称：人看得见 agent 的所见。
+10. **Agent 在面上现身** — agent 改文件、跑命令、操作 browser 时，对应 surface 显示 agent attribution（色标 + 操作标记），而不是只在聊天里报告。介质感来自看见对方在同一张桌上动手。
 
 ---
 
@@ -131,8 +138,9 @@ TurnCard 是 Multivac 执行透明度的用户界面——让用户看到 agent 
 **关键设计**：
 - Tool calls 默认折叠为一行（icon + name + status + brief result）
 - 用户点击展开后看到完整 input/output
-- 子 agent 的 tool calls 缩进，形成树状
+- 子 agent 的 tool calls 缩进，形成树状；每个 ActivityRow 标注执行者 agent 的 icon + color
 - Response 文本有缓冲：不是每个 token 都刷新渲染，而是 `MIN_WORDS=4` 或 `MIN_BUFFER_MS=100` 间隔
+- **Completion Gate 状态**进入 TurnCard：`验收中`（judge model 评估）/ `未通过`（展示 gate 理由 + agent 继续返工）/ `通过`。后台 sub-agent 的 gate 结果进 Inbox。用户看到的不是「子 agent 说自己做完了」，而是验收后的真实状态——执行透明度的一部分
 
 ### 3.3 Annotation 系统（Multivac 必须实现）
 
@@ -248,9 +256,63 @@ reconcilePanels(newPanels)  // 从 URL 同步
 
 ---
 
-## 四、Multivac 前端架构
+## 四、信息架构：工作台 = Surface 区 + Chat Lane
 
-### 4.1 技术栈
+定位（ADR-001 D1/D2）：根对象是 Workspace，chat 只是其中一个面。布局不是「聊天应用 + 周边面板」，而是**人和 agent 共享的一组工作面（surface）**——这与传统 agent UI「聊天为中心、工具为弹窗」相反：**创作介质占最大面积，对话退为右侧常驻的指挥信道**。
+
+```
+┌──────────────┬────────────────────────────────┬──────────────────────┐
+│  Left Rail   │  Surface 区（主舞台）            │  Chat Lane           │
+│              │                                │                      │
+│  Workspaces  │  Files / Reader（多媒体预览）    │  TurnCard timeline   │
+│  Runs        │  Git（status / log / diff）     │  ApprovalStrip       │
+│  Inbox       │  Terminal（共享 PTY）           │  ContextTray         │
+│              │  Browser（实时预览 + agent 感知）│  SessionInput        │
+│              │                                │   + 引用 chips        │
+└──────────────┴────────────────────────────────┴──────────────────────┘
+```
+
+- **v0 五个面**：对话、文件阅读（代码/markdown/图片/PDF/视频，只读为主——人读审指，agent 写）、git、终端、browser。每个 surface 实现**三件套合同**：渲染器 + 指代适配器 + 感知适配器（ADR-001 D2）。
+- **内容驱动激活**：diff 到达 → git 面前置；dev server 起 → browser 面打开；不做角色档案，不做 GenUI 布局引擎（v2 用 layout preset）。「按角色自动布局」由「按内容激活面」涌现。
+- **Chat Lane 常驻可调宽**：Stop/Interrupt、permission mode 在 lane 头部常驻；pending approval 在 ApprovalStrip 常驻可见，PermissionDialog 只是模态强化，不是唯一入口（设计原则 6）。
+- **Left Rail**：Workspaces（切换工作区）、Runs（运行列表 + 状态点）、Inbox（后台 run 完成/阻塞的通知，badge；daemon 模式下 agent 在窗口关闭后仍在工作，Inbox 是用户回来时「发生了什么」的入口）。
+- 布局 v0 做死：Surface 区 tab / 二分屏，Chat Lane 固定右侧；不提供自由拖拽分栏。
+
+### 4.1 Deixis：第一交互原语
+
+Craft Agents 的 annotation（选中文本 → Island → 追问）是这个原语在 chat 面上的特例。Multivac 把它泛化到全工作区：
+
+```
+任何 surface 上选中任何对象
+  文本 span / file:line / diff hunk / 终端行区间 / browser DOM 元素或截图区域
+→ Island 菜单（追问 / 指令 / 加入上下文）
+→ 生成引用 chip 进入 SessionInput
+→ 发送时 chip 解析为 Locator URI + 精确内容注入
+→ 对象写入 objects 表（provenance + scope），未来可被检索复用（ADR-001 D4）
+```
+
+实现要点：
+- 每个 surface 的指代适配器只做两件事：**选区 → Locator URI**；**URI → 高亮回显**（agent 回复中引用同一 URI 时反向定位到 surface 上）
+- chip 在输入框中可删除、可点击预览——和 context tray 一起构成「人看得见 agent 将看到什么」
+- v0 范围：文本 / 代码 / diff / 终端四种选区 + **session/turn 引用**（把一个会话作为 chip 注入另一个会话——跨 agent 共享上下文的 v0 形态，ADR-001 创世卡点 2）；browser 元素指代在阶段 2；时间码 / 波形区域是 v2 surface 的事
+
+### 4.2 Context Tray
+
+SessionInput 上方常驻一行，展示本条消息将携带的 WorkbenchContext：
+
+```
+[✓ 当前文件 auth.ts] [✓ 选区 L42-58] [✓ git diff (3 files)] [□ 终端最后 50 行] [□ browser console]
+```
+
+- 廉价环境摘要默认勾选（几百 token）；重对象默认不勾选——agent 可通过 `read_terminal` / `inspect_browser` 等工具按需查询（注意力策略三层模型，ADR-001 D3）
+- 点击任一 chip 预览 agent 将看到的确切内容
+- 这是权限与信任的主要 UX 载体：控制 agent 的所见，从这里开始，而不是从 RBAC 配置页开始
+
+---
+
+## 五、Multivac 前端架构
+
+### 5.1 技术栈
 
 | 层 | 选择 | 理由 |
 |----|------|------|
@@ -264,7 +326,17 @@ reconcilePanels(newPanels)  // 从 URL 同步
 | **图表** | Mermaid (客户端渲染) | tool call 流程图 |
 | **网络** | fetch (REST) + WebSocket (事件流) | — |
 
-### 4.2 色彩体系（借鉴 Epitaxy + 自建）
+**内部包边界**（Craft Agents `packages/ui` 的教训：agent UI primitives 要尽早从页面代码中抽离）。初期单 app，但目录按未来可拆包的边界组织：
+
+```
+src/components/   → 未来 packages/ui            （TurnCard 等 primitives，只消费 product model）
+src/api/          → 未来 packages/runtime-client （HTTP/WS transport + 事件投影）
+src/types/        → 未来 packages/product-model  （session/turn/task/artifact 前端类型）
+```
+
+组件不直接 import wire 格式（TaskEvent JSON），只消费 `reduceTurnState` 之后的 product model 类型。
+
+### 5.2 色彩体系（借鉴 Epitaxy + 自建）
 
 ```css
 :root {
@@ -300,51 +372,62 @@ reconcilePanels(newPanels)  // 从 URL 同步
 
 **规则**：永远不直接用 `slate-600` 这种固定色。始终通过 `var(--foreground)` 或 `color-mix(in srgb, var(--info) 10%, transparent)` 派生。
 
-### 4.3 组件树
+**Agent 标识色**（MIMO 经验：multi-agent 时用户必须能区分「这步是谁做的」）：
+
+```css
+  --color-agent-build: #fb8147;
+  --color-agent-plan: #c7e2a8;
+  --color-agent-review: #a7a3d8;
+  /* AgentFactory 动态生成的 agent 从预置色环分配 */
+```
+
+TurnCard 中每个 ActivityRow / ActivityGroupRow 标注执行者 agent 的 icon + color；同一颜色贯穿 surface 上的 agent attribution（设计原则 10）和 Inbox 条目。
+
+**Overlay 纪律**：z-index、shadow 全部 token 化（`--z-overlay` / `--z-island` / `--shadow-minimal` 等量表），配 ESLint 自定义规则禁止硬编码。Craft Agents 用 `no-hardcoded-z-index` / `no-nonstandard-shadows` 管住了 overlay 失控——agent 产品的 overlay、menu、island、diff viewer 数量多，这条纪律必须从第一天建立。
+
+### 5.3 组件树
 
 ```
 MultivacApp
 ├── AppShell
-│   ├── Sidebar
+│   ├── LeftRail
 │   │   ├── UserAvatar
-│   │   ├── SessionList
-│   │   │   └── SessionItem (icon, title, status dot, timestamp)
-│   │   ├── OrgSwitcher (如果是 SaaS 模式)
+│   │   ├── WorkspaceSwitcher
+│   │   ├── RunList
+│   │   │   └── RunItem (icon, title, status dot, timestamp)
+│   │   ├── InboxList (badge = inboxUnreadCount)
 │   │   └── BottomActions (settings, help, feedback)
 │   │
-│   ├── MainPanel
-│   │   ├── PanelStack
-│   │   │   ├── SessionView
-│   │   │   │   ├── SessionHeader (title, permission toggle, actions)
-│   │   │   │   ├── SessionViewer
-│   │   │   │   │   ├── TurnCard
-│   │   │   │   │   │   ├── PlanHeader (optional)
-│   │   │   │   │   │   ├── ActivityRow[] (tool calls)
-│   │   │   │   │   │   ├── ActivityGroupRow[] (sub-agent tasks)
-│   │   │   │   │   │   └── ResponseCard (assistant text)
-│   │   │   │   │   └── UserMessageBubble
-│   │   │   │   ├── AnnotationIsland (portal, floats above text)
-│   │   │   │   └── SessionInput
-│   │   │   │       ├── AttachmentBar
-│   │   │   │       ├── TiptapEditor
-│   │   │   │       └── SendButton + ModelSelector
-│   │   │   │
-│   │   │   ├── TaskView (panel push from session)
-│   │   │   └── KnowledgeView (panel push from session)
-│   │   │
-│   │   └── OverlayHost (portal target)
-│   │       ├── CodePreviewOverlay
-│   │       ├── DiffPreviewOverlay
-│   │       ├── JSONPreviewOverlay
-│   │       └── ImagePreviewOverlay
+│   ├── SurfaceArea (主舞台, tab / 二分屏)
+│   │   ├── FileSurface (tree + Reader: code/markdown/image/PDF/video, 只读为主)
+│   │   ├── GitSurface (status / log / DiffViewer——review 主视图)
+│   │   ├── TerminalSurface (xterm.js, 共享 PTY, agent sideband 操作带 attribution)
+│   │   ├── BrowserSurface (实时预览 + console; agent 感知源)
+│   │   └── OverlayHost (portal: fullscreen preview)
 │   │
-│   └── TransportStatusBar (连接状态, 仅 cloud 模式)
+│   ├── ChatLane (右侧常驻, 可调宽)
+│   │   ├── SessionHeader (permission mode, stop/interrupt 常驻可见)
+│   │   ├── SessionViewer
+│   │   │   ├── TurnCard
+│   │   │   │   ├── PlanHeader (optional)
+│   │   │   │   ├── ActivityRow[] (tool calls, agent color 标注)
+│   │   │   │   ├── ActivityGroupRow[] (sub-agent tasks)
+│   │   │   │   └── ResponseCard (assistant text)
+│   │   │   └── UserMessageBubble
+│   │   ├── ApprovalStrip (pending permissions, 常驻可见)
+│   │   ├── ContextTray (agent 将看到什么, 可勾选可预览)
+│   │   └── SessionInput
+│   │       ├── ReferenceChips (deixis 引用)
+│   │       ├── TiptapEditor
+│   │       └── SendButton + ModelSelector
+│   │
+│   └── DeixisIsland (portal, 任意 surface 选区上浮现)
 │
-├── PermissionDialog (全局, approval gate 触发)
+├── PermissionDialog (模态强化, ApprovalStrip 是常驻入口)
 └── ToastContainer (sonner)
 ```
 
-### 4.4 状态管理（Jotai）
+### 5.4 状态管理（Jotai）
 
 ```typescript
 // stores/sessions.ts
@@ -372,9 +455,13 @@ export const panelStackAtom = atom<Panel[]>([])
 
 // stores/annotations.ts
 export const activeAnnotationAtom = atom<AnnotationState | null>(null)
+
+// stores/inbox.ts —— 后台任务完成、gate partial/blocked、待批 permission
+export const inboxItemsAtom = atom<InboxItem[]>([])
+export const inboxUnreadCountAtom = atom((get) => get(inboxItemsAtom).filter(i => !i.read).length)
 ```
 
-### 4.5 Turn 状态模型
+### 5.5 Turn 状态模型
 
 每个 turn 的 UI 状态从事件流纯函数推导——可序列化、可重放、可测试。不在 event handler 里散装 mutate atoms。
 
@@ -394,7 +481,9 @@ function reduceTurnState(prev: TurnState, event: TurnEvent): TurnState
 
 `sessionAtomFamily` 中的 `messages` 数组替换为 `turns: TurnState[]`，每个 turn 从事件流纯函数构建。历史 session 加载时，重放 `task_events` 即可还原完整 UI 状态。
 
-### 4.6 WebSocket 事件处理
+**Renderer 无关性**：`TurnState` 是中间状态，不引用任何 DOM/React 概念。`renderWeb(state)` 之外，未来飞书卡片 `renderCard(state)`、移动 push `renderPush(state)` 消费同一状态机——对齐 lark-bridge 验证过的 `AgentEvent → RunState → render` 三段式。平台 payload 限制（卡片大小、交互组件）集中在各自 renderer 里消化，不回流到状态层。
+
+### 5.6 WebSocket 事件处理
 
 ```
 Backend → WS → EventProcessor → Jotai Atom 更新 → React re-render
@@ -409,17 +498,19 @@ Backend → WS → EventProcessor → Jotai Atom 更新 → React re-render
   text:delta        → 追加到 ResponseCard buffer
   text:flush        → force flush buffer
   turn:completed    → 标记当前 TurnState 为最终态，停止接收该 turn 的增量更新（AuditHook 此时写 DB）
-  permission:need   → 打开 PermissionDialog
+  permission:need   → 打开 PermissionDialog + ApprovalStrip 入列
   task:event        → 更新 sub-agent task 状态
+  task:gate         → completion gate 状态（evaluating / passed / partial+理由）
+  inbox:item        → 后台任务完成/降级 → Inbox badge + toast
   session:error     → 显示错误 + Toast
   session:completed → 设置 status = idle, turnPhase = complete
 ```
 
 ---
 
-## 五、核心交互流程
+## 六、核心交互流程
 
-### 5.1 新建 Session
+### 6.1 新建 Session
 
 ```
 用户点击 New Session → POST /api/sessions → 获得 sessionId
@@ -434,7 +525,7 @@ Backend → WS → EventProcessor → Jotai Atom 更新 → React re-render
 
 消息发送是同步 HTTP POST，不是 WS 消息。前端在收到 201 后立即渲染 skeleton，不等第一个 WS 事件——避免「用户发送消息后 UI 空白等第一个 event」的延迟感。`api/client.ts` 需同时暴露 `sendMessage()` HTTP 方法和 WS 事件监听。
 
-### 5.2 Agent 执行中的 UI
+### 6.2 Agent 执行中的 UI
 
 ```
 用户消息 → POST 返回 turn_id → 前端立即 TurnCard skeleton → TurnPhase: pending
@@ -448,7 +539,7 @@ tool 执行完 → TurnPhase: awaiting (等待下一个模型调用或完成)
   → WS relay hook 持久化 transcript
 ```
 
-### 5.3 追问流程
+### 6.3 追问流程（deixis 在 chat 面的特例，见 §4.1）
 
 ```
 用户在 ResponseCard 选中文字 → mouseup 触发
@@ -461,7 +552,7 @@ tool 执行完 → TurnPhase: awaiting (等待下一个模型调用或完成)
 → 标注设置为 sent 状态（透明度 0.58）
 ```
 
-### 5.4 Permission 弹窗
+### 6.4 Permission 弹窗
 
 ```
 Agent 调用 tool（requires approval） → WS 收到 permission:need
@@ -472,9 +563,11 @@ Agent 调用 tool（requires approval） → WS 收到 permission:need
 → 对话框关闭，agent 继续
 ```
 
+同一请求同时进入 ChatLane 的 ApprovalStrip——模态被关闭/失焦后 approval 仍有常驻可见入口，不会「丢」。多 run / 多 sub-agent 并发请求时以 strip 为主视图，模态只针对当前聚焦 session（设计原则 6）。
+
 ---
 
-## 六、不做的事
+## 七、不做的事
 
 | 不做 | 原因 |
 |------|------|
@@ -485,3 +578,7 @@ Agent 调用 tool（requires approval） → WS 收到 permission:need
 | **不做 workspace 文件树** | 先做 session 列表 + task board。文件树是 knowledge workspace 阶段的事 |
 | **不做多主题** | 一个暗色主题 + 一个亮色主题。不提供自定义主题引擎 |
 | **不做离线模式 UI** | 先做 always-online。离线缓存后续 |
+| **不做 hover-only 的关键动作** | approval / cancel / permission mode 必须常驻可见（Craft Agents 可发现性教训） |
+| **不做自由拖拽分栏** | v0 布局做死：Surface 区 tab/二分屏 + Chat Lane 固定右侧，先建立空间记忆 |
+| **不做编辑器内核** | 人读审指，agent 写（ADR-001 D6）；Reader 用成熟件，编辑外链 |
+| **不做角色档案 / GenUI 布局引擎** | 角色是涌现的——内容驱动 surface 激活；v2 用 layout preset（ADR-001 D2） |

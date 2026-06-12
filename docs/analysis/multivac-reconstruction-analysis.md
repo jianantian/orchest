@@ -1,15 +1,17 @@
 ---
 ## 产品定位
 
-**Multivac 的产品本体是 execution control plane——不是聊天插件，不是 IM bot 框架。**
+> 定位以 [ADR-001](./adr-001-product-positioning.md) 为准：**个体与 agent 协同的创作工作台——协作语法统一，创作介质可插拔，知识是工作的自动沉淀。**
 
-Session（聊天）只是 task/runtime 的一个视图，不是系统真相的唯一容器。外部 IM（飞书/Slack）是 distribution surface，不是产品定义。当 Session 和 Task 的设计冲突时，Task 的完整性优先。
+根对象是 **Workspace**（工作发生的现场），不是 Session（聊天），也不是知识容器。Chat 是 workspace 的一个面，Task 是对 agent 工作的记账，Knowledge 是工作历史的投影。本文档描述的 execution control plane 是支撑产品的**基础设施层**——它决定系统怎么建，不定义产品是什么。
 
-价值锚定在四个层面：
-- **Task** 是执行真相
-- **Runtime** 是执行宿主
-- **Artifact** 是执行产物，不是聊天附件
-- **Knowledge** 是任务与项目上下文，不是 IM 历史的副产物
+价值锚定：
+- **Workspace** 是系统真相的根（v0 = 本地目录/git repo + Runs + Artifacts）
+- **双向上下文流**是介质的技术核心：agent→人（TaskEvent → TurnState → 渲染）与 人→agent（WorkbenchContext → Context Composer → 注入/查询）必须对称（ADR-001 D3）
+- **Task** 是执行记账，**Runtime** 是执行宿主，**Artifact** 是执行产物——三者经 Locator（`knowledge://` URI + provenance + scope）全部可寻址
+- 外部 IM 是 distribution surface，不是产品定义
+
+**v0 工程剖面（ADR-001 D7）**：桌面单壳（Tauri vs Electron 复审中，§6.2）+ SQLite + Claude Code 单 runtime + 单 workspace。本文档 §6.7（编排深度）、§6.9（MessageIngress）、§6.10-6.13（双模式交付）为**目标架构，非 v0 范围**——接口形态保留，工程预算为零。
 
 ---
 
@@ -68,8 +70,11 @@ Session（聊天）只是 task/runtime 的一个视图，不是系统真相的�
 - Claude Code、Codex、OpenCode 这类 CLI agent 不属于普通 CRUD 后端模块。它们是长时执行平面，通过 `RuntimeBackend` 暴露 `start/attach/permission/pause/terminate/events` 等能力。
 - `RuntimeBackend` 有本机实现，也有远程实现。远程 runtime-host 可以通过 `tonic` gRPC（云内双向可达）或 runtime-host 主动连接的 WebSocket/reverse session（用户本机/NAT 后设备）接入。
 - 前端、task supervisor、审计日志只消费 normalized `TaskEvent` / `RuntimeEvent`，不直接消费 Claude Code JSONL、Codex ACP、PTY stdout 等内部协议。
+- **`multivac-core` 是 daemon-first 的库，不是 request-response server**（Kocoro 的 daemon 模型）。axum router 只是 trigger surface 之一：SessionManager 同样可以被定时任务、文件监听、IM ingress、MCP 调用唤醒。Desktop 模式下 agent 常驻后台，不随窗口关闭而消失——「server」暗示被动响应，「daemon」暗示主动的后台 agent 生命周期，所有模块按后者设计。
 
-### 6.2 为什么 Tauri 而不是 Electron
+### 6.2 桌面壳选型：Tauri vs Electron（复审中）
+
+> **2026-06-12 决策重开**，详见 [electron-vs-tauri 复审](../research/desktop-tools/electron-vs-tauri.md)。下表为原决策依据，其首要论据已失效。
 
 | | Electron | Tauri |
 |---|---------|-------|
@@ -80,7 +85,13 @@ Session（聊天）只是 task/runtime 的一个视图，不是系统真相的�
 | **内存** | ~200MB+ baseline | ~50MB baseline |
 | **Rust 契合度** | 需要额外的 FFI 层维护 | **天然一体** |
 
-Tauri 的 webview 使用系统 WebView（macOS WebKit, Windows WebView2），前端代码完全相同——Vite dev server 在开发时，构建产物嵌入 Tauri 发布。
+复审要点：
+1. **FFI 论据失效**——前端经 HTTP/WS 连 Rust daemon，壳与 core 进程解耦，两种壳都不碰 FFI，`multivac-core` 一行不改
+2. **新的决定性因素**——ADR-001 把 browser 面定为招牌：Electron 的 WebContentsView + `webContents.debugger`（全量 CDP）原生满足感知需求（Claude Code 桌面端即此架构）；Tauri 多 webview 仍是 unstable feature，且 macOS WKWebView 无任何官方编程感知接口
+3. **一致性成本**——系统 webview 版本随用户机器漂移；终端（xterm.js）、视频编解码（H.265）、canvas 渲染在 WKWebView 均有已知问题，恰砸在创作工作台最重的三个面上
+4. **复审建议：Electron**；若坚持 Tauri 需先通过 sidecar Chromium（CDP + screencast）的 spike。本决策须在阶段 1 动工前定死——surface 适配器有壳相关实现
+
+Tauri 路线下 webview 使用系统 WebView（macOS WebKit, Windows WebView2）；两种壳下前端代码完全相同——Vite dev server 在开发时，构建产物嵌入壳发布。
 
 ### 6.3 Workspace 结构
 
@@ -114,6 +125,9 @@ multivac/
 │   │       ├── org/
 │   │       ├── knowledge/
 │   │       ├── meeting/
+│   │       ├── agent/               # AgentFactory + EmployeeTaskBinding
+│   │       ├── ingress/             # MessageIngress trait（外部 IM 入口预留）
+│   │       ├── workflow/            # agent()/parallel() 编排原语（接口预留）
 │   │       ├── runtime/             # RuntimeBackend trait + normalized TaskEvent
 │   │       │   ├── mod.rs
 │   │       │   ├── backend.rs       # RuntimeBackend trait
@@ -261,6 +275,8 @@ pub async fn build_app(
 }
 ```
 
+**Daemon 语义**：`MultivacApp` 本质是一个 daemon，不是一个 HTTP server。`build_app()` 返回后，router 只是被动入口之一；`session_manager` 同时被多种 TriggerSource 驱动——用户消息、cron 调度、文件监听（fsnotify + debounce）、IM ingress、MCP 调用。事件经 `ws_hub` 广播给所有 subscriber（前端 WS、审计日志、IM renderer），系统不假设「有浏览器连接才工作」。
+
 ### 6.6 关键抽象：RuntimeBackend
 
 ```rust
@@ -280,6 +296,39 @@ pub trait RuntimeBackend: Send + Sync + 'static {
 
 `RuntimeBackend` 是 Multivac 作为 execution control plane 而非聊天插件的根本边界——所有 Task 的 runtime projection、所有 artifact 的产生与消费、所有 workspace 的变更，都通过这个 trait 流入系统真相。
 
+**`StartAgentTask` 完整契约**（吸收 MIMO `SpawnInput` 的验证过的字段，这是 spawn 不退化为 fire-and-forget 的关键）：
+
+```rust
+pub struct StartAgentTask {
+    pub task_id: TaskId,
+    pub agent_config: AgentConfig,
+    pub prompt: String,
+
+    pub context_mode: ContextMode,            // 子 agent 看到多少父上下文
+    pub output_format: Option<OutputFormat>,  // 结构化输出 schema
+    pub lifecycle: AgentLifecycle,            // Ephemeral | Persistent（可 idle/resume）
+    pub background: bool,                     // true → 完成后 Inbox 通知，不阻塞父 agent
+    pub parent_actor_id: Option<ActorId>,
+    pub gate: Option<CompletionGate>,         // 独立 judge model 验收
+}
+
+pub enum ContextMode {
+    Full,       // 完整对话历史 + project knowledge
+    Diff,       // 仅 checkpoint + project knowledge + 当前 task
+    TaskOnly,   // 仅 task 描述 + project knowledge
+}
+
+pub struct CompletionGate {
+    pub judge_model: ModelRef,       // 更小/更便宜的模型
+    pub criteria: Vec<String>,
+}
+```
+
+- `ContextMode` 解决「长对话中 sub-agent 浪费大量 token」——大多数委派任务用 `Diff` / `TaskOnly` 即可。
+- `background: true` 的 task 完成后进 Inbox（见前端设计），父 agent 不被阻塞；`task_id` 绑定意味着 spawn 即 task 进入 running——结构性副作用，不依赖模型自觉。
+- `gate` 判定未通过时，task 的 `reportedStatus` 降级为 `partial` / `blocked`，父 agent 与前端都收到不完整信号，而不是被「子 agent 说自己做完了」欺骗。
+- 子 agent 继承**父 agent 的 permission ruleset**（而非自己声明的），保证委派链上权限语义一致。
+
 `task_status()` 返回 `RuntimeProjection` 而不是存在 Task 表里——runtime projection 是瞬时执行状态（idle / working / waiting_for_user / processing_tools），由 RuntimeBackend 实时计算。不持久化避免了「数据库状态与实际执行不一致」的问题。
 
 - 对模型暴露的是 `start_agent_task` / `attach_agent_task` / `respond_permission` 等 product tools，不暴露 `run_claude_code` 这种 vendor-specific tool。
@@ -288,7 +337,84 @@ pub trait RuntimeBackend: Send + Sync + 'static {
 - `AcpRuntime` 负责 Codex / OpenCode：spawn ACP adapter subprocess，通过 JSON-RPC stdio 转译事件与权限请求。
 - `RemoteRuntimeBackend` 只关心远程协议，不关心具体 CLI。远程节点可以在云端沙箱，也可以在用户本机。
 
-### 6.7 两个产品 Binary 的差异
+### 6.7 编排深度：spawn 契约之上的四个机制
+
+这是 Multivac 与「调 API 的聊天工具」的根本差异层（MIMO 验证），其中 loop 级机制是对 Orchest SDK 的需求输入，产品级机制在 multivac-core 实现：
+
+**1. Hook ReAct 循环**（Orchest 需求）。Hook 不只是通知——`on_run_end` 的返回值可以重新驱动 agent：
+
+```rust
+pub enum HookDecision {
+    Continue { reason: String },  // 注入 reason 再跑一轮
+    Stop,                          // 正常结束
+    Escalate,                      // 升级到父 agent / 用户
+}
+```
+
+agent loop 在 `on_run_end` 收到 `Continue` 时注入 reason 重新进入循环，硬上限 `MAX_REACT = 3`，每次 Continue 的 reason 写入审计。这让「stop-guard 检查 progress 后阻止乐观停止」「gate 未通过自动返工」成为 hook 而不是产品 if/else。
+
+**2. Completion Gate**。`gate_eligible` 的 task 完成时由独立 judge model（更小更便宜）按 criteria 验收。gate 状态进入 `TaskEvent` 流，前端可展示「验收中 / 未通过理由 / agent 继续返工」。
+
+**3. Checkpoint-writer 与多级压缩**（Kocoro + MIMO 合流）。被动 `AuditHook` 只负责 transcript 持久化；上下文管理由专门的 **checkpoint-writer 子 agent** 承担：
+
+- 在独立 child session 后台运行，只写 checkpoint 文件，不污染主对话
+- 基于 context window 使用率决策何时写（不是固定间隔）
+- **任何压缩发生前先写 memory**（Kocoro 的 write-before-compact 模式：PersistLearnings → 再压缩）
+- Context reconstruction：逼近窗口上限时，重建 = 最新 checkpoint（token-budgeted，按 section 优先级分配预算）+ project memory + task progress + 最近 N 条消息
+
+v0 可以先做单路径 compaction + checkpoint 文件，但 `TaskEvent` 和 knowledge trait 不堵死这条演进路。
+
+**4. AgentFactory：agent 是可编程资源**。
+
+```rust
+#[async_trait]
+pub trait AgentFactory: Send + Sync {
+    /// 描述 → 完整 AgentConfig（system_prompt + tool allowlist + permission + model 推荐）
+    async fn generate(&self, description: &str, org_id: OrgId) -> Result<AgentConfig>;
+}
+```
+
+两个消费方：(a) 用户在前端用自然语言创建 Employee，确认后落库；(b) **primary agent 在运行时为委派任务动态创建特化子 agent**——领域知识进 system prompt、tool allowlist 精准匹配任务，而不是把所有知识塞进 task prompt。Employee 不是静态配置：`EmployeeTaskBinding` 记录 Employee 当前承接的 task，`AgentConfig::with_task_context(&task)` 按 task 派生运行配置——Employee 是「可承接 task、拥有 runtime context 的执行实体」，不是「会聊天的 bot」（feishu.md 的战略要求）。
+
+远期（接口不堵死）：**Dream**（从 session traces 提取持久知识更新 project memory）与 **Distill**（重复手动工作流自动打包为 skill）。
+
+### 6.8 双层权限模型
+
+两层互补，不混用（Kocoro 经验）：
+
+| 层 | 适用对象 | 机制 |
+|----|---------|------|
+| **Approval 枚举** | structured product tools | per-tool 的 `Never / WhenRisky / Always`，配合 per-session 的 Explore / Ask / Auto 模式 |
+| **命令前缀深度** | shell / CLI 执行 | `git → depth 1`（`git status` 放行，`git push` 询问）；hard-block patterns 优先；默认 ASK |
+
+per-agent ruleset 三层 merge：defaults → agent 默认 → user override，pattern 支持 glob（`"*.env": "deny"`）。子 agent 继承父 ruleset（见 6.6）。workspace 初始化时拒绝危险根目录（系统根、Home 根、temp 根、Desktop/Downloads、卷根——lark-bridge 的 deny-list，朴素但挡住了大多数真实事故）。
+
+### 6.9 外部 IM 接入：MessageIngress
+
+IM 是 distribution surface，不是产品定义（feishu.md）——但接入层的**内部状态必须硬**（lark-bridge 范式）：
+
+```rust
+#[async_trait]
+pub trait MessageIngress: Send + Sync {
+    async fn ingest(&self, scope: ScopeId, msg: IngressMessage) -> Result<IngestResult>;
+    async fn queue_status(&self, scope: ScopeId) -> Result<QueueStatus>;
+}
+
+pub enum IngressMessage {
+    Command { text: String, sender: SenderId },     // 跳过 debounce，有中断优先级
+    UserMessage { text: String, sender: SenderId }, // debounce 合并
+}
+```
+
+设计约束（全部来自 lark-bridge 被验证的模型）：
+
+- **输入按 IM 真实行为建模**：同 scope 短时 debounce 合并；运行中新消息排队到下一轮；同 scope 同时只允许一个 active run；全局并发上限
+- **身份先于恢复**：resume 判定走 `SessionIdentity`（scope + agent + workspace_fingerprint + policy_fingerprint），不是 chatId → sessionId 的脆弱映射
+- **回投走状态机**：`TaskEvent → TurnState → renderCard(state)`，平台 payload 限制集中在 renderer 消化（与前端 renderWeb 共用 TurnState，见前端设计 §五）
+- **回调防伪造**：交互卡片按钮签 runId + scope + operator + action + policy_fingerprint + 过期 + nonce，HMAC + replay 防护
+- adapter 本身尽量薄，不在 v0 实现——但 `ingress/` 模块和上述 trait 现在就定型，避免后补时侵入 session 模块
+
+### 6.10 两个产品 Binary 的差异
 
 ```rust
 // ===== Mode 2: Cloud (multivac-server/src/main.rs) =====
@@ -350,7 +476,7 @@ async fn main() -> Result<()> {
 
 **multivac-core 知道 deployment 与 runtime placement，但不关心具体 CLI 内部协议。** Claude Code JSONL、Codex ACP、PTY daemon stdin 都被限制在 runtime-host 实现里。
 
-### 6.8 前端：两种模式下的连接策略
+### 6.11 前端：两种模式下的连接策略
 
 ```typescript
 // frontend/src/api/client.ts
@@ -366,7 +492,7 @@ const ws = new WebSocket(BACKEND_URL.replace('http', 'ws') + '/ws');
 
 前端不区分模式——它只知道一个 `BACKEND_URL`。开发时指向 `localhost:5173`（Vite proxy to Rust），生产时指向 Tauri 本地端口或云端 URL。
 
-### 6.9 两种模式的行为差异
+### 6.12 两种模式的行为差异
 
 | 行为 | All-in-One (Tauri) | Cloud SaaS |
 |------|-------------------|------------|
@@ -383,7 +509,7 @@ const ws = new WebSocket(BACKEND_URL.replace('http', 'ws') + '/ws');
 | **安装** | 下载 .dmg/.msi | 打开浏览器 |
 | **升级** | Tauri updater | 服务端部署 |
 
-### 6.10 AppConfig 的模式差异
+### 6.13 AppConfig 的模式差异
 
 ```rust
 // crates/multivac-core/src/lib.rs
@@ -439,7 +565,12 @@ pub struct FeatureFlags {
 
 `multivac-core` 的代码通过 `DeploymentMode` 处理产品形态差异，通过 `RuntimeConfig` 处理执行平面位置差异。绝大多数模块（api handlers, session manager, ordinary product tools）不关心具体 CLI backend。
 
-### 6.11 技术栈选择
+**Desktop 运维基线**（lark-bridge 经验：本地工具最大的敌人不是吞吐，而是「偶发坏掉且难定位」）：
+- Profile 隔离目录：`~/.multivac/profiles/<name>/{config,sessions.db,workspace,logs,runtime}`，多 profile 互不污染
+- 状态文件原子写（tmp + fsync + rename）；进程 registry 带 lock + stale prune
+- JSONL 结构化日志，trace_id 贯穿全链路，token/secret/path 自动脱敏——为 `/doctor` 类自诊断准备稳定日志基座
+
+### 6.14 技术栈选择
 
 | 层 | 技术 | 两种模式的差异 |
 |----|------|--------------|
@@ -458,91 +589,60 @@ pub struct FeatureFlags {
 
 ---
 
-## 七、重构阶段
+## 七、重构阶段（按 ADR-001 重排：一条线，五个面）
 
-### 阶段 0：基础设施（先做，不依赖任何外部条件）
+**v0 工程剖面：桌面单壳（Tauri vs Electron 复审中，§6.2）+ SQLite + Claude Code 单 runtime + 单 workspace。** Cloud/Postgres、多 CLI runtime、MessageIngress、Org/Employee、Meeting/ASR、Orchest 编排深度全部移出 v0——trait/URI/事件协议等接口形态保留，工程预算为零。
+
+### 阶段 0：Kernel 地基
 
 1. **Rust workspace**：
-   - `multivac-core` lib crate + `MultivacDb` trait + Postgres impl
-   - axum router + WebSocket echo handler
-   - sqlx Postgres migrations（从零设计 6 张核心表）
+   - `multivac-core` lib crate + `MultivacDb` trait（v0 只做 SQLite impl，Postgres 是后续第二实现）
+   - axum router + WebSocket（daemon 语义：窗口关闭 agent 不死）
    - CI: `cargo test --workspace`, `cargo clippy`, `cargo fmt`
 
-2. **前端 scaffold**：
-   - Vite + React 18 + Tiptap + Tailwind + Jotai
-   - `api/client.ts` 连接 Rust backend（单 BACKEND_URL 配置）
-   - WebSocket 连接 + 事件类型定义
-   - 空壳 TurnCard + SessionViewer 组件
+2. **数据库 Schema**（4 张核心表起步）：
+   - `workspaces`（本地目录/git repo 绑定 + workspace_fingerprint）
+   - `sessions`（runs：SessionIdentity 四元组判定 resume）
+   - `events`（normalized TaskEvent，事件溯源，重放还原 UI）
+   - `objects`（**Locator 注册表**：`knowledge://` URI + provenance + scope——一切可指代对象在此登记，ADR-001 D4 给团队路线的结构性让步）
 
-3. **数据库 Schema**（从零设计，不迁移 Prisma）：
-   - `users`, `orgs`, `org_members`
-   - `sessions`, `messages`
-   - `tasks`, `task_events`
-   - `knowledge_docs`（source enum `File | TaskOutput | MeetingTranscript` 实现 `Display`/`FromStr`，统一为 `knowledge://` URI——前端和 skill 用同一个字符串引用知识）
-   - `meetings`, `meeting_transcripts`
-   - 每表 ≤15 个字段
+3. **RuntimeBackend + Claude Code**：
+   - `RuntimeBackend` trait + normalized `TaskEvent`；`StartAgentTask` 按 §6.6 完整契约定型（context_mode / lifecycle / background / gate 即使 v0 不全实现，schema 先锁定）
+   - Claude Code `PtyRuntime`（v0 唯一实现）：spawn CLI，JSONL → TaskEvent 转译
+   - 双层权限（§6.8）：Approval 枚举 + shell prefix-depth + workspace deny-list
 
-### 阶段 1：核心业务 + Orchest 集成（依赖 Orchest v0.7+）
+4. **对话面闭环**：
+   - 前端 scaffold：Vite + React 18 + Tailwind + Jotai
+   - HTTP POST → skeleton → WS 填充 → `reduceTurnState` → TurnCard
+   - Tauri 壳跑通（本地 axum + webview）
 
-4. **Session Manager**：
-   - `SessionManager::start_run()` 调用 `orchestr::AgentRun`
-   - `WsRelayHook` 将 `RuntimeEvent` 转发到前端
-   - `AuditHook` 持久化 transcript 到 `messages` 表
-   - `SessionIdentity` 判定 resume 可行性——scope_id + agent_id + workspace_root 三元组相同才允许 resume，避免运行上下文变化后误续旧 session
-   - `PermissionHook` 实现 Explore/Ask/Auto per session
+### 阶段 1：介质面（介质论的最小闭环）
 
-5. **Product Tools**：
-   - 从 Python agent engine 的 50+ tools 选出核心 15-20 个 ordinary product tools
-   - 新增 `start_agent_task` / `attach_agent_task` / `respond_permission` / `pause_agent_task` / `terminate_agent_task`
-   - 按 `orchestr::Tool` trait 重新实现
-   - 注册进 `ToolRegistry`
+5. **文件面**：树 + 阅读/预览（代码/markdown/图片/PDF；**只读为主——人读审指，agent 写**，ADR-001 D6）
+6. **git 面**：status / log / diff 渲染——diff 是 review 的主视图
+7. **终端面**：共享 PTY（portable-pty + xterm.js）+ session 持久化 + replay buffer + **sideband input**（agent 注入命令不干扰用户键盘，salvage §6.1）
+8. **Deixis 原语**：四个面统一的「选中 → Locator URI → 引用 chip → 进输入框」；对象写入 `objects` 表。**session/turn 本身也是引用对象**——把一个会话的 normalized transcript 注入另一个会话（v0 为 Claude↔Claude 并行 session 共享上下文；第二 runtime 接入后升级为跨厂商,创世卡点 2）
+9. **Context Composer v1**：环境摘要常驻 + 指代内容精确注入 + `read_file` / `read_terminal` / `git_status` 按需查询工具；前端 context tray（人能看见并勾选 agent 将看到什么）
 
-6. **RuntimeBackend + agent-task skills**：
-   - 定义 `RuntimeBackend` trait 与 normalized `TaskEvent`
-   - 实现 embedded local runtime-host（先支持 Claude Code PtyRuntime）
-   - 将原产品 `cli-task-dispatch` / `task-supervisor` 迁移为 Orchest Skill
-   - Skill 通过 agent-task tools 操作 RuntimeBackend，不直接调用 PTY daemon
+### 阶段 2：browser 面 + 感知
 
-7. **MCP 集成**：
-   - 配置驱动的 MCP server 连接
-   - 与 product tool 共用 `ToolRegistry`
+10. **browser 面**：实时预览（技术路线见 ADR-001 未决问题 1：Tauri 子 webview vs CDP）+ 感知适配器（URL / console / 截图 / DOM 摘要）
+11. **注意力策略完整版**：token 预算、摘要降级、按需查询工具集——「可感知 ≠ 全量注入」的三层模型（ADR-001 D3）
+12. **Agent 现身**：agent 在文件/终端/git/browser 面上动作时的 attribution（色标 + 操作标记）
 
-### 阶段 2：双模式交付
+### 阶段 3：裁决循环 + 知识投影
 
-8. **SQLite impl**：
-   - 实现 `MultivacDb` trait 的 SQLite 版本
-   - SQLite migrations（与 Postgres schema 对齐）
+13. **Draft / Review / Merge**：agent 产出为 draft，diff 审查 → 接受/打回（文件快照对比，不用 bare repo）
+14. **知识投影 v1**：session 摘要与决策自动落 `objects` + **单人记忆复用**（上周对象进入本周上下文）——这是 ADR-001 实验 2 的载体
+15. **Inbox**：后台 run 完成/阻塞的通知面
+16. **Claude Code 配置一键导入**：scan `~/.claude/` → diff → 原子 apply（Kocoro 迁移路径；onboarding 杠杆）
 
-9. **multivac-desktop (Tauri)**：
-   - Tauri shell 配置
-   - 嵌入 multivac-core，本地 axum 服务器
-   - 默认使用 embedded local RuntimeBackend
-   - Tauri 窗口指向本地端口
-   - 本地配置文件管理
+### 阶段 4：扩张（按 ADR-001 验证结果排序）
 
-10. **multivac-server (Cloud)**：
-   - Dockerfile
-   - 环境变量配置
-   - 健康检查端点
-   - 默认使用 remote/managed RuntimeBackend
-
-11. **multivac-runtime-host**：
-   - `tonic` gRPC server（云内 runtime-host）
-   - reverse WebSocket client（用户本机 runtime-host）
-   - Claude Code PtyRuntime + TaskEvent 转译
-   - Codex/OpenCode AcpRuntime 后续接入
-
-### 阶段 3：前端重写（UI/UX 对齐 Craft Agents）
-
-12. **Chat UI**：TurnCard + TurnPhase 状态机 + 流式缓冲
-13. **Annotation 系统**：Island 菜单 + 追问 + overlay layer
-14. **Multi-Panel + Permission + Overlay**：Panel stack, per-session toggle, fullscreen preview
-
-### 阶段 4：差异化能力
-
-15. **Task System**：独立于 Session 的 Task 生命周期 + Draft/Merge
-16. **Knowledge Workspace**：文件监听 + 自动索引
-17. **Meeting/ASR**：Meeting lifecycle + ASR Gateway
+17. **Team plane**：`objects` 的 scope 共享——团队知识库路线的兑现，数据模型不变
+18. **文字创作者 / PM surface 深化**：长文档 deixis、文档 artifact 类型
+19. **第二 runtime：Codex AcpRuntime**——v0 后的第一扩张项（ADR-001 创世卡点 2：跨厂商 agent 共享上下文是没有厂商会做的差异化；session-as-context 机制在 v0 已就位，接入即升级为跨厂商）
+20. **后置项**（接口已定型，按需启动）：更多 runtime（OpenCode 等）、Cloud 模式（Postgres impl + multivac-server + runtime-host）、Orchest 编排深度（§6.7）、MessageIngress（§6.9）、Meeting/ASR、MCP 集成、Product Tools 体系
 
 ---
 
@@ -585,10 +685,16 @@ pub struct FeatureFlags {
 | **不禁止远程 runtime-host 使用 gRPC/WS** | CLI agent runtime 可以在另一台机器上，必须保留稳定远程执行协议 |
 | **不保留 Channel 概念** | 改为 Session |
 | **不自研 Lexical** | Tiptap 足够 |
-| **不用 Electron** | Tauri 与 Rust backend 天然一体 |
+| ~~不用 Electron~~（已重开，§6.2） | 原论据「Tauri 与 Rust backend 天然一体」因 daemon 解耦失效；复审建议 Electron |
 | **不重写 iOS/Android** | 先做桌面 + Web |
 | **不做 E2E 加密协作** | 先做简单多用户 |
 | **不做 20+ extension** | 从 5 个 product tool 开始 |
+| **不做文档中心的 agent 编辑模式** | Nimbalyst 的 Lexical + inline diff 是其 3 年护城河；对话中心 + TurnCard 才匹配 orchestration 定位（多 agent、推理链、追问） |
+| **不做动态 JS extension marketplace** | product tool 编译期注册；marketplace 是远期差异化 |
+| **不做图状记忆 sidecar** | 先做 session 级记忆 + checkpoint；图记忆（Kocoro TLM 式）是 v2，knowledge trait 接口不堵死 |
+| **不和 IM 平台打入口层** | 消息入口、卡片容器、组织分发是平台必赢的地盘；防守 task/runtime/workspace/artifact/透明度（feishu.md） |
+| **不做编辑器内核** | 人读审指，agent 写（ADR-001 D6）；阅读/预览用成熟件，编辑外链 |
+| **不做角色档案 / GenUI 布局引擎** | 角色是涌现的——内容驱动 surface 激活；v2 用 layout preset 近似（ADR-001 D2） |
 
 ---
 
@@ -604,16 +710,19 @@ pub struct FeatureFlags {
 | **远程 runtime-host 网络不可达** | 云内用 `tonic` gRPC；用户本机优先 reverse WebSocket，由 runtime-host 主动连控制面 |
 | **CLI 事件协议不稳定** | 每个 backend 独立 adapter 转译为 normalized `TaskEvent`；前端和 supervisor 不依赖 Claude JSONL / ACP 原始格式 |
 | **PTY / ACP 双后端复杂度** | 先做 Claude Code `PtyRuntime`，Codex/OpenCode `AcpRuntime` 后续接入；二者共用 RuntimeBackend contract |
+| **ReAct hook 循环失控** | `MAX_REACT = 3` 硬上限；每次 `Continue` 必须带 reason 且写入审计 |
+| **Checkpoint-writer 与主 loop 互相干扰** | checkpoint-writer 在独立 child session 运行，只写 checkpoint 文件，不注入主对话 |
+| **后台 background task 静默失败** | Inbox 通知 + completion gate 的 `partial/blocked` 降级信号 + idle watchdog |
 
 ---
 
 ## 十一、立即行动项
 
-1. **Init Rust workspace**: `cargo new --lib crates/multivac-core` + `cargo new crates/multivac-server` + `cargo new crates/multivac-desktop`
-2. **Init frontend scaffold**: Vite + React + Tiptap + Jotai，连接 localhost axum
-3. **Define `MultivacDb` trait**: 从 Core 6 张表的方法签名开始
-4. **Implement axum WebSocket echo**: 前端连上，收到 ping/pong
-5. **Define `RuntimeBackend` trait + `TaskEvent` schema**: 先锁定 start/attach/permission/events 最小合同
-6. **Design DB schema**: 6 张核心表的 CREATE TABLE SQL（Postgres 先，SQLite 后续对齐）
-7. **迁移 agent-task skills 设计**: 将 `cli-task-dispatch` / `task-supervisor` 对齐到 Orchest Skill + ToolRegistry
-8. **确认 Orchest v0.7 timeline**: 决定 session/manager.rs 初版是 fallback loop 还是直接 AgentRun
+1. **签署 ADR-001**：三方确认定位与 v0 范围——之后所有 scope 争论对照它裁决
+2. **Init Rust workspace**: `cargo new --lib crates/multivac-core` + `cargo new crates/multivac-desktop`（Tauri；multivac-server 后置）
+3. **Design v0 schema**: `workspaces / sessions / events / objects(Locator)` 4 张表的 CREATE TABLE SQL（SQLite）
+4. **Define `RuntimeBackend` trait + `TaskEvent` schema**: 先锁定 start/attach/permission/events 最小合同；`StartAgentTask` 按 §6.6 完整契约定型（含 `ContextMode` / `CompletionGate` 类型）
+5. **对话面闭环**: Claude Code PtyRuntime → TaskEvent → WS → `reduceTurnState` → TurnCard，HTTP POST skeleton 先行
+6. **Deixis spike**: 文件 Reader 选区 → Locator URI → 引用 chip → 注入 prompt 的端到端原型——**介质论最快的可证伪实验**
+7. **browser 感知技术路线调研**: Tauri 子 webview vs CDP 外部浏览器（ADR-001 未决问题 1）
+8. **确认 Orchest 切入点**: v0 不进产品；评估 Context Composer 智能化作为首个集成点（ADR-001 未决问题 3）
