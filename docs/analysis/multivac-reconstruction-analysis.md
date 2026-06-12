@@ -1,15 +1,17 @@
 ---
 ## 产品定位
 
-**Multivac 的产品本体是 execution control plane——不是聊天插件，不是 IM bot 框架。**
+> 定位以 [ADR-001](./adr-001-product-positioning.md) 为准：**个体与 agent 协同的创作工作台——协作语法统一，创作介质可插拔，知识是工作的自动沉淀。**
 
-Session（聊天）只是 task/runtime 的一个视图，不是系统真相的唯一容器。外部 IM（飞书/Slack）是 distribution surface，不是产品定义。当 Session 和 Task 的设计冲突时，Task 的完整性优先。
+根对象是 **Workspace**（工作发生的现场），不是 Session（聊天），也不是知识容器。Chat 是 workspace 的一个面，Task 是对 agent 工作的记账，Knowledge 是工作历史的投影。本文档描述的 execution control plane 是支撑产品的**基础设施层**——它决定系统怎么建，不定义产品是什么。
 
-价值锚定在四个层面：
-- **Task** 是执行真相
-- **Runtime** 是执行宿主
-- **Artifact** 是执行产物，不是聊天附件
-- **Knowledge** 是任务与项目上下文，不是 IM 历史的副产物
+价值锚定：
+- **Workspace** 是系统真相的根（v0 = 本地目录/git repo + Runs + Artifacts）
+- **双向上下文流**是介质的技术核心：agent→人（TaskEvent → TurnState → 渲染）与 人→agent（WorkbenchContext → Context Composer → 注入/查询）必须对称（ADR-001 D3）
+- **Task** 是执行记账，**Runtime** 是执行宿主，**Artifact** 是执行产物——三者经 Locator（`knowledge://` URI + provenance + scope）全部可寻址
+- 外部 IM 是 distribution surface，不是产品定义
+
+**v0 工程剖面（ADR-001 D7）**：Tauri 桌面 + SQLite + Claude Code 单 runtime + 单 workspace。本文档 §6.7（编排深度）、§6.9（MessageIngress）、§6.10-6.13（双模式交付）为**目标架构，非 v0 范围**——接口形态保留，工程预算为零。
 
 ---
 
@@ -579,95 +581,59 @@ pub struct FeatureFlags {
 
 ---
 
-## 七、重构阶段
+## 七、重构阶段（按 ADR-001 重排：一条线，五个面）
 
-### 阶段 0：基础设施（先做，不依赖任何外部条件）
+**v0 工程剖面：Tauri 桌面 + SQLite + Claude Code 单 runtime + 单 workspace。** Cloud/Postgres、多 CLI runtime、MessageIngress、Org/Employee、Meeting/ASR、Orchest 编排深度全部移出 v0——trait/URI/事件协议等接口形态保留，工程预算为零。
+
+### 阶段 0：Kernel 地基
 
 1. **Rust workspace**：
-   - `multivac-core` lib crate + `MultivacDb` trait + Postgres impl
-   - axum router + WebSocket echo handler
-   - sqlx Postgres migrations（从零设计 6 张核心表）
+   - `multivac-core` lib crate + `MultivacDb` trait（v0 只做 SQLite impl，Postgres 是后续第二实现）
+   - axum router + WebSocket（daemon 语义：窗口关闭 agent 不死）
    - CI: `cargo test --workspace`, `cargo clippy`, `cargo fmt`
 
-2. **前端 scaffold**：
-   - Vite + React 18 + Tiptap + Tailwind + Jotai
-   - `api/client.ts` 连接 Rust backend（单 BACKEND_URL 配置）
-   - WebSocket 连接 + 事件类型定义
-   - 空壳 TurnCard + SessionViewer 组件
+2. **数据库 Schema**（4 张核心表起步）：
+   - `workspaces`（本地目录/git repo 绑定 + workspace_fingerprint）
+   - `sessions`（runs：SessionIdentity 四元组判定 resume）
+   - `events`（normalized TaskEvent，事件溯源，重放还原 UI）
+   - `objects`（**Locator 注册表**：`knowledge://` URI + provenance + scope——一切可指代对象在此登记，ADR-001 D4 给团队路线的结构性让步）
 
-3. **数据库 Schema**（从零设计，不迁移 Prisma）：
-   - `users`, `orgs`, `org_members`
-   - `sessions`, `messages`
-   - `tasks`, `task_events`
-   - `knowledge_docs`（source enum `File | TaskOutput | MeetingTranscript` 实现 `Display`/`FromStr`，统一为 `knowledge://` URI——前端和 skill 用同一个字符串引用知识）
-   - `meetings`, `meeting_transcripts`
-   - 每表 ≤15 个字段
+3. **RuntimeBackend + Claude Code**：
+   - `RuntimeBackend` trait + normalized `TaskEvent`；`StartAgentTask` 按 §6.6 完整契约定型（context_mode / lifecycle / background / gate 即使 v0 不全实现，schema 先锁定）
+   - Claude Code `PtyRuntime`（v0 唯一实现）：spawn CLI，JSONL → TaskEvent 转译
+   - 双层权限（§6.8）：Approval 枚举 + shell prefix-depth + workspace deny-list
 
-### 阶段 1：核心业务 + Orchest 集成（依赖 Orchest v0.7+）
+4. **对话面闭环**：
+   - 前端 scaffold：Vite + React 18 + Tailwind + Jotai
+   - HTTP POST → skeleton → WS 填充 → `reduceTurnState` → TurnCard
+   - Tauri 壳跑通（本地 axum + webview）
 
-4. **Session Manager**：
-   - `SessionManager::start_run()` 调用 `orchestr::AgentRun`
-   - `WsRelayHook` 将 `RuntimeEvent` 转发到前端
-   - `AuditHook` 持久化 transcript 到 `messages` 表
-   - `SessionIdentity` 判定 resume 可行性——`scope_id + agent_id + workspace_fingerprint + policy_fingerprint` 相同才允许 resume，避免运行上下文变化后误续旧 session（policy_fingerprint 覆盖权限模式、sandbox、resource scope）
-   - `PermissionHook` 实现 Explore/Ask/Auto per session + shell 命令的 prefix-depth 规则（§6.8）
-   - Hook `on_run_end` 支持 `HookDecision::Continue`（ReAct 循环，cap 3，§6.7）
+### 阶段 1：介质面（介质论的最小闭环）
 
-5. **Product Tools**：
-   - 从 Python agent engine 的 50+ tools 选出核心 15-20 个 ordinary product tools
-   - 新增 `start_agent_task` / `attach_agent_task` / `respond_permission` / `pause_agent_task` / `terminate_agent_task`
-   - 按 `orchestr::Tool` trait 重新实现
-   - 注册进 `ToolRegistry`
+5. **文件面**：树 + 阅读/预览（代码/markdown/图片/PDF；**只读为主——人读审指，agent 写**，ADR-001 D6）
+6. **git 面**：status / log / diff 渲染——diff 是 review 的主视图
+7. **终端面**：共享 PTY（portable-pty + xterm.js）+ session 持久化 + replay buffer + **sideband input**（agent 注入命令不干扰用户键盘，salvage §6.1）
+8. **Deixis 原语**：四个面统一的「选中 → Locator URI → 引用 chip → 进输入框」；对象写入 `objects` 表
+9. **Context Composer v1**：环境摘要常驻 + 指代内容精确注入 + `read_file` / `read_terminal` / `git_status` 按需查询工具；前端 context tray（人能看见并勾选 agent 将看到什么）
 
-6. **RuntimeBackend + agent-task skills**：
-   - 定义 `RuntimeBackend` trait 与 normalized `TaskEvent`，`StartAgentTask` 按 §6.6 完整契约定型（context_mode / lifecycle / background / gate 即使 v0 只实现部分，schema 先锁定）
-   - 实现 embedded local runtime-host（先支持 Claude Code PtyRuntime）
-   - 将原产品 `cli-task-dispatch` / `task-supervisor` 迁移为 Orchest Skill
-   - Skill 通过 agent-task tools 操作 RuntimeBackend，不直接调用 PTY daemon
+### 阶段 2：browser 面 + 感知
 
-7. **MCP 集成**：
-   - 配置驱动的 MCP server 连接
-   - 与 product tool 共用 `ToolRegistry`
+10. **browser 面**：实时预览（技术路线见 ADR-001 未决问题 1：Tauri 子 webview vs CDP）+ 感知适配器（URL / console / 截图 / DOM 摘要）
+11. **注意力策略完整版**：token 预算、摘要降级、按需查询工具集——「可感知 ≠ 全量注入」的三层模型（ADR-001 D3）
+12. **Agent 现身**：agent 在文件/终端/git/browser 面上动作时的 attribution（色标 + 操作标记）
 
-### 阶段 2：双模式交付
+### 阶段 3：裁决循环 + 知识投影
 
-8. **SQLite impl**：
-   - 实现 `MultivacDb` trait 的 SQLite 版本
-   - SQLite migrations（与 Postgres schema 对齐）
+13. **Draft / Review / Merge**：agent 产出为 draft，diff 审查 → 接受/打回（文件快照对比，不用 bare repo）
+14. **知识投影 v1**：session 摘要与决策自动落 `objects` + **单人记忆复用**（上周对象进入本周上下文）——这是 ADR-001 实验 2 的载体
+15. **Inbox**：后台 run 完成/阻塞的通知面
+16. **Claude Code 配置一键导入**：scan `~/.claude/` → diff → 原子 apply（Kocoro 迁移路径；onboarding 杠杆）
 
-9. **multivac-desktop (Tauri)**：
-   - Tauri shell 配置
-   - 嵌入 multivac-core，本地 axum 服务器
-   - 默认使用 embedded local RuntimeBackend
-   - Tauri 窗口指向本地端口
-   - 本地配置文件管理（profile 隔离目录，§6.13）
-   - **Claude Code 配置一键导入**：scan `~/.claude/` 的 agents/skills/commands/MCP configs → diff → 原子 apply（Kocoro 迁移路径；onboarding 关键杠杆，迁移成本降为零）
+### 阶段 4：扩张（按 ADR-001 验证结果排序）
 
-10. **multivac-server (Cloud)**：
-   - Dockerfile
-   - 环境变量配置
-   - 健康检查端点
-   - 默认使用 remote/managed RuntimeBackend
-
-11. **multivac-runtime-host**：
-   - `tonic` gRPC server（云内 runtime-host）
-   - reverse WebSocket client（用户本机 runtime-host）
-   - Claude Code PtyRuntime + TaskEvent 转译
-   - Codex/OpenCode AcpRuntime 后续接入
-
-### 阶段 3：前端重写（UI/UX 对齐 Craft Agents）
-
-12. **Chat UI**：TurnCard + TurnPhase 状态机 + 流式缓冲
-13. **Annotation 系统**：Island 菜单 + 追问 + overlay layer
-14. **Multi-Panel + Permission + Overlay**：Panel stack, per-session toggle, fullscreen preview
-
-### 阶段 4：差异化能力
-
-15. **Task System**：独立于 Session 的 Task 生命周期 + Draft/Merge
-16. **Knowledge Workspace**：文件监听 + 自动索引
-17. **Meeting/ASR**：Meeting lifecycle + ASR Gateway
-18. **编排深度**：Completion Gate + checkpoint-writer 子 agent + AgentFactory 运行时特化（§6.7）
-19. **外部 IM 接入**：MessageIngress 飞书 adapter + `TurnState → renderCard` 渲染链 + 回调签名（§6.9）
+17. **Team plane**：`objects` 的 scope 共享——团队知识库路线的兑现，数据模型不变
+18. **文字创作者 / PM surface 深化**：长文档 deixis、文档 artifact 类型
+19. **后置项**（接口已定型，按需启动）：多 runtime（Codex/OpenCode AcpRuntime）、Cloud 模式（Postgres impl + multivac-server + runtime-host）、Orchest 编排深度（§6.7）、MessageIngress（§6.9）、Meeting/ASR、MCP 集成、Product Tools 体系
 
 ---
 
@@ -718,6 +684,8 @@ pub struct FeatureFlags {
 | **不做动态 JS extension marketplace** | product tool 编译期注册；marketplace 是远期差异化 |
 | **不做图状记忆 sidecar** | 先做 session 级记忆 + checkpoint；图记忆（Kocoro TLM 式）是 v2，knowledge trait 接口不堵死 |
 | **不和 IM 平台打入口层** | 消息入口、卡片容器、组织分发是平台必赢的地盘；防守 task/runtime/workspace/artifact/透明度（feishu.md） |
+| **不做编辑器内核** | 人读审指，agent 写（ADR-001 D6）；阅读/预览用成熟件，编辑外链 |
+| **不做角色档案 / GenUI 布局引擎** | 角色是涌现的——内容驱动 surface 激活；v2 用 layout preset 近似（ADR-001 D2） |
 
 ---
 
@@ -741,11 +709,11 @@ pub struct FeatureFlags {
 
 ## 十一、立即行动项
 
-1. **Init Rust workspace**: `cargo new --lib crates/multivac-core` + `cargo new crates/multivac-server` + `cargo new crates/multivac-desktop`
-2. **Init frontend scaffold**: Vite + React + Tiptap + Jotai，连接 localhost axum
-3. **Define `MultivacDb` trait**: 从 Core 6 张表的方法签名开始
-4. **Implement axum WebSocket echo**: 前端连上，收到 ping/pong
-5. **Define `RuntimeBackend` trait + `TaskEvent` schema**: 先锁定 start/attach/permission/events 最小合同；`StartAgentTask` 按 §6.6 完整契约定型（含 `ContextMode` / `CompletionGate` 类型）
-6. **Design DB schema**: 6 张核心表的 CREATE TABLE SQL（Postgres 先，SQLite 后续对齐）
-7. **迁移 agent-task skills 设计**: 将 `cli-task-dispatch` / `task-supervisor` 对齐到 Orchest Skill + ToolRegistry
-8. **确认 Orchest v0.7 timeline**: 决定 session/manager.rs 初版是 fallback loop 还是直接 AgentRun
+1. **签署 ADR-001**：三方确认定位与 v0 范围——之后所有 scope 争论对照它裁决
+2. **Init Rust workspace**: `cargo new --lib crates/multivac-core` + `cargo new crates/multivac-desktop`（Tauri；multivac-server 后置）
+3. **Design v0 schema**: `workspaces / sessions / events / objects(Locator)` 4 张表的 CREATE TABLE SQL（SQLite）
+4. **Define `RuntimeBackend` trait + `TaskEvent` schema**: 先锁定 start/attach/permission/events 最小合同；`StartAgentTask` 按 §6.6 完整契约定型（含 `ContextMode` / `CompletionGate` 类型）
+5. **对话面闭环**: Claude Code PtyRuntime → TaskEvent → WS → `reduceTurnState` → TurnCard，HTTP POST skeleton 先行
+6. **Deixis spike**: 文件 Reader 选区 → Locator URI → 引用 chip → 注入 prompt 的端到端原型——**介质论最快的可证伪实验**
+7. **browser 感知技术路线调研**: Tauri 子 webview vs CDP 外部浏览器（ADR-001 未决问题 1）
+8. **确认 Orchest 切入点**: v0 不进产品；评估 Context Composer 智能化作为首个集成点（ADR-001 未决问题 3）
