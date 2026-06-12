@@ -11,6 +11,8 @@
 3. **空间即状态** — panel stack 的推入/弹出反映用户的工作深度。不是 tab，不是抽屉——是「我进入了这个 session，现在在这里」。
 4. **动效表达物理关系** — 参考 Craft Agents 的 Island 菜单：从文本选择点发出，速度决定动画距离。不是花哨，是指引注意力。
 5. **每 session 独立** — 状态管理用 Jotai atom family，不是全局 store。不同 session 的状态互相不可见。
+6. **关键动作永远可见** — approval、cancel/interrupt、permission mode 切换、artifact accept/reject 不藏在 hover、context menu 或组合键里。Craft Agents 的反面教训：视觉精致但可发现性差，「UI 好看但 UX 难用」的主要来源就是过多隐式交互。
+7. **固定信息架构先于灵活 panel** — 先让用户形成空间记忆（左：列表；中：工作区；右：inspector），再逐步引入 panel 折叠与推入。Panel stack 的灵活性只在中区生效。
 
 ---
 
@@ -131,8 +133,9 @@ TurnCard 是 Multivac 执行透明度的用户界面——让用户看到 agent 
 **关键设计**：
 - Tool calls 默认折叠为一行（icon + name + status + brief result）
 - 用户点击展开后看到完整 input/output
-- 子 agent 的 tool calls 缩进，形成树状
+- 子 agent 的 tool calls 缩进，形成树状；每个 ActivityRow 标注执行者 agent 的 icon + color
 - Response 文本有缓冲：不是每个 token 都刷新渲染，而是 `MIN_WORDS=4` 或 `MIN_BUFFER_MS=100` 间隔
+- **Completion Gate 状态**进入 TurnCard：`验收中`（judge model 评估）/ `未通过`（展示 gate 理由 + agent 继续返工）/ `通过`。后台 sub-agent 的 gate 结果进 Inbox。用户看到的不是「子 agent 说自己做完了」，而是验收后的真实状态——执行透明度的一部分
 
 ### 3.3 Annotation 系统（Multivac 必须实现）
 
@@ -248,9 +251,34 @@ reconcilePanels(newPanels)  // 从 URL 同步
 
 ---
 
-## 四、Multivac 前端架构
+## 四、信息架构：三区布局
 
-### 4.1 技术栈
+Craft Agents 的反面经验：sophisticated panel stack + 隐式交互让界面灵活但用户迷路；同时它的 chat-centric 偏置把 multi-agent 压平成一串 turn cards。Multivac 的回答是固定三区布局——**chat 是 human-agent communication lane，不是产品根模型**；Task / Approval / Artifact / sub-agent 关系在 Inspector 有独立于聊天流的稳定位置（这正是「execution control plane 而非聊天插件」在 UI 上的体现）。
+
+```
+┌──────────────┬──────────────────────────────┬─────────────────────┐
+│  Left Rail   │  Center: Run Workspace        │  Right: Inspector   │
+│              │                               │                     │
+│  Sessions    │  PanelStack                   │  Pending Approvals  │
+│  Tasks       │   - SessionViewer             │  Artifacts          │
+│  Inbox       │   - TurnCard timeline         │  Sub-agent Tree     │
+│  Knowledge   │   - SessionInput              │  Task / Runtime     │
+│              │                               │  Projection         │
+└──────────────┴──────────────────────────────┴─────────────────────┘
+```
+
+- **Left Rail**：四个一级入口——Sessions（对话列表）、Tasks（task board，独立于 session 的执行真相）、Inbox、Knowledge。每个 item 是 icon + label + 状态点，当前选中高亮。底部用户头像 + 设置。
+- **Center**：panel stack 的领地（§3.5 的物理栈模型只发生在这里）。Session、Task 详情、Knowledge 文档都以 panel 推入。
+- **Inspector**：执行真相的常驻视图——approval queue、artifact index、当前 session 的 sub-agent provenance 树、task lifecycle + runtime projection。可折叠，默认展开。Approve/Deny、Stop/Interrupt、permission mode 是 Inspector 与 SessionHeader 上的**常驻可见控件**，PermissionDialog 只是它们的模态强化，不是唯一入口。
+- **Inbox**：后台 task / background sub-agent 完成（或 gate 判定 partial/blocked）后的非侵入式通知面——sidebar badge + 列表，点击 pushPanel 进入对应 session/task。Daemon 模式下 agent 在窗口关闭后仍在工作，Inbox 是用户回来时「发生了什么」的入口。
+
+MVP 先做死这个布局，不提供自由拖拽分栏；空间记忆建立后再考虑 compact mode 等弹性。
+
+---
+
+## 五、Multivac 前端架构
+
+### 5.1 技术栈
 
 | 层 | 选择 | 理由 |
 |----|------|------|
@@ -264,7 +292,17 @@ reconcilePanels(newPanels)  // 从 URL 同步
 | **图表** | Mermaid (客户端渲染) | tool call 流程图 |
 | **网络** | fetch (REST) + WebSocket (事件流) | — |
 
-### 4.2 色彩体系（借鉴 Epitaxy + 自建）
+**内部包边界**（Craft Agents `packages/ui` 的教训：agent UI primitives 要尽早从页面代码中抽离）。初期单 app，但目录按未来可拆包的边界组织：
+
+```
+src/components/   → 未来 packages/ui            （TurnCard 等 primitives，只消费 product model）
+src/api/          → 未来 packages/runtime-client （HTTP/WS transport + 事件投影）
+src/types/        → 未来 packages/product-model  （session/turn/task/artifact 前端类型）
+```
+
+组件不直接 import wire 格式（TaskEvent JSON），只消费 `reduceTurnState` 之后的 product model 类型。
+
+### 5.2 色彩体系（借鉴 Epitaxy + 自建）
 
 ```css
 :root {
@@ -300,15 +338,31 @@ reconcilePanels(newPanels)  // 从 URL 同步
 
 **规则**：永远不直接用 `slate-600` 这种固定色。始终通过 `var(--foreground)` 或 `color-mix(in srgb, var(--info) 10%, transparent)` 派生。
 
-### 4.3 组件树
+**Agent 标识色**（MIMO 经验：multi-agent 时用户必须能区分「这步是谁做的」）：
+
+```css
+  --color-agent-build: #fb8147;
+  --color-agent-plan: #c7e2a8;
+  --color-agent-review: #a7a3d8;
+  /* AgentFactory 动态生成的 agent 从预置色环分配 */
+```
+
+TurnCard 中每个 ActivityRow / ActivityGroupRow 标注执行者 agent 的 icon + color；同一颜色贯穿 Inspector 的 sub-agent 树和 Inbox 条目。
+
+**Overlay 纪律**：z-index、shadow 全部 token 化（`--z-overlay` / `--z-island` / `--shadow-minimal` 等量表），配 ESLint 自定义规则禁止硬编码。Craft Agents 用 `no-hardcoded-z-index` / `no-nonstandard-shadows` 管住了 overlay 失控——agent 产品的 overlay、menu、island、diff viewer 数量多，这条纪律必须从第一天建立。
+
+### 5.3 组件树
 
 ```
 MultivacApp
 ├── AppShell
-│   ├── Sidebar
+│   ├── Sidebar (Left Rail)
 │   │   ├── UserAvatar
 │   │   ├── SessionList
 │   │   │   └── SessionItem (icon, title, status dot, timestamp)
+│   │   ├── TaskList (task board 入口)
+│   │   ├── InboxList (badge = inboxUnreadCount)
+│   │   ├── KnowledgeNav
 │   │   ├── OrgSwitcher (如果是 SaaS 模式)
 │   │   └── BottomActions (settings, help, feedback)
 │   │
@@ -338,13 +392,19 @@ MultivacApp
 │   │       ├── JSONPreviewOverlay
 │   │       └── ImagePreviewOverlay
 │   │
+│   ├── InspectorPanel (right, 可折叠)
+│   │   ├── ApprovalQueue (常驻 approve/deny 控件)
+│   │   ├── ArtifactIndex
+│   │   ├── SubAgentTree (agent color + provenance)
+│   │   └── TaskRuntimeStatus (lifecycle + runtime projection)
+│   │
 │   └── TransportStatusBar (连接状态, 仅 cloud 模式)
 │
 ├── PermissionDialog (全局, approval gate 触发)
 └── ToastContainer (sonner)
 ```
 
-### 4.4 状态管理（Jotai）
+### 5.4 状态管理（Jotai）
 
 ```typescript
 // stores/sessions.ts
@@ -372,9 +432,13 @@ export const panelStackAtom = atom<Panel[]>([])
 
 // stores/annotations.ts
 export const activeAnnotationAtom = atom<AnnotationState | null>(null)
+
+// stores/inbox.ts —— 后台任务完成、gate partial/blocked、待批 permission
+export const inboxItemsAtom = atom<InboxItem[]>([])
+export const inboxUnreadCountAtom = atom((get) => get(inboxItemsAtom).filter(i => !i.read).length)
 ```
 
-### 4.5 Turn 状态模型
+### 5.5 Turn 状态模型
 
 每个 turn 的 UI 状态从事件流纯函数推导——可序列化、可重放、可测试。不在 event handler 里散装 mutate atoms。
 
@@ -394,7 +458,9 @@ function reduceTurnState(prev: TurnState, event: TurnEvent): TurnState
 
 `sessionAtomFamily` 中的 `messages` 数组替换为 `turns: TurnState[]`，每个 turn 从事件流纯函数构建。历史 session 加载时，重放 `task_events` 即可还原完整 UI 状态。
 
-### 4.6 WebSocket 事件处理
+**Renderer 无关性**：`TurnState` 是中间状态，不引用任何 DOM/React 概念。`renderWeb(state)` 之外，未来飞书卡片 `renderCard(state)`、移动 push `renderPush(state)` 消费同一状态机——对齐 lark-bridge 验证过的 `AgentEvent → RunState → render` 三段式。平台 payload 限制（卡片大小、交互组件）集中在各自 renderer 里消化，不回流到状态层。
+
+### 5.6 WebSocket 事件处理
 
 ```
 Backend → WS → EventProcessor → Jotai Atom 更新 → React re-render
@@ -409,17 +475,19 @@ Backend → WS → EventProcessor → Jotai Atom 更新 → React re-render
   text:delta        → 追加到 ResponseCard buffer
   text:flush        → force flush buffer
   turn:completed    → 标记当前 TurnState 为最终态，停止接收该 turn 的增量更新（AuditHook 此时写 DB）
-  permission:need   → 打开 PermissionDialog
+  permission:need   → 打开 PermissionDialog + Inspector approval queue 入列
   task:event        → 更新 sub-agent task 状态
+  task:gate         → completion gate 状态（evaluating / passed / partial+理由）
+  inbox:item        → 后台任务完成/降级 → Inbox badge + toast
   session:error     → 显示错误 + Toast
   session:completed → 设置 status = idle, turnPhase = complete
 ```
 
 ---
 
-## 五、核心交互流程
+## 六、核心交互流程
 
-### 5.1 新建 Session
+### 6.1 新建 Session
 
 ```
 用户点击 New Session → POST /api/sessions → 获得 sessionId
@@ -434,7 +502,7 @@ Backend → WS → EventProcessor → Jotai Atom 更新 → React re-render
 
 消息发送是同步 HTTP POST，不是 WS 消息。前端在收到 201 后立即渲染 skeleton，不等第一个 WS 事件——避免「用户发送消息后 UI 空白等第一个 event」的延迟感。`api/client.ts` 需同时暴露 `sendMessage()` HTTP 方法和 WS 事件监听。
 
-### 5.2 Agent 执行中的 UI
+### 6.2 Agent 执行中的 UI
 
 ```
 用户消息 → POST 返回 turn_id → 前端立即 TurnCard skeleton → TurnPhase: pending
@@ -448,7 +516,7 @@ tool 执行完 → TurnPhase: awaiting (等待下一个模型调用或完成)
   → WS relay hook 持久化 transcript
 ```
 
-### 5.3 追问流程
+### 6.3 追问流程
 
 ```
 用户在 ResponseCard 选中文字 → mouseup 触发
@@ -461,7 +529,7 @@ tool 执行完 → TurnPhase: awaiting (等待下一个模型调用或完成)
 → 标注设置为 sent 状态（透明度 0.58）
 ```
 
-### 5.4 Permission 弹窗
+### 6.4 Permission 弹窗
 
 ```
 Agent 调用 tool（requires approval） → WS 收到 permission:need
@@ -472,9 +540,11 @@ Agent 调用 tool（requires approval） → WS 收到 permission:need
 → 对话框关闭，agent 继续
 ```
 
+同一请求同时进入 Inspector 的 ApprovalQueue——模态被关闭/失焦后 approval 仍有常驻可见入口，不会「丢」。多 session / 多 sub-agent 并发请求时以 queue 为主视图，模态只针对当前聚焦 session（设计原则 6）。
+
 ---
 
-## 六、不做的事
+## 七、不做的事
 
 | 不做 | 原因 |
 |------|------|
@@ -485,3 +555,6 @@ Agent 调用 tool（requires approval） → WS 收到 permission:need
 | **不做 workspace 文件树** | 先做 session 列表 + task board。文件树是 knowledge workspace 阶段的事 |
 | **不做多主题** | 一个暗色主题 + 一个亮色主题。不提供自定义主题引擎 |
 | **不做离线模式 UI** | 先做 always-online。离线缓存后续 |
+| **不做 hover-only 的关键动作** | approval / cancel / permission mode 必须常驻可见（Craft Agents 可发现性教训） |
+| **不做自由拖拽分栏** | 三区固定布局先建立空间记忆；panel stack 限定在中区 |
+| **不把 multi-agent 压平成 chat transcript** | sub-agent provenance / task / artifact 在 Inspector 有独立稳定位置 |
