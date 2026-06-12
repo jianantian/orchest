@@ -167,7 +167,10 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
 
 ## 7. 未决问题
 
-1. **browser 面技术路线**：Tauri 子 webview vs CDP 驱动的外部浏览器——影响感知适配器能做多深（截图/DOM/console 的获取方式）
+1. **browser 面技术路线**：Tauri 子 webview vs CDP 驱动的外部浏览器——影响感知适配器能做多深（截图/DOM/console 的获取方式）。
+   **调研补充（2026-06-12，Claude Code 桌面端）**：Claude Desktop 是 Electron（自带 Chromium），其 preview 面板即 Electron 内嵌 webContents——天然带全量 CDP（`webContents.debugger`），所以截图/DOM 检查/元素选取/表单交互开箱即得，且双平台一致。它还验证了我们的两个核心设计：① pane 工作台（chat/diff/preview/terminal/file/tasks 可拖拽布局）≈ 我们的 Surface 区；② 「点击元素 = 给下一条 prompt 提供指代上下文」（Cmd+Shift+S Select an element）= 我们的 deixis 原语。
+   **对决策的影响**：第三个选项浮现——Electron 壳。原架构反对 Electron 的主要论据（napi-rs FFI 桥）在我们的实际架构下不成立：前端本来就通过 HTTP/WS 连 Rust daemon，壳与 core 是进程解耦的，换壳不影响 multivac-core。真实代价只剩二进制体积与内存。三选项重述：(A) Tauri + 系统 webview（感知浅，平台不一致）；(B) Tauri + sidecar Chromium via CDP（感知满血，嵌入要做 screencast）；(C) Electron（感知满血 + 原生嵌入，体积大）。spike 改为 B vs C 对比。
+   **它的空档 = 我们的差异化**：Claude Code preview 是 solo-centric（一个 agent、一个本地 session、无共享）、code-only；我们的多角色创作介质 + v1 team plane 不与之正面冲突。
 2. **文件面编辑的「轻」**到什么程度：只读 + 行内小改，还是完全外链
 3. **Orchest 进入产品的时机与角色**：候选切入点是 Context Composer 的智能化（注意力策略由 agent 决策）与知识投影的提炼 agent（Dream/Distill 的近亲）
 4. **v1 文字创作角色的引擎**：Claude Code 通用化使用，还是 Orchest 原生 agent
