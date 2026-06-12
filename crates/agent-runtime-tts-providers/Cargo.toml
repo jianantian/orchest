@@ -1,0 +1,31 @@
+[package]
+name = "agent-runtime-tts-providers"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+
+[features]
+default = ["volcengine", "aliyun"]
+volcengine = ["dep:futures-util", "dep:tokio-tungstenite"]
+aliyun = ["dep:base64", "dep:futures-util", "dep:tokio-tungstenite"]
+
+[dependencies]
+async-trait = "0.1"
+base64 = { version = "0.22", optional = true }
+bytes = { version = "1", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+futures-util = { version = "0.3", optional = true }
+metrics = "0.24"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"], optional = true }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+
+[lints]
+workspace = true
