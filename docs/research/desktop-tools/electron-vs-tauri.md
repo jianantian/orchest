@@ -77,7 +77,7 @@
 | 自动更新 | tauri-updater | electron-updater/Squirrel | 持平 |
 | Linux | 支持(webkitgtk,质量一般) | 支持(成熟) | 低(v0 不承诺;Claude Desktop 也不出 Linux) |
 | 团队技能 | Rust(有)+ 壳 API 学习 | TS/Node(有) | 持平 |
-| 同类产品参照 | **零**(我们研究过的同类无一用 Tauri) | Craft Agents、Nimbalyst、Claude Desktop、Cursor(VS Code fork) | 高——成熟坑都被踩过 |
+| 同类产品参照 | **零**(我们研究过的同类无一用 Tauri) | Craft Agents、Nimbalyst、Claude Desktop、Cursor(VS Code fork)、Vibeyard(多 CLI agent IDE,MIT) | 高——成熟坑都被踩过 |
 
 ## 五、Rust core 不受影响(选型的可逆性边界)
 
