@@ -11,7 +11,7 @@
 - **Task** 是执行记账，**Runtime** 是执行宿主，**Artifact** 是执行产物——三者经 Locator（`knowledge://` URI + provenance + scope）全部可寻址
 - 外部 IM 是 distribution surface，不是产品定义
 
-**v0 工程剖面（ADR-001 D7）**：Tauri 桌面 + SQLite + Claude Code 单 runtime + 单 workspace。本文档 §6.7（编排深度）、§6.9（MessageIngress）、§6.10-6.13（双模式交付）为**目标架构，非 v0 范围**——接口形态保留，工程预算为零。
+**v0 工程剖面（ADR-001 D7）**：桌面单壳（Tauri vs Electron 复审中，§6.2）+ SQLite + Claude Code 单 runtime + 单 workspace。本文档 §6.7（编排深度）、§6.9（MessageIngress）、§6.10-6.13（双模式交付）为**目标架构，非 v0 范围**——接口形态保留，工程预算为零。
 
 ---
 
@@ -72,7 +72,9 @@
 - 前端、task supervisor、审计日志只消费 normalized `TaskEvent` / `RuntimeEvent`，不直接消费 Claude Code JSONL、Codex ACP、PTY stdout 等内部协议。
 - **`multivac-core` 是 daemon-first 的库，不是 request-response server**（Kocoro 的 daemon 模型）。axum router 只是 trigger surface 之一：SessionManager 同样可以被定时任务、文件监听、IM ingress、MCP 调用唤醒。Desktop 模式下 agent 常驻后台，不随窗口关闭而消失——「server」暗示被动响应，「daemon」暗示主动的后台 agent 生命周期，所有模块按后者设计。
 
-### 6.2 为什么 Tauri 而不是 Electron
+### 6.2 桌面壳选型：Tauri vs Electron（复审中）
+
+> **2026-06-12 决策重开**，详见 [electron-vs-tauri 复审](../research/desktop-tools/electron-vs-tauri.md)。下表为原决策依据，其首要论据已失效。
 
 | | Electron | Tauri |
 |---|---------|-------|
@@ -83,7 +85,13 @@
 | **内存** | ~200MB+ baseline | ~50MB baseline |
 | **Rust 契合度** | 需要额外的 FFI 层维护 | **天然一体** |
 
-Tauri 的 webview 使用系统 WebView（macOS WebKit, Windows WebView2），前端代码完全相同——Vite dev server 在开发时，构建产物嵌入 Tauri 发布。
+复审要点：
+1. **FFI 论据失效**——前端经 HTTP/WS 连 Rust daemon，壳与 core 进程解耦，两种壳都不碰 FFI，`multivac-core` 一行不改
+2. **新的决定性因素**——ADR-001 把 browser 面定为招牌：Electron 的 WebContentsView + `webContents.debugger`（全量 CDP）原生满足感知需求（Claude Code 桌面端即此架构）；Tauri 多 webview 仍是 unstable feature，且 macOS WKWebView 无任何官方编程感知接口
+3. **一致性成本**——系统 webview 版本随用户机器漂移；终端（xterm.js）、视频编解码（H.265）、canvas 渲染在 WKWebView 均有已知问题，恰砸在创作工作台最重的三个面上
+4. **复审建议：Electron**；若坚持 Tauri 需先通过 sidecar Chromium（CDP + screencast）的 spike。本决策须在阶段 1 动工前定死——surface 适配器有壳相关实现
+
+Tauri 路线下 webview 使用系统 WebView（macOS WebKit, Windows WebView2）；两种壳下前端代码完全相同——Vite dev server 在开发时，构建产物嵌入壳发布。
 
 ### 6.3 Workspace 结构
 
@@ -583,7 +591,7 @@ pub struct FeatureFlags {
 
 ## 七、重构阶段（按 ADR-001 重排：一条线，五个面）
 
-**v0 工程剖面：Tauri 桌面 + SQLite + Claude Code 单 runtime + 单 workspace。** Cloud/Postgres、多 CLI runtime、MessageIngress、Org/Employee、Meeting/ASR、Orchest 编排深度全部移出 v0——trait/URI/事件协议等接口形态保留，工程预算为零。
+**v0 工程剖面：桌面单壳（Tauri vs Electron 复审中，§6.2）+ SQLite + Claude Code 单 runtime + 单 workspace。** Cloud/Postgres、多 CLI runtime、MessageIngress、Org/Employee、Meeting/ASR、Orchest 编排深度全部移出 v0——trait/URI/事件协议等接口形态保留，工程预算为零。
 
 ### 阶段 0：Kernel 地基
 
@@ -676,7 +684,7 @@ pub struct FeatureFlags {
 | **不禁止远程 runtime-host 使用 gRPC/WS** | CLI agent runtime 可以在另一台机器上，必须保留稳定远程执行协议 |
 | **不保留 Channel 概念** | 改为 Session |
 | **不自研 Lexical** | Tiptap 足够 |
-| **不用 Electron** | Tauri 与 Rust backend 天然一体 |
+| ~~不用 Electron~~（已重开，§6.2） | 原论据「Tauri 与 Rust backend 天然一体」因 daemon 解耦失效；复审建议 Electron |
 | **不重写 iOS/Android** | 先做桌面 + Web |
 | **不做 E2E 加密协作** | 先做简单多用户 |
 | **不做 20+ extension** | 从 5 个 product tool 开始 |
