@@ -5,7 +5,7 @@
 - `crates/agent-runtime-asr-providers/src/routing.rs` — gateway/router style
 - `crates/agent-runtime-asr-providers/tests/router.rs` — fake provider routing tests
 - `crates/agent-runtime-providers/src/lib.rs` — model normalization behavior reference
-- `docs/iteration/v0_9_3/prd.md` — routing order and compatibility contract
+- `docs/archive/iteration/v0_9_3/prd.md` — routing order and compatibility contract
 
 ## 步骤
 

@@ -5,7 +5,7 @@
 - `docs/external/aliyun/tts-api-doc.md` — model names, HTTP/WebSocket protocol and response fields
 - `docs/external/aliyun/tts-guideline.md` — voice cloning/design and custom voice behavior
 - `crates/agent-runtime-tts-providers/src/providers/volcengine.rs` — adapter pattern from 006
-- `docs/iteration/v0_9_3/prd.md` — provider scope and tool boundary
+- `docs/archive/iteration/v0_9_3/prd.md` — provider scope and tool boundary
 
 ## 步骤
 

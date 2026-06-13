@@ -28,6 +28,7 @@
 | v0.9 | 功能 | Supervised Delegation 端到端（Approval 枚举、结构化 ToolError、as_tool Builder、Steering API、LlmWatcher、supervisor 恢复、多 watcher FIFO、端到端示例） |
 | v0.9.1 | 卫星 | ASR Provider Gateway（`agent-runtime-asr-providers`、Volcengine/Aliyun adapter、duplex streaming、observability） |
 | v0.9.2 | 卫星 | 文档（rustdoc 清理、quickstart、Python/TS SDK 指南、basic_agent_run 示例、CI doc/example 防线） |
+| v0.9.3 | 卫星 | TTS Provider Gateway（`agent-runtime-tts-providers`、voice catalog、streaming synthesis、Volcengine/Aliyun adapter、observability） |
 
 ## 迭代编号约定
 
@@ -35,12 +36,6 @@
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
 
 ## 规划中
-
-### [v0.9.3 — TTS Provider Gateway](./v0_9_3/prd.md)（卫星）
-
-新增 `agent-runtime-tts-providers`，提供 TTS provider 统一封装、voice catalog、duplex streaming synthesis、audio format、usage、telemetry 和 `trace_id` 对齐。与 v0.9 主线并行，不改 core run loop。
-
-**依赖**：v0.9.1 ASR Provider Gateway 的音频 provider/gateway 设计模式
 
 ### SDK 验证产品迭代（编号待定）
 
@@ -73,7 +68,7 @@
    v1.0: 首次公开发布（crates.io + release workflow + license 定稿）
 
 ✅ v0.9.1: ASR Provider Gateway（卫星，已完成）
-   v0.9.3: TTS Provider Gateway（卫星，独立并行）
+✅ v0.9.3: TTS Provider Gateway（卫星，已完成）
 ```
 
 ## 能力缺口全景
@@ -96,4 +91,4 @@
 | Supervised Delegation 完整 | ~~无~~ → LlmWatcher + supervisor 恢复 + 多 watcher FIFO | ✅ v0.9 |
 | Image AIGC Gateway | ~~无~~ → **v0.6.1 已完成** | ✅ |
 | ASR Provider Gateway | ~~无~~ → **v0.9.1 已完成** | ✅ |
-| TTS Provider Gateway | 无统一 TTS provider crate | **v0.9.3** |
+| TTS Provider Gateway | ~~无统一 TTS provider crate~~ → **v0.9.3 已完成** | ✅ |
