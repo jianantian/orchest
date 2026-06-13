@@ -7,7 +7,7 @@ cd "$repo_root"
 targets=(
   "js"
   "examples"
-  "docs/iteration/v0_1/issues"
+  "docs/archive/iteration/v0_1/issues"
 )
 
 patterns=(
