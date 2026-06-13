@@ -61,10 +61,10 @@ tokio = { version = "1", features = ["full"] }
 grep -rn "tokio::" crates/agent-runtime-core/src/
 ```
 
-预期需要：`rt`（spawn/spawn_blocking）、`sync`（Mutex/mpsc/oneshot）、`time`（timeout/sleep）、`macros`（`#[tokio::main]` in tests）、`io-util`（AsyncBufReadExt/AsyncWriteExt in code_exec）、`process`（Command in code_exec/mcp）。
+预期需要：`rt`（spawn/spawn_blocking）、`rt-multi-thread`（multi-thread tokio tests）、`sync`（Mutex/mpsc/oneshot/RwLock/Notify）、`time`（timeout/sleep）、`macros`（`#[tokio::test]`）、`io-util`（AsyncBufReadExt/AsyncWriteExt）、`process`（Command in code_exec/mcp/skill executor）、`fs`（tokio::fs built-in tools / env manager）、`net`（MCP / webhook TCP tests and helpers）。
 
 ```toml
-tokio = { version = "1", features = ["rt", "sync", "time", "macros", "io-util", "process"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util", "process", "fs", "net"] }
 ```
 
 实施时需验证 `cargo test -p agent-runtime-core` 全绿以确认无遗漏。

@@ -40,16 +40,16 @@ Hotfix 完成后：
 - MCP stdio reader 对单行 parse 错误 `continue` 而非 `break`
 - `max_tool_calls` 在 budget check 通过后立即 `record_tool_call()`
 - `register_persistence_hook` 不重复注册
-- `js/index.d.ts` 和 `python/__init__.pyi` 包含 `run_aborted` 和 `events_dropped` 事件
+- `js/index.d.ts` 和 `python/agent_runtime/__init__.pyi` 包含 `run_aborted` 和 `events_dropped` 事件
 - Python stdout pre-sentinel loop 有行数上限（10,000）
 - `.gitignore` 中 `.DS_STORE` 修正为 `.DS_Store`
 - `check-ts-event-wire-naming.sh` 中 scan target 路径与实际目录一致
 - Primary event subscriber 超时后 run loop 继续执行，不阻塞
 - model call 前 token count 超阈值时返回明确 runtime 错误（非 provider 500）
 - `McpStdioClient::Drop` 不泄漏子进程
-- Node binding event dropping 时发送 `EventsDropped` 通知
+- Node binding event dropping 时发送 `EventsDropped` 通知，或至少记录 `tracing::warn!`
 - `AgentRef` / `AgentError` 已删除，`on_update` 字段已删除
-- 标准验证通过：`cargo test --workspace`、`cargo clippy --workspace -- -D warnings`、`cargo fmt --check`、`./scripts/lint-check.sh`
+- 标准验证通过：`cargo test --workspace`、`cargo clippy --workspace -- -D warnings`、`cargo fmt --check`、`./scripts/lint-check.sh`、`./scripts/check-ts-event-wire-naming.sh`
 
 ## 范围
 
@@ -96,9 +96,9 @@ Hotfix 完成后：
 
 - 2a：loop 中加计数器，超过 `MAX_PRE_SENTINEL_LINES`（10,000）后 kill 子进程并返回错误；非 sentinel 行通过 `emit_update` 发出
 - 2b：`let use_deno = which::which("deno").is_ok();` 在分支前缓存，复用
-- 2c：检测是否有正在运行的 event loop（`asyncio.get_running_loop()`）。无 loop 时用 `asyncio.run(coro)`；有 loop 时用 `asyncio.ensure_future(coro)` 提交到已有 loop，通过 `concurrent.futures.Future` + `threading.Event` 等待结果（`run_until_complete` 在已运行的 loop 中同样会抛 `RuntimeError`）。两处均需修改（tool handler 和 async job poll）
+- 2c：检测是否有正在运行的 event loop（`asyncio.get_running_loop()`）。无 loop 时用 `asyncio.run(coro)`；有 loop 时在独立 OS 线程中用 `asyncio.run(coro)`，调用线程通过 `py.allow_threads` 释放 GIL 后等待结果。两处均需修改（tool handler 和 async job poll）
 - 2d：`Err(_) => continue` 替代 `break`，仅在 EOF（`next_line` 返回 `None`）时 break 清空
-- 2e：budget check 通过后立即调用 `state.budget.record_tool_call()`，删除 line 1092 的延迟 record
+- 2e：budget check 通过后立即调用 `state.budget.record_tool_call()`，删除 budget check 之后 timeout、handoff、正常完成路径中的延迟 record，避免重复计数
 - 2f：push 前检查 hooks 中是否已存在相同 `session_id` 的 `SessionPersistenceHook`
 
 ### Issue 3：Type Stub 对齐
@@ -111,8 +111,8 @@ Hotfix 完成后：
 
 TypeScript 添加：
 ```typescript
-| { type: "run_aborted"; reason: string | null; run_depth: number }
-| { type: "events_dropped"; subscriber_id: number; count: number; run_depth: number }
+| { type: "run_aborted"; reason: string | null; run_depth: number; child_run_id: string | null }
+| { type: "events_dropped"; subscriber_id: number; count: number; run_depth: number; child_run_id: string | null }
 ```
 
 Python 添加等价的 `TypedDict`。
@@ -131,7 +131,7 @@ Python 添加等价的 `TypedDict`。
 
 - 4a：`.DS_STORE` → `.DS_Store`
 - 4b：路径更正为 `docs/archive/iteration`；加入启动时路径存在性校验
-- 4c：`features = ["full"]` 替换为实际需要的 feature 列表（`rt`, `sync`, `time`, `macros`, `io-util`, `process`）
+- 4c：`features = ["full"]` 替换为实际需要的 feature 列表（`rt`, `rt-multi-thread`, `sync`, `time`, `macros`, `io-util`, `process`, `fs`, `net`）
 
 ### Issue 5：Node 绑定 unsafe 审计
 
@@ -155,7 +155,7 @@ Python 添加等价的 `TypedDict`。
 
 **修复方案：**
 
-- 6a/6b：primary subscriber 改为 `send_timeout`（如 500ms），超时发 `EventsDropped` 并继续。长期考虑迁移到 `tokio::sync::broadcast`，但 broadcast 的 lagging receiver 语义需要评估对 watcher 的影响，hotfix 阶段先用 timeout 兜底
+- 6a/6b：primary subscriber 改为 `send_timeout`（如 500ms），超时 best-effort 发送 `EventsDropped`；如果通知 channel 也满，至少记录 `tracing::warn!` 并继续。长期考虑迁移到 `tokio::sync::broadcast` 或 dropped-count accumulator，hotfix 阶段先用 timeout 兜底
 - 6c：在 `run_one_step` 的 model call 前（约 line 480），估算 `messages + tool_defs` 的 token count，若超过 context window 阈值则返回明确的 `RuntimeEvent::RunFailed` 并附上 token count 信息，而非让 provider 返回不可预期的错误。Proactive compaction 触发作为后续功能迭代处理
 
 ### Issue 7：MCP 子进程泄漏与 Node Event Dropping
@@ -169,8 +169,8 @@ Python 添加等价的 `TypedDict`。
 
 **修复方案：**
 
-- 7a：在 `Drop` 之前，先 abort reader task（解除其对 Mutex 的持有），再 `try_lock` kill 子进程。顺序改为 `self.reader_abort.abort()` → `self.child.try_lock()` → `start_kill()`。`std::sync::Mutex` 没有 `try_lock_for`，不引入新依赖
-- 7b：`NonBlocking` 的 `try_send` 失败时，通过 primary event channel 发送 `EventsDropped`，确保至少一个渠道能通知到消费者
+- 7a：保持 `Drop` 中先 abort reader task，再尝试 `try_lock` kill 子进程；如果 `try_lock` 失败，spawn 一个 OS thread 等待 Mutex 释放后调用 `start_kill()`。`std::sync::Mutex` 没有 `try_lock_for`，不引入新依赖
+- 7b：`NonBlocking` 的 `try_send` 失败时，优先通过 primary event channel 发送 `EventsDropped`；如果 event channel 不可用或已满，至少记录 `tracing::warn!`
 
 ### Issue 8：Dead Code 与 Dead Contract 清理
 

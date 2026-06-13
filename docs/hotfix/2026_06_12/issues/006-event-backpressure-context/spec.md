@@ -31,12 +31,13 @@ async fn emit(subs: &[mpsc::Sender<RuntimeEvent>], event: RuntimeEvent) {
             Ok(Ok(())) => {},
             Ok(Err(_)) => {},  // channel closed
             Err(_) => {
-                // 超时：primary 消费太慢，丢弃事件并通知
-                let _ = primary.try_send(RuntimeEvent::EventsDropped {
+                // 超时：primary 消费太慢，丢弃原事件并 best-effort 通知
+                if primary.try_send(RuntimeEvent::EventsDropped {
                     subscriber_id: 0,
                     count: 1,
-                    run_depth: 0,  // 需要从调用方传入实际 run_depth
-                });
+                }).is_err() {
+                    tracing::warn!("primary event subscriber timed out and EventsDropped notification channel is full");
+                }
             }
         }
     }
@@ -45,7 +46,7 @@ async fn emit(subs: &[mpsc::Sender<RuntimeEvent>], event: RuntimeEvent) {
 }
 ```
 
-`emit` 签名需要增加 `run_depth: usize` 参数，或者改为从 event 中提取。
+`EventsDropped` 当前不带 `run_depth` 字段；如果后续运行时事件模型统一添加 run depth，应先更新 Rust enum 和 type stubs，再调整这里。
 
 **设计决策**：超时时长 500ms 是折中——足够让正常消费者消化，不至于让 run loop 停顿太久。可提取为常量 `EVENT_SEND_TIMEOUT`。
 
@@ -55,9 +56,9 @@ async fn emit(subs: &[mpsc::Sender<RuntimeEvent>], event: RuntimeEvent) {
 
 Secondary subscriber 的 `EventsDropped` 通知使用 `try_send`，如果 channel 已满则通知本身也被丢弃。消费者完全无感知。
 
-**修复**：6a 的方案中，`EventsDropped` 通知发送到 primary channel（而非发给丢事件的那个 subscriber）。Primary channel 有 timeout 保障，不会无限阻塞。
+**修复**：6a 的方案中，`EventsDropped` 通知 best-effort 发送到 primary channel（而非发给丢事件的那个 subscriber）。如果 primary channel 已满，记录 `tracing::warn!`，确保不是完全静默丢弃。
 
-如果 primary 也满了（即 6a 的超时也触发了），`EventsDropped` 仍然可能丢失。这是可接受的——此时整个系统处于严重 backpressure，后续迭代可考虑迁移到 `tokio::sync::broadcast`。hotfix 阶段的目标是防止 run loop 无限阻塞，不是保证零丢失。
+如果 primary 也满了（即 6a 的超时也触发了），`EventsDropped` 仍然可能无法入队。这是可接受的——此时整个系统处于严重 backpressure，后续迭代可考虑迁移到 `tokio::sync::broadcast` 或 dropped-count accumulator。hotfix 阶段的目标是防止 run loop 无限阻塞，并提供 best-effort 可观测信号，不是保证零丢失。
 
 ## 6c. Model call 前无 context window 检查（Important）
 
@@ -71,24 +72,25 @@ Compaction 在 model response 后触发（line 620）。如果对话已积累到
 // run_one_step 中，model call 之前
 let estimated_tokens = state.tokenizer.estimate_messages(&messages)
     + state.tokenizer.estimate_tool_defs(&state.tool_defs);
-if let Some(context_window) = state.config.context_window {
-    if estimated_tokens > context_window {
+if let Some(context_window_size) = state.config.model.spec.context_window_size {
+    if estimated_tokens as u64 > context_window_size {
         emit(&subs, RuntimeEvent::RunFailed {
             error: format!(
-                "context window exceeded: estimated {estimated_tokens} tokens, limit {context_window}"
+                "context window exceeded: estimated {estimated_tokens} tokens, limit {context_window_size}"
             ),
-            run_depth: state.run_depth,
         }).await;
         return false;
     }
 }
 ```
 
+`RunFailed` 的 Rust enum 变体不带 `run_depth`；语言绑定层会按现有转换逻辑补充公开 wire metadata。
+
 **前提条件与降级策略**：
 
-1. `AgentConfig.context_window: Option<usize>`——如果当前不存在，本 issue 内添加。默认 `None`（不检查），由调用方根据 provider 的 context window 设置
+1. 复用现有 `AgentConfig.model.spec.context_window_size: Option<u64>`。默认 `None`（不检查），由调用方根据 provider 的 context window 设置
 2. Token 估算：`tokenizer.rs` 中已有 `estimate_tokens()` 用于 compaction 决策。复用同一接口估算 messages。tool_defs 的 token count 用 JSON 序列化后字符数 / 4 粗估（tiktoken 对英文的近似比例）
-3. 如果 `context_window` 为 `None`，跳过检查——行为与当前一致，不引入 breaking change
+3. 如果 `context_window_size` 为 `None`，跳过检查——行为与当前一致，不引入 breaking change
 
 **不做 proactive compaction**——只检查并报错。Proactive compaction 是功能迭代，不是 hotfix。
 
@@ -96,7 +98,7 @@ if let Some(context_window) = state.config.context_window {
 
 - [ ] `emit` 函数的 primary subscriber send 有超时（不再无限阻塞）
 - [ ] 超时常量 `EVENT_SEND_TIMEOUT` 已提取
-- [ ] Primary 超时后发送 `EventsDropped` 通知
+- [ ] Primary 超时后 best-effort 发送 `EventsDropped`；通知 channel 满时记录 `tracing::warn!`
 - [ ] Model call 前有 token count 估算，超限时返回 `RunFailed` 并包含 token count 信息
-- [ ] `AgentConfig` 有 `context_window` 字段（如果此前没有）
+- [ ] 检查逻辑复用 `AgentConfig.model.spec.context_window_size`，不新增重复的 context window 配置字段
 - [ ] `cargo test -p agent-runtime-core` 全绿

@@ -49,23 +49,26 @@ impl Drop for McpStdioClient {
 
 Node binding 使用 `ThreadsafeFunctionCallMode::NonBlocking` 转发事件到 JS callback。`NonBlocking` 模式下如果 V8 event queue 满，call 被静默跳过。消费者无感知。
 
-**修复**：在 event forwarding 循环中，检测 `NonBlocking` 的返回值（`napi::Status`），失败时通过 Rust 侧的 event channel 发送 `EventsDropped`：
+**修复**：在 event forwarding 循环中，检测 `NonBlocking` 的返回值（`napi::Status`）。失败时优先通过 Rust 侧的 event channel 发送 `EventsDropped`；如果 event channel 不可用或已满，则记录 `tracing::warn!`：
 
 ```rust
 let status = tsfn.call(event.clone(), ThreadsafeFunctionCallMode::NonBlocking);
 if status != napi::Status::Ok {
     // JS 侧无法消费，通过 primary event channel 通知
     if let Some(primary_tx) = &primary_event_tx {
-        let _ = primary_tx.try_send(RuntimeEvent::EventsDropped {
+        if primary_tx.try_send(RuntimeEvent::EventsDropped {
             subscriber_id: node_subscriber_id,
             count: 1,
-            run_depth: event.run_depth(),
-        });
+        }).is_err() {
+            tracing::warn!("node event callback dropped and EventsDropped notification channel is full");
+        }
+    } else {
+        tracing::warn!("node event callback dropped and no primary event channel is available");
     }
 }
 ```
 
-需要 Node binding 持有 primary event channel 的引用。如果架构上不方便，最小方案是 log warning（`tracing::warn!`）。
+需要 Node binding 持有 primary event channel 的引用。如果架构上不方便，最小方案是 log warning（`tracing::warn!`）。`EventsDropped` 通知是 best effort；hotfix 的硬要求是不能静默丢弃。
 
 ## 验收标准
 

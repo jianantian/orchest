@@ -155,7 +155,7 @@ skills/                          # example skills
 
 | Crate | Purpose | Features |
 |-------|---------|---------|
-| `tokio` | Async runtime | `full` |
+| `tokio` | Async runtime | core crate uses only required features (`rt`, `rt-multi-thread`, `sync`, `time`, `macros`, `io-util`, `process`, `fs`, `net`); application/example crates may use `full` |
 | `serde` + `serde_json` | Serialization | `derive` |
 | `async-trait` | Async trait objects | — |
 | `uuid` | RunId | `v4`, `serde` |

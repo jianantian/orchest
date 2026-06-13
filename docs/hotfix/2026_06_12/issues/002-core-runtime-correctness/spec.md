@@ -119,8 +119,9 @@ fn await_coroutine(py: Python, coro: Py<PyAny>) -> PyResult<Py<PyAny>> {
 
     std::thread::spawn(move || {
         Python::with_gil(|py| {
-            let asyncio = py.import("asyncio").unwrap();
-            let result = asyncio.call_method1("run", (coro_clone.bind(py),));
+            let result = py
+                .import("asyncio")
+                .and_then(|asyncio| asyncio.call_method1("run", (coro_clone.bind(py),)));
             let _ = tx.send(result.map(|v| v.unbind()));
         });
     });
@@ -184,7 +185,7 @@ if let Some(max) = state.config.budget.max_tool_calls {
 }
 ```
 
-删除 line 1092 的 `state.budget.record_tool_call()`（正常执行路径）。保留 handoff 路径（line 986）的 record 调用——它在 handoff 分支中单独计数。
+删除 budget check 之后各执行结果路径里的延迟 `state.budget.record_tool_call()`，包括 timeout、handoff 和正常执行完成路径，避免立即计数后重复计数。`before_tool` hook 的 `Skip` / `Reject` 分支发生在 budget check 之前；本 hotfix 不改变其既有计数语义，可暂时保留那两个分支的 record。
 
 ## 2f. `register_persistence_hook` 可重复注册（Important）
 
