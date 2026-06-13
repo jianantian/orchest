@@ -188,7 +188,7 @@ impl TtsRouter {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // justified: router selection needs explicit constraint inputs to keep filtering order readable.
     fn select(
         &self,
         operation: TtsRouteOperation,
@@ -299,7 +299,7 @@ fn route_matches_request(
             .any(|candidate| candidate == output_format)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // justified: capability validation compares the same independent route constraints used by selection.
 fn validate_provider_capability(
     provider: &dyn TtsProvider,
     operation: TtsRouteOperation,
@@ -481,7 +481,7 @@ fn coerce_semantic_control(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // justified: clamp helper keeps numeric control policy centralized for speed, pitch, and volume.
 fn clamp_or_reject(
     name: &str,
     value: &mut f32,
