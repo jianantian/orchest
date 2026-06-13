@@ -20,7 +20,7 @@ const { execFileSync } = require("node:child_process");
 const { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
 const { dirname, join, resolve } = require("node:path");
 
-const repoRoot = resolve(__dirname, "../..");
+const repoRoot = resolve(__dirname, "../../..");
 const nativeSource = join(repoRoot, "target/debug/libagent_runtime_node.dylib");
 const nativeAddon = join(repoRoot, "target/debug/agent_runtime_node.node");
 const promptDir = join(repoRoot, "examples/support/deep_research_prompts");

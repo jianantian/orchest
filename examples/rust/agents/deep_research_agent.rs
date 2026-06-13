@@ -29,10 +29,10 @@ const DEFAULT_MIN_RESEARCH_CALLS: u32 = 6;
 const DEFAULT_MAX_TOKENS: u32 = 16_000;
 const MAX_HIGHLIGHT_CHARS: usize = 900;
 const WEB_SEARCH_SYSTEM_PROMPT: &str =
-    include_str!("../support/deep_research_prompts/web_search_system.md");
-const MAIN_SYSTEM_PROMPT: &str = include_str!("../support/deep_research_prompts/main_system.md");
+    include_str!("../../support/deep_research_prompts/web_search_system.md");
+const MAIN_SYSTEM_PROMPT: &str = include_str!("../../support/deep_research_prompts/main_system.md");
 const RESEARCH_INSTRUCTIONS_PROMPT: &str =
-    include_str!("../support/deep_research_prompts/research_instructions.md");
+    include_str!("../../support/deep_research_prompts/research_instructions.md");
 
 fn load_dotenv() -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(".env");

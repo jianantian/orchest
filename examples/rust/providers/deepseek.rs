@@ -23,9 +23,9 @@ use serde_json::json;
 struct WeatherTool;
 
 fn weather_schema() -> &'static JsonSchema {
-    static S: LazyLock<JsonSchema> = LazyLock::new(|| {
-        json!({"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]})
-    });
+    static S: LazyLock<JsonSchema> = LazyLock::new(
+        || json!({"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}),
+    );
     &S
 }
 
@@ -43,11 +43,21 @@ fn weather_meta() -> &'static ToolMetadata {
 
 #[async_trait]
 impl Tool for WeatherTool {
-    fn name(&self) -> &str { "get_weather" }
-    fn description(&self) -> &str { "Get the current weather for a city." }
-    fn input_schema(&self) -> &JsonSchema { weather_schema() }
-    fn output_schema(&self) -> Option<&JsonSchema> { None }
-    fn metadata(&self) -> &ToolMetadata { weather_meta() }
+    fn name(&self) -> &str {
+        "get_weather"
+    }
+    fn description(&self) -> &str {
+        "Get the current weather for a city."
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        weather_schema()
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
+    fn metadata(&self) -> &ToolMetadata {
+        weather_meta()
+    }
 
     async fn execute(
         &self,
@@ -65,15 +75,14 @@ impl Tool for WeatherTool {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let model: Arc<dyn ModelAdapter> = Arc::from(create_adapter_from_config(
-        ProviderRuntimeConfig {
+    let model: Arc<dyn ModelAdapter> =
+        Arc::from(create_adapter_from_config(ProviderRuntimeConfig {
             model: "deepseek/deepseek-v4-flash".into(),
             api_key: None,
             api_key_env: Some("DEEPSEEK_API_KEY".into()),
             api_url: None,
             max_tokens: Some(1024),
-        },
-    )?);
+        })?);
 
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(WeatherTool))?;
@@ -83,8 +92,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .max_steps(5)
         .build()?;
 
-    let (_handle, mut rx) =
-        AgentRun::start(config, "What's the weather in Tokyo?".into(), model, registry);
+    let (_handle, mut rx) = AgentRun::start(
+        config,
+        "What's the weather in Tokyo?".into(),
+        model,
+        registry,
+    );
 
     while let Some(event) = rx.recv().await {
         match event {

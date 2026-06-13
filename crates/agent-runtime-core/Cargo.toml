@@ -44,67 +44,67 @@ path = "../../examples/rust/basic_agent_run.rs"
 
 [[example]]
 name = "rust_deep_research_agent"
-path = "../../examples/rust/deep_research_agent.rs"
+path = "../../examples/rust/agents/deep_research_agent.rs"
 
 [[example]]
 name = "hook_logging"
-path = "../../examples/rust/hook_logging.rs"
+path = "../../examples/rust/hooks/logging.rs"
 
 [[example]]
 name = "hook_modifier"
-path = "../../examples/rust/hook_modifier.rs"
+path = "../../examples/rust/hooks/modifier.rs"
 
 [[example]]
 name = "hook_abort"
-path = "../../examples/rust/hook_abort.rs"
+path = "../../examples/rust/hooks/abort.rs"
 
 [[example]]
 name = "agent_as_tool"
-path = "../../examples/rust/agent_as_tool.rs"
+path = "../../examples/rust/agents/agent_as_tool.rs"
 
 [[example]]
 name = "handoff_routing"
-path = "../../examples/rust/handoff_routing.rs"
+path = "../../examples/rust/handoff/routing.rs"
 
 [[example]]
 name = "handoff_input_filter"
-path = "../../examples/rust/handoff_input_filter.rs"
+path = "../../examples/rust/handoff/input_filter.rs"
 
 [[example]]
 name = "retry_exhausted"
-path = "../../examples/rust/retry_exhausted.rs"
+path = "../../examples/rust/resilience/retry_exhausted.rs"
 
 [[example]]
 name = "loop_detection"
-path = "../../examples/rust/loop_detection.rs"
+path = "../../examples/rust/hooks/loop_detection.rs"
 
 [[example]]
 name = "guardrail_keyword_filter"
-path = "../../examples/rust/guardrail_keyword_filter.rs"
+path = "../../examples/rust/guardrails/keyword_filter.rs"
 
 [[example]]
 name = "guardrail_output_sanitize"
-path = "../../examples/rust/guardrail_output_sanitize.rs"
+path = "../../examples/rust/guardrails/output_sanitize.rs"
 
 [[example]]
 name = "approval_mode_side_effect"
-path = "../../examples/rust/approval_mode_side_effect.rs"
+path = "../../examples/rust/resilience/approval_mode_side_effect.rs"
 
 [[example]]
 name = "session_persist_resume"
-path = "../../examples/rust/session_persist_resume.rs"
+path = "../../examples/rust/resilience/session_persist_resume.rs"
 
 [[example]]
 name = "watcher_inject_message"
-path = "../../examples/rust/watcher_inject_message.rs"
+path = "../../examples/rust/watchers/inject_message.rs"
 
 [[example]]
 name = "watcher_abort_on_pattern"
-path = "../../examples/rust/watcher_abort_on_pattern.rs"
+path = "../../examples/rust/watchers/abort_on_pattern.rs"
 
 [[example]]
 name = "supervised_delegation"
-path = "../../examples/rust/supervised_delegation.rs"
+path = "../../examples/rust/watchers/supervised_delegation.rs"
 
 [lints]
 workspace = true

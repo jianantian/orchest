@@ -24,11 +24,11 @@ metrics-util = "0.20"
 
 [[example]]
 name = "rust_provider_runtime_deepseek"
-path = "../../examples/rust/provider_runtime_deepseek.rs"
+path = "../../examples/rust/providers/deepseek.rs"
 
 [[example]]
 name = "rust_provider_runtime_openrouter"
-path = "../../examples/rust/provider_runtime_openrouter.rs"
+path = "../../examples/rust/providers/openrouter.rs"
 
 [lints]
 workspace = true

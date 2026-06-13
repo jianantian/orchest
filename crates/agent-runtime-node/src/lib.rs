@@ -579,7 +579,7 @@ impl Agent {
     }
 
     #[napi]
-    pub fn run_sync(&self, input: String) -> napi::Result<Vec<serde_json::Value>> {
+    pub async fn run_sync(&self, input: String) -> napi::Result<Vec<serde_json::Value>> {
         let config = self.build_config()?;
 
         let mut registry = ToolRegistry::new();
@@ -596,32 +596,24 @@ impl Agent {
 
         let run_handle_ref = Arc::clone(&self.run_handle);
 
-        let rt = shared_runtime();
+        let (handle, mut event_rx) = AgentRun::start(config, input, model, registry);
 
-        let events = rt.block_on(async {
-            let (handle, mut event_rx) = AgentRun::start(config, input, model, registry);
+        {
+            let mut guard = run_handle_ref.lock().await;
+            *guard = Some(handle);
+        }
 
-            // Store handle for respond_approval
-            {
-                let mut guard = run_handle_ref.lock().await;
-                *guard = Some(handle);
+        let mut events = Vec::new();
+        while let Some(event) = event_rx.recv().await {
+            events.push(event);
+        }
+
+        {
+            let mut guard = run_handle_ref.lock().await;
+            if let Some(h) = guard.take() {
+                h.wait().await;
             }
-
-            let mut events = Vec::new();
-            while let Some(event) = event_rx.recv().await {
-                events.push(event);
-            }
-
-            // Wait and clear handle
-            {
-                let mut guard = run_handle_ref.lock().await;
-                if let Some(h) = guard.take() {
-                    h.wait().await;
-                }
-            }
-
-            events
-        });
+        }
 
         let mut result = Vec::new();
         for event in &events {

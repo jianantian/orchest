@@ -47,8 +47,8 @@ from agent_runtime import Agent, RuntimeEvent
 
 EXA_SEARCH_URL = "https://api.exa.ai/search"
 DEFAULT_REPORT_PATH = "target/deep-research-report.md"
-PROMPT_DIR = Path(__file__).resolve().parents[1] / "support" / "deep_research_prompts"
-ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+PROMPT_DIR = Path(__file__).resolve().parents[2] / "support" / "deep_research_prompts"
+ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
 MAX_HIGHLIGHT_CHARS = 900
 DEFAULT_MIN_RESEARCH_CALLS = 6
 DEFAULT_MAX_TOKENS = 16000
