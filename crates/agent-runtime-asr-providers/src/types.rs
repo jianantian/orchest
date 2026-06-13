@@ -69,6 +69,11 @@ pub enum AudioInput {
     },
 }
 
+/// Lossy byte-vector serde used only for debug/log serialization.
+///
+/// `AudioInput::Bytes` can be large and is not intended to round-trip through
+/// JSON persistence or transport in this crate, so serialization records only
+/// the byte length and deserialization restores a zero-filled placeholder.
 mod serde_bytes_vec {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 

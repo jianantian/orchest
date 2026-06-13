@@ -1,14 +1,13 @@
 pub mod protocol;
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite;
+use tracing::Instrument;
 
 use crate::error::{AsrError, AsrErrorCode};
 use crate::observability::{self, AsrTelemetryBuilder};
@@ -180,6 +179,13 @@ impl AsrProvider for VolcengineAsrAdapter {
         &self,
         request: StreamingTranscribeRequest,
     ) -> Result<AsrStream, AsrError> {
+        if !self.config.ws_url.starts_with("wss://") {
+            return Err(AsrError::new(
+                AsrErrorCode::InvalidRequest,
+                "WebSocket URL must use wss:// for secure credential transport",
+            ));
+        }
+
         let trace_id = request
             .options
             .trace_id
@@ -215,17 +221,16 @@ impl AsrProvider for VolcengineAsrAdapter {
             })?;
 
         let span = observability::provider_stream_span(&trace_id, &model);
-        let _guard = span.enter();
 
-        let (ws_stream, _response) =
-            tokio_tungstenite::connect_async(ws_request)
-                .await
-                .map_err(|e| {
-                    AsrError::new(
-                        AsrErrorCode::ProviderStreamError,
-                        format!("WebSocket connection failed: {e}"),
-                    )
-                })?;
+        let (ws_stream, _response) = tokio_tungstenite::connect_async(ws_request)
+            .instrument(span)
+            .await
+            .map_err(|e| {
+                AsrError::new(
+                    AsrErrorCode::ProviderStreamError,
+                    format!("WebSocket connection failed: {e}"),
+                )
+            })?;
 
         let client_payload = self.build_client_payload(&request);
         let full_request_frame = build_full_client_request(&client_payload)?;
@@ -283,7 +288,7 @@ fn extract_host(url: &str) -> &str {
 // ---------------------------------------------------------------------------
 
 struct UtteranceDeduplicator {
-    seen: HashSet<(i32, i32, u64)>,
+    seen: HashSet<(i32, i32, String)>,
 }
 
 impl UtteranceDeduplicator {
@@ -294,9 +299,7 @@ impl UtteranceDeduplicator {
     }
 
     fn is_new(&mut self, u: &VolcengineUtterance) -> bool {
-        let mut hasher = DefaultHasher::new();
-        u.text.hash(&mut hasher);
-        let key = (u.start_time, u.end_time, hasher.finish());
+        let key = (u.start_time, u.end_time, u.text.clone());
         self.seen.insert(key)
     }
 }
@@ -456,7 +459,6 @@ async fn adapter_task(
                                 }
 
                                 if is_last && !segment_finalized {
-                                    segment_finalized = true;
                                     flush_pending = false;
 
                                     let text = match final_result_scope {
@@ -513,6 +515,12 @@ async fn adapter_task(
                                         let _ = ws_write.close().await;
                                         return;
                                     }
+
+                                    segment_finalized = false;
+                                    segment_idx += 1;
+                                    segment_words.clear();
+                                    dedup = UtteranceDeduplicator::new();
+                                    last_segment_text.clear();
                                 }
                             }
                             Ok(VolcengineFrame::ErrorResponse { code, message }) => {
@@ -756,6 +764,36 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(context).unwrap();
         assert_eq!(parsed["hotwords"][0]["word"], "热词1");
         assert_eq!(parsed["hotwords"][1]["word"], "热词2");
+    }
+
+    #[tokio::test]
+    async fn volcengine_rejects_insecure_ws_url() {
+        let adapter = VolcengineAsrAdapter::new(VolcengineAsrConfig {
+            model_name: "bigmodel_async".into(),
+            ws_url: "ws://example.invalid/api/v3/sauc/bigmodel_async".into(),
+            api_key: "key".into(),
+            access_key: "access".into(),
+            resource_id: "resource".into(),
+        });
+        let request = StreamingTranscribeRequest {
+            model: Some("volcengine/bigmodel_async".into()),
+            format: StreamingAudioFormat::Pcm16 {
+                sample_rate_hz: 16000,
+                channels: 1,
+            },
+            timeline: AudioTimelineMode::ContinuousRealtime,
+            options: TranscribeOptions::default(),
+            compatibility: CompatibilityPolicy::Coerce,
+            provider_options: serde_json::Value::Null,
+        };
+
+        let err = match adapter.start_stream(request).await {
+            Ok(_) => panic!("insecure WebSocket URL should be rejected before connect"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.code, AsrErrorCode::InvalidRequest);
+        assert!(err.message.contains("wss://"));
     }
 
     #[test]

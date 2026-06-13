@@ -39,8 +39,11 @@ export interface ToolRegistration {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** Deprecated: use `approval` instead. */
   requiresApproval?: boolean;
   sideEffect?: boolean;
+  /** "never" | "whenRisky" | "always". Takes priority over `requiresApproval`. */
+  approval?: string;
 }
 
 export interface ToolWithHandler {
@@ -80,27 +83,34 @@ export type StreamEvent =
   | unknown;
 
 export type RuntimeEvent =
-  | { type: "run_started"; run_id: string }
-  | { type: "model_call_started"; step: number }
-  | { type: "model_stream_chunk"; delta: StreamEvent }
-  | { type: "model_call_completed"; tokens: TokenUsage; option_adjustments?: OptionAdjustment[] }
-  | { type: "tool_call_started"; tool: string; source: unknown; input: unknown }
-  | { type: "tool_call_update"; tool: string; tool_call_id: string; partial: unknown }
-  | { type: "tool_call_completed"; tool: string; output: unknown; duration: unknown }
-  | { type: "tool_call_failed"; tool: string; error: string }
-  | { type: "async_tool_started"; tool: string; job_id: string }
-  | { type: "async_tool_progress"; tool: string; job_id: string; status: unknown }
-  | { type: "async_tool_completed"; tool: string; job_id: string; output: unknown; elapsed: unknown }
-  | { type: "skill_content_read"; skill_name: string; file: string; tokens: number }
-  | { type: "approval_requested"; tool_call: unknown }
-  | { type: "approval_granted"; tool_call: unknown }
-  | { type: "approval_denied"; tool_call: unknown }
-  | { type: "budget_warning"; used: unknown; limit: unknown }
+  | { type: "run_started"; run_id: string; run_depth: number; child_run_id: string | null }
+  | { type: "model_call_started"; step: number; run_depth: number; child_run_id: string | null }
+  | { type: "model_stream_chunk"; delta: StreamEvent; run_depth: number; child_run_id: string | null }
+  | { type: "model_call_completed"; tokens: TokenUsage; option_adjustments?: OptionAdjustment[]; run_depth: number; child_run_id: string | null }
+  | { type: "tool_call_started"; tool: string; metadata: unknown; input: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "tool_call_update"; tool: string; tool_call_id: string; partial: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "tool_call_completed"; tool: string; output: unknown; duration: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "tool_call_failed"; tool: string; error: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "async_tool_started"; tool: string; job_id: string; run_depth: number; child_run_id: string | null }
+  | { type: "async_tool_progress"; tool: string; job_id: string; status: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "async_tool_completed"; tool: string; job_id: string; output: unknown; elapsed: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "skill_content_read"; skill_name: string; file: string; tokens: number; run_depth: number; child_run_id: string | null }
+  | { type: "approval_requested"; tool_call: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "approval_granted"; tool_call: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "approval_denied"; tool_call: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "budget_warning"; used: unknown; limit: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "runtime_warning"; message: string; run_depth: number; child_run_id: string | null }
+  | { type: "skill_dependency_error"; skill_name: string; error: string; run_depth: number; child_run_id: string | null }
+  | { type: "skill_missing_capabilities"; skill_name: string; run_depth: number; child_run_id: string | null }
+  | { type: "context_compacted"; removed_messages: number; summary_tokens: number; run_depth: number; child_run_id: string | null }
   | { type: "child_run_event"; child_run_id: string; run_depth: number; event: RuntimeEvent }
-  | { type: "sub_agent_started"; parent_run_id: string; child_run_id: string; config_summary: unknown }
-  | { type: "sub_agent_completed"; child_run_id: string; output: unknown; budget_used: unknown }
-  | { type: "sub_agent_failed"; child_run_id: string; error: string }
-  | { type: "run_completed"; output: unknown }
-  | { type: "run_failed"; error: string };
+  | { type: "sub_agent_started"; parent_run_id: string; child_run_id: string; config_summary: unknown; run_depth: number }
+  | { type: "sub_agent_completed"; child_run_id: string; output: unknown; budget_used: unknown; run_depth: number }
+  | { type: "sub_agent_failed"; child_run_id: string; error: string; run_depth: number }
+  | { type: "run_restarted"; attempt: number; run_depth: number; child_run_id: string | null }
+  | { type: "run_aborted"; reason: string | null; run_depth: number; child_run_id: string | null }
+  | { type: "events_dropped"; subscriber_id: number; count: number; run_depth: number; child_run_id: string | null }
+  | { type: "run_completed"; output: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "run_failed"; error: string; run_depth: number; child_run_id: string | null };
 
 export { Agent } from "./native";

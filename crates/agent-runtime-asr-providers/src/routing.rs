@@ -67,62 +67,22 @@ impl AsrRouter {
         &self,
         request: &StreamingTranscribeRequest,
     ) -> Result<Arc<dyn AsrProvider>, AsrError> {
-        if let Some(ref model) = request.model {
-            let normalized = normalize_asr_provider_model(model)?;
-            let key = format!("{}/{}", normalized.provider, normalized.model);
-            return self.providers.get(&key).cloned().ok_or_else(|| {
-                AsrError::new(
-                    AsrErrorCode::NoMatchingProvider,
-                    format!("no registered provider for model '{}'", key),
-                )
-            });
-        }
-
-        if self.routes.is_empty() {
-            return Err(AsrError::new(
-                AsrErrorCode::NoMatchingProvider,
-                "no model specified and no route config available",
-            ));
-        }
-
-        let mut candidates: Vec<&AsrRoute> = self
-            .routes
-            .iter()
-            .filter(|route| {
-                if let Some(ref lang) = request.options.language {
-                    if !route.languages.iter().any(|l| l.0 == lang.0) {
-                        return false;
-                    }
-                }
-                self.providers.contains_key(&route.model)
-            })
-            .collect();
-
-        candidates.sort_by(|a, b| a.priority.cmp(&b.priority).then(a.model.cmp(&b.model)));
-
-        let route = candidates.first().ok_or_else(|| {
-            AsrError::new(
-                AsrErrorCode::NoMatchingProvider,
-                "no route matches the request constraints",
-            )
-        })?;
-
-        self.providers.get(&route.model).cloned().ok_or_else(|| {
-            AsrError::new(
-                AsrErrorCode::NoMatchingProvider,
-                format!(
-                    "route selected '{}' but provider not registered",
-                    route.model
-                ),
-            )
-        })
+        self.select_provider(request.model.as_deref(), request.options.language.as_ref())
     }
 
     pub fn select_for_transcribe(
         &self,
         request: &TranscribeRequest,
     ) -> Result<Arc<dyn AsrProvider>, AsrError> {
-        if let Some(ref model) = request.model {
+        self.select_provider(request.model.as_deref(), request.options.language.as_ref())
+    }
+
+    fn select_provider(
+        &self,
+        model: Option<&str>,
+        language: Option<&Language>,
+    ) -> Result<Arc<dyn AsrProvider>, AsrError> {
+        if let Some(model) = model {
             let normalized = normalize_asr_provider_model(model)?;
             let key = format!("{}/{}", normalized.provider, normalized.model);
             return self.providers.get(&key).cloned().ok_or_else(|| {
@@ -144,7 +104,7 @@ impl AsrRouter {
             .routes
             .iter()
             .filter(|route| {
-                if let Some(ref lang) = request.options.language {
+                if let Some(lang) = language {
                     if !route.languages.iter().any(|l| l.0 == lang.0) {
                         return false;
                     }

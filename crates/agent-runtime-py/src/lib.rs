@@ -53,6 +53,34 @@ fn resolve_approval(approval_str: Option<&str>, requires_approval: bool) -> Appr
     }
 }
 
+fn await_coroutine(py: Python<'_>, coro: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    let asyncio = py.import("asyncio")?;
+    let has_running_loop = asyncio.call_method0("get_running_loop").is_ok();
+
+    if !has_running_loop {
+        return asyncio
+            .call_method1("run", (coro.bind(py),))
+            .map(|value| value.unbind());
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let coro_clone = coro.clone_ref(py);
+
+    std::thread::spawn(move || {
+        let result = Python::attach(|py| {
+            py.import("asyncio")
+                .and_then(|asyncio| asyncio.call_method1("run", (coro_clone.bind(py),)))
+                .map(|value| value.unbind())
+        });
+        let _ = tx.send(result);
+    });
+
+    py.detach(move || {
+        rx.recv()
+            .map_err(|_| PyRuntimeError::new_err("async coroutine thread panicked"))
+    })?
+}
+
 #[pyclass]
 struct Agent {
     model: String,
@@ -136,9 +164,7 @@ impl Tool for PyTool {
                 .call_method1("iscoroutine", (raw_result.bind(py),))?
                 .extract()?;
             if is_coro {
-                let asyncio = py.import("asyncio")?;
-                let awaited = asyncio.call_method1("run", (raw_result.bind(py),))?;
-                Ok(awaited.unbind())
+                await_coroutine(py, raw_result)
             } else {
                 Ok(raw_result)
             }
@@ -205,15 +231,9 @@ fn py_async_job_handle(result: &Py<PyAny>) -> Result<Option<JobHandle>, ToolErro
                         .unwrap_or(false);
 
                     let value = if is_coro {
-                        let asyncio = py.import("asyncio").map_err(|e| {
-                            ToolError::fatal(format!("failed to import asyncio: {}", e))
-                        })?;
-                        asyncio
-                            .call_method1("run", (raw_value.bind(py),))
-                            .map_err(|e| {
-                                ToolError::fatal(format!("failed to await async poll: {}", e))
-                            })?
-                            .unbind()
+                        await_coroutine(py, raw_value).map_err(|e| {
+                            ToolError::fatal(format!("failed to await async poll: {}", e))
+                        })?
                     } else {
                         raw_value
                     };

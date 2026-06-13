@@ -15,6 +15,7 @@ use crate::tool::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOu
 
 const DEFAULT_TIMEOUT_SECONDS: u64 = 30;
 const MAX_TIMEOUT_SECONDS: u64 = 300;
+const MAX_PRE_SENTINEL_LINES: usize = 10_000;
 const SENTINEL_PREFIX: &str = "__ORCHEST_DONE__";
 const DEFAULT_PYTHON_BIN: &str = "python3";
 
@@ -162,6 +163,7 @@ print("{sentinel}" + json.dumps({{"stdout": __orchest_stdout.getvalue(), "stderr
         .map_err(io_tool_error)?;
     session.stdin.flush().await.map_err(io_tool_error)?;
 
+    let mut line_count = 0usize;
     loop {
         let mut line = String::new();
         let read = session
@@ -187,6 +189,16 @@ print("{sentinel}" + json.dumps({{"stdout": __orchest_stdout.getvalue(), "stderr
                 }
             }
             return Ok(output);
+        }
+        line_count += 1;
+        emit_update(ctx, json!({"stdout_line": trimmed})).await;
+        if line_count >= MAX_PRE_SENTINEL_LINES {
+            let _ = session.child.kill().await;
+            *guard = None;
+            return Err(
+                ToolError::fatal("python output exceeded line limit before sentinel")
+                    .with_code("OUTPUT_LIMIT"),
+            );
         }
     }
 }
@@ -277,7 +289,8 @@ impl Tool for ExecuteJavaScriptTool {
             ToolError::fatal("execute_javascript input missing code").with_code("INVALID_INPUT")
         })?;
         let timeout = requested_timeout(&input);
-        let mut command = if which::which("deno").is_ok() {
+        let use_deno = which::which("deno").is_ok();
+        let mut command = if use_deno {
             let mut cmd = Command::new("deno");
             cmd.arg("run")
                 .arg("--allow-net")
@@ -298,7 +311,7 @@ impl Tool for ExecuteJavaScriptTool {
             ToolError::fatal(format!("failed to spawn JavaScript runtime: {e}"))
                 .with_code("SPAWN_ERROR")
         })?;
-        if which::which("deno").is_ok() {
+        if use_deno {
             if let Some(stdin) = child.stdin.as_mut() {
                 stdin
                     .write_all(code.as_bytes())
@@ -349,4 +362,74 @@ async fn emit_update(ctx: &ToolContext, partial: Value) {
 
 fn io_tool_error(error: std::io::Error) -> ToolError {
     ToolError::transient(error.to_string()).with_code("IO_ERROR")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use tokio::sync::mpsc;
+
+    fn tool_context(event_tx: Option<mpsc::Sender<RuntimeEvent>>) -> ToolContext {
+        ToolContext {
+            run_id: crate::run::RunId::new(),
+            run_depth: 0,
+            tool_call_id: "call-1".into(),
+            event_tx,
+            webhook_base_url: None,
+            approval_bus: crate::run::handle::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn python_session_returns_output_limit_before_sentinel() {
+        let session = Arc::new(Mutex::new(None));
+        let ctx = tool_context(None);
+        let code = r#"
+import sys, time
+sys.__stdout__.write("line\n" * 10001)
+sys.__stdout__.flush()
+time.sleep(60)
+"#;
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            execute_python_in_session(&session, code, &ctx),
+        )
+        .await
+        .expect("line limit should return before timeout");
+
+        let err = result.expect_err("pre-sentinel output should exceed limit");
+        assert_eq!(err.code.as_deref(), Some("OUTPUT_LIMIT"));
+    }
+
+    #[tokio::test]
+    async fn python_session_emits_update_for_pre_sentinel_stdout() {
+        let session = Arc::new(Mutex::new(None));
+        let (event_tx, mut event_rx) = mpsc::channel(16);
+        let ctx = tool_context(Some(event_tx));
+        let code = r#"
+import sys
+sys.__stdout__.write("prelude\n")
+sys.__stdout__.flush()
+"#;
+
+        let output = tokio::time::timeout(
+            Duration::from_secs(2),
+            execute_python_in_session(&session, code, &ctx),
+        )
+        .await
+        .expect("sentinel output should arrive before timeout")
+        .expect("sentinel output should parse");
+
+        assert_eq!(output["exit_code"], 0);
+        let event = event_rx.recv().await.expect("pre-sentinel update event");
+        assert!(matches!(
+            event,
+            RuntimeEvent::ToolCallUpdate { partial, .. }
+                if partial["stdout_line"] == "prelude"
+        ));
+    }
 }

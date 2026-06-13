@@ -165,6 +165,84 @@ async fn run_loop_max_steps() {
     )));
 }
 
+#[tokio::test]
+async fn context_window_exceeded_fails_before_model_call() {
+    let mut config = test_config();
+    config.model.spec.context_window_size = Some(1);
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let model_for_run: Arc<dyn ModelAdapter> = model.clone();
+    let registry = ToolRegistry::new();
+
+    let (handle, mut rx) = AgentRun::start(
+        config,
+        "this input exceeds one token".into(),
+        model_for_run,
+        registry,
+    );
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert_eq!(model.call_count.load(Ordering::SeqCst), 0);
+    assert!(events.iter().any(
+        |event| matches!(event, RuntimeEvent::RunFailed { error } if error.contains("context window exceeded"))
+    ));
+}
+
+struct ManyStreamChunksModel {
+    chunks: usize,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for ManyStreamChunksModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        if let Some(tx) = tx {
+            for _ in 0..self.chunks {
+                let _ = tx.send(ModelStreamChunk::Text { delta: "x".into() }).await;
+            }
+        }
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("done".into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[tokio::test]
+async fn primary_event_backpressure_does_not_hang_run_loop() {
+    let model = Arc::new(ManyStreamChunksModel { chunks: 255 });
+    let registry = ToolRegistry::new();
+
+    let (handle, _rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
+
+    tokio::time::timeout(Duration::from_secs(4), handle.wait())
+        .await
+        .expect("run should finish even when primary event receiver is not drained");
+}
+
 struct ToolCallModelAdapter;
 
 #[async_trait::async_trait]
@@ -1521,6 +1599,90 @@ async fn max_tool_calls_boundary_enforced() {
         budget_exceeded,
         "third tool call should be denied by budget"
     );
+}
+
+struct TwoToolCallsOneStepModel;
+
+#[async_trait::async_trait]
+impl ModelAdapter for TwoToolCallsOneStepModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let has_tool_result = messages.iter().any(|message| {
+            message
+                .content
+                .iter()
+                .any(|block| matches!(block, ContentBlock::ToolResult { .. }))
+        });
+        if has_tool_result {
+            return Ok(ModelResponse {
+                content: vec![ContentBlock::Text("done".into())],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            });
+        }
+
+        Ok(ModelResponse {
+            content: vec![
+                ContentBlock::ToolUse {
+                    id: "call_1".into(),
+                    name: "echo".into(),
+                    input: json!({"n": 1}),
+                },
+                ContentBlock::ToolUse {
+                    id: "call_2".into(),
+                    name: "echo".into(),
+                    input: json!({"n": 2}),
+                },
+            ],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::ToolUse,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[tokio::test]
+async fn max_tool_calls_counts_each_tool_in_same_model_step() {
+    let mut config = test_config();
+    config.budget.max_tool_calls = Some(1);
+    let model = Arc::new(TwoToolCallsOneStepModel);
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeTool::echo())).unwrap();
+
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    let completed_count = events
+        .iter()
+        .filter(|event| matches!(event, RuntimeEvent::ToolCallCompleted { .. }))
+        .count();
+    assert_eq!(completed_count, 1);
+    assert!(events.iter().any(
+        |event| matches!(event, RuntimeEvent::ToolCallFailed { error, .. } if error.message == "tool call budget exceeded")
+    ));
 }
 
 #[test]

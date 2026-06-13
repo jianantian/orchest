@@ -5,6 +5,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite;
+use tracing::Instrument;
 
 use crate::error::{AsrError, AsrErrorCode};
 use crate::observability::{self, AsrTelemetryBuilder};
@@ -122,7 +123,7 @@ pub fn build_run_task(
     format: &str,
     max_sentence_silence: Option<u64>,
     provider_options: &serde_json::Value,
-) -> String {
+) -> Result<String, AsrError> {
     let mut parameters = serde_json::json!({
         "sample_rate": sample_rate,
         "format": format,
@@ -153,10 +154,15 @@ pub fn build_run_task(
             "input": {},
         }),
     };
-    serde_json::to_string(&msg).unwrap()
+    serde_json::to_string(&msg).map_err(|e| {
+        AsrError::new(
+            AsrErrorCode::InvalidRequest,
+            format!("failed to serialize aliyun task message: {e}"),
+        )
+    })
 }
 
-pub fn build_finish_task(task_id: &str) -> String {
+pub fn build_finish_task(task_id: &str) -> Result<String, AsrError> {
     let msg = DashScopeMessage {
         header: DashScopeClientHeader {
             action: "finish-task".into(),
@@ -167,7 +173,12 @@ pub fn build_finish_task(task_id: &str) -> String {
             "input": {},
         }),
     };
-    serde_json::to_string(&msg).unwrap()
+    serde_json::to_string(&msg).map_err(|e| {
+        AsrError::new(
+            AsrErrorCode::InvalidRequest,
+            format!("failed to serialize aliyun task message: {e}"),
+        )
+    })
 }
 
 pub fn parse_server_event(text: &str) -> Result<DashScopeServerEvent, AsrError> {
@@ -298,6 +309,12 @@ impl AsrProvider for AliyunAsrAdapter {
                 "qwen-asr is not yet implemented",
             ));
         }
+        if !self.config.ws_url.starts_with("wss://") {
+            return Err(AsrError::new(
+                AsrErrorCode::InvalidRequest,
+                "WebSocket URL must use wss:// for secure credential transport",
+            ));
+        }
 
         let trace_id = request
             .options
@@ -327,17 +344,16 @@ impl AsrProvider for AliyunAsrAdapter {
             })?;
 
         let span = observability::provider_stream_span(&trace_id, &model);
-        let _guard = span.enter();
 
-        let (ws_stream, _response) =
-            tokio_tungstenite::connect_async(ws_request)
-                .await
-                .map_err(|e| {
-                    AsrError::new(
-                        AsrErrorCode::ProviderStreamError,
-                        format!("WebSocket connection failed: {e}"),
-                    )
-                })?;
+        let (ws_stream, _response) = tokio_tungstenite::connect_async(ws_request)
+            .instrument(span)
+            .await
+            .map_err(|e| {
+                AsrError::new(
+                    AsrErrorCode::ProviderStreamError,
+                    format!("WebSocket connection failed: {e}"),
+                )
+            })?;
 
         let (sample_rate, audio_format) = match &request.format {
             StreamingAudioFormat::Pcm16 { sample_rate_hz, .. } => (*sample_rate_hz, "pcm"),
@@ -366,7 +382,7 @@ impl AsrProvider for AliyunAsrAdapter {
             audio_format,
             max_sentence_silence,
             &request.provider_options,
-        );
+        )?;
 
         let flush_timeout = request
             .options
@@ -439,7 +455,7 @@ struct TaskParams {
 }
 
 impl TaskParams {
-    fn build_run_task(&self, task_id: &str) -> String {
+    fn build_run_task(&self, task_id: &str) -> Result<String, AsrError> {
         build_run_task(
             task_id,
             &self.aliyun_model,
@@ -589,7 +605,17 @@ async fn adapter_task(
                                 if !chunk.data.is_empty() {
                                     let _ = ws_write.send(tungstenite::Message::Binary(chunk.data.to_vec())).await;
                                 }
-                                let finish_msg = build_finish_task(&_current_task_id);
+                                let finish_msg = match build_finish_task(&_current_task_id) {
+                                    Ok(msg) => msg,
+                                    Err(error) => {
+                                        let _ = event_tx.send(AsrStreamEvent::Error {
+                                            trace_id: trace_id.clone(),
+                                            error,
+                                            fatal: true,
+                                        }).await;
+                                        return;
+                                    }
+                                };
                                 if ws_write.send(tungstenite::Message::Text(finish_msg)).await.is_err() {
                                     let _ = event_tx.send(AsrStreamEvent::Error {
                                         trace_id: trace_id.clone(),
@@ -713,7 +739,17 @@ async fn adapter_task(
                                     last_segment_text.clear();
                                     flush_pending = false;
 
-                                    let new_run_msg = task_params.build_run_task(&_current_task_id);
+                                    let new_run_msg = match task_params.build_run_task(&_current_task_id) {
+                                        Ok(msg) => msg,
+                                        Err(error) => {
+                                            let _ = event_tx.send(AsrStreamEvent::Error {
+                                                trace_id: trace_id.clone(),
+                                                error,
+                                                fatal: true,
+                                            }).await;
+                                            return;
+                                        }
+                                    };
                                     if ws_write.send(tungstenite::Message::Text(new_run_msg)).await.is_err() {
                                         let _ = event_tx.send(AsrStreamEvent::Error {
                                             trace_id: trace_id.clone(),
@@ -888,7 +924,8 @@ mod tests {
             "pcm",
             Some(800),
             &serde_json::Value::Null,
-        );
+        )
+        .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["header"]["action"], "run-task");
         assert_eq!(parsed["header"]["task_id"], "abc123");
@@ -901,7 +938,7 @@ mod tests {
 
     #[test]
     fn finish_task_json_structure() {
-        let json = build_finish_task("task-xyz");
+        let json = build_finish_task("task-xyz").unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["header"]["action"], "finish-task");
         assert_eq!(parsed["header"]["task_id"], "task-xyz");
@@ -989,7 +1026,8 @@ mod tests {
             "pcm",
             Some(500),
             &serde_json::Value::Null,
-        );
+        )
+        .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["payload"]["parameters"]["max_sentence_silence"], 500);
     }
@@ -1014,7 +1052,7 @@ mod tests {
     #[test]
     fn run_task_with_provider_options() {
         let opts = serde_json::json!({"vocabulary_id": "vocab-123"});
-        let json = build_run_task("t1", "fun-asr-realtime", 16000, "pcm", None, &opts);
+        let json = build_run_task("t1", "fun-asr-realtime", 16000, "pcm", None, &opts).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(
             parsed["payload"]["parameters"]["vocabulary_id"],
@@ -1028,5 +1066,33 @@ mod tests {
             extract_host("wss://dashscope.aliyuncs.com/api-ws/v1/inference/"),
             "dashscope.aliyuncs.com"
         );
+    }
+
+    #[tokio::test]
+    async fn aliyun_rejects_insecure_ws_url() {
+        let adapter = AliyunAsrAdapter::new(AliyunAsrConfig {
+            model: "fun-asr-realtime".into(),
+            api_key: "key".into(),
+            ws_url: "ws://example.invalid/api-ws/v1/inference/".into(),
+        });
+        let request = StreamingTranscribeRequest {
+            model: Some("aliyun/fun-asr-realtime".into()),
+            format: StreamingAudioFormat::Pcm16 {
+                sample_rate_hz: 16000,
+                channels: 1,
+            },
+            timeline: AudioTimelineMode::ContinuousRealtime,
+            options: TranscribeOptions::default(),
+            compatibility: CompatibilityPolicy::Coerce,
+            provider_options: serde_json::Value::Null,
+        };
+
+        let err = match adapter.start_stream(request).await {
+            Ok(_) => panic!("insecure WebSocket URL should be rejected before connect"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.code, AsrErrorCode::InvalidRequest);
+        assert!(err.message.contains("wss://"));
     }
 }

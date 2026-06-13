@@ -66,10 +66,17 @@ pub struct McpStdioClient {
 impl Drop for McpStdioClient {
     fn drop(&mut self) {
         self.reader_abort.abort();
-        // Kill the child process so we don't leave zombie MCP servers.
-        // We use try_lock since we're in synchronous Drop.
+        let child = Arc::clone(&self.child);
         if let Ok(mut child) = self.child.try_lock() {
             let _ = child.start_kill();
+        } else {
+            // Drop is synchronous and may run without a Tokio runtime. If another
+            // task temporarily owns the child mutex, use an OS thread to wait for
+            // the lock and issue the kill without blocking the dropping thread.
+            std::thread::spawn(move || {
+                let mut guard = child.blocking_lock();
+                let _ = guard.start_kill();
+            });
         }
     }
 }
@@ -104,8 +111,7 @@ impl McpStdioClient {
                 let response = match serde_json::from_str::<Value>(&line) {
                     Ok(response) => response,
                     Err(_) => {
-                        pending_for_reader.lock().await.clear();
-                        break;
+                        continue;
                     }
                 };
                 let Some(id) = response.get("id").and_then(Value::as_u64) else {
@@ -576,6 +582,44 @@ for line in sys.stdin:
             .await
             .expect("call tool");
         assert_eq!(output["content"][0]["text"], "hello mcp");
+    }
+
+    #[tokio::test]
+    async fn stdio_client_ignores_malformed_line_and_keeps_pending_requests() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let server = tmp.path().join("mcp_server_with_noise.py");
+        fs::write(
+            &server,
+            r#"
+import json, sys
+for line in sys.stdin:
+    req = json.loads(line)
+    method = req.get("method")
+    if method == "initialize":
+        result = {"capabilities": {"tools": {}}}
+    elif method == "tools/list":
+        result = {"tools": [{"name": "ping", "description": "Ping", "inputSchema": {"type": "object"}}]}
+    else:
+        result = {}
+    sys.stdout.write("not json\n")
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req["id"], "result": result}) + "\n")
+    sys.stdout.flush()
+"#,
+        )
+        .expect("server write");
+
+        let client = McpStdioClient::connect(
+            "python3",
+            &[server.to_str().expect("server path should be utf-8")],
+        )
+        .await
+        .expect("stdio client should ignore malformed line during initialize");
+
+        let tools = client
+            .list_tools()
+            .await
+            .expect("request after malformed line should complete");
+        assert_eq!(tools[0].name, "ping");
     }
 
     #[tokio::test]

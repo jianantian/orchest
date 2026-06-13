@@ -150,7 +150,6 @@ mod tests {
             run_id: crate::run::RunId::new(),
             run_depth: 0,
             tool_call_id: "search".into(),
-            on_update: None,
             event_tx: None,
             webhook_base_url: None,
             approval_bus: crate::run::handle::ApprovalBus::default(),

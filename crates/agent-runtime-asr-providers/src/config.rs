@@ -77,12 +77,18 @@ pub fn create_asr_provider_from_config(
         #[cfg(feature = "volcengine")]
         "volcengine" => {
             let _ = &config;
-            todo!("volcengine adapter creation")
+            Err(AsrError::new(
+                AsrErrorCode::UnsupportedOperation,
+                "volcengine adapter creation from config is not yet implemented",
+            ))
         }
         #[cfg(feature = "aliyun")]
         "aliyun" => {
             let _ = &config;
-            todo!("aliyun adapter creation")
+            Err(AsrError::new(
+                AsrErrorCode::UnsupportedOperation,
+                "aliyun adapter creation from config is not yet implemented",
+            ))
         }
         other => Err(AsrError::new(
             AsrErrorCode::UnknownProvider,
@@ -156,5 +162,41 @@ mod tests {
         let n = normalize_asr_provider_model("  volcengine/bigmodel_async  ").unwrap();
         assert_eq!(n.provider, "volcengine");
         assert_eq!(n.model, "bigmodel_async");
+    }
+
+    #[test]
+    fn factory_returns_unsupported_for_volcengine_config() {
+        let err = match create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "volcengine/bigmodel_async".into(),
+            api_key: Some("key".into()),
+            api_key_env: None,
+            api_url: None,
+            region: None,
+            timeout: None,
+            provider_options: Value::Null,
+        }) {
+            Ok(_) => panic!("factory should return an error instead of panicking"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.code, AsrErrorCode::UnsupportedOperation);
+    }
+
+    #[test]
+    fn factory_returns_unsupported_for_aliyun_config() {
+        let err = match create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "aliyun/fun-asr-realtime".into(),
+            api_key: Some("key".into()),
+            api_key_env: None,
+            api_url: None,
+            region: None,
+            timeout: None,
+            provider_options: Value::Null,
+        }) {
+            Ok(_) => panic!("factory should return an error instead of panicking"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.code, AsrErrorCode::UnsupportedOperation);
     }
 }
