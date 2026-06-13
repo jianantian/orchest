@@ -3,6 +3,7 @@
 > 2026-06-12 | 状态：**待三方签署**
 > 本文是 `multivac-reconstruction-analysis.md` 与 `multivac-frontend-design.md` 的上游。
 > 此后所有「该不该进 v0」的争论对照本文裁决；与本文冲突的下游内容以本文为准。
+> **命名说明**：「Multivac」目前是**工作代号（占位，待定）**，非确定产品名——存在三层撞名负债（见 §7.5），公开发布前重新决定。文档沿用此代号仅为指代方便，不构成名称承诺。
 
 ---
 
@@ -339,8 +340,22 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
 2. **文件面编辑的「轻」**到什么程度：只读 + 行内小改，还是完全外链
 3. **Orchest 进入产品的时机与角色**：候选切入点是 Context Composer 的智能化（注意力策略由 agent 决策）与知识投影的提炼 agent（Dream/Distill 的近亲）
 4. **v1 文字创作角色的引擎**：Claude Code 通用化使用，还是 Orchest 原生 agent
-5. **命名与商标**：Multivac 出自阿西莫夫，且有同名既有项目——公开发布前完成商标与重名检查（不阻塞开发）
-6. **仓库组织**：在 orchest monorepo 内孵化还是独立 multivac repo——阶段 0 init 前定，影响 CI 与发布流水线
+### 7.5 命名（已升级为明确待决项：建议改名，时点定在发布前）
+
+「Multivac」是创始人对阿西莫夫《最后的问题》的致敬——而那个故事的内核（跨时间累积上下文 → 数据足够后完成创造，「LET THERE BE LIGHT」；以及 "INSUFFICIENT DATA FOR MEANINGFUL ANSWER"）恰好就是本文 §0.6 的两层赌注（沉淀复利 + 意义在创造）。**结论：要保留的是这个魂，不是这八个字母——魂已在产品里，与名字无关。**
+
+但字符串本身有三层独立撞名负债（2026-06-13 调研）：
+1. **直接竞品**：Multica（同品类、共享 Multi- 词根、`Multica` 近乎 `Multivac` 子集拼写、36.5k stars 先发心智）——会被误认为其拼写变体/fork/山寨，是名字相邻里最差的一种。
+2. **在位商标大厂**：MULTIVAC Sepp Haggenmüller SE & Co. KG（德国包装机械全球龙头，活跃商标组合，持有 `multivac.com`）——商标注册更复杂、`.com` 不可得、SEO 首页被占。
+3. **文化占用**：阿西莫夫的 Multivac 是著名专有名词，非空地。
+
+**时点理由**：现处 phase 0，名字仅存于 docs（repo 仍叫 orchest），零品牌资产——**此刻改名成本在谷底，发布后建了品牌再改伤筋动骨**。故决策不必今天拍，但须在公开发布前完成；在此之前 Multivac 仅作工作代号。
+
+**换名方向（待创始人启动）**：从同一语义场长出——琥珀/沉淀、墨与纸、终端血统、块状光标、deixis/指、共创/同一个光标、本地拥有，或阿西莫夫同源主题（累积到足够才能创造 / 不足以回答 / 终局之光）。硬性筛子：`.com` 或 `.ai` 可得、GitHub org 可得、商标软件类无强占用、不含被竞品与品类稀释的 Multi-/Agent/AI 词根、一眼会读会拼。
+
+**附带的命名卫生**：品类词「AI 创作工作台」与 YouMind「AI Creation Studio」、定位词「工作台」与 Moxt「Agent-Native Workspace」均相邻——对外叙事须先于邻居锚定差异。产品名最急，品类词其次。
+
+7.6 **仓库组织**：在 orchest monorepo 内孵化还是独立 repo——阶段 0 init 前定，影响 CI 与发布流水线
 
 ---
 
