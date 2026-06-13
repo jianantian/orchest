@@ -101,6 +101,7 @@ dependencies = [
  "napi-derive",
  "serde_json",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -1292,6 +1293,7 @@ dependencies = [
  "once_cell",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

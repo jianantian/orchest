@@ -7,8 +7,15 @@ cd "$repo_root"
 targets=(
   "js"
   "examples"
-  "docs/archive/iteration/v0_1/issues"
+  "docs/archive/iteration"
 )
+
+for target in "${targets[@]}"; do
+  if [[ ! -e "$target" ]]; then
+    echo "error: scan target '$target' does not exist" >&2
+    exit 1
+  fi
+done
 
 patterns=(
   "runStarted"

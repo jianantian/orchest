@@ -25,6 +25,7 @@ use super::tool_exec::poll_async_job;
 use super::webhook::{start_webhook_server, WebhookRuntime};
 
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(3600);
+const EVENT_SEND_TIMEOUT: Duration = Duration::from_millis(500);
 
 // ── Message enum ─────────────────────────────────────────────────────────────
 
@@ -511,13 +512,40 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             model_ctx.messages
         };
 
+        if let Some(context_window_size) = state.config.model.spec.context_window_size {
+            let estimated_tokens = estimate_context_tokens(&call_messages, &state.tool_defs);
+            if estimated_tokens > context_window_size {
+                let error = format!(
+                    "context window exceeded: estimated {estimated_tokens} tokens, limit {context_window_size}"
+                );
+                state.refresh_terminal_hook_ctx(step);
+                crate::hook::runner::run_on_run_error(
+                    &state.config.hooks,
+                    &state.run_hook_ctx,
+                    &error,
+                    primary(&subs),
+                )
+                .await;
+                emit(&subs, RuntimeEvent::RunFailed { error }).await;
+                return false;
+            }
+        }
+
         let (stream_tx, mut stream_rx) = mpsc::channel::<ModelStreamChunk>(64);
         let event_tx_clone = primary(&subs).clone();
         let forward_task = tokio::spawn(async move {
             while let Some(chunk) = stream_rx.recv().await {
-                let _ = event_tx_clone
-                    .send(RuntimeEvent::ModelStreamChunk { delta: chunk })
-                    .await;
+                if tokio::time::timeout(
+                    EVENT_SEND_TIMEOUT,
+                    event_tx_clone.send(RuntimeEvent::ModelStreamChunk { delta: chunk }),
+                )
+                .await
+                .is_err()
+                {
+                    tracing::warn!(
+                        "primary event subscriber timed out while forwarding model stream chunk"
+                    );
+                }
             }
         });
 
@@ -833,6 +861,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 continue;
             }
         }
+        state.budget.record_tool_call();
 
         // ToolCallStarted fires only once we are committed to executing the tool
         // (after before_tool, approval, and budget checks all pass).
@@ -857,7 +886,6 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             run_id,
             run_depth: state.config.runtime.run_depth,
             tool_call_id: tool_call.id.clone(),
-            on_update: None,
             event_tx: Some(primary(&subs).clone()),
             webhook_base_url: state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone()),
             approval_bus: state.approval_bus.clone(),
@@ -891,7 +919,6 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                         tool_use_id: tool_call.id.clone(),
                         content: json!({"error": "tool execution timed out"}),
                     });
-                    state.budget.record_tool_call();
                     continue;
                 }
             }
@@ -983,7 +1010,6 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 }
             }
             Ok(ToolOutput::Handoff(result)) => {
-                state.budget.record_tool_call();
                 if handoff_triggered {
                     tool_results.push(ContentBlock::ToolResult {
                         tool_use_id: tool_call.id.clone(),
@@ -1088,8 +1114,6 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 }
             }
         }
-
-        state.budget.record_tool_call();
     }
 
     state.messages.push(Message {
@@ -1180,21 +1204,51 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
 // ── Utility helpers ──────────────────────────────────────────────────────────
 
 async fn emit(subs: &[mpsc::Sender<RuntimeEvent>], event: RuntimeEvent) {
-    // Primary subscriber: blocking send (preserves existing behaviour).
     if let Some(primary) = subs.first() {
-        let _ = primary.send(event.clone()).await;
-    }
-    // Additional subscribers: try_send with backpressure.
-    for (subscriber_id, sub) in subs.iter().enumerate().skip(1) {
-        if let Err(mpsc::error::TrySendError::Full(_)) = sub.try_send(event.clone()) {
-            if let Some(p) = subs.first() {
-                let _ = p.try_send(RuntimeEvent::EventsDropped {
-                    subscriber_id: subscriber_id as u64,
-                    count: 1,
-                });
+        match tokio::time::timeout(EVENT_SEND_TIMEOUT, primary.send(event.clone())).await {
+            Ok(Ok(())) | Ok(Err(_)) => {}
+            Err(_) => {
+                if primary
+                    .try_send(RuntimeEvent::EventsDropped {
+                        subscriber_id: 0,
+                        count: 1,
+                    })
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "primary event subscriber timed out and EventsDropped notification channel is full"
+                    );
+                }
             }
         }
     }
+    for (subscriber_id, sub) in subs.iter().enumerate().skip(1) {
+        if let Err(mpsc::error::TrySendError::Full(_)) = sub.try_send(event.clone()) {
+            if let Some(p) = subs.first() {
+                if p.try_send(RuntimeEvent::EventsDropped {
+                    subscriber_id: subscriber_id as u64,
+                    count: 1,
+                })
+                .is_err()
+                {
+                    tracing::warn!(
+                        subscriber_id,
+                        "secondary event subscriber dropped an event and primary notification channel is full"
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn estimate_context_tokens(messages: &[Message], tool_defs: &[ToolDef]) -> u64 {
+    let message_tokens = serde_json::to_string(messages)
+        .map(|serialized| crate::tokenizer::count_tokens(&serialized) as u64)
+        .unwrap_or(0);
+    let tool_tokens = serde_json::to_string(tool_defs)
+        .map(|serialized| (serialized.len() as u64).div_ceil(4))
+        .unwrap_or(0);
+    message_tokens + tool_tokens
 }
 
 fn primary(subs: &[mpsc::Sender<RuntimeEvent>]) -> &mpsc::Sender<RuntimeEvent> {

@@ -10,7 +10,7 @@ declare const __dirname: string;
 declare const process: any;
 declare function require(name: string): any;
 
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { copyFileSync, existsSync } = require("node:fs");
 const { join, resolve } = require("node:path");
 
@@ -18,8 +18,11 @@ const repoRoot = resolve(__dirname, "../..");
 const nativeSource = join(repoRoot, "target/debug/libagent_runtime_node.dylib");
 const nativeAddon = join(repoRoot, "target/debug/agent_runtime_node.node");
 
-if (!existsSync(nativeAddon)) {
+if (existsSync(nativeSource)) {
   copyFileSync(nativeSource, nativeAddon);
+  if (process.platform === "darwin") {
+    spawnSync("codesign", ["--force", "--sign", "-", nativeAddon]);
+  }
 }
 
 const { Agent } = require(nativeAddon);
@@ -43,7 +46,7 @@ const port = 8798;
 const provider = process.env.ANTHROPIC_API_KEY ? undefined : startProvider(port);
 process.env.ANTHROPIC_API_KEY ||= "local-demo-key";
 
-setTimeout(() => {
+setTimeout(async () => {
   const agent = new Agent({
     model: "anthropic/claude-sonnet-4-20250514",
     systemPrompt: "You are a helpful assistant.",
@@ -61,7 +64,7 @@ setTimeout(() => {
     },
   });
 
-  const events = agent.runSync("Tell me the Tokyo weather in one short sentence.");
+  const events = await agent.runSync("Tell me the Tokyo weather in one short sentence.");
   for (const event of events as Array<Record<string, unknown>>) {
     switch (event.type) {
       case "model_stream_chunk":

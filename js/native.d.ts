@@ -48,8 +48,22 @@ export class Agent {
     options?: { requiresApproval?: boolean; sideEffect?: boolean; approval?: string },
   ): void;
 
-  /** Run the agent synchronously, returning all events as an array. */
-  runSync(input: string): unknown[];
+  /**
+   * Register an async tool with a separate poll handler.
+   * `handler(input)` returns `{ job_id, poll_interval_ms? }`.
+   * `pollHandler(jobId)` returns `{ status, progress?, message?, result?, error? }`.
+   */
+  registerAsyncToolWithHandler(
+    name: string,
+    description: string,
+    inputSchema: Record<string, unknown>,
+    handler: (input: any) => { job_id: string; poll_interval_ms?: number },
+    pollHandler: (jobId: string) => { status: string; progress?: number; message?: string; result?: any; error?: string },
+    options?: { requiresApproval?: boolean; sideEffect?: boolean; approval?: string },
+  ): void;
+
+  /** Run the agent and return all events as an array. */
+  runSync(input: string): Promise<unknown[]>;
 
   /** Stream events as they arrive; calls `onEvent` for each one. */
   runStream(input: string, onEvent: (event: unknown) => void): void;

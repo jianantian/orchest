@@ -95,7 +95,6 @@ pub struct ToolContext {
     pub run_id: crate::run::RunId,
     pub run_depth: u32,
     pub tool_call_id: String,
-    pub on_update: Option<mpsc::Sender<Value>>,
     pub event_tx: Option<mpsc::Sender<crate::events::RuntimeEvent>>,
     pub webhook_base_url: Option<String>,
     /// Shared approval bus for the entire run tree; used by AgentAsTool to forward

@@ -1,7 +1,6 @@
 //! Agent run orchestration, split into single-responsibility modules.
 
 pub(crate) mod actor;
-pub(crate) mod agent_ref;
 pub(crate) mod compaction;
 pub(crate) mod config;
 pub(crate) mod handle;

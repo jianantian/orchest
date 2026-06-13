@@ -23,7 +23,7 @@ use agent_runtime_core::model::{
 use agent_runtime_core::run::{
     AgentConfig, AgentRun, ApprovalMode, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
 };
-use agent_runtime_core::tool::async_job::JobHandle;
+use agent_runtime_core::tool::async_job::{JobHandle, JobStatus, PollFn};
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
@@ -125,7 +125,21 @@ struct JsTool {
     handler: ThreadsafeFunction<Value, ErrorStrategy::Fatal>,
 }
 
-// Safety: ThreadsafeFunction is designed to be Send + Sync
+const _: () = {
+    fn assert_send<T: Send>() {}
+    fn assert_sync<T: Sync>() {}
+
+    fn check_threadsafe_function_bounds() {
+        assert_send::<ThreadsafeFunction<Value, ErrorStrategy::Fatal>>();
+        assert_sync::<ThreadsafeFunction<Value, ErrorStrategy::Fatal>>();
+    }
+
+    let _ = check_threadsafe_function_bounds;
+};
+
+// Safety: JsTool contains a napi ThreadsafeFunction. The const assertion above
+// verifies the concrete ThreadsafeFunction type is Send + Sync for the pinned
+// napi-rs version, so forwarding those auto-traits to JsTool is sound.
 unsafe impl Send for JsTool {}
 unsafe impl Sync for JsTool {}
 
@@ -190,6 +204,147 @@ impl Tool for JsTool {
         }
 
         Ok(ToolOutput::Immediate(value))
+    }
+}
+
+/// Async tool backed by a JS initial-handler + a JS poll-handler.
+///
+/// The initial handler receives the tool input and returns `{ job_id, poll_interval_ms? }`.
+/// The poll handler receives `job_id: string` and returns
+/// `{ status: "pending"|"completed"|"failed", progress?, message?, result?, error? }`.
+struct JsAsyncTool {
+    name: String,
+    description: String,
+    input_schema: JsonSchema,
+    metadata: ToolMetadata,
+    handler: ThreadsafeFunction<Value, ErrorStrategy::Fatal>,
+    poll_handler: ThreadsafeFunction<Value, ErrorStrategy::Fatal>,
+}
+
+unsafe impl Send for JsAsyncTool {}
+unsafe impl Sync for JsAsyncTool {}
+
+#[async_trait]
+impl Tool for JsAsyncTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn input_schema(&self) -> &JsonSchema {
+        &self.input_schema
+    }
+
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
+
+    fn metadata(&self) -> &ToolMetadata {
+        &self.metadata
+    }
+
+    async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+        // Phase 1: call the initial handler to get { job_id, poll_interval_ms? }
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<Value, String>>();
+        let tx = std::sync::Mutex::new(Some(tx));
+
+        self.handler.call_with_return_value(
+            input,
+            ThreadsafeFunctionCallMode::NonBlocking,
+            move |result: Value| {
+                if let Some(sender) = tx.lock().unwrap().take() {
+                    let _ = sender.send(Ok(result));
+                }
+                Ok(())
+            },
+        );
+
+        let result = rx
+            .await
+            .map_err(|_| {
+                ToolError::fatal("JS async handler channel closed").with_code("CHANNEL_CLOSED")
+            })?
+            .map_err(|e| ToolError::fatal(e).with_code("JS_HANDLER_ERROR"))?;
+
+        let job_id = result
+            .get("job_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ToolError::fatal("async tool handler must return { job_id: string }")
+                    .with_code("MISSING_JOB_ID")
+            })?
+            .to_string();
+
+        let poll_interval_ms = result
+            .get("poll_interval_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1000);
+
+        // Phase 2: wrap the poll handler in a PollFn, passing job_id on each call
+        let poll_handler = self.poll_handler.clone();
+        let job_id_for_poll = job_id.clone();
+
+        let poll_fn: Arc<PollFn> = Arc::new(move || {
+            let ph = poll_handler.clone();
+            let jid = job_id_for_poll.clone();
+            Box::pin(async move {
+                let (tx2, rx2) = tokio::sync::oneshot::channel::<Result<Value, String>>();
+                let tx2 = std::sync::Mutex::new(Some(tx2));
+
+                ph.call_with_return_value(
+                    Value::String(jid),
+                    ThreadsafeFunctionCallMode::NonBlocking,
+                    move |result: Value| {
+                        if let Some(sender) = tx2.lock().unwrap().take() {
+                            let _ = sender.send(Ok(result));
+                        }
+                        Ok(())
+                    },
+                );
+
+                let result = rx2
+                    .await
+                    .map_err(|_| {
+                        ToolError::fatal("JS poll handler channel closed")
+                            .with_code("CHANNEL_CLOSED")
+                    })?
+                    .map_err(|e| ToolError::fatal(e).with_code("POLL_HANDLER_ERROR"))?;
+
+                match result.get("status").and_then(|v| v.as_str()) {
+                    Some("completed") => Ok(JobStatus::Completed(
+                        result.get("result").cloned().unwrap_or(Value::Null),
+                    )),
+                    Some("failed") => Ok(JobStatus::Failed(
+                        result
+                            .get("error")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("async job failed")
+                            .to_string(),
+                    )),
+                    _ => Ok(JobStatus::Pending {
+                        progress: result
+                            .get("progress")
+                            .and_then(|v| v.as_f64())
+                            .map(|v| v as f32),
+                        message: result
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                    }),
+                }
+            })
+        });
+
+        Ok(ToolOutput::AsyncJob(JobHandle {
+            job_id,
+            poll: Some(poll_fn),
+            poll_interval: Duration::from_millis(poll_interval_ms),
+            timeout: None,
+            webhook: None,
+        }))
     }
 }
 
@@ -357,8 +512,74 @@ impl Agent {
         Ok(())
     }
 
+    /// Register an async tool with a separate poll handler.
+    ///
+    /// `handler(input)` should return `{ job_id: string, poll_interval_ms?: number }`.
+    /// `pollHandler(jobId)` is called on each poll interval and should return
+    /// `{ status: "pending"|"completed"|"failed", progress?: number, message?: string, result?: any, error?: string }`.
+    #[napi(
+        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => { job_id: string; poll_interval_ms?: number }, pollHandler: (jobId: string) => { status: string; progress?: number; message?: string; result?: any; error?: string }, options?: { requiresApproval?: boolean; sideEffect?: boolean; approval?: string }"
+    )]
+    #[allow(clippy::too_many_arguments)] // justified: napi-rs exposes the JavaScript registration API as positional arguments.
+    pub fn register_async_tool_with_handler(
+        &mut self,
+        name: String,
+        description: String,
+        input_schema: serde_json::Value,
+        handler: napi::JsFunction,
+        poll_handler: napi::JsFunction,
+        options: Option<serde_json::Value>,
+    ) -> napi::Result<()> {
+        let approval_str = options
+            .as_ref()
+            .and_then(|o| o.get("approval"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let requires_approval = options
+            .as_ref()
+            .and_then(|o| o.get("requiresApproval"))
+            .and_then(|v| v.as_bool());
+        let side_effect = options
+            .as_ref()
+            .and_then(|o| o.get("sideEffect"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let resolved = resolve_approval_node(approval_str.as_deref(), requires_approval);
+
+        let handler_tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = handler
+            .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<Value>| {
+                let js_value = ctx.env.to_js_value(&ctx.value)?;
+                Ok(vec![js_value])
+            })?;
+
+        let poll_tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = poll_handler
+            .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<Value>| {
+                let js_value = ctx.env.to_js_value(&ctx.value)?;
+                Ok(vec![js_value])
+            })?;
+
+        let tool = JsAsyncTool {
+            name,
+            description,
+            input_schema,
+            metadata: ToolMetadata {
+                side_effect,
+                approval: resolved,
+                cost_hint: None,
+                timeout: None,
+                max_output_tokens: None,
+                source: ToolSource::InProcess,
+            },
+            handler: handler_tsfn,
+            poll_handler: poll_tsfn,
+        };
+
+        self.tools.push(Arc::new(tool));
+        Ok(())
+    }
+
     #[napi]
-    pub fn run_sync(&self, input: String) -> napi::Result<Vec<serde_json::Value>> {
+    pub async fn run_sync(&self, input: String) -> napi::Result<Vec<serde_json::Value>> {
         let config = self.build_config()?;
 
         let mut registry = ToolRegistry::new();
@@ -375,32 +596,24 @@ impl Agent {
 
         let run_handle_ref = Arc::clone(&self.run_handle);
 
-        let rt = shared_runtime();
+        let (handle, mut event_rx) = AgentRun::start(config, input, model, registry);
 
-        let events = rt.block_on(async {
-            let (handle, mut event_rx) = AgentRun::start(config, input, model, registry);
+        {
+            let mut guard = run_handle_ref.lock().await;
+            *guard = Some(handle);
+        }
 
-            // Store handle for respond_approval
-            {
-                let mut guard = run_handle_ref.lock().await;
-                *guard = Some(handle);
+        let mut events = Vec::new();
+        while let Some(event) = event_rx.recv().await {
+            events.push(event);
+        }
+
+        {
+            let mut guard = run_handle_ref.lock().await;
+            if let Some(h) = guard.take() {
+                h.wait().await;
             }
-
-            let mut events = Vec::new();
-            while let Some(event) = event_rx.recv().await {
-                events.push(event);
-            }
-
-            // Wait and clear handle
-            {
-                let mut guard = run_handle_ref.lock().await;
-                if let Some(h) = guard.take() {
-                    h.wait().await;
-                }
-            }
-
-            events
-        });
+        }
 
         let mut result = Vec::new();
         for event in &events {
@@ -450,7 +663,10 @@ impl Agent {
                 let value = serde_json::to_value(&event)
                     .map_err(|e| napi::Error::from_reason(format!("serialize error: {}", e)))?;
                 let value = runtime_event_to_value(value);
-                tsfn.call(value, ThreadsafeFunctionCallMode::NonBlocking);
+                let status = tsfn.call(value, ThreadsafeFunctionCallMode::NonBlocking);
+                if status != napi::Status::Ok {
+                    tracing::warn!("node event callback dropped: {:?}", status);
+                }
             }
 
             {
@@ -633,10 +849,10 @@ fn runtime_event_to_value(value: serde_json::Value) -> serde_json::Value {
                 serde_json::Value::String(to_snake_case(&variant)),
             );
             result
-                .entry("runDepth")
+                .entry("run_depth")
                 .or_insert(serde_json::Value::from(0));
             result
-                .entry("childRunId")
+                .entry("child_run_id")
                 .or_insert(serde_json::Value::Null);
             serde_json::Value::Object(result)
         }
@@ -677,6 +893,23 @@ mod tests {
 
         assert_eq!(converted["type"], "model_stream_chunk");
         assert!(converted.get("delta").is_some());
+    }
+
+    #[test]
+    fn runtime_event_metadata_uses_snake_case_wire_fields() {
+        let event = serde_json::json!({
+            "RunAborted": {
+                "reason": null
+            }
+        });
+
+        let converted = runtime_event_to_value(event);
+
+        assert_eq!(converted["type"], "run_aborted");
+        assert_eq!(converted["run_depth"], 0);
+        assert!(converted["child_run_id"].is_null());
+        assert!(converted.get(format!("{}{}", "run", "Depth")).is_none());
+        assert!(converted.get(format!("{}{}", "child", "RunId")).is_none());
     }
 
     #[test]

@@ -26,15 +26,15 @@ tempfile = "3"
 
 [[example]]
 name = "aigc_image_url_delivery"
-path = "../../examples/rust/aigc_image_url_delivery.rs"
+path = "../../examples/rust/aigc/image_url_delivery.rs"
 
 [[example]]
 name = "aigc_image_base64_delivery"
-path = "../../examples/rust/aigc_image_base64_delivery.rs"
+path = "../../examples/rust/aigc/image_base64_delivery.rs"
 
 [[example]]
 name = "aigc_image_resolve_asset"
-path = "../../examples/rust/aigc_image_resolve_asset.rs"
+path = "../../examples/rust/aigc/image_resolve_asset.rs"
 
 [lints]
 workspace = true

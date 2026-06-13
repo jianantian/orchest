@@ -120,6 +120,8 @@ export type RuntimeEvent =
   | { type: "sub_agent_completed"; child_run_id: string; output: unknown; budget_used: unknown; run_depth: number }
   | { type: "sub_agent_failed"; child_run_id: string; error: string; run_depth: number }
   | { type: "run_restarted"; attempt: number; run_depth: number }
+  | { type: "run_aborted"; reason: string | null; run_depth: number; child_run_id: string | null }
+  | { type: "events_dropped"; subscriber_id: number; count: number; run_depth: number; child_run_id: string | null }
   | { type: "run_completed"; output: unknown; run_depth: number }
   | { type: "run_failed"; error: string; run_depth: number };
 

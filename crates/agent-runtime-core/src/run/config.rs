@@ -371,6 +371,13 @@ impl AgentConfig {
         if let (Some(store), Some(session_id)) =
             (self.session_store.clone(), self.session_id.clone())
         {
+            if self
+                .hooks
+                .iter()
+                .any(|hook| hook.persistence_session_id() == Some(session_id.as_str()))
+            {
+                return;
+            }
             self.hooks
                 .push(Arc::new(crate::session::SessionPersistenceHook::new(
                     store,
@@ -692,5 +699,24 @@ mod tests {
             .max_steps(10)
             .build();
         assert!(config.is_ok());
+    }
+
+    #[test]
+    fn register_persistence_hook_deduplicates_same_session_id() {
+        let store = Arc::new(crate::session::InMemorySessionStore::default());
+        let mut config = AgentConfig::builder("anthropic/claude-sonnet-4-6")
+            .session_store(store, "session-1")
+            .build()
+            .unwrap();
+
+        config.register_persistence_hook();
+        config.register_persistence_hook();
+
+        let count = config
+            .hooks
+            .iter()
+            .filter(|hook| hook.persistence_session_id() == Some("session-1"))
+            .count();
+        assert_eq!(count, 1);
     }
 }

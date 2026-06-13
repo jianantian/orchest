@@ -1,9 +1,14 @@
 /**
- * Basic example: register tools and run an agent.
+ * Anthropic provider example: tool calling with Claude.
+ *
+ * Falls back to a local mock provider when ANTHROPIC_API_KEY is not set,
+ * so this example always runs out of the box.
  *
  * Usage:
  *   cargo build -p agent-runtime-node
- *   npx ts-node --compiler-options '{"module":"CommonJS"}' examples/typescript/basic.ts
+ *   npx ts-node --compiler-options '{"module":"CommonJS"}' examples/typescript/providers/anthropic.ts
+ *
+ * Requires (optional): ANTHROPIC_API_KEY
  */
 
 declare const __dirname: string;
@@ -14,7 +19,7 @@ const { spawn, spawnSync } = require("node:child_process");
 const { copyFileSync, existsSync } = require("node:fs");
 const { join, resolve } = require("node:path");
 
-const repoRoot = resolve(__dirname, "../..");
+const repoRoot = resolve(__dirname, "../../..");
 const nativeSource = join(repoRoot, "target/debug/libagent_runtime_node.dylib");
 const nativeAddon = join(repoRoot, "target/debug/agent_runtime_node.node");
 
@@ -42,15 +47,17 @@ function textDelta(delta: unknown): string {
   return String(text?.delta ?? "");
 }
 
-const port = 8797;
+const port = 8799;
 const provider = process.env.ANTHROPIC_API_KEY ? undefined : startProvider(port);
 process.env.ANTHROPIC_API_KEY ||= "local-demo-key";
 
 setTimeout(async () => {
   const agent = new Agent({
     model: "anthropic/claude-sonnet-4-20250514",
-    systemPrompt: "You are a helpful assistant with access to tools.",
-    apiUrl: process.env.ANTHROPIC_API_URL || `http://127.0.0.1:${port}/v1/messages`,
+    systemPrompt: "You are a helpful assistant. Answer concisely.",
+    apiKeyEnv: "ANTHROPIC_API_KEY",
+    apiUrl: process.env.ANTHROPIC_API_URL || (provider ? `http://127.0.0.1:${port}/v1/messages` : undefined),
+    requestOptions: { thinking: "off", maxTokens: 512 },
   });
 
   agent.registerToolWithHandler(
@@ -68,34 +75,20 @@ setTimeout(async () => {
     }),
   );
 
-  agent.registerToolWithHandler(
-    "get_time",
-    "Get the current time in a timezone",
-    {
-      type: "object",
-      properties: { timezone: { type: "string" } },
-      required: ["timezone"],
-    },
-    (input: Record<string, unknown>) => ({
-      timezone: input.timezone,
-      time: "14:30:00",
-    }),
-  );
-
-  const events = await agent.runSync("What's the weather in Tokyo and the current time in JST?");
+  const events = await agent.runSync("What's the weather in Tokyo? One sentence.");
   for (const event of events as Array<Record<string, unknown>>) {
     switch (event.type) {
       case "model_stream_chunk":
         process.stdout.write(textDelta(event.delta));
         break;
       case "tool_call_started":
-        console.log(`\n[Tool Call] ${event.tool}(${JSON.stringify(event.input)})`);
+        console.log(`\n[Tool] ${event.tool}(${JSON.stringify(event.input)})`);
         break;
       case "tool_call_completed":
-        console.log(`[Tool Result] ${JSON.stringify(event.output)}`);
+        console.log(`[Result] ${JSON.stringify(event.output)}`);
         break;
       case "run_completed":
-        console.log(`\n[Done] ${event.output}`);
+        console.log("\n\nDone.");
         break;
       case "run_failed":
         console.error(`\n[Error] ${event.error}`);

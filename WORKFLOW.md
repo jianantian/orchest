@@ -3,7 +3,7 @@
 ## Overview
 
 ```
-Pick issue → In Progress → branch → develop → merge to main → issue auto-closes
+Pick issue → In Progress → branch workwtree → develop → merge to main → issue auto-closes
 ```
 
 One issue = one branch = one merge commit. No PRs for solo work. The GitHub Project board updates automatically via commit messages.

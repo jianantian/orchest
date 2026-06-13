@@ -301,6 +301,21 @@ class RunRestartedEvent(TypedDict):
     child_run_id: str | None
 
 
+class RunAbortedEvent(TypedDict):
+    type: Literal["run_aborted"]
+    reason: str | None
+    run_depth: int
+    child_run_id: str | None
+
+
+class EventsDroppedEvent(TypedDict):
+    type: Literal["events_dropped"]
+    subscriber_id: int
+    count: int
+    run_depth: int
+    child_run_id: str | None
+
+
 RuntimeEvent: TypeAlias = (
     RunStartedEvent
     | ModelCallStartedEvent
@@ -327,6 +342,8 @@ RuntimeEvent: TypeAlias = (
     | SubAgentCompletedEvent
     | SubAgentFailedEvent
     | RunRestartedEvent
+    | RunAbortedEvent
+    | EventsDroppedEvent
     | RunCompletedEvent
     | RunFailedEvent
 )

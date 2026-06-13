@@ -72,6 +72,10 @@ pub struct CompactHookContext {
 /// by the runner and emitted as `HookPanicked` events — the run continues.
 #[async_trait]
 pub trait Hook: Send + Sync {
+    fn persistence_session_id(&self) -> Option<&str> {
+        None
+    }
+
     async fn on_run_start(&self, _ctx: &mut RunHookContext) {}
     async fn on_run_end(&self, _ctx: &RunHookContext) {}
     async fn on_run_error(&self, _ctx: &RunHookContext, _error: &str) {}
@@ -102,7 +106,7 @@ pub(crate) mod runner;
 
 pub use loop_detection::{LoopDetectionConfig, LoopDetectionHook};
 
-/// Helper: build a typed AgentRef wrapper from a raw arc.
+/// Helper: append a lifecycle hook to a hook list.
 pub fn with_hook(hooks: &mut Vec<Arc<dyn Hook>>, hook: Arc<dyn Hook>) {
     hooks.push(hook);
 }

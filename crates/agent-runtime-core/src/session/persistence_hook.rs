@@ -30,6 +30,10 @@ impl SessionPersistenceHook {
         }
     }
 
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
     fn build_snapshot(&self, ctx: &RunHookContext) -> SessionSnapshot {
         SessionSnapshot {
             schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
@@ -48,6 +52,10 @@ impl SessionPersistenceHook {
 
 #[async_trait]
 impl Hook for SessionPersistenceHook {
+    fn persistence_session_id(&self) -> Option<&str> {
+        Some(self.session_id())
+    }
+
     async fn on_run_end(&self, ctx: &RunHookContext) {
         let snap = self.build_snapshot(ctx);
         if let Err(e) = self.store.save(&self.session_id, &snap).await {
