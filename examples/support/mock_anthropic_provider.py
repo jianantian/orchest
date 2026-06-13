@@ -76,6 +76,7 @@ class MockAnthropicHandler(BaseHTTPRequestHandler):
                     },
                 )
             )
+            self.wfile.write(_sse("message_stop", {}))
             return
 
         tools = body.get("tools", [])
@@ -116,6 +117,7 @@ class MockAnthropicHandler(BaseHTTPRequestHandler):
                 {"delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 8}},
             )
         )
+        self.wfile.write(_sse("message_stop", {}))
 
 
 def serve(port: int) -> ThreadingHTTPServer:

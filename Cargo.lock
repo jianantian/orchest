@@ -108,6 +108,7 @@ dependencies = [
 name = "agent-runtime-providers"
 version = "0.1.0"
 dependencies = [
+ "agent-runtime-core",
  "agent-runtime-model",
  "async-trait",
  "bytes",

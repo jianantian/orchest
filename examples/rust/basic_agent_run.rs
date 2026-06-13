@@ -10,7 +10,7 @@
 //! sessions, handoffs, or watchers. See the other files in `examples/rust/`
 //! for those advanced scenarios.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock};
 
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::model::{ModelAdapter, StreamEvent};
@@ -30,22 +30,23 @@ use serde_json::json;
 struct CurrentTimeTool;
 
 /// `input_schema()` / `metadata()` return references, so the values must live
-/// for `'static`. `OnceLock` is the no-`unsafe` way to hold them.
+/// for `'static`. `LazyLock` bundles the value and initializer together.
 fn empty_object_schema() -> &'static JsonSchema {
-    static SCHEMA: OnceLock<JsonSchema> = OnceLock::new();
-    SCHEMA.get_or_init(|| json!({ "type": "object", "properties": {} }))
+    static SCHEMA: LazyLock<JsonSchema> =
+        LazyLock::new(|| json!({ "type": "object", "properties": {} }));
+    &SCHEMA
 }
 
 fn time_tool_metadata() -> &'static ToolMetadata {
-    static META: OnceLock<ToolMetadata> = OnceLock::new();
-    META.get_or_init(|| ToolMetadata {
+    static META: LazyLock<ToolMetadata> = LazyLock::new(|| ToolMetadata {
         side_effect: false,
         approval: Approval::Never,
         cost_hint: None,
         timeout: None,
         max_output_tokens: None,
         source: ToolSource::InProcess,
-    })
+    });
+    &META
 }
 
 #[async_trait]

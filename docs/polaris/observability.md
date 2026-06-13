@@ -106,7 +106,7 @@ metrics-util = "0.20"
 
 - `anthropic/claude-sonnet-4-20250514` → `claude`
 - `openai/gpt-4o` → `gpt`
-- `deepseek/deepseek-chat` → `deepseek`
+- `deepseek/deepseek-v4-flash` → `deepseek`
 - `openrouter/anthropic/claude-sonnet-4` → `claude`
 
 OpenRouter 的 `model_family` 应从 routed model path 推断：`anthropic/claude-*` → `claude`，`openai/gpt-*` → `gpt`。无法识别时使用 `openrouter`。
