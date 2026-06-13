@@ -4,7 +4,7 @@
 
 - `crates/agent-runtime-asr-providers/src/streaming.rs` — stream handle style
 - `crates/agent-runtime-asr-providers/tests/streaming.rs` — async stream tests and timeout style
-- `docs/iteration/v0_9_3/prd.md` — streaming lifecycle rules
+- `docs/archive/iteration/v0_9_3/prd.md` — streaming lifecycle rules
 
 ## 步骤
 
