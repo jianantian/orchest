@@ -26,5 +26,13 @@ flate2 = "1"
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 
+[[example]]
+name = "asr_full_duplex"
+path = "../../examples/rust/asr/asr_full_duplex.rs"
+
+[[example]]
+name = "asr_segmented"
+path = "../../examples/rust/asr/asr_segmented.rs"
+
 [lints]
 workspace = true

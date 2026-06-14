@@ -27,5 +27,21 @@ uuid = { version = "1", features = ["v4", "serde"] }
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 
+[[example]]
+name = "tts_batch"
+path = "../../examples/rust/tts/tts_batch.rs"
+
+[[example]]
+name = "tts_stream"
+path = "../../examples/rust/tts/tts_stream.rs"
+
+[[example]]
+name = "tts_duplex"
+path = "../../examples/rust/tts/tts_duplex.rs"
+
+[[example]]
+name = "tts_gateway"
+path = "../../examples/rust/tts/tts_gateway.rs"
+
 [lints]
 workspace = true
