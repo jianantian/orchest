@@ -38,9 +38,35 @@
 
 ## 规划中
 
-### SDK 验证产品迭代（编号待定）
+### v0.9.4 — Runtime Failure Semantics（规划）
 
-用一个真实的简单产品 dogfood SDK，验证其完备性和易用性。验证结论可能反过来影响 API 形状，因此须排在公开发布之前。SDK 语言（Python / TS / Rust）与产品形态待单独规划。
+把已审过的高杠杆 failure semantics backlog 收敛成一个小迭代：`ErrorKind::Ambiguity / SpecGap`、结构化 tool error 返回、`RetryHint` dispatch 消费、重复失败 hook，以及 `ActorRef` restart 注释澄清。详见 [`v0_9_4/prd.md`](./v0_9_4/prd.md)。
+
+### v0.9.5 — Agent Control-Flow Hardening（规划）
+
+在 v0.10 demo 前硬化 sub-agent / handoff / run-loop 路径：显式 `ContextMode`、handoff snapshot-then-swap、handoff/compaction/supervisor restart 测试、`run_one_step` 拆分，以及 Supervised Delegation 验证场景整理。详见 [`v0_9_5/prd.md`](./v0_9_5/prd.md)。
+
+### v0.9.6 — ASR Follow-up Providers（规划）
+
+把 v0.9.1 后续 ASR 工作落成卫星迭代：one-shot `transcribe()`、Deepgram、ElevenLabs Scribe、Soniox、AssemblyAI、Speechmatics 以及对应 docs/examples。详见 [`v0_9_6/prd.md`](./v0_9_6/prd.md)。
+
+### v0.9.7 — Tool Surface Extensions（规划）
+
+把高风险 tool workflow 和大工具库问题落成 runtime 迭代：Draft/Commit、deferred tool discovery 刷新、可选并行 tool execution。详见 [`v0_9_7/prd.md`](./v0_9_7/prd.md)。
+
+### v0.9.8 — Runtime Safety and Observability Hygiene（规划）
+
+处理 runtime hygiene：code execution executor 注入、核心 observability 扩展、Python GIL 行为文档/修复、静态错误 payload 清理。详见 [`v0_9_8/prd.md`](./v0_9_8/prd.md)。
+
+### v0.9.9 — API Cleanup and Product Patterns（规划）
+
+处理 v1.0 前 API cleanup 和产品层模式：deprecated API 移除、binding shared helpers、message history CoW 评估、复杂 guardrail policy examples、agent team pattern examples。详见 [`v0_9_9/prd.md`](./v0_9_9/prd.md)。
+
+### v0.10 — Demo Product Validation（规划）
+
+用一个真实但小的完整产品 dogfood SDK，验证其完备性和易用性。v0.10 用 demo 证据决定哪些 API / 文档 / runtime 问题必须在公开发布前修。
+
+当前产品形态锁定为 **Briefing Desk**：本地研究简报 agent。它读取一组 Markdown/text 材料，围绕用户问题搜索、引用、生成报告，展示事件流，在写文件前走 approval，并支持 session resume。详见 [`v0_10/prd.md`](./v0_10/prd.md)。
 
 **依赖**：v0.9.2 文档（验证者参照文档上手）
 
@@ -48,7 +74,7 @@
 
 第一个公开发布到 crates.io 的版本。包含发布准备的全部内容：Cargo publish 元数据、license 定稿、release workflow、CHANGELOG、版本号策略文档。
 
-**依赖**：SDK 验证产品迭代完成（API 经真实产品验证后才发布）
+**依赖**：v0.10 Demo Product Validation 完成（API 经真实产品验证后才发布）
 
 ### 依赖图
 
@@ -63,7 +89,25 @@
 ✅ v0.9.2: 文档
             │
             ▼
-   SDK 验证产品迭代（dogfooding，编号待定）
+   v0.9.4: Failure Semantics
+            │
+            ▼
+   v0.9.5: Control-Flow Hardening
+            │
+            ▼
+   v0.9.6: ASR Follow-up Providers
+            │
+            ▼
+   v0.9.7: Tool Surface Extensions
+            │
+            ▼
+   v0.9.8: Runtime Safety + Observability
+            │
+            ▼
+   v0.9.9: API Cleanup + Product Patterns
+            │
+            ▼
+   v0.10: Demo Product Validation
             │
             ▼
    v1.0: 首次公开发布（crates.io + release workflow + license 定稿）

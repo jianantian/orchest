@@ -193,13 +193,13 @@ Python 添加等价的 `TypedDict`。
 - `SqliteSessionStore` 并发优化（performance concern，非正确性 bug）
 - `to_snake_case` 去重到 common crate（重构，非 bug）
 - `lint-check.sh` file-length check 的启用（待 A4 splits 完成）
-- `run_one_step` 拆分（753 行，需专项设计阶段划分，已录入 todo backlog）
-- Handoff 状态原地突变重设计（需快照/回滚或 terminate-and-restart，已录入 todo backlog）
-- 消息历史零拷贝（`Arc<[Message]>` + CoW，需改所有权模型，已录入 todo backlog）
-- 废弃 API 移除（`as_tool_legacy` 等，等 v1.0 breaking change 窗口，已录入 todo backlog）
-- Handoff / Compaction / Crash-recovery 测试补齐（已录入 todo backlog）
-- 代码执行沙箱注入点（功能扩展，已录入 todo backlog）
-- 热路径静态 Value 优化（4 处 `json!`，低收益，已录入 todo backlog）
+- `run_one_step` 拆分（753 行，需专项设计阶段划分；后续进入 v0.9.5）
+- Handoff 状态原地突变重设计（需快照/回滚或 terminate-and-restart；后续进入 v0.9.5）
+- 消息历史零拷贝（`Arc<[Message]>` + CoW，需改所有权模型；后续进入 v0.9.9 评估）
+- 废弃 API 移除（`as_tool_legacy` 等，等 v1.0 breaking change 窗口；后续进入 v0.9.9）
+- Handoff / Compaction / Crash-recovery 测试补齐（后续进入 v0.9.5）
+- 代码执行沙箱注入点（功能扩展；后续进入 v0.9.8）
+- 热路径静态 Value 优化（4 处 `json!`，低收益；后续进入 v0.9.8）
 - v0.9.3 TTS Provider Gateway 的任何工作
 
 ## Issues 拆解

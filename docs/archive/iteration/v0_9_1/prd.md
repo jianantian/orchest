@@ -11,7 +11,7 @@ Orchest 已有两类 provider 封装：
 
 本卫星迭代新增 `agent-runtime-asr-providers` crate，为语音转文本提供统一 provider abstraction、streaming transcript、routing 和 telemetry。第一期只实现火山引擎和阿里云两个国内 ASR provider：两个 provider 足以验证公共抽象，避免围绕单一平台特化，同时不把迭代扩展成全球 ASR provider 横向铺开。
 
-ElevenLabs Scribe v2 Realtime 作为接口校准参考，但不进入 v0.9.1 实现范围。它的价值在于提供一个海外、WebSocket、实时 STT、word timestamp、keyterm prompting、speaker diarization 语义较完整的对照面；PRD 的双流式接口不能被国内 provider 的私有协议形态绑死。后续接入计划记录在 `docs/todo/`。
+ElevenLabs Scribe v2 Realtime 作为接口校准参考，但不进入 v0.9.1 实现范围。它的价值在于提供一个海外、WebSocket、实时 STT、word timestamp、keyterm prompting、speaker diarization 语义较完整的对照面；PRD 的双流式接口不能被国内 provider 的私有协议形态绑死。后续接入计划需要单独成 iteration 后再落地。
 
 参考研究：
 
@@ -124,7 +124,7 @@ SDK ergonomics are part of the contract, not example-only sugar. The same underl
 - **Application-driven segmented speech**：caller sends audio, calls `flush_and_wait_final()` when the application decides the current segment is complete, receives one `AsrFinalOutput` for that segment, and can then send the next segment on the same stream when the provider supports multi-segment streaming. The boundary source may be PTT, application-owned client-side VAD, server-side application logic, or another product event; the SDK must not choose that policy.
 - **Full-duplex speech**：caller splits the stream into sink/events, keeps sending audio from a capture task, and consumes `TranscriptUpdate`, `EndOfSpeech`, and provider endpoint-driven `AsrFinal` from an independent task without request-response lockstep.
 
-`transcribe()` is reserved for future complete-audio transcription and file transcription work. v0.9.1 defines the request/result/error shape so downstream SDKs can see the intended API, but adapter implementation and batch/file acceptance tests are deferred. The follow-up item lives in `docs/todo/2026-06-04-asr-provider-backlog.md`.
+`transcribe()` is reserved for future complete-audio transcription and file transcription work. v0.9.1 defines the request/result/error shape so downstream SDKs can see the intended API, but adapter implementation and batch/file acceptance tests are deferred to a future ASR satellite iteration.
 
 ### Key Types
 
@@ -834,7 +834,7 @@ Volcengine and Aliyun adapters are intentionally parallel after the shared strea
 
 - [ ] `crates/agent-runtime-asr-providers` exists and is part of the workspace
 - [ ] `AsrProvider` trait supports streaming transcription and reserves a one-shot `transcribe()` signature
-- [ ] v0.9.1 adapters may return `AsrErrorCode::UnsupportedOperation` from `transcribe()`; batch/file transcription implementation is deferred to `docs/todo/2026-06-04-asr-provider-backlog.md`
+- [ ] v0.9.1 adapters may return `AsrErrorCode::UnsupportedOperation` from `transcribe()`; batch/file transcription implementation is deferred to a future ASR satellite iteration
 - [ ] Crate has zero workspace-internal dependencies
 - [ ] `TranscribeRequest` and `StreamingTranscribeRequest` expose an optional `model: Option<String>` request selector using the `"provider/model"` convention
 - [ ] ASR model normalization rejects bare model strings without provider prefix instead of applying any default provider fallback
