@@ -10,7 +10,9 @@ Add metadata that links draft tools to commit tools.
 
 ## Acceptance Criteria
 
-- [ ] Tool metadata can express draft mode or an associated commit tool.
+- [ ] `ToolMetadata` has `ToolExecutionMode::Normal`, `ToolExecutionMode::Draft { commit_tool }` and `ToolExecutionMode::Commit { draft_tool }`.
+- [ ] Draft and commit links use canonical tool names and are validated during registration or registry finalization.
+- [ ] Self-links, missing linked tools and ambiguous many-to-one links are rejected with structured errors.
 - [ ] Metadata serialization remains stable across Rust/Python/Node boundaries.
-- [ ] Tool registration validates obvious invalid draft/commit relationships.
-- [ ] Tests cover metadata defaults and invalid links.
+- [ ] Rust, Python and Node tool registration paths can set the execution mode.
+- [ ] Tests cover metadata defaults, valid links, invalid links and binding serialization.

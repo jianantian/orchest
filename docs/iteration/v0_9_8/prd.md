@@ -17,19 +17,32 @@ Code review identified real runtime hygiene work that should not stay as informa
 - No hosted observability platform.
 - No binding crate architecture split; that is v0.9.9.
 
+## Scope
+
+### Code Execution Executor
+
+Replace hidden bare-subprocess spawning inside code execution tools with an explicit executor configuration. `BareSubprocessExecutor` may remain available as a development executor, but applications must choose it explicitly; do not silently fall back to it from an absent executor.
+
+The code execution tools must use `Arc<dyn ScriptExecutor>`. Do not introduce a second code-exec-specific executor trait in this iteration.
+
+### Observability
+
+Core telemetry must cover model calls, token usage, budget utilization, approval latency, compaction and event channel pressure with stable metric/span names documented in the observability guide.
+
 ## Issue Breakdown
 
 | Issue | Title | Scope |
 |-------|-------|-------|
-| 001 | Code execution executor injection | Let code exec tools use `ScriptExecutor` or equivalent |
+| 001 | Code execution executor injection | Replace implicit bare subprocess execution with explicit executor configuration |
 | 002 | Core observability metrics | Model duration/tokens, budget, approval latency, compaction, event drops |
 | 003 | Python GIL behavior | Verify current behavior, document constraints, improve if needed |
 | 004 | Static error payload cleanup | Replace low-value repeated `json!` allocations where simple |
 
 ## Acceptance Criteria
 
-- [ ] Code execution tools can run through an injected executor without changing default behavior.
+- [ ] Code execution tools run through an explicit executor configuration; bare subprocess execution is opt-in and visible.
 - [ ] Core telemetry covers the listed observability gaps.
 - [ ] Python SDK docs accurately describe GIL behavior.
-- [ ] Static error payload cleanup does not change model-facing behavior.
+- [ ] Static error payload cleanup preserves the post-v0.9.4 structured model-facing error shape.
+- [ ] Public examples and tests are updated for explicit code execution executor configuration and new telemetry names.
 - [ ] `cargo test --workspace`, `cargo clippy --workspace -- -D warnings` and `cargo fmt --check` pass.

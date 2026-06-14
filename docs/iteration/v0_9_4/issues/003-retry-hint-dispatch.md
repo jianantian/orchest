@@ -14,10 +14,12 @@ Implement bounded, budget-aware retry behavior in the tool dispatch path.
 - [ ] `RetryHint::Safe` with non-transient errors does not retry unless explicitly documented and tested.
 - [ ] `RetryHint::Unsafe` never retries automatically.
 - [ ] `RetryHint::Caution` requests approval before retrying.
+- [ ] Approval requests distinguish `InitialToolCall` from retry approval and include retry attempt count plus previous structured error for cautious retries.
 - [ ] Approval denial returns the structured error payload to the model.
 - [ ] Retry attempts emit debuggable events or telemetry with tool name and attempt count.
 - [ ] Retry attempts respect existing run budget and timeout constraints.
-- [ ] Tests cover safe success-after-retry, safe max-retry exhaustion, unsafe no-retry and caution approval-denied.
+- [ ] Tests cover safe success-after-retry, safe max-retry exhaustion, unsafe no-retry, caution approval-denied and caution approval context.
+- [ ] Public examples that show approval handling are updated for the new approval reason/context shape.
 
 ## Notes
 

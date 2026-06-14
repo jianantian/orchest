@@ -11,6 +11,7 @@ Remove simple repeated allocations for static tool-result payloads where it does
 ## Acceptance Criteria
 
 - [ ] Static error/skip payload helpers are introduced only where they reduce duplication.
-- [ ] Model-facing payload shape is unchanged.
+- [ ] Model-facing payload shape preserves the post-v0.9.4 structured error contract.
 - [ ] Tests that assert payload shape continue to pass.
 - [ ] No unrelated run-loop refactor is included.
+- [ ] Cleanup does not reintroduce string-only error payloads.

@@ -13,4 +13,5 @@ Provide examples for complex permission policies as application-layer guardrails
 - [ ] Example covers multi-level authority or risk classification using existing guardrails.
 - [ ] Docs explain why this remains app-layer.
 - [ ] Example compiles and runs in CI.
-- [ ] Any proven core gap is documented separately.
+- [ ] Example demonstrates approval integration using current `Approval` / guardrail APIs after deprecated API removal.
+- [ ] Any proven core gap is documented as a follow-up issue with evidence from the example.

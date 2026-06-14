@@ -21,7 +21,7 @@ The remaining code-review and research items are real work, but they are best ha
 
 | Issue | Title | Scope |
 |-------|-------|-------|
-| 001 | Deprecated API removal | Remove `as_tool_legacy`, `SideEffectOnly`, `AgentAsTool::new` if migration is complete |
+| 001 | Deprecated API removal | Remove `as_tool_legacy`, `SideEffectOnly`, `AgentAsTool::new` and binding aliases |
 | 002 | Binding crate shared helpers | Extract duplicated FFI-independent conversion helpers |
 | 003 | Message history CoW evaluation | Profile/test clone cost and implement CoW only if justified |
 | 004 | Guardrail policy examples | Show complex policies as app-layer guardrails |
@@ -29,7 +29,8 @@ The remaining code-review and research items are real work, but they are best ha
 
 ## Acceptance Criteria
 
-- [ ] Deprecated API removal has migration notes.
+- [ ] Deprecated APIs listed in issue 001 are removed from Rust, Python and Node surfaces.
+- [ ] Deprecated API removal has migration notes and updated examples/tests.
 - [ ] Binding helper extraction does not change Python/Node behavior.
 - [ ] Message CoW is either implemented with tests or rejected with profiling evidence in the issue notes.
 - [ ] Complex permission policy remains app-layer unless a core gap is proven.

@@ -12,6 +12,9 @@ Make draft calls side-effect-free by default and commit calls approval-gated by 
 
 - [ ] Draft tool calls default to no approval and no side effect.
 - [ ] Commit tool calls default to approval-required.
+- [ ] Commit approval includes a reason/context that identifies the linked draft when available.
 - [ ] Approval denial prevents commit execution.
+- [ ] Run-level permissive approval settings do not accidentally bypass commit approval unless a custom approval function explicitly does so.
 - [ ] Runtime events make draft vs commit visible enough for debugging.
-- [ ] Tests cover draft success, commit approval, and commit denial.
+- [ ] Tests cover draft success, commit approval, commit denial and attempted commit approval bypass.
+- [ ] Public examples show a high-risk tool pair using draft output as commit input.

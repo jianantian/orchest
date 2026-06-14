@@ -13,6 +13,18 @@ v0.9.1 established the ASR provider gateway with Volcengine and Aliyun and inten
 
 ## Scope
 
+### One-shot Input Contract
+
+`TranscribeRequest.audio` must support the existing `AudioInput` variants explicitly:
+
+- `AudioInput::Bytes { data, format, sample_rate_hz }`
+- `AudioInput::File { path, format }`
+- `AudioInput::Url { url, format }`
+
+One-shot cancellation and timeout are part of the provider contract, not caller-side examples. Realtime-only adapters must either return `AsrErrorCode::UnsupportedOperation` from `transcribe()` or implement `transcribe()` by driving `start_stream()` internally; each provider issue must state which path it uses.
+
+### Provider Flags
+
 Provider priority:
 
 1. Deepgram realtime STT.
@@ -21,7 +33,15 @@ Provider priority:
 4. AssemblyAI transcript metadata and batch shape pressure.
 5. Speechmatics multilingual fallback.
 
-The iteration may stage provider implementation behind feature flags, but each provider issue must define fake-provider tests and env-gated live tests.
+Implement each provider behind an explicit cargo feature:
+
+- `deepgram`
+- `elevenlabs`
+- `soniox`
+- `assemblyai`
+- `speechmatics`
+
+Each provider issue must define fake-provider tests and env-gated live tests. Live tests are ignored by default and use provider-specific environment variables documented in the ASR guide.
 
 ## Non-Goals
 
@@ -45,9 +65,11 @@ The iteration may stage provider implementation behind feature flags, but each p
 
 - [ ] `transcribe()` has defined behavior for file paths/URLs, byte inputs, realtime-only providers and cancellation.
 - [ ] Deepgram, ElevenLabs, Soniox, AssemblyAI and Speechmatics providers exist behind feature flags.
+- [ ] Feature names, provider/model selectors and live-test environment variables are documented.
 - [ ] Fake-provider tests cover each provider's compatibility and routing behavior.
 - [ ] Env-gated live tests are documented for each provider.
 - [ ] Public provider/model names follow the existing `"provider/model"` convention.
+- [ ] Public ASR examples cover both `transcribe()` and `start_stream()` for at least one implemented provider.
 - [ ] `cargo test -p agent-runtime-asr-providers` passes.
 - [ ] `cargo clippy -p agent-runtime-asr-providers -- -D warnings` passes.
 

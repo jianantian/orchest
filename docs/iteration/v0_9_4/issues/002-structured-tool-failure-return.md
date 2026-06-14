@@ -6,16 +6,17 @@ The run loop currently returns only `error.message` to the model for failed tool
 
 ## Goal
 
-Return structured tool error payloads to the model while preserving existing event behavior.
+Replace the old string-only model-facing tool error payload with a structured error object while preserving existing event behavior.
 
 ## Acceptance Criteria
 
 - [ ] Tool result content for failures includes an `error` object with `message`, `kind`, `retry`, `code` and `next_step`.
 - [ ] `RuntimeEvent::ToolCallFailed` continues to carry the full `ToolError`.
-- [ ] Existing tests that assert error shape are updated intentionally.
+- [ ] Existing tests and examples that assert or show error shape are updated to the structured `error` object.
 - [ ] A focused run-loop test verifies that a `ToolError::spec_gap("missing contract")` reaches the model-facing tool result with `kind = "SpecGap"` or the established serde equivalent.
+- [ ] No legacy `{"error": "...message..."}` model-facing shape remains in docs, examples or tests.
 - [ ] No private fields are exposed across FFI boundaries without explicit conversion.
 
 ## Notes
 
-Keep compatibility in mind: if callers previously expected `{"error": "...message..."}`, document the shape change in the issue implementation notes.
+This is an intentional breaking cleanup. Do not add compatibility adapters for the old string-only shape.

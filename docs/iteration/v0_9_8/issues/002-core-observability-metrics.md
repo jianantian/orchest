@@ -16,3 +16,6 @@ Add core metrics/spans for the missing runtime paths.
 - [ ] Approval gate latency is observable.
 - [ ] Compaction frequency and token savings are observable.
 - [ ] Event channel drops/backpressure are observable.
+- [ ] Metric/span names and units are documented in `docs/polaris/observability.md` or the closest runtime observability guide.
+- [ ] Tests or snapshot-style assertions cover emitted telemetry for model call, approval and compaction paths.
+- [ ] Examples show how an application subscribes to or exports the new telemetry.

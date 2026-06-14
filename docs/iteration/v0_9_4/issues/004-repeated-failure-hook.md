@@ -11,10 +11,12 @@ Add a repeated-failure hook that triggers when the same tool fails with the same
 ## Acceptance Criteria
 
 - [ ] A typed hook context includes `run_id`, `tool_name`, `error_kind`, `error_history` and `count`.
-- [ ] The threshold is configurable, with a conservative default.
+- [ ] A `RepeatedFailureConfig` or equivalent runtime config field defines the threshold, with default threshold 3.
+- [ ] Runtime config rejects thresholds below 1.
 - [ ] Different `ErrorKind` values do not count as the same repeated failure pattern.
 - [ ] Hook action can continue or abort the run, matching existing hook action style where possible.
-- [ ] Tests prove the hook triggers after the threshold and does not trigger for mixed error kinds.
+- [ ] Tests prove the hook triggers after the default threshold, honors a custom threshold and does not trigger for mixed error kinds.
+- [ ] Public examples that configure runtime hooks are updated to show repeated-failure configuration when relevant.
 - [ ] Hook docs mention Supervised Delegation watcher use cases.
 
 ## Notes

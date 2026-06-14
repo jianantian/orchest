@@ -6,17 +6,20 @@
 
 ## Goal
 
-Introduce explicit `ContextMode::Fresh | Fork { depth }` semantics for Agent-as-Tool/sub-agent execution.
+Replace the numeric context inheritance API with explicit `ContextMode::Fresh | Fork { depth }` semantics for Agent-as-Tool/sub-agent execution.
 
 ## Acceptance Criteria
 
 - [ ] Public `ContextMode` type exists in the appropriate core module.
 - [ ] `Fresh` starts the child run without parent history.
 - [ ] `Fork { depth }` inherits exactly the latest `depth` parent messages.
+- [ ] `Fork` depth is represented as non-zero by type where practical, or `depth == 0` is rejected during builder validation.
 - [ ] `Fork { depth }` with no available parent messages fails loudly or produces a structured error; it must not silently degrade to `Fresh`.
-- [ ] Existing builder helpers remain source-compatible or have a clear deprecation/migration note.
-- [ ] Tests cover fresh, fork depth and empty-parent fork behavior.
+- [ ] `inherit_context_count` is removed from public configuration/state.
+- [ ] The `inherit_context(...)` builder helper is removed; callers use `context_mode(ContextMode::...)`.
+- [ ] Tests cover fresh, fork depth, zero-depth rejection and empty-parent fork behavior.
+- [ ] Public examples are updated to use `ContextMode`.
 
 ## Notes
 
-Prefer naming that fits existing `AgentAsTool` / `SubAgentBuilder` public API style.
+Prefer naming that fits existing `AgentAsTool` / `SubAgentBuilder` public API style. Do not preserve the old helper API.

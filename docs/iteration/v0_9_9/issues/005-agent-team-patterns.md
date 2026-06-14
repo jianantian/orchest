@@ -12,5 +12,6 @@ Provide examples/templates for agent team coordination using existing primitives
 
 - [ ] Examples cover at least two team patterns using Agent-as-Tool, Handoff or watchers.
 - [ ] Docs identify when existing primitives are sufficient.
-- [ ] If direct peer-to-peer communication is required, a follow-up runtime issue is created with evidence.
+- [ ] Examples use `ContextMode` rather than removed `inherit_context(...)` helpers.
+- [ ] If direct peer-to-peer communication is required, a follow-up runtime issue is created with evidence from a failing or awkward example.
 - [ ] Examples compile and run in CI.

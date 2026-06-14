@@ -42,7 +42,7 @@ When tool execution fails, the model-facing tool result must include at least:
 - `error.code`
 - `error.next_step`
 
-The existing human-readable `message` remains available.
+The model-facing shape is a breaking replacement for the old string-only error result. Human-readable text lives at `error.message`; examples and tests must stop asserting or showing `{"error": "...message..."}`.
 
 ### RetryHint Dispatch
 
@@ -52,11 +52,18 @@ Tool dispatch consumes `ToolError.retry`:
 - `RetryHint::Unsafe`: no automatic retry.
 - `RetryHint::Caution`: request approval before retrying. If approval is denied or unavailable, return the structured error to the model.
 
+Approval requests must distinguish an initial tool call from a retry decision. Add an approval reason/context shape equivalent to:
+
+- `InitialToolCall`
+- `RetryAfterFailure { attempt, previous_error }`
+
 Retry attempts must emit events or telemetry sufficient for debugging and must account for existing budget limits.
 
 ### Repeated Failure Hook
 
 Add `on_repeated_failure(tool_name, error_history, count)` or an equivalent typed hook context. It triggers when the same tool fails with the same `ErrorKind` for a configurable threshold within one run.
+
+The threshold belongs in runtime configuration, for example `RepeatedFailureConfig { threshold: usize }`, with a default of 3. A threshold below 1 must be rejected during config construction.
 
 ## Non-Goals
 
@@ -81,11 +88,14 @@ Add `on_repeated_failure(tool_name, error_history, count)` or an equivalent type
 - [ ] `ErrorKind` includes `Ambiguity` and `SpecGap` with serde compatibility.
 - [ ] Convenience constructors or documented patterns exist for ambiguity and spec-gap errors.
 - [ ] Model-facing tool errors include structured fields, not only `message`.
+- [ ] Legacy string-only tool error examples/tests are replaced with the structured `error` object.
 - [ ] Safe transient tool failures retry with bounded exponential backoff.
 - [ ] Unsafe tool failures are returned without automatic retry.
-- [ ] Caution tool failures ask for approval before retrying.
+- [ ] Caution tool failures ask for approval before retrying, and the approval request includes retry context with attempt count and previous error.
 - [ ] Retry behavior has focused unit or integration tests for all three retry hints.
 - [ ] Repeated failure hook triggers only for same tool + same `ErrorKind`.
+- [ ] Repeated failure threshold is configurable through runtime config and tested for default and custom values.
+- [ ] Public examples and tests are updated to the new failure, retry approval and repeated-failure config shapes.
 - [ ] `RunHandle.actor_ref` / supervisor restart comment explains why the mutex is required.
 - [ ] `cargo test --workspace`, `cargo clippy --workspace -- -D warnings` and `cargo fmt --check` pass.
 

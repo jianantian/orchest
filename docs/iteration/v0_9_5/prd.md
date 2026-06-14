@@ -31,13 +31,15 @@ v0.9.5 is a focused hardening iteration for sub-agent context semantics, handoff
 Replace implicit `inherit_context_count: Option<usize>` semantics with explicit context mode:
 
 - `ContextMode::Fresh`: no parent history.
-- `ContextMode::Fork { depth: usize }`: inherit the latest `depth` parent messages.
+- `ContextMode::Fork { depth }`: inherit the latest `depth` parent messages.
 
-Compatibility helpers may remain temporarily, but public docs should prefer `ContextMode`.
+This is a breaking cleanup. Remove the `inherit_context_count` field and the `inherit_context(...)` builder helper instead of carrying compatibility wrappers. Use a non-zero depth type if practical, or reject `depth == 0` during builder validation. Public examples and tests must use `context_mode(ContextMode::...)`.
 
 ### Handoff Transition Safety
 
 Handoff must not leave `AgentRunState` half-mutated if filtering or rebuilding state fails. The preferred implementation is snapshot-then-swap: compute next messages, registry, tool definitions, budget/config decisions first, then replace state in one final section.
+
+Make `HandoffInputFilter::filter` fallible, for example `Result<HandoffInputData, HandoffError>` or the local equivalent. A filter failure must emit a structured failure and leave the previous run state coherent.
 
 ### Run Loop Decomposition
 
@@ -64,14 +66,14 @@ Add focused tests for:
 - No message-history zero-copy rewrite; `Arc<[Message]>` remains deferred until evidence shows it matters.
 - No binding crate deduplication.
 - No code execution sandbox injection.
-- No deprecated API removal in v0.9.5; API cleanup is handled by v0.9.9.
+- No broad deprecated API sweep in v0.9.5; the old context inheritance API is removed here because it is part of this iteration's core contract.
 - No peer-to-peer agent communication.
 
 ## Issue Breakdown
 
 | Issue | Title | Scope |
 |-------|-------|-------|
-| 001 | Explicit sub-agent ContextMode | Add `ContextMode`, builder API and compatibility path |
+| 001 | Explicit sub-agent ContextMode | Add `ContextMode` and replace the old inheritance API |
 | 002 | Handoff transition safety | Replace in-place mutation with snapshot-then-swap or equivalent safe transition |
 | 003 | Missing control-flow tests | Add handoff, compaction and supervisor restart coverage |
 | 004 | `run_one_step` decomposition | Split the large orchestration function into named phases |
@@ -80,11 +82,14 @@ Add focused tests for:
 ## Acceptance Criteria
 
 - [ ] Public sub-agent builder supports `ContextMode::Fresh` and `ContextMode::Fork { depth }`.
-- [ ] Existing `inherit_context_count` usage remains compatible or has an explicit migration note.
+- [ ] Old `inherit_context_count` storage and `inherit_context(...)` builder helper are removed.
+- [ ] Fork depth is non-zero by type or rejected during builder validation.
 - [ ] Fork mode with no available parent context fails loudly or records a clear error; it must not silently behave like Fresh.
 - [ ] Handoff state construction completes before mutable run state is replaced.
+- [ ] Handoff input filters are fallible, and filter failure leaves prior run state coherent.
 - [ ] Handoff failure leaves prior run state coherent.
 - [ ] Tests cover handoff, compaction and supervisor restart paths.
+- [ ] Public examples and tests are updated for `ContextMode` and fallible handoff filters.
 - [ ] `run_one_step` no longer requires `#[allow(clippy::too_many_lines)]`.
 - [ ] Refactor does not change externally visible runtime events except where explicitly documented.
 - [ ] `cargo test --workspace`, `cargo clippy --workspace -- -D warnings` and `cargo fmt --check` pass.
