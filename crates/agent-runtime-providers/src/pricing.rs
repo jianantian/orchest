@@ -53,12 +53,12 @@ pub fn openai_pricing(model: &str) -> ModelPricing {
     match model {
         // gpt-5.5 — $5 / $30
         m if m.starts_with("gpt-5.5") => usd(5.0, 30.0, None, None),
-        // gpt-5.4 (base) — $2.50 / $15
-        m if m == "gpt-5.4" => usd(2.5, 15.0, None, None),
-        // gpt-5.4-mini — $0.75 / $4.50
+        // gpt-5.4-mini — $0.75 / $4.50 (must precede gpt-5.4 base)
         m if m.starts_with("gpt-5.4-mini") => usd(0.75, 4.5, None, None),
-        // gpt-5.4-nano — $0.20 / $1.25
+        // gpt-5.4-nano — $0.20 / $1.25 (must precede gpt-5.4 base)
         m if m.starts_with("gpt-5.4-nano") => usd(0.20, 1.25, None, None),
+        // gpt-5.4 (base) — $2.50 / $15
+        m if m.starts_with("gpt-5.4") => usd(2.5, 15.0, None, None),
         _ => usd(2.5, 15.0, None, None),
     }
 }

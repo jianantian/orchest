@@ -167,7 +167,7 @@ fn anthropic_models() -> LlmProviderInfo {
             "anthropic/claude-sonnet-4-5",
             "anthropic",
             "Claude Sonnet 4.5",
-            200_000,
+            1_000_000,
             Some(64_000),
             3.0, 15.0, Some(0.3), Some(3.75),
         ),
