@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use agent_runtime_tts_providers::{
     normalize_tts_provider_model, AudioFormat, AudioOutputConfig, CompatibilityPolicy,
-    DuplexSynthesizeRequest, Language, ListVoicesRequest, SpeechControls, StreamSynthesizeRequest,
-    SynthesizeRequest, TtsErrorCode, TtsGateway, TtsGatewayConfig, TtsInput, TtsOperation,
-    TtsProvider, TtsProviderRuntimeConfig, TtsRoute, TtsRouter, TtsStreamEvent, VoiceKind,
-    VoiceSelection,
+    DuplexSynthesizeRequest, Language, ListVoicesRequest, SpeechControls, SynthesizeRequest,
+    TtsErrorCode, TtsGateway, TtsGatewayConfig, TtsInput, TtsOperation, TtsProvider,
+    TtsProviderRuntimeConfig, TtsRoute, TtsRouter, TtsStreamEvent, VoiceKind, VoiceSelection,
 };
 
 mod support;
@@ -139,7 +138,6 @@ async fn gateway_coerce_strips_unsupported_semantic_controls_before_provider_cal
     let gateway = TtsGateway::new(router, TtsGatewayConfig::default());
     let mut request = text_request(Some("fake/batch"));
     request.compatibility = CompatibilityPolicy::Coerce;
-    request.controls.allow_semantic_coercions = true;
     request.controls.instruction = Some("speak warmly".to_owned());
 
     let result = gateway.synthesize(request).await.unwrap();
@@ -215,7 +213,7 @@ async fn list_voices_with_explicit_model_uses_selected_provider() {
 #[tokio::test]
 async fn stream_gateway_emits_route_selected_first() {
     let mut stream = gateway()
-        .stream_synthesize(StreamSynthesizeRequest {
+        .stream_synthesize(SynthesizeRequest {
             model: Some("fake/stream".to_owned()),
             input: TtsInput::Text("hello".to_owned()),
             voice: VoiceSelection::by_id("voice-a"),
@@ -354,14 +352,16 @@ async fn coerce_clamps_numeric_controls_and_records_adjustments() {
 }
 
 #[tokio::test]
-async fn semantic_coercions_require_explicit_opt_in() {
+async fn coerce_drops_unsupported_semantic_controls() {
     let mut request = text_request(Some("fake/batch"));
     request.compatibility = CompatibilityPolicy::Coerce;
     request.controls.instruction = Some("speak warmly".to_owned());
 
-    let err = gateway().synthesize(request).await.unwrap_err();
+    let result = gateway().synthesize(request).await.unwrap();
 
-    assert_eq!(err.code, TtsErrorCode::UnsupportedOption);
+    assert_eq!(result.option_adjustments.len(), 1);
+    assert_eq!(result.option_adjustments[0].option, "instruction");
+    assert!(result.option_adjustments[0].applied.is_null());
 }
 
 #[tokio::test]

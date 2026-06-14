@@ -1,5 +1,7 @@
 #![cfg(feature = "volcengine")]
 
+use std::env;
+
 use agent_runtime_asr_providers::providers::volcengine::{
     VolcengineAsrAdapter, VolcengineAsrConfig,
 };
@@ -7,14 +9,41 @@ use agent_runtime_asr_providers::traits::AsrProvider;
 use agent_runtime_asr_providers::types::*;
 use bytes::Bytes;
 
+fn load_dotenv_if_present() {
+    let mut path = std::env::current_dir().ok();
+    while let Some(dir) = path {
+        if let Ok(contents) = std::fs::read_to_string(dir.join(".env")) {
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once('=') {
+                    let key = key
+                        .trim()
+                        .strip_prefix("export ")
+                        .unwrap_or(key.trim())
+                        .trim();
+                    if env::var_os(key).is_none() {
+                        env::set_var(key, value.trim().trim_matches('"'));
+                    }
+                }
+            }
+            break;
+        }
+        path = dir.parent().map(|p| p.to_path_buf());
+    }
+}
+
 fn get_config() -> Option<VolcengineAsrConfig> {
+    load_dotenv_if_present();
     let api_key = std::env::var("VOLCENGINE_API_KEY").ok()?;
     let resource_id = std::env::var("VOLCENGINE_RESOURCE_ID").ok()?;
     Some(VolcengineAsrConfig {
         model_name: "bigmodel_async".into(),
         ws_url: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async".into(),
         api_key,
-        access_key: std::env::var("VOLCENGINE_ACCESS_KEY").unwrap_or_default(),
+        access_key: std::env::var("VOLCENGINE_ACCESS_KEY").ok(),
         resource_id,
     })
 }

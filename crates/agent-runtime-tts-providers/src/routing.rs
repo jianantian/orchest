@@ -12,8 +12,7 @@ use crate::streaming::{TtsDuplexStream, TtsOutputStream, TtsStreamEvent};
 use crate::traits::TtsProvider;
 use crate::types::{
     AudioFormat, CompatibilityPolicy, DuplexSynthesizeRequest, Language, ListVoicesRequest,
-    SpeechControls, StreamSynthesizeRequest, SynthesizeRequest, SynthesizeResult, TtsInputKind,
-    VoiceKind,
+    SpeechControls, SynthesizeRequest, SynthesizeResult, TtsInputKind, VoiceKind,
 };
 use crate::voices::filter_voices;
 
@@ -106,7 +105,7 @@ impl TtsRouter {
 
     pub fn select_for_stream(
         &self,
-        request: &StreamSynthesizeRequest,
+        request: &SynthesizeRequest,
     ) -> Result<Arc<dyn TtsProvider>, TtsError> {
         self.select(
             TtsRouteOperation::SingleStream,
@@ -412,29 +411,25 @@ fn validate_controls(
         &mut adjustments,
     )?;
 
-    let semantic_policy = SemanticControlPolicy {
-        compatibility,
-        allow_coercions: controls.allow_semantic_coercions,
-    };
     coerce_semantic_control(
         "instruction",
         &mut controls.instruction,
         capabilities.supports_instruction,
-        &semantic_policy,
+        compatibility,
         &mut adjustments,
     )?;
     coerce_semantic_control(
         "emotion",
         &mut controls.emotion,
         capabilities.supports_emotion,
-        &semantic_policy,
+        compatibility,
         &mut adjustments,
     )?;
     coerce_semantic_control(
         "style",
         &mut controls.style,
         capabilities.supports_style,
-        &semantic_policy,
+        compatibility,
         &mut adjustments,
     )?;
     if input_kind == Some(TtsInputKind::Ssml) && !capabilities.supports_ssml {
@@ -446,16 +441,11 @@ fn validate_controls(
     Ok(adjustments)
 }
 
-struct SemanticControlPolicy<'a> {
-    compatibility: &'a CompatibilityPolicy,
-    allow_coercions: bool,
-}
-
 fn coerce_semantic_control(
     field: &str,
     value: &mut Option<String>,
     supported: bool,
-    policy: &SemanticControlPolicy<'_>,
+    compatibility: &CompatibilityPolicy,
     adjustments: &mut Vec<crate::types::OptionAdjustment>,
 ) -> Result<(), TtsError> {
     let Some(requested) = value.take() else {
@@ -465,7 +455,7 @@ fn coerce_semantic_control(
         *value = Some(requested);
         return Ok(());
     }
-    if *policy.compatibility == CompatibilityPolicy::Strict || !policy.allow_coercions {
+    if *compatibility == CompatibilityPolicy::Strict {
         *value = Some(requested);
         return Err(TtsError::new(
             TtsErrorCode::UnsupportedOption,
@@ -561,7 +551,7 @@ impl TtsGateway {
 
     pub async fn stream_synthesize(
         &self,
-        mut request: StreamSynthesizeRequest,
+        mut request: SynthesizeRequest,
     ) -> Result<TtsOutputStream, TtsError> {
         let trace_id = ensure_trace_id(&mut request.trace_id);
         let provider = {

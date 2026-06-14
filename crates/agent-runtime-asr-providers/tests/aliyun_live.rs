@@ -1,12 +1,43 @@
 #![cfg(feature = "aliyun")]
 
+use std::env;
+
 use agent_runtime_asr_providers::providers::aliyun::{AliyunAsrAdapter, AliyunAsrConfig};
 use agent_runtime_asr_providers::traits::AsrProvider;
 use agent_runtime_asr_providers::types::*;
 use bytes::Bytes;
 
+fn load_dotenv_if_present() {
+    let mut path = std::env::current_dir().ok();
+    while let Some(dir) = path {
+        if let Ok(contents) = std::fs::read_to_string(dir.join(".env")) {
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once('=') {
+                    let key = key
+                        .trim()
+                        .strip_prefix("export ")
+                        .unwrap_or(key.trim())
+                        .trim();
+                    if env::var_os(key).is_none() {
+                        env::set_var(key, value.trim().trim_matches('"'));
+                    }
+                }
+            }
+            break;
+        }
+        path = dir.parent().map(|p| p.to_path_buf());
+    }
+}
+
 fn get_config() -> Option<AliyunAsrConfig> {
-    let api_key = std::env::var("ALIYUN_ASR_API_KEY").ok()?;
+    load_dotenv_if_present();
+    let api_key = std::env::var("DASHSCOPE_API_KEY")
+        .or_else(|_| std::env::var("ALIYUN_ASR_API_KEY"))
+        .ok()?;
     Some(AliyunAsrConfig::fun_asr_realtime(api_key))
 }
 
@@ -16,7 +47,7 @@ async fn live_aliyun_streaming_silence() {
     let config = match get_config() {
         Some(c) => c,
         None => {
-            eprintln!("skipping: ALIYUN_ASR_API_KEY not set");
+            eprintln!("skipping: DASHSCOPE_API_KEY not set");
             return;
         }
     };

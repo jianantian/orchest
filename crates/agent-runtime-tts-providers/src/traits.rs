@@ -3,8 +3,8 @@ use async_trait::async_trait;
 use crate::error::TtsError;
 use crate::streaming::{TtsDuplexStream, TtsOutputStream};
 use crate::types::{
-    DuplexSynthesizeRequest, ListVoicesRequest, StreamSynthesizeRequest, SynthesizeRequest,
-    SynthesizeResult, TtsModelCapabilities, VoiceInfo,
+    DuplexSynthesizeRequest, ListVoicesRequest, SynthesizeRequest, SynthesizeResult,
+    TtsModelCapabilities, VoiceInfo,
 };
 
 #[async_trait]
@@ -17,7 +17,7 @@ pub trait TtsProvider: Send + Sync {
 
     async fn stream_synthesize(
         &self,
-        request: StreamSynthesizeRequest,
+        request: SynthesizeRequest,
     ) -> Result<TtsOutputStream, TtsError>;
 
     async fn start_duplex_stream(

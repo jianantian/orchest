@@ -50,24 +50,45 @@ impl AliyunImageAdapter {
         })
     }
 
+    fn is_wanx_model(&self) -> bool {
+        self.config.model.starts_with("wanx")
+    }
+
     pub fn build_request(&self, request: &ImageGenerationRequest) -> Result<Value, AigcError> {
-        let mut content = vec![json!({ "text": request.prompt })];
-        for input in &request.inputs {
-            match &input.asset {
-                crate::AssetRef::Url(url) | crate::AssetRef::DataUrl(url) => {
-                    content.push(json!({ "image": url }));
-                }
-                crate::AssetRef::Base64 { data, mime_type } => {
-                    content.push(json!({ "image": format!("data:{mime_type};base64,{data}") }));
-                }
-                _ => {
-                    return Err(AigcError::new(
-                        "unsupported_input",
-                        "Aliyun adapter requires URL or base64 data URL inputs",
-                    ))
+        let parameters = self.build_parameters(request);
+        if self.is_wanx_model() {
+            Ok(json!({
+                "model": self.config.model,
+                "input": { "prompt": request.prompt },
+                "parameters": parameters,
+            }))
+        } else {
+            let mut content = vec![json!({ "text": request.prompt })];
+            for input in &request.inputs {
+                match &input.asset {
+                    crate::AssetRef::Url(url) | crate::AssetRef::DataUrl(url) => {
+                        content.push(json!({ "image": url }));
+                    }
+                    crate::AssetRef::Base64 { data, mime_type } => {
+                        content.push(json!({ "image": format!("data:{mime_type};base64,{data}") }));
+                    }
+                    _ => {
+                        return Err(AigcError::new(
+                            "unsupported_input",
+                            "Aliyun adapter requires URL or base64 data URL inputs",
+                        ))
+                    }
                 }
             }
+            Ok(json!({
+                "model": self.config.model,
+                "input": { "messages": [{ "role": "user", "content": content }] },
+                "parameters": parameters,
+            }))
         }
+    }
+
+    fn build_parameters(&self, request: &ImageGenerationRequest) -> Value {
         let mut parameters = json!({
             "size": aliyun_size_to_string(&request.generation_config.size),
         });
@@ -109,14 +130,19 @@ impl AliyunImageAdapter {
                 parameters["bbox_list"] = json!(boxes);
             }
         }
-        Ok(json!({
-            "model": self.config.model,
-            "input": { "messages": [{ "role": "user", "content": content }] },
-            "parameters": parameters,
-        }))
+        parameters
     }
 
     pub fn parse_response(&self, response: Value) -> ProviderImageJob {
+        // wanx async task-start response: output.task_id + output.task_status
+        if let Some(task_id) = response
+            .pointer("/output/task_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+        {
+            return self.parse_task_response(response, &task_id);
+        }
+        // multimodal synchronous response: output.choices[0].message.content[].image
         let urls = response
             .pointer("/output/choices/0/message/content")
             .and_then(|v| v.as_array())
@@ -136,7 +162,6 @@ impl AliyunImageAdapter {
         ProviderImageJob {
             id: response
                 .get("request_id")
-                .or_else(|| response.pointer("/output/task_id"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("aliyun-sync")
                 .into(),
@@ -193,14 +218,21 @@ impl ImageProvider for AliyunImageAdapter {
         request: &ImageGenerationRequest,
     ) -> Result<ProviderImageJob, AigcError> {
         let body = self.build_request(request)?;
+        let endpoint = if self.is_wanx_model() {
+            self.text2image_endpoint()
+        } else {
+            self.multimodal_generation_endpoint()
+        };
         let mut request_builder = crate::http::shared_client()
-            .post(self.multimodal_generation_endpoint())
+            .post(endpoint)
             .bearer_auth(&self.config.api_key)
             .json(&body);
         if let Some(timeout) = self.config.timeout {
             request_builder = request_builder.timeout(timeout);
         }
-        if request.execution_config.prefer_async {
+        // wanx models require async task-based execution; other models support both
+        let use_async = self.is_wanx_model() || request.execution_config.prefer_async;
+        if use_async {
             request_builder = request_builder.header("X-DashScope-Async", "enable");
         }
         let response = request_builder.send().await.map_err(|err| {
@@ -208,7 +240,7 @@ impl ImageProvider for AliyunImageAdapter {
         })?;
         let response = super::parse_json_response("aliyun", response).await?;
         let mut job = self.parse_response(response);
-        if request.execution_config.prefer_async && job.assets.is_empty() {
+        if use_async && job.assets.is_empty() {
             job.status = ProviderGenerationStatus::Queued;
         }
         Ok(job)
@@ -234,6 +266,13 @@ impl AliyunImageAdapter {
     fn multimodal_generation_endpoint(&self) -> String {
         format!(
             "{}/services/aigc/multimodal-generation/generation",
+            self.api_base_url
+        )
+    }
+
+    fn text2image_endpoint(&self) -> String {
+        format!(
+            "{}/services/aigc/text2image/image-synthesis",
             self.api_base_url
         )
     }
@@ -370,6 +409,82 @@ mod tests {
         assert_eq!(body["parameters"]["thinking_mode"], false);
         assert_eq!(body["parameters"]["color_palette"][0]["color"], "#ff0000");
         assert_eq!(body["parameters"]["bbox_list"], json!([[10, 20, 40, 60]]));
+    }
+
+    #[test]
+    fn wanx_request_uses_prompt_field() {
+        let adapter = AliyunImageAdapter::from_config(AliyunImageConfig {
+            model: "wanx2.1-t2i-turbo".into(),
+            api_key: "key".into(),
+            region: None,
+            api_url: None,
+            timeout: None,
+        })
+        .unwrap();
+        let body = adapter
+            .build_request(&ImageGenerationRequest {
+                operation: ImageOperation::TextToImage,
+                prompt: "mountain".into(),
+                negative_prompt: None,
+                inputs: vec![],
+                generation_config: ImageGenerationConfig::default(),
+                execution_config: Default::default(),
+                output_config: ImageOutputConfig::default(),
+                compatibility_policy: Default::default(),
+                provider_options: json!({}),
+            })
+            .unwrap();
+        assert_eq!(body["input"]["prompt"], "mountain");
+        assert!(body["input"].get("messages").is_none());
+    }
+
+    #[tokio::test]
+    async fn wanx_model_posts_to_text2image_endpoint() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let request = read_http_request(&mut socket).await;
+            assert!(request.starts_with("POST /api/v1/services/aigc/text2image/image-synthesis "));
+            assert!(request
+                .to_ascii_lowercase()
+                .contains("x-dashscope-async: enable"));
+            assert!(request.contains("\"model\":\"wanx2.1-t2i-turbo\""));
+            let body = r#"{"request_id":"req-wanx","output":{"task_id":"task-123","task_status":"PENDING"}}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let adapter = AliyunImageAdapter::from_config(AliyunImageConfig {
+            model: "wanx2.1-t2i-turbo".into(),
+            api_key: "key".into(),
+            region: None,
+            api_url: Some(format!("http://{addr}/api/v1")),
+            timeout: None,
+        })
+        .unwrap();
+        let job = adapter
+            .create_image_generation(&ImageGenerationRequest {
+                operation: ImageOperation::TextToImage,
+                prompt: "mountain".into(),
+                negative_prompt: None,
+                inputs: vec![],
+                generation_config: ImageGenerationConfig::default(),
+                execution_config: Default::default(),
+                output_config: ImageOutputConfig::default(),
+                compatibility_policy: Default::default(),
+                provider_options: json!({}),
+            })
+            .await
+            .unwrap();
+
+        server.await.unwrap();
+        assert_eq!(job.id, "task-123");
+        assert!(matches!(job.status, ProviderGenerationStatus::Queued));
     }
 
     #[tokio::test]

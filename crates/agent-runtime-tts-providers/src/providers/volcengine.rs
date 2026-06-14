@@ -24,11 +24,12 @@ use crate::types::{
 use crate::voices::filter_voices;
 
 const DEFAULT_WS_URL: &str = "wss://openspeech.bytedance.com/api/v3/tts/bidirection";
-const DEFAULT_ENV: &str = "VOLCENGINE_TTS_API_KEY";
+const DEFAULT_ENV: &str = "VOLCENGINE_API_KEY";
 
 #[derive(Clone)]
 struct VolcengineTtsConfig {
     model: String,
+    resource_id: String,
     api_key: String,
     ws_url: String,
     timeout: Duration,
@@ -53,7 +54,10 @@ impl VolcengineTtsAdapter {
                 "expected volcengine provider selector",
             ));
         }
-        if normalized.model != "seed-tts-2.0" {
+        if !matches!(
+            normalized.model,
+            "seed-tts-1.0" | "seed-tts-1.0-concurr" | "seed-tts-2.0"
+        ) {
             return Err(TtsError::new(
                 TtsErrorCode::UnknownModel,
                 format!("unknown Volcengine TTS model '{}'", normalized.model),
@@ -70,9 +74,19 @@ impl VolcengineTtsAdapter {
                 format!("missing Volcengine API key; set api_key or {DEFAULT_ENV}"),
             )
         })?;
+        // resource_id defaults to the model name (e.g. "seed-tts-1.0") but can be
+        // overridden via provider_options.resource_id for billing variants like
+        // "seed-tts-1.0-concurr".
+        let resource_id = config
+            .provider_options
+            .get("resource_id")
+            .and_then(|v| v.as_str())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| normalized.model.to_owned());
         Ok(Self {
             config: VolcengineTtsConfig {
                 model: normalized.model.to_owned(),
+                resource_id,
                 api_key,
                 ws_url: config.api_url.unwrap_or_else(|| DEFAULT_WS_URL.to_owned()),
                 timeout: config.timeout.unwrap_or(Duration::from_secs(30)),
@@ -124,6 +138,7 @@ impl VolcengineTtsAdapter {
         VolcengineSynthesisRequest {
             trace_id,
             model: self.config.model.clone(),
+            resource_id: self.config.resource_id.clone(),
             api_key: self.config.api_key.clone(),
             ws_url: self.config.ws_url.clone(),
             timeout: self.config.timeout,
@@ -216,7 +231,7 @@ impl TtsProvider for VolcengineTtsAdapter {
 
     async fn stream_synthesize(
         &self,
-        request: crate::types::StreamSynthesizeRequest,
+        request: SynthesizeRequest,
     ) -> Result<TtsOutputStream, TtsError> {
         self.validate_selector(&request.model)?;
         validate_output_format(
@@ -294,27 +309,23 @@ fn validate_controls(
     compatibility: &CompatibilityPolicy,
     capabilities: &TtsModelCapabilities,
 ) -> Result<(), TtsError> {
-    let allow_coerce = controls.allow_semantic_coercions;
     strip_unsupported_control(
         "instruction",
         &mut controls.instruction,
         capabilities.supports_instruction,
         compatibility,
-        allow_coerce,
     )?;
     strip_unsupported_control(
         "emotion",
         &mut controls.emotion,
         capabilities.supports_emotion,
         compatibility,
-        allow_coerce,
     )?;
     strip_unsupported_control(
         "style",
         &mut controls.style,
         capabilities.supports_style,
         compatibility,
-        allow_coerce,
     )
 }
 
@@ -323,12 +334,11 @@ fn strip_unsupported_control(
     value: &mut Option<String>,
     supported: bool,
     compatibility: &CompatibilityPolicy,
-    allow_coerce: bool,
 ) -> Result<(), TtsError> {
     if value.is_none() || supported {
         return Ok(());
     }
-    if *compatibility == CompatibilityPolicy::Strict || !allow_coerce {
+    if *compatibility == CompatibilityPolicy::Strict {
         return Err(TtsError::new(
             TtsErrorCode::UnsupportedOption,
             format!("unsupported speech control '{name}'"),
@@ -342,6 +352,7 @@ fn strip_unsupported_control(
 struct VolcengineSynthesisRequest {
     trace_id: String,
     model: String,
+    resource_id: String,
     api_key: String,
     ws_url: String,
     timeout: Duration,
@@ -474,10 +485,20 @@ async fn volcengine_session_task(
     mut input_rx: Option<mpsc::Receiver<TextChunk>>,
     event_tx: mpsc::Sender<TtsStreamEvent>,
 ) -> Result<(), TtsError> {
+    let ws_key = tungstenite::handshake::client::generate_key();
+    let host = tungstenite::http::Uri::try_from(request.ws_url.as_str())
+        .ok()
+        .and_then(|u| u.authority().map(|a| a.as_str().to_string()))
+        .unwrap_or_default();
     let ws_request = tungstenite::http::Request::builder()
         .uri(&request.ws_url)
+        .header("Host", host)
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Sec-WebSocket-Key", ws_key)
         .header("X-Api-Key", &request.api_key)
-        .header("X-Api-Resource-Id", &request.model)
+        .header("X-Api-Resource-Id", &request.resource_id)
         .header("X-Api-Connect-Id", uuid::Uuid::new_v4().to_string())
         .header("X-Control-Require-Usage-Tokens-Return", "text_words")
         .body(())
@@ -506,13 +527,16 @@ async fn volcengine_session_task(
     let session_id = uuid::Uuid::new_v4().simple().to_string();
     let provider_metadata = serde_json::json!({"x_tt_logid": log_id});
 
-    sink.send(Message::Binary(protocol::build_meta_frame(
+    // Step 1: send StartConnection and wait for ConnectionStarted (event 50).
+    sink.send(Message::Binary(protocol::build_connect_frame(
         protocol::EVENT_START_CONNECTION,
-        "",
         &serde_json::json!({}),
     )?))
     .await
     .map_err(stream_send_error)?;
+    wait_for_connection_started(&mut source).await?;
+
+    // Step 2: send StartSession and wait for SessionStarted (event 150).
     sink.send(Message::Binary(protocol::build_meta_frame(
         protocol::EVENT_START_SESSION,
         &session_id,
@@ -520,6 +544,7 @@ async fn volcengine_session_task(
     )?))
     .await
     .map_err(stream_send_error)?;
+    wait_for_session_started(&mut source).await?;
 
     event_tx
         .send(TtsStreamEvent::Started {
@@ -547,9 +572,10 @@ async fn volcengine_session_task(
         .await
         .ok();
 
+    // Step 3: send text (if batch/stream mode) then FinishSession.
     if let Some(chunks) = initial_text {
         for chunk in chunks {
-            send_text_chunk(&mut sink, &session_id, &chunk).await?;
+            send_text_chunk(&mut sink, &session_id, &request, &chunk).await?;
         }
         sink.send(Message::Binary(protocol::build_meta_frame(
             protocol::EVENT_FINISH_SESSION,
@@ -573,7 +599,7 @@ async fn volcengine_session_task(
             }, if input_rx.is_some() => {
                 match maybe_chunk {
                     Some(chunk) => {
-                        send_text_chunk(&mut sink, &session_id, &chunk).await?;
+                        send_text_chunk(&mut sink, &session_id, &request, &chunk).await?;
                         if chunk.is_final {
                             sink.send(Message::Binary(protocol::build_meta_frame(protocol::EVENT_FINISH_SESSION, &session_id, &serde_json::json!({}))?))
                                 .await
@@ -659,9 +685,114 @@ async fn volcengine_session_task(
     Ok(())
 }
 
+async fn wait_for_connection_started<S>(source: &mut S) -> Result<(), TtsError>
+where
+    S: futures_util::Stream<Item = Result<Message, tungstenite::Error>> + Unpin,
+{
+    loop {
+        match source.next().await {
+            None => {
+                return Err(TtsError::new(
+                    TtsErrorCode::ProviderStreamError,
+                    "websocket closed before ConnectionStarted",
+                ))
+            }
+            Some(Err(e)) => {
+                return Err(TtsError::new(
+                    TtsErrorCode::ProviderStreamError,
+                    format!("ws error: {e}"),
+                ))
+            }
+            Some(Ok(Message::Binary(data))) => match protocol::parse_frame(&data)? {
+                protocol::VolcengineFrame::Meta { event, .. }
+                    if event == protocol::EVENT_CONNECTION_STARTED =>
+                {
+                    return Ok(());
+                }
+                protocol::VolcengineFrame::Meta { event, payload, .. }
+                    if event == protocol::EVENT_CONNECTION_FAILED =>
+                {
+                    return Err(TtsError::new(
+                        TtsErrorCode::ProviderStreamError,
+                        payload
+                            .get("message")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("connection failed"),
+                    )
+                    .with_upstream(
+                        None,
+                        payload.get("status_code").map(ToString::to_string),
+                        None,
+                        Some(payload),
+                    ));
+                }
+                protocol::VolcengineFrame::Error { code, message } => {
+                    return Err(TtsError::new(TtsErrorCode::ProviderStreamError, message)
+                        .with_upstream(None, Some(code.to_string()), None, None));
+                }
+                _ => {}
+            },
+            Some(Ok(_)) => {}
+        }
+    }
+}
+
+async fn wait_for_session_started<S>(source: &mut S) -> Result<(), TtsError>
+where
+    S: futures_util::Stream<Item = Result<Message, tungstenite::Error>> + Unpin,
+{
+    loop {
+        match source.next().await {
+            None => {
+                return Err(TtsError::new(
+                    TtsErrorCode::ProviderStreamError,
+                    "websocket closed before SessionStarted",
+                ))
+            }
+            Some(Err(e)) => {
+                return Err(TtsError::new(
+                    TtsErrorCode::ProviderStreamError,
+                    format!("ws error: {e}"),
+                ))
+            }
+            Some(Ok(Message::Binary(data))) => match protocol::parse_frame(&data)? {
+                protocol::VolcengineFrame::Meta { event, .. }
+                    if event == protocol::EVENT_SESSION_STARTED =>
+                {
+                    return Ok(());
+                }
+                protocol::VolcengineFrame::Meta { event, payload, .. }
+                    if event == protocol::EVENT_SESSION_FAILED =>
+                {
+                    return Err(TtsError::new(
+                        TtsErrorCode::ProviderStreamError,
+                        payload
+                            .get("message")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("session failed"),
+                    )
+                    .with_upstream(
+                        None,
+                        payload.get("status_code").map(ToString::to_string),
+                        None,
+                        Some(payload),
+                    ));
+                }
+                protocol::VolcengineFrame::Error { code, message } => {
+                    return Err(TtsError::new(TtsErrorCode::ProviderStreamError, message)
+                        .with_upstream(None, Some(code.to_string()), None, None));
+                }
+                _ => {}
+            },
+            Some(Ok(_)) => {}
+        }
+    }
+}
+
 async fn send_text_chunk<S>(
     sink: &mut S,
     session_id: &str,
+    request: &VolcengineSynthesisRequest,
     chunk: &TextChunk,
 ) -> Result<(), TtsError>
 where
@@ -670,14 +801,44 @@ where
     if chunk.text.is_empty() {
         return Ok(());
     }
-    let frame = protocol::build_meta_frame(
-        protocol::EVENT_TASK_REQUEST,
-        session_id,
-        &serde_json::json!({"text": chunk.text}),
-    )?;
+    let payload = build_task_request_payload(request, &chunk.text);
+    let frame = protocol::build_meta_frame(protocol::EVENT_TASK_REQUEST, session_id, &payload)?;
     sink.send(Message::Binary(frame))
         .await
         .map_err(stream_send_error)
+}
+
+fn build_task_request_payload(
+    request: &VolcengineSynthesisRequest,
+    text: &str,
+) -> serde_json::Value {
+    let format = match request.output_format {
+        AudioFormat::Mp3 => "mp3",
+        AudioFormat::Pcm16Le => "pcm",
+        AudioFormat::WavPcm16Le => "wav",
+        AudioFormat::OggOpus => "ogg_opus",
+    };
+    let additions_json = serde_json::to_string(&serde_json::json!({
+        "post_process": {
+            "pitch": request.controls.pitch.round() as i64,
+        }
+    }))
+    .unwrap_or_default();
+    serde_json::json!({
+        "user": {"uid": "orchest-sdk"},
+        "namespace": "BidirectionalTTS",
+        "event": protocol::EVENT_TASK_REQUEST,
+        "req_params": {
+            "text": text,
+            "speaker": request.voice_id,
+            "audio_params": {
+                "format": format,
+                "sample_rate": 24000,
+                "speech_rate": volcengine_speech_rate(request.controls.speed),
+            },
+            "additions": additions_json,
+        },
+    })
 }
 
 fn stream_send_error(e: tungstenite::Error) -> TtsError {
@@ -694,6 +855,12 @@ fn build_session_payload(request: &VolcengineSynthesisRequest) -> serde_json::Va
         AudioFormat::WavPcm16Le => "wav",
         AudioFormat::OggOpus => "ogg_opus",
     };
+    let additions_json = serde_json::to_string(&serde_json::json!({
+        "post_process": {
+            "pitch": request.controls.pitch.round() as i64,
+        }
+    }))
+    .unwrap_or_default();
     let mut req_params = serde_json::json!({
         "speaker": request.voice_id,
         "audio_params": {
@@ -701,11 +868,7 @@ fn build_session_payload(request: &VolcengineSynthesisRequest) -> serde_json::Va
             "sample_rate": 24000,
             "speech_rate": volcengine_speech_rate(request.controls.speed),
         },
-        "additions": {
-            "post_process": {
-                "pitch": request.controls.pitch.round() as i64,
-            }
-        },
+        "additions": additions_json,
     });
     if let Some(options) = request.provider_options.as_object() {
         for (key, value) in options {
@@ -726,8 +889,10 @@ mod protocol {
     use crate::error::{TtsError, TtsErrorCode};
 
     pub const EVENT_START_CONNECTION: i32 = 1;
+    pub const EVENT_CONNECTION_STARTED: i32 = 50;
     pub const EVENT_CONNECTION_FAILED: i32 = 51;
     pub const EVENT_START_SESSION: i32 = 100;
+    pub const EVENT_SESSION_STARTED: i32 = 150;
     pub const EVENT_FINISH_SESSION: i32 = 102;
     pub const EVENT_CANCEL_SESSION: i32 = 101;
     pub const EVENT_SESSION_FAILED: i32 = 153;
@@ -759,6 +924,32 @@ mod protocol {
         },
     }
 
+    // Connection-level events (StartConnection, FinishConnection): no session_id field.
+    pub fn build_connect_frame(
+        event: i32,
+        payload: &serde_json::Value,
+    ) -> Result<Vec<u8>, TtsError> {
+        let payload = serde_json::to_vec(payload).map_err(|e| {
+            TtsError::new(
+                TtsErrorCode::InvalidRequest,
+                format!("serialize Volcengine payload: {e}"),
+            )
+        })?;
+        let mut out = Vec::with_capacity(4 + 4 + 4 + payload.len());
+        out.extend_from_slice(&[
+            0b0001_0001,
+            (MSG_FULL_CLIENT_REQUEST << 4) | FLAG_WITH_EVENT,
+            SER_JSON << 4,
+            0,
+        ]);
+        out.extend_from_slice(&event.to_be_bytes());
+        out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        out.extend_from_slice(&payload);
+        Ok(out)
+    }
+
+    // Session/task events (StartSession, FinishSession, CancelSession, TaskRequest):
+    // include session_id_size + session_id before payload.
     pub fn build_meta_frame(
         event: i32,
         session_id: &str,
@@ -821,8 +1012,8 @@ mod protocol {
     }
 
     fn parse_meta(data: &[u8]) -> Result<VolcengineFrame, TtsError> {
-        let (event, session_id, payload) = parse_event_session_payload(data)?;
-        let payload = serde_json::from_slice(&payload).map_err(|e| {
+        let (event, session_id, payload_bytes) = parse_event_session_payload(data)?;
+        let payload = serde_json::from_slice(&payload_bytes).map_err(|e| {
             TtsError::new(
                 TtsErrorCode::ProviderStreamError,
                 format!("parse Volcengine meta JSON: {e}"),
@@ -991,6 +1182,7 @@ mod tests {
         let adapter = VolcengineTtsAdapter::with_transport(
             VolcengineTtsConfig {
                 model: "seed-tts-2.0".to_owned(),
+                resource_id: "seed-tts-2.0".to_owned(),
                 api_key: "key".to_owned(),
                 ws_url: DEFAULT_WS_URL.to_owned(),
                 timeout: Duration::from_secs(1),
@@ -1022,6 +1214,7 @@ mod tests {
         let adapter = VolcengineTtsAdapter::with_transport(
             VolcengineTtsConfig {
                 model: "seed-tts-2.0".to_owned(),
+                resource_id: "seed-tts-2.0".to_owned(),
                 api_key: "key".to_owned(),
                 ws_url: DEFAULT_WS_URL.to_owned(),
                 timeout: Duration::from_secs(1),
@@ -1030,7 +1223,7 @@ mod tests {
             Arc::new(CapturingTransport),
         );
         let mut stream = adapter
-            .stream_synthesize(crate::types::StreamSynthesizeRequest {
+            .stream_synthesize(crate::types::SynthesizeRequest {
                 model: Some("volcengine/seed-tts-2.0".to_owned()),
                 input: TtsInput::Text("hello".to_owned()),
                 voice: crate::types::VoiceSelection::by_id("v"),
@@ -1076,6 +1269,7 @@ mod tests {
         let request = VolcengineSynthesisRequest {
             trace_id: "trace".to_owned(),
             model: "seed-tts-2.0".to_owned(),
+            resource_id: "seed-tts-2.0".to_owned(),
             api_key: "key".to_owned(),
             ws_url: DEFAULT_WS_URL.to_owned(),
             timeout: Duration::from_secs(1),
@@ -1086,9 +1280,8 @@ mod tests {
         };
         let payload = build_session_payload(&request);
         assert_eq!(payload["req_params"]["audio_params"]["speech_rate"], 50);
-        assert_eq!(
-            payload["req_params"]["additions"]["post_process"]["pitch"],
-            3
-        );
+        let additions: serde_json::Value =
+            serde_json::from_str(payload["req_params"]["additions"].as_str().unwrap()).unwrap();
+        assert_eq!(additions["post_process"]["pitch"], 3);
     }
 }

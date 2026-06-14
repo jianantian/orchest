@@ -148,7 +148,7 @@ impl TtsProvider for FakeTtsProvider {
 
     async fn stream_synthesize(
         &self,
-        request: agent_runtime_tts_providers::StreamSynthesizeRequest,
+        request: SynthesizeRequest,
     ) -> Result<TtsOutputStream, TtsError> {
         validate_direct_model_selector(self.provider_name(), self.model_name(), &request.model)?;
         let (tx, rx) = mpsc::channel(8);

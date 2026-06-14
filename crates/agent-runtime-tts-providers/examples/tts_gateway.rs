@@ -1,8 +1,7 @@
 use agent_runtime_tts_providers::{
     create_tts_provider_from_config, AudioFormat, AudioOutputConfig, CompatibilityPolicy, Language,
-    ListVoicesRequest, SpeechControls, StreamSynthesizeRequest, SynthesizeRequest, TtsGateway,
-    TtsGatewayConfig, TtsInput, TtsProviderRuntimeConfig, TtsRoute, TtsRouter, VoiceKind,
-    VoiceSelection,
+    ListVoicesRequest, SpeechControls, SynthesizeRequest, TtsGateway, TtsGatewayConfig, TtsInput,
+    TtsProviderRuntimeConfig, TtsRoute, TtsRouter, VoiceKind, VoiceSelection,
 };
 
 #[tokio::main(flavor = "current_thread")]
@@ -71,7 +70,7 @@ async fn stream_once(
     voice_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut stream = gateway
-        .stream_synthesize(StreamSynthesizeRequest {
+        .stream_synthesize(SynthesizeRequest {
             model: Some("volcengine/seed-tts-2.0".to_owned()),
             input: TtsInput::Text("streaming text".to_owned()),
             voice: VoiceSelection::by_id(voice_id),

@@ -42,6 +42,26 @@ impl AudioOutputConfig {
             channels: None,
         }
     }
+
+    pub fn mp3() -> Self {
+        Self::new(AudioFormat::Mp3)
+    }
+
+    pub fn ogg_opus() -> Self {
+        Self::new(AudioFormat::OggOpus)
+    }
+
+    pub fn wav_pcm16le() -> Self {
+        Self::new(AudioFormat::WavPcm16Le)
+    }
+
+    pub fn pcm16le(sample_rate_hz: u32) -> Self {
+        Self {
+            format: AudioFormat::Pcm16Le,
+            sample_rate_hz: Some(sample_rate_hz),
+            channels: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,8 +78,6 @@ pub struct SpeechControls {
     pub emotion: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style: Option<String>,
-    #[serde(default)]
-    pub allow_semantic_coercions: bool,
 }
 
 impl Default for SpeechControls {
@@ -71,7 +89,6 @@ impl Default for SpeechControls {
             instruction: None,
             emotion: None,
             style: None,
-            allow_semantic_coercions: false,
         }
     }
 }
@@ -100,6 +117,14 @@ pub enum TtsInput {
 }
 
 impl TtsInput {
+    pub fn text(s: impl Into<String>) -> Self {
+        Self::Text(s.into())
+    }
+
+    pub fn ssml(s: impl Into<String>) -> Self {
+        Self::Ssml(s.into())
+    }
+
     pub fn kind(&self) -> TtsInputKind {
         match self {
             Self::Text(_) => TtsInputKind::Text,
@@ -205,24 +230,20 @@ impl VoiceSelection {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SynthesizeRequest {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    pub input: TtsInput,
-    pub voice: VoiceSelection,
-    pub output: AudioOutputConfig,
-    pub controls: SpeechControls,
-    #[serde(default)]
-    pub compatibility: CompatibilityPolicy,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trace_id: Option<String>,
-    #[serde(default)]
-    pub provider_options: Value,
+impl From<String> for VoiceSelection {
+    fn from(id: String) -> Self {
+        Self::by_id(id)
+    }
+}
+
+impl From<&str> for VoiceSelection {
+    fn from(id: &str) -> Self {
+        Self::by_id(id)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StreamSynthesizeRequest {
+pub struct SynthesizeRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     pub input: TtsInput,

@@ -26,7 +26,7 @@ pub struct VolcengineAsrConfig {
     pub model_name: String,
     pub ws_url: String,
     pub api_key: String,
-    pub access_key: String,
+    pub access_key: Option<String>,
     pub resource_id: String,
 }
 
@@ -196,10 +196,13 @@ impl AsrProvider for VolcengineAsrAdapter {
         let connect_id = uuid::Uuid::new_v4().to_string();
         let request_id = uuid::Uuid::new_v4().to_string();
 
-        let ws_request = tungstenite::http::Request::builder()
+        let mut ws_builder = tungstenite::http::Request::builder()
             .uri(&self.config.ws_url)
-            .header("X-Api-Key", &self.config.api_key)
-            .header("X-Api-Access-Key", &self.config.access_key)
+            .header("X-Api-Key", &self.config.api_key);
+        if let Some(ak) = &self.config.access_key {
+            ws_builder = ws_builder.header("X-Api-Access-Key", ak);
+        }
+        let ws_request = ws_builder
             .header("X-Api-Resource-Id", &self.config.resource_id)
             .header("X-Api-Connect-Id", &connect_id)
             .header("X-Api-Request-Id", &request_id)
@@ -708,7 +711,7 @@ mod tests {
             model_name: "bigmodel_async".into(),
             ws_url: "wss://test.com".into(),
             api_key: "key".into(),
-            access_key: "".into(),
+            access_key: None,
             resource_id: "res".into(),
         };
         let adapter = VolcengineAsrAdapter::new(config);
@@ -738,7 +741,7 @@ mod tests {
             model_name: "bigmodel_async".into(),
             ws_url: "wss://test.com".into(),
             api_key: "key".into(),
-            access_key: "".into(),
+            access_key: None,
             resource_id: "res".into(),
         };
         let adapter = VolcengineAsrAdapter::new(config);
@@ -772,7 +775,7 @@ mod tests {
             model_name: "bigmodel_async".into(),
             ws_url: "ws://example.invalid/api/v3/sauc/bigmodel_async".into(),
             api_key: "key".into(),
-            access_key: "access".into(),
+            access_key: Some("access".into()),
             resource_id: "resource".into(),
         });
         let request = StreamingTranscribeRequest {
@@ -802,7 +805,7 @@ mod tests {
             model_name: "bigmodel_async".into(),
             ws_url: "wss://test.com".into(),
             api_key: "key".into(),
-            access_key: "".into(),
+            access_key: None,
             resource_id: "res".into(),
         };
         let adapter = VolcengineAsrAdapter::new(config);

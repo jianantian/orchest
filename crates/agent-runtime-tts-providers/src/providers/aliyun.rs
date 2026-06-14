@@ -203,7 +203,7 @@ impl TtsProvider for AliyunTtsAdapter {
 
     async fn stream_synthesize(
         &self,
-        request: crate::types::StreamSynthesizeRequest,
+        request: SynthesizeRequest,
     ) -> Result<TtsOutputStream, TtsError> {
         self.validate_selector(&request.model)?;
         validate_output_format(
@@ -281,27 +281,23 @@ fn validate_controls(
     compatibility: &CompatibilityPolicy,
     capabilities: &TtsModelCapabilities,
 ) -> Result<(), TtsError> {
-    let allow_coerce = controls.allow_semantic_coercions;
     strip_unsupported_control(
         "instruction",
         &mut controls.instruction,
         capabilities.supports_instruction,
         compatibility,
-        allow_coerce,
     )?;
     strip_unsupported_control(
         "emotion",
         &mut controls.emotion,
         capabilities.supports_emotion,
         compatibility,
-        allow_coerce,
     )?;
     strip_unsupported_control(
         "style",
         &mut controls.style,
         capabilities.supports_style,
         compatibility,
-        allow_coerce,
     )
 }
 
@@ -310,12 +306,11 @@ fn strip_unsupported_control(
     value: &mut Option<String>,
     supported: bool,
     compatibility: &CompatibilityPolicy,
-    allow_coerce: bool,
 ) -> Result<(), TtsError> {
     if value.is_none() || supported {
         return Ok(());
     }
-    if *compatibility == CompatibilityPolicy::Strict || !allow_coerce {
+    if *compatibility == CompatibilityPolicy::Strict {
         return Err(TtsError::new(
             TtsErrorCode::UnsupportedOption,
             format!("unsupported speech control '{name}'"),
@@ -341,7 +336,7 @@ fn capabilities_for_model(model: &str) -> Result<TtsModelCapabilities, TtsError>
         supports_ssml: false,
     };
     match model {
-        "cosyvoice-v3-flash" => {
+        "cosyvoice-v3-flash" | "cosyvoice-v3.5-flash" | "cosyvoice-v3.5-plus" => {
             capabilities.supports_instruction = true;
         }
         "qwen3-tts-flash-realtime" => {}
@@ -494,8 +489,18 @@ async fn aliyun_session_task(
     mut input_rx: Option<mpsc::Receiver<TextChunk>>,
     event_tx: mpsc::Sender<TtsStreamEvent>,
 ) -> Result<(), TtsError> {
+    let ws_key = tungstenite::handshake::client::generate_key();
+    let host = tungstenite::http::Uri::try_from(request.ws_url.as_str())
+        .ok()
+        .and_then(|u| u.authority().map(|a| a.as_str().to_string()))
+        .unwrap_or_default();
     let ws_request = tungstenite::http::Request::builder()
         .uri(&request.ws_url)
+        .header("Host", host)
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Sec-WebSocket-Key", ws_key)
         .header("Authorization", format!("bearer {}", request.api_key))
         .header("X-DashScope-DataInspection", "enable")
         .body(())
