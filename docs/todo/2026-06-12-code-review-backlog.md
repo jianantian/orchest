@@ -7,7 +7,7 @@ metadata:
   originSessionId: orchest-full-code-review-2026-06-12
 ---
 
-2026-06-12 对 orchest 全仓库做了系统 code review（内部 3-agent 并行 + 外部架构评审），识别出一批不适合进 hotfix 但需要在 v1.0 前解决的问题。Critical/Important 级别已进入 [hotfix 06-12](../hotfix/2026_06_12/prd.md)，以下是剩余项。
+2026-06-12 对 orchest 全仓库做了系统 code review（内部 3-agent 并行 + 外部架构评审），识别出一批不适合进 hotfix 但需要在 v1.0 前解决的问题。Critical/Important 级别已进入 [hotfix 06-12](../archive/hotfix/2026_06_12/prd.md)，以下是剩余项。
 
 ---
 
