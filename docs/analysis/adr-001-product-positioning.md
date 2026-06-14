@@ -59,6 +59,68 @@ agent 把协调成本打穿（Coase 企业理论：公司存在是因为内部�
 | OPC/小组织成为主流 | 可证伪（强版本） | 高 | **加速器，非承重墙** |
 | 人的意义在于创造 | 价值公理 | 不适用 | 灵魂 + 设计约束（要配市场验证纪律） |
 
+## 0.7 核心使用模型：两阶段工作流 · 输入槽 · runtime 池 · avatar
+
+> 这是「人怎么用 / Orchest 何时进 / Claude Code 如何被驱动」最完整的一张图，是 reconstruction §6.6/§八 的上游（那两节的「Orchest 大脑指挥 Claude Code」措辞按本节校正）。
+
+### 工作流是一条两阶段的弧
+
+```
+阶段一（attended，重人协作）        交接棒              阶段二（unattended，自动）
+人 ↔ agent 共创、明确想法    ──→ [设计文档+验收判据] ──→  对着判据自动执行  ──→ 验收
+  人是作者/路由器                  一物两用                avatar 驱动            人在 gate 裁决
+  meaning 在「决定什么」      spec + gate 判据                              meaning 在「判定对不对」
+```
+
+- **阶段一**：人与 agent 高带宽共创，产出设计文档 + 验收判据。meaning 在此。
+- **交接**：设计文档是接力棒，一物两用——**spec**（造什么）+ **gate 判据**（怎么算完成）。「批准设计」= 授权阶段二。
+- **阶段二**：对着判据自动执行，人参与度下降。
+- **验收**（命门，杠杆最高/风险最高）：分层——测试（客观、loop 终止条件）+ LLM judge（软判据）+ 人在 gate 抽检（Inbox）。欠规格 → 自动执行自信地造错，故判据质量决定一切。
+
+这条弧也解了「老板模型行不行」：老板模型的病是「薄规格上委派」；阶段一产出厚 spec 后，阶段二委派就成立。**Multica 只有阶段二（薄 ticket）；YouMind 只有阶段一（生成无验收闭环）；我们拥有整条弧。**
+
+### 人类输入槽：谁填取决于阶段
+
+每个 runtime（Claude Code 等）有一个「人类输入槽」（prompt / stream-json 输入）+ 一条输出流（TaskEvent）。谁填槽：
+- **阶段一**：真人（经工作台 / deixis）
+- **阶段二**：avatar（扮演人——读 TaskEvent、注入下一句、判完成）
+- 共享总线：人随时可重新接管。**v0 桩：只建一条「填输入槽」路径**（RuntimeBackend inject-input），v0 人驱动、M2 avatar 驱动，不要分叉成两条。
+
+### runtime 池 + 路由器（先人后 avatar）
+
+- **WHAT（哪个 runtime 干这活）**：一池 binding `{inline:orchest, cli:claude-code, cli:codex}`。右活配右 runtime——**不是所有事都要 Claude Code**。
+- **WHO（谁路由）**：v0 人选；M2 avatar 自动选/驱动。**「claude-code-as-skill」= M2 状态**（avatar 在池里按需调 Claude Code）。
+- ⇒ **inline/cli 既非两种员工类型、也非固定 primary，而是「runtime 池 + 路由器」**。这彻底化解长期的 inline/cli 迷茫。
+
+### Avatar = 人的授权代理 = 阶段二驱动者
+
+- **avatar**：1:1 对人，带人的权限行事，是填输入槽 / 路由 / 驱动的代理。它**就是** M2 的外层 Orchest agent（inline binding）——我们从第一性重新推出它，旧设计给了它名字。
+- **托管是光谱**：人自己做（不托管）←→ avatar 全做（全托管）。
+- **与价值公理的张力（必须守）**：**全托管 = 人退化成「avatar 的老板」= §0.6 否定的空心老板模型**。故甜点与产品默认 = **共创（阶段一）+ 托管执行（阶段二）+ 自留验收**。全托管可做到，但不鼓励、非默认——否则就是「带 avatar 的 Multica」。
+- **avatar 是我们 workforce 与 Multica 的分界**：它**携带共创出的上下文/沉淀进入执行**，而非派薄 ticket。
+- **blast radius**：avatar 带人的完整权限自主行动，爆炸半径 = 人的全部授权。D9–D14 加倍适用（scoped permission、每 run 快照/回滚、预算闸、卡死升级、落盘前脱敏）。
+
+### Employee = 可复用的 AgentConfig worker（deferred）
+
+- **employee**：1:多，一个具名可复用的 AgentConfig（salvage 的 identity/soul/role），scoped 权限，被 avatar/人 实例化到某 runtime 上的 worker。
+- 与 avatar 区分：avatar 是 1:1、带人全权的代理；employee 是 scoped 的 worker。
+- **v0 两者都没有**：人 + workspace 里的 Claude Code 即可。
+
+### Roadmap 映射
+
+| 里程碑 | 工作流 | 角色配置 |
+|--------|--------|----------|
+| **M1** | 阶段一(共创介质 + 设计作为一等产出物) | 人填槽、人路由；无 avatar、无 employee |
+| **M2** | + 阶段二(Ralph/自动执行 + gate + Inbox) | **avatar 入场**(= §7.3 Orchest 入场点 = 阶段二驱动者/路由器)；claude-code-as-skill 在此成真；跨厂商共享上下文经 avatar 实现 |
+| **M3** | + workforce / team | employee + scope 共享沉淀 |
+
+### 由本模型推出的 v0 桩（现在就埋，M2 零返工）
+
+1. 单一「填输入槽」路径（人 now / avatar later 共用）
+2. 进程组 runtime 生命周期（spawn/terminate/restart 整棵进程树）
+3. RuntimeBackend 池抽象（v0 一个 binding，后续加）
+4. 设计文档 + 验收判据作为一等 Locator 对象
+
 ## 1. 背景：三个愿景的张力
 
 团队内部对产品定位存在三种表述，导致设计文档 scope 蔓延（Org/Employee/Meeting/Knowledge/多 runtime 全部挤进早期阶段）：
@@ -338,7 +400,7 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
    **它的空档 = 我们的差异化**：Claude Code preview 是 solo-centric（一个 agent、一个本地 session、无共享）、code-only；我们的多角色创作介质 + v1 team plane 不与之正面冲突。
    **完整复审**：见 [electron-vs-tauri](../research/desktop-tools/electron-vs-tauri.md)——结论是建议改选 Electron；该决策须在阶段 1（介质面）动工前定死。
 2. **文件面编辑的「轻」**到什么程度：只读 + 行内小改，还是完全外链
-3. **Orchest 进入产品的时机与角色**：候选切入点是 Context Composer 的智能化（注意力策略由 agent 决策）与知识投影的提炼 agent（Dream/Distill 的近亲）
+3. **Orchest 进入产品的时机与角色**：**已收敛（见 §0.7）——Orchest 作为 inline binding 入场的身份就是 avatar / 阶段二驱动者（替缺席的人填输入槽 + runtime 路由），时点 M2。** 其余候选切入点（Context Composer 智能化、知识投影提炼 agent / Dream/Distill）是 avatar 能力的子集或近亲，同属 M2+。
 4. **v1 文字创作角色的引擎**：Claude Code 通用化使用，还是 Orchest 原生 agent
 ### 7.5 命名（已升级为明确待决项：建议改名，时点定在发布前）
 
