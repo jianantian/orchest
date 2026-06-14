@@ -562,6 +562,30 @@ Agent 调用 tool（requires approval） → WS 收到 permission:need
 
 同一请求同时进入 ChatLane 的 ApprovalStrip——模态被关闭/失焦后 approval 仍有常驻可见入口，不会「丢」。多 run / 多 sub-agent 并发请求时以 strip 为主视图，模态只针对当前聚焦 session（设计原则 6）。
 
+### 6.5 两阶段工作流的 UI：输入槽 · avatar 驱动 · 验收回流
+
+> 对齐 [ADR §0.7](./adr-001-product-positioning.md)。**v0 只做阶段一 + 人填输入槽**；avatar 驱动的阶段二与验收回流是 **M2**——但 UI 外壳（gate 状态、Inbox、take-over 控件）v0 就以最小形态埋好，M2 零返工。
+
+**SessionInput = 那个「人类输入槽」。** 前端只有一条发送路径(`POST /channels/:id/messages` → inject-input)；v0 是人在打字，M2 是 avatar 在填同一个槽。所以 SessionInput 不是「聊天框」，是工作台对 runtime 输入槽的视图——这决定了它的组件边界(deixis chips + context tray + 发送)对人和 avatar 是同一套。
+
+**阶段一（v0 核心，attended 共创）**：
+- 人填槽，TurnCard 流式回放，deixis 指代、context tray 控制 agent 所见
+- 产出**设计文档**——它是一等 artifact（在 Surface 区作为文档面打开，可 deixis 引用），不是聊天里的一段文本
+- **「批准设计」是一个独立、显眼的动作**（approve the plan, not every command）：批准 = 授权阶段二自动执行。它不是 TurnCard 里的小 header，是设计面上的一等按钮 + 授权范围(允许的目录/runtime/预算)的可见勾选
+
+**阶段二（M2，unattended 自动执行）**：
+- 输入槽改由 **avatar 驱动**——人不在打字。UI 必须**显式标注「avatar 自主驱动中」**：avatar 色标 + 一个清晰的 autonomous 指示(区别于"人在操作")，TurnCard 流继续但 author = avatar
+- **take-over 常驻可见**：人随时夺回输入槽(开始打字即接管)——因为控制面是共享总线(设计原则 6)
+- gate 状态进 TurnCard：`验收中 / 未通过(+理由,avatar 返工) / 通过`(§3.2)
+- 后台 run 不抢前台：完成 / gate 降级(partial/blocked) / 卡死升级 → 进 **Inbox**(badge + toast，非侵入)
+
+**验收回流（M2，meaning 的后端）**：
+- Inbox 是验收的入口——点击后台 run 进入**验收视图**：设计文档 + diff + 测试结果 + judge 报告**并排**(Surface 区的 overlay/多面)
+- 人的裁决:**接受** / **打回**——打回要区分两个去向:回阶段一(重设计)还是回阶段二(重执行)，对应两个不同按钮
+- 这是人留在创作弧两端中的「后端」(前端是设计)；验收做得好不好 = 整条弧的命门(ADR §0.7)
+
+**Avatar attribution 贯穿全局**：人 authored 的 turn/action 与 avatar authored 的，用 §5.2 的 agent 色标 + 标记区分；Inbox 条目、surface 上的 agent 现身(设计原则 10)、TurnCard author 三处共用同一标识。让用户任何时候都能一眼分清「这是我做的 / 这是我的 avatar 替我做的」。
+
 ---
 
 ## 七、不做的事
@@ -579,3 +603,4 @@ Agent 调用 tool（requires approval） → WS 收到 permission:need
 | **不做自由拖拽分栏** | v0 布局做死：Surface 区 tab/二分屏 + Chat Lane 固定右侧，先建立空间记忆 |
 | **不做编辑器内核** | 人读审指，agent 写（ADR-001 D6）；Reader 用成熟件，编辑外链 |
 | **不做角色档案 / GenUI 布局引擎** | 角色是涌现的——内容驱动 surface 激活；v2 用 layout preset（ADR-001 D2） |
+| **v0 不做 avatar 自主驱动 / 验收回流的完整 UI** | 阶段二是 M2（§6.5）；v0 是人填输入槽。仅埋最小外壳(gate 状态、Inbox badge、take-over 控件)，不建自动驱动可视化 |
