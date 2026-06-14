@@ -304,8 +304,6 @@ pub enum ImageGenerationEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ImageModelCapabilities {
-    pub provider: String,
-    pub model: String,
     pub operations: HashMap<String, ImageOperationCapability>,
     #[serde(default)]
     pub source: CapabilitySource,
@@ -624,8 +622,6 @@ mod tests {
             },
         );
         let caps = ImageModelCapabilities {
-            provider: "test".into(),
-            model: "model".into(),
             operations,
             source: CapabilitySource::Static,
         };

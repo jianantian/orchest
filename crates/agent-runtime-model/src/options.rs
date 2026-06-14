@@ -90,23 +90,24 @@ pub struct ModelCapabilities {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelPricing {
-    pub input_per_million_usd: f64,
-    pub output_per_million_usd: f64,
+    pub currency: String,
+    pub input_per_million: f64,
+    pub output_per_million: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_read_per_million_usd: Option<f64>,
+    pub cache_read_per_million: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_write_per_million_usd: Option<f64>,
+    pub cache_write_per_million: Option<f64>,
 }
 
 impl ModelPricing {
     pub fn calculate(&self, usage: &TokenUsage) -> f64 {
-        let base = usage.input_tokens as f64 * self.input_per_million_usd / 1_000_000.0
-            + usage.output_tokens as f64 * self.output_per_million_usd / 1_000_000.0;
+        let base = usage.input_tokens as f64 * self.input_per_million / 1_000_000.0
+            + usage.output_tokens as f64 * self.output_per_million / 1_000_000.0;
         let cache_read = usage.cache_read_tokens as f64
-            * self.cache_read_per_million_usd.unwrap_or(0.0)
+            * self.cache_read_per_million.unwrap_or(0.0)
             / 1_000_000.0;
         let cache_write = usage.cache_write_tokens as f64
-            * self.cache_write_per_million_usd.unwrap_or(0.0)
+            * self.cache_write_per_million.unwrap_or(0.0)
             / 1_000_000.0;
         base + cache_read + cache_write
     }

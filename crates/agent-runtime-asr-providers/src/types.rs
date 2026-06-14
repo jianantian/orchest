@@ -423,7 +423,6 @@ pub enum ConnectionReuse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AsrModelCapabilities {
-    pub model: String,
     pub languages: Vec<Language>,
     pub streaming: bool,
     pub batch: bool,

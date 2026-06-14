@@ -60,8 +60,8 @@ impl FakeAsrProvider {
 
     pub fn with_behavior(behavior: FakeAdapterBehavior) -> Arc<Self> {
         Arc::new(Self {
-            provider: "fake".into(),
-            model: "test".into(),
+            provider: "volcengine".into(),
+            model: "bigmodel_async".into(),
             caps: make_volcengine_caps(),
             languages: vec![Language::new("zh-CN")],
             behavior,
@@ -74,8 +74,8 @@ impl FakeAsrProvider {
         flush_timeout: Duration,
     ) -> Arc<Self> {
         Arc::new(Self {
-            provider: "fake".into(),
-            model: "test".into(),
+            provider: "volcengine".into(),
+            model: "bigmodel_async".into(),
             caps: make_volcengine_caps(),
             languages: vec![Language::new("zh-CN")],
             behavior,
@@ -86,7 +86,6 @@ impl FakeAsrProvider {
 
 fn make_volcengine_caps() -> AsrModelCapabilities {
     AsrModelCapabilities {
-        model: "volcengine/bigmodel_async".into(),
         languages: vec![Language::new("zh-CN"), Language::new("en")],
         streaming: true,
         batch: false,
@@ -120,7 +119,6 @@ fn make_volcengine_caps() -> AsrModelCapabilities {
 
 fn make_aliyun_caps() -> AsrModelCapabilities {
     AsrModelCapabilities {
-        model: "aliyun/fun-asr-realtime".into(),
         languages: vec![
             Language::new("zh-CN"),
             Language::new("en"),
@@ -233,7 +231,7 @@ impl AsrProvider for FakeAsrProvider {
             .trace_id
             .clone()
             .unwrap_or_else(|| "fake-trace".into());
-        let model = self.caps.model.clone();
+        let model = format!("{}/{}", self.provider, self.model);
         let behavior = self.behavior.clone();
         let final_result_scope = request.options.final_result_scope.clone();
         let flush_timeout = self

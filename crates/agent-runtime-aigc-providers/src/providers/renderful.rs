@@ -228,8 +228,6 @@ impl RenderfulImageAdapter {
             },
         );
         Ok(ImageModelCapabilities {
-            provider: "renderful".into(),
-            model: model.into(),
             operations,
             source: CapabilitySource::ProviderMetadata,
         })
@@ -247,11 +245,7 @@ impl ImageProvider for RenderfulImageAdapter {
     }
 
     fn capabilities(&self) -> crate::ImageModelCapabilities {
-        super::basic_capabilities(
-            "renderful",
-            &self.config.model,
-            vec![ImageOperation::TextToImage, ImageOperation::ImageToImage],
-        )
+        super::basic_capabilities(vec![ImageOperation::TextToImage, ImageOperation::ImageToImage])
     }
 
     async fn create_image_generation(

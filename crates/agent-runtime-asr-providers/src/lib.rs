@@ -6,6 +6,9 @@
 //! through [`AsrEventStream`].
 #![allow(clippy::result_large_err)]
 
+pub mod catalog;
+pub use catalog::{AsrModelCapabilitiesSummary, AsrModelEntry};
+
 pub mod compatibility;
 pub mod config;
 pub mod error;

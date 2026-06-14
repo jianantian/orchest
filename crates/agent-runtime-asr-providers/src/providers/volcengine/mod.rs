@@ -110,7 +110,6 @@ impl AsrProvider for VolcengineAsrAdapter {
 
     fn capabilities(&self) -> AsrModelCapabilities {
         AsrModelCapabilities {
-            model: format!("volcengine/{}", self.config.model_name),
             languages: vec![Language::new("zh-CN"), Language::new("en")],
             streaming: true,
             batch: false,

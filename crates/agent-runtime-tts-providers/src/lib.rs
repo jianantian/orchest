@@ -5,6 +5,9 @@
 //! contracts, telemetry summaries, and feature-gated provider adapters.
 #![allow(clippy::result_large_err)]
 
+pub mod catalog;
+pub use catalog::{TtsModelCapabilitiesSummary, TtsModelEntry};
+
 pub mod config;
 pub mod error;
 pub mod observability;

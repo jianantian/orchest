@@ -347,15 +347,11 @@ impl ImageProvider for CrazyrouterImageAdapter {
     }
 
     fn capabilities(&self) -> crate::ImageModelCapabilities {
-        super::basic_capabilities(
-            "crazyrouter",
-            &self.config.model,
-            vec![
-                ImageOperation::TextToImage,
-                ImageOperation::ImageToImage,
-                ImageOperation::EditImage,
-            ],
-        )
+        super::basic_capabilities(vec![
+            ImageOperation::TextToImage,
+            ImageOperation::ImageToImage,
+            ImageOperation::EditImage,
+        ])
     }
 
     async fn create_image_generation(

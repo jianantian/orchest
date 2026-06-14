@@ -69,10 +69,11 @@ mod tests {
     #[test]
     fn model_pricing_calculate_sonnet() {
         let pricing = ModelPricing {
-            input_per_million_usd: 3.0,
-            output_per_million_usd: 15.0,
-            cache_read_per_million_usd: None,
-            cache_write_per_million_usd: None,
+            currency: "USD".into(),
+            input_per_million: 3.0,
+            output_per_million: 15.0,
+            cache_read_per_million: None,
+            cache_write_per_million: None,
         };
         let usage = TokenUsage {
             input_tokens: 1_000_000,
@@ -86,10 +87,11 @@ mod tests {
     #[test]
     fn model_pricing_calculate_with_cache() {
         let pricing = ModelPricing {
-            input_per_million_usd: 3.0,
-            output_per_million_usd: 15.0,
-            cache_read_per_million_usd: Some(0.3),
-            cache_write_per_million_usd: Some(3.75),
+            currency: "USD".into(),
+            input_per_million: 3.0,
+            output_per_million: 15.0,
+            cache_read_per_million: Some(0.3),
+            cache_write_per_million: Some(3.75),
         };
         let usage = TokenUsage {
             input_tokens: 500_000,

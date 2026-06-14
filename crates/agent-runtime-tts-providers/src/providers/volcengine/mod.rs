@@ -16,7 +16,8 @@ use crate::traits::TtsProvider;
 use crate::types::{
     AudioData, AudioFormat, CompatibilityPolicy, DuplexSynthesizeRequest, Language,
     ListVoicesRequest, SpeechControls, SynthesizeRequest, SynthesizeResult, TtsInput, TtsInputKind,
-    TtsModelCapabilities, TtsOperation, VoiceCatalogSource, VoiceGender, VoiceInfo, VoiceKind,
+    TtsModelCapabilities, TtsOperation, VoiceCatalogSource, VoiceGender, VoiceInfo,
+    VoiceKind,
 };
 use crate::voices::filter_voices;
 
@@ -171,20 +172,7 @@ impl TtsProvider for VolcengineTtsAdapter {
     }
 
     fn capabilities(&self) -> TtsModelCapabilities {
-        TtsModelCapabilities {
-            batch_synthesis: true,
-            single_streaming: true,
-            duplex_streaming: true,
-            input_kinds: vec![TtsInputKind::Text],
-            languages: vec![Language::new("zh-CN"), Language::new("en-US")],
-            voice_kinds: vec![VoiceKind::System, VoiceKind::Custom],
-            batch_output_formats: vec![AudioFormat::Mp3, AudioFormat::Pcm16Le],
-            stream_output_formats: vec![AudioFormat::Mp3, AudioFormat::Pcm16Le],
-            supports_instruction: false,
-            supports_emotion: false,
-            supports_style: false,
-            supports_ssml: false,
-        }
+        volcengine_model_capabilities()
     }
 
     async fn synthesize(&self, request: SynthesizeRequest) -> Result<SynthesizeResult, TtsError> {
@@ -368,6 +356,23 @@ fn strip_unsupported_control(
     }
     *value = None;
     Ok(())
+}
+
+fn volcengine_model_capabilities() -> TtsModelCapabilities {
+    TtsModelCapabilities {
+        batch_synthesis: true,
+        single_streaming: true,
+        duplex_streaming: true,
+        input_kinds: vec![TtsInputKind::Text],
+        languages: vec![Language::new("zh-CN"), Language::new("en-US")],
+        voice_kinds: vec![VoiceKind::System, VoiceKind::Custom],
+        batch_output_formats: vec![AudioFormat::Mp3, AudioFormat::Pcm16Le],
+        stream_output_formats: vec![AudioFormat::Mp3, AudioFormat::Pcm16Le],
+        supports_instruction: false,
+        supports_emotion: false,
+        supports_style: false,
+        supports_ssml: false,
+    }
 }
 
 pub(super) fn audio_format_name(format: &AudioFormat) -> &'static str {

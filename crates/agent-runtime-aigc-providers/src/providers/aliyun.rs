@@ -51,7 +51,10 @@ impl AliyunImageAdapter {
     }
 
     fn is_wanx_model(&self) -> bool {
-        self.config.model.starts_with("wanx")
+        // "wanx*" = legacy naming (e.g. wanx2.1-t2i-turbo)
+        // "wan2.*" = new naming (e.g. wan2.7-image-pro)
+        let m = &self.config.model;
+        m.starts_with("wanx") || m.starts_with("wan2")
     }
 
     pub fn build_request(&self, request: &ImageGenerationRequest) -> Result<Value, AigcError> {
@@ -202,15 +205,11 @@ impl ImageProvider for AliyunImageAdapter {
     }
 
     fn capabilities(&self) -> crate::ImageModelCapabilities {
-        super::basic_capabilities(
-            "aliyun",
-            &self.config.model,
-            vec![
-                ImageOperation::TextToImage,
-                ImageOperation::ImageToImage,
-                ImageOperation::EditImage,
-            ],
-        )
+        super::basic_capabilities(vec![
+            ImageOperation::TextToImage,
+            ImageOperation::ImageToImage,
+            ImageOperation::EditImage,
+        ])
     }
 
     async fn create_image_generation(

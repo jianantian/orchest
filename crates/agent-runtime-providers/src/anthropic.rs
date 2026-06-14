@@ -81,9 +81,22 @@ impl AnthropicAdapter {
 
     fn supports_adaptive(&self) -> bool {
         let m = &self.model;
-        m.starts_with("claude-opus-4")
+        // fable-5 and mythos-5: adaptive always-on
+        // opus-4.x and sonnet-4.x: adaptive always-on
+        // haiku-4.x: extended thinking only (no adaptive)
+        m.starts_with("claude-fable-5")
+            || m.starts_with("claude-mythos-5")
+            || m.starts_with("claude-opus-4")
             || m.starts_with("claude-sonnet-4")
-            || m.starts_with("claude-haiku-4")
+    }
+
+    fn context_window_size(&self) -> u64 {
+        let m = &self.model;
+        if m.starts_with("claude-haiku-4") {
+            200_000
+        } else {
+            1_000_000
+        }
     }
 
     fn build_request_body(
@@ -325,7 +338,7 @@ impl ModelAdapter for AnthropicAdapter {
                 long_ttl: true,
             },
             max_output_tokens: Some(self.max_tokens),
-            context_window_size: Some(200_000),
+            context_window_size: Some(self.context_window_size()),
             source: CapabilitySource::Static,
             pricing: Some(self.pricing()),
         }

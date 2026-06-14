@@ -574,8 +574,6 @@ mod tests {
             },
         );
         ImageModelCapabilities {
-            provider: "mock".into(),
-            model: "mock-image".into(),
             operations,
             source: crate::CapabilitySource::Static,
         }

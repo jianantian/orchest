@@ -5,6 +5,9 @@
 //! [`gateway`] module and [`create_image_provider_from_config`].
 #![allow(clippy::result_large_err)]
 
+pub mod catalog;
+pub use catalog::{ImageModelEntry, ImageModelList, ImageProviderInfo};
+
 pub mod gateway;
 pub mod http;
 pub mod image;

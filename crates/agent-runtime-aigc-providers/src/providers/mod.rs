@@ -17,11 +17,7 @@ use crate::{
     ImageOperation, ImageOperationCapability,
 };
 
-fn basic_capabilities(
-    provider: &str,
-    model: &str,
-    operations: Vec<ImageOperation>,
-) -> ImageModelCapabilities {
+fn basic_capabilities(operations: Vec<ImageOperation>) -> ImageModelCapabilities {
     let mut map = HashMap::new();
     for operation in operations {
         map.insert(
@@ -38,8 +34,6 @@ fn basic_capabilities(
         );
     }
     ImageModelCapabilities {
-        provider: provider.into(),
-        model: model.into(),
         operations: map,
         source: CapabilitySource::Static,
     }

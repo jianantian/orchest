@@ -169,7 +169,6 @@ impl OpenRouterImageAdapter {
 
     #[allow(dead_code)]
     pub fn parse_model_metadata(
-        model: &str,
         metadata: Value,
     ) -> Result<ImageModelCapabilities, AigcError> {
         let output_modalities = metadata
@@ -216,8 +215,6 @@ impl OpenRouterImageAdapter {
             },
         );
         Ok(ImageModelCapabilities {
-            provider: "openrouter".into(),
-            model: model.into(),
             operations,
             source: CapabilitySource::ProviderMetadata,
         })
@@ -246,11 +243,7 @@ impl ImageProvider for OpenRouterImageAdapter {
     }
 
     fn capabilities(&self) -> crate::ImageModelCapabilities {
-        super::basic_capabilities(
-            "openrouter",
-            &self.config.model,
-            vec![ImageOperation::TextToImage],
-        )
+        super::basic_capabilities(vec![ImageOperation::TextToImage])
     }
 
     async fn create_image_generation(
@@ -422,7 +415,6 @@ mod tests {
     #[test]
     fn model_metadata_parser_records_image_modalities() {
         let caps = OpenRouterImageAdapter::parse_model_metadata(
-            "google/gemini-2.5-flash-image",
             json!({
                 "id": "google/gemini-2.5-flash-image",
                 "architecture": {

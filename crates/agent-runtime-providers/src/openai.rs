@@ -286,13 +286,22 @@ fn normalize_chat_url(value: &str) -> String {
 }
 
 fn supports_reasoning_model(model: &str) -> bool {
-    matches!(
-        model.split_once('/').map_or(model, |(_, model)| model),
-        name if name.starts_with("o1")
-            || name.starts_with("o3")
-            || name.starts_with("o4")
-            || name.starts_with("gpt-5")
-    )
+    let name = model.split_once('/').map_or(model, |(_, m)| m);
+    name.starts_with("o1")
+        || name.starts_with("o3")
+        || name.starts_with("o4")
+        || name.starts_with("gpt-5")
+}
+
+fn openai_context_window(model: &str) -> u64 {
+    let name = model.split_once('/').map_or(model, |(_, m)| m);
+    if name.starts_with("gpt-5.5") || name == "gpt-5.4" {
+        1_000_000
+    } else if name.starts_with("gpt-5.4-mini") || name.starts_with("gpt-5.4-nano") {
+        400_000
+    } else {
+        128_000
+    }
 }
 
 #[async_trait]
@@ -333,9 +342,9 @@ impl ModelAdapter for OpenAiAdapter {
                 long_ttl: false,
             },
             max_output_tokens: Some(self.max_tokens),
-            context_window_size: Some(128_000),
+            context_window_size: Some(openai_context_window(&self.model)),
             source: CapabilitySource::Static,
-            pricing: None,
+            pricing: Some(crate::pricing::openai_pricing(&self.model)),
         }
     }
 

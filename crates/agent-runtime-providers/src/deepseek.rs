@@ -290,6 +290,14 @@ fn map_stop_reason(raw: &str) -> StopReason {
     }
 }
 
+impl DeepSeekAdapter {
+    fn supports_thinking(&self) -> bool {
+        // v4-flash and legacy deepseek-reasoner support thinking; v4-pro is non-thinking only
+        let m = &self.model;
+        m.starts_with("deepseek-v4-flash") || m.starts_with("deepseek-reasoner")
+    }
+}
+
 #[async_trait]
 impl ModelAdapter for DeepSeekAdapter {
     fn provider_name(&self) -> &str {
@@ -301,13 +309,23 @@ impl ModelAdapter for DeepSeekAdapter {
     }
 
     fn capabilities(&self) -> ModelCapabilities {
+        let context_window = if self.model.starts_with("deepseek-v4") {
+            1_000_000
+        } else {
+            64_000
+        };
+
         ModelCapabilities {
             streaming: true,
             tool_use: true,
             parallel_tool_use: true,
             reasoning: ReasoningCapability {
-                supported: true,
-                efforts: vec![ThinkingLevel::High, ThinkingLevel::Max],
+                supported: self.supports_thinking(),
+                efforts: if self.supports_thinking() {
+                    vec![ThinkingLevel::High, ThinkingLevel::Max]
+                } else {
+                    vec![]
+                },
                 budget_tokens: false,
                 output_exclusion: false,
                 replay_metadata_required: true,
@@ -318,9 +336,9 @@ impl ModelAdapter for DeepSeekAdapter {
                 long_ttl: false,
             },
             max_output_tokens: Some(self.max_tokens),
-            context_window_size: Some(64_000),
+            context_window_size: Some(context_window),
             source: CapabilitySource::Static,
-            pricing: None,
+            pricing: Some(crate::pricing::deepseek_pricing(&self.model)),
         }
     }
 

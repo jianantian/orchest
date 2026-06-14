@@ -213,7 +213,6 @@ impl AliyunAsrAdapter {
 
     fn fun_asr_capabilities(&self) -> AsrModelCapabilities {
         AsrModelCapabilities {
-            model: format!("aliyun/{}", self.config.model),
             languages: vec![
                 Language::new("zh-CN"),
                 Language::new("en"),

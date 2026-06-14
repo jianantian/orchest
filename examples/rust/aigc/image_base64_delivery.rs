@@ -22,8 +22,6 @@ impl ImageProvider for ExampleProvider {
 
     fn capabilities(&self) -> ImageModelCapabilities {
         ImageModelCapabilities {
-            provider: "example".into(),
-            model: "example-image".into(),
             operations: Default::default(),
             source: Default::default(),
         }
