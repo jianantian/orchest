@@ -296,6 +296,8 @@ pub trait RuntimeBackend: Send + Sync + 'static {
 
 `RuntimeBackend` 是 Multivac 作为 execution control plane 而非聊天插件的根本边界——所有 Task 的 runtime projection、所有 artifact 的产生与消费、所有 workspace 的变更，都通过这个 trait 流入系统真相。
 
+> **拓扑校正（以 [ADR §0.7](./adr-001-product-positioning.md) 为准）**：RuntimeBackend 不是「Orchest 大脑指挥 Claude Code」的串接层，而是 **一池 runtime binding**（`inline:orchest` / `cli:claude-code` / `cli:codex`）+ 一个 **路由器**。每个 runtime 有一个「人类输入槽」+ 一条 TaskEvent 输出流；**谁填输入槽取决于阶段**——v0 是人（前台共创，经工作台/deixis），M2 是 avatar（阶段二替缺席的人驱动）。本节下面的 `start_agent_task` / `cli-task-dispatch` / `task-supervisor` 描述的是 **M2 编排层**（avatar 作为路由器/驱动者时的形态），**不是 v0**：v0 是「人当路由器 + 单一 cli:claude-code binding + 人填输入槽」，没有 Orchest agent 居于人与 Claude Code 之间。inline/cli 不是两种员工类型、也非固定 primary——是 pool + router（先人后 avatar）。
+
 **`StartAgentTask` 完整契约**（吸收 MIMO `SpawnInput` 的验证过的字段，这是 spawn 不退化为 fire-and-forget 的关键）：
 
 ```rust
@@ -331,13 +333,16 @@ pub struct CompletionGate {
 
 `task_status()` 返回 `RuntimeProjection` 而不是存在 Task 表里——runtime projection 是瞬时执行状态（idle / working / waiting_for_user / processing_tools），由 RuntimeBackend 实时计算。不持久化避免了「数据库状态与实际执行不一致」的问题。
 
-- 对模型暴露的是 `start_agent_task` / `attach_agent_task` / `respond_permission` 等 product tools，不暴露 `run_claude_code` 这种 vendor-specific tool。
-- `cli-task-dispatch` skill 决定何时创建或附加 CLI task；`task-supervisor` skill 决定何时注入指令、批准、暂停或终止。
-- `PtyRuntime` 负责 Claude Code：spawn `claude`，读取 JSONL / PTY 输出并转译为 `TaskEvent`。
+- **（M2 编排层）** 对 avatar/编排 agent 暴露的是 `start_agent_task` / `attach_agent_task` / `respond_permission` 等 product tools，不暴露 `run_claude_code` 这种 vendor-specific tool。
+- **（M2 编排层）** `cli-task-dispatch` skill 决定何时创建或附加 CLI task；`task-supervisor` skill 决定何时注入指令、批准、暂停或终止——二者是 avatar 当路由器/驱动者时的能力，**v0 由人直接做（人选 runtime、人填输入槽）**。
+- **（v0 + 始终）** `start/terminate/restart` 走进程组生命周期（kill 整棵进程树），人与 avatar 共用同一条「填输入槽」(inject-input) 路径——这是 v0 桩，不分叉。
+- `PtyRuntime` 负责 Claude Code：spawn `claude`（官方 headless / stream-json），读取 JSONL 输出并转译为 `TaskEvent`。
 - `AcpRuntime` 负责 Codex / OpenCode：spawn ACP adapter subprocess，通过 JSON-RPC stdio 转译事件与权限请求。
 - `RemoteRuntimeBackend` 只关心远程协议，不关心具体 CLI。远程节点可以在云端沙箱，也可以在用户本机。
 
-### 6.7 编排深度：spawn 契约之上的四个机制
+### 6.7 编排深度：spawn 契约之上的四个机制（M2，avatar 入场后）
+
+> 本节是 **M2 编排层**——avatar（阶段二驱动者）的能力集（[ADR §0.7](./adr-001-product-positioning.md)）。v0 不实现，但 `TaskEvent` / 输入槽 / 进程组生命周期等桩 v0 就埋，M2 零返工。
 
 这是 Multivac 与「调 API 的聊天工具」的根本差异层（MIMO 验证），其中 loop 级机制是对 Orchest SDK 的需求输入，产品级机制在 multivac-core 实现：
 
@@ -377,6 +382,17 @@ pub trait AgentFactory: Send + Sync {
 两个消费方：(a) 用户在前端用自然语言创建 Employee，确认后落库；(b) **primary agent 在运行时为委派任务动态创建特化子 agent**——领域知识进 system prompt、tool allowlist 精准匹配任务，而不是把所有知识塞进 task prompt。Employee 不是静态配置：`EmployeeTaskBinding` 记录 Employee 当前承接的 task，`AgentConfig::with_task_context(&task)` 按 task 派生运行配置——Employee 是「可承接 task、拥有 runtime context 的执行实体」，不是「会聊天的 bot」（feishu.md 的战略要求）。
 
 远期（接口不堵死）：**Dream**（从 session traces 提取持久知识更新 project memory）与 **Distill**（重复手动工作流自动打包为 skill）。
+
+**5. 自主执行：watcher-driven loop（avatar 的核心动作）**。avatar 在阶段二「填输入槽」的方式就是一个循环——读 TaskEvent，决定下一句输入，判完成。两种 loop 策略：
+
+| | continue-loop（ReAct，机制 1） | restart-loop（Ralph） |
+|---|---|---|
+| context | 同上下文，注入 reason 再跑 | **每轮全新 context** |
+| 跨轮记忆 | 在对话里 | **在磁盘**（progress/checkpoint/objects——沉淀是承重件） |
+| 进程 | 不重启 | **kill 整树 + 带状态指针重启** |
+| 适合 | 「快好了，推一把」 | 长任务、context rot 是敌人、过夜碾 |
+
+二者共用 RuntimeBackend 控制面（与人 UI 同一条总线，人随时接管）；终止条件 = completion gate（机制 2）。**护栏不可省**：迭代 cap + BudgetGuard 成本闸、每轮 workspace 快照（接 ADR D12 可整 loop 回滚）、卡死 N 轮 → `Escalate` 到 Inbox/人、每轮仍走双层权限。现有零件：`watcher.rs`（`WatcherAction::Inject/Steer/Abort`，泛化到消费 cli 的 TaskEvent）、`llm_watcher.rs`、`supervisor.rs`（进程监管树，从 inline 扩到 cli runtime）。
 
 ### 6.8 双层权限模型
 
@@ -651,6 +667,8 @@ pub struct FeatureFlags {
 
 ## 八、职责边界：Orchest vs Multivac vs Runtime Host
 
+> **v0/M2 读法（[ADR §0.7](./adr-001-product-positioning.md)）**：下表是**完整目标架构**的职责分配。其中「Orchest SDK」列在 **v0 基本不进产品**——v0 是「人当路由器 + 单一 cli:claude-code binding」，Orchest 的 AgentRun/SubAgent/Skill 编排是 **M2 avatar 入场**时才激活的能力。v0 真正需要的是 multivac-core 的 RuntimeBackend（进程组生命周期 + 单一输入槽 + TaskEvent）+ Claude Code 的 PtyRuntime。
+
 | 职责 | Orchest SDK | multivac-core (Multivac) | multivac-runtime-host |
 |------|------------|--------------------------|--------------------|
 | Agent loop | ✅ AgentRun | — | — |
@@ -662,6 +680,9 @@ pub struct FeatureFlags {
 | Sub-agent | ✅ SubAgentBuilder | — | — |
 | Mid-run steering | ✅ (v0.9) | UI 控制 + RuntimeBackend steering | runtime-specific steering |
 | Normalized event contract | ✅ RuntimeEvent | ✅ TaskEvent 持久化、广播、审计 | ✅ CLI/ACP/PTY → TaskEvent 转译 |
+| 路由 / 填输入槽 (WHO) | — | **v0：人**（工作台 UI）；**M2：avatar**（inline binding 上的 Orchest agent） | 执行 inject-input 到对应 runtime |
+| Avatar（阶段二驱动者，M2） | ✅ AgentRun 承载 | avatar 生命周期 + 授权范围 = 人的权限 + 护栏 | — |
+| Employee（可复用 AgentConfig，M2/M3） | ✅ AgentConfig | org/ 管理具名 worker 配置 | 实例化到 runtime |
 | | | | |
 | **HTTP/WS server** | — | ✅ axum router | reverse WS client/server only |
 | **Auth (JWT, OAuth)** | — | ✅ auth/ module | runtime-host token / binding |
