@@ -35,7 +35,7 @@ impl FakeAsrProvider {
     pub fn volcengine() -> Arc<Self> {
         Arc::new(Self {
             provider: "volcengine".into(),
-            model: "bigmodel_async".into(),
+            model: "bigasr".into(),
             caps: make_volcengine_caps(),
             languages: vec![Language::new("zh-CN"), Language::new("en")],
             behavior: FakeAdapterBehavior::Normal,
@@ -61,7 +61,7 @@ impl FakeAsrProvider {
     pub fn with_behavior(behavior: FakeAdapterBehavior) -> Arc<Self> {
         Arc::new(Self {
             provider: "volcengine".into(),
-            model: "bigmodel_async".into(),
+            model: "bigasr".into(),
             caps: make_volcengine_caps(),
             languages: vec![Language::new("zh-CN")],
             behavior,
@@ -75,7 +75,7 @@ impl FakeAsrProvider {
     ) -> Arc<Self> {
         Arc::new(Self {
             provider: "volcengine".into(),
-            model: "bigmodel_async".into(),
+            model: "bigasr".into(),
             caps: make_volcengine_caps(),
             languages: vec![Language::new("zh-CN")],
             behavior,

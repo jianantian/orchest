@@ -40,7 +40,7 @@ fn get_config() -> Option<VolcengineAsrConfig> {
     let api_key = std::env::var("VOLCENGINE_API_KEY").ok()?;
     let resource_id = std::env::var("VOLCENGINE_RESOURCE_ID").ok()?;
     Some(VolcengineAsrConfig {
-        model_name: "bigmodel_async".into(),
+        model: "bigasr".into(),
         ws_url: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async".into(),
         api_key,
         access_key: std::env::var("VOLCENGINE_ACCESS_KEY").ok(),
@@ -61,7 +61,7 @@ async fn live_volcengine_streaming_silence() {
 
     let adapter = VolcengineAsrAdapter::new(config);
     let request = StreamingTranscribeRequest {
-        model: Some("volcengine/bigmodel_async".into()),
+        model: Some("volcengine/bigasr".into()),
         format: StreamingAudioFormat::Pcm16 {
             sample_rate_hz: 16000,
             channels: 1,
@@ -92,7 +92,7 @@ async fn live_volcengine_streaming_silence() {
     assert_eq!(final_output.trace_id, "live-test-silence");
     assert_eq!(
         final_output.result.telemetry.model,
-        "volcengine/bigmodel_async"
+        "volcengine/bigasr"
     );
     assert!(final_output.result.telemetry.latency_final_ms > 0);
 }

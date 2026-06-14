@@ -23,10 +23,17 @@ use protocol::*;
 
 #[derive(Debug, Clone)]
 pub struct VolcengineAsrConfig {
-    pub model_name: String,
+    /// Model identifier: "bigasr" (Doubao ASR 1.0) or "seedasr" (Doubao ASR 2.0).
+    /// Maps to the `X-Api-Resource-Id` header; see `resource_id`.
+    pub model: String,
+    /// WebSocket endpoint URL, e.g. "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async".
+    /// Selects the streaming protocol variant (bigmodel / bigmodel_nostream / bigmodel_async).
     pub ws_url: String,
     pub api_key: String,
     pub access_key: Option<String>,
+    /// Provider-side resource identifier (X-Api-Resource-Id).
+    /// Normally derived from `model`; can also encode the billing tier
+    /// (e.g. "volc.bigasr.sauc.concurrent" for concurrent billing).
     pub resource_id: String,
 }
 
@@ -105,7 +112,7 @@ impl AsrProvider for VolcengineAsrAdapter {
     }
 
     fn model_name(&self) -> &str {
-        &self.config.model_name
+        &self.config.model
     }
 
     fn capabilities(&self) -> AsrModelCapabilities {
@@ -190,7 +197,7 @@ impl AsrProvider for VolcengineAsrAdapter {
             .trace_id
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let model = format!("volcengine/{}", self.config.model_name);
+        let model = format!("volcengine/{}", self.config.model);
 
         let connect_id = uuid::Uuid::new_v4().to_string();
         let request_id = uuid::Uuid::new_v4().to_string();
@@ -707,7 +714,7 @@ mod tests {
     #[test]
     fn build_client_payload_basic() {
         let config = VolcengineAsrConfig {
-            model_name: "bigmodel_async".into(),
+            model: "bigasr".into(),
             ws_url: "wss://test.com".into(),
             api_key: "key".into(),
             access_key: None,
@@ -715,7 +722,7 @@ mod tests {
         };
         let adapter = VolcengineAsrAdapter::new(config);
         let request = StreamingTranscribeRequest {
-            model: Some("volcengine/bigmodel_async".into()),
+            model: Some("volcengine/bigasr".into()),
             format: StreamingAudioFormat::Pcm16 {
                 sample_rate_hz: 16000,
                 channels: 1,
@@ -737,7 +744,7 @@ mod tests {
     #[test]
     fn build_client_payload_with_hot_words() {
         let config = VolcengineAsrConfig {
-            model_name: "bigmodel_async".into(),
+            model: "bigasr".into(),
             ws_url: "wss://test.com".into(),
             api_key: "key".into(),
             access_key: None,
@@ -750,7 +757,7 @@ mod tests {
         };
 
         let request = StreamingTranscribeRequest {
-            model: Some("volcengine/bigmodel_async".into()),
+            model: Some("volcengine/bigasr".into()),
             format: StreamingAudioFormat::Pcm16 {
                 sample_rate_hz: 16000,
                 channels: 1,
@@ -771,14 +778,14 @@ mod tests {
     #[tokio::test]
     async fn volcengine_rejects_insecure_ws_url() {
         let adapter = VolcengineAsrAdapter::new(VolcengineAsrConfig {
-            model_name: "bigmodel_async".into(),
+            model: "bigasr".into(),
             ws_url: "ws://example.invalid/api/v3/sauc/bigmodel_async".into(),
             api_key: "key".into(),
             access_key: Some("access".into()),
             resource_id: "resource".into(),
         });
         let request = StreamingTranscribeRequest {
-            model: Some("volcengine/bigmodel_async".into()),
+            model: Some("volcengine/bigasr".into()),
             format: StreamingAudioFormat::Pcm16 {
                 sample_rate_hz: 16000,
                 channels: 1,
@@ -801,7 +808,7 @@ mod tests {
     #[test]
     fn build_client_payload_with_endpointing() {
         let config = VolcengineAsrConfig {
-            model_name: "bigmodel_async".into(),
+            model: "bigasr".into(),
             ws_url: "wss://test.com".into(),
             api_key: "key".into(),
             access_key: None,
@@ -817,7 +824,7 @@ mod tests {
         };
 
         let request = StreamingTranscribeRequest {
-            model: Some("volcengine/bigmodel_async".into()),
+            model: Some("volcengine/bigasr".into()),
             format: StreamingAudioFormat::Pcm16 {
                 sample_rate_hz: 16000,
                 channels: 1,

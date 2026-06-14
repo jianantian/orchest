@@ -30,10 +30,10 @@ pub struct AsrModelEntry {
     pub display_name: &'static str,
     pub languages: &'static [&'static str],
     pub capabilities: AsrModelCapabilitiesSummary,
-    /// Default `resource_id` passed via provider_options, if applicable.
-    /// Set this in `AsrProviderRuntimeConfig.provider_options["resource_id"]` to
-    /// select a specific billing tier (e.g. concurrent vs per-hour).
-    pub default_resource_id: Option<&'static str>,
+    /// The provider-side resource identifier that selects this model.
+    /// For Volcengine this is the `X-Api-Resource-Id` header value.
+    /// `None` for providers that identify models by other means (e.g. URL / request param).
+    pub resource_id: Option<&'static str>,
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ fn build_catalog() -> Vec<AsrModelEntry> {
                 hot_words: true,
                 context_prompt: false,
             },
-            default_resource_id: None,
+            resource_id: None,
         },
         AsrModelEntry {
             model_id: "volcengine/bigasr",
@@ -74,9 +74,7 @@ fn build_catalog() -> Vec<AsrModelEntry> {
                 hot_words: true,
                 context_prompt: true,
             },
-            // Per-hour billing. For concurrent billing, set resource_id to
-            // "volc.bigasr.sauc.concurrent" in provider_options.
-            default_resource_id: Some("volc.bigasr.sauc.duration"),
+            resource_id: Some("volc.bigasr.sauc.duration"),
         },
         AsrModelEntry {
             model_id: "volcengine/seedasr",
@@ -92,9 +90,7 @@ fn build_catalog() -> Vec<AsrModelEntry> {
                 hot_words: true,
                 context_prompt: true,
             },
-            // Per-hour billing. For concurrent billing, set resource_id to
-            // "volc.seedasr.sauc.concurrent" in provider_options.
-            default_resource_id: Some("volc.seedasr.sauc.duration"),
+            resource_id: Some("volc.seedasr.sauc.duration"),
         },
     ]
 }
@@ -125,7 +121,7 @@ mod tests {
             .expect("aliyun/fun-asr-realtime should be in catalog");
         assert!(entry.capabilities.streaming);
         assert!(entry.capabilities.word_timestamps);
-        assert!(entry.default_resource_id.is_none());
+        assert!(entry.resource_id.is_none());
     }
 
     #[test]
@@ -135,7 +131,7 @@ mod tests {
             .find(|m| m.model_id == "volcengine/bigasr")
             .expect("volcengine/bigasr should be in catalog");
         assert_eq!(
-            entry.default_resource_id,
+            entry.resource_id,
             Some("volc.bigasr.sauc.duration")
         );
     }
@@ -147,7 +143,7 @@ mod tests {
             .find(|m| m.model_id == "volcengine/seedasr")
             .expect("volcengine/seedasr should be in catalog");
         assert_eq!(
-            entry.default_resource_id,
+            entry.resource_id,
             Some("volc.seedasr.sauc.duration")
         );
     }

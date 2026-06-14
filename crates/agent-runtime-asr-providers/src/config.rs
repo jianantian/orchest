@@ -120,14 +120,14 @@ mod tests {
 
     #[test]
     fn normalize_valid_provider_model() {
-        let n = normalize_asr_provider_model("volcengine/bigmodel_async").unwrap();
+        let n = normalize_asr_provider_model("volcengine/bigasr").unwrap();
         assert_eq!(n.provider, "volcengine");
-        assert_eq!(n.model, "bigmodel_async");
+        assert_eq!(n.model, "bigasr");
     }
 
     #[test]
     fn normalize_rejects_bare_model() {
-        let err = normalize_asr_provider_model("bigmodel_async").unwrap_err();
+        let err = normalize_asr_provider_model("bigasr").unwrap_err();
         assert_eq!(err.code, AsrErrorCode::InvalidRequest);
         assert!(err.message.contains("bare model strings"));
     }
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn normalize_rejects_empty_provider() {
-        let err = normalize_asr_provider_model("/bigmodel_async").unwrap_err();
+        let err = normalize_asr_provider_model("/bigasr").unwrap_err();
         assert_eq!(err.code, AsrErrorCode::InvalidRequest);
     }
 
@@ -159,15 +159,15 @@ mod tests {
 
     #[test]
     fn normalize_trims_whitespace() {
-        let n = normalize_asr_provider_model("  volcengine/bigmodel_async  ").unwrap();
+        let n = normalize_asr_provider_model("  volcengine/bigasr  ").unwrap();
         assert_eq!(n.provider, "volcengine");
-        assert_eq!(n.model, "bigmodel_async");
+        assert_eq!(n.model, "bigasr");
     }
 
     #[test]
     fn factory_returns_unsupported_for_volcengine_config() {
         let err = match create_asr_provider_from_config(AsrProviderRuntimeConfig {
-            model: "volcengine/bigmodel_async".into(),
+            model: "volcengine/bigasr".into(),
             api_key: Some("key".into()),
             api_key_env: None,
             api_url: None,

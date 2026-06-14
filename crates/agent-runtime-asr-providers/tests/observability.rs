@@ -149,7 +149,7 @@ async fn final_output_contains_telemetry() {
     assert_eq!(final_output.result.telemetry.trace_id, "tel-test");
     assert_eq!(
         final_output.result.telemetry.model,
-        "volcengine/bigmodel_async"
+        "volcengine/bigasr"
     );
 
     stream.input.end_stream().await.unwrap();
