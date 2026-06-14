@@ -141,7 +141,6 @@ impl AsrProvider for VolcengineAsrAdapter {
             hot_words: true,
             context_prompt: true,
             provider_option_keys: vec![
-                "resource_id",
                 "enable_nonstream",
                 "enable_itn",
                 "enable_punc",

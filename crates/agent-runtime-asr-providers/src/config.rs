@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::error::{AsrError, AsrErrorCode};
 use crate::traits::AsrProvider;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AsrProviderRuntimeConfig {
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -67,7 +67,7 @@ pub fn normalize_asr_provider_model(
     })
 }
 
-#[allow(clippy::result_large_err)] // justified: ConfigError is large by design (rich diagnostics); callers box it immediately
+#[allow(clippy::result_large_err)]
 pub fn create_asr_provider_from_config(
     config: AsrProviderRuntimeConfig,
 ) -> Result<Arc<dyn AsrProvider>, AsrError> {
@@ -76,25 +76,126 @@ pub fn create_asr_provider_from_config(
     match normalized.provider {
         #[cfg(feature = "volcengine")]
         "volcengine" => {
-            let _ = &config;
-            Err(AsrError::new(
-                AsrErrorCode::UnsupportedOperation,
-                "volcengine adapter creation from config is not yet implemented",
-            ))
+            use crate::providers::volcengine::{VolcengineAsrAdapter, VolcengineAsrConfig};
+
+            let api_key = resolve_api_key(&config, "VOLCENGINE_API_KEY")?;
+
+            let base = match normalized.model {
+                "bigasr" => "volc.bigasr.sauc.",
+                "seedasr" => "volc.seedasr.sauc.",
+                other => {
+                    return Err(AsrError::new(
+                        AsrErrorCode::InvalidRequest,
+                        format!(
+                            "unknown Volcengine ASR model '{other}'; \
+                             supported: bigasr, seedasr"
+                        ),
+                    ))
+                }
+            };
+
+            let billing = config
+                .provider_options
+                .get("billing")
+                .and_then(|v| v.as_str())
+                .unwrap_or("duration");
+            let suffix = match billing {
+                "duration" => "duration",
+                "concurrent" => "concurrent",
+                other => {
+                    return Err(AsrError::new(
+                        AsrErrorCode::InvalidRequest,
+                        format!(
+                            "unknown billing mode '{other}'; \
+                             expected 'duration' (default) or 'concurrent'"
+                        ),
+                    ))
+                }
+            };
+
+            let resource_id = format!("{base}{suffix}");
+            let ws_url = config.api_url.unwrap_or_else(|| {
+                "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async".to_string()
+            });
+            let access_key = config
+                .provider_options
+                .get("access_key")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+
+            Ok(Arc::new(VolcengineAsrAdapter::new(VolcengineAsrConfig {
+                model: normalized.model.to_string(),
+                ws_url,
+                api_key,
+                access_key,
+                resource_id,
+            })))
         }
         #[cfg(feature = "aliyun")]
         "aliyun" => {
-            let _ = &config;
-            Err(AsrError::new(
-                AsrErrorCode::UnsupportedOperation,
-                "aliyun adapter creation from config is not yet implemented",
-            ))
+            use crate::providers::aliyun::{AliyunAsrAdapter, AliyunAsrConfig};
+
+            let api_key = resolve_api_key(&config, "DASHSCOPE_API_KEY")?;
+
+            if normalized.model != "fun-asr-realtime" {
+                return Err(AsrError::new(
+                    AsrErrorCode::InvalidRequest,
+                    format!(
+                        "unknown Aliyun ASR model '{}'; supported: fun-asr-realtime",
+                        normalized.model
+                    ),
+                ));
+            }
+
+            let ws_url = config.api_url.unwrap_or_else(|| {
+                "wss://dashscope.aliyuncs.com/api-ws/v1/inference/".to_string()
+            });
+
+            Ok(Arc::new(AliyunAsrAdapter::new(AliyunAsrConfig {
+                model: normalized.model.to_string(),
+                api_key,
+                ws_url,
+            })))
         }
         other => Err(AsrError::new(
             AsrErrorCode::UnknownProvider,
             format!("unknown ASR provider '{other}'"),
         )),
     }
+}
+
+fn resolve_api_key(config: &AsrProviderRuntimeConfig, default_env: &str) -> Result<String, AsrError> {
+    if let Some(key) = &config.api_key {
+        let trimmed = key.trim();
+        if trimmed.is_empty() {
+            return Err(AsrError::new(
+                AsrErrorCode::InvalidRequest,
+                "api_key cannot be empty",
+            ));
+        }
+        return Ok(trimmed.to_string());
+    }
+    let env_name = config.api_key_env.as_deref().unwrap_or(default_env);
+    if env_name.trim().is_empty() {
+        return Err(AsrError::new(
+            AsrErrorCode::InvalidRequest,
+            "api_key_env cannot be empty",
+        ));
+    }
+    let value = std::env::var(env_name).map_err(|_| {
+        AsrError::new(
+            AsrErrorCode::InvalidRequest,
+            format!("API key env var '{env_name}' is not set"),
+        )
+    })?;
+    let trimmed = value.trim().to_string();
+    if trimmed.is_empty() {
+        return Err(AsrError::new(
+            AsrErrorCode::InvalidRequest,
+            format!("API key env var '{env_name}' is set but empty"),
+        ));
+    }
+    Ok(trimmed)
 }
 
 mod serde_opt_duration_secs {
@@ -165,8 +266,8 @@ mod tests {
     }
 
     #[test]
-    fn factory_returns_unsupported_for_volcengine_config() {
-        let err = match create_asr_provider_from_config(AsrProviderRuntimeConfig {
+    fn factory_creates_volcengine_bigasr_with_duration_billing() {
+        let provider = create_asr_provider_from_config(AsrProviderRuntimeConfig {
             model: "volcengine/bigasr".into(),
             api_key: Some("key".into()),
             api_key_env: None,
@@ -174,17 +275,56 @@ mod tests {
             region: None,
             timeout: None,
             provider_options: Value::Null,
-        }) {
-            Ok(_) => panic!("factory should return an error instead of panicking"),
-            Err(err) => err,
-        };
-
-        assert_eq!(err.code, AsrErrorCode::UnsupportedOperation);
+        })
+        .expect("factory should succeed");
+        assert_eq!(provider.provider_name(), "volcengine");
+        assert_eq!(provider.model_name(), "bigasr");
     }
 
     #[test]
-    fn factory_returns_unsupported_for_aliyun_config() {
-        let err = match create_asr_provider_from_config(AsrProviderRuntimeConfig {
+    fn factory_creates_volcengine_seedasr_with_concurrent_billing() {
+        let provider = create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "volcengine/seedasr".into(),
+            api_key: Some("key".into()),
+            api_key_env: None,
+            api_url: None,
+            region: None,
+            timeout: None,
+            provider_options: serde_json::json!({"billing": "concurrent"}),
+        })
+        .expect("factory should succeed");
+        assert_eq!(provider.provider_name(), "volcengine");
+        assert_eq!(provider.model_name(), "seedasr");
+    }
+
+    #[test]
+    fn factory_rejects_unknown_volcengine_model() {
+        let err = create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "volcengine/unknown-model".into(),
+            api_key: Some("key".into()),
+            ..Default::default()
+        })
+        .err()
+        .expect("factory should return an error");
+        assert_eq!(err.code, AsrErrorCode::InvalidRequest);
+    }
+
+    #[test]
+    fn factory_rejects_unknown_billing_mode() {
+        let err = create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "volcengine/bigasr".into(),
+            api_key: Some("key".into()),
+            provider_options: serde_json::json!({"billing": "invalid"}),
+            ..Default::default()
+        })
+        .err()
+        .expect("factory should return an error");
+        assert_eq!(err.code, AsrErrorCode::InvalidRequest);
+    }
+
+    #[test]
+    fn factory_creates_aliyun_fun_asr() {
+        let provider = create_asr_provider_from_config(AsrProviderRuntimeConfig {
             model: "aliyun/fun-asr-realtime".into(),
             api_key: Some("key".into()),
             api_key_env: None,
@@ -192,11 +332,21 @@ mod tests {
             region: None,
             timeout: None,
             provider_options: Value::Null,
-        }) {
-            Ok(_) => panic!("factory should return an error instead of panicking"),
-            Err(err) => err,
-        };
+        })
+        .expect("factory should succeed");
+        assert_eq!(provider.provider_name(), "aliyun");
+        assert_eq!(provider.model_name(), "fun-asr-realtime");
+    }
 
-        assert_eq!(err.code, AsrErrorCode::UnsupportedOperation);
+    #[test]
+    fn factory_rejects_unknown_aliyun_model() {
+        let err = create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "aliyun/qwen-asr".into(),
+            api_key: Some("key".into()),
+            ..Default::default()
+        })
+        .err()
+        .expect("factory should return an error");
+        assert_eq!(err.code, AsrErrorCode::InvalidRequest);
     }
 }
