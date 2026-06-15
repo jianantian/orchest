@@ -506,7 +506,9 @@ const BACKEND_URL = (window as any).__BACKEND_URL__
 const ws = new WebSocket(BACKEND_URL.replace('http', 'ws') + '/ws');
 ```
 
-前端不区分模式——它只知道一个 `BACKEND_URL`。开发时指向 `localhost:5173`（Vite proxy to Rust），生产时指向 Tauri 本地端口或云端 URL。
+前端不区分模式——它只知道一个 `BACKEND_URL`。开发时指向 `localhost:5173`（Vite proxy to Rust），生产时指向桌面壳本地端口或云端 URL。
+
+> **第三种形态：跨设备(本地 daemon + 瘦 relay)，[ADR D15](./adr-001-product-positioning.md)。** 跨设备不是「Cloud SaaS 模式」——执行平面(workspace/files/terminal/Claude Code)仍在用户机器(local-first)，只是 daemon 主动外拨一个**瘦 relay**(只转发 events + auth，非全后端)，让移动/web 客户端可达。这正是 `BACKEND_URL` + daemon-first + 事件溯源的免费副产品：异机客户端就是「另一个瘦客户端，BACKEND_URL 指向 relay，订阅同一 daemon 的事件流」。复用 RuntimeBackend 已有的 reverse-WebSocket 可达模式。**移动端是阶段二 surface**(遥控 + 验收，surface 子集)，不是阶段一重共创。web 跨设备 v0 即近乎免费(创始人用 tunnel/LAN)；移动 app + 产品化 relay = M2。
 
 ### 6.12 两种模式的行为差异
 
@@ -518,7 +520,7 @@ const ws = new WebSocket(BACKEND_URL.replace('http', 'ws') + '/ws');
 | **User Shell PTY** | 用户本机 bash/zsh | 云端沙箱或浏览器连接的 remote shell |
 | **文件访问** | 用户本地文件系统 | 云端 workspace 目录 |
 | **数据库** | 本地 SQLite 文件 | 云端 Postgres |
-| **多设备同步** | 不支持（本地数据） | 支持 |
+| **多设备同步** | **支持**（本地 daemon + 瘦 relay，第三形态，D15；执行仍在本机） | 支持（daemon 在云） |
 | **离线工作** | 支持（LLM 调用除外） | 不支持 |
 | **协作** | 不支持 | 支持 |
 | **数据隐私** | 完全本地 | 云端存储 |

@@ -253,6 +253,13 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
 
 **D14 实验遥测进 v0。** 里程碑靠实验数据解锁（§4.5），故指标采集（指代次数、沉淀引用率、context tray 修改率）是 v0 功能而非运营工具：本地优先、明文可查、不上传——单人阶段不需要任何服务端。
 
+**D15 跨设备连续性是一等需求，不是「Cloud 模式」的子集（创始人 must-have）。** 在桌面重协作、在移动/web 接着看与轻量推进——这被错误地埋进了延后的「Cloud SaaS 模式」。纠正：它**几乎是已有架构的免费副产品**——daemon-first（工作活在 daemon，不在 UI）+ 事件溯源（任何客户端 replay events 还原 TurnState）+ 单一输入槽 + 单一 BACKEND_URL 客户端 ⇒ **「跨设备」= 另一个瘦客户端订阅同一个 daemon 的事件流**，不是新子系统。
+
+- **移动 = 阶段二 surface，不是阶段一**（§0.7）：移动端不做重共创(无终端/browser 感知/重 deixis)，它是**阶段二的遥控 + 验收面**——看 avatar 在跑什么、approve/answer/轻量 inject、读 artifact(diff/doc)、gate 验收。这与「移动端肯定不可能有很重的人机协作」一致，且和两阶段模型天然咬合(桌面=阶段一,移动/web=阶段二)。surface 子集化:渲染器无关的 TurnState(`renderWeb`/`renderCard`/`renderPush`)本就为多终端预留。
+- **拓扑裁决:本地 daemon + 瘦 relay 可达,不是云 daemon。** 把执行平面(workspace/files/terminal/dev server/Claude Code)搬到云会牺牲 local-first(我们对 YouMind 的差异、执行深度护城河的根)。所以:daemon 留在用户机器(local-first),靠 daemon 主动外拨的瘦 relay(只转发 events + auth,非全后端)让移动/web 可达(复用已设计的 reverse-WebSocket 模式)。这是「第三种形态」,区别于 reconstruction 的 All-in-One 与 Cloud SaaS。
+- **安全**:可达的 daemon + 带人全权的 avatar = 远程控制面必须强认证;移动端 approve/inject 动作借 lark-bridge 的 callback 签名模式(签 run+scope+operator+action+过期+nonce)。
+- **roadmap**:web 跨设备**便宜且早**(前端本就是 web,Tauri/Electron 只是壳;`BACKEND_URL` 配置已在 §6.11——创始人 v0 即可用 tunnel/LAN 从另一台机器开 web 接上);**移动 app + 产品化 relay + 阶段二遥控 UI = M2**(与 avatar/阶段二/验收天然耦合)。v0 桩:daemon 可达 + web 客户端能从异机连上,**不分叉客户端**。
+
 ---
 
 ## 4. v0 范围表
@@ -268,6 +275,7 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
 | Locator 对象模型（URI + provenance + scope） | Claude Code 配置导入（v0.x 增长杠杆） | |
 | review / draft 裁决循环 | | |
 | 脱敏器、run 前快照、写锁、本地遥测、一键导出（D9-D14） | | |
+| 跨设备桩：daemon 可达 + web 客户端异机可连（D15，创始人 tunnel 即用） | 产品化 relay + 移动 app + 阶段二遥控 UI（M2，D15） | |
 
 ---
 
@@ -278,17 +286,17 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
 ### M1「自己的工作台」——证明介质论
 
 - **用户**：我们自己（程序员/技术创作者，单人）
-- **交付**：五个面（对话/文件阅读/git/终端/browser）+ deixis + context tray + review 裁决 + objects 沉淀；单壳 + SQLite + Claude Code 单 runtime。对应阶段 0-3
+- **交付**：五个面（对话/文件阅读/git/终端/browser）+ deixis + context tray + review 裁决 + objects 沉淀；单壳 + SQLite + Claude Code 单 runtime。**daemon 可达 + web 客户端异机可连**（D15 跨设备桩——创始人靠 tunnel/LAN 即可在另一台机器开 web 接着干）。对应阶段 0-3
 - **解锁判据（exit criteria）**：
   1. 创始用户连续 4 周把日常真实工作放在里面完成（不是 demo，是默认工具）
   2. 实验 1 正信号：「指代替说」高频发生，失败点收敛为可修的 bug 清单
   3. 实验 3 开始计量：沉淀引用率有第一条基线曲线
-- **此阶段不做**：任何团队功能、任何第二角色 surface
+- **此阶段不做**：任何团队功能、任何第二角色 surface；移动 app（仅留 web 异机可连的桩）
 
 ### M2「会积累的工作台」——证明沉淀复利 + 跨 agent
 
 - **用户**：个人创作者（bottom-up 自然扩散的第一批外部用户）
-- **交付**：Codex 第二 runtime（session-as-context 升级为跨厂商，兑现创世卡点 2）；知识投影深化（单人记忆复用）；文字创作者/PM surface；Claude Code 配置一键导入
+- **交付**：Codex 第二 runtime（session-as-context 升级为跨厂商，兑现创世卡点 2）；知识投影深化（单人记忆复用）；文字创作者/PM surface；Claude Code 配置一键导入；**移动 app + 产品化 relay + 阶段二遥控/验收 UI**（D15——移动是阶段二 surface，与 avatar/自动执行/Inbox 验收天然耦合）
 - **解锁判据**：
   1. 实验 2 正信号：上周的沉淀让本周的 agent 可感知地更好用
   2. 实验 3 曲线持续上升：跨 session / 跨 agent 引用成为日常动作
