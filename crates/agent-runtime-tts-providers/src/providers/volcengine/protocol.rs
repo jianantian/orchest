@@ -105,8 +105,7 @@ fn build_session_frame(
     session_id: &[u8],
     payload: &[u8],
 ) -> Vec<u8> {
-    let mut out =
-        Vec::with_capacity(4 + 4 + 4 + session_id.len() + 4 + payload.len());
+    let mut out = Vec::with_capacity(4 + 4 + 4 + session_id.len() + 4 + payload.len());
     out.extend_from_slice(&[
         0b0001_0001,
         (msg_type << 4) | FLAG_WITH_EVENT,
@@ -162,8 +161,7 @@ fn parse_event_session_payload(data: &[u8]) -> Result<(i32, String, Vec<u8>), Tt
             "Volcengine frame missing payload length",
         ));
     }
-    let session_id =
-        String::from_utf8_lossy(&data[session_start..payload_len_start]).to_string();
+    let session_id = String::from_utf8_lossy(&data[session_start..payload_len_start]).to_string();
     let payload_len = u32::from_be_bytes([
         data[payload_len_start],
         data[payload_len_start + 1],

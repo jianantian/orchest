@@ -90,9 +90,6 @@ async fn live_volcengine_streaming_silence() {
 
     let final_output = stream.end_and_wait_final().await.unwrap();
     assert_eq!(final_output.trace_id, "live-test-silence");
-    assert_eq!(
-        final_output.result.telemetry.model,
-        "volcengine/bigasr"
-    );
+    assert_eq!(final_output.result.telemetry.model, "volcengine/bigasr");
     assert!(final_output.result.telemetry.latency_final_ms > 0);
 }

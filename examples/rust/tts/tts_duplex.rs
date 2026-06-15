@@ -66,14 +66,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut all_audio: Vec<u8> = Vec::new();
     loop {
         match stream.events.next().await.unwrap() {
-            TtsStreamEvent::Started { provider, model, .. } => {
+            TtsStreamEvent::Started {
+                provider, model, ..
+            } => {
                 println!(
                     "[{:>5}ms] started  provider={provider} model={model}",
                     started.elapsed().as_millis()
                 );
             }
             TtsStreamEvent::TextAccepted { chars, .. } => {
-                println!("[{:>5}ms] text accepted  chars={chars}", started.elapsed().as_millis());
+                println!(
+                    "[{:>5}ms] text accepted  chars={chars}",
+                    started.elapsed().as_millis()
+                );
             }
             TtsStreamEvent::AudioChunk { data, sequence, .. } => {
                 println!(

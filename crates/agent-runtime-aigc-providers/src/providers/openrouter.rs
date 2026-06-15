@@ -168,9 +168,7 @@ impl OpenRouterImageAdapter {
     }
 
     #[allow(dead_code)]
-    pub fn parse_model_metadata(
-        metadata: Value,
-    ) -> Result<ImageModelCapabilities, AigcError> {
+    pub fn parse_model_metadata(metadata: Value) -> Result<ImageModelCapabilities, AigcError> {
         let output_modalities = metadata
             .pointer("/architecture/output_modalities")
             .or_else(|| metadata.get("output_modalities"))
@@ -414,16 +412,14 @@ mod tests {
 
     #[test]
     fn model_metadata_parser_records_image_modalities() {
-        let caps = OpenRouterImageAdapter::parse_model_metadata(
-            json!({
-                "id": "google/gemini-2.5-flash-image",
-                "architecture": {
-                    "input_modalities": ["text"],
-                    "output_modalities": ["image", "text"]
-                },
-                "supported_parameters": ["image_config"]
-            }),
-        )
+        let caps = OpenRouterImageAdapter::parse_model_metadata(json!({
+            "id": "google/gemini-2.5-flash-image",
+            "architecture": {
+                "input_modalities": ["text"],
+                "output_modalities": ["image", "text"]
+            },
+            "supported_parameters": ["image_config"]
+        }))
         .unwrap();
         let op = caps.operations.get("texttoimage").unwrap();
         assert_eq!(caps.source, crate::CapabilitySource::ProviderMetadata);

@@ -2,12 +2,7 @@
 
 use agent_runtime_model::ModelPricing;
 
-fn usd(
-    input: f64,
-    output: f64,
-    cache_read: Option<f64>,
-    cache_write: Option<f64>,
-) -> ModelPricing {
+fn usd(input: f64, output: f64, cache_read: Option<f64>, cache_write: Option<f64>) -> ModelPricing {
     ModelPricing {
         currency: "USD".into(),
         input_per_million: input,

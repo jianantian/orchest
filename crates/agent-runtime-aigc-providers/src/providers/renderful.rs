@@ -245,7 +245,10 @@ impl ImageProvider for RenderfulImageAdapter {
     }
 
     fn capabilities(&self) -> crate::ImageModelCapabilities {
-        super::basic_capabilities(vec![ImageOperation::TextToImage, ImageOperation::ImageToImage])
+        super::basic_capabilities(vec![
+            ImageOperation::TextToImage,
+            ImageOperation::ImageToImage,
+        ])
     }
 
     async fn create_image_generation(

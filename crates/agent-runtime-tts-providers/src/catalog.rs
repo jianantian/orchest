@@ -64,7 +64,9 @@ fn build_catalog() -> Vec<TtsModelEntry> {
             model_id: "aliyun/cosyvoice-v3.5-flash",
             provider: "aliyun",
             display_name: "Aliyun CosyVoice V3.5 Flash",
-            languages: &["zh-CN", "en", "fr", "de", "ja", "ko", "ru", "pt", "th", "id", "vi"],
+            languages: &[
+                "zh-CN", "en", "fr", "de", "ja", "ko", "ru", "pt", "th", "id", "vi",
+            ],
             capabilities: TtsModelCapabilitiesSummary {
                 batch_synthesis: true,
                 single_streaming: true,
@@ -81,7 +83,9 @@ fn build_catalog() -> Vec<TtsModelEntry> {
             model_id: "aliyun/cosyvoice-v3.5-plus",
             provider: "aliyun",
             display_name: "Aliyun CosyVoice V3.5 Plus",
-            languages: &["zh-CN", "en", "fr", "de", "ja", "ko", "ru", "pt", "th", "id", "vi"],
+            languages: &[
+                "zh-CN", "en", "fr", "de", "ja", "ko", "ru", "pt", "th", "id", "vi",
+            ],
             capabilities: TtsModelCapabilitiesSummary {
                 batch_synthesis: true,
                 single_streaming: true,
