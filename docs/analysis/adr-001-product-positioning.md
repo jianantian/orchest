@@ -223,7 +223,7 @@ v0 的一切对象（session、turn、文件、diff、终端片段、annotation�
 
 ### D7 v0 工程剖面：一条线
 
-**daemon 跑在用户自有、SSH/Tailscale 可达的单台常开机器上（见 D15）+ SQLite + Claude Code 单 runtime + 单 workspace；客户端瘦连接（v0 可 web-first，原生壳 Tauri/Electron 复审降级为后续打包项，[选型文档](../research/desktop-tools/electron-vs-tauri.md)）。** 注：原「桌面壳内嵌 daemon」设想被 D15 的「daemon 在自有盒子 + 瘦客户端」反转——v0 不内嵌、不分叉客户端。
+**daemon 是独立进程 at host:port，host ∈ {本机 localhost，用户自有 SSH/Tailscale 可达盒子}（统一模型，见 D15）+ SQLite + Claude Code 单 runtime + 单 workspace；客户端瘦连接（v0 可 web-first，原生壳 Tauri/Electron 复审降级为后续打包项，[选型文档](../research/desktop-tools/electron-vs-tauri.md)）。** 本地与远程是同一模型 host 的两个取值，非两种架构；「内嵌/All-in-One」只是 host=localhost 的打包糖，不分叉客户端。
 
 移出 v0（接口形态保留，工程预算为零）：Cloud/Postgres、多 CLI runtime（Codex/OpenCode）、MessageIngress（IM 接入）、Org/Employee、Meeting/ASR、Orchest 编排深度（gate/checkpoint/factory）。
 
@@ -260,7 +260,13 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
 - **安全**:可达的 daemon + 带人全权的 avatar = 远程控制面必须强认证;移动端 approve/inject 动作借 lark-bridge 的 callback 签名模式(签 run+scope+operator+action+过期+nonce)。
 - **roadmap**:web 跨设备**便宜且早**(前端本就是 web,Tauri/Electron 只是壳;`BACKEND_URL` 配置已在 §6.11——创始人 v0 即可用 tunnel/LAN 从另一台机器开 web 接上);**移动 app + 产品化 relay + 阶段二遥控 UI = M2**(与 avatar/阶段二/验收天然耦合)。v0 桩:daemon 可达 + web 客户端能从异机连上,**不分叉客户端**。
 - **可达性 ≠ 可用性**:relay/tunnel 解决「找得到」(NAT 穿透),但必须有一台机器**开着**在跑 daemon(可用性)。会睡的笔记本给不了「离开后继续跑」——过夜自动执行 + 在外遥控**结构上需要常开宿主**。daemon 放置是用户在「可用性 vs 拥有权」上的选择(同一 daemon 二进制):会睡笔记本 / 常开自托管盒子 / 可选托管云。
-- **v0(一期)部署裁决:daemon 跑在创始人自有、SSH/Tailscale 可达的单台常开机器上;所有客户端(笔记本桌面端 / web / 手机)瘦连接,BACKEND_URL 指向它。无云、无 relay、无 SaaS。** 这反转了「桌面壳内嵌 daemon」的原设想——v0 结构上是「daemon 在一台 server + 瘦客户端」,只是 server = 用户自己的盒子(workspace/files/terminal/Claude Code/SQLite 全在盒子上)。三个连带简化:① 可用性+可达性一并解决;② **shell 决策放松、不再卡 v0**——shell 不内嵌 Rust daemon、是纯渲染瘦客户端,**v0 可 web-client-first**,原生壳(Electron/Tauri 复审)降级为后续打包项;③ **CDP 挪到盒子上**(dev server + 感知 Chromium 在盒子,挨着 Claude Code),客户端是 screencast viewer + 输入转发,electron-vs-tauri spike 前提部分消解。**「local-first」精确为「self-hosted-host-first」**:文件/执行在用户自有盒子(非 vendor 云)——对 YouMind 的差异与执行深度护城河保住,且更贴近开发者「SSH 到自己 dev box」的真实习惯。
+- **v0(一期)部署裁决:统一模型——daemon 是独立进程,监听 host:port;客户端经 BACKEND_URL 连接;host ∈ {本机 localhost,用户自有 SSH/Tailscale 可达盒子}。同一份代码,host 只是参数。无云、无 relay、无 SaaS。** 本地与远程不是两种架构,是 host 的两个取值:
+  - **host=本机**:daemon + Claude Code + workspace/terminal/files 全在这台 PC;满血 Phase 1、零延迟、**除 LLM 调用外可离线**。主力开发体验。
+  - **host=远程盒子**:同上,只是在另一台常开机器;给「会睡的笔记本」补可用性 + 在外手机可达。
+  - **daemon-first 本机也成立**:daemon 是独立进程(非嵌在 app 窗口进程),关窗口不杀 daemon——本机 Ralph loop 继续跑、可重连。这是「本地远程一致」的根。
+  - **「内嵌/All-in-One」= 可选打包糖**(host=localhost + 把启动本机 daemon 打包进 app),非架构分叉。
+  - 连带简化:① 可用性+可达性按 host 取值各自满足;② **shell 决策放松、不卡 v0**——shell 不内嵌 daemon、是纯渲染瘦客户端,**v0 可 web-client-first**,原生壳(Electron/Tauri 复审)降级为后续打包项;③ **CDP 在 daemon 所在机器**(dev server + 感知 Chromium 挨着 Claude Code),客户端是 screencast viewer + 输入转发,electron-vs-tauri spike 前提部分消解。
+  - **「local-first」精确为「self-hosted-host-first」**:文件/执行在用户自有机器(本机或自有盒子,非 vendor 云)——对 YouMind 的差异与执行深度护城河保住,贴近开发者「在自己机器上干活 / SSH 到自己 dev box」的真实习惯。
 
 ---
 
