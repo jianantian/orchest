@@ -12,6 +12,10 @@ use crate::tool::ToolError;
 use super::helpers::emit;
 use super::webhook::WebhookRuntime;
 
+pub(crate) fn tool_error_result(error: &ToolError) -> Value {
+    json!({ "error": error })
+}
+
 pub(crate) async fn poll_async_job(
     tx: &mpsc::Sender<RuntimeEvent>,
     tool_name: &str,
@@ -44,15 +48,16 @@ pub(crate) async fn poll_async_job(
                 return value;
             }
             Ok(Ok(JobStatus::Failed(error))) => {
+                let error = ToolError::fatal(error.clone()).with_code("ASYNC_JOB_FAILED");
                 emit(
                     tx,
                     RuntimeEvent::ToolCallFailed {
                         tool: tool_name.to_string(),
-                        error: ToolError::fatal(error.clone()).with_code("ASYNC_JOB_FAILED"),
+                        error: error.clone(),
                     },
                 )
                 .await;
-                return json!({"error": error});
+                return tool_error_result(&error);
             }
             Ok(Ok(JobStatus::Pending { progress, message })) => {
                 emit(
@@ -79,29 +84,30 @@ pub(crate) async fn poll_async_job(
 
         if let Some(max) = timeout {
             if start_time.elapsed() > max {
+                let error = ToolError::transient("async job timed out").with_code("TIMEOUT");
                 emit(
                     tx,
                     RuntimeEvent::ToolCallFailed {
                         tool: tool_name.to_string(),
-                        error: ToolError::transient("async job timed out").with_code("TIMEOUT"),
+                        error: error.clone(),
                     },
                 )
                 .await;
-                return json!({"error": "async job timed out"});
+                return tool_error_result(&error);
             }
         }
 
         let Some(poll) = &handle.poll else {
+            let error = ToolError::fatal("async job has no polling fallback").with_code("NO_POLL");
             emit(
                 tx,
                 RuntimeEvent::ToolCallFailed {
                     tool: tool_name.to_string(),
-                    error: ToolError::fatal("async job has no polling fallback")
-                        .with_code("NO_POLL"),
+                    error: error.clone(),
                 },
             )
             .await;
-            return json!({"error": "async job has no polling fallback"});
+            return tool_error_result(&error);
         };
 
         match (poll)().await {
@@ -131,15 +137,16 @@ pub(crate) async fn poll_async_job(
                 return value;
             }
             Ok(JobStatus::Failed(err)) => {
+                let error = ToolError::fatal(err.clone()).with_code("ASYNC_JOB_FAILED");
                 emit(
                     tx,
                     RuntimeEvent::ToolCallFailed {
                         tool: tool_name.to_string(),
-                        error: ToolError::fatal(err.clone()).with_code("ASYNC_JOB_FAILED"),
+                        error: error.clone(),
                     },
                 )
                 .await;
-                return json!({"error": err});
+                return tool_error_result(&error);
             }
             Err(e) => {
                 emit(
@@ -150,7 +157,7 @@ pub(crate) async fn poll_async_job(
                     },
                 )
                 .await;
-                return json!({"error": e.message});
+                return tool_error_result(&e);
             }
         }
     }

@@ -10,12 +10,12 @@ Replace the old string-only model-facing tool error payload with a structured er
 
 ## Acceptance Criteria
 
-- [ ] Tool result content for failures includes an `error` object with `message`, `kind`, `retry`, `code` and `next_step`.
-- [ ] `RuntimeEvent::ToolCallFailed` continues to carry the full `ToolError`.
-- [ ] Existing tests and examples that assert or show error shape are updated to the structured `error` object.
-- [ ] A focused run-loop test verifies that a `ToolError::spec_gap("missing contract")` reaches the model-facing tool result with `kind = "SpecGap"` or the established serde equivalent.
-- [ ] No legacy `{"error": "...message..."}` model-facing shape remains in docs, examples or tests.
-- [ ] No private fields are exposed across FFI boundaries without explicit conversion.
+- [x] Tool result content for failures includes an `error` object with `message`, `kind`, `retry`, `code` and `next_step`.
+- [x] `RuntimeEvent::ToolCallFailed` continues to carry the full `ToolError`.
+- [x] Existing tests and examples that assert or show error shape are updated to the structured `error` object.
+- [x] A focused run-loop test verifies that a `ToolError::spec_gap("missing contract")` reaches the model-facing tool result with `kind = "SpecGap"` or the established serde equivalent.
+- [x] No legacy model-facing shape with a bare string in `error` remains in docs, examples or tests.
+- [x] No private fields are exposed across FFI boundaries without explicit conversion.
 
 ## Notes
 
