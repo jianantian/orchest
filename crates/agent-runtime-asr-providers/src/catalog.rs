@@ -130,10 +130,7 @@ mod tests {
             .iter()
             .find(|m| m.model_id == "volcengine/bigasr")
             .expect("volcengine/bigasr should be in catalog");
-        assert_eq!(
-            entry.resource_id,
-            Some("volc.bigasr.sauc.duration")
-        );
+        assert_eq!(entry.resource_id, Some("volc.bigasr.sauc.duration"));
     }
 
     #[test]
@@ -142,9 +139,6 @@ mod tests {
             .iter()
             .find(|m| m.model_id == "volcengine/seedasr")
             .expect("volcengine/seedasr should be in catalog");
-        assert_eq!(
-            entry.resource_id,
-            Some("volc.seedasr.sauc.duration")
-        );
+        assert_eq!(entry.resource_id, Some("volc.seedasr.sauc.duration"));
     }
 }

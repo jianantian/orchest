@@ -13,7 +13,7 @@ use crate::types::{TtsOperation, TtsStreamSummary, TtsUsage};
 use super::bidirectional::make_voice_info;
 use super::protocol;
 use super::{
-    VolcengineSynthesisRequest, audio_format_name, stream_send_error, volcengine_speech_rate,
+    audio_format_name, stream_send_error, volcengine_speech_rate, VolcengineSynthesisRequest,
 };
 
 pub fn spawn_stream(request: VolcengineSynthesisRequest, text: String) -> TtsOutputStream {

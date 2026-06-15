@@ -147,10 +147,7 @@ async fn final_output_contains_telemetry() {
 
     let final_output = stream.flush_and_wait_final().await.unwrap();
     assert_eq!(final_output.result.telemetry.trace_id, "tel-test");
-    assert_eq!(
-        final_output.result.telemetry.model,
-        "volcengine/bigasr"
-    );
+    assert_eq!(final_output.result.telemetry.model, "volcengine/bigasr");
 
     stream.input.end_stream().await.unwrap();
 }

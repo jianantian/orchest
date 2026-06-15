@@ -42,19 +42,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         match stream.events.next().await.unwrap() {
-            TtsStreamEvent::Started { provider, model, .. } => {
-                println!("[{:>5}ms] started  provider={provider} model={model}", started.elapsed().as_millis());
+            TtsStreamEvent::Started {
+                provider, model, ..
+            } => {
+                println!(
+                    "[{:>5}ms] started  provider={provider} model={model}",
+                    started.elapsed().as_millis()
+                );
             }
             TtsStreamEvent::AudioChunk { data, sequence, .. } => {
                 let elapsed = started.elapsed().as_millis();
-                println!("[{elapsed:>5}ms] chunk #{sequence:02}  {} bytes", data.len());
+                println!(
+                    "[{elapsed:>5}ms] chunk #{sequence:02}  {} bytes",
+                    data.len()
+                );
                 all_audio.extend_from_slice(&data);
             }
             TtsStreamEvent::Completed { summary, .. } => {
                 println!(
                     "[{:>5}ms] completed  chunks={} total_bytes={} first_audio={}ms",
                     started.elapsed().as_millis(),
-                    all_audio.len(),  // approximate
+                    all_audio.len(), // approximate
                     all_audio.len(),
                     summary.telemetry.first_audio_latency_ms.unwrap_or_default(),
                 );

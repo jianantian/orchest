@@ -58,6 +58,7 @@ pub struct LlmProviderInfo {
 
 static LLM_PROVIDERS: LazyLock<Vec<LlmProviderInfo>> = LazyLock::new(build_catalog);
 
+#[allow(clippy::too_many_arguments)]
 fn usd_model(
     model_id: &'static str,
     provider: &'static str,
@@ -85,6 +86,7 @@ fn usd_model(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cny_model(
     model_id: &'static str,
     provider: &'static str,
@@ -120,7 +122,10 @@ fn anthropic_models() -> LlmProviderInfo {
             "Claude Fable 5",
             1_000_000,
             Some(128_000),
-            10.0, 50.0, Some(1.0), Some(12.5),
+            10.0,
+            50.0,
+            Some(1.0),
+            Some(12.5),
         ),
         usd_model(
             "anthropic/claude-opus-4-8",
@@ -128,7 +133,10 @@ fn anthropic_models() -> LlmProviderInfo {
             "Claude Opus 4.8",
             1_000_000,
             Some(128_000),
-            5.0, 25.0, Some(0.5), Some(6.25),
+            5.0,
+            25.0,
+            Some(0.5),
+            Some(6.25),
         ),
         usd_model(
             "anthropic/claude-sonnet-4-6",
@@ -136,7 +144,10 @@ fn anthropic_models() -> LlmProviderInfo {
             "Claude Sonnet 4.6",
             1_000_000,
             Some(64_000),
-            3.0, 15.0, Some(0.3), Some(3.75),
+            3.0,
+            15.0,
+            Some(0.3),
+            Some(3.75),
         ),
         usd_model(
             "anthropic/claude-haiku-4-5",
@@ -144,7 +155,10 @@ fn anthropic_models() -> LlmProviderInfo {
             "Claude Haiku 4.5",
             200_000,
             Some(64_000),
-            1.0, 5.0, Some(0.1), Some(1.25),
+            1.0,
+            5.0,
+            Some(0.1),
+            Some(1.25),
         ),
         // --- Legacy models (still available) ---
         usd_model(
@@ -153,7 +167,10 @@ fn anthropic_models() -> LlmProviderInfo {
             "Claude Opus 4.7",
             1_000_000,
             Some(128_000),
-            5.0, 25.0, Some(0.5), Some(6.25),
+            5.0,
+            25.0,
+            Some(0.5),
+            Some(6.25),
         ),
         usd_model(
             "anthropic/claude-opus-4-6",
@@ -161,7 +178,10 @@ fn anthropic_models() -> LlmProviderInfo {
             "Claude Opus 4.6",
             1_000_000,
             Some(128_000),
-            5.0, 25.0, Some(0.5), Some(6.25),
+            5.0,
+            25.0,
+            Some(0.5),
+            Some(6.25),
         ),
         usd_model(
             "anthropic/claude-sonnet-4-5",
@@ -169,7 +189,10 @@ fn anthropic_models() -> LlmProviderInfo {
             "Claude Sonnet 4.5",
             1_000_000,
             Some(64_000),
-            3.0, 15.0, Some(0.3), Some(3.75),
+            3.0,
+            15.0,
+            Some(0.3),
+            Some(3.75),
         ),
     ];
 
@@ -189,7 +212,10 @@ fn openai_models() -> LlmProviderInfo {
             "GPT-5.5",
             1_000_000,
             None,
-            5.0, 30.0, None, None,
+            5.0,
+            30.0,
+            None,
+            None,
         ),
         usd_model(
             "openai/gpt-5.4",
@@ -197,7 +223,10 @@ fn openai_models() -> LlmProviderInfo {
             "GPT-5.4",
             1_000_000,
             None,
-            2.5, 15.0, None, None,
+            2.5,
+            15.0,
+            None,
+            None,
         ),
         usd_model(
             "openai/gpt-5.4-mini",
@@ -205,7 +234,10 @@ fn openai_models() -> LlmProviderInfo {
             "GPT-5.4 mini",
             400_000,
             None,
-            0.75, 4.5, None, None,
+            0.75,
+            4.5,
+            None,
+            None,
         ),
         usd_model(
             "openai/gpt-5.4-nano",
@@ -213,7 +245,10 @@ fn openai_models() -> LlmProviderInfo {
             "GPT-5.4 nano",
             400_000,
             None,
-            0.20, 1.25, None, None,
+            0.20,
+            1.25,
+            None,
+            None,
         ),
     ];
 
@@ -234,7 +269,8 @@ fn deepseek_models() -> LlmProviderInfo {
             "DeepSeek V4 Flash",
             1_000_000,
             Some(384_000),
-            1.0, 2.0,
+            1.0,
+            2.0,
         ),
         cny_model(
             "deepseek/deepseek-v4-pro",
@@ -242,7 +278,8 @@ fn deepseek_models() -> LlmProviderInfo {
             "DeepSeek V4 Pro",
             1_000_000,
             Some(384_000),
-            3.0, 6.0,
+            3.0,
+            6.0,
         ),
     ];
 
@@ -319,16 +356,30 @@ mod tests {
     #[test]
     fn all_anthropic_models_have_usd_pricing() {
         for entry in list_models().filter(|m| m.provider == "anthropic") {
-            let p = entry.pricing.as_ref().expect("anthropic model should have pricing");
-            assert_eq!(p.currency, "USD", "{} should have USD pricing", entry.model_id);
+            let p = entry
+                .pricing
+                .as_ref()
+                .expect("anthropic model should have pricing");
+            assert_eq!(
+                p.currency, "USD",
+                "{} should have USD pricing",
+                entry.model_id
+            );
         }
     }
 
     #[test]
     fn deepseek_models_have_cny_pricing() {
         for entry in list_models().filter(|m| m.provider == "deepseek") {
-            let p = entry.pricing.as_ref().expect("deepseek model should have pricing");
-            assert_eq!(p.currency, "CNY", "{} should have CNY pricing", entry.model_id);
+            let p = entry
+                .pricing
+                .as_ref()
+                .expect("deepseek model should have pricing");
+            assert_eq!(
+                p.currency, "CNY",
+                "{} should have CNY pricing",
+                entry.model_id
+            );
         }
     }
 

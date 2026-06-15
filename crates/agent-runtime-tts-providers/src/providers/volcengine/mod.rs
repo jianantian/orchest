@@ -16,8 +16,7 @@ use crate::traits::TtsProvider;
 use crate::types::{
     AudioData, AudioFormat, CompatibilityPolicy, DuplexSynthesizeRequest, Language,
     ListVoicesRequest, SpeechControls, SynthesizeRequest, SynthesizeResult, TtsInput, TtsInputKind,
-    TtsModelCapabilities, TtsOperation, VoiceCatalogSource, VoiceGender, VoiceInfo,
-    VoiceKind,
+    TtsModelCapabilities, TtsOperation, VoiceCatalogSource, VoiceGender, VoiceInfo, VoiceKind,
 };
 use crate::voices::filter_voices;
 
@@ -25,8 +24,7 @@ mod bidirectional;
 mod protocol;
 mod unidirectional;
 
-const DEFAULT_BIDIRECTIONAL_WS_URL: &str =
-    "wss://openspeech.bytedance.com/api/v3/tts/bidirection";
+const DEFAULT_BIDIRECTIONAL_WS_URL: &str = "wss://openspeech.bytedance.com/api/v3/tts/bidirection";
 const DEFAULT_UNIDIRECTIONAL_WS_URL: &str =
     "wss://openspeech.bytedance.com/api/v3/tts/unidirectional/stream";
 const DEFAULT_ENV: &str = "VOLCENGINE_API_KEY";
@@ -447,10 +445,10 @@ impl VolcengineTtsTransport for VolcengineWebSocketTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::Bytes;
-    use tokio::sync::mpsc;
     use crate::observability::TtsTelemetryBuilder;
     use crate::types::{TtsStreamSummary, TtsUsage};
+    use bytes::Bytes;
+    use tokio::sync::mpsc;
 
     struct CapturingTransport;
 

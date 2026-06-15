@@ -14,16 +14,14 @@ use crate::types::{
 
 use super::protocol;
 use super::{
-    VolcengineSynthesisRequest, audio_format_name, stream_send_error, volcengine_speech_rate,
+    audio_format_name, stream_send_error, volcengine_speech_rate, VolcengineSynthesisRequest,
 };
 
 pub fn spawn_duplex(request: VolcengineSynthesisRequest) -> TtsDuplexStream {
     let (input_tx, input_rx) = mpsc::channel(16);
     let (event_tx, event_rx) = mpsc::channel(32);
     tokio::spawn(async move {
-        if let Err(error) =
-            run_session(request, None, Some(input_rx), event_tx.clone()).await
-        {
+        if let Err(error) = run_session(request, None, Some(input_rx), event_tx.clone()).await {
             let _ = event_tx
                 .send(TtsStreamEvent::Error {
                     trace_id: "volcengine-duplex".to_owned(),
@@ -36,6 +34,7 @@ pub fn spawn_duplex(request: VolcengineSynthesisRequest) -> TtsDuplexStream {
     TtsDuplexStream::new(input_tx, event_rx)
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run_session(
     request: VolcengineSynthesisRequest,
     initial_text: Option<Vec<TextChunk>>,

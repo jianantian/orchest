@@ -132,7 +132,8 @@ fn renderful_provider() -> ImageProviderInfo {
         provider_id: "renderful",
         display_name: "Renderful",
         models: ImageModelList::Dynamic {
-            description: "Renderful is a managed image generation gateway. \
+            description:
+                "Renderful is a managed image generation gateway. \
                 Available models depend on your plan; query the Renderful API for the current list.",
             model_id_format: "<model-name>",
             model_id_example: "flux-pro",
@@ -182,7 +183,10 @@ mod tests {
             .filter(|m| m.provider == "aliyun")
             .map(|m| m.model_id)
             .collect();
-        assert!(ids.contains(&"wan2.7-image-pro"), "wan2.7 model should be in catalog");
+        assert!(
+            ids.contains(&"wan2.7-image-pro"),
+            "wan2.7 model should be in catalog"
+        );
         assert!(ids.contains(&"qwen-image-2.0-pro"));
     }
 

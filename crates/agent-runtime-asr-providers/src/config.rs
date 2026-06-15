@@ -147,9 +147,9 @@ pub fn create_asr_provider_from_config(
                 ));
             }
 
-            let ws_url = config.api_url.unwrap_or_else(|| {
-                "wss://dashscope.aliyuncs.com/api-ws/v1/inference/".to_string()
-            });
+            let ws_url = config
+                .api_url
+                .unwrap_or_else(|| "wss://dashscope.aliyuncs.com/api-ws/v1/inference/".to_string());
 
             Ok(Arc::new(AliyunAsrAdapter::new(AliyunAsrConfig {
                 model: normalized.model.to_string(),
@@ -164,7 +164,10 @@ pub fn create_asr_provider_from_config(
     }
 }
 
-fn resolve_api_key(config: &AsrProviderRuntimeConfig, default_env: &str) -> Result<String, AsrError> {
+fn resolve_api_key(
+    config: &AsrProviderRuntimeConfig,
+    default_env: &str,
+) -> Result<String, AsrError> {
     if let Some(key) = &config.api_key {
         let trimmed = key.trim();
         if trimmed.is_empty() {
