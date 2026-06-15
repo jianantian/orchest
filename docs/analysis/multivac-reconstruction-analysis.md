@@ -15,11 +15,13 @@
 
 ---
 
-## 六、目标架构：双交付形态，同一套 Rust Core + 可远程 Runtime Host
+## 六、目标架构：统一 daemon（host 为参数）+ 可远程 Runtime Host
 
 ### 6.1 核心原则
 
-**一套 Rust 控制面，两种产品交付形态，同一个前端，同一个 HTTP/WS 协议；CLI agent runtime 通过 RuntimeBackend 抽象接入，可本机嵌入，也可部署在另一台机器。**
+> **统一模型校正（以 [ADR D15](./adr-001-product-positioning.md) 为准）**：不存在「两种交付形态」——只有**一个 daemon**，是独立进程监听 `host:port`，客户端经 BACKEND_URL 连接，**host 是参数**(本机 localhost / 用户自有 SSH 盒子 / 可选托管云)。本节下面的「Mode 1 All-in-One(Tauri 嵌入 core)」「Mode 2 Cloud SaaS」**不是两种架构,是同一 daemon 的打包/host 取值变体**：All-in-One = host=localhost + 把启动本机 daemon 打包进 app（可选糖）；Cloud SaaS = host=托管云。**v0 = host ∈ {localhost, 自有盒子}，瘦客户端、web-first，不内嵌、不要求原生壳**。下文「双模式」措辞按此理解。
+
+**一套 Rust 控制面（daemon），同一个前端，同一个 HTTP/WS 协议；host 可为本机、用户自有盒子或托管云；CLI agent runtime 通过 RuntimeBackend 抽象接入，可与 daemon 同机，也可部署在另一台机器。**
 
 ```
                     ┌──────────────────────────────┐
@@ -74,7 +76,7 @@
 
 ### 6.2 桌面壳选型：Tauri vs Electron（复审中）
 
-> **2026-06-12 决策重开**，详见 [electron-vs-tauri 复审](../research/desktop-tools/electron-vs-tauri.md)。下表为原决策依据，其首要论据已失效。
+> **2026-06-12 决策重开 / 2026-06-15 降级**，详见 [electron-vs-tauri 复审](../research/desktop-tools/electron-vs-tauri.md)。下表为原决策依据，其首要论据(FFI)已失效。**且按 ADR D15，原生壳不再阻塞 v0**——v0 可 web-client-first(浏览器连 daemon)，CDP 在 daemon 所在机器、客户端是 screencast viewer，原生壳(Electron/Tauri)降级为「需要更好 browser-surface 集成时」的后续打包项。下文复审在「确实要做原生壳」时仍适用。
 
 | | Electron | Tauri |
 |---|---------|-------|
@@ -609,7 +611,7 @@ pub struct FeatureFlags {
 
 ## 七、重构阶段（按 ADR-001 重排：一条线，五个面）
 
-**v0 工程剖面：桌面单壳（Tauri vs Electron 复审中，§6.2）+ SQLite + Claude Code 单 runtime + 单 workspace。** Cloud/Postgres、多 CLI runtime、MessageIngress、Org/Employee、Meeting/ASR、Orchest 编排深度全部移出 v0——trait/URI/事件协议等接口形态保留，工程预算为零。
+**v0 工程剖面（ADR D7/D15 统一模型）：daemon 独立进程 at host:port（host=本机或自有 SSH 盒子）+ 瘦客户端（web-first，原生壳 deferred，§6.2）+ SQLite + Claude Code 单 runtime + 单 workspace。** Cloud/Postgres、多 CLI runtime、MessageIngress、Org/Employee、Meeting/ASR、Orchest 编排深度全部移出 v0——trait/URI/事件协议等接口形态保留，工程预算为零。
 
 ### 阶段 0：Kernel 地基
 
@@ -634,7 +636,7 @@ pub struct FeatureFlags {
 4. **对话面闭环**：
    - 前端 scaffold：Vite + React 18 + Tailwind + Jotai
    - HTTP POST → skeleton → WS 填充 → `reduceTurnState` → TurnCard
-   - Tauri 壳跑通（本地 axum + webview）
+   - web 客户端连本机/盒子 daemon 跑通（BACKEND_URL；原生壳 deferred，§6.2 / ADR D15）
 
 ### 阶段 1：介质面（介质论的最小闭环）
 
@@ -745,7 +747,7 @@ pub struct FeatureFlags {
 ## 十一、立即行动项
 
 1. **签署 ADR-001**：三方确认定位与 v0 范围——之后所有 scope 争论对照它裁决
-2. **Init Rust workspace**: `cargo new --lib crates/multivac-core` + `cargo new crates/multivac-desktop`（Tauri；multivac-server 后置）
+2. **Init Rust workspace**: `cargo new --lib crates/multivac-core`（daemon 独立进程 bin；web 客户端连它，原生壳 multivac-desktop / multivac-server 后置——ADR D15）
 3. **Design v0 schema**: `workspaces / sessions / events / objects(Locator)` 4 张表的 CREATE TABLE SQL（SQLite）
 4. **Define `RuntimeBackend` trait + `TaskEvent` schema**: 先锁定 start/attach/permission/events 最小合同；`StartAgentTask` 按 §6.6 完整契约定型（含 `ContextMode` / `CompletionGate` 类型）
 5. **对话面闭环**: Claude Code PtyRuntime → TaskEvent → WS → `reduceTurnState` → TurnCard，HTTP POST skeleton 先行

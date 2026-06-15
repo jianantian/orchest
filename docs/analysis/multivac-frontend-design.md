@@ -586,7 +586,7 @@ Agent 调用 tool（requires approval） → WS 收到 permission:need
 
 **Avatar attribution 贯穿全局**：人 authored 的 turn/action 与 avatar authored 的，用 §5.2 的 agent 色标 + 标记区分；Inbox 条目、surface 上的 agent 现身(设计原则 10)、TurnCard author 三处共用同一标识。让用户任何时候都能一眼分清「这是我做的 / 这是我的 avatar 替我做的」。
 
-**跨设备：移动/web = 阶段二 surface 子集（[ADR D15](./adr-001-product-positioning.md)）。** 客户端只是「订阅同一 daemon 事件流、BACKEND_URL 指向 relay」的瘦客户端——渲染器无关的 TurnState（§5.5 的 `renderWeb`/`renderCard`/`renderPush`）本就为此预留。移动端**不做阶段一重共创**(无终端/browser 感知/重 deixis)，它渲染 surface 的子集:TurnCard 流(读)、ApprovalStrip(approve)、Inbox→验收视图、轻量 inject-input、artifact(diff/doc)只读。桌面=阶段一(全 surface),移动/web=阶段二(遥控+验收)。web 异机连 v0 即近乎免费(同一份前端 + BACKEND_URL);移动 app 与产品化 relay = M2。
+**跨设备：移动/web = 阶段二 surface 子集（[ADR D15](./adr-001-product-positioning.md)）。** 客户端只是「订阅同一 daemon 事件流、BACKEND_URL 指向 daemon(本机/自有盒子/relay)」的瘦客户端——渲染器无关的 TurnState（§5.5 的 `renderWeb`/`renderCard`/`renderPush`）本就为此预留。移动端**不做阶段一重共创**(无终端/browser 感知/重 deixis)，它渲染 surface 的子集:TurnCard 流(读)、ApprovalStrip(approve)、Inbox→验收视图、轻量 inject-input、artifact(diff/doc)只读。桌面=阶段一(全 surface),移动/web=阶段二(遥控+验收)。web 异机连 v0 即近乎免费(同一份前端 + BACKEND_URL);移动 app 与产品化 relay = M2。
 
 ---
 
