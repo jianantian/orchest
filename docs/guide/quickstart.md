@@ -103,6 +103,12 @@ impl Tool for CurrentTimeTool {
 - **`Approval` 三态**：`Never`（只读/计算，从不审批）、`WhenRisky`（有副作用时按 run 级策略）、`Always`（外部通信/破坏性操作，总是审批）。无副作用的 tool 用 `Never`。
 - `execute` 返回 `ToolOutput::Immediate(value)` 是最常见的同步结果；另有 `Structured` / `AsyncJob` / `Handoff` 等高级形态。
 
+### ToolError 的失败分类
+
+`ToolError::invalid_input(...)` 用于输入已经明确但不符合 schema 或业务约束的情况，例如缺少字段、字段类型错误或值越界。`ToolError::ambiguity(...)` 用于请求本身存在多个合理解释的情况，此时默认 `next_step = "clarify"`，引导模型向用户澄清而不是猜测或重试。
+
+`ToolError::spec_gap(...)` 用于 SDK 或应用契约缺少必要行为的情况，此时默认 `next_step = "escalate"`，引导模型升级给调用方或 supervising agent。
+
 ## 5. 启动 run + 监听事件
 
 ```rust
