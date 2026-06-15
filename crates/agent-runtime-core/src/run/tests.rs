@@ -13,7 +13,7 @@ use crate::tool::{
 };
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, Notify};
 
@@ -816,6 +816,151 @@ async fn async_job_polling() {
     assert!(events
         .iter()
         .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+}
+
+struct FailingToolResultModel {
+    observed_tool_result: Arc<Mutex<Option<Value>>>,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for FailingToolResultModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Default::default()
+        };
+        if let Some(ref tx) = tx {
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+        }
+
+        let tool_result = messages.iter().find_map(|message| {
+            message.content.iter().find_map(|block| match block {
+                ContentBlock::ToolResult { content, .. } => Some(content.clone()),
+                _ => None,
+            })
+        });
+
+        if let Some(content) = tool_result {
+            *self.observed_tool_result.lock().unwrap() = Some(content);
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("done".into())],
+                usage,
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        } else {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "call_1".into(),
+                    name: "contract_tool".into(),
+                    input: json!({}),
+                }],
+                usage,
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+struct SpecGapTool;
+
+#[async_trait::async_trait]
+impl Tool for SpecGapTool {
+    fn name(&self) -> &str {
+        "contract_tool"
+    }
+    fn description(&self) -> &str {
+        "tool with a missing application contract"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &serde_json::Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
+    fn metadata(&self) -> &ToolMetadata {
+        &ToolMetadata {
+            side_effect: false,
+            approval: Approval::Never,
+            cost_hint: None,
+            timeout: None,
+            max_output_tokens: None,
+            source: ToolSource::InProcess,
+        }
+    }
+    async fn execute(
+        &self,
+        _input: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        Err(ToolError::spec_gap("missing contract").with_code("MISSING_CONTRACT"))
+    }
+}
+
+#[tokio::test]
+async fn failed_tool_result_preserves_structured_tool_error_for_model() {
+    let observed_tool_result = Arc::new(Mutex::new(None));
+    let model = Arc::new(FailingToolResultModel {
+        observed_tool_result: Arc::clone(&observed_tool_result),
+    });
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(SpecGapTool)).unwrap();
+
+    let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    let content = observed_tool_result
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("model should receive failed tool result");
+    assert_eq!(
+        content,
+        json!({
+            "error": {
+                "message": "missing contract",
+                "kind": "SpecGap",
+                "retry": "Unsafe",
+                "code": "MISSING_CONTRACT",
+                "next_step": "escalate"
+            }
+        })
+    );
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            RuntimeEvent::ToolCallFailed { tool, error }
+                if tool == "contract_tool"
+                    && error.message == "missing contract"
+                    && error.kind == crate::tool::ErrorKind::SpecGap
+        )
+    }));
 }
 
 struct ToolSearchModel {
@@ -2456,7 +2601,6 @@ use crate::hook::{
     CompactHookContext, HandoffHookContext, Hook, HookAction, ModelHookAction, ModelHookContext,
     RunHookContext, ToolHookContext,
 };
-use std::sync::Mutex;
 
 /// Records every hook invocation so tests can assert call order / count.
 struct RecordingHook {

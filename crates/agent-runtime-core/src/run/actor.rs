@@ -21,7 +21,7 @@ use super::config::{AgentConfig, RunId};
 use super::handle::ApprovalBus;
 use super::helpers::{append_searched_tool_defs, connect_mcp_servers, truncate_output};
 use super::skills::register_skills;
-use super::tool_exec::poll_async_job;
+use super::tool_exec::{poll_async_job, tool_error_result};
 use super::webhook::{start_webhook_server, WebhookRuntime};
 
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(3600);
@@ -733,7 +733,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 .await;
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: tool_call.id.clone(),
-                    content: json!({"error": error.message}),
+                    content: tool_error_result(&error),
                 });
                 continue;
             }
@@ -772,9 +772,10 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 continue;
             }
             crate::hook::HookAction::Reject(reason) => {
+                let error = ToolError::fatal(reason).with_code("HOOK_REJECTED");
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: tool_call.id.clone(),
-                    content: json!({"error": reason}),
+                    content: tool_error_result(&error),
                 });
                 state.budget.record_tool_call();
                 continue;
@@ -828,6 +829,8 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 )
                 .await;
             } else {
+                let error =
+                    ToolError::fatal("tool call denied by user").with_code("APPROVAL_DENIED");
                 emit(
                     &subs,
                     RuntimeEvent::ApprovalDenied {
@@ -837,7 +840,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 .await;
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: tool_call.id.clone(),
-                    content: json!({"error": "tool call denied by user"}),
+                    content: tool_error_result(&error),
                 });
                 continue;
             }
@@ -845,18 +848,19 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
 
         if let Some(max) = state.config.budget.max_tool_calls {
             if state.budget.usage().tool_calls_used >= max {
+                let error =
+                    ToolError::fatal("tool call budget exceeded").with_code("BUDGET_EXCEEDED");
                 emit(
                     &subs,
                     RuntimeEvent::ToolCallFailed {
                         tool: tool_call.name.clone(),
-                        error: ToolError::fatal("tool call budget exceeded")
-                            .with_code("BUDGET_EXCEEDED"),
+                        error: error.clone(),
                     },
                 )
                 .await;
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: tool_call.id.clone(),
-                    content: json!({"error": "tool call budget exceeded"}),
+                    content: tool_error_result(&error),
                 });
                 continue;
             }
@@ -901,6 +905,8 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             match tokio::time::timeout(timeout, execute_fut).await {
                 Ok(r) => r,
                 Err(_) => {
+                    let error =
+                        ToolError::transient("tool execution timed out").with_code("TIMEOUT");
                     telemetry::record_tool_timeout(
                         &tool_call.name,
                         source_label,
@@ -910,14 +916,13 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                         &subs,
                         RuntimeEvent::ToolCallFailed {
                             tool: tool_call.name.clone(),
-                            error: ToolError::transient("tool execution timed out")
-                                .with_code("TIMEOUT"),
+                            error: error.clone(),
                         },
                     )
                     .await;
                     tool_results.push(ContentBlock::ToolResult {
                         tool_use_id: tool_call.id.clone(),
-                        content: json!({"error": "tool execution timed out"}),
+                        content: tool_error_result(&error),
                     });
                     continue;
                 }
@@ -1011,9 +1016,11 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             }
             Ok(ToolOutput::Handoff(result)) => {
                 if handoff_triggered {
+                    let error = ToolError::fatal("Only one handoff per turn is allowed")
+                        .with_code("HANDOFF_ALREADY_TRIGGERED");
                     tool_results.push(ContentBlock::ToolResult {
                         tool_use_id: tool_call.id.clone(),
-                        content: json!({"error": "Only one handoff per turn is allowed"}),
+                        content: tool_error_result(&error),
                     });
                 } else {
                     handoff_triggered = true;
@@ -1096,7 +1103,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 telemetry::record_tool_error(&tool_call.name, source_label, duration);
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: tool_call.id.clone(),
-                    content: json!({"error": e.message}),
+                    content: tool_error_result(&e),
                 });
                 if let Err(reason) = finalize_after_tool(
                     &state.config.hooks,

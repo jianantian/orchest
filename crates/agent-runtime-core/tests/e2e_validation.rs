@@ -908,8 +908,9 @@ impl ModelAdapter for ApprovalAdapter {
                 m.content.iter().any(|c| match c {
                     ContentBlock::ToolResult { content, .. } => content
                         .get("error")
+                        .and_then(|value| value.get("message"))
                         .and_then(|value| value.as_str())
-                        .is_some_and(|error| error == "tool call denied by user"),
+                        .is_some_and(|message| message == "tool call denied by user"),
                     _ => false,
                 })
             });

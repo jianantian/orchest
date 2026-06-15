@@ -42,7 +42,7 @@ When tool execution fails, the model-facing tool result must include at least:
 - `error.code`
 - `error.next_step`
 
-The model-facing shape is a breaking replacement for the old string-only error result. Human-readable text lives at `error.message`; examples and tests must stop asserting or showing `{"error": "...message..."}`.
+The model-facing shape is a breaking replacement for the old string-only error result. Human-readable text lives at `error.message`; examples and tests must stop asserting or showing a bare string in the `error` field.
 
 ### RetryHint Dispatch
 
