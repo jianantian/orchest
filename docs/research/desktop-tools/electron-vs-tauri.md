@@ -3,6 +3,8 @@
 > 2026-06-12 | 触发：ADR-001 未决问题 1 的调研——Claude Code 桌面端的 browser preview 即「Electron 内嵌 Chromium + CDP」架构
 > 性质：对 `multivac-reconstruction-analysis.md` §6.2「为什么 Tauri 而不是 Electron」的正式复审
 > 上游：[ADR-001](../../analysis/adr-001-product-positioning.md)（五个面、browser 面为招牌、人读审指 agent 写）
+>
+> **2026-06-15 降级:本决策不再阻塞 v0。** ADR D15 定 v0 部署为「daemon 在用户自有 SSH 可达盒子 + 瘦客户端」,shell 不内嵌 daemon、v0 可 web-client-first。两个连带:① 原生壳(本文主题)降级为「需要更好 browser-surface 集成时」的后续打包项;② **CDP/Chromium 挪到 daemon 盒子上**(挨着 dev server 与 Claude Code),客户端是 screencast viewer + 输入转发——本文「客户端要不要内嵌带 CDP 的 Chromium」的核心前提部分消解,问题软化为「web 客户端渲染 screencast 是否够,还是要原生」。下文结论(倾向 Electron)在「确实要做原生壳」时仍适用。
 
 ---
 
