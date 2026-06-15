@@ -11,6 +11,16 @@ use crate::run::RunId;
 use crate::tool::async_job::JobStatus;
 use crate::tool::{ToolCall, ToolError, ToolMetadata};
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub enum ApprovalContext {
+    #[default]
+    InitialToolCall,
+    RetryAfterFailure {
+        attempt: u32,
+        previous_error: ToolError,
+    },
+}
+
 /// An event emitted on the run's event stream: run lifecycle, model calls,
 /// tool calls, approvals, budget, sub-agents, and steering. Consumers receive
 /// these from the `EventReceiver` returned by `AgentRun::start`.
@@ -56,6 +66,12 @@ pub enum RuntimeEvent {
         tool: String,
         error: ToolError,
     },
+    ToolCallRetry {
+        tool: String,
+        attempt: u32,
+        previous_error: ToolError,
+        next_delay: Duration,
+    },
 
     AsyncToolStarted {
         tool: String,
@@ -81,12 +97,18 @@ pub enum RuntimeEvent {
 
     ApprovalRequested {
         tool_call: ToolCall,
+        #[serde(default)]
+        context: ApprovalContext,
     },
     ApprovalGranted {
         tool_call: ToolCall,
+        #[serde(default)]
+        context: ApprovalContext,
     },
     ApprovalDenied {
         tool_call: ToolCall,
+        #[serde(default)]
+        context: ApprovalContext,
     },
 
     BudgetWarning {

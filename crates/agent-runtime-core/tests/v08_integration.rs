@@ -241,7 +241,7 @@ async fn guardrail_and_approval_coexist() {
     let mut saw_approval = false;
     while let Some(event) = rx.recv().await {
         match &event {
-            RuntimeEvent::ApprovalRequested { tool_call } => {
+            RuntimeEvent::ApprovalRequested { tool_call, .. } => {
                 // Verify the approved call is the SAFE one (not the banned one)
                 let path = tool_call
                     .input
