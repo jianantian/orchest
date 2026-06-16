@@ -123,15 +123,23 @@ fn volcengine_models() -> ImageProviderInfo {
     //
     // NOTE: the docs reference model *names* with dots (e.g. "doubao-seedream-5.0-lite",
     // "4.5", "4.0", "3.0-t2i"), but those returned InvalidEndpointOrModel.NotFound when
-    // invoked directly. Only the dated, hyphenated form below was confirmed against the
-    // live API (2026-06-16, real ARK_API_KEY). Add the others back once verified with
-    // credentials that have access to them.
-    let models = vec![ImageModelEntry {
-        model_id: "doubao-seedream-5-0-260128",
-        provider: "volcengine",
-        display_name: "Doubao Seedream 5.0",
-        operations: &["text_to_image", "image_to_image"],
-    }];
+    // invoked directly. Only the dated, hyphenated forms below were confirmed against
+    // the live API (2026-06-16, real ARK_API_KEY). Add other variants (3.0, 4.0) back
+    // once verified with credentials that have access to them.
+    let models = vec![
+        ImageModelEntry {
+            model_id: "doubao-seedream-5-0-260128",
+            provider: "volcengine",
+            display_name: "Doubao Seedream 5.0",
+            operations: &["text_to_image", "image_to_image"],
+        },
+        ImageModelEntry {
+            model_id: "doubao-seedream-4-5-251128",
+            provider: "volcengine",
+            display_name: "Doubao Seedream 4.5",
+            operations: &["text_to_image", "image_to_image"],
+        },
+    ];
 
     ImageProviderInfo {
         provider_id: "volcengine",
@@ -211,6 +219,15 @@ mod tests {
             .expect("doubao-seedream-5-0-260128 should be in catalog");
         assert_eq!(entry.provider, "volcengine");
         assert!(entry.operations.contains(&"text_to_image"));
+    }
+
+    #[test]
+    fn volcengine_seedream_4_5_present() {
+        let entry = list_models()
+            .find(|m| m.model_id == "doubao-seedream-4-5-251128")
+            .expect("doubao-seedream-4-5-251128 should be in catalog");
+        assert_eq!(entry.provider, "volcengine");
+        assert!(entry.operations.contains(&"image_to_image"));
     }
 
     #[test]

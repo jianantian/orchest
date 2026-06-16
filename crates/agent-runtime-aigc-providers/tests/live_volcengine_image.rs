@@ -46,12 +46,12 @@ fn load_dotenv_if_present() {
     }
 }
 
-fn adapter() -> agent_runtime_aigc_providers::AigcProviderRuntimeConfig {
+fn adapter(model: &str) -> agent_runtime_aigc_providers::AigcProviderRuntimeConfig {
     load_dotenv_if_present();
     let api_key = env::var("ARK_API_KEY").expect("ARK_API_KEY must be set for live test");
     agent_runtime_aigc_providers::AigcProviderRuntimeConfig {
         provider: "volcengine".into(),
-        model: "doubao-seedream-5-0-260128".into(),
+        model: model.into(),
         api_key: Some(api_key),
         timeout: Some(std::time::Duration::from_secs(120)),
         ..Default::default()
@@ -61,8 +61,10 @@ fn adapter() -> agent_runtime_aigc_providers::AigcProviderRuntimeConfig {
 #[tokio::test]
 #[ignore = "requires real ARK_API_KEY"]
 async fn live_text_to_image_returns_url() {
-    let provider =
-        agent_runtime_aigc_providers::create_image_provider_from_config(adapter()).unwrap();
+    let provider = agent_runtime_aigc_providers::create_image_provider_from_config(adapter(
+        "doubao-seedream-5-0-260128",
+    ))
+    .unwrap();
 
     let job = provider
         .create_image_generation(&ImageGenerationRequest {
@@ -101,8 +103,10 @@ async fn live_text_to_image_returns_url() {
 #[tokio::test]
 #[ignore = "requires real ARK_API_KEY"]
 async fn live_image_to_image_with_reference() {
-    let provider =
-        agent_runtime_aigc_providers::create_image_provider_from_config(adapter()).unwrap();
+    let provider = agent_runtime_aigc_providers::create_image_provider_from_config(adapter(
+        "doubao-seedream-5-0-260128",
+    ))
+    .unwrap();
 
     // First generate a base image to use as the reference input.
     let base_job = provider
@@ -166,4 +170,45 @@ async fn live_image_to_image_with_reference() {
         "expected https URL, got: {url}"
     );
     println!("image-to-image URL: {url}");
+}
+
+#[tokio::test]
+#[ignore = "requires real ARK_API_KEY"]
+async fn live_seedream_4_5_text_to_image_returns_url() {
+    let provider = agent_runtime_aigc_providers::create_image_provider_from_config(adapter(
+        "doubao-seedream-4-5-251128",
+    ))
+    .unwrap();
+
+    let job = provider
+        .create_image_generation(&ImageGenerationRequest {
+            operation: ImageOperation::TextToImage,
+            prompt: "A small green triangle icon on a plain white background".into(),
+            negative_prompt: None,
+            inputs: vec![],
+            generation_config: ImageGenerationConfig {
+                size: ImageSize::Pixels {
+                    width: 2048,
+                    height: 2048,
+                },
+                count: Some(1),
+                ..Default::default()
+            },
+            execution_config: Default::default(),
+            output_config: ImageOutputConfig::default(),
+            compatibility_policy: Default::default(),
+            provider_options: serde_json::json!({}),
+        })
+        .await
+        .expect("live seedream 4.5 text-to-image should succeed");
+
+    assert_eq!(job.assets.len(), 1);
+    let AssetIngestSource::Url(url) = &job.assets[0].source else {
+        panic!("expected a URL asset");
+    };
+    assert!(
+        url.starts_with("https://"),
+        "expected https URL, got: {url}"
+    );
+    println!("seedream 4.5 text-to-image URL: {url}");
 }
