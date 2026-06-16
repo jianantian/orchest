@@ -202,6 +202,8 @@ pub struct RuntimeConfig {
     pub run_depth: u32,
     #[serde(default)]
     pub approval_mode: ApprovalMode,
+    #[serde(default)]
+    pub repeated_failure: RepeatedFailureConfig,
     /// Custom approval predicate. Takes priority over `approval_mode` when set.
     /// Not serialized (like hooks/retry_policy); only set via code.
     #[serde(skip)]
@@ -242,6 +244,7 @@ impl std::fmt::Debug for RuntimeConfig {
             .field("code_execution_enabled", &self.code_execution_enabled)
             .field("run_depth", &self.run_depth)
             .field("approval_mode", &self.approval_mode)
+            .field("repeated_failure", &self.repeated_failure)
             .field("custom_approval_fn", &self.custom_approval_fn.is_some())
             .finish()
     }
@@ -259,8 +262,20 @@ impl Default for RuntimeConfig {
             code_execution_enabled: false,
             run_depth: 0,
             approval_mode: ApprovalMode::PerTool,
+            repeated_failure: RepeatedFailureConfig::default(),
             custom_approval_fn: None,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RepeatedFailureConfig {
+    pub threshold: usize,
+}
+
+impl Default for RepeatedFailureConfig {
+    fn default() -> Self {
+        Self { threshold: 3 }
     }
 }
 
@@ -504,6 +519,10 @@ impl AgentConfigBuilder {
         self.runtime.custom_approval_fn = Some(Arc::new(f));
         self
     }
+    pub fn repeated_failure_threshold(mut self, threshold: usize) -> Self {
+        self.runtime.repeated_failure.threshold = threshold;
+        self
+    }
     pub fn session_store(
         mut self,
         store: Arc<dyn crate::session::SessionStore>,
@@ -535,6 +554,11 @@ impl AgentConfigBuilder {
                 return Err(ConfigError::InvalidMaxToolCalls(0));
             }
         }
+        if self.runtime.repeated_failure.threshold < 1 {
+            return Err(ConfigError::InvalidRepeatedFailureThreshold(
+                self.runtime.repeated_failure.threshold,
+            ));
+        }
         Ok(AgentConfig {
             system_prompt: self.system_prompt,
             model: self.model,
@@ -563,6 +587,8 @@ pub enum ConfigError {
     InvalidMaxTokens(u64),
     #[error("max_tool_calls must be > 0, got {0}")]
     InvalidMaxToolCalls(u32),
+    #[error("repeated_failure.threshold must be > 0, got {0}")]
+    InvalidRepeatedFailureThreshold(usize),
 }
 
 // Runtime types
@@ -692,13 +718,26 @@ mod tests {
     }
 
     #[test]
+    fn zero_repeated_failure_threshold_rejected() {
+        let err = AgentConfig::builder("m")
+            .repeated_failure_threshold(0)
+            .build()
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::InvalidRepeatedFailureThreshold(0)
+        ));
+    }
+
+    #[test]
     fn valid_config_succeeds() {
         let config = AgentConfig::builder("anthropic/claude-sonnet-4-6")
             .system_prompt("test")
             .max_cost_usd(1.0)
             .max_steps(10)
-            .build();
-        assert!(config.is_ok());
+            .build()
+            .unwrap();
+        assert_eq!(config.runtime.repeated_failure.threshold, 3);
     }
 
     #[test]

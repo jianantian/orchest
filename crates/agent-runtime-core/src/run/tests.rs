@@ -2961,7 +2961,7 @@ async fn child_run_events_carry_run_depth_and_child_id() {
 
 use crate::hook::{
     CompactHookContext, HandoffHookContext, Hook, HookAction, ModelHookAction, ModelHookContext,
-    RunHookContext, ToolHookContext,
+    RepeatedFailureHookContext, RunHookContext, ToolHookContext,
 };
 
 /// Records every hook invocation so tests can assert call order / count.
@@ -3031,6 +3031,239 @@ impl Hook for RecordingHook {
             .push(format!("{}:before_compact", self.label));
         HookAction::Continue
     }
+}
+
+struct RepeatedFailureModel {
+    max_tool_calls: usize,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for RepeatedFailureModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Default::default()
+        };
+        if let Some(ref tx) = tx {
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+        }
+
+        let tool_result_count = messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .filter(|block| matches!(block, ContentBlock::ToolResult { .. }))
+            .count();
+
+        if tool_result_count >= self.max_tool_calls {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("done".into())],
+                usage,
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        } else {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: format!("call_{}", tool_result_count + 1),
+                    name: "unstable_tool".into(),
+                    input: json!({}),
+                }],
+                usage,
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+struct RepeatedFailureTool {
+    kinds: Vec<ErrorKind>,
+    calls: Arc<AtomicU32>,
+}
+
+#[async_trait::async_trait]
+impl Tool for RepeatedFailureTool {
+    fn name(&self) -> &str {
+        "unstable_tool"
+    }
+    fn description(&self) -> &str {
+        "always fails with configured error kinds"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &serde_json::Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
+    fn metadata(&self) -> &ToolMetadata {
+        &ToolMetadata {
+            side_effect: false,
+            approval: Approval::Never,
+            cost_hint: None,
+            timeout: None,
+            max_output_tokens: None,
+            source: ToolSource::InProcess,
+        }
+    }
+    async fn execute(
+        &self,
+        _input: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        let idx = self.calls.fetch_add(1, Ordering::SeqCst) as usize;
+        let kind = self
+            .kinds
+            .get(idx)
+            .copied()
+            .unwrap_or_else(|| *self.kinds.last().unwrap_or(&ErrorKind::Fatal));
+        Err(ToolError {
+            message: format!("failure {}", idx + 1),
+            kind,
+            retry: RetryHint::Unsafe,
+            code: Some("REPEATED_FAILURE_TEST".into()),
+            next_step: None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RepeatedFailureRecord {
+    tool_name: String,
+    error_kind: ErrorKind,
+    count: usize,
+    history_len: usize,
+}
+
+struct RepeatedFailureRecordingHook {
+    records: Arc<Mutex<Vec<RepeatedFailureRecord>>>,
+    abort: bool,
+}
+
+#[async_trait::async_trait]
+impl Hook for RepeatedFailureRecordingHook {
+    async fn on_repeated_failure(&self, ctx: &RepeatedFailureHookContext) -> HookAction {
+        self.records.lock().unwrap().push(RepeatedFailureRecord {
+            tool_name: ctx.tool_name.clone(),
+            error_kind: ctx.error_kind,
+            count: ctx.count,
+            history_len: ctx.error_history.len(),
+        });
+        if self.abort {
+            HookAction::Abort(format!("repeated {} {:?}", ctx.tool_name, ctx.error_kind))
+        } else {
+            HookAction::Continue
+        }
+    }
+}
+
+async fn run_repeated_failure_scenario(
+    kinds: Vec<ErrorKind>,
+    max_tool_calls: usize,
+    config: AgentConfig,
+) -> (Vec<RuntimeEvent>, Arc<Mutex<Vec<RepeatedFailureRecord>>>) {
+    let records = Arc::new(Mutex::new(Vec::new()));
+    let calls = Arc::new(AtomicU32::new(0));
+    let mut config = config;
+    config.hooks.push(Arc::new(RepeatedFailureRecordingHook {
+        records: Arc::clone(&records),
+        abort: true,
+    }));
+
+    let model = Arc::new(RepeatedFailureModel { max_tool_calls });
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(RepeatedFailureTool { kinds, calls }))
+        .unwrap();
+
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    (events, records)
+}
+
+#[tokio::test]
+async fn repeated_failure_hook_triggers_at_default_threshold() {
+    let (events, records) = run_repeated_failure_scenario(
+        vec![ErrorKind::Fatal, ErrorKind::Fatal, ErrorKind::Fatal],
+        5,
+        test_config(),
+    )
+    .await;
+
+    assert_eq!(
+        records.lock().unwrap().as_slice(),
+        &[RepeatedFailureRecord {
+            tool_name: "unstable_tool".into(),
+            error_kind: ErrorKind::Fatal,
+            count: 3,
+            history_len: 3,
+        }]
+    );
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            RuntimeEvent::RunFailed { error } if error.contains("repeated unstable_tool Fatal")
+        )
+    }));
+}
+
+#[tokio::test]
+async fn repeated_failure_hook_honors_custom_threshold() {
+    let mut config = test_config();
+    config.runtime.repeated_failure.threshold = 2;
+
+    let (_events, records) =
+        run_repeated_failure_scenario(vec![ErrorKind::Transient, ErrorKind::Transient], 5, config)
+            .await;
+
+    assert_eq!(
+        records.lock().unwrap().as_slice(),
+        &[RepeatedFailureRecord {
+            tool_name: "unstable_tool".into(),
+            error_kind: ErrorKind::Transient,
+            count: 2,
+            history_len: 2,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn repeated_failure_hook_does_not_mix_error_kinds() {
+    let mut config = test_config();
+    config.runtime.repeated_failure.threshold = 2;
+
+    let (events, records) =
+        run_repeated_failure_scenario(vec![ErrorKind::Fatal, ErrorKind::InvalidInput], 2, config)
+            .await;
+
+    assert!(records.lock().unwrap().is_empty());
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, RuntimeEvent::RunCompleted { .. })));
 }
 
 /// Test A – two hooks are called in registration order.

@@ -1,4 +1,4 @@
-//! Example: custom Hook that logs before_model and after_tool events.
+//! Example: custom Hook that logs before_model, after_tool, and repeated failures.
 //!
 //! Run with: cargo run --example hook_logging
 
@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::hook::{
-    Hook, HookAction, ModelHookAction, ModelHookContext, ToolHookContext,
+    Hook, HookAction, ModelHookAction, ModelHookContext, RepeatedFailureHookContext,
+    ToolHookContext,
 };
 use agent_runtime_core::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
@@ -83,6 +84,17 @@ impl Hook for LoggingHook {
         );
         HookAction::Continue
     }
+
+    async fn on_repeated_failure(&self, ctx: &RepeatedFailureHookContext) -> HookAction {
+        println!(
+            "[hook] repeated failure: tool='{}' kind={:?} count={} history={}",
+            ctx.tool_name,
+            ctx.error_kind,
+            ctx.count,
+            ctx.error_history.len()
+        );
+        HookAction::Continue
+    }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -92,6 +104,7 @@ async fn main() {
     let config = AgentConfig::builder("mock/mock")
         .system_prompt("you are a helpful assistant")
         .max_steps(3)
+        .repeated_failure_threshold(3)
         .build()
         .unwrap()
         .with_hook(Arc::new(LoggingHook));
