@@ -14,6 +14,7 @@ use agent_runtime_core::model::{
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
 use agent_runtime_core::run::{AgentConfig, AgentRun};
+use agent_runtime_core::tool::agent_as_tool::ContextMode;
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::ToolError;
 use async_trait::async_trait;
@@ -157,6 +158,7 @@ async fn main() {
         .as_tool("summariser", "Summarises long text")
         .model(Arc::clone(&child_model))
         .registry(child_registry)
+        .context_mode(ContextMode::Fresh)
         .input_mapper(|input: Value| {
             input
                 .get("input")
