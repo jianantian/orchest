@@ -1,12 +1,20 @@
-//! AIGC provider gateway for the Orchest runtime: unified image generation.
+//! AIGC provider gateway for the Orchest runtime: unified image and video generation.
 //!
 //! Standalone crate wrapping image-generation providers behind one abstraction,
 //! with asset persistence and a common output contract. Entry points are the
 //! [`gateway`] module and [`create_image_provider_from_config`].
+//!
+//! Video generation ([`video`] module / [`create_video_provider_from_config`]) is a
+//! thinner, provider-level abstraction: it does not yet have a gateway/asset-storage
+//! layer like images do, since generation is asynchronous (poll-based) on every known
+//! provider — callers create a task, then poll [`VideoProvider::get_video_generation`]
+//! until it reaches a terminal status.
 #![allow(clippy::result_large_err)]
 
 pub mod catalog;
-pub use catalog::{ImageModelEntry, ImageModelList, ImageProviderInfo};
+pub use catalog::{
+    ImageModelEntry, ImageModelList, ImageProviderInfo, VideoModelEntry, VideoProviderInfo,
+};
 
 pub mod gateway;
 pub mod http;
@@ -15,17 +23,19 @@ pub mod providers;
 pub mod storage;
 pub mod telemetry;
 pub mod types;
+pub mod video;
 
 use crate::providers::{
     AliyunImageAdapter, AliyunImageConfig, CrazyrouterImageAdapter, CrazyrouterImageConfig,
     OpenRouterImageAdapter, OpenRouterImageConfig, RenderfulImageAdapter, RenderfulImageConfig,
-    VolcengineImageAdapter, VolcengineImageConfig,
+    VolcengineImageAdapter, VolcengineImageConfig, VolcengineVideoAdapter, VolcengineVideoConfig,
 };
 
 pub use gateway::*;
 pub use image::*;
 pub use storage::*;
 pub use types::*;
+pub use video::*;
 
 #[allow(clippy::result_large_err)] // justified: AigcError carries diagnostic context needed for user-facing messages
 pub fn create_image_provider_from_config(
@@ -107,6 +117,42 @@ pub fn create_image_provider_from_config(
         _ => Err(AigcError::new(
             "unknown_provider",
             format!("unknown provider '{provider}'"),
+        )),
+    }
+}
+
+#[allow(clippy::result_large_err)] // justified: AigcError carries diagnostic context needed for user-facing messages
+pub fn create_video_provider_from_config(
+    config: AigcProviderRuntimeConfig,
+) -> Result<Box<dyn VideoProvider>, AigcError> {
+    let provider = config.provider.trim().to_ascii_lowercase();
+    if provider.is_empty() {
+        return Err(AigcError::new(
+            "unknown_provider",
+            "provider cannot be empty",
+        ));
+    }
+    if config.model.trim().is_empty() {
+        return Err(AigcError::new("invalid_model", "model cannot be empty"));
+    }
+
+    let api_key = resolve_api_key(
+        &provider,
+        config.api_key.as_deref(),
+        config.api_key_env.as_deref(),
+    )?;
+    match provider.as_str() {
+        "volcengine" | "ark" => Ok(Box::new(VolcengineVideoAdapter::from_config(
+            VolcengineVideoConfig {
+                model: config.model,
+                api_key,
+                api_url: config.api_url,
+                timeout: config.timeout,
+            },
+        )?)),
+        _ => Err(AigcError::new(
+            "unknown_provider",
+            format!("unknown video provider '{provider}'"),
         )),
     }
 }
