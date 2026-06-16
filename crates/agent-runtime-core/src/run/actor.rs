@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use crate::budget::{BudgetConfig, BudgetGuard};
@@ -77,6 +77,14 @@ pub(crate) struct AgentRunState {
     pub event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
     pub webhook_runtime: Option<WebhookRuntime>,
     pub repeated_failures: HashMap<(String, ErrorKind), Vec<ToolError>>,
+}
+
+struct PreparedHandoffTransition {
+    messages: Vec<Message>,
+    config: AgentConfig,
+    registry: ToolRegistry,
+    tool_defs: Vec<ToolDef>,
+    budget: BudgetGuard,
 }
 
 impl AgentRunState {
@@ -821,7 +829,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
 
     let mut tool_results = Vec::new();
     let mut handoff_triggered = false;
-    let mut pending_handoff: Option<(String, crate::handoff::HandoffResult)> = None;
+    let mut pending_handoff: Option<(String, String, crate::handoff::HandoffResult)> = None;
 
     for tool_call in &tool_uses {
         let tool = match state.registry.get(&tool_call.name) {
@@ -1220,7 +1228,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                         tool_use_id: tool_call.id.clone(),
                         content: json!({"result": result.transfer_message}),
                     });
-                    pending_handoff = Some((tool_call.name.clone(), *result));
+                    pending_handoff = Some((tool_call.name.clone(), tool_call.id.clone(), *result));
                 }
                 if let Err(reason) = finalize_after_tool(
                     &state.config.hooks,
@@ -1311,17 +1319,48 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         }
     }
 
-    state.messages.push(Message {
-        role: Role::User,
-        content: tool_results,
-    });
-
-    // Process pending handoff: switch agent and continue
-    if let Some((tool_name, handoff_result)) = pending_handoff {
+    // Process pending handoff: prepare the next state first, then swap it in.
+    if let Some((tool_name, tool_use_id, handoff_result)) = pending_handoff {
         let previous_agent =
             state.config.system_prompt[..state.config.system_prompt.len().min(60)].to_string();
         let new_agent_prompt = handoff_result.target_agent.system_prompt.clone();
         let new_agent = new_agent_prompt[..new_agent_prompt.len().min(60)].to_string();
+        let handoff_input = json!({"tool": tool_name});
+
+        let mut handoff_history = state.messages.clone();
+        handoff_history.push(Message {
+            role: Role::User,
+            content: tool_results.clone(),
+        });
+
+        let transition = prepare_handoff_transition(
+            state,
+            handoff_result,
+            handoff_history,
+            handoff_input.clone(),
+        )
+        .await;
+
+        let transition = match transition {
+            Ok(transition) => transition,
+            Err(error) => {
+                emit(
+                    &subs,
+                    RuntimeEvent::ToolCallFailed {
+                        tool: tool_name,
+                        error: error.clone(),
+                    },
+                )
+                .await;
+                replace_tool_result(&mut tool_results, &tool_use_id, tool_error_result(&error));
+                state.messages.push(Message {
+                    role: Role::User,
+                    content: tool_results,
+                });
+                state.step += 1;
+                return true;
+            }
+        };
 
         crate::hook::runner::run_on_handoff(
             &state.config.hooks,
@@ -1329,7 +1368,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 run_id,
                 previous_agent: previous_agent.clone(),
                 new_agent: new_agent.clone(),
-                handoff_input: json!({"tool": tool_name}),
+                handoff_input,
             },
             primary(&subs),
         )
@@ -1344,56 +1383,96 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         )
         .await;
 
-        let mut next_messages = handoff_result
-            .apply_filter(state.messages.clone(), json!({"tool": tool_name}))
-            .await;
-
-        if next_messages
-            .first()
-            .map(|m| !matches!(m.role, Role::System))
-            .unwrap_or(true)
-        {
-            next_messages.insert(
-                0,
-                Message {
-                    role: Role::System,
-                    content: vec![ContentBlock::Text(new_agent_prompt.clone())],
-                },
-            );
-        } else if let Some(first) = next_messages.first_mut() {
-            first.content = vec![ContentBlock::Text(new_agent_prompt.clone())];
-        }
-        state.messages = next_messages;
-
-        state.registry = ToolRegistry::new();
-        let mut new_config = handoff_result.target_agent;
-        for handoff in new_config.handoffs.drain(..) {
-            let tool: Arc<dyn Tool> =
-                Arc::new(crate::tool::handoff_tool::HandoffTool::new(handoff));
-            let _ = state.registry.register(tool);
-        }
-        state.registry = state
-            .registry
-            .filter_by_allowed(&new_config.runtime.allowed_tools);
-        state.tool_defs = state.registry.list();
-
-        let new_budget = if new_config.budget.max_tokens.is_none()
-            && new_config.budget.max_tool_calls.is_none()
-            && new_config.budget.max_duration.is_none()
-            && new_config.budget.max_cost_usd.is_none()
-        {
-            state.budget.remaining_config()
-        } else {
-            new_config.budget.clone()
-        };
-        state.budget = BudgetGuard::new(new_budget);
-
+        state.messages = transition.messages;
+        state.registry = transition.registry;
+        state.tool_defs = transition.tool_defs;
+        state.budget = transition.budget;
         state.run_hook_ctx.agent_name = new_agent;
-        state.config = new_config;
+        state.config = transition.config;
+    } else {
+        state.messages.push(Message {
+            role: Role::User,
+            content: tool_results,
+        });
     }
 
     state.step += 1;
     true
+}
+
+async fn prepare_handoff_transition(
+    state: &AgentRunState,
+    handoff_result: crate::handoff::HandoffResult,
+    history: Vec<Message>,
+    handoff_input: Value,
+) -> Result<PreparedHandoffTransition, ToolError> {
+    let new_agent_prompt = handoff_result.target_agent.system_prompt.clone();
+    let mut next_messages = handoff_result
+        .apply_filter(history, handoff_input)
+        .await
+        .map_err(|error| ToolError::fatal(error.to_string()).with_code("HANDOFF_FILTER_FAILED"))?;
+
+    if next_messages
+        .first()
+        .map(|m| !matches!(m.role, Role::System))
+        .unwrap_or(true)
+    {
+        next_messages.insert(
+            0,
+            Message {
+                role: Role::System,
+                content: vec![ContentBlock::Text(new_agent_prompt.clone())],
+            },
+        );
+    } else if let Some(first) = next_messages.first_mut() {
+        first.content = vec![ContentBlock::Text(new_agent_prompt)];
+    }
+
+    let mut new_config = handoff_result.target_agent;
+    let mut next_registry = ToolRegistry::new();
+    for handoff in new_config.handoffs.drain(..) {
+        let tool: Arc<dyn Tool> = Arc::new(crate::tool::handoff_tool::HandoffTool::new(handoff));
+        next_registry.register(tool).map_err(|error| {
+            ToolError::fatal(format!("failed to build handoff registry: {error}"))
+                .with_code("HANDOFF_REGISTRY_FAILED")
+        })?;
+    }
+    let next_registry = next_registry.filter_by_allowed(&new_config.runtime.allowed_tools);
+    let tool_defs = next_registry.list();
+
+    let new_budget = if new_config.budget.max_tokens.is_none()
+        && new_config.budget.max_tool_calls.is_none()
+        && new_config.budget.max_duration.is_none()
+        && new_config.budget.max_cost_usd.is_none()
+    {
+        state.budget.remaining_config()
+    } else {
+        new_config.budget.clone()
+    };
+    let budget = BudgetGuard::new(new_budget);
+
+    Ok(PreparedHandoffTransition {
+        messages: next_messages,
+        config: new_config,
+        registry: next_registry,
+        tool_defs,
+        budget,
+    })
+}
+
+fn replace_tool_result(tool_results: &mut [ContentBlock], tool_use_id: &str, content: Value) {
+    for block in tool_results {
+        if let ContentBlock::ToolResult {
+            tool_use_id: existing,
+            content: existing_content,
+        } = block
+        {
+            if existing == tool_use_id {
+                *existing_content = content;
+                return;
+            }
+        }
+    }
 }
 
 // ── Utility helpers ──────────────────────────────────────────────────────────

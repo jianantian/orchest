@@ -10,14 +10,14 @@ Make handoff transition state construction atomic from the perspective of `Agent
 
 ## Acceptance Criteria
 
-- [ ] Handoff next messages are computed before replacing `state.messages`.
-- [ ] `HandoffInputFilter::filter` returns a fallible result such as `Result<HandoffInputData, HandoffError>` or the local equivalent.
-- [ ] Next registry and tool definitions are built before replacing the active registry/tool definitions.
-- [ ] Budget/config decisions are computed before active state replacement.
-- [ ] If handoff filtering fails, previous state remains coherent and the run emits a structured failure.
-- [ ] Tests cover successful handoff and handoff filter failure.
-- [ ] Public examples that implement handoff filters are updated for the fallible filter signature.
-- [ ] Runtime event ordering for successful handoff is documented or preserved.
+- [x] Handoff next messages are computed before replacing `state.messages`.
+- [x] `HandoffInputFilter::filter` returns a fallible result such as `Result<HandoffInputData, HandoffError>` or the local equivalent.
+- [x] Next registry and tool definitions are built before replacing the active registry/tool definitions.
+- [x] Budget/config decisions are computed before active state replacement.
+- [x] If handoff filtering fails, previous state remains coherent and the run emits a structured failure.
+- [x] Tests cover successful handoff and handoff filter failure.
+- [x] Public examples that implement handoff filters are updated for the fallible filter signature.
+- [x] Runtime event ordering for successful handoff is documented or preserved.
 
 ## Notes
 

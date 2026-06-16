@@ -3671,6 +3671,97 @@ impl HandoffModel {
     }
 }
 
+struct FailingHandoffInputFilter;
+
+#[async_trait::async_trait]
+impl crate::handoff::HandoffInputFilter for FailingHandoffInputFilter {
+    async fn filter(
+        &self,
+        _data: crate::handoff::HandoffInputData,
+    ) -> Result<crate::handoff::HandoffInputData, crate::handoff::HandoffError> {
+        Err(crate::handoff::HandoffError::Filter(
+            "filter rejected handoff".to_string(),
+        ))
+    }
+}
+
+struct HandoffFilterFailureModel {
+    call_count: AtomicU32,
+}
+
+impl HandoffFilterFailureModel {
+    fn new() -> Self {
+        Self {
+            call_count: AtomicU32::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for HandoffFilterFailureModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[crate::tool::ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            return Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "h1".into(),
+                    name: "transfer_to_billing".into(),
+                    input: json!({}),
+                }],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            });
+        }
+
+        let active_prompt = messages.iter().find_map(|message| {
+            if matches!(message.role, Role::System) {
+                message.content.iter().find_map(|block| match block {
+                    ContentBlock::Text(text) => Some(text.as_str()),
+                    _ => None,
+                })
+            } else {
+                None
+            }
+        });
+        let has_handoff_error = messages.iter().flat_map(|m| &m.content).any(|block| {
+            matches!(
+                block,
+                ContentBlock::ToolResult { content, .. }
+                    if content["error"]["code"] == "HANDOFF_FILTER_FAILED"
+            )
+        });
+
+        let text = if active_prompt == Some("triage agent") && has_handoff_error {
+            "handoff_failed_under_triage"
+        } else {
+            "handoff_state_was_mutated"
+        };
+
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text(text.into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
 #[async_trait::async_trait]
 impl ModelAdapter for HandoffModel {
     fn provider_name(&self) -> &str {
@@ -3749,6 +3840,58 @@ async fn static_handoff_switches_agent_and_completes() {
             .iter()
             .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("hello from billing"))),
         "run should complete under billing agent"
+    );
+}
+
+#[tokio::test]
+async fn handoff_filter_failure_keeps_original_agent_state_coherent() {
+    use crate::handoff::{Handoff, HandoffTarget};
+
+    let mut billing_config = test_config();
+    billing_config.system_prompt = "billing specialist".into();
+
+    let mut config = test_config();
+    config.system_prompt = "triage agent".into();
+    config = config.with_handoff(Handoff {
+        tool_name: "transfer_to_billing".into(),
+        tool_description: "Transfer to billing agent".into(),
+        input_schema: json!({"type": "object", "properties": {}}),
+        target: HandoffTarget::Static(Box::new(billing_config)),
+        input_filter: Some(Arc::new(FailingHandoffInputFilter)),
+        nest_history: false,
+    });
+
+    let model = Arc::new(HandoffFilterFailureModel::new());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events.iter().any(|event| {
+            matches!(
+                event,
+                RuntimeEvent::ToolCallFailed { tool, error }
+                    if tool == "transfer_to_billing"
+                        && error.code.as_deref() == Some("HANDOFF_FILTER_FAILED")
+            )
+        }),
+        "filter failure should emit a structured tool failure"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::AgentUpdated { .. })),
+        "failed handoff must not emit AgentUpdated"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("handoff_failed_under_triage"))),
+        "original agent should continue with structured handoff error"
     );
 }
 
