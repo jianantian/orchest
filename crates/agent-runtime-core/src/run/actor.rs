@@ -1,5 +1,6 @@
 //! WorkerActor: Ractor-based agent run actor (mode B: self-message step).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -75,6 +76,7 @@ pub(crate) struct AgentRunState {
     /// Subscriber list; index 0 is the primary (blocking send), rest use try_send.
     pub event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
     pub webhook_runtime: Option<WebhookRuntime>,
+    pub repeated_failures: HashMap<(String, ErrorKind), Vec<ToolError>>,
 }
 
 impl AgentRunState {
@@ -321,6 +323,7 @@ impl Actor for WorkerActor {
             approval_bus,
             event_subs,
             webhook_runtime,
+            repeated_failures: HashMap::new(),
         })
     }
 
@@ -493,6 +496,39 @@ async fn request_retry_approval(request: RetryApprovalRequest<'_>) -> bool {
     }
 
     approved
+}
+
+async fn record_repeated_failure(
+    state: &mut AgentRunState,
+    subs: &[mpsc::Sender<RuntimeEvent>],
+    tool_name: &str,
+    error: &ToolError,
+) -> Result<(), String> {
+    let key = (tool_name.to_string(), error.kind);
+    let history = state.repeated_failures.entry(key).or_default();
+    history.push(error.clone());
+
+    let threshold = state.config.runtime.repeated_failure.threshold;
+    if history.len() < threshold {
+        return Ok(());
+    }
+
+    let ctx = crate::hook::RepeatedFailureHookContext {
+        run_id: state.run_id,
+        tool_name: tool_name.to_string(),
+        error_kind: error.kind,
+        error_history: history.clone(),
+        count: history.len(),
+    };
+
+    match crate::hook::runner::run_on_repeated_failure(&state.config.hooks, &ctx, primary(subs))
+        .await
+    {
+        crate::hook::HookAction::Abort(reason) => Err(reason),
+        crate::hook::HookAction::Continue
+        | crate::hook::HookAction::Skip
+        | crate::hook::HookAction::Reject(_) => Ok(()),
+    }
 }
 
 /// Execute one outer-loop iteration. Returns true to continue, false to stop.
@@ -1247,6 +1283,12 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 }
             }
             Err(e) => {
+                if let Err(reason) =
+                    record_repeated_failure(state, &subs, &tool_call.name, &e).await
+                {
+                    emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    return false;
+                }
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: tool_call.id.clone(),
                     content: tool_error_result(&e),
@@ -1440,5 +1482,6 @@ fn failed_state(
         approval_bus,
         event_subs,
         webhook_runtime: None,
+        repeated_failures: HashMap::new(),
     }
 }
