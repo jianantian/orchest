@@ -10,10 +10,10 @@ Clarify the concurrency/restart invariant in code comments.
 
 ## Acceptance Criteria
 
-- [ ] `crates/agent-runtime-core/src/run/handle.rs` documents that `actor_ref` is rewritten after supervisor restarts.
-- [ ] The comment mentions concurrent watcher access as the reason for the mutex.
-- [ ] No behavior changes are made.
-- [ ] `cargo fmt --check` passes.
+- [x] `crates/agent-runtime-core/src/run/handle.rs` documents that `actor_ref` is rewritten after supervisor restarts.
+- [x] The comment mentions concurrent watcher access as the reason for the mutex.
+- [x] No behavior changes are made.
+- [x] `cargo fmt --check` passes.
 
 ## Notes
 
