@@ -17,6 +17,45 @@ use crate::{
 use crate::{GeneratedImage, ImageProvider};
 use crate::{GeneratedVideoAsset, VideoGenerationRequest, VideoGenerationResponse, VideoProvider};
 
+/// Bundles the object-storage handles every gateway needs to persist a
+/// provider asset: where to write it, where to register it, under which
+/// scope, and which provider's name to tag metrics with. Exists so
+/// `persist_provider_asset` — the single shared implementation of "accept a
+/// provider asset and put it in our own storage" — takes one argument
+/// instead of four.
+struct AssetStorageContext<'a> {
+    asset_store: &'a dyn AssetStore,
+    asset_registry: &'a dyn AssetRegistry,
+    scope: &'a AssetScope,
+    provider_name: &'a str,
+}
+
+/// Persists a provider-supplied asset (image or video) to our own asset
+/// store and registers it, recording the same telemetry regardless of media
+/// type. Both `ImageGateway` and `VideoGateway` call into this so there is
+/// exactly one implementation of object-storage semantics (key prefixes,
+/// registry scoping, persisted-bytes/duration metrics) for the whole crate.
+async fn persist_provider_asset(
+    ctx: AssetStorageContext<'_>,
+    source: AssetIngestSource,
+    options: PutAssetOptions,
+) -> Result<StoredAsset, AigcError> {
+    let persist_started_at = std::time::Instant::now();
+    let stored = ctx.asset_store.put_stream(source, options).await?;
+    metrics::histogram!(
+        crate::telemetry::METRIC_ASSET_PERSIST_DURATION,
+        "provider" => ctx.provider_name.to_string()
+    )
+    .record(persist_started_at.elapsed().as_secs_f64());
+    metrics::counter!(
+        crate::telemetry::METRIC_PERSISTED_BYTES,
+        "provider" => ctx.provider_name.to_string()
+    )
+    .increment(stored.byte_count);
+    ctx.asset_registry.save(ctx.scope, stored.clone()).await?;
+    Ok(stored)
+}
+
 pub struct ImageGateway {
     provider: Arc<dyn ImageProvider>,
     asset_store: Arc<dyn AssetStore>,
@@ -120,31 +159,21 @@ impl ImageGateway {
 
         let mut images = Vec::with_capacity(provider_job.assets.len());
         for asset in provider_job.assets {
-            let persist_started_at = std::time::Instant::now();
-            let stored = self
-                .asset_store
-                .put_stream(
-                    asset.source,
-                    PutAssetOptions {
-                        content_type_hint: asset.mime_type.clone(),
-                        max_base64_bytes: self.config.max_base64_bytes,
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            metrics::histogram!(
-                crate::telemetry::METRIC_ASSET_PERSIST_DURATION,
-                "provider" => self.provider.provider_name().to_string()
+            let stored = persist_provider_asset(
+                AssetStorageContext {
+                    asset_store: self.asset_store.as_ref(),
+                    asset_registry: self.asset_registry.as_ref(),
+                    scope: &self.config.scope,
+                    provider_name: self.provider.provider_name(),
+                },
+                asset.source,
+                PutAssetOptions {
+                    content_type_hint: asset.mime_type.clone(),
+                    max_base64_bytes: self.config.max_base64_bytes,
+                    ..Default::default()
+                },
             )
-            .record(persist_started_at.elapsed().as_secs_f64());
-            metrics::counter!(
-                crate::telemetry::METRIC_PERSISTED_BYTES,
-                "provider" => self.provider.provider_name().to_string()
-            )
-            .increment(stored.byte_count);
-            self.asset_registry
-                .save(&self.config.scope, stored.clone())
-                .await?;
+            .await?;
             images.push(
                 self.public_image(stored, &request.output_config.delivery)
                     .await?,
@@ -423,20 +452,21 @@ impl ImageGateway {
         &self,
         asset: ProviderAsset,
     ) -> Result<GeneratedImage, AigcError> {
-        let stored = self
-            .asset_store
-            .put_stream(
-                asset.source,
-                PutAssetOptions {
-                    content_type_hint: asset.mime_type,
-                    max_base64_bytes: self.config.max_base64_bytes,
-                    ..Default::default()
-                },
-            )
-            .await?;
-        self.asset_registry
-            .save(&self.config.scope, stored.clone())
-            .await?;
+        let stored = persist_provider_asset(
+            AssetStorageContext {
+                asset_store: self.asset_store.as_ref(),
+                asset_registry: self.asset_registry.as_ref(),
+                scope: &self.config.scope,
+                provider_name: self.provider.provider_name(),
+            },
+            asset.source,
+            PutAssetOptions {
+                content_type_hint: asset.mime_type,
+                max_base64_bytes: self.config.max_base64_bytes,
+                ..Default::default()
+            },
+        )
+        .await?;
         self.public_image(stored, &ImageOutputDelivery::Url).await
     }
 }
@@ -586,20 +616,21 @@ impl VideoGateway {
         content_type_hint: &str,
         key_prefix: &str,
     ) -> Result<GeneratedVideoAsset, AigcError> {
-        let stored = self
-            .asset_store
-            .put_stream(
-                AssetIngestSource::Url(provider_url.to_string()),
-                PutAssetOptions {
-                    content_type_hint: Some(content_type_hint.into()),
-                    key_prefix: Some(key_prefix.into()),
-                    ..Default::default()
-                },
-            )
-            .await?;
-        self.asset_registry
-            .save(&self.config.scope, stored.clone())
-            .await?;
+        let stored = persist_provider_asset(
+            AssetStorageContext {
+                asset_store: self.asset_store.as_ref(),
+                asset_registry: self.asset_registry.as_ref(),
+                scope: &self.config.scope,
+                provider_name: self.provider.provider_name(),
+            },
+            AssetIngestSource::Url(provider_url.to_string()),
+            PutAssetOptions {
+                content_type_hint: Some(content_type_hint.into()),
+                key_prefix: Some(key_prefix.into()),
+                ..Default::default()
+            },
+        )
+        .await?;
         let access = self
             .asset_store
             .signed_url(&stored, self.config.signed_url_ttl)
