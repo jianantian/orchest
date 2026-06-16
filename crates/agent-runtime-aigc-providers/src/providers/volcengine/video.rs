@@ -264,7 +264,7 @@ impl VideoProvider for VolcengineVideoAdapter {
         let response = builder.send().await.map_err(|err| {
             AigcError::new("provider_request_failed", err.to_string()).provider("volcengine")
         })?;
-        let response = super::parse_json_response("volcengine", response).await?;
+        let response = crate::providers::parse_json_response("volcengine", response).await?;
         Ok(self.parse_job(response))
     }
 
@@ -279,7 +279,7 @@ impl VideoProvider for VolcengineVideoAdapter {
         let response = builder.send().await.map_err(|err| {
             AigcError::new("provider_request_failed", err.to_string()).provider("volcengine")
         })?;
-        let response = super::parse_json_response("volcengine", response).await?;
+        let response = crate::providers::parse_json_response("volcengine", response).await?;
         Ok(self.parse_job(response))
     }
 
@@ -294,7 +294,7 @@ impl VideoProvider for VolcengineVideoAdapter {
         let response = builder.send().await.map_err(|err| {
             AigcError::new("provider_request_failed", err.to_string()).provider("volcengine")
         })?;
-        super::parse_json_response("volcengine", response).await?;
+        crate::providers::parse_json_response("volcengine", response).await?;
         Ok(())
     }
 
@@ -332,7 +332,7 @@ impl VideoProvider for VolcengineVideoAdapter {
         let response = builder.send().await.map_err(|err| {
             AigcError::new("provider_request_failed", err.to_string()).provider("volcengine")
         })?;
-        let response = super::parse_json_response("volcengine", response).await?;
+        let response = crate::providers::parse_json_response("volcengine", response).await?;
         let total = response.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
         let items = response
             .get("items")
