@@ -109,6 +109,12 @@ impl Tool for CurrentTimeTool {
 
 `ToolError::spec_gap(...)` 用于 SDK 或应用契约缺少必要行为的情况，此时默认 `next_step = "escalate"`，引导模型升级给调用方或 supervising agent。
 
+### 重复失败 Hook
+
+`RuntimeConfig.repeated_failure.threshold` 默认是 `3`。同一个 run 内，当同一个 tool 以同一个 `ErrorKind` 连续累计到阈值时，runtime 会调用 `Hook::on_repeated_failure`，传入 `run_id`、`tool_name`、`error_kind`、`error_history` 和 `count`。Hook 可以返回 `Continue` 继续运行，或返回 `Abort(reason)` 让 run 失败退出。
+
+这个 hook 是应用层介入点，不是内置策略引擎。需要跨子 agent、Supervised Delegation 或多订阅者场景做观察、注入 steering、或统一 abort 时，优先配合 watcher 示例使用。
+
 ## 5. 启动 run + 监听事件
 
 ```rust
@@ -148,6 +154,7 @@ while let Some(event) = rx.recv().await {
 | `ToolCallStarted` | 模型发起一次 tool 调用 |
 | `ToolCallCompleted` | tool 返回结果 |
 | `ToolCallFailed` | tool 执行失败（携带结构化 `ToolError`） |
+| `ToolCallRetry` | runtime 准备重试 tool 调用（携带 attempt 和上一条错误） |
 | `RunCompleted` | run 正常结束，带最终 `output` |
 | `RunFailed` | run 失败 |
 

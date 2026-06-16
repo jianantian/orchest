@@ -208,8 +208,11 @@ async fn main() {
     let mut saw_approval = false;
     while let Some(event) = rx.recv().await {
         match &event {
-            RuntimeEvent::ApprovalRequested { tool_call } => {
-                println!("[approval] requested for tool '{}'", tool_call.name);
+            RuntimeEvent::ApprovalRequested { tool_call, context } => {
+                println!(
+                    "[approval] requested for tool '{}' ({context:?})",
+                    tool_call.name
+                );
                 saw_approval = true;
                 handle.respond_approval(handle.run_id, true).await.unwrap();
             }

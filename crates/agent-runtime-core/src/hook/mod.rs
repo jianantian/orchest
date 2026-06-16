@@ -53,6 +53,14 @@ pub struct ToolHookContext {
     pub tool_output: Option<serde_json::Value>,
 }
 
+pub struct RepeatedFailureHookContext {
+    pub run_id: crate::run::RunId,
+    pub tool_name: String,
+    pub error_kind: crate::tool::ErrorKind,
+    pub error_history: Vec<crate::tool::ToolError>,
+    pub count: usize,
+}
+
 pub struct HandoffHookContext {
     pub run_id: crate::run::RunId,
     pub previous_agent: String,
@@ -91,6 +99,10 @@ pub trait Hook: Send + Sync {
         HookAction::Continue
     }
     async fn after_tool(&self, _ctx: &mut ToolHookContext) -> HookAction {
+        HookAction::Continue
+    }
+
+    async fn on_repeated_failure(&self, _ctx: &RepeatedFailureHookContext) -> HookAction {
         HookAction::Continue
     }
 

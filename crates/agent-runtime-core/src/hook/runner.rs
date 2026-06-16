@@ -11,7 +11,7 @@ use crate::run::helpers::emit;
 
 use super::{
     CompactHookContext, HandoffHookContext, Hook, HookAction, ModelHookAction, ModelHookContext,
-    RunHookContext, ToolHookContext,
+    RepeatedFailureHookContext, RunHookContext, ToolHookContext,
 };
 
 pub(crate) async fn run_on_run_start(
@@ -192,6 +192,43 @@ pub(crate) async fn run_after_tool(
                     tx,
                     RuntimeEvent::HookPanicked {
                         hook_name: "after_tool".to_string(),
+                        message: format!("{panic:?}"),
+                    },
+                )
+                .await;
+            }
+        }
+    }
+    HookAction::Continue
+}
+
+pub(crate) async fn run_on_repeated_failure(
+    hooks: &[Arc<dyn Hook>],
+    ctx: &RepeatedFailureHookContext,
+    tx: &mpsc::Sender<RuntimeEvent>,
+) -> HookAction {
+    for hook in hooks {
+        let result = AssertUnwindSafe(hook.on_repeated_failure(ctx))
+            .catch_unwind()
+            .await;
+        match result {
+            Ok(HookAction::Abort(reason)) => return HookAction::Abort(reason),
+            Ok(HookAction::Reject(_)) => {
+                emit(
+                    tx,
+                    RuntimeEvent::RuntimeWarning {
+                        message: "HookAction::Reject returned from on_repeated_failure; ignored"
+                            .into(),
+                    },
+                )
+                .await;
+            }
+            Ok(HookAction::Skip | HookAction::Continue) => {}
+            Err(panic) => {
+                emit(
+                    tx,
+                    RuntimeEvent::HookPanicked {
+                        hook_name: "on_repeated_failure".to_string(),
                         message: format!("{panic:?}"),
                     },
                 )
