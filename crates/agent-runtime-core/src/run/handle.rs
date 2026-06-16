@@ -49,7 +49,12 @@ impl ApprovalBus {
 /// attach watchers, respond to approvals, and steer the run mid-flight.
 pub struct RunHandle {
     pub run_id: RunId,
-    /// Actor reference — set once `Actor::spawn` completes inside the background task.
+    /// Current worker actor reference.
+    ///
+    /// The supervisor writes this after the initial worker spawn and rewrites it
+    /// after a supervised restart. The mutex is required because public handle
+    /// methods and watcher reattachment tasks can read the current actor
+    /// concurrently while the supervisor swaps in the restarted actor.
     pub(crate) actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
     /// Fires once after `actor_ref` is set; used by `subscribe_events` to avoid
     /// a race where the subscriber cast hits `None`.
