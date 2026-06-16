@@ -29,11 +29,11 @@ impl ProviderRegistry {
         let mut reg = Self {
             factories: HashMap::new(),
         };
-        reg.register(Box::new(super::anthropic::AnthropicFactory));
-        reg.register(Box::new(super::openai::OpenAiFactory));
-        reg.register(Box::new(super::deepseek::DeepSeekFactory));
-        reg.register(Box::new(super::openrouter::OpenRouterFactory));
-        reg.register(Box::new(super::volcengine::VolcengineFactory));
+        reg.register(Box::new(super::providers::anthropic::AnthropicFactory));
+        reg.register(Box::new(super::providers::openai::OpenAiFactory));
+        reg.register(Box::new(super::providers::deepseek::DeepSeekFactory));
+        reg.register(Box::new(super::providers::openrouter::OpenRouterFactory));
+        reg.register(Box::new(super::providers::volcengine::VolcengineFactory));
         reg
     }
 

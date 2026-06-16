@@ -1,14 +1,19 @@
 //! AIGC provider gateway for the Orchest runtime: unified image and video generation.
 //!
-//! Standalone crate wrapping image-generation providers behind one abstraction,
-//! with asset persistence and a common output contract. Entry points are the
-//! [`gateway`] module and [`create_image_provider_from_config`].
+//! Standalone crate wrapping image- and video-generation providers behind a common
+//! abstraction, with asset persistence so callers never see a provider's own
+//! (often short-lived) asset URLs. Entry points: [`gateway::ImageGateway`] /
+//! [`create_image_provider_from_config`] for images, [`gateway::VideoGateway`] /
+//! [`create_video_provider_from_config`] for video.
 //!
-//! Video generation ([`video`] module / [`create_video_provider_from_config`]) is a
-//! thinner, provider-level abstraction: it does not yet have a gateway/asset-storage
-//! layer like images do, since generation is asynchronous (poll-based) on every known
-//! provider — callers create a task, then poll [`VideoProvider::get_video_generation`]
-//! until it reaches a terminal status.
+//! Video generation is asynchronous on every known provider — `VideoGateway::generate`
+//! creates the task and polls internally until it reaches a terminal status, unlike
+//! image generation which most providers complete synchronously.
+//!
+//! Module layout: [`types`], [`catalog`], and [`gateway`] are each split into an
+//! `image` and a `video` submodule (plus a `common`/shared piece for `types`), so the
+//! image and video concerns don't bleed into one file. [`providers`] holds one
+//! submodule per upstream provider adapter.
 #![allow(clippy::result_large_err)]
 
 pub mod catalog;
