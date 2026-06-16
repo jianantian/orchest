@@ -8,13 +8,15 @@ use serde_json::json;
 use tokio::sync::mpsc;
 
 use crate::budget::{BudgetConfig, BudgetGuard};
-use crate::events::RuntimeEvent;
+use crate::events::{ApprovalContext, RuntimeEvent};
 use crate::model::{ContentBlock, Message, ModelAdapter, ModelStreamChunk, Role, StopReason};
 use crate::telemetry;
 use crate::tool::code_exec::CodeExecutionMcpServer;
 use crate::tool::registry::ToolRegistry;
 use crate::tool::search::SearchToolsTool;
-use crate::tool::{Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolOutput};
+use crate::tool::{
+    ErrorKind, RetryHint, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolOutput,
+};
 
 use super::compaction::maybe_compact_context;
 use super::config::{AgentConfig, RunId};
@@ -26,6 +28,8 @@ use super::webhook::{start_webhook_server, WebhookRuntime};
 
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(3600);
 const EVENT_SEND_TIMEOUT: Duration = Duration::from_millis(500);
+const TOOL_RETRY_MAX_ATTEMPTS: u32 = 3;
+const TOOL_RETRY_BASE_DELAY: Duration = Duration::from_millis(10);
 
 // ── Message enum ─────────────────────────────────────────────────────────────
 
@@ -421,6 +425,76 @@ async fn finalize_after_tool(
     Ok(())
 }
 
+fn should_retry_tool_error(error: &ToolError, attempt: u32) -> bool {
+    if attempt >= TOOL_RETRY_MAX_ATTEMPTS {
+        return false;
+    }
+
+    match error.retry {
+        RetryHint::Safe => error.kind == ErrorKind::Transient,
+        RetryHint::Caution => true,
+        RetryHint::Unsafe => false,
+    }
+}
+
+fn tool_retry_delay(next_attempt: u32) -> Duration {
+    let exponent = next_attempt.saturating_sub(2).min(8);
+    TOOL_RETRY_BASE_DELAY.saturating_mul(1 << exponent)
+}
+
+struct RetryApprovalRequest<'a> {
+    approval_bus: &'a ApprovalBus,
+    subs: &'a [mpsc::Sender<RuntimeEvent>],
+    run_id: RunId,
+    tool_call: &'a ToolCall,
+    attempt: u32,
+    previous_error: &'a ToolError,
+}
+
+async fn request_retry_approval(request: RetryApprovalRequest<'_>) -> bool {
+    let context = ApprovalContext::RetryAfterFailure {
+        attempt: request.attempt,
+        previous_error: request.previous_error.clone(),
+    };
+    let approval_rx = request.approval_bus.request(request.run_id).await;
+    emit(
+        request.subs,
+        RuntimeEvent::ApprovalRequested {
+            tool_call: request.tool_call.clone(),
+            context: context.clone(),
+        },
+    )
+    .await;
+
+    let approved = match tokio::time::timeout(APPROVAL_TIMEOUT, approval_rx).await {
+        Ok(result) => result.unwrap_or(false),
+        Err(_) => false,
+    };
+    request.approval_bus.cancel(request.run_id).await;
+
+    if approved {
+        emit(
+            request.subs,
+            RuntimeEvent::ApprovalGranted {
+                tool_call: request.tool_call.clone(),
+                context,
+            },
+        )
+        .await;
+    } else {
+        emit(
+            request.subs,
+            RuntimeEvent::ApprovalDenied {
+                tool_call: request.tool_call.clone(),
+                context,
+            },
+        )
+        .await;
+    }
+
+    approved
+}
+
 /// Execute one outer-loop iteration. Returns true to continue, false to stop.
 #[allow(clippy::too_many_lines)] // justified: single-function orchestration loop; splitting would obscure control flow
 async fn run_one_step(state: &mut AgentRunState) -> bool {
@@ -801,6 +875,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 &subs,
                 RuntimeEvent::ApprovalRequested {
                     tool_call: effective_call.clone(),
+                    context: ApprovalContext::InitialToolCall,
                 },
             )
             .await;
@@ -825,6 +900,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     &subs,
                     RuntimeEvent::ApprovalGranted {
                         tool_call: effective_call.clone(),
+                        context: ApprovalContext::InitialToolCall,
                     },
                 )
                 .await;
@@ -835,6 +911,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     &subs,
                     RuntimeEvent::ApprovalDenied {
                         tool_call: effective_call.clone(),
+                        context: ApprovalContext::InitialToolCall,
                     },
                 )
                 .await;
@@ -867,51 +944,79 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         }
         state.budget.record_tool_call();
 
-        // ToolCallStarted fires only once we are committed to executing the tool
-        // (after before_tool, approval, and budget checks all pass).
-        emit(
-            &subs,
-            RuntimeEvent::ToolCallStarted {
-                tool: tool_call.name.clone(),
-                metadata: tool_meta.clone(),
-                input: tool_input.clone(),
-            },
-        )
-        .await;
-
-        let _tool_span = telemetry::tool_execute_span(&tool_call.name, source_label);
-
-        let parent_messages = if tool.needs_parent_context() {
-            state.messages.clone()
-        } else {
-            vec![]
-        };
-        let ctx = ToolContext {
-            run_id,
-            run_depth: state.config.runtime.run_depth,
-            tool_call_id: tool_call.id.clone(),
-            event_tx: Some(primary(&subs).clone()),
-            webhook_base_url: state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone()),
-            approval_bus: state.approval_bus.clone(),
-            remaining_budget: state.budget.remaining_config(),
-            parent_messages,
-        };
-
-        let start_time = Instant::now();
         let metadata_timeout = tool_meta.timeout;
         let max_output_tokens = tool_meta.max_output_tokens;
-        let execute_fut = tool.execute(tool_input.clone(), &ctx);
-        let result = if let Some(timeout) = metadata_timeout {
-            match tokio::time::timeout(timeout, execute_fut).await {
-                Ok(r) => r,
-                Err(_) => {
-                    let error =
-                        ToolError::transient("tool execution timed out").with_code("TIMEOUT");
-                    telemetry::record_tool_timeout(
-                        &tool_call.name,
-                        source_label,
-                        start_time.elapsed(),
-                    );
+        let mut attempt = 1;
+        let result = loop {
+            if attempt > 1 {
+                if let Some(max) = state.config.budget.max_tool_calls {
+                    if state.budget.usage().tool_calls_used >= max {
+                        let error = ToolError::fatal("tool call budget exceeded")
+                            .with_code("BUDGET_EXCEEDED");
+                        emit(
+                            &subs,
+                            RuntimeEvent::ToolCallFailed {
+                                tool: tool_call.name.clone(),
+                                error: error.clone(),
+                            },
+                        )
+                        .await;
+                        break Err(error);
+                    }
+                }
+            }
+            if attempt > 1 {
+                state.budget.record_tool_call();
+            }
+
+            // ToolCallStarted fires for each committed execution attempt, after
+            // before_tool, approval, and budget checks all pass.
+            emit(
+                &subs,
+                RuntimeEvent::ToolCallStarted {
+                    tool: tool_call.name.clone(),
+                    metadata: tool_meta.clone(),
+                    input: tool_input.clone(),
+                },
+            )
+            .await;
+
+            let _tool_span = telemetry::tool_execute_span(&tool_call.name, source_label);
+
+            let parent_messages = if tool.needs_parent_context() {
+                state.messages.clone()
+            } else {
+                vec![]
+            };
+            let ctx = ToolContext {
+                run_id,
+                run_depth: state.config.runtime.run_depth,
+                tool_call_id: tool_call.id.clone(),
+                event_tx: Some(primary(&subs).clone()),
+                webhook_base_url: state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone()),
+                approval_bus: state.approval_bus.clone(),
+                remaining_budget: state.budget.remaining_config(),
+                parent_messages,
+            };
+
+            let start_time = Instant::now();
+            let execute_fut = tool.execute(tool_input.clone(), &ctx);
+            let (attempt_result, timed_out) = if let Some(timeout) = metadata_timeout {
+                match tokio::time::timeout(timeout, execute_fut).await {
+                    Ok(result) => (result, false),
+                    Err(_) => (
+                        Err(ToolError::transient("tool execution timed out").with_code("TIMEOUT")),
+                        true,
+                    ),
+                }
+            } else {
+                (execute_fut.await, false)
+            };
+
+            match attempt_result {
+                Ok(output) => break Ok((output, start_time)),
+                Err(error) => {
+                    let duration = start_time.elapsed();
                     emit(
                         &subs,
                         RuntimeEvent::ToolCallFailed {
@@ -920,19 +1025,67 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                         },
                     )
                     .await;
-                    tool_results.push(ContentBlock::ToolResult {
-                        tool_use_id: tool_call.id.clone(),
-                        content: tool_error_result(&error),
-                    });
-                    continue;
+                    if timed_out {
+                        telemetry::record_tool_timeout(&tool_call.name, source_label, duration);
+                    } else {
+                        telemetry::record_tool_error(&tool_call.name, source_label, duration);
+                    }
+
+                    if !should_retry_tool_error(&error, attempt) {
+                        break Err(error);
+                    }
+
+                    let next_attempt = attempt + 1;
+                    if let Some(max) = state.config.budget.max_tool_calls {
+                        if state.budget.usage().tool_calls_used >= max {
+                            let budget_error = ToolError::fatal("tool call budget exceeded")
+                                .with_code("BUDGET_EXCEEDED");
+                            emit(
+                                &subs,
+                                RuntimeEvent::ToolCallFailed {
+                                    tool: tool_call.name.clone(),
+                                    error: budget_error.clone(),
+                                },
+                            )
+                            .await;
+                            break Err(budget_error);
+                        }
+                    }
+
+                    if error.retry == RetryHint::Caution {
+                        let approved = request_retry_approval(RetryApprovalRequest {
+                            approval_bus: &state.approval_bus,
+                            subs: &subs,
+                            run_id,
+                            tool_call: &effective_call,
+                            attempt: next_attempt,
+                            previous_error: &error,
+                        })
+                        .await;
+                        if !approved {
+                            break Err(error);
+                        }
+                    }
+
+                    let next_delay = tool_retry_delay(next_attempt);
+                    emit(
+                        &subs,
+                        RuntimeEvent::ToolCallRetry {
+                            tool: tool_call.name.clone(),
+                            attempt: next_attempt,
+                            previous_error: error,
+                            next_delay,
+                        },
+                    )
+                    .await;
+                    tokio::time::sleep(next_delay).await;
+                    attempt = next_attempt;
                 }
             }
-        } else {
-            execute_fut.await
         };
 
         match result {
-            Ok(ToolOutput::Immediate(value)) => {
+            Ok((ToolOutput::Immediate(value), start_time)) => {
                 let mut value = value;
                 if let Some(max_tokens) = max_output_tokens {
                     value = truncate_output(value, max_tokens);
@@ -970,11 +1123,14 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     return false;
                 }
             }
-            Ok(ToolOutput::Structured {
-                model_output,
-                details,
-                external_usage,
-            }) => {
+            Ok((
+                ToolOutput::Structured {
+                    model_output,
+                    details,
+                    external_usage,
+                },
+                start_time,
+            )) => {
                 if let Some(usage) = external_usage {
                     state.budget.record_external_usage(&usage);
                 }
@@ -1014,7 +1170,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     return false;
                 }
             }
-            Ok(ToolOutput::Handoff(result)) => {
+            Ok((ToolOutput::Handoff(result), _start_time)) => {
                 if handoff_triggered {
                     let error = ToolError::fatal("Only one handoff per turn is allowed")
                         .with_code("HANDOFF_ALREADY_TRIGGERED");
@@ -1046,7 +1202,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 }
                 continue;
             }
-            Ok(ToolOutput::AsyncJob(handle)) => {
+            Ok((ToolOutput::AsyncJob(handle), start_time)) => {
                 emit(
                     &subs,
                     RuntimeEvent::AsyncToolStarted {
@@ -1091,16 +1247,6 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 }
             }
             Err(e) => {
-                let duration = start_time.elapsed();
-                emit(
-                    &subs,
-                    RuntimeEvent::ToolCallFailed {
-                        tool: tool_call.name.clone(),
-                        error: e.clone(),
-                    },
-                )
-                .await;
-                telemetry::record_tool_error(&tool_call.name, source_label, duration);
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: tool_call.id.clone(),
                     content: tool_error_result(&e),

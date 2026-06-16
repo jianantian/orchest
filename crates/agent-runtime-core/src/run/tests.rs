@@ -8,8 +8,8 @@ use crate::model::{
 use crate::tool::async_job::{JobHandle, JobStatus};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{
-    Approval, JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolMetadata,
-    ToolOutput, ToolSource,
+    Approval, ErrorKind, JsonSchema, RetryHint, Tool, ToolCall, ToolContext, ToolDef, ToolError,
+    ToolMetadata, ToolOutput, ToolSource,
 };
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -605,6 +605,7 @@ async fn approval_gate_approved() {
                         name: String::new(),
                         input: json!(null),
                     },
+                    context: crate::events::ApprovalContext::InitialToolCall,
                 });
                 handle.respond_approval(handle.run_id, true).await.unwrap();
             }
@@ -645,6 +646,7 @@ async fn approval_gate_denied() {
                         name: String::new(),
                         input: json!(null),
                     },
+                    context: crate::events::ApprovalContext::InitialToolCall,
                 });
                 handle.respond_approval(handle.run_id, false).await.unwrap();
             }
@@ -961,6 +963,366 @@ async fn failed_tool_result_preserves_structured_tool_error_for_model() {
                     && error.kind == crate::tool::ErrorKind::SpecGap
         )
     }));
+}
+
+struct RetryResultModel {
+    tool_name: &'static str,
+    observed_tool_result: Arc<Mutex<Option<Value>>>,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for RetryResultModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Default::default()
+        };
+        if let Some(ref tx) = tx {
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+        }
+
+        let tool_result = messages.iter().find_map(|message| {
+            message.content.iter().find_map(|block| match block {
+                ContentBlock::ToolResult { content, .. } => Some(content.clone()),
+                _ => None,
+            })
+        });
+
+        if let Some(content) = tool_result {
+            *self.observed_tool_result.lock().unwrap() = Some(content);
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("done".into())],
+                usage,
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        } else {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "call_1".into(),
+                    name: self.tool_name.into(),
+                    input: json!({}),
+                }],
+                usage,
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+struct RetryHintTool {
+    name: &'static str,
+    attempts: Arc<AtomicU32>,
+    fail_until_attempt: u32,
+    error: ToolError,
+}
+
+#[async_trait::async_trait]
+impl Tool for RetryHintTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn description(&self) -> &str {
+        "retry hint tool"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &serde_json::Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
+    fn metadata(&self) -> &ToolMetadata {
+        &ToolMetadata {
+            side_effect: false,
+            approval: Approval::Never,
+            cost_hint: None,
+            timeout: None,
+            max_output_tokens: None,
+            source: ToolSource::InProcess,
+        }
+    }
+    async fn execute(
+        &self,
+        _input: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        let attempt = self.attempts.fetch_add(1, Ordering::SeqCst) + 1;
+        if attempt <= self.fail_until_attempt {
+            Err(self.error.clone())
+        } else {
+            Ok(ToolOutput::Immediate(json!({ "attempt": attempt })))
+        }
+    }
+}
+
+fn retry_hint_error(kind: ErrorKind, retry: RetryHint) -> ToolError {
+    ToolError {
+        message: "retryable failure".into(),
+        kind,
+        retry,
+        code: Some("RETRY_TEST".into()),
+        next_step: Some("retry if allowed".into()),
+    }
+}
+
+async fn run_retry_hint_tool(
+    error: ToolError,
+    fail_until_attempt: u32,
+    approve_retry: Option<bool>,
+) -> (Vec<RuntimeEvent>, Arc<AtomicU32>, Arc<Mutex<Option<Value>>>) {
+    let attempts = Arc::new(AtomicU32::new(0));
+    let observed_tool_result = Arc::new(Mutex::new(None));
+    let model = Arc::new(RetryResultModel {
+        tool_name: "retry_hint_tool",
+        observed_tool_result: Arc::clone(&observed_tool_result),
+    });
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(RetryHintTool {
+            name: "retry_hint_tool",
+            attempts: Arc::clone(&attempts),
+            fail_until_attempt,
+            error,
+        }))
+        .unwrap();
+
+    let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        if matches!(
+            event,
+            RuntimeEvent::ApprovalRequested {
+                context: crate::events::ApprovalContext::RetryAfterFailure { .. },
+                ..
+            }
+        ) {
+            if let Some(approved) = approve_retry {
+                handle
+                    .respond_approval(handle.run_id, approved)
+                    .await
+                    .unwrap();
+            }
+        }
+        events.push(event);
+    }
+    handle.wait().await;
+
+    (events, attempts, observed_tool_result)
+}
+
+#[tokio::test]
+async fn retry_hint_safe_transient_succeeds_after_retry() {
+    let (events, attempts, observed_tool_result) = run_retry_hint_tool(
+        retry_hint_error(ErrorKind::Transient, RetryHint::Safe),
+        1,
+        None,
+    )
+    .await;
+
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        observed_tool_result.lock().unwrap().clone(),
+        Some(json!({ "attempt": 2 }))
+    );
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            RuntimeEvent::ToolCallRetry {
+                tool,
+                attempt: 2,
+                previous_error,
+                ..
+            } if tool == "retry_hint_tool"
+                && previous_error.kind == ErrorKind::Transient
+                && previous_error.retry == RetryHint::Safe
+        )
+    }));
+}
+
+#[tokio::test]
+async fn retry_hint_safe_transient_stops_after_three_attempts() {
+    let (events, attempts, observed_tool_result) = run_retry_hint_tool(
+        retry_hint_error(ErrorKind::Transient, RetryHint::Safe),
+        99,
+        None,
+    )
+    .await;
+
+    assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    let retry_attempts: Vec<u32> = events
+        .iter()
+        .filter_map(|event| match event {
+            RuntimeEvent::ToolCallRetry { attempt, .. } => Some(*attempt),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(retry_attempts, vec![2, 3]);
+    assert_eq!(
+        observed_tool_result
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("model receives final error")["error"]["kind"],
+        "Transient"
+    );
+}
+
+#[tokio::test]
+async fn retry_hint_safe_non_transient_does_not_retry() {
+    let (events, attempts, observed_tool_result) = run_retry_hint_tool(
+        retry_hint_error(ErrorKind::InvalidInput, RetryHint::Safe),
+        99,
+        None,
+    )
+    .await;
+
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, RuntimeEvent::ToolCallRetry { .. })));
+    assert_eq!(
+        observed_tool_result
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("model receives final error")["error"]["kind"],
+        "InvalidInput"
+    );
+}
+
+#[tokio::test]
+async fn retry_hint_unsafe_never_retries() {
+    let (events, attempts, observed_tool_result) = run_retry_hint_tool(
+        retry_hint_error(ErrorKind::Fatal, RetryHint::Unsafe),
+        99,
+        None,
+    )
+    .await;
+
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, RuntimeEvent::ToolCallRetry { .. })));
+    assert_eq!(
+        observed_tool_result
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("model receives final error")["error"]["retry"],
+        "Unsafe"
+    );
+}
+
+#[tokio::test]
+async fn retry_hint_retry_attempts_respect_tool_call_budget() {
+    let attempts = Arc::new(AtomicU32::new(0));
+    let observed_tool_result = Arc::new(Mutex::new(None));
+    let model = Arc::new(RetryResultModel {
+        tool_name: "retry_hint_tool",
+        observed_tool_result: Arc::clone(&observed_tool_result),
+    });
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(RetryHintTool {
+            name: "retry_hint_tool",
+            attempts: Arc::clone(&attempts),
+            fail_until_attempt: 99,
+            error: retry_hint_error(ErrorKind::Transient, RetryHint::Safe),
+        }))
+        .unwrap();
+    let mut config = test_config();
+    config.budget.max_tool_calls = Some(1);
+
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, RuntimeEvent::ToolCallRetry { .. })));
+    assert_eq!(
+        observed_tool_result
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("model receives final error")["error"]["code"],
+        "BUDGET_EXCEEDED"
+    );
+}
+
+#[tokio::test]
+async fn retry_hint_caution_denial_returns_error_with_retry_approval_context() {
+    let (events, attempts, observed_tool_result) = run_retry_hint_tool(
+        retry_hint_error(ErrorKind::Transient, RetryHint::Caution),
+        99,
+        Some(false),
+    )
+    .await;
+
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            RuntimeEvent::ApprovalRequested {
+                context: crate::events::ApprovalContext::RetryAfterFailure {
+                    attempt: 2,
+                    previous_error,
+                },
+                ..
+            } if previous_error.retry == RetryHint::Caution
+                && previous_error.kind == ErrorKind::Transient
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            RuntimeEvent::ApprovalDenied {
+                context: crate::events::ApprovalContext::RetryAfterFailure {
+                    attempt: 2,
+                    previous_error,
+                },
+                ..
+            } if previous_error.retry == RetryHint::Caution
+        )
+    }));
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, RuntimeEvent::ToolCallRetry { .. })));
+    assert_eq!(
+        observed_tool_result
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("model receives final error")["error"]["retry"],
+        "Caution"
+    );
 }
 
 struct ToolSearchModel {
@@ -3379,7 +3741,7 @@ async fn before_tool_runs_before_approval_with_modified_input() {
     let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
     let mut approval_input: Option<Value> = None;
     while let Some(e) = rx.recv().await {
-        if let RuntimeEvent::ApprovalRequested { tool_call } = &e {
+        if let RuntimeEvent::ApprovalRequested { tool_call, .. } = &e {
             approval_input = Some(tool_call.input.clone());
             handle.respond_approval(handle.run_id, true).await.unwrap();
         }

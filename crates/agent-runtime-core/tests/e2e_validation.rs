@@ -296,6 +296,7 @@ async fn e2e_event_coverage() {
             RuntimeEvent::ToolCallUpdate { .. } => "ToolCallUpdate",
             RuntimeEvent::ToolCallCompleted { .. } => "ToolCallCompleted",
             RuntimeEvent::ToolCallFailed { .. } => "ToolCallFailed",
+            RuntimeEvent::ToolCallRetry { .. } => "ToolCallRetry",
             RuntimeEvent::AsyncToolStarted { .. } => "AsyncToolStarted",
             RuntimeEvent::AsyncToolProgress { .. } => "AsyncToolProgress",
             RuntimeEvent::AsyncToolCompleted { .. } => "AsyncToolCompleted",
