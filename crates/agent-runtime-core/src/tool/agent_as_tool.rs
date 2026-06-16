@@ -4,6 +4,7 @@
 //! AgentAsTool::execute awaits completion and forwards every child RuntimeEvent
 //! upward as SubAgentEvent, giving consumers a continuous event stream.
 
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -11,13 +12,22 @@ use serde_json::{json, Value};
 
 use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::events::RuntimeEvent;
-use crate::model::{Message, ModelAdapter};
+use crate::model::ModelAdapter;
 use crate::run::{AgentConfig, AgentRun};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
 
 type InputMapperFn = dyn Fn(Value) -> Result<String, ToolError> + Send + Sync;
 type OutputExtractorFn = dyn Fn(Value) -> Value + Send + Sync;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ContextMode {
+    #[default]
+    Fresh,
+    Fork {
+        depth: NonZeroUsize,
+    },
+}
 
 /// Returns a `BudgetConfig` whose each limit is the tightest of `configured` and `remaining`.
 /// A `None` on either side means "no limit from that side", so the other side wins.
@@ -64,7 +74,7 @@ pub struct AgentAsTool {
     registry: ToolRegistry,
     input_mapper: Arc<InputMapperFn>,
     output_extractor: Arc<OutputExtractorFn>,
-    inherit_context_count: Option<usize>,
+    context_mode: ContextMode,
 }
 
 impl AgentAsTool {
@@ -100,7 +110,7 @@ impl AgentAsTool {
             registry,
             input_mapper,
             output_extractor,
-            inherit_context_count: None,
+            context_mode: ContextMode::Fresh,
         }
     }
 }
@@ -128,7 +138,7 @@ impl Tool for AgentAsTool {
     }
 
     fn needs_parent_context(&self) -> bool {
-        self.inherit_context_count.is_some()
+        matches!(self.context_mode, ContextMode::Fork { .. })
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
@@ -157,19 +167,24 @@ impl Tool for AgentAsTool {
         child_config.runtime.run_depth = ctx.run_depth + 1;
         child_config.budget = cap_budget(child_config.budget, &ctx.remaining_budget);
 
-        // Prepend inherited parent messages if configured.
-        let mut initial_messages: Vec<Message> = Vec::new();
-        if let Some(n) = self.inherit_context_count {
-            let recent: Vec<_> = ctx
-                .parent_messages
-                .iter()
-                .rev()
-                .take(n)
-                .rev()
-                .cloned()
-                .collect();
-            initial_messages.extend(recent);
-        }
+        let initial_messages = match self.context_mode {
+            ContextMode::Fresh => Vec::new(),
+            ContextMode::Fork { depth } => {
+                if ctx.parent_messages.is_empty() {
+                    return Err(ToolError::invalid_input(
+                        "ContextMode::Fork requires parent message history",
+                    )
+                    .with_code("EMPTY_PARENT_CONTEXT"));
+                }
+                ctx.parent_messages
+                    .iter()
+                    .rev()
+                    .take(depth.get())
+                    .rev()
+                    .cloned()
+                    .collect()
+            }
+        };
 
         let (handle, mut child_rx) = AgentRun::start_with_bus(
             child_config,
@@ -282,7 +297,7 @@ pub struct SubAgentBuilder {
     input_schema: Option<JsonSchema>,
     input_mapper: Option<Arc<InputMapperFn>>,
     output_extractor: Option<Arc<OutputExtractorFn>>,
-    inherit_context_count: Option<usize>,
+    context_mode: ContextMode,
 }
 
 impl SubAgentBuilder {
@@ -296,7 +311,7 @@ impl SubAgentBuilder {
             input_schema: None,
             input_mapper: None,
             output_extractor: None,
-            inherit_context_count: None,
+            context_mode: ContextMode::Fresh,
         }
     }
 
@@ -328,8 +343,8 @@ impl SubAgentBuilder {
         self
     }
 
-    pub fn inherit_context(mut self, recent_messages: usize) -> Self {
-        self.inherit_context_count = Some(recent_messages);
+    pub fn context_mode(mut self, mode: ContextMode) -> Self {
+        self.context_mode = mode;
         self
     }
 
@@ -373,7 +388,7 @@ impl SubAgentBuilder {
             registry,
             input_mapper,
             output_extractor,
-            inherit_context_count: self.inherit_context_count,
+            context_mode: self.context_mode,
         })
     }
 }
