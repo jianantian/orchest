@@ -1,7 +1,9 @@
 //! Live acceptance tests against the real Volcengine Ark video generation API.
 //!
 //! Requires `ARK_API_KEY` (see `.env` at the repo root — `VOLCENGINE_API_KEY`
-//! is the same Ark key and works interchangeably). Run with:
+//! is the same Ark key and works interchangeably). The gateway test also
+//! requires `AIGC_OSS_*` credentials (same as `live_image_gateway.rs`). Run
+//! with:
 //!
 //!   cargo test -p agent-runtime-aigc-providers --test live_volcengine_video -- --ignored --nocapture
 //!
@@ -9,11 +11,13 @@
 //! minutes) and cost real money — run deliberately, not in CI.
 
 use std::env;
+use std::sync::Arc;
 use std::time::Duration;
 
 use agent_runtime_aigc_providers::{
-    create_video_provider_from_config, AigcProviderRuntimeConfig, ProviderGenerationStatus,
-    VideoContentItem, VideoGenerationConfig, VideoGenerationRequest, VideoTaskListQuery,
+    create_video_provider_from_config, AigcProviderRuntimeConfig, AssetScope,
+    InMemoryAssetRegistry, OssAssetStore, OssStorageConfig, VideoContentItem, VideoGateway,
+    VideoGatewayConfig, VideoGenerationConfig, VideoGenerationRequest, VideoTaskListQuery,
 };
 
 fn load_dotenv_if_present() {
@@ -62,15 +66,36 @@ fn provider_config(model: &str) -> AigcProviderRuntimeConfig {
     }
 }
 
+/// End-to-end: create a real video, poll Volcengine until it's done, and
+/// verify the gateway downloads the (24h-expiry) provider URL and re-uploads
+/// it to our own OSS bucket — the response only ever contains a URL we
+/// control, not Volcengine's.
 #[tokio::test]
-#[ignore = "requires real ARK_API_KEY; slow and costs real money"]
-async fn live_text_to_video_completes_with_url() {
-    let provider =
+#[ignore = "requires real ARK_API_KEY and AIGC_OSS_* credentials; slow and costs real money"]
+async fn live_video_gateway_persists_to_oss_and_returns_controlled_url() {
+    let provider = Arc::from(
         create_video_provider_from_config(provider_config("doubao-seedance-1-0-pro-250528"))
-            .unwrap();
+            .unwrap(),
+    );
+    let gateway = VideoGateway::new(
+        provider,
+        Arc::new(OssAssetStore::new(
+            OssStorageConfig::from_env().expect("AIGC_OSS_* config should be set"),
+        )),
+        Arc::new(InMemoryAssetRegistry::default()),
+        VideoGatewayConfig {
+            scope: AssetScope {
+                tenant: env::var("AIGC_LIVE_TENANT").unwrap_or_else(|_| "live".into()),
+                workspace: env::var("AIGC_LIVE_WORKSPACE").unwrap_or_else(|_| "default".into()),
+                app: env::var("AIGC_LIVE_APP").unwrap_or_else(|_| "aigc-gateway".into()),
+                namespace: "video-smoke".into(),
+            },
+            signed_url_ttl: Some(Duration::from_secs(900)),
+        },
+    );
 
-    let created = provider
-        .create_video_generation(&VideoGenerationRequest {
+    let response = gateway
+        .generate(VideoGenerationRequest {
             content: vec![VideoContentItem::Text {
                 text: "A small blue ball bouncing on a white floor".into(),
             }],
@@ -79,52 +104,22 @@ async fn live_text_to_video_completes_with_url() {
                 duration_secs: Some(4),
                 ..Default::default()
             },
+            execution_config: Default::default(),
             provider_options: serde_json::json!({}),
         })
         .await
-        .expect("create_video_generation should succeed");
+        .expect("live video gateway generation should succeed");
 
-    assert!(!created.id.is_empty());
-    println!("created video task: {}", created.id);
-
-    // Poll until terminal status. Seedance 1.0 Pro at 480p/4s typically
-    // finishes within a couple of minutes.
-    let mut job = created;
-    let deadline = std::time::Instant::now() + Duration::from_secs(300);
-    while !matches!(
-        job.status,
-        ProviderGenerationStatus::Completed
-            | ProviderGenerationStatus::Failed
-            | ProviderGenerationStatus::TimedOut
-    ) {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "video generation did not finish within 300s, last status: {:?}",
-            job.raw_status
-        );
-        tokio::time::sleep(Duration::from_secs(5)).await;
-        job = provider
-            .get_video_generation(&job.id)
-            .await
-            .expect("get_video_generation should succeed");
-        println!("poll status: {:?}", job.raw_status);
-    }
-
-    assert_eq!(
-        job.status,
-        ProviderGenerationStatus::Completed,
-        "expected video generation to succeed, got raw_status={:?} error={:?}",
-        job.raw_status,
-        job.error
-    );
-    let video_url = job
-        .video_url
-        .expect("completed job should have a video_url");
+    let video = response
+        .video
+        .expect("response should include a video asset");
+    assert!(!video.asset_id.is_empty());
     assert!(
-        video_url.starts_with("https://"),
-        "expected https URL, got: {video_url}"
+        !video.url.starts_with("https://ark-content-generation"),
+        "video URL should be our own OSS bucket, not Volcengine's TOS host: {}",
+        video.url
     );
-    println!("video URL: {video_url}");
+    println!("controlled video URL: {}", video.url);
 }
 
 #[tokio::test]
@@ -144,6 +139,7 @@ async fn live_create_then_cancel_queued_task() {
                 duration_secs: Some(4),
                 ..Default::default()
             },
+            execution_config: Default::default(),
             provider_options: serde_json::json!({}),
         })
         .await

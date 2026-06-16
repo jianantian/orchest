@@ -723,6 +723,8 @@ fn extension_for_content_type(content_type: &str) -> &'static str {
         "image/png" => "png",
         "image/jpeg" => "jpg",
         "image/webp" => "webp",
+        "video/mp4" => "mp4",
+        "video/quicktime" => "mov",
         _ => "bin",
     }
 }

@@ -373,6 +373,7 @@ mod tests {
                 duration_secs: Some(4),
                 ..Default::default()
             },
+            execution_config: Default::default(),
             provider_options: json!({}),
         };
         let body = adapter().build_create_request(&request).unwrap();
@@ -396,6 +397,7 @@ mod tests {
                 },
             ],
             generation_config: Default::default(),
+            execution_config: Default::default(),
             provider_options: json!({}),
         };
         let body = adapter().build_create_request(&request).unwrap();
@@ -412,6 +414,7 @@ mod tests {
         let request = VideoGenerationRequest {
             content: vec![],
             generation_config: Default::default(),
+            execution_config: Default::default(),
             provider_options: json!({}),
         };
         let err = adapter().build_create_request(&request).unwrap_err();

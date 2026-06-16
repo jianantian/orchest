@@ -448,7 +448,29 @@ pub struct VideoGenerationRequest {
     #[serde(default)]
     pub generation_config: VideoGenerationConfig,
     #[serde(default)]
+    pub execution_config: VideoExecutionConfig,
+    #[serde(default)]
     pub provider_options: Value,
+}
+
+/// Polling parameters for the gateway's wait loop. Defaults are tuned for
+/// video generation (which takes tens of seconds to a few minutes), unlike
+/// `GenerationExecutionConfig`'s image-oriented defaults.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VideoExecutionConfig {
+    #[serde(default, with = "duration_millis_opt")]
+    pub poll_interval: Option<Duration>,
+    #[serde(default, with = "duration_millis_opt")]
+    pub timeout: Option<Duration>,
+}
+
+impl Default for VideoExecutionConfig {
+    fn default() -> Self {
+        Self {
+            poll_interval: Some(Duration::from_secs(5)),
+            timeout: Some(Duration::from_secs(600)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -533,6 +555,31 @@ pub struct VideoTaskListQuery {
     pub status: Option<String>,
     pub task_ids: Vec<String>,
     pub model: Option<String>,
+}
+
+/// Public response from `VideoGateway::generate` — the provider's own
+/// (24h-expiry) URLs have already been downloaded and persisted to our own
+/// asset store; only controlled, signed/public URLs are exposed here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VideoGenerationResponse {
+    pub job_id: String,
+    pub status: GenerationStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<GeneratedVideoAsset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_frame: Option<GeneratedVideoAsset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GeneratedVideoAsset {
+    pub asset_id: String,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
