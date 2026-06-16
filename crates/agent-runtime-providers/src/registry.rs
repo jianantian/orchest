@@ -33,6 +33,7 @@ impl ProviderRegistry {
         reg.register(Box::new(super::openai::OpenAiFactory));
         reg.register(Box::new(super::deepseek::DeepSeekFactory));
         reg.register(Box::new(super::openrouter::OpenRouterFactory));
+        reg.register(Box::new(super::volcengine::VolcengineFactory));
         reg
     }
 

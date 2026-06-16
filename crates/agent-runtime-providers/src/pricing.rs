@@ -72,6 +72,26 @@ pub fn deepseek_pricing(model: &str) -> ModelPricing {
     }
 }
 
+/// Pricing for Volcengine Ark (火山方舟) Doubao models.
+///
+/// Source: docs/external/volceengine/llm/ (pricing pages not included in docs)
+/// Prices are approximate; set to None when unknown.
+pub fn volcengine_pricing(model: &str) -> ModelPricing {
+    // All doubao models are CNY-denominated.
+    // Exact per-model pricing is not available in the bundled docs;
+    // these are approximate public list prices (¥ per million tokens).
+    match model {
+        // doubao-seed-2.0-pro — most capable
+        m if m.starts_with("doubao-seed-2-0-pro") => cny(1.0, 5.0),
+        // doubao-seed-2.0-lite / mini
+        m if m.starts_with("doubao-seed-2-0-lite") => cny(0.5, 2.0),
+        m if m.starts_with("doubao-seed-2-0-mini") => cny(0.3, 1.5),
+        // doubao-seed-1.x and code preview
+        m if m.starts_with("doubao-seed") => cny(0.5, 2.0),
+        _ => cny(0.5, 2.0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -19,6 +19,7 @@ pub mod types;
 use crate::providers::{
     AliyunImageAdapter, AliyunImageConfig, CrazyrouterImageAdapter, CrazyrouterImageConfig,
     OpenRouterImageAdapter, OpenRouterImageConfig, RenderfulImageAdapter, RenderfulImageConfig,
+    VolcengineImageAdapter, VolcengineImageConfig,
 };
 
 pub use gateway::*;
@@ -95,6 +96,14 @@ pub fn create_image_provider_from_config(
                     .map(str::to_string),
             },
         )?)),
+        "volcengine" | "ark" => Ok(Box::new(VolcengineImageAdapter::from_config(
+            VolcengineImageConfig {
+                model: config.model,
+                api_key,
+                api_url: config.api_url,
+                timeout: config.timeout,
+            },
+        )?)),
         _ => Err(AigcError::new(
             "unknown_provider",
             format!("unknown provider '{provider}'"),
@@ -132,6 +141,7 @@ fn resolve_api_key(
         "aliyun" | "dashscope" => "DASHSCOPE_API_KEY",
         "openrouter" => "OPENROUTER_API_KEY",
         "renderful" => "RENDERFUL_API_KEY",
+        "volcengine" | "ark" => "ARK_API_KEY",
         _ => {
             return Err(AigcError::new(
                 "unknown_provider",

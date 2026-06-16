@@ -290,6 +290,77 @@ fn deepseek_models() -> LlmProviderInfo {
     }
 }
 
+fn volcengine_models() -> LlmProviderInfo {
+    // Source: docs/external/volceengine/llm/
+    // API: https://ark.cn-beijing.volces.com/api/v3/chat/completions
+    // Auth: ARK_API_KEY (火山方舟 API Key)
+    let models = vec![
+        // --- doubao-seed-2.0 series (thinking enabled by default) ---
+        cny_model(
+            "volcengine/doubao-seed-2-0-pro-260215",
+            "volcengine",
+            "Doubao Seed 2.0 Pro",
+            128_000,
+            Some(16_384),
+            1.0,
+            5.0,
+        ),
+        cny_model(
+            "volcengine/doubao-seed-2-0-lite-260215",
+            "volcengine",
+            "Doubao Seed 2.0 Lite",
+            128_000,
+            Some(16_384),
+            0.5,
+            2.0,
+        ),
+        cny_model(
+            "volcengine/doubao-seed-2-0-mini-260215",
+            "volcengine",
+            "Doubao Seed 2.0 Mini",
+            128_000,
+            Some(16_384),
+            0.3,
+            1.5,
+        ),
+        // --- doubao-seed-2.0 (428 series with thinking summary) ---
+        cny_model(
+            "volcengine/doubao-seed-2-0-lite-260428",
+            "volcengine",
+            "Doubao Seed 2.0 Lite (260428)",
+            128_000,
+            Some(16_384),
+            0.5,
+            2.0,
+        ),
+        cny_model(
+            "volcengine/doubao-seed-2-0-mini-260428",
+            "volcengine",
+            "Doubao Seed 2.0 Mini (260428)",
+            128_000,
+            Some(16_384),
+            0.3,
+            1.5,
+        ),
+        // --- doubao-seed-1.x series ---
+        cny_model(
+            "volcengine/doubao-seed-1-6-flash-250615",
+            "volcengine",
+            "Doubao Seed 1.6 Flash",
+            128_000,
+            Some(16_384),
+            0.5,
+            2.0,
+        ),
+    ];
+
+    LlmProviderInfo {
+        provider_id: "volcengine",
+        display_name: "Volcengine (火山引擎 / Doubao)",
+        models: LlmModelList::Known(models),
+    }
+}
+
 fn openrouter_provider() -> LlmProviderInfo {
     LlmProviderInfo {
         provider_id: "openrouter",
@@ -309,6 +380,7 @@ fn build_catalog() -> Vec<LlmProviderInfo> {
         anthropic_models(),
         openai_models(),
         deepseek_models(),
+        volcengine_models(),
         openrouter_provider(),
     ]
 }
@@ -336,8 +408,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_four_providers() {
-        assert_eq!(list_providers().len(), 4);
+    fn catalog_has_five_providers() {
+        assert_eq!(list_providers().len(), 5);
     }
 
     #[test]
@@ -375,6 +447,32 @@ mod tests {
                 .pricing
                 .as_ref()
                 .expect("deepseek model should have pricing");
+            assert_eq!(
+                p.currency, "CNY",
+                "{} should have CNY pricing",
+                entry.model_id
+            );
+        }
+    }
+
+    #[test]
+    fn volcengine_models_present() {
+        let models: Vec<_> = list_models()
+            .filter(|m| m.provider == "volcengine")
+            .collect();
+        assert!(!models.is_empty());
+        let ids: Vec<_> = models.iter().map(|m| m.model_id).collect();
+        assert!(ids.contains(&"volcengine/doubao-seed-2-0-pro-260215"));
+        assert!(ids.contains(&"volcengine/doubao-seed-2-0-lite-260215"));
+    }
+
+    #[test]
+    fn volcengine_models_have_cny_pricing() {
+        for entry in list_models().filter(|m| m.provider == "volcengine") {
+            let p = entry
+                .pricing
+                .as_ref()
+                .expect("volcengine model should have pricing");
             assert_eq!(
                 p.currency, "CNY",
                 "{} should have CNY pricing",

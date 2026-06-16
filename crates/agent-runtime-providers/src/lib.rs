@@ -1,4 +1,4 @@
-//! LLM provider adapters: Anthropic, OpenAI, DeepSeek, OpenRouter.
+//! LLM provider adapters: Anthropic, OpenAI, DeepSeek, OpenRouter, Volcengine.
 
 pub mod catalog;
 pub use catalog::{LlmModelEntry, LlmModelList, LlmProviderInfo};
@@ -23,6 +23,9 @@ pub use deepseek::{DeepSeekAdapter, DeepSeekConfig};
 
 pub mod openrouter;
 pub use openrouter::{OpenRouterAdapter, OpenRouterConfig};
+
+pub mod volcengine;
+pub use volcengine::{VolcengineAdapter, VolcengineConfig};
 
 pub mod telemetry;
 
@@ -782,5 +785,6 @@ data: [DONE]
         assert!(providers.contains(&"openai"));
         assert!(providers.contains(&"deepseek"));
         assert!(providers.contains(&"openrouter"));
+        assert!(providers.contains(&"volcengine"));
     }
 }

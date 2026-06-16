@@ -25,3 +25,9 @@ pub mod openrouter {
     pub const API_URL: &str = "https://openrouter.ai/api";
     pub const API_KEY_ENV: &str = "OPENROUTER_API_KEY";
 }
+
+pub mod volcengine {
+    /// Base URL for Volcengine Ark (火山方舟) OpenAI-compatible Chat API.
+    pub const API_URL: &str = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
+    pub const API_KEY_ENV: &str = "ARK_API_KEY";
+}

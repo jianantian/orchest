@@ -2,11 +2,13 @@ mod aliyun;
 mod crazyrouter;
 mod openrouter;
 mod renderful;
+mod volcengine;
 
 pub(crate) use aliyun::{AliyunImageAdapter, AliyunImageConfig};
 pub(crate) use crazyrouter::{CrazyrouterImageAdapter, CrazyrouterImageConfig};
 pub(crate) use openrouter::{OpenRouterImageAdapter, OpenRouterImageConfig};
 pub(crate) use renderful::{RenderfulImageAdapter, RenderfulImageConfig};
+pub(crate) use volcengine::{VolcengineImageAdapter, VolcengineImageConfig};
 
 use std::collections::HashMap;
 

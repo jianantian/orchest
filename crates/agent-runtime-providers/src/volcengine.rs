@@ -275,9 +275,7 @@ fn normalize_chat_url(value: &str) -> String {
     let trimmed = value.trim().trim_end_matches('/');
     if trimmed.ends_with("/chat/completions") {
         trimmed.to_string()
-    } else if trimmed.ends_with("/v3") {
-        format!("{trimmed}/chat/completions")
-    } else if trimmed.ends_with("/v1") {
+    } else if trimmed.ends_with("/v3") || trimmed.ends_with("/v1") {
         format!("{trimmed}/chat/completions")
     } else {
         format!("{trimmed}/v3/chat/completions")
@@ -341,7 +339,6 @@ impl ModelAdapter for VolcengineAdapter {
         options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
-        let _span = telemetry::model_complete_span("volcengine", &self.model, tx.is_some());
         let thinking_enabled = options.thinking != ThinkingLevel::Off && self.supports_thinking();
 
         let effective_thinking = if !options.include_thinking && thinking_enabled {
@@ -375,164 +372,83 @@ impl ModelAdapter for VolcengineAdapter {
             });
         }
 
-        let client = crate::http::shared_client();
         let start = Instant::now();
-
-        let response = client
+        let response = crate::http::shared_client()
             .post(&self.api_url)
             .bearer_auth(&self.api_key)
             .json(&body)
             .send()
             .await
-            .map_err(|err| ModelError::network(err.to_string(), "volcengine"))?;
+            .map_err(|e| {
+                telemetry::record_model_error("volcengine", &self.model, start.elapsed());
+                ModelError {
+                    message: e.to_string(),
+                    code: Some("request_failed".into()),
+                    provider: Some("volcengine".into()),
+                    status: None,
+                    retry_after_secs: None,
+                    upstream: None,
+                }
+            })?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
-            let upstream_body = serde_json::from_str::<Value>(&text).ok();
-            let upstream = upstream_body.as_ref().map(|body| UpstreamErrorDetail {
-                code: body
-                    .pointer("/error/code")
-                    .or_else(|| body.get("code"))
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string),
-                message: body
-                    .pointer("/error/message")
-                    .or_else(|| body.get("message"))
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string),
-                body: upstream_body.clone(),
-            });
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let body_text = response.text().await.unwrap_or_default();
+            let upstream_body: Option<Value> = serde_json::from_str(&body_text).ok();
+            let (upstream_code, upstream_msg) = upstream_body
+                .as_ref()
+                .and_then(|b| b.get("error"))
+                .map(|err| {
+                    (
+                        err.get("code").and_then(|v| v.as_str()).map(String::from),
+                        err.get("message")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                    )
+                })
+                .unwrap_or((None, None));
+
+            telemetry::record_model_error("volcengine", &self.model, start.elapsed());
             return Err(ModelError {
-                message: format!("Volcengine API returned HTTP {status}"),
-                code: Some("provider_http_error".into()),
+                message: format!("API returned {status}: {body_text}"),
+                code: Some(status.to_string()),
                 provider: Some("volcengine".into()),
-                status: Some(status.as_u16()),
+                status: Some(status),
                 retry_after_secs: None,
-                upstream,
+                upstream: Some(Arc::new(UpstreamErrorDetail {
+                    code: upstream_code,
+                    message: upstream_msg,
+                    body: upstream_body,
+                })),
             });
         }
 
-        let mut content = Vec::<ContentBlock>::new();
-        let mut usage = crate::types::TokenUsage::default();
-        let mut stop_reason = StopReason::EndTurn;
-        let mut thinking_buf: Option<String> = None;
-        let mut text_buf = String::new();
+        let stream = response.bytes_stream();
+        let tx_ref = tx.as_ref();
 
-        let stream = crate::sse::SseStream::from_response(response);
-        let stream = Arc::new(tokio::sync::Mutex::new(stream));
+        let sse = crate::sse::parse_openai_sse_stream(
+            stream,
+            tx_ref,
+            Some("reasoning_content"),
+            None,
+            start,
+        )
+        .await
+        .map_err(|mut e| {
+            telemetry::record_model_error("volcengine", &self.model, start.elapsed());
+            e.provider = Some("volcengine".into());
+            e
+        })?;
 
-        loop {
-            let line = {
-                let mut s = stream.lock().await;
-                s.next_line().await
-            };
+        let content = sse.content;
+        let usage = sse.usage;
+        let first_token_latency = sse.first_token_latency;
 
-            match line {
-                None => break,
-                Some(Err(err)) => {
-                    return Err(ModelError::network(err.to_string(), "volcengine"));
-                }
-                Some(Ok(data)) => {
-                    if data == "[DONE]" {
-                        break;
-                    }
-                    let chunk: Value = match serde_json::from_str(&data) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
+        let stop_reason = match &sse.stop_reason {
+            StopReason::Other(raw) => map_stop_reason(raw),
+            _ => sse.stop_reason,
+        };
 
-                    if let Some(arr) = chunk["choices"].as_array() {
-                        for choice in arr {
-                            let delta = &choice["delta"];
-
-                            // reasoning_content → Thinking block
-                            if let Some(rc) = delta
-                                .get("reasoning_content")
-                                .and_then(|v| v.as_str())
-                                .filter(|s| !s.is_empty())
-                            {
-                                let buf = thinking_buf.get_or_insert_with(String::new);
-                                buf.push_str(rc);
-                                if let Some(ref tx) = tx {
-                                    let _ = tx
-                                        .send(StreamEvent::Thinking {
-                                            delta: rc.to_string(),
-                                        })
-                                        .await;
-                                }
-                            }
-
-                            // content → Text
-                            if let Some(text) = delta
-                                .get("content")
-                                .and_then(|v| v.as_str())
-                                .filter(|s| !s.is_empty())
-                            {
-                                text_buf.push_str(text);
-                                if let Some(ref tx) = tx {
-                                    let _ = tx
-                                        .send(StreamEvent::Text {
-                                            delta: text.to_string(),
-                                        })
-                                        .await;
-                                }
-                            }
-
-                            // tool_calls
-                            if let Some(tcs) = delta["tool_calls"].as_array() {
-                                for tc in tcs {
-                                    if let (Some(id), Some(name)) = (
-                                        tc["id"].as_str(),
-                                        tc["function"]["name"].as_str(),
-                                    ) {
-                                        let input: Value = tc["function"]["arguments"]
-                                            .as_str()
-                                            .and_then(|s| serde_json::from_str(s).ok())
-                                            .unwrap_or(json!({}));
-                                        content.push(ContentBlock::ToolUse {
-                                            id: id.to_string(),
-                                            name: name.to_string(),
-                                            input,
-                                        });
-                                    }
-                                }
-                            }
-
-                            if let Some(reason) = choice["finish_reason"].as_str() {
-                                stop_reason = map_stop_reason(reason);
-                            }
-                        }
-                    }
-
-                    // usage
-                    if let Some(u) = chunk.get("usage") {
-                        usage.input_tokens =
-                            u["prompt_tokens"].as_u64().unwrap_or(0) as u32;
-                        usage.output_tokens =
-                            u["completion_tokens"].as_u64().unwrap_or(0) as u32;
-                    }
-                }
-            }
-        }
-
-        // Flush text/thinking buffers into content
-        if let Some(thinking) = thinking_buf {
-            if !thinking.is_empty() && options.include_thinking {
-                content.insert(
-                    0,
-                    ContentBlock::Thinking {
-                        text: Some(thinking),
-                        encrypted: None,
-                    },
-                );
-            }
-        }
-        if !text_buf.is_empty() {
-            content.push(ContentBlock::Text(text_buf));
-        }
-
-        let latency_ms = start.elapsed().as_millis() as u64;
         if let Some(ref tx) = tx {
             let _ = tx
                 .send(StreamEvent::Done {
@@ -540,7 +456,17 @@ impl ModelAdapter for VolcengineAdapter {
                 })
                 .await;
         }
-        telemetry::record_model_latency("volcengine", &self.model, latency_ms);
+
+        let duration = start.elapsed();
+        telemetry::record_model_success(
+            "volcengine",
+            &self.model,
+            duration,
+            usage.input_tokens,
+            usage.output_tokens,
+            first_token_latency,
+            Some(duration),
+        );
 
         Ok(ModelResponse {
             content,
@@ -569,12 +495,14 @@ impl crate::registry::ProviderFactory for VolcengineFactory {
         api_key: String,
         api_url: Option<String>,
     ) -> Result<Box<dyn ModelAdapter>, ModelError> {
-        Ok(Box::new(VolcengineAdapter::from_config(VolcengineConfig {
-            model: model.to_string(),
-            max_tokens,
-            api_key: Some(api_key),
-            api_url,
-        })?))
+        Ok(Box::new(VolcengineAdapter::from_config(
+            VolcengineConfig {
+                model: model.to_string(),
+                max_tokens,
+                api_key: Some(api_key),
+                api_url,
+            },
+        )?))
     }
 
     fn default_api_key_env(&self) -> &'static str {
@@ -585,7 +513,6 @@ impl crate::registry::ProviderFactory for VolcengineFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     fn adapter_with_url(api_url: &str) -> VolcengineAdapter {
         VolcengineAdapter::from_config(VolcengineConfig {
