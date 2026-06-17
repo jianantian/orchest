@@ -76,6 +76,16 @@ The app may use workspace path dependencies. It must not reach into private modu
 | Sub-agent or handoff | Reviewer sub-agent or handoff validates the draft brief |
 | Documentation | README is enough for a new user to run the demo from source |
 
+### Delegation Validation Boundary
+
+v0.10 must validate the lightweight reviewer path, not every delegation shape.
+
+- **Agent-as-Tool** means the parent agent calls a child agent as a normal tool and then continues with the returned result. This is the preferred shape when Briefing Desk needs a reviewer that inspects a draft and returns feedback.
+- **Handoff** means the current run-loop control flow transfers to another agent. This is acceptable for the reviewer path only if the demo wants the reviewer agent to take over the session rather than return as a tool result.
+- **Supervised long-running delegation** means a delegated worker, such as a Claude-Code-as-tool style agent, is monitored through event streams and can be steered mid-run. This remains a future validation scenario for long-running agent-tool products; it is not a v0.10 requirement.
+
+The v0.10 demo should validate at least one public-API reviewer path using Agent-as-Tool or Handoff. Any friction in `ContextMode`, handoff state, event visibility or resume behavior is recorded in the validation report and classified by the triage rule below.
+
 ## Validation Triage Rule
 
 During v0.10, findings from the demo validation report enter one of three buckets:

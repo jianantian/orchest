@@ -68,6 +68,8 @@
 
 当前产品形态锁定为 **Briefing Desk**：本地研究简报 agent。它读取一组 Markdown/text 材料，围绕用户问题搜索、引用、生成报告，展示事件流，在写文件前走 approval，并支持 session resume。详见 [`v0_10/prd.md`](./v0_10/prd.md)。
 
+v0.10 至少验证一个轻量 reviewer sub-agent 或 handoff 路径：Agent-as-Tool 用于"父 agent 调子 agent 审稿后继续"，Handoff 用于"会话控制权转移给另一个 agent"。Claude-Code-as-tool 风格的长运行 Supervised Delegation 仍作为后续 agent-tool 产品验证场景，不作为 v0.10 必做项。
+
 **依赖**：v0.9.2 文档（验证者参照文档上手）
 
 ### v1.0 — 首次公开发布（规划）
