@@ -705,3 +705,29 @@ Phase 5: Music
 4. **计费/限流文档**: 各 API 返回 `usage_characters` / `task_token`(JWT 包含配额信息?)但 Minimax 计费规则文档未收录。
    - 影响: `polaris/observability.md` 的 token 计量需要这些字段映射
    - 行动: 补 `pricing.md` 与限流规则文档,确认 RPM / TPM 上限
+
+---
+
+## 九、待确认:Her(角色扮演 / 陪伴模型)
+
+**现状**: `docs/external/minimax/` **完全没有** Her 模型相关文档。
+
+核查结论(全文 grep):
+- 出现的 LLM 模型只有 `MiniMax-M2 / M2.1 / M2.5 / M2.7 / M3`(及 `-highspeed` 变体)
+- 没有 `her` / `role.?play` / `角色扮演` / `陪伴` / `companion` / `persona` 任何关键词
+- `llm.md` 只覆盖 `/anthropic/v1/messages` 一个端点
+
+**可能的解释**(本地不可证):
+1. Her 走 Minimax 自有 chat 协议(非 Anthropic 兼容路径),如 `/v1/text/chatcompletion_v2` 系列,文档未拉取
+2. Her 在 Minimax 海外站(MiniMax Audio / Talkie)产品里,不出现在 `platform.minimaxi.com/docs` 的 API 索引中
+3. `llm.md:2` 写明 "Fetch the complete documentation index at https://platform.minimaxi.com/docs/llms.txt",**本地是子集**,Her 可能在未拉取的页面里
+
+**对接入设计的影响**:
+- 若 Her 走 Anthropic 兼容路径,**§二 的 `MinimaxAdapter` 已覆盖**,只需在 `catalog.rs` 加模型条目
+- 若 Her 走自有 chat 协议,需要在 §二 新增第二个 adapter(`MinimaxLegacyAdapter`),与现有 `MinimaxAdapter`(Anthropic 兼容)并存
+- 若 Her 有**专属字段**(如 `character_setting` / `persona_id` / 多模态人物形象),需评估是否扩 `RequestOptions` / `Message` / `ContentBlock`
+
+**行动**:
+1. 从 `https://platform.minimaxi.com/docs/llms.txt` 抓完整索引,确认 Her 是否独立 API
+2. 若是,补 `docs/external/minimax/her.md`(或 `chat_legacy.md`),然后回头扩 §二
+3. 在确认之前,**§六 Phase 1 范围不包含 Her** — 不要在没看到 schema 的情况下凭印象设计字段
