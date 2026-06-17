@@ -31,6 +31,12 @@
 | hotfix 06-12 | 重构 | Code Review 问题清偿（ASR 安全、Core Runtime 正确性、Type Stub 对齐、Event Backpressure、MCP/Node 可靠性） |
 | v0.9.3 | 卫星 | TTS Provider Gateway（`agent-runtime-tts-providers`、voice catalog、streaming synthesis、Volcengine/Aliyun adapter、observability） |
 
+## 规划中(hotfix)
+
+| 版本 | 类型 | 主题 |
+|------|------|------|
+| hotfix 06-17 | 重构 | LLM Catalog 信息扩展(`Modality` / `ModelScene` / `ThinkingSpec`,`LlmModelEntry` 加 6 字段,19 条现有 model 数据填实)。详见 [`docs/hotfix/2026_06_17/prd.md`](../hotfix/2026_06_17/prd.md) |
+
 ## 迭代编号约定
 
 - **主线迭代**（v0.7、v0.8、v0.9）：runtime 核心能力演进，有依赖链

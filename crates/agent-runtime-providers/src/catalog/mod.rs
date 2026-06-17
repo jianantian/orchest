@@ -95,6 +95,8 @@ fn cny_model(
     max_output_tokens: Option<u32>,
     input: f64,
     output: f64,
+    cache_read: Option<f64>,
+    cache_write: Option<f64>,
 ) -> LlmModelEntry {
     LlmModelEntry {
         model_id,
@@ -106,8 +108,8 @@ fn cny_model(
             currency: "CNY".into(),
             input_per_million: input,
             output_per_million: output,
-            cache_read_per_million: None,
-            cache_write_per_million: None,
+            cache_read_per_million: cache_read,
+            cache_write_per_million: cache_write,
         }),
     }
 }
@@ -271,6 +273,8 @@ fn deepseek_models() -> LlmProviderInfo {
             Some(384_000),
             1.0,
             2.0,
+            Some(0.02), // cache hit price; see source URL above
+            None,       // DeepSeek does not charge for cache writes
         ),
         cny_model(
             "deepseek/deepseek-v4-pro",
@@ -280,6 +284,8 @@ fn deepseek_models() -> LlmProviderInfo {
             Some(384_000),
             3.0,
             6.0,
+            Some(0.025),
+            None,
         ),
     ];
 
@@ -294,6 +300,8 @@ fn volcengine_models() -> LlmProviderInfo {
     // Source: docs/external/volceengine/llm/
     // API: https://ark.cn-beijing.volces.com/api/v3/chat/completions
     // Auth: ARK_API_KEY (火山方舟 API Key)
+    // Cache pricing: Volcengine has not published per-model cache rates;
+    // entries pass None until the upstream pricing page lists them.
     let models = vec![
         // --- doubao-seed-2.0 series (thinking enabled by default) ---
         cny_model(
@@ -304,6 +312,8 @@ fn volcengine_models() -> LlmProviderInfo {
             Some(16_384),
             1.0,
             5.0,
+            None,
+            None,
         ),
         cny_model(
             "volcengine/doubao-seed-2-0-lite-260215",
@@ -313,6 +323,8 @@ fn volcengine_models() -> LlmProviderInfo {
             Some(16_384),
             0.5,
             2.0,
+            None,
+            None,
         ),
         cny_model(
             "volcengine/doubao-seed-2-0-mini-260215",
@@ -322,6 +334,8 @@ fn volcengine_models() -> LlmProviderInfo {
             Some(16_384),
             0.3,
             1.5,
+            None,
+            None,
         ),
         // --- doubao-seed-2.0 (428 series with thinking summary) ---
         cny_model(
@@ -332,6 +346,8 @@ fn volcengine_models() -> LlmProviderInfo {
             Some(16_384),
             0.5,
             2.0,
+            None,
+            None,
         ),
         cny_model(
             "volcengine/doubao-seed-2-0-mini-260428",
@@ -341,6 +357,8 @@ fn volcengine_models() -> LlmProviderInfo {
             Some(16_384),
             0.3,
             1.5,
+            None,
+            None,
         ),
         // --- doubao-seed-1.x series ---
         cny_model(
@@ -351,6 +369,8 @@ fn volcengine_models() -> LlmProviderInfo {
             Some(16_384),
             0.5,
             2.0,
+            None,
+            None,
         ),
     ];
 

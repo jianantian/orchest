@@ -104,3 +104,29 @@ fn deepseek_v4_context_window_is_1m() {
         );
     }
 }
+
+#[test]
+fn deepseek_models_publish_cache_hit_price() {
+    // Source: https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+    // DeepSeek lists a per-model cache-hit input price; absence indicates a regression.
+    // No separate cache-write price exists, so cache_write_per_million stays None.
+    let expected = [
+        ("deepseek/deepseek-v4-flash", 0.02),
+        ("deepseek/deepseek-v4-pro", 0.025),
+    ];
+    for (model_id, want) in expected {
+        let entry = list_models()
+            .find(|m| m.model_id == model_id)
+            .unwrap_or_else(|| panic!("{model_id} missing from catalog"));
+        let pricing = entry.pricing.as_ref().expect("pricing must exist");
+        assert_eq!(
+            pricing.cache_read_per_million,
+            Some(want),
+            "{model_id} cache_read price drifted from upstream",
+        );
+        assert!(
+            pricing.cache_write_per_million.is_none(),
+            "{model_id} should not declare cache_write price (DeepSeek does not charge for writes)",
+        );
+    }
+}
