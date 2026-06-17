@@ -23,12 +23,10 @@ pub use catalog::{
 
 pub mod gateway;
 pub mod http;
-pub mod image;
 pub mod providers;
 pub mod storage;
 pub mod telemetry;
 pub mod types;
-pub mod video;
 
 use crate::providers::{
     AliyunImageAdapter, AliyunImageConfig, CrazyrouterImageAdapter, CrazyrouterImageConfig,
@@ -37,10 +35,8 @@ use crate::providers::{
 };
 
 pub use gateway::*;
-pub use image::*;
 pub use storage::*;
 pub use types::*;
-pub use video::*;
 
 #[allow(clippy::result_large_err)] // justified: AigcError carries diagnostic context needed for user-facing messages
 pub fn create_image_provider_from_config(

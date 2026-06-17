@@ -1,22 +1,31 @@
 //! Anthropic Claude adapter implementation.
+//!
+//! Split by concern: this file owns the adapter struct, capability
+//! reporting, and `complete()`'s control flow; [`request`] builds the
+//! Messages API request body; [`response`] consumes the SSE response into a
+//! normalized result.
+
+mod request;
+mod response;
 
 use std::env;
 use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use crate::{
-    CacheCapability, CachePolicy, CapabilitySource, CompatibilityPolicy, ContentBlock, Message,
-    ModelAdapter, ModelCapabilities, ModelError, ModelPricing, ModelResponse, OptionAdjustment,
-    ReasoningCapability, RequestOptions, Role, StopReason, StreamEvent, ThinkingLevel, TokenUsage,
-    ToolDef, UpstreamErrorDetail,
+    CacheCapability, CapabilitySource, CompatibilityPolicy, Message, ModelAdapter,
+    ModelCapabilities, ModelError, ModelPricing, ModelResponse, OptionAdjustment,
+    ReasoningCapability, RequestOptions, StreamEvent, ThinkingLevel, ToolDef, UpstreamErrorDetail,
 };
 
 use crate::{defaults, telemetry};
+
+use request::normalize_messages_url;
+use response::consume_event_stream;
 
 pub struct AnthropicAdapter {
     api_key: String,
@@ -99,198 +108,12 @@ impl AnthropicAdapter {
         }
     }
 
-    fn build_request_body(
-        &self,
-        messages: &[Message],
-        tools: &[ToolDef],
-        options: &RequestOptions,
-    ) -> (Value, Vec<OptionAdjustment>) {
-        let mut system_parts = Vec::new();
-        let mut api_messages = Vec::new();
-        let mut adjustments = Vec::new();
-
-        for msg in messages {
-            match msg.role {
-                Role::System => {
-                    for block in &msg.content {
-                        if let ContentBlock::Text(t) = block {
-                            system_parts.push(t.clone());
-                        }
-                    }
-                }
-                _ => {
-                    let role = match msg.role {
-                        Role::User | Role::Tool => "user",
-                        Role::Assistant => "assistant",
-                        Role::System => unreachable!(),
-                    };
-
-                    let content: Vec<Value> = msg
-                        .content
-                        .iter()
-                        .map(|block| match block {
-                            ContentBlock::Text(t) => json!({"type": "text", "text": t}),
-                            ContentBlock::Thinking { text, signature, .. } => {
-                                let mut obj = json!({"type": "thinking"});
-                                if let Some(t) = text {
-                                    obj["thinking"] = json!(t);
-                                }
-                                if let Some(s) = signature {
-                                    obj["signature"] = json!(s);
-                                }
-                                obj
-                            }
-                            ContentBlock::ToolUse { id, name, input } => {
-                                json!({"type": "tool_use", "id": id, "name": name, "input": input})
-                            }
-                            ContentBlock::ToolResult { tool_use_id, content } => {
-                                json!({"type": "tool_result", "tool_use_id": tool_use_id, "content": content})
-                            }
-                        })
-                        .collect();
-
-                    api_messages.push(json!({"role": role, "content": content}));
-                }
-            }
-        }
-
-        let effective_max_tokens = options.max_tokens.unwrap_or(self.max_tokens);
-
-        let mut body = json!({
-            "model": self.model,
-            "max_tokens": effective_max_tokens,
-            "messages": api_messages,
-            "stream": true,
-        });
-
-        if !system_parts.is_empty() {
-            body["system"] = json!(system_parts.join("\n\n"));
-        }
-
-        if !tools.is_empty() {
-            let tool_defs: Vec<Value> = tools
-                .iter()
-                .map(|t| {
-                    json!({
-                        "name": t.name,
-                        "description": t.description,
-                        "input_schema": t.input_schema,
-                    })
-                })
-                .collect();
-            body["tools"] = json!(tool_defs);
-        }
-
-        // ThinkingLevel mapping
-        match options.thinking {
-            ThinkingLevel::Off => {
-                body["thinking"] = json!({"type": "disabled"});
-            }
-            level => {
-                if self.supports_adaptive() {
-                    let effort = match level {
-                        ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
-                        ThinkingLevel::Medium => "medium",
-                        ThinkingLevel::High => "high",
-                        ThinkingLevel::XHigh => "xhigh",
-                        ThinkingLevel::Max => "max",
-                        ThinkingLevel::Off => unreachable!(),
-                    };
-                    body["thinking"] = json!({"type": "adaptive"});
-
-                    if options.include_thinking {
-                        body["thinking"]["display"] = json!("summarized");
-                    } else {
-                        body["thinking"]["display"] = json!("omitted");
-                    }
-
-                    body["output_config"] = json!({"effort": effort});
-
-                    if options.thinking_budget_tokens.is_some() {
-                        adjustments.push(OptionAdjustment {
-                            option: "thinking_budget_tokens".into(),
-                            requested: json!(options.thinking_budget_tokens),
-                            applied: json!(null),
-                            reason: "unsupported_in_adaptive_thinking".into(),
-                        });
-                    }
-                } else {
-                    let budget = options.thinking_budget_tokens.unwrap_or(match level {
-                        ThinkingLevel::Minimal => 1024,
-                        ThinkingLevel::Low => 4096,
-                        ThinkingLevel::Medium => 10240,
-                        ThinkingLevel::High => 32768,
-                        ThinkingLevel::XHigh => 65536,
-                        ThinkingLevel::Max => effective_max_tokens,
-                        ThinkingLevel::Off => unreachable!(),
-                    });
-                    body["thinking"] = json!({
-                        "type": "enabled",
-                        "budget_tokens": budget,
-                    });
-
-                    if options.include_thinking {
-                        body["thinking"]["display"] = json!("summarized");
-                    } else {
-                        body["thinking"]["display"] = json!("omitted");
-                    }
-                }
-            }
-        }
-
-        // CachePolicy mapping
-        match options.cache_policy {
-            CachePolicy::Auto => {
-                body["cache_control"] = json!({"type": "ephemeral"});
-            }
-            CachePolicy::Long => {
-                body["cache_control"] = json!({"type": "ephemeral", "ttl": "1h"});
-            }
-            CachePolicy::None => {}
-        }
-
-        // temperature / top_p
-        if let Some(temp) = options.temperature {
-            body["temperature"] = json!(temp);
-        }
-        if let Some(tp) = options.top_p {
-            body["top_p"] = json!(tp);
-        }
-
-        (body, adjustments)
-    }
-}
-
-fn normalize_messages_url(value: &str) -> String {
-    let trimmed = value.trim().trim_end_matches('/');
-    if trimmed.ends_with("/v1/messages") {
-        trimmed.to_string()
-    } else {
-        format!("{trimmed}/v1/messages")
-    }
-}
-
-fn map_stop_reason(raw: &str) -> StopReason {
-    match raw {
-        "end_turn" => StopReason::EndTurn,
-        "tool_use" => StopReason::ToolUse,
-        "max_tokens" => StopReason::MaxTokens,
-        "stop_sequence" => StopReason::StopSequence,
-        "pause_turn" | "compaction" => StopReason::Pause,
-        "refusal" => StopReason::Refusal,
-        "model_context_window_exceeded" => StopReason::ContextWindowExceeded,
-        other => StopReason::Other(other.to_string()),
-    }
-}
-
-impl AnthropicAdapter {
     fn pricing(&self) -> ModelPricing {
         crate::pricing::anthropic_pricing(&self.model)
     }
 }
 
 #[async_trait]
-#[allow(clippy::too_many_lines)] // justified: streaming SSE + tool-use mapping in one impl block, splitting would fragment cohesive logic
 impl ModelAdapter for AnthropicAdapter {
     fn provider_name(&self) -> &str {
         "anthropic"
@@ -419,257 +242,16 @@ impl ModelAdapter for AnthropicAdapter {
             });
         }
 
-        let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
-
-        let mut content_blocks: Vec<ContentBlock> = Vec::new();
-        let mut current_block_type: Option<String> = None;
-        let mut current_block_id: Option<String> = None;
-        let mut current_block_name: Option<String> = None;
-        let mut current_text = String::new();
-        let mut current_thinking_text = String::new();
-        let mut current_tool_input_json = String::new();
-        let mut usage = TokenUsage::default();
-        let mut stop_reason = StopReason::EndTurn;
-        let mut got_message_stop = false;
-        let mut first_token_latency: Option<std::time::Duration> = None;
-
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result.map_err(|e| ModelError {
-                message: e.to_string(),
-                code: Some("stream_error".into()),
-                provider: Some("anthropic".into()),
-                status: None,
-                retry_after_secs: None,
-                upstream: None,
-            })?;
-
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-            while let Some(pos) = buffer.find("\n\n") {
-                let event_block = buffer[..pos].to_string();
-                buffer = buffer[pos + 2..].to_string();
-
-                let mut event_type = String::new();
-                let mut event_data = String::new();
-
-                for line in event_block.lines() {
-                    if let Some(et) = line.strip_prefix("event: ") {
-                        event_type = et.to_string();
-                    } else if let Some(ed) = line.strip_prefix("data: ") {
-                        event_data = ed.to_string();
-                    }
-                }
-
-                if event_data.is_empty() {
-                    continue;
-                }
-
-                let data: Value = serde_json::from_str(&event_data).map_err(|e| ModelError {
-                    message: format!("malformed SSE JSON: {e}"),
-                    code: Some("invalid_json".into()),
-                    provider: Some("anthropic".into()),
-                    status: None,
-                    retry_after_secs: None,
-                    upstream: Some(Arc::new(UpstreamErrorDetail {
-                        code: None,
-                        message: None,
-                        body: Some(json!(event_data)),
-                    })),
+        let outcome =
+            consume_event_stream(response.bytes_stream(), "anthropic", tx.as_ref(), start)
+                .await
+                .map_err(|mut e| {
+                    telemetry::record_model_error("anthropic", &self.model, start.elapsed());
+                    e.provider.get_or_insert_with(|| "anthropic".into());
+                    e
                 })?;
 
-                match event_type.as_str() {
-                    "content_block_start" => {
-                        if let Some(block) = data.get("content_block") {
-                            current_block_type =
-                                block.get("type").and_then(|v| v.as_str()).map(String::from);
-                            current_block_id =
-                                block.get("id").and_then(|v| v.as_str()).map(String::from);
-                            current_block_name =
-                                block.get("name").and_then(|v| v.as_str()).map(String::from);
-                            current_text.clear();
-                            current_thinking_text.clear();
-                            current_tool_input_json.clear();
-
-                            match current_block_type.as_deref() {
-                                Some("thinking") => {
-                                    if let Some(ref tx) = tx {
-                                        let _ = tx.send(StreamEvent::ThinkingStart).await;
-                                    }
-                                }
-                                Some("tool_use") => {
-                                    if let Some(ref tx) = tx {
-                                        let _ = tx
-                                            .send(StreamEvent::ToolUseStart {
-                                                id: current_block_id.clone().unwrap_or_default(),
-                                                name: current_block_name
-                                                    .clone()
-                                                    .unwrap_or_default(),
-                                            })
-                                            .await;
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    "content_block_delta" => {
-                        if let Some(delta) = data.get("delta") {
-                            let delta_type =
-                                delta.get("type").and_then(|v| v.as_str()).unwrap_or("");
-
-                            match delta_type {
-                                "text_delta" => {
-                                    if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
-                                        first_token_latency.get_or_insert_with(|| start.elapsed());
-                                        current_text.push_str(text);
-                                        if let Some(ref tx) = tx {
-                                            let _ = tx
-                                                .send(StreamEvent::Text {
-                                                    delta: text.to_string(),
-                                                })
-                                                .await;
-                                        }
-                                    }
-                                }
-                                "input_json_delta" => {
-                                    if let Some(partial) =
-                                        delta.get("partial_json").and_then(|v| v.as_str())
-                                    {
-                                        first_token_latency.get_or_insert_with(|| start.elapsed());
-                                        current_tool_input_json.push_str(partial);
-                                        if let Some(ref tx) = tx {
-                                            if let Some(id) = &current_block_id {
-                                                let _ = tx
-                                                    .send(StreamEvent::ToolUseArgsChunk {
-                                                        id: id.clone(),
-                                                        delta: partial.to_string(),
-                                                    })
-                                                    .await;
-                                            }
-                                        }
-                                    }
-                                }
-                                "thinking_delta" => {
-                                    if let Some(text) =
-                                        delta.get("thinking").and_then(|v| v.as_str())
-                                    {
-                                        current_thinking_text.push_str(text);
-                                        if let Some(ref tx) = tx {
-                                            let _ = tx
-                                                .send(StreamEvent::Thinking {
-                                                    delta: text.to_string(),
-                                                })
-                                                .await;
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    "content_block_stop" => {
-                        match current_block_type.as_deref() {
-                            Some("text") => {
-                                content_blocks.push(ContentBlock::Text(current_text.clone()));
-                            }
-                            Some("tool_use") => {
-                                let input: Value = serde_json::from_str(&current_tool_input_json)
-                                    .unwrap_or(Value::Object(Default::default()));
-                                let id = current_block_id.clone().unwrap_or_default();
-                                content_blocks.push(ContentBlock::ToolUse {
-                                    id: id.clone(),
-                                    name: current_block_name.clone().unwrap_or_default(),
-                                    input,
-                                });
-                                if let Some(ref tx) = tx {
-                                    let _ = tx.send(StreamEvent::ToolUseEnd { id }).await;
-                                }
-                            }
-                            Some("thinking") => {
-                                let signature = data
-                                    .get("content_block")
-                                    .and_then(|b| b.get("signature"))
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from);
-
-                                let thinking_text = if current_thinking_text.is_empty() {
-                                    None
-                                } else {
-                                    Some(current_thinking_text.clone())
-                                };
-
-                                content_blocks.push(ContentBlock::Thinking {
-                                    text: thinking_text,
-                                    signature: signature.clone(),
-                                    provider_details: None,
-                                });
-
-                                if let Some(ref tx) = tx {
-                                    let _ = tx
-                                        .send(StreamEvent::ThinkingEnd {
-                                            signature,
-                                            provider_details: None,
-                                        })
-                                        .await;
-                                }
-                            }
-                            _ => {}
-                        }
-                        current_block_type = None;
-                        current_block_id = None;
-                        current_block_name = None;
-                    }
-                    "message_delta" => {
-                        if let Some(delta) = data.get("delta") {
-                            if let Some(sr) = delta.get("stop_reason").and_then(|v| v.as_str()) {
-                                stop_reason = map_stop_reason(sr);
-                            }
-                        }
-                        if let Some(u) = data.get("usage") {
-                            if let Some(ot) = u.get("output_tokens").and_then(|v| v.as_u64()) {
-                                usage.output_tokens = ot;
-                            }
-                        }
-                    }
-                    "message_start" => {
-                        if let Some(msg) = data.get("message") {
-                            if let Some(u) = msg.get("usage") {
-                                if let Some(it) = u.get("input_tokens").and_then(|v| v.as_u64()) {
-                                    usage.input_tokens = it;
-                                }
-                                if let Some(cr) =
-                                    u.get("cache_read_input_tokens").and_then(|v| v.as_u64())
-                                {
-                                    usage.cache_read_tokens = cr;
-                                }
-                                if let Some(cw) = u
-                                    .get("cache_creation_input_tokens")
-                                    .and_then(|v| v.as_u64())
-                                {
-                                    usage.cache_write_tokens = cw;
-                                }
-                            }
-                        }
-                    }
-                    "message_stop" => {
-                        got_message_stop = true;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        if !got_message_stop {
-            return Err(ModelError {
-                message: "SSE stream ended without message_stop".into(),
-                code: Some("stream_interrupted".into()),
-                provider: Some("anthropic".into()),
-                status: None,
-                retry_after_secs: None,
-                upstream: None,
-            });
-        }
+        let mut usage = outcome.usage;
 
         let has_usage = usage.input_tokens > 0 || usage.output_tokens > 0;
         if !has_usage {
@@ -697,16 +279,16 @@ impl ModelAdapter for AnthropicAdapter {
             duration,
             usage.input_tokens,
             usage.output_tokens,
-            first_token_latency,
+            outcome.first_token_latency,
             Some(duration),
         );
 
         usage.cost_usd = Some(self.pricing().calculate(&usage));
 
         Ok(ModelResponse {
-            content: content_blocks,
+            content: outcome.content,
             usage,
-            stop_reason,
+            stop_reason: outcome.stop_reason,
             option_adjustments,
         })
     }
@@ -889,6 +471,8 @@ pub(crate) mod test_util {
 mod tests {
     use super::*;
     use crate::providers::anthropic::test_util::*;
+    use crate::{CachePolicy, ContentBlock, StopReason};
+    use response::map_stop_reason;
 
     const MINIMAL_SSE: &str = r#"event: message_start
 data: {"message":{"usage":{"input_tokens":10}}}
