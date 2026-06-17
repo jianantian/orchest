@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tracing::Instrument;
 
-use crate::compatibility::validate_streaming_request;
+use crate::compatibility::{validate_streaming_request, validate_transcribe_request};
 use crate::config::normalize_asr_provider_model;
 use crate::error::{AsrError, AsrErrorCode};
 use crate::observability;
@@ -192,9 +192,26 @@ impl AsrGateway {
             self.router.select_for_transcribe(&request)?
         };
         let model = provider.model_name().to_string();
+        let caps = provider.capabilities();
+        let compat = validate_transcribe_request(&request, &caps)?;
+        if !compat.adjustments.is_empty() {
+            observability::record_option_adjustment_count(&model, compat.adjustments.len() as u32);
+        }
+        let timeout = request.timeout;
         let span = observability::gateway_transcribe_span(&trace_id, &model);
         async {
-            let result = provider.transcribe(request).await;
+            let transcribe = provider.transcribe(request);
+            let result = match timeout {
+                Some(timeout) => match tokio::time::timeout(timeout, transcribe).await {
+                    Ok(result) => result,
+                    Err(_) => Err(AsrError::new(
+                        AsrErrorCode::Timeout,
+                        "transcribe() timed out while waiting for provider response",
+                    )
+                    .with_model(model.clone())),
+                },
+                None => transcribe.await,
+            };
             if let Ok(ref r) = result {
                 observability::record_request_duration(
                     &model,
