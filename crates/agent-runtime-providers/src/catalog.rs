@@ -58,7 +58,7 @@ pub struct LlmProviderInfo {
 
 static LLM_PROVIDERS: LazyLock<Vec<LlmProviderInfo>> = LazyLock::new(build_catalog);
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // justified: catalog builder needs all pricing/capability fields; a struct would be more verbose with no clarity gain
 fn usd_model(
     model_id: &'static str,
     provider: &'static str,
@@ -86,7 +86,7 @@ fn usd_model(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // justified: same as usd_model — all fields required, no meaningful grouping
 fn cny_model(
     model_id: &'static str,
     provider: &'static str,

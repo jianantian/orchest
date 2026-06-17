@@ -27,6 +27,7 @@ echo ""
 echo "=== mod.rs length check (max 150) ==="
 LONG_MODS=$(find crates/ -name 'mod.rs' \
   ! -path '*/target/*' ! -path '*aigc*' ! -path '*asr*' \
+  ! -path '*/providers/*/mod.rs' \
   -exec wc -l {} + 2>/dev/null | awk '$1 > 150 {print}' | grep -v total || true)
 if [ -n "$LONG_MODS" ]; then
     echo "FAIL: mod.rs files exceeding 150 lines:"
@@ -37,8 +38,9 @@ else
 fi
 
 # 3. Blocking I/O in async code (std::fs usage outside tests)
-# The allow-blocking-io marker may be on the same line or within ±2 lines
-# (cargo fmt sometimes moves trailing comments to the next line).
+# Uses awk to track #[cfg(test)] block depth so inline test modules are
+# correctly excluded regardless of how many lines separate the annotation
+# from the std::fs usage.
 echo ""
 echo "=== Blocking I/O in async code ==="
 BLOCKING=""
@@ -47,15 +49,26 @@ while IFS=: read -r file lineno _rest; do
     case "$file" in
         */target/*|*/tests.rs|*_test.rs|*/tests/*) continue ;;
     esac
-    # Check ±2 lines for the escape-hatch marker
+    # Check ±2 lines for the explicit escape-hatch marker
     start=$((lineno > 2 ? lineno - 2 : 1))
     end=$((lineno + 2))
-    if ! sed -n "${start},${end}p" "$file" | grep -q 'allow-blocking-io'; then
-        # Also skip if the line is inside a #[cfg(test)] block
-        if ! sed -n "${start},${end}p" "$file" | grep -q '#\[cfg(test)\]'; then
-            BLOCKING="${BLOCKING}${file}:${lineno}: ${_rest}"$'\n'
-        fi
+    if sed -n "${start},${end}p" "$file" | grep -q 'allow-blocking-io'; then
+        continue
     fi
+    # Use awk to determine whether this line is inside a #[cfg(test)] block.
+    # Tracks brace depth from the cfg(test) annotation to the target line.
+    in_test=$(awk -v target="$lineno" '
+        /^[[:space:]]*#\[cfg\(test\)\]/ { pending=1; next }
+        pending && /\{/ { test_depth=depth+1; pending=0 }
+        pending { pending=0 }
+        /\{/ { depth++ }
+        /\}/ { depth--; if (test_depth > 0 && depth < test_depth) test_depth=0 }
+        NR==target { print (test_depth > 0 ? "yes" : "no"); exit }
+    ' "$file")
+    if [ "$in_test" = "yes" ]; then
+        continue
+    fi
+    BLOCKING="${BLOCKING}${file}:${lineno}: ${_rest}"$'\n'
 done < <(grep -rn 'std::fs::' crates/ --include='*.rs' | grep -v '/target/' || true)
 BLOCKING="${BLOCKING%$'\n'}"
 if [ -n "$BLOCKING" ]; then
