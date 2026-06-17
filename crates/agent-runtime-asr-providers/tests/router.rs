@@ -9,7 +9,9 @@ use agent_runtime_asr_providers::traits::AsrProvider;
 use agent_runtime_asr_providers::types::*;
 use fake_provider::FakeAsrProvider;
 use serde_json::json;
+use std::path::PathBuf;
 use std::time::Duration;
+use tokio::sync::oneshot;
 
 fn expect_err<T>(result: Result<T, AsrError>) -> AsrError {
     match result {
@@ -30,6 +32,20 @@ fn make_streaming_request() -> StreamingTranscribeRequest {
             language: Some(Language::new("zh-CN")),
             ..Default::default()
         },
+        compatibility: CompatibilityPolicy::Strict,
+        provider_options: serde_json::Value::Null,
+    }
+}
+
+fn make_transcribe_request(audio: AudioInput) -> TranscribeRequest {
+    TranscribeRequest {
+        model: None,
+        audio,
+        options: TranscribeOptions {
+            language: Some(Language::new("zh-CN")),
+            ..Default::default()
+        },
+        timeout: None,
         compatibility: CompatibilityPolicy::Strict,
         provider_options: serde_json::Value::Null,
     }
@@ -60,6 +76,20 @@ regions = ["cn"]
     )
     .unwrap();
     router.set_routes(routes);
+    router
+}
+
+fn setup_batch_router_with_routes(provider: std::sync::Arc<FakeAsrProvider>) -> AsrRouter {
+    let mut router = AsrRouter::new();
+    router.register_provider("fake/batch".into(), provider);
+    router.set_routes(vec![AsrRoute {
+        model: "fake/batch".into(),
+        priority: 10,
+        languages: vec![Language::new("zh-CN"), Language::new("en")],
+        regions: vec![],
+        max_latency_ms: None,
+        max_cost_micros_per_minute: None,
+    }]);
     router
 }
 
@@ -128,6 +158,35 @@ fn router_explicit_model_bypasses_routes() {
 
     let provider = router.select_for_streaming(&request).unwrap();
     assert_eq!(provider.provider_name(), "aliyun");
+}
+
+#[test]
+fn router_transcribe_explicit_model_bypasses_routes() {
+    let router = setup_batch_router_with_routes(FakeAsrProvider::batch());
+
+    let mut request = make_transcribe_request(AudioInput::Bytes {
+        data: vec![0; 100],
+        format: AudioFormat::Pcm,
+        sample_rate_hz: Some(16000),
+    });
+    request.model = Some("fake/batch".into());
+
+    let provider = router.select_for_transcribe(&request).unwrap();
+    assert_eq!(provider.provider_name(), "fake");
+}
+
+#[test]
+fn router_transcribe_auto_selects_route() {
+    let router = setup_batch_router_with_routes(FakeAsrProvider::batch());
+
+    let request = make_transcribe_request(AudioInput::Bytes {
+        data: vec![0; 100],
+        format: AudioFormat::Pcm,
+        sample_rate_hz: Some(16000),
+    });
+
+    let provider = router.select_for_transcribe(&request).unwrap();
+    assert_eq!(provider.model_name(), "batch");
 }
 
 #[test]
@@ -216,6 +275,226 @@ async fn gateway_auto_generates_trace_id() {
     assert!(request.options.trace_id.is_none());
 
     let _stream = gateway.start_stream(request).await.unwrap();
+}
+
+#[tokio::test]
+async fn gateway_transcribe_bytes_success_with_explicit_model() {
+    let router = setup_batch_router_with_routes(FakeAsrProvider::batch());
+    let gateway = AsrGateway::new(
+        router,
+        AsrGatewayConfig {
+            route_config_path: None,
+        },
+    );
+
+    let mut request = make_transcribe_request(AudioInput::Bytes {
+        data: vec![0; 100],
+        format: AudioFormat::Pcm,
+        sample_rate_hz: Some(16000),
+    });
+    request.model = Some("fake/batch".into());
+
+    let result = gateway.transcribe(request).await.unwrap();
+    assert_eq!(result.text, "one-shot transcript");
+    assert_eq!(result.language, Some(Language::new("zh-CN")));
+}
+
+#[tokio::test]
+async fn gateway_transcribe_file_success_with_explicit_format() {
+    let router = setup_batch_router_with_routes(FakeAsrProvider::batch());
+    let gateway = AsrGateway::new(
+        router,
+        AsrGatewayConfig {
+            route_config_path: None,
+        },
+    );
+
+    let request = make_transcribe_request(AudioInput::File {
+        path: PathBuf::from("fixtures/audio.mp3"),
+        format: Some(AudioFormat::Mp3),
+    });
+
+    let result = gateway.transcribe(request).await.unwrap();
+    assert_eq!(result.text, "one-shot transcript");
+}
+
+#[tokio::test]
+async fn gateway_transcribe_url_success_with_explicit_format() {
+    let router = setup_batch_router_with_routes(FakeAsrProvider::batch());
+    let gateway = AsrGateway::new(
+        router,
+        AsrGatewayConfig {
+            route_config_path: None,
+        },
+    );
+
+    let request = make_transcribe_request(AudioInput::Url {
+        url: "https://example.com/audio.wav".into(),
+        format: Some(AudioFormat::Wav),
+    });
+
+    let result = gateway.transcribe(request).await.unwrap();
+    assert_eq!(result.text, "one-shot transcript");
+}
+
+#[tokio::test]
+async fn gateway_transcribe_file_without_format_requires_inference_support() {
+    let router = setup_batch_router_with_routes(FakeAsrProvider::batch());
+    let gateway = AsrGateway::new(
+        router,
+        AsrGatewayConfig {
+            route_config_path: None,
+        },
+    );
+
+    let request = make_transcribe_request(AudioInput::File {
+        path: PathBuf::from("fixtures/audio.mp3"),
+        format: None,
+    });
+
+    let err = expect_err(gateway.transcribe(request).await);
+    assert_eq!(err.code, AsrErrorCode::InvalidRequest);
+    assert!(err.message.contains("explicit format"));
+}
+
+#[tokio::test]
+async fn gateway_transcribe_url_without_format_allowed_with_inference_support() {
+    let router = setup_batch_router_with_routes(FakeAsrProvider::batch_with_format_inference(true));
+    let gateway = AsrGateway::new(
+        router,
+        AsrGatewayConfig {
+            route_config_path: None,
+        },
+    );
+
+    let request = make_transcribe_request(AudioInput::Url {
+        url: "https://example.com/audio".into(),
+        format: None,
+    });
+
+    let result = gateway.transcribe(request).await.unwrap();
+    assert_eq!(result.text, "one-shot transcript");
+}
+
+#[tokio::test]
+async fn gateway_transcribe_realtime_only_provider_returns_unsupported() {
+    let router = setup_router_with_routes();
+    let gateway = AsrGateway::new(
+        router,
+        AsrGatewayConfig {
+            route_config_path: None,
+        },
+    );
+
+    let mut request = make_transcribe_request(AudioInput::Bytes {
+        data: vec![0; 100],
+        format: AudioFormat::Pcm,
+        sample_rate_hz: Some(16000),
+    });
+    request.model = Some("volcengine/bigmodel_async".into());
+
+    let err = expect_err(gateway.transcribe(request).await);
+    assert_eq!(err.code, AsrErrorCode::UnsupportedOperation);
+}
+
+#[tokio::test]
+async fn gateway_transcribe_rejects_empty_byte_input() {
+    let router = setup_batch_router_with_routes(FakeAsrProvider::batch());
+    let gateway = AsrGateway::new(
+        router,
+        AsrGatewayConfig {
+            route_config_path: None,
+        },
+    );
+
+    let request = make_transcribe_request(AudioInput::Bytes {
+        data: vec![],
+        format: AudioFormat::Pcm,
+        sample_rate_hz: Some(16000),
+    });
+
+    let err = expect_err(gateway.transcribe(request).await);
+    assert_eq!(err.code, AsrErrorCode::InvalidAudio);
+}
+
+#[tokio::test]
+async fn gateway_transcribe_requires_pcm_sample_rate() {
+    let router = setup_batch_router_with_routes(FakeAsrProvider::batch());
+    let gateway = AsrGateway::new(
+        router,
+        AsrGatewayConfig {
+            route_config_path: None,
+        },
+    );
+
+    let request = make_transcribe_request(AudioInput::Bytes {
+        data: vec![0; 100],
+        format: AudioFormat::Pcm,
+        sample_rate_hz: None,
+    });
+
+    let err = expect_err(gateway.transcribe(request).await);
+    assert_eq!(err.code, AsrErrorCode::InvalidRequest);
+    assert!(err.message.contains("sample_rate_hz"));
+}
+
+#[tokio::test]
+async fn gateway_transcribe_times_out_provider_execution() {
+    let (entered_tx, _entered_rx) = oneshot::channel();
+    let (cancelled_tx, _cancelled_rx) = oneshot::channel();
+    let router = setup_batch_router_with_routes(FakeAsrProvider::batch_never_transcribes(
+        entered_tx,
+        cancelled_tx,
+    ));
+    let gateway = AsrGateway::new(
+        router,
+        AsrGatewayConfig {
+            route_config_path: None,
+        },
+    );
+
+    let mut request = make_transcribe_request(AudioInput::Bytes {
+        data: vec![0; 100],
+        format: AudioFormat::Pcm,
+        sample_rate_hz: Some(16000),
+    });
+    request.timeout = Some(Duration::from_millis(10));
+
+    let err = expect_err(gateway.transcribe(request).await);
+    assert_eq!(err.code, AsrErrorCode::Timeout);
+}
+
+#[tokio::test]
+async fn gateway_transcribe_future_cancellation_drops_provider_future() {
+    let (entered_tx, entered_rx) = oneshot::channel();
+    let (cancelled_tx, cancelled_rx) = oneshot::channel();
+    let router = setup_batch_router_with_routes(FakeAsrProvider::batch_never_transcribes(
+        entered_tx,
+        cancelled_tx,
+    ));
+    let gateway = AsrGateway::new(
+        router,
+        AsrGatewayConfig {
+            route_config_path: None,
+        },
+    );
+
+    let request = make_transcribe_request(AudioInput::Bytes {
+        data: vec![0; 100],
+        format: AudioFormat::Pcm,
+        sample_rate_hz: Some(16000),
+    });
+
+    let task = tokio::spawn(async move { gateway.transcribe(request).await });
+    tokio::time::timeout(Duration::from_secs(1), entered_rx)
+        .await
+        .expect("provider future should start")
+        .expect("entered sender should not drop before start");
+    task.abort();
+    tokio::time::timeout(Duration::from_secs(1), cancelled_rx)
+        .await
+        .expect("provider future should be dropped on cancellation")
+        .expect("cancelled sender should not drop before cancellation");
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +793,7 @@ async fn fake_provider_transcribe_returns_unsupported() {
             sample_rate_hz: Some(16000),
         },
         options: TranscribeOptions::default(),
+        timeout: None,
         compatibility: CompatibilityPolicy::Strict,
         provider_options: serde_json::Value::Null,
     };

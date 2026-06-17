@@ -7,9 +7,9 @@ use agent_runtime_asr_providers::traits::AsrProvider;
 use agent_runtime_asr_providers::types::*;
 use async_trait::async_trait;
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 #[derive(Debug, Clone)]
 pub enum FakeAdapterBehavior {
@@ -22,12 +22,23 @@ pub enum FakeAdapterBehavior {
     LateProviderFinal,
 }
 
+#[derive(Clone)]
+pub enum FakeTranscribeBehavior {
+    Unsupported,
+    Success,
+    Never {
+        entered: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+        cancelled: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    },
+}
+
 pub struct FakeAsrProvider {
     pub provider: String,
     pub model: String,
     pub caps: AsrModelCapabilities,
     pub languages: Vec<Language>,
     pub behavior: FakeAdapterBehavior,
+    pub transcribe_behavior: FakeTranscribeBehavior,
     pub flush_timeout_override: Option<Duration>,
 }
 
@@ -39,6 +50,7 @@ impl FakeAsrProvider {
             caps: make_volcengine_caps(),
             languages: vec![Language::new("zh-CN"), Language::new("en")],
             behavior: FakeAdapterBehavior::Normal,
+            transcribe_behavior: FakeTranscribeBehavior::Unsupported,
             flush_timeout_override: None,
         })
     }
@@ -54,6 +66,41 @@ impl FakeAsrProvider {
                 Language::new("ja"),
             ],
             behavior: FakeAdapterBehavior::Normal,
+            transcribe_behavior: FakeTranscribeBehavior::Unsupported,
+            flush_timeout_override: None,
+        })
+    }
+
+    pub fn batch() -> Arc<Self> {
+        Self::batch_with_format_inference(false)
+    }
+
+    pub fn batch_with_format_inference(batch_format_inference: bool) -> Arc<Self> {
+        Arc::new(Self {
+            provider: "fake".into(),
+            model: "batch".into(),
+            caps: make_batch_caps(batch_format_inference),
+            languages: vec![Language::new("zh-CN"), Language::new("en")],
+            behavior: FakeAdapterBehavior::Normal,
+            transcribe_behavior: FakeTranscribeBehavior::Success,
+            flush_timeout_override: None,
+        })
+    }
+
+    pub fn batch_never_transcribes(
+        entered: oneshot::Sender<()>,
+        cancelled: oneshot::Sender<()>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            provider: "fake".into(),
+            model: "batch".into(),
+            caps: make_batch_caps(false),
+            languages: vec![Language::new("zh-CN")],
+            behavior: FakeAdapterBehavior::Normal,
+            transcribe_behavior: FakeTranscribeBehavior::Never {
+                entered: Arc::new(Mutex::new(Some(entered))),
+                cancelled: Arc::new(Mutex::new(Some(cancelled))),
+            },
             flush_timeout_override: None,
         })
     }
@@ -65,6 +112,7 @@ impl FakeAsrProvider {
             caps: make_volcengine_caps(),
             languages: vec![Language::new("zh-CN")],
             behavior,
+            transcribe_behavior: FakeTranscribeBehavior::Unsupported,
             flush_timeout_override: None,
         })
     }
@@ -79,6 +127,7 @@ impl FakeAsrProvider {
             caps: make_volcengine_caps(),
             languages: vec![Language::new("zh-CN")],
             behavior,
+            transcribe_behavior: FakeTranscribeBehavior::Unsupported,
             flush_timeout_override: Some(flush_timeout),
         })
     }
@@ -97,6 +146,7 @@ fn make_volcengine_caps() -> AsrModelCapabilities {
             max_bytes: None,
         }],
         batch_inputs: vec![],
+        batch_format_inference: false,
         audio_timeline_modes: vec![AudioTimelineMode::ContinuousRealtime],
         interim_results: true,
         endpointing_modes: vec![EndpointingMode::NaturalSegmenting],
@@ -134,6 +184,7 @@ fn make_aliyun_caps() -> AsrModelCapabilities {
             max_bytes: None,
         }],
         batch_inputs: vec![],
+        batch_format_inference: false,
         audio_timeline_modes: vec![AudioTimelineMode::ContinuousRealtime],
         interim_results: true,
         endpointing_modes: vec![EndpointingMode::AcousticSilence],
@@ -149,6 +200,56 @@ fn make_aliyun_caps() -> AsrModelCapabilities {
         provider_option_keys: vec!["max_sentence_silence".into()],
         max_duration_ms: None,
         default_flush_timeout_ms: Some(5000),
+        source: CapabilitySource::Static,
+        diagnostic_metadata: Value::Null,
+    }
+}
+
+fn make_batch_caps(batch_format_inference: bool) -> AsrModelCapabilities {
+    AsrModelCapabilities {
+        languages: vec![Language::new("zh-CN"), Language::new("en")],
+        streaming: false,
+        batch: true,
+        streaming_inputs: vec![],
+        batch_inputs: vec![
+            AudioInputCapability {
+                format: AudioFormat::Pcm,
+                sample_rates_hz: SampleRateSupport::Exact(vec![16000]),
+                channels: ChannelSupport::Exact(vec![1]),
+                max_duration_ms: None,
+                max_bytes: Some(1024),
+            },
+            AudioInputCapability {
+                format: AudioFormat::Mp3,
+                sample_rates_hz: SampleRateSupport::Any,
+                channels: ChannelSupport::Any,
+                max_duration_ms: None,
+                max_bytes: Some(1024 * 1024),
+            },
+            AudioInputCapability {
+                format: AudioFormat::Wav,
+                sample_rates_hz: SampleRateSupport::Any,
+                channels: ChannelSupport::Any,
+                max_duration_ms: None,
+                max_bytes: Some(1024 * 1024),
+            },
+        ],
+        batch_format_inference,
+        audio_timeline_modes: vec![],
+        interim_results: false,
+        endpointing_modes: vec![],
+        segment_flush: false,
+        multi_segment_streaming: false,
+        connection_reuse: ConnectionReuse::NotReusable,
+        word_timestamps: true,
+        speaker_diarization: false,
+        confidence: true,
+        code_switching: false,
+        hot_words: true,
+        context_prompt: true,
+        provider_option_keys: vec!["batch_hint".into()],
+        max_duration_ms: Some(60_000),
+        default_flush_timeout_ms: None,
         source: CapabilitySource::Static,
         diagnostic_metadata: Value::Null,
     }
@@ -215,8 +316,23 @@ impl AsrProvider for FakeAsrProvider {
         &self.languages
     }
 
-    async fn transcribe(&self, _request: TranscribeRequest) -> Result<TranscribeResult, AsrError> {
-        Err(AsrError::unsupported_operation())
+    async fn transcribe(&self, request: TranscribeRequest) -> Result<TranscribeResult, AsrError> {
+        match &self.transcribe_behavior {
+            FakeTranscribeBehavior::Unsupported => Err(AsrError::unsupported_operation()),
+            FakeTranscribeBehavior::Success => Ok(make_transcribe_result(
+                request.options.trace_id.as_deref().unwrap_or("fake-trace"),
+                &format!("{}/{}", self.provider, self.model),
+                "one-shot transcript",
+            )),
+            FakeTranscribeBehavior::Never { entered, cancelled } => {
+                send_once(entered);
+                let _guard = CancelGuard {
+                    cancelled: Arc::clone(cancelled),
+                };
+                std::future::pending::<()>().await;
+                unreachable!("pending future never resolves")
+            }
+        }
     }
 
     async fn start_stream(
@@ -253,6 +369,45 @@ impl AsrProvider for FakeAsrProvider {
             AsrAudioSink::new(audio_tx),
             AsrEventStream::new(event_rx),
         ))
+    }
+}
+
+struct CancelGuard {
+    cancelled: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+}
+
+impl Drop for CancelGuard {
+    fn drop(&mut self) {
+        send_once(&self.cancelled);
+    }
+}
+
+fn send_once(slot: &Arc<Mutex<Option<oneshot::Sender<()>>>>) {
+    if let Ok(mut guard) = slot.lock() {
+        if let Some(tx) = guard.take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
+fn make_transcribe_result(trace_id: &str, model: &str, text: &str) -> TranscribeResult {
+    TranscribeResult {
+        text: text.into(),
+        language: Some(Language::new("zh-CN")),
+        confidence: Some(0.98),
+        words: vec![],
+        speakers: vec![],
+        audio_duration_ms: 1000,
+        processing_latency_ms: 25,
+        usage: AsrUsage {
+            audio_duration_ms: 1000,
+            billable_duration_ms: Some(1000),
+            input_bytes: None,
+            transcript_chars: Some(text.len() as u64),
+            cost_estimate_micros: None,
+        },
+        option_adjustments: vec![],
+        telemetry: make_telemetry(trace_id, model),
     }
 }
 

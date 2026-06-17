@@ -128,6 +128,7 @@ impl AsrProvider for VolcengineAsrAdapter {
                 max_bytes: None,
             }],
             batch_inputs: vec![],
+            batch_format_inference: false,
             audio_timeline_modes: vec![AudioTimelineMode::ContinuousRealtime],
             interim_results: true,
             endpointing_modes: vec![],
