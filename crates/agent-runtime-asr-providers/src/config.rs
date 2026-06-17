@@ -67,7 +67,7 @@ pub fn normalize_asr_provider_model(
     })
 }
 
-#[allow(clippy::result_large_err)]
+#[allow(clippy::result_large_err)] // justified: AsrError carries provider-specific detail needed at the call site; boxing would hide the type
 pub fn create_asr_provider_from_config(
     config: AsrProviderRuntimeConfig,
 ) -> Result<Arc<dyn AsrProvider>, AsrError> {

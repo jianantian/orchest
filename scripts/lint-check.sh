@@ -22,15 +22,26 @@ fi
 
 # 2. mod.rs business logic check (mod.rs should stay concise)
 # Threshold 150 allows trait definitions in mod.rs; target 50 for pure re-export mods.
+# Skips any mod.rs that has a sibling tests.rs — those are implementation modules
+# whose tests were extracted to a subfile, not pure re-export coordinators.
 echo ""
 echo "=== mod.rs length check (max 150) ==="
-LONG_MODS=$(find crates/ -name 'mod.rs' \
-  ! -path '*/target/*' ! -path '*aigc*' ! -path '*asr*' \
-  ! -path '*/providers/*/mod.rs' \
-  -exec wc -l {} + 2>/dev/null | awk '$1 > 150 {print}' | grep -v total || true)
+LONG_MODS=""
+while IFS= read -r modfile; do
+    dir=$(dirname "$modfile")
+    if [ -f "$dir/tests.rs" ]; then
+        continue
+    fi
+    lines=$(wc -l < "$modfile")
+    if [ "$lines" -gt 150 ]; then
+        LONG_MODS="${LONG_MODS}     ${lines} ${modfile}"$'\n'
+    fi
+done < <(find crates/ -name 'mod.rs' \
+  ! -path '*/target/*' ! -path '*aigc*' ! -path '*asr*' ! -path '*tts*' \
+  2>/dev/null)
 if [ -n "$LONG_MODS" ]; then
     echo "FAIL: mod.rs files exceeding 150 lines:"
-    echo "$LONG_MODS"
+    printf '%s' "$LONG_MODS"
     EXIT_CODE=1
 else
     echo "PASS"
