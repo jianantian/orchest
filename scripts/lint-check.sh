@@ -5,15 +5,14 @@ set -euo pipefail
 
 EXIT_CODE=0
 
-# 1. File length check (excluding test files, threshold 700 lines)
-# Target: 400 after remaining file splits (see #77 A4).
-echo "=== File length check (max 700, excluding tests) ==="
+# 1. File length check (excluding test files, threshold 500 lines)
+echo "=== File length check (max 500, excluding tests) ==="
 LONG_FILES=$(find crates/ -name '*.rs' \
   ! -name 'tests.rs' ! -name '*_test.rs' \
   ! -path '*/target/*' ! -path '*/tests/*' \
-  -exec wc -l {} + 2>/dev/null | awk '$1 > 700 {print}' | grep -v total || true)
+  -exec wc -l {} + 2>/dev/null | awk '$1 > 500 {print}' | grep -v total || true)
 if [ -n "$LONG_FILES" ]; then
-    echo "WARN: Files exceeding 700 lines (split candidate):"
+    echo "WARN: Files exceeding 500 lines (split candidate):"
     echo "$LONG_FILES"
     # Not failing yet — provider files exceed threshold pending A4 splits.
     # EXIT_CODE=1
