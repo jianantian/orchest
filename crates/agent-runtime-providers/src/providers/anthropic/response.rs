@@ -33,6 +33,150 @@ pub(super) struct StreamOutcome {
     pub first_token_latency: Option<Duration>,
 }
 
+// Accumulates per-content-block state across the three SSE events that
+// bracket each block (content_block_start / content_block_delta* / content_block_stop).
+struct BlockState {
+    block_type: Option<String>,
+    block_id: Option<String>,
+    block_name: Option<String>,
+    text: String,
+    thinking_text: String,
+    tool_input_json: String,
+}
+
+impl BlockState {
+    fn new() -> Self {
+        Self {
+            block_type: None,
+            block_id: None,
+            block_name: None,
+            text: String::new(),
+            thinking_text: String::new(),
+            tool_input_json: String::new(),
+        }
+    }
+
+    async fn on_start(&mut self, block: &Value, tx: Option<&mpsc::Sender<StreamEvent>>) {
+        self.block_type = block.get("type").and_then(|v| v.as_str()).map(String::from);
+        self.block_id = block.get("id").and_then(|v| v.as_str()).map(String::from);
+        self.block_name = block.get("name").and_then(|v| v.as_str()).map(String::from);
+        self.text.clear();
+        self.thinking_text.clear();
+        self.tool_input_json.clear();
+
+        if let Some(tx) = tx {
+            match self.block_type.as_deref() {
+                Some("thinking") => {
+                    let _ = tx.send(StreamEvent::ThinkingStart).await;
+                }
+                Some("tool_use") => {
+                    let _ = tx
+                        .send(StreamEvent::ToolUseStart {
+                            id: self.block_id.clone().unwrap_or_default(),
+                            name: self.block_name.clone().unwrap_or_default(),
+                        })
+                        .await;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    async fn on_delta(
+        &mut self,
+        delta: &Value,
+        first_token_latency: &mut Option<Duration>,
+        start: Instant,
+        tx: Option<&mpsc::Sender<StreamEvent>>,
+    ) {
+        match delta.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+            "text_delta" => {
+                if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                    first_token_latency.get_or_insert_with(|| start.elapsed());
+                    self.text.push_str(text);
+                    if let Some(tx) = tx {
+                        let _ = tx.send(StreamEvent::Text { delta: text.to_string() }).await;
+                    }
+                }
+            }
+            "input_json_delta" => {
+                if let Some(partial) = delta.get("partial_json").and_then(|v| v.as_str()) {
+                    first_token_latency.get_or_insert_with(|| start.elapsed());
+                    self.tool_input_json.push_str(partial);
+                    if let Some(tx) = tx {
+                        if let Some(id) = &self.block_id {
+                            let _ = tx
+                                .send(StreamEvent::ToolUseArgsChunk {
+                                    id: id.clone(),
+                                    delta: partial.to_string(),
+                                })
+                                .await;
+                        }
+                    }
+                }
+            }
+            "thinking_delta" => {
+                if let Some(text) = delta.get("thinking").and_then(|v| v.as_str()) {
+                    self.thinking_text.push_str(text);
+                    if let Some(tx) = tx {
+                        let _ = tx.send(StreamEvent::Thinking { delta: text.to_string() }).await;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    async fn on_stop(
+        &mut self,
+        data: &Value,
+        content_blocks: &mut Vec<ContentBlock>,
+        tx: Option<&mpsc::Sender<StreamEvent>>,
+    ) {
+        match self.block_type.as_deref() {
+            Some("text") => {
+                content_blocks.push(ContentBlock::Text(self.text.clone()));
+            }
+            Some("tool_use") => {
+                let input: Value = serde_json::from_str(&self.tool_input_json)
+                    .unwrap_or(Value::Object(Default::default()));
+                let id = self.block_id.clone().unwrap_or_default();
+                content_blocks.push(ContentBlock::ToolUse {
+                    id: id.clone(),
+                    name: self.block_name.clone().unwrap_or_default(),
+                    input,
+                });
+                if let Some(tx) = tx {
+                    let _ = tx.send(StreamEvent::ToolUseEnd { id }).await;
+                }
+            }
+            Some("thinking") => {
+                let signature = data
+                    .get("content_block")
+                    .and_then(|b| b.get("signature"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let thinking_text = (!self.thinking_text.is_empty())
+                    .then(|| self.thinking_text.clone());
+                content_blocks.push(ContentBlock::Thinking {
+                    text: thinking_text,
+                    signature: signature.clone(),
+                    provider_details: None,
+                });
+                if let Some(tx) = tx {
+                    let _ = tx
+                        .send(StreamEvent::ThinkingEnd { signature, provider_details: None })
+                        .await;
+                }
+            }
+            _ => {}
+        }
+        self.block_type = None;
+        self.block_id = None;
+        self.block_name = None;
+    }
+}
+
 /// Drains an Anthropic Messages API SSE byte stream, forwarding deltas to
 /// `tx` as they arrive (if present) and accumulating the final content
 /// blocks / usage / stop reason for the non-streaming `ModelResponse`.
@@ -43,14 +187,8 @@ pub(super) async fn consume_event_stream(
     start: Instant,
 ) -> Result<StreamOutcome, ModelError> {
     let mut buffer = String::new();
-
+    let mut block = BlockState::new();
     let mut content_blocks: Vec<ContentBlock> = Vec::new();
-    let mut current_block_type: Option<String> = None;
-    let mut current_block_id: Option<String> = None;
-    let mut current_block_name: Option<String> = None;
-    let mut current_text = String::new();
-    let mut current_thinking_text = String::new();
-    let mut current_tool_input_json = String::new();
     let mut usage = TokenUsage::default();
     let mut stop_reason = StopReason::EndTurn;
     let mut got_message_stop = false;
@@ -65,7 +203,6 @@ pub(super) async fn consume_event_stream(
             retry_after_secs: None,
             upstream: None,
         })?;
-
         buffer.push_str(&String::from_utf8_lossy(&chunk));
 
         while let Some(pos) = buffer.find("\n\n") {
@@ -74,7 +211,6 @@ pub(super) async fn consume_event_stream(
 
             let mut event_type = String::new();
             let mut event_data = String::new();
-
             for line in event_block.lines() {
                 if let Some(et) = line.strip_prefix("event: ") {
                     event_type = et.to_string();
@@ -82,7 +218,6 @@ pub(super) async fn consume_event_stream(
                     event_data = ed.to_string();
                 }
             }
-
             if event_data.is_empty() {
                 continue;
             }
@@ -102,141 +237,17 @@ pub(super) async fn consume_event_stream(
 
             match event_type.as_str() {
                 "content_block_start" => {
-                    if let Some(block) = data.get("content_block") {
-                        current_block_type =
-                            block.get("type").and_then(|v| v.as_str()).map(String::from);
-                        current_block_id =
-                            block.get("id").and_then(|v| v.as_str()).map(String::from);
-                        current_block_name =
-                            block.get("name").and_then(|v| v.as_str()).map(String::from);
-                        current_text.clear();
-                        current_thinking_text.clear();
-                        current_tool_input_json.clear();
-
-                        match current_block_type.as_deref() {
-                            Some("thinking") => {
-                                if let Some(tx) = tx {
-                                    let _ = tx.send(StreamEvent::ThinkingStart).await;
-                                }
-                            }
-                            Some("tool_use") => {
-                                if let Some(tx) = tx {
-                                    let _ = tx
-                                        .send(StreamEvent::ToolUseStart {
-                                            id: current_block_id.clone().unwrap_or_default(),
-                                            name: current_block_name.clone().unwrap_or_default(),
-                                        })
-                                        .await;
-                                }
-                            }
-                            _ => {}
-                        }
+                    if let Some(b) = data.get("content_block") {
+                        block.on_start(b, tx).await;
                     }
                 }
                 "content_block_delta" => {
                     if let Some(delta) = data.get("delta") {
-                        let delta_type = delta.get("type").and_then(|v| v.as_str()).unwrap_or("");
-
-                        match delta_type {
-                            "text_delta" => {
-                                if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
-                                    first_token_latency.get_or_insert_with(|| start.elapsed());
-                                    current_text.push_str(text);
-                                    if let Some(tx) = tx {
-                                        let _ = tx
-                                            .send(StreamEvent::Text {
-                                                delta: text.to_string(),
-                                            })
-                                            .await;
-                                    }
-                                }
-                            }
-                            "input_json_delta" => {
-                                if let Some(partial) =
-                                    delta.get("partial_json").and_then(|v| v.as_str())
-                                {
-                                    first_token_latency.get_or_insert_with(|| start.elapsed());
-                                    current_tool_input_json.push_str(partial);
-                                    if let Some(tx) = tx {
-                                        if let Some(id) = &current_block_id {
-                                            let _ = tx
-                                                .send(StreamEvent::ToolUseArgsChunk {
-                                                    id: id.clone(),
-                                                    delta: partial.to_string(),
-                                                })
-                                                .await;
-                                        }
-                                    }
-                                }
-                            }
-                            "thinking_delta" => {
-                                if let Some(text) = delta.get("thinking").and_then(|v| v.as_str())
-                                {
-                                    current_thinking_text.push_str(text);
-                                    if let Some(tx) = tx {
-                                        let _ = tx
-                                            .send(StreamEvent::Thinking {
-                                                delta: text.to_string(),
-                                            })
-                                            .await;
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
+                        block.on_delta(delta, &mut first_token_latency, start, tx).await;
                     }
                 }
                 "content_block_stop" => {
-                    match current_block_type.as_deref() {
-                        Some("text") => {
-                            content_blocks.push(ContentBlock::Text(current_text.clone()));
-                        }
-                        Some("tool_use") => {
-                            let input: Value = serde_json::from_str(&current_tool_input_json)
-                                .unwrap_or(Value::Object(Default::default()));
-                            let id = current_block_id.clone().unwrap_or_default();
-                            content_blocks.push(ContentBlock::ToolUse {
-                                id: id.clone(),
-                                name: current_block_name.clone().unwrap_or_default(),
-                                input,
-                            });
-                            if let Some(tx) = tx {
-                                let _ = tx.send(StreamEvent::ToolUseEnd { id }).await;
-                            }
-                        }
-                        Some("thinking") => {
-                            let signature = data
-                                .get("content_block")
-                                .and_then(|b| b.get("signature"))
-                                .and_then(|v| v.as_str())
-                                .map(String::from);
-
-                            let thinking_text = if current_thinking_text.is_empty() {
-                                None
-                            } else {
-                                Some(current_thinking_text.clone())
-                            };
-
-                            content_blocks.push(ContentBlock::Thinking {
-                                text: thinking_text,
-                                signature: signature.clone(),
-                                provider_details: None,
-                            });
-
-                            if let Some(tx) = tx {
-                                let _ = tx
-                                    .send(StreamEvent::ThinkingEnd {
-                                        signature,
-                                        provider_details: None,
-                                    })
-                                    .await;
-                            }
-                        }
-                        _ => {}
-                    }
-                    current_block_type = None;
-                    current_block_id = None;
-                    current_block_name = None;
+                    block.on_stop(&data, &mut content_blocks, tx).await;
                 }
                 "message_delta" => {
                     if let Some(delta) = data.get("delta") {
@@ -288,10 +299,5 @@ pub(super) async fn consume_event_stream(
         });
     }
 
-    Ok(StreamOutcome {
-        content: content_blocks,
-        usage,
-        stop_reason,
-        first_token_latency,
-    })
+    Ok(StreamOutcome { content: content_blocks, usage, stop_reason, first_token_latency })
 }

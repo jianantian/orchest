@@ -3,8 +3,8 @@
 //! (often short-lived) asset URL to our own storage before handing back a
 //! controlled URL. See [`image::ImageGateway`] and [`video::VideoGateway`].
 
-pub mod image;
-pub mod video;
+mod image;
+mod video;
 
 pub use image::{ImageGateway, ImageGatewayConfig};
 pub use video::{VideoGateway, VideoGatewayConfig};
