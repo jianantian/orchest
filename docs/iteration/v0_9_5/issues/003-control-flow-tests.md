@@ -10,12 +10,12 @@ Add focused tests for handoff transition, compaction summary injection and super
 
 ## Acceptance Criteria
 
-- [ ] A test exercises a model response that triggers `ToolOutput::Handoff`.
-- [ ] The handoff test asserts target agent config, message history and emitted events.
-- [ ] A compaction test triggers the configured threshold and asserts summary injection.
-- [ ] A supervisor restart test verifies state replay after worker crash.
-- [ ] Tests use local fakes, not network providers.
-- [ ] `cargo test -p agent-runtime-core handoff` and related focused test commands pass.
+- [x] A test exercises a model response that triggers `ToolOutput::Handoff`.
+- [x] The handoff test asserts target agent config, message history and emitted events.
+- [x] A compaction test triggers the configured threshold and asserts summary injection.
+- [x] A supervisor restart test verifies state replay after worker crash.
+- [x] Tests use local fakes, not network providers.
+- [x] `cargo test -p agent-runtime-core handoff` and related focused test commands pass.
 
 ## Notes
 
