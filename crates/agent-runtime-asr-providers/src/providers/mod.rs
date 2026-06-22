@@ -3,3 +3,6 @@ pub mod volcengine;
 
 #[cfg(feature = "aliyun")]
 pub mod aliyun;
+
+#[cfg(feature = "deepgram")]
+pub mod deepgram;

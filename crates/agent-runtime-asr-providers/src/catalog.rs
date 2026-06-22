@@ -45,6 +45,22 @@ static ASR_MODELS: LazyLock<Vec<AsrModelEntry>> = LazyLock::new(build_catalog);
 fn build_catalog() -> Vec<AsrModelEntry> {
     vec![
         AsrModelEntry {
+            model_id: "deepgram/nova-3",
+            provider: "deepgram",
+            display_name: "Deepgram Nova-3 Realtime",
+            languages: &["en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh"],
+            capabilities: AsrModelCapabilitiesSummary {
+                streaming: true,
+                batch: false,
+                word_timestamps: true,
+                speaker_diarization: false,
+                code_switching: false,
+                hot_words: true,
+                context_prompt: false,
+            },
+            resource_id: None,
+        },
+        AsrModelEntry {
             model_id: "aliyun/fun-asr-realtime",
             provider: "aliyun",
             display_name: "Aliyun FunASR Realtime",
@@ -109,8 +125,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_three_models() {
-        assert_eq!(list_models().len(), 3);
+    fn catalog_has_four_models() {
+        assert_eq!(list_models().len(), 4);
+    }
+
+    #[test]
+    fn deepgram_nova_3_present() {
+        let entry = list_models()
+            .iter()
+            .find(|m| m.model_id == "deepgram/nova-3")
+            .expect("deepgram/nova-3 should be in catalog");
+        assert!(entry.capabilities.streaming);
+        assert!(!entry.capabilities.batch);
+        assert!(entry.capabilities.word_timestamps);
+        assert_eq!(entry.resource_id, None);
     }
 
     #[test]

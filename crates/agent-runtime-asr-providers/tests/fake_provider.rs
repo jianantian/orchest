@@ -71,6 +71,18 @@ impl FakeAsrProvider {
         })
     }
 
+    pub fn deepgram() -> Arc<Self> {
+        Arc::new(Self {
+            provider: "deepgram".into(),
+            model: "nova-3".into(),
+            caps: make_deepgram_caps(),
+            languages: vec![Language::new("en"), Language::new("es")],
+            behavior: FakeAdapterBehavior::Normal,
+            transcribe_behavior: FakeTranscribeBehavior::Unsupported,
+            flush_timeout_override: None,
+        })
+    }
+
     pub fn batch() -> Arc<Self> {
         Self::batch_with_format_inference(false)
     }
@@ -202,6 +214,47 @@ fn make_aliyun_caps() -> AsrModelCapabilities {
         default_flush_timeout_ms: Some(5000),
         source: CapabilitySource::Static,
         diagnostic_metadata: Value::Null,
+    }
+}
+
+fn make_deepgram_caps() -> AsrModelCapabilities {
+    AsrModelCapabilities {
+        languages: vec![Language::new("en"), Language::new("es")],
+        streaming: true,
+        batch: false,
+        streaming_inputs: vec![AudioInputCapability {
+            format: AudioFormat::Pcm,
+            sample_rates_hz: SampleRateSupport::Range {
+                min: 8000,
+                max: 48000,
+            },
+            channels: ChannelSupport::Any,
+            max_duration_ms: None,
+            max_bytes: None,
+        }],
+        batch_inputs: vec![],
+        batch_format_inference: false,
+        audio_timeline_modes: vec![AudioTimelineMode::ContinuousRealtime],
+        interim_results: true,
+        endpointing_modes: vec![
+            EndpointingMode::ProviderDefault,
+            EndpointingMode::AcousticSilence,
+            EndpointingMode::ProviderDisabled,
+        ],
+        segment_flush: true,
+        multi_segment_streaming: true,
+        connection_reuse: ConnectionReuse::NotReusable,
+        word_timestamps: true,
+        speaker_diarization: false,
+        confidence: true,
+        code_switching: false,
+        hot_words: true,
+        context_prompt: false,
+        provider_option_keys: vec!["smart_format".into()],
+        max_duration_ms: None,
+        default_flush_timeout_ms: Some(3000),
+        source: CapabilitySource::Static,
+        diagnostic_metadata: serde_json::json!({"provider": "deepgram"}),
     }
 }
 
