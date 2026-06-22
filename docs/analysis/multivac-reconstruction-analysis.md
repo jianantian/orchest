@@ -19,7 +19,7 @@
 
 ### 6.1 核心原则
 
-> **统一模型校正（以 [ADR D15](./adr-001-product-positioning.md) 为准）**：不存在「两种交付形态」——只有**一个 daemon**，是独立进程监听 `host:port`，客户端经 BACKEND_URL 连接，**host 是参数**(本机 localhost / 用户自有 SSH 盒子 / 可选托管云)。本节下面的「Mode 1 All-in-One(Tauri 嵌入 core)」「Mode 2 Cloud SaaS」**不是两种架构,是同一 daemon 的打包/host 取值变体**：All-in-One = host=localhost + 把启动本机 daemon 打包进 app（可选糖）；Cloud SaaS = host=托管云。**v0 = host ∈ {localhost, 自有盒子}，瘦客户端、web-first，不内嵌、不要求原生壳**。下文「双模式」措辞按此理解。
+> **统一模型校正（以 [ADR D16](./adr-001-product-positioning.md) 为准）**：不存在「两种交付形态」——只有**一个 daemon**，是独立进程监听 `host:port`，客户端经 BACKEND_URL 连接，**host 是参数**(本机 localhost / 用户自有 SSH 盒子 / 可选托管云)。本节下面的「Mode 1 All-in-One(Tauri 嵌入 core)」「Mode 2 Cloud SaaS」**不是两种架构,是同一 daemon 的打包/host 取值变体**：All-in-One = host=localhost + 把启动本机 daemon 打包进 app（可选糖）；Cloud SaaS = host=托管云。**v0 = host ∈ {localhost, 自有盒子}，瘦客户端、web-first，不内嵌、不要求原生壳**。下文「双模式」措辞按此理解。
 
 **一套 Rust 控制面（daemon），同一个前端，同一个 HTTP/WS 协议；host 可为本机、用户自有盒子或托管云；CLI agent runtime 通过 RuntimeBackend 抽象接入，可与 daemon 同机，也可部署在另一台机器。**
 
@@ -76,7 +76,7 @@
 
 ### 6.2 桌面壳选型：Tauri vs Electron（复审中）
 
-> **2026-06-12 决策重开 / 2026-06-15 降级**，详见 [electron-vs-tauri 复审](../research/desktop-tools/electron-vs-tauri.md)。下表为原决策依据，其首要论据(FFI)已失效。**且按 ADR D15，原生壳不再阻塞 v0**——v0 可 web-client-first(浏览器连 daemon)，CDP 在 daemon 所在机器、客户端是 screencast viewer，原生壳(Electron/Tauri)降级为「需要更好 browser-surface 集成时」的后续打包项。下文复审在「确实要做原生壳」时仍适用。
+> **2026-06-12 决策重开 / 2026-06-15 降级**，详见 [electron-vs-tauri 复审](../research/desktop-tools/electron-vs-tauri.md)。下表为原决策依据，其首要论据(FFI)已失效。**且按 ADR D16，原生壳不再阻塞 v0**——v0 可 web-client-first(浏览器连 daemon)，CDP 在 daemon 所在机器、客户端是 screencast viewer，原生壳(Electron/Tauri)降级为「需要更好 browser-surface 集成时」的后续打包项。下文复审在「确实要做原生壳」时仍适用。
 
 | | Electron | Tauri |
 |---|---------|-------|
@@ -494,7 +494,7 @@ async fn main() -> Result<()> {
 
 **multivac-core 知道 deployment 与 runtime placement，但不关心具体 CLI 内部协议。** Claude Code JSONL、Codex ACP、PTY daemon stdin 都被限制在 runtime-host 实现里。
 
-### 6.11 前端：两种模式下的连接策略
+### 6.11 前端：统一 host 下的连接策略
 
 ```typescript
 // frontend/src/api/client.ts
@@ -510,7 +510,7 @@ const ws = new WebSocket(BACKEND_URL.replace('http', 'ws') + '/ws');
 
 前端不区分模式——它只知道一个 `BACKEND_URL`。开发时指向 `localhost:5173`（Vite proxy to Rust），生产时指向桌面壳本地端口或云端 URL。
 
-> **第三种形态：跨设备(本地 daemon + 瘦 relay)，[ADR D15](./adr-001-product-positioning.md)。** 跨设备不是「Cloud SaaS 模式」——执行平面(workspace/files/terminal/Claude Code)仍在用户机器(local-first)，只是 daemon 主动外拨一个**瘦 relay**(只转发 events + auth，非全后端)，让移动/web 客户端可达。这正是 `BACKEND_URL` + daemon-first + 事件溯源的免费副产品：异机客户端就是「另一个瘦客户端，BACKEND_URL 指向 relay，订阅同一 daemon 的事件流」。复用 RuntimeBackend 已有的 reverse-WebSocket 可达模式。**移动端是阶段二 surface**(遥控 + 验收，surface 子集)，不是阶段一重共创。web 跨设备 v0 即近乎免费(创始人用 tunnel/LAN)；移动 app + 产品化 relay = M2。
+> **跨设备：同一 host 模型 + 瘦 relay 可达，[ADR D15](./adr-001-product-positioning.md)（部署统一模型见 D16）。** 跨设备不引入新 host 形态——执行平面(workspace/files/terminal/Claude Code)仍在用户机器(local-first)，只是 daemon 主动外拨一个**瘦 relay**(只转发 events + auth，非全后端)，让移动/web 客户端可达。这正是 `BACKEND_URL` + daemon-first + 事件溯源的免费副产品：异机客户端就是「另一个瘦客户端，BACKEND_URL 指向 relay，订阅同一 daemon 的事件流」。复用 RuntimeBackend 已有的 reverse-WebSocket 可达模式。**移动端是阶段二 surface**(遥控 + 验收，surface 子集)，不是阶段一重共创。web 跨设备 v0 即近乎免费(创始人用 tunnel/LAN)；移动 app + 产品化 relay = M2。
 
 ### 6.12 两种模式的行为差异
 
@@ -522,7 +522,7 @@ const ws = new WebSocket(BACKEND_URL.replace('http', 'ws') + '/ws');
 | **User Shell PTY** | 用户本机 bash/zsh | 云端沙箱或浏览器连接的 remote shell |
 | **文件访问** | 用户本地文件系统 | 云端 workspace 目录 |
 | **数据库** | 本地 SQLite 文件 | 云端 Postgres |
-| **多设备同步** | **支持**（本地 daemon + 瘦 relay，第三形态，D15；执行仍在本机） | 支持（daemon 在云） |
+| **多设备同步** | **支持**（本地 daemon + 瘦 relay 可达，D15；执行仍在本机） | 支持（daemon 在云） |
 | **离线工作** | 支持（LLM 调用除外） | 不支持 |
 | **协作** | 不支持 | 支持 |
 | **数据隐私** | 完全本地 | 云端存储 |
@@ -611,7 +611,7 @@ pub struct FeatureFlags {
 
 ## 七、重构阶段（按 ADR-001 重排：一条线，五个面）
 
-**v0 工程剖面（ADR D7/D15 统一模型）：daemon 独立进程 at host:port（host=本机或自有 SSH 盒子）+ 瘦客户端（web-first，原生壳 deferred，§6.2）+ SQLite + Claude Code 单 runtime + 单 workspace。** Cloud/Postgres、多 CLI runtime、MessageIngress、Org/Employee、Meeting/ASR、Orchest 编排深度全部移出 v0——trait/URI/事件协议等接口形态保留，工程预算为零。
+**v0 工程剖面（ADR D7/D16 统一模型）：daemon 独立进程 at host:port（host=本机或自有 SSH 盒子）+ 瘦客户端（web-first，原生壳 deferred，§6.2）+ SQLite + Claude Code 单 runtime + 单 workspace。** Cloud/Postgres、多 CLI runtime、MessageIngress、Org/Employee、Meeting/ASR、Orchest 编排深度全部移出 v0——trait/URI/事件协议等接口形态保留，工程预算为零。
 
 ### 阶段 0：Kernel 地基
 
@@ -636,7 +636,7 @@ pub struct FeatureFlags {
 4. **对话面闭环**：
    - 前端 scaffold：Vite + React 18 + Tailwind + Jotai
    - HTTP POST → skeleton → WS 填充 → `reduceTurnState` → TurnCard
-   - web 客户端连本机/盒子 daemon 跑通（BACKEND_URL；原生壳 deferred，§6.2 / ADR D15）
+   - web 客户端连本机/盒子 daemon 跑通（BACKEND_URL；原生壳 deferred，§6.2 / ADR D16）
 
 ### 阶段 1：介质面（介质论的最小闭环）
 
@@ -747,7 +747,7 @@ pub struct FeatureFlags {
 ## 十一、立即行动项
 
 1. **签署 ADR-001**：三方确认定位与 v0 范围——之后所有 scope 争论对照它裁决
-2. **Init Rust workspace**: `cargo new --lib crates/multivac-core`（daemon 独立进程 bin；web 客户端连它，原生壳 multivac-desktop / multivac-server 后置——ADR D15）
+2. **Init Rust workspace**: `cargo new --lib crates/multivac-core`（daemon 独立进程 bin；web 客户端连它，原生壳 multivac-desktop / multivac-server 后置——ADR D16）
 3. **Design v0 schema**: `workspaces / sessions / events / objects(Locator)` 4 张表的 CREATE TABLE SQL（SQLite）
 4. **Define `RuntimeBackend` trait + `TaskEvent` schema**: 先锁定 start/attach/permission/events 最小合同；`StartAgentTask` 按 §6.6 完整契约定型（含 `ContextMode` / `CompletionGate` 类型）
 5. **对话面闭环**: Claude Code PtyRuntime → TaskEvent → WS → `reduceTurnState` → TurnCard，HTTP POST skeleton 先行

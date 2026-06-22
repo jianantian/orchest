@@ -223,7 +223,7 @@ v0 的一切对象（session、turn、文件、diff、终端片段、annotation�
 
 ### D7 v0 工程剖面：一条线
 
-**daemon 是独立进程 at host:port，host ∈ {本机 localhost，用户自有 SSH/Tailscale 可达盒子}（统一模型，见 D15）+ SQLite + Claude Code 单 runtime + 单 workspace；客户端瘦连接（v0 可 web-first，原生壳 Tauri/Electron 复审降级为后续打包项，[选型文档](../research/desktop-tools/electron-vs-tauri.md)）。** 本地与远程是同一模型 host 的两个取值，非两种架构；「内嵌/All-in-One」只是 host=localhost 的打包糖，不分叉客户端。
+**daemon 是独立进程 at host:port，host ∈ {本机 localhost，用户自有 SSH/Tailscale 可达盒子}（统一模型，见 D16）+ SQLite + Claude Code 单 runtime + 单 workspace；客户端瘦连接（v0 可 web-first，原生壳 Tauri/Electron 复审降级为后续打包项，[选型文档](../research/desktop-tools/electron-vs-tauri.md)）。** 本地与远程是同一模型 host 的两个取值，非两种架构；「内嵌/All-in-One」只是 host=localhost 的打包糖，不分叉客户端。
 
 移出 v0（接口形态保留，工程预算为零）：Cloud/Postgres、多 CLI runtime（Codex/OpenCode）、MessageIngress（IM 接入）、Org/Employee、Meeting/ASR、Orchest 编排深度（gate/checkpoint/factory）。
 
@@ -239,7 +239,7 @@ execution control plane → Kernel 底下的 runtime 基础设施（始终是手
 
 Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的路径）——单个创作者自己下载、自己爱用、带进团队。与小团队做桌面应用的现实匹配。
 
-### D9-D15 开工前必须定死的补充决策（2026-06-12 缺口审计 + 2026-06-15 跨设备：标准是「现在不定，以后改不动」）
+### D9-D17 开工前必须定死的补充决策（2026-06-12 缺口审计 + 2026-06-15 跨设备/部署/managed：标准是「现在不定，以后改不动」）
 
 **D9 沉淀的安全基线：先脱敏，后落盘。** 「所有上下文可感知 + 永久沉淀」同时是负债：终端回滚区有 API key，.env 会被读，browser 快照含登录态。脱敏器（token/secret/key 模式 + 可配路径黑名单）是 events/objects 持久化管线的 kernel 组件，不是后补功能——明文落盘或发给厂商后无法追回。跨厂商数据流向需要 workspace 级 policy（哪些对象类别允许进入哪个厂商 runtime）：把 Claude transcript 发给 OpenAI（创世卡点 2）必须是用户明示选择，context tray 的逐条勾选不够。
 
@@ -260,14 +260,14 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
 - **安全**:可达的 daemon + 带人全权的 avatar = 远程控制面必须强认证;移动端 approve/inject 动作借 lark-bridge 的 callback 签名模式(签 run+scope+operator+action+过期+nonce)。
 - **roadmap**:web 跨设备**便宜且早**(前端本就是 web,Tauri/Electron 只是壳;`BACKEND_URL` 配置已在 §6.11——创始人 v0 即可用 tunnel/LAN 从另一台机器开 web 接上);**移动 app + 产品化 relay + 阶段二遥控 UI = M2**(与 avatar/阶段二/验收天然耦合)。v0 桩:daemon 可达 + web 客户端能从异机连上,**不分叉客户端**。
 - **可达性 ≠ 可用性**:relay/tunnel 解决「找得到」(NAT 穿透),但必须有一台机器**开着**在跑 daemon(可用性)。会睡的笔记本给不了「离开后继续跑」——过夜自动执行 + 在外遥控**结构上需要常开宿主**。daemon 放置是用户在「可用性 vs 拥有权」上的选择(同一 daemon 二进制):会睡笔记本 / 常开自托管盒子 / 可选托管云。
-- **v0(一期)部署裁决:统一模型——daemon 是独立进程,监听 host:port;客户端经 BACKEND_URL 连接;host ∈ {本机 localhost,用户自有 SSH/Tailscale 可达盒子}。同一份代码,host 只是参数。无云、无 relay、无 SaaS。** 本地与远程不是两种架构,是 host 的两个取值:
+**D16 统一部署模型:daemon 是独立进程,监听 host:port;客户端经 BACKEND_URL 连接;host ∈ {本机 localhost,用户自有 SSH/Tailscale 可达盒子}。同一份代码,host 只是参数。v0 无云、无 relay、无 SaaS。** 本地与远程不是两种架构,是 host 的两个取值:
   - **host=本机**:daemon + Claude Code + workspace/terminal/files 全在这台 PC;满血 Phase 1、零延迟、**除 LLM 调用外可离线**。主力开发体验。
   - **host=远程盒子**:同上,只是在另一台常开机器;给「会睡的笔记本」补可用性 + 在外手机可达。
   - **daemon-first 本机也成立**:daemon 是独立进程(非嵌在 app 窗口进程),关窗口不杀 daemon——本机 Ralph loop 继续跑、可重连。这是「本地远程一致」的根。
   - **「内嵌/All-in-One」= 可选打包糖**(host=localhost + 把启动本机 daemon 打包进 app),非架构分叉。
   - 连带简化:① 可用性+可达性按 host 取值各自满足;② **shell 决策放松、不卡 v0**——shell 不内嵌 daemon、是纯渲染瘦客户端,**v0 可 web-client-first**,原生壳(Electron/Tauri 复审)降级为后续打包项;③ **CDP 在 daemon 所在机器**(dev server + 感知 Chromium 挨着 Claude Code),客户端是 screencast viewer + 输入转发,electron-vs-tauri spike 前提部分消解。
   - **「local-first」精确为「self-hosted-host-first」**:文件/执行在用户自有机器(本机或自有盒子,非 vendor 云)——对 YouMind 的差异与执行深度护城河保住,贴近开发者「在自己机器上干活 / SSH 到自己 dev box」的真实习惯。
-- **managed runtime(host=每用户一台 VM,M2/M3,非 v0)= host 参数的第三个取值,不是另一个架构:「把你的盒子托管在云上」,同一 daemon/同一套 surface。处置:ride 不 build。** 隔离是**两层,落在两条时间线**:
+**D17 managed runtime(host=每用户一台 VM,M2/M3,非 v0)= host 参数的第三个取值,不是另一个架构:「把你的盒子托管在云上」,同一 daemon/同一套 surface。处置:ride 不 build。** 隔离是**两层,落在两条时间线**:
   - **Tier 1 — 每用户一台 VM(租户边界,managed-only)**:强 VM 边界只用在「隔离不同用户」这个需要不信任分离处。**粒度是 user 不是 agent**——一个用户的很多 agent 都带该用户权限(avatar + employee)、彼此互信、像笔记本上的多进程共享机器,故它们之间不需 VM 隔离,只需内层轻沙盒;且需共享该用户的 workspace/沉淀。原语:Firecracker microVM(启停 ~125ms、空闲 scale-to-zero、离开 hibernate/回来无损 resume——daemon-first + 事件溯源使然;过夜 Ralph 跑时 VM 保持开)。
   - **Tier 2 — agent 脚本执行的内层沙盒(到处都要,含 v0 本机)**:即使在自己电脑上 avatar 也自主跑代码,须框住。v0 本机版 = 权限模型 + deny-list + run 前快照(轻量,D6.8/D9/D11/D12);managed 版可在 VM 内再加容器化脚本执行。
   - **Trinity 的位置**:不是租户边界(VM 才是),而是**跑在每个用户 VM 内**,当该用户自己多 agent 的内层编排 + 容器沙盒 + fleet 可观测——其 Docker 共享内核弱点在用户自有 VM 内不重要(爆炸半径已被 VM 框住)。fleet 层候选 Trinity(Apache 2.0,Trinity Connect ≈ avatar 驱动);隔离原语层(更要紧)= microVM / E2B/Modal/Daytona。两个分开的决定,后者更安全攸关、最不该靠年轻 OSS 默认隔离。这一切 v0 用不上(v0=用户自有机器,无 managed)。
@@ -392,7 +392,7 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
 
 三翼都有强占位者，但**没有一个站在交点**：创作 × 执行 × 共创介质 × 用户本地沉淀。三者的共同缺失高度一致——**没有沉淀、没有跨 agent 共享上下文、没有同步共创介质**，这恰好是本文 D3/D4 + 创世卡点 2 锁定的位置。结论不是「我们没有竞争」，而是「我们赌的那个点至今无人站」——但三翼的存在把验证窗口收紧了：M1 必须让介质 + 沉淀在 v0 第一天就可感知，否则会被归入任一已占侧翼。
 
-**基础设施层(非侧翼,是地板):执行/runtime/fleet 正被 OSS 商品化。** Trinity（Abilityai，Apache 2.0，Python/Docker，"Claude Code writes the agent, Trinity runs it in production"）= 自托管的 agent 生产运行时 / fleet 运维:每 agent 一容器隔离、凭据加密、fleet 可观测、调度、审计、**Trinity Connect(WebSocket 协调 Claude Code 实例,≈ 我们的 avatar 经输入槽驱动 + 跨 agent 上下文)**。它**不占任何侧翼**(无 kernel/介质),占的是我们 runtime-host / 执行平面层。连同 Vibeyard、E2B/Modal/Daytona,推论同厚度论(§5.5):**执行平面是被免费铺的地板——别自建 runtime,ride 它,把护城河全押 kernel。** managed runtime 的处置见 D15。
+**基础设施层(非侧翼,是地板):执行/runtime/fleet 正被 OSS 商品化。** Trinity（Abilityai，Apache 2.0，Python/Docker，"Claude Code writes the agent, Trinity runs it in production"）= 自托管的 agent 生产运行时 / fleet 运维:每 agent 一容器隔离、凭据加密、fleet 可观测、调度、审计、**Trinity Connect(WebSocket 协调 Claude Code 实例,≈ 我们的 avatar 经输入槽驱动 + 跨 agent 上下文)**。它**不占任何侧翼**(无 kernel/介质),占的是我们 runtime-host / 执行平面层。连同 Vibeyard、E2B/Modal/Daytona,推论同厚度论(§5.5):**执行平面是被免费铺的地板——别自建 runtime,ride 它,把护城河全押 kernel。** managed runtime 的处置见 D17。
 
 **显式承认的赌注**：纵向排序（D5）= 主动放弃当下声量最大的市场入口，赌「从执行侧进入文档市场的武器」比「现在和几十家 RAG-chat 挤同一扇门」更值钱。三方对齐时明确说出：文字/办公市场不是不去，是换一条进攻路线去。
 
@@ -422,7 +422,7 @@ Tauri 子 webview vs CDP 驱动的外部浏览器——影响感知适配器能�
    **调研补充（2026-06-12，Claude Code 桌面端）**：Claude Desktop 是 Electron（自带 Chromium），其 preview 面板即 Electron 内嵌 webContents——天然带全量 CDP（`webContents.debugger`），所以截图/DOM 检查/元素选取/表单交互开箱即得，且双平台一致。它还验证了我们的两个核心设计：① pane 工作台（chat/diff/preview/terminal/file/tasks 可拖拽布局）≈ 我们的 Surface 区；② 「点击元素 = 给下一条 prompt 提供指代上下文」（Cmd+Shift+S Select an element）= 我们的 deixis 原语。
    **对决策的影响**：第三个选项浮现——Electron 壳。原架构反对 Electron 的主要论据（napi-rs FFI 桥）在我们的实际架构下不成立：前端本来就通过 HTTP/WS 连 Rust daemon，壳与 core 是进程解耦的，换壳不影响 multivac-core。真实代价只剩二进制体积与内存。三选项重述：(A) Tauri + 系统 webview（感知浅，平台不一致）；(B) Tauri + sidecar Chromium via CDP（感知满血，嵌入要做 screencast）；(C) Electron（感知满血 + 原生嵌入，体积大）。spike 改为 B vs C 对比。
    **它的空档 = 我们的差异化**：Claude Code preview 是 solo-centric（一个 agent、一个本地 session、无共享）、code-only；我们的多角色创作介质 + v1 team plane 不与之正面冲突。
-   **完整复审**：见 [electron-vs-tauri](../research/desktop-tools/electron-vs-tauri.md)——结论是建议改选 Electron。**2026-06-15 降级（D15）：原生壳不再阻塞 v0**——daemon-on-box + web-client-first + CDP 在 daemon 所在机器,使本问题从「阶段1动工前定死」降为「需要更好 browser-surface 集成时再定」的后续打包项。spike(B vs C)在确定要做原生壳时再跑。
+   **完整复审**：见 [electron-vs-tauri](../research/desktop-tools/electron-vs-tauri.md)——结论是建议改选 Electron。**2026-06-15 降级（D16）：原生壳不再阻塞 v0**——daemon-on-box + web-client-first + CDP 在 daemon 所在机器,使本问题从「阶段1动工前定死」降为「需要更好 browser-surface 集成时再定」的后续打包项。spike(B vs C)在确定要做原生壳时再跑。
 ### 7.2 文件面编辑的「轻」到什么程度
 
 只读 + 行内小改，还是完全外链。
