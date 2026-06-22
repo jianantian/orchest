@@ -54,10 +54,12 @@ fn make_transcribe_request(audio: AudioInput) -> TranscribeRequest {
 fn setup_router_with_routes() -> AsrRouter {
     let volcengine = FakeAsrProvider::volcengine();
     let aliyun = FakeAsrProvider::aliyun();
+    let deepgram = FakeAsrProvider::deepgram();
 
     let mut router = AsrRouter::new();
     router.register_provider("volcengine/bigmodel_async".into(), volcengine);
     router.register_provider("aliyun/fun-asr-realtime".into(), aliyun);
+    router.register_provider("deepgram/nova-3".into(), deepgram);
 
     let routes = parse_route_config(
         r#"
@@ -72,6 +74,12 @@ model = "aliyun/fun-asr-realtime"
 priority = 20
 languages = ["zh-CN", "en", "ja"]
 regions = ["cn"]
+
+[[routes]]
+model = "deepgram/nova-3"
+priority = 5
+languages = ["en", "es"]
+regions = ["global"]
 "#,
     )
     .unwrap();
@@ -150,6 +158,18 @@ fn router_language_filter() {
 }
 
 #[test]
+fn router_selects_deepgram_for_english_route() {
+    let router = setup_router_with_routes();
+
+    let mut request = make_streaming_request();
+    request.options.language = Some(Language::new("en"));
+
+    let provider = router.select_for_streaming(&request).unwrap();
+    assert_eq!(provider.provider_name(), "deepgram");
+    assert_eq!(provider.model_name(), "nova-3");
+}
+
+#[test]
 fn router_explicit_model_bypasses_routes() {
     let router = setup_router_with_routes();
 
@@ -158,6 +178,18 @@ fn router_explicit_model_bypasses_routes() {
 
     let provider = router.select_for_streaming(&request).unwrap();
     assert_eq!(provider.provider_name(), "aliyun");
+}
+
+#[test]
+fn router_explicit_deepgram_model_bypasses_routes() {
+    let router = setup_router_with_routes();
+
+    let mut request = make_streaming_request();
+    request.model = Some("deepgram/nova-3".into());
+
+    let provider = router.select_for_streaming(&request).unwrap();
+    assert_eq!(provider.provider_name(), "deepgram");
+    assert_eq!(provider.model_name(), "nova-3");
 }
 
 #[test]
@@ -601,6 +633,22 @@ fn strict_allows_silence_timeout_with_acoustic_silence() {
 }
 
 #[test]
+fn strict_allows_deepgram_pcm_range_word_timestamps_and_endpointing() {
+    let caps = FakeAsrProvider::deepgram().capabilities();
+    let mut request = make_streaming_request();
+    request.model = Some("deepgram/nova-3".into());
+    request.options.language = Some(Language::new("en"));
+    request.options.word_timestamps = true;
+    request.options.endpointing = Some(EndpointingOptions {
+        mode: EndpointingMode::AcousticSilence,
+        silence_timeout: Some(Duration::from_millis(750)),
+    });
+    request.provider_options = json!({"smart_format": true});
+
+    assert!(validate_streaming_request(&request, &caps).is_ok());
+}
+
+#[test]
 fn strict_rejects_word_timestamps() {
     let caps = FakeAsrProvider::volcengine().capabilities();
     let mut request = make_streaming_request();
@@ -760,6 +808,29 @@ fn coerce_records_endpointing_mode_adjustment() {
         .adjustments
         .iter()
         .any(|a| a.option == "endpointing.mode"));
+}
+
+#[test]
+fn coerce_records_deepgram_unsupported_options() {
+    let caps = FakeAsrProvider::deepgram().capabilities();
+    let mut request = make_streaming_request();
+    request.compatibility = CompatibilityPolicy::Coerce;
+    request.model = Some("deepgram/nova-3".into());
+    request.options.speaker_diarization = true;
+    request.options.code_switching = true;
+    request.options.context_prompt = Some("domain hints".into());
+    request.provider_options = json!({"unsupported": true});
+
+    let result = validate_streaming_request(&request, &caps).unwrap();
+    let options: Vec<&str> = result
+        .adjustments
+        .iter()
+        .map(|a| a.option.as_str())
+        .collect();
+    assert!(options.contains(&"speaker_diarization"));
+    assert!(options.contains(&"code_switching"));
+    assert!(options.contains(&"context_prompt"));
+    assert!(options.contains(&"provider_options.unsupported"));
 }
 
 // ---------------------------------------------------------------------------
