@@ -267,6 +267,7 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
   - **「内嵌/All-in-One」= 可选打包糖**(host=localhost + 把启动本机 daemon 打包进 app),非架构分叉。
   - 连带简化:① 可用性+可达性按 host 取值各自满足;② **shell 决策放松、不卡 v0**——shell 不内嵌 daemon、是纯渲染瘦客户端,**v0 可 web-client-first**,原生壳(Electron/Tauri 复审)降级为后续打包项;③ **CDP 在 daemon 所在机器**(dev server + 感知 Chromium 挨着 Claude Code),客户端是 screencast viewer + 输入转发,electron-vs-tauri spike 前提部分消解。
   - **「local-first」精确为「self-hosted-host-first」**:文件/执行在用户自有机器(本机或自有盒子,非 vendor 云)——对 YouMind 的差异与执行深度护城河保住,贴近开发者「在自己机器上干活 / SSH 到自己 dev box」的真实习惯。
+- **managed runtime(host=托管云,M2/M3,非 v0)的处置:ride 不 build。** 给每个用户的 agent 上隔离 + fleet 运维是最难、最无差异化、最安全攸关的管线,按厚度论不该自建。两个分开的决定:① **fleet/编排/可观测层**——候选 Trinity(Apache 2.0,自托管,Trinity Connect ≈ avatar 驱动);② **隔离原语**(更要紧)——managed = 多租户跑不受信任用户的任意代码,**Docker 容器共享内核是弱边界,安全边界必须 VM 级**(Firecracker/gVisor/Kata microVM,或 E2B/Modal/Daytona 这类"安全沙箱即服务")。Trinity 只给 ①、其隔离是 Docker,故需在其下垫 microVM、按租户一实例。安全是最不该靠年轻 OSS 默认隔离的地方。这一切 v0 用不上(v0=用户自有机器,无 managed)。
 
 ---
 
@@ -387,6 +388,8 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
 | 监督/协调/AI 员工 | **Multica（36.5k，开源）** | assign-and-wait 非共创、无跨 agent 上下文、无沉淀 |
 
 三翼都有强占位者，但**没有一个站在交点**：创作 × 执行 × 共创介质 × 用户本地沉淀。三者的共同缺失高度一致——**没有沉淀、没有跨 agent 共享上下文、没有同步共创介质**，这恰好是本文 D3/D4 + 创世卡点 2 锁定的位置。结论不是「我们没有竞争」，而是「我们赌的那个点至今无人站」——但三翼的存在把验证窗口收紧了：M1 必须让介质 + 沉淀在 v0 第一天就可感知，否则会被归入任一已占侧翼。
+
+**基础设施层(非侧翼,是地板):执行/runtime/fleet 正被 OSS 商品化。** Trinity（Abilityai，Apache 2.0，Python/Docker，"Claude Code writes the agent, Trinity runs it in production"）= 自托管的 agent 生产运行时 / fleet 运维:每 agent 一容器隔离、凭据加密、fleet 可观测、调度、审计、**Trinity Connect(WebSocket 协调 Claude Code 实例,≈ 我们的 avatar 经输入槽驱动 + 跨 agent 上下文)**。它**不占任何侧翼**(无 kernel/介质),占的是我们 runtime-host / 执行平面层。连同 Vibeyard、E2B/Modal/Daytona,推论同厚度论(§5.5):**执行平面是被免费铺的地板——别自建 runtime,ride 它,把护城河全押 kernel。** managed runtime 的处置见 D15。
 
 **显式承认的赌注**：纵向排序（D5）= 主动放弃当下声量最大的市场入口，赌「从执行侧进入文档市场的武器」比「现在和几十家 RAG-chat 挤同一扇门」更值钱。三方对齐时明确说出：文字/办公市场不是不去，是换一条进攻路线去。
 
