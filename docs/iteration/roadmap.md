@@ -30,6 +30,8 @@
 | v0.9.2 | 卫星 | 文档（rustdoc 清理、quickstart、Python/TS SDK 指南、basic_agent_run 示例、CI doc/example 防线） |
 | hotfix 06-12 | 重构 | Code Review 问题清偿（ASR 安全、Core Runtime 正确性、Type Stub 对齐、Event Backpressure、MCP/Node 可靠性） |
 | v0.9.3 | 卫星 | TTS Provider Gateway（`agent-runtime-tts-providers`、voice catalog、streaming synthesis、Volcengine/Aliyun adapter、observability） |
+| v0.9.4 | 重构 | Runtime Failure Semantics（ErrorKind taxonomy、structured tool failure return、RetryHint dispatch、repeated failure hook、ActorRef restart 注释） |
+| v0.9.5 | 重构 | Agent Control-Flow Hardening（ContextMode、handoff snapshot-then-swap、control-flow tests、`run_one_step` 拆分、Supervised Delegation 验证边界） |
 
 ## 规划中(hotfix)
 
@@ -43,14 +45,6 @@
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
 
 ## 规划中
-
-### v0.9.4 — Runtime Failure Semantics（规划）
-
-把已审过的高杠杆 failure semantics backlog 收敛成一个小迭代：`ErrorKind::Ambiguity / SpecGap`、结构化 tool error 返回、`RetryHint` dispatch 消费、重复失败 hook，以及 `ActorRef` restart 注释澄清。详见 [`v0_9_4/prd.md`](./v0_9_4/prd.md)。
-
-### v0.9.5 — Agent Control-Flow Hardening（规划）
-
-在 v0.10 demo 前硬化 sub-agent / handoff / run-loop 路径：显式 `ContextMode`、handoff snapshot-then-swap、handoff/compaction/supervisor restart 测试、`run_one_step` 拆分，以及 Supervised Delegation 验证场景整理。详见 [`v0_9_5/prd.md`](./v0_9_5/prd.md)。
 
 ### v0.9.6 — ASR Follow-up Providers（规划）
 
@@ -74,6 +68,8 @@
 
 当前产品形态锁定为 **Briefing Desk**：本地研究简报 agent。它读取一组 Markdown/text 材料，围绕用户问题搜索、引用、生成报告，展示事件流，在写文件前走 approval，并支持 session resume。详见 [`v0_10/prd.md`](./v0_10/prd.md)。
 
+v0.10 至少验证一个轻量 reviewer sub-agent 或 handoff 路径：Agent-as-Tool 用于"父 agent 调子 agent 审稿后继续"，Handoff 用于"会话控制权转移给另一个 agent"。Claude-Code-as-tool 风格的长运行 Supervised Delegation 仍作为后续 agent-tool 产品验证场景，不作为 v0.10 必做项。
+
 **依赖**：v0.9.2 文档（验证者参照文档上手）
 
 ### v1.0 — 首次公开发布（规划）
@@ -95,10 +91,10 @@
 ✅ v0.9.2: 文档
             │
             ▼
-   v0.9.4: Failure Semantics
+✅ v0.9.4: Failure Semantics
             │
             ▼
-   v0.9.5: Control-Flow Hardening
+✅ v0.9.5: Control-Flow Hardening
             │
             ▼
    v0.9.6: ASR Follow-up Providers

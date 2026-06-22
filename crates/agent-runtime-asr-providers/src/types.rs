@@ -232,6 +232,12 @@ pub struct TranscribeRequest {
     pub model: Option<String>,
     pub audio: AudioInput,
     pub options: TranscribeOptions,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_opt_duration_ms"
+    )]
+    pub timeout: Option<Duration>,
     #[serde(default = "default_compatibility")]
     pub compatibility: CompatibilityPolicy,
     #[serde(default)]
@@ -430,6 +436,8 @@ pub struct AsrModelCapabilities {
     pub streaming_inputs: Vec<AudioInputCapability>,
     #[serde(default)]
     pub batch_inputs: Vec<AudioInputCapability>,
+    #[serde(default)]
+    pub batch_format_inference: bool,
     #[serde(default)]
     pub audio_timeline_modes: Vec<AudioTimelineMode>,
     pub interim_results: bool,

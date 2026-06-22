@@ -11,7 +11,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use agent_runtime_core::events::RuntimeEvent;
-use agent_runtime_core::handoff::{Handoff, HandoffInputData, HandoffInputFilter, HandoffTarget};
+use agent_runtime_core::handoff::{
+    Handoff, HandoffError, HandoffInputData, HandoffInputFilter, HandoffTarget,
+};
 use agent_runtime_core::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, Role, StopReason, StreamEvent, TokenUsage,
@@ -28,7 +30,7 @@ struct LastMessageFilter;
 
 #[async_trait]
 impl HandoffInputFilter for LastMessageFilter {
-    async fn filter(&self, mut data: HandoffInputData) -> HandoffInputData {
+    async fn filter(&self, mut data: HandoffInputData) -> Result<HandoffInputData, HandoffError> {
         let system: Vec<Message> = data
             .history
             .iter()
@@ -47,7 +49,7 @@ impl HandoffInputFilter for LastMessageFilter {
             "[filter] trimmed history to {} messages",
             data.history.len()
         );
-        data
+        Ok(data)
     }
 }
 

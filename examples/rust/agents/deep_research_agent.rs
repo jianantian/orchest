@@ -8,6 +8,7 @@ use agent_runtime_core::budget::BudgetConfig;
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::model::{ModelSpec, ProviderRuntimeConfig, RequestOptions};
 use agent_runtime_core::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
+use agent_runtime_core::tool::agent_as_tool::ContextMode;
 use agent_runtime_core::tool::builtin::WriteFileTool;
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
@@ -390,6 +391,7 @@ fn build_deep_research_agent(
             )
             .model(web_model)
             .registry(web_registry)
+            .context_mode(ContextMode::Fresh)
             .input_mapper(|value: serde_json::Value| {
                 value
                     .get("question")

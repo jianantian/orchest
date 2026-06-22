@@ -10,10 +10,10 @@ Keep Supervised Delegation visible as a validation scenario for v0.10 and later 
 
 ## Acceptance Criteria
 
-- [ ] Roadmap or iteration docs mention that v0.10 should validate at least the lightweight form of reviewer sub-agent or handoff.
-- [ ] Long-running Claude-Code-as-tool style delegation remains documented as a future validation scenario, not a v0.10 requirement.
-- [ ] Docs distinguish Agent-as-Tool, Handoff and supervised long-running delegation.
-- [ ] No runtime implementation is required in this issue.
+- [x] Roadmap or iteration docs mention that v0.10 should validate at least the lightweight form of reviewer sub-agent or handoff.
+- [x] Long-running Claude-Code-as-tool style delegation remains documented as a future validation scenario, not a v0.10 requirement.
+- [x] Docs distinguish Agent-as-Tool, Handoff and supervised long-running delegation.
+- [x] No runtime implementation is required in this issue.
 
 ## Notes
 

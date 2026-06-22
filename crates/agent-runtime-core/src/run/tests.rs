@@ -1405,6 +1405,7 @@ async fn tool_search_enabled_loads_schemas_progressively() {
 
 struct CompactingModel {
     call_count: AtomicU32,
+    observed_run_messages: Arc<Mutex<Vec<Vec<String>>>>,
 }
 
 #[async_trait::async_trait]
@@ -1425,10 +1426,29 @@ impl ModelAdapter for CompactingModel {
         _options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
+        let is_summary_request = messages.iter().any(|message| {
+            matches!(message.role, Role::User)
+                && message.content.iter().any(|block| {
+                    matches!(block, ContentBlock::Text(text) if text.contains("AI agent session"))
+                })
+        });
+        if is_summary_request {
+            return Ok(ModelResponse {
+                content: vec![ContentBlock::Text("摘要".into())],
+                usage: TokenUsage {
+                    input_tokens: 1,
+                    output_tokens: 3,
+                    ..Default::default()
+                },
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            });
+        }
+
         let count = self.call_count.fetch_add(1, Ordering::SeqCst);
         let usage = if count == 0 {
             TokenUsage {
-                input_tokens: 90,
+                input_tokens: 700,
                 output_tokens: 20,
                 ..Default::default()
             }
@@ -1446,25 +1466,49 @@ impl ModelAdapter for CompactingModel {
                 })
                 .await;
         }
-        if messages
-                .iter()
-                .any(|message| matches!(message.role, Role::User)
-                    && message.content.iter().any(|block| matches!(block, ContentBlock::Text(text) if text.contains("历史对话记录"))))
-            {
-                Ok(ModelResponse {
-                    content: vec![ContentBlock::Text("摘要".into())],
-                    usage,
-                    stop_reason: StopReason::EndTurn,
-                    option_adjustments: vec![],
-                })
-            } else {
-                Ok(ModelResponse {
-                    content: vec![ContentBlock::Text("done".into())],
-                    usage,
-                    stop_reason: StopReason::EndTurn,
-                    option_adjustments: vec![],
-                })
-            }
+        let texts = messages
+            .iter()
+            .flat_map(|message| &message.content)
+            .filter_map(|block| match block {
+                ContentBlock::Text(text) => Some(text.clone()),
+                ContentBlock::ToolResult { content, .. } => Some(content.to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        self.observed_run_messages
+            .lock()
+            .unwrap()
+            .push(texts.clone());
+
+        if count == 0 {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "compact_echo".into(),
+                    name: "echo".into(),
+                    input: json!({"value": "force another step"}),
+                }],
+                usage,
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        } else {
+            let saw_summary = texts.iter().any(|text| {
+                text.contains(crate::prompts::COMPACTION_SUMMARY_PREFIX) && text.contains("摘要")
+            });
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text(
+                    if saw_summary {
+                        "saw compacted summary"
+                    } else {
+                        "missing compacted summary"
+                    }
+                    .into(),
+                )],
+                usage,
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
     }
 }
 
@@ -1475,11 +1519,14 @@ async fn context_compaction_emits_event() {
         threshold: 0.5,
         recent_messages: 0,
     });
-    config.model.spec.context_window_size = Some(100);
+    config.model.spec.context_window_size = Some(1_000);
+    let observed_run_messages = Arc::new(Mutex::new(Vec::new()));
     let model = Arc::new(CompactingModel {
         call_count: AtomicU32::new(0),
+        observed_run_messages: Arc::clone(&observed_run_messages),
     });
-    let registry = ToolRegistry::new();
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeTool::echo())).unwrap();
     let (handle, mut rx) = AgentRun::start(config, "compact".into(), model, registry);
     let mut saw_compacted = false;
     while let Some(event) = rx.recv().await {
@@ -1489,6 +1536,13 @@ async fn context_compaction_emits_event() {
     }
     handle.wait().await;
     assert!(saw_compacted);
+    let observed = observed_run_messages.lock().unwrap();
+    assert!(
+        observed
+            .iter()
+            .any(|messages| messages.iter().any(|text| text.contains("摘要"))),
+        "a later model call should receive the injected compaction summary; observed={observed:?}"
+    );
 }
 
 struct WebhookTool;
@@ -3671,6 +3725,181 @@ impl HandoffModel {
     }
 }
 
+struct FailingHandoffInputFilter;
+
+#[async_trait::async_trait]
+impl crate::handoff::HandoffInputFilter for FailingHandoffInputFilter {
+    async fn filter(
+        &self,
+        _data: crate::handoff::HandoffInputData,
+    ) -> Result<crate::handoff::HandoffInputData, crate::handoff::HandoffError> {
+        Err(crate::handoff::HandoffError::Filter(
+            "filter rejected handoff".to_string(),
+        ))
+    }
+}
+
+struct HandoffFilterFailureModel {
+    call_count: AtomicU32,
+}
+
+impl HandoffFilterFailureModel {
+    fn new() -> Self {
+        Self {
+            call_count: AtomicU32::new(0),
+        }
+    }
+}
+
+struct HandoffStateInspectingModel {
+    call_count: AtomicU32,
+}
+
+impl HandoffStateInspectingModel {
+    fn new() -> Self {
+        Self {
+            call_count: AtomicU32::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for HandoffStateInspectingModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[crate::tool::ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            return Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "handoff_state".into(),
+                    name: "transfer_to_billing".into(),
+                    input: json!({}),
+                }],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            });
+        }
+
+        let active_prompt = messages.iter().find_map(|message| {
+            if matches!(message.role, Role::System) {
+                message.content.iter().find_map(|block| match block {
+                    ContentBlock::Text(text) => Some(text.as_str()),
+                    _ => None,
+                })
+            } else {
+                None
+            }
+        });
+        let has_original_user = messages.iter().any(|message| {
+            matches!(message.role, Role::User)
+                && message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, ContentBlock::Text(text) if text == "hi"))
+        });
+        let has_handoff_result = messages.iter().flat_map(|m| &m.content).any(|block| {
+            matches!(
+                block,
+                ContentBlock::ToolResult { content, .. }
+                    if content["result"] == "Transferring session to 'transfer_to_billing'."
+            )
+        });
+
+        let output =
+            if active_prompt == Some("billing agent") && has_original_user && has_handoff_result {
+                "handoff_config_and_history_ok"
+            } else {
+                "handoff_state_missing"
+            };
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text(output.into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for HandoffFilterFailureModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[crate::tool::ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            return Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "h1".into(),
+                    name: "transfer_to_billing".into(),
+                    input: json!({}),
+                }],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            });
+        }
+
+        let active_prompt = messages.iter().find_map(|message| {
+            if matches!(message.role, Role::System) {
+                message.content.iter().find_map(|block| match block {
+                    ContentBlock::Text(text) => Some(text.as_str()),
+                    _ => None,
+                })
+            } else {
+                None
+            }
+        });
+        let has_handoff_error = messages.iter().flat_map(|m| &m.content).any(|block| {
+            matches!(
+                block,
+                ContentBlock::ToolResult { content, .. }
+                    if content["error"]["code"] == "HANDOFF_FILTER_FAILED"
+            )
+        });
+
+        let text = if active_prompt == Some("triage agent") && has_handoff_error {
+            "handoff_failed_under_triage"
+        } else {
+            "handoff_state_was_mutated"
+        };
+
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text(text.into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
 #[async_trait::async_trait]
 impl ModelAdapter for HandoffModel {
     fn provider_name(&self) -> &str {
@@ -3749,6 +3978,101 @@ async fn static_handoff_switches_agent_and_completes() {
             .iter()
             .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("hello from billing"))),
         "run should complete under billing agent"
+    );
+}
+
+#[tokio::test]
+async fn handoff_transition_exposes_target_config_and_history() {
+    use crate::handoff::{Handoff, HandoffTarget};
+
+    let mut billing_config = test_config();
+    billing_config.system_prompt = "billing agent".into();
+
+    let mut config = test_config();
+    config.system_prompt = "triage agent".into();
+    config = config.with_handoff(Handoff {
+        tool_name: "transfer_to_billing".into(),
+        tool_description: "Transfer to billing agent".into(),
+        input_schema: json!({"type": "object", "properties": {}}),
+        target: HandoffTarget::Static(Box::new(billing_config)),
+        input_filter: None,
+        nest_history: false,
+    });
+
+    let model = Arc::new(HandoffStateInspectingModel::new());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::AgentUpdated { previous_agent, new_agent }
+                if previous_agent == "triage agent" && new_agent == "billing agent"
+        )),
+        "handoff should emit the exact target agent transition"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("handoff_config_and_history_ok"))),
+        "target model should see target config and carried history"
+    );
+}
+
+#[tokio::test]
+async fn handoff_filter_failure_keeps_original_agent_state_coherent() {
+    use crate::handoff::{Handoff, HandoffTarget};
+
+    let mut billing_config = test_config();
+    billing_config.system_prompt = "billing specialist".into();
+
+    let mut config = test_config();
+    config.system_prompt = "triage agent".into();
+    config = config.with_handoff(Handoff {
+        tool_name: "transfer_to_billing".into(),
+        tool_description: "Transfer to billing agent".into(),
+        input_schema: json!({"type": "object", "properties": {}}),
+        target: HandoffTarget::Static(Box::new(billing_config)),
+        input_filter: Some(Arc::new(FailingHandoffInputFilter)),
+        nest_history: false,
+    });
+
+    let model = Arc::new(HandoffFilterFailureModel::new());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events.iter().any(|event| {
+            matches!(
+                event,
+                RuntimeEvent::ToolCallFailed { tool, error }
+                    if tool == "transfer_to_billing"
+                        && error.code.as_deref() == Some("HANDOFF_FILTER_FAILED")
+            )
+        }),
+        "filter failure should emit a structured tool failure"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::AgentUpdated { .. })),
+        "failed handoff must not emit AgentUpdated"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("handoff_failed_under_triage"))),
+        "original agent should continue with structured handoff error"
     );
 }
 
@@ -4498,6 +4822,65 @@ async fn restart_after_resume_reuses_original_snapshot_when_store_absent() {
         inputs.as_slice(),
         &["snapshot input".to_string(), "snapshot input".to_string()],
         "restart after resume should fall back to the original snapshot"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restart_replays_latest_session_store_snapshot() {
+    use crate::session::{InMemorySessionStore, SessionSnapshot, SessionStore};
+
+    let user_inputs = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(RestartInputRecordingModel {
+        calls: AtomicU32::new(0),
+        user_inputs: Arc::clone(&user_inputs),
+    });
+    let store = Arc::new(InMemorySessionStore::new());
+    let session_id = "restart-store-replay";
+    let mut config = test_config();
+    config.supervision_strategy = SupervisionStrategy::Restart { max_retries: 1 };
+    config.session_store = Some(store.clone() as Arc<dyn SessionStore>);
+    config.session_id = Some(session_id.into());
+
+    let snapshot = SessionSnapshot {
+        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
+        session_id: session_id.into(),
+        run_id: RunId::new(),
+        messages: vec![
+            Message {
+                role: Role::System,
+                content: vec![ContentBlock::Text("stored system".into())],
+            },
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text("stored input".into())],
+            },
+        ],
+        step: 4,
+        budget_used: Default::default(),
+        active_config: config.clone(),
+    };
+    store
+        .save(session_id, &snapshot)
+        .await
+        .expect("save snapshot");
+
+    let (handle, mut rx) =
+        AgentRun::start(config, "original input".into(), model, ToolRegistry::new());
+
+    let mut saw_restart = false;
+    while let Some(event) = rx.recv().await {
+        if matches!(event, RuntimeEvent::RunRestarted { .. }) {
+            saw_restart = true;
+        }
+    }
+    handle.wait().await;
+
+    let inputs = user_inputs.lock().await;
+    assert!(saw_restart, "test must exercise supervisor restart");
+    assert_eq!(
+        inputs.as_slice(),
+        &["original input".to_string(), "stored input".to_string()],
+        "restart should replay the latest persisted session snapshot"
     );
 }
 

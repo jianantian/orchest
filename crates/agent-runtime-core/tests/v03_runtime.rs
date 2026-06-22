@@ -1,3 +1,4 @@
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -5,13 +6,16 @@ use agent_runtime_core::budget::BudgetConfig;
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
-    RequestOptions, StopReason, StreamEvent, TokenUsage,
+    RequestOptions, Role, StopReason, StreamEvent, TokenUsage,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
+use agent_runtime_core::run::{
+    AgentConfig, AgentRun, ApprovalBus, ModelConfig, RunId, RuntimeConfig, SkillsConfig,
+};
 use agent_runtime_core::skill::{SkillDependencies, SkillEnvManager, SkillManifest};
+use agent_runtime_core::tool::agent_as_tool::ContextMode;
 use agent_runtime_core::tool::registry::ToolRegistry;
-use agent_runtime_core::tool::Tool;
-use serde_json::json;
+use agent_runtime_core::tool::{Tool, ToolContext, ToolOutput};
+use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 fn test_config() -> AgentConfig {
@@ -178,6 +182,49 @@ impl ModelAdapter for SubAgentModel {
     }
 }
 
+struct ContextEchoModel;
+
+#[async_trait::async_trait]
+impl ModelAdapter for ContextEchoModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "context-echo"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[agent_runtime_core::tool::ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let seen = messages
+            .iter()
+            .flat_map(|message| &message.content)
+            .filter_map(|block| match block {
+                ContentBlock::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text(seen)],
+            usage: TokenUsage {
+                input_tokens: 1,
+                output_tokens: 1,
+                ..Default::default()
+            },
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
 fn make_spawn_child_tool() -> Arc<dyn Tool> {
     let mut config = test_config();
     config.budget.max_tokens = Some(20);
@@ -187,7 +234,45 @@ fn make_spawn_child_tool() -> Arc<dyn Tool> {
         .as_tool("spawn_child", "requests a sub-agent")
         .model(Arc::new(SubAgentModel))
         .registry(ToolRegistry::new())
+        .context_mode(ContextMode::Fresh)
         .input_mapper(|_| Ok("child task".into()))
+        .output_extractor(|details| details.get("output").cloned().unwrap_or(details.clone()))
+        .build()
+}
+
+fn text_message(text: &str) -> Message {
+    Message {
+        role: Role::User,
+        content: vec![ContentBlock::Text(text.to_string())],
+    }
+}
+
+fn sub_agent_tool_context(parent_messages: Vec<Message>) -> ToolContext {
+    ToolContext {
+        run_id: RunId::new(),
+        run_depth: 0,
+        tool_call_id: "test-call".into(),
+        event_tx: None,
+        webhook_base_url: None,
+        approval_bus: ApprovalBus::default(),
+        remaining_budget: BudgetConfig::default(),
+        parent_messages,
+    }
+}
+
+fn context_echo_tool(context_mode: ContextMode) -> Arc<dyn Tool> {
+    test_config()
+        .as_tool("spawn_child", "delegates to a child agent")
+        .model(Arc::new(ContextEchoModel))
+        .registry(ToolRegistry::new())
+        .context_mode(context_mode)
+        .input_mapper(|input: Value| {
+            Ok(input
+                .get("input")
+                .and_then(Value::as_str)
+                .unwrap_or("child task")
+                .to_string())
+        })
         .output_extractor(|details| details.get("output").cloned().unwrap_or(details.clone()))
         .build()
 }
@@ -335,6 +420,7 @@ async fn agent_tool_runs_child_agent_with_isolated_context() {
                 .as_tool("spawn_child", "delegates to a child agent")
                 .model(Arc::new(SubAgentModel))
                 .registry(ToolRegistry::new())
+                .context_mode(ContextMode::Fresh)
                 .input_mapper(|_| Ok("child task".into()))
                 .output_extractor(|details| {
                     details.get("output").cloned().unwrap_or(details.clone())
@@ -375,4 +461,70 @@ async fn agent_tool_runs_child_agent_with_isolated_context() {
     assert!(saw_child_done);
     assert!(saw_parent_tool_details);
     assert_eq!(final_output, Some(json!("parent done")));
+}
+
+#[tokio::test]
+async fn context_mode_fresh_starts_child_without_parent_history() {
+    let tool = context_echo_tool(ContextMode::Fresh);
+    let output = tool
+        .execute(
+            json!({"input": "child task"}),
+            &sub_agent_tool_context(vec![text_message("parent task")]),
+        )
+        .await
+        .unwrap();
+
+    match output {
+        ToolOutput::Structured { model_output, .. } => {
+            assert_eq!(model_output, json!("test|child task"));
+        }
+        other => panic!("expected structured child output, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn context_mode_fork_inherits_latest_parent_messages() {
+    let tool = context_echo_tool(ContextMode::Fork {
+        depth: NonZeroUsize::new(2).unwrap(),
+    });
+    let output = tool
+        .execute(
+            json!({"input": "child task"}),
+            &sub_agent_tool_context(vec![
+                text_message("oldest"),
+                text_message("recent one"),
+                text_message("recent two"),
+            ]),
+        )
+        .await
+        .unwrap();
+
+    match output {
+        ToolOutput::Structured { model_output, .. } => {
+            assert_eq!(model_output, json!("test|recent one|recent two|child task"));
+        }
+        other => panic!("expected structured child output, got {other:?}"),
+    }
+}
+
+#[test]
+fn context_mode_fork_depth_is_non_zero() {
+    assert!(NonZeroUsize::new(0).is_none());
+}
+
+#[tokio::test]
+async fn context_mode_fork_with_empty_parent_context_fails_loudly() {
+    let tool = context_echo_tool(ContextMode::Fork {
+        depth: NonZeroUsize::new(1).unwrap(),
+    });
+    let error = tool
+        .execute(
+            json!({"input": "child task"}),
+            &sub_agent_tool_context(vec![]),
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code.as_deref(), Some("EMPTY_PARENT_CONTEXT"));
+    assert!(error.message.contains("parent message history"));
 }

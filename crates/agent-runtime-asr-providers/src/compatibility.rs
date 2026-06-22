@@ -2,9 +2,10 @@ use serde_json::Value;
 
 use crate::error::{AsrError, AsrErrorCode};
 use crate::types::{
-    AsrModelCapabilities, AudioTimelineMode, CompatibilityPolicy, EndpointingMode,
-    EndpointingOptions, OptionAdjustment, StreamingAudioFormat, StreamingTranscribeRequest,
-    TranscribeOptions,
+    AsrModelCapabilities, AudioFormat, AudioInput, AudioInputCapability, AudioTimelineMode,
+    ChannelSupport, CompatibilityPolicy, EndpointingMode, EndpointingOptions, OptionAdjustment,
+    SampleRateSupport, StreamingAudioFormat, StreamingTranscribeRequest, TranscribeOptions,
+    TranscribeRequest,
 };
 
 #[derive(Debug)]
@@ -19,6 +20,150 @@ pub fn validate_streaming_request(
     match &request.compatibility {
         CompatibilityPolicy::Strict => validate_strict(request, caps),
         CompatibilityPolicy::Coerce => validate_coerce(request, caps),
+    }
+}
+
+pub fn validate_transcribe_request(
+    request: &TranscribeRequest,
+    caps: &AsrModelCapabilities,
+) -> Result<CompatibilityResult, AsrError> {
+    if !caps.batch {
+        return Err(AsrError::new(
+            AsrErrorCode::UnsupportedOperation,
+            "transcribe() is not supported by this realtime-only provider/model",
+        ));
+    }
+
+    validate_one_shot_audio_input(&request.audio, caps)?;
+
+    match &request.compatibility {
+        CompatibilityPolicy::Strict => {
+            validate_options_strict(&request.options, caps)?;
+            validate_provider_options_strict(&request.provider_options, caps)?;
+            Ok(CompatibilityResult {
+                adjustments: vec![],
+            })
+        }
+        CompatibilityPolicy::Coerce => {
+            let mut adjustments = Vec::new();
+            coerce_options(&request.options, caps, &mut adjustments);
+            coerce_provider_options(&request.provider_options, caps, &mut adjustments);
+            Ok(CompatibilityResult { adjustments })
+        }
+    }
+}
+
+fn validate_one_shot_audio_input(
+    input: &AudioInput,
+    caps: &AsrModelCapabilities,
+) -> Result<(), AsrError> {
+    match input {
+        AudioInput::Bytes {
+            data,
+            format,
+            sample_rate_hz,
+        } => {
+            if data.is_empty() {
+                return Err(AsrError::new(
+                    AsrErrorCode::InvalidAudio,
+                    "byte audio input must not be empty",
+                ));
+            }
+            validate_batch_format(format, *sample_rate_hz, Some(data.len()), caps)
+        }
+        AudioInput::File { path, format } => {
+            if path.as_os_str().is_empty() {
+                return Err(AsrError::new(
+                    AsrErrorCode::InvalidRequest,
+                    "file audio input requires a non-empty path",
+                ));
+            }
+            validate_optional_batch_format(format.as_ref(), caps)
+        }
+        AudioInput::Url { url, format } => {
+            if url.trim().is_empty() {
+                return Err(AsrError::new(
+                    AsrErrorCode::InvalidRequest,
+                    "url audio input requires a non-empty URL",
+                ));
+            }
+            validate_optional_batch_format(format.as_ref(), caps)
+        }
+    }
+}
+
+fn validate_optional_batch_format(
+    format: Option<&AudioFormat>,
+    caps: &AsrModelCapabilities,
+) -> Result<(), AsrError> {
+    match format {
+        Some(format) => validate_batch_format(format, None, None, caps),
+        None if caps.batch_format_inference => Ok(()),
+        None => Err(AsrError::new(
+            AsrErrorCode::InvalidRequest,
+            "file and URL one-shot audio require an explicit format unless the provider supports format inference",
+        )),
+    }
+}
+
+fn validate_batch_format(
+    format: &AudioFormat,
+    sample_rate_hz: Option<u32>,
+    byte_len: Option<usize>,
+    caps: &AsrModelCapabilities,
+) -> Result<(), AsrError> {
+    let matching_caps: Vec<&AudioInputCapability> = caps
+        .batch_inputs
+        .iter()
+        .filter(|cap| cap.format == *format)
+        .collect();
+
+    if matching_caps.is_empty() {
+        return Err(AsrError::new(
+            AsrErrorCode::UnsupportedAudioFormat,
+            format!("unsupported one-shot audio format: {:?}", format),
+        ));
+    }
+
+    if let Some(bytes) = byte_len {
+        if matching_caps
+            .iter()
+            .all(|cap| cap.max_bytes.is_some_and(|max| bytes as u64 > max))
+        {
+            return Err(AsrError::new(
+                AsrErrorCode::InvalidAudio,
+                "byte audio input exceeds provider max_bytes",
+            ));
+        }
+    }
+
+    if *format == AudioFormat::Pcm && sample_rate_hz.is_none() {
+        return Err(AsrError::new(
+            AsrErrorCode::InvalidRequest,
+            "PCM byte audio input requires sample_rate_hz",
+        ));
+    }
+
+    if let Some(sample_rate_hz) = sample_rate_hz {
+        if matching_caps
+            .iter()
+            .all(|cap| !sample_rate_supported(&cap.sample_rates_hz, sample_rate_hz))
+        {
+            return Err(AsrError::new(
+                AsrErrorCode::UnsupportedAudioFormat,
+                format!("unsupported one-shot sample rate: {sample_rate_hz}Hz"),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn sample_rate_supported(support: &SampleRateSupport, sample_rate_hz: u32) -> bool {
+    match support {
+        SampleRateSupport::Any => true,
+        SampleRateSupport::Exact(rates) => rates.contains(&sample_rate_hz),
+        SampleRateSupport::Range { min, max } => sample_rate_hz >= *min && sample_rate_hz <= *max,
     }
 }
 
@@ -56,8 +201,8 @@ fn validate_streaming_format_strict(
                         }
                     }
                     && match &cap.channels {
-                        crate::types::ChannelSupport::Any => true,
-                        crate::types::ChannelSupport::Exact(ch) => ch.contains(channels),
+                        ChannelSupport::Any => true,
+                        ChannelSupport::Exact(ch) => ch.contains(channels),
                     }
             });
             if !supported {

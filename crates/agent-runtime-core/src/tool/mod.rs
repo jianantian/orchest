@@ -104,7 +104,8 @@ pub struct ToolContext {
     /// AgentAsTool uses this to cap the child run so it cannot exceed what
     /// the parent has left.
     pub remaining_budget: crate::budget::BudgetConfig,
-    /// Parent run's message history; used by AgentAsTool for context inheritance.
+    /// Parent run's message history; supplied when AgentAsTool uses
+    /// `ContextMode::Fork`.
     pub parent_messages: Vec<Message>,
 }
 

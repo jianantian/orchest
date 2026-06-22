@@ -21,3 +21,5 @@ Add persisted session resume and a reviewer sub-agent or handoff that checks the
 ## Notes
 
 Do not add new sub-agent API shape in this issue unless the existing public API blocks the demo. If that happens, document the blocker first.
+
+This issue validates the lightweight reviewer path only. Use Agent-as-Tool when the reviewer should inspect the draft and return feedback to the parent agent; use Handoff only if the reviewer should take over the run-loop session. Long-running Claude-Code-as-tool style supervised delegation remains a future validation scenario and is not required for v0.10.

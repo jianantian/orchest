@@ -21,7 +21,7 @@ pub trait HandoffResolver: Send + Sync {
 /// Filters the conversation history before passing it to the new agent.
 #[async_trait]
 pub trait HandoffInputFilter: Send + Sync {
-    async fn filter(&self, data: HandoffInputData) -> HandoffInputData;
+    async fn filter(&self, data: HandoffInputData) -> Result<HandoffInputData, HandoffError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +89,8 @@ impl std::fmt::Debug for HandoffResult {
 pub enum HandoffError {
     #[error("handoff resolution failed: {0}")]
     Resolution(String),
+    #[error("handoff input filter failed: {0}")]
+    Filter(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -100,19 +102,23 @@ impl HandoffResult {
     ///
     /// The new agent's system prompt is prepended by the run loop separately;
     /// this method returns only the non-system turn messages.
-    pub async fn apply_filter(&self, history: Vec<Message>, handoff_input: Value) -> Vec<Message> {
+    pub async fn apply_filter(
+        &self,
+        history: Vec<Message>,
+        handoff_input: Value,
+    ) -> Result<Vec<Message>, HandoffError> {
         if let Some(filter) = &self.input_filter {
             let data = filter
                 .filter(HandoffInputData {
                     history: history.clone(),
                     handoff_input,
                 })
-                .await;
-            data.history
+                .await?;
+            Ok(data.history)
         } else if self.nest_history {
-            fold_history(history)
+            Ok(fold_history(history))
         } else {
-            history
+            Ok(history)
         }
     }
 }

@@ -5,12 +5,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use crate::budget::{BudgetConfig, BudgetGuard};
 use crate::events::{ApprovalContext, RuntimeEvent};
-use crate::model::{ContentBlock, Message, ModelAdapter, ModelStreamChunk, Role, StopReason};
+use crate::model::{
+    ContentBlock, Message, ModelAdapter, ModelResponse, ModelStreamChunk, Role, StopReason,
+};
 use crate::telemetry;
 use crate::tool::code_exec::CodeExecutionMcpServer;
 use crate::tool::registry::ToolRegistry;
@@ -77,6 +79,14 @@ pub(crate) struct AgentRunState {
     pub event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
     pub webhook_runtime: Option<WebhookRuntime>,
     pub repeated_failures: HashMap<(String, ErrorKind), Vec<ToolError>>,
+}
+
+struct PreparedHandoffTransition {
+    messages: Vec<Message>,
+    config: AgentConfig,
+    registry: ToolRegistry,
+    tool_defs: Vec<ToolDef>,
+    budget: BudgetGuard,
 }
 
 impl AgentRunState {
@@ -531,12 +541,8 @@ async fn record_repeated_failure(
     }
 }
 
-/// Execute one outer-loop iteration. Returns true to continue, false to stop.
-#[allow(clippy::too_many_lines)] // justified: single-function orchestration loop; splitting would obscure control flow
-async fn run_one_step(state: &mut AgentRunState) -> bool {
-    let subs = state.event_subs.clone();
+async fn check_step_limits(state: &mut AgentRunState, subs: &[mpsc::Sender<RuntimeEvent>]) -> bool {
     let step = state.step;
-    let run_id = state.run_id;
 
     if step >= state.config.runtime.max_steps {
         state.refresh_terminal_hook_ctx(step);
@@ -544,11 +550,11 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             &state.config.hooks,
             &state.run_hook_ctx,
             "max_steps_reached",
-            primary(&subs),
+            primary(subs),
         )
         .await;
         emit(
-            &subs,
+            subs,
             RuntimeEvent::RunFailed {
                 error: "max_steps_reached".into(),
             },
@@ -559,7 +565,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
 
     if let Some(violation) = state.budget.check() {
         emit(
-            &subs,
+            subs,
             RuntimeEvent::BudgetWarning {
                 used: state.budget.usage().clone(),
                 limit: state.budget.config().clone(),
@@ -572,14 +578,24 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             &state.config.hooks,
             &state.run_hook_ctx,
             &error,
-            primary(&subs),
+            primary(subs),
         )
         .await;
-        emit(&subs, RuntimeEvent::RunFailed { error }).await;
+        emit(subs, RuntimeEvent::RunFailed { error }).await;
         return false;
     }
 
-    emit(&subs, RuntimeEvent::ModelCallStarted { step }).await;
+    true
+}
+
+async fn call_model_phase(
+    state: &mut AgentRunState,
+    subs: &[mpsc::Sender<RuntimeEvent>],
+) -> Option<ModelResponse> {
+    let step = state.step;
+    let run_id = state.run_id;
+
+    emit(subs, RuntimeEvent::ModelCallStarted { step }).await;
 
     // Snapshot the message history before this step's hooks.
     // Each before_model invocation (including retries) receives a fresh clone
@@ -588,7 +604,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
     // history stored in state.messages.
     let pre_step_messages = state.messages.clone();
     let mut retry_attempt: u32 = 0;
-    let response = loop {
+    loop {
         // Build per-attempt call context from the clean pre-step snapshot.
         // Hook mutations stay inside call_messages; state.messages is untouched.
         let call_messages = {
@@ -601,7 +617,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             match crate::hook::runner::run_before_model(
                 &state.config.hooks,
                 &mut model_ctx,
-                primary(&subs),
+                primary(subs),
             )
             .await
             {
@@ -611,137 +627,193 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                         &state.config.hooks,
                         &state.run_hook_ctx,
                         &reason,
-                        primary(&subs),
+                        primary(subs),
                     )
                     .await;
-                    emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
-                    return false;
+                    emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    return None;
                 }
                 crate::hook::ModelHookAction::Continue => {}
             }
             model_ctx.messages
         };
 
-        if let Some(context_window_size) = state.config.model.spec.context_window_size {
-            let estimated_tokens = estimate_context_tokens(&call_messages, &state.tool_defs);
-            if estimated_tokens > context_window_size {
-                let error = format!(
-                    "context window exceeded: estimated {estimated_tokens} tokens, limit {context_window_size}"
-                );
-                state.refresh_terminal_hook_ctx(step);
-                crate::hook::runner::run_on_run_error(
-                    &state.config.hooks,
-                    &state.run_hook_ctx,
-                    &error,
-                    primary(&subs),
-                )
-                .await;
-                emit(&subs, RuntimeEvent::RunFailed { error }).await;
-                return false;
-            }
+        if !validate_context_window(state, subs, &call_messages).await {
+            return None;
         }
 
-        let (stream_tx, mut stream_rx) = mpsc::channel::<ModelStreamChunk>(64);
-        let event_tx_clone = primary(&subs).clone();
-        let forward_task = tokio::spawn(async move {
-            while let Some(chunk) = stream_rx.recv().await {
-                if tokio::time::timeout(
-                    EVENT_SEND_TIMEOUT,
-                    event_tx_clone.send(RuntimeEvent::ModelStreamChunk { delta: chunk }),
-                )
-                .await
-                .is_err()
-                {
-                    tracing::warn!(
-                        "primary event subscriber timed out while forwarding model stream chunk"
-                    );
-                }
-            }
-        });
-
-        let raw_response = state
-            .model
-            .complete(
-                &call_messages,
-                &state.tool_defs,
-                &state.config.model.options,
-                Some(stream_tx),
-            )
-            .await;
-        let _ = forward_task.await;
+        let raw_response = dispatch_model_call(state, subs, &call_messages).await;
 
         match raw_response {
-            Ok(r) => {
-                let mut r = r;
-                {
-                    // after_model sees the call-time context that was sent to the model,
-                    // plus the model's response (which the hook may rewrite).
-                    let mut model_ctx = crate::hook::ModelHookContext {
-                        run_id,
-                        messages: call_messages,
-                        model_spec: state.config.model.spec.clone(),
-                        response: Some(r.content.clone()),
-                    };
-                    if let crate::hook::HookAction::Abort(reason) =
-                        crate::hook::runner::run_after_model(
-                            &state.config.hooks,
-                            &mut model_ctx,
-                            primary(&subs),
-                        )
-                        .await
-                    {
-                        state.refresh_terminal_hook_ctx(step);
-                        crate::hook::runner::run_on_run_error(
-                            &state.config.hooks,
-                            &state.run_hook_ctx,
-                            &reason,
-                            primary(&subs),
-                        )
-                        .await;
-                        emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
-                        return false;
-                    }
-                    // Read back any rewrite the hook applied to the response.
-                    if let Some(modified) = model_ctx.response.take() {
-                        r.content = modified;
-                    }
-                }
-                break r;
+            Ok(response) => {
+                return apply_after_model_hooks(state, subs, call_messages, response).await;
             }
-            Err(e) => {
-                let class = super::retry::classify(&e);
-                if super::retry::should_retry(&class, retry_attempt, &state.config.retry_policy) {
-                    let delay = super::retry::compute_delay(
-                        retry_attempt,
-                        &e,
-                        state.config.retry_policy.as_ref().unwrap(),
-                    );
-                    emit(
-                        &subs,
-                        RuntimeEvent::ModelRetry {
-                            attempt: retry_attempt + 1,
-                            error: e.message.clone(),
-                            next_delay: delay,
-                        },
-                    )
-                    .await;
-                    tokio::time::sleep(delay).await;
-                    retry_attempt += 1;
-                    continue;
+            Err(error) => {
+                if !handle_model_error_or_retry(state, subs, &error, retry_attempt).await {
+                    return None;
                 }
-                let error = e.to_string();
-                state.refresh_terminal_hook_ctx(step);
-                crate::hook::runner::run_on_run_error(
-                    &state.config.hooks,
-                    &state.run_hook_ctx,
-                    &error,
-                    primary(&subs),
-                )
-                .await;
-                emit(&subs, RuntimeEvent::RunFailed { error }).await;
-                return false;
+                retry_attempt += 1;
             }
         }
+    }
+}
+
+async fn validate_context_window(
+    state: &mut AgentRunState,
+    subs: &[mpsc::Sender<RuntimeEvent>],
+    call_messages: &[Message],
+) -> bool {
+    let Some(context_window_size) = state.config.model.spec.context_window_size else {
+        return true;
+    };
+    let estimated_tokens = estimate_context_tokens(call_messages, &state.tool_defs);
+    if estimated_tokens <= context_window_size {
+        return true;
+    }
+
+    let error = format!(
+        "context window exceeded: estimated {estimated_tokens} tokens, limit {context_window_size}"
+    );
+    state.refresh_terminal_hook_ctx(state.step);
+    crate::hook::runner::run_on_run_error(
+        &state.config.hooks,
+        &state.run_hook_ctx,
+        &error,
+        primary(subs),
+    )
+    .await;
+    emit(subs, RuntimeEvent::RunFailed { error }).await;
+    false
+}
+
+async fn dispatch_model_call(
+    state: &AgentRunState,
+    subs: &[mpsc::Sender<RuntimeEvent>],
+    call_messages: &[Message],
+) -> Result<ModelResponse, crate::model::ModelError> {
+    let (stream_tx, mut stream_rx) = mpsc::channel::<ModelStreamChunk>(64);
+    let event_tx_clone = primary(subs).clone();
+    let forward_task = tokio::spawn(async move {
+        while let Some(chunk) = stream_rx.recv().await {
+            if tokio::time::timeout(
+                EVENT_SEND_TIMEOUT,
+                event_tx_clone.send(RuntimeEvent::ModelStreamChunk { delta: chunk }),
+            )
+            .await
+            .is_err()
+            {
+                tracing::warn!(
+                    "primary event subscriber timed out while forwarding model stream chunk"
+                );
+            }
+        }
+    });
+
+    let raw_response = state
+        .model
+        .complete(
+            call_messages,
+            &state.tool_defs,
+            &state.config.model.options,
+            Some(stream_tx),
+        )
+        .await;
+    let _ = forward_task.await;
+    raw_response
+}
+
+async fn apply_after_model_hooks(
+    state: &mut AgentRunState,
+    subs: &[mpsc::Sender<RuntimeEvent>],
+    call_messages: Vec<Message>,
+    mut response: ModelResponse,
+) -> Option<ModelResponse> {
+    let mut model_ctx = crate::hook::ModelHookContext {
+        run_id: state.run_id,
+        messages: call_messages,
+        model_spec: state.config.model.spec.clone(),
+        response: Some(response.content.clone()),
+    };
+    if let crate::hook::HookAction::Abort(reason) =
+        crate::hook::runner::run_after_model(&state.config.hooks, &mut model_ctx, primary(subs))
+            .await
+    {
+        state.refresh_terminal_hook_ctx(state.step);
+        crate::hook::runner::run_on_run_error(
+            &state.config.hooks,
+            &state.run_hook_ctx,
+            &reason,
+            primary(subs),
+        )
+        .await;
+        emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
+        return None;
+    }
+    // Read back any rewrite the hook applied to the response.
+    if let Some(modified) = model_ctx.response.take() {
+        response.content = modified;
+    }
+    Some(response)
+}
+
+async fn handle_model_error_or_retry(
+    state: &mut AgentRunState,
+    subs: &[mpsc::Sender<RuntimeEvent>],
+    error: &crate::model::ModelError,
+    retry_attempt: u32,
+) -> bool {
+    let class = super::retry::classify(error);
+    let should_retry =
+        super::retry::should_retry(&class, retry_attempt, &state.config.retry_policy);
+    if should_retry {
+        let Some(policy) = state.config.retry_policy.as_ref() else {
+            return false;
+        };
+        let delay = super::retry::compute_delay(retry_attempt, error, policy);
+        emit(
+            subs,
+            RuntimeEvent::ModelRetry {
+                attempt: retry_attempt + 1,
+                error: error.message.clone(),
+                next_delay: delay,
+            },
+        )
+        .await;
+        tokio::time::sleep(delay).await;
+        return true;
+    }
+
+    let error = error.to_string();
+    state.refresh_terminal_hook_ctx(state.step);
+    crate::hook::runner::run_on_run_error(
+        &state.config.hooks,
+        &state.run_hook_ctx,
+        &error,
+        primary(subs),
+    )
+    .await;
+    emit(subs, RuntimeEvent::RunFailed { error }).await;
+    false
+}
+
+struct PendingHandoff {
+    tool_name: String,
+    tool_use_id: String,
+    result: crate::handoff::HandoffResult,
+}
+
+/// Execute one outer-loop iteration. Returns true to continue, false to stop.
+async fn run_one_step(state: &mut AgentRunState) -> bool {
+    let subs = state.event_subs.clone();
+    let step = state.step;
+    let run_id = state.run_id;
+
+    if !check_step_limits(state, &subs).await {
+        return false;
+    }
+
+    let Some(response) = call_model_phase(state, &subs).await else {
+        return false;
     };
 
     state.budget.record_model_call(&response.usage);
@@ -814,6 +886,17 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         _ => {}
     }
 
+    run_tool_and_handoff_phase(state, &subs, run_id, &response, &tool_uses).await
+}
+
+#[allow(clippy::too_many_lines)] // justified: mechanical extraction of existing tool dispatch flow; narrower helpers follow in later refactors
+async fn run_tool_and_handoff_phase(
+    state: &mut AgentRunState,
+    subs: &[mpsc::Sender<RuntimeEvent>],
+    run_id: RunId,
+    response: &ModelResponse,
+    tool_uses: &[ToolCall],
+) -> bool {
     state.messages.push(Message {
         role: Role::Assistant,
         content: response.content.clone(),
@@ -821,9 +904,9 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
 
     let mut tool_results = Vec::new();
     let mut handoff_triggered = false;
-    let mut pending_handoff: Option<(String, crate::handoff::HandoffResult)> = None;
+    let mut pending_handoff: Option<PendingHandoff> = None;
 
-    for tool_call in &tool_uses {
+    for tool_call in tool_uses {
         let tool = match state.registry.get(&tool_call.name) {
             Some(t) => t,
             None => {
@@ -834,7 +917,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                         .with_code("NOT_FOUND")
                 };
                 emit(
-                    &subs,
+                    subs,
                     RuntimeEvent::ToolCallFailed {
                         tool: tool_call.name.clone(),
                         error: error.clone(),
@@ -869,7 +952,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         match crate::hook::runner::run_before_tool(
             &state.config.hooks,
             &mut tool_hook_ctx,
-            primary(&subs),
+            primary(subs),
         )
         .await
         {
@@ -891,7 +974,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 continue;
             }
             crate::hook::HookAction::Abort(reason) => {
-                emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
                 return false;
             }
             crate::hook::HookAction::Continue => {}
@@ -908,7 +991,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         if state.config.runtime.should_approve(tool.metadata()) {
             let approval_rx = state.approval_bus.request(run_id).await;
             emit(
-                &subs,
+                subs,
                 RuntimeEvent::ApprovalRequested {
                     tool_call: effective_call.clone(),
                     context: ApprovalContext::InitialToolCall,
@@ -920,7 +1003,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 Ok(result) => result.unwrap_or(false),
                 Err(_) => {
                     emit(
-                        &subs,
+                        subs,
                         RuntimeEvent::RunFailed {
                             error: "approval_timeout".into(),
                         },
@@ -933,7 +1016,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
 
             if approved {
                 emit(
-                    &subs,
+                    subs,
                     RuntimeEvent::ApprovalGranted {
                         tool_call: effective_call.clone(),
                         context: ApprovalContext::InitialToolCall,
@@ -944,7 +1027,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 let error =
                     ToolError::fatal("tool call denied by user").with_code("APPROVAL_DENIED");
                 emit(
-                    &subs,
+                    subs,
                     RuntimeEvent::ApprovalDenied {
                         tool_call: effective_call.clone(),
                         context: ApprovalContext::InitialToolCall,
@@ -964,7 +1047,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 let error =
                     ToolError::fatal("tool call budget exceeded").with_code("BUDGET_EXCEEDED");
                 emit(
-                    &subs,
+                    subs,
                     RuntimeEvent::ToolCallFailed {
                         tool: tool_call.name.clone(),
                         error: error.clone(),
@@ -990,7 +1073,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                         let error = ToolError::fatal("tool call budget exceeded")
                             .with_code("BUDGET_EXCEEDED");
                         emit(
-                            &subs,
+                            subs,
                             RuntimeEvent::ToolCallFailed {
                                 tool: tool_call.name.clone(),
                                 error: error.clone(),
@@ -1008,7 +1091,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             // ToolCallStarted fires for each committed execution attempt, after
             // before_tool, approval, and budget checks all pass.
             emit(
-                &subs,
+                subs,
                 RuntimeEvent::ToolCallStarted {
                     tool: tool_call.name.clone(),
                     metadata: tool_meta.clone(),
@@ -1028,7 +1111,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 run_id,
                 run_depth: state.config.runtime.run_depth,
                 tool_call_id: tool_call.id.clone(),
-                event_tx: Some(primary(&subs).clone()),
+                event_tx: Some(primary(subs).clone()),
                 webhook_base_url: state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone()),
                 approval_bus: state.approval_bus.clone(),
                 remaining_budget: state.budget.remaining_config(),
@@ -1054,7 +1137,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 Err(error) => {
                     let duration = start_time.elapsed();
                     emit(
-                        &subs,
+                        subs,
                         RuntimeEvent::ToolCallFailed {
                             tool: tool_call.name.clone(),
                             error: error.clone(),
@@ -1077,7 +1160,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                             let budget_error = ToolError::fatal("tool call budget exceeded")
                                 .with_code("BUDGET_EXCEEDED");
                             emit(
-                                &subs,
+                                subs,
                                 RuntimeEvent::ToolCallFailed {
                                     tool: tool_call.name.clone(),
                                     error: budget_error.clone(),
@@ -1091,7 +1174,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                     if error.retry == RetryHint::Caution {
                         let approved = request_retry_approval(RetryApprovalRequest {
                             approval_bus: &state.approval_bus,
-                            subs: &subs,
+                            subs,
                             run_id,
                             tool_call: &effective_call,
                             attempt: next_attempt,
@@ -1105,7 +1188,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
 
                     let next_delay = tool_retry_delay(next_attempt);
                     emit(
-                        &subs,
+                        subs,
                         RuntimeEvent::ToolCallRetry {
                             tool: tool_call.name.clone(),
                             attempt: next_attempt,
@@ -1131,7 +1214,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 }
                 let duration = start_time.elapsed();
                 emit(
-                    &subs,
+                    subs,
                     RuntimeEvent::ToolCallCompleted {
                         tool: tool_call.name.clone(),
                         output: value.clone(),
@@ -1146,7 +1229,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 });
                 if let Err(reason) = finalize_after_tool(
                     &state.config.hooks,
-                    &subs,
+                    subs,
                     run_id,
                     &tool_call.name,
                     &tool_input,
@@ -1155,7 +1238,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 )
                 .await
                 {
-                    emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
                     return false;
                 }
             }
@@ -1178,7 +1261,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 }
                 let duration = start_time.elapsed();
                 emit(
-                    &subs,
+                    subs,
                     RuntimeEvent::ToolCallCompleted {
                         tool: tool_call.name.clone(),
                         output: details,
@@ -1193,7 +1276,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 });
                 if let Err(reason) = finalize_after_tool(
                     &state.config.hooks,
-                    &subs,
+                    subs,
                     run_id,
                     &tool_call.name,
                     &tool_input,
@@ -1202,7 +1285,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 )
                 .await
                 {
-                    emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
                     return false;
                 }
             }
@@ -1220,11 +1303,15 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                         tool_use_id: tool_call.id.clone(),
                         content: json!({"result": result.transfer_message}),
                     });
-                    pending_handoff = Some((tool_call.name.clone(), *result));
+                    pending_handoff = Some(PendingHandoff {
+                        tool_name: tool_call.name.clone(),
+                        tool_use_id: tool_call.id.clone(),
+                        result: *result,
+                    });
                 }
                 if let Err(reason) = finalize_after_tool(
                     &state.config.hooks,
-                    &subs,
+                    subs,
                     run_id,
                     &tool_call.name,
                     &tool_input,
@@ -1233,14 +1320,14 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 )
                 .await
                 {
-                    emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
                     return false;
                 }
                 continue;
             }
             Ok((ToolOutput::AsyncJob(handle), start_time)) => {
                 emit(
-                    &subs,
+                    subs,
                     RuntimeEvent::AsyncToolStarted {
                         tool: tool_call.name.clone(),
                         job_id: handle.job_id.clone(),
@@ -1249,7 +1336,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 .await;
 
                 let async_result = poll_async_job(
-                    primary(&subs),
+                    primary(subs),
                     &tool_call.name,
                     &handle,
                     start_time,
@@ -1269,7 +1356,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 });
                 if let Err(reason) = finalize_after_tool(
                     &state.config.hooks,
-                    &subs,
+                    subs,
                     run_id,
                     &tool_call.name,
                     &tool_input,
@@ -1278,15 +1365,14 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 )
                 .await
                 {
-                    emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
                     return false;
                 }
             }
             Err(e) => {
-                if let Err(reason) =
-                    record_repeated_failure(state, &subs, &tool_call.name, &e).await
+                if let Err(reason) = record_repeated_failure(state, subs, &tool_call.name, &e).await
                 {
-                    emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
                     return false;
                 }
                 tool_results.push(ContentBlock::ToolResult {
@@ -1295,7 +1381,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 });
                 if let Err(reason) = finalize_after_tool(
                     &state.config.hooks,
-                    &subs,
+                    subs,
                     run_id,
                     &tool_call.name,
                     &tool_input,
@@ -1304,96 +1390,184 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 )
                 .await
                 {
-                    emit(&subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
                     return false;
                 }
             }
         }
     }
 
-    state.messages.push(Message {
+    apply_tool_phase_results(state, subs, run_id, pending_handoff, tool_results).await;
+
+    true
+}
+
+async fn apply_tool_phase_results(
+    state: &mut AgentRunState,
+    subs: &[mpsc::Sender<RuntimeEvent>],
+    run_id: RunId,
+    pending_handoff: Option<PendingHandoff>,
+    mut tool_results: Vec<ContentBlock>,
+) {
+    // Process pending handoff: prepare the next state first, then swap it in.
+    let Some(pending_handoff) = pending_handoff else {
+        state.messages.push(Message {
+            role: Role::User,
+            content: tool_results,
+        });
+        state.step += 1;
+        return;
+    };
+
+    let PendingHandoff {
+        tool_name,
+        tool_use_id,
+        result: handoff_result,
+    } = pending_handoff;
+    let previous_agent =
+        state.config.system_prompt[..state.config.system_prompt.len().min(60)].to_string();
+    let new_agent_prompt = handoff_result.target_agent.system_prompt.clone();
+    let new_agent = new_agent_prompt[..new_agent_prompt.len().min(60)].to_string();
+    let handoff_input = json!({"tool": tool_name});
+
+    let mut handoff_history = state.messages.clone();
+    handoff_history.push(Message {
         role: Role::User,
-        content: tool_results,
+        content: tool_results.clone(),
     });
 
-    // Process pending handoff: switch agent and continue
-    if let Some((tool_name, handoff_result)) = pending_handoff {
-        let previous_agent =
-            state.config.system_prompt[..state.config.system_prompt.len().min(60)].to_string();
-        let new_agent_prompt = handoff_result.target_agent.system_prompt.clone();
-        let new_agent = new_agent_prompt[..new_agent_prompt.len().min(60)].to_string();
+    let transition = prepare_handoff_transition(
+        state,
+        handoff_result,
+        handoff_history,
+        handoff_input.clone(),
+    )
+    .await;
 
-        crate::hook::runner::run_on_handoff(
-            &state.config.hooks,
-            &crate::hook::HandoffHookContext {
-                run_id,
-                previous_agent: previous_agent.clone(),
-                new_agent: new_agent.clone(),
-                handoff_input: json!({"tool": tool_name}),
-            },
-            primary(&subs),
-        )
-        .await;
-
-        emit(
-            &subs,
-            RuntimeEvent::AgentUpdated {
-                previous_agent,
-                new_agent: new_agent.clone(),
-            },
-        )
-        .await;
-
-        let mut next_messages = handoff_result
-            .apply_filter(state.messages.clone(), json!({"tool": tool_name}))
-            .await;
-
-        if next_messages
-            .first()
-            .map(|m| !matches!(m.role, Role::System))
-            .unwrap_or(true)
-        {
-            next_messages.insert(
-                0,
-                Message {
-                    role: Role::System,
-                    content: vec![ContentBlock::Text(new_agent_prompt.clone())],
+    let transition = match transition {
+        Ok(transition) => transition,
+        Err(error) => {
+            emit(
+                subs,
+                RuntimeEvent::ToolCallFailed {
+                    tool: tool_name,
+                    error: error.clone(),
                 },
-            );
-        } else if let Some(first) = next_messages.first_mut() {
-            first.content = vec![ContentBlock::Text(new_agent_prompt.clone())];
+            )
+            .await;
+            replace_tool_result(&mut tool_results, &tool_use_id, tool_error_result(&error));
+            state.messages.push(Message {
+                role: Role::User,
+                content: tool_results,
+            });
+            state.step += 1;
+            return;
         }
-        state.messages = next_messages;
+    };
 
-        state.registry = ToolRegistry::new();
-        let mut new_config = handoff_result.target_agent;
-        for handoff in new_config.handoffs.drain(..) {
-            let tool: Arc<dyn Tool> =
-                Arc::new(crate::tool::handoff_tool::HandoffTool::new(handoff));
-            let _ = state.registry.register(tool);
-        }
-        state.registry = state
-            .registry
-            .filter_by_allowed(&new_config.runtime.allowed_tools);
-        state.tool_defs = state.registry.list();
+    crate::hook::runner::run_on_handoff(
+        &state.config.hooks,
+        &crate::hook::HandoffHookContext {
+            run_id,
+            previous_agent: previous_agent.clone(),
+            new_agent: new_agent.clone(),
+            handoff_input,
+        },
+        primary(subs),
+    )
+    .await;
 
-        let new_budget = if new_config.budget.max_tokens.is_none()
-            && new_config.budget.max_tool_calls.is_none()
-            && new_config.budget.max_duration.is_none()
-            && new_config.budget.max_cost_usd.is_none()
-        {
-            state.budget.remaining_config()
-        } else {
-            new_config.budget.clone()
-        };
-        state.budget = BudgetGuard::new(new_budget);
+    emit(
+        subs,
+        RuntimeEvent::AgentUpdated {
+            previous_agent,
+            new_agent: new_agent.clone(),
+        },
+    )
+    .await;
 
-        state.run_hook_ctx.agent_name = new_agent;
-        state.config = new_config;
+    state.messages = transition.messages;
+    state.registry = transition.registry;
+    state.tool_defs = transition.tool_defs;
+    state.budget = transition.budget;
+    state.run_hook_ctx.agent_name = new_agent;
+    state.config = transition.config;
+    state.step += 1;
+}
+
+async fn prepare_handoff_transition(
+    state: &AgentRunState,
+    handoff_result: crate::handoff::HandoffResult,
+    history: Vec<Message>,
+    handoff_input: Value,
+) -> Result<PreparedHandoffTransition, ToolError> {
+    let new_agent_prompt = handoff_result.target_agent.system_prompt.clone();
+    let mut next_messages = handoff_result
+        .apply_filter(history, handoff_input)
+        .await
+        .map_err(|error| ToolError::fatal(error.to_string()).with_code("HANDOFF_FILTER_FAILED"))?;
+
+    if next_messages
+        .first()
+        .map(|m| !matches!(m.role, Role::System))
+        .unwrap_or(true)
+    {
+        next_messages.insert(
+            0,
+            Message {
+                role: Role::System,
+                content: vec![ContentBlock::Text(new_agent_prompt.clone())],
+            },
+        );
+    } else if let Some(first) = next_messages.first_mut() {
+        first.content = vec![ContentBlock::Text(new_agent_prompt)];
     }
 
-    state.step += 1;
-    true
+    let mut new_config = handoff_result.target_agent;
+    let mut next_registry = ToolRegistry::new();
+    for handoff in new_config.handoffs.drain(..) {
+        let tool: Arc<dyn Tool> = Arc::new(crate::tool::handoff_tool::HandoffTool::new(handoff));
+        next_registry.register(tool).map_err(|error| {
+            ToolError::fatal(format!("failed to build handoff registry: {error}"))
+                .with_code("HANDOFF_REGISTRY_FAILED")
+        })?;
+    }
+    let next_registry = next_registry.filter_by_allowed(&new_config.runtime.allowed_tools);
+    let tool_defs = next_registry.list();
+
+    let new_budget = if new_config.budget.max_tokens.is_none()
+        && new_config.budget.max_tool_calls.is_none()
+        && new_config.budget.max_duration.is_none()
+        && new_config.budget.max_cost_usd.is_none()
+    {
+        state.budget.remaining_config()
+    } else {
+        new_config.budget.clone()
+    };
+    let budget = BudgetGuard::new(new_budget);
+
+    Ok(PreparedHandoffTransition {
+        messages: next_messages,
+        config: new_config,
+        registry: next_registry,
+        tool_defs,
+        budget,
+    })
+}
+
+fn replace_tool_result(tool_results: &mut [ContentBlock], tool_use_id: &str, content: Value) {
+    for block in tool_results {
+        if let ContentBlock::ToolResult {
+            tool_use_id: existing,
+            content: existing_content,
+        } = block
+        {
+            if existing == tool_use_id {
+                *existing_content = content;
+                return;
+            }
+        }
+    }
 }
 
 // ── Utility helpers ──────────────────────────────────────────────────────────

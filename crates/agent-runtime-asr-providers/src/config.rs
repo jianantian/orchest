@@ -157,6 +157,21 @@ pub fn create_asr_provider_from_config(
                 ws_url,
             })))
         }
+        #[cfg(feature = "deepgram")]
+        "deepgram" => {
+            use crate::providers::deepgram::{DeepgramAsrAdapter, DeepgramAsrConfig};
+
+            let api_key = resolve_api_key(&config, "DEEPGRAM_API_KEY")?;
+            let ws_url = config
+                .api_url
+                .unwrap_or_else(|| "wss://api.deepgram.com/v1/listen".to_string());
+
+            Ok(Arc::new(DeepgramAsrAdapter::new(DeepgramAsrConfig {
+                model: normalized.model.to_string(),
+                api_key,
+                ws_url,
+            })))
+        }
         other => Err(AsrError::new(
             AsrErrorCode::UnknownProvider,
             format!("unknown ASR provider '{other}'"),
@@ -256,6 +271,20 @@ mod tests {
 
     #[test]
     fn normalize_preserves_nested_model_path() {
+        let n = normalize_asr_provider_model("deepgram/nova-3/general").unwrap();
+        assert_eq!(n.provider, "deepgram");
+        assert_eq!(n.model, "nova-3/general");
+    }
+
+    #[test]
+    fn normalize_deepgram_model() {
+        let n = normalize_asr_provider_model("deepgram/nova-3").unwrap();
+        assert_eq!(n.provider, "deepgram");
+        assert_eq!(n.model, "nova-3");
+    }
+
+    #[test]
+    fn normalize_preserves_aliyun_model_path() {
         let n = normalize_asr_provider_model("aliyun/fun-asr-realtime").unwrap();
         assert_eq!(n.provider, "aliyun");
         assert_eq!(n.model, "fun-asr-realtime");
@@ -351,5 +380,22 @@ mod tests {
         .err()
         .expect("factory should return an error");
         assert_eq!(err.code, AsrErrorCode::InvalidRequest);
+    }
+
+    #[cfg(feature = "deepgram")]
+    #[test]
+    fn factory_creates_deepgram_nova_3() {
+        let provider = create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "deepgram/nova-3".into(),
+            api_key: Some("key".into()),
+            api_key_env: None,
+            api_url: None,
+            region: None,
+            timeout: None,
+            provider_options: Value::Null,
+        })
+        .expect("factory should succeed");
+        assert_eq!(provider.provider_name(), "deepgram");
+        assert_eq!(provider.model_name(), "nova-3");
     }
 }
