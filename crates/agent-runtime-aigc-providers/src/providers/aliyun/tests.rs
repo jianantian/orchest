@@ -1,7 +1,5 @@
 use super::*;
-use crate::{
-    ImageEditConfig, ImageGenerationConfig, ImageOutputConfig, ImageRegion, ImageSize,
-};
+use crate::{ImageEditConfig, ImageGenerationConfig, ImageOutputConfig, ImageRegion, ImageSize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -123,7 +121,8 @@ async fn wanx_model_posts_to_text2image_endpoint() {
             .to_ascii_lowercase()
             .contains("x-dashscope-async: enable"));
         assert!(request.contains("\"model\":\"wanx2.1-t2i-turbo\""));
-        let body = r#"{"request_id":"req-wanx","output":{"task_id":"task-123","task_status":"PENDING"}}"#;
+        let body =
+            r#"{"request_id":"req-wanx","output":{"task_id":"task-123","task_status":"PENDING"}}"#;
         let response = format!(
             "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
             body.len(),
@@ -168,9 +167,7 @@ async fn create_generation_posts_to_dashscope_api() {
         let (mut socket, _) = listener.accept().await.unwrap();
         let request = read_http_request(&mut socket).await;
         let lower_request = request.to_ascii_lowercase();
-        assert!(
-            request.starts_with("POST /api/v1/services/aigc/multimodal-generation/generation ")
-        );
+        assert!(request.starts_with("POST /api/v1/services/aigc/multimodal-generation/generation "));
         assert!(lower_request.contains("authorization: bearer key"));
         assert!(request.contains("\"model\":\"qwen-image\""));
         let body = r#"{"request_id":"req-1","output":{"choices":[{"message":{"content":[{"image":"https://dashscope-result/image.png"}]}}]}}"#;

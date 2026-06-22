@@ -7,8 +7,10 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::{ContentBlock, Message, ModelError, OptionAdjustment, RequestOptions, Role,
-    ThinkingLevel, ToolDef, UpstreamErrorDetail};
+use crate::{
+    ContentBlock, Message, ModelError, OptionAdjustment, RequestOptions, Role, ThinkingLevel,
+    ToolDef, UpstreamErrorDetail,
+};
 
 use super::OpenRouterAdapter;
 

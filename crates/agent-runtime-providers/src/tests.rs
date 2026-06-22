@@ -119,8 +119,7 @@ fn factory_routes_by_provider() {
         .expect("anthropic should create");
     assert_eq!(anthropic.provider_name(), "anthropic");
 
-    let openai =
-        create_adapter("openai/gpt-4o", Some("key".into())).expect("openai should create");
+    let openai = create_adapter("openai/gpt-4o", Some("key".into())).expect("openai should create");
     assert_eq!(openai.provider_name(), "openai");
 
     let deepseek = create_adapter("deepseek/deepseek-chat", Some("key".into()))
@@ -179,8 +178,8 @@ fn provider_config_api_key_precedence_explicit_then_env() {
 
     let registry = ProviderRegistry::new();
     let factory = registry.get("openai").unwrap();
-    let explicit = resolve_api_key(factory, Some("explicit-key"), Some(env_name))
-        .expect("explicit key wins");
+    let explicit =
+        resolve_api_key(factory, Some("explicit-key"), Some(env_name)).expect("explicit key wins");
     let from_env = resolve_api_key(factory, None, Some(env_name)).expect("env key resolves");
 
     assert_eq!(explicit, "explicit-key");
@@ -293,8 +292,8 @@ async fn provider_config_max_tokens_default_and_override() {
     );
 }
 
-async fn serve_openai_sse_capture_full_request(
-) -> (String, tokio::sync::oneshot::Receiver<String>) {
+async fn serve_openai_sse_capture_full_request() -> (String, tokio::sync::oneshot::Receiver<String>)
+{
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("test server should bind");
@@ -339,8 +338,7 @@ async fn read_http_request(socket: &mut tokio::net::TcpStream) -> String {
             break;
         }
         buffer.extend_from_slice(&chunk[..n]);
-        let Some(header_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n")
-        else {
+        let Some(header_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") else {
             continue;
         };
         let headers = String::from_utf8_lossy(&buffer[..header_end]);

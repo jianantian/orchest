@@ -3,8 +3,8 @@ use tokio::sync::mpsc;
 use super::*;
 use crate::providers::anthropic::test_util::*;
 use crate::{
-    CapabilitySource, ContentBlock, Message, RequestOptions, Role, StreamEvent, ThinkingLevel,
-    StopReason,
+    CapabilitySource, ContentBlock, Message, RequestOptions, Role, StopReason, StreamEvent,
+    ThinkingLevel,
 };
 
 fn default_options() -> RequestOptions {

@@ -95,7 +95,11 @@ impl BlockState {
                     first_token_latency.get_or_insert_with(|| start.elapsed());
                     self.text.push_str(text);
                     if let Some(tx) = tx {
-                        let _ = tx.send(StreamEvent::Text { delta: text.to_string() }).await;
+                        let _ = tx
+                            .send(StreamEvent::Text {
+                                delta: text.to_string(),
+                            })
+                            .await;
                     }
                 }
             }
@@ -119,7 +123,11 @@ impl BlockState {
                 if let Some(text) = delta.get("thinking").and_then(|v| v.as_str()) {
                     self.thinking_text.push_str(text);
                     if let Some(tx) = tx {
-                        let _ = tx.send(StreamEvent::Thinking { delta: text.to_string() }).await;
+                        let _ = tx
+                            .send(StreamEvent::Thinking {
+                                delta: text.to_string(),
+                            })
+                            .await;
                     }
                 }
             }
@@ -156,8 +164,8 @@ impl BlockState {
                     .and_then(|b| b.get("signature"))
                     .and_then(|v| v.as_str())
                     .map(String::from);
-                let thinking_text = (!self.thinking_text.is_empty())
-                    .then(|| self.thinking_text.clone());
+                let thinking_text =
+                    (!self.thinking_text.is_empty()).then(|| self.thinking_text.clone());
                 content_blocks.push(ContentBlock::Thinking {
                     text: thinking_text,
                     signature: signature.clone(),
@@ -165,7 +173,10 @@ impl BlockState {
                 });
                 if let Some(tx) = tx {
                     let _ = tx
-                        .send(StreamEvent::ThinkingEnd { signature, provider_details: None })
+                        .send(StreamEvent::ThinkingEnd {
+                            signature,
+                            provider_details: None,
+                        })
                         .await;
                 }
             }
@@ -243,7 +254,9 @@ pub(super) async fn consume_event_stream(
                 }
                 "content_block_delta" => {
                     if let Some(delta) = data.get("delta") {
-                        block.on_delta(delta, &mut first_token_latency, start, tx).await;
+                        block
+                            .on_delta(delta, &mut first_token_latency, start, tx)
+                            .await;
                     }
                 }
                 "content_block_stop" => {
@@ -272,8 +285,9 @@ pub(super) async fn consume_event_stream(
                             {
                                 usage.cache_read_tokens = cr;
                             }
-                            if let Some(cw) =
-                                u.get("cache_creation_input_tokens").and_then(|v| v.as_u64())
+                            if let Some(cw) = u
+                                .get("cache_creation_input_tokens")
+                                .and_then(|v| v.as_u64())
                             {
                                 usage.cache_write_tokens = cw;
                             }
@@ -299,5 +313,10 @@ pub(super) async fn consume_event_stream(
         });
     }
 
-    Ok(StreamOutcome { content: content_blocks, usage, stop_reason, first_token_latency })
+    Ok(StreamOutcome {
+        content: content_blocks,
+        usage,
+        stop_reason,
+        first_token_latency,
+    })
 }
