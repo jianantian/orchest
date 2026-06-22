@@ -94,21 +94,36 @@ bash scripts/lint-check.sh
 
 All four must pass. Fix any failures before merging.
 
-### 6. Merge to Main
+### 6. Create a Pull Request
+
+Push the branch and open a PR:
 
 ```bash
-cd ~/Develop/orchest   # main repo directory
+cd ../orchest-v0_10
 
-git checkout main && git pull
-git merge --no-ff iteration/v0_10
-git push
+git push -u origin iteration/v0_10
+
+gh pr create --repo jianantian/orchest \
+  --title "iteration: v0.10" \
+  --base main \
+  --body "Closes all issues in v0.10. See docs/iteration/v0_10/prd.md for scope."
+```
+
+### 7. Merge to Main
+
+After the PR is reviewed and approved:
+
+```bash
+gh pr merge --merge --repo jianantian/orchest <PR-number>
 
 # Clean up
+cd ~/Develop/orchest
+git checkout main && git pull
 git worktree remove ../orchest-v0_10
 git branch -d iteration/v0_10
 ```
 
-After push:
+After merge:
 - Every `closes #N` commit **automatically closes its issue**
 - All Project board cards **move to Done**
 - The milestone progress bar advances
@@ -127,10 +142,12 @@ git worktree add ../orchest-hotfix-0617  -b hotfix/2026_06_17
 cd ../orchest-v0_10       && cargo test
 cd ../orchest-hotfix-0617 && cargo test
 
-# Merge each when done
-cd ~/Develop/orchest
-git merge --no-ff iteration/v0_10
-git merge --no-ff hotfix/2026_06_17
+# Open a PR for each and merge when approved
+gh pr create --repo jianantian/orchest --title "iteration: v0.10" --base main --body "..."
+gh pr create --repo jianantian/orchest --title "hotfix: 2026-06-17" --base main --body "..."
+
+gh pr merge --merge --repo jianantian/orchest <PR-number-1>
+gh pr merge --merge --repo jianantian/orchest <PR-number-2>
 
 # Clean up
 git worktree remove ../orchest-v0_10
@@ -195,13 +212,16 @@ git worktree add ../orchest-v0_10 -b iteration/v0_10
 # Commit each issue (one commit = one issue)
 git commit -m "feat: <description> (closes #N)"
 
-# Pre-merge checks
+# Pre-PR checks
 cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --check && bash scripts/lint-check.sh
 
-# Merge and push
-git checkout main && git merge --no-ff iteration/v0_10 && git push
+# Push and open PR
+git push -u origin iteration/v0_10
+gh pr create --repo jianantian/orchest --title "iteration: v0.10" --base main --body "..."
 
-# Clean up
+# Merge PR and clean up
+gh pr merge --merge --repo jianantian/orchest <PR-number>
+git checkout main && git pull
 git worktree remove ../orchest-v0_10 && git branch -d iteration/v0_10
 
 # Check milestone progress
