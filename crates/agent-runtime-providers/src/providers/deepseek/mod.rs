@@ -74,9 +74,12 @@ impl DeepSeekAdapter {
     }
 
     fn supports_thinking(&self) -> bool {
-        // v4-flash and legacy deepseek-reasoner support thinking; v4-pro is non-thinking only
+        // v4-flash and v4-pro both support thinking mode (see thinking_mode guide).
+        // legacy deepseek-reasoner (deprecated 2026-07-24) also supports thinking.
         let m = &self.model;
-        m.starts_with("deepseek-v4-flash") || m.starts_with("deepseek-reasoner")
+        m.starts_with("deepseek-v4-flash")
+            || m.starts_with("deepseek-v4-pro")
+            || m.starts_with("deepseek-reasoner")
     }
 }
 

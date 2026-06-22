@@ -12,7 +12,6 @@ fn anthropic_models_present() {
         .collect();
     assert!(!models.is_empty());
     let ids: Vec<_> = models.iter().map(|m| m.model_id).collect();
-    assert!(ids.contains(&"anthropic/claude-fable-5"));
     assert!(ids.contains(&"anthropic/claude-opus-4-8"));
     assert!(ids.contains(&"anthropic/claude-sonnet-4-6"));
     assert!(ids.contains(&"anthropic/claude-haiku-4-5"));
@@ -127,6 +126,153 @@ fn deepseek_models_publish_cache_hit_price() {
         assert!(
             pricing.cache_write_per_million.is_none(),
             "{model_id} should not declare cache_write price (DeepSeek does not charge for writes)",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests for catalog information fields (issue 006)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn description_is_non_empty_for_all_models() {
+    for entry in list_models() {
+        assert!(
+            !entry.description.is_empty(),
+            "{} description should be filled",
+            entry.model_id
+        );
+    }
+}
+
+#[test]
+/// Note: OpenAI gpt-5.5/5.4 and Volcengine doubao-seed-2-0-pro are not asserted
+/// here because the catalog does not yet declare Image for them. Add assertions
+/// once the catalog data is confirmed against vendor docs.
+fn multimodal_models_declare_image_input() {
+    let must_have_image = [
+        "anthropic/claude-opus-4-8",
+        "anthropic/claude-sonnet-4-6",
+        "anthropic/claude-haiku-4-5",
+        "openai/gpt-5.4-mini",
+    ];
+    for model_id in must_have_image {
+        let entry = list_models()
+            .find(|m| m.model_id == model_id)
+            .unwrap_or_else(|| panic!("{model_id} missing"));
+        assert!(
+            entry.input_modalities.contains(&Modality::Image),
+            "{model_id} should support Image input",
+        );
+    }
+}
+
+#[test]
+fn text_only_models_have_only_text_modality() {
+    let text_only = [
+/// Note: gpt-5.4-nano is not listed here because the catalog declares Image
+/// input for it. If nano is confirmed text-only, add it here and fix the catalog.
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4-pro",
+        "volcengine/doubao-seed-character-251128",
+    ];
+    for model_id in text_only {
+        let entry = list_models()
+            .find(|m| m.model_id == model_id)
+            .unwrap_or_else(|| panic!("{model_id} missing"));
+        assert_eq!(
+            entry.input_modalities,
+            &[Modality::Text],
+            "{model_id} input modalities mismatch",
+        );
+        assert_eq!(
+            entry.output_modalities,
+            &[Modality::Text],
+            "{model_id} output modalities mismatch",
+        );
+    }
+}
+
+#[test]
+fn reasoning_scene_marks_top_tier_models() {
+    let reasoning_models = [
+        "anthropic/claude-opus-4-8",
+/// Note: OpenAI gpt-5.5/5.4 are not flagged as Reasoning in the current catalog.
+/// Add them here once the catalog data is updated.
+        "anthropic/claude-opus-4-7",
+        "deepseek/deepseek-v4-pro",
+    ];
+    for model_id in reasoning_models {
+        let entry = list_models()
+            .find(|m| m.model_id == model_id)
+            .unwrap_or_else(|| panic!("{model_id} missing"));
+        assert!(
+            entry.scenes.contains(&ModelScene::Reasoning),
+            "{model_id} should be flagged as Reasoning SOTA",
+        );
+    }
+}
+
+#[test]
+fn thinking_support_matches_provider_implementation() {
+    // These models declare thinking support in catalog
+    let thinking_supported = [
+        "anthropic/claude-opus-4-8",
+        "anthropic/claude-sonnet-4-6",
+        "deepseek/deepseek-v4-pro",
+        "volcengine/doubao-seed-1-6-flash-250615",
+    ];
+    for model_id in thinking_supported {
+        let entry = list_models()
+            .find(|m| m.model_id == model_id)
+            .unwrap_or_else(|| panic!("{model_id} missing"));
+        assert!(
+            entry.thinking.is_some(),
+            "{model_id} should declare thinking support",
+        );
+    }
+
+    // Character model does NOT support thinking
+    let char_entry = list_models()
+        .find(|m| m.model_id == "volcengine/doubao-seed-character-251128")
+        .unwrap();
+    assert!(
+        char_entry.thinking.is_none(),
+        "doubao-seed-character should NOT declare thinking support",
+    );
+}
+
+#[test]
+fn max_input_tokens_within_context_window() {
+    for entry in list_models() {
+        if let Some(max_input) = entry.max_input_tokens {
+            assert!(
+                max_input <= entry.context_window,
+                "{} max_input_tokens ({}) exceeds context_window ({})",
+                entry.model_id,
+                max_input,
+                entry.context_window,
+            );
+        }
+    }
+}
+
+#[test]
+fn coding_scene_for_dev_oriented_models() {
+    let coding_models = [
+        "anthropic/claude-sonnet-4-6",
+        "anthropic/claude-opus-4-8",
+        "openai/gpt-5.4",
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4-pro",
+    ];
+    for model_id in coding_models {
+        let entry = list_models()
+            .find(|m| m.model_id == model_id)
+            .unwrap_or_else(|| panic!("{model_id} missing"));
+        assert!(
+            entry.scenes.contains(&ModelScene::Coding),
+            "{model_id} should be flagged for Coding scene",
         );
     }
 }

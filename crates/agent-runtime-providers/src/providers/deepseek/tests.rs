@@ -369,3 +369,41 @@ fn max_tokens_override() {
     let (body2, _) = adapter.build_request_body(&[], &[], &default_options(), false);
     assert_eq!(body2["max_tokens"], 4096);
 }
+
+#[test]
+fn v4_pro_supports_thinking() {
+    // v4-pro supports thinking per official thinking_mode guide
+    // (https://api-docs.deepseek.com/zh-cn/guides/thinking_mode).
+    // Regression test for issue 007: supports_thinking() previously excluded v4-pro.
+    let adapter = DeepSeekAdapter::from_config(DeepSeekConfig {
+        model: "deepseek-v4-pro".into(),
+        api_url: Some("http://localhost".into()),
+        api_key: Some("test".into()),
+        max_tokens: 4096,
+    })
+    .expect("v4-pro adapter should construct");
+    assert!(
+        adapter.supports_thinking(),
+        "deepseek-v4-pro should support thinking"
+    );
+    let caps = adapter.capabilities();
+    assert!(
+        caps.reasoning.supported,
+        "v4-pro capabilities should report reasoning.supported = true"
+    );
+}
+
+#[test]
+fn v4_flash_supports_thinking() {
+    let adapter = DeepSeekAdapter::from_config(DeepSeekConfig {
+        model: "deepseek-v4-flash".into(),
+        api_url: Some("http://localhost".into()),
+        api_key: Some("test".into()),
+        max_tokens: 4096,
+    })
+    .expect("v4-flash adapter should construct");
+    assert!(
+        adapter.supports_thinking(),
+        "deepseek-v4-flash should support thinking"
+    );
+}
