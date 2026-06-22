@@ -267,7 +267,10 @@ Go-to-market 推论：个体优先 = bottom-up 采用（Cursor / Claude Code 的
   - **「内嵌/All-in-One」= 可选打包糖**(host=localhost + 把启动本机 daemon 打包进 app),非架构分叉。
   - 连带简化:① 可用性+可达性按 host 取值各自满足;② **shell 决策放松、不卡 v0**——shell 不内嵌 daemon、是纯渲染瘦客户端,**v0 可 web-client-first**,原生壳(Electron/Tauri 复审)降级为后续打包项;③ **CDP 在 daemon 所在机器**(dev server + 感知 Chromium 挨着 Claude Code),客户端是 screencast viewer + 输入转发,electron-vs-tauri spike 前提部分消解。
   - **「local-first」精确为「self-hosted-host-first」**:文件/执行在用户自有机器(本机或自有盒子,非 vendor 云)——对 YouMind 的差异与执行深度护城河保住,贴近开发者「在自己机器上干活 / SSH 到自己 dev box」的真实习惯。
-- **managed runtime(host=托管云,M2/M3,非 v0)的处置:ride 不 build。** 给每个用户的 agent 上隔离 + fleet 运维是最难、最无差异化、最安全攸关的管线,按厚度论不该自建。两个分开的决定:① **fleet/编排/可观测层**——候选 Trinity(Apache 2.0,自托管,Trinity Connect ≈ avatar 驱动);② **隔离原语**(更要紧)——managed = 多租户跑不受信任用户的任意代码,**Docker 容器共享内核是弱边界,安全边界必须 VM 级**(Firecracker/gVisor/Kata microVM,或 E2B/Modal/Daytona 这类"安全沙箱即服务")。Trinity 只给 ①、其隔离是 Docker,故需在其下垫 microVM、按租户一实例。安全是最不该靠年轻 OSS 默认隔离的地方。这一切 v0 用不上(v0=用户自有机器,无 managed)。
+- **managed runtime(host=每用户一台 VM,M2/M3,非 v0)= host 参数的第三个取值,不是另一个架构:「把你的盒子托管在云上」,同一 daemon/同一套 surface。处置:ride 不 build。** 隔离是**两层,落在两条时间线**:
+  - **Tier 1 — 每用户一台 VM(租户边界,managed-only)**:强 VM 边界只用在「隔离不同用户」这个需要不信任分离处。**粒度是 user 不是 agent**——一个用户的很多 agent 都带该用户权限(avatar + employee)、彼此互信、像笔记本上的多进程共享机器,故它们之间不需 VM 隔离,只需内层轻沙盒;且需共享该用户的 workspace/沉淀。原语:Firecracker microVM(启停 ~125ms、空闲 scale-to-zero、离开 hibernate/回来无损 resume——daemon-first + 事件溯源使然;过夜 Ralph 跑时 VM 保持开)。
+  - **Tier 2 — agent 脚本执行的内层沙盒(到处都要,含 v0 本机)**:即使在自己电脑上 avatar 也自主跑代码,须框住。v0 本机版 = 权限模型 + deny-list + run 前快照(轻量,D6.8/D9/D11/D12);managed 版可在 VM 内再加容器化脚本执行。
+  - **Trinity 的位置**:不是租户边界(VM 才是),而是**跑在每个用户 VM 内**,当该用户自己多 agent 的内层编排 + 容器沙盒 + fleet 可观测——其 Docker 共享内核弱点在用户自有 VM 内不重要(爆炸半径已被 VM 框住)。fleet 层候选 Trinity(Apache 2.0,Trinity Connect ≈ avatar 驱动);隔离原语层(更要紧)= microVM / E2B/Modal/Daytona。两个分开的决定,后者更安全攸关、最不该靠年轻 OSS 默认隔离。这一切 v0 用不上(v0=用户自有机器,无 managed)。
 
 ---
 
