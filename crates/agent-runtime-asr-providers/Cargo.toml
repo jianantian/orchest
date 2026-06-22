@@ -41,5 +41,9 @@ path = "../../examples/rust/asr/asr_full_duplex.rs"
 name = "asr_segmented"
 path = "../../examples/rust/asr/asr_segmented.rs"
 
+[[example]]
+name = "asr_transcribe"
+path = "../../examples/rust/asr/asr_transcribe.rs"
+
 [lints]
 workspace = true
