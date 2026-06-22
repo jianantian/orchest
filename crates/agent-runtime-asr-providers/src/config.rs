@@ -172,6 +172,30 @@ pub fn create_asr_provider_from_config(
                 ws_url,
             })))
         }
+        #[cfg(feature = "elevenlabs")]
+        "elevenlabs" => {
+            use crate::providers::elevenlabs::{ElevenLabsAsrAdapter, ElevenLabsAsrConfig};
+
+            let api_key = resolve_api_key(&config, "ELEVENLABS_API_KEY")?;
+            if normalized.model != "scribe_v2_realtime" {
+                return Err(AsrError::new(
+                    AsrErrorCode::InvalidRequest,
+                    format!(
+                        "unknown ElevenLabs ASR model '{}'; supported realtime model: scribe_v2_realtime; batch model scribe_v2 is catalog-only in this iteration",
+                        normalized.model
+                    ),
+                ));
+            }
+            let ws_url = config
+                .api_url
+                .unwrap_or_else(|| "wss://api.elevenlabs.io/v1/speech-to-text/stream".to_string());
+
+            Ok(Arc::new(ElevenLabsAsrAdapter::new(ElevenLabsAsrConfig {
+                model: normalized.model.to_string(),
+                api_key,
+                ws_url,
+            })))
+        }
         other => Err(AsrError::new(
             AsrErrorCode::UnknownProvider,
             format!("unknown ASR provider '{other}'"),
@@ -281,6 +305,13 @@ mod tests {
         let n = normalize_asr_provider_model("deepgram/nova-3").unwrap();
         assert_eq!(n.provider, "deepgram");
         assert_eq!(n.model, "nova-3");
+    }
+
+    #[test]
+    fn normalize_elevenlabs_model() {
+        let n = normalize_asr_provider_model("elevenlabs/scribe_v2_realtime").unwrap();
+        assert_eq!(n.provider, "elevenlabs");
+        assert_eq!(n.model, "scribe_v2_realtime");
     }
 
     #[test]
@@ -397,5 +428,36 @@ mod tests {
         .expect("factory should succeed");
         assert_eq!(provider.provider_name(), "deepgram");
         assert_eq!(provider.model_name(), "nova-3");
+    }
+
+    #[cfg(feature = "elevenlabs")]
+    #[test]
+    fn factory_creates_elevenlabs_scribe_v2_realtime() {
+        let provider = create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "elevenlabs/scribe_v2_realtime".into(),
+            api_key: Some("key".into()),
+            api_key_env: None,
+            api_url: None,
+            region: None,
+            timeout: None,
+            provider_options: Value::Null,
+        })
+        .expect("factory should succeed");
+        assert_eq!(provider.provider_name(), "elevenlabs");
+        assert_eq!(provider.model_name(), "scribe_v2_realtime");
+    }
+
+    #[cfg(feature = "elevenlabs")]
+    #[test]
+    fn factory_rejects_elevenlabs_batch_model_for_realtime_adapter() {
+        let err = create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "elevenlabs/scribe_v2".into(),
+            api_key: Some("key".into()),
+            ..Default::default()
+        })
+        .err()
+        .expect("factory should return an error");
+        assert_eq!(err.code, AsrErrorCode::InvalidRequest);
+        assert!(err.message.contains("catalog-only"));
     }
 }

@@ -101,7 +101,11 @@ impl AnthropicAdapter {
 
     fn context_window_size(&self) -> u64 {
         let m = &self.model;
-        if m.starts_with("claude-haiku-4") { 200_000 } else { 1_000_000 }
+        if m.starts_with("claude-haiku-4") {
+            200_000
+        } else {
+            1_000_000
+        }
     }
 
     fn pricing(&self) -> ModelPricing {
@@ -216,7 +220,9 @@ impl ModelAdapter for AnthropicAdapter {
                 .map(|err| {
                     (
                         err.get("type").and_then(|v| v.as_str()).map(String::from),
-                        err.get("message").and_then(|v| v.as_str()).map(String::from),
+                        err.get("message")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
                     )
                 })
                 .unwrap_or((None, None));
@@ -259,7 +265,11 @@ impl ModelAdapter for AnthropicAdapter {
         }
 
         if let Some(ref tx) = tx {
-            let _ = tx.send(StreamEvent::Done { usage: usage.clone() }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
         }
 
         let duration = start.elapsed();

@@ -108,8 +108,8 @@ fn image_config_maps_model_specific_provider_options_and_stream_deltas() {
     assert_eq!(body["image_config"]["text_layout"][0]["text"], "SALE");
 
     let events = adapter.parse_stream_delta(json!({
-    "choices": [{"delta": {"images": [{"image_url": {"url": "data:image/png;base64,cG5n"}}]}}]
-}));
+        "choices": [{"delta": {"images": [{"image_url": {"url": "data:image/png;base64,cG5n"}}]}}]
+    }));
     assert_eq!(events.len(), 1);
     assert!(matches!(
         events[0],

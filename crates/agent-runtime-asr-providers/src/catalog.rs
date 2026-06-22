@@ -45,6 +45,38 @@ static ASR_MODELS: LazyLock<Vec<AsrModelEntry>> = LazyLock::new(build_catalog);
 fn build_catalog() -> Vec<AsrModelEntry> {
     vec![
         AsrModelEntry {
+            model_id: "elevenlabs/scribe_v2_realtime",
+            provider: "elevenlabs",
+            display_name: "ElevenLabs Scribe v2 Realtime",
+            languages: &["auto", "en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh"],
+            capabilities: AsrModelCapabilitiesSummary {
+                streaming: true,
+                batch: false,
+                word_timestamps: true,
+                speaker_diarization: false,
+                code_switching: false,
+                hot_words: true,
+                context_prompt: false,
+            },
+            resource_id: None,
+        },
+        AsrModelEntry {
+            model_id: "elevenlabs/scribe_v2",
+            provider: "elevenlabs",
+            display_name: "ElevenLabs Scribe v2 Batch",
+            languages: &["auto", "en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh"],
+            capabilities: AsrModelCapabilitiesSummary {
+                streaming: false,
+                batch: true,
+                word_timestamps: true,
+                speaker_diarization: false,
+                code_switching: false,
+                hot_words: true,
+                context_prompt: false,
+            },
+            resource_id: None,
+        },
+        AsrModelEntry {
             model_id: "deepgram/nova-3",
             provider: "deepgram",
             display_name: "Deepgram Nova-3 Realtime",
@@ -125,8 +157,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_four_models() {
-        assert_eq!(list_models().len(), 4);
+    fn catalog_has_six_models() {
+        assert_eq!(list_models().len(), 6);
+    }
+
+    #[test]
+    fn elevenlabs_scribe_models_present() {
+        let realtime = list_models()
+            .iter()
+            .find(|m| m.model_id == "elevenlabs/scribe_v2_realtime")
+            .expect("elevenlabs/scribe_v2_realtime should be in catalog");
+        assert!(realtime.capabilities.streaming);
+        assert!(!realtime.capabilities.batch);
+        assert!(realtime.capabilities.word_timestamps);
+
+        let batch = list_models()
+            .iter()
+            .find(|m| m.model_id == "elevenlabs/scribe_v2")
+            .expect("elevenlabs/scribe_v2 should be in catalog");
+        assert!(!batch.capabilities.streaming);
+        assert!(batch.capabilities.batch);
+        assert!(batch.capabilities.word_timestamps);
     }
 
     #[test]

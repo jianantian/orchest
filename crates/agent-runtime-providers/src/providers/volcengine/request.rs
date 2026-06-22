@@ -4,9 +4,7 @@
 
 use serde_json::{json, Value};
 
-use crate::{
-    CachePolicy, ContentBlock, Message, OptionAdjustment, RequestOptions, Role, ToolDef,
-};
+use crate::{CachePolicy, ContentBlock, Message, OptionAdjustment, RequestOptions, Role, ToolDef};
 
 use super::VolcengineAdapter;
 

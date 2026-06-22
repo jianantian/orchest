@@ -1,7 +1,7 @@
 use tokio::sync::mpsc;
 
-use super::*;
 use super::test_util::*;
+use super::*;
 use crate::{CachePolicy, ContentBlock, StopReason};
 use response::map_stop_reason;
 
@@ -26,7 +26,10 @@ data: {}
 "#;
 
 fn default_options() -> RequestOptions {
-    RequestOptions { thinking: ThinkingLevel::Off, ..Default::default() }
+    RequestOptions {
+        thinking: ThinkingLevel::Off,
+        ..Default::default()
+    }
 }
 
 fn make_adapter(api_url: &str) -> AnthropicAdapter {
@@ -202,12 +205,18 @@ data: {}
     .await;
 
     let adapter = make_adapter(&api_url);
-    let response =
-        adapter.complete(&[], &[], &default_options(), None).await.expect("should parse");
+    let response = adapter
+        .complete(&[], &[], &default_options(), None)
+        .await
+        .expect("should parse");
 
     assert_eq!(response.content.len(), 2);
     match &response.content[0] {
-        ContentBlock::Thinking { text, signature, provider_details } => {
+        ContentBlock::Thinking {
+            text,
+            signature,
+            provider_details,
+        } => {
             assert_eq!(text.as_deref(), Some("reasoning here"));
             assert_eq!(signature.as_deref(), Some("my-sig"));
             assert!(provider_details.is_none());
@@ -227,7 +236,10 @@ fn thinking_level_maps_to_budget() {
     })
     .unwrap();
 
-    let opts = RequestOptions { thinking: ThinkingLevel::High, ..Default::default() };
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::High,
+        ..Default::default()
+    };
     let (body, _) = adapter.build_request_body(&[], &[], &opts);
     assert_eq!(body["thinking"]["type"], "enabled");
     assert_eq!(body["thinking"]["budget_tokens"], 32768);
@@ -292,7 +304,10 @@ fn adaptive_uses_output_config_effort() {
         (ThinkingLevel::XHigh, "xhigh"),
         (ThinkingLevel::Max, "max"),
     ] {
-        let opts = RequestOptions { thinking: level, ..Default::default() };
+        let opts = RequestOptions {
+            thinking: level,
+            ..Default::default()
+        };
         let (body, _) = adapter.build_request_body(&[], &[], &opts);
         assert_eq!(body["thinking"]["type"], "adaptive");
         assert_eq!(body["output_config"]["effort"], expected, "level {level:?}");
@@ -382,8 +397,10 @@ data: {}
     .await;
 
     let adapter = make_adapter(&api_url);
-    let response =
-        adapter.complete(&[], &[], &default_options(), None).await.expect("should parse");
+    let response = adapter
+        .complete(&[], &[], &default_options(), None)
+        .await
+        .expect("should parse");
 
     assert_eq!(response.usage.input_tokens, 100);
     assert_eq!(response.usage.cache_read_tokens, 50);
@@ -400,8 +417,11 @@ fn temperature_forwarded() {
     })
     .unwrap();
 
-    let opts =
-        RequestOptions { thinking: ThinkingLevel::Off, temperature: Some(0.7), ..Default::default() };
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Off,
+        temperature: Some(0.7),
+        ..Default::default()
+    };
     let (body, _) = adapter.build_request_body(&[], &[], &opts);
     assert!(
         body["temperature"].as_f64().unwrap() > 0.69
@@ -512,7 +532,10 @@ data: {}
 
     let adapter = make_adapter(&api_url);
     let (tx, mut rx) = mpsc::channel(32);
-    adapter.complete(&[], &[], &default_options(), Some(tx)).await.expect("should parse");
+    adapter
+        .complete(&[], &[], &default_options(), Some(tx))
+        .await
+        .expect("should parse");
 
     let mut events = Vec::new();
     while let Some(e) = rx.recv().await {
@@ -534,8 +557,10 @@ async fn tx_none_skips_events() {
     let api_url = serve_sse_once(MINIMAL_SSE).await;
     let adapter = make_adapter(&api_url);
 
-    let response =
-        adapter.complete(&[], &[], &default_options(), None).await.expect("should parse");
+    let response = adapter
+        .complete(&[], &[], &default_options(), None)
+        .await
+        .expect("should parse");
 
     assert_eq!(response.content.len(), 1);
     assert!(matches!(&response.content[0], ContentBlock::Text(t) if t == "Hello"));
@@ -554,13 +579,19 @@ fn max_tokens_override() {
     })
     .unwrap();
 
-    let opts =
-        RequestOptions { thinking: ThinkingLevel::Off, max_tokens: Some(4096), ..Default::default() };
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Off,
+        max_tokens: Some(4096),
+        ..Default::default()
+    };
     let (body, _) = adapter.build_request_body(&[], &[], &opts);
     assert_eq!(body["max_tokens"], 4096);
 
-    let opts_none =
-        RequestOptions { thinking: ThinkingLevel::Off, max_tokens: None, ..Default::default() };
+    let opts_none = RequestOptions {
+        thinking: ThinkingLevel::Off,
+        max_tokens: None,
+        ..Default::default()
+    };
     let (body2, _) = adapter.build_request_body(&[], &[], &opts_none);
     assert_eq!(body2["max_tokens"], 128);
 }
@@ -616,10 +647,15 @@ data: {}
     .await;
 
     let adapter = make_adapter(&api_url);
-    let response =
-        adapter.complete(&[], &[], &default_options(), None).await.expect("should succeed");
+    let response = adapter
+        .complete(&[], &[], &default_options(), None)
+        .await
+        .expect("should succeed");
 
-    let adj = response.option_adjustments.iter().find(|a| a.reason == "usage_not_reported");
+    let adj = response
+        .option_adjustments
+        .iter()
+        .find(|a| a.reason == "usage_not_reported");
     assert!(adj.is_some(), "should report usage_not_reported adjustment");
 }
 
@@ -644,7 +680,10 @@ async fn done_usage_matches_model_response() {
     let done_usage = done_usage.expect("should have Done event");
     assert_eq!(done_usage.input_tokens, response.usage.input_tokens);
     assert_eq!(done_usage.output_tokens, response.usage.output_tokens);
-    assert!(response.usage.cost_usd.is_some(), "response should have cost_usd filled by adapter");
+    assert!(
+        response.usage.cost_usd.is_some(),
+        "response should have cost_usd filled by adapter"
+    );
 }
 
 #[test]
@@ -689,7 +728,10 @@ async fn stop_reason_mapping() {
         ("pause_turn", StopReason::Pause),
         ("compaction", StopReason::Pause),
         ("refusal", StopReason::Refusal),
-        ("model_context_window_exceeded", StopReason::ContextWindowExceeded),
+        (
+            "model_context_window_exceeded",
+            StopReason::ContextWindowExceeded,
+        ),
     ] {
         assert_eq!(map_stop_reason(raw), expected, "for {raw}");
     }
