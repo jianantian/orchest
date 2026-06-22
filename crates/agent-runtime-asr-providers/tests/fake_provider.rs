@@ -83,6 +83,18 @@ impl FakeAsrProvider {
         })
     }
 
+    pub fn elevenlabs() -> Arc<Self> {
+        Arc::new(Self {
+            provider: "elevenlabs".into(),
+            model: "scribe_v2_realtime".into(),
+            caps: make_elevenlabs_caps(),
+            languages: vec![Language::new("en"), Language::new("es")],
+            behavior: FakeAdapterBehavior::Normal,
+            transcribe_behavior: FakeTranscribeBehavior::Unsupported,
+            flush_timeout_override: None,
+        })
+    }
+
     pub fn batch() -> Arc<Self> {
         Self::batch_with_format_inference(false)
     }
@@ -255,6 +267,55 @@ fn make_deepgram_caps() -> AsrModelCapabilities {
         default_flush_timeout_ms: Some(3000),
         source: CapabilitySource::Static,
         diagnostic_metadata: serde_json::json!({"provider": "deepgram"}),
+    }
+}
+
+fn make_elevenlabs_caps() -> AsrModelCapabilities {
+    AsrModelCapabilities {
+        languages: vec![
+            Language::new("en"),
+            Language::new("es"),
+            Language::new("auto"),
+        ],
+        streaming: true,
+        batch: false,
+        streaming_inputs: vec![AudioInputCapability {
+            format: AudioFormat::Pcm,
+            sample_rates_hz: SampleRateSupport::Exact(vec![
+                8000, 16000, 22050, 24000, 44100, 48000,
+            ]),
+            channels: ChannelSupport::Exact(vec![1]),
+            max_duration_ms: None,
+            max_bytes: None,
+        }],
+        batch_inputs: vec![],
+        batch_format_inference: false,
+        audio_timeline_modes: vec![AudioTimelineMode::ContinuousRealtime],
+        interim_results: true,
+        endpointing_modes: vec![
+            EndpointingMode::ProviderDefault,
+            EndpointingMode::AcousticSilence,
+            EndpointingMode::ProviderDisabled,
+        ],
+        segment_flush: true,
+        multi_segment_streaming: true,
+        connection_reuse: ConnectionReuse::NotReusable,
+        word_timestamps: true,
+        speaker_diarization: false,
+        confidence: false,
+        code_switching: false,
+        hot_words: true,
+        context_prompt: false,
+        provider_option_keys: vec![
+            "keyterms".into(),
+            "include_language_detection".into(),
+            "commit_strategy".into(),
+            "vad_silence_threshold_secs".into(),
+        ],
+        max_duration_ms: None,
+        default_flush_timeout_ms: Some(3000),
+        source: CapabilitySource::Static,
+        diagnostic_metadata: serde_json::json!({"provider": "elevenlabs"}),
     }
 }
 

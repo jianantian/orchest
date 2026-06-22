@@ -8,6 +8,7 @@ default = ["volcengine", "aliyun"]
 volcengine = []
 aliyun = []
 deepgram = []
+elevenlabs = []
 
 [dependencies]
 tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
@@ -23,6 +24,7 @@ toml = "0.8"
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 futures-util = "0.3"
 flate2 = "1"
+base64 = "0.22"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

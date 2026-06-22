@@ -55,11 +55,13 @@ fn setup_router_with_routes() -> AsrRouter {
     let volcengine = FakeAsrProvider::volcengine();
     let aliyun = FakeAsrProvider::aliyun();
     let deepgram = FakeAsrProvider::deepgram();
+    let elevenlabs = FakeAsrProvider::elevenlabs();
 
     let mut router = AsrRouter::new();
     router.register_provider("volcengine/bigmodel_async".into(), volcengine);
     router.register_provider("aliyun/fun-asr-realtime".into(), aliyun);
     router.register_provider("deepgram/nova-3".into(), deepgram);
+    router.register_provider("elevenlabs/scribe_v2_realtime".into(), elevenlabs);
 
     let routes = parse_route_config(
         r#"
@@ -79,6 +81,12 @@ regions = ["cn"]
 model = "deepgram/nova-3"
 priority = 5
 languages = ["en", "es"]
+regions = ["global"]
+
+[[routes]]
+model = "elevenlabs/scribe_v2_realtime"
+priority = 6
+languages = ["en", "es", "auto"]
 regions = ["global"]
 "#,
     )
@@ -190,6 +198,18 @@ fn router_explicit_deepgram_model_bypasses_routes() {
     let provider = router.select_for_streaming(&request).unwrap();
     assert_eq!(provider.provider_name(), "deepgram");
     assert_eq!(provider.model_name(), "nova-3");
+}
+
+#[test]
+fn router_explicit_elevenlabs_model_bypasses_routes() {
+    let router = setup_router_with_routes();
+
+    let mut request = make_streaming_request();
+    request.model = Some("elevenlabs/scribe_v2_realtime".into());
+
+    let provider = router.select_for_streaming(&request).unwrap();
+    assert_eq!(provider.provider_name(), "elevenlabs");
+    assert_eq!(provider.model_name(), "scribe_v2_realtime");
 }
 
 #[test]
@@ -649,6 +669,28 @@ fn strict_allows_deepgram_pcm_range_word_timestamps_and_endpointing() {
 }
 
 #[test]
+fn strict_allows_elevenlabs_keyterms_language_detection_and_timestamps() {
+    let caps = FakeAsrProvider::elevenlabs().capabilities();
+    let mut request = make_streaming_request();
+    request.model = Some("elevenlabs/scribe_v2_realtime".into());
+    request.options.language = Some(Language::new("en"));
+    request.options.word_timestamps = true;
+    request.options.hot_words = vec!["orchest".into()];
+    request.options.endpointing = Some(EndpointingOptions {
+        mode: EndpointingMode::AcousticSilence,
+        silence_timeout: Some(Duration::from_millis(750)),
+    });
+    request.provider_options = json!({
+        "include_language_detection": true,
+        "keyterms": ["runtime"],
+        "commit_strategy": "vad",
+        "vad_silence_threshold_secs": 0.75
+    });
+
+    assert!(validate_streaming_request(&request, &caps).is_ok());
+}
+
+#[test]
 fn strict_rejects_word_timestamps() {
     let caps = FakeAsrProvider::volcengine().capabilities();
     let mut request = make_streaming_request();
@@ -831,6 +873,25 @@ fn coerce_records_deepgram_unsupported_options() {
     assert!(options.contains(&"code_switching"));
     assert!(options.contains(&"context_prompt"));
     assert!(options.contains(&"provider_options.unsupported"));
+}
+
+#[test]
+fn coerce_records_elevenlabs_unsupported_diarization() {
+    let caps = FakeAsrProvider::elevenlabs().capabilities();
+    let mut request = make_streaming_request();
+    request.compatibility = CompatibilityPolicy::Coerce;
+    request.model = Some("elevenlabs/scribe_v2_realtime".into());
+    request.options.speaker_diarization = true;
+    request.provider_options = json!({"unknown": true});
+
+    let result = validate_streaming_request(&request, &caps).unwrap();
+    let options: Vec<&str> = result
+        .adjustments
+        .iter()
+        .map(|a| a.option.as_str())
+        .collect();
+    assert!(options.contains(&"speaker_diarization"));
+    assert!(options.contains(&"provider_options.unknown"));
 }
 
 // ---------------------------------------------------------------------------

@@ -6,3 +6,6 @@ pub mod aliyun;
 
 #[cfg(feature = "deepgram")]
 pub mod deepgram;
+
+#[cfg(feature = "elevenlabs")]
+pub mod elevenlabs;
