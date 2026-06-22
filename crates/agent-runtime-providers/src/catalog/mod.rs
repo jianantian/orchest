@@ -360,6 +360,18 @@ fn volcengine_models() -> LlmProviderInfo {
             None,
             None,
         ),
+        // --- doubao-seed-character series (roleplay / character dialogue, no thinking) ---
+        cny_model(
+            "volcengine/doubao-seed-character-251128",
+            "volcengine",
+            "Doubao Seed Character",
+            128_000,
+            Some(32_768),
+            0.8,
+            2.0,
+            None,
+            None,
+        ),
         // --- doubao-seed-1.x series ---
         cny_model(
             "volcengine/doubao-seed-1-6-flash-250615",

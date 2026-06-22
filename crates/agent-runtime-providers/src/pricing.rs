@@ -86,6 +86,8 @@ pub fn volcengine_pricing(model: &str) -> ModelPricing {
         // doubao-seed-2.0-lite / mini
         m if m.starts_with("doubao-seed-2-0-lite") => cny(0.5, 2.0),
         m if m.starts_with("doubao-seed-2-0-mini") => cny(0.3, 1.5),
+        // doubao-seed-character — roleplay model; ¥0.8/2.0 per million tokens
+        m if m.starts_with("doubao-seed-character") => cny(0.8, 2.0),
         // doubao-seed-1.x and code preview
         m if m.starts_with("doubao-seed") => cny(0.5, 2.0),
         _ => cny(0.5, 2.0),

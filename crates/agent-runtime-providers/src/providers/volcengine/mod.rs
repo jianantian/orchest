@@ -2,7 +2,7 @@
 //!
 //! API base: https://ark.cn-beijing.volces.com/api/v3/chat/completions
 //! Auth:     Authorization: Bearer $ARK_API_KEY
-//! Models:   doubao-seed-2-0-pro-260215, doubao-seed-2-0-lite-260215, etc.
+//! Models:   doubao-seed-2-0-pro-260215, doubao-seed-character-251128, etc.
 //!
 //! Split by concern: this file owns the adapter struct, capability reporting,
 //! and `complete()`'s control flow; [`request`] builds the Chat Completions
@@ -89,7 +89,8 @@ impl VolcengineAdapter {
     }
 
     pub(super) fn supports_thinking(&self) -> bool {
-        self.model.starts_with("doubao-seed")
+        // doubao-seed-character is a roleplay model — no reasoning support.
+        self.model.starts_with("doubao-seed") && !self.model.contains("character")
     }
 }
 
