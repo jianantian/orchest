@@ -6,7 +6,19 @@
 > 文档规范:本文每一个设计决策都必须引用 `docs/external/minimax/<file>:<行号>` 或具体 crate 路径。
 > 没有引用的"应该""可能"必须删掉或补来源。
 >
-> 日期: 2026-06-14 | 状态: 设计阶段
+> 日期: 2026-06-14 | 状态: 设计阶段 → 已立项为 **v0.9.10**
+
+---
+
+> **🔧 实现决策更新(2026-06-22,以 [`docs/iteration/v0_9_10/prd.md`](../iteration/v0_9_10/prd.md) 为准)**
+>
+> 本文写于 v0.10 命名确定前,落项时有 3 处调整:
+> 1. **版本号**:文中所有 "v0.10" 指本迭代,实际版本号为 **v0.9.10**(v0.10 已被 Briefing Desk 占用)。
+> 2. **Music 不新建 crate**(覆盖 §四 / §六 Phase 5 / §七 Q3):改放进 `agent-runtime-aigc-providers`
+>    子模块(`src/music/`),单开 `MusicProvider` trait 不污染现有 trait。原因:后续要合 crate
+>    (见 [`docs/todo/provider-unification.md`](../todo/provider-unification.md)),现在不加新 crate。
+> 3. **ContentBlock 一并加 `Audio`**(补充 §2.3):除 `Image`/`Video`,Phase 1 一并加
+>    `ContentBlock::Audio { source }`,作为 omni 端到端语音(后续 Step 2)的前向占位。
 
 ---
 
@@ -417,6 +429,10 @@ pub struct DesignVoiceRequest {
 ---
 
 ## 四、Music — 新 crate `agent-runtime-music-providers`
+
+> ⚠️ **决策已变更(见顶部 banner)**:v0.9.10 **不新建 crate**,music 放进
+> `agent-runtime-aigc-providers/src/music/`。下方"新建独立 crate"的论证保留作历史记录,
+> 实际布局以 [`v0_9_10/issues/006-minimax-music/spec.md`](../iteration/v0_9_10/issues/006-minimax-music/spec.md) 为准。
 
 **归属**: **新建** `crates/agent-runtime-music-providers/`(独立 crate,不并入 aigc)
 
