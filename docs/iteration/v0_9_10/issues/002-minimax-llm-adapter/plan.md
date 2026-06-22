@@ -20,7 +20,7 @@
 - `crates/agent-runtime-providers/src/providers/mod.rs`(submodule 声明)
 - `crates/agent-runtime-providers/src/catalog/mod.rs`(条目形态)
 - `crates/agent-runtime-providers/src/defaults.rs`(默认 URL 放置处)
-- `docs/external/minimax/llm.md`(协议锚点)
+- `docs/external/minimax/llm/api.md`(协议锚点)
 
 ## 文件改动
 
@@ -44,8 +44,8 @@
 - [ ] `request.rs` 的 `ContentBlock` match:`Image` 输出 Minimax image schema(`source` Url/Base64);
       `Video` 输出含 `fps` / `max_long_side_pixel` / `detail`;`MidConvSystem` 输出对应 block。
 - [ ] `Role` match:4 个 Minimax-only role 输出 `user_system` / `group` / `sample_message_user` /
-      `sample_message_ai` 字符串(锚点 `llm.md:1088-1091`)。
-- [ ] 透传 `RequestOptions.service_tier` 到请求体(`llm.md:807`)。
+      `sample_message_ai` 字符串(锚点 `llm/api.md:1088-1091`)。
+- [ ] 透传 `RequestOptions.service_tier` 到请求体(`llm/api.md:807`)。
 
 ### 3. 响应 / SSE
 
@@ -56,7 +56,7 @@
 
 - [ ] `providers/mod.rs` 加 `pub mod minimax;`。
 - [ ] `registry.rs` 的 `ProviderRegistry::new()` 加 `reg.register(Box::new(super::providers::minimax::MinimaxFactory));`。
-- [ ] catalog 加 MiniMax-M3 / M2.7 / M2.5 / M2.1,前缀 `minimax/`,pricing 留 TODO。
+- [ ] catalog 加 8 条非 Her 模型(M3 / M2.7 / M2.7-highspeed / M2.5 / M2.5-highspeed / M2.1 / M2.1-highspeed / M2),前缀 `minimax/`,pricing 留 TODO。
 
 ### 5. 测试
 

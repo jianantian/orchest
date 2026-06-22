@@ -3,6 +3,12 @@
 > 类型: 卫星(功能) | 状态: 规划
 > 详细设计来源: [`docs/research/minimax-api-analysis.md`](../../research/minimax-api-analysis.md)
 > 本 PRD 是迭代级契约;每个 issue 的字段表 / 文档行号锚点以设计文档为准,不在此重复。
+>
+> **文档路径注**:研究文档与各 issue 的 LLM 锚点形如 `llm.md:NNN`;实际供应商文档
+> 已拆分为 `docs/external/minimax/llm/` 目录(`api.md` / `chat_model.md` / `desc.md` /
+> `tool.md` / `activate_cache.md` / `prompt_cache.md`)。所有 `llm.md:NNN` 锚点均映射到
+> `llm/api.md:NNN`(已统一重写);Her 与角色扮演角色补充语义位于 `llm/chat_model.md`,
+> 模型名总表位于 `llm/desc.md`。
 
 ## 背景
 
@@ -75,7 +81,7 @@ Provider 统一重构(见 [`docs/todo/provider-unification.md`](../../todo/provi
 - [ ] `bash scripts/lint-check.sh` 通过
 - [ ] `agent-runtime-model::ContentBlock` 含 `Image`/`Video`/`Audio`/`MidConvSystem`,
       所有现有 LLM adapter 穷尽 match 编译通过且不 panic
-- [ ] `MinimaxAdapter` 注册进 `ProviderRegistry`,catalog 含 MiniMax-M3/M2.7/M2.5/M2.1 条目
+- [ ] `MinimaxAdapter` 注册进 `ProviderRegistry`,catalog 含 8 条非 Her 模型条目(M3 / M2.7 / M2.7-highspeed / M2.5 / M2.5-highspeed / M2.1 / M2.1-highspeed / M2)
 - [ ] Minimax video 5 变体经 `VideoProvider` 提交,轮询状态映射正确,asset 在 download_url 过期前落库
 - [ ] Minimax TTS 同步 WSS + 异步路径可用,`TtsOperation::Async` 存在
 - [ ] `VoiceManager` trait 落地,Minimax 实现 clone/design/delete

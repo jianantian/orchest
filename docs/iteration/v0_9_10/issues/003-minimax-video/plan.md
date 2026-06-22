@@ -42,7 +42,9 @@
 
 - [ ] 解构 `Vec<VideoContentItem>`:`Text` → `prompt`;`Image{role:FirstFrame}` → `first_frame_image`;
       `LastFrame` → `last_frame_image`;`ReferenceImage` → `subject_reference`。
-- [ ] `AssetRef::Url` → 直传 URL;`AssetRef::DataUrl` → `data:image/...;base64,`。
+- [ ] `AssetRef` 6 variant 全部具体化为 URL 或 `data:<mime>;base64,...`(映射表见 spec §3e):
+      `Url`/`DataUrl` 直传;`Base64`/`Bytes`/`LocalPath` 拼 `data:` URI(`LocalPath` 用 `tokio::fs::read`);
+      `Stored` 走 `AssetRegistry::get` + `AssetStore::signed_url(asset, ttl)` 或返回 `AigcError::UnsupportedOperation`。
 - [ ] 通用字段从 `VideoGenerationConfig` 取(`duration` / `resolution` / `aigc_watermark`);
       `prompt_optimizer` / `fast_pretreatment` 从 `provider_options` 取。
 - [ ] POST `/v1/video_generation`,解析返回 `task_id`。

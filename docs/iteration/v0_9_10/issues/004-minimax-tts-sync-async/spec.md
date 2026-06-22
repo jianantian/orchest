@@ -52,7 +52,12 @@ trait 方法映射:
 - `stream_synthesize`:每帧立刻 push `TtsStreamEvent::Audio`。
 - `start_duplex_stream`:输入 channel 映射到 `task_continue` 序列。
 
-**base_resp 错误码映射(§3.2 表 → 已核对的 `TtsErrorCode`)**:
+**base_resp 错误码映射(§3.2 + §3.3 全表 → 已核对的 `TtsErrorCode`)**:
+
+下表为 `tts_sync.md` 与 `tts_async.md` 中出现的 base_resp 码的**并集**;两文件共 30+ 个码,
+表里列出语义稳定的常见码,**未列出的同步/异步专属码(例如同步专属 1491/1578/1683/1823/1871/2882,
+异步专属 1200/1573/2251)统一落到 `1000 / 其他 → ProviderTaskFailed`,`upstream_code` 保留原码,
+不视为遗漏**。
 
 | Minimax | → TtsErrorCode |
 |---|---|
@@ -81,11 +86,35 @@ trait 方法映射:
 薄拷贝(GET + JSON + `download_url` 提取,设计文档 §3.3 决策 A,tts crate 内复制)。
 错误用 `TtsErrorCode::InvalidRequest`(非 `InvalidInput`)。
 
+## 4f. 网关路由层(`routing.rs`)
+
+现有网关 `TtsRouteOperation` 是 3 变体枚举(`Batch` / `SingleStream` / `DuplexStream`),入口点
+`select_for_synthesize` / `select_for_stream` / `select_for_duplex` 各自硬编码一个 route op
+(`routing.rs:92-132`);capability 校验匹配 `TtsModelCapabilities` 上的同名 bool
+(`batch_synthesis` / `single_streaming` / `duplex_streaming`,`types.rs:364-381`)。
+`TtsOperation::Async` 是第 5 个 variant,**无对应路由路径**,实现时必须补齐:
+
+1. `TtsRouteOperation` 加 `Async` variant(`routing.rs:57`)。
+2. `TtsModelCapabilities` 加 `async_synthesis: bool`(`types.rs:364`,`Default` 为 `false`);
+   `Default` impl 与 catalog 默认值同步更新。
+3. `routing.rs:311` 的 capability match 加 `TtsRouteOperation::Async if !cap.async_synthesis →
+   UnsupportedOperation` 分支;`routing.rs:366` 的 `formats` match 把 `Async` 归 `batch_output_formats`
+   (异步返回的是完整文件 URL,语义与 batch 一致)。
+4. `TtsGateway` 加入口点 `select_for_async(&SynthesizeRequest) -> Result<Arc<dyn TtsProvider>, _>`,
+   传 `TtsRouteOperation::Async` 给 `select`。
+5. `synthesize` 网关层根据 `request.operation`(若为 `Async`)走 `select_for_async`,否则走
+   原 `select_for_synthesize`。
+
+capability 默认 `async_synthesis: false`:aliyun / volcengine 现有 provider 不受影响,继续按
+`batch_synthesis: true` 路由 `Batch`。Minimax catalog 条目把 `async_synthesis` 标 `true`。
+
 ## 验收标准
 
 - [ ] Cargo `minimax` feature + optional `reqwest`(json+multipart)/`hex` 加好,`--no-default-features --features minimax` 可编译
 - [ ] `providers/minimax/{mod,protocol,sync,async,files}.rs` 存在,`providers/mod.rs` feature-gated 声明
-- [ ] `TtsOperation::Async` variant 存在
+- [ ] `TtsOperation::Async` variant 存在;`TtsRouteOperation::Async` + `TtsModelCapabilities.async_synthesis` 加好(`async_synthesis` `Default` 为 `false`)
+- [ ] `routing.rs` capability match 含 `Async` 分支,format match 把 `Async` 归 `batch_output_formats`,单元测试断言 aliyun/volcengine(默认 `async_synthesis: false`)收到 `Async` 请求返回 `UnsupportedOperation`
+- [ ] `TtsGateway::select_for_async` 存在,Minimax catalog 标 `async_synthesis: true` 后能选中
 - [ ] protocol.rs 16 个 base_resp 状态码按 4c 表映射,单元测试覆盖(尤其 1002→429+upstream_code、1004→InvalidApiKey)
 - [ ] hex 音频解码:`data.audio` hex → bytes,`data=null` 判空不 panic(单元测试)
 - [ ] `synthesize`(sync 路径)聚合帧返回非空 `AudioData::Bytes`(用 fake WSS / 帧夹具测试)

@@ -13,7 +13,8 @@ Minimax 5 个 video 生成变体(T2V / I2V / Frame2V / Subject Ref + 状态查�
 - `VideoImageRole`(`types/video.rs:62-67`)的 `FirstFrame`/`LastFrame`/`ReferenceImage` 对齐
   I2V `first_frame_image` / Frame2V `last_frame_image` / Subject Ref `subject_reference`。
 - `VideoGateway::generate`(`gateway/video.rs`)已封装"创建 → `wait_for_completion` 轮询 → 下载持久化"。
-- `AssetRef::{Url, DataUrl}`(`types/common.rs`)覆盖图片输入(URL / `data:image/...;base64,`)。
+- `AssetRef`(`types/common.rs:14-21`,**6 个 variant**)的全部输入形态都需具体化到 Minimax
+  请求体的 URL 或 base64(见 §3e 映射)。
 
 设计来源:[`minimax-api-analysis.md`](../../../../research/minimax-api-analysis.md) §五。
 模板:`crates/agent-runtime-aigc-providers/src/providers/volcengine/video.rs`。
@@ -48,6 +49,23 @@ I2V-01-Director / I2V-01-live / I2V-01 / S2V-01。catalog video 条目据此加�
 
 `callback_url` webhook **不实现**(PRD 非目标 / 设计文档 §5.5 / §七 Q4):v0.9.10 只做轮询。
 
+## 3e. `AssetRef` → Minimax 输入映射(全 6 variant)
+
+Minimax 图片输入(I2V `first_frame_image` / Frame2V `last_frame_image` / Subject Ref
+`subject_reference`)接受 URL 或 `data:<mime>;base64,<...>` 字符串。`AssetRef` 6 个 variant
+逐一具体化:
+
+| `AssetRef` | 处理 |
+|---|---|
+| `Url(s)` | 直传 `s`(Minimax 拉取) |
+| `DataUrl(s)` | 直传 `s`(已是 `data:<mime>;base64,...`) |
+| `Base64 { data, mime_type }` | 拼成 `data:<mime_type>;base64,<data>` |
+| `Bytes { bytes, mime_type }` | base64 编码 `bytes` → 拼 `data:<mime_type>;base64,<...>` |
+| `LocalPath(p)` | `tokio::fs::read(p)` → 推断 mime(扩展名;失败时 `application/octet-stream` 并报 `AigcError`)→ 同 `Bytes` 路径 |
+| `Stored { asset_id }` | `AssetRegistry::get` 取 `StoredAsset`,再 `AssetStore::signed_url(asset, ttl)` 拿短期外链 URL,走 `Url` 路径;若 store 无法签发外链(例如 `NoopAssetStore`),返回 `AigcError::UnsupportedOperation`("Minimax 视频图片输入需要可外网访问的 URL 或内联 base64") |
+
+错误形态:`LocalPath` 读失败或 `Stored` 无法解析为外链均返回 `AigcError`(不 panic)。Minimax video 上传的 `signed_url` 推荐 ttl ≥ 1h(轮询 + 下载窗口对齐 §3c 的 `download_url` 1 小时过期)。
+
 ## 验收标准
 
 - [ ] `providers/minimax.rs` impl `VideoProvider`,注册进 `create_video_provider_from_config` 的 `"minimax"` 分支
@@ -57,7 +75,7 @@ I2V-01-Director / I2V-01-live / I2V-01 / S2V-01。catalog video 条目据此加�
 - [ ] Subject Ref:`Image{role:ReferenceImage}` + S2V-01 → `subject_reference`
 - [ ] `prompt_optimizer` / `fast_pretreatment` 经 `provider_options` 进请求体,**不**出现在共享 config 字段
 - [ ] 状态映射单元测试:`Preparing`/`Queueing`/`Processing`/`Success`/`Fail` → 对应 `ProviderGenerationStatus`
-- [ ] `Success` 路径用 `file_id` 拉 `/v1/files/retrieve` 取 `download_url`(可用 fake HTTP 断言调用)
+- [ ] `AssetRef` 6 variant 全部具体化的单元测试(`Url`/`DataUrl` 直传;`Base64`/`Bytes`/`LocalPath` 拼 `data:` URI;`Stored` 走 `AssetRegistry::get` + `AssetStore::signed_url` 或返回 `UnsupportedOperation`)
 - [ ] 无 `callback_url` webhook 代码
 - [ ] `cargo test -p agent-runtime-aigc-providers` 全绿;`clippy -- -D warnings` 无 warning
 
