@@ -34,7 +34,7 @@ pub fn spawn_duplex(request: VolcengineSynthesisRequest) -> TtsDuplexStream {
     TtsDuplexStream::new(input_tx, event_rx)
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // justified: bidirectional WebSocket session loop — event dispatch + reconnect logic is sequential and cannot be meaningfully split
 async fn run_session(
     request: VolcengineSynthesisRequest,
     initial_text: Option<Vec<TextChunk>>,

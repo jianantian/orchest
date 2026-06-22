@@ -76,9 +76,10 @@ git commit -m "feat: complete agent run loop (closes #5)"
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 cargo fmt --check
+bash scripts/lint-check.sh
 ```
 
-All three must pass. Fix any failures before merging.
+All four must pass. Fix any failures before merging.
 
 ### 6. Merge to Main
 
@@ -221,7 +222,7 @@ git checkout -b issue-<N>-<slug>
 git commit -m "feat: <description> (closes #<N>)"
 
 # Pre-merge checks
-cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --check
+cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --check && bash scripts/lint-check.sh
 
 # Merge and push
 git checkout main && git merge --no-ff issue-<N>-<slug> && git push && git branch -d issue-<N>-<slug>

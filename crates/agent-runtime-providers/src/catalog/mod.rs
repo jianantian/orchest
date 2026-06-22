@@ -58,7 +58,7 @@ pub struct LlmProviderInfo {
 
 static LLM_PROVIDERS: LazyLock<Vec<LlmProviderInfo>> = LazyLock::new(build_catalog);
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // justified: catalog builder needs all pricing/capability fields; a struct would be more verbose with no clarity gain
 fn usd_model(
     model_id: &'static str,
     provider: &'static str,
@@ -86,7 +86,7 @@ fn usd_model(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // justified: same as usd_model — all fields required, no meaningful grouping
 fn cny_model(
     model_id: &'static str,
     provider: &'static str,
@@ -95,6 +95,8 @@ fn cny_model(
     max_output_tokens: Option<u32>,
     input: f64,
     output: f64,
+    cache_read: Option<f64>,
+    cache_write: Option<f64>,
 ) -> LlmModelEntry {
     LlmModelEntry {
         model_id,
@@ -106,8 +108,8 @@ fn cny_model(
             currency: "CNY".into(),
             input_per_million: input,
             output_per_million: output,
-            cache_read_per_million: None,
-            cache_write_per_million: None,
+            cache_read_per_million: cache_read,
+            cache_write_per_million: cache_write,
         }),
     }
 }
@@ -271,6 +273,8 @@ fn deepseek_models() -> LlmProviderInfo {
             Some(384_000),
             1.0,
             2.0,
+            Some(0.02), // cache hit price; see source URL above
+            None,       // DeepSeek does not charge for cache writes
         ),
         cny_model(
             "deepseek/deepseek-v4-pro",
@@ -280,6 +284,8 @@ fn deepseek_models() -> LlmProviderInfo {
             Some(384_000),
             3.0,
             6.0,
+            Some(0.025),
+            None,
         ),
     ];
 
@@ -294,6 +300,8 @@ fn volcengine_models() -> LlmProviderInfo {
     // Source: docs/external/volceengine/llm/
     // API: https://ark.cn-beijing.volces.com/api/v3/chat/completions
     // Auth: ARK_API_KEY (火山方舟 API Key)
+    // Cache pricing: Volcengine has not published per-model cache rates;
+    // entries pass None until the upstream pricing page lists them.
     let models = vec![
         // --- doubao-seed-2.0 series (thinking enabled by default) ---
         cny_model(
@@ -304,6 +312,8 @@ fn volcengine_models() -> LlmProviderInfo {
             Some(16_384),
             1.0,
             5.0,
+            None,
+            None,
         ),
         cny_model(
             "volcengine/doubao-seed-2-0-lite-260215",
@@ -313,6 +323,8 @@ fn volcengine_models() -> LlmProviderInfo {
             Some(16_384),
             0.5,
             2.0,
+            None,
+            None,
         ),
         cny_model(
             "volcengine/doubao-seed-2-0-mini-260215",
@@ -322,6 +334,8 @@ fn volcengine_models() -> LlmProviderInfo {
             Some(16_384),
             0.3,
             1.5,
+            None,
+            None,
         ),
         // --- doubao-seed-2.0 (428 series with thinking summary) ---
         cny_model(
@@ -332,6 +346,8 @@ fn volcengine_models() -> LlmProviderInfo {
             Some(16_384),
             0.5,
             2.0,
+            None,
+            None,
         ),
         cny_model(
             "volcengine/doubao-seed-2-0-mini-260428",
@@ -341,6 +357,20 @@ fn volcengine_models() -> LlmProviderInfo {
             Some(16_384),
             0.3,
             1.5,
+            None,
+            None,
+        ),
+        // --- doubao-seed-character series (roleplay / character dialogue, no thinking) ---
+        cny_model(
+            "volcengine/doubao-seed-character-251128",
+            "volcengine",
+            "Doubao Seed Character",
+            128_000,
+            Some(32_768),
+            0.8,
+            2.0,
+            None,
+            None,
         ),
         // --- doubao-seed-1.x series ---
         cny_model(
@@ -351,6 +381,8 @@ fn volcengine_models() -> LlmProviderInfo {
             Some(16_384),
             0.5,
             2.0,
+            None,
+            None,
         ),
     ];
 
@@ -404,111 +436,4 @@ pub fn list_models() -> impl Iterator<Item = &'static LlmModelEntry> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn catalog_has_five_providers() {
-        assert_eq!(list_providers().len(), 5);
-    }
-
-    #[test]
-    fn anthropic_models_present() {
-        let models: Vec<_> = list_models()
-            .filter(|m| m.provider == "anthropic")
-            .collect();
-        assert!(!models.is_empty());
-        let ids: Vec<_> = models.iter().map(|m| m.model_id).collect();
-        assert!(ids.contains(&"anthropic/claude-fable-5"));
-        assert!(ids.contains(&"anthropic/claude-opus-4-8"));
-        assert!(ids.contains(&"anthropic/claude-sonnet-4-6"));
-        assert!(ids.contains(&"anthropic/claude-haiku-4-5"));
-    }
-
-    #[test]
-    fn all_anthropic_models_have_usd_pricing() {
-        for entry in list_models().filter(|m| m.provider == "anthropic") {
-            let p = entry
-                .pricing
-                .as_ref()
-                .expect("anthropic model should have pricing");
-            assert_eq!(
-                p.currency, "USD",
-                "{} should have USD pricing",
-                entry.model_id
-            );
-        }
-    }
-
-    #[test]
-    fn deepseek_models_have_cny_pricing() {
-        for entry in list_models().filter(|m| m.provider == "deepseek") {
-            let p = entry
-                .pricing
-                .as_ref()
-                .expect("deepseek model should have pricing");
-            assert_eq!(
-                p.currency, "CNY",
-                "{} should have CNY pricing",
-                entry.model_id
-            );
-        }
-    }
-
-    #[test]
-    fn volcengine_models_present() {
-        let models: Vec<_> = list_models()
-            .filter(|m| m.provider == "volcengine")
-            .collect();
-        assert!(!models.is_empty());
-        let ids: Vec<_> = models.iter().map(|m| m.model_id).collect();
-        assert!(ids.contains(&"volcengine/doubao-seed-2-0-pro-260215"));
-        assert!(ids.contains(&"volcengine/doubao-seed-2-0-lite-260215"));
-    }
-
-    #[test]
-    fn volcengine_models_have_cny_pricing() {
-        for entry in list_models().filter(|m| m.provider == "volcengine") {
-            let p = entry
-                .pricing
-                .as_ref()
-                .expect("volcengine model should have pricing");
-            assert_eq!(
-                p.currency, "CNY",
-                "{} should have CNY pricing",
-                entry.model_id
-            );
-        }
-    }
-
-    #[test]
-    fn openrouter_is_dynamic() {
-        let or_provider = list_providers()
-            .iter()
-            .find(|p| p.provider_id == "openrouter")
-            .expect("openrouter should be in catalog");
-        assert!(
-            matches!(or_provider.models, LlmModelList::Dynamic { .. }),
-            "openrouter should be Dynamic"
-        );
-    }
-
-    #[test]
-    fn haiku_context_window_is_200k() {
-        let haiku = list_models()
-            .find(|m| m.model_id == "anthropic/claude-haiku-4-5")
-            .expect("haiku should be in catalog");
-        assert_eq!(haiku.context_window, 200_000);
-    }
-
-    #[test]
-    fn deepseek_v4_context_window_is_1m() {
-        for entry in list_models().filter(|m| m.provider == "deepseek") {
-            assert_eq!(
-                entry.context_window, 1_000_000,
-                "{} should have 1M context",
-                entry.model_id
-            );
-        }
-    }
-}
+mod tests;
