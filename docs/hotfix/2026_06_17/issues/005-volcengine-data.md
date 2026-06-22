@@ -27,7 +27,9 @@ issue 001 落地后,6 条 volcengine 模型字段全为占位值。本 issue 把
 
 ### Thinking
 
-doubao-seed-2.0 系列**默认开思考**(`think.md` 内容)。`crates/agent-runtime-providers/src/providers/volcengine/mod.rs:107-117` 的 `supports_thinking()` 实现是判断依据。
+doubao-seed 系列**默认开思考**(`docs/external/volceengine/llm/think.md:1, 12`)。`crates/agent-runtime-providers/src/providers/volcengine/mod.rs:91-93` 的 `supports_thinking()` 实现是判断依据(`doubao-seed-*` 前缀,排除 `character` 角色扮演模型)。
+
+**注意**: `think.md:12` 明确"250615 及之后版本的大语言模型,如无特殊说明,默认支持 Responses API",示例中用 `doubao-seed-1-6-251015` 演示 thinking 能力。**doubao-seed-1.6-flash-250615 也支持 thinking**,与 doubao-seed-2.0 系列同口径。
 
 | model | thinking |
 |---|---|
@@ -36,7 +38,7 @@ doubao-seed-2.0 系列**默认开思考**(`think.md` 内容)。`crates/agent-run
 | doubao-seed-2-0-mini-260215 | `Some(ThinkingSpec { max_thinking_tokens: None })` |
 | doubao-seed-2-0-lite-260428 | `Some(ThinkingSpec { max_thinking_tokens: None })` |
 | doubao-seed-2-0-mini-260428 | `Some(ThinkingSpec { max_thinking_tokens: None })` |
-| doubao-seed-1-6-flash-250615 | `None` (1.6 系列不支持) |
+| doubao-seed-1-6-flash-250615 | `Some(ThinkingSpec { max_thinking_tokens: None })` |
 
 ### Modalities
 
@@ -64,8 +66,7 @@ doubao-seed-2.0 系列支持多模态输入(`multimodal.md` 内文档)。1.6-fla
 ## 验收标准
 
 - [ ] 6 条 volcengine entry `description` 含"豆包"
-- [ ] 5 条 doubao-seed-2.0 系列 `thinking` 非 `None`
-- [ ] doubao-seed-1-6-flash `thinking: None`
+- [ ] 6 条 doubao-seed 系列 `thinking` 非 `None`(含 1.6-flash)
 - [ ] doubao-seed-2-0-pro `input_modalities` 含 `Image`(必)、`Video` / `Audio`(尽量)
 - [ ] doubao-seed-1-6-flash `input_modalities` 仅 `Text`
 - [ ] pro `scenes` 含 `Reasoning` + `Coding` + `Agent`

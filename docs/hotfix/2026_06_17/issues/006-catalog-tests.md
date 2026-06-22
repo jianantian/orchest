@@ -34,7 +34,6 @@ fn multimodal_models_declare_image_input() {
     // OpenAI gpt-5.4-nano 只支持 Text;
     // Volcengine doubao-seed-2.0 系列支持 Image。
     let must_have_image = [
-        "anthropic/claude-fable-5",
         "anthropic/claude-opus-4-8",
         "anthropic/claude-sonnet-4-6",
         "anthropic/claude-haiku-4-5",
@@ -90,12 +89,11 @@ fn text_only_models_have_only_text_modality() {
 #[test]
 fn reasoning_scene_marks_top_tier_models() {
     let reasoning_models = [
-        "anthropic/claude-fable-5",
         "anthropic/claude-opus-4-8",
         "anthropic/claude-opus-4-7",
+        "deepseek/deepseek-v4-pro",
         "openai/gpt-5.5",
         "openai/gpt-5.4",
-        "deepseek/deepseek-v4-pro",
         "volcengine/doubao-seed-2-0-pro-260215",
     ];
     for model_id in reasoning_models {
@@ -124,6 +122,7 @@ fn thinking_support_matches_provider_implementation() {
         "openai/gpt-5.4",
         "deepseek/deepseek-v4-pro",
         "volcengine/doubao-seed-2-0-pro-260215",
+        "volcengine/doubao-seed-1-6-flash-250615",
     ];
     for model_id in thinking_supported {
         let entry = list_models()

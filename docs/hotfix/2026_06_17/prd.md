@@ -115,11 +115,15 @@ pub struct LlmModelEntry {
 
 新签名会有 12+ 参数,helper 已反生产力。改用 struct literal,字段具名,IDE 字段提示可用。
 
-### 4. 19 个现有模型条目逐条更新
+### 4. 现有模型条目逐条更新(含删除下架模型)
 
-详见 issue 002-005。
+详见 issue 002-005。**claude-fable-5 / claude-mythos-5 已下架,从 catalog 删除 claude-fable-5**(见 issue 002)。条目数从 19 降到 18。
 
-### 5. 测试钉住关键事实
+### 5. 修复 DeepSeek adapter `supports_thinking()` 代码 bug
+
+`deepseek/mod.rs:76-79` 错误地认为 v4-pro 不支持 thinking,与官方文档矛盾。详见 issue 007。
+
+### 6. 测试钉住关键事实
 
 详见 issue 006。
 
@@ -137,17 +141,18 @@ pub struct LlmModelEntry {
 | Issue | 标题 | 范围 |
 |-------|------|------|
 | 001 | 新类型与 LlmModelEntry 扩展 | 加 `Modality` / `ModelScene` / `ThinkingSpec` 三个类型,扩 `LlmModelEntry` 6 个字段,砍 `usd_model` / `cny_model` helper |
-| 002 | Anthropic 模型条目更新 | 7 个 claude 模型逐条填新字段,源信息引用 `docs/external/anthropic/models.md` |
+| 002 | Anthropic 模型条目更新 | **删除下架的 claude-fable-5**,剩余 6 个 claude 模型逐条填新字段,源引用 `docs/external/anthropic/models.md` |
 | 003 | OpenAI 模型条目更新 | 4 个 GPT 模型逐条填,源信息引用 OpenAI 官网 |
-| 004 | DeepSeek 模型条目更新 | 2 个 V4 模型逐条填,源引用 DeepSeek pricing 页 |
+| 004 | DeepSeek 模型条目更新 | 2 个 V4 模型逐条填,**v4-pro 与 v4-flash 都支持 thinking**,源引用 DeepSeek pricing 页 + thinking_mode 指南 |
 | 005 | Volcengine 模型条目更新 | 6 个 doubao 模型逐条填,源引用 `docs/external/volceengine/llm/` |
 | 006 | catalog 测试钉住关键事实 | 加 5-8 个回归测试:模态命中、scene 命中、thinking 上限、description 非空 |
+| 007 | 修复 DeepSeek `supports_thinking()` 代码 bug | `deepseek/mod.rs:76-79` 错误排除 v4-pro,与官方文档矛盾。修正使 v4-pro 返回 true |
 
 ## 验收标准
 
 - [ ] `LlmModelEntry` 含 `description` / `max_input_tokens` / `thinking` / `input_modalities` / `output_modalities` / `scenes` 6 个新字段
 - [ ] `Modality` / `ModelScene` / `ThinkingSpec` 三个类型 `pub` 暴露,`Serialize + Deserialize`
-- [ ] 19 个现有 model 条目全部填齐新字段,无 `TODO` 占位
+- [ ] 18 个现有 model 条目全部填齐新字段,无 `TODO` 占位(原 19 条减去下架的 claude-fable-5)
 - [ ] 每个 `*_models()` 函数顶部有 `// Source:` 注释指向供应商文档
 - [ ] `usd_model` / `cny_model` 便利函数已删除,所有条目改为 struct literal
 - [ ] 新增至少 5 条回归测试:模态命中、scene 命中、thinking 上限、description 非空
