@@ -9,22 +9,70 @@
 use std::sync::LazyLock;
 
 use agent_runtime_model::ModelPricing;
+use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
 /// An individually enumerable LLM model.
+///
+/// - `description`: one-line technical characterization (Chinese).
+/// - `max_input_tokens`: conservative upper bound on input assuming
+///   `max_output_tokens` is fully used. For pool-type providers (Anthropic /
+///   OpenAI) the constraint is `input + output ≤ context_window`.
+/// - `thinking`: `None` = no thinking/reasoning mode; `Some` = supported,
+///   with an optional token cap (`None` = vendor did not publish a cap).
+/// - `input_modalities` / `output_modalities`: content types accepted/produced.
+/// - `scenes`: workload classes the model is tuned for (can match several).
 #[derive(Debug, Clone)]
 pub struct LlmModelEntry {
-    /// Full model ID to put in `ProviderRuntimeConfig { model: "..." }`.
-    /// Always in `"provider/model-name"` form, e.g. `"anthropic/claude-opus-4-8"`.
+    /// Full model ID for `ProviderRuntimeConfig { model: "..." }`.
+    /// Always `"provider/model-name"` form, e.g. `"anthropic/claude-opus-4-8"`.
     pub model_id: &'static str,
     pub provider: &'static str,
     pub display_name: &'static str,
+    pub description: &'static str,
     pub context_window: u64,
+    pub max_input_tokens: Option<u64>,
     pub max_output_tokens: Option<u32>,
+    pub thinking: Option<ThinkingSpec>,
+    pub input_modalities: &'static [Modality],
+    pub output_modalities: &'static [Modality],
+    pub scenes: &'static [ModelScene],
     pub pricing: Option<ModelPricing>,
+}
+
+/// A content modality a model can accept or produce.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Modality {
+    Text,
+    Image,
+    Video,
+    Audio,
+}
+
+/// A workload class a model is tuned for. A model can match several.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ModelScene {
+    /// General-purpose tasks (default).
+    General,
+    /// Code generation / editing SOTA.
+    Coding,
+    /// Tool use / long-horizon agentic tasks.
+    Agent,
+    /// Role-play / companion / conversational.
+    Chat,
+    /// Math / logic / reasoning SOTA.
+    Reasoning,
+}
+
+/// Thinking/reasoning mode specification for a model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThinkingSpec {
+    /// Maximum tokens the model can spend on thinking content.
+    /// `None` = vendor did not publish a specific cap.
+    pub max_thinking_tokens: Option<u32>,
 }
 
 /// How a provider exposes its model list.
@@ -58,144 +106,153 @@ pub struct LlmProviderInfo {
 
 static LLM_PROVIDERS: LazyLock<Vec<LlmProviderInfo>> = LazyLock::new(build_catalog);
 
-#[allow(clippy::too_many_arguments)] // justified: catalog builder needs all pricing/capability fields; a struct would be more verbose with no clarity gain
-fn usd_model(
-    model_id: &'static str,
-    provider: &'static str,
-    display_name: &'static str,
-    context_window: u64,
-    max_output_tokens: Option<u32>,
-    input: f64,
-    output: f64,
-    cache_read: Option<f64>,
-    cache_write: Option<f64>,
-) -> LlmModelEntry {
-    LlmModelEntry {
-        model_id,
-        provider,
-        display_name,
-        context_window,
-        max_output_tokens,
-        pricing: Some(ModelPricing {
-            currency: "USD".into(),
-            input_per_million: input,
-            output_per_million: output,
-            cache_read_per_million: cache_read,
-            cache_write_per_million: cache_write,
-        }),
-    }
-}
-
-#[allow(clippy::too_many_arguments)] // justified: same as usd_model — all fields required, no meaningful grouping
-fn cny_model(
-    model_id: &'static str,
-    provider: &'static str,
-    display_name: &'static str,
-    context_window: u64,
-    max_output_tokens: Option<u32>,
-    input: f64,
-    output: f64,
-    cache_read: Option<f64>,
-    cache_write: Option<f64>,
-) -> LlmModelEntry {
-    LlmModelEntry {
-        model_id,
-        provider,
-        display_name,
-        context_window,
-        max_output_tokens,
-        pricing: Some(ModelPricing {
-            currency: "CNY".into(),
-            input_per_million: input,
-            output_per_million: output,
-            cache_read_per_million: cache_read,
-            cache_write_per_million: cache_write,
-        }),
-    }
-}
-
 fn anthropic_models() -> LlmProviderInfo {
     // Source: docs/external/anthropic/models.md
+    // Pricing: USD. Context constraint: input + output ≤ context_window.
+    // max_input_tokens = context_window - max_output_tokens (conservative).
     let models = vec![
         // --- Current models ---
-        usd_model(
-            "anthropic/claude-fable-5",
-            "anthropic",
-            "Claude Fable 5",
-            1_000_000,
-            Some(128_000),
-            10.0,
-            50.0,
-            Some(1.0),
-            Some(12.5),
-        ),
-        usd_model(
-            "anthropic/claude-opus-4-8",
-            "anthropic",
-            "Claude Opus 4.8",
-            1_000_000,
-            Some(128_000),
-            5.0,
-            25.0,
-            Some(0.5),
-            Some(6.25),
-        ),
-        usd_model(
-            "anthropic/claude-sonnet-4-6",
-            "anthropic",
-            "Claude Sonnet 4.6",
-            1_000_000,
-            Some(64_000),
-            3.0,
-            15.0,
-            Some(0.3),
-            Some(3.75),
-        ),
-        usd_model(
-            "anthropic/claude-haiku-4-5",
-            "anthropic",
-            "Claude Haiku 4.5",
-            200_000,
-            Some(64_000),
-            1.0,
-            5.0,
-            Some(0.1),
-            Some(1.25),
-        ),
+        LlmModelEntry {
+            model_id: "anthropic/claude-fable-5",
+            provider: "anthropic",
+            display_name: "Claude Fable 5",
+            description: "旗舰推理模型，支持 adaptive thinking，百万 token 上下文",
+            context_window: 1_000_000,
+            max_input_tokens: Some(872_000),
+            max_output_tokens: Some(128_000),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text, Modality::Image],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General, ModelScene::Coding, ModelScene::Agent, ModelScene::Reasoning],
+            pricing: Some(ModelPricing {
+                currency: "USD".into(),
+                input_per_million: 10.0,
+                output_per_million: 50.0,
+                cache_read_per_million: Some(1.0),
+                cache_write_per_million: Some(12.5),
+            }),
+        },
+        LlmModelEntry {
+            model_id: "anthropic/claude-opus-4-8",
+            provider: "anthropic",
+            display_name: "Claude Opus 4.8",
+            description: "Opus 主力模型，支持 extended/adaptive thinking",
+            context_window: 1_000_000,
+            max_input_tokens: Some(872_000),
+            max_output_tokens: Some(128_000),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text, Modality::Image],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General, ModelScene::Coding, ModelScene::Agent, ModelScene::Reasoning],
+            pricing: Some(ModelPricing {
+                currency: "USD".into(),
+                input_per_million: 5.0,
+                output_per_million: 25.0,
+                cache_read_per_million: Some(0.5),
+                cache_write_per_million: Some(6.25),
+            }),
+        },
+        LlmModelEntry {
+            model_id: "anthropic/claude-sonnet-4-6",
+            provider: "anthropic",
+            display_name: "Claude Sonnet 4.6",
+            description: "主力通用模型，平衡性能与成本，支持 extended thinking",
+            context_window: 1_000_000,
+            max_input_tokens: Some(936_000),
+            max_output_tokens: Some(64_000),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text, Modality::Image],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General, ModelScene::Coding, ModelScene::Agent],
+            pricing: Some(ModelPricing {
+                currency: "USD".into(),
+                input_per_million: 3.0,
+                output_per_million: 15.0,
+                cache_read_per_million: Some(0.3),
+                cache_write_per_million: Some(3.75),
+            }),
+        },
+        LlmModelEntry {
+            model_id: "anthropic/claude-haiku-4-5",
+            provider: "anthropic",
+            display_name: "Claude Haiku 4.5",
+            description: "轻量快速模型，支持 extended thinking，200k 上下文",
+            context_window: 200_000,
+            max_input_tokens: Some(136_000),
+            max_output_tokens: Some(64_000),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text, Modality::Image],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General],
+            pricing: Some(ModelPricing {
+                currency: "USD".into(),
+                input_per_million: 1.0,
+                output_per_million: 5.0,
+                cache_read_per_million: Some(0.1),
+                cache_write_per_million: Some(1.25),
+            }),
+        },
         // --- Legacy models (still available) ---
-        usd_model(
-            "anthropic/claude-opus-4-7",
-            "anthropic",
-            "Claude Opus 4.7",
-            1_000_000,
-            Some(128_000),
-            5.0,
-            25.0,
-            Some(0.5),
-            Some(6.25),
-        ),
-        usd_model(
-            "anthropic/claude-opus-4-6",
-            "anthropic",
-            "Claude Opus 4.6",
-            1_000_000,
-            Some(128_000),
-            5.0,
-            25.0,
-            Some(0.5),
-            Some(6.25),
-        ),
-        usd_model(
-            "anthropic/claude-sonnet-4-5",
-            "anthropic",
-            "Claude Sonnet 4.5",
-            1_000_000,
-            Some(64_000),
-            3.0,
-            15.0,
-            Some(0.3),
-            Some(3.75),
-        ),
+        LlmModelEntry {
+            model_id: "anthropic/claude-opus-4-7",
+            provider: "anthropic",
+            display_name: "Claude Opus 4.7",
+            description: "Opus 上代旗舰，支持 extended thinking",
+            context_window: 1_000_000,
+            max_input_tokens: Some(872_000),
+            max_output_tokens: Some(128_000),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text, Modality::Image],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General, ModelScene::Coding, ModelScene::Agent, ModelScene::Reasoning],
+            pricing: Some(ModelPricing {
+                currency: "USD".into(),
+                input_per_million: 5.0,
+                output_per_million: 25.0,
+                cache_read_per_million: Some(0.5),
+                cache_write_per_million: Some(6.25),
+            }),
+        },
+        LlmModelEntry {
+            model_id: "anthropic/claude-opus-4-6",
+            provider: "anthropic",
+            display_name: "Claude Opus 4.6",
+            description: "Opus 上代主力，支持 extended thinking",
+            context_window: 1_000_000,
+            max_input_tokens: Some(872_000),
+            max_output_tokens: Some(128_000),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text, Modality::Image],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General, ModelScene::Coding, ModelScene::Agent, ModelScene::Reasoning],
+            pricing: Some(ModelPricing {
+                currency: "USD".into(),
+                input_per_million: 5.0,
+                output_per_million: 25.0,
+                cache_read_per_million: Some(0.5),
+                cache_write_per_million: Some(6.25),
+            }),
+        },
+        LlmModelEntry {
+            model_id: "anthropic/claude-sonnet-4-5",
+            provider: "anthropic",
+            display_name: "Claude Sonnet 4.5",
+            description: "Sonnet 上代主力，支持 extended thinking",
+            context_window: 1_000_000,
+            max_input_tokens: Some(936_000),
+            max_output_tokens: Some(64_000),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text, Modality::Image],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General, ModelScene::Coding, ModelScene::Agent],
+            pricing: Some(ModelPricing {
+                currency: "USD".into(),
+                input_per_million: 3.0,
+                output_per_million: 15.0,
+                cache_read_per_million: Some(0.3),
+                cache_write_per_million: Some(3.75),
+            }),
+        },
     ];
 
     LlmProviderInfo {
@@ -206,52 +263,90 @@ fn anthropic_models() -> LlmProviderInfo {
 }
 
 fn openai_models() -> LlmProviderInfo {
-    // Source: https://developers.openai.com/api/docs/models/all
+    // Source: https://platform.openai.com/docs/models
+    // Pricing: USD. max_input_tokens: None — OpenAI does not publish a separate
+    // max-input limit distinct from context_window for these models.
     let models = vec![
-        usd_model(
-            "openai/gpt-5.5",
-            "openai",
-            "GPT-5.5",
-            1_000_000,
-            None,
-            5.0,
-            30.0,
-            None,
-            None,
-        ),
-        usd_model(
-            "openai/gpt-5.4",
-            "openai",
-            "GPT-5.4",
-            1_000_000,
-            None,
-            2.5,
-            15.0,
-            None,
-            None,
-        ),
-        usd_model(
-            "openai/gpt-5.4-mini",
-            "openai",
-            "GPT-5.4 mini",
-            400_000,
-            None,
-            0.75,
-            4.5,
-            None,
-            None,
-        ),
-        usd_model(
-            "openai/gpt-5.4-nano",
-            "openai",
-            "GPT-5.4 nano",
-            400_000,
-            None,
-            0.20,
-            1.25,
-            None,
-            None,
-        ),
+        LlmModelEntry {
+            model_id: "openai/gpt-5.5",
+            provider: "openai",
+            display_name: "GPT-5.5",
+            description: "GPT 旗舰模型，综合能力最强，百万 token 上下文",
+            context_window: 1_000_000,
+            max_input_tokens: None,
+            max_output_tokens: None,
+            thinking: None,
+            input_modalities: &[Modality::Text, Modality::Image],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General, ModelScene::Coding, ModelScene::Agent],
+            pricing: Some(ModelPricing {
+                currency: "USD".into(),
+                input_per_million: 5.0,
+                output_per_million: 30.0,
+                cache_read_per_million: None,
+                cache_write_per_million: None,
+            }),
+        },
+        LlmModelEntry {
+            model_id: "openai/gpt-5.4",
+            provider: "openai",
+            display_name: "GPT-5.4",
+            description: "GPT 主力模型，平衡能力与成本",
+            context_window: 1_000_000,
+            max_input_tokens: None,
+            max_output_tokens: None,
+            thinking: None,
+            input_modalities: &[Modality::Text, Modality::Image],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General, ModelScene::Coding],
+            pricing: Some(ModelPricing {
+                currency: "USD".into(),
+                input_per_million: 2.5,
+                output_per_million: 15.0,
+                cache_read_per_million: None,
+                cache_write_per_million: None,
+            }),
+        },
+        LlmModelEntry {
+            model_id: "openai/gpt-5.4-mini",
+            provider: "openai",
+            display_name: "GPT-5.4 mini",
+            description: "GPT 轻量模型，高性价比",
+            context_window: 400_000,
+            max_input_tokens: None,
+            max_output_tokens: None,
+            thinking: None,
+            input_modalities: &[Modality::Text, Modality::Image],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General],
+            pricing: Some(ModelPricing {
+                currency: "USD".into(),
+                input_per_million: 0.75,
+                output_per_million: 4.5,
+                cache_read_per_million: None,
+                cache_write_per_million: None,
+            }),
+        },
+        LlmModelEntry {
+            model_id: "openai/gpt-5.4-nano",
+            provider: "openai",
+            display_name: "GPT-5.4 nano",
+            description: "GPT 极轻量模型，最低延迟与成本",
+            context_window: 400_000,
+            max_input_tokens: None,
+            max_output_tokens: None,
+            thinking: None,
+            input_modalities: &[Modality::Text, Modality::Image],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General],
+            pricing: Some(ModelPricing {
+                currency: "USD".into(),
+                input_per_million: 0.20,
+                output_per_million: 1.25,
+                cache_read_per_million: None,
+                cache_write_per_million: None,
+            }),
+        },
     ];
 
     LlmProviderInfo {
@@ -264,29 +359,48 @@ fn openai_models() -> LlmProviderInfo {
 fn deepseek_models() -> LlmProviderInfo {
     // Source: https://api-docs.deepseek.com/zh-cn/quick_start/pricing
     // Legacy model IDs (deepseek-chat, deepseek-reasoner) deprecated 2026-07-24.
+    // Pricing: CNY. max_input_tokens = context_window - max_output_tokens.
     let models = vec![
-        cny_model(
-            "deepseek/deepseek-v4-flash",
-            "deepseek",
-            "DeepSeek V4 Flash",
-            1_000_000,
-            Some(384_000),
-            1.0,
-            2.0,
-            Some(0.02), // cache hit price; see source URL above
-            None,       // DeepSeek does not charge for cache writes
-        ),
-        cny_model(
-            "deepseek/deepseek-v4-pro",
-            "deepseek",
-            "DeepSeek V4 Pro",
-            1_000_000,
-            Some(384_000),
-            3.0,
-            6.0,
-            Some(0.025),
-            None,
-        ),
+        LlmModelEntry {
+            model_id: "deepseek/deepseek-v4-flash",
+            provider: "deepseek",
+            display_name: "DeepSeek V4 Flash",
+            description: "快速推理模型，支持 thinking 模式，超长上下文",
+            context_window: 1_000_000,
+            max_input_tokens: Some(616_000),
+            max_output_tokens: Some(384_000),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General, ModelScene::Reasoning, ModelScene::Coding],
+            pricing: Some(ModelPricing {
+                currency: "CNY".into(),
+                input_per_million: 1.0,
+                output_per_million: 2.0,
+                cache_read_per_million: Some(0.02),
+                cache_write_per_million: None,
+            }),
+        },
+        LlmModelEntry {
+            model_id: "deepseek/deepseek-v4-pro",
+            provider: "deepseek",
+            display_name: "DeepSeek V4 Pro",
+            description: "旗舰推理模型，支持 thinking 模式，极强代码与数学能力",
+            context_window: 1_000_000,
+            max_input_tokens: Some(616_000),
+            max_output_tokens: Some(384_000),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::Reasoning, ModelScene::Coding, ModelScene::General],
+            pricing: Some(ModelPricing {
+                currency: "CNY".into(),
+                input_per_million: 3.0,
+                output_per_million: 6.0,
+                cache_read_per_million: Some(0.025),
+                cache_write_per_million: None,
+            }),
+        },
     ];
 
     LlmProviderInfo {
@@ -300,90 +414,153 @@ fn volcengine_models() -> LlmProviderInfo {
     // Source: docs/external/volceengine/llm/
     // API: https://ark.cn-beijing.volces.com/api/v3/chat/completions
     // Auth: ARK_API_KEY (火山方舟 API Key)
-    // Cache pricing: Volcengine has not published per-model cache rates;
-    // entries pass None until the upstream pricing page lists them.
+    // Pricing: CNY. Cache pricing: not published; entries use None.
+    // max_input_tokens = context_window - max_output_tokens unless stated otherwise.
     let models = vec![
         // --- doubao-seed-2.0 series (thinking enabled by default) ---
-        cny_model(
-            "volcengine/doubao-seed-2-0-pro-260215",
-            "volcengine",
-            "Doubao Seed 2.0 Pro",
-            128_000,
-            Some(16_384),
-            1.0,
-            5.0,
-            None,
-            None,
-        ),
-        cny_model(
-            "volcengine/doubao-seed-2-0-lite-260215",
-            "volcengine",
-            "Doubao Seed 2.0 Lite",
-            128_000,
-            Some(16_384),
-            0.5,
-            2.0,
-            None,
-            None,
-        ),
-        cny_model(
-            "volcengine/doubao-seed-2-0-mini-260215",
-            "volcengine",
-            "Doubao Seed 2.0 Mini",
-            128_000,
-            Some(16_384),
-            0.3,
-            1.5,
-            None,
-            None,
-        ),
+        LlmModelEntry {
+            model_id: "volcengine/doubao-seed-2-0-pro-260215",
+            provider: "volcengine",
+            display_name: "Doubao Seed 2.0 Pro",
+            description: "豆包旗舰推理模型，默认开启 thinking",
+            context_window: 128_000,
+            max_input_tokens: Some(112_000),
+            max_output_tokens: Some(16_384),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General, ModelScene::Reasoning, ModelScene::Coding],
+            pricing: Some(ModelPricing {
+                currency: "CNY".into(),
+                input_per_million: 1.0,
+                output_per_million: 5.0,
+                cache_read_per_million: None,
+                cache_write_per_million: None,
+            }),
+        },
+        LlmModelEntry {
+            model_id: "volcengine/doubao-seed-2-0-lite-260215",
+            provider: "volcengine",
+            display_name: "Doubao Seed 2.0 Lite",
+            description: "豆包 Lite 推理模型，支持 thinking，低成本",
+            context_window: 128_000,
+            max_input_tokens: Some(112_000),
+            max_output_tokens: Some(16_384),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General, ModelScene::Coding],
+            pricing: Some(ModelPricing {
+                currency: "CNY".into(),
+                input_per_million: 0.5,
+                output_per_million: 2.0,
+                cache_read_per_million: None,
+                cache_write_per_million: None,
+            }),
+        },
+        LlmModelEntry {
+            model_id: "volcengine/doubao-seed-2-0-mini-260215",
+            provider: "volcengine",
+            display_name: "Doubao Seed 2.0 Mini",
+            description: "豆包 Mini 推理模型，最轻量 thinking",
+            context_window: 128_000,
+            max_input_tokens: Some(112_000),
+            max_output_tokens: Some(16_384),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General],
+            pricing: Some(ModelPricing {
+                currency: "CNY".into(),
+                input_per_million: 0.3,
+                output_per_million: 1.5,
+                cache_read_per_million: None,
+                cache_write_per_million: None,
+            }),
+        },
         // --- doubao-seed-2.0 (428 series with thinking summary) ---
-        cny_model(
-            "volcengine/doubao-seed-2-0-lite-260428",
-            "volcengine",
-            "Doubao Seed 2.0 Lite (260428)",
-            128_000,
-            Some(16_384),
-            0.5,
-            2.0,
-            None,
-            None,
-        ),
-        cny_model(
-            "volcengine/doubao-seed-2-0-mini-260428",
-            "volcengine",
-            "Doubao Seed 2.0 Mini (260428)",
-            128_000,
-            Some(16_384),
-            0.3,
-            1.5,
-            None,
-            None,
-        ),
-        // --- doubao-seed-character series (roleplay / character dialogue, no thinking) ---
-        cny_model(
-            "volcengine/doubao-seed-character-251128",
-            "volcengine",
-            "Doubao Seed Character",
-            128_000,
-            Some(32_768),
-            0.8,
-            2.0,
-            None,
-            None,
-        ),
+        LlmModelEntry {
+            model_id: "volcengine/doubao-seed-2-0-lite-260428",
+            provider: "volcengine",
+            display_name: "Doubao Seed 2.0 Lite (260428)",
+            description: "豆包 Lite 推理模型（带 thinking summary），低成本",
+            context_window: 128_000,
+            max_input_tokens: Some(112_000),
+            max_output_tokens: Some(16_384),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General, ModelScene::Coding],
+            pricing: Some(ModelPricing {
+                currency: "CNY".into(),
+                input_per_million: 0.5,
+                output_per_million: 2.0,
+                cache_read_per_million: None,
+                cache_write_per_million: None,
+            }),
+        },
+        LlmModelEntry {
+            model_id: "volcengine/doubao-seed-2-0-mini-260428",
+            provider: "volcengine",
+            display_name: "Doubao Seed 2.0 Mini (260428)",
+            description: "豆包 Mini 推理模型（带 thinking summary），极轻量",
+            context_window: 128_000,
+            max_input_tokens: Some(112_000),
+            max_output_tokens: Some(16_384),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General],
+            pricing: Some(ModelPricing {
+                currency: "CNY".into(),
+                input_per_million: 0.3,
+                output_per_million: 1.5,
+                cache_read_per_million: None,
+                cache_write_per_million: None,
+            }),
+        },
+        // --- doubao-seed-character series (roleplay / character dialogue) ---
+        LlmModelEntry {
+            model_id: "volcengine/doubao-seed-character-251128",
+            provider: "volcengine",
+            display_name: "Doubao Seed Character",
+            description: "角色扮演专用模型，适合对话与角色扮演场景，不支持 thinking",
+            context_window: 128_000,
+            max_input_tokens: Some(96_000),
+            max_output_tokens: Some(32_768),
+            thinking: None,
+            input_modalities: &[Modality::Text],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::Chat],
+            pricing: Some(ModelPricing {
+                currency: "CNY".into(),
+                input_per_million: 0.8,
+                output_per_million: 2.0,
+                cache_read_per_million: None,
+                cache_write_per_million: None,
+            }),
+        },
         // --- doubao-seed-1.x series ---
-        cny_model(
-            "volcengine/doubao-seed-1-6-flash-250615",
-            "volcengine",
-            "Doubao Seed 1.6 Flash",
-            128_000,
-            Some(16_384),
-            0.5,
-            2.0,
-            None,
-            None,
-        ),
+        LlmModelEntry {
+            model_id: "volcengine/doubao-seed-1-6-flash-250615",
+            provider: "volcengine",
+            display_name: "Doubao Seed 1.6 Flash",
+            description: "豆包 1.6 快速模型，支持 thinking",
+            context_window: 128_000,
+            max_input_tokens: Some(112_000),
+            max_output_tokens: Some(16_384),
+            thinking: Some(ThinkingSpec { max_thinking_tokens: None }),
+            input_modalities: &[Modality::Text],
+            output_modalities: &[Modality::Text],
+            scenes: &[ModelScene::General],
+            pricing: Some(ModelPricing {
+                currency: "CNY".into(),
+                input_per_million: 0.5,
+                output_per_million: 2.0,
+                cache_read_per_million: None,
+                cache_write_per_million: None,
+            }),
+        },
     ];
 
     LlmProviderInfo {
