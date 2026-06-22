@@ -1,6 +1,8 @@
 mod fake_provider;
 
-use agent_runtime_asr_providers::compatibility::validate_streaming_request;
+use agent_runtime_asr_providers::compatibility::{
+    validate_streaming_request, validate_transcribe_request,
+};
 use agent_runtime_asr_providers::error::{AsrError, AsrErrorCode};
 use agent_runtime_asr_providers::routing::{
     parse_route_config, AsrGateway, AsrGatewayConfig, AsrRoute, AsrRouter,
@@ -114,6 +116,38 @@ fn setup_batch_router_with_routes(provider: std::sync::Arc<FakeAsrProvider>) -> 
         max_latency_ms: None,
         max_cost_micros_per_minute: None,
     }]);
+    router
+}
+
+fn setup_global_batch_router() -> AsrRouter {
+    let mut router = AsrRouter::new();
+    router.register_provider("assemblyai/universal".into(), FakeAsrProvider::assemblyai());
+    router.register_provider(
+        "speechmatics/enhanced".into(),
+        FakeAsrProvider::speechmatics(),
+    );
+    router.set_routes(vec![
+        AsrRoute {
+            model: "assemblyai/universal".into(),
+            priority: 10,
+            languages: vec![Language::new("auto"), Language::new("en")],
+            regions: vec![],
+            max_latency_ms: None,
+            max_cost_micros_per_minute: None,
+        },
+        AsrRoute {
+            model: "speechmatics/enhanced".into(),
+            priority: 20,
+            languages: vec![
+                Language::new("auto"),
+                Language::new("de"),
+                Language::new("en"),
+            ],
+            regions: vec![],
+            max_latency_ms: None,
+            max_cost_micros_per_minute: None,
+        },
+    ]);
     router
 }
 
@@ -258,6 +292,36 @@ fn router_transcribe_explicit_model_bypasses_routes() {
 
     let provider = router.select_for_transcribe(&request).unwrap();
     assert_eq!(provider.provider_name(), "fake");
+}
+
+#[test]
+fn router_transcribe_explicit_assemblyai_model_bypasses_routes() {
+    let router = setup_global_batch_router();
+    let mut request = make_transcribe_request(AudioInput::Url {
+        url: "https://example.com/audio.mp3".into(),
+        format: Some(AudioFormat::Mp3),
+    });
+    request.model = Some("assemblyai/universal".into());
+    request.options.language = Some(Language::new("xx-custom"));
+
+    let provider = router.select_for_transcribe(&request).unwrap();
+    assert_eq!(provider.provider_name(), "assemblyai");
+    assert_eq!(provider.model_name(), "universal");
+}
+
+#[test]
+fn router_transcribe_routes_german_to_speechmatics() {
+    let router = setup_global_batch_router();
+    let mut request = make_transcribe_request(AudioInput::Bytes {
+        data: vec![0; 100],
+        format: AudioFormat::Wav,
+        sample_rate_hz: None,
+    });
+    request.options.language = Some(Language::new("de"));
+
+    let provider = router.select_for_transcribe(&request).unwrap();
+    assert_eq!(provider.provider_name(), "speechmatics");
+    assert_eq!(provider.model_name(), "enhanced");
 }
 
 #[test]
@@ -745,6 +809,63 @@ fn strict_allows_soniox_code_switching_and_arbitrary_language_hint() {
     });
 
     assert!(validate_streaming_request(&request, &caps).is_ok());
+}
+
+#[test]
+fn strict_allows_assemblyai_batch_metadata_options() {
+    let caps = FakeAsrProvider::assemblyai().capabilities();
+    let mut request = make_transcribe_request(AudioInput::Url {
+        url: "https://example.com/audio.mp3".into(),
+        format: Some(AudioFormat::Mp3),
+    });
+    request.model = Some("assemblyai/universal".into());
+    request.options.language = Some(Language::new("auto"));
+    request.options.speaker_diarization = true;
+    request.options.word_timestamps = true;
+    request.options.hot_words = vec!["orchest".into()];
+    request.provider_options = json!({
+        "speaker_labels": true,
+        "language_detection": true,
+        "language_confidence_threshold": 0.7,
+        "speech_model": "universal",
+        "format_text": true
+    });
+
+    assert!(validate_transcribe_request(&request, &caps).is_ok());
+}
+
+#[test]
+fn strict_allows_speechmatics_batch_metadata_options() {
+    let caps = FakeAsrProvider::speechmatics().capabilities();
+    let mut request = make_transcribe_request(AudioInput::Bytes {
+        data: vec![0; 100],
+        format: AudioFormat::Wav,
+        sample_rate_hz: None,
+    });
+    request.model = Some("speechmatics/enhanced".into());
+    request.options.language = Some(Language::new("de"));
+    request.options.speaker_diarization = true;
+    request.options.word_timestamps = true;
+    request.options.hot_words = vec!["orchest".into()];
+    request.provider_options = json!({
+        "operating_point": "enhanced",
+        "diarization": "speaker",
+        "additional_vocab": [{"content": "runtime"}],
+        "enable_entities": true
+    });
+
+    assert!(validate_transcribe_request(&request, &caps).is_ok());
+}
+
+#[test]
+fn strict_rejects_streaming_request_for_batch_only_provider() {
+    let caps = FakeAsrProvider::assemblyai().capabilities();
+    let mut request = make_streaming_request();
+    request.model = Some("assemblyai/universal".into());
+    request.options.language = Some(Language::new("en"));
+
+    let err = validate_streaming_request(&request, &caps).unwrap_err();
+    assert_eq!(err.code, AsrErrorCode::UnsupportedAudioFormat);
 }
 
 #[test]

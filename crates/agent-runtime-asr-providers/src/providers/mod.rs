@@ -4,6 +4,9 @@ pub mod volcengine;
 #[cfg(feature = "aliyun")]
 pub mod aliyun;
 
+#[cfg(feature = "assemblyai")]
+pub mod assemblyai;
+
 #[cfg(feature = "deepgram")]
 pub mod deepgram;
 
@@ -12,3 +15,6 @@ pub mod elevenlabs;
 
 #[cfg(feature = "soniox")]
 pub mod soniox;
+
+#[cfg(feature = "speechmatics")]
+pub mod speechmatics;

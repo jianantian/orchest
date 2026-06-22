@@ -12,6 +12,8 @@ pub use catalog::{AsrModelCapabilitiesSummary, AsrModelEntry};
 pub mod compatibility;
 pub mod config;
 pub mod error;
+#[cfg(any(feature = "assemblyai", feature = "speechmatics"))]
+mod http;
 pub mod observability;
 pub mod providers;
 pub mod routing;

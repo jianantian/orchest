@@ -45,6 +45,54 @@ static ASR_MODELS: LazyLock<Vec<AsrModelEntry>> = LazyLock::new(build_catalog);
 fn build_catalog() -> Vec<AsrModelEntry> {
     vec![
         AsrModelEntry {
+            model_id: "assemblyai/universal",
+            provider: "assemblyai",
+            display_name: "AssemblyAI Universal Batch",
+            languages: &["auto", "en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh"],
+            capabilities: AsrModelCapabilitiesSummary {
+                streaming: false,
+                batch: true,
+                word_timestamps: true,
+                speaker_diarization: true,
+                code_switching: false,
+                hot_words: true,
+                context_prompt: false,
+            },
+            resource_id: None,
+        },
+        AsrModelEntry {
+            model_id: "speechmatics/enhanced",
+            provider: "speechmatics",
+            display_name: "Speechmatics Enhanced Batch",
+            languages: &["auto", "en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh"],
+            capabilities: AsrModelCapabilitiesSummary {
+                streaming: false,
+                batch: true,
+                word_timestamps: true,
+                speaker_diarization: true,
+                code_switching: false,
+                hot_words: true,
+                context_prompt: false,
+            },
+            resource_id: None,
+        },
+        AsrModelEntry {
+            model_id: "speechmatics/standard",
+            provider: "speechmatics",
+            display_name: "Speechmatics Standard Batch",
+            languages: &["auto", "en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh"],
+            capabilities: AsrModelCapabilitiesSummary {
+                streaming: false,
+                batch: true,
+                word_timestamps: true,
+                speaker_diarization: true,
+                code_switching: false,
+                hot_words: true,
+                context_prompt: false,
+            },
+            resource_id: None,
+        },
+        AsrModelEntry {
             model_id: "soniox/stt-rt-v5",
             provider: "soniox",
             display_name: "Soniox STT Realtime v5",
@@ -173,8 +221,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_seven_models() {
-        assert_eq!(list_models().len(), 7);
+    fn catalog_has_ten_models() {
+        assert_eq!(list_models().len(), 10);
+    }
+
+    #[test]
+    fn assemblyai_universal_present() {
+        let entry = list_models()
+            .iter()
+            .find(|m| m.model_id == "assemblyai/universal")
+            .expect("assemblyai/universal should be in catalog");
+        assert!(entry.capabilities.batch);
+        assert!(!entry.capabilities.streaming);
+        assert!(entry.capabilities.speaker_diarization);
+    }
+
+    #[test]
+    fn speechmatics_models_present() {
+        let enhanced = list_models()
+            .iter()
+            .find(|m| m.model_id == "speechmatics/enhanced")
+            .expect("speechmatics/enhanced should be in catalog");
+        assert!(enhanced.capabilities.batch);
+        assert!(enhanced.languages.contains(&"auto"));
+
+        let standard = list_models()
+            .iter()
+            .find(|m| m.model_id == "speechmatics/standard")
+            .expect("speechmatics/standard should be in catalog");
+        assert!(standard.capabilities.batch);
+        assert!(!standard.capabilities.streaming);
     }
 
     #[test]

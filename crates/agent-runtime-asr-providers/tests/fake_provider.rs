@@ -107,6 +107,34 @@ impl FakeAsrProvider {
         })
     }
 
+    pub fn assemblyai() -> Arc<Self> {
+        Arc::new(Self {
+            provider: "assemblyai".into(),
+            model: "universal".into(),
+            caps: make_assemblyai_caps(),
+            languages: vec![Language::new("auto"), Language::new("en")],
+            behavior: FakeAdapterBehavior::Normal,
+            transcribe_behavior: FakeTranscribeBehavior::Success,
+            flush_timeout_override: None,
+        })
+    }
+
+    pub fn speechmatics() -> Arc<Self> {
+        Arc::new(Self {
+            provider: "speechmatics".into(),
+            model: "enhanced".into(),
+            caps: make_speechmatics_caps(),
+            languages: vec![
+                Language::new("auto"),
+                Language::new("en"),
+                Language::new("de"),
+            ],
+            behavior: FakeAdapterBehavior::Normal,
+            transcribe_behavior: FakeTranscribeBehavior::Success,
+            flush_timeout_override: None,
+        })
+    }
+
     pub fn batch() -> Arc<Self> {
         Self::batch_with_format_inference(false)
     }
@@ -374,6 +402,84 @@ fn make_soniox_caps() -> AsrModelCapabilities {
         default_flush_timeout_ms: Some(3000),
         source: CapabilitySource::Static,
         diagnostic_metadata: serde_json::json!({"provider": "soniox"}),
+    }
+}
+
+fn make_assemblyai_caps() -> AsrModelCapabilities {
+    make_global_batch_caps(
+        true,
+        vec![
+            "speaker_labels".into(),
+            "language_detection".into(),
+            "language_confidence_threshold".into(),
+            "speech_model".into(),
+            "format_text".into(),
+        ],
+        serde_json::json!({"provider": "assemblyai"}),
+    )
+}
+
+fn make_speechmatics_caps() -> AsrModelCapabilities {
+    make_global_batch_caps(
+        true,
+        vec![
+            "operating_point".into(),
+            "diarization".into(),
+            "additional_vocab".into(),
+            "enable_entities".into(),
+        ],
+        serde_json::json!({"provider": "speechmatics"}),
+    )
+}
+
+fn make_global_batch_caps(
+    speaker_diarization: bool,
+    provider_option_keys: Vec<String>,
+    diagnostic_metadata: Value,
+) -> AsrModelCapabilities {
+    AsrModelCapabilities {
+        languages: vec![
+            Language::new("auto"),
+            Language::new("en"),
+            Language::new("de"),
+        ],
+        streaming: false,
+        batch: true,
+        streaming_inputs: vec![],
+        batch_inputs: vec![
+            AudioInputCapability {
+                format: AudioFormat::Wav,
+                sample_rates_hz: SampleRateSupport::Any,
+                channels: ChannelSupport::Any,
+                max_duration_ms: None,
+                max_bytes: None,
+            },
+            AudioInputCapability {
+                format: AudioFormat::Mp3,
+                sample_rates_hz: SampleRateSupport::Any,
+                channels: ChannelSupport::Any,
+                max_duration_ms: None,
+                max_bytes: None,
+            },
+        ],
+        batch_format_inference: true,
+        audio_timeline_modes: vec![],
+        interim_results: false,
+        endpointing_modes: vec![],
+        segment_flush: false,
+        multi_segment_streaming: false,
+        connection_reuse: ConnectionReuse::NotReusable,
+        word_timestamps: true,
+        speaker_diarization,
+        confidence: true,
+        code_switching: false,
+        hot_words: true,
+        context_prompt: false,
+        provider_option_keys,
+        max_duration_ms: None,
+        default_flush_timeout_ms: None,
+        source: CapabilitySource::Static,
+        diagnostic_metadata,
     }
 }
 
