@@ -9,3 +9,6 @@ pub mod deepgram;
 
 #[cfg(feature = "elevenlabs")]
 pub mod elevenlabs;
+
+#[cfg(feature = "soniox")]
+pub mod soniox;

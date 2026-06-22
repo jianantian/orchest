@@ -45,6 +45,22 @@ static ASR_MODELS: LazyLock<Vec<AsrModelEntry>> = LazyLock::new(build_catalog);
 fn build_catalog() -> Vec<AsrModelEntry> {
     vec![
         AsrModelEntry {
+            model_id: "soniox/stt-rt-v5",
+            provider: "soniox",
+            display_name: "Soniox STT Realtime v5",
+            languages: &["*", "multi", "en", "es", "fr", "de", "ja", "zh"],
+            capabilities: AsrModelCapabilitiesSummary {
+                streaming: true,
+                batch: false,
+                word_timestamps: true,
+                speaker_diarization: false,
+                code_switching: true,
+                hot_words: true,
+                context_prompt: true,
+            },
+            resource_id: None,
+        },
+        AsrModelEntry {
             model_id: "elevenlabs/scribe_v2_realtime",
             provider: "elevenlabs",
             display_name: "ElevenLabs Scribe v2 Realtime",
@@ -157,8 +173,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_six_models() {
-        assert_eq!(list_models().len(), 6);
+    fn catalog_has_seven_models() {
+        assert_eq!(list_models().len(), 7);
+    }
+
+    #[test]
+    fn soniox_stt_rt_v5_present() {
+        let entry = list_models()
+            .iter()
+            .find(|m| m.model_id == "soniox/stt-rt-v5")
+            .expect("soniox/stt-rt-v5 should be in catalog");
+        assert!(entry.capabilities.streaming);
+        assert!(entry.capabilities.code_switching);
+        assert!(entry.capabilities.context_prompt);
+        assert!(entry.languages.contains(&"*"));
     }
 
     #[test]

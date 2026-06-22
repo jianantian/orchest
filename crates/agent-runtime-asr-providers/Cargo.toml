@@ -9,6 +9,7 @@ volcengine = []
 aliyun = []
 deepgram = []
 elevenlabs = []
+soniox = []
 
 [dependencies]
 tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }

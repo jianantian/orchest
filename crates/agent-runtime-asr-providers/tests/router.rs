@@ -56,12 +56,14 @@ fn setup_router_with_routes() -> AsrRouter {
     let aliyun = FakeAsrProvider::aliyun();
     let deepgram = FakeAsrProvider::deepgram();
     let elevenlabs = FakeAsrProvider::elevenlabs();
+    let soniox = FakeAsrProvider::soniox();
 
     let mut router = AsrRouter::new();
     router.register_provider("volcengine/bigmodel_async".into(), volcengine);
     router.register_provider("aliyun/fun-asr-realtime".into(), aliyun);
     router.register_provider("deepgram/nova-3".into(), deepgram);
     router.register_provider("elevenlabs/scribe_v2_realtime".into(), elevenlabs);
+    router.register_provider("soniox/stt-rt-v5".into(), soniox);
 
     let routes = parse_route_config(
         r#"
@@ -87,6 +89,12 @@ regions = ["global"]
 model = "elevenlabs/scribe_v2_realtime"
 priority = 6
 languages = ["en", "es", "auto"]
+regions = ["global"]
+
+[[routes]]
+model = "soniox/stt-rt-v5"
+priority = 4
+languages = ["mixed:en,es"]
 regions = ["global"]
 "#,
     )
@@ -210,6 +218,31 @@ fn router_explicit_elevenlabs_model_bypasses_routes() {
     let provider = router.select_for_streaming(&request).unwrap();
     assert_eq!(provider.provider_name(), "elevenlabs");
     assert_eq!(provider.model_name(), "scribe_v2_realtime");
+}
+
+#[test]
+fn router_handles_arbitrary_mixed_language_tag_for_soniox() {
+    let router = setup_router_with_routes();
+
+    let mut request = make_streaming_request();
+    request.options.language = Some(Language::new("mixed:en,es"));
+
+    let provider = router.select_for_streaming(&request).unwrap();
+    assert_eq!(provider.provider_name(), "soniox");
+    assert_eq!(provider.model_name(), "stt-rt-v5");
+}
+
+#[test]
+fn router_explicit_soniox_model_bypasses_routes() {
+    let router = setup_router_with_routes();
+
+    let mut request = make_streaming_request();
+    request.model = Some("soniox/stt-rt-v5".into());
+    request.options.language = Some(Language::new("xx-custom"));
+
+    let provider = router.select_for_streaming(&request).unwrap();
+    assert_eq!(provider.provider_name(), "soniox");
+    assert_eq!(provider.model_name(), "stt-rt-v5");
 }
 
 #[test]
@@ -685,6 +718,30 @@ fn strict_allows_elevenlabs_keyterms_language_detection_and_timestamps() {
         "keyterms": ["runtime"],
         "commit_strategy": "vad",
         "vad_silence_threshold_secs": 0.75
+    });
+
+    assert!(validate_streaming_request(&request, &caps).is_ok());
+}
+
+#[test]
+fn strict_allows_soniox_code_switching_and_arbitrary_language_hint() {
+    let caps = FakeAsrProvider::soniox().capabilities();
+    let mut request = make_streaming_request();
+    request.model = Some("soniox/stt-rt-v5".into());
+    request.options.language = Some(Language::new("mixed:en,es"));
+    request.options.code_switching = true;
+    request.options.word_timestamps = true;
+    request.options.hot_words = vec!["orchest".into()];
+    request.options.context_prompt = Some("agent runtime vocabulary".into());
+    request.options.endpointing = Some(EndpointingOptions {
+        mode: EndpointingMode::AcousticSilence,
+        silence_timeout: Some(Duration::from_millis(750)),
+    });
+    request.provider_options = json!({
+        "language_hints": ["en", "es"],
+        "language_hints_strict": false,
+        "enable_language_identification": true,
+        "max_endpoint_delay_ms": 750
     });
 
     assert!(validate_streaming_request(&request, &caps).is_ok());
