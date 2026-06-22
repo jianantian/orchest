@@ -3,7 +3,7 @@
 ## Overview
 
 ```
-Plan iteration/hotfix → Create all GitHub issues → One branch+worktree → One commit per issue → Merge to main
+Plan iteration/hotfix → Create all GitHub issues → One branch+worktree → One commit per issue → PR → Merge to main
 ```
 
 One iteration (or hotfix) = one branch = one worktree. All issues in the iteration are developed sequentially on that branch, each as a single focused commit. The GitHub Project board updates automatically via commit messages.
@@ -80,8 +80,8 @@ Rules:
 - If the plan and spec conflict, update the docs first before continuing
 
 Each issue's documentation:
-- `docs/iteration/<version>/issues/<NNN-slug>/spec.md` — acceptance criteria
-- `docs/iteration/<version>/issues/<NNN-slug>/plan.md` — implementation steps
+- `docs/iteration/<version>/issues/<NNN-slug>/spec.md` — acceptance criteria (hotfix uses same path under `docs/hotfix/<date>/issues/`)
+- `docs/iteration/<version>/issues/<NNN-slug>/plan.md` — implementation steps (iterations only; hotfix issues embed the plan directly in spec.md)
 
 ### 5. Run Checks Before Merging
 
