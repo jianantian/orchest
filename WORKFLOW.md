@@ -3,72 +3,85 @@
 ## Overview
 
 ```
-Pick issue → In Progress → branch workwtree → develop → merge to main → issue auto-closes
+Plan iteration/hotfix → Create all GitHub issues → One branch+worktree → One commit per issue → Merge to main
 ```
 
-One issue = one branch = one merge commit. No PRs for solo work. The GitHub Project board updates automatically via commit messages.
+One iteration (or hotfix) = one branch = one worktree. All issues in the iteration are developed sequentially on that branch, each as a single focused commit. The GitHub Project board updates automatically via commit messages.
 
 ---
 
 ## Step-by-Step
 
-### 1. Pick an Issue
+### 1. Plan the Iteration or Hotfix
 
-Work through issues in order within each iteration — most have sequential dependencies. Check the current iteration's PRD for the dependency order.
-
-```bash
-# View open issues for v0.1
-gh issue list --repo jianantian/orchest --label "v0.1" --state open
-
-# View the milestone progress
-gh api repos/jianantian/orchest/milestones --jq '.[] | {title, open_issues, closed_issues}'
-```
-
-### 2. Set to In Progress
-
-Move the card on the [Project board](https://github.com/users/jianantian/projects/1) to **In Progress**, or do it from the CLI:
+Read the PRD to understand scope and dependency order:
 
 ```bash
-gh issue edit <N> --repo jianantian/orchest --add-label "in-progress"
+cat docs/iteration/v0_10/prd.md
+# or
+cat docs/hotfix/2026_06_17/prd.md
 ```
 
-### 3. Create a Branch
+### 2. Create All GitHub Issues First
+
+Before writing any code, open a GitHub issue for every issue in the iteration or hotfix. This gives each issue a number for the `closes #N` commit reference.
+
+```bash
+# Create issues in order
+gh issue create --repo jianantian/orchest \
+  --title "feat: <issue title>" \
+  --label "v0.10" \
+  --body "$(cat docs/iteration/v0_10/issues/001-foo/spec.md)"
+
+# Repeat for each issue in the iteration
+# Note the assigned issue numbers — you'll use them in commit messages
+```
+
+### 3. Create a Branch and Worktree for the Iteration
+
+One branch covers the entire iteration or hotfix. Use a worktree so you can keep main checked out elsewhere.
 
 ```bash
 git checkout main && git pull
-git checkout -b issue-<N>-<slug>
-# e.g. git checkout -b issue-5-run-loop
+
+# Iteration
+git worktree add ../orchest-v0_10 -b iteration/v0_10
+
+# Hotfix
+git worktree add ../orchest-hotfix-2026_06_17 -b hotfix/2026_06_17
 ```
 
-Branch naming: `issue-<N>-<slug>` where slug matches the issue filename (e.g. `run-loop`, `core-types`).
+Branch naming:
+- Iteration: `iteration/v0_10`
+- Hotfix: `hotfix/YYYY_MM_DD`
 
-### 4. Develop From the Issue Plan
+### 4. Develop Each Issue — One Commit Per Issue
 
-Keep commits focused. Each issue is implemented from its own documentation bundle:
-
-- `docs/iteration/<version>/prd.md` defines iteration scope and dependency order.
-- `docs/iteration/<version>/issues/<NNN-slug>/spec.md` defines the issue contract and acceptance criteria.
-- `docs/iteration/<version>/issues/<NNN-slug>/plan.md` defines the implementation sequence for that issue.
-
-Use the issue's `plan.md` as the step-by-step implementation guide. Use the issue's `spec.md` and acceptance criteria as the definition of done. If the plan and spec conflict, stop and update the docs first so the plan, spec, and PRD stay consistent before implementation continues.
+Work through issues in dependency order. Each issue is exactly one commit.
 
 ```bash
-# Check the iteration scope, issue contract, and implementation plan
-cat docs/iteration/v0_5/prd.md
-cat docs/iteration/v0_5/issues/005-openrouter-adapter/spec.md
-cat docs/iteration/v0_5/issues/005-openrouter-adapter/plan.md
+cd ../orchest-v0_10
 
-# Commit as you go
+# Implement issue 001
+# ... make changes ...
 git add -p
-git commit -m "feat: implement run loop core state machine"
-git commit -m "feat: add budget check at loop entry"
+git commit -m "feat: <description> (closes #42)"
+
+# Implement issue 002
+# ... make changes ...
+git add -p
+git commit -m "feat: <description> (closes #43)"
 ```
 
-Write the `closes #N` reference in the **final** commit of the branch — this is what triggers automatic issue closing on push.
+Rules:
+- **One commit per issue** — all changes for an issue go in a single commit
+- **`closes #N` in every commit** — triggers automatic issue closing on push
+- **Dependency order** — follow the order in the PRD; don't jump ahead
+- If the plan and spec conflict, update the docs first before continuing
 
-```bash
-git commit -m "feat: complete agent run loop (closes #5)"
-```
+Each issue's documentation:
+- `docs/iteration/<version>/issues/<NNN-slug>/spec.md` — acceptance criteria
+- `docs/iteration/<version>/issues/<NNN-slug>/plan.md` — implementation steps
 
 ### 5. Run Checks Before Merging
 
@@ -84,43 +97,48 @@ All four must pass. Fix any failures before merging.
 ### 6. Merge to Main
 
 ```bash
-git checkout main
-git merge --no-ff issue-<N>-<slug>   # --no-ff preserves a merge commit per issue
+cd ~/Develop/orchest   # main repo directory
+
+git checkout main && git pull
+git merge --no-ff iteration/v0_10
 git push
-git branch -d issue-<N>-<slug>
+
+# Clean up
+git worktree remove ../orchest-v0_10
+git branch -d iteration/v0_10
 ```
 
 After push:
-- The `closes #N` commit **automatically closes the issue**
-- The Project board card **moves to Done**
+- Every `closes #N` commit **automatically closes its issue**
+- All Project board cards **move to Done**
 - The milestone progress bar advances
 
 ---
 
-## Parallel Work with Worktrees
+## Parallel Iterations with Worktrees
 
-Use worktrees:
+If two iterations or hotfixes are running in parallel (no shared files), use separate worktrees:
 
 ```bash
-# Set up two parallel workspaces
-git worktree add ../orchest-mcp   issue-16-mcp-stdio
-git worktree add ../orchest-oai   issue-19-openai-adapter
+git worktree add ../orchest-v0_10        -b iteration/v0_10
+git worktree add ../orchest-hotfix-0617  -b hotfix/2026_06_17
 
-# Work in each directory independently
-cd ../orchest-mcp   && cargo test
-cd ../orchest-oai   && cargo test
+# Work in each independently
+cd ../orchest-v0_10       && cargo test
+cd ../orchest-hotfix-0617 && cargo test
 
-# Merge each when done (from the main repo directory)
+# Merge each when done
 cd ~/Develop/orchest
-git merge --no-ff issue-16-mcp-stdio
-git merge --no-ff issue-19-openai-adapter
+git merge --no-ff iteration/v0_10
+git merge --no-ff hotfix/2026_06_17
 
 # Clean up
-git worktree remove ../orchest-mcp
-git worktree remove ../orchest-oai
+git worktree remove ../orchest-v0_10
+git worktree remove ../orchest-hotfix-0617
+git branch -d iteration/v0_10 hotfix/2026_06_17
 ```
 
-Do not use worktrees for issues that share modified files — resolve the conflict on a single branch instead.
+Do not use parallel worktrees for iterations that share modified files — conflicts must be resolved on a single branch.
 
 ---
 
@@ -128,104 +146,63 @@ Do not use worktrees for issues that share modified files — resolve the confli
 
 ### Starting a New Iteration
 
-Before picking up the first issue of a new iteration:
+Before writing any code:
 
 1. Verify the previous iteration's milestone is 100% closed
-2. Re-read the new iteration's `prd.md` to refresh scope and success metrics
-3. Start with issue `001` — it sets up the scaffolding everything else depends on
+2. Re-read the new iteration's `prd.md` to refresh scope and dependency order
+3. Create all GitHub issues (Step 2 above)
+4. Start with issue `001` — it sets up scaffolding everything else depends on
 
 ### Completing an Iteration
 
-After the last issue of an iteration is merged and all acceptance criteria are met:
+After all issues are merged:
 
-1. Update `docs/iteration/roadmap.md` — move the iteration from **规划中** → **已完成** (add a table row under 已完成, remove the entry from 规划中)
-2. If the iteration fills a gap listed in the 能力缺口全景 table, update the 当前状态 column accordingly
-3. Commit the roadmap update:
+1. Update `docs/iteration/roadmap.md` — move from **规划中** → **已完成**
+2. If the iteration fills a gap in the 能力缺口全景 table, update 当前状态 accordingly
+3. Commit the roadmap update (on main, directly):
 
 ```bash
 git add docs/iteration/roadmap.md
 git commit -m "docs: mark v0.X as completed in roadmap"
+git push
 ```
 
 ### Archiving Completed Iterations and Hotfixes
 
-After an iteration or hotfix is closed (all issues merged, acceptance criteria met, roadmap updated), move its documentation directory to `docs/archive/`:
+After closeout, move the docs to `docs/archive/`:
 
 ```bash
-# Archive a completed iteration
-mv docs/iteration/v0_5 docs/archive/v0_5
+mv docs/iteration/v0_10 docs/archive/v0_10
+# or
+mv docs/hotfix/2026_06_17 docs/archive/hotfix/2026_06_17
 
-# Archive a completed hotfix
-mv docs/hotfix/2026_05_26 docs/archive/hotfix/2026_05_26
-```
-
-This keeps the active `docs/iteration/` and `docs/hotfix/` trees focused on in-progress and upcoming work. Completed work remains accessible under `docs/archive/` for reference.
-
-After archiving:
-
-```bash
 git add docs/archive/ docs/iteration/ docs/hotfix/
-git commit -m "docs: archive completed v0.X docs"
+git commit -m "docs: archive completed v0.10 docs"
+git push
 ```
-
-### Dependency Order in v0.1
-
-```
-001 (workspace setup)
-  └── 002 (core types)
-        └── 003 (tool registry)
-              └── 004 (model adapter)
-                    └── 005 (run loop)
-                          ├── 006 (budget guard)
-                          ├── 007 (approval gate)
-                          ├── 008 (async job)
-                          ├── 009 (skill loading)
-                          │     └── 010 (skill bundled tool)
-                          └── 011 (builtin read_file)
-                                └── 012 (Python SDK)
-                                └── 013 (TypeScript SDK)
-                                      └── 014 (e2e validation)
-```
-
-006–011 have some flexibility and can be interleaved once 005 is done.
-
-### Dependency / Cadence in v0.2
-
-v0.2 issues are partially parallelizable. Recommended cadence:
-
-```
-001 (MCP stdio)
-  └── 002 (MCP HTTP)
-        └── 003 (Tool Search Tool)
-
-004 (OpenAI adapter)  // can run in parallel with 001/002/003 after core model interface is stable
-005 (Context compaction) // can run in parallel with 004; touches run-loop/message management
-006 (Webhook async tool) // after async job path is validated; avoid overlapping edits with 005 where possible
-```
-
-Suggested execution rhythm:
-
-1. **MCP lane first**: complete 001 → 002 to unblock all transport-dependent tests.
-2. **Parallel lane**: develop 004 and 005 in separate branches/worktrees.
-3. **Finalize async reliability**: complete 006 after 005 merge to reduce run-loop conflicts.
-4. **Iteration closeout**: run full workspace checks and one end-to-end pass for all v0.2 acceptance criteria.
 
 ---
 
 ## Quick Reference
 
 ```bash
-# Start issue N
-git checkout -b issue-<N>-<slug>
+# Create GitHub issues first (one per issue in the iteration)
+gh issue create --repo jianantian/orchest --title "..." --label "v0.10" --body "..."
 
-# Final commit (triggers auto-close)
-git commit -m "feat: <description> (closes #<N>)"
+# Start an iteration
+git worktree add ../orchest-v0_10 -b iteration/v0_10
+
+# Commit each issue (one commit = one issue)
+git commit -m "feat: <description> (closes #N)"
 
 # Pre-merge checks
 cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --check && bash scripts/lint-check.sh
 
 # Merge and push
-git checkout main && git merge --no-ff issue-<N>-<slug> && git push && git branch -d issue-<N>-<slug>
+git checkout main && git merge --no-ff iteration/v0_10 && git push
+
+# Clean up
+git worktree remove ../orchest-v0_10 && git branch -d iteration/v0_10
 
 # Check milestone progress
 gh api repos/jianantian/orchest/milestones --jq '.[] | "\(.title): \(.closed_issues)/\(.open_issues + .closed_issues)"'
