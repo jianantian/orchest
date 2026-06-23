@@ -212,11 +212,17 @@ pub struct RuntimeConfig {
 
 impl RuntimeConfig {
     /// Resolves whether a tool call requires approval under this run's policy.
-    /// `custom_approval_fn` takes priority; otherwise `approval_mode` decides.
+    /// `custom_approval_fn` takes priority; otherwise Draft/Commit defaults and
+    /// then `approval_mode` decide.
     pub fn should_approve(&self, meta: &crate::tool::ToolMetadata) -> bool {
-        use crate::tool::Approval;
+        use crate::tool::{Approval, ToolExecutionMode};
         if let Some(f) = &self.custom_approval_fn {
             return f(meta);
+        }
+        match &meta.execution_mode {
+            ToolExecutionMode::Draft { .. } => return false,
+            ToolExecutionMode::Commit { .. } => return true,
+            ToolExecutionMode::Normal => {}
         }
         match self.approval_mode {
             ApprovalMode::PerTool => match meta.approval {

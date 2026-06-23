@@ -91,6 +91,10 @@ name = "approval_mode_side_effect"
 path = "../../examples/rust/resilience/approval_mode_side_effect.rs"
 
 [[example]]
+name = "draft_commit_approval"
+path = "../../examples/rust/resilience/draft_commit_approval.rs"
+
+[[example]]
 name = "session_persist_resume"
 path = "../../examples/rust/resilience/session_persist_resume.rs"
 

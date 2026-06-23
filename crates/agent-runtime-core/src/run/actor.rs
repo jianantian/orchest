@@ -18,7 +18,8 @@ use crate::tool::code_exec::CodeExecutionMcpServer;
 use crate::tool::registry::ToolRegistry;
 use crate::tool::search::SearchToolsTool;
 use crate::tool::{
-    ErrorKind, RetryHint, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolOutput,
+    ErrorKind, RetryHint, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolExecutionMode,
+    ToolMetadata, ToolOutput,
 };
 
 use super::compaction::maybe_compact_context;
@@ -1003,12 +1004,13 @@ async fn run_tool_and_handoff_phase(
         };
 
         if state.config.runtime.should_approve(tool.metadata()) {
+            let approval_context = approval_context_for(tool.metadata());
             let approval_rx = state.approval_bus.request(run_id).await;
             emit(
                 subs,
                 RuntimeEvent::ApprovalRequested {
                     tool_call: effective_call.clone(),
-                    context: ApprovalContext::InitialToolCall,
+                    context: approval_context.clone(),
                 },
             )
             .await;
@@ -1033,7 +1035,7 @@ async fn run_tool_and_handoff_phase(
                     subs,
                     RuntimeEvent::ApprovalGranted {
                         tool_call: effective_call.clone(),
-                        context: ApprovalContext::InitialToolCall,
+                        context: approval_context,
                     },
                 )
                 .await;
@@ -1044,7 +1046,7 @@ async fn run_tool_and_handoff_phase(
                     subs,
                     RuntimeEvent::ApprovalDenied {
                         tool_call: effective_call.clone(),
-                        context: ApprovalContext::InitialToolCall,
+                        context: approval_context,
                     },
                 )
                 .await;
@@ -1641,6 +1643,17 @@ fn estimate_context_tokens(messages: &[Message], tool_defs: &[ToolDef]) -> u64 {
 fn primary(subs: &[mpsc::Sender<RuntimeEvent>]) -> &mpsc::Sender<RuntimeEvent> {
     subs.first()
         .expect("event_subs always has at least one subscriber")
+}
+
+fn approval_context_for(meta: &ToolMetadata) -> ApprovalContext {
+    match &meta.execution_mode {
+        ToolExecutionMode::Commit { draft_tool } => ApprovalContext::CommitToolCall {
+            draft_tool: draft_tool.clone(),
+        },
+        ToolExecutionMode::Draft { .. } | ToolExecutionMode::Normal => {
+            ApprovalContext::InitialToolCall
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)] // justified: mirrors pre_start owned state needed to terminate startup cleanly

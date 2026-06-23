@@ -1,6 +1,6 @@
 use super::*;
 use crate::budget::BudgetConfig;
-use crate::events::RuntimeEvent;
+use crate::events::{ApprovalContext, RuntimeEvent};
 use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
     ModelStreamChunk, RequestOptions, Role, StopReason, StreamEvent, TokenUsage,
@@ -304,6 +304,68 @@ impl ModelAdapter for ToolCallModelAdapter {
     }
 }
 
+struct NamedToolCallModel {
+    tool_name: &'static str,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for NamedToolCallModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let has_tool_result = messages.iter().any(|m| {
+            m.content
+                .iter()
+                .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
+        });
+        let usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Default::default()
+        };
+        if let Some(ref tx) = tx {
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+        }
+
+        if has_tool_result {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("done".into())],
+                usage,
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        } else {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: format!("call_{}", self.tool_name),
+                    name: self.tool_name.into(),
+                    input: json!({"path": "/tmp/report.md", "content": "updated"}),
+                }],
+                usage,
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
 struct FakeTool {
     name: &'static str,
     approval: Approval,
@@ -354,6 +416,89 @@ impl Tool for MetadataTool {
     ) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::Immediate(input))
     }
+}
+
+struct CountingMetadataTool {
+    name: &'static str,
+    metadata: ToolMetadata,
+    executions: Arc<AtomicU32>,
+}
+
+#[async_trait::async_trait]
+impl Tool for CountingMetadataTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn description(&self) -> &str {
+        "counting metadata test tool"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &serde_json::Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
+    fn metadata(&self) -> &ToolMetadata {
+        &self.metadata
+    }
+    async fn execute(
+        &self,
+        input: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        self.executions.fetch_add(1, Ordering::SeqCst);
+        Ok(ToolOutput::Immediate(input))
+    }
+}
+
+fn draft_metadata() -> ToolMetadata {
+    ToolMetadata {
+        side_effect: false,
+        approval: Approval::Always,
+        execution_mode: ToolExecutionMode::Draft {
+            commit_tool: "commit_file".into(),
+        },
+        source: ToolSource::InProcess,
+        ..ToolMetadata::default()
+    }
+}
+
+fn commit_metadata() -> ToolMetadata {
+    ToolMetadata {
+        side_effect: false,
+        approval: Approval::Never,
+        execution_mode: ToolExecutionMode::Commit {
+            draft_tool: "draft_file".into(),
+        },
+        source: ToolSource::InProcess,
+        ..ToolMetadata::default()
+    }
+}
+
+fn draft_commit_registry(commit_executions: Option<Arc<AtomicU32>>) -> ToolRegistry {
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(MetadataTool {
+            name: "draft_file",
+            metadata: draft_metadata(),
+        }))
+        .unwrap();
+    match commit_executions {
+        Some(executions) => registry
+            .register(Arc::new(CountingMetadataTool {
+                name: "commit_file",
+                metadata: commit_metadata(),
+                executions,
+            }))
+            .unwrap(),
+        None => registry
+            .register(Arc::new(MetadataTool {
+                name: "commit_file",
+                metadata: commit_metadata(),
+            }))
+            .unwrap(),
+    }
+    registry
 }
 
 #[async_trait::async_trait]
@@ -437,6 +582,141 @@ async fn invalid_tool_metadata_links_fail_run_before_model_call() {
             .as_deref()
             .is_some_and(|error| error.contains("tool metadata validation failed")),
         "invalid metadata links should fail the run"
+    );
+}
+
+#[tokio::test]
+async fn draft_tool_call_runs_without_approval_or_side_effect() {
+    let model = Arc::new(NamedToolCallModel {
+        tool_name: "draft_file",
+    });
+    let mut config = test_config();
+    config.runtime.approval_mode = ApprovalMode::All;
+    let registry = draft_commit_registry(None);
+
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ApprovalRequested { .. })),
+        "draft calls must not request approval by default"
+    );
+    assert!(events.iter().any(|e| {
+        matches!(
+            e,
+            RuntimeEvent::ToolCallStarted {
+                tool,
+                metadata,
+                ..
+            } if tool == "draft_file"
+                && !metadata.side_effect
+                && matches!(metadata.execution_mode, ToolExecutionMode::Draft { .. })
+        )
+    }));
+    assert!(events.iter().any(
+        |e| matches!(e, RuntimeEvent::ToolCallCompleted { tool, .. } if tool == "draft_file")
+    ));
+}
+
+#[tokio::test]
+async fn commit_tool_call_requires_approval_with_linked_draft_context() {
+    let model = Arc::new(NamedToolCallModel {
+        tool_name: "commit_file",
+    });
+    let mut config = test_config();
+    config.runtime.approval_mode = ApprovalMode::None;
+    let registry = draft_commit_registry(None);
+
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        if matches!(event, RuntimeEvent::ApprovalRequested { .. }) {
+            handle.respond_approval(handle.run_id, true).await.unwrap();
+        }
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert!(events.iter().any(|e| {
+        matches!(
+            e,
+            RuntimeEvent::ApprovalRequested {
+                tool_call,
+                context: ApprovalContext::CommitToolCall { draft_tool },
+            } if tool_call.name == "commit_file" && draft_tool == "draft_file"
+        )
+    }));
+    assert!(events.iter().any(
+        |e| matches!(e, RuntimeEvent::ToolCallCompleted { tool, .. } if tool == "commit_file")
+    ));
+}
+
+#[tokio::test]
+async fn commit_approval_denial_prevents_execution() {
+    let model = Arc::new(NamedToolCallModel {
+        tool_name: "commit_file",
+    });
+    let executions = Arc::new(AtomicU32::new(0));
+    let registry = draft_commit_registry(Some(executions.clone()));
+
+    let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        if matches!(event, RuntimeEvent::ApprovalRequested { .. }) {
+            handle.respond_approval(handle.run_id, false).await.unwrap();
+        }
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ApprovalDenied { .. })));
+    assert_eq!(
+        executions.load(Ordering::SeqCst),
+        0,
+        "denied commit must not execute"
+    );
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ToolCallStarted { tool, .. } if tool == "commit_file")));
+}
+
+#[tokio::test]
+async fn custom_approval_fn_can_explicitly_bypass_commit_approval() {
+    let model = Arc::new(NamedToolCallModel {
+        tool_name: "commit_file",
+    });
+    let executions = Arc::new(AtomicU32::new(0));
+    let mut config = test_config();
+    config.runtime.approval_mode = ApprovalMode::None;
+    config.runtime.custom_approval_fn = Some(Arc::new(|_: &ToolMetadata| false));
+    let registry = draft_commit_registry(Some(executions.clone()));
+
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ApprovalRequested { .. })));
+    assert_eq!(
+        executions.load(Ordering::SeqCst),
+        1,
+        "custom approval function is the only bypass for commit approval"
     );
 }
 

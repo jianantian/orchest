@@ -15,6 +15,9 @@ use crate::tool::{ToolCall, ToolError, ToolMetadata};
 pub enum ApprovalContext {
     #[default]
     InitialToolCall,
+    CommitToolCall {
+        draft_tool: String,
+    },
     RetryAfterFailure {
         attempt: u32,
         previous_error: ToolError,
