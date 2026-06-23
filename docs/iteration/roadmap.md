@@ -62,6 +62,16 @@
 
 处理 v1.0 前 API cleanup 和产品层模式：deprecated API 移除、binding shared helpers、message history CoW 评估、复杂 guardrail policy examples、agent team pattern examples。详见 [`v0_9_9/prd.md`](./v0_9_9/prd.md)。
 
+### v0.9.10 — Minimax 多模态 Provider 接入（卫星，规划）
+
+把一个多模态厂商（Minimax，16 API：LLM / TTS / Voice / Music / Video）接入现有 provider crate。卫星迭代，按现有 4-crate 布局具体落，**不动 crate 拓扑**。LLM Phase 1 给 `agent-runtime-model::ContentBlock` 加齐 `Image / Video / Audio` 多模态地基；music 放进 `agent-runtime-aigc-providers` 子模块（不新建 crate）。详见 [`v0_9_10/prd.md`](./v0_9_10/prd.md)。
+
+这是"先堆熵"的一步：单厂商横跨 3 个 crate 的 http+auth 重复，正是后续 provider 统一重构需要的证据。
+
+### 后续方向 — Provider 统一（omni 驱动，待排期）
+
+omni（端到端语音大模型，生态位 ≈ asr+llm+tts 融合）和 Chameleon（对话出图模型）从两个相反方向证伪"按模态分 crate"。三步走：① v0.9.10 接 Minimax → ② 接 1-2 个 omni（qwen-omni / 豆包 realtime，`docs/external/volceengine/realtime.md`）→ ③ 按"交互原语 × 模态"重切、合 crate。详见 [`docs/todo/provider-unification.md`](../todo/provider-unification.md)。
+
 ### v0.10 — Demo Product Validation（规划）
 
 用一个真实但小的完整产品 dogfood SDK，验证其完备性和易用性。v0.10 用 demo 证据决定哪些 API / 文档 / runtime 问题必须在公开发布前修。
@@ -116,6 +126,11 @@ v0.10 至少验证一个轻量 reviewer sub-agent 或 handoff 路径：Agent-as-
 
 ✅ v0.9.1: ASR Provider Gateway（卫星，已完成）
 ✅ v0.9.3: TTS Provider Gateway（卫星，已完成）
+   v0.9.10: Minimax 多模态 Provider 接入（卫星，规划）
+            │
+            ▼
+   后续: Omni 接入（qwen-omni / 豆包 realtime）→ Provider 统一 / 合 crate
+        （docs/todo/provider-unification.md）
 ```
 
 ## 能力缺口全景

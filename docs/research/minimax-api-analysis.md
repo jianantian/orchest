@@ -6,7 +6,19 @@
 > 文档规范:本文每一个设计决策都必须引用 `docs/external/minimax/<file>:<行号>` 或具体 crate 路径。
 > 没有引用的"应该""可能"必须删掉或补来源。
 >
-> 日期: 2026-06-14 | 状态: 设计阶段
+> 日期: 2026-06-14 | 状态: 设计阶段 → 已立项为 **v0.9.10**
+
+---
+
+> **🔧 实现决策更新(2026-06-22,以 [`docs/iteration/v0_9_10/prd.md`](../iteration/v0_9_10/prd.md) 为准)**
+>
+> 本文写于 v0.10 命名确定前,落项时有 3 处调整:
+> 1. **版本号**:文中所有 "v0.10" 指本迭代,实际版本号为 **v0.9.10**(v0.10 已被 Briefing Desk 占用)。
+> 2. **Music 不新建 crate**(覆盖 §四 / §六 Phase 5 / §七 Q3):改放进 `agent-runtime-aigc-providers`
+>    子模块(`src/music/`),单开 `MusicProvider` trait 不污染现有 trait。原因:后续要合 crate
+>    (见 [`docs/todo/provider-unification.md`](../todo/provider-unification.md)),现在不加新 crate。
+> 3. **ContentBlock 一并加 `Audio`**(补充 §2.3):除 `Image`/`Video`,Phase 1 一并加
+>    `ContentBlock::Audio { source }`,作为 omni 端到端语音(后续 Step 2)的前向占位。
 
 ---
 
@@ -14,7 +26,7 @@
 
 | # | Minimax API | 文档锚点 | 归属 crate | 新增模块 | 复用 trait/抽象 |
 |---|---|---|---|---|---|
-| 1 | `POST /anthropic/v1/messages` | `docs/external/minimax/llm.md:25,42` | `agent-runtime-providers` | `providers/minimax/` | `ModelAdapter`,套 `anthropic/{request,response}.rs` |
+| 1 | `POST /anthropic/v1/messages` | `docs/external/minimax/llm/api.md:25,42` | `agent-runtime-providers` | `providers/minimax/` | `ModelAdapter`,套 `anthropic/{request,response}.rs` |
 | 2 | `WSS /ws/v1/t2a_v2` (同步 TTS) | `docs/external/minimax/tts_sync.md:23` | `agent-runtime-tts-providers` | `providers/minimax/sync.rs` + feature `minimax` | `TtsProvider::stream_synthesize` / `start_duplex_stream` |
 | 3 | `POST /v1/t2a_async_v2` | `docs/external/minimax/tts_async.md:39,54` | `agent-runtime-tts-providers` | `providers/minimax/async.rs` | `TtsProvider::synthesize` + 新 `TtsOperation::Async` |
 | 4 | `POST /v1/voice_clone` | `docs/external/minimax/voice_clone/clone.md:15,28` | `agent-runtime-tts-providers` | `providers/minimax/voice.rs` | 新 trait `VoiceManager` (见 §3.5) |
@@ -37,18 +49,18 @@
 
 **归属**: `crates/agent-runtime-providers/`
 **模板**: `crates/agent-runtime-providers/src/providers/anthropic/{mod,request,response}.rs`
-**供应商文档**: `docs/external/minimax/llm.md`
+**供应商文档**: `docs/external/minimax/llm/api.md`
 
 ### 2.1 协议兼容性 (可直接套现有代码)
 
-Minimax LLM 自称 "Anthropic API 兼容 Messages 格式" (`llm.md:7`)。验证:
+Minimax LLM 自称 "Anthropic API 兼容 Messages 格式" (`llm/api.md:7`)。验证:
 
 | 项 | Minimax 字段 | 现有 Anthropic adapter | 锚点 |
 |---|---|---|---|
-| 路径 | `POST /anthropic/v1/messages` | 同 | `llm.md:25,42` |
-| 鉴权 | `Authorization: Bearer` + `x-api-key` 任一 | `Bearer` | `llm.md:38-40` |
-| SSE 事件 | `message_start` / `content_block_delta` / `message_stop` / `thinking_delta` | 同 (见 `anthropic/response.rs:118`) | `llm.md:1019` |
-| `thinking` schema | `{type: "adaptive" \| "disabled"}` + `display: summarized\|omitted` | 同 (见 `anthropic/request.rs:107-128`) | `llm.md:880-898` |
+| 路径 | `POST /anthropic/v1/messages` | 同 | `llm/api.md:25,42` |
+| 鉴权 | `Authorization: Bearer` + `x-api-key` 任一 | `Bearer` | `llm/api.md:38-40` |
+| SSE 事件 | `message_start` / `content_block_delta` / `message_stop` / `thinking_delta` | 同 (见 `anthropic/response.rs:118`) | `llm/api.md:1019` |
+| `thinking` schema | `{type: "adaptive" \| "disabled"}` + `display: summarized\|omitted` | 同 (见 `anthropic/request.rs:107-128`) | `llm/api.md:880-898` |
 | `tool` / `tool_choice` / `tool_use` / `tool_result` | 同 Anthropic | 同 | (内嵌于 Messages schema) |
 
 **结论**: `ModelAdapter` trait 不动,直接以 `AnthropicAdapter` 为模板做 `MinimaxAdapter`。
@@ -60,8 +72,8 @@ Minimax LLM 自称 "Anthropic API 兼容 Messages 格式" (`llm.md:7`)。验证:
 2. **注册到 `ProviderRegistry`**: `crates/agent-runtime-providers/src/registry.rs` + `providers/mod.rs`
    - 前缀: `minimax/MiniMax-M3`、`minimax/MiniMax-M2.7` 等
 3. **Catalog 条目** (`catalog.rs`):MiniMax-M3 / M2.7 / M2.5 / M2.1,定价待补
-4. **默认 API URL**: `https://api.minimaxi.com` (见 `llm.md:36-37`)
-5. **鉴权**: 用 `Authorization: Bearer ${api_key}` 与 `AnthropicAdapter` 行为对齐 (`llm.md:38-40` 允许两种)
+4. **默认 API URL**: `https://api.minimaxi.com` (见 `llm/api.md:36-37`)
+5. **鉴权**: 用 `Authorization: Bearer ${api_key}` 与 `AnthropicAdapter` 行为对齐 (`llm/api.md:38-40` 允许两种)
 
 ### 2.3 需要扩展的字段
 
@@ -71,11 +83,11 @@ Minimax LLM 自称 "Anthropic API 兼容 Messages 格式" (`llm.md:7`)。验证:
 
 | 字段 | 锚点 | 当前是否支持 | 动作 |
 |---|---|---|---|
-| `image` content block | `llm.md:843,1188`(`ContentBlock` 当前列表) | ❌ 全无 | `ContentBlock::Image { source: MediaSource, detail: Option<String> }` 新增 variant + 顺带让现有 Anthropic adapter 也实现 image 序列化(`Anthropic Messages API` 本就支持) |
-| `video` content block | `llm.md:843,1188,1334-1343` | ❌ | `ContentBlock::Video { source: MediaSource, fps, detail, max_long_side_pixel }` 新增 variant,Minimax 专属字段(`fps` / `max_long_side_pixel`)挂在此 variant 上 |
-| `mid_conv_system` block | `llm.md:1136,1202-1211` | ❌ | `ContentBlock::MidConvSystem(String)` 新增 variant |
-| `user_system` / `group` / `sample_message_user` / `sample_message_ai` 角色 | `llm.md:1088-1091` | ❌ (当前 `Role` 是固定 enum,位于 `crates/agent-runtime-model/src/types.rs:16-22`) | 给 `Role` 加 4 个 variant,序列化时只 Minimax adapter 输出这些值 |
-| `service_tier`: `standard\|priority` | `llm.md:807,360,548` | ❌ | `RequestOptions.service_tier: Option<String>`(在 `agent-runtime-model/src/options.rs`)|
+| `image` content block | `llm/api.md:843,1188`(`ContentBlock` 当前列表) | ❌ 全无 | `ContentBlock::Image { source: MediaSource, detail: Option<String> }` 新增 variant + 顺带让现有 Anthropic adapter 也实现 image 序列化(`Anthropic Messages API` 本就支持) |
+| `video` content block | `llm/api.md:843,1188,1334-1343` | ❌ | `ContentBlock::Video { source: MediaSource, fps, detail, max_long_side_pixel }` 新增 variant,Minimax 专属字段(`fps` / `max_long_side_pixel`)挂在此 variant 上 |
+| `mid_conv_system` block | `llm/api.md:1136,1202-1211` | ❌ | `ContentBlock::MidConvSystem(String)` 新增 variant |
+| `user_system` / `group` / `sample_message_user` / `sample_message_ai` 角色 | `llm/api.md:1088-1091` | ❌ (当前 `Role` 是固定 enum,位于 `crates/agent-runtime-model/src/types.rs:16-22`) | 给 `Role` 加 4 个 variant,序列化时只 Minimax adapter 输出这些值 |
+| `service_tier`: `standard\|priority` | `llm/api.md:807,360,548` | ❌ | `RequestOptions.service_tier: Option<String>`(在 `agent-runtime-model/src/options.rs`)|
 
 **命名冲突警告**: `crates/agent-runtime-aigc-providers/src/types/video.rs:88` 已有 `service_tier: Option<String>` 字段,但语义是"图片/视频生成调用优先级",与 LLM 的"standard / priority" 不同语义。两者不要互相借用;若担心读者混淆,可在 `agent-runtime-model` 的字段文档注释里明示。
 
@@ -418,6 +430,10 @@ pub struct DesignVoiceRequest {
 
 ## 四、Music — 新 crate `agent-runtime-music-providers`
 
+> ⚠️ **决策已变更(见顶部 banner)**:v0.9.10 **不新建 crate**,music 放进
+> `agent-runtime-aigc-providers/src/music/`。下方"新建独立 crate"的论证保留作历史记录,
+> 实际布局以 [`v0_9_10/issues/006-minimax-music/spec.md`](../iteration/v0_9_10/issues/006-minimax-music/spec.md) 为准。
+
 **归属**: **新建** `crates/agent-runtime-music-providers/`(独立 crate,不并入 aigc)
 
 **理由**: 音乐生成与图片/视频生成的参数体系差异大(歌词、翻唱预处理、流式 hex 输出),且 API 之间有强逻辑耦合(歌词 + 预处理 → 生成)。并入 aigc 会污染 `VideoProvider` / `ImageProvider` trait。后续若有第二家音乐 provider(如 Suno),复用价值明显。
@@ -715,12 +731,12 @@ Phase 5: Music
 核查结论(全文 grep):
 - 出现的 LLM 模型只有 `MiniMax-M2 / M2.1 / M2.5 / M2.7 / M3`(及 `-highspeed` 变体)
 - 没有 `her` / `role.?play` / `角色扮演` / `陪伴` / `companion` / `persona` 任何关键词
-- `llm.md` 只覆盖 `/anthropic/v1/messages` 一个端点
+- `llm/api.md` 只覆盖 `/anthropic/v1/messages` 一个端点
 
 **可能的解释**(本地不可证):
 1. Her 走 Minimax 自有 chat 协议(非 Anthropic 兼容路径),如 `/v1/text/chatcompletion_v2` 系列,文档未拉取
 2. Her 在 Minimax 海外站(MiniMax Audio / Talkie)产品里,不出现在 `platform.minimaxi.com/docs` 的 API 索引中
-3. `llm.md:2` 写明 "Fetch the complete documentation index at https://platform.minimaxi.com/docs/llms.txt",**本地是子集**,Her 可能在未拉取的页面里
+3. `llm/api.md:2` 写明 "Fetch the complete documentation index at https://platform.minimaxi.com/docs/llms.txt",**本地是子集**,Her 可能在未拉取的页面里
 
 **对接入设计的影响**:
 - 若 Her 走 Anthropic 兼容路径,**§二 的 `MinimaxAdapter` 已覆盖**,只需在 `catalog.rs` 加模型条目
