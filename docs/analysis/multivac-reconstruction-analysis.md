@@ -11,7 +11,7 @@
 - **Task** 是执行记账，**Runtime** 是执行宿主，**Artifact** 是执行产物——三者经 Locator（`knowledge://` URI + provenance + scope）全部可寻址
 - 外部 IM 是 distribution surface，不是产品定义
 
-**v0 工程剖面（ADR-001 D7）**：桌面单壳（Tauri vs Electron 复审中，§6.2）+ SQLite + Claude Code 单 runtime + 单 workspace。本文档 §6.7（编排深度）、§6.9（MessageIngress）、§6.10-6.13（双模式交付）为**目标架构，非 v0 范围**——接口形态保留，工程预算为零。
+**v0 工程剖面（ADR-001 D7）**：桌面单壳（Tauri vs Electron 复审中，§6.2）+ SQLite + Claude Code 单 runtime + 单 workspace。本文档 §6.7（编排深度）、§6.9（MessageIngress）、§6.10-6.13（host 取值/打包变体）为**目标架构，非 v0 范围**——接口形态保留，工程预算为零。
 
 ---
 
@@ -432,7 +432,7 @@ pub enum IngressMessage {
 - **回调防伪造**：交互卡片按钮签 runId + scope + operator + action + policy_fingerprint + 过期 + nonce，HMAC + replay 防护
 - adapter 本身尽量薄，不在 v0 实现——但 `ingress/` 模块和上述 trait 现在就定型，避免后补时侵入 session 模块
 
-### 6.10 两个产品 Binary 的差异
+### 6.10 host 取值 / 打包变体的 Binary 差异（原「两个产品 Binary」）
 
 ```rust
 // ===== Mode 2: Cloud (multivac-server/src/main.rs) =====
@@ -512,7 +512,7 @@ const ws = new WebSocket(BACKEND_URL.replace('http', 'ws') + '/ws');
 
 > **跨设备：同一 host 模型 + 瘦 relay 可达，[ADR D15](./adr-001-product-positioning.md)（部署统一模型见 D16）。** 跨设备不引入新 host 形态——执行平面(workspace/files/terminal/Claude Code)仍在用户机器(local-first)，只是 daemon 主动外拨一个**瘦 relay**(只转发 events + auth，非全后端)，让移动/web 客户端可达。这正是 `BACKEND_URL` + daemon-first + 事件溯源的免费副产品：异机客户端就是「另一个瘦客户端，BACKEND_URL 指向 relay，订阅同一 daemon 的事件流」。复用 RuntimeBackend 已有的 reverse-WebSocket 可达模式。**移动端是阶段二 surface**(遥控 + 验收，surface 子集)，不是阶段一重共创。web 跨设备 v0 即近乎免费(创始人用 tunnel/LAN)；移动 app + 产品化 relay = M2。
 
-### 6.12 两种模式的行为差异
+### 6.12 host 取值 / 打包变体的行为差异
 
 | 行为 | All-in-One (Tauri) | Cloud SaaS |
 |------|-------------------|------------|
@@ -529,13 +529,13 @@ const ws = new WebSocket(BACKEND_URL.replace('http', 'ws') + '/ws');
 | **安装** | 下载 .dmg/.msi | 打开浏览器 |
 | **升级** | Tauri updater | 服务端部署 |
 
-### 6.13 AppConfig 的模式差异
+### 6.13 AppConfig 的 host 取值差异
 
 ```rust
 // crates/multivac-core/src/lib.rs
 
 pub struct AppConfig {
-    // 两种模式都有的
+    // 各 host 取值都有的
     pub skills_dir: PathBuf,
     pub file_store_root: PathBuf,
 
@@ -592,7 +592,7 @@ pub struct FeatureFlags {
 
 ### 6.14 技术栈选择
 
-| 层 | 技术 | 两种模式的差异 |
+| 层 | 技术 | host 取值的差异 |
 |----|------|--------------|
 | **桌面壳** | Tauri 2.x | 仅 Mode 1 |
 | **HTTP 框架** | axum 0.8 | 相同 |
