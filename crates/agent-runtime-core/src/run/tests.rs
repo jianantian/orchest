@@ -1720,27 +1720,40 @@ impl ModelAdapter for ToolSearchModel {
                 })
                 .await;
         }
-        if count == 0 {
-            assert_eq!(tools.len(), 1);
-            assert_eq!(tools[0].name, "search_tools");
-            Ok(ModelResponse {
-                content: vec![ContentBlock::ToolUse {
-                    id: "search_1".into(),
-                    name: "search_tools".into(),
-                    input: json!({"query": "async operation"}),
-                }],
-                usage,
-                stop_reason: StopReason::ToolUse,
-                option_adjustments: vec![],
-            })
-        } else {
-            assert!(tools.iter().any(|tool| tool.name == "async_op"));
-            Ok(ModelResponse {
+        match count {
+            0 => {
+                assert_eq!(tools.len(), 1);
+                assert_eq!(tools[0].name, "search_tools");
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "search_1".into(),
+                        name: "search_tools".into(),
+                        input: json!({"query": "async operation"}),
+                    }],
+                    usage,
+                    stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
+                })
+            }
+            1 => {
+                assert!(tools.iter().any(|tool| tool.name == "async_op"));
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "async_1".into(),
+                        name: "async_op".into(),
+                        input: json!({}),
+                    }],
+                    usage,
+                    stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
+                })
+            }
+            _ => Ok(ModelResponse {
                 content: vec![ContentBlock::Text("done".into())],
                 usage,
                 stop_reason: StopReason::EndTurn,
                 option_adjustments: vec![],
-            })
+            }),
         }
     }
 }
@@ -1759,6 +1772,174 @@ async fn tool_search_enabled_loads_schemas_progressively() {
         call_count: AtomicU32::new(0),
     });
     let (handle, mut rx) = AgentRun::start(config, "find tool".into(), model, registry);
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+}
+
+struct NoResultToolSearchModel {
+    call_count: AtomicU32,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for NoResultToolSearchModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        tools: &[ToolDef],
+        _options: &RequestOptions,
+        tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let count = self.call_count.fetch_add(1, Ordering::SeqCst);
+        let usage = TokenUsage {
+            input_tokens: 5,
+            output_tokens: 5,
+            ..Default::default()
+        };
+        if let Some(ref tx) = tx {
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+        }
+        if count == 0 {
+            assert_eq!(tools.len(), 1);
+            assert_eq!(tools[0].name, "search_tools");
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "search_empty".into(),
+                    name: "search_tools".into(),
+                    input: json!({"query": "zzzzzz"}),
+                }],
+                usage,
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        } else {
+            assert_eq!(tools.len(), 1);
+            assert_eq!(tools[0].name, "search_tools");
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("done".into())],
+                usage,
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+struct DisabledToolSearchModel;
+
+#[async_trait::async_trait]
+impl ModelAdapter for DisabledToolSearchModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        tools: &[ToolDef],
+        _options: &RequestOptions,
+        tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        assert!(tools.iter().any(|tool| tool.name == "async_op"));
+        assert!(!tools.iter().any(|tool| tool.name == "search_tools"));
+        let usage = TokenUsage {
+            input_tokens: 5,
+            output_tokens: 5,
+            ..Default::default()
+        };
+        if let Some(ref tx) = tx {
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+        }
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("done".into())],
+            usage,
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[tokio::test]
+async fn tool_search_hidden_tool_call_is_rejected_before_exposure() {
+    let mut config = test_config();
+    config.runtime.tool_search_enabled = true;
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(AsyncTool {
+            polls_until_done: AtomicU32::new(1),
+        }))
+        .unwrap();
+    let model = Arc::new(NamedToolCallModel {
+        tool_name: "async_op",
+    });
+
+    let (handle, mut rx) = AgentRun::start(config, "guess tool".into(), model, registry);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert!(events.iter().any(
+        |e| matches!(e, RuntimeEvent::ToolCallFailed { tool, error } if tool == "async_op"
+            && error.code.as_deref() == Some("NOT_EXPOSED"))
+    ));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ToolCallStarted { tool, .. } if tool == "async_op")));
+}
+
+#[tokio::test]
+async fn tool_search_disabled_exposes_all_schemas_without_search_tools() {
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(AsyncTool {
+            polls_until_done: AtomicU32::new(1),
+        }))
+        .unwrap();
+    let model = Arc::new(DisabledToolSearchModel);
+
+    let (handle, mut rx) = AgentRun::start(test_config(), "list tools".into(), model, registry);
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+}
+
+#[tokio::test]
+async fn tool_search_no_results_keeps_hidden_tools_unexposed() {
+    let mut config = test_config();
+    config.runtime.tool_search_enabled = true;
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(AsyncTool {
+            polls_until_done: AtomicU32::new(1),
+        }))
+        .unwrap();
+    let model = Arc::new(NoResultToolSearchModel {
+        call_count: AtomicU32::new(0),
+    });
+
+    let (handle, mut rx) = AgentRun::start(config, "find nothing".into(), model, registry);
     while rx.recv().await.is_some() {}
     handle.wait().await;
 }

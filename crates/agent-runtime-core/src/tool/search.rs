@@ -53,6 +53,7 @@ impl SearchToolsTool {
         });
         scored
             .into_iter()
+            .filter(|(score, _, _)| *score > 0.0)
             .take(top_k)
             .map(|(_, _, tool)| tool)
             .collect()
@@ -163,5 +164,17 @@ mod tests {
         };
         assert_eq!(results[0]["name"], "read_file");
         assert!(results[0].get("input_schema").is_some());
+    }
+
+    #[tokio::test]
+    async fn search_omits_zero_score_results() {
+        let tool = SearchToolsTool::new(vec![super::super::ToolDef {
+            name: "read_file".into(),
+            description: "Read a file from disk".into(),
+            input_schema: json!({"type": "object"}),
+        }]);
+        let results = tool.search("zzzzzz", 5);
+
+        assert!(results.is_empty());
     }
 }

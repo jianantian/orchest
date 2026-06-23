@@ -922,6 +922,22 @@ async fn run_tool_and_handoff_phase(
     let mut pending_handoff: Option<PendingHandoff> = None;
 
     for tool_call in tool_uses {
+        if let Some(error) = deferred_tool_exposure_error(state, &tool_call.name) {
+            emit(
+                subs,
+                RuntimeEvent::ToolCallFailed {
+                    tool: tool_call.name.clone(),
+                    error: error.clone(),
+                },
+            )
+            .await;
+            tool_results.push(ContentBlock::ToolResult {
+                tool_use_id: tool_call.id.clone(),
+                content: tool_error_result(&error),
+            });
+            continue;
+        }
+
         let tool = match state.registry.get(&tool_call.name) {
             Some(t) => t,
             None => {
@@ -1654,6 +1670,22 @@ fn approval_context_for(meta: &ToolMetadata) -> ApprovalContext {
             ApprovalContext::InitialToolCall
         }
     }
+}
+
+fn deferred_tool_exposure_error(state: &AgentRunState, tool_name: &str) -> Option<ToolError> {
+    if !state.config.runtime.tool_search_enabled || tool_name == "search_tools" {
+        return None;
+    }
+    if state.tool_defs.iter().any(|tool| tool.name == tool_name) {
+        return None;
+    }
+    state.registry.contains(tool_name).then(|| {
+        ToolError::fatal(format!(
+            "tool '{tool_name}' is hidden until returned by search_tools"
+        ))
+        .with_code("NOT_EXPOSED")
+        .with_next_step("call search_tools and retry after the tool schema is exposed")
+    })
 }
 
 #[allow(clippy::too_many_arguments)] // justified: mirrors pre_start owned state needed to terminate startup cleanly
