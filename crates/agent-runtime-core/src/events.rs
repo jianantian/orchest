@@ -75,6 +75,21 @@ pub enum RuntimeEvent {
         previous_error: ToolError,
         next_delay: Duration,
     },
+    ToolCallBatchStarted {
+        batch_id: String,
+        tool_count: usize,
+    },
+    ToolCallBatchItemStarted {
+        batch_id: String,
+        tool: String,
+        requested_order: usize,
+    },
+    ToolCallBatchItemCompleted {
+        batch_id: String,
+        tool: String,
+        requested_order: usize,
+        completion_order: usize,
+    },
 
     AsyncToolStarted {
         tool: String,

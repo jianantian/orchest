@@ -2675,6 +2675,464 @@ impl ModelAdapter for MultiToolCallModel {
     }
 }
 
+struct SameTurnToolCallModel {
+    call_count: AtomicU32,
+    tool_names: Vec<&'static str>,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for SameTurnToolCallModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let count = self.call_count.fetch_add(1, Ordering::SeqCst);
+        let tool_result_count = messages
+            .iter()
+            .flat_map(|message| &message.content)
+            .filter(|block| matches!(block, ContentBlock::ToolResult { .. }))
+            .count();
+        let usage = TokenUsage {
+            input_tokens: 5,
+            output_tokens: 5,
+            ..Default::default()
+        };
+        if let Some(ref tx) = tx {
+            let _ = tx
+                .send(ModelStreamChunk::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+        }
+        if count == 0 {
+            Ok(ModelResponse {
+                content: self
+                    .tool_names
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, name)| ContentBlock::ToolUse {
+                        id: format!("call_{idx}"),
+                        name: (*name).into(),
+                        input: json!({"idx": idx}),
+                    })
+                    .collect(),
+                usage,
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        } else {
+            assert_eq!(tool_result_count, self.tool_names.len());
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("done".into())],
+                usage,
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+struct ConcurrencyTool {
+    name: &'static str,
+    metadata: ToolMetadata,
+    current: Arc<AtomicU32>,
+    max_seen: Arc<AtomicU32>,
+    sleep_ms: u64,
+    fail: bool,
+}
+
+#[async_trait::async_trait]
+impl Tool for ConcurrencyTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn description(&self) -> &str {
+        "concurrency test tool"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &serde_json::Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
+    fn metadata(&self) -> &ToolMetadata {
+        &self.metadata
+    }
+    async fn execute(
+        &self,
+        input: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        let now = self.current.fetch_add(1, Ordering::SeqCst) + 1;
+        update_max_seen(&self.max_seen, now);
+        tokio::time::sleep(Duration::from_millis(self.sleep_ms)).await;
+        self.current.fetch_sub(1, Ordering::SeqCst);
+        if self.fail {
+            Err(ToolError::transient("parallel failure").with_code("PARALLEL_TEST_FAILURE"))
+        } else {
+            Ok(ToolOutput::Immediate(input))
+        }
+    }
+}
+
+fn update_max_seen(max_seen: &AtomicU32, observed: u32) {
+    let mut current = max_seen.load(Ordering::SeqCst);
+    while observed > current {
+        match max_seen.compare_exchange(current, observed, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => break,
+            Err(next) => current = next,
+        }
+    }
+}
+
+fn concurrency_metadata(parallelism: ToolParallelism, approval: Approval) -> ToolMetadata {
+    ToolMetadata {
+        side_effect: false,
+        approval,
+        parallelism,
+        execution_mode: ToolExecutionMode::Normal,
+        source: ToolSource::InProcess,
+        ..ToolMetadata::default()
+    }
+}
+
+fn register_concurrency_tool(
+    registry: &mut ToolRegistry,
+    name: &'static str,
+    metadata: ToolMetadata,
+    current: Arc<AtomicU32>,
+    max_seen: Arc<AtomicU32>,
+    sleep_ms: u64,
+    fail: bool,
+) {
+    registry
+        .register(Arc::new(ConcurrencyTool {
+            name,
+            metadata,
+            current,
+            max_seen,
+            sleep_ms,
+            fail,
+        }))
+        .unwrap();
+}
+
+#[tokio::test]
+async fn parallel_tool_execution_is_disabled_by_default() {
+    let current = Arc::new(AtomicU32::new(0));
+    let max_seen = Arc::new(AtomicU32::new(0));
+    let mut registry = ToolRegistry::new();
+    for name in ["parallel_a", "parallel_b"] {
+        register_concurrency_tool(
+            &mut registry,
+            name,
+            concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never),
+            current.clone(),
+            max_seen.clone(),
+            20,
+            false,
+        );
+    }
+    let model = Arc::new(SameTurnToolCallModel {
+        call_count: AtomicU32::new(0),
+        tool_names: vec!["parallel_a", "parallel_b"],
+    });
+
+    let (handle, mut rx) = AgentRun::start(test_config(), "run tools".into(), model, registry);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert_eq!(max_seen.load(Ordering::SeqCst), 1);
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ToolCallBatchStarted { .. })));
+}
+
+#[tokio::test]
+async fn parallel_safe_tools_execute_concurrently_when_enabled() {
+    let current = Arc::new(AtomicU32::new(0));
+    let max_seen = Arc::new(AtomicU32::new(0));
+    let mut registry = ToolRegistry::new();
+    for name in ["parallel_a", "parallel_b"] {
+        register_concurrency_tool(
+            &mut registry,
+            name,
+            concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never),
+            current.clone(),
+            max_seen.clone(),
+            50,
+            false,
+        );
+    }
+    let mut config = test_config();
+    config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;
+    let model = Arc::new(SameTurnToolCallModel {
+        call_count: AtomicU32::new(0),
+        tool_names: vec!["parallel_a", "parallel_b"],
+    });
+
+    let (handle, mut rx) = AgentRun::start(config, "run tools".into(), model, registry);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert_eq!(max_seen.load(Ordering::SeqCst), 2);
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ToolCallBatchStarted { tool_count: 2, .. })));
+    assert!(events.iter().any(|e| {
+        matches!(
+            e,
+            RuntimeEvent::ToolCallBatchItemCompleted {
+                requested_order: 0,
+                ..
+            }
+        )
+    }));
+    assert!(events.iter().any(|e| {
+        matches!(
+            e,
+            RuntimeEvent::ToolCallBatchItemCompleted {
+                requested_order: 1,
+                ..
+            }
+        )
+    }));
+}
+
+#[tokio::test]
+async fn parallel_batch_records_failures_deterministically() {
+    let current = Arc::new(AtomicU32::new(0));
+    let max_seen = Arc::new(AtomicU32::new(0));
+    let mut registry = ToolRegistry::new();
+    register_concurrency_tool(
+        &mut registry,
+        "parallel_ok",
+        concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never),
+        current.clone(),
+        max_seen.clone(),
+        30,
+        false,
+    );
+    register_concurrency_tool(
+        &mut registry,
+        "parallel_fail",
+        concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never),
+        current.clone(),
+        max_seen.clone(),
+        30,
+        true,
+    );
+    let mut config = test_config();
+    config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;
+    let model = Arc::new(SameTurnToolCallModel {
+        call_count: AtomicU32::new(0),
+        tool_names: vec!["parallel_ok", "parallel_fail"],
+    });
+
+    let (handle, mut rx) = AgentRun::start(config, "run tools".into(), model, registry);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert_eq!(max_seen.load(Ordering::SeqCst), 2);
+    assert!(events.iter().any(
+        |e| matches!(e, RuntimeEvent::ToolCallFailed { tool, error } if tool == "parallel_fail"
+            && error.code.as_deref() == Some("PARALLEL_TEST_FAILURE"))
+    ));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+}
+
+#[tokio::test]
+async fn mixed_serial_parallel_tools_fall_back_to_ordered_execution() {
+    let current = Arc::new(AtomicU32::new(0));
+    let max_seen = Arc::new(AtomicU32::new(0));
+    let mut registry = ToolRegistry::new();
+    register_concurrency_tool(
+        &mut registry,
+        "serial",
+        concurrency_metadata(ToolParallelism::Serial, Approval::Never),
+        current.clone(),
+        max_seen.clone(),
+        20,
+        false,
+    );
+    register_concurrency_tool(
+        &mut registry,
+        "parallel",
+        concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never),
+        current.clone(),
+        max_seen.clone(),
+        20,
+        false,
+    );
+    let mut config = test_config();
+    config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;
+    let model = Arc::new(SameTurnToolCallModel {
+        call_count: AtomicU32::new(0),
+        tool_names: vec!["serial", "parallel"],
+    });
+
+    let (handle, mut rx) = AgentRun::start(config, "run tools".into(), model, registry);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert_eq!(max_seen.load(Ordering::SeqCst), 1);
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ToolCallBatchStarted { .. })));
+}
+
+#[tokio::test]
+async fn approval_gated_tools_are_excluded_from_parallel_execution() {
+    let current = Arc::new(AtomicU32::new(0));
+    let max_seen = Arc::new(AtomicU32::new(0));
+    let mut registry = ToolRegistry::new();
+    for name in ["guarded_a", "guarded_b"] {
+        register_concurrency_tool(
+            &mut registry,
+            name,
+            concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Always),
+            current.clone(),
+            max_seen.clone(),
+            20,
+            false,
+        );
+    }
+    let mut config = test_config();
+    config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;
+    let model = Arc::new(SameTurnToolCallModel {
+        call_count: AtomicU32::new(0),
+        tool_names: vec!["guarded_a", "guarded_b"],
+    });
+
+    let (handle, mut rx) = AgentRun::start(config, "run tools".into(), model, registry);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        if matches!(event, RuntimeEvent::ApprovalRequested { .. }) {
+            handle.respond_approval(handle.run_id, true).await.unwrap();
+        }
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert_eq!(max_seen.load(Ordering::SeqCst), 1);
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ApprovalRequested { .. })));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ToolCallBatchStarted { .. })));
+}
+
+#[tokio::test]
+async fn parallel_timeout_is_reported_per_tool() {
+    let current = Arc::new(AtomicU32::new(0));
+    let max_seen = Arc::new(AtomicU32::new(0));
+    let mut metadata = concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never);
+    metadata.timeout = Some(Duration::from_millis(5));
+    let mut registry = ToolRegistry::new();
+    for name in ["timeout_a", "timeout_b"] {
+        register_concurrency_tool(
+            &mut registry,
+            name,
+            metadata.clone(),
+            current.clone(),
+            max_seen.clone(),
+            50,
+            false,
+        );
+    }
+    let mut config = test_config();
+    config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;
+    let model = Arc::new(SameTurnToolCallModel {
+        call_count: AtomicU32::new(0),
+        tool_names: vec!["timeout_a", "timeout_b"],
+    });
+
+    let (handle, mut rx) = AgentRun::start(config, "run tools".into(), model, registry);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    let timeout_failures = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                RuntimeEvent::ToolCallFailed { error, .. }
+                    if error.code.as_deref() == Some("TIMEOUT")
+            )
+        })
+        .count();
+    assert_eq!(timeout_failures, 2);
+}
+
+#[tokio::test]
+async fn parallel_batch_honors_abort_after_batch_boundary() {
+    let current = Arc::new(AtomicU32::new(0));
+    let max_seen = Arc::new(AtomicU32::new(0));
+    let mut registry = ToolRegistry::new();
+    for name in ["abort_a", "abort_b"] {
+        register_concurrency_tool(
+            &mut registry,
+            name,
+            concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never),
+            current.clone(),
+            max_seen.clone(),
+            30,
+            false,
+        );
+    }
+    let mut config = test_config();
+    config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;
+    let model = Arc::new(SameTurnToolCallModel {
+        call_count: AtomicU32::new(0),
+        tool_names: vec!["abort_a", "abort_b"],
+    });
+
+    let (handle, mut rx) = AgentRun::start(config, "run tools".into(), model, registry);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        if matches!(event, RuntimeEvent::ToolCallBatchStarted { .. }) {
+            handle.abort();
+        }
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert_eq!(max_seen.load(Ordering::SeqCst), 2);
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, RuntimeEvent::RunAborted { reason: None })));
+}
+
 #[tokio::test]
 async fn max_tool_calls_boundary_enforced() {
     let mut config = test_config();
