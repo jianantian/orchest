@@ -278,8 +278,10 @@ async fn provider_config_max_tokens_default_and_override() {
     })
     .expect("adapter should create");
 
-    let mut options = RequestOptions::default();
-    options.max_tokens = Some(5678);
+    let options = RequestOptions {
+        max_tokens: Some(5678),
+        ..Default::default()
+    };
     let _ = adapter
         .complete(&[], &[], &options, None)
         .await
@@ -549,7 +551,7 @@ fn system_role_maps_per_provider() {
     })
     .unwrap();
 
-    let messages = vec![Message {
+    let messages = [Message {
         role: Role::System,
         content: vec![ContentBlock::Text("You are helpful.".into())],
     }];

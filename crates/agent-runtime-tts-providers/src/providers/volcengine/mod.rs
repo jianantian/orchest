@@ -590,9 +590,11 @@ mod tests {
 
     #[test]
     fn session_payload_maps_portable_controls_to_volcengine_fields() {
-        let mut controls = SpeechControls::default();
-        controls.speed = 1.5;
-        controls.pitch = 3.4;
+        let controls = SpeechControls {
+            speed: 1.5,
+            pitch: 3.4,
+            ..SpeechControls::default()
+        };
         let request = VolcengineSynthesisRequest {
             trace_id: "trace".to_owned(),
             model: "seed-tts-2.0".to_owned(),
