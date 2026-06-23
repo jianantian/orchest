@@ -1,10 +1,10 @@
 //! Volcengine Ark (火山方舟) video generation adapter — Seedance models.
 //!
 //! Endpoints:
-//!   POST   https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks
-//!   GET    https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/{id}
-//!   DELETE https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/{id}
-//!   GET    https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks
+//!   POST   <https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks>
+//!   GET    <https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/>{id}
+//!   DELETE <https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/>{id}
+//!   GET    <https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks>
 //! Auth: Authorization: Bearer $ARK_API_KEY
 //!
 //! Unlike image generation this API is asynchronous: create returns a task id

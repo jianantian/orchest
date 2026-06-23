@@ -1,8 +1,8 @@
 //! Anthropic Claude adapter implementation.
 //!
 //! Split by concern: this file owns the adapter struct, capability
-//! reporting, and `complete()`'s control flow; [`request`] builds the
-//! Messages API request body; [`response`] consumes the SSE response into a
+//! reporting, and `complete()`'s control flow; `request` builds the
+//! Messages API request body; `response` consumes the SSE response into a
 //! normalized result.
 
 mod request;
