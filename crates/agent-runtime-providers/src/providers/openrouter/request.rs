@@ -8,9 +8,11 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::{
-    ContentBlock, Message, ModelError, OptionAdjustment, RequestOptions, Role, ThinkingLevel,
-    ToolDef, UpstreamErrorDetail,
+    ContentBlock, Message, ModelError, OptionAdjustment, RequestOptions, ThinkingLevel, ToolDef,
+    UpstreamErrorDetail,
 };
+
+use crate::role_compat::{downgrade_minimax_role, CompatibleRole};
 
 use super::OpenRouterAdapter;
 
@@ -74,11 +76,12 @@ impl OpenRouterAdapter {
         options: &RequestOptions,
     ) -> Result<(Value, Vec<OptionAdjustment>), ModelError> {
         let mut api_messages: Vec<Value> = Vec::new();
-        let adjustments = Vec::new();
+        let mut adjustments = Vec::new();
 
         for message in messages {
-            match message.role {
-                Role::System => {
+            let effective_role = downgrade_minimax_role(message.role, &mut adjustments);
+            match effective_role {
+                CompatibleRole::System => {
                     let text = message
                         .content
                         .iter()
@@ -90,7 +93,7 @@ impl OpenRouterAdapter {
                         .join("\n");
                     api_messages.push(json!({"role": "system", "content": text}));
                 }
-                Role::User => {
+                CompatibleRole::User => {
                     let mut text_parts = Vec::new();
                     let mut tool_results = Vec::new();
                     for block in &message.content {
@@ -122,7 +125,7 @@ impl OpenRouterAdapter {
                         api_messages.push(json!({"role": "user", "content": text}));
                     }
                 }
-                Role::Assistant => {
+                CompatibleRole::Assistant => {
                     let has_tool_calls = message
                         .content
                         .iter()
@@ -182,7 +185,7 @@ impl OpenRouterAdapter {
                     }
                     api_messages.push(msg);
                 }
-                Role::Tool => {
+                CompatibleRole::Tool => {
                     for block in &message.content {
                         if let ContentBlock::ToolResult {
                             tool_use_id,

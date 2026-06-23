@@ -407,3 +407,29 @@ fn v4_flash_supports_thinking() {
         "deepseek-v4-flash should support thinking"
     );
 }
+
+#[test]
+fn deepseek_downgrades_minimax_only_roles_with_adjustment() {
+    let adapter = make_adapter("http://localhost");
+    let opts = default_options();
+    // Minimax-only roles: UserSystem→system, others→user. All record an adjustment.
+    for (role, expected_api_role) in [
+        (Role::UserSystem, "system"),
+        (Role::Group, "user"),
+        (Role::SampleMessageUser, "user"),
+        (Role::SampleMessageAi, "user"),
+    ] {
+        let messages = vec![crate::Message {
+            role,
+            content: vec![ContentBlock::Text("hi".into())],
+        }];
+        let (body, adjustments) = adapter.build_request_body(&messages, &[], &opts, false);
+        assert_eq!(body["messages"][0]["role"], expected_api_role, "{role:?}");
+        assert!(
+            adjustments
+                .iter()
+                .any(|a| a.option == "role" && a.reason == "minimax_only_role_unsupported"),
+            "{role:?} should record role adjustment"
+        );
+    }
+}

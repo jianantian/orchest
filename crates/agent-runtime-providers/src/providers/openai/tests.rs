@@ -342,3 +342,28 @@ fn provider_name_and_model_name() {
     assert_eq!(adapter.provider_name(), "openai");
     assert_eq!(adapter.model_name(), "gpt-4o-mini");
 }
+
+#[test]
+fn openai_downgrades_minimax_only_roles_with_adjustment() {
+    let adapter = make_adapter("http://localhost");
+    let opts = default_options();
+    for (role, expected_api_role) in [
+        (Role::UserSystem, "system"),
+        (Role::Group, "user"),
+        (Role::SampleMessageUser, "user"),
+        (Role::SampleMessageAi, "user"),
+    ] {
+        let messages = vec![Message {
+            role,
+            content: vec![ContentBlock::Text("hi".into())],
+        }];
+        let (body, adjustments) = adapter.build_request_body(&messages, &[], &opts);
+        assert_eq!(body["messages"][0]["role"], expected_api_role, "{role:?}");
+        assert!(
+            adjustments
+                .iter()
+                .any(|a| a.option == "role" && a.reason == "minimax_only_role_unsupported"),
+            "{role:?} should record role adjustment"
+        );
+    }
+}

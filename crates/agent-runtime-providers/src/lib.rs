@@ -18,6 +18,7 @@ pub use providers::{
 };
 
 pub(crate) mod http;
+pub(crate) mod role_compat;
 pub(crate) mod sse;
 
 pub mod telemetry;

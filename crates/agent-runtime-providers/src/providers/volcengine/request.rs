@@ -4,7 +4,9 @@
 
 use serde_json::{json, Value};
 
-use crate::{CachePolicy, ContentBlock, Message, OptionAdjustment, RequestOptions, Role, ToolDef};
+use crate::{CachePolicy, ContentBlock, Message, OptionAdjustment, RequestOptions, ToolDef};
+
+use crate::role_compat::{downgrade_minimax_role, CompatibleRole};
 
 use super::VolcengineAdapter;
 
@@ -43,8 +45,9 @@ impl VolcengineAdapter {
         let mut adjustments = Vec::new();
 
         for message in messages {
-            match message.role {
-                Role::System => {
+            let effective_role = downgrade_minimax_role(message.role, &mut adjustments);
+            match effective_role {
+                CompatibleRole::System => {
                     let text = message
                         .content
                         .iter()
@@ -56,7 +59,7 @@ impl VolcengineAdapter {
                         .join("\n");
                     api_messages.push(json!({"role": "system", "content": text}));
                 }
-                Role::User => {
+                CompatibleRole::User => {
                     let mut text_parts = Vec::new();
                     let mut tool_results = Vec::new();
                     for block in &message.content {
@@ -88,7 +91,7 @@ impl VolcengineAdapter {
                         api_messages.push(json!({"role": "user", "content": text}));
                     }
                 }
-                Role::Assistant => {
+                CompatibleRole::Assistant => {
                     let has_tool_calls = message
                         .content
                         .iter()
@@ -132,7 +135,7 @@ impl VolcengineAdapter {
                     }
                     api_messages.push(msg);
                 }
-                Role::Tool => {
+                CompatibleRole::Tool => {
                     for block in &message.content {
                         if let ContentBlock::ToolResult {
                             tool_use_id,

@@ -85,3 +85,28 @@ fn capabilities_has_streaming_and_tool_use() {
     assert!(caps.tool_use);
     assert!(caps.reasoning.supported);
 }
+
+#[test]
+fn volcengine_downgrades_minimax_only_roles_with_adjustment() {
+    let adapter = adapter_with_url("http://localhost");
+    for (role, expected_api_role) in [
+        (crate::Role::UserSystem, "system"),
+        (crate::Role::Group, "user"),
+        (crate::Role::SampleMessageUser, "user"),
+        (crate::Role::SampleMessageAi, "user"),
+    ] {
+        let messages = vec![crate::Message {
+            role,
+            content: vec![crate::ContentBlock::Text("hi".into())],
+        }];
+        let (body, adjustments) =
+            adapter.build_request_body(&messages, &[], &RequestOptions::default(), false);
+        assert_eq!(body["messages"][0]["role"], expected_api_role, "{role:?}");
+        assert!(
+            adjustments
+                .iter()
+                .any(|a| a.option == "role" && a.reason == "minimax_only_role_unsupported"),
+            "{role:?} should record role adjustment"
+        );
+    }
+}

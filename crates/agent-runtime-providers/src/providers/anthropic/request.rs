@@ -6,8 +6,8 @@
 use serde_json::{json, Value};
 
 use crate::{
-    CachePolicy, ContentBlock, Message, OptionAdjustment, RequestOptions, Role, ThinkingLevel,
-    ToolDef,
+    CachePolicy, ContentBlock, MediaSource, Message, OptionAdjustment, RequestOptions, Role,
+    ThinkingLevel, ToolDef,
 };
 
 use super::AnthropicAdapter;
@@ -42,37 +42,34 @@ impl AnthropicAdapter {
                     }
                 }
                 _ => {
-                    let role = match msg.role {
+                    let api_role = match msg.role {
                         Role::User | Role::Tool => "user",
                         Role::Assistant => "assistant",
                         Role::System => unreachable!(),
+                        // Minimax-only roles — Anthropic 不支持,降级 + 记录 OptionAdjustment。
+                        Role::UserSystem => {
+                            adjustments.push(OptionAdjustment {
+                                option: "role".into(),
+                                requested: json!("user_system"),
+                                applied: json!("user"),
+                                reason: "minimax_only_role_dropped".into(),
+                            });
+                            "user"
+                        }
+                        Role::Group | Role::SampleMessageUser | Role::SampleMessageAi => {
+                            adjustments.push(OptionAdjustment {
+                                option: "role".into(),
+                                requested: json!(format!("{:?}", msg.role)),
+                                applied: json!("user"),
+                                reason: "minimax_only_role_dropped".into(),
+                            });
+                            "user"
+                        }
                     };
 
-                    let content: Vec<Value> = msg
-                        .content
-                        .iter()
-                        .map(|block| match block {
-                            ContentBlock::Text(t) => json!({"type": "text", "text": t}),
-                            ContentBlock::Thinking { text, signature, .. } => {
-                                let mut obj = json!({"type": "thinking"});
-                                if let Some(t) = text {
-                                    obj["thinking"] = json!(t);
-                                }
-                                if let Some(s) = signature {
-                                    obj["signature"] = json!(s);
-                                }
-                                obj
-                            }
-                            ContentBlock::ToolUse { id, name, input } => {
-                                json!({"type": "tool_use", "id": id, "name": name, "input": input})
-                            }
-                            ContentBlock::ToolResult { tool_use_id, content } => {
-                                json!({"type": "tool_result", "tool_use_id": tool_use_id, "content": content})
-                            }
-                        })
-                        .collect();
+                    let content = build_content_blocks(&msg.content, &mut adjustments);
 
-                    api_messages.push(json!({"role": role, "content": content}));
+                    api_messages.push(json!({"role": api_role, "content": content}));
                 }
             }
         }
@@ -182,4 +179,88 @@ impl AnthropicAdapter {
 
         (body, adjustments)
     }
+}
+
+/// 把 `Vec<ContentBlock>` 序列化成 Anthropic Messages API 的 content 数组。
+/// 不支持的多模态 variant 丢弃并 push `OptionAdjustment` 到 `adjustments`。
+fn build_content_blocks(
+    blocks: &[ContentBlock],
+    adjustments: &mut Vec<OptionAdjustment>,
+) -> Vec<Value> {
+    let mut content: Vec<Value> = Vec::with_capacity(blocks.len());
+    for block in blocks {
+        match block {
+            ContentBlock::Text(t) => {
+                content.push(json!({"type": "text", "text": t}));
+            }
+            ContentBlock::Thinking {
+                text, signature, ..
+            } => {
+                let mut obj = json!({"type": "thinking"});
+                if let Some(t) = text {
+                    obj["thinking"] = json!(t);
+                }
+                if let Some(s) = signature {
+                    obj["signature"] = json!(s);
+                }
+                content.push(obj);
+            }
+            ContentBlock::ToolUse { id, name, input } => {
+                content.push(json!({
+                    "type": "tool_use",
+                    "id": id,
+                    "name": name,
+                    "input": input
+                }));
+            }
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content: tr_content,
+            } => {
+                content.push(json!({
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": tr_content
+                }));
+            }
+            // Anthropic Messages API 原生支持 image —— 真实序列化。
+            ContentBlock::Image { source, .. } => {
+                let source_value = match source {
+                    MediaSource::Url { url } => json!({"type": "url", "url": url}),
+                    MediaSource::Base64 { media_type, data } => json!({
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": data,
+                    }),
+                };
+                content.push(json!({"type": "image", "source": source_value}));
+            }
+            // Anthropic 当前 LLM API 不接 video/audio/mid_conv_system,丢弃并记录。
+            ContentBlock::Video { .. } => {
+                adjustments.push(OptionAdjustment {
+                    option: "content_block".into(),
+                    requested: json!("video"),
+                    applied: json!(null),
+                    reason: "anthropic_unsupported_content_block".into(),
+                });
+            }
+            ContentBlock::Audio { .. } => {
+                adjustments.push(OptionAdjustment {
+                    option: "content_block".into(),
+                    requested: json!("audio"),
+                    applied: json!(null),
+                    reason: "anthropic_unsupported_content_block".into(),
+                });
+            }
+            ContentBlock::MidConvSystem(_) => {
+                adjustments.push(OptionAdjustment {
+                    option: "content_block".into(),
+                    requested: json!("mid_conv_system"),
+                    applied: json!(null),
+                    reason: "anthropic_unsupported_content_block".into(),
+                });
+            }
+        }
+    }
+    content
 }

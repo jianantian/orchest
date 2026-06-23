@@ -2213,6 +2213,30 @@ mod history_clone_profile_tests {
                 tool_use_id,
                 content,
             } => tool_use_id.len() + serde_json::to_string(content).unwrap_or_default().len(),
+            // v0.9.10 multimodal variants — payload is the encoded source +
+            // (for Video) a few small numeric fields. Approximate via the
+            // source size; tests using this helper only care about relative
+            // magnitudes for compaction triggering, not exact bytes.
+            ContentBlock::Image { source, detail } => {
+                media_source_bytes(source) + detail.as_deref().map(str::len).unwrap_or(0)
+            }
+            ContentBlock::Video {
+                source,
+                fps: _,
+                detail,
+                max_long_side_pixel: _,
+            } => media_source_bytes(source) + detail.as_deref().map(str::len).unwrap_or(0),
+            ContentBlock::Audio { source } => media_source_bytes(source),
+            ContentBlock::MidConvSystem(text) => text.len(),
+        }
+    }
+
+    fn media_source_bytes(source: &agent_runtime_model::MediaSource) -> usize {
+        match source {
+            agent_runtime_model::MediaSource::Url { url } => url.len(),
+            agent_runtime_model::MediaSource::Base64 { media_type, data } => {
+                media_type.len() + data.len()
+            }
         }
     }
 

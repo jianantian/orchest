@@ -384,3 +384,30 @@ data: [DONE]
         .expect("should parse");
     assert_eq!(response.stop_reason, StopReason::EndTurn);
 }
+
+#[test]
+fn openrouter_downgrades_minimax_only_roles_with_adjustment() {
+    let adapter = make_adapter("http://localhost");
+    let opts = default_options();
+    for (role, expected_api_role) in [
+        (Role::UserSystem, "system"),
+        (Role::Group, "user"),
+        (Role::SampleMessageUser, "user"),
+        (Role::SampleMessageAi, "user"),
+    ] {
+        let messages = vec![Message {
+            role,
+            content: vec![ContentBlock::Text("hi".into())],
+        }];
+        let (body, adjustments) = adapter
+            .try_build_request_body(&messages, &[], &opts)
+            .expect("valid request");
+        assert_eq!(body["messages"][0]["role"], expected_api_role, "{role:?}");
+        assert!(
+            adjustments
+                .iter()
+                .any(|a| a.option == "role" && a.reason == "minimax_only_role_unsupported"),
+            "{role:?} should record role adjustment"
+        );
+    }
+}
