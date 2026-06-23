@@ -4,7 +4,7 @@
 
 Orchest is a **low-level Rust SDK** that provides the agent runtime core for building AI agent applications. It is not a complete agent product — it is the engine that other agent products run on: responsible for the agent loop, state management, event streaming, tool dispatch, and skill loading.
 
-Current stage: **documentation only, no implementation code yet**. All work lives under `docs/`. Once code is introduced, `crates/`, `examples/`, and `skills/` will be organized per the Rust Project Conventions section below.
+Current stage: **pre-1.0, actively implemented**. The Rust core (`agent-runtime-core`) and the shared model crate (`agent-runtime-model`) are built out, alongside satellite provider crates for LLM, image/video (AIGC), ASR, and TTS. Design docs under `docs/` remain the authoritative implementation contract; code lives in `crates/`, `examples/`, and `skills/` per the Rust Project Conventions below. The living roadmap is [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md).
 
 ---
 
@@ -30,21 +30,18 @@ For any question about these boundaries, defer to `docs/polaris/concept-boundari
 
 ```
 docs/
-├── polaris/
-│   ├── overview.md            # Product positioning, core concepts, design philosophy (overall reference; not an implementation contract)
-│   ├── concept-boundaries.md  # Tool/MCP/Skill boundary definitions (authoritative)
-│   ├── design-principles.md   # Design principles and decision heuristics
-│   ├── observability.md       # SDK-wide logging, metrics, token, and error observability contract
-│   └── non-goals.md           # Hard boundaries + minimum security guidance for sandboxless environments
+├── polaris/                    # Cross-iteration constraints (authoritative): overview, concept-boundaries,
+│                               #   design-principles, observability, non-goals
 ├── iteration/
-│   ├── v0_1/                  # Minimum viable: Rust core + dual-language SDK
-│   ├── v0_2/                  # MCP integration + OpenAI adapter + context compaction
-│   ├── v0_3/                  # Production readiness: skill deps + code exec + sub-agent + sandbox architecture
-│   └── v0_4/                  # Acceptance + SDK docs + unified extension package skeleton
-└── hotfix/
-    └── 2026_05/               # Runtime contract repair between v0.3 and v0.4
-└── research/
-    └── claw-landscape.md      # Architecture research across 7 comparable products (SDK-layer takeaways)
+│   ├── roadmap.md             # Living iteration roadmap + dependency graph + capability-gap map (START HERE)
+│   ├── v0_9_6/ … v0_9_10/     # Active/planned iterations — each: prd.md + issues/NNN-slug/{spec,plan}.md
+│   └── v0_10/                 # Demo Product Validation (Briefing Desk)
+├── hotfix/                     # Refactor/repair iterations (e.g. 2026_06_17)
+├── archive/                    # Completed iterations + hotfixes (v0_1 … v0_9), moved here after closeout
+├── todo/                       # Forward-looking direction notes not yet scheduled (e.g. provider-unification.md)
+├── external/                   # Upstream vendor API docs (anthropic, minimax, volceengine, aliyun, …)
+├── research/ · analysis/       # Architecture research and competitive analysis
+└── guide/                      # User-facing quickstart + Python/TS SDK guides
 ```
 
 ### Authority Rules (Important)
@@ -53,19 +50,17 @@ docs/
 
 Each iteration has two layers:
 - `prd.md` — iteration goals, success metrics, scope, and explicit out-of-scope items
-- `issues/*.md` — implementation-ready units with acceptance criteria
+- `issues/NNN-slug/` — one directory per issue, holding `spec.md` (acceptance criteria) and `plan.md` (implementation steps). Hotfix issues may embed the plan in `spec.md`. See [WORKFLOW.md](./WORKFLOW.md).
+
+The living iteration index is [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md) — consult it for current status rather than this file.
 
 ---
 
 ## Iteration Status
 
-| Iteration | Status | Core Scope |
-|-----------|--------|-----------|
-| **v0.1** | Implemented (with contract gaps — see Hotfix 2026-05) | Rust core run loop, skill loading, async jobs, budget guard, approval gate, Python/TS SDK |
-| **v0.2** | Implemented (with contract gaps — see Hotfix 2026-05) | MCP stdio/HTTP, Tool Search Tool, OpenAI adapter, context compaction, webhook async tool |
-| **v0.3** | Implemented (with contract gaps — see Hotfix 2026-05) | Skill dependency management, Code Execution MCP, sub-agent, ScriptExecutor abstraction + capability declaration |
-| **Hotfix 2026-05** | Planning | Runtime contract repair: permission boundaries, tool metadata enforcement, SDK contracts, provider tool protocol, sub-agent routing, MCP reliability (see `docs/hotfix/2026_05/`) |
-| **v0.4** | Planning (depends on Hotfix 2026-05) | Acceptance playground (CLI), SDK docs, unified extension package `orchest-tools` (+ Python/Node bindings), first file-based skill |
+The authoritative, up-to-date status lives in [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md) (已完成 / 规划中 tables + dependency graph). Do not duplicate it here.
+
+Snapshot (2026-06): v0.1–v0.9.5 shipped; satellite provider crates landed (ASR v0.9.1, TTS v0.9.3, Image/Video AIGC v0.6.1); v0.9.6–v0.9.9 runtime/satellite iterations planned; **v0.9.10 Minimax multimodal provider integration** in progress; then v0.10 Demo Product Validation → v1.0 first public release.
 
 ---
 
@@ -80,6 +75,7 @@ The following decisions are settled. Do not propose alternatives without a compe
 - **Streaming output is a first-class concern** — not optional; model adapters use the unified `ModelAdapter::complete()` contract with streaming events delivered through the optional event channel, and `stream_chat()` is the convenience helper
 - **Sequential tool execution in v0.1** — keeps the approval gate simple; parallelism is a v0.2 optimization
 - **No sandbox until v0.3+** — but v0.3 must complete the `ScriptExecutor` trait abstraction and `capabilities` declaration
+- **Provider crates are independent satellites** — each modality (LLM, AIGC image/video, ASR, TTS) is its own crate depending on `agent-runtime-model`, not on `agent-runtime-core`. Cross-modality consolidation (driven by omni / end-to-end speech models, and Chameleon-style image-out LLMs) is a **known future direction, not yet decided** — tracked in [`docs/todo/provider-unification.md`](./docs/todo/provider-unification.md). Do not merge provider crates ahead of that refactor, and do not assume the current single-modality split is permanent.
 
 ---
 
@@ -87,8 +83,8 @@ The following decisions are settled. Do not propose alternatives without a compe
 
 ### Adding an Issue
 
-1. Place it under the relevant iteration's `issues/` directory; filename format: `NNN-slug.md` (three-digit numeric prefix)
-2. Must include: Background, Goal, Acceptance Criteria (checkbox list), Notes (optional)
+1. Create a directory `issues/NNN-slug/` under the relevant iteration (three-digit numeric prefix), holding `spec.md` + `plan.md` (hotfix issues may embed the plan in `spec.md`). See [WORKFLOW.md](./WORKFLOW.md).
+2. `spec.md` must include: Background, Goal/scope, Acceptance Criteria (checkbox list), Notes (optional). `plan.md` lists files to read, files to change, and numbered implementation steps.
 3. Acceptance criteria must be concrete and testable — write "when Y, Z holds" not just "implement X"
 
 ### Editing Issue Specs
@@ -118,36 +114,21 @@ Polaris documents record **constraints that do not change across iterations**. E
 ```
 Cargo.toml                       # workspace root — no business logic here
 crates/
-  agent-runtime-core/            # pure Rust core, no FFI
-    src/
-      lib.rs
-      run.rs                     # AgentRun, RunState, run loop
-      tool/
-        mod.rs                   # Tool trait, ToolRegistry, ToolOutput
-        in_process.rs            # FFI callback tool
-        skill_bundled.rs         # script tool + async job protocol parsing
-        async_job.rs             # JobHandle, JobStatus, poll loop
-        builtin.rs               # built-in read_file tool
-        mcp.rs                   # MCP tool (added in v0.2)
-      skill/
-        mod.rs                   # SkillManifest, discovery, SKILL.md parsing
-        executor.rs              # ScriptExecutor trait + BareSubprocessExecutor
-      model/
-        mod.rs                   # ModelAdapter trait
-        anthropic.rs
-        openai.rs                # added in v0.2
-        streaming.rs             # ModelStreamChunk shared logic
-      events.rs                  # RuntimeEvent enum
-      budget.rs                  # BudgetGuard, BudgetConfig, BudgetUsage
+  agent-runtime-core/            # pure Rust core: run loop, tools, skills, sessions, guardrails, hooks — no FFI
+  agent-runtime-model/           # shared model-layer types: Message, ContentBlock, Role, RequestOptions, ModelAdapter
+  agent-runtime-providers/       # LLM provider adapters: anthropic, openai, deepseek, openrouter, volcengine (+ minimax in v0.9.10)
+  agent-runtime-aigc-providers/  # image + video generation gateway + asset persistence (+ music submodule in v0.9.10)
+  agent-runtime-asr-providers/   # speech-to-text providers (volcengine, aliyun) — duplex streaming
+  agent-runtime-tts-providers/   # text-to-speech + voice management providers (volcengine, aliyun; + minimax in v0.9.10)
   agent-runtime-py/              # PyO3 binding — no business logic
-    src/lib.rs
   agent-runtime-node/            # napi-rs binding — no business logic
-    src/lib.rs
 examples/
 skills/                          # example skills
 ```
 
-**Rule:** All business logic lives in `agent-runtime-core`. Binding crates only do type conversion and FFI glue — no business decisions.
+Each satellite crate keeps its own `src/` layout (e.g. `providers/<vendor>/`, `catalog`, `gateway`, `storage`); see the crate's `lib.rs` for its module map.
+
+**Rule:** Runtime business logic lives in `agent-runtime-core`; shared model types live in `agent-runtime-model`; provider adapters live in their respective satellite crates (each depends on `agent-runtime-model`, not on `core`). Binding crates only do type conversion and FFI glue — no business decisions.
 
 ### Dependencies
 
@@ -162,6 +143,8 @@ skills/                          # example skills
 | `thiserror` | Error types in library crates | — |
 | `pyo3` | Python binding | `extension-module` |
 | `napi` + `napi-derive` | Node.js binding | — |
+
+The table above is the **core** crate's locked dependency set. Satellite provider crates carry their own provider-specific deps (`reqwest`, `tokio-tungstenite`, `futures-util`, and crypto/`base64`/`hex` for signing and audio decoding), gated behind per-provider feature flags where optional (`agent-runtime-core` stays dependency-light).
 
 **Policy for adding new dependencies:**
 - Prefer std + tokio; do not introduce actor frameworks (locked decision)
@@ -235,7 +218,7 @@ skills/                          # example skills
 
 ## Development Workflow
 
-See [WORKFLOW.md](./WORKFLOW.md) for the full development workflow: picking up issues, branch naming, pre-merge checks, worktree usage for parallel issues, and the v0.1 dependency order.
+See [WORKFLOW.md](./WORKFLOW.md) for the full development workflow: one branch + worktree per iteration, GitHub issues first, one commit per issue (`closes #N`), pre-merge checks, and per-iteration dependency order.
 
 ---
 
@@ -264,6 +247,6 @@ find docs -maxdepth 4 -name "*.md" | sort
 # Show all unchecked acceptance criteria across iterations
 rg "\- \[ \]" docs/iteration/
 
-# Verify no stale v1.0 references remain (should return nothing)
-rg "v1\.0|v1_0" docs/
+# Current iteration status (authoritative)
+sed -n '/## 已完成/,/## 能力缺口/p' docs/iteration/roadmap.md
 ```
