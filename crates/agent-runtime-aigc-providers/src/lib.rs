@@ -151,6 +151,16 @@ pub fn create_video_provider_from_config(
                 timeout: config.timeout,
             },
         )?)),
+        "minimax" => Ok(Box::new(
+            crate::providers::MinimaxVideoAdapter::from_config(
+                crate::providers::MinimaxVideoConfig {
+                    model: config.model,
+                    api_key,
+                    api_url: config.api_url,
+                    timeout: config.timeout,
+                },
+            )?,
+        )),
         _ => Err(AigcError::new(
             "unknown_provider",
             format!("unknown video provider '{provider}'"),
@@ -189,6 +199,7 @@ fn resolve_api_key(
         "openrouter" => "OPENROUTER_API_KEY",
         "renderful" => "RENDERFUL_API_KEY",
         "volcengine" | "ark" => "ARK_API_KEY",
+        "minimax" => "MINIMAX_API_KEY",
         _ => {
             return Err(AigcError::new(
                 "unknown_provider",

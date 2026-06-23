@@ -51,8 +51,70 @@ fn volcengine_video_models() -> VideoProviderInfo {
     }
 }
 
+fn minimax_video_models() -> VideoProviderInfo {
+    // Source: docs/external/minimax/video/{t2v,i2v,frame2v,refvideo}.md
+    // API: POST https://api.minimaxi.com/v1/video_generation
+    // Auth: MINIMAX_API_KEY (Bearer)
+    //
+    // 9 个 model id 来自 video/{t2v,i2v,frame2v,refvideo}.md 的 model enum:
+    // T2V/I2V/Frame2V 共享 Hailuo + T2V/I2V-01 系列;Subject Reference 仅 S2V-01。
+    let models = vec![
+        VideoModelEntry {
+            model_id: "MiniMax-Hailuo-2.3",
+            provider: "minimax",
+            display_name: "MiniMax Hailuo 2.3",
+        },
+        VideoModelEntry {
+            model_id: "MiniMax-Hailuo-2.3-Fast",
+            provider: "minimax",
+            display_name: "MiniMax Hailuo 2.3 Fast",
+        },
+        VideoModelEntry {
+            model_id: "MiniMax-Hailuo-02",
+            provider: "minimax",
+            display_name: "MiniMax Hailuo 02",
+        },
+        VideoModelEntry {
+            model_id: "T2V-01-Director",
+            provider: "minimax",
+            display_name: "T2V-01 Director",
+        },
+        VideoModelEntry {
+            model_id: "T2V-01",
+            provider: "minimax",
+            display_name: "T2V-01",
+        },
+        VideoModelEntry {
+            model_id: "I2V-01-Director",
+            provider: "minimax",
+            display_name: "I2V-01 Director",
+        },
+        VideoModelEntry {
+            model_id: "I2V-01-live",
+            provider: "minimax",
+            display_name: "I2V-01 Live",
+        },
+        VideoModelEntry {
+            model_id: "I2V-01",
+            provider: "minimax",
+            display_name: "I2V-01",
+        },
+        VideoModelEntry {
+            model_id: "S2V-01",
+            provider: "minimax",
+            display_name: "S2V-01 (Subject Reference)",
+        },
+    ];
+
+    VideoProviderInfo {
+        provider_id: "minimax",
+        display_name: "MiniMax (Hailuo / T2V / I2V / S2V)",
+        models,
+    }
+}
+
 fn build_video_catalog() -> Vec<VideoProviderInfo> {
-    vec![volcengine_video_models()]
+    vec![volcengine_video_models(), minimax_video_models()]
 }
 
 /// Returns metadata for all known video generation providers.
@@ -74,5 +136,32 @@ mod tests {
         let ids: Vec<_> = list_video_models().map(|m| m.model_id).collect();
         assert!(ids.contains(&"doubao-seedance-1-0-pro-250528"));
         assert!(ids.contains(&"doubao-seedance-1-5-pro-251215"));
+    }
+}
+
+#[cfg(test)]
+mod minimax_tests {
+    use super::*;
+
+    #[test]
+    fn video_catalog_has_minimax_models() {
+        let ids: Vec<_> = list_video_models()
+            .filter(|m| m.provider == "minimax")
+            .map(|m| m.model_id)
+            .collect();
+        for expected in [
+            "MiniMax-Hailuo-2.3",
+            "MiniMax-Hailuo-2.3-Fast",
+            "MiniMax-Hailuo-02",
+            "T2V-01-Director",
+            "T2V-01",
+            "I2V-01-Director",
+            "I2V-01-live",
+            "I2V-01",
+            "S2V-01",
+        ] {
+            assert!(ids.contains(&expected), "missing {expected}: {ids:?}");
+        }
+        assert_eq!(ids.len(), 9);
     }
 }
