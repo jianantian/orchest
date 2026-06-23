@@ -32,6 +32,7 @@
 | v0.9.3 | 卫星 | TTS Provider Gateway（`agent-runtime-tts-providers`、voice catalog、streaming synthesis、Volcengine/Aliyun adapter、observability） |
 | v0.9.4 | 重构 | Runtime Failure Semantics（ErrorKind taxonomy、structured tool failure return、RetryHint dispatch、repeated failure hook、ActorRef restart 注释） |
 | v0.9.5 | 重构 | Agent Control-Flow Hardening（ContextMode、handoff snapshot-then-swap、control-flow tests、`run_one_step` 拆分、Supervised Delegation 验证边界） |
+| v0.9.6 | 卫星 | ASR Follow-up Providers（one-shot `transcribe()`、Deepgram、ElevenLabs Scribe、Soniox、AssemblyAI、Speechmatics、docs/examples） |
 
 ## 规划中(hotfix)
 
@@ -45,10 +46,6 @@
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
 
 ## 规划中
-
-### v0.9.6 — ASR Follow-up Providers（规划）
-
-把 v0.9.1 后续 ASR 工作落成卫星迭代：one-shot `transcribe()`、Deepgram、ElevenLabs Scribe、Soniox、AssemblyAI、Speechmatics 以及对应 docs/examples。详见 [`v0_9_6/prd.md`](./v0_9_6/prd.md)。
 
 ### v0.9.7 — Tool Surface Extensions（规划）
 
@@ -107,7 +104,7 @@ v0.10 至少验证一个轻量 reviewer sub-agent 或 handoff 路径：Agent-as-
 ✅ v0.9.5: Control-Flow Hardening
             │
             ▼
-   v0.9.6: ASR Follow-up Providers
+✅ v0.9.6: ASR Follow-up Providers
             │
             ▼
    v0.9.7: Tool Surface Extensions
