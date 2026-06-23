@@ -31,3 +31,11 @@ pub mod volcengine {
     pub const API_URL: &str = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
     pub const API_KEY_ENV: &str = "ARK_API_KEY";
 }
+
+pub mod minimax {
+    /// 默认 API URL。锚点:`docs/external/minimax/llm/api.md:37`(`https://api.minimaxi.com`),
+    /// 同源 `/anthropic/v1/messages`。`normalize_messages_url` 会自动补 `/v1/messages`。
+    pub const API_URL: &str = "https://api.minimaxi.com/anthropic/v1/messages";
+    pub const API_KEY_ENV: &str = "MINIMAX_API_KEY";
+    pub const API_URL_ENV: &str = "MINIMAX_API_URL";
+}
