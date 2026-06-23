@@ -3,6 +3,7 @@
 本教程带你用 Rust 从零跑通一个最小 Orchest agent：配置 provider、注册一个 tool、启动 run、监听事件流。全部代码与 [`examples/rust/basic_agent_run.rs`](../../examples/rust/basic_agent_run.rs) 一致，可直接 `cargo run --example basic_agent_run` 运行。
 
 > Python / TypeScript 用户请看 [SDK · Python](./sdk-python.md) 和 [SDK · TypeScript](./sdk-typescript.md)。
+> 高风险 tool、延迟发现和并行执行请看 [Tool Surface Patterns](./tool-surface.md)。
 
 ## 1. 前置条件
 
