@@ -1,11 +1,11 @@
 //! Volcengine Ark (火山方舟) adapter — OpenAI-compatible Chat Completions.
 //!
-//! API base: https://ark.cn-beijing.volces.com/api/v3/chat/completions
+//! API base: <https://ark.cn-beijing.volces.com/api/v3/chat/completions>
 //! Auth:     Authorization: Bearer $ARK_API_KEY
 //! Models:   doubao-seed-2-0-pro-260215, doubao-seed-character-251128, etc.
 //!
 //! Split by concern: this file owns the adapter struct, capability reporting,
-//! and `complete()`'s control flow; [`request`] builds the Chat Completions
+//! and `complete()`'s control flow; `request` builds the Chat Completions
 //! request body and helpers.
 
 mod request;

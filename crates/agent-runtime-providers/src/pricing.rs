@@ -43,7 +43,7 @@ pub fn anthropic_pricing(model: &str) -> ModelPricing {
 
 /// Pricing for OpenAI models.
 ///
-/// Source: https://developers.openai.com/api/docs/models/all
+/// Source: <https://developers.openai.com/api/docs/models/all>
 pub fn openai_pricing(model: &str) -> ModelPricing {
     match model {
         // gpt-5.5 — $5 / $30
@@ -60,7 +60,7 @@ pub fn openai_pricing(model: &str) -> ModelPricing {
 
 /// Pricing for DeepSeek models.
 ///
-/// Source: https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+/// Source: <https://api-docs.deepseek.com/zh-cn/quick_start/pricing>
 pub fn deepseek_pricing(model: &str) -> ModelPricing {
     match model {
         // v4-flash (non-thinking): ¥1 / ¥2 per MTok

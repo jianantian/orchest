@@ -570,7 +570,7 @@ async fn adapter_task(
     }
 }
 
-#[allow(clippy::too_many_arguments)] // final assembly spans request state plus provider telemetry; keeping it local avoids shared mutable structs in the duplex loop
+#[allow(clippy::too_many_arguments)] // justified: final assembly spans request state plus provider telemetry; keeping it local avoids shared mutable structs in the duplex loop
 async fn emit_final(
     event_tx: &mpsc::Sender<AsrStreamEvent>,
     trace_id: &str,

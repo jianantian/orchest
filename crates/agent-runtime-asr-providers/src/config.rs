@@ -196,6 +196,82 @@ pub fn create_asr_provider_from_config(
                 ws_url,
             })))
         }
+        #[cfg(feature = "soniox")]
+        "soniox" => {
+            use crate::providers::soniox::{SonioxAsrAdapter, SonioxAsrConfig};
+
+            let api_key = resolve_api_key(&config, "SONIOX_API_KEY")?;
+            match normalized.model {
+                "stt-rt-v5" | "stt-rt-v4" => {}
+                other => {
+                    return Err(AsrError::new(
+                        AsrErrorCode::InvalidRequest,
+                        format!(
+                            "unknown Soniox ASR model '{other}'; supported: stt-rt-v5, stt-rt-v4"
+                        ),
+                    ))
+                }
+            }
+            let ws_url = config
+                .api_url
+                .unwrap_or_else(|| "wss://stt-rt.soniox.com/transcribe-websocket".to_string());
+
+            Ok(Arc::new(SonioxAsrAdapter::new(SonioxAsrConfig {
+                model: normalized.model.to_string(),
+                api_key,
+                ws_url,
+            })))
+        }
+        #[cfg(feature = "assemblyai")]
+        "assemblyai" => {
+            use crate::providers::assemblyai::{AssemblyAiAsrAdapter, AssemblyAiAsrConfig};
+
+            let api_key = resolve_api_key(&config, "ASSEMBLYAI_API_KEY")?;
+            if normalized.model != "universal" {
+                return Err(AsrError::new(
+                    AsrErrorCode::InvalidRequest,
+                    format!(
+                        "unknown AssemblyAI ASR model '{}'; supported: universal",
+                        normalized.model
+                    ),
+                ));
+            }
+            let mut assembly = AssemblyAiAsrConfig::universal(api_key);
+            assembly.api_url = config
+                .api_url
+                .unwrap_or_else(|| "https://api.assemblyai.com/v2".to_string());
+            if let Some(upload_url) = config
+                .provider_options
+                .get("upload_url")
+                .and_then(|v| v.as_str())
+            {
+                assembly.upload_url = upload_url.to_string();
+            }
+            Ok(Arc::new(AssemblyAiAsrAdapter::new(assembly)))
+        }
+        #[cfg(feature = "speechmatics")]
+        "speechmatics" => {
+            use crate::providers::speechmatics::{SpeechmaticsAsrAdapter, SpeechmaticsAsrConfig};
+
+            let api_key = resolve_api_key(&config, "SPEECHMATICS_API_KEY")?;
+            match normalized.model {
+                "enhanced" | "standard" => {}
+                other => {
+                    return Err(AsrError::new(
+                        AsrErrorCode::InvalidRequest,
+                        format!(
+                        "unknown Speechmatics ASR model '{other}'; supported: enhanced, standard"
+                    ),
+                    ))
+                }
+            }
+            let mut speechmatics = SpeechmaticsAsrConfig::enhanced(api_key);
+            speechmatics.model = normalized.model.to_string();
+            speechmatics.api_url = config
+                .api_url
+                .unwrap_or_else(|| "https://asr.api.speechmatics.com/v2".to_string());
+            Ok(Arc::new(SpeechmaticsAsrAdapter::new(speechmatics)))
+        }
         other => Err(AsrError::new(
             AsrErrorCode::UnknownProvider,
             format!("unknown ASR provider '{other}'"),
@@ -312,6 +388,27 @@ mod tests {
         let n = normalize_asr_provider_model("elevenlabs/scribe_v2_realtime").unwrap();
         assert_eq!(n.provider, "elevenlabs");
         assert_eq!(n.model, "scribe_v2_realtime");
+    }
+
+    #[test]
+    fn normalize_soniox_model() {
+        let n = normalize_asr_provider_model("soniox/stt-rt-v5").unwrap();
+        assert_eq!(n.provider, "soniox");
+        assert_eq!(n.model, "stt-rt-v5");
+    }
+
+    #[test]
+    fn normalize_assemblyai_model() {
+        let n = normalize_asr_provider_model("assemblyai/universal").unwrap();
+        assert_eq!(n.provider, "assemblyai");
+        assert_eq!(n.model, "universal");
+    }
+
+    #[test]
+    fn normalize_speechmatics_model() {
+        let n = normalize_asr_provider_model("speechmatics/enhanced").unwrap();
+        assert_eq!(n.provider, "speechmatics");
+        assert_eq!(n.model, "enhanced");
     }
 
     #[test]
@@ -459,5 +556,95 @@ mod tests {
         .expect("factory should return an error");
         assert_eq!(err.code, AsrErrorCode::InvalidRequest);
         assert!(err.message.contains("catalog-only"));
+    }
+
+    #[cfg(feature = "soniox")]
+    #[test]
+    fn factory_creates_soniox_stt_rt_v5() {
+        let provider = create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "soniox/stt-rt-v5".into(),
+            api_key: Some("key".into()),
+            api_key_env: None,
+            api_url: None,
+            region: None,
+            timeout: None,
+            provider_options: Value::Null,
+        })
+        .expect("factory should succeed");
+        assert_eq!(provider.provider_name(), "soniox");
+        assert_eq!(provider.model_name(), "stt-rt-v5");
+    }
+
+    #[cfg(feature = "soniox")]
+    #[test]
+    fn factory_rejects_unknown_soniox_model() {
+        let err = create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "soniox/batch".into(),
+            api_key: Some("key".into()),
+            ..Default::default()
+        })
+        .err()
+        .expect("factory should return an error");
+        assert_eq!(err.code, AsrErrorCode::InvalidRequest);
+    }
+
+    #[cfg(feature = "assemblyai")]
+    #[test]
+    fn factory_creates_assemblyai_universal() {
+        let provider = create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "assemblyai/universal".into(),
+            api_key: Some("key".into()),
+            api_key_env: None,
+            api_url: None,
+            region: None,
+            timeout: None,
+            provider_options: Value::Null,
+        })
+        .expect("factory should succeed");
+        assert_eq!(provider.provider_name(), "assemblyai");
+        assert_eq!(provider.model_name(), "universal");
+    }
+
+    #[cfg(feature = "assemblyai")]
+    #[test]
+    fn factory_rejects_unknown_assemblyai_model() {
+        let err = create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "assemblyai/nano".into(),
+            api_key: Some("key".into()),
+            ..Default::default()
+        })
+        .err()
+        .expect("factory should return an error");
+        assert_eq!(err.code, AsrErrorCode::InvalidRequest);
+    }
+
+    #[cfg(feature = "speechmatics")]
+    #[test]
+    fn factory_creates_speechmatics_enhanced() {
+        let provider = create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "speechmatics/enhanced".into(),
+            api_key: Some("key".into()),
+            api_key_env: None,
+            api_url: None,
+            region: None,
+            timeout: None,
+            provider_options: Value::Null,
+        })
+        .expect("factory should succeed");
+        assert_eq!(provider.provider_name(), "speechmatics");
+        assert_eq!(provider.model_name(), "enhanced");
+    }
+
+    #[cfg(feature = "speechmatics")]
+    #[test]
+    fn factory_rejects_unknown_speechmatics_model() {
+        let err = create_asr_provider_from_config(AsrProviderRuntimeConfig {
+            model: "speechmatics/turbo".into(),
+            api_key: Some("key".into()),
+            ..Default::default()
+        })
+        .err()
+        .expect("factory should return an error");
+        assert_eq!(err.code, AsrErrorCode::InvalidRequest);
     }
 }

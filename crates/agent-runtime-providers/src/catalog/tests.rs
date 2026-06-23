@@ -170,8 +170,8 @@ fn multimodal_models_declare_image_input() {
 #[test]
 fn text_only_models_have_only_text_modality() {
     let text_only = [
-/// Note: gpt-5.4-nano is not listed here because the catalog declares Image
-/// input for it. If nano is confirmed text-only, add it here and fix the catalog.
+        // Note: gpt-5.4-nano is not listed here because the catalog declares Image
+        // input for it. If nano is confirmed text-only, add it here and fix the catalog.
         "deepseek/deepseek-v4-flash",
         "deepseek/deepseek-v4-pro",
         "volcengine/doubao-seed-character-251128",
@@ -197,8 +197,8 @@ fn text_only_models_have_only_text_modality() {
 fn reasoning_scene_marks_top_tier_models() {
     let reasoning_models = [
         "anthropic/claude-opus-4-8",
-/// Note: OpenAI gpt-5.5/5.4 are not flagged as Reasoning in the current catalog.
-/// Add them here once the catalog data is updated.
+        // Note: OpenAI gpt-5.5/5.4 are not flagged as Reasoning in the current catalog.
+        // Add them here once the catalog data is updated.
         "anthropic/claude-opus-4-7",
         "deepseek/deepseek-v4-pro",
     ];

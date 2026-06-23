@@ -1,7 +1,7 @@
 //! OpenAI adapter implementation.
 //!
 //! Split by concern: this file owns the adapter struct, capability
-//! reporting, and `complete()`'s control flow; [`request`] builds the
+//! reporting, and `complete()`'s control flow; `request` builds the
 //! chat completions request body.
 
 mod request;

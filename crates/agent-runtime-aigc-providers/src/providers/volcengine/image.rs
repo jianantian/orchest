@@ -1,6 +1,6 @@
 //! Volcengine Ark (火山方舟) image generation adapter.
 //!
-//! Endpoint: POST https://ark.cn-beijing.volces.com/api/v3/images/generations
+//! Endpoint: POST <https://ark.cn-beijing.volces.com/api/v3/images/generations>
 //! Auth:     Authorization: Bearer $ARK_API_KEY
 //! Models:   doubao-seedream-5-0-260128 (confirmed against the live API; see
 //!           catalog.rs for notes on other model name variants).

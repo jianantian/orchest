@@ -9,6 +9,9 @@ volcengine = []
 aliyun = []
 deepgram = []
 elevenlabs = []
+soniox = []
+assemblyai = []
+speechmatics = []
 
 [dependencies]
 tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
@@ -25,6 +28,7 @@ tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 futures-util = "0.3"
 flate2 = "1"
 base64 = "0.22"
+reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -36,6 +40,10 @@ path = "../../examples/rust/asr/asr_full_duplex.rs"
 [[example]]
 name = "asr_segmented"
 path = "../../examples/rust/asr/asr_segmented.rs"
+
+[[example]]
+name = "asr_transcribe"
+path = "../../examples/rust/asr/asr_transcribe.rs"
 
 [lints]
 workspace = true
