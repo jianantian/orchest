@@ -1,7 +1,9 @@
 //! LLM provider adapters: Anthropic, OpenAI, DeepSeek, OpenRouter, Volcengine.
 
 pub mod catalog;
-pub use catalog::{LlmModelEntry, LlmModelList, LlmProviderInfo, Modality, ModelScene, ThinkingSpec};
+pub use catalog::{
+    LlmModelEntry, LlmModelList, LlmProviderInfo, Modality, ModelScene, ThinkingSpec,
+};
 
 pub mod defaults;
 pub mod pricing;
