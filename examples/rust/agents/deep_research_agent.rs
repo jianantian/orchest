@@ -133,10 +133,9 @@ impl ExaSearchTool {
             metadata: ToolMetadata {
                 side_effect: false,
                 approval: Approval::Never,
-                cost_hint: None,
                 timeout: Some(Duration::from_secs(30)),
-                max_output_tokens: None,
                 source: ToolSource::InProcess,
+                ..ToolMetadata::default()
             },
             input_schema: json!({
                 "type": "object",

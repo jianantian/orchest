@@ -27,12 +27,10 @@ impl SkillManifest {
         ToolMetadata {
             side_effect: false,
             approval: crate::tool::Approval::Never,
-            cost_hint: None,
-            timeout: None,
-            max_output_tokens: None,
             source: ToolSource::Skill {
                 skill_name: self.name.clone(),
             },
+            ..ToolMetadata::default()
         }
     }
 }

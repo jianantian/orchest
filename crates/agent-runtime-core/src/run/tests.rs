@@ -9,7 +9,7 @@ use crate::tool::async_job::{JobHandle, JobStatus};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{
     Approval, ErrorKind, JsonSchema, RetryHint, Tool, ToolCall, ToolContext, ToolDef, ToolError,
-    ToolMetadata, ToolOutput, ToolSource,
+    ToolExecutionMode, ToolMetadata, ToolOutput, ToolParallelism, ToolSource,
 };
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -325,6 +325,37 @@ impl FakeTool {
     }
 }
 
+struct MetadataTool {
+    name: &'static str,
+    metadata: ToolMetadata,
+}
+
+#[async_trait::async_trait]
+impl Tool for MetadataTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn description(&self) -> &str {
+        "metadata test tool"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &serde_json::Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
+    fn metadata(&self) -> &ToolMetadata {
+        &self.metadata
+    }
+    async fn execute(
+        &self,
+        input: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        Ok(ToolOutput::Immediate(input))
+    }
+}
+
 #[async_trait::async_trait]
 impl Tool for FakeTool {
     fn name(&self) -> &str {
@@ -344,6 +375,8 @@ impl Tool for FakeTool {
             Approval::Always => &ToolMetadata {
                 side_effect: true,
                 approval: Approval::Always,
+                execution_mode: ToolExecutionMode::Normal,
+                parallelism: ToolParallelism::Serial,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,
@@ -352,6 +385,8 @@ impl Tool for FakeTool {
             _ => &ToolMetadata {
                 side_effect: false,
                 approval: Approval::Never,
+                execution_mode: ToolExecutionMode::Normal,
+                parallelism: ToolParallelism::Serial,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,
@@ -366,6 +401,43 @@ impl Tool for FakeTool {
     ) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::Immediate(input))
     }
+}
+
+#[tokio::test]
+async fn invalid_tool_metadata_links_fail_run_before_model_call() {
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(MetadataTool {
+            name: "draft",
+            metadata: ToolMetadata {
+                side_effect: false,
+                approval: Approval::Never,
+                execution_mode: ToolExecutionMode::Draft {
+                    commit_tool: "missing_commit".into(),
+                },
+                source: ToolSource::InProcess,
+                ..ToolMetadata::default()
+            },
+        }))
+        .unwrap();
+    let config = test_config();
+
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+    let mut failed = None;
+    while let Some(e) = rx.recv().await {
+        if let RuntimeEvent::RunFailed { error } = e {
+            failed = Some(error);
+        }
+    }
+    handle.wait().await;
+
+    assert!(
+        failed
+            .as_deref()
+            .is_some_and(|error| error.contains("tool metadata validation failed")),
+        "invalid metadata links should fail the run"
+    );
 }
 
 #[tokio::test]
@@ -476,6 +548,8 @@ impl Tool for StructuredTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
+            execution_mode: ToolExecutionMode::Normal,
+            parallelism: ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -686,6 +760,8 @@ impl Tool for AsyncTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
+            execution_mode: ToolExecutionMode::Normal,
+            parallelism: ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -905,6 +981,8 @@ impl Tool for SpecGapTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
+            execution_mode: ToolExecutionMode::Normal,
+            parallelism: ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -1056,6 +1134,8 @@ impl Tool for RetryHintTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
+            execution_mode: ToolExecutionMode::Normal,
+            parallelism: ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -1565,6 +1645,8 @@ impl Tool for WebhookTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
+            execution_mode: ToolExecutionMode::Normal,
+            parallelism: ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -1877,6 +1959,8 @@ impl SlowTool {
             metadata: ToolMetadata {
                 side_effect: false,
                 approval: Approval::Never,
+                execution_mode: ToolExecutionMode::Normal,
+                parallelism: ToolParallelism::Serial,
                 cost_hint: None,
                 timeout: Some(Duration::from_millis(50)),
                 max_output_tokens: None,
@@ -2010,6 +2094,8 @@ impl BigOutputTool {
             metadata: ToolMetadata {
                 side_effect: false,
                 approval: Approval::Never,
+                execution_mode: ToolExecutionMode::Normal,
+                parallelism: ToolParallelism::Serial,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: Some(10),
@@ -3173,6 +3259,8 @@ impl Tool for RepeatedFailureTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
+            execution_mode: ToolExecutionMode::Normal,
+            parallelism: ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -3449,6 +3537,8 @@ impl Tool for MustNotRunTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
+            execution_mode: ToolExecutionMode::Normal,
+            parallelism: ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -4424,6 +4514,8 @@ impl Tool for GuardedNamedTool {
         &ToolMetadata {
             side_effect: true,
             approval: Approval::Always,
+            execution_mode: ToolExecutionMode::Normal,
+            parallelism: ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -4447,6 +4539,8 @@ fn meta(approval: Approval, side_effect: bool) -> ToolMetadata {
     ToolMetadata {
         side_effect,
         approval,
+        execution_mode: ToolExecutionMode::Normal,
+        parallelism: ToolParallelism::Serial,
         cost_hint: None,
         timeout: None,
         max_output_tokens: None,

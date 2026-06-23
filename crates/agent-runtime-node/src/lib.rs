@@ -26,7 +26,8 @@ use agent_runtime_core::run::{
 use agent_runtime_core::tool::async_job::{JobHandle, JobStatus, PollFn};
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
-    Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
+    Approval, JsonSchema, Tool, ToolContext, ToolError, ToolExecutionMode, ToolMetadata,
+    ToolOutput, ToolSource,
 };
 use agent_runtime_providers::{create_adapter_from_config, normalize_provider_model};
 
@@ -44,6 +45,48 @@ fn resolve_approval_node(approval_str: Option<&str>, requires_approval: Option<b
             }
         }
     }
+}
+
+fn parse_execution_mode_node(
+    mode: Option<&str>,
+    commit_tool: Option<String>,
+    draft_tool: Option<String>,
+) -> napi::Result<ToolExecutionMode> {
+    match mode {
+        None | Some("normal") => Ok(ToolExecutionMode::Normal),
+        Some("draft") => {
+            let commit_tool = commit_tool.ok_or_else(|| {
+                napi::Error::from_reason("executionMode 'draft' requires commitTool")
+            })?;
+            Ok(ToolExecutionMode::Draft { commit_tool })
+        }
+        Some("commit") => {
+            let draft_tool = draft_tool.ok_or_else(|| {
+                napi::Error::from_reason("executionMode 'commit' requires draftTool")
+            })?;
+            Ok(ToolExecutionMode::Commit { draft_tool })
+        }
+        Some(other) => Err(napi::Error::from_reason(format!(
+            "invalid executionMode '{other}'; expected normal|draft|commit"
+        ))),
+    }
+}
+
+fn execution_mode_from_options(
+    options: Option<&serde_json::Value>,
+) -> napi::Result<ToolExecutionMode> {
+    let mode = options
+        .and_then(|o| o.get("executionMode").or_else(|| o.get("execution_mode")))
+        .and_then(|v| v.as_str());
+    let commit_tool = options
+        .and_then(|o| o.get("commitTool").or_else(|| o.get("commit_tool")))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let draft_tool = options
+        .and_then(|o| o.get("draftTool").or_else(|| o.get("draft_tool")))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    parse_execution_mode_node(mode, commit_tool, draft_tool)
 }
 
 fn shared_runtime() -> &'static tokio::runtime::Runtime {
@@ -112,6 +155,10 @@ pub struct ToolRegistration {
     pub side_effect: Option<bool>,
     /// Approval level: "never" | "whenRisky" | "always". Takes priority over `requires_approval`.
     pub approval: Option<String>,
+    /// Execution mode: "normal" | "draft" | "commit".
+    pub execution_mode: Option<String>,
+    pub commit_tool: Option<String>,
+    pub draft_tool: Option<String>,
 }
 
 /// Tool backed by a JavaScript handler function.
@@ -438,6 +485,11 @@ impl Agent {
     pub fn register_tool(&mut self, options: ToolRegistration) -> napi::Result<()> {
         let resolved =
             resolve_approval_node(options.approval.as_deref(), options.requires_approval);
+        let execution_mode = parse_execution_mode_node(
+            options.execution_mode.as_deref(),
+            options.commit_tool,
+            options.draft_tool,
+        )?;
         let tool = StaticTool {
             name: options.name.clone(),
             description: options.description.clone(),
@@ -445,10 +497,9 @@ impl Agent {
             metadata: ToolMetadata {
                 side_effect: options.side_effect.unwrap_or(false),
                 approval: resolved,
-                cost_hint: None,
-                timeout: None,
-                max_output_tokens: None,
+                execution_mode,
                 source: ToolSource::InProcess,
+                ..ToolMetadata::default()
             },
         };
 
@@ -460,7 +511,7 @@ impl Agent {
     /// The handler receives the parsed input object and should return a
     /// JSON-serializable value. Errors thrown become ToolCallFailed events.
     #[napi(
-        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => any, options?: { requiresApproval?: boolean, sideEffect?: boolean, approval?: string }"
+        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => any, options?: { requiresApproval?: boolean, sideEffect?: boolean, approval?: string, executionMode?: 'normal' | 'draft' | 'commit', commitTool?: string, draftTool?: string }"
     )]
     #[allow(clippy::too_many_arguments)] // justified: NAPI binding mirrors JS API surface
     pub fn register_tool_with_handler(
@@ -486,6 +537,7 @@ impl Agent {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let resolved = resolve_approval_node(approval_str.as_deref(), requires_approval);
+        let execution_mode = execution_mode_from_options(options.as_ref())?;
 
         let tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = handler
             .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<Value>| {
@@ -500,10 +552,9 @@ impl Agent {
             metadata: ToolMetadata {
                 side_effect,
                 approval: resolved,
-                cost_hint: None,
-                timeout: None,
-                max_output_tokens: None,
+                execution_mode,
                 source: ToolSource::InProcess,
+                ..ToolMetadata::default()
             },
             handler: tsfn,
         };
@@ -518,7 +569,7 @@ impl Agent {
     /// `pollHandler(jobId)` is called on each poll interval and should return
     /// `{ status: "pending"|"completed"|"failed", progress?: number, message?: string, result?: any, error?: string }`.
     #[napi(
-        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => { job_id: string; poll_interval_ms?: number }, pollHandler: (jobId: string) => { status: string; progress?: number; message?: string; result?: any; error?: string }, options?: { requiresApproval?: boolean; sideEffect?: boolean; approval?: string }"
+        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => { job_id: string; poll_interval_ms?: number }, pollHandler: (jobId: string) => { status: string; progress?: number; message?: string; result?: any; error?: string }, options?: { requiresApproval?: boolean; sideEffect?: boolean; approval?: string, executionMode?: 'normal' | 'draft' | 'commit', commitTool?: string, draftTool?: string }"
     )]
     #[allow(clippy::too_many_arguments)] // justified: napi-rs exposes the JavaScript registration API as positional arguments.
     pub fn register_async_tool_with_handler(
@@ -545,6 +596,7 @@ impl Agent {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let resolved = resolve_approval_node(approval_str.as_deref(), requires_approval);
+        let execution_mode = execution_mode_from_options(options.as_ref())?;
 
         let handler_tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = handler
             .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<Value>| {
@@ -565,10 +617,9 @@ impl Agent {
             metadata: ToolMetadata {
                 side_effect,
                 approval: resolved,
-                cost_hint: None,
-                timeout: None,
-                max_output_tokens: None,
+                execution_mode,
                 source: ToolSource::InProcess,
+                ..ToolMetadata::default()
             },
             handler: handler_tsfn,
             poll_handler: poll_tsfn,
@@ -955,6 +1006,43 @@ mod tests {
         })
         .expect_err("invalid enum should fail");
         assert!(err.contains("off|minimal|low|medium|high|xhigh|max"));
+    }
+
+    #[test]
+    fn node_execution_mode_defaults_to_normal() {
+        let mode = parse_execution_mode_node(None, None, None).expect("normal mode should parse");
+
+        assert_eq!(mode, ToolExecutionMode::Normal);
+    }
+
+    #[test]
+    fn node_execution_mode_parses_commit() {
+        let mode = parse_execution_mode_node(Some("commit"), None, Some("draft_write".into()))
+            .expect("commit mode should parse");
+
+        assert_eq!(
+            mode,
+            ToolExecutionMode::Commit {
+                draft_tool: "draft_write".into()
+            }
+        );
+    }
+
+    #[test]
+    fn node_execution_mode_from_handler_options_accepts_camel_case() {
+        let options = serde_json::json!({
+            "executionMode": "draft",
+            "commitTool": "commit_write"
+        });
+
+        let mode = execution_mode_from_options(Some(&options)).expect("options should parse");
+
+        assert_eq!(
+            mode,
+            ToolExecutionMode::Draft {
+                commit_tool: "commit_write".into()
+            }
+        );
     }
 
     #[test]

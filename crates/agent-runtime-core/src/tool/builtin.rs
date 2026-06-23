@@ -43,10 +43,8 @@ impl ReadFileTool {
             metadata: ToolMetadata {
                 side_effect: false,
                 approval: Approval::Never,
-                cost_hint: None,
-                timeout: None,
-                max_output_tokens: None,
                 source: ToolSource::Builtin,
+                ..ToolMetadata::default()
             },
             input_schema: json!({
                 "type": "object",
@@ -91,10 +89,8 @@ impl WriteFileTool {
             metadata: ToolMetadata {
                 side_effect: true,
                 approval,
-                cost_hint: None,
-                timeout: None,
-                max_output_tokens: None,
                 source: ToolSource::Builtin,
+                ..ToolMetadata::default()
             },
             input_schema: json!({
                 "type": "object",

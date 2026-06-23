@@ -193,6 +193,8 @@ impl Tool for EchoTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
+            execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
+            parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -793,6 +795,8 @@ impl Tool for AsyncEchoTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
+            execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
+            parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -978,6 +982,8 @@ impl Tool for GuardedTool {
         &ToolMetadata {
             side_effect: true,
             approval: Approval::Always,
+            execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
+            parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,

@@ -94,6 +94,8 @@ impl Tool for LongTask {
             timeout: None,
             max_output_tokens: None,
             approval: Approval::Never,
+            execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
+            parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
             cost_hint: None,
         }
     }

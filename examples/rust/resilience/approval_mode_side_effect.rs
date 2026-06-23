@@ -128,6 +128,8 @@ impl Tool for ReadFileTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
+            execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
+            parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -164,6 +166,8 @@ impl Tool for WriteFileTool {
         &ToolMetadata {
             side_effect: true,
             approval: Approval::Never, // approval_mode overrides this
+            execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
+            parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,

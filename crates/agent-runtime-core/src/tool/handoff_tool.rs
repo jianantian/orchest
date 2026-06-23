@@ -21,8 +21,8 @@ impl HandoffTool {
             approval: crate::tool::Approval::Never,
             cost_hint: Some(CostHint::Free),
             timeout: Some(Duration::from_secs(30)),
-            max_output_tokens: None,
             source: ToolSource::Builtin,
+            ..ToolMetadata::default()
         };
         Self { handoff, metadata }
     }

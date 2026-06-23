@@ -261,6 +261,20 @@ impl Actor for WorkerActor {
 
         let unfiltered_registry = registry.clone();
         let mut registry = registry.filter_by_allowed(&config.runtime.allowed_tools);
+        if let Err(error) = registry.validate_metadata_links() {
+            return Ok(fail_pre_start(
+                &myself,
+                &event_subs,
+                run_id,
+                config,
+                model,
+                registry,
+                approval_bus,
+                run_hook_ctx,
+                format!("tool metadata validation failed: {error}"),
+            )
+            .await);
+        }
 
         let (messages, initial_step, initial_budget_used) = if let Some(rs) = resume {
             (rs.messages, rs.step, Some(rs.budget_used))
@@ -1533,6 +1547,10 @@ async fn prepare_handoff_transition(
         })?;
     }
     let next_registry = next_registry.filter_by_allowed(&new_config.runtime.allowed_tools);
+    next_registry.validate_metadata_links().map_err(|error| {
+        ToolError::fatal(format!("tool metadata validation failed: {error}"))
+            .with_code("TOOL_METADATA_VALIDATION_FAILED")
+    })?;
     let tool_defs = next_registry.list();
 
     let new_budget = if new_config.budget.max_tokens.is_none()
@@ -1623,6 +1641,31 @@ fn estimate_context_tokens(messages: &[Message], tool_defs: &[ToolDef]) -> u64 {
 fn primary(subs: &[mpsc::Sender<RuntimeEvent>]) -> &mpsc::Sender<RuntimeEvent> {
     subs.first()
         .expect("event_subs always has at least one subscriber")
+}
+
+#[allow(clippy::too_many_arguments)] // justified: mirrors pre_start owned state needed to terminate startup cleanly
+async fn fail_pre_start(
+    myself: &ActorRef<AgentMsg>,
+    event_subs: &[mpsc::Sender<RuntimeEvent>],
+    run_id: RunId,
+    config: AgentConfig,
+    model: Arc<dyn ModelAdapter>,
+    registry: ToolRegistry,
+    approval_bus: ApprovalBus,
+    run_hook_ctx: crate::hook::RunHookContext,
+    error: String,
+) -> AgentRunState {
+    emit(event_subs, RuntimeEvent::RunFailed { error }).await;
+    myself.cast(AgentMsg::RunStep).ok();
+    failed_state(
+        run_id,
+        config,
+        model,
+        registry,
+        approval_bus,
+        event_subs.to_vec(),
+        run_hook_ctx,
+    )
 }
 
 #[allow(clippy::too_many_arguments)] // justified: mirrors AgentRunArgs fields for error recovery path

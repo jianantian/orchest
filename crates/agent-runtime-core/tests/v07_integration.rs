@@ -139,6 +139,8 @@ impl Tool for EchoSearchTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
+            execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
+            parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,

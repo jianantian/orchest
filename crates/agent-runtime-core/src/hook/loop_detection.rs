@@ -189,6 +189,8 @@ mod tests {
             tool_metadata: ToolMetadata {
                 side_effect: false,
                 approval: crate::tool::Approval::Never,
+                execution_mode: crate::tool::ToolExecutionMode::Normal,
+                parallelism: crate::tool::ToolParallelism::Serial,
                 cost_hint: None,
                 timeout: None,
                 max_output_tokens: None,

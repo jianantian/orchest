@@ -334,6 +334,8 @@ mod tests {
                 timeout: None,
                 max_output_tokens: None,
                 approval: crate::tool::Approval::Never,
+                execution_mode: crate::tool::ToolExecutionMode::Normal,
+                parallelism: crate::tool::ToolParallelism::Serial,
                 cost_hint: None,
             },
             input: json!({"query": "test"}),
