@@ -8,7 +8,7 @@ export interface AgentOptions {
   maxTokens?: number;
   requestOptions?: RequestOptions;
   budget?: BudgetOptions;
-  /** Run-level approval policy: "perTool" | "none" | "all" | "sideEffectOnly". */
+  /** Run-level approval policy: "perTool" | "none" | "all". */
   approvalMode?: string;
 }
 
@@ -34,10 +34,8 @@ export interface ToolRegistration {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  /** Deprecated: use `approval` instead. */
-  requiresApproval?: boolean;
   sideEffect?: boolean;
-  /** "never" | "whenRisky" | "always". Takes priority over `requiresApproval`. */
+  /** "never" | "whenRisky" | "always". */
   approval?: string;
 }
 
@@ -46,8 +44,8 @@ export interface ToolWithHandler {
   description: string;
   inputSchema: Record<string, unknown>;
   handler: (input: any) => any;
-  requiresApproval?: boolean;
   sideEffect?: boolean;
+  approval?: string;
 }
 
 export interface ToolMetadata {
@@ -133,7 +131,7 @@ export class Agent {
     description: string,
     inputSchema: Record<string, unknown>,
     handler: (input: any) => any,
-    options?: { requiresApproval?: boolean; sideEffect?: boolean; approval?: string },
+    options?: { sideEffect?: boolean; approval?: string },
   ): void;
   runSync(input: string): RuntimeEvent[];
   runStream(input: string, onEvent: (event: RuntimeEvent) => void): void;

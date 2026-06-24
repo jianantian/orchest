@@ -58,6 +58,10 @@ def get_weather(city: str) -> dict:
 agent.register_tool(get_weather, approval="never")   # "never" | "when_risky" | "always"
 ```
 
+### v0.9.9 迁移说明
+
+`requires_approval` 参数已移除；使用 `approval="always"` 表达必须审批，使用 `approval="never"` 表达不审批。`approval_mode="side_effect_only"` 也已移除；用默认 `approval_mode="per_tool"`，并在有副作用的 tool metadata 上设置 `approval="when_risky"` 与 `side_effect=True`。
+
 异步 tool（长任务轮询）返回 `{"async_job": {...}}` 形状，见 [`examples/python/async_tool.py`](../../examples/python/async_tool.py)。
 
 ## 4. 消费事件

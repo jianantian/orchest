@@ -88,8 +88,8 @@ name = "guardrail_output_sanitize"
 path = "../../examples/rust/guardrails/output_sanitize.rs"
 
 [[example]]
-name = "approval_mode_side_effect"
-path = "../../examples/rust/resilience/approval_mode_side_effect.rs"
+name = "approval_when_risky_side_effect"
+path = "../../examples/rust/resilience/approval_when_risky_side_effect.rs"
 
 [[example]]
 name = "draft_commit_approval"

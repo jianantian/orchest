@@ -12,7 +12,7 @@ use agent_runtime_core::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, Role, StopReason, StreamEvent, TokenUsage,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun, ApprovalMode, RunId, Watcher, WatcherAction};
+use agent_runtime_core::run::{AgentConfig, AgentRun, RunId, Watcher, WatcherAction};
 use agent_runtime_core::session::{InMemorySessionStore, SessionSnapshot, SessionStore};
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
@@ -192,7 +192,7 @@ impl Tool for WriteFileTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: true,
-            approval: Approval::Never,
+            approval: Approval::WhenRisky,
             execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
             parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
             cost_hint: None,
@@ -221,11 +221,9 @@ impl ToolInputGuardrail for BannedKeywordGuardrail {
 
 #[tokio::test]
 async fn guardrail_and_approval_coexist() {
-    #[allow(deprecated)]
     let config = AgentConfig::builder("mock/mock")
         .system_prompt("assistant")
         .max_steps(5)
-        .approval_mode(ApprovalMode::SideEffectOnly)
         .build()
         .unwrap()
         .with_tool_input_guardrail(Arc::new(BannedKeywordGuardrail));
@@ -706,11 +704,9 @@ async fn all_v08_features_combined() {
     const SID: &str = "combined-session";
     let tool_completions = Arc::new(AtomicU32::new(0));
 
-    #[allow(deprecated)]
     let config = AgentConfig::builder("mock/mock")
         .system_prompt("combined feature assistant")
         .max_steps(10)
-        .approval_mode(ApprovalMode::SideEffectOnly)
         .session_store(store.clone() as Arc<dyn SessionStore>, SID)
         .build()
         .unwrap()

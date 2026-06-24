@@ -31,19 +31,13 @@ use agent_runtime_core::tool::{
 };
 use agent_runtime_providers::{create_adapter_from_config, normalize_provider_model};
 
-fn resolve_approval_node(approval_str: Option<&str>, requires_approval: Option<bool>) -> Approval {
+fn resolve_approval_node(approval_str: Option<&str>, default: Approval) -> Approval {
     match approval_str {
         Some("never") => Approval::Never,
         Some("whenRisky") | Some("when_risky") => Approval::WhenRisky,
         Some("always") => Approval::Always,
         Some(_) => Approval::WhenRisky,
-        None => {
-            if requires_approval.unwrap_or(false) {
-                Approval::Always
-            } else {
-                Approval::Never
-            }
-        }
+        None => default,
     }
 }
 
@@ -99,13 +93,8 @@ fn parse_approval_mode(value: Option<&str>) -> Result<ApprovalMode, String> {
         None | Some("perTool") | Some("PerTool") => Ok(ApprovalMode::PerTool),
         Some("none") | Some("None") => Ok(ApprovalMode::None),
         Some("all") | Some("All") => Ok(ApprovalMode::All),
-        #[allow(deprecated)]
-        Some("sideEffectOnly") | Some("SideEffectOnly") => {
-            eprintln!("warning: sideEffectOnly is deprecated, use perTool with Approval::WhenRisky instead");
-            Ok(ApprovalMode::SideEffectOnly)
-        }
         Some(other) => Err(format!(
-            "invalid approvalMode '{other}'; expected perTool|none|all|sideEffectOnly"
+            "invalid approvalMode '{other}'; expected perTool|none|all"
         )),
     }
 }
@@ -121,7 +110,7 @@ pub struct AgentOptions {
     pub max_tokens: Option<u32>,
     pub request_options: Option<RequestOptions>,
     pub budget: Option<BudgetOptions>,
-    /// Run-level approval policy: "perTool" | "none" | "all" | "sideEffectOnly".
+    /// Run-level approval policy: "perTool" | "none" | "all".
     pub approval_mode: Option<String>,
 }
 
@@ -150,10 +139,8 @@ pub struct ToolRegistration {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
-    /// Deprecated: use `approval` ("never"/"whenRisky"/"always") instead.
-    pub requires_approval: Option<bool>,
     pub side_effect: Option<bool>,
-    /// Approval level: "never" | "whenRisky" | "always". Takes priority over `requires_approval`.
+    /// Approval level: "never" | "whenRisky" | "always".
     pub approval: Option<String>,
     /// Execution mode: "normal" | "draft" | "commit".
     pub execution_mode: Option<String>,
@@ -483,8 +470,7 @@ impl Agent {
     /// For tools with handlers, use `registerToolWithHandler`.
     #[napi]
     pub fn register_tool(&mut self, options: ToolRegistration) -> napi::Result<()> {
-        let resolved =
-            resolve_approval_node(options.approval.as_deref(), options.requires_approval);
+        let resolved = resolve_approval_node(options.approval.as_deref(), Approval::Never);
         let execution_mode = parse_execution_mode_node(
             options.execution_mode.as_deref(),
             options.commit_tool,
@@ -511,7 +497,7 @@ impl Agent {
     /// The handler receives the parsed input object and should return a
     /// JSON-serializable value. Errors thrown become ToolCallFailed events.
     #[napi(
-        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => any, options?: { requiresApproval?: boolean, sideEffect?: boolean, approval?: string, executionMode?: 'normal' | 'draft' | 'commit', commitTool?: string, draftTool?: string }"
+        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => any, options?: { sideEffect?: boolean, approval?: string, executionMode?: 'normal' | 'draft' | 'commit', commitTool?: string, draftTool?: string }"
     )]
     #[allow(clippy::too_many_arguments)] // justified: NAPI binding mirrors JS API surface
     pub fn register_tool_with_handler(
@@ -527,16 +513,12 @@ impl Agent {
             .and_then(|o| o.get("approval"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let requires_approval = options
-            .as_ref()
-            .and_then(|o| o.get("requiresApproval"))
-            .and_then(|v| v.as_bool());
         let side_effect = options
             .as_ref()
             .and_then(|o| o.get("sideEffect"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let resolved = resolve_approval_node(approval_str.as_deref(), requires_approval);
+        let resolved = resolve_approval_node(approval_str.as_deref(), Approval::Never);
         let execution_mode = execution_mode_from_options(options.as_ref())?;
 
         let tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = handler
@@ -569,7 +551,7 @@ impl Agent {
     /// `pollHandler(jobId)` is called on each poll interval and should return
     /// `{ status: "pending"|"completed"|"failed", progress?: number, message?: string, result?: any, error?: string }`.
     #[napi(
-        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => { job_id: string; poll_interval_ms?: number }, pollHandler: (jobId: string) => { status: string; progress?: number; message?: string; result?: any; error?: string }, options?: { requiresApproval?: boolean; sideEffect?: boolean; approval?: string, executionMode?: 'normal' | 'draft' | 'commit', commitTool?: string, draftTool?: string }"
+        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => { job_id: string; poll_interval_ms?: number }, pollHandler: (jobId: string) => { status: string; progress?: number; message?: string; result?: any; error?: string }, options?: { sideEffect?: boolean; approval?: string, executionMode?: 'normal' | 'draft' | 'commit', commitTool?: string, draftTool?: string }"
     )]
     #[allow(clippy::too_many_arguments)] // justified: napi-rs exposes the JavaScript registration API as positional arguments.
     pub fn register_async_tool_with_handler(
@@ -586,16 +568,12 @@ impl Agent {
             .and_then(|o| o.get("approval"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let requires_approval = options
-            .as_ref()
-            .and_then(|o| o.get("requiresApproval"))
-            .and_then(|v| v.as_bool());
         let side_effect = options
             .as_ref()
             .and_then(|o| o.get("sideEffect"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let resolved = resolve_approval_node(approval_str.as_deref(), requires_approval);
+        let resolved = resolve_approval_node(approval_str.as_deref(), Approval::Never);
         let execution_mode = execution_mode_from_options(options.as_ref())?;
 
         let handler_tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = handler

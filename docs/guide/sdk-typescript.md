@@ -59,6 +59,10 @@ agent.registerTool({
 });
 ```
 
+### v0.9.9 迁移说明
+
+`requiresApproval` 选项已移除；使用 `approval: "always"` 表达必须审批，使用 `approval: "never"` 表达不审批。`approvalMode: "sideEffectOnly"` 也已移除；使用默认 `approvalMode: "perTool"`，并在有副作用的 tool 上设置 `approval: "whenRisky"` 和 `sideEffect: true`。
+
 ## 4. 消费事件
 
 `runSync` 返回的数组里每个 event 带 `type` 字段：

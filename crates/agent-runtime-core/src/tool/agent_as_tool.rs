@@ -77,42 +77,6 @@ pub struct AgentAsTool {
     context_mode: ContextMode,
 }
 
-impl AgentAsTool {
-    #[deprecated(
-        since = "0.9.0",
-        note = "use AgentConfig::as_tool(name, desc).model(m).registry(r).build()"
-    )]
-    #[allow(clippy::too_many_arguments)] // justified: backward-compat; use SubAgentBuilder instead
-    pub fn new(
-        config: AgentConfig,
-        tool_name: String,
-        tool_description: String,
-        input_schema: JsonSchema,
-        model: Arc<dyn ModelAdapter>,
-        registry: ToolRegistry,
-        input_mapper: Arc<InputMapperFn>,
-        output_extractor: Arc<OutputExtractorFn>,
-    ) -> Self {
-        Self {
-            config,
-            tool_name,
-            tool_description,
-            input_schema,
-            metadata: ToolMetadata {
-                side_effect: false,
-                approval: crate::tool::Approval::Never,
-                source: ToolSource::InProcess,
-                ..ToolMetadata::default()
-            },
-            model,
-            registry,
-            input_mapper,
-            output_extractor,
-            context_mode: ContextMode::Fresh,
-        }
-    }
-}
-
 #[async_trait]
 impl Tool for AgentAsTool {
     fn name(&self) -> &str {

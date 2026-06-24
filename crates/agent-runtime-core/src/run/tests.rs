@@ -626,7 +626,7 @@ async fn draft_tool_call_runs_without_approval_or_side_effect() {
 }
 
 #[tokio::test]
-async fn commit_tool_call_requires_approval_with_linked_draft_context() {
+async fn commit_tool_call_requests_approval_with_linked_draft_context() {
     let model = Arc::new(NamedToolCallModel {
         tool_name: "commit_file",
     });
@@ -5519,17 +5519,6 @@ fn approval_mode_all_always_approves() {
         ..Default::default()
     };
     assert!(rc.should_approve(&meta(Approval::Never, false)));
-}
-
-#[test]
-fn approval_mode_side_effect_only() {
-    #[allow(deprecated)]
-    let rc = config::RuntimeConfig {
-        approval_mode: ApprovalMode::SideEffectOnly,
-        ..Default::default()
-    };
-    assert!(rc.should_approve(&meta(Approval::Never, true)));
-    assert!(!rc.should_approve(&meta(Approval::Always, false)));
 }
 
 #[test]

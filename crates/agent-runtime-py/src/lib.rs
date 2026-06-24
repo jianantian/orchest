@@ -32,7 +32,7 @@ use agent_runtime_core::tool::{
 };
 use agent_runtime_providers::{create_adapter_from_config, normalize_provider_model};
 
-fn resolve_approval(approval_str: Option<&str>, requires_approval: bool) -> Approval {
+fn resolve_approval(approval_str: Option<&str>, default: Approval) -> Approval {
     match approval_str {
         Some("never") => Approval::Never,
         Some("when_risky") => Approval::WhenRisky,
@@ -41,16 +41,7 @@ fn resolve_approval(approval_str: Option<&str>, requires_approval: bool) -> Appr
             eprintln!("warning: unknown approval value '{other}', defaulting to WhenRisky");
             Approval::WhenRisky
         }
-        None => {
-            if requires_approval {
-                eprintln!(
-                    "warning: requires_approval is deprecated, use approval='always' instead"
-                );
-                Approval::Always
-            } else {
-                Approval::Never
-            }
-        }
+        None => default,
     }
 }
 
@@ -468,13 +459,8 @@ fn parse_approval_mode(value: Option<&str>) -> PyResult<ApprovalMode> {
         None | Some("per_tool") | Some("PerTool") => Ok(ApprovalMode::PerTool),
         Some("none") | Some("None") => Ok(ApprovalMode::None),
         Some("all") | Some("All") => Ok(ApprovalMode::All),
-        #[allow(deprecated)]
-        Some("side_effect_only") | Some("SideEffectOnly") => {
-            eprintln!("warning: side_effect_only is deprecated, use per_tool with approval='when_risky' instead");
-            Ok(ApprovalMode::SideEffectOnly)
-        }
         Some(other) => Err(PyRuntimeError::new_err(format!(
-            "invalid approval_mode '{other}'; expected per_tool|none|all|side_effect_only"
+            "invalid approval_mode '{other}'; expected per_tool|none|all"
         ))),
     }
 }
@@ -657,15 +643,12 @@ impl Agent {
     }
 
     /// Register a tool. Supports `@agent.tool` (bare decorator).
-    ///
-    /// `requires_approval` is deprecated — use `approval` ("never"/"when_risky"/"always") instead.
-    #[pyo3(signature = (func=None, requires_approval=false, side_effect=false, approval=None, execution_mode=None, commit_tool=None, draft_tool=None))]
-    #[allow(clippy::too_many_arguments)] // justified: backward-compat requires_approval + new approval param
+    #[pyo3(signature = (func=None, side_effect=false, approval=None, execution_mode=None, commit_tool=None, draft_tool=None))]
+    #[allow(clippy::too_many_arguments)] // justified: Python decorator metadata surface
     fn tool(
         &mut self,
         py: Python<'_>,
         func: Option<Py<PyAny>>,
-        requires_approval: bool,
         side_effect: bool,
         approval: Option<String>,
         execution_mode: Option<String>,
@@ -679,7 +662,7 @@ impl Agent {
                 .and_then(|d| d.extract(py))
                 .unwrap_or_else(|_| format!("Tool: {}", name));
             let input_schema = infer_schema_from_hints(py, &func)?;
-            let resolved = resolve_approval(approval.as_deref(), requires_approval);
+            let resolved = resolve_approval(approval.as_deref(), Approval::Never);
             let execution_mode =
                 parse_execution_mode(execution_mode.as_deref(), commit_tool, draft_tool)?;
 
@@ -702,15 +685,12 @@ impl Agent {
     }
 
     /// Explicitly register a tool with metadata options.
-    ///
-    /// `requires_approval` is deprecated — use `approval` ("never"/"when_risky"/"always") instead.
-    #[pyo3(signature = (func, requires_approval=false, side_effect=false, approval=None, execution_mode=None, commit_tool=None, draft_tool=None))]
-    #[allow(clippy::too_many_arguments)] // justified: backward-compat requires_approval + new approval param
+    #[pyo3(signature = (func, side_effect=false, approval=None, execution_mode=None, commit_tool=None, draft_tool=None))]
+    #[allow(clippy::too_many_arguments)] // justified: Python tool metadata surface
     fn register_tool(
         &mut self,
         py: Python<'_>,
         func: Py<PyAny>,
-        requires_approval: bool,
         side_effect: bool,
         approval: Option<String>,
         execution_mode: Option<String>,
@@ -723,7 +703,7 @@ impl Agent {
             .and_then(|d| d.extract(py))
             .unwrap_or_else(|_| format!("Tool: {}", name));
         let input_schema = infer_schema_from_hints(py, &func)?;
-        let resolved = resolve_approval(approval.as_deref(), requires_approval);
+        let resolved = resolve_approval(approval.as_deref(), Approval::Never);
         let execution_mode =
             parse_execution_mode(execution_mode.as_deref(), commit_tool, draft_tool)?;
 
@@ -793,14 +773,9 @@ impl Agent {
         Ok(())
     }
 
-    /// `requires_approval` is deprecated — use `approval` ("never"/"when_risky"/"always") instead.
-    #[pyo3(signature = (requires_approval=true, approval=None))]
-    fn register_write_file_tool(
-        &mut self,
-        requires_approval: bool,
-        approval: Option<String>,
-    ) -> PyResult<()> {
-        let resolved = resolve_approval(approval.as_deref(), requires_approval);
+    #[pyo3(signature = (approval=None))]
+    fn register_write_file_tool(&mut self, approval: Option<String>) -> PyResult<()> {
+        let resolved = resolve_approval(approval.as_deref(), Approval::Always);
         self.native_tools
             .push(Arc::new(WriteFileTool::new_with_approval(resolved)));
         Ok(())
