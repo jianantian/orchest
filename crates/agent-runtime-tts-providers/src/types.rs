@@ -331,6 +331,10 @@ pub enum TtsOperation {
     SingleStream,
     DuplexStream,
     ListVoices,
+    /// Long-form async batch synthesis (Minimax `/v1/t2a_async_v2`).
+    /// Returns a file URL after a server-side render; default routing puts
+    /// this in the same format space as `Batch` (file output, not stream).
+    Async,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -365,6 +369,11 @@ pub struct TtsModelCapabilities {
     pub batch_synthesis: bool,
     pub single_streaming: bool,
     pub duplex_streaming: bool,
+    /// Set true when the provider supports an async long-form synthesis path
+    /// (e.g. Minimax `/v1/t2a_async_v2`). Default `false` so existing
+    /// providers (aliyun / volcengine) don't accidentally accept Async routes.
+    #[serde(default)]
+    pub async_synthesis: bool,
     #[serde(default)]
     pub input_kinds: Vec<TtsInputKind>,
     #[serde(default)]
@@ -387,6 +396,7 @@ impl Default for TtsModelCapabilities {
             batch_synthesis: false,
             single_streaming: false,
             duplex_streaming: false,
+            async_synthesis: false,
             input_kinds: vec![TtsInputKind::Text],
             languages: Vec::new(),
             voice_kinds: vec![VoiceKind::System],

@@ -8,6 +8,7 @@ readme = "README.md"
 default = ["volcengine", "aliyun"]
 volcengine = ["dep:futures-util", "dep:tokio-tungstenite"]
 aliyun = ["dep:base64", "dep:futures-util", "dep:tokio-tungstenite"]
+minimax = ["dep:base64", "dep:futures-util", "dep:hex", "dep:reqwest", "dep:tokio-tungstenite"]
 
 [dependencies]
 async-trait = "0.1"
@@ -20,6 +21,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+hex = { version = "0.4", optional = true }
+reqwest = { version = "0.12", features = ["json", "multipart"], optional = true }
 tokio-tungstenite = { version = "0.24", features = ["native-tls"], optional = true }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }

@@ -189,6 +189,43 @@ fn build_catalog() -> Vec<TtsModelEntry> {
                 supports_design: false,
             },
         },
+        // --- Minimax speech series (issue 004) ---
+        // 同步 WSS (`/ws/v1/t2a_v2`) + 异步 HTTP (`/v1/t2a_async_v2`)。
+        // 8 models per docs/external/minimax/tts_sync.md model enum.
+        TtsModelEntry {
+            model_id: "minimax/speech-2.8-hd",
+            provider: "minimax",
+            display_name: "MiniMax Speech 2.8 HD",
+            languages: &["zh-CN", "en", "ja", "ko"],
+            capabilities: TtsModelCapabilitiesSummary {
+                batch_synthesis: true,
+                single_streaming: true,
+                duplex_streaming: true,
+                supports_instruction: false,
+                supports_emotion: true,
+                supports_style: false,
+                supports_ssml: true,
+                supports_cloning: true,
+                supports_design: true,
+            },
+        },
+        TtsModelEntry {
+            model_id: "minimax/speech-2.8-turbo",
+            provider: "minimax",
+            display_name: "MiniMax Speech 2.8 Turbo",
+            languages: &["zh-CN", "en", "ja", "ko"],
+            capabilities: TtsModelCapabilitiesSummary {
+                batch_synthesis: true,
+                single_streaming: true,
+                duplex_streaming: true,
+                supports_instruction: false,
+                supports_emotion: true,
+                supports_style: false,
+                supports_ssml: true,
+                supports_cloning: true,
+                supports_design: true,
+            },
+        },
     ]
 }
 
@@ -207,7 +244,7 @@ mod tests {
 
     #[test]
     fn catalog_has_expected_count() {
-        assert_eq!(list_models().len(), 8);
+        assert_eq!(list_models().len(), 10);
     }
 
     #[test]
@@ -245,5 +282,21 @@ mod tests {
             .find(|m| m.model_id == "aliyun/qwen3-tts-flash-realtime")
             .unwrap();
         assert!(!plain.capabilities.supports_instruction);
+    }
+}
+
+#[cfg(test)]
+mod minimax_tests {
+    use super::*;
+
+    #[test]
+    fn minimax_speech_models_present() {
+        let ids: Vec<_> = list_models()
+            .iter()
+            .filter(|m| m.provider == "minimax")
+            .map(|m| m.model_id)
+            .collect();
+        assert!(ids.contains(&"minimax/speech-2.8-hd"));
+        assert!(ids.contains(&"minimax/speech-2.8-turbo"));
     }
 }
