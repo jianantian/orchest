@@ -33,6 +33,8 @@
 | v0.9.4 | 重构 | Runtime Failure Semantics（ErrorKind taxonomy、structured tool failure return、RetryHint dispatch、repeated failure hook、ActorRef restart 注释） |
 | v0.9.5 | 重构 | Agent Control-Flow Hardening（ContextMode、handoff snapshot-then-swap、control-flow tests、`run_one_step` 拆分、Supervised Delegation 验证边界） |
 | v0.9.6 | 卫星 | ASR Follow-up Providers（one-shot `transcribe()`、Deepgram、ElevenLabs Scribe、Soniox、AssemblyAI、Speechmatics、docs/examples） |
+| v0.9.7 | 重构 | Tool Surface Extensions（Draft/Commit、deferred tool discovery、可选并行 tool execution） |
+| v0.9.8 | 重构 | Runtime Safety and Observability Hygiene（code execution executor 注入、核心 observability、Python GIL 行为、静态错误 payload 清理） |
 
 ## 规划中(hotfix)
 
@@ -46,14 +48,6 @@
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
 
 ## 规划中
-
-### v0.9.7 — Tool Surface Extensions（规划）
-
-把高风险 tool workflow 和大工具库问题落成 runtime 迭代：Draft/Commit、deferred tool discovery 刷新、可选并行 tool execution。详见 [`v0_9_7/prd.md`](./v0_9_7/prd.md)。
-
-### v0.9.8 — Runtime Safety and Observability Hygiene（规划）
-
-处理 runtime hygiene：code execution executor 注入、核心 observability 扩展、Python GIL 行为文档/修复、静态错误 payload 清理。详见 [`v0_9_8/prd.md`](./v0_9_8/prd.md)。
 
 ### v0.9.9 — API Cleanup and Product Patterns（规划）
 
@@ -107,10 +101,10 @@ v0.10 至少验证一个轻量 reviewer sub-agent 或 handoff 路径：Agent-as-
 ✅ v0.9.6: ASR Follow-up Providers
             │
             ▼
-   v0.9.7: Tool Surface Extensions
+✅ v0.9.7: Tool Surface Extensions
             │
             ▼
-   v0.9.8: Runtime Safety + Observability
+✅ v0.9.8: Runtime Safety + Observability
             │
             ▼
    v0.9.9: API Cleanup + Product Patterns
