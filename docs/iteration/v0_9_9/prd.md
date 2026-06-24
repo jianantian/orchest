@@ -33,6 +33,6 @@ The remaining code-review and research items are real work, but they are best ha
 - [x] Deprecated API removal has migration notes and updated examples/tests.
 - [x] Binding helper extraction does not change Python/Node behavior.
 - [x] Message CoW is either implemented with tests or rejected with profiling evidence in the issue notes.
-- [ ] Complex permission policy remains app-layer unless a core gap is proven.
+- [x] Complex permission policy remains app-layer unless a core gap is proven.
 - [ ] Team patterns are available as examples or docs.
 - [ ] `cargo test --workspace`, `cargo clippy --workspace -- -D warnings` and `cargo fmt --check` pass.
