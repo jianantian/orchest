@@ -25,6 +25,7 @@ pub(crate) mod async_http;
 pub mod files;
 pub(crate) mod protocol;
 pub(crate) mod sync;
+pub(crate) mod voice;
 
 use std::time::Duration;
 
@@ -115,6 +116,41 @@ impl MinimaxTtsAdapter {
     }
     pub(crate) fn api_key(&self) -> &str {
         &self.config.api_key
+    }
+
+    /// Raw model name (for VoiceManager response synthesis).
+    pub(crate) fn model_name_raw(&self) -> &str {
+        &self.config.model
+    }
+
+    /// Common JSON POST helper for VoiceManager endpoints. Returns the raw
+    /// response body; callers parse + map `base_resp` themselves.
+    pub(crate) async fn post_json(&self, path: &str, body: &Value) -> Result<String, TtsError> {
+        use crate::error::TtsErrorCode;
+        let url = format!("{}{}", self.http_url, path);
+        let response = self
+            .http_client
+            .post(&url)
+            .bearer_auth(&self.config.api_key)
+            .json(body)
+            .send()
+            .await
+            .map_err(|err| {
+                TtsError::new(
+                    TtsErrorCode::ProviderHttpError,
+                    format!("Minimax {path} request failed: {err}"),
+                )
+            })?;
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(TtsError::new(
+                TtsErrorCode::ProviderHttpError,
+                format!("Minimax {path} HTTP {status}: {text}"),
+            )
+            .with_upstream(Some(status.as_u16()), None, None, None));
+        }
+        Ok(text)
     }
 
     /// Dispatch: `provider_options.operation == "async"` selects the HTTP

@@ -409,3 +409,68 @@ impl Default for TtsModelCapabilities {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Voice Management (issue 005 / VoiceManager trait)
+// ---------------------------------------------------------------------------
+
+/// Voice Clone 示例音频(`docs/external/minimax/voice_clone/clone.md`):
+/// 同时传 `prompt_audio`(已上传的 file_id)+ `prompt_text`(对应文本)
+/// 才生效。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClonePrompt {
+    pub prompt_audio: u64,
+    pub prompt_text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloneVoiceRequest {
+    /// 待复刻音频的 file_id(`POST /v1/files/upload` 拿到)。
+    pub file_id: u64,
+    /// 自定义复刻音色的 voice_id(规则见 `voice_clone/clone.md`)。
+    pub voice_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clone_prompt: Option<ClonePrompt>,
+    /// 试听文本(<=1000 字符)。同时设置 `trial_text` + `trial_model` 才合成试听音频。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trial_text: Option<String>,
+    /// 试听音频使用的模型。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trial_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language_boost: Option<String>,
+    #[serde(default)]
+    pub need_noise_reduction: bool,
+    #[serde(default)]
+    pub need_volume_normalization: bool,
+    #[serde(default)]
+    pub aigc_watermark: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloneVoiceResponse {
+    /// 新建复刻音色,`kind` 固定为 `Cloned`。
+    pub voice: VoiceInfo,
+    /// 仅当 `trial_text` 与 `trial_model` 同时给出时返回试听音频 URL,
+    /// 否则为 `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub demo_audio: Option<String>,
+    /// 输入音频风控类型 0..=7(`clone.md` 注:0 = 通过)。
+    pub input_sensitive: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DesignVoiceRequest {
+    pub prompt: String,
+    pub preview_text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DesignVoiceResponse {
+    /// 新建文生音色,`kind` 固定为 `Designed`。
+    pub voice: VoiceInfo,
+    /// hex 解码后的试听音频。
+    pub trial_audio: AudioData,
+}
