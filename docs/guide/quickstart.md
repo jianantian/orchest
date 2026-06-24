@@ -189,4 +189,5 @@ ANTHROPIC_API_KEY=sk-... cargo run --example basic_agent_run
   - Mid-run steering / watcher：`watcher_inject_message.rs` / `watcher_abort_on_pattern.rs`
   - Supervised Delegation：`supervised_delegation.rs`
   - Agent-as-Tool：`agent_as_tool.rs`
+- **模式指南**：[Agent Team Patterns](./agent-team-patterns.md)、[Tool Surface Patterns](./tool-surface.md)
 - **其他语言**：[SDK · Python](./sdk-python.md)、[SDK · TypeScript](./sdk-typescript.md)
