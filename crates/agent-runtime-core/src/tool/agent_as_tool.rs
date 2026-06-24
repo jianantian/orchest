@@ -101,10 +101,8 @@ impl AgentAsTool {
             metadata: ToolMetadata {
                 side_effect: false,
                 approval: crate::tool::Approval::Never,
-                cost_hint: None,
-                timeout: None,
-                max_output_tokens: None,
                 source: ToolSource::InProcess,
+                ..ToolMetadata::default()
             },
             model,
             registry,
@@ -379,10 +377,8 @@ impl SubAgentBuilder {
             metadata: ToolMetadata {
                 side_effect: false,
                 approval: crate::tool::Approval::Never,
-                cost_hint: None,
-                timeout: None,
-                max_output_tokens: None,
                 source: ToolSource::InProcess,
+                ..ToolMetadata::default()
             },
             model,
             registry,

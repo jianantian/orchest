@@ -31,6 +31,8 @@ fn weather_meta() -> &'static ToolMetadata {
     static M: LazyLock<ToolMetadata> = LazyLock::new(|| ToolMetadata {
         side_effect: false,
         approval: Approval::Never,
+        execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
+        parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
         cost_hint: None,
         timeout: None,
         max_output_tokens: None,

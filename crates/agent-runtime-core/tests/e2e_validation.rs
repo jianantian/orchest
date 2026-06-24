@@ -193,6 +193,8 @@ impl Tool for EchoTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
+            execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
+            parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -297,6 +299,9 @@ async fn e2e_event_coverage() {
             RuntimeEvent::ToolCallCompleted { .. } => "ToolCallCompleted",
             RuntimeEvent::ToolCallFailed { .. } => "ToolCallFailed",
             RuntimeEvent::ToolCallRetry { .. } => "ToolCallRetry",
+            RuntimeEvent::ToolCallBatchStarted { .. } => "ToolCallBatchStarted",
+            RuntimeEvent::ToolCallBatchItemStarted { .. } => "ToolCallBatchItemStarted",
+            RuntimeEvent::ToolCallBatchItemCompleted { .. } => "ToolCallBatchItemCompleted",
             RuntimeEvent::AsyncToolStarted { .. } => "AsyncToolStarted",
             RuntimeEvent::AsyncToolProgress { .. } => "AsyncToolProgress",
             RuntimeEvent::AsyncToolCompleted { .. } => "AsyncToolCompleted",
@@ -793,6 +798,8 @@ impl Tool for AsyncEchoTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
+            execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
+            parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -978,6 +985,8 @@ impl Tool for GuardedTool {
         &ToolMetadata {
             side_effect: true,
             approval: Approval::Always,
+            execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
+            parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,

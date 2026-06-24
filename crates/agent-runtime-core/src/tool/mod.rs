@@ -8,10 +8,9 @@ pub mod error;
 pub mod handoff_tool;
 pub mod in_process;
 pub mod mcp;
+pub mod metadata;
 pub mod registry;
 pub mod search;
-
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -23,6 +22,7 @@ use async_job::JobHandle;
 
 pub use crate::model::{JsonSchema, ToolDef};
 pub use error::{ErrorKind, RetryHint, ToolError};
+pub use metadata::{CostHint, ToolExecutionMode, ToolMetadata, ToolParallelism, ToolSource};
 
 /// A capability the model can invoke: name, schemas, metadata, and an async
 /// `execute`. Implement this trait (or use `InProcessTool`) and register the
@@ -62,32 +62,6 @@ pub enum Approval {
     #[default]
     WhenRisky,
     Always,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolMetadata {
-    pub side_effect: bool,
-    pub approval: Approval,
-    pub cost_hint: Option<CostHint>,
-    pub timeout: Option<Duration>,
-    pub max_output_tokens: Option<u64>,
-    pub source: ToolSource,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ToolSource {
-    InProcess,
-    McpServer { server_id: String },
-    Skill { skill_name: String },
-    Builtin,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CostHint {
-    Free,
-    Low,
-    Medium,
-    High,
 }
 
 #[derive(Debug, Clone)]

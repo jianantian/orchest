@@ -44,12 +44,12 @@ Add a runtime config field for tool parallelism, disabled by default. Extend too
 
 ## Acceptance Criteria
 
-- [ ] High-risk tools can expose a preview path and a commit path.
-- [ ] Draft calls produce no side effects and require no approval by default.
-- [ ] Commit calls require approval by default.
-- [ ] Deferred tool discovery behavior is documented and tested against current tool schema injection.
-- [ ] Parallel execution is opt-in and respects approval, budget, timeout and event ordering constraints.
-- [ ] `ToolMetadata` serialization and Rust/Python/Node bindings cover Draft/Commit and parallel-safety metadata.
-- [ ] Public examples and tests are updated for Draft/Commit, `search_tools` and parallel execution.
-- [ ] Existing sequential behavior remains the default.
-- [ ] `cargo test --workspace`, `cargo clippy --workspace -- -D warnings` and `cargo fmt --check` pass.
+- [x] High-risk tools can expose a preview path and a commit path.
+- [x] Draft calls produce no side effects and require no approval by default.
+- [x] Commit calls require approval by default.
+- [x] Deferred tool discovery behavior is documented and tested against current tool schema injection.
+- [x] Parallel execution is opt-in and respects approval, budget, timeout and event ordering constraints.
+- [x] `ToolMetadata` serialization and Rust/Python/Node bindings cover Draft/Commit and parallel-safety metadata.
+- [x] Public examples and tests are updated for Draft/Commit, `search_tools` and parallel execution.
+- [x] Existing sequential behavior remains the default.
+- [x] `cargo test --workspace`, `cargo clippy --workspace -- -D warnings` and `cargo fmt --check` pass.

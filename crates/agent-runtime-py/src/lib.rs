@@ -27,7 +27,8 @@ use agent_runtime_core::tool::async_job::{JobHandle, JobStatus};
 use agent_runtime_core::tool::builtin::WriteFileTool;
 use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
-    Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
+    Approval, JsonSchema, Tool, ToolContext, ToolError, ToolExecutionMode, ToolMetadata,
+    ToolOutput, ToolSource,
 };
 use agent_runtime_providers::{create_adapter_from_config, normalize_provider_model};
 
@@ -50,6 +51,31 @@ fn resolve_approval(approval_str: Option<&str>, requires_approval: bool) -> Appr
                 Approval::Never
             }
         }
+    }
+}
+
+fn parse_execution_mode(
+    mode: Option<&str>,
+    commit_tool: Option<String>,
+    draft_tool: Option<String>,
+) -> PyResult<ToolExecutionMode> {
+    match mode {
+        None | Some("normal") => Ok(ToolExecutionMode::Normal),
+        Some("draft") => {
+            let commit_tool = commit_tool.ok_or_else(|| {
+                PyRuntimeError::new_err("execution_mode='draft' requires commit_tool")
+            })?;
+            Ok(ToolExecutionMode::Draft { commit_tool })
+        }
+        Some("commit") => {
+            let draft_tool = draft_tool.ok_or_else(|| {
+                PyRuntimeError::new_err("execution_mode='commit' requires draft_tool")
+            })?;
+            Ok(ToolExecutionMode::Commit { draft_tool })
+        }
+        Some(other) => Err(PyRuntimeError::new_err(format!(
+            "invalid execution_mode '{other}'; expected normal|draft|commit"
+        ))),
     }
 }
 
@@ -113,6 +139,7 @@ struct PyToolDef {
     input_schema: Value,
     approval: Approval,
     side_effect: bool,
+    execution_mode: ToolExecutionMode,
     callback: Py<PyAny>,
 }
 
@@ -553,10 +580,9 @@ impl Agent {
                 metadata: ToolMetadata {
                     side_effect: tool_def.side_effect,
                     approval: tool_def.approval,
-                    cost_hint: None,
-                    timeout: None,
-                    max_output_tokens: None,
+                    execution_mode: tool_def.execution_mode.clone(),
                     source: ToolSource::InProcess,
+                    ..ToolMetadata::default()
                 },
             };
             registry
@@ -638,7 +664,7 @@ impl Agent {
     /// Register a tool. Supports `@agent.tool` (bare decorator).
     ///
     /// `requires_approval` is deprecated — use `approval` ("never"/"when_risky"/"always") instead.
-    #[pyo3(signature = (func=None, requires_approval=false, side_effect=false, approval=None))]
+    #[pyo3(signature = (func=None, requires_approval=false, side_effect=false, approval=None, execution_mode=None, commit_tool=None, draft_tool=None))]
     #[allow(clippy::too_many_arguments)] // justified: backward-compat requires_approval + new approval param
     fn tool(
         &mut self,
@@ -647,6 +673,9 @@ impl Agent {
         requires_approval: bool,
         side_effect: bool,
         approval: Option<String>,
+        execution_mode: Option<String>,
+        commit_tool: Option<String>,
+        draft_tool: Option<String>,
     ) -> PyResult<Py<PyAny>> {
         if let Some(func) = func {
             let name: String = func.getattr(py, "__name__")?.extract(py)?;
@@ -656,6 +685,8 @@ impl Agent {
                 .unwrap_or_else(|_| format!("Tool: {}", name));
             let input_schema = infer_schema_from_hints(py, &func)?;
             let resolved = resolve_approval(approval.as_deref(), requires_approval);
+            let execution_mode =
+                parse_execution_mode(execution_mode.as_deref(), commit_tool, draft_tool)?;
 
             self.tools.push(PyToolDef {
                 name,
@@ -663,6 +694,7 @@ impl Agent {
                 input_schema,
                 approval: resolved,
                 side_effect,
+                execution_mode,
                 callback: func.clone_ref(py),
             });
 
@@ -677,7 +709,7 @@ impl Agent {
     /// Explicitly register a tool with metadata options.
     ///
     /// `requires_approval` is deprecated — use `approval` ("never"/"when_risky"/"always") instead.
-    #[pyo3(signature = (func, requires_approval=false, side_effect=false, approval=None))]
+    #[pyo3(signature = (func, requires_approval=false, side_effect=false, approval=None, execution_mode=None, commit_tool=None, draft_tool=None))]
     #[allow(clippy::too_many_arguments)] // justified: backward-compat requires_approval + new approval param
     fn register_tool(
         &mut self,
@@ -686,6 +718,9 @@ impl Agent {
         requires_approval: bool,
         side_effect: bool,
         approval: Option<String>,
+        execution_mode: Option<String>,
+        commit_tool: Option<String>,
+        draft_tool: Option<String>,
     ) -> PyResult<()> {
         let name: String = func.getattr(py, "__name__")?.extract(py)?;
         let description: String = func
@@ -694,6 +729,8 @@ impl Agent {
             .unwrap_or_else(|_| format!("Tool: {}", name));
         let input_schema = infer_schema_from_hints(py, &func)?;
         let resolved = resolve_approval(approval.as_deref(), requires_approval);
+        let execution_mode =
+            parse_execution_mode(execution_mode.as_deref(), commit_tool, draft_tool)?;
 
         self.tools.push(PyToolDef {
             name,
@@ -701,6 +738,7 @@ impl Agent {
             input_schema,
             approval: resolved,
             side_effect,
+            execution_mode,
             callback: func,
         });
 
@@ -920,4 +958,47 @@ impl Agent {
 fn agent_runtime_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Agent>()?;
     Ok(())
+}
+
+#[cfg(all(test, not(target_os = "macos")))]
+mod tests {
+    use super::*;
+
+    fn initialize_python() {
+        Python::initialize();
+    }
+
+    #[test]
+    fn python_execution_mode_defaults_to_normal() {
+        initialize_python();
+
+        let mode = parse_execution_mode(None, None, None).expect("normal mode should parse");
+
+        assert_eq!(mode, ToolExecutionMode::Normal);
+    }
+
+    #[test]
+    fn python_execution_mode_parses_draft() {
+        initialize_python();
+
+        let mode = parse_execution_mode(Some("draft"), Some("commit_write".into()), None)
+            .expect("draft mode should parse");
+
+        assert_eq!(
+            mode,
+            ToolExecutionMode::Draft {
+                commit_tool: "commit_write".into()
+            }
+        );
+    }
+
+    #[test]
+    fn python_execution_mode_requires_linked_tool() {
+        initialize_python();
+
+        let err = parse_execution_mode(Some("commit"), None, None)
+            .expect_err("commit mode should require draft_tool");
+
+        assert!(err.to_string().contains("requires draft_tool"));
+    }
 }

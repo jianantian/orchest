@@ -62,10 +62,9 @@ impl ExecutePythonTool {
             metadata: ToolMetadata {
                 side_effect: true,
                 approval: crate::tool::Approval::Never,
-                cost_hint: None,
                 timeout: Some(Duration::from_secs(DEFAULT_TIMEOUT_SECONDS)),
-                max_output_tokens: None,
                 source: ToolSource::Builtin,
+                ..ToolMetadata::default()
             },
             session,
         }
@@ -253,10 +252,9 @@ impl ExecuteJavaScriptTool {
             metadata: ToolMetadata {
                 side_effect: true,
                 approval: crate::tool::Approval::Never,
-                cost_hint: None,
                 timeout: Some(Duration::from_secs(DEFAULT_TIMEOUT_SECONDS)),
-                max_output_tokens: None,
                 source: ToolSource::Builtin,
+                ..ToolMetadata::default()
             },
         }
     }

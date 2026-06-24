@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -18,11 +19,12 @@ use crate::tool::code_exec::CodeExecutionMcpServer;
 use crate::tool::registry::ToolRegistry;
 use crate::tool::search::SearchToolsTool;
 use crate::tool::{
-    ErrorKind, RetryHint, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolOutput,
+    ErrorKind, RetryHint, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolExecutionMode,
+    ToolMetadata, ToolOutput, ToolParallelism, ToolSource,
 };
 
 use super::compaction::maybe_compact_context;
-use super::config::{AgentConfig, RunId};
+use super::config::{AgentConfig, RunId, ToolExecutionPolicy};
 use super::handle::ApprovalBus;
 use super::helpers::{append_searched_tool_defs, connect_mcp_servers, truncate_output};
 use super::skills::register_skills;
@@ -261,6 +263,20 @@ impl Actor for WorkerActor {
 
         let unfiltered_registry = registry.clone();
         let mut registry = registry.filter_by_allowed(&config.runtime.allowed_tools);
+        if let Err(error) = registry.validate_metadata_links() {
+            return Ok(fail_pre_start(
+                &myself,
+                &event_subs,
+                run_id,
+                config,
+                model,
+                registry,
+                approval_bus,
+                run_hook_ctx,
+                format!("tool metadata validation failed: {error}"),
+            )
+            .await);
+        }
 
         let (messages, initial_step, initial_budget_used) = if let Some(rs) = resume {
             (rs.messages, rs.step, Some(rs.budget_used))
@@ -802,6 +818,34 @@ struct PendingHandoff {
     result: crate::handoff::HandoffResult,
 }
 
+struct ParallelToolCall {
+    requested_order: usize,
+    tool_call: ToolCall,
+    tool: Arc<dyn Tool>,
+    metadata: ToolMetadata,
+    input: Value,
+    source_label: &'static str,
+    max_output_tokens: Option<u64>,
+}
+
+struct ParallelToolResult {
+    requested_order: usize,
+    tool_call: ToolCall,
+    source_label: &'static str,
+    max_output_tokens: Option<u64>,
+    result: Result<(ToolOutput, Instant), ToolError>,
+}
+
+struct ParallelExecutionContext {
+    run_id: RunId,
+    run_depth: u32,
+    event_tx: mpsc::Sender<RuntimeEvent>,
+    webhook_base_url: Option<String>,
+    approval_bus: ApprovalBus,
+    remaining_budget: BudgetConfig,
+    parent_messages: Vec<Message>,
+}
+
 /// Execute one outer-loop iteration. Returns true to continue, false to stop.
 async fn run_one_step(state: &mut AgentRunState) -> bool {
     let subs = state.event_subs.clone();
@@ -906,7 +950,33 @@ async fn run_tool_and_handoff_phase(
     let mut handoff_triggered = false;
     let mut pending_handoff: Option<PendingHandoff> = None;
 
+    if let Some(parallel_results) =
+        run_parallel_tool_batch_if_allowed(state, subs, run_id, tool_uses).await
+    {
+        state.messages.push(Message {
+            role: Role::Tool,
+            content: parallel_results,
+        });
+        return true;
+    }
+
     for tool_call in tool_uses {
+        if let Some(error) = deferred_tool_exposure_error(state, &tool_call.name) {
+            emit(
+                subs,
+                RuntimeEvent::ToolCallFailed {
+                    tool: tool_call.name.clone(),
+                    error: error.clone(),
+                },
+            )
+            .await;
+            tool_results.push(ContentBlock::ToolResult {
+                tool_use_id: tool_call.id.clone(),
+                content: tool_error_result(&error),
+            });
+            continue;
+        }
+
         let tool = match state.registry.get(&tool_call.name) {
             Some(t) => t,
             None => {
@@ -989,12 +1059,13 @@ async fn run_tool_and_handoff_phase(
         };
 
         if state.config.runtime.should_approve(tool.metadata()) {
+            let approval_context = approval_context_for(tool.metadata());
             let approval_rx = state.approval_bus.request(run_id).await;
             emit(
                 subs,
                 RuntimeEvent::ApprovalRequested {
                     tool_call: effective_call.clone(),
-                    context: ApprovalContext::InitialToolCall,
+                    context: approval_context.clone(),
                 },
             )
             .await;
@@ -1019,7 +1090,7 @@ async fn run_tool_and_handoff_phase(
                     subs,
                     RuntimeEvent::ApprovalGranted {
                         tool_call: effective_call.clone(),
-                        context: ApprovalContext::InitialToolCall,
+                        context: approval_context,
                     },
                 )
                 .await;
@@ -1030,7 +1101,7 @@ async fn run_tool_and_handoff_phase(
                     subs,
                     RuntimeEvent::ApprovalDenied {
                         tool_call: effective_call.clone(),
-                        context: ApprovalContext::InitialToolCall,
+                        context: approval_context,
                     },
                 )
                 .await;
@@ -1533,6 +1604,10 @@ async fn prepare_handoff_transition(
         })?;
     }
     let next_registry = next_registry.filter_by_allowed(&new_config.runtime.allowed_tools);
+    next_registry.validate_metadata_links().map_err(|error| {
+        ToolError::fatal(format!("tool metadata validation failed: {error}"))
+            .with_code("TOOL_METADATA_VALIDATION_FAILED")
+    })?;
     let tool_defs = next_registry.list();
 
     let new_budget = if new_config.budget.max_tokens.is_none()
@@ -1623,6 +1698,350 @@ fn estimate_context_tokens(messages: &[Message], tool_defs: &[ToolDef]) -> u64 {
 fn primary(subs: &[mpsc::Sender<RuntimeEvent>]) -> &mpsc::Sender<RuntimeEvent> {
     subs.first()
         .expect("event_subs always has at least one subscriber")
+}
+
+fn approval_context_for(meta: &ToolMetadata) -> ApprovalContext {
+    match &meta.execution_mode {
+        ToolExecutionMode::Commit { draft_tool } => ApprovalContext::CommitToolCall {
+            draft_tool: draft_tool.clone(),
+        },
+        ToolExecutionMode::Draft { .. } | ToolExecutionMode::Normal => {
+            ApprovalContext::InitialToolCall
+        }
+    }
+}
+
+fn tool_source_label(source: &ToolSource) -> &'static str {
+    match source {
+        ToolSource::Builtin => "builtin",
+        ToolSource::InProcess => "in_process",
+        ToolSource::McpServer { .. } => "mcp_server",
+        ToolSource::Skill { .. } => "skill",
+    }
+}
+
+async fn run_parallel_tool_batch_if_allowed(
+    state: &mut AgentRunState,
+    subs: &[mpsc::Sender<RuntimeEvent>],
+    run_id: RunId,
+    tool_uses: &[ToolCall],
+) -> Option<Vec<ContentBlock>> {
+    if state.config.runtime.tool_execution_policy != ToolExecutionPolicy::ParallelSafe
+        || tool_uses.len() < 2
+        || !state.config.hooks.is_empty()
+        || state.config.retry_policy.is_some()
+    {
+        return None;
+    }
+    if let Some(max) = state.config.budget.max_tool_calls {
+        if state.budget.usage().tool_calls_used + tool_uses.len() as u32 > max {
+            return None;
+        }
+    }
+
+    let mut calls = Vec::with_capacity(tool_uses.len());
+    for (idx, tool_call) in tool_uses.iter().enumerate() {
+        if deferred_tool_exposure_error(state, &tool_call.name).is_some() {
+            return None;
+        }
+        let tool = state.registry.get(&tool_call.name)?;
+        let metadata = tool.metadata().clone();
+        if metadata.side_effect
+            || metadata.parallelism != ToolParallelism::ParallelSafe
+            || state.config.runtime.should_approve(&metadata)
+        {
+            return None;
+        }
+        let source_label = tool_source_label(&metadata.source);
+        calls.push(ParallelToolCall {
+            requested_order: idx,
+            tool_call: tool_call.clone(),
+            tool,
+            metadata: metadata.clone(),
+            input: tool_call.input.clone(),
+            source_label,
+            max_output_tokens: metadata.max_output_tokens,
+        });
+    }
+
+    let batch_id = format!("tool_batch_{}", uuid::Uuid::new_v4());
+    emit(
+        subs,
+        RuntimeEvent::ToolCallBatchStarted {
+            batch_id: batch_id.clone(),
+            tool_count: calls.len(),
+        },
+    )
+    .await;
+    for call in &calls {
+        state.budget.record_tool_call();
+        emit(
+            subs,
+            RuntimeEvent::ToolCallBatchItemStarted {
+                batch_id: batch_id.clone(),
+                tool: call.tool_call.name.clone(),
+                requested_order: call.requested_order,
+            },
+        )
+        .await;
+    }
+
+    let mut pending = FuturesUnordered::new();
+    for call in calls {
+        let event_tx = primary(subs).clone();
+        let webhook_base_url = state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone());
+        let approval_bus = state.approval_bus.clone();
+        let remaining_budget = state.budget.remaining_config();
+        let parent_messages = if call.tool.needs_parent_context() {
+            state.messages.clone()
+        } else {
+            vec![]
+        };
+        pending.push(execute_parallel_tool_call(
+            call,
+            ParallelExecutionContext {
+                run_id,
+                run_depth: state.config.runtime.run_depth,
+                event_tx,
+                webhook_base_url,
+                approval_bus,
+                remaining_budget,
+                parent_messages,
+            },
+        ));
+    }
+
+    let mut ordered_results: Vec<Option<ContentBlock>> = vec![None; tool_uses.len()];
+    let mut completion_order = 0;
+    while let Some(result) = pending.next().await {
+        completion_order += 1;
+        let requested_order = result.requested_order;
+        let tool_name = result.tool_call.name.clone();
+        emit(
+            subs,
+            RuntimeEvent::ToolCallBatchItemCompleted {
+                batch_id: batch_id.clone(),
+                tool: tool_name.clone(),
+                requested_order,
+                completion_order,
+            },
+        )
+        .await;
+        let content = finalize_parallel_tool_result(state, subs, result).await;
+        ordered_results[requested_order] = Some(content);
+    }
+
+    Some(
+        ordered_results
+            .into_iter()
+            .flatten()
+            .collect::<Vec<ContentBlock>>(),
+    )
+}
+
+async fn execute_parallel_tool_call(
+    call: ParallelToolCall,
+    parallel_ctx: ParallelExecutionContext,
+) -> ParallelToolResult {
+    let ctx = ToolContext {
+        run_id: parallel_ctx.run_id,
+        run_depth: parallel_ctx.run_depth,
+        tool_call_id: call.tool_call.id.clone(),
+        event_tx: Some(parallel_ctx.event_tx.clone()),
+        webhook_base_url: parallel_ctx.webhook_base_url,
+        approval_bus: parallel_ctx.approval_bus,
+        remaining_budget: parallel_ctx.remaining_budget,
+        parent_messages: parallel_ctx.parent_messages,
+    };
+    let _ = parallel_ctx
+        .event_tx
+        .send(RuntimeEvent::ToolCallStarted {
+            tool: call.tool_call.name.clone(),
+            metadata: call.metadata.clone(),
+            input: call.input.clone(),
+        })
+        .await;
+    let start_time = Instant::now();
+    let execute_fut = call.tool.execute(call.input.clone(), &ctx);
+    let result = if let Some(timeout) = call.metadata.timeout {
+        match tokio::time::timeout(timeout, execute_fut).await {
+            Ok(result) => result.map(|output| (output, start_time)),
+            Err(_) => Err(ToolError::transient("tool execution timed out").with_code("TIMEOUT")),
+        }
+    } else {
+        execute_fut.await.map(|output| (output, start_time))
+    };
+
+    ParallelToolResult {
+        requested_order: call.requested_order,
+        tool_call: call.tool_call,
+        source_label: call.source_label,
+        max_output_tokens: call.max_output_tokens,
+        result,
+    }
+}
+
+async fn finalize_parallel_tool_result(
+    state: &mut AgentRunState,
+    subs: &[mpsc::Sender<RuntimeEvent>],
+    result: ParallelToolResult,
+) -> ContentBlock {
+    match result.result {
+        Ok((ToolOutput::Immediate(value), start_time)) => {
+            let mut value = value;
+            if let Some(max_tokens) = result.max_output_tokens {
+                value = truncate_output(value, max_tokens);
+            }
+            let duration = start_time.elapsed();
+            emit(
+                subs,
+                RuntimeEvent::ToolCallCompleted {
+                    tool: result.tool_call.name.clone(),
+                    output: value.clone(),
+                    duration,
+                },
+            )
+            .await;
+            telemetry::record_tool_success(&result.tool_call.name, result.source_label, duration);
+            ContentBlock::ToolResult {
+                tool_use_id: result.tool_call.id,
+                content: value,
+            }
+        }
+        Ok((
+            ToolOutput::Structured {
+                model_output,
+                details,
+                external_usage,
+            },
+            start_time,
+        )) => {
+            if let Some(usage) = external_usage {
+                state.budget.record_external_usage(&usage);
+            }
+            let mut model_output = model_output;
+            let mut details = details;
+            if let Some(max_tokens) = result.max_output_tokens {
+                model_output = truncate_output(model_output, max_tokens);
+                details = truncate_output(details, max_tokens);
+            }
+            let duration = start_time.elapsed();
+            emit(
+                subs,
+                RuntimeEvent::ToolCallCompleted {
+                    tool: result.tool_call.name.clone(),
+                    output: details,
+                    duration,
+                },
+            )
+            .await;
+            telemetry::record_tool_success(&result.tool_call.name, result.source_label, duration);
+            ContentBlock::ToolResult {
+                tool_use_id: result.tool_call.id,
+                content: model_output,
+            }
+        }
+        Ok((ToolOutput::AsyncJob(handle), start_time)) => {
+            emit(
+                subs,
+                RuntimeEvent::AsyncToolStarted {
+                    tool: result.tool_call.name.clone(),
+                    job_id: handle.job_id.clone(),
+                },
+            )
+            .await;
+            let async_result = poll_async_job(
+                primary(subs),
+                &result.tool_call.name,
+                &handle,
+                start_time,
+                &state.webhook_runtime,
+            )
+            .await;
+            let duration = start_time.elapsed();
+            if async_result.get("error").is_some() {
+                telemetry::record_tool_error(&result.tool_call.name, result.source_label, duration);
+            } else {
+                telemetry::record_tool_success(
+                    &result.tool_call.name,
+                    result.source_label,
+                    duration,
+                );
+            }
+            ContentBlock::ToolResult {
+                tool_use_id: result.tool_call.id,
+                content: async_result,
+            }
+        }
+        Ok((ToolOutput::Handoff(_), _)) => {
+            let error = ToolError::fatal("handoff tools cannot execute in parallel")
+                .with_code("PARALLEL_HANDOFF");
+            ContentBlock::ToolResult {
+                tool_use_id: result.tool_call.id,
+                content: tool_error_result(&error),
+            }
+        }
+        Err(error) => {
+            emit(
+                subs,
+                RuntimeEvent::ToolCallFailed {
+                    tool: result.tool_call.name.clone(),
+                    error: error.clone(),
+                },
+            )
+            .await;
+            telemetry::record_tool_error(
+                &result.tool_call.name,
+                result.source_label,
+                Duration::default(),
+            );
+            ContentBlock::ToolResult {
+                tool_use_id: result.tool_call.id,
+                content: tool_error_result(&error),
+            }
+        }
+    }
+}
+
+fn deferred_tool_exposure_error(state: &AgentRunState, tool_name: &str) -> Option<ToolError> {
+    if !state.config.runtime.tool_search_enabled || tool_name == "search_tools" {
+        return None;
+    }
+    if state.tool_defs.iter().any(|tool| tool.name == tool_name) {
+        return None;
+    }
+    state.registry.contains(tool_name).then(|| {
+        ToolError::fatal(format!(
+            "tool '{tool_name}' is hidden until returned by search_tools"
+        ))
+        .with_code("NOT_EXPOSED")
+        .with_next_step("call search_tools and retry after the tool schema is exposed")
+    })
+}
+
+#[allow(clippy::too_many_arguments)] // justified: mirrors pre_start owned state needed to terminate startup cleanly
+async fn fail_pre_start(
+    myself: &ActorRef<AgentMsg>,
+    event_subs: &[mpsc::Sender<RuntimeEvent>],
+    run_id: RunId,
+    config: AgentConfig,
+    model: Arc<dyn ModelAdapter>,
+    registry: ToolRegistry,
+    approval_bus: ApprovalBus,
+    run_hook_ctx: crate::hook::RunHookContext,
+    error: String,
+) -> AgentRunState {
+    emit(event_subs, RuntimeEvent::RunFailed { error }).await;
+    myself.cast(AgentMsg::RunStep).ok();
+    failed_state(
+        run_id,
+        config,
+        model,
+        registry,
+        approval_bus,
+        event_subs.to_vec(),
+        run_hook_ctx,
+    )
 }
 
 #[allow(clippy::too_many_arguments)] // justified: mirrors AgentRunArgs fields for error recovery path

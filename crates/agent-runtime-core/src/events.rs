@@ -15,6 +15,9 @@ use crate::tool::{ToolCall, ToolError, ToolMetadata};
 pub enum ApprovalContext {
     #[default]
     InitialToolCall,
+    CommitToolCall {
+        draft_tool: String,
+    },
     RetryAfterFailure {
         attempt: u32,
         previous_error: ToolError,
@@ -71,6 +74,21 @@ pub enum RuntimeEvent {
         attempt: u32,
         previous_error: ToolError,
         next_delay: Duration,
+    },
+    ToolCallBatchStarted {
+        batch_id: String,
+        tool_count: usize,
+    },
+    ToolCallBatchItemStarted {
+        batch_id: String,
+        tool: String,
+        requested_order: usize,
+    },
+    ToolCallBatchItemCompleted {
+        batch_id: String,
+        tool: String,
+        requested_order: usize,
+        completion_order: usize,
     },
 
     AsyncToolStarted {

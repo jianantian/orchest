@@ -178,6 +178,13 @@ pub enum ApprovalMode {
     SideEffectOnly,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolExecutionPolicy {
+    #[default]
+    Sequential,
+    ParallelSafe,
+}
+
 // RuntimeConfig holds a non-Debug `Arc<dyn Fn>`, so Debug is implemented manually.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RuntimeConfig {
@@ -203,6 +210,8 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub approval_mode: ApprovalMode,
     #[serde(default)]
+    pub tool_execution_policy: ToolExecutionPolicy,
+    #[serde(default)]
     pub repeated_failure: RepeatedFailureConfig,
     /// Custom approval predicate. Takes priority over `approval_mode` when set.
     /// Not serialized (like hooks/retry_policy); only set via code.
@@ -212,11 +221,17 @@ pub struct RuntimeConfig {
 
 impl RuntimeConfig {
     /// Resolves whether a tool call requires approval under this run's policy.
-    /// `custom_approval_fn` takes priority; otherwise `approval_mode` decides.
+    /// `custom_approval_fn` takes priority; otherwise Draft/Commit defaults and
+    /// then `approval_mode` decide.
     pub fn should_approve(&self, meta: &crate::tool::ToolMetadata) -> bool {
-        use crate::tool::Approval;
+        use crate::tool::{Approval, ToolExecutionMode};
         if let Some(f) = &self.custom_approval_fn {
             return f(meta);
+        }
+        match &meta.execution_mode {
+            ToolExecutionMode::Draft { .. } => return false,
+            ToolExecutionMode::Commit { .. } => return true,
+            ToolExecutionMode::Normal => {}
         }
         match self.approval_mode {
             ApprovalMode::PerTool => match meta.approval {
@@ -244,6 +259,7 @@ impl std::fmt::Debug for RuntimeConfig {
             .field("code_execution_enabled", &self.code_execution_enabled)
             .field("run_depth", &self.run_depth)
             .field("approval_mode", &self.approval_mode)
+            .field("tool_execution_policy", &self.tool_execution_policy)
             .field("repeated_failure", &self.repeated_failure)
             .field("custom_approval_fn", &self.custom_approval_fn.is_some())
             .finish()
@@ -262,6 +278,7 @@ impl Default for RuntimeConfig {
             code_execution_enabled: false,
             run_depth: 0,
             approval_mode: ApprovalMode::PerTool,
+            tool_execution_policy: ToolExecutionPolicy::Sequential,
             repeated_failure: RepeatedFailureConfig::default(),
             custom_approval_fn: None,
         }
@@ -496,6 +513,10 @@ impl AgentConfigBuilder {
         self.runtime.tool_search_enabled = true;
         self
     }
+    pub fn enable_parallel_tools(mut self) -> Self {
+        self.runtime.tool_execution_policy = ToolExecutionPolicy::ParallelSafe;
+        self
+    }
     pub fn enable_code_execution(mut self) -> Self {
         self.runtime.code_execution_enabled = true;
         self
@@ -654,6 +675,7 @@ mod tests {
             .skills_dir("./skills")
             .max_steps(50)
             .enable_tool_search()
+            .enable_parallel_tools()
             .build()
             .unwrap();
         assert_eq!(config.system_prompt, "test");
@@ -661,6 +683,10 @@ mod tests {
         assert_eq!(config.skills.dir.as_deref(), Some("./skills"));
         assert_eq!(config.runtime.max_steps, 50);
         assert!(config.runtime.tool_search_enabled);
+        assert_eq!(
+            config.runtime.tool_execution_policy,
+            ToolExecutionPolicy::ParallelSafe
+        );
     }
 
     #[test]
