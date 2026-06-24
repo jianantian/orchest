@@ -256,7 +256,7 @@ impl MinimaxVideoAdapter {
         // 这里把 file_id 暂时塞进 metadata,VideoProvider impl 在 get_video_generation 完成
         // 后会自行解析并补全 video_url 字段。
         let mut metadata = response.clone();
-        if let Some(ref fid) = file_id {
+        if let Some(fid) = &file_id {
             metadata["file_id"] = json!(fid);
         }
 

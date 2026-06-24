@@ -265,7 +265,7 @@ impl ModelAdapter for MinimaxAdapter {
             });
         }
 
-        if let Some(ref tx) = tx {
+        if let Some(tx) = &tx {
             let _ = tx
                 .send(StreamEvent::Done {
                     usage: usage.clone(),
