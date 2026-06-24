@@ -14,7 +14,10 @@ use pyo3::types::PyDict;
 use serde_json::Value;
 use tokio::sync::Mutex as TokioMutex;
 
-use agent_runtime_core::budget::BudgetConfig;
+use agent_runtime_core::bindings::{
+    budget_config_from_binding, parse_binding_approval, parse_binding_approval_mode,
+    runtime_event_to_wire_value, BindingBudgetConfig, BindingNameStyle,
+};
 use agent_runtime_core::events::RuntimeEvent;
 use agent_runtime_core::model::{
     CachePolicy, CompatibilityPolicy, ModelSpec, ProviderRuntimeConfig, RequestOptions,
@@ -31,19 +34,6 @@ use agent_runtime_core::tool::{
     ToolOutput, ToolSource,
 };
 use agent_runtime_providers::{create_adapter_from_config, normalize_provider_model};
-
-fn resolve_approval(approval_str: Option<&str>, default: Approval) -> Approval {
-    match approval_str {
-        Some("never") => Approval::Never,
-        Some("when_risky") => Approval::WhenRisky,
-        Some("always") => Approval::Always,
-        Some(other) => {
-            eprintln!("warning: unknown approval value '{other}', defaulting to WhenRisky");
-            Approval::WhenRisky
-        }
-        None => default,
-    }
-}
 
 fn parse_execution_mode(
     mode: Option<&str>,
@@ -355,31 +345,9 @@ fn infer_schema_from_hints(py: Python<'_>, func: &Py<PyAny>) -> PyResult<Value> 
 }
 
 fn runtime_event_to_dict(py: Python<'_>, event: &RuntimeEvent) -> PyResult<Py<PyDict>> {
-    let json_str = serde_json::to_string(event)
+    // Target-language glue remains here: core produces JSON, PyO3 converts it to a Python dict.
+    let event_obj = runtime_event_to_wire_value(event)
         .map_err(|e| PyRuntimeError::new_err(format!("failed to serialize event: {}", e)))?;
-    let value: Value = serde_json::from_str(&json_str)
-        .map_err(|e| PyRuntimeError::new_err(format!("failed to parse event: {}", e)))?;
-
-    let event_obj = match value {
-        Value::Object(outer) if outer.len() == 1 => {
-            let (variant, fields) = outer.into_iter().next().ok_or_else(|| {
-                PyRuntimeError::new_err("failed to extract serialized event variant")
-            })?;
-            let mut result = match fields {
-                Value::Object(fields) => fields,
-                other => {
-                    let mut fields = serde_json::Map::new();
-                    fields.insert("value".into(), other);
-                    fields
-                }
-            };
-            result.insert("type".into(), Value::String(to_snake_case(&variant)));
-            result.entry("run_depth").or_insert(Value::from(0));
-            result.entry("child_run_id").or_insert(Value::Null);
-            Value::Object(result)
-        }
-        other => other,
-    };
     let json_str = serde_json::to_string(&event_obj)
         .map_err(|e| PyRuntimeError::new_err(format!("failed to serialize event dict: {}", e)))?;
 
@@ -388,23 +356,6 @@ fn runtime_event_to_dict(py: Python<'_>, event: &RuntimeEvent) -> PyResult<Py<Py
     let dict: Py<PyDict> = dict.extract()?;
 
     Ok(dict)
-}
-
-fn to_snake_case(name: &str) -> String {
-    let mut out = String::new();
-    for (idx, ch) in name.chars().enumerate() {
-        if ch.is_uppercase() {
-            if idx > 0 {
-                out.push('_');
-            }
-            for lower in ch.to_lowercase() {
-                out.push(lower);
-            }
-        } else {
-            out.push(ch);
-        }
-    }
-    out
 }
 
 fn parse_request_options_value(value: Option<Value>) -> Result<RequestOptions, String> {
@@ -455,14 +406,7 @@ fn parse_thinking_level(value: &str) -> Result<ThinkingLevel, String> {
 }
 
 fn parse_approval_mode(value: Option<&str>) -> PyResult<ApprovalMode> {
-    match value {
-        None | Some("per_tool") | Some("PerTool") => Ok(ApprovalMode::PerTool),
-        Some("none") | Some("None") => Ok(ApprovalMode::None),
-        Some("all") | Some("All") => Ok(ApprovalMode::All),
-        Some(other) => Err(PyRuntimeError::new_err(format!(
-            "invalid approval_mode '{other}'; expected per_tool|none|all"
-        ))),
-    }
+    parse_binding_approval_mode(value, BindingNameStyle::Python).map_err(PyRuntimeError::new_err)
 }
 
 fn parse_compatibility_policy(value: &str) -> Result<CompatibilityPolicy, String> {
@@ -498,21 +442,13 @@ impl Agent {
     }
 
     fn build_config(&self) -> PyResult<AgentConfig> {
-        let budget_config = if let Some(ref b) = self.budget {
-            BudgetConfig {
+        let budget_config =
+            budget_config_from_binding(self.budget.as_ref().map(|b| BindingBudgetConfig {
                 max_tokens: b.max_tokens,
                 max_tool_calls: b.max_tool_calls,
-                max_duration: b.max_duration_secs.map(Duration::from_secs),
+                max_duration_secs: b.max_duration_secs,
                 max_cost_usd: b.max_cost_usd,
-            }
-        } else {
-            BudgetConfig {
-                max_tokens: None,
-                max_tool_calls: None,
-                max_duration: None,
-                max_cost_usd: None,
-            }
-        };
+            }));
 
         let normalized = normalize_provider_model(&self.model)
             .map_err(|e| PyRuntimeError::new_err(format!("invalid model config: {e}")))?;
@@ -662,7 +598,7 @@ impl Agent {
                 .and_then(|d| d.extract(py))
                 .unwrap_or_else(|_| format!("Tool: {}", name));
             let input_schema = infer_schema_from_hints(py, &func)?;
-            let resolved = resolve_approval(approval.as_deref(), Approval::Never);
+            let resolved = parse_binding_approval(approval.as_deref(), Approval::Never);
             let execution_mode =
                 parse_execution_mode(execution_mode.as_deref(), commit_tool, draft_tool)?;
 
@@ -703,7 +639,7 @@ impl Agent {
             .and_then(|d| d.extract(py))
             .unwrap_or_else(|_| format!("Tool: {}", name));
         let input_schema = infer_schema_from_hints(py, &func)?;
-        let resolved = resolve_approval(approval.as_deref(), Approval::Never);
+        let resolved = parse_binding_approval(approval.as_deref(), Approval::Never);
         let execution_mode =
             parse_execution_mode(execution_mode.as_deref(), commit_tool, draft_tool)?;
 
@@ -775,7 +711,7 @@ impl Agent {
 
     #[pyo3(signature = (approval=None))]
     fn register_write_file_tool(&mut self, approval: Option<String>) -> PyResult<()> {
-        let resolved = resolve_approval(approval.as_deref(), Approval::Always);
+        let resolved = parse_binding_approval(approval.as_deref(), Approval::Always);
         self.native_tools
             .push(Arc::new(WriteFileTool::new_with_approval(resolved)));
         Ok(())
