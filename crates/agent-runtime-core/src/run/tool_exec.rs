@@ -1,5 +1,6 @@
 //! Tool execution helpers: sync dispatch, async job polling, and webhook waits.
 
+use std::sync::LazyLock;
 use std::time::Instant;
 
 use serde_json::{json, Value};
@@ -14,6 +15,13 @@ use super::webhook::WebhookRuntime;
 
 pub(crate) fn tool_error_result(error: &ToolError) -> Value {
     json!({ "error": error })
+}
+
+pub(crate) fn tool_skipped_by_hook_result() -> Value {
+    static SKIPPED_BY_HOOK: LazyLock<Value> = LazyLock::new(|| {
+        tool_error_result(&ToolError::fatal("tool call skipped by hook").with_code("HOOK_SKIPPED"))
+    });
+    SKIPPED_BY_HOOK.clone()
 }
 
 pub(crate) async fn poll_async_job(

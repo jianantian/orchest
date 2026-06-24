@@ -4474,7 +4474,9 @@ impl Tool for MustNotRunTool {
 }
 
 /// Model that calls `must_not_run` once then returns end-turn.
-struct SkipToolModel;
+struct SkipToolModel {
+    observed_tool_result: Arc<Mutex<Option<Value>>>,
+}
 
 #[async_trait::async_trait]
 impl ModelAdapter for SkipToolModel {
@@ -4494,16 +4496,19 @@ impl ModelAdapter for SkipToolModel {
         _options: &RequestOptions,
         _tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
-        let has_tool_result = messages
-            .iter()
-            .flat_map(|m| &m.content)
-            .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
+        let tool_result = messages.iter().find_map(|message| {
+            message.content.iter().find_map(|block| match block {
+                ContentBlock::ToolResult { content, .. } => Some(content.clone()),
+                _ => None,
+            })
+        });
         let usage = TokenUsage {
             input_tokens: 1,
             output_tokens: 1,
             ..Default::default()
         };
-        if has_tool_result {
+        if let Some(content) = tool_result {
+            *self.observed_tool_result.lock().unwrap() = Some(content);
             Ok(ModelResponse {
                 content: vec![ContentBlock::Text("done".into())],
                 usage,
@@ -4533,8 +4538,12 @@ async fn hook_skip_before_tool_prevents_execution_run_completes() {
 
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(MustNotRunTool)).unwrap();
+    let observed_tool_result = Arc::new(Mutex::new(None));
+    let model = Arc::new(SkipToolModel {
+        observed_tool_result: Arc::clone(&observed_tool_result),
+    });
 
-    let (handle, mut rx) = AgentRun::start(config, "go".into(), Arc::new(SkipToolModel), registry);
+    let (handle, mut rx) = AgentRun::start(config, "go".into(), model, registry);
 
     let mut events = Vec::new();
     while let Some(e) = rx.recv().await {
@@ -4553,6 +4562,23 @@ async fn hook_skip_before_tool_prevents_execution_run_completes() {
             .iter()
             .any(|e| matches!(e, RuntimeEvent::RunFailed { .. })),
         "run must not fail"
+    );
+    let content = observed_tool_result
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("model should receive skipped tool result");
+    assert_eq!(
+        content,
+        json!({
+            "error": {
+                "message": "tool call skipped by hook",
+                "kind": "Fatal",
+                "retry": "Unsafe",
+                "code": "HOOK_SKIPPED",
+                "next_step": null
+            }
+        })
     );
 }
 

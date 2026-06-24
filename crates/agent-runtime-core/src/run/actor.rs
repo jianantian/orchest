@@ -29,7 +29,7 @@ use super::config::{AgentConfig, RunId, ToolExecutionPolicy};
 use super::handle::ApprovalBus;
 use super::helpers::{append_searched_tool_defs, connect_mcp_servers, truncate_output};
 use super::skills::register_skills;
-use super::tool_exec::{poll_async_job, tool_error_result};
+use super::tool_exec::{poll_async_job, tool_error_result, tool_skipped_by_hook_result};
 use super::webhook::{start_webhook_server, WebhookRuntime};
 
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(3600);
@@ -1077,7 +1077,7 @@ async fn run_tool_and_handoff_phase(
             crate::hook::HookAction::Skip => {
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: tool_call.id.clone(),
-                    content: json!("tool call skipped by hook"),
+                    content: tool_skipped_by_hook_result(),
                 });
                 state.budget.record_tool_call();
                 continue;
