@@ -63,6 +63,7 @@ dependencies = [
  "httparse",
  "libc",
  "metrics",
+ "metrics-util",
  "ractor",
  "reqwest",
  "rusqlite",

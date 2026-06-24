@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::events::RuntimeEvent;
 use crate::model::{ContentBlock, Message, ModelAdapter, Role, TokenUsage};
+use crate::telemetry;
 
 use super::config::{AgentConfig, RunId};
 use super::helpers::emit;
@@ -131,6 +132,8 @@ pub(crate) async fn maybe_compact_context(
     let removed_messages = messages.len().saturating_sub(compacted.len());
     *messages = compacted;
     *last_compaction_step = Some(step);
+    let token_savings = used.saturating_sub(response.usage.output_tokens);
+    telemetry::record_context_compaction(removed_messages, token_savings);
     emit(
         tx,
         RuntimeEvent::ContextCompacted {

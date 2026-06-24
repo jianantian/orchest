@@ -33,6 +33,7 @@ libc = "0.2"
 
 [dev-dependencies]
 agent-runtime-providers = { path = "../agent-runtime-providers" }
+metrics-util = "0.20"
 
 [[test]]
 name = "ractor_poc"
@@ -105,6 +106,10 @@ path = "../../examples/rust/resilience/parallel_tool_execution.rs"
 [[example]]
 name = "code_execution_executor"
 path = "../../examples/rust/resilience/code_execution_executor.rs"
+
+[[example]]
+name = "observability_metrics"
+path = "../../examples/rust/resilience/observability_metrics.rs"
 
 [[example]]
 name = "session_persist_resume"
