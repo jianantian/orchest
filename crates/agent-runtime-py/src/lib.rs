@@ -964,8 +964,14 @@ fn agent_runtime_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
 
+    fn initialize_python() {
+        Python::initialize();
+    }
+
     #[test]
     fn python_execution_mode_defaults_to_normal() {
+        initialize_python();
+
         let mode = parse_execution_mode(None, None, None).expect("normal mode should parse");
 
         assert_eq!(mode, ToolExecutionMode::Normal);
@@ -973,6 +979,8 @@ mod tests {
 
     #[test]
     fn python_execution_mode_parses_draft() {
+        initialize_python();
+
         let mode = parse_execution_mode(Some("draft"), Some("commit_write".into()), None)
             .expect("draft mode should parse");
 
@@ -986,6 +994,8 @@ mod tests {
 
     #[test]
     fn python_execution_mode_requires_linked_tool() {
+        initialize_python();
+
         let err = parse_execution_mode(Some("commit"), None, None)
             .expect_err("commit mode should require draft_tool");
 
