@@ -103,6 +103,10 @@ name = "parallel_tool_execution"
 path = "../../examples/rust/resilience/parallel_tool_execution.rs"
 
 [[example]]
+name = "code_execution_executor"
+path = "../../examples/rust/resilience/code_execution_executor.rs"
+
+[[example]]
 name = "session_persist_resume"
 path = "../../examples/rust/resilience/session_persist_resume.rs"
 

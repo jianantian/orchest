@@ -185,36 +185,36 @@ impl Actor for WorkerActor {
         };
 
         if let Err(error) = connect_mcp_servers(&config, &mut registry).await {
-            emit(
+            return Ok(fail_pre_start(
+                &myself,
                 &event_subs,
-                RuntimeEvent::RunFailed {
-                    error: error.message,
-                },
-            )
-            .await;
-            myself.cast(AgentMsg::RunStep).ok();
-            return Ok(failed_state(
                 run_id,
                 config,
                 model,
                 registry,
                 approval_bus,
-                event_subs,
                 run_hook_ctx,
-            ));
+                error.message,
+            )
+            .await);
         }
 
         if config.runtime.code_execution_enabled {
-            for tool in CodeExecutionMcpServer::tools() {
-                if let Err(error) = registry.register(tool) {
-                    emit(
-                        &event_subs,
-                        RuntimeEvent::RuntimeWarning {
-                            message: format!("failed to register code execution tool: {error}"),
-                        },
-                    )
-                    .await;
-                }
+            if let Err(error) =
+                register_code_execution_tools(&config, &mut registry, &event_subs).await
+            {
+                return Ok(fail_pre_start(
+                    &myself,
+                    &event_subs,
+                    run_id,
+                    config,
+                    model,
+                    registry,
+                    approval_bus,
+                    run_hook_ctx,
+                    error.to_string(),
+                )
+                .await);
             }
         }
 
@@ -227,23 +227,18 @@ impl Actor for WorkerActor {
             )
             .await
             {
-                emit(
+                return Ok(fail_pre_start(
+                    &myself,
                     &event_subs,
-                    RuntimeEvent::RunFailed {
-                        error: format!("skill loading failed: {error}"),
-                    },
-                )
-                .await;
-                myself.cast(AgentMsg::RunStep).ok();
-                return Ok(failed_state(
                     run_id,
                     config,
                     model,
                     registry,
                     approval_bus,
-                    event_subs,
                     run_hook_ctx,
-                ));
+                    format!("skill loading failed: {error}"),
+                )
+                .await);
             }
         }
 
@@ -410,6 +405,26 @@ impl Actor for WorkerActor {
         state.approval_bus.cancel(state.run_id).await;
         Ok(())
     }
+}
+
+async fn register_code_execution_tools(
+    config: &AgentConfig,
+    registry: &mut ToolRegistry,
+    event_subs: &[mpsc::Sender<RuntimeEvent>],
+) -> Result<(), ToolError> {
+    let tools = CodeExecutionMcpServer::tools(config.runtime.code_execution_executor.clone())?;
+    for tool in tools {
+        if let Err(error) = registry.register(tool) {
+            emit(
+                event_subs,
+                RuntimeEvent::RuntimeWarning {
+                    message: format!("failed to register code execution tool: {error}"),
+                },
+            )
+            .await;
+        }
+    }
+    Ok(())
 }
 
 // ── Per-step logic ────────────────────────────────────────────────────────────

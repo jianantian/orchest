@@ -11,6 +11,7 @@ use agent_runtime_core::model::{
 use agent_runtime_core::run::{
     AgentConfig, AgentRun, ApprovalBus, ModelConfig, RunId, RuntimeConfig, SkillsConfig,
 };
+use agent_runtime_core::skill::executor::BareSubprocessExecutor;
 use agent_runtime_core::skill::{SkillDependencies, SkillEnvManager, SkillManifest};
 use agent_runtime_core::tool::agent_as_tool::ContextMode;
 use agent_runtime_core::tool::registry::ToolRegistry;
@@ -42,6 +43,7 @@ fn test_config() -> AgentConfig {
         runtime: RuntimeConfig {
             max_steps: 4,
             code_execution_enabled: true,
+            code_execution_executor: Some(Arc::new(BareSubprocessExecutor::new())),
             ..RuntimeConfig::default()
         },
         hooks: vec![],
@@ -99,7 +101,7 @@ impl ModelAdapter for CodeExecModel {
                 content: vec![ContentBlock::ToolUse {
                     id: "two".into(),
                     name: "execute_python".into(),
-                    input: json!({"code": "print(x + 1)", "timeout_seconds": 5}),
+                    input: json!({"code": "print(42)", "timeout_seconds": 5}),
                 }],
                 usage,
                 stop_reason: StopReason::ToolUse,
@@ -310,7 +312,7 @@ fn skill_env_manager_uses_hashed_python_cache_dir() {
 }
 
 #[tokio::test]
-async fn code_execution_registers_tools_and_reuses_python_session() {
+async fn code_execution_registers_tools_with_explicit_executor() {
     let (handle, mut rx) = AgentRun::start(
         test_config(),
         "run code".into(),
@@ -338,6 +340,31 @@ async fn code_execution_registers_tools_and_reuses_python_session() {
     assert!(outputs[1]["stdout"].as_str().unwrap().contains("42"));
     assert!(updates.iter().any(|value| value["stdout_line"] == "41"));
     assert!(updates.iter().any(|value| value["stdout_line"] == "42"));
+}
+
+#[tokio::test]
+async fn code_execution_enabled_without_executor_fails_before_tool_execution() {
+    let mut config = test_config();
+    config.runtime.code_execution_executor = None;
+
+    let (handle, mut rx) = AgentRun::start(
+        config,
+        "run code".into(),
+        Arc::new(CodeExecModel),
+        ToolRegistry::new(),
+    );
+
+    let mut failed = None;
+    while let Some(event) = rx.recv().await {
+        if let RuntimeEvent::RunFailed { error } = event {
+            failed = Some(error);
+        }
+    }
+    handle.wait().await;
+
+    let error = failed.expect("run should fail before tool execution");
+    assert!(error.contains("ScriptExecutor"));
+    assert!(error.contains("code execution"));
 }
 
 #[test]

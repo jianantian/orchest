@@ -40,7 +40,7 @@ Core telemetry must cover model calls, token usage, budget utilization, approval
 
 ## Acceptance Criteria
 
-- [ ] Code execution tools run through an explicit executor configuration; bare subprocess execution is opt-in and visible.
+- [x] Code execution tools run through an explicit executor configuration; bare subprocess execution is opt-in and visible.
 - [ ] Core telemetry covers the listed observability gaps.
 - [ ] Python SDK docs accurately describe GIL behavior.
 - [ ] Static error payload cleanup preserves the post-v0.9.4 structured model-facing error shape.
