@@ -8,6 +8,7 @@ use futures_util::stream::{FuturesUnordered, StreamExt};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
+use tracing::Instrument;
 
 use crate::budget::{BudgetConfig, BudgetGuard};
 use crate::events::{ApprovalContext, RuntimeEvent};
@@ -28,7 +29,7 @@ use super::config::{AgentConfig, RunId, ToolExecutionPolicy};
 use super::handle::ApprovalBus;
 use super::helpers::{append_searched_tool_defs, connect_mcp_servers, truncate_output};
 use super::skills::register_skills;
-use super::tool_exec::{poll_async_job, tool_error_result};
+use super::tool_exec::{poll_async_job, tool_error_result, tool_skipped_by_hook_result};
 use super::webhook::{start_webhook_server, WebhookRuntime};
 
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(3600);
@@ -185,36 +186,36 @@ impl Actor for WorkerActor {
         };
 
         if let Err(error) = connect_mcp_servers(&config, &mut registry).await {
-            emit(
+            return Ok(fail_pre_start(
+                &myself,
                 &event_subs,
-                RuntimeEvent::RunFailed {
-                    error: error.message,
-                },
-            )
-            .await;
-            myself.cast(AgentMsg::RunStep).ok();
-            return Ok(failed_state(
                 run_id,
                 config,
                 model,
                 registry,
                 approval_bus,
-                event_subs,
                 run_hook_ctx,
-            ));
+                error.message,
+            )
+            .await);
         }
 
         if config.runtime.code_execution_enabled {
-            for tool in CodeExecutionMcpServer::tools() {
-                if let Err(error) = registry.register(tool) {
-                    emit(
-                        &event_subs,
-                        RuntimeEvent::RuntimeWarning {
-                            message: format!("failed to register code execution tool: {error}"),
-                        },
-                    )
-                    .await;
-                }
+            if let Err(error) =
+                register_code_execution_tools(&config, &mut registry, &event_subs).await
+            {
+                return Ok(fail_pre_start(
+                    &myself,
+                    &event_subs,
+                    run_id,
+                    config,
+                    model,
+                    registry,
+                    approval_bus,
+                    run_hook_ctx,
+                    error.to_string(),
+                )
+                .await);
             }
         }
 
@@ -227,23 +228,18 @@ impl Actor for WorkerActor {
             )
             .await
             {
-                emit(
+                return Ok(fail_pre_start(
+                    &myself,
                     &event_subs,
-                    RuntimeEvent::RunFailed {
-                        error: format!("skill loading failed: {error}"),
-                    },
-                )
-                .await;
-                myself.cast(AgentMsg::RunStep).ok();
-                return Ok(failed_state(
                     run_id,
                     config,
                     model,
                     registry,
                     approval_bus,
-                    event_subs,
                     run_hook_ctx,
-                ));
+                    format!("skill loading failed: {error}"),
+                )
+                .await);
             }
         }
 
@@ -412,6 +408,26 @@ impl Actor for WorkerActor {
     }
 }
 
+async fn register_code_execution_tools(
+    config: &AgentConfig,
+    registry: &mut ToolRegistry,
+    event_subs: &[mpsc::Sender<RuntimeEvent>],
+) -> Result<(), ToolError> {
+    let tools = CodeExecutionMcpServer::tools(config.runtime.code_execution_executor.clone())?;
+    for tool in tools {
+        if let Err(error) = registry.register(tool) {
+            emit(
+                event_subs,
+                RuntimeEvent::RuntimeWarning {
+                    message: format!("failed to register code execution tool: {error}"),
+                },
+            )
+            .await;
+        }
+    }
+    Ok(())
+}
+
 // ── Per-step logic ────────────────────────────────────────────────────────────
 
 /// Runs `after_tool` hooks for the just-pushed tool result and applies any
@@ -466,6 +482,15 @@ fn should_retry_tool_error(error: &ToolError, attempt: u32) -> bool {
     }
 }
 
+fn budget_violation_kind(violation: &crate::budget::BudgetViolation) -> &'static str {
+    match violation {
+        crate::budget::BudgetViolation::MaxTokensExceeded => "tokens",
+        crate::budget::BudgetViolation::MaxToolCallsExceeded => "tool_calls",
+        crate::budget::BudgetViolation::MaxDurationExceeded => "duration",
+        crate::budget::BudgetViolation::MaxCostExceeded => "cost",
+    }
+}
+
 fn tool_retry_delay(next_attempt: u32) -> Duration {
     let exponent = next_attempt.saturating_sub(2).min(8);
     TOOL_RETRY_BASE_DELAY.saturating_mul(1 << exponent)
@@ -486,6 +511,7 @@ async fn request_retry_approval(request: RetryApprovalRequest<'_>) -> bool {
         previous_error: request.previous_error.clone(),
     };
     let approval_rx = request.approval_bus.request(request.run_id).await;
+    let approval_started = Instant::now();
     emit(
         request.subs,
         RuntimeEvent::ApprovalRequested {
@@ -495,11 +521,16 @@ async fn request_retry_approval(request: RetryApprovalRequest<'_>) -> bool {
     )
     .await;
 
-    let approved = match tokio::time::timeout(APPROVAL_TIMEOUT, approval_rx).await {
-        Ok(result) => result.unwrap_or(false),
-        Err(_) => false,
-    };
+    let (approved, approval_status) =
+        match tokio::time::timeout(APPROVAL_TIMEOUT, approval_rx).await {
+            Ok(result) => {
+                let approved = result.unwrap_or(false);
+                (approved, if approved { "granted" } else { "denied" })
+            }
+            Err(_) => (false, "timeout"),
+        };
     request.approval_bus.cancel(request.run_id).await;
+    telemetry::record_approval(approval_status, approval_started.elapsed());
 
     if approved {
         emit(
@@ -580,6 +611,7 @@ async fn check_step_limits(state: &mut AgentRunState, subs: &[mpsc::Sender<Runti
     }
 
     if let Some(violation) = state.budget.check() {
+        telemetry::record_budget_exceeded(budget_violation_kind(&violation));
         emit(
             subs,
             RuntimeEvent::BudgetWarning {
@@ -725,15 +757,30 @@ async fn dispatch_model_call(
         }
     });
 
-    let raw_response = state
-        .model
-        .complete(
-            call_messages,
-            &state.tool_defs,
-            &state.config.model.options,
-            Some(stream_tx),
-        )
-        .await;
+    let provider = state.model.provider_name().to_string();
+    let model = state.model.model_name().to_string();
+    let start = Instant::now();
+    let span = telemetry::model_complete_span(&provider, &model, true);
+    let raw_response = async {
+        state
+            .model
+            .complete(
+                call_messages,
+                &state.tool_defs,
+                &state.config.model.options,
+                Some(stream_tx),
+            )
+            .await
+    }
+    .instrument(span)
+    .await;
+    let duration = start.elapsed();
+    match &raw_response {
+        Ok(response) => {
+            telemetry::record_model_success(&provider, &model, duration, &response.usage)
+        }
+        Err(_) => telemetry::record_model_error(&provider, &model, duration),
+    }
     let _ = forward_task.await;
     raw_response
 }
@@ -861,6 +908,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
     };
 
     state.budget.record_model_call(&response.usage);
+    telemetry::record_budget_usage(state.budget.usage(), state.budget.config());
 
     emit(
         &subs,
@@ -1029,7 +1077,7 @@ async fn run_tool_and_handoff_phase(
             crate::hook::HookAction::Skip => {
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: tool_call.id.clone(),
-                    content: json!("tool call skipped by hook"),
+                    content: tool_skipped_by_hook_result(),
                 });
                 state.budget.record_tool_call();
                 continue;
@@ -1061,6 +1109,7 @@ async fn run_tool_and_handoff_phase(
         if state.config.runtime.should_approve(tool.metadata()) {
             let approval_context = approval_context_for(tool.metadata());
             let approval_rx = state.approval_bus.request(run_id).await;
+            let approval_started = Instant::now();
             emit(
                 subs,
                 RuntimeEvent::ApprovalRequested {
@@ -1073,6 +1122,7 @@ async fn run_tool_and_handoff_phase(
             let approved = match tokio::time::timeout(APPROVAL_TIMEOUT, approval_rx).await {
                 Ok(result) => result.unwrap_or(false),
                 Err(_) => {
+                    telemetry::record_approval("timeout", approval_started.elapsed());
                     emit(
                         subs,
                         RuntimeEvent::RunFailed {
@@ -1084,6 +1134,10 @@ async fn run_tool_and_handoff_phase(
                 }
             };
             state.approval_bus.cancel(run_id).await;
+            telemetry::record_approval(
+                if approved { "granted" } else { "denied" },
+                approval_started.elapsed(),
+            );
 
             if approved {
                 emit(
@@ -1652,6 +1706,7 @@ async fn emit(subs: &[mpsc::Sender<RuntimeEvent>], event: RuntimeEvent) {
         match tokio::time::timeout(EVENT_SEND_TIMEOUT, primary.send(event.clone())).await {
             Ok(Ok(())) | Ok(Err(_)) => {}
             Err(_) => {
+                telemetry::record_event_drop("primary", 1);
                 if primary
                     .try_send(RuntimeEvent::EventsDropped {
                         subscriber_id: 0,
@@ -1668,6 +1723,7 @@ async fn emit(subs: &[mpsc::Sender<RuntimeEvent>], event: RuntimeEvent) {
     }
     for (subscriber_id, sub) in subs.iter().enumerate().skip(1) {
         if let Err(mpsc::error::TrySendError::Full(_)) = sub.try_send(event.clone()) {
+            telemetry::record_event_drop("secondary", 1);
             if let Some(p) = subs.first() {
                 if p.try_send(RuntimeEvent::EventsDropped {
                     subscriber_id: subscriber_id as u64,

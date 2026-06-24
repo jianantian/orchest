@@ -100,7 +100,14 @@ metrics-util = "0.20"
 | `orchest_run_duration_seconds` | histogram | `status` | agent run 延迟 |
 | `orchest_run_failures_total` | counter | `error_code` | agent run 失败 |
 | `orchest_budget_tokens_total` | counter | `kind` | 来自标准化 usage 的预算归因 |
+| `orchest_budget_utilization_ratio` | gauge | `kind` | 当前 used / configured limit；`kind`: `tokens`, `tool_calls`, `cost` |
 | `orchest_budget_exceeded_total` | counter | `kind` | budget guard 拒绝 |
+| `orchest_approval_requests_total` | counter | `status` | approval gate 结果；`status`: `granted`, `denied`, `timeout` |
+| `orchest_approval_latency_seconds` | histogram | `status` | approval requested 到响应/超时的延迟 |
+| `orchest_context_compactions_total` | counter | — | context compaction 完成次数 |
+| `orchest_context_compaction_token_savings` | histogram | — | compaction 前 token usage 与 summary token 的差值 |
+| `orchest_context_compaction_removed_messages` | histogram | — | 每次 compaction 移除的 message 数 |
+| `orchest_event_drops_total` | counter | `subscriber` | 事件通道 backpressure 导致的 drop；`subscriber`: `primary`, `secondary` |
 
 `model_family` 是比 `model` 更粗的归类：
 

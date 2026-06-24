@@ -10,10 +10,10 @@ Replace implicit bare-subprocess execution with explicit executor configuration 
 
 ## Acceptance Criteria
 
-- [ ] Code execution tools require an explicit executor configuration when code execution is enabled.
-- [ ] `BareSubprocessExecutor` remains available only as an explicitly selected development executor.
-- [ ] Code execution tools accept `Arc<dyn ScriptExecutor>`.
-- [ ] Executor-backed execution maps stdout/stderr/status consistently.
-- [ ] Missing executor configuration returns a structured configuration error before tool execution.
-- [ ] Tests cover bare-subprocess opt-in, injected-executor execution and missing-executor rejection.
-- [ ] Public examples are updated to configure an executor explicitly.
+- [x] Code execution tools require an explicit executor configuration when code execution is enabled.
+- [x] `BareSubprocessExecutor` remains available only as an explicitly selected development executor.
+- [x] Code execution tools accept `Arc<dyn ScriptExecutor>`.
+- [x] Executor-backed execution maps stdout/stderr/status consistently.
+- [x] Missing executor configuration returns a structured configuration error before tool execution.
+- [x] Tests cover bare-subprocess opt-in, injected-executor execution and missing-executor rejection.
+- [x] Public examples are updated to configure an executor explicitly.

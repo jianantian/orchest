@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::model::{Message, ModelSpec, RequestOptions};
+use crate::skill::executor::ScriptExecutor;
 use crate::tool::mcp::McpServerConfig;
 use crate::tool::Tool;
 
@@ -200,11 +201,18 @@ pub struct RuntimeConfig {
     pub webhook_enabled: bool,
     /// Whether Python/JavaScript code execution is enabled for this agent.
     ///
-    /// **Security note**: Code runs in a bare subprocess without sandboxing.
-    /// Do not enable for untrusted user input without additional isolation
-    /// (e.g., containers, `nsjail`, or a remote execution backend).
+    /// **Security note**: Code execution requires an explicit
+    /// [`ScriptExecutor`]. Use `BareSubprocessExecutor` only as an explicit
+    /// development choice; production applications should inject a sandboxed or
+    /// remote executor.
     #[serde(default)]
     pub code_execution_enabled: bool,
+    /// Executor used by built-in code execution tools.
+    ///
+    /// Skipped during serialization because trait object process state and
+    /// sandbox configuration must be rebuilt by the host application.
+    #[serde(skip)]
+    pub code_execution_executor: Option<Arc<dyn ScriptExecutor>>,
     #[serde(default)]
     pub run_depth: u32,
     #[serde(default)]
@@ -257,6 +265,10 @@ impl std::fmt::Debug for RuntimeConfig {
             .field("compaction", &self.compaction)
             .field("webhook_enabled", &self.webhook_enabled)
             .field("code_execution_enabled", &self.code_execution_enabled)
+            .field(
+                "code_execution_executor",
+                &self.code_execution_executor.is_some(),
+            )
             .field("run_depth", &self.run_depth)
             .field("approval_mode", &self.approval_mode)
             .field("tool_execution_policy", &self.tool_execution_policy)
@@ -276,6 +288,7 @@ impl Default for RuntimeConfig {
             compaction: None,
             webhook_enabled: false,
             code_execution_enabled: false,
+            code_execution_executor: None,
             run_depth: 0,
             approval_mode: ApprovalMode::PerTool,
             tool_execution_policy: ToolExecutionPolicy::Sequential,
@@ -517,8 +530,20 @@ impl AgentConfigBuilder {
         self.runtime.tool_execution_policy = ToolExecutionPolicy::ParallelSafe;
         self
     }
+    /// Enable code execution registration.
+    ///
+    /// This does not select a default executor. A run with code execution
+    /// enabled but no `ScriptExecutor` fails during startup. Prefer
+    /// [`Self::code_execution_executor`] when enabling executable code paths.
     pub fn enable_code_execution(mut self) -> Self {
         self.runtime.code_execution_enabled = true;
+        self
+    }
+    /// Enable code execution and inject the executor used by built-in Python
+    /// and JavaScript execution tools.
+    pub fn code_execution_executor(mut self, executor: Arc<dyn ScriptExecutor>) -> Self {
+        self.runtime.code_execution_enabled = true;
+        self.runtime.code_execution_executor = Some(executor);
         self
     }
     pub fn enable_compaction(mut self, config: CompactionConfig) -> Self {

@@ -40,9 +40,9 @@ Core telemetry must cover model calls, token usage, budget utilization, approval
 
 ## Acceptance Criteria
 
-- [ ] Code execution tools run through an explicit executor configuration; bare subprocess execution is opt-in and visible.
-- [ ] Core telemetry covers the listed observability gaps.
-- [ ] Python SDK docs accurately describe GIL behavior.
-- [ ] Static error payload cleanup preserves the post-v0.9.4 structured model-facing error shape.
-- [ ] Public examples and tests are updated for explicit code execution executor configuration and new telemetry names.
-- [ ] `cargo test --workspace`, `cargo clippy --workspace -- -D warnings` and `cargo fmt --check` pass.
+- [x] Code execution tools run through an explicit executor configuration; bare subprocess execution is opt-in and visible.
+- [x] Core telemetry covers the listed observability gaps.
+- [x] Python SDK docs accurately describe GIL behavior.
+- [x] Static error payload cleanup preserves the post-v0.9.4 structured model-facing error shape.
+- [x] Public examples and tests are updated for explicit code execution executor configuration and new telemetry names.
+- [x] `cargo test --workspace`, `cargo clippy --workspace -- -D warnings` and `cargo fmt --check` pass.
