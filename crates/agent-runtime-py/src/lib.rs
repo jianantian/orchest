@@ -80,15 +80,10 @@ fn parse_execution_mode(
 }
 
 fn await_coroutine(py: Python<'_>, coro: Py<PyAny>) -> PyResult<Py<PyAny>> {
-    let asyncio = py.import("asyncio")?;
-    let has_running_loop = asyncio.call_method0("get_running_loop").is_ok();
+    run_coroutine_on_thread(py, coro)
+}
 
-    if !has_running_loop {
-        return asyncio
-            .call_method1("run", (coro.bind(py),))
-            .map(|value| value.unbind());
-    }
-
+fn run_coroutine_on_thread(py: Python<'_>, coro: Py<PyAny>) -> PyResult<Py<PyAny>> {
     let (tx, rx) = std::sync::mpsc::channel();
     let coro_clone = coro.clone_ref(py);
 

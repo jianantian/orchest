@@ -31,6 +31,16 @@ events = agent.run("What's the weather in Tokyo?")
 
 `run(input)` 和 `run_sync(input)` 都返回 `list[RuntimeEvent]`（一次性返回事件列表，不是流式 generator）。
 
+### GIL 行为
+
+`run()` / `run_sync()` 在 Rust run loop 执行期间使用 `py.detach()` 释放 Python GIL；长时间 model call、Rust tool、MCP tool、skill tool 不会因为 Python 调用线程持有 GIL 而阻塞其它 Python 线程。返回事件列表转换成 Python dict/list 时会短暂重新持有 GIL。
+
+`run_stream(input, on_event)` 在后台线程运行 Rust agent；调用线程只在把单个事件转换为 dict 并执行 `on_event(event)` 时持有 GIL，等待新事件时会释放 GIL。`on_event` 是用户 Python callback；如果它自己执行长时间 CPU-bound Python 代码，它会按普通 Python 规则占用 GIL。
+
+Python 注册的 tool callback 必须在持有 GIL 时执行，因为它运行用户 Python 代码。同步 callback 的耗时由用户代码决定；异步 callback 返回 coroutine 时，binding 会在后台线程中运行 coroutine，并在等待结果时释放调用线程的 GIL。
+
+示例见 [`examples/python/gil_behavior.py`](../../examples/python/gil_behavior.py)。
+
 ## 3. 注册 tool
 
 最常用的是 `@agent.tool` 装饰器——函数的 docstring 作为 description，参数名/类型推断出 input schema：
