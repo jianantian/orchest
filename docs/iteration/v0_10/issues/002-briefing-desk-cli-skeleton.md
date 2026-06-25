@@ -12,13 +12,15 @@ Create the `examples/demo/briefing-desk` Rust app crate with CLI argument parsin
 
 - [ ] `examples/demo/briefing-desk/Cargo.toml` exists and uses workspace path dependencies.
 - [ ] `src/main.rs` exposes `run` and `resume` subcommands.
-- [ ] `run` accepts `--materials`, `--question`, `--output`, `--session` and `--fake-model`.
-- [ ] `resume` accepts `--session`, `--question`, `--output` and `--fake-model`.
-- [ ] `src/app.rs` keeps command orchestration separate from tool implementations.
-- [ ] `tests/smoke.rs` runs the fake-model path without network credentials.
+- [ ] `run` accepts `--materials` (directory; may contain `.md`/`.txt`, image files and audio files), `--question`, `--output`, `--session`, `--fake` and `--no-tts` (skip audio synthesis).
+- [ ] `resume` accepts `--session`, `--question`, `--output`, `--fake` and `--no-tts`.
+- [ ] `src/app.rs` keeps command orchestration separate from tool and media implementations.
+- [ ] `tests/smoke.rs` runs the `--fake` path without network credentials; the smoke path includes placeholder calls for the multimedia flow (transcribe → read image → write → synthesize) so the full pipeline is exercised offline.
 - [ ] `cargo test -p briefing-desk-demo` passes.
 - [ ] The skeleton still uses only public Orchest APIs.
 
 ## Notes
 
-The fake-model path should be deterministic enough for CI. Live provider support can be wired later behind environment variables.
+The `--fake` flag must be a single switch that simultaneously activates fake model responses, fake ASR transcription and fake TTS synthesis — a single environment variable or CLI flag, not separate per-modality flags. This makes the smoke path unambiguous.
+
+The fake-model path should be deterministic enough for CI. Live provider support can be wired later behind environment variables. Real audio/image fixture files are not needed in this issue; stubs (empty bytes or tiny synthetic files) are enough to exercise the CLI plumbing.
