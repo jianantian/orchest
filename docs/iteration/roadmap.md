@@ -47,9 +47,13 @@
 
 ## 规划中
 
-### 后续方向 — Provider 统一（omni 驱动，待排期）
+### v0.9.12 — Provider 统一（大重构，规划）
 
-omni（端到端语音大模型，生态位 ≈ asr+llm+tts 融合）和 Chameleon（对话出图模型）从两个相反方向证伪"按模态分 crate"。三步走：① v0.9.10 接 Minimax → ② v0.9.11 接至少 1 个 omni（已完成，Volcengine realtime evidence 已归档）→ ③ 按"交互原语 × 模态"重切、合 crate。详见 [`docs/todo/provider-unification.md`](../todo/provider-unification.md)。
+`docs/todo/provider-unification.md` Step 3 的落地迭代：承接 v0.9.10 Minimax 跨 crate 重复证据和 v0.9.11 omni 全双工形态证据，对 provider 架构做一次大重构。证伪"按模态分 crate"的两个反例——omni（端到端语音大模型，全双工跨模态）和 Chameleon（对话原生出图，turn × image）——作为硬验收标尺。
+
+核心切法按**两个独立维度**重组，中间用 registry/umbrella 墙隔开：**使用方**按能力查或按厂商/型号点名，**实现方**按可复用性分层（协议脊柱 + 基础组件/认证 + wire 方言），crate 边界只为隔离依赖重量。落点：5 个按模态切的 provider crate → `orchest-protocol` + `orchest-provider-core` + 3 个按重量切的 impl crate（http/stream/visual）+ `orchest-providers` umbrella，`agent-runtime-realtime-providers` 被吸收。详见 [`v0_9_12/prd.md`](./v0_9_12/prd.md) 与 [`docs/todo/provider-unification.md`](../todo/provider-unification.md)。
+
+**依赖**：v0.9.10 Minimax 多模态 Provider 接入、v0.9.11 omni realtime evidence；现有 ASR/TTS duplex streaming 作为生命周期/测试形态参考。重构迭代，provider 卫星线独立推进，不阻塞 v0.10 / v0.11 demo 主线。
 
 ### v0.10 — Demo A: 能力组合广度验证（规划）
 
