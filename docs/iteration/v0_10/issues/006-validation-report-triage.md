@@ -1,4 +1,4 @@
-# 005 · Validation report and release-blocker triage
+# 006 · Validation report and release-blocker triage
 
 ## Background
 
@@ -14,6 +14,7 @@ Run Briefing Desk in fake and live modes, write the validation report and update
 - [ ] Report includes fake smoke command, result and commit/date tested.
 - [ ] Report includes live provider command, provider/model, date and outcome.
 - [ ] Report lists API friction with file/function references where possible.
+- [ ] Report lists modality gateway friction (ASR/TTS/multimodal/AIGC), including the known fake-provider accessibility finding from issue 005.
 - [ ] Report lists documentation gaps with target docs paths.
 - [ ] Every finding is classified as demo blocker, release blocker or post-1.0 backlog.
 - [ ] `docs/iteration/roadmap.md` links v1.0 dependency to the validation report.

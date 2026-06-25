@@ -1,4 +1,4 @@
-# 006 · Multimedia ingestion and audio output
+# 005 · Multimedia ingestion and audio output
 
 ## Background
 

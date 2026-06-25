@@ -121,6 +121,7 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
 ✅ v0.9.3: TTS Provider Gateway（卫星，已完成）
 ✅ v0.9.10: Minimax 多模态 Provider 接入（卫星，已完成）
             │
+            ├──────▶ v0.10 Demo A 消费（ASR/TTS/多模态图像 → 模态广度验证）
             ▼
    后续: Omni 接入（qwen-omni / 豆包 realtime）→ Provider 统一 / 合 crate
         （docs/todo/provider-unification.md）

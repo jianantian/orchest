@@ -140,8 +140,8 @@ Examples:
 | 002 | Briefing Desk CLI skeleton | Add app crate, CLI arguments, config loading and deterministic fake-model smoke path |
 | 003 | Runtime tool flow | Implement search/read/write/report tools, approval behavior and event rendering |
 | 004 | Session resume and reviewer path | Add persisted sessions, resume command and reviewer sub-agent or handoff |
-| 006 | Multimedia ingestion and audio output | Wire ASR transcription, multimodal image input and TTS audio output as tools/model paths, each with a fake provider for offline smoke |
-| 005 | Validation report and release-blocker triage | Run the demo, document findings (incl. modality gateway friction) and classify follow-up fixes |
+| 005 | Multimedia ingestion and audio output | Wire ASR transcription, multimodal image input and TTS audio output as tools/model paths, each with a fake provider for offline smoke |
+| 006 | Validation report and release-blocker triage | Run the demo, document findings (incl. modality gateway friction) and classify follow-up fixes |
 
 ## Acceptance Criteria
 
@@ -171,8 +171,9 @@ v0.10 does not block on v0.11 scope being defined; it blocks only on v0.10 accep
 ## Dependencies
 
 - v0.9.2 documentation and basic examples.
-- v0.9 Supervised Delegation runtime APIs.
-- Existing session persistence support from v0.8.
+- v0.7 Agent-as-Tool + Handoff (the reviewer path; supervised delegation / LlmWatcher is **not** a v0.10 dependency — that surface is exercised in v0.11).
+- v0.9.5 Control-Flow Hardening (`ContextMode` for the reviewer sub-agent).
+- Session persistence from v0.8.
 - v0.6.1 Image AIGC Gateway (`agent-runtime-aigc-providers`) — for the optional AIGC stretch.
 - v0.9.1 / v0.9.6 ASR Provider Gateway (`agent-runtime-asr-providers`).
 - v0.9.3 TTS Provider Gateway (`agent-runtime-tts-providers`).
