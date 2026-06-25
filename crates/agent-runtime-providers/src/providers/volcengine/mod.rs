@@ -2,7 +2,7 @@
 //!
 //! API base: <https://ark.cn-beijing.volces.com/api/v3/chat/completions>
 //! Auth:     Authorization: Bearer $ARK_API_KEY
-//! Models:   doubao-seed-2-0-pro-260215, doubao-seed-character-251128, etc.
+//! Models:   doubao-seed-2-1-pro-260628, doubao-seed-2-1-turbo-260628, doubao-seed-character-260628, etc.
 //!
 //! Split by concern: this file owns the adapter struct, capability reporting,
 //! and `complete()`'s control flow; `request` builds the Chat Completions
@@ -88,9 +88,19 @@ impl VolcengineAdapter {
         })
     }
 
+    /// Resolve this adapter's catalog entry, if any.
+    ///
+    /// Returns `None` for unrecognised model ids (custom/preview endpoints
+    /// keyed off the same OpenAI-compatible API). Callers MUST treat that
+    /// case conservatively rather than fall back to name-prefix guessing.
+    fn catalog_entry(&self) -> Option<&'static crate::catalog::LlmModelEntry> {
+        crate::catalog::find_model(&self.model)
+    }
+
     pub(super) fn supports_thinking(&self) -> bool {
-        // doubao-seed-character is a roleplay model — no reasoning support.
-        self.model.starts_with("doubao-seed") && !self.model.contains("character")
+        self.catalog_entry()
+            .map(|m| m.thinking.is_some())
+            .unwrap_or(false)
     }
 }
 
@@ -127,9 +137,15 @@ impl ModelAdapter for VolcengineAdapter {
                 long_ttl: false,
             },
             max_output_tokens: Some(self.max_tokens),
-            context_window_size: Some(128_000),
+            context_window_size: self
+                .catalog_entry()
+                .map(|m| m.context_window)
+                .or(Some(128_000)),
             source: CapabilitySource::Static,
-            pricing: Some(crate::pricing::volcengine_pricing(&self.model)),
+            pricing: self
+                .catalog_entry()
+                .and_then(|m| m.pricing.clone())
+                .or_else(|| Some(crate::pricing::volcengine_pricing(&self.model))),
         }
     }
 

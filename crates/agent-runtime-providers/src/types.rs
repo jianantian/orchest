@@ -68,13 +68,7 @@ mod tests {
 
     #[test]
     fn model_pricing_calculate_sonnet() {
-        let pricing = ModelPricing {
-            currency: "USD".into(),
-            input_per_million: 3.0,
-            output_per_million: 15.0,
-            cache_read_per_million: None,
-            cache_write_per_million: None,
-        };
+        let pricing = ModelPricing::flat_text("USD", 3.0, 15.0);
         let usage = TokenUsage {
             input_tokens: 1_000_000,
             output_tokens: 1_000_000,
@@ -86,13 +80,11 @@ mod tests {
 
     #[test]
     fn model_pricing_calculate_with_cache() {
-        let pricing = ModelPricing {
-            currency: "USD".into(),
-            input_per_million: 3.0,
-            output_per_million: 15.0,
-            cache_read_per_million: Some(0.3),
-            cache_write_per_million: Some(3.75),
-        };
+        use agent_runtime_model::PricingRates;
+        let pricing = ModelPricing::single_tier(
+            "USD",
+            PricingRates::text(3.0, 15.0).with_cache(Some(0.3), Some(3.75)),
+        );
         let usage = TokenUsage {
             input_tokens: 500_000,
             output_tokens: 100_000,
@@ -106,6 +98,53 @@ mod tests {
             + 200_000.0 * 0.3 / 1_000_000.0
             + 50_000.0 * 3.75 / 1_000_000.0;
         assert!((cost - expected).abs() < 1e-10);
+    }
+
+    #[test]
+    fn model_pricing_calculate_tiered_with_audio() {
+        use agent_runtime_model::{PricingRates, PricingTier};
+        // doubao-seed-2-0-mini-260428 三档 (audio surcharge) — verify
+        // calculate() picks the right tier and applies audio rate.
+        let pricing = ModelPricing {
+            currency: "CNY".into(),
+            tiers: vec![
+                PricingTier {
+                    max_input_tokens: Some(32_000),
+                    rates: PricingRates::text(0.2, 2.0).with_audio_input(3.0),
+                },
+                PricingTier {
+                    max_input_tokens: Some(128_000),
+                    rates: PricingRates::text(0.4, 4.0).with_audio_input(6.0),
+                },
+                PricingTier {
+                    max_input_tokens: None,
+                    rates: PricingRates::text(0.8, 8.0).with_audio_input(12.0),
+                },
+            ],
+        };
+        // Mid tier: 50K text input + 10K audio input + 1K output
+        let usage = TokenUsage {
+            input_tokens: 50_000,
+            output_tokens: 1_000,
+            audio_input_tokens: 10_000,
+            ..Default::default()
+        };
+        let cost = pricing.calculate(&usage);
+        // 50_000 * 0.4 + 1_000 * 4 + 10_000 * 6, all / 1_000_000.
+        let expected = (50_000.0 * 0.4 + 1_000.0 * 4.0 + 10_000.0 * 6.0) / 1_000_000.0;
+        assert!(
+            (cost - expected).abs() < 1e-10,
+            "got {cost}, expected {expected}"
+        );
+        // High tier: 200K text input falls into the catch-all
+        let usage_high = TokenUsage {
+            input_tokens: 200_000,
+            output_tokens: 1_000,
+            ..Default::default()
+        };
+        let cost_high = pricing.calculate(&usage_high);
+        let expected_high = (200_000.0 * 0.8 + 1_000.0 * 8.0) / 1_000_000.0;
+        assert!((cost_high - expected_high).abs() < 1e-10);
     }
 
     #[test]

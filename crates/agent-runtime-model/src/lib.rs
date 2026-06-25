@@ -11,7 +11,7 @@ pub use adapter::ModelAdapter;
 pub use error::{ModelError, UpstreamErrorDetail};
 pub use options::{
     CacheCapability, CachePolicy, CapabilitySource, CompatibilityPolicy, ModelCapabilities,
-    ModelPricing, ReasoningCapability, RequestOptions, ThinkingLevel,
+    ModelPricing, PricingRates, PricingTier, ReasoningCapability, RequestOptions, ThinkingLevel,
 };
 pub use response::{ModelResponse, OptionAdjustment, StopReason, TokenUsage};
 pub use stream::StreamEvent;

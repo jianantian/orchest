@@ -106,13 +106,7 @@ impl MinimaxAdapter {
     /// Minimax catalog 暂无定价数据;返回零成本占位(`docs/external/minimax/` 缺
     /// pricing.md,见研究文档 §八)。pricing 在 catalog 层定义后会替换为表驱动。
     fn pricing(&self) -> ModelPricing {
-        ModelPricing {
-            currency: "USD".into(),
-            input_per_million: 0.0,
-            output_per_million: 0.0,
-            cache_read_per_million: None,
-            cache_write_per_million: None,
-        }
+        ModelPricing::flat_text("USD", 0.0, 0.0)
     }
 }
 

@@ -99,8 +99,8 @@ fn volcengine_models_present() {
         .collect();
     assert!(!models.is_empty());
     let ids: Vec<_> = models.iter().map(|m| m.model_id).collect();
-    assert!(ids.contains(&"volcengine/doubao-seed-2-0-pro-260215"));
-    assert!(ids.contains(&"volcengine/doubao-seed-2-0-lite-260215"));
+    assert!(ids.contains(&"volcengine/doubao-seed-2-1-pro-260628"));
+    assert!(ids.contains(&"volcengine/doubao-seed-2-0-lite-260428"));
 }
 
 #[test]
@@ -163,13 +163,14 @@ fn deepseek_models_publish_cache_hit_price() {
             .find(|m| m.model_id == model_id)
             .unwrap_or_else(|| panic!("{model_id} missing from catalog"));
         let pricing = entry.pricing.as_ref().expect("pricing must exist");
+        let rates = &pricing.tiers.first().expect("at least one tier").rates;
         assert_eq!(
-            pricing.cache_read_per_million,
+            rates.cache_read_per_million,
             Some(want),
             "{model_id} cache_read price drifted from upstream",
         );
         assert!(
-            pricing.cache_write_per_million.is_none(),
+            rates.cache_write_per_million.is_none(),
             "{model_id} should not declare cache_write price (DeepSeek does not charge for writes)",
         );
     }
@@ -217,9 +218,10 @@ fn text_only_models_have_only_text_modality() {
     let text_only = [
         // Note: gpt-5.4-nano is not listed here because the catalog declares Image
         // input for it. If nano is confirmed text-only, add it here and fix the catalog.
+        // doubao-seed-character-260628 is intentionally absent: the 2.1 refresh added
+        // image + audio input for multi-role companion scenarios.
         "deepseek/deepseek-v4-flash",
         "deepseek/deepseek-v4-pro",
-        "volcengine/doubao-seed-character-251128",
     ];
     for model_id in text_only {
         let entry = list_models()
@@ -265,7 +267,7 @@ fn thinking_support_matches_provider_implementation() {
         "anthropic/claude-opus-4-8",
         "anthropic/claude-sonnet-4-6",
         "deepseek/deepseek-v4-pro",
-        "volcengine/doubao-seed-1-6-flash-250615",
+        "volcengine/doubao-seed-2-1-turbo-260628",
     ];
     for model_id in thinking_supported {
         let entry = list_models()
@@ -279,7 +281,7 @@ fn thinking_support_matches_provider_implementation() {
 
     // Character model does NOT support thinking
     let char_entry = list_models()
-        .find(|m| m.model_id == "volcengine/doubao-seed-character-251128")
+        .find(|m| m.model_id == "volcengine/doubao-seed-character-260628")
         .unwrap();
     assert!(
         char_entry.thinking.is_none(),

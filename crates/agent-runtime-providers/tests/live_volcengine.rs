@@ -61,7 +61,7 @@ fn adapter(model: &str) -> VolcengineAdapter {
 #[tokio::test]
 #[ignore = "requires real ARK_API_KEY"]
 async fn live_chat_completion_without_thinking() {
-    let adapter = adapter("doubao-seed-2-0-lite-260215");
+    let adapter = adapter("doubao-seed-2-1-turbo-260628");
     let messages = vec![Message {
         role: Role::User,
         content: vec![ContentBlock::Text(
@@ -101,7 +101,7 @@ async fn live_chat_completion_without_thinking() {
 #[tokio::test]
 #[ignore = "requires real ARK_API_KEY"]
 async fn live_chat_completion_with_thinking_enabled() {
-    let adapter = adapter("doubao-seed-2-0-lite-260215");
+    let adapter = adapter("doubao-seed-2-1-turbo-260628");
     let messages = vec![Message {
         role: Role::User,
         content: vec![ContentBlock::Text(
@@ -148,7 +148,7 @@ async fn live_chat_completion_with_thinking_enabled() {
 #[tokio::test]
 #[ignore = "requires real ARK_API_KEY"]
 async fn live_tool_calling_round_trip() {
-    let adapter = adapter("doubao-seed-2-0-lite-260215");
+    let adapter = adapter("doubao-seed-2-1-turbo-260628");
     let tool = agent_runtime_model::ToolDef {
         name: "get_weather".into(),
         description: "Get the current weather for a city".into(),

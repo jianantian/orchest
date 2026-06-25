@@ -2,7 +2,7 @@ use super::*;
 
 fn adapter_with_url(api_url: &str) -> VolcengineAdapter {
     VolcengineAdapter::from_config(VolcengineConfig {
-        model: "doubao-seed-2-0-lite-260215".into(),
+        model: "doubao-seed-2-1-turbo-260628".into(),
         max_tokens: 4096,
         api_key: Some("test-key".into()),
         api_url: Some(api_url.into()),
@@ -13,13 +13,13 @@ fn adapter_with_url(api_url: &str) -> VolcengineAdapter {
 #[test]
 fn strips_volcengine_prefix_from_model() {
     let adapter = VolcengineAdapter::from_config(VolcengineConfig {
-        model: "volcengine/doubao-seed-2-0-lite-260215".into(),
+        model: "volcengine/doubao-seed-2-1-turbo-260628".into(),
         max_tokens: 4096,
         api_key: Some("key".into()),
         api_url: Some("http://localhost".into()),
     })
     .unwrap();
-    assert_eq!(adapter.model_name(), "doubao-seed-2-0-lite-260215");
+    assert_eq!(adapter.model_name(), "doubao-seed-2-1-turbo-260628");
 }
 
 #[test]
