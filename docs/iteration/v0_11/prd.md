@@ -4,7 +4,7 @@
 
 v0.10 (Demo A) validates Orchest breadth: runtime capabilities composing correctly in one coherent product. v0.11 (Demo B) validates depth in the one subsystem that matters most before v1.0—the supervised delegation API surface that Multivac M2's avatar will drive.
 
-Multivac M2 is the automated phase of the Multivac product: an avatar agent that delegates research and writing tasks to worker agents, monitors their progress through event streams, injects steering corrections mid-run, and recovers from worker failures. The Orchest APIs that enable this—`LlmWatcher`, Steering / `InjectCmd`, `ContextMode`, supervisor recovery, multi-watcher FIFO, and completion gate—have been implemented but have never been exercised by a product-shaped application. Any usability problem, naming confusion, missing primitive, or correctness gap in those APIs must be found before v1.0 freezes them.
+Multivac M2 is the automated phase of the Multivac product: an avatar agent that delegates research and writing tasks to worker agents, monitors their progress through event streams, injects steering corrections mid-run, and recovers from worker failures. The Orchest APIs that enable this—`LlmWatcher`, `WatcherAction` steering, `ContextMode`, supervisor recovery, multi-watcher FIFO, and completion gate—have been implemented but have never been exercised by a product-shaped application. Any usability problem, naming confusion, missing primitive, or correctness gap in those APIs must be found before v1.0 freezes them.
 
 Demo B is the evidence collection run. It produces a seam gap analysis that decides which API or documentation issues are release blockers for v1.0.
 
@@ -47,7 +47,7 @@ examples/demo/research-pipeline/
 │   ├── main.rs
 │   ├── supervisor.rs      (supervisor agent + delegation orchestration)
 │   ├── worker.rs          (worker agent + tool set)
-│   ├── watcher.rs         (LlmWatcher impl + InjectCmd scenarios)
+│   ├── watcher.rs         (LlmWatcher impl + WatcherAction steering scenarios)
 │   ├── fault.rs           (controlled fault injection for recovery test)
 │   └── events.rs          (event rendering shared with both agents)
 └── tests/
@@ -61,7 +61,7 @@ The app may use workspace path dependencies and may import tool definitions from
 1. User runs the demo with a research question.
 2. Supervisor agent delegates the task to the worker Orchest agent.
 3. `LlmWatcher` attaches to the worker's event stream; both worker and watcher events render to stdout.
-4. Watcher injects one steering command mid-run (a correction, clarification or redirect) via `InjectCmd`.
+4. Watcher returns `WatcherAction::Inject(message)` from `on_event()` to inject one steering command mid-run (a correction, clarification or redirect).
 5. Worker processes the injection and continues; supervisor receives the result.
 6. Fault injection forces a controlled worker failure; supervisor detects failure and recovers (restart or escalate).
 7. Supervisor synthesizes the worker result into a final output.
@@ -73,16 +73,17 @@ A `--fake-model` mode exercises the full path using deterministic fake responses
 
 | Capability | Demo expectation |
 |------------|------------------|
-| `LlmWatcher` attach/detach | Watcher attaches before delegation and receives all worker events |
-| Worker event visibility | Tool calls, model turns, approval events and status transitions are visible to watcher |
-| `InjectCmd` / Steering | Watcher injects one correction mid-run; worker processes it without panicking or losing state |
-| `ContextMode::Fresh` | Worker starts with clean context, no parent message history bleed |
-| `ContextMode::Fork` | Alternative path: worker inherits a bounded window of parent context |
-| Supervisor recovery | Controlled fault → worker fails → supervisor detects failure → restarts or escalates |
-| Multi-watcher FIFO | Two watchers attached concurrently; event delivery order is deterministic |
-| Completion gate | Supervisor knows definitively when worker run has finished (not by timeout) |
-| Seam API ergonomics | Builder, attach, inject, detach, recover all usable without reading private source |
-| Documentation coverage | README and inline rustdoc are enough to reconstruct the flow from first principles |
+| `LlmWatcher` attach/detach | `RunHandle::attach_watcher()` wires the watcher before delegation; detach is implicit on run completion |
+| Worker event visibility | Tool calls, model turns, approval events and status transitions arrive at the watcher via `Watcher::on_event()` |
+| Steering via `WatcherAction` | Watcher returns `WatcherAction::Inject(msg)` from `on_event()`; worker processes the injection without panicking or losing state |
+| `RunHandle` steering | `RunHandle::inject_message()` / `RunHandle::steer()` cover the external-caller steering path |
+| `ContextMode::Fresh` | Worker `SubAgentBuilder::context_mode(ContextMode::Fresh)`: no parent message history in worker context |
+| `ContextMode::Fork` | `SubAgentBuilder::context_mode(ContextMode::Fork { depth })`: inherits at most `depth` parent messages; no-messages case errors rather than silently falling back |
+| Supervisor recovery | `SupervisionStrategy::Restart { max_retries }` on `AgentConfigBuilder`; observable via `RuntimeEvent::RunRestarted` / `RunAborted` |
+| Multi-watcher FIFO | Two `RunHandle::attach_watcher()` calls; event delivery order is deterministic across both watchers |
+| Completion gate | Supervisor polls `EventReceiver` for `RuntimeEvent::RunCompleted` / `RunFailed` / `RunAborted`—no fixed timeout |
+| Import-path ergonomics | `LlmWatcher` (`run::llm_watcher`) and `ContextMode` (`tool::agent_as_tool`) are not re-exported from lib.rs; ergonomics classified during demo |
+| Documentation coverage | README and inline rustdoc are enough to reconstruct the full delegation flow from first principles |
 
 ### Fault Injection Scenario
 
@@ -99,14 +100,32 @@ The demo must exercise both `ContextMode::Fresh` and `ContextMode::Fork { depth 
 
 ### Seam API Surface
 
-The v0.11 demo must use the following Orchest public API entry points directly. Any entry point that is missing, misnamed, undocumented, or requires workarounds to use correctly is a seam gap finding:
+The v0.11 demo must use the following Orchest public API entry points directly. Any entry point that is missing, misnamed, undocumented, or requires workarounds to use correctly is a seam gap finding.
 
-- `LlmWatcher` construction and attachment
-- `InjectCmd` send path
-- `ContextMode` variants and builder integration
-- Supervisor-side failure detection API
-- Worker restart or escalation entry point
-- Completion gate (how supervisor waits for worker done)
+Accurate public paths (confirmed against codebase before demo is written):
+
+| Seam API | Public type / method | Full path |
+|----------|---------------------|-----------|
+| Watcher construction | `LlmWatcher::builder()` | `agent_runtime_core::run::llm_watcher::LlmWatcher` |
+| Watcher attachment | `RunHandle::attach_watcher(watcher, capacity)` | `agent_runtime_core::run::handle::RunHandle` |
+| Steering from watcher | `WatcherAction::Inject(String)` / `WatcherAction::Steer(String)` returned from `on_event()` | `agent_runtime_core::run::watcher::WatcherAction` |
+| Steering from external caller | `RunHandle::inject_message(msg)` / `RunHandle::steer(msg)` | `agent_runtime_core::run::handle::RunHandle` |
+| Context mode | `SubAgentBuilder::context_mode(ContextMode::Fresh \| Fork { depth })` | `agent_runtime_core::tool::agent_as_tool::ContextMode` |
+| Supervisor strategy | `AgentConfigBuilder::supervision_strategy(SupervisionStrategy::Restart { max_retries })` | `agent_runtime_core::run::config::SupervisionStrategy` |
+| Failure observation | `RuntimeEvent::RunRestarted { attempt }` / `RunAborted { reason }` | `agent_runtime_core::events::RuntimeEvent` |
+| Completion gate | `RuntimeEvent::RunCompleted { output }` / `RunFailed { error }` via `EventReceiver` | `agent_runtime_core::run::handle::EventReceiver` |
+
+**Note**: `InjectCmd` and `SteerCmd` are `pub(crate)` internal types. Do not use them directly; use `WatcherAction` and `RunHandle` methods above.
+
+### Pre-Seeded Findings
+
+These friction points are already known before the demo is written. The demo confirms their impact and produces a final classification. They are not fixed in advance; the demo may reveal they are harmless, or it may confirm they are seam blockers.
+
+| ID | Finding | Preliminary classification |
+|----|---------|---------------------------|
+| PSF-1 | `LlmWatcher` is not re-exported from `lib.rs`; import path is `agent_runtime_core::run::llm_watcher::LlmWatcher` | Likely post-1.0 (path friction, not a correctness issue) unless Multivac M2 onboarding proves it is confusing |
+| PSF-2 | `ContextMode` is not re-exported from `lib.rs`; import path is `agent_runtime_core::tool::agent_as_tool::ContextMode` | Same as PSF-1 |
+| PSF-3 | Fake ASR/TTS providers live in `tests/fake_provider.rs` inside each provider crate; they are not accessible as normal dev-dependencies from an external crate. The demo must either vendor the struct or the crates must expose fakes through a `#[cfg(feature = "test-utils")]` feature gate | Likely seam blocker if the demo cannot easily construct fake providers for offline smoke; record workaround used |
 
 ## Validation Triage Rule
 
@@ -118,11 +137,11 @@ Findings from Demo B enter one of three buckets. The classification criteria dif
 
 Examples:
 
-- `InjectCmd` delivery order is non-deterministic when two watchers inject concurrently → seam blocker (Multivac M2 supervisor and avatar may both inject).
+- `WatcherAction::Inject` delivery order is non-deterministic when two watchers inject concurrently → seam blocker (Multivac M2 supervisor and avatar may both inject).
 - `ContextMode::Fork` silently falls back to `Fresh` instead of failing → seam blocker (`ContextMode` semantics must be explicit before 1.0 freezes them).
-- Supervisor recovery API requires reading private source to understand which method to call → seam blocker (documentation gap).
-- Completion gate works but the method name is confusing → post-1.0 if the Multivac M2 team can work with it; release blocker only if renaming before 1.0 is the lesser cost.
-- LlmWatcher event payload contains more fields than documented → post-1.0.
+- Supervisor recovery requires reading private source to understand which `SupervisionStrategy` variant to set → seam blocker (documentation gap).
+- Completion gate works but the event variant name is confusing → post-1.0 if the Multivac M2 team can work with it; release blocker only if renaming before 1.0 is the lesser cost.
+- `LlmWatcher` event payload contains more fields than documented → post-1.0.
 
 ## Issue Breakdown
 
@@ -131,16 +150,16 @@ Examples:
 | 001 | Demo spec and scaffold | Lock the delegation flow, fixture re-use plan, fake-model contract and seam API checklist |
 | 002 | Worker agent and tool set | Implement worker agent with research tools and fault_trigger; fake-model smoke path |
 | 003 | Supervisor + LlmWatcher + ContextMode | Implement supervisor delegation, watcher attach/detach, ContextMode::Fresh and Fork paths |
-| 004 | Steering injection and supervisor recovery | Implement InjectCmd scenario, multi-watcher FIFO test, fault injection, supervisor recovery |
+| 004 | Steering injection and supervisor recovery | Implement WatcherAction::Inject scenario, multi-watcher FIFO test, fault injection, supervisor recovery |
 | 005 | Seam gap analysis and release-blocker triage | Run full demo, document all seam gaps, classify as seam blocker / release blocker / post-1.0, update v1.0 scope |
 
 ## Acceptance Criteria
 
 - [ ] `examples/demo/research-pipeline` exists and builds with workspace path dependencies.
-- [ ] Fake-model smoke test covers supervisor delegation, watcher attach/inject, ContextMode both variants, fault injection and recovery.
+- [ ] Fake-model smoke test covers supervisor delegation, watcher attach, `WatcherAction::Inject` steering, `ContextMode` both variants, fault injection and recovery.
 - [ ] Live run works when provider environment variables are configured.
-- [ ] `LlmWatcher` attach produces a visible event stream from the worker on stdout.
-- [ ] `InjectCmd` injection is processed by the worker and visible in events.
+- [ ] `LlmWatcher` attach (`RunHandle::attach_watcher`) produces a visible event stream from the worker on stdout.
+- [ ] Steering injection via `WatcherAction::Inject` is processed by the worker and visible in events.
 - [ ] `ContextMode::Fresh` and `ContextMode::Fork` both exercise their respective paths; Fork failure produces a clear error.
 - [ ] Fault injection causes a controlled worker failure; supervisor recovery path runs without panicking.
 - [ ] Two watchers attached concurrently produce deterministic event ordering.

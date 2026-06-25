@@ -11,15 +11,17 @@ Implement the supervisor agent, attach an `LlmWatcher` to the worker run, and ex
 ## Acceptance Criteria
 
 - [ ] Supervisor is implemented in `src/supervisor.rs` and delegates to the worker using the public Orchest delegation API.
-- [ ] `LlmWatcher` is implemented in `src/watcher.rs`, attaches to the worker's event stream before delegation starts, and logs received events to stdout.
-- [ ] Watcher detaches cleanly after the worker run completes.
-- [ ] `ContextMode::Fresh` path: worker starts with no inherited parent messages. Test asserts that worker context contains no messages from supervisor history.
-- [ ] `ContextMode::Fork { depth }` path: worker inherits the most recent `depth` messages from supervisor history. Test asserts correct count.
+- [ ] `LlmWatcher` is implemented in `src/watcher.rs` via `LlmWatcher::builder().build()`, attached via `RunHandle::attach_watcher()` before delegation starts, and logs received events to stdout. Import path: `agent_runtime_core::run::llm_watcher::LlmWatcher`.
+- [ ] Watcher detaches cleanly after the worker run completes (implicit on `RuntimeEvent::RunCompleted / RunFailed / RunAborted`).
+- [ ] `ContextMode::Fresh` path: `SubAgentBuilder::context_mode(ContextMode::Fresh)` — worker starts with no inherited parent messages. Test asserts that worker context contains no messages from supervisor history. Import path: `agent_runtime_core::tool::agent_as_tool::ContextMode`.
+- [ ] `ContextMode::Fork { depth }` path: `SubAgentBuilder::context_mode(ContextMode::Fork { depth })` — worker inherits the most recent `depth` messages from supervisor history. Test asserts correct count.
 - [ ] `ContextMode::Fork` with no inheritable messages produces a clear error rather than silently falling back to `Fresh`.
 - [ ] Fake-model smoke test for the full supervisor → worker → watcher path passes without network access.
 - [ ] Any missing or confusing public API entry point encountered during implementation is recorded as a seam gap finding in a `FINDINGS.md` or inline in the validation notes.
 
 ## Notes
+
+**Pre-seeded findings to verify**: PSF-1 and PSF-2 from the PRD (LlmWatcher and ContextMode not re-exported from lib.rs). Confirm whether the extra import depth is acceptable ergonomics or warrants a lib.rs re-export before 1.0.
 
 If the public Orchest API for attaching a watcher before delegation start requires reading private source or working around an undocumented constraint, that is a seam gap finding (likely a seam blocker).
 
