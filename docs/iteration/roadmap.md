@@ -52,9 +52,9 @@ omni（端到端语音大模型，生态位 ≈ asr+llm+tts 融合）和 Chamele
 
 ### v0.10 — Demo A: 能力组合广度验证（规划）
 
-两轮 demo 验证策略的第一轮，**广度优先**：用一个真实但小的完整产品 dogfood SDK，验证运行时各能力在产品场景下的协同。v0.10 用 demo 证据决定哪些 API / 文档 / runtime 问题必须在公开发布前修。
+两轮 demo 验证策略的第一轮，**广度优先**：用一个真实但小的完整产品 dogfood SDK，验证运行时各能力在产品场景下的协同。广度覆盖两个轴——编排控制面（model/tool/approval/event/session/sub-agent）与**模态网关**（ASR/TTS/多模态图像输入）。v0.10 用 demo 证据决定哪些 API / 文档 / runtime 问题必须在公开发布前修。
 
-当前产品形态锁定为 **Briefing Desk**：本地研究简报 agent。它读取一组 Markdown/text 材料，围绕用户问题搜索、引用、生成报告，展示事件流，在写文件前走 approval，并支持 session resume。详见 [`v0_10/prd.md`](./v0_10/prd.md)。
+当前产品形态锁定为 **Briefing Desk**：本地**多媒体**研究简报 agent。它读取一组混合材料（Markdown/text 笔记 + 图表截图 + 录音访谈），转写音频（ASR）、读图（多模态图像输入）、检索文本，围绕用户问题生成报告，展示事件流，写文件前走 approval，可选合成简报音频版（TTS），并支持 session resume。模态不是为凑覆盖率而堆——研究简报工具本就自然地吸收访谈录音与图表。AIGC 生图为可选 stretch，视频/音乐与音频直喂 LLM 不在范围内。详见 [`v0_10/prd.md`](./v0_10/prd.md)。
 
 v0.10 至少验证一个轻量 reviewer sub-agent 或 handoff 路径（Agent-as-Tool 或 Handoff）。v0.10 验证报告中的 Supervised Delegation 摩擦点会直接移交 v0.11。
 
