@@ -6,7 +6,7 @@ Briefing Desk must validate real Orchest runtime behavior: tools, metadata, appr
 
 ## Goal
 
-Implement search/read/write/report tools, approval behavior and event rendering for the demo.
+Implement the **text tools only**: search/read/write/report tools, approval behavior and event rendering. Multimedia tools (ASR transcription, vision image-in, TTS synthesis) are in issue 005 and must not be added here.
 
 ## Acceptance Criteria
 
