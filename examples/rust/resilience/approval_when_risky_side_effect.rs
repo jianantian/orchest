@@ -1,6 +1,6 @@
-//! ApprovalMode::SideEffectOnly example: only tools with side_effect=true require approval.
+//! Approval::WhenRisky example: only side-effecting risky tools require approval.
 //!
-//! Run with: cargo run --example approval_mode_side_effect
+//! Run with: cargo run --example approval_when_risky_side_effect
 
 use std::sync::Arc;
 
@@ -9,7 +9,7 @@ use agent_runtime_core::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun, ApprovalMode};
+use agent_runtime_core::run::{AgentConfig, AgentRun};
 use agent_runtime_core::tool::{
     registry::ToolRegistry, Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError,
     ToolMetadata, ToolOutput, ToolSource,
@@ -165,7 +165,7 @@ impl Tool for WriteFileTool {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             side_effect: true,
-            approval: Approval::Never, // approval_mode overrides this
+            approval: Approval::WhenRisky,
             execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
             parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
             cost_hint: None,
@@ -191,10 +191,6 @@ async fn main() {
     let config = AgentConfig::builder("mock/mock")
         .system_prompt("You are a file assistant.")
         .max_steps(5)
-        .approval_mode({
-            #[allow(deprecated)]
-            ApprovalMode::SideEffectOnly
-        })
         .build()
         .unwrap();
 

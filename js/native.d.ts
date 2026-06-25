@@ -23,7 +23,7 @@ export class Agent {
       maxDurationSecs?: number;
       maxCostUsd?: number;
     };
-    /** Run-level approval policy: "perTool" | "none" | "all" | "sideEffectOnly". */
+    /** Run-level approval policy: "perTool" | "none" | "all". */
     approvalMode?: string;
   });
 
@@ -32,10 +32,8 @@ export class Agent {
     name: string;
     description: string;
     inputSchema: Record<string, unknown>;
-    /** Deprecated: use `approval` instead. */
-    requiresApproval?: boolean;
     sideEffect?: boolean;
-    /** "never" | "whenRisky" | "always". Takes priority over `requiresApproval`. */
+    /** "never" | "whenRisky" | "always". */
     approval?: string;
   }): void;
 
@@ -45,7 +43,7 @@ export class Agent {
     description: string,
     inputSchema: Record<string, unknown>,
     handler: (input: any) => any,
-    options?: { requiresApproval?: boolean; sideEffect?: boolean; approval?: string },
+    options?: { sideEffect?: boolean; approval?: string },
   ): void;
 
   /**
@@ -59,7 +57,7 @@ export class Agent {
     inputSchema: Record<string, unknown>,
     handler: (input: any) => { job_id: string; poll_interval_ms?: number },
     pollHandler: (jobId: string) => { status: string; progress?: number; message?: string; result?: any; error?: string },
-    options?: { requiresApproval?: boolean; sideEffect?: boolean; approval?: string },
+    options?: { sideEffect?: boolean; approval?: string },
   ): void;
 
   /** Run the agent and return all events as an array. */

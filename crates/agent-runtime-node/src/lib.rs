@@ -15,13 +15,16 @@ use napi_derive::napi;
 use serde_json::Value;
 use tokio::sync::Mutex as TokioMutex;
 
-use agent_runtime_core::budget::BudgetConfig;
+use agent_runtime_core::bindings::{
+    budget_config_from_binding, parse_binding_approval, parse_binding_approval_mode,
+    runtime_event_to_wire_value, BindingBudgetConfig, BindingNameStyle,
+};
 use agent_runtime_core::model::{
     CachePolicy, CompatibilityPolicy, ModelSpec, ProviderRuntimeConfig,
     RequestOptions as RustRequestOptions, ThinkingLevel,
 };
 use agent_runtime_core::run::{
-    AgentConfig, AgentRun, ApprovalMode, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
+    AgentConfig, AgentRun, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
 };
 use agent_runtime_core::tool::async_job::{JobHandle, JobStatus, PollFn};
 use agent_runtime_core::tool::registry::ToolRegistry;
@@ -30,22 +33,6 @@ use agent_runtime_core::tool::{
     ToolOutput, ToolSource,
 };
 use agent_runtime_providers::{create_adapter_from_config, normalize_provider_model};
-
-fn resolve_approval_node(approval_str: Option<&str>, requires_approval: Option<bool>) -> Approval {
-    match approval_str {
-        Some("never") => Approval::Never,
-        Some("whenRisky") | Some("when_risky") => Approval::WhenRisky,
-        Some("always") => Approval::Always,
-        Some(_) => Approval::WhenRisky,
-        None => {
-            if requires_approval.unwrap_or(false) {
-                Approval::Always
-            } else {
-                Approval::Never
-            }
-        }
-    }
-}
 
 fn parse_execution_mode_node(
     mode: Option<&str>,
@@ -94,22 +81,6 @@ fn shared_runtime() -> &'static tokio::runtime::Runtime {
     RT.get_or_init(|| tokio::runtime::Runtime::new().expect("failed to create tokio runtime"))
 }
 
-fn parse_approval_mode(value: Option<&str>) -> Result<ApprovalMode, String> {
-    match value {
-        None | Some("perTool") | Some("PerTool") => Ok(ApprovalMode::PerTool),
-        Some("none") | Some("None") => Ok(ApprovalMode::None),
-        Some("all") | Some("All") => Ok(ApprovalMode::All),
-        #[allow(deprecated)]
-        Some("sideEffectOnly") | Some("SideEffectOnly") => {
-            eprintln!("warning: sideEffectOnly is deprecated, use perTool with Approval::WhenRisky instead");
-            Ok(ApprovalMode::SideEffectOnly)
-        }
-        Some(other) => Err(format!(
-            "invalid approvalMode '{other}'; expected perTool|none|all|sideEffectOnly"
-        )),
-    }
-}
-
 #[napi(object)]
 pub struct AgentOptions {
     pub model: String,
@@ -121,7 +92,7 @@ pub struct AgentOptions {
     pub max_tokens: Option<u32>,
     pub request_options: Option<RequestOptions>,
     pub budget: Option<BudgetOptions>,
-    /// Run-level approval policy: "perTool" | "none" | "all" | "sideEffectOnly".
+    /// Run-level approval policy: "perTool" | "none" | "all".
     pub approval_mode: Option<String>,
 }
 
@@ -150,10 +121,8 @@ pub struct ToolRegistration {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
-    /// Deprecated: use `approval` ("never"/"whenRisky"/"always") instead.
-    pub requires_approval: Option<bool>,
     pub side_effect: Option<bool>,
-    /// Approval level: "never" | "whenRisky" | "always". Takes priority over `requires_approval`.
+    /// Approval level: "never" | "whenRisky" | "always".
     pub approval: Option<String>,
     /// Execution mode: "normal" | "draft" | "commit".
     pub execution_mode: Option<String>,
@@ -483,8 +452,7 @@ impl Agent {
     /// For tools with handlers, use `registerToolWithHandler`.
     #[napi]
     pub fn register_tool(&mut self, options: ToolRegistration) -> napi::Result<()> {
-        let resolved =
-            resolve_approval_node(options.approval.as_deref(), options.requires_approval);
+        let resolved = parse_binding_approval(options.approval.as_deref(), Approval::Never);
         let execution_mode = parse_execution_mode_node(
             options.execution_mode.as_deref(),
             options.commit_tool,
@@ -511,7 +479,7 @@ impl Agent {
     /// The handler receives the parsed input object and should return a
     /// JSON-serializable value. Errors thrown become ToolCallFailed events.
     #[napi(
-        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => any, options?: { requiresApproval?: boolean, sideEffect?: boolean, approval?: string, executionMode?: 'normal' | 'draft' | 'commit', commitTool?: string, draftTool?: string }"
+        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => any, options?: { sideEffect?: boolean, approval?: string, executionMode?: 'normal' | 'draft' | 'commit', commitTool?: string, draftTool?: string }"
     )]
     #[allow(clippy::too_many_arguments)] // justified: NAPI binding mirrors JS API surface
     pub fn register_tool_with_handler(
@@ -527,16 +495,12 @@ impl Agent {
             .and_then(|o| o.get("approval"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let requires_approval = options
-            .as_ref()
-            .and_then(|o| o.get("requiresApproval"))
-            .and_then(|v| v.as_bool());
         let side_effect = options
             .as_ref()
             .and_then(|o| o.get("sideEffect"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let resolved = resolve_approval_node(approval_str.as_deref(), requires_approval);
+        let resolved = parse_binding_approval(approval_str.as_deref(), Approval::Never);
         let execution_mode = execution_mode_from_options(options.as_ref())?;
 
         let tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = handler
@@ -569,7 +533,7 @@ impl Agent {
     /// `pollHandler(jobId)` is called on each poll interval and should return
     /// `{ status: "pending"|"completed"|"failed", progress?: number, message?: string, result?: any, error?: string }`.
     #[napi(
-        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => { job_id: string; poll_interval_ms?: number }, pollHandler: (jobId: string) => { status: string; progress?: number; message?: string; result?: any; error?: string }, options?: { requiresApproval?: boolean; sideEffect?: boolean; approval?: string, executionMode?: 'normal' | 'draft' | 'commit', commitTool?: string, draftTool?: string }"
+        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => { job_id: string; poll_interval_ms?: number }, pollHandler: (jobId: string) => { status: string; progress?: number; message?: string; result?: any; error?: string }, options?: { sideEffect?: boolean; approval?: string, executionMode?: 'normal' | 'draft' | 'commit', commitTool?: string, draftTool?: string }"
     )]
     #[allow(clippy::too_many_arguments)] // justified: napi-rs exposes the JavaScript registration API as positional arguments.
     pub fn register_async_tool_with_handler(
@@ -586,16 +550,12 @@ impl Agent {
             .and_then(|o| o.get("approval"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let requires_approval = options
-            .as_ref()
-            .and_then(|o| o.get("requiresApproval"))
-            .and_then(|v| v.as_bool());
         let side_effect = options
             .as_ref()
             .and_then(|o| o.get("sideEffect"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let resolved = resolve_approval_node(approval_str.as_deref(), requires_approval);
+        let resolved = parse_binding_approval(approval_str.as_deref(), Approval::Never);
         let execution_mode = execution_mode_from_options(options.as_ref())?;
 
         let handler_tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = handler
@@ -668,9 +628,10 @@ impl Agent {
 
         let mut result = Vec::new();
         for event in &events {
-            let value = serde_json::to_value(event)
+            // Target-language glue remains here: core produces JSON, napi converts it to JS values.
+            let value = runtime_event_to_wire_value(event)
                 .map_err(|e| napi::Error::from_reason(format!("serialize error: {}", e)))?;
-            result.push(runtime_event_to_value(value));
+            result.push(value);
         }
 
         Ok(result)
@@ -711,9 +672,9 @@ impl Agent {
             }
 
             while let Some(event) = event_rx.recv().await {
-                let value = serde_json::to_value(&event)
+                // Target-language glue remains here: core produces JSON, napi converts it to JS values.
+                let value = runtime_event_to_wire_value(&event)
                     .map_err(|e| napi::Error::from_reason(format!("serialize error: {}", e)))?;
-                let value = runtime_event_to_value(value);
                 let status = tsfn.call(value, ThreadsafeFunctionCallMode::NonBlocking);
                 if status != napi::Status::Ok {
                     tracing::warn!("node event callback dropped: {:?}", status);
@@ -772,21 +733,13 @@ impl Agent {
     }
 
     fn build_config(&self) -> napi::Result<AgentConfig> {
-        let budget_config = if let Some(ref b) = self.budget {
-            BudgetConfig {
+        let budget_config =
+            budget_config_from_binding(self.budget.as_ref().map(|b| BindingBudgetConfig {
                 max_tokens: b.max_tokens.map(|v| v as u64),
                 max_tool_calls: b.max_tool_calls.map(|v| v as u32),
-                max_duration: b.max_duration_secs.map(|v| Duration::from_secs(v as u64)),
+                max_duration_secs: b.max_duration_secs.map(|v| v as u64),
                 max_cost_usd: b.max_cost_usd,
-            }
-        } else {
-            BudgetConfig {
-                max_tokens: None,
-                max_tool_calls: None,
-                max_duration: None,
-                max_cost_usd: None,
-            }
-        };
+            }));
 
         let normalized = normalize_provider_model(&self.model)
             .map_err(|e| napi::Error::from_reason(format!("invalid model config: {e}")))?;
@@ -810,8 +763,11 @@ impl Agent {
                 ..SkillsConfig::default()
             },
             runtime: RuntimeConfig {
-                approval_mode: parse_approval_mode(self.approval_mode.as_deref())
-                    .map_err(napi::Error::from_reason)?,
+                approval_mode: parse_binding_approval_mode(
+                    self.approval_mode.as_deref(),
+                    BindingNameStyle::Node,
+                )
+                .map_err(napi::Error::from_reason)?,
                 ..RuntimeConfig::default()
             },
             hooks: vec![],
@@ -881,56 +837,10 @@ fn parse_cache_policy(value: &str) -> Result<CachePolicy, String> {
     }
 }
 
-fn runtime_event_to_value(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(outer) if outer.len() == 1 => {
-            let Some((variant, fields)) = outer.into_iter().next() else {
-                return serde_json::Value::Object(serde_json::Map::new());
-            };
-            let mut result = match fields {
-                serde_json::Value::Object(fields) => fields,
-                other => {
-                    let mut fields = serde_json::Map::new();
-                    fields.insert("value".into(), other);
-                    fields
-                }
-            };
-            result.insert(
-                "type".into(),
-                serde_json::Value::String(to_snake_case(&variant)),
-            );
-            result
-                .entry("run_depth")
-                .or_insert(serde_json::Value::from(0));
-            result
-                .entry("child_run_id")
-                .or_insert(serde_json::Value::Null);
-            serde_json::Value::Object(result)
-        }
-        other => other,
-    }
-}
-
-fn to_snake_case(name: &str) -> String {
-    let mut out = String::new();
-    for (idx, ch) in name.chars().enumerate() {
-        if ch.is_uppercase() {
-            if idx > 0 {
-                out.push('_');
-            }
-            for lower in ch.to_lowercase() {
-                out.push(lower);
-            }
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_runtime_core::bindings::{runtime_event_value_to_wire_value, to_snake_case};
 
     #[test]
     fn runtime_event_type_uses_snake_case_wire_format() {
@@ -940,7 +850,7 @@ mod tests {
             }
         });
 
-        let converted = runtime_event_to_value(event);
+        let converted = runtime_event_value_to_wire_value(event);
 
         assert_eq!(converted["type"], "model_stream_chunk");
         assert!(converted.get("delta").is_some());
@@ -954,7 +864,7 @@ mod tests {
             }
         });
 
-        let converted = runtime_event_to_value(event);
+        let converted = runtime_event_value_to_wire_value(event);
 
         assert_eq!(converted["type"], "run_aborted");
         assert_eq!(converted["run_depth"], 0);

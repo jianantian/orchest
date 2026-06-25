@@ -97,35 +97,6 @@ impl AgentConfig {
             description.to_string(),
         )
     }
-
-    /// Legacy 7-parameter version. Prefer the builder returned by `as_tool(name, desc)`.
-    #[deprecated(
-        since = "0.9.0",
-        note = "use as_tool(name, desc).model(m).registry(r).build()"
-    )]
-    #[allow(clippy::too_many_arguments)] // justified: backward-compat; use SubAgentBuilder instead
-    pub fn as_tool_legacy(
-        &self,
-        name: &str,
-        description: &str,
-        model: std::sync::Arc<dyn crate::model::ModelAdapter>,
-        registry: crate::tool::registry::ToolRegistry,
-        input_mapper: std::sync::Arc<
-            dyn Fn(serde_json::Value) -> Result<String, crate::tool::ToolError> + Send + Sync,
-        >,
-        output_extractor: std::sync::Arc<
-            dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync,
-        >,
-    ) -> std::sync::Arc<dyn crate::tool::Tool> {
-        let im = input_mapper;
-        let oe = output_extractor;
-        self.as_tool(name, description)
-            .model(model)
-            .registry(registry)
-            .input_mapper(move |v| im(v))
-            .output_extractor(move |v| oe(v))
-            .build()
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,11 +143,6 @@ pub enum ApprovalMode {
     None,
     /// Request approval for every tool call.
     All,
-    #[deprecated(
-        since = "0.9.0",
-        note = "use Approval::WhenRisky + side_effect instead"
-    )]
-    SideEffectOnly,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -249,8 +215,6 @@ impl RuntimeConfig {
             },
             ApprovalMode::None => false,
             ApprovalMode::All => true,
-            #[allow(deprecated)]
-            ApprovalMode::SideEffectOnly => meta.side_effect,
         }
     }
 }

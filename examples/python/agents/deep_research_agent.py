@@ -254,7 +254,7 @@ def build_deep_research_agent(
         agent=web_search_agent,
         input_key="question",
     )
-    agent.register_write_file_tool(requires_approval=False)
+    agent.register_write_file_tool(approval="never")
     return agent
 
 

@@ -111,6 +111,26 @@ Parallel batch events include a batch id, model-requested order, and completion
 order so consumers can reconstruct both the requested sequence and actual finish
 sequence.
 
+## App-Layer Policy Guardrails
+
+Complex authority policy should stay outside the runtime core. The runtime
+provides the enforcement hooks: tool input guardrails can allow, modify, reject,
+or abort a call before execution, while `ToolMetadata` still controls coarse
+side-effect approval with `Approval::Never`, `Approval::WhenRisky`, or
+`Approval::Always`.
+
+Keep multi-level policy in application code when the decision depends on product
+state such as the actor role, workspace, resource owner, risk tier, tenant plan,
+or audit workflow. Those rules change more often than the SDK runtime contract,
+and product teams need to test and version them independently.
+
+The `guardrail_authority_policy` example shows this split:
+
+- a tool input guardrail rejects a high-risk request from a support actor;
+- the same guardrail allows a medium-risk request from a manager;
+- the allowed side-effecting tool still triggers `Approval::WhenRisky` before it
+  executes.
+
 ## Examples
 
 Run the examples from the workspace root:
@@ -119,4 +139,6 @@ Run the examples from the workspace root:
 cargo run -p agent-runtime-core --example draft_commit_approval
 cargo run -p agent-runtime-core --example tool_search_discovery
 cargo run -p agent-runtime-core --example parallel_tool_execution
+cargo run -p agent-runtime-core --example approval_when_risky_side_effect
+cargo run -p agent-runtime-core --example guardrail_authority_policy
 ```

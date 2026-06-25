@@ -9,7 +9,7 @@
 Tool 是 agent 与外部世界交互的接口抽象，包含：
 - 名称、描述、输入 schema、可选的输出 schema
 - 实现（execute 函数）
-- 元数据（side_effect、requires_approval、timeout 等）
+- 元数据（side_effect、approval、timeout 等）
 
 Tool 关心的是"能做什么"，不关心"怎么提供给 runtime"。
 

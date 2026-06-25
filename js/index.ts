@@ -39,10 +39,8 @@ export interface ToolRegistration {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  /** Deprecated: use `approval` instead. */
-  requiresApproval?: boolean;
   sideEffect?: boolean;
-  /** "never" | "whenRisky" | "always". Takes priority over `requiresApproval`. */
+  /** "never" | "whenRisky" | "always". */
   approval?: string;
 }
 
@@ -51,8 +49,8 @@ export interface ToolWithHandler {
   description: string;
   inputSchema: Record<string, unknown>;
   handler: (input: any) => any;
-  requiresApproval?: boolean;
   sideEffect?: boolean;
+  approval?: string;
 }
 
 export interface TokenUsage {

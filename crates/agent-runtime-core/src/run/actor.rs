@@ -2134,3 +2134,132 @@ fn failed_state(
         repeated_failures: HashMap::new(),
     }
 }
+
+#[cfg(test)]
+mod history_clone_profile_tests {
+    use super::*;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ClonePath {
+        ModelCall { retry_count: usize },
+        Handoff { input_filter: bool },
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct MessageHistoryCloneProfile {
+        path: ClonePath,
+        message_count: usize,
+        content_bytes: usize,
+        clone_count: usize,
+        estimated_payload_bytes: usize,
+    }
+
+    fn profile_message_history_clones(
+        messages: &[Message],
+        path: ClonePath,
+    ) -> MessageHistoryCloneProfile {
+        let clone_count = match path {
+            // One pre-step snapshot plus one hook/model-call clone per attempt.
+            ClonePath::ModelCall { retry_count } => 1 + retry_count + 1,
+            // The handoff phase clones state.messages. Input filters currently
+            // receive an owned HandoffInputData and add one defensive clone.
+            ClonePath::Handoff { input_filter } => 1 + usize::from(input_filter),
+        };
+        let content_bytes = message_content_bytes(messages);
+        MessageHistoryCloneProfile {
+            path,
+            message_count: messages.len(),
+            content_bytes,
+            clone_count,
+            estimated_payload_bytes: content_bytes * clone_count,
+        }
+    }
+
+    fn message_content_bytes(messages: &[Message]) -> usize {
+        messages
+            .iter()
+            .map(|message| {
+                message
+                    .content
+                    .iter()
+                    .map(content_block_payload_bytes)
+                    .sum::<usize>()
+            })
+            .sum()
+    }
+
+    fn content_block_payload_bytes(block: &ContentBlock) -> usize {
+        match block {
+            ContentBlock::Text(text) => text.len(),
+            ContentBlock::Thinking {
+                text,
+                signature,
+                provider_details,
+            } => {
+                text.as_deref().map(str::len).unwrap_or(0)
+                    + signature.as_deref().map(str::len).unwrap_or(0)
+                    + provider_details
+                        .as_ref()
+                        .map(serde_json::to_string)
+                        .transpose()
+                        .unwrap_or_default()
+                        .map(|value| value.len())
+                        .unwrap_or(0)
+            }
+            ContentBlock::ToolUse { id, name, input } => {
+                id.len() + name.len() + serde_json::to_string(input).unwrap_or_default().len()
+            }
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+            } => tool_use_id.len() + serde_json::to_string(content).unwrap_or_default().len(),
+        }
+    }
+
+    fn representative_history(message_count: usize, payload_bytes: usize) -> Vec<Message> {
+        (0..message_count)
+            .map(|idx| Message {
+                role: if idx == 0 { Role::System } else { Role::User },
+                content: vec![ContentBlock::Text("x".repeat(payload_bytes))],
+            })
+            .collect()
+    }
+
+    #[test]
+    fn message_history_clone_profile_records_model_retry_and_handoff_paths() {
+        let history = representative_history(64, 1024);
+
+        let model_call =
+            profile_message_history_clones(&history, ClonePath::ModelCall { retry_count: 0 });
+        let one_retry =
+            profile_message_history_clones(&history, ClonePath::ModelCall { retry_count: 1 });
+        let handoff = profile_message_history_clones(
+            &history,
+            ClonePath::Handoff {
+                input_filter: false,
+            },
+        );
+        let handoff_filter =
+            profile_message_history_clones(&history, ClonePath::Handoff { input_filter: true });
+
+        eprintln!("message history clone profile:");
+        for profile in [&model_call, &one_retry, &handoff, &handoff_filter] {
+            eprintln!(
+                "path={:?} messages={} content_bytes={} clone_count={} estimated_payload_bytes={}",
+                profile.path,
+                profile.message_count,
+                profile.content_bytes,
+                profile.clone_count,
+                profile.estimated_payload_bytes
+            );
+        }
+
+        assert_eq!(model_call.message_count, 64);
+        assert_eq!(model_call.content_bytes, 64 * 1024);
+        assert_eq!(model_call.clone_count, 2);
+        assert_eq!(one_retry.clone_count, 3);
+        assert_eq!(handoff.clone_count, 1);
+        assert_eq!(handoff_filter.clone_count, 2);
+        assert_eq!(one_retry.estimated_payload_bytes, 64 * 1024 * 3);
+    }
+}
