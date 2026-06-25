@@ -18,11 +18,13 @@
 
 pub mod catalog;
 pub use catalog::{
-    ImageModelEntry, ImageModelList, ImageProviderInfo, VideoModelEntry, VideoProviderInfo,
+    ImageModelEntry, ImageModelList, ImageProviderInfo, MusicModelEntry, MusicProviderInfo,
+    VideoModelEntry, VideoProviderInfo,
 };
 
 pub mod gateway;
 pub mod http;
+pub mod music;
 pub mod providers;
 pub mod storage;
 pub mod telemetry;
@@ -36,6 +38,13 @@ use crate::providers::{
 
 pub use gateway::*;
 pub use storage::*;
+
+pub use music::{
+    CoverAudioSource, CoverPreprocessRequest, CoverPreprocessResult, GenerateLyricsRequest,
+    GenerateLyricsResult, GenerateMusicRequest, GenerateMusicResult, LyricsMode,
+    MinimaxMusicAdapter, MinimaxMusicConfig, MusicAudio, MusicAudioSetting, MusicOutputFormat,
+    MusicProvider, MusicStream,
+};
 pub use types::*;
 
 #[allow(clippy::result_large_err)] // justified: AigcError carries diagnostic context needed for user-facing messages
@@ -151,9 +160,54 @@ pub fn create_video_provider_from_config(
                 timeout: config.timeout,
             },
         )?)),
+        "minimax" => Ok(Box::new(
+            crate::providers::MinimaxVideoAdapter::from_config(
+                crate::providers::MinimaxVideoConfig {
+                    model: config.model,
+                    api_key,
+                    api_url: config.api_url,
+                    timeout: config.timeout,
+                },
+            )?,
+        )),
         _ => Err(AigcError::new(
             "unknown_provider",
             format!("unknown video provider '{provider}'"),
+        )),
+    }
+}
+
+#[allow(clippy::result_large_err)] // justified: AigcError carries diagnostic context needed for user-facing messages
+pub fn create_music_provider_from_config(
+    config: AigcProviderRuntimeConfig,
+) -> Result<Box<dyn MusicProvider>, AigcError> {
+    let provider = config.provider.trim().to_ascii_lowercase();
+    if provider.is_empty() {
+        return Err(AigcError::new(
+            "unknown_provider",
+            "provider cannot be empty",
+        ));
+    }
+    if config.model.trim().is_empty() {
+        return Err(AigcError::new("invalid_model", "model cannot be empty"));
+    }
+    let api_key = resolve_api_key(
+        &provider,
+        config.api_key.as_deref(),
+        config.api_key_env.as_deref(),
+    )?;
+    match provider.as_str() {
+        "minimax" => Ok(Box::new(MinimaxMusicAdapter::from_config(
+            MinimaxMusicConfig {
+                model: config.model,
+                api_key,
+                api_url: config.api_url,
+                timeout: config.timeout,
+            },
+        )?)),
+        _ => Err(AigcError::new(
+            "unknown_provider",
+            format!("unknown music provider '{provider}'"),
         )),
     }
 }
@@ -189,6 +243,7 @@ fn resolve_api_key(
         "openrouter" => "OPENROUTER_API_KEY",
         "renderful" => "RENDERFUL_API_KEY",
         "volcengine" | "ark" => "ARK_API_KEY",
+        "minimax" => "MINIMAX_API_KEY",
         _ => {
             return Err(AigcError::new(
                 "unknown_provider",

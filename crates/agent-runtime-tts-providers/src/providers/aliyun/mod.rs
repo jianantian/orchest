@@ -325,6 +325,7 @@ fn capabilities_for_model(model: &str) -> Result<TtsModelCapabilities, TtsError>
         batch_synthesis: true,
         single_streaming: true,
         duplex_streaming: true,
+        async_synthesis: false,
         input_kinds: vec![TtsInputKind::Text],
         languages: vec![Language::new("zh-CN"), Language::new("en-US")],
         voice_kinds: vec![VoiceKind::System, VoiceKind::Custom],

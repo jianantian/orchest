@@ -58,6 +58,9 @@ enum TtsRouteOperation {
     Batch,
     SingleStream,
     DuplexStream,
+    /// Long-form async batch synthesis(Minimax `/v1/t2a_async_v2`)。
+    /// 返回完整文件 URL,format 走 batch_output_formats。
+    Async,
 }
 
 pub struct TtsRouter {
@@ -125,6 +128,23 @@ impl TtsRouter {
             TtsRouteOperation::DuplexStream,
             request.model.as_deref(),
             None,
+            request.voice.language.as_ref(),
+            request.voice.kind.as_ref(),
+            &request.output.format,
+        )
+    }
+
+    /// 选择支持 `TtsOperation::Async` 的 provider(Minimax 长文本异步路径)。
+    /// 用 `batch_output_formats` 做格式校验 —— 异步返回的是完整文件 URL,
+    /// 语义与 batch 一致。
+    pub fn select_for_async(
+        &self,
+        request: &SynthesizeRequest,
+    ) -> Result<Arc<dyn TtsProvider>, TtsError> {
+        self.select(
+            TtsRouteOperation::Async,
+            request.model.as_deref(),
+            Some(request.input.kind()),
             request.voice.language.as_ref(),
             request.voice.kind.as_ref(),
             &request.output.format,
@@ -318,6 +338,9 @@ fn validate_provider_capability(
         TtsRouteOperation::DuplexStream if !capabilities.duplex_streaming => {
             return Err(TtsError::unsupported_operation())
         }
+        TtsRouteOperation::Async if !capabilities.async_synthesis => {
+            return Err(TtsError::unsupported_operation())
+        }
         _ => {}
     }
 
@@ -364,7 +387,8 @@ fn validate_provider_capability(
     }
 
     let formats = match operation {
-        TtsRouteOperation::Batch => &capabilities.batch_output_formats,
+        // Async returns a complete file URL — same format space as Batch.
+        TtsRouteOperation::Batch | TtsRouteOperation::Async => &capabilities.batch_output_formats,
         TtsRouteOperation::SingleStream | TtsRouteOperation::DuplexStream => {
             &capabilities.stream_output_formats
         }
@@ -701,4 +725,169 @@ fn ensure_trace_id(trace_id: &mut Option<String>) -> String {
         *trace_id = Some(uuid::Uuid::new_v4().to_string());
     }
     trace_id.clone().unwrap_or_default()
+}
+
+#[cfg(test)]
+mod async_route_tests {
+    use super::*;
+    use crate::error::TtsErrorCode;
+    use crate::streaming::{TtsDuplexStream, TtsOutputStream};
+    use crate::types::{
+        AudioOutputConfig, SpeechControls, SynthesizeRequest, SynthesizeResult, TtsInput,
+        TtsModelCapabilities, VoiceSelection,
+    };
+    use async_trait::async_trait;
+
+    /// Fake provider whose capability bool table is parameterised — used to
+    /// verify the Async route arm in `validate_provider_capability`.
+    struct CapFakeProvider {
+        caps: TtsModelCapabilities,
+    }
+
+    #[async_trait]
+    impl TtsProvider for CapFakeProvider {
+        fn provider_name(&self) -> &str {
+            "fake"
+        }
+        fn model_name(&self) -> &str {
+            "fake/m"
+        }
+        fn capabilities(&self) -> TtsModelCapabilities {
+            self.caps.clone()
+        }
+        async fn synthesize(
+            &self,
+            _: SynthesizeRequest,
+        ) -> Result<SynthesizeResult, crate::error::TtsError> {
+            unreachable!("not called")
+        }
+        async fn stream_synthesize(
+            &self,
+            _: SynthesizeRequest,
+        ) -> Result<TtsOutputStream, crate::error::TtsError> {
+            unreachable!()
+        }
+        async fn start_duplex_stream(
+            &self,
+            _: crate::types::DuplexSynthesizeRequest,
+        ) -> Result<TtsDuplexStream, crate::error::TtsError> {
+            unreachable!()
+        }
+        async fn list_voices(
+            &self,
+            _: crate::types::ListVoicesRequest,
+        ) -> Result<Vec<crate::types::VoiceInfo>, crate::error::TtsError> {
+            unreachable!()
+        }
+    }
+
+    #[allow(dead_code)] // justified: kept as a fixture for upcoming router-driven tests of Async dispatch
+    fn fake_request(model: &str) -> SynthesizeRequest {
+        SynthesizeRequest {
+            model: Some(model.into()),
+            input: TtsInput::text("hi"),
+            voice: VoiceSelection::by_id("v"),
+            output: AudioOutputConfig::mp3(),
+            controls: SpeechControls::default(),
+            compatibility: crate::types::CompatibilityPolicy::default(),
+            trace_id: None,
+            provider_options: serde_json::Value::Null,
+        }
+    }
+
+    #[test]
+    fn async_route_rejects_provider_without_async_synthesis() {
+        // Default capabilities have async_synthesis=false (aliyun/volcengine
+        // baseline). Async route MUST return UnsupportedOperation.
+        let provider = CapFakeProvider {
+            caps: TtsModelCapabilities {
+                batch_synthesis: true,
+                single_streaming: true,
+                duplex_streaming: true,
+                async_synthesis: false,
+                batch_output_formats: vec![AudioFormat::Mp3],
+                stream_output_formats: vec![AudioFormat::Mp3],
+                ..Default::default()
+            },
+        };
+        let err = validate_provider_capability(
+            &provider,
+            TtsRouteOperation::Async,
+            Some(&TtsInputKind::Text),
+            None,
+            None,
+            &AudioFormat::Mp3,
+        )
+        .unwrap_err();
+        assert_eq!(err.code, TtsErrorCode::UnsupportedOperation);
+    }
+
+    #[test]
+    fn async_route_accepts_provider_with_async_synthesis() {
+        let provider = CapFakeProvider {
+            caps: TtsModelCapabilities {
+                batch_synthesis: true,
+                single_streaming: true,
+                duplex_streaming: true,
+                async_synthesis: true,
+                batch_output_formats: vec![AudioFormat::Mp3],
+                stream_output_formats: vec![AudioFormat::Mp3],
+                ..Default::default()
+            },
+        };
+        validate_provider_capability(
+            &provider,
+            TtsRouteOperation::Async,
+            Some(&TtsInputKind::Text),
+            None,
+            None,
+            &AudioFormat::Mp3,
+        )
+        .expect("Async route should accept provider with async_synthesis=true");
+    }
+
+    #[test]
+    fn async_route_validates_against_batch_output_formats() {
+        // Async uses batch_output_formats (not stream_output_formats) per
+        // spec §4f: "Async returns a complete file URL; same format space as Batch."
+        let provider = CapFakeProvider {
+            caps: TtsModelCapabilities {
+                async_synthesis: true,
+                batch_output_formats: vec![AudioFormat::Mp3],
+                stream_output_formats: vec![AudioFormat::OggOpus],
+                ..Default::default()
+            },
+        };
+        // Mp3 is in batch_output_formats → OK
+        validate_provider_capability(
+            &provider,
+            TtsRouteOperation::Async,
+            None,
+            None,
+            None,
+            &AudioFormat::Mp3,
+        )
+        .expect("Mp3 in batch_output_formats");
+        // OggOpus is only in stream_output_formats → rejected for Async
+        let err = validate_provider_capability(
+            &provider,
+            TtsRouteOperation::Async,
+            None,
+            None,
+            None,
+            &AudioFormat::OggOpus,
+        )
+        .unwrap_err();
+        assert_eq!(err.code, TtsErrorCode::UnsupportedAudioFormat);
+    }
+
+    #[test]
+    fn default_tts_model_capabilities_has_async_synthesis_false() {
+        let caps = TtsModelCapabilities::default();
+        assert!(
+            !caps.async_synthesis,
+            "Default::default() async_synthesis must be false so existing \
+             providers don't accidentally accept Async routes"
+        );
+    }
 }

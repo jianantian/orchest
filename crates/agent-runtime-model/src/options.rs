@@ -53,6 +53,14 @@ pub struct RequestOptions {
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub cache_policy: CachePolicy,
+    /// LLM provider 调用优先级,例如 Minimax `standard` / `priority`
+    /// (`docs/external/minimax/llm/api.md:807`)。`None` 表示走 provider 默认级别。
+    ///
+    /// **命名冲突注**:`agent-runtime-aigc-providers::VideoGenerationConfig` 也有
+    /// `service_tier` 字段,语义是"图片/视频生成调用优先级",与此处的 LLM 级别**不互通**。
+    /// 跨 crate 时不要互相借用字符串值。
+    #[serde(default)]
+    pub service_tier: Option<String>,
 }
 
 impl Default for RequestOptions {
@@ -66,6 +74,7 @@ impl Default for RequestOptions {
             temperature: None,
             top_p: None,
             cache_policy: CachePolicy::default(),
+            service_tier: None,
         }
     }
 }

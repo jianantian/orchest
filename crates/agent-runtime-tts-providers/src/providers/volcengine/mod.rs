@@ -361,6 +361,7 @@ fn volcengine_model_capabilities() -> TtsModelCapabilities {
         batch_synthesis: true,
         single_streaming: true,
         duplex_streaming: true,
+        async_synthesis: false,
         input_kinds: vec![TtsInputKind::Text],
         languages: vec![Language::new("zh-CN"), Language::new("en-US")],
         voice_kinds: vec![VoiceKind::System, VoiceKind::Custom],
@@ -590,9 +591,11 @@ mod tests {
 
     #[test]
     fn session_payload_maps_portable_controls_to_volcengine_fields() {
-        let mut controls = SpeechControls::default();
-        controls.speed = 1.5;
-        controls.pitch = 3.4;
+        let controls = SpeechControls {
+            speed: 1.5,
+            pitch: 3.4,
+            ..SpeechControls::default()
+        };
         let request = VolcengineSynthesisRequest {
             trace_id: "trace".to_owned(),
             model: "seed-tts-2.0".to_owned(),

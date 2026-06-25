@@ -606,6 +606,158 @@ fn volcengine_models() -> LlmProviderInfo {
     }
 }
 
+fn minimax_models() -> LlmProviderInfo {
+    // Source: docs/external/minimax/llm/desc.md:21-29 (model table)
+    // Pricing: pricing.md 缺失(研究文档 §八),pricing 字段为 0.0 占位待补。
+    // Context: M3 1M, M2.x series 204_800.
+    // M3 supports native multimodal (text + image + video) per
+    // docs/external/minimax/llm/api.md:843. M2.x supports text + tools only.
+    // Her (M2-her) excluded — uses non-Anthropic chat protocol (research §九, PRD non-goal).
+    let pricing_placeholder = || ModelPricing {
+        currency: "USD".into(),
+        input_per_million: 0.0,
+        output_per_million: 0.0,
+        cache_read_per_million: None,
+        cache_write_per_million: None,
+    };
+    let m2_input_modalities: &[Modality] = &[Modality::Text];
+    let m3_input_modalities: &[Modality] = &[Modality::Text, Modality::Image];
+    let text_only_output: &[Modality] = &[Modality::Text];
+    let coding_agent_scenes: &[ModelScene] =
+        &[ModelScene::General, ModelScene::Coding, ModelScene::Agent];
+    let m3_scenes: &[ModelScene] = &[
+        ModelScene::General,
+        ModelScene::Coding,
+        ModelScene::Agent,
+        ModelScene::Reasoning,
+    ];
+    let thinking_open = Some(ThinkingSpec {
+        max_thinking_tokens: None,
+    });
+
+    let models = vec![
+        LlmModelEntry {
+            model_id: "minimax/MiniMax-M3",
+            provider: "minimax",
+            display_name: "MiniMax-M3",
+            description:
+                "Frontier coding 模型,1M 上下文,原生多模态(text/image/video),adaptive thinking。",
+            context_window: 1_000_000,
+            max_input_tokens: Some(936_000),
+            max_output_tokens: Some(64_000),
+            thinking: thinking_open,
+            input_modalities: m3_input_modalities,
+            output_modalities: text_only_output,
+            scenes: m3_scenes,
+            pricing: Some(pricing_placeholder()),
+        },
+        LlmModelEntry {
+            model_id: "minimax/MiniMax-M2.7",
+            provider: "minimax",
+            display_name: "MiniMax-M2.7",
+            description: "M2.7 主线,200K 上下文,thinking 始终开启;约 60 TPS。",
+            context_window: 204_800,
+            max_input_tokens: Some(140_800),
+            max_output_tokens: Some(64_000),
+            thinking: thinking_open,
+            input_modalities: m2_input_modalities,
+            output_modalities: text_only_output,
+            scenes: coding_agent_scenes,
+            pricing: Some(pricing_placeholder()),
+        },
+        LlmModelEntry {
+            model_id: "minimax/MiniMax-M2.7-highspeed",
+            provider: "minimax",
+            display_name: "MiniMax-M2.7-highspeed",
+            description: "M2.7 极速版,效果不变约 100 TPS;200K 上下文。",
+            context_window: 204_800,
+            max_input_tokens: Some(140_800),
+            max_output_tokens: Some(64_000),
+            thinking: thinking_open,
+            input_modalities: m2_input_modalities,
+            output_modalities: text_only_output,
+            scenes: coding_agent_scenes,
+            pricing: Some(pricing_placeholder()),
+        },
+        LlmModelEntry {
+            model_id: "minimax/MiniMax-M2.5",
+            provider: "minimax",
+            display_name: "MiniMax-M2.5",
+            description: "顶尖性能性价比,200K 上下文;约 60 TPS。",
+            context_window: 204_800,
+            max_input_tokens: Some(140_800),
+            max_output_tokens: Some(64_000),
+            thinking: thinking_open,
+            input_modalities: m2_input_modalities,
+            output_modalities: text_only_output,
+            scenes: coding_agent_scenes,
+            pricing: Some(pricing_placeholder()),
+        },
+        LlmModelEntry {
+            model_id: "minimax/MiniMax-M2.5-highspeed",
+            provider: "minimax",
+            display_name: "MiniMax-M2.5-highspeed",
+            description: "M2.5 极速版,约 100 TPS;200K 上下文。",
+            context_window: 204_800,
+            max_input_tokens: Some(140_800),
+            max_output_tokens: Some(64_000),
+            thinking: thinking_open,
+            input_modalities: m2_input_modalities,
+            output_modalities: text_only_output,
+            scenes: coding_agent_scenes,
+            pricing: Some(pricing_placeholder()),
+        },
+        LlmModelEntry {
+            model_id: "minimax/MiniMax-M2.1",
+            provider: "minimax",
+            display_name: "MiniMax-M2.1",
+            description: "多语言编程能力升级,200K 上下文;约 60 TPS。",
+            context_window: 204_800,
+            max_input_tokens: Some(140_800),
+            max_output_tokens: Some(64_000),
+            thinking: thinking_open,
+            input_modalities: m2_input_modalities,
+            output_modalities: text_only_output,
+            scenes: coding_agent_scenes,
+            pricing: Some(pricing_placeholder()),
+        },
+        LlmModelEntry {
+            model_id: "minimax/MiniMax-M2.1-highspeed",
+            provider: "minimax",
+            display_name: "MiniMax-M2.1-highspeed",
+            description: "M2.1 极速版,约 100 TPS;200K 上下文。",
+            context_window: 204_800,
+            max_input_tokens: Some(140_800),
+            max_output_tokens: Some(64_000),
+            thinking: thinking_open,
+            input_modalities: m2_input_modalities,
+            output_modalities: text_only_output,
+            scenes: coding_agent_scenes,
+            pricing: Some(pricing_placeholder()),
+        },
+        LlmModelEntry {
+            model_id: "minimax/MiniMax-M2",
+            provider: "minimax",
+            display_name: "MiniMax-M2",
+            description: "M2 系列基线,专为高效编码与 Agent 工作流;200K 上下文。",
+            context_window: 204_800,
+            max_input_tokens: Some(140_800),
+            max_output_tokens: Some(64_000),
+            thinking: thinking_open,
+            input_modalities: m2_input_modalities,
+            output_modalities: text_only_output,
+            scenes: coding_agent_scenes,
+            pricing: Some(pricing_placeholder()),
+        },
+    ];
+
+    LlmProviderInfo {
+        provider_id: "minimax",
+        display_name: "MiniMax",
+        models: LlmModelList::Known(models),
+    }
+}
+
 fn openrouter_provider() -> LlmProviderInfo {
     LlmProviderInfo {
         provider_id: "openrouter",
@@ -626,6 +778,7 @@ fn build_catalog() -> Vec<LlmProviderInfo> {
         openai_models(),
         deepseek_models(),
         volcengine_models(),
+        minimax_models(),
         openrouter_provider(),
     ]
 }

@@ -5,9 +5,10 @@
 use serde_json::{json, Value};
 
 use crate::{
-    CachePolicy, ContentBlock, Message, OptionAdjustment, RequestOptions, Role, ThinkingLevel,
-    ToolDef,
+    CachePolicy, ContentBlock, Message, OptionAdjustment, RequestOptions, ThinkingLevel, ToolDef,
 };
+
+use crate::role_compat::{downgrade_minimax_role, CompatibleRole};
 
 use super::OpenAiAdapter;
 
@@ -52,8 +53,9 @@ impl OpenAiAdapter {
         let mut adjustments = Vec::new();
 
         for message in messages {
-            match message.role {
-                Role::System => {
+            let effective_role = downgrade_minimax_role(message.role, &mut adjustments);
+            match effective_role {
+                CompatibleRole::System => {
                     let text = message
                         .content
                         .iter()
@@ -65,7 +67,7 @@ impl OpenAiAdapter {
                         .join("\n");
                     api_messages.push(json!({"role": "system", "content": text}));
                 }
-                Role::User => {
+                CompatibleRole::User => {
                     let mut text_parts = Vec::new();
                     let mut tool_results = Vec::new();
                     for block in &message.content {
@@ -97,7 +99,7 @@ impl OpenAiAdapter {
                         api_messages.push(json!({"role": "user", "content": text}));
                     }
                 }
-                Role::Assistant => {
+                CompatibleRole::Assistant => {
                     let mut text_parts = Vec::new();
                     let mut tool_calls_arr = Vec::new();
                     for block in &message.content {
@@ -129,7 +131,7 @@ impl OpenAiAdapter {
                     }
                     api_messages.push(msg);
                 }
-                Role::Tool => {
+                CompatibleRole::Tool => {
                     for block in &message.content {
                         if let ContentBlock::ToolResult {
                             tool_use_id,

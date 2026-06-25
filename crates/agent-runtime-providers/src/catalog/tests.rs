@@ -1,8 +1,53 @@
 use super::*;
 
 #[test]
-fn catalog_has_five_providers() {
-    assert_eq!(list_providers().len(), 5);
+fn catalog_has_six_providers() {
+    assert_eq!(list_providers().len(), 6);
+}
+
+#[test]
+fn minimax_models_present() {
+    let models: Vec<_> = list_models().filter(|m| m.provider == "minimax").collect();
+    assert_eq!(
+        models.len(),
+        8,
+        "minimax catalog should have 8 non-Her models (M3 + 7 M2.x)"
+    );
+    let ids: Vec<_> = models.iter().map(|m| m.model_id).collect();
+    for expected in [
+        "minimax/MiniMax-M3",
+        "minimax/MiniMax-M2.7",
+        "minimax/MiniMax-M2.7-highspeed",
+        "minimax/MiniMax-M2.5",
+        "minimax/MiniMax-M2.5-highspeed",
+        "minimax/MiniMax-M2.1",
+        "minimax/MiniMax-M2.1-highspeed",
+        "minimax/MiniMax-M2",
+    ] {
+        assert!(ids.contains(&expected), "missing {expected}: {ids:?}");
+    }
+    // Her must NOT be in catalog — non-Anthropic protocol, PRD non-goal.
+    assert!(!ids.iter().any(|m| m.contains("her") || m.contains("Her")));
+}
+
+#[test]
+fn minimax_m3_is_multimodal() {
+    let m3 = list_models()
+        .find(|m| m.model_id == "minimax/MiniMax-M3")
+        .expect("M3 catalog entry");
+    assert!(m3.input_modalities.contains(&Modality::Image));
+    assert_eq!(m3.context_window, 1_000_000);
+}
+
+#[test]
+fn minimax_m2_series_is_text_only() {
+    for model_id in ["minimax/MiniMax-M2.7", "minimax/MiniMax-M2"] {
+        let entry = list_models()
+            .find(|m| m.model_id == model_id)
+            .unwrap_or_else(|| panic!("{model_id} catalog entry"));
+        assert_eq!(entry.input_modalities, &[Modality::Text]);
+        assert_eq!(entry.context_window, 204_800);
+    }
 }
 
 #[test]

@@ -1,7 +1,7 @@
-//! Builds the Anthropic Messages API request body: message/content mapping,
-//! thinking (adaptive vs. budget-token) mode, cache control, and sampling
-//! params. Pure data transformation — no networking, kept separate from the
-//! adapter shell and the SSE response consumer.
+//! Builds the Minimax Messages API request body(`POST /anthropic/v1/messages`,
+//! Anthropic 兼容):message/content mapping、thinking (adaptive vs. budget-token)、
+//! cache control、sampling params、`service_tier` 透传、Minimax-only role + 多模态
+//! block 序列化。纯数据转换,无网络调用,与 adapter shell 及 SSE 响应消费者解耦。
 
 use serde_json::{json, Value};
 
@@ -10,18 +10,20 @@ use crate::{
     ThinkingLevel, ToolDef,
 };
 
-use super::AnthropicAdapter;
+use super::MinimaxAdapter;
 
 pub(super) fn normalize_messages_url(value: &str) -> String {
     let trimmed = value.trim().trim_end_matches('/');
-    if trimmed.ends_with("/v1/messages") {
+    if trimmed.ends_with("/anthropic/v1/messages") || trimmed.ends_with("/v1/messages") {
         trimmed.to_string()
     } else {
-        format!("{trimmed}/v1/messages")
+        // Minimax 的 Anthropic 兼容路径是 `/anthropic/v1/messages`(`llm/api.md:42`),
+        // 与 Anthropic 自家的 `/v1/messages` 不同。用户给 base URL 时自动补全。
+        format!("{trimmed}/anthropic/v1/messages")
     }
 }
 
-impl AnthropicAdapter {
+impl MinimaxAdapter {
     pub(super) fn build_request_body(
         &self,
         messages: &[Message],
@@ -46,25 +48,12 @@ impl AnthropicAdapter {
                         Role::User | Role::Tool => "user",
                         Role::Assistant => "assistant",
                         Role::System => unreachable!(),
-                        // Minimax-only roles — Anthropic 不支持,降级 + 记录 OptionAdjustment。
-                        Role::UserSystem => {
-                            adjustments.push(OptionAdjustment {
-                                option: "role".into(),
-                                requested: json!("user_system"),
-                                applied: json!("user"),
-                                reason: "minimax_only_role_dropped".into(),
-                            });
-                            "user"
-                        }
-                        Role::Group | Role::SampleMessageUser | Role::SampleMessageAi => {
-                            adjustments.push(OptionAdjustment {
-                                option: "role".into(),
-                                requested: json!(format!("{:?}", msg.role)),
-                                applied: json!("user"),
-                                reason: "minimax_only_role_dropped".into(),
-                            });
-                            "user"
-                        }
+                        // Minimax-only roles — 直接输出对应字符串
+                        // (`docs/external/minimax/llm/api.md:1088-1091`)。
+                        Role::UserSystem => "user_system",
+                        Role::Group => "group",
+                        Role::SampleMessageUser => "sample_message_user",
+                        Role::SampleMessageAi => "sample_message_ai",
                     };
 
                     let content = build_content_blocks(&msg.content, &mut adjustments);
@@ -177,12 +166,18 @@ impl AnthropicAdapter {
             body["top_p"] = json!(tp);
         }
 
+        // service_tier 透传(`llm/api.md:807`,可选 `standard` / `priority`)。
+        if let Some(tier) = &options.service_tier {
+            body["service_tier"] = json!(tier);
+        }
+
         (body, adjustments)
     }
 }
 
-/// 把 `Vec<ContentBlock>` 序列化成 Anthropic Messages API 的 content 数组。
-/// 不支持的多模态 variant 丢弃并 push `OptionAdjustment` 到 `adjustments`。
+/// 把 `Vec<ContentBlock>` 序列化成 Minimax Messages API 的 content 数组。
+/// `Image` / `Video` / `MidConvSystem` 走真实序列化(锚点 `llm/api.md:1136-1321`);
+/// `Audio` 在当前 LLM API 不被接受(Step 2 omni 占位),丢弃并记录 OptionAdjustment。
 fn build_content_blocks(
     blocks: &[ContentBlock],
     adjustments: &mut Vec<OptionAdjustment>,
@@ -223,44 +218,63 @@ fn build_content_blocks(
                     "content": tr_content
                 }));
             }
-            // Anthropic Messages API 原生支持 image —— 真实序列化。
-            ContentBlock::Image { source, .. } => {
-                let source_value = match source {
-                    MediaSource::Url { url } => json!({"type": "url", "url": url}),
-                    MediaSource::Base64 { media_type, data } => json!({
-                        "type": "base64",
-                        "media_type": media_type,
-                        "data": data,
-                    }),
-                };
-                content.push(json!({"type": "image", "source": source_value}));
+            // Minimax 原生支持 image,与 Anthropic 同 schema(`llm/api.md:1215-1305`)。
+            ContentBlock::Image { source, detail } => {
+                let source_value = build_media_source_value(source);
+                let mut obj = json!({"type": "image", "source": source_value});
+                if let Some(d) = detail {
+                    obj["detail"] = json!(d);
+                }
+                content.push(obj);
             }
-            // Anthropic 当前 LLM API 不接 video/audio/mid_conv_system,丢弃并记录。
-            ContentBlock::Video { .. } => {
-                adjustments.push(OptionAdjustment {
-                    option: "content_block".into(),
-                    requested: json!("video"),
-                    applied: json!(null),
-                    reason: "anthropic_unsupported_content_block".into(),
-                });
+            // Minimax 视频 block,Minimax 专属字段 fps / max_long_side_pixel
+            // (`llm/api.md:1334-1343`)。
+            ContentBlock::Video {
+                source,
+                fps,
+                detail,
+                max_long_side_pixel,
+            } => {
+                let source_value = build_media_source_value(source);
+                let mut obj = json!({"type": "video", "source": source_value});
+                if let Some(f) = fps {
+                    obj["fps"] = json!(f);
+                }
+                if let Some(d) = detail {
+                    obj["detail"] = json!(d);
+                }
+                if let Some(m) = max_long_side_pixel {
+                    obj["max_long_side_pixel"] = json!(m);
+                }
+                content.push(obj);
             }
+            // Minimax LLM API 当前不接 audio block(Step 2 omni 占位);记录后丢弃。
             ContentBlock::Audio { .. } => {
                 adjustments.push(OptionAdjustment {
                     option: "content_block".into(),
                     requested: json!("audio"),
                     applied: json!(null),
-                    reason: "anthropic_unsupported_content_block".into(),
+                    reason: "minimax_audio_block_unsupported_in_llm_api".into(),
                 });
             }
-            ContentBlock::MidConvSystem(_) => {
-                adjustments.push(OptionAdjustment {
-                    option: "content_block".into(),
-                    requested: json!("mid_conv_system"),
-                    applied: json!(null),
-                    reason: "anthropic_unsupported_content_block".into(),
-                });
+            // Minimax 对话中途插入的系统指令(`llm/api.md:1202-1211`)。
+            ContentBlock::MidConvSystem(text) => {
+                content.push(json!({"type": "mid_conv_system", "text": text}));
             }
         }
     }
     content
+}
+
+/// 序列化 `MediaSource` 成 Minimax `{type:url|base64}` source 对象
+/// (`docs/external/minimax/llm/api.md:1245-1305`)。
+fn build_media_source_value(source: &MediaSource) -> Value {
+    match source {
+        MediaSource::Url { url } => json!({"type": "url", "url": url}),
+        MediaSource::Base64 { media_type, data } => json!({
+            "type": "base64",
+            "media_type": media_type,
+            "data": data,
+        }),
+    }
 }

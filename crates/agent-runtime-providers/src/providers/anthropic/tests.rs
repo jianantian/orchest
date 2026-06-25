@@ -739,3 +739,148 @@ async fn stop_reason_mapping() {
         matches!(map_stop_reason("unknown_reason"), StopReason::Other(s) if s == "unknown_reason")
     );
 }
+
+// ---------------------------------------------------------------------------
+// v0.9.10 multimodal additions: real Image serialization + Video/Audio/
+// MidConvSystem drop + Minimax-only role downgrade.
+// ---------------------------------------------------------------------------
+
+use crate::{MediaSource, Message, Role};
+
+#[test]
+fn anthropic_serializes_image_url() {
+    let adapter = make_adapter("http://example.com/v1/messages");
+    let opts = default_options();
+    let messages = vec![Message {
+        role: Role::User,
+        content: vec![ContentBlock::Image {
+            source: MediaSource::Url {
+                url: "https://example.com/cat.png".into(),
+            },
+            detail: None,
+        }],
+    }];
+    let (body, adjustments) = adapter.build_request_body(&messages, &[], &opts);
+    assert!(adjustments.is_empty(), "image is natively supported");
+    let blocks = &body["messages"][0]["content"];
+    assert_eq!(blocks[0]["type"], "image");
+    assert_eq!(blocks[0]["source"]["type"], "url");
+    assert_eq!(blocks[0]["source"]["url"], "https://example.com/cat.png");
+}
+
+#[test]
+fn anthropic_serializes_image_base64() {
+    let adapter = make_adapter("http://example.com/v1/messages");
+    let opts = default_options();
+    let messages = vec![Message {
+        role: Role::User,
+        content: vec![ContentBlock::Image {
+            source: MediaSource::Base64 {
+                media_type: "image/png".into(),
+                data: "iVBORw0KGgo=".into(),
+            },
+            detail: Some("high".into()),
+        }],
+    }];
+    let (body, _) = adapter.build_request_body(&messages, &[], &opts);
+    let source = &body["messages"][0]["content"][0]["source"];
+    assert_eq!(source["type"], "base64");
+    assert_eq!(source["media_type"], "image/png");
+    assert_eq!(source["data"], "iVBORw0KGgo=");
+}
+
+#[test]
+fn anthropic_drops_video_audio_mid_conv_system_with_adjustments() {
+    let adapter = make_adapter("http://example.com/v1/messages");
+    let opts = default_options();
+    let messages = vec![Message {
+        role: Role::User,
+        content: vec![
+            ContentBlock::Video {
+                source: MediaSource::Url {
+                    url: "https://example.com/v.mp4".into(),
+                },
+                fps: Some(24.0),
+                detail: None,
+                max_long_side_pixel: None,
+            },
+            ContentBlock::Audio {
+                source: MediaSource::Url {
+                    url: "https://example.com/a.mp3".into(),
+                },
+            },
+            ContentBlock::MidConvSystem("reset persona".into()),
+        ],
+    }];
+    let (body, adjustments) = adapter.build_request_body(&messages, &[], &opts);
+    assert_eq!(body["messages"][0]["content"].as_array().unwrap().len(), 0);
+    assert_eq!(adjustments.len(), 3);
+    let reasons: Vec<_> = adjustments.iter().map(|a| a.reason.as_str()).collect();
+    assert!(reasons
+        .iter()
+        .all(|r| *r == "anthropic_unsupported_content_block"));
+    let requested: Vec<_> = adjustments
+        .iter()
+        .map(|a| a.requested.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(requested, vec!["video", "audio", "mid_conv_system"]);
+}
+
+#[test]
+fn anthropic_downgrades_minimax_user_system_role() {
+    let adapter = make_adapter("http://example.com/v1/messages");
+    let opts = default_options();
+    let messages = vec![Message {
+        role: Role::UserSystem,
+        content: vec![ContentBlock::Text("be a pirate".into())],
+    }];
+    let (body, adjustments) = adapter.build_request_body(&messages, &[], &opts);
+    // Anthropic's match leaves UserSystem in the non-system arm (api_role = "user").
+    assert_eq!(body["messages"][0]["role"], "user");
+    let adj = adjustments
+        .iter()
+        .find(|a| a.option == "role")
+        .expect("role adjustment recorded");
+    assert_eq!(adj.requested, serde_json::json!("user_system"));
+    assert_eq!(adj.applied, serde_json::json!("user"));
+    assert_eq!(adj.reason, "minimax_only_role_dropped");
+}
+
+#[test]
+fn anthropic_downgrades_minimax_group_and_sample_roles() {
+    let adapter = make_adapter("http://example.com/v1/messages");
+    let opts = default_options();
+    for role in [Role::Group, Role::SampleMessageUser, Role::SampleMessageAi] {
+        let messages = vec![Message {
+            role,
+            content: vec![ContentBlock::Text("hi".into())],
+        }];
+        let (body, adjustments) = adapter.build_request_body(&messages, &[], &opts);
+        assert_eq!(
+            body["messages"][0]["role"], "user",
+            "downgrade for {role:?}"
+        );
+        assert!(
+            adjustments
+                .iter()
+                .any(|a| a.option == "role" && a.reason == "minimax_only_role_dropped"),
+            "adjustment for {role:?}"
+        );
+    }
+}
+
+#[test]
+fn anthropic_passes_service_tier_silently() {
+    // service_tier is LLM-only; Anthropic adapter doesn't forward it today, but it
+    // must not break the build. This pins the field's presence on RequestOptions.
+    let adapter = make_adapter("http://example.com/v1/messages");
+    let opts = RequestOptions {
+        service_tier: Some("priority".into()),
+        ..default_options()
+    };
+    let messages = vec![Message {
+        role: Role::User,
+        content: vec![ContentBlock::Text("hi".into())],
+    }];
+    let _ = adapter.build_request_body(&messages, &[], &opts);
+}

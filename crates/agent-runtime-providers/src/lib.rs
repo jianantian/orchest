@@ -13,11 +13,13 @@ pub use types::*;
 
 pub mod providers;
 pub use providers::{
-    AnthropicAdapter, AnthropicConfig, DeepSeekAdapter, DeepSeekConfig, OpenAiAdapter,
-    OpenAiConfig, OpenRouterAdapter, OpenRouterConfig, VolcengineAdapter, VolcengineConfig,
+    AnthropicAdapter, AnthropicConfig, DeepSeekAdapter, DeepSeekConfig, MinimaxAdapter,
+    MinimaxConfig, OpenAiAdapter, OpenAiConfig, OpenRouterAdapter, OpenRouterConfig,
+    VolcengineAdapter, VolcengineConfig,
 };
 
 pub(crate) mod http;
+pub(crate) mod role_compat;
 pub(crate) mod sse;
 
 pub mod telemetry;

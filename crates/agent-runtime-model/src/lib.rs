@@ -16,5 +16,5 @@ pub use options::{
 pub use response::{ModelResponse, OptionAdjustment, StopReason, TokenUsage};
 pub use stream::StreamEvent;
 pub use types::{
-    ContentBlock, JsonSchema, Message, ModelSpec, ProviderRuntimeConfig, Role, ToolDef,
+    ContentBlock, JsonSchema, MediaSource, Message, ModelSpec, ProviderRuntimeConfig, Role, ToolDef,
 };

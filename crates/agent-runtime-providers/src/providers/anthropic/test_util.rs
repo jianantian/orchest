@@ -72,6 +72,7 @@ pub async fn serve_sse_once_capture(
     (format!("http://{address}"), capture_rx)
 }
 
+#[allow(dead_code)]
 pub async fn serve_status(status: u16, body: &'static str) -> String {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await

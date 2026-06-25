@@ -5,12 +5,14 @@
 
 pub mod anthropic;
 pub mod deepseek;
+pub mod minimax;
 pub mod openai;
 pub mod openrouter;
 pub mod volcengine;
 
 pub use anthropic::{AnthropicAdapter, AnthropicConfig};
 pub use deepseek::{DeepSeekAdapter, DeepSeekConfig};
+pub use minimax::{MinimaxAdapter, MinimaxConfig};
 pub use openai::{OpenAiAdapter, OpenAiConfig};
 pub use openrouter::{OpenRouterAdapter, OpenRouterConfig};
 pub use volcengine::{VolcengineAdapter, VolcengineConfig};

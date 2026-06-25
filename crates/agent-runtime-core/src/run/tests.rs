@@ -5495,8 +5495,10 @@ fn meta(approval: Approval, side_effect: bool) -> ToolMetadata {
 
 #[test]
 fn approval_mode_per_tool_uses_enum() {
-    let mut rc = config::RuntimeConfig::default();
-    rc.approval_mode = ApprovalMode::PerTool;
+    let rc = config::RuntimeConfig {
+        approval_mode: ApprovalMode::PerTool,
+        ..Default::default()
+    };
     assert!(rc.should_approve(&meta(Approval::Always, false)));
     assert!(!rc.should_approve(&meta(Approval::Never, false)));
     assert!(rc.should_approve(&meta(Approval::WhenRisky, true)));
