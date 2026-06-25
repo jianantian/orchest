@@ -1,0 +1,27 @@
+[package]
+name = "agent-runtime-realtime-providers"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["volcengine"]
+volcengine = []
+
+[dependencies]
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+
+[[example]]
+name = "volcengine_realtime_live"
+path = "../../examples/rust/realtime/volcengine_realtime_live.rs"
+required-features = ["volcengine"]
+
+[lints]
+workspace = true

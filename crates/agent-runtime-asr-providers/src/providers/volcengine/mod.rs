@@ -1,5 +1,4 @@
 pub mod protocol;
-pub mod realtime;
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};

@@ -1,26 +1,48 @@
-use futures_util::{SinkExt, StreamExt};
+use std::time::Duration;
+
+use futures_util::{SinkExt, Stream, StreamExt};
 use serde_json::Value;
-use tokio_tungstenite::tungstenite::{self, Message};
+use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest, http::HeaderValue, Message};
 
 use super::*;
+
+const START_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl VolcengineRealtimeSession {
     pub async fn connect_live(
         config: VolcengineRealtimeConfig,
-    ) -> Result<(Self, mpsc::Receiver<VolcengineRealtimeEvent>), AsrError> {
+    ) -> Result<(Self, mpsc::Receiver<VolcengineRealtimeEvent>), RealtimeError> {
         config.validate()?;
         let connect_id = config.effective_connect_id();
         let session_id = Uuid::new_v4().to_string();
         let request = build_realtime_request(&config, &connect_id)?;
-        let (ws, _) = tokio_tungstenite::connect_async(request)
+        let (ws, response) = tokio_tungstenite::connect_async(request)
             .await
             .map_err(|e| {
-                AsrError::new(
-                    AsrErrorCode::ProviderStreamError,
+                RealtimeError::new(
+                    RealtimeErrorCode::ProviderStreamError,
                     format!("Volcengine realtime WebSocket connect failed: {e}"),
                 )
             })?;
+        let handshake_log_id = response
+            .headers()
+            .get("X-Tt-Logid")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
         let (mut write, mut read) = ws.split();
+        let (events, rx) = mpsc::channel(64);
+
+        events
+            .send(VolcengineRealtimeEvent::Handshake {
+                log_id: handshake_log_id.clone(),
+            })
+            .await
+            .map_err(|_| {
+                RealtimeError::new(
+                    RealtimeErrorCode::ProviderStreamError,
+                    "Volcengine realtime event receiver was dropped",
+                )
+            })?;
 
         write
             .send(Message::Binary(build_connect_json_frame(
@@ -29,6 +51,8 @@ impl VolcengineRealtimeSession {
             )?))
             .await
             .map_err(stream_send_error)?;
+        wait_for_lifecycle_event(&mut read, &session_id, &events, 50, "ConnectionStarted").await?;
+
         write
             .send(Message::Binary(build_session_json_frame(
                 EVENT_START_SESSION,
@@ -37,23 +61,14 @@ impl VolcengineRealtimeSession {
             )?))
             .await
             .map_err(stream_send_error)?;
+        wait_for_lifecycle_event(&mut read, &session_id, &events, 150, "SessionStarted").await?;
 
-        let (events, rx) = mpsc::channel(64);
         let (commands, mut command_rx) = mpsc::channel(16);
         let read_events = events.clone();
         let read_session_id = session_id.clone();
         tokio::spawn(async move {
             while let Some(message) = read.next().await {
-                let event = match message {
-                    Ok(Message::Binary(bytes)) => parse_realtime_frame(&bytes),
-                    Ok(Message::Close(_)) => Ok(Some(VolcengineRealtimeEvent::SessionClosed {
-                        session_id: read_session_id.clone(),
-                    })),
-                    Ok(_) => Ok(None),
-                    Err(err) => Ok(Some(VolcengineRealtimeEvent::ProviderError {
-                        message: format!("Volcengine realtime read failed: {err}"),
-                    })),
-                };
+                let event = parse_realtime_message(message, &read_session_id);
                 match event {
                     Ok(Some(event)) => {
                         if read_events.send(event).await.is_err() {
@@ -111,6 +126,7 @@ impl VolcengineRealtimeSession {
         Ok((
             Self {
                 session_id,
+                handshake_log_id,
                 state: VolcengineRealtimeState::Started,
                 events,
                 commands: Some(commands),
@@ -120,29 +136,143 @@ impl VolcengineRealtimeSession {
     }
 }
 
-fn build_realtime_request(
-    config: &VolcengineRealtimeConfig,
-    connect_id: &str,
-) -> Result<tungstenite::http::Request<()>, AsrError> {
-    tungstenite::http::Request::builder()
-        .uri(&config.ws_url)
-        .header("X-Api-App-ID", &config.app_id)
-        .header("X-Api-Access-Key", &config.access_key)
-        .header("X-Api-Resource-Id", &config.resource_id)
-        .header("X-Api-App-Key", &config.app_key)
-        .header("X-Api-Connect-Id", connect_id)
-        .body(())
-        .map_err(|e| {
-            AsrError::new(
-                AsrErrorCode::InvalidRequest,
-                format!("Volcengine realtime request build failed: {e}"),
+async fn wait_for_lifecycle_event<S>(
+    read: &mut S,
+    session_id: &str,
+    events: &mpsc::Sender<VolcengineRealtimeEvent>,
+    expected_event_id: u16,
+    expected_name: &str,
+) -> Result<(), RealtimeError>
+where
+    S: Stream<Item = Result<Message, tungstenite::Error>> + Unpin,
+{
+    loop {
+        let event = tokio::time::timeout(
+            START_ACK_TIMEOUT,
+            read_next_realtime_event(read, session_id),
+        )
+        .await
+        .map_err(|_| {
+            RealtimeError::new(
+                RealtimeErrorCode::ProviderStreamError,
+                format!("timed out waiting for Volcengine realtime {expected_name}"),
             )
-        })
+        })?
+        .ok_or_else(|| {
+            RealtimeError::new(
+                RealtimeErrorCode::ProviderStreamError,
+                format!("Volcengine realtime stream closed before {expected_name}"),
+            )
+        })??;
+
+        let is_expected = matches!(
+            &event,
+            VolcengineRealtimeEvent::ServerEvent {
+                event: VolcengineRealtimeMappedEvent::Lifecycle { event_id, .. },
+            } if *event_id == expected_event_id
+        );
+        let error = match &event {
+            VolcengineRealtimeEvent::ProviderError { message } => Some(message.clone()),
+            VolcengineRealtimeEvent::ServerEvent {
+                event: VolcengineRealtimeMappedEvent::Error { message, .. },
+            } => Some(message.clone()),
+            _ => None,
+        };
+
+        events.send(event).await.map_err(|_| {
+            RealtimeError::new(
+                RealtimeErrorCode::ProviderStreamError,
+                "Volcengine realtime event receiver was dropped",
+            )
+        })?;
+
+        if let Some(message) = error {
+            return Err(RealtimeError::new(
+                RealtimeErrorCode::ProviderStreamError,
+                format!("Volcengine realtime failed before {expected_name}: {message}"),
+            ));
+        }
+        if is_expected {
+            return Ok(());
+        }
+    }
 }
 
-fn stream_send_error(err: tungstenite::Error) -> AsrError {
-    AsrError::new(
-        AsrErrorCode::ProviderStreamError,
+async fn read_next_realtime_event<S>(
+    read: &mut S,
+    session_id: &str,
+) -> Option<Result<VolcengineRealtimeEvent, RealtimeError>>
+where
+    S: Stream<Item = Result<Message, tungstenite::Error>> + Unpin,
+{
+    read.next()
+        .await
+        .map(|message| parse_realtime_message(message, session_id).and_then(required_event))
+}
+
+fn required_event(
+    event: Option<VolcengineRealtimeEvent>,
+) -> Result<VolcengineRealtimeEvent, RealtimeError> {
+    event.ok_or_else(|| {
+        RealtimeError::new(
+            RealtimeErrorCode::ProviderStreamError,
+            "Volcengine realtime received a non-binary control message",
+        )
+    })
+}
+
+fn parse_realtime_message(
+    message: Result<Message, tungstenite::Error>,
+    session_id: &str,
+) -> Result<Option<VolcengineRealtimeEvent>, RealtimeError> {
+    match message {
+        Ok(Message::Binary(bytes)) => parse_realtime_frame(&bytes),
+        Ok(Message::Close(_)) => Ok(Some(VolcengineRealtimeEvent::SessionClosed {
+            session_id: session_id.to_string(),
+        })),
+        Ok(_) => Ok(None),
+        Err(err) => Ok(Some(VolcengineRealtimeEvent::ProviderError {
+            message: format!("Volcengine realtime read failed: {err}"),
+        })),
+    }
+}
+
+pub(super) fn build_realtime_request(
+    config: &VolcengineRealtimeConfig,
+    connect_id: &str,
+) -> Result<tungstenite::http::Request<()>, RealtimeError> {
+    let mut request = config.ws_url.as_str().into_client_request().map_err(|e| {
+        RealtimeError::new(
+            RealtimeErrorCode::InvalidRequest,
+            format!("Volcengine realtime request build failed: {e}"),
+        )
+    })?;
+    insert_header(&mut request, "X-Api-App-ID", &config.app_id)?;
+    insert_header(&mut request, "X-Api-Access-Key", &config.access_key)?;
+    insert_header(&mut request, "X-Api-Resource-Id", &config.resource_id)?;
+    insert_header(&mut request, "X-Api-App-Key", &config.app_key)?;
+    insert_header(&mut request, "X-Api-Connect-Id", connect_id)?;
+    Ok(request)
+}
+
+fn insert_header(
+    request: &mut tungstenite::http::Request<()>,
+    name: &'static str,
+    value: &str,
+) -> Result<(), RealtimeError> {
+    let value = HeaderValue::from_str(value).map_err(|e| {
+        RealtimeError::new(
+            RealtimeErrorCode::InvalidRequest,
+            format!("Volcengine realtime header {name} is invalid: {e}"),
+        )
+    })?;
+    request.headers_mut().insert(name, value);
+    Ok(())
+}
+
+fn stream_send_error(err: tungstenite::Error) -> RealtimeError {
+    RealtimeError::new(
+        RealtimeErrorCode::ProviderStreamError,
         format!("Volcengine realtime WebSocket send failed: {err}"),
     )
 }
@@ -156,10 +286,13 @@ fn build_header(msg_type: u8, flags: u8, serialization: u8) -> [u8; 4] {
     ]
 }
 
-fn build_connect_json_frame(event_id: u32, payload: &Value) -> Result<Vec<u8>, AsrError> {
+pub(super) fn build_connect_json_frame(
+    event_id: u32,
+    payload: &Value,
+) -> Result<Vec<u8>, RealtimeError> {
     let payload = serde_json::to_vec(payload).map_err(|e| {
-        AsrError::new(
-            AsrErrorCode::InvalidRequest,
+        RealtimeError::new(
+            RealtimeErrorCode::InvalidRequest,
             format!("Volcengine realtime JSON serialization failed: {e}"),
         )
     })?;
@@ -171,14 +304,14 @@ fn build_connect_json_frame(event_id: u32, payload: &Value) -> Result<Vec<u8>, A
     Ok(frame)
 }
 
-fn build_session_json_frame(
+pub(super) fn build_session_json_frame(
     event_id: u32,
     session_id: &str,
     payload: &Value,
-) -> Result<Vec<u8>, AsrError> {
+) -> Result<Vec<u8>, RealtimeError> {
     let payload = serde_json::to_vec(payload).map_err(|e| {
-        AsrError::new(
-            AsrErrorCode::InvalidRequest,
+        RealtimeError::new(
+            RealtimeErrorCode::InvalidRequest,
             format!("Volcengine realtime JSON serialization failed: {e}"),
         )
     })?;
@@ -196,10 +329,10 @@ fn build_session_audio_frame(
     event_id: u32,
     session_id: &str,
     audio: &[u8],
-) -> Result<Vec<u8>, AsrError> {
+) -> Result<Vec<u8>, RealtimeError> {
     if audio.is_empty() {
-        return Err(AsrError::new(
-            AsrErrorCode::InvalidAudio,
+        return Err(RealtimeError::new(
+            RealtimeErrorCode::InvalidAudio,
             "audio chunk must not be empty",
         ));
     }
@@ -213,10 +346,10 @@ fn build_session_audio_frame(
     Ok(frame)
 }
 
-fn parse_realtime_frame(data: &[u8]) -> Result<Option<VolcengineRealtimeEvent>, AsrError> {
+fn parse_realtime_frame(data: &[u8]) -> Result<Option<VolcengineRealtimeEvent>, RealtimeError> {
     if data.len() < 12 {
-        return Err(AsrError::new(
-            AsrErrorCode::ProviderStreamError,
+        return Err(RealtimeError::new(
+            RealtimeErrorCode::ProviderStreamError,
             "Volcengine realtime frame is too short",
         ));
     }
@@ -232,8 +365,8 @@ fn parse_realtime_frame(data: &[u8]) -> Result<Option<VolcengineRealtimeEvent>, 
         }));
     }
     if !matches!(msg_type, MSG_FULL_SERVER_RESPONSE | MSG_AUDIO_ONLY_RESPONSE) {
-        return Err(AsrError::new(
-            AsrErrorCode::ProviderStreamError,
+        return Err(RealtimeError::new(
+            RealtimeErrorCode::ProviderStreamError,
             format!("unexpected Volcengine realtime message type: {msg_type}"),
         ));
     }
@@ -264,10 +397,10 @@ fn parse_realtime_frame(data: &[u8]) -> Result<Option<VolcengineRealtimeEvent>, 
     Ok(Some(VolcengineRealtimeEvent::from(mapped)))
 }
 
-fn read_u32(data: &[u8], offset: &mut usize) -> Result<u32, AsrError> {
+fn read_u32(data: &[u8], offset: &mut usize) -> Result<u32, RealtimeError> {
     if data.len() < *offset + 4 {
-        return Err(AsrError::new(
-            AsrErrorCode::ProviderStreamError,
+        return Err(RealtimeError::new(
+            RealtimeErrorCode::ProviderStreamError,
             "Volcengine realtime frame ended before u32 field",
         ));
     }
@@ -281,7 +414,7 @@ fn read_u32(data: &[u8], offset: &mut usize) -> Result<u32, AsrError> {
     Ok(value)
 }
 
-fn skip_optional_session_id(data: &[u8], offset: &mut usize) -> Result<(), AsrError> {
+fn skip_optional_session_id(data: &[u8], offset: &mut usize) -> Result<(), RealtimeError> {
     if data.len() < *offset + 8 {
         return Ok(());
     }
@@ -294,11 +427,11 @@ fn skip_optional_session_id(data: &[u8], offset: &mut usize) -> Result<(), AsrEr
     Ok(())
 }
 
-fn read_payload<'a>(data: &'a [u8], offset: &mut usize) -> Result<&'a [u8], AsrError> {
+fn read_payload<'a>(data: &'a [u8], offset: &mut usize) -> Result<&'a [u8], RealtimeError> {
     let payload_len = read_u32(data, offset)? as usize;
     if data.len() < *offset + payload_len {
-        return Err(AsrError::new(
-            AsrErrorCode::ProviderStreamError,
+        return Err(RealtimeError::new(
+            RealtimeErrorCode::ProviderStreamError,
             "Volcengine realtime frame payload is truncated",
         ));
     }
@@ -315,6 +448,7 @@ fn realtime_event_name(event_id: u16) -> String {
         150 => "SessionStarted",
         152 => "SessionFinished",
         153 => "SessionFailed",
+        154 => "UsageResponse",
         350 => "TTSSentenceStart",
         351 => "TTSSentenceEnd",
         352 => "TTSResponse",

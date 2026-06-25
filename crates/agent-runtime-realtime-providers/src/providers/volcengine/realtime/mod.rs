@@ -12,7 +12,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::error::{AsrError, AsrErrorCode};
+use crate::error::{RealtimeError, RealtimeErrorCode};
 
 pub const DEFAULT_REALTIME_WS_URL: &str = "wss://openspeech.bytedance.com/api/v3/realtime/dialogue";
 pub const DEFAULT_REALTIME_RESOURCE_ID: &str = "volc.speech.dialog";
@@ -61,39 +61,47 @@ impl VolcengineRealtimeConfig {
         }
     }
 
-    pub fn from_env() -> Result<Self, AsrError> {
-        let app_id = required_env("VOLCENGINE_REALTIME_APP_ID")?;
-        let access_key = required_env("VOLCENGINE_REALTIME_ACCESS_KEY")?;
-        let mut config = Self::new(app_id, access_key);
-        config.resource_id = optional_env("VOLCENGINE_REALTIME_RESOURCE_ID")
-            .unwrap_or_else(|| DEFAULT_REALTIME_RESOURCE_ID.to_string());
-        config.app_key = optional_env("VOLCENGINE_REALTIME_APP_KEY")
-            .unwrap_or_else(|| DEFAULT_REALTIME_APP_KEY.to_string());
-        config.connect_id = optional_env("VOLCENGINE_REALTIME_CONNECT_ID");
-        config.model = optional_env("VOLCENGINE_REALTIME_MODEL")
-            .unwrap_or_else(|| DEFAULT_REALTIME_MODEL.to_string());
-        config.speaker = optional_env("VOLCENGINE_REALTIME_SPEAKER")
-            .unwrap_or_else(|| DEFAULT_REALTIME_SPEAKER.to_string());
-        Ok(config)
+    pub fn from_env() -> Result<Self, RealtimeError> {
+        config_from_env_lookup(|name| env::var(name).ok())
     }
+}
 
-    pub fn validate(&self) -> Result<(), AsrError> {
+fn config_from_env_lookup(
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<VolcengineRealtimeConfig, RealtimeError> {
+    let app_id = required_env_from_lookup(&lookup, "VOLCENGINE_APP_ID")?;
+    let access_key = required_env_from_lookup(&lookup, "VOLCENGINE_ACCESS_TOKEN")?;
+    let mut config = VolcengineRealtimeConfig::new(app_id, access_key);
+    config.resource_id = optional_env_from_lookup(&lookup, "VOLCENGINE_REALTIME_RESOURCE_ID", &[])
+        .unwrap_or_else(|| DEFAULT_REALTIME_RESOURCE_ID.to_string());
+    config.app_key = optional_env_from_lookup(&lookup, "VOLCENGINE_REALTIME_APP_KEY", &[])
+        .unwrap_or_else(|| DEFAULT_REALTIME_APP_KEY.to_string());
+    config.connect_id = optional_env_from_lookup(&lookup, "VOLCENGINE_REALTIME_CONNECT_ID", &[]);
+    config.model = optional_env_from_lookup(&lookup, "VOLCENGINE_REALTIME_MODEL", &[])
+        .unwrap_or_else(|| DEFAULT_REALTIME_MODEL.to_string());
+    config.speaker = optional_env_from_lookup(&lookup, "VOLCENGINE_REALTIME_SPEAKER", &[])
+        .unwrap_or_else(|| DEFAULT_REALTIME_SPEAKER.to_string());
+    Ok(config)
+}
+
+impl VolcengineRealtimeConfig {
+    pub fn validate(&self) -> Result<(), RealtimeError> {
         if !self.ws_url.starts_with("wss://") {
-            return Err(AsrError::new(
-                AsrErrorCode::InvalidRequest,
+            return Err(RealtimeError::new(
+                RealtimeErrorCode::InvalidRequest,
                 "Volcengine realtime WebSocket URL must use wss://",
             ));
         }
         if self.app_id.trim().is_empty() {
-            return Err(AsrError::new(
-                AsrErrorCode::MissingApiKey,
-                "VOLCENGINE_REALTIME_APP_ID must not be empty",
+            return Err(RealtimeError::new(
+                RealtimeErrorCode::MissingApiKey,
+                "VOLCENGINE_APP_ID must not be empty",
             ));
         }
         if self.access_key.trim().is_empty() {
-            return Err(AsrError::new(
-                AsrErrorCode::MissingApiKey,
-                "VOLCENGINE_REALTIME_ACCESS_KEY must not be empty",
+            return Err(RealtimeError::new(
+                RealtimeErrorCode::MissingApiKey,
+                "VOLCENGINE_ACCESS_TOKEN must not be empty",
             ));
         }
         Ok(())
@@ -146,6 +154,9 @@ pub enum VolcengineRealtimeState {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum VolcengineRealtimeEvent {
+    Handshake {
+        log_id: Option<String>,
+    },
     SessionStarted {
         session_id: String,
     },
@@ -237,6 +248,7 @@ enum VolcengineRealtimeCommand {
 
 pub struct VolcengineRealtimeSession {
     session_id: String,
+    handshake_log_id: Option<String>,
     state: VolcengineRealtimeState,
     events: mpsc::Sender<VolcengineRealtimeEvent>,
     commands: Option<mpsc::Sender<VolcengineRealtimeCommand>>,
@@ -248,6 +260,7 @@ impl VolcengineRealtimeSession {
         (
             Self {
                 session_id: session_id.into(),
+                handshake_log_id: None,
                 state: VolcengineRealtimeState::Created,
                 events,
                 commands: None,
@@ -260,11 +273,15 @@ impl VolcengineRealtimeSession {
         &self.session_id
     }
 
+    pub fn handshake_log_id(&self) -> Option<&str> {
+        self.handshake_log_id.as_deref()
+    }
+
     pub fn state(&self) -> &VolcengineRealtimeState {
         &self.state
     }
 
-    pub async fn start(&mut self) -> Result<(), AsrError> {
+    pub async fn start(&mut self) -> Result<(), RealtimeError> {
         match self.state {
             VolcengineRealtimeState::Created => {
                 self.state = VolcengineRealtimeState::Started;
@@ -273,27 +290,27 @@ impl VolcengineRealtimeSession {
                 })
                 .await
             }
-            VolcengineRealtimeState::Started => Err(AsrError::new(
-                AsrErrorCode::InvalidRequest,
+            VolcengineRealtimeState::Started => Err(RealtimeError::new(
+                RealtimeErrorCode::InvalidRequest,
                 "Volcengine realtime session is already started",
             )),
-            VolcengineRealtimeState::Closed => Err(AsrError::new(
-                AsrErrorCode::InvalidRequest,
+            VolcengineRealtimeState::Closed => Err(RealtimeError::new(
+                RealtimeErrorCode::InvalidRequest,
                 "Volcengine realtime session is already closed",
             )),
         }
     }
 
-    pub async fn send_audio_chunk(&self, chunk: &[u8]) -> Result<(), AsrError> {
+    pub async fn send_audio_chunk(&self, chunk: &[u8]) -> Result<(), RealtimeError> {
         if self.state != VolcengineRealtimeState::Started {
-            return Err(AsrError::new(
-                AsrErrorCode::InvalidRequest,
+            return Err(RealtimeError::new(
+                RealtimeErrorCode::InvalidRequest,
                 "Volcengine realtime session must be started before sending audio",
             ));
         }
         if chunk.is_empty() {
-            return Err(AsrError::new(
-                AsrErrorCode::InvalidAudio,
+            return Err(RealtimeError::new(
+                RealtimeErrorCode::InvalidAudio,
                 "audio chunk must not be empty",
             ));
         }
@@ -302,26 +319,30 @@ impl VolcengineRealtimeSession {
                 .send(VolcengineRealtimeCommand::Audio(chunk.to_vec()))
                 .await
                 .map_err(|_| {
-                    AsrError::new(
-                        AsrErrorCode::ProviderStreamError,
+                    RealtimeError::new(
+                        RealtimeErrorCode::ProviderStreamError,
                         "Volcengine realtime command loop was closed",
                     )
                 })?;
+        } else {
+            self.emit_local_ack(VolcengineRealtimeEvent::AudioInputAccepted { bytes: chunk.len() });
         }
-        self.emit(VolcengineRealtimeEvent::AudioInputAccepted { bytes: chunk.len() })
-            .await
+        Ok(())
     }
 
-    pub async fn interrupt(&self, input_mode: VolcengineRealtimeInputMode) -> Result<(), AsrError> {
+    pub async fn interrupt(
+        &self,
+        input_mode: VolcengineRealtimeInputMode,
+    ) -> Result<(), RealtimeError> {
         if self.state != VolcengineRealtimeState::Started {
-            return Err(AsrError::new(
-                AsrErrorCode::InvalidRequest,
+            return Err(RealtimeError::new(
+                RealtimeErrorCode::InvalidRequest,
                 "Volcengine realtime session must be started before interrupting",
             ));
         }
         if input_mode != VolcengineRealtimeInputMode::PushToTalk {
-            return Err(AsrError::new(
-                AsrErrorCode::UnsupportedOperation,
+            return Err(RealtimeError::new(
+                RealtimeErrorCode::UnsupportedOperation,
                 "Volcengine ClientInterrupt is documented only for push_to_talk mode",
             ));
         }
@@ -330,8 +351,8 @@ impl VolcengineRealtimeSession {
                 .send(VolcengineRealtimeCommand::Interrupt)
                 .await
                 .map_err(|_| {
-                    AsrError::new(
-                        AsrErrorCode::ProviderStreamError,
+                    RealtimeError::new(
+                        RealtimeErrorCode::ProviderStreamError,
                         "Volcengine realtime command loop was closed",
                     )
                 })?;
@@ -342,7 +363,7 @@ impl VolcengineRealtimeSession {
         .await
     }
 
-    pub async fn close(&mut self) -> Result<(), AsrError> {
+    pub async fn close(&mut self) -> Result<(), RealtimeError> {
         match self.state {
             VolcengineRealtimeState::Started | VolcengineRealtimeState::Created => {
                 self.state = VolcengineRealtimeState::Closed;
@@ -351,34 +372,50 @@ impl VolcengineRealtimeSession {
                         .send(VolcengineRealtimeCommand::CloseSession)
                         .await
                         .map_err(|_| {
-                            AsrError::new(
-                                AsrErrorCode::ProviderStreamError,
+                            RealtimeError::new(
+                                RealtimeErrorCode::ProviderStreamError,
                                 "Volcengine realtime command loop was closed",
                             )
                         })?;
-                    let _ = commands
-                        .send(VolcengineRealtimeCommand::CloseConnection)
-                        .await;
                 }
                 self.emit(VolcengineRealtimeEvent::SessionClosed {
                     session_id: self.session_id.clone(),
                 })
                 .await
             }
-            VolcengineRealtimeState::Closed => Err(AsrError::new(
-                AsrErrorCode::InvalidRequest,
+            VolcengineRealtimeState::Closed => Err(RealtimeError::new(
+                RealtimeErrorCode::InvalidRequest,
                 "Volcengine realtime session is already closed",
             )),
         }
     }
 
-    async fn emit(&self, event: VolcengineRealtimeEvent) -> Result<(), AsrError> {
+    pub async fn finish_connection(&self) -> Result<(), RealtimeError> {
+        if let Some(commands) = &self.commands {
+            commands
+                .send(VolcengineRealtimeCommand::CloseConnection)
+                .await
+                .map_err(|_| {
+                    RealtimeError::new(
+                        RealtimeErrorCode::ProviderStreamError,
+                        "Volcengine realtime command loop was closed",
+                    )
+                })?;
+        }
+        Ok(())
+    }
+
+    async fn emit(&self, event: VolcengineRealtimeEvent) -> Result<(), RealtimeError> {
         self.events.send(event).await.map_err(|_| {
-            AsrError::new(
-                AsrErrorCode::ProviderStreamError,
+            RealtimeError::new(
+                RealtimeErrorCode::ProviderStreamError,
                 "Volcengine realtime event receiver was dropped",
             )
         })
+    }
+
+    fn emit_local_ack(&self, event: VolcengineRealtimeEvent) {
+        let _ = self.events.try_send(event);
     }
 }
 
@@ -401,7 +438,7 @@ pub fn map_realtime_server_event(
                 .unwrap_or("Volcengine realtime provider error")
                 .to_string(),
         },
-        350 | 351 => VolcengineRealtimeMappedEvent::Metadata {
+        154 | 350 | 351 => VolcengineRealtimeMappedEvent::Metadata {
             event_id,
             name,
             payload,
@@ -478,22 +515,31 @@ pub fn classify_realtime_error(
     }
 }
 
-fn required_env(name: &str) -> Result<String, AsrError> {
-    env::var(name).map_err(|_| {
-        AsrError::new(
-            AsrErrorCode::MissingApiKey,
+fn required_env_from_lookup(
+    lookup: &impl Fn(&str) -> Option<String>,
+    name: &str,
+) -> Result<String, RealtimeError> {
+    optional_env_from_lookup(lookup, name, &[]).ok_or_else(|| {
+        RealtimeError::new(
+            RealtimeErrorCode::MissingApiKey,
             format!("missing required environment variable {name}"),
         )
     })
 }
 
-fn optional_env(name: &str) -> Option<String> {
-    env::var(name).ok().filter(|value| !value.trim().is_empty())
+fn optional_env_from_lookup(
+    lookup: &impl Fn(&str) -> Option<String>,
+    primary: &str,
+    aliases: &[&str],
+) -> Option<String> {
+    std::iter::once(primary)
+        .chain(aliases.iter().copied())
+        .find_map(|name| lookup(name).filter(|value| !value.trim().is_empty()))
 }
 
-#[path = "realtime_live.rs"]
+#[path = "live.rs"]
 mod live;
 
 #[cfg(test)]
-#[path = "realtime_tests.rs"]
+#[path = "tests.rs"]
 mod tests;

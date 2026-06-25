@@ -144,6 +144,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-runtime-realtime-providers"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "uuid",
+]
+
+[[package]]
 name = "agent-runtime-tts-providers"
 version = "0.1.0"
 dependencies = [

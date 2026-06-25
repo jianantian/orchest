@@ -64,6 +64,7 @@ Payloads may be JSON event bodies or raw audio bytes. Session-level events carry
 | 150 | `SessionStarted` | lifecycle |
 | 152 | `SessionFinished` | lifecycle |
 | 153 | `SessionFailed` | error / lifecycle |
+| 154 | `UsageResponse` | token/audio usage metadata |
 | 350 | `TTSSentenceStart` | text / audio-generation metadata |
 | 351 | `TTSSentenceEnd` | text / audio-generation metadata |
 | 352 | `TTSResponse` | audio output bytes |
@@ -89,8 +90,8 @@ Use these environment variable names for manual validation unless implementation
 
 | Environment variable | Maps to |
 |----------------------|---------|
-| `VOLCENGINE_REALTIME_APP_ID` | `X-Api-App-ID` |
-| `VOLCENGINE_REALTIME_ACCESS_KEY` | `X-Api-Access-Key` |
+| `VOLCENGINE_APP_ID` | `X-Api-App-ID` |
+| `VOLCENGINE_ACCESS_TOKEN` | `X-Api-Access-Key` |
 | `VOLCENGINE_REALTIME_RESOURCE_ID` | `X-Api-Resource-Id`; default `volc.speech.dialog` |
 | `VOLCENGINE_REALTIME_APP_KEY` | `X-Api-App-Key`; default `PlgvMymc7f3tQnJ6` |
 | `VOLCENGINE_REALTIME_CONNECT_ID` | Optional `X-Api-Connect-Id` override |

@@ -38,7 +38,7 @@ fn load_dotenv_if_present() {
 fn get_config() -> Option<VolcengineAsrConfig> {
     load_dotenv_if_present();
     let api_key = std::env::var("VOLCENGINE_API_KEY").ok()?;
-    let resource_id = std::env::var("VOLCENGINE_RESOURCE_ID").ok()?;
+    let resource_id = std::env::var("VOLCENGINE_ASR_RESOURCE_ID").ok()?;
     Some(VolcengineAsrConfig {
         model: "bigasr".into(),
         ws_url: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async".into(),
@@ -54,7 +54,7 @@ async fn live_volcengine_streaming_silence() {
     let config = match get_config() {
         Some(c) => c,
         None => {
-            eprintln!("skipping: VOLCENGINE_API_KEY and VOLCENGINE_RESOURCE_ID not set");
+            eprintln!("skipping: VOLCENGINE_API_KEY and VOLCENGINE_ASR_RESOURCE_ID not set");
             return;
         }
     };
