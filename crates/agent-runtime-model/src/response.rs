@@ -44,7 +44,7 @@ pub struct TokenUsage {
     pub cost_usd: Option<f64>,
 }
 
-#[allow(clippy::trivially_copy_pass_by_ref)] // serde-required signature
+#[allow(clippy::trivially_copy_pass_by_ref)] // justified: serde-required signature
 fn is_zero_u64(v: &u64) -> bool {
     *v == 0
 }
