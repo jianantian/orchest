@@ -35,6 +35,7 @@
 | v0.9.6 | 卫星 | ASR Follow-up Providers（one-shot `transcribe()`、Deepgram、ElevenLabs Scribe、Soniox、AssemblyAI、Speechmatics、docs/examples） |
 | v0.9.7 | 重构 | Tool Surface Extensions（Draft/Commit、deferred tool discovery、可选并行 tool execution） |
 | v0.9.8 | 重构 | Runtime Safety and Observability Hygiene（code execution executor 注入、核心 observability、Python GIL 行为、静态错误 payload 清理） |
+| v0.9.9 | 重构 | API Cleanup and Product Patterns（deprecated API 移除、binding shared helpers、message history CoW 评估、guardrail/team pattern examples） |
 
 ## 规划中(hotfix)
 
@@ -48,10 +49,6 @@
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
 
 ## 规划中
-
-### v0.9.9 — API Cleanup and Product Patterns（规划）
-
-处理 v1.0 前 API cleanup 和产品层模式：deprecated API 移除、binding shared helpers、message history CoW 评估、复杂 guardrail policy examples、agent team pattern examples。详见 [`v0_9_9/prd.md`](./v0_9_9/prd.md)。
 
 ### v0.9.10 — Minimax 多模态 Provider 接入（卫星，规划）
 
@@ -107,7 +104,7 @@ v0.10 至少验证一个轻量 reviewer sub-agent 或 handoff 路径：Agent-as-
 ✅ v0.9.8: Runtime Safety + Observability
             │
             ▼
-   v0.9.9: API Cleanup + Product Patterns
+✅ v0.9.9: API Cleanup + Product Patterns
             │
             ▼
    v0.10: Demo Product Validation
