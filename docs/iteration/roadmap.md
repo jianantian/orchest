@@ -36,12 +36,7 @@
 | v0.9.7 | 重构 | Tool Surface Extensions（Draft/Commit、deferred tool discovery、可选并行 tool execution） |
 | v0.9.8 | 重构 | Runtime Safety and Observability Hygiene（code execution executor 注入、核心 observability、Python GIL 行为、静态错误 payload 清理） |
 | v0.9.9 | 重构 | API Cleanup and Product Patterns（deprecated API 移除、binding shared helpers、message history CoW 评估、guardrail/team pattern examples） |
-
-## 规划中(hotfix)
-
-| 版本 | 类型 | 主题 |
-|------|------|------|
-| hotfix 06-17 | 重构 | LLM Catalog 信息扩展(`Modality` / `ModelScene` / `ThinkingSpec`,`LlmModelEntry` 加 6 字段,19 条现有 model 数据填实)。详见 [`docs/hotfix/2026_06_17/prd.md`](../hotfix/2026_06_17/prd.md) |
+| hotfix 06-17 | 重构 | LLM Catalog 信息扩展（`Modality` / `ModelScene` / `ThinkingSpec`，`LlmModelEntry` 加 6 字段，18 条 model 数据填实，修复 DeepSeek `supports_thinking()` bug） |
 
 ## 迭代编号约定
 

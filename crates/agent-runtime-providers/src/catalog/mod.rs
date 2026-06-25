@@ -112,33 +112,7 @@ fn anthropic_models() -> LlmProviderInfo {
     // max_input_tokens = context_window - max_output_tokens (conservative).
     let models = vec![
         // --- Current models ---
-        LlmModelEntry {
-            model_id: "anthropic/claude-fable-5",
-            provider: "anthropic",
-            display_name: "Claude Fable 5",
-            description: "旗舰推理模型，支持 adaptive thinking，百万 token 上下文",
-            context_window: 1_000_000,
-            max_input_tokens: Some(872_000),
-            max_output_tokens: Some(128_000),
-            thinking: Some(ThinkingSpec {
-                max_thinking_tokens: None,
-            }),
-            input_modalities: &[Modality::Text, Modality::Image],
-            output_modalities: &[Modality::Text],
-            scenes: &[
-                ModelScene::General,
-                ModelScene::Coding,
-                ModelScene::Agent,
-                ModelScene::Reasoning,
-            ],
-            pricing: Some(ModelPricing {
-                currency: "USD".into(),
-                input_per_million: 10.0,
-                output_per_million: 50.0,
-                cache_read_per_million: Some(1.0),
-                cache_write_per_million: Some(12.5),
-            }),
-        },
+        // claude-fable-5 removed: temporarily delisted by Anthropic as of 2026-06-25.
         LlmModelEntry {
             model_id: "anthropic/claude-opus-4-8",
             provider: "anthropic",
