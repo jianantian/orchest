@@ -2,9 +2,9 @@
 
 ## Files to Read
 
-- `docs/iteration/v0_9_11/prd.md`
-- `docs/iteration/v0_9_11/issues/002-duplex-session-scaffolding/spec.md` and lifecycle implementation
-- `docs/iteration/v0_9_11/issues/003-streaming-event-mapping/spec.md`
+- `docs/archive/iteration/v0_9_11/prd.md`
+- `docs/archive/iteration/v0_9_11/issues/002-duplex-session-scaffolding/spec.md` and lifecycle implementation
+- `docs/archive/iteration/v0_9_11/issues/003-streaming-event-mapping/spec.md`
 - Selected provider docs for cancel/barge-in/close/error events
 - Existing provider error types and streaming shutdown tests
 

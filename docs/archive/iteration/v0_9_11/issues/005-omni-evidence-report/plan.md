@@ -2,7 +2,7 @@
 
 ## Files to Read
 
-- `docs/iteration/v0_9_11/prd.md`
+- `docs/archive/iteration/v0_9_11/prd.md`
 - All v0.9.11 issue specs and plans
 - `docs/todo/provider-unification.md`
 - Provider decision output from Issue 001
@@ -10,7 +10,7 @@
 
 ## Files to Change
 
-- `docs/iteration/v0_9_11/evidence.md`
+- `docs/archive/iteration/v0_9_11/evidence.md`
 - Optional: `docs/todo/provider-unification.md` if Step 2 assumptions changed
 - Optional: PRD or issue docs if validation reveals scope corrections
 

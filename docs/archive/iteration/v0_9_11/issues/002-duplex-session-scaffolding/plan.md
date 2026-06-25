@@ -2,8 +2,8 @@
 
 ## Files to Read
 
-- `docs/iteration/v0_9_11/prd.md`
-- `docs/iteration/v0_9_11/issues/001-protocol-fixtures/spec.md` and its provider decision output
+- `docs/archive/iteration/v0_9_11/prd.md`
+- `docs/archive/iteration/v0_9_11/issues/001-protocol-fixtures/spec.md` and its provider decision output
 - Selected vendor documentation from `docs/external/`
 - Existing ASR/TTS duplex provider modules and tests
 - Relevant crate `Cargo.toml` files for feature/dependency patterns

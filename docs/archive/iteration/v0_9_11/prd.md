@@ -71,9 +71,9 @@ The implementation should expose enough shape to observe the provider as a capab
 
 ### Required Artifacts
 
-- Issue specs and plans under `docs/iteration/v0_9_11/issues/` before implementation begins.
+- Issue specs and plans under `docs/archive/iteration/v0_9_11/issues/` before implementation begins.
 - A manual-run README or iteration note explaining exact environment variables, input fixture expectations and known provider limitations.
-- An evidence report, preferably `docs/iteration/v0_9_11/evidence.md`, separating observed facts, provider-specific quirks and refactor recommendations.
+- An evidence report, preferably `docs/archive/iteration/v0_9_11/evidence.md`, separating observed facts, provider-specific quirks and refactor recommendations.
 
 Update `docs/todo/provider-unification.md` only if this iteration discovers new evidence that changes Step 2 assumptions. Do not convert the todo into the refactor design; that belongs to the later provider-unification PRD/ADR.
 
@@ -105,15 +105,15 @@ Dependency order: 001 must complete before implementation issues begin; 002 crea
 
 ## Acceptance Criteria
 
-- [ ] A v0.9.11 issue set exists under `docs/iteration/v0_9_11/issues/` before implementation begins.
-- [ ] One selected realtime/omni provider is documented with vendor source references and credential requirements; a second provider is explicitly accepted or deferred.
-- [ ] A feature-gated provider path can start a realtime session, send audio input and receive streamed output events.
-- [ ] Output distinguishes audio chunks, text/transcript deltas, lifecycle events and errors.
-- [ ] Barge-in/cancel/close behavior is implemented when supported or explicitly documented when unsupported.
-- [ ] Unit tests use fake sessions and require no network credentials.
-- [ ] Manual live validation is documented with exact command, provider, model, date and outcome.
-- [ ] The implementation does not merge provider crates or introduce a final unified provider abstraction.
-- [ ] Evidence for the later provider-unification refactor is captured in `docs/iteration/v0_9_11/evidence.md`, an ADR draft or `docs/todo/provider-unification.md` update.
+- [x] A v0.9.11 issue set exists under `docs/archive/iteration/v0_9_11/issues/` before implementation begins.
+- [x] One selected realtime/omni provider is documented with vendor source references and credential requirements; a second provider is explicitly accepted or deferred.
+- [x] A feature-gated provider path can start a realtime session, send audio input and receive streamed output events.
+- [x] Output distinguishes audio chunks, text/transcript deltas, lifecycle events and errors.
+- [x] Barge-in/cancel/close behavior is implemented when supported or explicitly documented when unsupported.
+- [x] Unit tests use fake sessions and require no network credentials.
+- [x] Manual live validation is documented with exact command, provider, model, date and outcome.
+- [x] The implementation does not merge provider crates or introduce a final unified provider abstraction.
+- [x] Evidence for the later provider-unification refactor is captured in `docs/archive/iteration/v0_9_11/evidence.md`, an ADR draft or `docs/todo/provider-unification.md` update.
 
 ## Dependencies
 

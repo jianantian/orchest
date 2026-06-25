@@ -14,7 +14,7 @@ Reason: checked-in vendor documentation exists, the protocol exercises the desir
 
 Second provider: **deferred** until after the first Volcengine realtime session produces enough live evidence.
 
-See `docs/iteration/v0_9_11/provider-decision.md` for endpoint, auth headers, event IDs, audio contract and credential variables.
+See `docs/archive/iteration/v0_9_11/provider-decision.md` for endpoint, auth headers, event IDs, audio contract and credential variables.
 
 ## Implemented Experimental Surface
 
@@ -40,10 +40,10 @@ Live WebSocket transport code now exists for credential-gated validation, and `e
 ### Static fixture validation
 
 ```bash
-python -m json.tool docs/iteration/v0_9_11/fixtures/start_session_audio_file_o2.json
-python -m json.tool docs/iteration/v0_9_11/fixtures/text_query.json
-python -m json.tool docs/iteration/v0_9_11/fixtures/fake_event_sequence.json
-stat -c '%n %s bytes' docs/iteration/v0_9_11/fixtures/silence_20ms_16k_s16le.pcm
+python -m json.tool docs/archive/iteration/v0_9_11/fixtures/start_session_audio_file_o2.json
+python -m json.tool docs/archive/iteration/v0_9_11/fixtures/text_query.json
+python -m json.tool docs/archive/iteration/v0_9_11/fixtures/fake_event_sequence.json
+stat -c '%n %s bytes' docs/archive/iteration/v0_9_11/fixtures/silence_20ms_16k_s16le.pcm
 ```
 
 Outcome: all JSON fixtures parsed successfully; silence fixture is 640 bytes.

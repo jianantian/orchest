@@ -2,7 +2,7 @@
 
 ## Files to Read
 
-- `docs/iteration/v0_9_11/prd.md`
+- `docs/archive/iteration/v0_9_11/prd.md`
 - `docs/todo/provider-unification.md`
 - `docs/external/volceengine/realtime.md`
 - Existing ASR/TTS provider docs and tests that describe duplex fixture shape
@@ -10,7 +10,7 @@
 ## Files to Change
 
 - Fixture files or fixture-contract docs under the selected provider/example test location
-- A provider decision note under `docs/iteration/v0_9_11/`
+- A provider decision note under `docs/archive/iteration/v0_9_11/`
 
 ## Steps
 

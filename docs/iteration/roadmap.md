@@ -38,6 +38,7 @@
 | v0.9.9 | 重构 | API Cleanup and Product Patterns（deprecated API 移除、binding shared helpers、message history CoW 评估、guardrail/team pattern examples） |
 | hotfix 06-17 | 重构 | LLM Catalog 信息扩展（`Modality` / `ModelScene` / `ThinkingSpec`，`LlmModelEntry` 加 6 字段，18 条 model 数据填实，修复 DeepSeek `supports_thinking()` bug） |
 | v0.9.10 | 卫星 | Minimax 多模态 Provider 接入（多模态 ContentBlock 地基、Minimax LLM/TTS/Video/Voice/Music adapter，5 个 issue 全部落地） |
+| v0.9.11 | 卫星 | Omni Realtime Provider Evidence（Volcengine realtime 全双工 session、事件映射、barge-in/close/error 语义、live validation、provider-unification evidence） |
 
 ## 迭代编号约定
 
@@ -46,15 +47,9 @@
 
 ## 规划中
 
-### v0.9.11 — Omni Realtime Provider Evidence（规划）
-
-从 [`docs/todo/provider-unification.md`](../todo/provider-unification.md) 的 Step 2 拆出的卫星证据迭代。接入至少一个真实 omni/realtime provider（优先 Doubao / Volcengine realtime；必要时可改为 qwen-omni 但必须补 vendor 文档），验证 audio in → realtime 推理/事件 → audio/text out 的全双工 session 形态，并记录 barge-in、tool-use、事件映射和 crate 边界压力。详见 [`v0_9_11/prd.md`](./v0_9_11/prd.md)。
-
-**依赖**：v0.9.10 Minimax 多模态 Provider 接入完成；现有 ASR/TTS duplex streaming 作为生命周期参考。此迭代不替代 v0.10 的 v1.0 前产品验证门槛，可作为 provider 卫星线独立推进。
-
 ### 后续方向 — Provider 统一（omni 驱动，待排期）
 
-omni（端到端语音大模型，生态位 ≈ asr+llm+tts 融合）和 Chameleon（对话出图模型）从两个相反方向证伪"按模态分 crate"。三步走：① v0.9.10 接 Minimax → ② v0.9.11 接至少 1 个 omni（优先豆包 realtime，`docs/external/volceengine/realtime.md`）→ ③ 按"交互原语 × 模态"重切、合 crate。详见 [`docs/todo/provider-unification.md`](../todo/provider-unification.md)。
+omni（端到端语音大模型，生态位 ≈ asr+llm+tts 融合）和 Chameleon（对话出图模型）从两个相反方向证伪"按模态分 crate"。三步走：① v0.9.10 接 Minimax → ② v0.9.11 接至少 1 个 omni（已完成，Volcengine realtime evidence 已归档）→ ③ 按"交互原语 × 模态"重切、合 crate。详见 [`docs/todo/provider-unification.md`](../todo/provider-unification.md)。
 
 ### v0.10 — Demo A: 能力组合广度验证（规划）
 
@@ -129,7 +124,7 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
             │
             ├──────▶ v0.10 Demo A 消费（ASR/TTS/多模态图像 → 模态广度验证）
             ▼
-   v0.9.11: Omni Realtime Provider Evidence
+✅ v0.9.11: Omni Realtime Provider Evidence
             │
             ▼
    后续: Provider 统一 / 合 crate

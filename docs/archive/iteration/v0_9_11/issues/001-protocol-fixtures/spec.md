@@ -25,7 +25,7 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- [x] The selected first provider is recorded with vendor source references in `docs/iteration/v0_9_11/provider-decision.md`.
+- [x] The selected first provider is recorded with vendor source references in `docs/archive/iteration/v0_9_11/provider-decision.md`.
 - [x] Required credentials, endpoint settings and model/session identifiers are documented.
 - [x] Input fixture expectations are documented, including audio format, sample rate, storage path and text metadata if applicable.
 - [x] A second-provider decision is recorded as accepted or deferred.

@@ -2,9 +2,9 @@
 
 ## Files to Read
 
-- `docs/iteration/v0_9_11/prd.md`
-- `docs/iteration/v0_9_11/issues/001-protocol-fixtures/spec.md` and provider decision output
-- `docs/iteration/v0_9_11/issues/002-duplex-session-scaffolding/spec.md` and lifecycle implementation
+- `docs/archive/iteration/v0_9_11/prd.md`
+- `docs/archive/iteration/v0_9_11/issues/001-protocol-fixtures/spec.md` and provider decision output
+- `docs/archive/iteration/v0_9_11/issues/002-duplex-session-scaffolding/spec.md` and lifecycle implementation
 - `crates/agent-runtime-model/src/` content/event model files
 - Existing ASR/TTS streaming event code and tests
 - Selected provider protocol docs

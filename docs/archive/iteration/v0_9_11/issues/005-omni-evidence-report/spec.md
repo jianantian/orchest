@@ -24,7 +24,7 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- [x] `docs/iteration/v0_9_11/evidence.md` exists or an explicitly named ADR draft contains equivalent evidence.
+- [x] `docs/archive/iteration/v0_9_11/evidence.md` exists or an explicitly named ADR draft contains equivalent evidence.
 - [x] The report includes exact validation commands and outcomes.
 - [x] The report states whether audio input, audio output, text/transcript output, interruption and tool-use were observed.
 - [x] The report lists refactor inputs for provider-core/unification, or explicitly states that insufficient evidence was collected.
