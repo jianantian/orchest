@@ -45,5 +45,10 @@ path = "../../examples/rust/asr/asr_segmented.rs"
 name = "asr_transcribe"
 path = "../../examples/rust/asr/asr_transcribe.rs"
 
+[[example]]
+name = "volcengine_realtime_live"
+path = "../../examples/rust/asr/volcengine_realtime_live.rs"
+required-features = ["volcengine"]
+
 [lints]
 workspace = true

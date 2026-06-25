@@ -1,0 +1,106 @@
+[
+  {
+    "event_id": 50,
+    "name": "ConnectionStarted",
+    "class": "lifecycle",
+    "payload": {}
+  },
+  {
+    "event_id": 150,
+    "name": "SessionStarted",
+    "class": "lifecycle",
+    "payload": {
+      "dialog_id": "fixture-dialog"
+    }
+  },
+  {
+    "event_id": 450,
+    "name": "ASRInfo",
+    "class": "input_speech_detected",
+    "payload": {
+      "question_id": "q-fixture-1"
+    }
+  },
+  {
+    "event_id": 451,
+    "name": "ASRResponse",
+    "class": "transcript",
+    "payload": {
+      "results": [
+        {
+          "text": "你好",
+          "is_interim": true
+        }
+      ]
+    }
+  },
+  {
+    "event_id": 459,
+    "name": "ASREnded",
+    "class": "transcript_lifecycle",
+    "payload": {}
+  },
+  {
+    "event_id": 550,
+    "name": "ChatResponse",
+    "class": "model_text",
+    "payload": {
+      "content": "你好，我是 Orchest realtime fixture。",
+      "question_id": "q-fixture-1",
+      "reply_id": "r-fixture-1"
+    }
+  },
+  {
+    "event_id": 350,
+    "name": "TTSSentenceStart",
+    "class": "audio_metadata",
+    "payload": {
+      "tts_type": "default",
+      "text": "你好，我是 Orchest realtime fixture。",
+      "question_id": "q-fixture-1",
+      "reply_id": "r-fixture-1"
+    }
+  },
+  {
+    "event_id": 352,
+    "name": "TTSResponse",
+    "class": "audio_output",
+    "payload": {
+      "fixture_audio_file": "silence_20ms_16k_s16le.pcm",
+      "encoding": "pcm_s16le",
+      "sample_rate": 24000,
+      "channel": 1
+    }
+  },
+  {
+    "event_id": 359,
+    "name": "TTSEnded",
+    "class": "audio_lifecycle",
+    "payload": {
+      "question_id": "q-fixture-1",
+      "reply_id": "r-fixture-1",
+      "status_code": "20000000"
+    }
+  },
+  {
+    "event_id": 559,
+    "name": "ChatEnded",
+    "class": "model_text_lifecycle",
+    "payload": {
+      "question_id": "q-fixture-1",
+      "reply_id": "r-fixture-1"
+    }
+  },
+  {
+    "event_id": 152,
+    "name": "SessionFinished",
+    "class": "lifecycle",
+    "payload": {}
+  },
+  {
+    "event_id": 52,
+    "name": "ConnectionFinished",
+    "class": "lifecycle",
+    "payload": {}
+  }
+]

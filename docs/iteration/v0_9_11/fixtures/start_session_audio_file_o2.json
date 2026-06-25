@@ -1,0 +1,26 @@
+{
+  "asr": {
+    "audio_info": {
+      "format": "pcm_s16le",
+      "sample_rate": 16000,
+      "channel": 1
+    }
+  },
+  "dialog": {
+    "bot_name": "Doubao",
+    "dialog_id": "",
+    "extra": {
+      "input_mod": "audio_file",
+      "model": "1.2.1.1",
+      "strict_audit": true
+    }
+  },
+  "tts": {
+    "speaker": "zh_female_vv_jupiter_bigtts",
+    "audio_config": {
+      "channel": 1,
+      "format": "pcm_s16le",
+      "sample_rate": 24000
+    }
+  }
+}

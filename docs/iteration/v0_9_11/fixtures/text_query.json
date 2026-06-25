@@ -1,0 +1,9 @@
+{
+  "dialog": {
+    "extra": {
+      "input_mod": "text",
+      "model": "1.2.1.1"
+    }
+  },
+  "query": "请用一句话介绍 Orchest。"
+}
