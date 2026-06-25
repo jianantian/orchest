@@ -37,6 +37,7 @@
 | v0.9.8 | 重构 | Runtime Safety and Observability Hygiene（code execution executor 注入、核心 observability、Python GIL 行为、静态错误 payload 清理） |
 | v0.9.9 | 重构 | API Cleanup and Product Patterns（deprecated API 移除、binding shared helpers、message history CoW 评估、guardrail/team pattern examples） |
 | hotfix 06-17 | 重构 | LLM Catalog 信息扩展（`Modality` / `ModelScene` / `ThinkingSpec`，`LlmModelEntry` 加 6 字段，18 条 model 数据填实，修复 DeepSeek `supports_thinking()` bug） |
+| v0.9.10 | 卫星 | Minimax 多模态 Provider 接入（多模态 ContentBlock 地基、Minimax LLM/TTS/Video/Voice/Music adapter，5 个 issue 全部落地） |
 
 ## 迭代编号约定
 
@@ -44,12 +45,6 @@
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
 
 ## 规划中
-
-### v0.9.10 — Minimax 多模态 Provider 接入（卫星，规划）
-
-把一个多模态厂商（Minimax，16 API：LLM / TTS / Voice / Music / Video）接入现有 provider crate。卫星迭代，按现有 4-crate 布局具体落，**不动 crate 拓扑**。LLM Phase 1 给 `agent-runtime-model::ContentBlock` 加齐 `Image / Video / Audio` 多模态地基；music 放进 `agent-runtime-aigc-providers` 子模块（不新建 crate）。详见 [`v0_9_10/prd.md`](./v0_9_10/prd.md)。
-
-这是"先堆熵"的一步：单厂商横跨 3 个 crate 的 http+auth 重复，正是后续 provider 统一重构需要的证据。
 
 ### 后续方向 — Provider 统一（omni 驱动，待排期）
 
@@ -109,7 +104,7 @@ v0.10 至少验证一个轻量 reviewer sub-agent 或 handoff 路径：Agent-as-
 
 ✅ v0.9.1: ASR Provider Gateway（卫星，已完成）
 ✅ v0.9.3: TTS Provider Gateway（卫星，已完成）
-   v0.9.10: Minimax 多模态 Provider 接入（卫星，规划）
+✅ v0.9.10: Minimax 多模态 Provider 接入（卫星，已完成）
             │
             ▼
    后续: Omni 接入（qwen-omni / 豆包 realtime）→ Provider 统一 / 合 crate
