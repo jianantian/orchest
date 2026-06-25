@@ -16,10 +16,10 @@ Add persisted session resume and a reviewer sub-agent or handoff that checks the
 - [ ] Reviewer path uses either Agent-as-Tool or Handoff through public APIs.
 - [ ] Reviewer output is visible in the event stream or final validation summary.
 - [ ] Fake-model tests cover session resume.
-- [ ] Validation notes classify any sub-agent context friction as demo blocker, release blocker or post-1.0 backlog.
+- [ ] Validation notes classify any sub-agent context friction (ContextMode, history bleed, event visibility) as demo blocker, release blocker or post-1.0 backlog.
 
 ## Notes
 
 Do not add new sub-agent API shape in this issue unless the existing public API blocks the demo. If that happens, document the blocker first.
 
-This issue validates the lightweight reviewer path only. Use Agent-as-Tool when the reviewer should inspect the draft and return feedback to the parent agent; use Handoff only if the reviewer should take over the run-loop session. Long-running Claude-Code-as-tool style supervised delegation remains a future validation scenario and is not required for v0.10.
+This issue validates the lightweight reviewer path only. Prefer `Agent-as-Tool` with `ContextMode::Fresh` (reviewer sees no parent history — avoids anchoring bias). Use `Handoff` only if the reviewer should own the session. Long-running supervised delegation (LlmWatcher, Steering, multi-watcher FIFO) is validated in Demo B (v0.11), not here.
