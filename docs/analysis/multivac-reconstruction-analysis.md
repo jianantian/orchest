@@ -11,15 +11,17 @@
 - **Task** 是执行记账，**Runtime** 是执行宿主，**Artifact** 是执行产物——三者经 Locator（`knowledge://` URI + provenance + scope）全部可寻址
 - 外部 IM 是 distribution surface，不是产品定义
 
-**v0 工程剖面（ADR-001 D7）**：桌面单壳（Tauri vs Electron 复审中，§6.2）+ SQLite + Claude Code 单 runtime + 单 workspace。本文档 §6.7（编排深度）、§6.9（MessageIngress）、§6.10-6.13（双模式交付）为**目标架构，非 v0 范围**——接口形态保留，工程预算为零。
+**v0 工程剖面（ADR-001 D7）**：桌面单壳（Tauri vs Electron 复审中，§6.2）+ SQLite + Claude Code 单 runtime + 单 workspace。本文档 §6.7（编排深度）、§6.9（MessageIngress）、§6.10-6.13（host 取值/打包变体）为**目标架构，非 v0 范围**——接口形态保留，工程预算为零。
 
 ---
 
-## 六、目标架构：双交付形态，同一套 Rust Core + 可远程 Runtime Host
+## 六、目标架构：统一 daemon（host 为参数）+ 可远程 Runtime Host
 
 ### 6.1 核心原则
 
-**一套 Rust 控制面，两种产品交付形态，同一个前端，同一个 HTTP/WS 协议；CLI agent runtime 通过 RuntimeBackend 抽象接入，可本机嵌入，也可部署在另一台机器。**
+> **统一模型校正（以 [ADR D16](./adr-001-product-positioning.md) 为准）**：不存在「两种交付形态」——只有**一个 daemon**，是独立进程监听 `host:port`，客户端经 BACKEND_URL 连接，**host 是参数**(本机 localhost / 用户自有 SSH 盒子 / 可选托管云)。本节下面的「Mode 1 All-in-One(Tauri 嵌入 core)」「Mode 2 Cloud SaaS」**不是两种架构,是同一 daemon 的打包/host 取值变体**：All-in-One = host=localhost + 把启动本机 daemon 打包进 app（可选糖）；Cloud SaaS = host=托管云。**v0 = host ∈ {localhost, 自有盒子}，瘦客户端、web-first，不内嵌、不要求原生壳**。下文「双模式」措辞按此理解。
+
+**一套 Rust 控制面（daemon），同一个前端，同一个 HTTP/WS 协议；host 可为本机、用户自有盒子或托管云；CLI agent runtime 通过 RuntimeBackend 抽象接入，可与 daemon 同机，也可部署在另一台机器。**
 
 ```
                     ┌──────────────────────────────┐
@@ -74,7 +76,7 @@
 
 ### 6.2 桌面壳选型：Tauri vs Electron（复审中）
 
-> **2026-06-12 决策重开**，详见 [electron-vs-tauri 复审](../research/desktop-tools/electron-vs-tauri.md)。下表为原决策依据，其首要论据已失效。
+> **2026-06-12 决策重开 / 2026-06-15 降级**，详见 [electron-vs-tauri 复审](../research/desktop-tools/electron-vs-tauri.md)。下表为原决策依据，其首要论据(FFI)已失效。**且按 ADR D16，原生壳不再阻塞 v0**——v0 可 web-client-first(浏览器连 daemon)，CDP 在 daemon 所在机器、客户端是 screencast viewer，原生壳(Electron/Tauri)降级为「需要更好 browser-surface 集成时」的后续打包项。下文复审在「确实要做原生壳」时仍适用。
 
 | | Electron | Tauri |
 |---|---------|-------|
@@ -296,6 +298,8 @@ pub trait RuntimeBackend: Send + Sync + 'static {
 
 `RuntimeBackend` 是 Multivac 作为 execution control plane 而非聊天插件的根本边界——所有 Task 的 runtime projection、所有 artifact 的产生与消费、所有 workspace 的变更，都通过这个 trait 流入系统真相。
 
+> **拓扑校正（以 [ADR §0.7](./adr-001-product-positioning.md) 为准）**：RuntimeBackend 不是「Orchest 大脑指挥 Claude Code」的串接层，而是 **一池 runtime binding**（`inline:orchest` / `cli:claude-code` / `cli:codex`）+ 一个 **路由器**。每个 runtime 有一个「人类输入槽」+ 一条 TaskEvent 输出流；**谁填输入槽取决于阶段**——v0 是人（前台共创，经工作台/deixis），M2 是 avatar（阶段二替缺席的人驱动）。本节下面的 `start_agent_task` / `cli-task-dispatch` / `task-supervisor` 描述的是 **M2 编排层**（avatar 作为路由器/驱动者时的形态），**不是 v0**：v0 是「人当路由器 + 单一 cli:claude-code binding + 人填输入槽」，没有 Orchest agent 居于人与 Claude Code 之间。inline/cli 不是两种员工类型、也非固定 primary——是 pool + router（先人后 avatar）。
+
 **`StartAgentTask` 完整契约**（吸收 MIMO `SpawnInput` 的验证过的字段，这是 spawn 不退化为 fire-and-forget 的关键）：
 
 ```rust
@@ -331,13 +335,16 @@ pub struct CompletionGate {
 
 `task_status()` 返回 `RuntimeProjection` 而不是存在 Task 表里——runtime projection 是瞬时执行状态（idle / working / waiting_for_user / processing_tools），由 RuntimeBackend 实时计算。不持久化避免了「数据库状态与实际执行不一致」的问题。
 
-- 对模型暴露的是 `start_agent_task` / `attach_agent_task` / `respond_permission` 等 product tools，不暴露 `run_claude_code` 这种 vendor-specific tool。
-- `cli-task-dispatch` skill 决定何时创建或附加 CLI task；`task-supervisor` skill 决定何时注入指令、批准、暂停或终止。
-- `PtyRuntime` 负责 Claude Code：spawn `claude`，读取 JSONL / PTY 输出并转译为 `TaskEvent`。
+- **（M2 编排层）** 对 avatar/编排 agent 暴露的是 `start_agent_task` / `attach_agent_task` / `respond_permission` 等 product tools，不暴露 `run_claude_code` 这种 vendor-specific tool。
+- **（M2 编排层）** `cli-task-dispatch` skill 决定何时创建或附加 CLI task；`task-supervisor` skill 决定何时注入指令、批准、暂停或终止——二者是 avatar 当路由器/驱动者时的能力，**v0 由人直接做（人选 runtime、人填输入槽）**。
+- **（v0 + 始终）** `start/terminate/restart` 走进程组生命周期（kill 整棵进程树），人与 avatar 共用同一条「填输入槽」(inject-input) 路径——这是 v0 桩，不分叉。
+- `PtyRuntime` 负责 Claude Code：spawn `claude`（官方 headless / stream-json），读取 JSONL 输出并转译为 `TaskEvent`。
 - `AcpRuntime` 负责 Codex / OpenCode：spawn ACP adapter subprocess，通过 JSON-RPC stdio 转译事件与权限请求。
 - `RemoteRuntimeBackend` 只关心远程协议，不关心具体 CLI。远程节点可以在云端沙箱，也可以在用户本机。
 
-### 6.7 编排深度：spawn 契约之上的四个机制
+### 6.7 编排深度：spawn 契约之上的四个机制（M2，avatar 入场后）
+
+> 本节是 **M2 编排层**——avatar（阶段二驱动者）的能力集（[ADR §0.7](./adr-001-product-positioning.md)）。v0 不实现，但 `TaskEvent` / 输入槽 / 进程组生命周期等桩 v0 就埋，M2 零返工。
 
 这是 Multivac 与「调 API 的聊天工具」的根本差异层（MIMO 验证），其中 loop 级机制是对 Orchest SDK 的需求输入，产品级机制在 multivac-core 实现：
 
@@ -378,6 +385,17 @@ pub trait AgentFactory: Send + Sync {
 
 远期（接口不堵死）：**Dream**（从 session traces 提取持久知识更新 project memory）与 **Distill**（重复手动工作流自动打包为 skill）。
 
+**5. 自主执行：watcher-driven loop（avatar 的核心动作）**。avatar 在阶段二「填输入槽」的方式就是一个循环——读 TaskEvent，决定下一句输入，判完成。两种 loop 策略：
+
+| | continue-loop（ReAct，机制 1） | restart-loop（Ralph） |
+|---|---|---|
+| context | 同上下文，注入 reason 再跑 | **每轮全新 context** |
+| 跨轮记忆 | 在对话里 | **在磁盘**（progress/checkpoint/objects——沉淀是承重件） |
+| 进程 | 不重启 | **kill 整树 + 带状态指针重启** |
+| 适合 | 「快好了，推一把」 | 长任务、context rot 是敌人、过夜碾 |
+
+二者共用 RuntimeBackend 控制面（与人 UI 同一条总线，人随时接管）；终止条件 = completion gate（机制 2）。**护栏不可省**：迭代 cap + BudgetGuard 成本闸、每轮 workspace 快照（接 ADR D12 可整 loop 回滚）、卡死 N 轮 → `Escalate` 到 Inbox/人、每轮仍走双层权限。现有零件：`watcher.rs`（`WatcherAction::Inject/Steer/Abort`，泛化到消费 cli 的 TaskEvent）、`llm_watcher.rs`、`supervisor.rs`（进程监管树，从 inline 扩到 cli runtime）。
+
 ### 6.8 双层权限模型
 
 两层互补，不混用（Kocoro 经验）：
@@ -414,7 +432,7 @@ pub enum IngressMessage {
 - **回调防伪造**：交互卡片按钮签 runId + scope + operator + action + policy_fingerprint + 过期 + nonce，HMAC + replay 防护
 - adapter 本身尽量薄，不在 v0 实现——但 `ingress/` 模块和上述 trait 现在就定型，避免后补时侵入 session 模块
 
-### 6.10 两个产品 Binary 的差异
+### 6.10 host 取值 / 打包变体的 Binary 差异（原「两个产品 Binary」）
 
 ```rust
 // ===== Mode 2: Cloud (multivac-server/src/main.rs) =====
@@ -476,7 +494,7 @@ async fn main() -> Result<()> {
 
 **multivac-core 知道 deployment 与 runtime placement，但不关心具体 CLI 内部协议。** Claude Code JSONL、Codex ACP、PTY daemon stdin 都被限制在 runtime-host 实现里。
 
-### 6.11 前端：两种模式下的连接策略
+### 6.11 前端：统一 host 下的连接策略
 
 ```typescript
 // frontend/src/api/client.ts
@@ -490,9 +508,11 @@ const BACKEND_URL = (window as any).__BACKEND_URL__
 const ws = new WebSocket(BACKEND_URL.replace('http', 'ws') + '/ws');
 ```
 
-前端不区分模式——它只知道一个 `BACKEND_URL`。开发时指向 `localhost:5173`（Vite proxy to Rust），生产时指向 Tauri 本地端口或云端 URL。
+前端不区分模式——它只知道一个 `BACKEND_URL`。开发时指向 `localhost:5173`（Vite proxy to Rust），生产时指向桌面壳本地端口或云端 URL。
 
-### 6.12 两种模式的行为差异
+> **跨设备：同一 host 模型 + 瘦 relay 可达，[ADR D15](./adr-001-product-positioning.md)（部署统一模型见 D16）。** 跨设备不引入新 host 形态——执行平面(workspace/files/terminal/Claude Code)仍在用户机器(local-first)，只是 daemon 主动外拨一个**瘦 relay**(只转发 events + auth，非全后端)，让移动/web 客户端可达。这正是 `BACKEND_URL` + daemon-first + 事件溯源的免费副产品：异机客户端就是「另一个瘦客户端，BACKEND_URL 指向 relay，订阅同一 daemon 的事件流」。复用 RuntimeBackend 已有的 reverse-WebSocket 可达模式。**移动端是阶段二 surface**(遥控 + 验收，surface 子集)，不是阶段一重共创。web 跨设备 v0 即近乎免费(创始人用 tunnel/LAN)；移动 app + 产品化 relay = M2。
+
+### 6.12 host 取值 / 打包变体的行为差异
 
 | 行为 | All-in-One (Tauri) | Cloud SaaS |
 |------|-------------------|------------|
@@ -502,20 +522,20 @@ const ws = new WebSocket(BACKEND_URL.replace('http', 'ws') + '/ws');
 | **User Shell PTY** | 用户本机 bash/zsh | 云端沙箱或浏览器连接的 remote shell |
 | **文件访问** | 用户本地文件系统 | 云端 workspace 目录 |
 | **数据库** | 本地 SQLite 文件 | 云端 Postgres |
-| **多设备同步** | 不支持（本地数据） | 支持 |
+| **多设备同步** | **支持**（本地 daemon + 瘦 relay 可达，D15；执行仍在本机） | 支持（daemon 在云） |
 | **离线工作** | 支持（LLM 调用除外） | 不支持 |
 | **协作** | 不支持 | 支持 |
 | **数据隐私** | 完全本地 | 云端存储 |
 | **安装** | 下载 .dmg/.msi | 打开浏览器 |
 | **升级** | Tauri updater | 服务端部署 |
 
-### 6.13 AppConfig 的模式差异
+### 6.13 AppConfig 的 host 取值差异
 
 ```rust
 // crates/multivac-core/src/lib.rs
 
 pub struct AppConfig {
-    // 两种模式都有的
+    // 各 host 取值都有的
     pub skills_dir: PathBuf,
     pub file_store_root: PathBuf,
 
@@ -572,7 +592,7 @@ pub struct FeatureFlags {
 
 ### 6.14 技术栈选择
 
-| 层 | 技术 | 两种模式的差异 |
+| 层 | 技术 | host 取值的差异 |
 |----|------|--------------|
 | **桌面壳** | Tauri 2.x | 仅 Mode 1 |
 | **HTTP 框架** | axum 0.8 | 相同 |
@@ -591,7 +611,7 @@ pub struct FeatureFlags {
 
 ## 七、重构阶段（按 ADR-001 重排：一条线，五个面）
 
-**v0 工程剖面：桌面单壳（Tauri vs Electron 复审中，§6.2）+ SQLite + Claude Code 单 runtime + 单 workspace。** Cloud/Postgres、多 CLI runtime、MessageIngress、Org/Employee、Meeting/ASR、Orchest 编排深度全部移出 v0——trait/URI/事件协议等接口形态保留，工程预算为零。
+**v0 工程剖面（ADR D7/D16 统一模型）：daemon 独立进程 at host:port（host=本机或自有 SSH 盒子）+ 瘦客户端（web-first，原生壳 deferred，§6.2）+ SQLite + Claude Code 单 runtime + 单 workspace。** Cloud/Postgres、多 CLI runtime、MessageIngress、Org/Employee、Meeting/ASR、Orchest 编排深度全部移出 v0——trait/URI/事件协议等接口形态保留，工程预算为零。
 
 ### 阶段 0：Kernel 地基
 
@@ -605,16 +625,18 @@ pub struct FeatureFlags {
    - `sessions`（runs：SessionIdentity 四元组判定 resume）
    - `events`（normalized TaskEvent，事件溯源，重放还原 UI）
    - `objects`（**Locator 注册表**：`knowledge://` URI + provenance + scope——一切可指代对象在此登记，ADR-001 D4 给团队路线的结构性让步）
+   - 持久化纪律（ADR D9/D10/D11）：events 带 schema_version 且永不破坏重放；持久化管线内置脱敏器（token/secret 模式 + 路径黑名单），先脱敏后落盘；workspace 写锁模型（同 workspace 同时仅一个持写权 run）；一键导出（JSONL + 文件）
 
 3. **RuntimeBackend + Claude Code**：
    - `RuntimeBackend` trait + normalized `TaskEvent`；`StartAgentTask` 按 §6.6 完整契约定型（context_mode / lifecycle / background / gate 即使 v0 不全实现，schema 先锁定）
-   - Claude Code `PtyRuntime`（v0 唯一实现）：spawn CLI，JSONL → TaskEvent 转译
+   - Claude Code `PtyRuntime`（v0 唯一实现）：走官方 headless / stream-json 接口（不做 PTY 屏幕抓取），JSONL → TaskEvent 转译 + 契约测试（版本升级先跑契约，ADR D13）；认证用用户自己的 Claude 订阅
+   - `start_task` 前置钩子：run 前自动 workspace 快照 + 一键回滚（撤销先于 review，ADR D12）
    - 双层权限（§6.8）：Approval 枚举 + shell prefix-depth + workspace deny-list
 
 4. **对话面闭环**：
    - 前端 scaffold：Vite + React 18 + Tailwind + Jotai
    - HTTP POST → skeleton → WS 填充 → `reduceTurnState` → TurnCard
-   - Tauri 壳跑通（本地 axum + webview）
+   - web 客户端连本机/盒子 daemon 跑通（BACKEND_URL；原生壳 deferred，§6.2 / ADR D16）
 
 ### 阶段 1：介质面（介质论的最小闭环）
 
@@ -623,6 +645,7 @@ pub struct FeatureFlags {
 7. **终端面**：共享 PTY（portable-pty + xterm.js）+ session 持久化 + replay buffer + **sideband input**（agent 注入命令不干扰用户键盘，salvage §6.1）
 8. **Deixis 原语**：四个面统一的「选中 → Locator URI → 引用 chip → 进输入框」；对象写入 `objects` 表。**session/turn 本身也是引用对象**——把一个会话的 normalized transcript 注入另一个会话（v0 为 Claude↔Claude 并行 session 共享上下文；第二 runtime 接入后升级为跨厂商,创世卡点 2）
 9. **Context Composer v1**：环境摘要常驻 + 指代内容精确注入 + `read_file` / `read_terminal` / `git_status` 按需查询工具；前端 context tray（人能看见并勾选 agent 将看到什么）
+   - 随附**本地遥测**（ADR D14）：指代次数、沉淀引用率、context tray 修改率的本地埋点——里程碑 exit criteria 的测量基础；本地明文、不上传
 
 ### 阶段 2：browser 面 + 感知
 
@@ -648,6 +671,8 @@ pub struct FeatureFlags {
 
 ## 八、职责边界：Orchest vs Multivac vs Runtime Host
 
+> **v0/M2 读法（[ADR §0.7](./adr-001-product-positioning.md)）**：下表是**完整目标架构**的职责分配。其中「Orchest SDK」列在 **v0 基本不进产品**——v0 是「人当路由器 + 单一 cli:claude-code binding」，Orchest 的 AgentRun/SubAgent/Skill 编排是 **M2 avatar 入场**时才激活的能力。v0 真正需要的是 multivac-core 的 RuntimeBackend（进程组生命周期 + 单一输入槽 + TaskEvent）+ Claude Code 的 PtyRuntime。
+
 | 职责 | Orchest SDK | multivac-core (Multivac) | multivac-runtime-host |
 |------|------------|--------------------------|--------------------|
 | Agent loop | ✅ AgentRun | — | — |
@@ -659,6 +684,9 @@ pub struct FeatureFlags {
 | Sub-agent | ✅ SubAgentBuilder | — | — |
 | Mid-run steering | ✅ (v0.9) | UI 控制 + RuntimeBackend steering | runtime-specific steering |
 | Normalized event contract | ✅ RuntimeEvent | ✅ TaskEvent 持久化、广播、审计 | ✅ CLI/ACP/PTY → TaskEvent 转译 |
+| 路由 / 填输入槽 (WHO) | — | **v0：人**（工作台 UI）；**M2：avatar**（inline binding 上的 Orchest agent） | 执行 inject-input 到对应 runtime |
+| Avatar（阶段二驱动者，M2） | ✅ AgentRun 承载 | avatar 生命周期 + 授权范围 = 人的权限 + 护栏 | — |
+| Employee（可复用 AgentConfig，M2/M3） | ✅ AgentConfig | org/ 管理具名 worker 配置 | 实例化到 runtime |
 | | | | |
 | **HTTP/WS server** | — | ✅ axum router | reverse WS client/server only |
 | **Auth (JWT, OAuth)** | — | ✅ auth/ module | runtime-host token / binding |
@@ -719,7 +747,7 @@ pub struct FeatureFlags {
 ## 十一、立即行动项
 
 1. **签署 ADR-001**：三方确认定位与 v0 范围——之后所有 scope 争论对照它裁决
-2. **Init Rust workspace**: `cargo new --lib crates/multivac-core` + `cargo new crates/multivac-desktop`（Tauri；multivac-server 后置）
+2. **Init Rust workspace**: `cargo new --lib crates/multivac-core`（daemon 独立进程 bin；web 客户端连它，原生壳 multivac-desktop / multivac-server 后置——ADR D16）
 3. **Design v0 schema**: `workspaces / sessions / events / objects(Locator)` 4 张表的 CREATE TABLE SQL（SQLite）
 4. **Define `RuntimeBackend` trait + `TaskEvent` schema**: 先锁定 start/attach/permission/events 最小合同；`StartAgentTask` 按 §6.6 完整契约定型（含 `ContextMode` / `CompletionGate` 类型）
 5. **对话面闭环**: Claude Code PtyRuntime → TaskEvent → WS → `reduceTurnState` → TurnCard，HTTP POST skeleton 先行

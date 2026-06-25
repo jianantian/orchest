@@ -336,36 +336,33 @@ src/types/        → 未来 packages/product-model  （session/turn/task/artifa
 
 组件不直接 import wire 格式（TaskEvent JSON），只消费 `reduceTurnState` 之后的 product model 类型。
 
-### 5.2 色彩体系（借鉴 Epitaxy + 自建）
+### 5.2 色彩体系
+
+> 基调、token 与琥珀纪律以 [multivac-design.md](./multivac-design.md) 为准（墨/纸/琥珀体系，暖中性基底替换原 slate 占位色板）。本节保留派生规则与组件级纪律。
 
 ```css
 :root {
-  /* 语义色 */
-  --color-primary: #3b82f6;
-  --color-primary-rgb: 59, 130, 246;
-  --color-info: #6366f1;
-  --color-info-rgb: 99, 102, 241;
-  --color-success: #22c55e;
-  --color-success-rgb: 34, 197, 94;
-  --color-warning: #f59e0b;
-  --color-warning-rgb: 245, 158, 11;
-  --color-error: #ef4444;
-  --color-error-rgb: 239, 68, 68;
+  /* 基底：墨与纸（暖中性，完整 token 见 multivac-design.md §2.2） */
+  --background: #faf8f4;
+  --foreground: #1c1a17;
+  --surface: #f3f0ea;
+  --border: #e4dfd5;
 
-  /* 表面色 */
-  --background: #ffffff;
-  --foreground: #0f172a;
-  --surface: #f8fafc;
-  --surface-secondary: #f1f5f9;
-  --border: #e2e8f0;
+  /* 品牌色：琥珀——出场率 < 5%（deixis 高亮 / 聚焦态 / 品牌时刻） */
+  --color-primary: #d97917;
 
-  /* 暗色 */
+  /* 语义色：独立状态系统，降饱和 */
+  --color-success: #4d9960;
+  --color-error: #c4554d;
+  --color-warning: #d9a317;
+  --color-info: #5b7e9e;
+
   &[data-theme="dark"] {
-    --background: #0f172a;
-    --foreground: #f1f5f9;
-    --surface: #1e293b;
-    --surface-secondary: #334155;
-    --border: #475569;
+    /* 石墨夜：暖黑微偏褐 */
+    --background: #161411;
+    --foreground: #e8e4dc;
+    --surface: #1f1c18;
+    --border: #353029;
   }
 }
 ```
@@ -565,6 +562,32 @@ Agent 调用 tool（requires approval） → WS 收到 permission:need
 
 同一请求同时进入 ChatLane 的 ApprovalStrip——模态被关闭/失焦后 approval 仍有常驻可见入口，不会「丢」。多 run / 多 sub-agent 并发请求时以 strip 为主视图，模态只针对当前聚焦 session（设计原则 6）。
 
+### 6.5 两阶段工作流的 UI：输入槽 · avatar 驱动 · 验收回流
+
+> 对齐 [ADR §0.7](./adr-001-product-positioning.md)。**v0 只做阶段一 + 人填输入槽**；avatar 驱动的阶段二与验收回流是 **M2**——但 UI 外壳（gate 状态、Inbox、take-over 控件）v0 就以最小形态埋好，M2 零返工。
+
+**SessionInput = 那个「人类输入槽」。** 前端只有一条发送路径(`POST /channels/:id/messages` → inject-input)；v0 是人在打字，M2 是 avatar 在填同一个槽。所以 SessionInput 不是「聊天框」，是工作台对 runtime 输入槽的视图——这决定了它的组件边界(deixis chips + context tray + 发送)对人和 avatar 是同一套。
+
+**阶段一（v0 核心，attended 共创）**：
+- 人填槽，TurnCard 流式回放，deixis 指代、context tray 控制 agent 所见
+- 产出**设计文档**——它是一等 artifact（在 Surface 区作为文档面打开，可 deixis 引用），不是聊天里的一段文本
+- **「批准设计」是一个独立、显眼的动作**（approve the plan, not every command）：批准 = 授权阶段二自动执行。它不是 TurnCard 里的小 header，是设计面上的一等按钮 + 授权范围(允许的目录/runtime/预算)的可见勾选
+
+**阶段二（M2，unattended 自动执行）**：
+- 输入槽改由 **avatar 驱动**——人不在打字。UI 必须**显式标注「avatar 自主驱动中」**：avatar 色标 + 一个清晰的 autonomous 指示(区别于"人在操作")，TurnCard 流继续但 author = avatar
+- **take-over 常驻可见**：人随时夺回输入槽(开始打字即接管)——因为控制面是共享总线(设计原则 6)
+- gate 状态进 TurnCard：`验收中 / 未通过(+理由,avatar 返工) / 通过`(§3.2)
+- 后台 run 不抢前台：完成 / gate 降级(partial/blocked) / 卡死升级 → 进 **Inbox**(badge + toast，非侵入)
+
+**验收回流（M2，meaning 的后端）**：
+- Inbox 是验收的入口——点击后台 run 进入**验收视图**：设计文档 + diff + 测试结果 + judge 报告**并排**(Surface 区的 overlay/多面)
+- 人的裁决:**接受** / **打回**——打回要区分两个去向:回阶段一(重设计)还是回阶段二(重执行)，对应两个不同按钮
+- 这是人留在创作弧两端中的「后端」(前端是设计)；验收做得好不好 = 整条弧的命门(ADR §0.7)
+
+**Avatar attribution 贯穿全局**：人 authored 的 turn/action 与 avatar authored 的，用 §5.2 的 agent 色标 + 标记区分；Inbox 条目、surface 上的 agent 现身(设计原则 10)、TurnCard author 三处共用同一标识。让用户任何时候都能一眼分清「这是我做的 / 这是我的 avatar 替我做的」。
+
+**跨设备：移动/web = 阶段二 surface 子集（[ADR D15](./adr-001-product-positioning.md)）。** 客户端只是「订阅同一 daemon 事件流、BACKEND_URL 指向 daemon(本机/自有盒子/relay)」的瘦客户端——渲染器无关的 TurnState（§5.5 的 `renderWeb`/`renderCard`/`renderPush`）本就为此预留。移动端**不做阶段一重共创**(无终端/browser 感知/重 deixis)，它渲染 surface 的子集:TurnCard 流(读)、ApprovalStrip(approve)、Inbox→验收视图、轻量 inject-input、artifact(diff/doc)只读。桌面=阶段一(全 surface),移动/web=阶段二(遥控+验收)。web 异机连 v0 即近乎免费(同一份前端 + BACKEND_URL);移动 app 与产品化 relay = M2。
+
 ---
 
 ## 七、不做的事
@@ -582,3 +605,4 @@ Agent 调用 tool（requires approval） → WS 收到 permission:need
 | **不做自由拖拽分栏** | v0 布局做死：Surface 区 tab/二分屏 + Chat Lane 固定右侧，先建立空间记忆 |
 | **不做编辑器内核** | 人读审指，agent 写（ADR-001 D6）；Reader 用成熟件，编辑外链 |
 | **不做角色档案 / GenUI 布局引擎** | 角色是涌现的——内容驱动 surface 激活；v2 用 layout preset（ADR-001 D2） |
+| **v0 不做 avatar 自主驱动 / 验收回流的完整 UI** | 阶段二是 M2（§6.5）；v0 是人填输入槽。仅埋最小外壳(gate 状态、Inbox badge、take-over 控件)，不建自动驱动可视化 |
