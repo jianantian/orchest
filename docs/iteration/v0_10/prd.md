@@ -12,7 +12,7 @@ This iteration turns the previously unnamed "SDK validation product" milestone i
 
 Build **Briefing Desk**, a local **multimedia** research-brief agent demo. It takes a directory of mixed research materials — Markdown/text notes, image charts/screenshots, and at least one recorded audio interview — plus a user question. It runs an Orchest agent that transcribes audio sources (ASR), reads image sources through a vision model (multimodal image input), searches and reads text through filesystem tools, streams progress events, asks for approval before writing output, optionally synthesizes an audio version of the brief (TTS), persists the session and produces a final Markdown brief.
 
-The demo is intentionally small in **orchestration** but deliberately broad in **modality**. The modalities are not bolted on for coverage's sake: a real research-briefing tool naturally ingests recorded interviews and chart images and offers an audio version of its output. Breadth falls out of a coherent product, not a checklist.
+The demo is intentionally small in **orchestration** but deliberately broad in **modality** — because its real job is to **debug the SDK's public surface before v1.0 freezes it**. Wiring each provider gateway into a working app *is* the validation probe: you only discover that a gateway's construction is awkward, its events are confusing, or its fakes are inaccessible (see issue 005's known fake-provider finding) by actually calling it from application code. The product shape — a multimedia briefing tool — is the vehicle, chosen so the integrations exercise realistic code paths instead of contrived ones, because better product fit yields better debug signal. But the driver is coverage of the freeze surface, not product polish.
 
 The demo stays small everywhere else: no web UI, no user accounts, no hosted service, no multi-tenant concerns and no new runtime framework. It must feel like a complete usable tool rather than a code snippet.
 
@@ -84,12 +84,12 @@ This is the breadth axis the iteration must cover. Each modality is present beca
 | Multimodal image input | `ContentBlock::Image` + vision model adapter | Read a chart/screenshot in the corpus into the brief | Required |
 | ASR | `AsrProvider` gateway | Transcribe a recorded interview in the corpus | Required |
 | TTS | `TtsProvider` + `VoiceManager` | Synthesize an audio version of the brief | Required |
-| AIGC image generation | `agent-runtime-aigc-providers` gateway | Generate one figure/diagram for the brief | Optional stretch — include only if it adds real product value; a forced illustration produces weak validation signal |
+| AIGC image generation | `agent-runtime-aigc-providers` gateway | Generate one figure/diagram for the brief | Optional — lowest freeze risk (oldest gateway, v0.6.1 + hotfixes). Add a minimal debug probe if cheap; if skipped, record it as a conscious coverage gap in the validation report |
 | AIGC video/music, audio-block input | — | — | Out of scope |
 
 **Offline discipline.** Every required modality must have a deterministic fake/stub provider so the `--fake` smoke path exercises the full multimedia flow (transcribe → read image → write → synthesize) without network credentials. Live provider runs for each modality are manual and env-var gated, documented in the validation report.
 
-**Why these and not others.** Audio input directly to the LLM is excluded because the `Audio` ContentBlock is a forward placeholder with no provider yet — ASR is the supported bridge from audio to text. AIGC image-out is optional because generating an illustration for a text brief is decoration, not a natural product need; including it on weak grounds would pollute the validation signal. Video and music have no place in a research brief.
+**Why these and not others.** The selection is risk-driven, not product-driven. The three required gateways (multimodal image-in, ASR, TTS) are the *newest* satellites (v0.9.1–v0.9.10), so they carry the most un-validated surface going into freeze — they get a mandatory dogfood pass. AIGC is older and more battle-tested (v0.6.1 + hotfixes), so it is optional; if it is skipped, the validation report states so as a conscious coverage gap rather than a silent omission. Audio-input-direct-to-LLM is excluded for a hard reason: the `Audio` ContentBlock is a forward placeholder with no provider yet, so ASR is the only supported audio→text bridge. Video and music generation are out of scope — no realistic briefing code path drives them, so any integration would be contrived and yield weak debug signal.
 
 ### Runtime Capabilities Under Test
 
