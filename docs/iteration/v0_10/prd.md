@@ -4,6 +4,8 @@
 
 v1.0 should not be a bucket for every remaining backlog item. Before the first public release, Orchest needs one small but real product built on top of the SDK. The goal is to discover API friction, missing runtime API gaps and documentation gaps through actual usage, then fix only the issues that block product completion or API stability.
 
+This iteration is **Demo A** of a two-demo validation strategy: Demo A (v0.10) validates breadth—runtime capabilities working together in one coherent product. Demo B (v0.11) validates depth—the supervised delegation APIs that the Multivac M2 avatar will depend on. The two demos together form the pre-v1.0 evidence base.
+
 This iteration turns the previously unnamed "SDK validation product" milestone into a concrete pre-1.0 gate.
 
 ## Product
@@ -82,9 +84,9 @@ v0.10 must validate the lightweight reviewer path, not every delegation shape.
 
 - **Agent-as-Tool** means the parent agent calls a child agent as a normal tool and then continues with the returned result. This is the preferred shape when Briefing Desk needs a reviewer that inspects a draft and returns feedback.
 - **Handoff** means the current run-loop control flow transfers to another agent. This is acceptable for the reviewer path only if the demo wants the reviewer agent to take over the session rather than return as a tool result.
-- **Supervised long-running delegation** means a delegated worker, such as a Claude-Code-as-tool style agent, is monitored through event streams and can be steered mid-run. This remains a future validation scenario for long-running agent-tool products; it is not a v0.10 requirement.
+- **Supervised long-running delegation** means a delegated worker, such as a Claude-Code-as-tool style agent, is monitored through event streams and can be steered mid-run. This is not a v0.10 requirement. The full supervised delegation API surface—LlmWatcher, Steering, ContextMode, supervisor recovery, multi-watcher FIFO, and completion gate—is validated in Demo B (v0.11).
 
-The v0.10 demo should validate at least one public-API reviewer path using Agent-as-Tool or Handoff. Any friction in `ContextMode`, handoff state, event visibility or resume behavior is recorded in the validation report and classified by the triage rule below.
+The v0.10 demo should validate at least one public-API reviewer path using Agent-as-Tool or Handoff. Any friction in `ContextMode`, handoff state, event visibility or resume behavior is recorded in the validation report and classified by the triage rule below. Friction that touches the deeper supervised delegation surface is flagged for v0.11.
 
 ## Validation Triage Rule
 
@@ -123,6 +125,15 @@ Examples:
 - [ ] Demo uses only public Orchest APIs.
 - [ ] Validation report records API friction, docs gaps and release-blocker decisions.
 - [ ] v1.0 scope is updated from the validation report rather than from unvalidated backlog.
+
+## Path to v0.11
+
+v0.10's validation report feeds directly into v0.11 scope in two ways:
+
+1. **API blockers promoted to v0.11 must-fix**: any release blocker discovered in the reviewer path that touches supervised delegation APIs (LlmWatcher, Steering, ContextMode, supervisor recovery) is handed to v0.11 to confirm the fix under deeper exercise.
+2. **Seam gap list**: the validation report produces a named list of supervised delegation friction points. v0.11 begins by running against that list and either closing each item or reclassifying it.
+
+v0.10 does not block on v0.11 scope being defined; it blocks only on v0.10 acceptance criteria being met.
 
 ## Dependencies
 

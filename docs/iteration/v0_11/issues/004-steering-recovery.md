@@ -1,0 +1,28 @@
+# 004 · Steering injection and supervisor recovery
+
+## Background
+
+This issue exercises the deepest parts of the supervised delegation API: mid-run steering via `InjectCmd`, multi-watcher concurrency, controlled fault injection, and supervisor recovery. These paths are the highest-risk seams for Multivac M2.
+
+## Goal
+
+Implement the `InjectCmd` injection scenario, add a second watcher to test multi-watcher FIFO, trigger the `fault_trigger` tool and verify supervisor recovery.
+
+## Acceptance Criteria
+
+- [ ] Watcher injects one `InjectCmd` at a predetermined point in the worker run (e.g., after the first tool call event). The injected command is visible in the worker event stream and changes the worker's next step.
+- [ ] Worker processes the injection without panicking or losing existing state.
+- [ ] Two watchers are attached concurrently to the same worker run. Both receive all events. Event delivery order is the same for both watchers across repeated fake-model runs on the same machine.
+- [ ] Fault injection scenario: supervisor run includes a step that triggers `fault_trigger`. Worker run terminates with a failure. Supervisor detects the failure through the public failure detection API (not by catching a panic or checking a side channel).
+- [ ] Supervisor recovery: after failure detection, supervisor either restarts the worker or escalates to a summary output. The chosen path is exercised end-to-end in fake-model mode.
+- [ ] Completion gate: supervisor waits for worker done without relying on a fixed timeout. The mechanism used is documented in `FINDINGS.md` or validation notes.
+- [ ] Fake-model smoke test for the full path (inject → multi-watcher → fault → recovery → completion gate) passes and is deterministic.
+- [ ] All seam gaps found during this issue are added to `FINDINGS.md` with preliminary classification.
+
+## Notes
+
+`InjectCmd` injection at a predetermined point likely requires either a hook or a watcher event handler. If there is no public API to inject at a specific event, that is a seam gap finding (likely a seam blocker).
+
+Multi-watcher FIFO test should use a simple event counter assertion, not wall-clock ordering. Record the exact assertion used so issue 005 can evaluate whether the test proves the property.
+
+Supervisor recovery design: prefer restart over escalation if the public API makes restart easy. If restart requires private access or undocumented state management, use escalation and record the restart gap as a seam blocker.

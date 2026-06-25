@@ -50,21 +50,33 @@
 
 omni（端到端语音大模型，生态位 ≈ asr+llm+tts 融合）和 Chameleon（对话出图模型）从两个相反方向证伪"按模态分 crate"。三步走：① v0.9.10 接 Minimax → ② 接 1-2 个 omni（qwen-omni / 豆包 realtime，`docs/external/volceengine/realtime.md`）→ ③ 按"交互原语 × 模态"重切、合 crate。详见 [`docs/todo/provider-unification.md`](../todo/provider-unification.md)。
 
-### v0.10 — Demo Product Validation（规划）
+### v0.10 — Demo A: 能力组合广度验证（规划）
 
-用一个真实但小的完整产品 dogfood SDK，验证其完备性和易用性。v0.10 用 demo 证据决定哪些 API / 文档 / runtime 问题必须在公开发布前修。
+两轮 demo 验证策略的第一轮，**广度优先**：用一个真实但小的完整产品 dogfood SDK，验证运行时各能力在产品场景下的协同。v0.10 用 demo 证据决定哪些 API / 文档 / runtime 问题必须在公开发布前修。
 
 当前产品形态锁定为 **Briefing Desk**：本地研究简报 agent。它读取一组 Markdown/text 材料，围绕用户问题搜索、引用、生成报告，展示事件流，在写文件前走 approval，并支持 session resume。详见 [`v0_10/prd.md`](./v0_10/prd.md)。
 
-v0.10 至少验证一个轻量 reviewer sub-agent 或 handoff 路径：Agent-as-Tool 用于"父 agent 调子 agent 审稿后继续"，Handoff 用于"会话控制权转移给另一个 agent"。Claude-Code-as-tool 风格的长运行 Supervised Delegation 仍作为后续 agent-tool 产品验证场景，不作为 v0.10 必做项。
+v0.10 至少验证一个轻量 reviewer sub-agent 或 handoff 路径（Agent-as-Tool 或 Handoff）。v0.10 验证报告中的 Supervised Delegation 摩擦点会直接移交 v0.11。
 
-**依赖**：v0.9.2 文档（验证者参照文档上手）
+**依赖**：v0.9.2 文档
+
+### v0.11 — Demo B: Supervised Delegation 深度验证（规划）
+
+两轮 demo 验证策略的第二轮，**深度优先**：专门验证 Supervised Delegation API 面——即 Multivac M2 avatar 所依赖的 Orchest seam。
+
+产品形态为 **Research Pipeline**：两层委派 demo。Supervisor Orchest agent 委派任务给 Worker Orchest agent，`LlmWatcher` 挂载并实时监控 worker 事件流，通过 `InjectCmd` 注入一次 steering 修正，触发受控 fault injection 验证 supervisor recovery 路径。详见 [`v0_11/prd.md`](./v0_11/prd.md)。
+
+需验证的 seam API：`LlmWatcher` attach/detach、`InjectCmd` / Steering、`ContextMode::Fresh | Fork`、supervisor 故障检测、worker 重启或升级、multi-watcher FIFO、completion gate。产出物是 **Seam Gap Analysis 报告**，决定哪些 API 在 v1.0 冻结前必须修改。
+
+Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格的长运行 Supervised Delegation 是 Multivac M2 产品层的验证场景，不进 v0.11。
+
+**依赖**：v0.10 完成（验证报告中的 SD 摩擦点）、v0.9.5 Control-Flow Hardening、v0.9.4 Failure Semantics
 
 ### v1.0 — 首次公开发布（规划）
 
 第一个公开发布到 crates.io 的版本。包含发布准备的全部内容：Cargo publish 元数据、license 定稿、release workflow、CHANGELOG、版本号策略文档。
 
-**依赖**：v0.10 Demo Product Validation 完成（API 经真实产品验证后才发布）
+**依赖**：v0.11 Demo B 完成（Supervised Delegation API 经产品验证后才冻结公开 API）
 
 ### 依赖图
 
@@ -97,7 +109,10 @@ v0.10 至少验证一个轻量 reviewer sub-agent 或 handoff 路径：Agent-as-
 ✅ v0.9.9: API Cleanup + Product Patterns
             │
             ▼
-   v0.10: Demo Product Validation
+   v0.10: Demo A — 能力组合广度验证（Briefing Desk）
+            │
+            ▼
+   v0.11: Demo B — Supervised Delegation 深度验证（Research Pipeline）
             │
             ▼
    v1.0: 首次公开发布（crates.io + release workflow + license 定稿）
