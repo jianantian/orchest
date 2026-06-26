@@ -18,7 +18,11 @@ In scope:
 - Capability traits: `ChatModel` (← `ModelAdapter`), `Asr` (← `AsrProvider`), `Tts` (← `TtsProvider`),
   `VoiceManager` (separate optional), and **new** `RealtimeSession` (`send(SessionInput)` + `events()`) and
   `GenTask` (submit/poll/fetch).
-- Unified event model: delta-granular core + typed extensions; pulled `events()` delivery.
+- Unified event model: delta-granular core + typed extensions. `StreamEvent` is **extended in place** so
+  the existing push-based `ModelAdapter` keeps compiling and behaving as today; the new
+  `RealtimeSession` trait exposes the pulled `events()` stream (`GenTask` uses its own submit/poll/fetch
+  lifecycle, not `events()`). The push→pull convergence for
+  chat/asr/tts is **not** done here (see Out of scope).
 - Unified capability descriptor: common queryable core + typed extensions + static catalog form; a single
   `CapabilitySource`.
 - Unified error replacing `ModelError`/`AsrError`/`TtsError`/`RealtimeError`.
@@ -27,6 +31,9 @@ In scope:
 Out of scope:
 
 - No provider impl changes (providers still compile against aliases).
+- **No push→pull migration of chat/asr/tts.** `ModelAdapter` (push) is retained unchanged as the compat
+  bridge; converging providers onto the pulled traits is owned by Issue 005 (LLM's push `ModelAdapter` →
+  `ChatModel`). ASR/TTS/omni are already pull/stream-native, so their move in Issue 006 carries no push bridge.
 - No `orchest-provider-core` (Issue 003), no registry/wall (Issue 004).
 - No deletion of old modality crates.
 
@@ -36,6 +43,8 @@ Out of scope:
 - [ ] Capability traits incl. `RealtimeSession`/`GenTask` are defined per Issue 001; no god-trait.
 - [ ] One event model (core + typed extensions) and one descriptor (core + typed extensions + static form);
       the duplicate `CapabilitySource` is removed.
+- [ ] `StreamEvent` is extended in place; existing push-based `ModelAdapter` providers compile and behave
+      unchanged — no push→pull migration happens in this issue.
 - [ ] One unified error; old error types alias or `From`-convert.
 - [ ] Old `agent-runtime-model` public API resolves via deprecated aliases; `agent-runtime-core/node/py`
       compile unchanged.

@@ -10,7 +10,7 @@
 
 ## Files to Change
 
-- New crate `orchest-provider-visual` (+ workspace member, `oss` feature)
+- `crates/orchest-provider-visual/src/` (skeleton from Issue 004, `oss` feature)
 - `GenTask` impls for volc-visual/aliyun/crazyrouter/renderful; minimax music → `orchest-provider-http`
 - Pricing reconciliation in `orchest-provider-core`
 - Delete `crates/agent-runtime-aigc-providers`; remove from workspace
@@ -18,7 +18,7 @@
 
 ## Steps
 
-1. Create `orchest-provider-visual` (signed/poll tier) depending on protocol + core.
+1. Use/fill the `orchest-provider-visual` skeleton (from Issue 004; signed/poll tier) depending on protocol + core.
 2. Abstract `GenTask` from `ImageGateway` + video gateway; implement for volc-visual/aliyun/crazyrouter/renderful.
 3. Route minimax music to `orchest-provider-http` (REST/Bearer).
 4. Move asset storage/OSS use onto core; wire gen-task poller.

@@ -91,7 +91,8 @@ layer and the thinking bit from **`ModelCapabilities`** — two different struct
 - **How `node/py` actually obtain an adapter (two touch points).** They store the trait as
   `agent_runtime_core::model::ModelAdapter` (a `core` re-export of `agent_runtime_model`), **and** they
   construct it by calling the free functions `agent_runtime_providers::create_adapter_from_config` +
-  `normalize_provider_model` (node `lib.rs:35,603`; py `lib.rs:36,513`). `agent-runtime-core` does **not**
+  `normalize_provider_model` (multiple call sites — enumerate with
+  `rg "create_adapter_from_config|normalize_provider_model"`, not fixed line numbers). `agent-runtime-core` does **not**
   construct any provider registry. → migration must insulate **both** the trait path and these two functions.
 - **Pricing:** three billing models — `ModelPricing` token-tier (`…/options.rs:110`), ASR
   duration-based (`AsrUsage.cost_estimate_micros`), aigc per-asset.
@@ -167,7 +168,8 @@ orchest-providers         THE WALL: registry + vendor facade + feature flags (re
 ### 4. Consumer-facing API (the wall)
 
 Consumers depend on exactly `orchest-protocol` + `orchest-providers`. Three selection styles, all hiding
-impl crates:
+impl crates (**non-normative pseudocode** — the exact surface is settled in Issue 004; Rust has no arity
+overloading, so `chat()` vs `chat("openai/gpt-5.4")` below is illustrative, not a literal signature):
 
 ```rust
 use orchest_providers::registry;
@@ -214,10 +216,11 @@ The path is incremental and dependency-ordered. Each row names the real artifact
 5. **Phase 5 — Cleanup.** Remove deprecated re-exports; finalize feature graph; update `node/py`/examples;
    record `cargo tree` weight evidence.
 
-The phases are stages, not a strict serial chain. Once the spine (1) and core (2) land, the wall (3), the
-stream/visual impl crates and the LLM migration (Phase 3–4 work) depend only on spine+core to **compile** —
-the registry aggregates the impl crates but does not block them. Sequence them for review safety; they can
-largely proceed in parallel.
+The phases are stages, not a strict serial chain. Once the spine (1) and core (2) land, the impl crates
+(LLM / stream / visual) need only spine+core to **build**, so they can be developed in parallel. But their
+**registration into the wall** depends on the registry *mechanism* from Issue 004 — which itself needs only
+spine+core and ships as a mechanism + facade skeleton, with each impl issue adding its own entries. So:
+parallel build after (2); registration serializes behind 004's mechanism.
 
 ## Acceptance Test Cases (the two rulers)
 
@@ -273,16 +276,16 @@ The architecture is rejected if it cannot seat **both** without provider-local c
 | Issue | Title | Scope |
 |---|---|---|
 | 001 | ADR + capability-descriptor & event reconciliation design | `docs/adr/0001`; design common descriptor core + typed extensions and the unified event model; prove omni + Chameleon seat |
-| 002 | `orchest-protocol` spine | Unified error/event (incl. push→pull delivery)/descriptor (with static catalog form); `ChatModel`/`Asr`/`Tts`; **new** `RealtimeSession`/`GenTask` shapes; alias old types |
+| 002 | `orchest-protocol` spine | Unified error/event (delta core + extensions; pull on new traits, chat/asr/tts push→pull deferred to 005/006)/descriptor (with static catalog form); `ChatModel`/`Asr`/`Tts`; **new** `RealtimeSession`/`GenTask` shapes; alias old types |
 | 003 | `orchest-provider-core` extraction | One http/sse/ws/oss/telemetry stack + L1 header-auth strategies |
 | 004 | Registry + umbrella wall | Reconcile `ProviderRegistry` + `AsrRouter` into one multi-capability, descriptor-queryable registry (reuse `select_for_*`); vendor facade; cfg-gated feature wiring |
 | 005 | LLM migration + dependency inversion | LLM providers behind the wall; deprecated re-export; insulate `node/py` at `core::model`; flip `core → orchest-protocol` |
 | 006 | Stream impl + realtime absorption | openspeech/minimax-ws/asr dialects; delete `agent-runtime-realtime-providers`; omni as `RealtimeSession` |
-| 007 | Visual + remaining modality migration | aigc image/video/music → `visual`/`http` (abstract `GenTask` from `ImageGateway`); TTS → `stream`; reconcile pricing |
+| 007 | Visual + remaining modality migration | aigc image/video/music → `visual`/`http` (abstract `GenTask` from `ImageGateway`); reconcile pricing (token/duration/asset). ASR/TTS are owned by Issue 006. |
 | 008 | Cleanup + bindings | Remove shims; finalize features; update `node`/`py`/examples; `cargo tree` weight checks |
 
-Dependency order: 001 → 002 → 003 → then {004, 005, 006, 007} largely parallel (each needs only spine+core
-to compile; 004 aggregates 005–007 but does not block them) → 008.
+Dependency order: 001 → 002 → 003 → 004 (registry mechanism + facade + empty impl-crate skeletons) →
+{005, 006, 007} in parallel (each fills a skeleton and registers its own entries via the 004 mechanism) → 008.
 
 ## Decisions
 

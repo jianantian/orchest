@@ -10,18 +10,19 @@
 
 ## Files to Change
 
-- New crate `orchest-provider-stream` (+ workspace member, `ws` feature)
-- openspeech dialect module shared by asr/tts/omni; minimax-ws; streaming-ASR dialect modules
+- `crates/orchest-provider-stream/src/` (skeleton from Issue 004, `ws` feature): openspeech dialect shared by asr/tts/omni; minimax-ws; streaming-ASR dialects; WS-backed `synthesize()` (Minimax sync WSS, Volcengine unidirectional)
 - `RealtimeSession` impl for omni
+- `crates/orchest-provider-http/src/` (skeleton from Issue 004): REST/SSE one-shot `transcribe()` + REST TTS modules
 - Delete `crates/agent-runtime-realtime-providers`; remove from workspace
 - Wall registration (Issue 004)
 
 ## Steps
 
-1. Create `orchest-provider-stream` (WS tier) depending on protocol + core.
+1. Use the `orchest-provider-stream` skeleton (from Issue 004); ensure it depends on protocol + core.
 2. Port the openspeech binary protocol once; build the Volcengine asr/tts dialect on it.
 3. Implement omni as `RealtimeSession` over the same openspeech protocol; map frames → unified event model.
-4. Port minimax-ws TTS and the per-vendor streaming-ASR dialects.
-5. Delete `agent-runtime-realtime-providers`; drop its `RealtimeError`/event enum.
-6. Register stream entries through the wall.
-7. Port the fake-session lifecycle tests; add the omni-ruler fake test (audio + tool use concurrency); fmt/clippy/test.
+4. Port minimax-ws TTS and the per-vendor streaming-ASR dialects; keep WS-backed `synthesize()` (Minimax sync WSS, Volcengine unidirectional) in `-stream`.
+5. Migrate REST/SSE one-shot `transcribe()` + REST TTS into `orchest-provider-http` (skeleton from 004) as `Asr`/`Tts` impls.
+6. Delete `agent-runtime-realtime-providers`; drop its `RealtimeError`/event enum.
+7. Register stream + http ASR/TTS entries through the wall.
+8. Port the fake-session lifecycle tests; add the omni-ruler fake test (audio + tool use concurrency); fmt/clippy/test.

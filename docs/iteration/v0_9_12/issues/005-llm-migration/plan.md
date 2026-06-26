@@ -6,11 +6,11 @@
 - `crates/agent-runtime-providers/src/providers/{anthropic,openai,deepseek,openrouter,volcengine,minimax}/`
 - `crates/agent-runtime-providers/src/lib.rs` (`create_adapter_from_config`, `normalize_provider_model`)
 - `crates/agent-runtime-core/src/model/mod.rs`, `crates/agent-runtime-core/Cargo.toml`
-- `crates/agent-runtime-node/src/lib.rs:35,603`, `crates/agent-runtime-py/src/lib.rs:36,513`
+- node/py construction call sites — enumerate with `rg "create_adapter_from_config|normalize_provider_model" crates/agent-runtime-node/src crates/agent-runtime-py/src` (sites exist today at node 35/604/652/744, py 36/453/513; do not rely on fixed line numbers)
 
 ## Files to Change
 
-- `crates/orchest-provider-http/src/`: openai-compat (openai/deepseek/openrouter/volc-ark), anthropic, minimax-rest dialect modules as `ChatModel`
+- `crates/orchest-provider-http/src/` (skeleton from Issue 004): openai-compat (openai/deepseek/openrouter/volc-ark), anthropic, minimax-rest dialect modules as `ChatModel`
 - `crates/agent-runtime-providers/`: reduce to deprecated re-export preserving the two free functions + `ModelAdapter` path
 - `crates/agent-runtime-core/Cargo.toml` + `src/model/mod.rs`: depend on `orchest-protocol`, keep alias
 - Wall registration (Issue 004)

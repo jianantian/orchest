@@ -18,23 +18,30 @@ In scope:
 - Multi-capability registry keyed by (capability, provider, model), querying the **static descriptor core**.
 - Selection: capability-query + identity-pick in **one** mechanism, mixable; pick-one + list-then-choose
   (PRD Decision 4 constraints). Settle the exact builder surface here against real call sites.
-- Vendor-namespaced facade (`providers::volcengine::{chat,asr,tts}`).
-- Feature flags (`volcengine`/`llm`/`asr`/…) mapping to impl-crate features; **cfg-gated registration**
-  that compiles with any feature subset (no reference to a disabled impl crate).
+- Vendor-namespaced facade **scaffold** (`providers::volcengine::{chat,asr,tts}`) — the structure and
+  re-export pattern; concrete per-vendor rows are added by the impl issues.
+- The **cfg-gated registration mechanism** + feature-graph **scaffold**; it must build with **zero**
+  registered impls (mechanism-only). Concrete `volcengine`/`llm`/`asr` feature rows and registrations are
+  added by Issues 005/006/007, not here.
+- Create the **empty impl-crate skeletons** `orchest-provider-{http,stream,visual}` (Cargo.toml + lib stub +
+  workspace members + feature stubs) so the impl issues only add modules — removing the crate-creation race.
 
 Out of scope:
 
-- Provider impls themselves (Issues 005–007) — the wall lands with LLM first; others wire in as they migrate.
+- Provider impls **and** their concrete registrations / per-vendor feature+facade rows — those land in
+  Issues 005/006/007. This issue ships the mechanism + facade skeleton, unit-tested against fixture descriptors.
 
 ## Acceptance Criteria
 
 - [ ] `orchest-providers` exposes a registry serving capability-query **and** identity-pick as one
       mechanism; the two mix (e.g. "bidirectional ASR from Volcengine").
 - [ ] `AsrRouter.select_for_*` logic is reused, not re-invented; `ProviderRegistry` factory-by-name is folded in.
-- [ ] cfg-gated registration compiles with any feature subset; no path names a disabled impl crate.
-- [ ] The vendor facade re-exports without the consumer naming an impl crate.
+- [ ] The registration mechanism builds with **zero** impls registered (mechanism-only build is green); cfg
+      subsets compile with no path naming a disabled impl crate.
+- [ ] The facade scaffold compiles with zero registered impls; concrete per-vendor re-exports are deferred to the impl issues.
+- [ ] Selection is unit-tested against **fixture descriptors** (no real impl crate required).
 - [ ] The chosen selection API surface is recorded (PRD Decision 4) with the call sites that justified it.
 
 ## Notes
 
-Depends on Issue 002 (descriptor) + Issue 003 (core). The exact selection surface is decided here, against real call sites.
+Depends on Issue 002 (descriptor) + Issue 003 (core). The exact selection surface is decided here, against real call sites. Concrete provider registrations land in Issues 005/006/007.

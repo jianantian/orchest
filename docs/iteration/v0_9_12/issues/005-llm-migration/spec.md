@@ -14,6 +14,9 @@ In scope:
 
 - Move anthropic / openai / deepseek / openrouter / volcengine-ark / minimax-llm into
   `orchest-provider-http` dialect modules implementing `ChatModel`.
+- **Own the LLM push→pull migration:** converge providers from the push-based `ModelAdapter`
+  (`complete(.., tx)`) onto the pulled `ChatModel` `events()` stream; `ModelAdapter` is retained as a
+  working compat bridge until the cutover in Issue 008.
 - Register them through the wall (Issue 004).
 - Keep `agent-runtime-providers` as a deprecated re-export preserving the `ModelAdapter` path,
   `create_adapter_from_config`, and `normalize_provider_model` (same signatures).
@@ -24,6 +27,8 @@ Out of scope: asr/tts/realtime (006), aigc (007), removing the shim (008).
 ## Acceptance Criteria
 
 - [ ] LLM dialects live in `orchest-provider-http` as `ChatModel` impls, registered via the wall.
+- [ ] LLM providers converge from push `ModelAdapter` onto the pulled `ChatModel`; `ModelAdapter` remains a
+      working compat bridge (no behavior regression).
 - [ ] `agent-runtime-providers` is a thin deprecated re-export; `create_adapter_from_config` /
       `normalize_provider_model` still resolve with identical signatures.
 - [ ] `agent-runtime-core` depends on `orchest-protocol` (not concrete providers); `core::model::ModelAdapter`
