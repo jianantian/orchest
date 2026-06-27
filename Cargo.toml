@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/orchest-protocol",
+    "crates/orchest-provider-core",
     "crates/agent-runtime-model",
     "crates/agent-runtime-core",
     "crates/agent-runtime-aigc-providers",

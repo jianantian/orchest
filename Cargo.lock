@@ -19,6 +19,7 @@ dependencies = [
  "hex",
  "hmac",
  "metrics",
+ "orchest-provider-core",
  "percent-encoding",
  "reqwest",
  "serde",
@@ -43,6 +44,7 @@ dependencies = [
  "futures-util",
  "metrics",
  "orchest-protocol",
+ "orchest-provider-core",
  "reqwest",
  "serde",
  "serde_json",
@@ -117,6 +119,7 @@ dependencies = [
  "futures-util",
  "metrics",
  "metrics-util",
+ "orchest-provider-core",
  "reqwest",
  "serde",
  "serde_json",
@@ -1464,6 +1467,26 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "orchest-provider-core"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "futures-util",
+ "hex",
+ "hmac",
+ "orchest-protocol",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
 ]
 
 [[package]]

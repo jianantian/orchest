@@ -1,20 +1,16 @@
-use std::sync::OnceLock;
-use std::time::Duration;
+//! Shared `reqwest::Client` for AIGC providers.
+//!
+//! Construction is delegated to `orchest_provider_core::http` (v0.9.12 — the one
+//! shared client builder). This crate keeps its own cached instance with its
+//! historic timeouts (300s, 20 idle conns/host) so behavior is unchanged.
 
-static SHARED_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+use std::sync::OnceLock;
+
+use orchest_provider_core::http::{cached, HttpClientConfig};
 
 pub fn shared_client() -> &'static reqwest::Client {
-    // INVARIANT: reqwest::Client::builder() with these fixed parameters can
-    // only fail on catastrophic platform misconfiguration (missing TLS
-    // backend, exhausted file descriptors at startup).  An early panic is
-    // preferable to silently failing on every subsequent HTTP request.
-    SHARED_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .pool_max_idle_per_host(20)
-            .timeout(Duration::from_secs(300))
-            .build()
-            .expect("reqwest client configuration should be valid")
-    })
+    static SHARED_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    cached(&SHARED_CLIENT, HttpClientConfig::default())
 }
 
 #[cfg(test)]

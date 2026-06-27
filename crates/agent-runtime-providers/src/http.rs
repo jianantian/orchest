@@ -1,22 +1,16 @@
-//! Global shared reqwest::Client for provider adapters.
+//! Global shared `reqwest::Client` for LLM provider adapters.
+//!
+//! Construction is delegated to `orchest_provider_core::http` (v0.9.12 — the one
+//! shared client builder). This crate keeps its own cached instance with its
+//! historic timeouts (300s, 20 idle conns/host) so request behavior is unchanged.
 
 use std::sync::OnceLock;
-use std::time::Duration;
 
-static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+use orchest_provider_core::http::{cached, HttpClientConfig};
 
 pub fn shared_client() -> &'static reqwest::Client {
-    // INVARIANT: reqwest::Client::builder() with these fixed parameters can
-    // only fail on catastrophic platform misconfiguration (missing TLS
-    // backend, exhausted file descriptors at startup).  An early panic is
-    // preferable to silently failing on every subsequent HTTP request.
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .pool_max_idle_per_host(20)
-            .timeout(Duration::from_secs(300))
-            .build()
-            .expect("failed to build shared reqwest::Client")
-    })
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    cached(&CLIENT, HttpClientConfig::default())
 }
 
 #[cfg(test)]
