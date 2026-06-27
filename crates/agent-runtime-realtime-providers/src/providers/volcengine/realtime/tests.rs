@@ -188,8 +188,9 @@ async fn live_session_send_audio_does_not_emit_local_ack_events() {
 
 #[test]
 fn fixture_event_sequence_maps_core_event_classes() {
-    let fixture =
-        include_str!("../../../../../../docs/iteration/v0_9_11/fixtures/fake_event_sequence.json");
+    let fixture = include_str!(
+        "../../../../../../docs/archive/iteration/v0_9_11/fixtures/fake_event_sequence.json"
+    );
     let events: Vec<VolcengineRealtimeFixtureEvent> =
         serde_json::from_str(fixture).expect("fixture event JSON parses");
     let mapped: Vec<VolcengineRealtimeMappedEvent> = events

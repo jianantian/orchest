@@ -138,10 +138,10 @@ fn load_pcm_input() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     }
 
     println!("no PCM path provided; using checked-in 20ms silence fixture");
-    Ok(
-        include_bytes!("../../../docs/iteration/v0_9_11/fixtures/silence_20ms_16k_s16le.pcm")
-            .to_vec(),
+    Ok(include_bytes!(
+        "../../../docs/archive/iteration/v0_9_11/fixtures/silence_20ms_16k_s16le.pcm"
     )
+    .to_vec())
 }
 
 fn append_trailing_silence(audio: &mut Vec<u8>) {
