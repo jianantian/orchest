@@ -6,6 +6,7 @@
 //! also absorbs and deletes `agent-runtime-realtime-providers`. The
 //! entry-producing functions below return empty vectors for now.
 
+pub mod asr;
 pub mod omni;
 pub mod openspeech;
 
