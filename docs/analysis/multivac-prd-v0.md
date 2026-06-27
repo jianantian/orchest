@@ -23,12 +23,14 @@
 
 v0 对应 ADR 里的 **M1「自己的工作台」**：证明介质论，而不是证明团队协作、云 SaaS、多 runtime 或全自动 avatar。
 
+换言之，v0 只验证 ADR §0.7 两阶段工作流里的 **阶段一 attended 共创**：真人填输入槽、真人路由、真人审查与转向。阶段二 unattended 托管执行、avatar 驱动、移动遥控与自动验收闭环属于 M2，不是 v0 的产品承诺。
+
 v0 成立的标准：创始用户可以连续数周把真实开发/创作工作放进 Multivac，并且高频发生“指代替说”、diff 审查、跨 session 引用、自动沉淀复用。
 
 ### 0.3 v0 一条线
 
 - **Host**：一个独立 daemon at `host:port`，host 取值为本机或用户自有 SSH / Tailscale 可达盒子。
-- **Client**：web-first 瘦客户端，通过 `BACKEND_URL` 连接 daemon；原生壳不是 v0 阻塞项。
+- **Client**：web-first 瘦客户端，通过 `BACKEND_URL` 连接 daemon；当 host 经 LAN / SSH / Tailscale 可达时，另一台机器上的 web client 可连接同一 daemon 并 replay events 接续工作。原生壳、移动 app 与产品化 relay 不是 v0 阻塞项。
 - **Storage**：SQLite + 本地文件系统。
 - **Runtime**：Claude Code 单 runtime，走受支持的 headless / stream-json / SDK 类接口，转译为 normalized `TaskEvent`。
 - **Workspace**：单 workspace。
@@ -159,7 +161,7 @@ TurnCard / ActivityRow / ApprovalStrip 不是装饰，而是告诉用户：
 - 哪些步骤失败或重试。
 - 哪些文件、diff、artifact 被影响。
 - 哪些动作需要确认。
-- completion gate / 验收状态如何。
+- run 完成 / 失败 / 取消及用户验收状态如何。
 
 ### P6. 先撤销，后 review
 
@@ -237,6 +239,14 @@ v0 阶段 agent 就可能写真实文件，因此 run 前快照与一键回滚�
 
 #### 4.1.2 Workbench Surfaces
 
+Surface 不是各自为政的面板集合。v0 的每个 surface 都必须实现同一组三件套合同：
+
+- **Renderer**：把该介质渲染为人可读、可操作的工作面。
+- **Deixis adapter**：把用户选区 / 对象转成 Locator / Reference Chip，并能从 Locator 重新定位原对象。
+- **Perception adapter**：把授权范围内的状态 / 事件转成机器可读摘要或 `TaskEvent`，供 Context Composer 与 agent 感知。
+
+后续新增视频、音频、文档等 surface 时，只能扩展这组三件套，不能绕过 Locator / Context Composer / TaskEvent 另起临时代码路径。
+
 1. **Chat Lane / TurnCard**
    - HTTP POST 创建 skeleton。
    - WebSocket 事件流填充 TurnState。
@@ -249,6 +259,7 @@ v0 阶段 agent 就可能写真实文件，因此 run 前快照与一键回滚�
    - 文件操作必须包含复制路径：复制相对 workspace 路径、复制绝对路径，并能把路径作为 Reference Chip 插入输入框。
    - 支持类似 VS Code 的“从剪贴板粘贴创建文件”能力：剪贴板里是文件 / 图片 / 文本片段时，可在当前目录快速创建对应文件。
    - 所有可查看内容都应可被选中并生成 Locator；音频至少支持以时间区间生成 Locator。
+   - 音频在 v0 只要求播放、时间定位与引用；转写、合成和音频生成不属于 v0。
 
 3. **Git / Diff Surface**
    - 展示当前 branch、worktree 状态、git status、log、diff。
@@ -315,7 +326,7 @@ v0 阶段 agent 就可能写真实文件，因此 run 前快照与一键回滚�
 - Codex / OpenCode / Gemini 等第二 runtime。
 - Orchest supervised delegation / avatar / worker 自动编排。
 - Mobile app 与产品化 relay。
-- Meeting / ASR / TTS。
+- Meeting / ASR / TTS；File Surface 的音频播放和时间区间 Locator 是消费 / 引用能力，不代表引入音频生产管线。
 - 完整 MCP marketplace。
 - 自研编辑器内核。
 - 角色档案 / persona 配置 / GenUI 自由布局。
@@ -345,6 +356,8 @@ v0 不做用户自定义布局。Surface foregrounding 由规则触发：
 - command 运行 → Terminal Surface 高亮。
 - console error 捕获 → Browser Surface 高亮。
 - approval request 到达 → ApprovalStrip 常驻显示。
+
+Inbox 在 v0 是轻量注意力列表，不是 M2 的异步 unattended activity feed：只承载 `waiting_approval`、blocked / interrupted、以及 completed / failed 后需要用户查看或验收的事项。
 
 ### 5.2 TurnCard 最小结构
 
@@ -486,7 +499,7 @@ v0 UI spike 必须用真实 TurnCard + terminal + diff 内容校准视觉，而�
 | WorkbenchContext | 人当前看到 / 选择的上下文 | 打开文件、选区、diff、terminal、browser |
 | KnowledgeObject | 工作副产品 | summary、decision、checkpoint、annotation |
 | Snapshot | run 前状态 | 支持回滚 |
-| InboxItem | 后台事项 | blocked、approval、完成、失败 |
+| InboxItem | 待处理事项 | v0 只承载 approval、blocked / interrupted、完成 / 失败 run；完整 unattended activity feed 后置 M2 |
 
 ### 8.2 Locator 初版示例
 
@@ -576,6 +589,7 @@ v0 不要求 URI 语法永久定型，但必须保证：
 以下清单用于把 PRD 拆成 issue 时校验闭环是否真的可用：
 
 - 当用户打开一个 git repo 时，系统能展示当前 workspace、branch、worktree 状态和最近 runs。
+- 当任一 Surface 进入 v0 实现时，必须同时交付 renderer、deixis adapter、perception adapter，并能完成 Locator → Reference Chip → Context Composer 的闭环。
 - 当用户在 File Surface 打开 markdown / HTML / PDF / CSV / 图片 / 音频时，内容可预览；文件本身、文件片段与音频时间区间都可生成 Locator；相对路径和绝对路径都可复制。
 - 当用户从剪贴板粘贴文件 / 图片 / 文本片段到目录时，系统能创建对应文件并在 File Surface 中定位。
 - 当用户选中文件片段、diff hunk、terminal 行区间、browser console error 或历史 turn 时，系统能生成 Reference Chip，并在 Context Tray 中显示 agent 将看到的内容。
@@ -593,7 +607,7 @@ v0 不要求 URI 语法永久定型，但必须保证：
 |---|---|
 | v0 退化成漂亮聊天应用 | 入口从 Workspace 开始；五个 surface 与 Context Tray 必须进 v0 验证 |
 | 退化成 IDE 竞赛 | 文件面支持简单编辑但不追求 IDE 级人体工学；差异化放在多介质查看、deixis、event、knowledge、agent attribution |
-| 执行透明度变噪音 | ActivityRow 默认折叠；失败、approval、artifact、gate 优先展示 |
+| 执行透明度变噪音 | ActivityRow 默认折叠；失败、approval、artifact、用户验收优先展示 |
 | 沉淀变成隐私负债 | 先脱敏后落盘；路径黑名单；跨厂商传递明示确认 |
 | CLI runtime 协议不稳定 | adapter 隔离原始协议；契约测试；前端只看 normalized `TaskEvent` |
 | context token 爆炸 | 常驻摘要 + 精确指代 + 按需查询；Context Composer token budget |
@@ -644,6 +658,7 @@ v0 不要求 URI 语法永久定型，但必须保证：
 - 更深 checkpoint writer。
 - mobile / relay / 阶段二遥控 UI。
 - avatar / supervised delegation。
+- 完整 unattended Inbox / activity feed。
 - team plane scope sharing。
 
 ---
