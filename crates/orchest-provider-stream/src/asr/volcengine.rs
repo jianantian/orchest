@@ -8,11 +8,13 @@
 //! mark the final server response. The event-tagged `FLAG_WITH_EVENT` framing is
 //! tts/omni-only and lives there.
 
+use async_trait::async_trait;
 use orchest_protocol::{
-    ErrorCode, LifecycleEvent, ProtocolError, StreamEvent, TranscriptStability,
+    ErrorCode, LifecycleEvent, ProtocolError, SessionInput, StreamEvent, TranscriptStability,
 };
 use serde::Deserialize;
 use serde_json::Value;
+use tokio::sync::mpsc;
 
 use crate::openspeech::{
     build_header, compress_gzip, decompress_gzip, parse_header, COMP_GZIP, COMP_NONE,
@@ -264,6 +266,74 @@ pub fn map_frame(frame: VolcengineFrame) -> Vec<StreamEvent> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Streaming loop (transport-agnostic; live WS is a thin ByteDuplex adapter)
+// ---------------------------------------------------------------------------
+
+/// A minimal duplex byte transport the ASR loop runs over: a `tokio-tungstenite`
+/// WebSocket in production, an in-memory channel pair in tests. Keeping the loop
+/// generic over this is what makes the streaming behavior testable without a
+/// network connection.
+#[async_trait]
+pub trait ByteDuplex: Send {
+    async fn send(&mut self, frame: Vec<u8>) -> Result<(), ProtocolError>;
+    async fn recv(&mut self) -> Option<Vec<u8>>;
+}
+
+/// Drive one ASR streaming session over `transport`: client [`SessionInput`]
+/// audio is framed as openspeech audio-only requests and sent; server frames are
+/// parsed and projected onto `events` via [`map_frame`]. Closing `input` flushes
+/// a final audio frame; the loop ends on the last server frame or transport EOF.
+pub async fn run_asr_stream<T: ByteDuplex>(
+    mut transport: T,
+    mut input: mpsc::Receiver<SessionInput>,
+    events: mpsc::Sender<StreamEvent>,
+) {
+    let mut input_open = true;
+    loop {
+        tokio::select! {
+            maybe_input = input.recv(), if input_open => match maybe_input {
+                Some(SessionInput::Audio(bytes)) => {
+                    if transport.send(build_audio_frame(&bytes, false)).await.is_err() {
+                        break;
+                    }
+                }
+                // End of audio (input closed or an explicit interrupt): flush the
+                // last audio frame and keep reading server frames until the last.
+                None | Some(SessionInput::Interrupt) => {
+                    input_open = false;
+                    let _ = transport.send(build_audio_frame(&[], true)).await;
+                }
+                // Text / tool-result are not part of the ASR send side.
+                Some(_) => {}
+            },
+            maybe_frame = transport.recv() => match maybe_frame {
+                Some(bytes) => match parse_response(&bytes) {
+                    Ok(frame) => {
+                        let is_last = matches!(
+                            frame,
+                            VolcengineFrame::ServerResponse { is_last: true, .. }
+                        );
+                        for event in map_frame(frame) {
+                            if events.send(event).await.is_err() {
+                                return;
+                            }
+                        }
+                        if is_last {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = events.send(StreamEvent::Error { error, fatal: true }).await;
+                        break;
+                    }
+                },
+                None => break,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -469,5 +539,66 @@ mod tests {
             message: "bad".into(),
         });
         assert!(matches!(events[0], StreamEvent::Error { fatal: true, .. }));
+    }
+
+    struct ChannelDuplex {
+        out: mpsc::Sender<Vec<u8>>,
+        inbound: mpsc::Receiver<Vec<u8>>,
+    }
+
+    #[async_trait]
+    impl ByteDuplex for ChannelDuplex {
+        async fn send(&mut self, frame: Vec<u8>) -> Result<(), ProtocolError> {
+            self.out.send(frame).await.map_err(|_| stream_err("closed"))
+        }
+        async fn recv(&mut self) -> Option<Vec<u8>> {
+            self.inbound.recv().await
+        }
+    }
+
+    #[tokio::test]
+    async fn run_asr_stream_maps_audio_in_and_server_frames_out() {
+        let (out_tx, mut out_rx) = mpsc::channel(16); // loop -> server observes
+        let (in_tx, in_rx) = mpsc::channel(16); // server -> loop
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(16);
+        let (events_tx, mut events_rx) = mpsc::channel(16);
+
+        let handle = tokio::spawn(run_asr_stream(transport, input_rx, events_tx));
+
+        // audio in -> the loop frames it as an openspeech audio-only request
+        input_tx
+            .send(SessionInput::Audio(bytes::Bytes::from_static(b"mic")))
+            .await
+            .unwrap();
+        let framed = out_rx.recv().await.expect("audio frame emitted");
+        assert_eq!(
+            parse_header(&framed).unwrap().msg_type,
+            MSG_AUDIO_ONLY_REQUEST
+        );
+
+        // server sends its final response -> Transcript(Committed) + EndOfSpeech, then ends
+        let body = json!({"result": {"text": "done"}});
+        in_tx
+            .send(server_frame(FLAG_SEQUENCE_NEGATIVE, Some(-1), &body))
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Transcript {
+                stability: TranscriptStability::Committed,
+                ..
+            }
+        ));
+        assert!(matches!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
+        ));
+
+        handle.await.unwrap(); // the loop terminated on the last server frame
     }
 }
