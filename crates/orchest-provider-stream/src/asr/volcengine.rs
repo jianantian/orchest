@@ -8,7 +8,9 @@
 //! mark the final server response. The event-tagged `FLAG_WITH_EVENT` framing is
 //! tts/omni-only and lives there.
 
-use orchest_protocol::{ErrorCode, ProtocolError};
+use orchest_protocol::{
+    ErrorCode, LifecycleEvent, ProtocolError, StreamEvent, TranscriptStability,
+};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -198,6 +200,70 @@ fn parse_server_response(
     })
 }
 
+// ---------------------------------------------------------------------------
+// Frame → unified event mapping (the semantic core of the `Asr` reader loop)
+// ---------------------------------------------------------------------------
+
+/// Project one decoded [`VolcengineFrame`] onto unified [`StreamEvent`]s — the
+/// bridge the streaming `Asr` reader loop emits onto its `EventStream`.
+///
+/// Each utterance becomes a `Transcript`: `Committed` once the recognizer marks
+/// it `definite`, else `Provisional` (revisable). A response with no utterances
+/// but a non-empty rolling `text` yields one transcript (committed iff this is
+/// the last frame). The final frame additionally emits `EndOfSpeech`. An error
+/// frame becomes a single fatal `Error`.
+pub fn map_frame(frame: VolcengineFrame) -> Vec<StreamEvent> {
+    match frame {
+        VolcengineFrame::ServerResponse {
+            payload, is_last, ..
+        } => {
+            let mut events = Vec::new();
+            if let Some(result) = payload.result {
+                match result.utterances {
+                    Some(utterances) if !utterances.is_empty() => {
+                        for utt in utterances {
+                            events.push(StreamEvent::Transcript {
+                                text: utt.text,
+                                stability: if utt.definite {
+                                    TranscriptStability::Committed
+                                } else {
+                                    TranscriptStability::Provisional
+                                },
+                                segment: None,
+                            });
+                        }
+                    }
+                    _ if !result.text.is_empty() => {
+                        events.push(StreamEvent::Transcript {
+                            text: result.text,
+                            stability: if is_last {
+                                TranscriptStability::Committed
+                            } else {
+                                TranscriptStability::Provisional
+                            },
+                            segment: None,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            if is_last {
+                events.push(StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                    segment: None,
+                }));
+            }
+            events
+        }
+        VolcengineFrame::ErrorResponse { code, message } => vec![StreamEvent::Error {
+            error: ProtocolError::new(
+                ErrorCode::ProviderTaskFailed,
+                format!("Volcengine ASR error {code}: {message}"),
+            ),
+            fatal: true,
+        }],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,5 +385,89 @@ mod tests {
             }
             _ => panic!("expected ErrorResponse"),
         }
+    }
+
+    fn server(is_last: bool, payload: VolcenginePayload) -> VolcengineFrame {
+        VolcengineFrame::ServerResponse {
+            sequence: 0,
+            payload,
+            is_last,
+        }
+    }
+
+    #[test]
+    fn map_frame_emits_transcript_per_utterance_with_stability() {
+        let payload = VolcenginePayload {
+            result: Some(VolcengineResult {
+                text: "ignored when utterances present".into(),
+                utterances: Some(vec![
+                    VolcengineUtterance {
+                        text: "hello".into(),
+                        definite: false,
+                        start_time: 0,
+                        end_time: 1,
+                        words: None,
+                        additions: None,
+                    },
+                    VolcengineUtterance {
+                        text: "hello world".into(),
+                        definite: true,
+                        start_time: 0,
+                        end_time: 2,
+                        words: None,
+                        additions: None,
+                    },
+                ]),
+            }),
+            audio_info: None,
+        };
+        let events = map_frame(server(false, payload));
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            StreamEvent::Transcript {
+                stability: TranscriptStability::Provisional,
+                ..
+            }
+        ));
+        assert!(matches!(
+            events[1],
+            StreamEvent::Transcript {
+                stability: TranscriptStability::Committed,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn map_frame_last_text_only_commits_and_ends_speech() {
+        let payload = VolcenginePayload {
+            result: Some(VolcengineResult {
+                text: "final".into(),
+                utterances: None,
+            }),
+            audio_info: None,
+        };
+        let events = map_frame(server(true, payload));
+        assert!(matches!(
+            events[0],
+            StreamEvent::Transcript {
+                stability: TranscriptStability::Committed,
+                ..
+            }
+        ));
+        assert!(matches!(
+            events[1],
+            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
+        ));
+    }
+
+    #[test]
+    fn map_frame_error_is_fatal() {
+        let events = map_frame(VolcengineFrame::ErrorResponse {
+            code: 45000001,
+            message: "bad".into(),
+        });
+        assert!(matches!(events[0], StreamEvent::Error { fatal: true, .. }));
     }
 }
