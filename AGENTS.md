@@ -40,7 +40,8 @@ docs/
 ├── archive/                    # Completed iterations + hotfixes (v0_1 … v0_9), moved here after closeout
 ├── todo/                       # Forward-looking direction notes not yet scheduled (e.g. provider-unification.md)
 ├── external/                   # Upstream vendor API docs (anthropic, minimax, volceengine, aliyun, …)
-├── research/ · analysis/       # Architecture research and competitive analysis
+├── research/                   # Architecture research
+├── analysis/                   # Symlink to ../multivac-suite/multivac/docs/analysis for moved Multivac notes
 └── guide/                      # User-facing quickstart + Python/TS SDK guides
 ```
 
