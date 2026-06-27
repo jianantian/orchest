@@ -6,6 +6,7 @@
 //! also absorbs and deletes `agent-runtime-realtime-providers`. The
 //! entry-producing functions below return empty vectors for now.
 
+pub mod omni;
 pub mod openspeech;
 
 use orchest_protocol::{Asr, RealtimeSession, Tts};

@@ -1503,9 +1503,13 @@ dependencies = [
 name = "orchest-provider-stream"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "bytes",
  "flate2",
  "orchest-protocol",
  "orchest-provider-core",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
