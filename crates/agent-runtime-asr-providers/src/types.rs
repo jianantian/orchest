@@ -411,13 +411,11 @@ pub struct AudioInputCapability {
     pub max_bytes: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CapabilitySource {
-    Static,
-    ProviderMetadata,
-    Assumed,
-}
+// `CapabilitySource` is now the single canonical type in `orchest-protocol`
+// (v0.9.12 spine unification). Re-exported here so existing
+// `CapabilitySource::Static` / `source: CapabilitySource` sites keep resolving;
+// the verbatim duplicate that used to live here is removed.
+pub use orchest_protocol::CapabilitySource;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

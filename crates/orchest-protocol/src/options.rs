@@ -35,13 +35,10 @@ pub enum CompatibilityPolicy {
     Strict,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub enum CapabilitySource {
-    #[default]
-    Static,
-    ProviderMetadata,
-    Assumed,
-}
+// `CapabilitySource` is now defined once in `crate::descriptor` (v0.9.12 spine
+// unification) and re-exported here so `ModelCapabilities.source` and existing
+// `options::CapabilitySource` paths keep resolving to the single canonical type.
+pub use crate::descriptor::CapabilitySource;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestOptions {

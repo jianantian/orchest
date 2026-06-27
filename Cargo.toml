@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/orchest-protocol",
     "crates/agent-runtime-model",
     "crates/agent-runtime-core",
     "crates/agent-runtime-aigc-providers",

@@ -42,6 +42,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "metrics",
+ "orchest-protocol",
  "reqwest",
  "serde",
  "serde_json",
@@ -86,11 +87,7 @@ dependencies = [
 name = "agent-runtime-model"
 version = "0.1.0"
 dependencies = [
- "async-trait",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
+ "orchest-protocol",
 ]
 
 [[package]]
@@ -1455,6 +1452,18 @@ dependencies = [
  "libc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "orchest-protocol"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
