@@ -13,9 +13,14 @@ pub mod openspeech;
 use orchest_protocol::{Asr, RealtimeSession, Tts};
 use orchest_provider_core::registry::Entry;
 
-/// Streaming + WS-backed one-shot ASR dialects. Filled in Issue 006.
+/// Streaming + WS-backed one-shot ASR dialects. The Volcengine openspeech
+/// streaming dialect is registered here; construction is synchronous (the WS
+/// handshake is deferred to `Asr::start_stream`), so it fits the sync factory.
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn asr_entries() -> Vec<Entry<Box<dyn Asr>>> {
-    Vec::new()
+    vec![Entry::new(asr::volcengine::entry_descriptor(), |cfg| {
+        Ok(Box::new(asr::volcengine::from_provider_config(cfg)?) as Box<dyn Asr>)
+    })]
 }
 
 /// Streaming + WS-backed TTS dialects (openspeech, minimax-ws). Filled in Issue 006.

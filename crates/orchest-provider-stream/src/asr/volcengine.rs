@@ -9,9 +9,14 @@
 //! tts/omni-only and lives there.
 
 use async_trait::async_trait;
+use futures_util::{SinkExt, StreamExt};
 use orchest_protocol::{
-    ErrorCode, LifecycleEvent, ProtocolError, SessionInput, StreamEvent, TranscriptStability,
+    Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
+    Modality, ProtocolError, RealtimeHandle, SessionInput, StreamEvent, StreamingTranscribeRequest,
+    TranscribeRequest, TranscribeResult, TranscriptStability,
 };
+use orchest_provider_core::registry::ProviderConfig;
+use orchest_provider_core::ws::{connect_async, tungstenite};
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -331,6 +336,248 @@ pub async fn run_asr_stream<T: ByteDuplex>(
                 None => break,
             },
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Live WebSocket transport + the spine `Asr` impl
+// ---------------------------------------------------------------------------
+
+/// A [`ByteDuplex`] over any `tungstenite` WebSocket sink/stream — the live
+/// transport [`run_asr_stream`] runs on (a `tokio-tungstenite` connection in
+/// production). Generic over the stream so this crate names no concrete
+/// `tokio-tungstenite` type and keeps one WS stack through `orchest-provider-core`.
+pub struct WsDuplex<S> {
+    inner: S,
+}
+
+impl<S> WsDuplex<S> {
+    pub fn new(inner: S) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait]
+impl<S> ByteDuplex for WsDuplex<S>
+where
+    S: futures_util::Sink<tungstenite::Message>
+        + futures_util::Stream<Item = Result<tungstenite::Message, tungstenite::Error>>
+        + Send
+        + Unpin,
+    <S as futures_util::Sink<tungstenite::Message>>::Error: std::fmt::Display,
+{
+    async fn send(&mut self, frame: Vec<u8>) -> Result<(), ProtocolError> {
+        self.inner
+            .send(tungstenite::Message::Binary(frame))
+            .await
+            .map_err(|e| stream_err(format!("ws send: {e}")))
+    }
+
+    async fn recv(&mut self) -> Option<Vec<u8>> {
+        while let Some(message) = self.inner.next().await {
+            match message {
+                Ok(tungstenite::Message::Binary(bytes)) => return Some(bytes),
+                Ok(_) => continue, // ignore text/ping/pong/close control frames
+                Err(_) => return None,
+            }
+        }
+        None
+    }
+}
+
+/// Volcengine streaming-ASR configuration (the openspeech `sauc` endpoints).
+#[derive(Debug, Clone)]
+pub struct VolcengineAsrConfig {
+    pub model: String,
+    pub ws_url: String,
+    pub api_key: String,
+    pub access_key: Option<String>,
+    pub resource_id: String,
+}
+
+/// The Volcengine streaming ASR provider as the spine [`Asr`]. Construction is
+/// cheap and synchronous (the WS handshake is deferred to [`Asr::start_stream`]),
+/// so this slots straight into the registry factory.
+pub struct VolcengineAsr {
+    config: VolcengineAsrConfig,
+}
+
+impl VolcengineAsr {
+    pub fn new(config: VolcengineAsrConfig) -> Self {
+        Self { config }
+    }
+
+    fn client_payload(&self, request: &StreamingTranscribeRequest) -> Value {
+        let mut req_obj = serde_json::json!({
+            "model_name": "bigmodel",
+            "show_utterances": true,
+            "result_type": "single",
+        });
+        if let Some(extra) = request.options.as_object() {
+            for (key, value) in extra {
+                req_obj[key] = value.clone();
+            }
+        }
+        serde_json::json!({
+            "user": {"uid": "orchest-sdk"},
+            "audio": {"format": "pcm", "rate": 16000, "bits": 16, "channel": 1},
+            "request": req_obj,
+        })
+    }
+}
+
+fn extract_host(url: &str) -> &str {
+    url.strip_prefix("wss://")
+        .or_else(|| url.strip_prefix("ws://"))
+        .and_then(|s| s.split('/').next())
+        .unwrap_or("openspeech.bytedance.com")
+}
+
+/// The static descriptor the registry filters on for the Volcengine ASR dialect.
+pub fn entry_descriptor() -> CapabilityDescriptor {
+    CapabilityDescriptor::new("volcengine", "bigmodel", Capability::Asr)
+        .streaming(true)
+        .duplex(true)
+        .with_input_modalities([Modality::Audio])
+        .with_output_modalities([Modality::Text])
+}
+
+/// Build a [`VolcengineAsr`] from a registry [`ProviderConfig`]: `api_url` is the
+/// `wss://` endpoint, `api_key` the secret, and `options.{access_key,resource_id}`
+/// carry the dialect-specific knobs.
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
+pub fn from_provider_config(cfg: &ProviderConfig) -> Result<VolcengineAsr, ProtocolError> {
+    let ws_url = cfg.api_url.clone().ok_or_else(|| {
+        ProtocolError::new(
+            ErrorCode::InvalidRequest,
+            "volcengine ASR requires api_url (wss:// endpoint)",
+        )
+    })?;
+    let api_key = cfg.api_key.clone().ok_or_else(|| {
+        ProtocolError::new(ErrorCode::MissingApiKey, "volcengine ASR requires api_key")
+    })?;
+    let model = if cfg.model.is_empty() {
+        "bigmodel".to_string()
+    } else {
+        cfg.model.clone()
+    };
+    let access_key = cfg
+        .options
+        .get("access_key")
+        .and_then(Value::as_str)
+        .map(String::from);
+    let resource_id = cfg
+        .options
+        .get("resource_id")
+        .and_then(Value::as_str)
+        .unwrap_or("volc.bigasr.sauc.duration")
+        .to_string();
+    Ok(VolcengineAsr::new(VolcengineAsrConfig {
+        model,
+        ws_url,
+        api_key,
+        access_key,
+        resource_id,
+    }))
+}
+
+#[async_trait]
+impl Asr for VolcengineAsr {
+    fn provider_name(&self) -> &str {
+        "volcengine"
+    }
+
+    fn model_name(&self) -> &str {
+        &self.config.model
+    }
+
+    fn descriptor(&self) -> CapabilityDescriptor {
+        CapabilityDescriptor::new("volcengine", self.config.model.clone(), Capability::Asr)
+            .streaming(true)
+            .duplex(true)
+            .with_input_modalities([Modality::Audio])
+            .with_output_modalities([Modality::Text])
+    }
+
+    fn supported_languages(&self) -> &[Language] {
+        &[]
+    }
+
+    async fn transcribe(
+        &self,
+        _request: TranscribeRequest,
+    ) -> Result<TranscribeResult, ProtocolError> {
+        Err(ProtocolError::new(
+            ErrorCode::UnsupportedOperation,
+            "volcengine ASR is streaming-only; use start_stream",
+        ))
+    }
+
+    async fn start_stream(
+        &self,
+        request: StreamingTranscribeRequest,
+    ) -> Result<RealtimeHandle, ProtocolError> {
+        if !self.config.ws_url.starts_with("wss://") {
+            return Err(ProtocolError::new(
+                ErrorCode::InvalidRequest,
+                "WebSocket URL must use wss:// for secure credential transport",
+            ));
+        }
+
+        let connect_id = uuid::Uuid::new_v4().to_string();
+        let request_id = uuid::Uuid::new_v4().to_string();
+
+        let mut builder = tungstenite::http::Request::builder()
+            .uri(&self.config.ws_url)
+            .header("X-Api-Key", &self.config.api_key);
+        if let Some(access_key) = &self.config.access_key {
+            builder = builder.header("X-Api-Access-Key", access_key);
+        }
+        let ws_request = builder
+            .header("X-Api-Resource-Id", &self.config.resource_id)
+            .header("X-Api-Connect-Id", &connect_id)
+            .header("X-Api-Request-Id", &request_id)
+            .header("X-Api-Sequence", "-1")
+            .header("Host", extract_host(&self.config.ws_url))
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header(
+                "Sec-WebSocket-Key",
+                tungstenite::handshake::client::generate_key(),
+            )
+            .body(())
+            .map_err(|e| {
+                ProtocolError::new(ErrorCode::InvalidRequest, format!("build ws request: {e}"))
+            })?;
+
+        let (ws_stream, _response) = connect_async(ws_request)
+            .await
+            .map_err(|e| stream_err(format!("WebSocket connection failed: {e}")))?;
+
+        let mut duplex = WsDuplex::new(ws_stream);
+        duplex
+            .send(build_full_client_request(&self.client_payload(&request))?)
+            .await?;
+
+        let (input_tx, input_rx) = mpsc::channel(32);
+        let (events_tx, events) = EventStream::channel(64);
+
+        // Surface route selection up front, like the legacy adapter did.
+        let _ = events_tx
+            .send(StreamEvent::Lifecycle(LifecycleEvent::RouteSelected {
+                provider: "volcengine".into(),
+                model: self.config.model.clone(),
+                trace_id: None,
+            }))
+            .await;
+
+        tokio::spawn(run_asr_stream(duplex, input_rx, events_tx));
+
+        Ok(RealtimeHandle {
+            input: input_tx,
+            events,
+        })
     }
 }
 

@@ -179,8 +179,29 @@ fn build_instantiates_the_selected_entry() {
 
 #[test]
 fn mechanism_only_registry_is_empty() {
-    // The default-feature build registers zero impls.
-    let reg = Registry::with_builtin();
+    // `Registry::new()` is the mechanism-only constructor: zero registered impls,
+    // independent of which dialect features are enabled. (`with_builtin()` loads
+    // the feature-gated impl crates, so once a dialect is registered — e.g. the
+    // Volcengine ASR entry under `stream` — its contents are feature-dependent.)
+    let reg = Registry::new();
     assert!(reg.chat().list().is_empty());
     assert!(reg.asr().list().is_empty());
+    assert!(reg.tts().list().is_empty());
+    assert!(reg.realtime().list().is_empty());
+    assert!(reg.gen().list().is_empty());
+}
+
+#[cfg(feature = "stream")]
+#[test]
+fn with_builtin_registers_stream_asr_dialect() {
+    // With the WS weight tier enabled, the wall exposes the openspeech ASR
+    // dialect by capability/identity — selection works against a real descriptor.
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .asr()
+        .provider("volcengine")
+        .bidirectional()
+        .select()
+        .expect("volcengine streaming ASR is registered under the stream feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "bigmodel");
 }
