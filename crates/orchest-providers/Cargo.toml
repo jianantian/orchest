@@ -1,0 +1,43 @@
+[package]
+name = "orchest-providers"
+version = "0.1.0"
+edition = "2021"
+
+# THE WALL: the consumer-facing registry + vendor facade + feature flags
+# (v0.9.12 provider unification, Issue 004). Consumers depend on exactly
+# orchest-protocol + orchest-providers; impl crates and wire dialects are never
+# named. Concrete provider registrations + per-vendor feature/facade rows are
+# added by Issues 005/006/007.
+
+[features]
+# Mechanism-only by default: zero registered impls, no impl crate pulled in.
+default = []
+
+# Impl-crate weight tiers (each pulls one dialect crate).
+http = ["dep:orchest-provider-http"]
+stream = ["dep:orchest-provider-stream"]
+visual = ["dep:orchest-provider-visual"]
+
+# Capability convenience aliases (map to the weight tiers that host them).
+# `llm` pulls only the REST tier — no websocket/OSS deps.
+llm = ["http"]
+asr = ["http", "stream"]
+tts = ["http", "stream"]
+realtime = ["stream"]
+gen = ["http", "visual"]
+
+[dependencies]
+orchest-protocol = { path = "../orchest-protocol" }
+orchest-provider-core = { path = "../orchest-provider-core" }
+serde_json = "1"
+
+orchest-provider-http = { path = "../orchest-provider-http", optional = true }
+orchest-provider-stream = { path = "../orchest-provider-stream", optional = true }
+orchest-provider-visual = { path = "../orchest-provider-visual", optional = true }
+
+[dev-dependencies]
+async-trait = "0.1"
+tokio = { version = "1", features = ["sync", "macros", "rt"] }
+
+[lints]
+workspace = true

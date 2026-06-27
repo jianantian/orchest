@@ -1,0 +1,18 @@
+[package]
+name = "orchest-provider-http"
+version = "0.1.0"
+edition = "2021"
+
+# L2/L3 REST + SSE dialects (openai-compat · anthropic · minimax-rest · rest-asr ·
+# music). Skeleton created in Issue 004; dialect modules added in 005/006/007.
+# Light weight tier — REST only, no websocket/OSS.
+
+[features]
+default = []
+
+[dependencies]
+orchest-protocol = { path = "../orchest-protocol" }
+orchest-provider-core = { path = "../orchest-provider-core" }
+
+[lints]
+workspace = true

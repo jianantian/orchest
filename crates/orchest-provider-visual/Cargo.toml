@@ -1,0 +1,18 @@
+[package]
+name = "orchest-provider-visual"
+version = "0.1.0"
+edition = "2021"
+
+# L2/L3 signed/polled generation (volc-visual · aliyun · crazyrouter · renderful).
+# Absorbs the aigc image/video gen. Skeleton created in Issue 004; GenTask impls
+# added in Issue 007. Enables core's `oss` feature (signing + poller).
+
+[features]
+default = []
+
+[dependencies]
+orchest-protocol = { path = "../orchest-protocol" }
+orchest-provider-core = { path = "../orchest-provider-core", features = ["oss"] }
+
+[lints]
+workspace = true

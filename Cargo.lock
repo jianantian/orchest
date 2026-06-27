@@ -1490,6 +1490,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "orchest-provider-http"
+version = "0.1.0"
+dependencies = [
+ "orchest-protocol",
+ "orchest-provider-core",
+]
+
+[[package]]
+name = "orchest-provider-stream"
+version = "0.1.0"
+dependencies = [
+ "orchest-protocol",
+ "orchest-provider-core",
+]
+
+[[package]]
+name = "orchest-provider-visual"
+version = "0.1.0"
+dependencies = [
+ "orchest-protocol",
+ "orchest-provider-core",
+]
+
+[[package]]
+name = "orchest-providers"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "orchest-protocol",
+ "orchest-provider-core",
+ "orchest-provider-http",
+ "orchest-provider-stream",
+ "orchest-provider-visual",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "ordered-float"
 version = "5.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

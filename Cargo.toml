@@ -3,6 +3,10 @@ resolver = "2"
 members = [
     "crates/orchest-protocol",
     "crates/orchest-provider-core",
+    "crates/orchest-provider-http",
+    "crates/orchest-provider-stream",
+    "crates/orchest-provider-visual",
+    "crates/orchest-providers",
     "crates/agent-runtime-model",
     "crates/agent-runtime-core",
     "crates/agent-runtime-aigc-providers",

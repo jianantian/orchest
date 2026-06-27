@@ -16,6 +16,7 @@
 
 pub mod auth;
 pub mod http;
+pub mod registry;
 pub mod retry;
 pub mod telemetry;
 

@@ -1,0 +1,19 @@
+[package]
+name = "orchest-provider-stream"
+version = "0.1.0"
+edition = "2021"
+
+# L2/L3 WebSocket dialects (openspeech[asr/tts/omni] · minimax-ws · streaming
+# asr). Absorbs the realtime + asr/tts streaming crates. Skeleton created in
+# Issue 004; dialect modules added in Issue 006. WS weight tier — enables core's
+# `ws` feature.
+
+[features]
+default = []
+
+[dependencies]
+orchest-protocol = { path = "../orchest-protocol" }
+orchest-provider-core = { path = "../orchest-provider-core", features = ["ws"] }
+
+[lints]
+workspace = true
