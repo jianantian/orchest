@@ -8,7 +8,10 @@
 
 use std::sync::LazyLock;
 
-use agent_runtime_model::{ModelPricing, PricingRates, PricingTier};
+use orchest_protocol::{
+    Capability, CapabilityDescriptor, CapabilityExt, CapabilitySource, CatalogEntry,
+    ChatCapabilityExt, Modality as ProtoModality, ModelPricing, PricingRates, PricingTier,
+};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -774,6 +777,51 @@ pub fn find_model(model_id: &str) -> Option<&'static LlmModelEntry> {
                 .rsplit_once('/')
                 .is_some_and(|(_, bare)| bare == model_id)
     })
+}
+
+// ---------------------------------------------------------------------------
+// Catalog → spine descriptor (Issue 005)
+// ---------------------------------------------------------------------------
+
+fn to_proto_modality(m: Modality) -> ProtoModality {
+    match m {
+        Modality::Text => ProtoModality::Text,
+        Modality::Image => ProtoModality::Image,
+        Modality::Video => ProtoModality::Video,
+        Modality::Audio => ProtoModality::Audio,
+    }
+}
+
+fn map_modalities(ms: &[Modality]) -> Vec<ProtoModality> {
+    ms.iter().copied().map(to_proto_modality).collect()
+}
+
+/// Project a catalog row onto the registry's queryable [`CapabilityDescriptor`].
+/// The booleans the registry filters on (streaming/tools/thinking, modalities)
+/// come from the catalog; the preserved chat detail (pricing, context window,
+/// output cap) rides in [`CapabilityExt::Chat`]. All enumerable LLM models
+/// stream and support tools, so those two are constant `true`.
+impl CatalogEntry for LlmModelEntry {
+    fn descriptor(&self) -> CapabilityDescriptor {
+        let model = self
+            .model_id
+            .split_once('/')
+            .map(|(_, m)| m)
+            .unwrap_or(self.model_id);
+        CapabilityDescriptor::new(self.provider, model, Capability::Chat)
+            .streaming(true)
+            .tools(true)
+            .thinking(self.thinking.is_some())
+            .with_input_modalities(map_modalities(self.input_modalities))
+            .with_output_modalities(map_modalities(self.output_modalities))
+            .with_source(CapabilitySource::Static)
+            .with_ext(CapabilityExt::Chat(ChatCapabilityExt {
+                max_output_tokens: self.max_output_tokens,
+                context_window_size: Some(self.context_window),
+                pricing: self.pricing.clone(),
+                ..Default::default()
+            }))
+    }
 }
 
 #[cfg(test)]

@@ -3,25 +3,18 @@ name = "agent-runtime-providers"
 version = "0.1.0"
 edition = "2021"
 
+# Deprecated re-export shell (v0.9.12): the LLM adapters live in
+# orchest-provider-http now; this crate only re-exports them for core/node/py.
+# Removed in Issue 008.
+
 [dependencies]
-orchest-provider-core = { path = "../orchest-provider-core" }
-tokio = { version = "1", features = ["sync"] }
-serde = { version = "1", features = ["derive", "rc"] }
-serde_json = "1"
-async-trait = "0.1"
-bytes = "1"
-reqwest = { version = "0.12", features = ["json", "stream"] }
-futures-util = "0.3"
-thiserror = "2"
-agent-runtime-model = { path = "../agent-runtime-model" }
-tracing = "0.1"
-metrics = "0.24"
+orchest-provider-http = { path = "../orchest-provider-http" }
 
 [dev-dependencies]
 agent-runtime-core = { path = "../agent-runtime-core" }
+async-trait = "0.1"
+serde_json = "1"
 tokio = { version = "1", features = ["full"] }
-tracing-subscriber = { version = "0.3", features = ["fmt", "registry"] }
-metrics-util = "0.20"
 
 [[example]]
 name = "rust_provider_runtime_deepseek"

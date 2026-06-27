@@ -1,6 +1,6 @@
 //! Re-exported model types from `agent-runtime-model`.
 // Re-exported here for backward compatibility.
-pub use agent_runtime_model::{
+pub use orchest_protocol::{
     CacheCapability, CachePolicy, CapabilitySource, CompatibilityPolicy, ContentBlock, JsonSchema,
     MediaSource, Message, ModelAdapter, ModelCapabilities, ModelError, ModelPricing, ModelResponse,
     ModelSpec, OptionAdjustment, ProviderRuntimeConfig, ReasoningCapability, RequestOptions, Role,
@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn model_pricing_calculate_with_cache() {
-        use agent_runtime_model::PricingRates;
+        use orchest_protocol::PricingRates;
         let pricing = ModelPricing::single_tier(
             "USD",
             PricingRates::text(3.0, 15.0).with_cache(Some(0.3), Some(3.75)),
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn model_pricing_calculate_tiered_with_audio() {
-        use agent_runtime_model::{PricingRates, PricingTier};
+        use orchest_protocol::{PricingRates, PricingTier};
         // doubao-seed-2-0-mini-260428 三档 (audio surcharge) — verify
         // calculate() picks the right tier and applies audio rate.
         let pricing = ModelPricing {

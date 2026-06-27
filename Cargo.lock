@@ -60,7 +60,6 @@ dependencies = [
 name = "agent-runtime-core"
 version = "0.1.0"
 dependencies = [
- "agent-runtime-model",
  "agent-runtime-providers",
  "async-trait",
  "futures-util",
@@ -68,6 +67,7 @@ dependencies = [
  "libc",
  "metrics",
  "metrics-util",
+ "orchest-protocol",
  "ractor",
  "reqwest",
  "rusqlite",
@@ -113,20 +113,10 @@ name = "agent-runtime-providers"
 version = "0.1.0"
 dependencies = [
  "agent-runtime-core",
- "agent-runtime-model",
  "async-trait",
- "bytes",
- "futures-util",
- "metrics",
- "metrics-util",
- "orchest-provider-core",
- "reqwest",
- "serde",
+ "orchest-provider-http",
  "serde_json",
- "thiserror 2.0.18",
  "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1493,8 +1483,20 @@ dependencies = [
 name = "orchest-provider-http"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "bytes",
+ "futures-util",
+ "metrics",
+ "metrics-util",
  "orchest-protocol",
  "orchest-provider-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

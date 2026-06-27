@@ -4,10 +4,10 @@
 //! recorded in `catalog`. The catalog is the source of truth; helpers here
 //! exist so a custom/preview model id still gets a sensible cost estimate.
 
-use agent_runtime_model::ModelPricing;
+use orchest_protocol::ModelPricing;
 
 fn usd(input: f64, output: f64, cache_read: Option<f64>, cache_write: Option<f64>) -> ModelPricing {
-    use agent_runtime_model::PricingRates;
+    use orchest_protocol::PricingRates;
     ModelPricing::single_tier(
         "USD",
         PricingRates::text(input, output).with_cache(cache_read, cache_write),
@@ -96,7 +96,7 @@ pub fn volcengine_pricing(model: &str) -> ModelPricing {
 mod tests {
     use super::*;
 
-    fn headline(pricing: &ModelPricing) -> &agent_runtime_model::PricingRates {
+    fn headline(pricing: &ModelPricing) -> &orchest_protocol::PricingRates {
         &pricing
             .tiers
             .first()

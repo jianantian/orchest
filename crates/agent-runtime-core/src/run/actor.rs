@@ -2231,10 +2231,10 @@ mod history_clone_profile_tests {
         }
     }
 
-    fn media_source_bytes(source: &agent_runtime_model::MediaSource) -> usize {
+    fn media_source_bytes(source: &orchest_protocol::MediaSource) -> usize {
         match source {
-            agent_runtime_model::MediaSource::Url { url } => url.len(),
-            agent_runtime_model::MediaSource::Base64 { media_type, data } => {
+            orchest_protocol::MediaSource::Url { url } => url.len(),
+            orchest_protocol::MediaSource::Base64 { media_type, data } => {
                 media_type.len() + data.len()
             }
         }

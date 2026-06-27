@@ -7,10 +7,10 @@
 
 use std::env;
 
-use agent_runtime_model::{
+use agent_runtime_providers::{
     ContentBlock, Message, ModelAdapter, RequestOptions, Role, StopReason, ThinkingLevel,
+    VolcengineAdapter, VolcengineConfig,
 };
-use agent_runtime_providers::{VolcengineAdapter, VolcengineConfig};
 
 fn load_dotenv_if_present() {
     let mut path = std::env::current_dir().ok();
@@ -149,7 +149,7 @@ async fn live_chat_completion_with_thinking_enabled() {
 #[ignore = "requires real ARK_API_KEY"]
 async fn live_tool_calling_round_trip() {
     let adapter = adapter("doubao-seed-2-1-turbo-260628");
-    let tool = agent_runtime_model::ToolDef {
+    let tool = agent_runtime_providers::ToolDef {
         name: "get_weather".into(),
         description: "Get the current weather for a city".into(),
         input_schema: serde_json::json!({

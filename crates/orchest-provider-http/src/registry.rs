@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use agent_runtime_model::{ModelAdapter, ModelError};
+use orchest_protocol::{ModelAdapter, ModelError};
 
 /// Trait for provider-specific adapter creation. Each provider implements this
 /// to register itself with the [`ProviderRegistry`].

@@ -1,18 +1,77 @@
 //! `orchest-provider-http` — REST + SSE wire dialects (the light weight tier).
 //!
-//! **Skeleton (Issue 004).** Dialect modules (openai-compat, anthropic,
-//! minimax-rest, REST one-shot asr/tts, minimax music) and their concrete
-//! registry entries are added by Issues 005/006/007. The entry-producing
-//! functions below return empty vectors so the wall (`orchest-providers`) can
-//! wire them behind features and compile with zero registered impls.
+//! Home of the LLM chat adapters (Anthropic, OpenAI, DeepSeek, OpenRouter,
+//! Volcengine-Ark, Minimax), migrated here from `agent-runtime-providers` in
+//! Issue 005. They implement [`ChatModel`] (the renamed `ModelAdapter`) over a
+//! shared `reqwest` client + SSE decoder, and are registered through the wall
+//! (`orchest-providers`) via [`chat_entries`]. The deprecated
+//! `agent-runtime-providers` crate is now a thin re-export of this one, so
+//! `core/node/py` keep their `create_adapter_from_config` /
+//! `normalize_provider_model` / `ModelAdapter` entry points unchanged.
+//!
+//! REST/SSE one-shot ASR/TTS (Issue 006) and the minimax-music gen-task (Issue
+//! 007) join the asr/tts/gen entry functions later.
 
-use orchest_protocol::{Asr, ChatModel, GenTask, Tts};
-use orchest_provider_core::registry::Entry;
+pub mod catalog;
+pub use catalog::{
+    LlmModelEntry, LlmModelList, LlmProviderInfo, Modality, ModelScene, ThinkingSpec,
+};
 
-/// Chat (LLM) dialects: openai-compat, anthropic, minimax-rest, volc-ark.
-/// Filled in Issue 005.
+pub mod defaults;
+pub mod pricing;
+pub mod registry;
+pub mod types;
+pub use types::*;
+
+pub mod providers;
+pub use providers::{
+    AnthropicAdapter, AnthropicConfig, DeepSeekAdapter, DeepSeekConfig, MinimaxAdapter,
+    MinimaxConfig, OpenAiAdapter, OpenAiConfig, OpenRouterAdapter, OpenRouterConfig,
+    VolcengineAdapter, VolcengineConfig,
+};
+
+pub(crate) mod http;
+pub(crate) mod role_compat;
+pub(crate) mod sse;
+
+pub mod telemetry;
+
+pub use registry::{ProviderFactory, ProviderRegistry};
+
+use std::future::Future;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+
+use orchest_protocol::{Asr, CatalogEntry, ChatModel, EventStream, GenTask, ProtocolError, Tts};
+use orchest_provider_core::registry::{Entry, ProviderConfig};
+
+// ---------------------------------------------------------------------------
+// Wall registration (Issue 004 surface, filled here in Issue 005)
+// ---------------------------------------------------------------------------
+
+/// LLM chat dialects as registry entries. One [`Entry`] per **enumerable**
+/// catalog model: the static [`CapabilityDescriptor`](orchest_protocol::CapabilityDescriptor)
+/// (queried before instantiation) plus a factory that builds the concrete
+/// adapter via [`create_adapter_from_config`]. Dynamic-gateway providers
+/// (OpenRouter) cannot be enumerated statically and stay reachable only through
+/// the free-function path (`create_adapter_from_config`), which `node/py` use.
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn chat_entries() -> Vec<Entry<Box<dyn ChatModel>>> {
-    Vec::new()
+    catalog::list_models()
+        .map(|m| {
+            let model_id = m.model_id; // 'static "provider/model"
+            Entry::new(CatalogEntry::descriptor(m), move |cfg: &ProviderConfig| {
+                create_adapter_from_config(ProviderRuntimeConfig {
+                    model: model_id.to_string(),
+                    api_key: cfg.api_key.clone(),
+                    api_key_env: None,
+                    api_url: cfg.api_url.clone(),
+                    max_tokens: cfg.max_tokens,
+                })
+                .map_err(ProtocolError::from)
+            })
+        })
+        .collect()
 }
 
 /// REST/SSE one-shot ASR dialects. Filled in Issue 006.
@@ -29,3 +88,194 @@ pub fn tts_entries() -> Vec<Entry<Box<dyn Tts>>> {
 pub fn gen_entries() -> Vec<Entry<Box<dyn GenTask>>> {
     Vec::new()
 }
+
+// ---------------------------------------------------------------------------
+// Free-function construction API (preserved for core/node/py via the
+// `agent-runtime-providers` re-export — same signatures as before the move).
+// ---------------------------------------------------------------------------
+
+pub fn create_adapter(
+    model: &str,
+    api_key: Option<String>,
+) -> Result<Box<dyn ModelAdapter>, ModelError> {
+    create_adapter_from_config(ProviderRuntimeConfig {
+        model: model.to_string(),
+        api_key,
+        api_key_env: None,
+        api_url: None,
+        max_tokens: None,
+    })
+}
+
+pub fn create_adapter_from_config(
+    config: ProviderRuntimeConfig,
+) -> Result<Box<dyn ModelAdapter>, ModelError> {
+    let registry = ProviderRegistry::new();
+    let normalized = normalize_provider_model(&config.model)?;
+
+    let factory = registry
+        .get(normalized.provider)
+        .ok_or_else(|| unknown_provider(normalized.provider, &registry))?;
+
+    let api_key = resolve_api_key(
+        factory,
+        config.api_key.as_deref(),
+        config.api_key_env.as_deref(),
+    )?;
+    let max_tokens = config.max_tokens.unwrap_or(defaults::MAX_TOKENS);
+
+    factory.create_adapter(normalized.model, max_tokens, api_key, config.api_url)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NormalizedProviderModel<'a> {
+    pub provider: &'a str,
+    pub model: &'a str,
+}
+
+pub fn normalize_provider_model(model: &str) -> Result<NormalizedProviderModel<'_>, ModelError> {
+    let registry = ProviderRegistry::new();
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        return Err(ModelError::internal(
+            "model string cannot be empty",
+            "invalid_model",
+        ));
+    }
+
+    let Some((provider, model_name)) = trimmed.split_once('/') else {
+        return Ok(NormalizedProviderModel {
+            provider: "anthropic",
+            model: trimmed,
+        });
+    };
+
+    if provider.is_empty() || model_name.is_empty() {
+        return Err(ModelError::internal(
+            format!("invalid model string '{model}': expected 'provider/model'"),
+            "invalid_model",
+        ));
+    }
+
+    if registry.get(provider).is_some() {
+        Ok(NormalizedProviderModel {
+            provider,
+            model: model_name,
+        })
+    } else {
+        Err(unknown_provider(provider, &registry))
+    }
+}
+
+fn resolve_api_key(
+    factory: &dyn ProviderFactory,
+    explicit: Option<&str>,
+    api_key_env: Option<&str>,
+) -> Result<String, ModelError> {
+    if let Some(value) = explicit {
+        return non_empty_api_key(value);
+    }
+    if let Some(env_name) = api_key_env {
+        if env_name.trim().is_empty() {
+            return Err(ModelError::internal(
+                "api_key_env cannot be empty",
+                "invalid_api_key_env",
+            ));
+        }
+        return match std::env::var(env_name) {
+            Ok(value) => non_empty_api_key(&value),
+            Err(_) => Err(ModelError::internal(
+                format!("API key env var '{env_name}' is not set"),
+                "missing_api_key",
+            )),
+        };
+    }
+
+    let env_name = factory.default_api_key_env();
+    match std::env::var(env_name) {
+        Ok(value) => non_empty_api_key(&value),
+        Err(_) => Err(ModelError::internal(
+            format!("{env_name} not set and no api_key provided"),
+            "missing_api_key",
+        )),
+    }
+}
+
+fn non_empty_api_key(value: &str) -> Result<String, ModelError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Err(ModelError::internal(
+            "API key cannot be empty",
+            "invalid_api_key",
+        ))
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+fn unknown_provider(provider: &str, registry: &ProviderRegistry) -> ModelError {
+    let supported = registry.supported_providers().join(", ");
+    ModelError::internal(
+        format!("unknown provider '{provider}': supported providers are {supported}"),
+        "unknown_provider",
+    )
+}
+
+pub fn stream_chat<'a>(
+    adapter: &'a dyn ModelAdapter,
+    messages: &'a [Message],
+    tools: &'a [ToolDef],
+    options: &'a RequestOptions,
+) -> (
+    impl Future<Output = Result<ModelResponse, ModelError>> + 'a,
+    mpsc::Receiver<StreamEvent>,
+) {
+    let (tx, rx) = mpsc::channel(64);
+    let future = adapter.complete(messages, tools, options, Some(tx));
+    (future, rx)
+}
+
+pub async fn chat(
+    adapter: &dyn ModelAdapter,
+    messages: &[Message],
+    tools: &[ToolDef],
+    options: &RequestOptions,
+) -> Result<ModelResponse, ModelError> {
+    adapter.complete(messages, tools, options, None).await
+}
+
+/// Chat push→pull bridge (Issue 005). Drives a [`ChatModel`]'s retained push
+/// completion (`complete(.., Some(tx))`) on a background task and hands back the
+/// **pulled** [`EventStream`] — the unified delivery shape ASR/TTS/realtime
+/// already speak (design §1.4). This is where chat "converges onto a pulled
+/// `events()`": every LLM provider reaches the pull world through here while its
+/// `ModelAdapter` push transport stays the working bridge underneath until Issue
+/// 008. The completion's terminal `Result` is surfaced in-band as the stream's
+/// trailing `Done`/`Error` events, so a pull-only consumer needs nothing else.
+pub fn events(
+    model: Arc<dyn ChatModel>,
+    messages: Vec<Message>,
+    tools: Vec<ToolDef>,
+    options: RequestOptions,
+) -> EventStream {
+    let (tx, stream) = EventStream::channel(64);
+    tokio::spawn(async move {
+        if let Err(err) = model
+            .complete(&messages, &tools, &options, Some(tx.clone()))
+            .await
+        {
+            // The push path emits its own terminal events on success; on a hard
+            // failure before any were sent, surface it so the puller still ends.
+            let _ = tx
+                .send(StreamEvent::Error {
+                    error: err.into(),
+                    fatal: true,
+                })
+                .await;
+        }
+    });
+    stream
+}
+
+#[cfg(test)]
+mod tests;

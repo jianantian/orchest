@@ -3,16 +3,29 @@ name = "orchest-provider-http"
 version = "0.1.0"
 edition = "2021"
 
-# L2/L3 REST + SSE dialects (openai-compat · anthropic · minimax-rest · rest-asr ·
-# music). Skeleton created in Issue 004; dialect modules added in 005/006/007.
+# L2/L3 REST + SSE dialects. Home of the LLM chat adapters (openai-compat ·
+# anthropic · minimax-rest · volc-ark), migrated from agent-runtime-providers in
+# Issue 005. REST one-shot asr/tts (006) and minimax-music gen-task (007) follow.
 # Light weight tier — REST only, no websocket/OSS.
-
-[features]
-default = []
 
 [dependencies]
 orchest-protocol = { path = "../orchest-protocol" }
 orchest-provider-core = { path = "../orchest-provider-core" }
+tokio = { version = "1", features = ["sync", "rt"] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+async-trait = "0.1"
+bytes = "1"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+futures-util = "0.3"
+thiserror = "2"
+tracing = "0.1"
+metrics = "0.24"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "registry"] }
+metrics-util = "0.20"
 
 [lints]
 workspace = true
