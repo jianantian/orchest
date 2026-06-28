@@ -6,5 +6,6 @@
 //! the synthesize/duplex loops sit on top of this codec and land alongside the
 //! live transport; minimax-ws TTS follows.
 
+pub mod aliyun;
 pub mod minimax;
 pub mod volcengine;

@@ -52,6 +52,9 @@ pub fn tts_entries() -> Vec<Entry<Box<dyn Tts>>> {
         Entry::new(tts::minimax::entry_descriptor(), |cfg| {
             Ok(Box::new(tts::minimax::from_provider_config(cfg)?) as Box<dyn Tts>)
         }),
+        Entry::new(tts::aliyun::entry_descriptor(), |cfg| {
+            Ok(Box::new(tts::aliyun::from_provider_config(cfg)?) as Box<dyn Tts>)
+        }),
     ]
 }
 

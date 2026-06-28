@@ -277,3 +277,15 @@ fn with_builtin_registers_minimax_tts_dialect() {
         .expect("minimax TTS is registered under the stream feature");
     assert_eq!(picked.descriptor.model.as_ref(), "speech-2.8-hd");
 }
+
+#[cfg(feature = "stream")]
+#[test]
+fn with_builtin_registers_aliyun_tts_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .tts()
+        .provider("aliyun")
+        .select()
+        .expect("aliyun TTS is registered under the stream feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "cosyvoice-v2");
+}
