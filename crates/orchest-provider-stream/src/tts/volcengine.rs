@@ -9,9 +9,11 @@
 //! `session_id`, then the length-prefixed payload (or raw audio).
 
 use bytes::Bytes;
-use orchest_protocol::{AudioFormat, ErrorCode, ProtocolError, StreamEvent};
+use orchest_protocol::{AudioFormat, ErrorCode, ProtocolError, StreamEvent, TokenUsage};
 use serde_json::Value;
+use tokio::sync::mpsc;
 
+use crate::asr::volcengine::ByteDuplex;
 use crate::openspeech::{
     build_header, parse_header, COMP_NONE, FLAG_WITH_EVENT, MSG_AUDIO_ONLY_RESPONSE,
     MSG_ERROR_RESPONSE, MSG_FULL_CLIENT_REQUEST, MSG_FULL_SERVER_RESPONSE, SER_JSON,
@@ -212,9 +214,57 @@ pub fn map_frame(frame: VolcengineFrame) -> Option<StreamEvent> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Unidirectional synthesis loop (transport-agnostic; live WS is a thin adapter)
+// ---------------------------------------------------------------------------
+
+/// Drive one unidirectional TTS synthesis over `transport`: send the prebuilt
+/// client `request_frame` (text + voice config), then stream server frames —
+/// audio chunks become `AudioDelta`, the terminal `SESSION_FINISHED` emits a
+/// final `Done`, and an error frame a fatal `Error`. Generic over [`ByteDuplex`]
+/// so the synthesis behavior is testable without a network (the live
+/// `tokio-tungstenite` WebSocket is the same thin adapter the ASR path uses).
+pub async fn run_tts_synthesis<T: ByteDuplex>(
+    mut transport: T,
+    request_frame: Vec<u8>,
+    events: mpsc::Sender<StreamEvent>,
+) {
+    if transport.send(request_frame).await.is_err() {
+        return;
+    }
+    while let Some(bytes) = transport.recv().await {
+        match parse_frame(&bytes) {
+            Ok(frame) => {
+                let finished = matches!(
+                    &frame,
+                    VolcengineFrame::Meta { event, .. } if *event == EVENT_SESSION_FINISHED
+                );
+                if let Some(event) = map_frame(frame) {
+                    if events.send(event).await.is_err() {
+                        return;
+                    }
+                }
+                if finished {
+                    let _ = events
+                        .send(StreamEvent::Done {
+                            usage: TokenUsage::default(),
+                        })
+                        .await;
+                    break;
+                }
+            }
+            Err(error) => {
+                let _ = events.send(StreamEvent::Error { error, fatal: true }).await;
+                break;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use serde_json::json;
 
     #[test]
@@ -339,5 +389,52 @@ mod tests {
     fn meta_frame_maps_to_no_event() {
         let frame = server_meta_frame(EVENT_SESSION_FINISHED, "s", &json!({}));
         assert!(map_frame(parse_frame(&frame).unwrap()).is_none());
+    }
+
+    struct ChannelDuplex {
+        out: mpsc::Sender<Vec<u8>>,
+        inbound: mpsc::Receiver<Vec<u8>>,
+    }
+
+    #[async_trait]
+    impl ByteDuplex for ChannelDuplex {
+        async fn send(&mut self, frame: Vec<u8>) -> Result<(), ProtocolError> {
+            self.out.send(frame).await.map_err(|_| stream_err("closed"))
+        }
+        async fn recv(&mut self) -> Option<Vec<u8>> {
+            self.inbound.recv().await
+        }
+    }
+
+    #[tokio::test]
+    async fn run_tts_synthesis_streams_audio_then_done() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+
+        let handle = tokio::spawn(run_tts_synthesis(transport, vec![0u8; 8], events_tx));
+
+        // The synthesis sends the request frame, which the server observes.
+        assert!(out_rx.recv().await.is_some());
+        // Server streams one audio chunk, then signals SESSION_FINISHED.
+        in_tx.send(audio_frame("s", b"pcm")).await.unwrap();
+        in_tx
+            .send(server_meta_frame(EVENT_SESSION_FINISHED, "s", &json!({})))
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::AudioDelta { .. }
+        ));
+        assert!(matches!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Done { .. }
+        ));
+        handle.await.unwrap(); // synthesis terminated on SESSION_FINISHED
     }
 }
