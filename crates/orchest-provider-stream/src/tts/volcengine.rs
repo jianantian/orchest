@@ -8,16 +8,25 @@
 //! `event` (i32), then — for session/task frames — a length-prefixed
 //! `session_id`, then the length-prefixed payload (or raw audio).
 
+use async_trait::async_trait;
 use bytes::Bytes;
-use orchest_protocol::{AudioFormat, ErrorCode, ProtocolError, StreamEvent, TokenUsage};
+use orchest_protocol::{
+    AudioFormat, Capability, CapabilityDescriptor, ErrorCode, EventStream, Modality, ProtocolError,
+    RealtimeHandle, StreamEvent, SynthesizeRequest, SynthesizeResult, TokenUsage, Tts,
+};
+use orchest_provider_core::registry::ProviderConfig;
+use orchest_provider_core::ws::{connect_async, tungstenite};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::asr::volcengine::ByteDuplex;
+use crate::asr::volcengine::{ByteDuplex, WsDuplex};
 use crate::openspeech::{
     build_header, parse_header, COMP_NONE, FLAG_WITH_EVENT, MSG_AUDIO_ONLY_RESPONSE,
     MSG_ERROR_RESPONSE, MSG_FULL_CLIENT_REQUEST, MSG_FULL_SERVER_RESPONSE, SER_JSON,
 };
+
+const DEFAULT_UNIDIRECTIONAL_WS_URL: &str =
+    "wss://openspeech.bytedance.com/api/v3/tts/unidirectional/stream";
 
 // openspeech TTS event numbers.
 pub const EVENT_START_CONNECTION: i32 = 1;
@@ -261,10 +270,237 @@ pub async fn run_tts_synthesis<T: ByteDuplex>(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Client send frame + payload (unidirectional synthesize)
+// ---------------------------------------------------------------------------
+
+/// Unidirectional client send frame: a plain `MSG_FULL_CLIENT_REQUEST` (no event
+/// flag), length-prefixed JSON payload. (Duplex uses the event-framing builders.)
+pub fn build_send_frame(payload: &[u8]) -> Vec<u8> {
+    let mut out = build_header(MSG_FULL_CLIENT_REQUEST, 0, SER_JSON, COMP_NONE).to_vec();
+    out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    out.extend_from_slice(payload);
+    out
+}
+
+fn audio_format_name(format: &AudioFormat) -> &'static str {
+    match format {
+        AudioFormat::Mp3 => "mp3",
+        AudioFormat::OggOpus | AudioFormat::Ogg => "ogg_opus",
+        AudioFormat::Wav | AudioFormat::WavPcm16Le => "wav",
+        _ => "pcm",
+    }
+}
+
+fn build_synthesis_payload(request: &SynthesizeRequest) -> Value {
+    let mut req_params = serde_json::json!({
+        "text": request.text,
+        "speaker": request.voice.clone().unwrap_or_default(),
+        "audio_params": {
+            "format": audio_format_name(&request.format),
+            "sample_rate": 24000,
+        },
+    });
+    if let Some(extra) = request.options.as_object() {
+        for (key, value) in extra {
+            req_params[key] = value.clone();
+        }
+    }
+    serde_json::json!({ "user": {"uid": "orchest-sdk"}, "req_params": req_params })
+}
+
+// ---------------------------------------------------------------------------
+// The spine `Tts` impl
+// ---------------------------------------------------------------------------
+
+/// Volcengine streaming-TTS configuration (the openspeech unidirectional endpoint).
+#[derive(Debug, Clone)]
+pub struct VolcengineTtsConfig {
+    pub model: String,
+    pub ws_url: String,
+    pub api_key: String,
+    pub access_key: Option<String>,
+    pub resource_id: String,
+}
+
+/// The Volcengine streaming TTS provider as the spine [`Tts`]. Like the ASR
+/// provider, construction is synchronous; the WS handshake is deferred to the
+/// synthesize calls.
+pub struct VolcengineTts {
+    config: VolcengineTtsConfig,
+}
+
+impl VolcengineTts {
+    pub fn new(config: VolcengineTtsConfig) -> Self {
+        Self { config }
+    }
+
+    /// Connect, send the unidirectional request frame, and spawn the synthesis
+    /// loop, returning the pulled [`EventStream`] of audio/lifecycle events.
+    async fn open_stream(&self, request: SynthesizeRequest) -> Result<EventStream, ProtocolError> {
+        if !self.config.ws_url.starts_with("wss://") {
+            return Err(ProtocolError::new(
+                ErrorCode::InvalidRequest,
+                "WebSocket URL must use wss:// for secure credential transport",
+            ));
+        }
+        let payload = serde_json::to_vec(&build_synthesis_payload(&request)).map_err(|e| {
+            ProtocolError::new(ErrorCode::InvalidRequest, format!("serialize: {e}"))
+        })?;
+        let request_frame = build_send_frame(&payload);
+
+        let connect_id = uuid::Uuid::new_v4().to_string();
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let mut builder = tungstenite::http::Request::builder()
+            .uri(&self.config.ws_url)
+            .header("X-Api-Key", &self.config.api_key);
+        if let Some(access_key) = &self.config.access_key {
+            builder = builder.header("X-Api-Access-Key", access_key);
+        }
+        let ws_request = builder
+            .header("X-Api-Resource-Id", &self.config.resource_id)
+            .header("X-Api-Connect-Id", &connect_id)
+            .header("X-Api-Request-Id", &request_id)
+            .header("Host", host_of(&self.config.ws_url))
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header(
+                "Sec-WebSocket-Key",
+                tungstenite::handshake::client::generate_key(),
+            )
+            .body(())
+            .map_err(|e| {
+                ProtocolError::new(ErrorCode::InvalidRequest, format!("build ws request: {e}"))
+            })?;
+
+        let (ws_stream, _response) = connect_async(ws_request)
+            .await
+            .map_err(|e| stream_err(format!("WebSocket connection failed: {e}")))?;
+
+        let (events_tx, events) = EventStream::channel(64);
+        tokio::spawn(run_tts_synthesis(
+            WsDuplex::new(ws_stream),
+            request_frame,
+            events_tx,
+        ));
+        Ok(events)
+    }
+}
+
+fn host_of(url: &str) -> &str {
+    url.strip_prefix("wss://")
+        .or_else(|| url.strip_prefix("ws://"))
+        .and_then(|s| s.split('/').next())
+        .unwrap_or("openspeech.bytedance.com")
+}
+
+/// The static descriptor the registry filters on for the Volcengine TTS dialect.
+pub fn entry_descriptor() -> CapabilityDescriptor {
+    CapabilityDescriptor::new("volcengine", "tts", Capability::Tts)
+        .streaming(true)
+        .with_input_modalities([Modality::Text])
+        .with_output_modalities([Modality::Audio])
+}
+
+/// Build a [`VolcengineTts`] from a registry [`ProviderConfig`]: `api_url` is the
+/// `wss://` endpoint (defaulting to the unidirectional stream), `api_key` the
+/// secret, and `options.{access_key,resource_id}` the dialect knobs (resource_id
+/// defaults to the model name).
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
+pub fn from_provider_config(cfg: &ProviderConfig) -> Result<VolcengineTts, ProtocolError> {
+    let api_key = cfg.api_key.clone().ok_or_else(|| {
+        ProtocolError::new(ErrorCode::MissingApiKey, "volcengine TTS requires api_key")
+    })?;
+    let model = if cfg.model.is_empty() {
+        "tts".to_string()
+    } else {
+        cfg.model.clone()
+    };
+    let ws_url = cfg
+        .api_url
+        .clone()
+        .unwrap_or_else(|| DEFAULT_UNIDIRECTIONAL_WS_URL.to_string());
+    let access_key = cfg
+        .options
+        .get("access_key")
+        .and_then(Value::as_str)
+        .map(String::from);
+    let resource_id = cfg
+        .options
+        .get("resource_id")
+        .and_then(Value::as_str)
+        .map(String::from)
+        .unwrap_or_else(|| model.clone());
+    Ok(VolcengineTts::new(VolcengineTtsConfig {
+        model,
+        ws_url,
+        api_key,
+        access_key,
+        resource_id,
+    }))
+}
+
+#[async_trait]
+impl Tts for VolcengineTts {
+    fn provider_name(&self) -> &str {
+        "volcengine"
+    }
+
+    fn model_name(&self) -> &str {
+        &self.config.model
+    }
+
+    fn descriptor(&self) -> CapabilityDescriptor {
+        CapabilityDescriptor::new("volcengine", self.config.model.clone(), Capability::Tts)
+            .streaming(true)
+            .with_input_modalities([Modality::Text])
+            .with_output_modalities([Modality::Audio])
+    }
+
+    async fn synthesize(
+        &self,
+        request: SynthesizeRequest,
+    ) -> Result<SynthesizeResult, ProtocolError> {
+        let format = request.format;
+        let mut stream = self.open_stream(request).await?;
+        let mut audio = Vec::new();
+        while let Some(event) = stream.next().await {
+            match event {
+                StreamEvent::AudioDelta { data, .. } => audio.extend_from_slice(&data),
+                StreamEvent::Error { error, .. } => return Err(error),
+                StreamEvent::Done { .. } => break,
+                _ => {}
+            }
+        }
+        Ok(SynthesizeResult {
+            audio: Bytes::from(audio),
+            format,
+            diagnostic_metadata: Value::Null,
+        })
+    }
+
+    async fn stream_synthesize(
+        &self,
+        request: SynthesizeRequest,
+    ) -> Result<EventStream, ProtocolError> {
+        self.open_stream(request).await
+    }
+
+    async fn start_duplex_stream(&self) -> Result<RealtimeHandle, ProtocolError> {
+        // The bidirectional event-framing handshake (build_connect_frame /
+        // build_meta_frame) lands in a later slice; one-shot synthesis is the
+        // primary path and is fully wired above.
+        Err(ProtocolError::new(
+            ErrorCode::UnsupportedOperation,
+            "volcengine TTS duplex stream is not yet wired on the spine",
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use serde_json::json;
 
     #[test]

@@ -24,9 +24,15 @@ pub fn asr_entries() -> Vec<Entry<Box<dyn Asr>>> {
     })]
 }
 
-/// Streaming + WS-backed TTS dialects (openspeech, minimax-ws). Filled in Issue 006.
+/// Streaming + WS-backed TTS dialects (openspeech, minimax-ws). The Volcengine
+/// openspeech unidirectional TTS dialect is registered here; like ASR,
+/// construction is synchronous (the handshake is deferred to the synthesize
+/// calls), so it fits the sync factory.
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn tts_entries() -> Vec<Entry<Box<dyn Tts>>> {
-    Vec::new()
+    vec![Entry::new(tts::volcengine::entry_descriptor(), |cfg| {
+        Ok(Box::new(tts::volcengine::from_provider_config(cfg)?) as Box<dyn Tts>)
+    })]
 }
 
 /// Omni full-duplex realtime sessions (openspeech). Filled in Issue 006.

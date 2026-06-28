@@ -205,3 +205,15 @@ fn with_builtin_registers_stream_asr_dialect() {
         .expect("volcengine streaming ASR is registered under the stream feature");
     assert_eq!(picked.descriptor.model.as_ref(), "bigmodel");
 }
+
+#[cfg(feature = "stream")]
+#[test]
+fn with_builtin_registers_stream_tts_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .tts()
+        .provider("volcengine")
+        .select()
+        .expect("volcengine TTS is registered under the stream feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "tts");
+}
