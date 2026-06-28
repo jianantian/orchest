@@ -23,7 +23,7 @@ use crate::openspeech::{
     build_header, parse_header, COMP_NONE, FLAG_WITH_EVENT, MSG_AUDIO_ONLY_RESPONSE,
     MSG_ERROR_RESPONSE, MSG_FULL_CLIENT_REQUEST, MSG_FULL_SERVER_RESPONSE, SER_JSON,
 };
-use crate::transport::{ByteDuplex, WsDuplex};
+use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 
 const DEFAULT_UNIDIRECTIONAL_WS_URL: &str =
     "wss://openspeech.bytedance.com/api/v3/tts/unidirectional/stream";
@@ -238,11 +238,18 @@ pub async fn run_tts_synthesis<T: ByteDuplex>(
     request_frame: Vec<u8>,
     events: mpsc::Sender<StreamEvent>,
 ) {
-    if transport.send(request_frame).await.is_err() {
+    if transport
+        .send(WsFrame::Binary(request_frame))
+        .await
+        .is_err()
+    {
         return;
     }
-    while let Some(bytes) = transport.recv().await {
-        match parse_frame(&bytes) {
+    while let Some(frame) = transport.recv().await {
+        let Some(bytes) = frame.as_binary() else {
+            continue; // openspeech TTS server frames are binary
+        };
+        match parse_frame(bytes) {
             Ok(frame) => {
                 let finished = matches!(
                     &frame,
@@ -628,16 +635,16 @@ mod tests {
     }
 
     struct ChannelDuplex {
-        out: mpsc::Sender<Vec<u8>>,
-        inbound: mpsc::Receiver<Vec<u8>>,
+        out: mpsc::Sender<WsFrame>,
+        inbound: mpsc::Receiver<WsFrame>,
     }
 
     #[async_trait]
     impl ByteDuplex for ChannelDuplex {
-        async fn send(&mut self, frame: Vec<u8>) -> Result<(), ProtocolError> {
+        async fn send(&mut self, frame: WsFrame) -> Result<(), ProtocolError> {
             self.out.send(frame).await.map_err(|_| stream_err("closed"))
         }
-        async fn recv(&mut self) -> Option<Vec<u8>> {
+        async fn recv(&mut self) -> Option<WsFrame> {
             self.inbound.recv().await
         }
     }
@@ -657,9 +664,16 @@ mod tests {
         // The synthesis sends the request frame, which the server observes.
         assert!(out_rx.recv().await.is_some());
         // Server streams one audio chunk, then signals SESSION_FINISHED.
-        in_tx.send(audio_frame("s", b"pcm")).await.unwrap();
         in_tx
-            .send(server_meta_frame(EVENT_SESSION_FINISHED, "s", &json!({})))
+            .send(WsFrame::Binary(audio_frame("s", b"pcm")))
+            .await
+            .unwrap();
+        in_tx
+            .send(WsFrame::Binary(server_meta_frame(
+                EVENT_SESSION_FINISHED,
+                "s",
+                &json!({}),
+            )))
             .await
             .unwrap();
 

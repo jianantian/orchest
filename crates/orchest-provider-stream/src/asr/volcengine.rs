@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::transport::{ByteDuplex, WsDuplex};
+use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 
 use crate::openspeech::{
     build_header, compress_gzip, decompress_gzip, parse_header, COMP_GZIP, COMP_NONE,
@@ -290,7 +290,11 @@ pub async fn run_asr_stream<T: ByteDuplex>(
         tokio::select! {
             maybe_input = input.recv(), if input_open => match maybe_input {
                 Some(SessionInput::Audio(bytes)) => {
-                    if transport.send(build_audio_frame(&bytes, false)).await.is_err() {
+                    if transport
+                        .send(WsFrame::Binary(build_audio_frame(&bytes, false)))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -298,13 +302,13 @@ pub async fn run_asr_stream<T: ByteDuplex>(
                 // last audio frame and keep reading server frames until the last.
                 None | Some(SessionInput::Interrupt) => {
                     input_open = false;
-                    let _ = transport.send(build_audio_frame(&[], true)).await;
+                    let _ = transport.send(WsFrame::Binary(build_audio_frame(&[], true))).await;
                 }
                 // Text / tool-result are not part of the ASR send side.
                 Some(_) => {}
             },
-            maybe_frame = transport.recv() => match maybe_frame {
-                Some(bytes) => match parse_response(&bytes) {
+            maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_binary) {
+                Some(bytes) => match parse_response(bytes) {
                     Ok(frame) => {
                         let is_last = matches!(
                             frame,
@@ -324,7 +328,11 @@ pub async fn run_asr_stream<T: ByteDuplex>(
                         break;
                     }
                 },
-                None => break,
+                // A text frame (openspeech is binary) or transport EOF.
+                None => match maybe_frame {
+                    Some(_) => continue, // unexpected text frame — ignore
+                    None => break,
+                },
             },
         }
     }
@@ -506,7 +514,9 @@ impl Asr for VolcengineAsr {
 
         let mut duplex = WsDuplex::new(ws_stream);
         duplex
-            .send(build_full_client_request(&self.client_payload(&request))?)
+            .send(WsFrame::Binary(build_full_client_request(
+                &self.client_payload(&request),
+            )?))
             .await?;
 
         let (input_tx, input_rx) = mpsc::channel(32);
@@ -738,16 +748,16 @@ mod tests {
     }
 
     struct ChannelDuplex {
-        out: mpsc::Sender<Vec<u8>>,
-        inbound: mpsc::Receiver<Vec<u8>>,
+        out: mpsc::Sender<WsFrame>,
+        inbound: mpsc::Receiver<WsFrame>,
     }
 
     #[async_trait]
     impl ByteDuplex for ChannelDuplex {
-        async fn send(&mut self, frame: Vec<u8>) -> Result<(), ProtocolError> {
+        async fn send(&mut self, frame: WsFrame) -> Result<(), ProtocolError> {
             self.out.send(frame).await.map_err(|_| stream_err("closed"))
         }
-        async fn recv(&mut self) -> Option<Vec<u8>> {
+        async fn recv(&mut self) -> Option<WsFrame> {
             self.inbound.recv().await
         }
     }
@@ -772,14 +782,18 @@ mod tests {
             .unwrap();
         let framed = out_rx.recv().await.expect("audio frame emitted");
         assert_eq!(
-            parse_header(&framed).unwrap().msg_type,
+            parse_header(framed.as_binary().unwrap()).unwrap().msg_type,
             MSG_AUDIO_ONLY_REQUEST
         );
 
         // server sends its final response -> Transcript(Committed) + EndOfSpeech, then ends
         let body = json!({"result": {"text": "done"}});
         in_tx
-            .send(server_frame(FLAG_SEQUENCE_NEGATIVE, Some(-1), &body))
+            .send(WsFrame::Binary(server_frame(
+                FLAG_SEQUENCE_NEGATIVE,
+                Some(-1),
+                &body,
+            )))
             .await
             .unwrap();
 
