@@ -39,9 +39,14 @@ pub fn asr_entries() -> Vec<Entry<Box<dyn Asr>>> {
 /// calls), so it fits the sync factory.
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn tts_entries() -> Vec<Entry<Box<dyn Tts>>> {
-    vec![Entry::new(tts::volcengine::entry_descriptor(), |cfg| {
-        Ok(Box::new(tts::volcengine::from_provider_config(cfg)?) as Box<dyn Tts>)
-    })]
+    vec![
+        Entry::new(tts::volcengine::entry_descriptor(), |cfg| {
+            Ok(Box::new(tts::volcengine::from_provider_config(cfg)?) as Box<dyn Tts>)
+        }),
+        Entry::new(tts::minimax::entry_descriptor(), |cfg| {
+            Ok(Box::new(tts::minimax::from_provider_config(cfg)?) as Box<dyn Tts>)
+        }),
+    ]
 }
 
 /// Omni full-duplex realtime sessions (openspeech). Filled in Issue 006.

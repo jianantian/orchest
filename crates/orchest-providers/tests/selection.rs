@@ -241,3 +241,15 @@ fn with_builtin_registers_stream_tts_dialect() {
         .expect("volcengine TTS is registered under the stream feature");
     assert_eq!(picked.descriptor.model.as_ref(), "tts");
 }
+
+#[cfg(feature = "stream")]
+#[test]
+fn with_builtin_registers_minimax_tts_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .tts()
+        .provider("minimax")
+        .select()
+        .expect("minimax TTS is registered under the stream feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "speech-2.8-hd");
+}
