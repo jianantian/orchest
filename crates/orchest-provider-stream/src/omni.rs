@@ -28,6 +28,19 @@ use orchest_protocol::{
     Modality, ProtocolError, RealtimeSession, SessionInput, StreamEvent, TranscriptStability,
 };
 
+use crate::transport::{ByteDuplex, WsFrame};
+use crate::tts::volcengine::{
+    build_audio_frame, build_connect_frame, build_meta_frame, parse_frame, VolcengineFrame,
+    EVENT_CONNECTION_STARTED, EVENT_FINISH_SESSION, EVENT_SESSION_FINISHED, EVENT_SESSION_STARTED,
+    EVENT_START_CONNECTION, EVENT_START_SESSION, EVENT_TASK_REQUEST,
+};
+
+/// Client `FinishConnection` event (no TTS analog; the unidirectional path never
+/// closes a live connection).
+const EV_FINISH_CONNECTION: i32 = 2;
+/// Client barge-in / interrupt event (omni-only).
+const EV_CLIENT_INTERRUPT: i32 = 515;
+
 // openspeech omni server event ids (the v0.9.11 evidence set).
 const EV_AUDIO_OUTPUT: u16 = 352;
 const EV_ASR_RESPONSE: u16 = 451;
@@ -224,6 +237,176 @@ impl OmniServerHandle {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Live transport: handshake + full-duplex loop over the openspeech codec
+// ---------------------------------------------------------------------------
+
+/// Encode one [`ClientFrame`] onto an openspeech wire frame for `session_id`.
+/// `Audio` is a raw `TaskRequest` audio frame; `Interrupt` a client-interrupt
+/// meta frame; `Text` / `ToolResult` ride `TaskRequest` as a JSON meta payload.
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
+fn encode_client_frame(frame: ClientFrame, session_id: &str) -> Result<Vec<u8>, ProtocolError> {
+    Ok(match frame {
+        ClientFrame::Audio(bytes) => build_audio_frame(EVENT_TASK_REQUEST, session_id, &bytes),
+        ClientFrame::Interrupt => {
+            build_meta_frame(EV_CLIENT_INTERRUPT, session_id, &serde_json::json!({}))?
+        }
+        ClientFrame::Text(text) => build_meta_frame(
+            EVENT_TASK_REQUEST,
+            session_id,
+            &serde_json::json!({ "text": text }),
+        )?,
+        ClientFrame::ToolResult {
+            tool_use_id,
+            content,
+        } => build_meta_frame(
+            EVENT_TASK_REQUEST,
+            session_id,
+            &serde_json::json!({ "tool_use_id": tool_use_id, "content": content }),
+        )?,
+    })
+}
+
+/// Project a decoded openspeech frame onto a unified event, plus whether it is a
+/// terminal frame (`SessionFinished` / a fatal error).
+fn map_volc_frame(frame: VolcengineFrame) -> (Option<StreamEvent>, bool) {
+    match frame {
+        VolcengineFrame::Audio { event, data, .. } => (
+            map_server_event(event as u16, &Value::Null, Some(Bytes::from(data))),
+            false,
+        ),
+        VolcengineFrame::Meta { event, payload, .. } => (
+            map_server_event(event as u16, &payload, None),
+            event == EVENT_SESSION_FINISHED,
+        ),
+        VolcengineFrame::Error { code, message } => (
+            Some(StreamEvent::Error {
+                error: ProtocolError::new(
+                    ErrorCode::ProviderStreamError,
+                    format!("omni provider error {code}: {message}"),
+                ),
+                fatal: true,
+            }),
+            true,
+        ),
+    }
+}
+
+/// Read frames until the `expected` lifecycle event arrives (`true`), forwarding
+/// any stray content events meanwhile. Returns `false` on a terminal/error frame
+/// or transport EOF before the ack.
+async fn await_lifecycle<T: ByteDuplex>(
+    transport: &mut T,
+    expected: i32,
+    events: &mpsc::Sender<StreamEvent>,
+) -> bool {
+    while let Some(frame) = transport.recv().await {
+        let WsFrame::Binary(bytes) = frame else {
+            continue;
+        };
+        let Ok(decoded) = parse_frame(&bytes) else {
+            continue;
+        };
+        if let VolcengineFrame::Meta { event, .. } = &decoded {
+            if *event == expected {
+                return true;
+            }
+        }
+        let (mapped, terminal) = map_volc_frame(decoded);
+        if let Some(event) = mapped {
+            let _ = events.send(event).await;
+        }
+        if terminal {
+            return false;
+        }
+    }
+    false
+}
+
+/// Drive one omni full-duplex session over `transport`: the openspeech handshake
+/// (`StartConnection` → `ConnectionStarted` → `StartSession` → `SessionStarted`),
+/// then a duplex loop — [`ClientFrame`]s in, server frames projected to
+/// [`StreamEvent`]s out, ending on `SessionFinished` / a fatal error / EOF. Input
+/// end flushes `FinishSession` + `FinishConnection`. Generic over [`ByteDuplex`]
+/// so the whole session is testable without a network.
+pub async fn run_omni_session<T: ByteDuplex>(
+    mut transport: T,
+    session_id: String,
+    session_config: Value,
+    mut input: mpsc::Receiver<ClientFrame>,
+    events: mpsc::Sender<StreamEvent>,
+) {
+    let Ok(start_connection) = build_connect_frame(EVENT_START_CONNECTION, &serde_json::json!({}))
+    else {
+        return;
+    };
+    if transport
+        .send(WsFrame::Binary(start_connection))
+        .await
+        .is_err()
+        || !await_lifecycle(&mut transport, EVENT_CONNECTION_STARTED, &events).await
+    {
+        return;
+    }
+    let Ok(start_session) = build_meta_frame(EVENT_START_SESSION, &session_id, &session_config)
+    else {
+        return;
+    };
+    if transport
+        .send(WsFrame::Binary(start_session))
+        .await
+        .is_err()
+        || !await_lifecycle(&mut transport, EVENT_SESSION_STARTED, &events).await
+    {
+        return;
+    }
+
+    let mut input_open = true;
+    loop {
+        tokio::select! {
+            command = input.recv(), if input_open => match command {
+                Some(frame) => {
+                    if let Ok(bytes) = encode_client_frame(frame, &session_id) {
+                        if transport.send(WsFrame::Binary(bytes)).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+                None => {
+                    input_open = false;
+                    if let Ok(finish_session) =
+                        build_meta_frame(EVENT_FINISH_SESSION, &session_id, &serde_json::json!({}))
+                    {
+                        let _ = transport.send(WsFrame::Binary(finish_session)).await;
+                    }
+                    if let Ok(finish_connection) =
+                        build_connect_frame(EV_FINISH_CONNECTION, &serde_json::json!({}))
+                    {
+                        let _ = transport.send(WsFrame::Binary(finish_connection)).await;
+                    }
+                }
+            },
+            frame = transport.recv() => match frame {
+                Some(WsFrame::Binary(bytes)) => {
+                    if let Ok(decoded) = parse_frame(&bytes) {
+                        let (mapped, terminal) = map_volc_frame(decoded);
+                        if let Some(event) = mapped {
+                            if events.send(event).await.is_err() {
+                                return;
+                            }
+                        }
+                        if terminal {
+                            break;
+                        }
+                    }
+                }
+                Some(_) => {}
+                None => break,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,5 +529,179 @@ mod tests {
         assert_eq!(frames.len(), 2);
         assert!(matches!(frames[0], ClientFrame::Audio(_)));
         assert!(matches!(frames[1], ClientFrame::ToolResult { .. }));
+    }
+
+    struct ChannelDuplex {
+        out: mpsc::Sender<WsFrame>,
+        inbound: mpsc::Receiver<WsFrame>,
+    }
+
+    #[async_trait]
+    impl ByteDuplex for ChannelDuplex {
+        async fn send(&mut self, frame: WsFrame) -> Result<(), ProtocolError> {
+            self.out
+                .send(frame)
+                .await
+                .map_err(|_| ProtocolError::new(ErrorCode::ProviderStreamError, "closed"))
+        }
+        async fn recv(&mut self) -> Option<WsFrame> {
+            self.inbound.recv().await
+        }
+    }
+
+    /// A crossed pair of in-memory duplexes: what one sends, the other receives.
+    fn duplex_pair() -> (ChannelDuplex, ChannelDuplex) {
+        let (a_tx, a_rx) = mpsc::channel(32);
+        let (b_tx, b_rx) = mpsc::channel(32);
+        (
+            ChannelDuplex {
+                out: a_tx,
+                inbound: b_rx,
+            },
+            ChannelDuplex {
+                out: b_tx,
+                inbound: a_rx,
+            },
+        )
+    }
+
+    /// Build a server→client audio (`MSG_AUDIO_ONLY_RESPONSE`) openspeech frame.
+    fn server_audio_frame(event: i32, session: &str, audio: &[u8]) -> Vec<u8> {
+        use crate::openspeech::{
+            build_header, COMP_NONE, FLAG_WITH_EVENT, MSG_AUDIO_ONLY_RESPONSE, SER_NONE,
+        };
+        let session = session.as_bytes();
+        let mut out = build_header(
+            MSG_AUDIO_ONLY_RESPONSE,
+            FLAG_WITH_EVENT,
+            SER_NONE,
+            COMP_NONE,
+        )
+        .to_vec();
+        out.extend_from_slice(&event.to_be_bytes());
+        out.extend_from_slice(&(session.len() as u32).to_be_bytes());
+        out.extend_from_slice(session);
+        out.extend_from_slice(&(audio.len() as u32).to_be_bytes());
+        out.extend_from_slice(audio);
+        out
+    }
+
+    /// Build a server→client meta (`MSG_FULL_SERVER_RESPONSE`) openspeech frame —
+    /// what `parse_frame` decodes (the client builders produce request frames).
+    fn server_meta_frame(event: i32, session: &str, payload: &serde_json::Value) -> Vec<u8> {
+        use crate::openspeech::{
+            build_header, COMP_NONE, FLAG_WITH_EVENT, MSG_FULL_SERVER_RESPONSE, SER_JSON,
+        };
+        let body = serde_json::to_vec(payload).unwrap();
+        let session = session.as_bytes();
+        let mut out = build_header(
+            MSG_FULL_SERVER_RESPONSE,
+            FLAG_WITH_EVENT,
+            SER_JSON,
+            COMP_NONE,
+        )
+        .to_vec();
+        out.extend_from_slice(&event.to_be_bytes());
+        out.extend_from_slice(&(session.len() as u32).to_be_bytes());
+        out.extend_from_slice(session);
+        out.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        out.extend_from_slice(&body);
+        out
+    }
+
+    /// Assert the next client frame the server receives carries `expected` event.
+    async fn expect_client_event(server: &mut ChannelDuplex, expected: i32) {
+        match server.recv().await.expect("a client frame") {
+            WsFrame::Binary(bytes) => {
+                let event = i32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+                assert_eq!(event, expected, "unexpected client event");
+            }
+            other => panic!("expected a binary frame, got {other:?}"),
+        }
+    }
+
+    /// The live session over an in-memory openspeech peer: the handshake completes,
+    /// server audio + model text project to unified events, a mic frame is encoded
+    /// as a `TaskRequest`, and `SessionFinished` ends the stream.
+    #[tokio::test]
+    async fn run_omni_session_handshakes_then_streams_duplex() {
+        let (client, mut server) = duplex_pair();
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let handle = tokio::spawn(run_omni_session(
+            client,
+            "sess".to_string(),
+            json!({}),
+            input_rx,
+            events_tx,
+        ));
+
+        // handshake: StartConnection -> ConnectionStarted, StartSession -> SessionStarted
+        expect_client_event(&mut server, EVENT_START_CONNECTION).await;
+        server
+            .send(WsFrame::Binary(server_meta_frame(
+                EVENT_CONNECTION_STARTED,
+                "sess",
+                &json!({}),
+            )))
+            .await
+            .unwrap();
+        expect_client_event(&mut server, EVENT_START_SESSION).await;
+        server
+            .send(WsFrame::Binary(server_meta_frame(
+                EVENT_SESSION_STARTED,
+                "sess",
+                &json!({}),
+            )))
+            .await
+            .unwrap();
+
+        // server emits an audio chunk (352) and a model-text delta (550)
+        server
+            .send(WsFrame::Binary(server_audio_frame(
+                EV_AUDIO_OUTPUT as i32,
+                "sess",
+                b"aud",
+            )))
+            .await
+            .unwrap();
+        server
+            .send(WsFrame::Binary(server_meta_frame(
+                EV_MODEL_TEXT as i32,
+                "sess",
+                &json!({"content": "hi"}),
+            )))
+            .await
+            .unwrap();
+
+        // a mic frame in is encoded as a TaskRequest(200) audio frame
+        input_tx
+            .send(ClientFrame::Audio(Bytes::from_static(b"mic")))
+            .await
+            .unwrap();
+        expect_client_event(&mut server, EVENT_TASK_REQUEST).await;
+
+        // server finishes the session -> the event stream terminates
+        server
+            .send(WsFrame::Binary(server_meta_frame(
+                EVENT_SESSION_FINISHED,
+                "sess",
+                &json!({}),
+            )))
+            .await
+            .unwrap();
+
+        let mut audio = Vec::new();
+        let mut text = String::new();
+        while let Some(event) = events_rx.recv().await {
+            match event {
+                StreamEvent::AudioDelta { data, .. } => audio.push(data),
+                StreamEvent::Text { delta } => text.push_str(&delta),
+                _ => {}
+            }
+        }
+        assert_eq!(audio, vec![Bytes::from_static(b"aud")]);
+        assert_eq!(text, "hi");
+        handle.await.unwrap();
     }
 }

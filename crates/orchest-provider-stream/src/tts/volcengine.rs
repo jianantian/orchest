@@ -20,8 +20,9 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::openspeech::{
-    build_header, parse_header, COMP_NONE, FLAG_WITH_EVENT, MSG_AUDIO_ONLY_RESPONSE,
-    MSG_ERROR_RESPONSE, MSG_FULL_CLIENT_REQUEST, MSG_FULL_SERVER_RESPONSE, SER_JSON,
+    build_header, parse_header, COMP_NONE, FLAG_WITH_EVENT, MSG_AUDIO_ONLY_REQUEST,
+    MSG_AUDIO_ONLY_RESPONSE, MSG_ERROR_RESPONSE, MSG_FULL_CLIENT_REQUEST, MSG_FULL_SERVER_RESPONSE,
+    SER_JSON, SER_NONE,
 };
 use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 
@@ -115,6 +116,21 @@ pub fn build_meta_frame(
     out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
     out.extend_from_slice(&payload);
     Ok(out)
+}
+
+/// Client audio frame (`MSG_AUDIO_ONLY_REQUEST`): event + session_id + raw audio.
+/// The bidirectional (omni) client direction; the unidirectional TTS path never
+/// sends audio, but both dialects share this openspeech framing.
+pub fn build_audio_frame(event: i32, session_id: &str, audio: &[u8]) -> Vec<u8> {
+    let session = session_id.as_bytes();
+    let mut out =
+        build_header(MSG_AUDIO_ONLY_REQUEST, FLAG_WITH_EVENT, SER_NONE, COMP_NONE).to_vec();
+    out.extend_from_slice(&event.to_be_bytes());
+    out.extend_from_slice(&(session.len() as u32).to_be_bytes());
+    out.extend_from_slice(session);
+    out.extend_from_slice(&(audio.len() as u32).to_be_bytes());
+    out.extend_from_slice(audio);
+    out
 }
 
 // ---------------------------------------------------------------------------
