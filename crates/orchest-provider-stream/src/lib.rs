@@ -9,6 +9,7 @@
 pub mod asr;
 pub mod omni;
 pub mod openspeech;
+pub mod transport;
 pub mod tts;
 
 use orchest_protocol::{Asr, RealtimeSession, Tts};

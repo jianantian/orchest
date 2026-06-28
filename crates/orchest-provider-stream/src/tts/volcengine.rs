@@ -19,11 +19,11 @@ use orchest_provider_core::ws::{connect_async, tungstenite};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::asr::volcengine::{ByteDuplex, WsDuplex};
 use crate::openspeech::{
     build_header, parse_header, COMP_NONE, FLAG_WITH_EVENT, MSG_AUDIO_ONLY_RESPONSE,
     MSG_ERROR_RESPONSE, MSG_FULL_CLIENT_REQUEST, MSG_FULL_SERVER_RESPONSE, SER_JSON,
 };
+use crate::transport::{ByteDuplex, WsDuplex};
 
 const DEFAULT_UNIDIRECTIONAL_WS_URL: &str =
     "wss://openspeech.bytedance.com/api/v3/tts/unidirectional/stream";

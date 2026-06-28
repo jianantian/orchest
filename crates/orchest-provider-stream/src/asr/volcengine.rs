@@ -9,7 +9,6 @@
 //! tts/omni-only and lives there.
 
 use async_trait::async_trait;
-use futures_util::{SinkExt, StreamExt};
 use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
     Modality, ProtocolError, RealtimeHandle, SessionInput, StreamEvent, StreamingTranscribeRequest,
@@ -20,6 +19,8 @@ use orchest_provider_core::ws::{connect_async, tungstenite};
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::mpsc;
+
+use crate::transport::{ByteDuplex, WsDuplex};
 
 use crate::openspeech::{
     build_header, compress_gzip, decompress_gzip, parse_header, COMP_GZIP, COMP_NONE,
@@ -275,16 +276,6 @@ pub fn map_frame(frame: VolcengineFrame) -> Vec<StreamEvent> {
 // Streaming loop (transport-agnostic; live WS is a thin ByteDuplex adapter)
 // ---------------------------------------------------------------------------
 
-/// A minimal duplex byte transport the ASR loop runs over: a `tokio-tungstenite`
-/// WebSocket in production, an in-memory channel pair in tests. Keeping the loop
-/// generic over this is what makes the streaming behavior testable without a
-/// network connection.
-#[async_trait]
-pub trait ByteDuplex: Send {
-    async fn send(&mut self, frame: Vec<u8>) -> Result<(), ProtocolError>;
-    async fn recv(&mut self) -> Option<Vec<u8>>;
-}
-
 /// Drive one ASR streaming session over `transport`: client [`SessionInput`]
 /// audio is framed as openspeech audio-only requests and sent; server frames are
 /// parsed and projected onto `events` via [`map_frame`]. Closing `input` flushes
@@ -342,48 +333,6 @@ pub async fn run_asr_stream<T: ByteDuplex>(
 // ---------------------------------------------------------------------------
 // Live WebSocket transport + the spine `Asr` impl
 // ---------------------------------------------------------------------------
-
-/// A [`ByteDuplex`] over any `tungstenite` WebSocket sink/stream — the live
-/// transport [`run_asr_stream`] runs on (a `tokio-tungstenite` connection in
-/// production). Generic over the stream so this crate names no concrete
-/// `tokio-tungstenite` type and keeps one WS stack through `orchest-provider-core`.
-pub struct WsDuplex<S> {
-    inner: S,
-}
-
-impl<S> WsDuplex<S> {
-    pub fn new(inner: S) -> Self {
-        Self { inner }
-    }
-}
-
-#[async_trait]
-impl<S> ByteDuplex for WsDuplex<S>
-where
-    S: futures_util::Sink<tungstenite::Message>
-        + futures_util::Stream<Item = Result<tungstenite::Message, tungstenite::Error>>
-        + Send
-        + Unpin,
-    <S as futures_util::Sink<tungstenite::Message>>::Error: std::fmt::Display,
-{
-    async fn send(&mut self, frame: Vec<u8>) -> Result<(), ProtocolError> {
-        self.inner
-            .send(tungstenite::Message::Binary(frame))
-            .await
-            .map_err(|e| stream_err(format!("ws send: {e}")))
-    }
-
-    async fn recv(&mut self) -> Option<Vec<u8>> {
-        while let Some(message) = self.inner.next().await {
-            match message {
-                Ok(tungstenite::Message::Binary(bytes)) => return Some(bytes),
-                Ok(_) => continue, // ignore text/ping/pong/close control frames
-                Err(_) => return None,
-            }
-        }
-        None
-    }
-}
 
 /// Volcengine streaming-ASR configuration (the openspeech `sauc` endpoints).
 #[derive(Debug, Clone)]
