@@ -30,6 +30,9 @@ pub fn asr_entries() -> Vec<Entry<Box<dyn Asr>>> {
         Entry::new(asr::soniox::entry_descriptor(), |cfg| {
             Ok(Box::new(asr::soniox::from_provider_config(cfg)?) as Box<dyn Asr>)
         }),
+        Entry::new(asr::aliyun::entry_descriptor(), |cfg| {
+            Ok(Box::new(asr::aliyun::from_provider_config(cfg)?) as Box<dyn Asr>)
+        }),
     ]
 }
 

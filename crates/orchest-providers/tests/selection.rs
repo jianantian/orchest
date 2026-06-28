@@ -232,6 +232,18 @@ fn with_builtin_registers_soniox_asr_dialect() {
 
 #[cfg(feature = "stream")]
 #[test]
+fn with_builtin_registers_aliyun_asr_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .asr()
+        .provider("aliyun")
+        .select()
+        .expect("aliyun streaming ASR is registered under the stream feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "paraformer-realtime-v2");
+}
+
+#[cfg(feature = "stream")]
+#[test]
 fn with_builtin_registers_stream_tts_dialect() {
     let reg = Registry::with_builtin();
     let picked = reg

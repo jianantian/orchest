@@ -5,6 +5,7 @@
 //! streaming audio→event loop sit on top of this codec and land alongside the
 //! live transport; the per-vendor streaming dialects (deepgram/soniox/…) follow.
 
+pub mod aliyun;
 pub mod deepgram;
 pub mod soniox;
 pub mod volcengine;
