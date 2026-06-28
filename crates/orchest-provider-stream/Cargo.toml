@@ -15,6 +15,7 @@ default = []
 orchest-protocol = { path = "../orchest-protocol" }
 orchest-provider-core = { path = "../orchest-provider-core", features = ["ws"] }
 flate2 = "1"
+hex = "0.4"
 async-trait = "0.1"
 bytes = "1"
 futures-util = "0.3"

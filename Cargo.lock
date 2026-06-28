@@ -1507,6 +1507,7 @@ dependencies = [
  "bytes",
  "flate2",
  "futures-util",
+ "hex",
  "orchest-protocol",
  "orchest-provider-core",
  "serde",
