@@ -220,6 +220,18 @@ fn with_builtin_registers_deepgram_asr_dialect() {
 
 #[cfg(feature = "stream")]
 #[test]
+fn with_builtin_registers_soniox_asr_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .asr()
+        .provider("soniox")
+        .select()
+        .expect("soniox streaming ASR is registered under the stream feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "stt-rt-v5");
+}
+
+#[cfg(feature = "stream")]
+#[test]
 fn with_builtin_registers_stream_tts_dialect() {
     let reg = Registry::with_builtin();
     let picked = reg

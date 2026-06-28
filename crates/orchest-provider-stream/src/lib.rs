@@ -27,6 +27,9 @@ pub fn asr_entries() -> Vec<Entry<Box<dyn Asr>>> {
         Entry::new(asr::deepgram::entry_descriptor(), |cfg| {
             Ok(Box::new(asr::deepgram::from_provider_config(cfg)?) as Box<dyn Asr>)
         }),
+        Entry::new(asr::soniox::entry_descriptor(), |cfg| {
+            Ok(Box::new(asr::soniox::from_provider_config(cfg)?) as Box<dyn Asr>)
+        }),
     ]
 }
 
