@@ -7,5 +7,6 @@
 
 pub mod aliyun;
 pub mod deepgram;
+pub mod elevenlabs;
 pub mod soniox;
 pub mod volcengine;

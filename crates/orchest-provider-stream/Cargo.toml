@@ -14,6 +14,7 @@ default = []
 [dependencies]
 orchest-protocol = { path = "../orchest-protocol" }
 orchest-provider-core = { path = "../orchest-provider-core", features = ["ws"] }
+base64 = "0.22"
 flate2 = "1"
 hex = "0.4"
 async-trait = "0.1"

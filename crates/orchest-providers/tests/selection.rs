@@ -244,6 +244,18 @@ fn with_builtin_registers_aliyun_asr_dialect() {
 
 #[cfg(feature = "stream")]
 #[test]
+fn with_builtin_registers_elevenlabs_asr_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .asr()
+        .provider("elevenlabs")
+        .select()
+        .expect("elevenlabs streaming ASR is registered under the stream feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "scribe-v2-realtime");
+}
+
+#[cfg(feature = "stream")]
+#[test]
 fn with_builtin_registers_stream_tts_dialect() {
     let reg = Registry::with_builtin();
     let picked = reg
