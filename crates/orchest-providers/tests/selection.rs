@@ -208,6 +208,18 @@ fn with_builtin_registers_stream_asr_dialect() {
 
 #[cfg(feature = "stream")]
 #[test]
+fn with_builtin_registers_deepgram_asr_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .asr()
+        .provider("deepgram")
+        .select()
+        .expect("deepgram streaming ASR is registered under the stream feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "nova-3");
+}
+
+#[cfg(feature = "stream")]
+#[test]
 fn with_builtin_registers_stream_tts_dialect() {
     let reg = Registry::with_builtin();
     let picked = reg

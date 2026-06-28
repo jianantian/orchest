@@ -20,9 +20,14 @@ use orchest_provider_core::registry::Entry;
 /// handshake is deferred to `Asr::start_stream`), so it fits the sync factory.
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn asr_entries() -> Vec<Entry<Box<dyn Asr>>> {
-    vec![Entry::new(asr::volcengine::entry_descriptor(), |cfg| {
-        Ok(Box::new(asr::volcengine::from_provider_config(cfg)?) as Box<dyn Asr>)
-    })]
+    vec![
+        Entry::new(asr::volcengine::entry_descriptor(), |cfg| {
+            Ok(Box::new(asr::volcengine::from_provider_config(cfg)?) as Box<dyn Asr>)
+        }),
+        Entry::new(asr::deepgram::entry_descriptor(), |cfg| {
+            Ok(Box::new(asr::deepgram::from_provider_config(cfg)?) as Box<dyn Asr>)
+        }),
+    ]
 }
 
 /// Streaming + WS-backed TTS dialects (openspeech, minimax-ws). The Volcengine
