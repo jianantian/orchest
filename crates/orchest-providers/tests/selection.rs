@@ -289,3 +289,16 @@ fn with_builtin_registers_aliyun_tts_dialect() {
         .expect("aliyun TTS is registered under the stream feature");
     assert_eq!(picked.descriptor.model.as_ref(), "cosyvoice-v2");
 }
+
+#[cfg(feature = "stream")]
+#[test]
+fn with_builtin_registers_omni_realtime_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .realtime()
+        .provider("volcengine")
+        .select()
+        .expect("volcengine omni realtime is registered under the stream feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "1.2.1.1");
+    assert!(picked.descriptor.duplex && picked.descriptor.interruptible);
+}

@@ -9,12 +9,13 @@
 //! makes a mid-stream `ToolResult` never block outgoing audio — the omni
 //! acceptance ruler (design §6.1).
 //!
-//! This module owns the network-independent core: the server-event → unified
-//! `StreamEvent` mapping (ported from the v0.9.11 `map_realtime_server_event`),
-//! the `RealtimeSession` surface, and an in-memory session for the ruler test.
-//! The live WS transport (handshake + frame loop over [`crate::openspeech`]) is
-//! layered on in a later slice; the factory wiring waits on the async-connect
-//! question and is not registered through the wall yet.
+//! This module owns: the server-event → unified `StreamEvent` mapping (ported
+//! from the v0.9.11 `map_realtime_server_event`), the `RealtimeSession` surface +
+//! an in-memory session for the ruler test, the live transport
+//! ([`run_omni_session`]: handshake + duplex loop over [`crate::openspeech`], via
+//! the Volcengine event-frame codec), and the wall factory. The factory is sync
+//! but connect is async, so [`OmniSession::spawn_live`] spawns a connect-then-run
+//! task and surfaces a connect failure as a fatal `Error` on `events()`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -28,12 +29,18 @@ use orchest_protocol::{
     Modality, ProtocolError, RealtimeSession, SessionInput, StreamEvent, TranscriptStability,
 };
 
-use crate::transport::{ByteDuplex, WsFrame};
+use orchest_provider_core::registry::ProviderConfig;
+use orchest_provider_core::ws::{connect_async, tungstenite};
+
+use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 use crate::tts::volcengine::{
     build_audio_frame, build_connect_frame, build_meta_frame, parse_frame, VolcengineFrame,
     EVENT_CONNECTION_STARTED, EVENT_FINISH_SESSION, EVENT_SESSION_FINISHED, EVENT_SESSION_STARTED,
     EVENT_START_CONNECTION, EVENT_START_SESSION, EVENT_TASK_REQUEST,
 };
+
+/// Default Volcengine openspeech realtime-dialogue endpoint.
+const DEFAULT_OMNI_WS_URL: &str = "wss://openspeech.bytedance.com/api/v3/realtime/dialogue";
 
 /// Client `FinishConnection` event (no TTS analog; the unidirectional path never
 /// closes a live connection).
@@ -405,6 +412,164 @@ pub async fn run_omni_session<T: ByteDuplex>(
             },
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Live connect + the sync wall factory
+// ---------------------------------------------------------------------------
+
+/// Volcengine openspeech omni (realtime dialogue) configuration. Auth is the four
+/// `X-Api-*` credentials; `start_session_payload` carries the asr/dialog/tts setup.
+#[derive(Debug, Clone)]
+pub struct OmniConfig {
+    pub model: String,
+    pub speaker: String,
+    pub ws_url: String,
+    pub app_id: String,
+    pub access_key: String,
+    pub resource_id: String,
+    pub app_key: String,
+}
+
+impl OmniConfig {
+    /// The `StartSession` payload (asr input / dialog bot / tts output blocks).
+    fn start_session_payload(&self) -> Value {
+        serde_json::json!({
+            "asr": { "audio_info": { "format": "pcm_s16le", "sample_rate": 16000, "channel": 1 } },
+            "dialog": {
+                "bot_name": "Doubao",
+                "dialog_id": "",
+                "extra": { "input_mod": "audio_file", "model": self.model, "strict_audit": true }
+            },
+            "tts": {
+                "speaker": self.speaker,
+                "audio_config": { "channel": 1, "format": "pcm_s16le", "sample_rate": 24000 }
+            }
+        })
+    }
+}
+
+fn host_of(url: &str) -> &str {
+    url.strip_prefix("wss://")
+        .or_else(|| url.strip_prefix("ws://"))
+        .and_then(|s| s.split(['/', '?']).next())
+        .unwrap_or("openspeech.bytedance.com")
+}
+
+/// Connect the omni WebSocket with the four `X-Api-*` headers.
+async fn connect_omni(config: &OmniConfig) -> Result<impl ByteDuplex, ProtocolError> {
+    let ws_request = tungstenite::http::Request::builder()
+        .uri(&config.ws_url)
+        .header("X-Api-App-ID", &config.app_id)
+        .header("X-Api-Access-Key", &config.access_key)
+        .header("X-Api-Resource-Id", &config.resource_id)
+        .header("X-Api-App-Key", &config.app_key)
+        .header("X-Api-Connect-Id", uuid::Uuid::new_v4().to_string())
+        .header("Host", host_of(&config.ws_url))
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header(
+            "Sec-WebSocket-Key",
+            tungstenite::handshake::client::generate_key(),
+        )
+        .body(())
+        .map_err(|e| {
+            ProtocolError::new(ErrorCode::InvalidRequest, format!("build ws request: {e}"))
+        })?;
+    let (ws_stream, _response) = connect_async(ws_request).await.map_err(|e| {
+        ProtocolError::new(
+            ErrorCode::ProviderStreamError,
+            format!("Volcengine omni WebSocket connection failed: {e}"),
+        )
+    })?;
+    Ok(WsDuplex::new(ws_stream))
+}
+
+impl OmniSession {
+    /// Build a **live** session. The wall factory is sync but connect is async, so
+    /// this spawns a connect-then-run task and returns immediately; a connect
+    /// failure surfaces as a fatal `Error` on `events()` (the `RealtimeSession`
+    /// surface has no async constructor to defer to). The command channel buffers
+    /// any `send` issued before the handshake completes.
+    pub fn spawn_live(config: OmniConfig) -> Self {
+        let session_id = uuid::Uuid::new_v4().simple().to_string();
+        let (commands_tx, commands_rx) = mpsc::channel(32);
+        let (events_tx, events) = EventStream::channel(64);
+        let task_session_id = session_id.clone();
+        tokio::spawn(async move {
+            match connect_omni(&config).await {
+                Ok(transport) => {
+                    run_omni_session(
+                        transport,
+                        task_session_id,
+                        config.start_session_payload(),
+                        commands_rx,
+                        events_tx,
+                    )
+                    .await;
+                }
+                Err(error) => {
+                    let _ = events_tx
+                        .send(StreamEvent::Error { error, fatal: true })
+                        .await;
+                }
+            }
+        });
+        Self {
+            session_id,
+            commands: commands_tx,
+            events,
+            closed: AtomicBool::new(false),
+        }
+    }
+}
+
+/// The static descriptor the registry filters on for the omni dialect.
+pub fn entry_descriptor() -> CapabilityDescriptor {
+    omni_descriptor("volcengine", "1.2.1.1")
+}
+
+/// Build a live omni [`OmniSession`] from a registry [`ProviderConfig`]: the
+/// access key is `api_key`; `app_id` / `app_key` / `resource_id` / `speaker` ride
+/// `options` (with the Volcengine defaults).
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
+pub fn from_provider_config(cfg: &ProviderConfig) -> Result<OmniSession, ProtocolError> {
+    let access_key = cfg.api_key.clone().ok_or_else(|| {
+        ProtocolError::new(
+            ErrorCode::MissingApiKey,
+            "volcengine omni requires api_key (the access key)",
+        )
+    })?;
+    let opt = |key: &str| {
+        cfg.options
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
+    let app_id = opt("app_id").ok_or_else(|| {
+        ProtocolError::new(
+            ErrorCode::InvalidRequest,
+            "volcengine omni requires options.app_id",
+        )
+    })?;
+    let config = OmniConfig {
+        model: if cfg.model.is_empty() {
+            "1.2.1.1".to_string()
+        } else {
+            cfg.model.clone()
+        },
+        speaker: opt("speaker").unwrap_or_else(|| "zh_female_vv_jupiter_bigtts".to_string()),
+        ws_url: cfg
+            .api_url
+            .clone()
+            .unwrap_or_else(|| DEFAULT_OMNI_WS_URL.to_string()),
+        app_id,
+        access_key,
+        resource_id: opt("resource_id").unwrap_or_else(|| "volc.speech.dialog".to_string()),
+        app_key: opt("app_key").unwrap_or_else(|| "PlgvMymc7f3tQnJ6".to_string()),
+    };
+    Ok(OmniSession::spawn_live(config))
 }
 
 #[cfg(test)]

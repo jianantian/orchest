@@ -58,7 +58,13 @@ pub fn tts_entries() -> Vec<Entry<Box<dyn Tts>>> {
     ]
 }
 
-/// Omni full-duplex realtime sessions (openspeech). Filled in Issue 006.
+/// Omni full-duplex realtime sessions (Volcengine openspeech). The factory is
+/// sync but the omni connect is async, so `spawn_live` spawns a connect-then-run
+/// task and hands back the session immediately; a connect failure surfaces as a
+/// fatal `Error` on `events()`.
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn realtime_entries() -> Vec<Entry<Box<dyn RealtimeSession>>> {
-    Vec::new()
+    vec![Entry::new(omni::entry_descriptor(), |cfg| {
+        Ok(Box::new(omni::from_provider_config(cfg)?) as Box<dyn RealtimeSession>)
+    })]
 }
