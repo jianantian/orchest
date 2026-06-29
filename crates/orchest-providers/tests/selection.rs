@@ -290,6 +290,19 @@ fn with_builtin_registers_aliyun_tts_dialect() {
     assert_eq!(picked.descriptor.model.as_ref(), "cosyvoice-v2");
 }
 
+#[cfg(feature = "http")]
+#[test]
+fn with_builtin_registers_assemblyai_batch_asr_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .asr()
+        .provider("assemblyai")
+        .select()
+        .expect("assemblyai batch ASR is registered under the http feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "universal");
+    assert!(!picked.descriptor.streaming);
+}
+
 #[cfg(feature = "stream")]
 #[test]
 fn with_builtin_registers_omni_realtime_dialect() {

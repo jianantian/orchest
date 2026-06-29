@@ -23,6 +23,8 @@ pub mod registry;
 pub mod types;
 pub use types::*;
 
+pub mod asr;
+
 pub mod providers;
 pub use providers::{
     AnthropicAdapter, AnthropicConfig, DeepSeekAdapter, DeepSeekConfig, MinimaxAdapter,
@@ -74,9 +76,13 @@ pub fn chat_entries() -> Vec<Entry<Box<dyn ChatModel>>> {
         .collect()
 }
 
-/// REST/SSE one-shot ASR dialects. Filled in Issue 006.
+/// REST/batch one-shot ASR dialects (AssemblyAI; Speechmatics next). Streaming
+/// ASR lives in `orchest-provider-stream`.
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn asr_entries() -> Vec<Entry<Box<dyn Asr>>> {
-    Vec::new()
+    vec![Entry::new(asr::assemblyai::entry_descriptor(), |cfg| {
+        Ok(Box::new(asr::assemblyai::from_provider_config(cfg)?) as Box<dyn Asr>)
+    })]
 }
 
 /// REST TTS dialects. Filled in Issue 006.
