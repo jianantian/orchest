@@ -1,10 +1,12 @@
 //! `orchest-provider-stream` — WebSocket wire dialects (the WS weight tier).
 //!
-//! **Skeleton (Issue 004).** The openspeech binary protocol (shared by
-//! Volcengine asr/tts/omni), minimax-ws TTS, the per-vendor streaming-ASR
-//! dialects, and the omni `RealtimeSession` impl are added in Issue 006, which
-//! also absorbs and deletes `agent-runtime-realtime-providers`. The
-//! entry-producing functions below return empty vectors for now.
+//! Houses the openspeech binary protocol (shared by Volcengine asr/tts/omni),
+//! minimax-ws TTS, the per-vendor streaming-ASR dialects, and the omni
+//! `RealtimeSession` impl — the absorbed `agent-runtime-realtime-providers`
+//! (Issue 006). The entry-producing functions below register each dialect through
+//! the wall; every WS `Asr`/`Tts` factory is synchronous (the handshake is
+//! deferred to the streaming call), while omni's `spawn_live` bridges the
+//! sync-factory / async-connect gap.
 
 pub mod asr;
 pub mod omni;
