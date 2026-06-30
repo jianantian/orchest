@@ -9,7 +9,6 @@ members = [
     "crates/orchest-providers",
     "crates/agent-runtime-model",
     "crates/agent-runtime-core",
-    "crates/agent-runtime-aigc-providers",
     "crates/agent-runtime-providers",
     "crates/agent-runtime-py",
     "crates/agent-runtime-node",

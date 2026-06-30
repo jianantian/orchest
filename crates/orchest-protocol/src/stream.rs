@@ -196,3 +196,61 @@ impl EventStream {
         self.inner.recv().await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::MediaSource;
+
+    /// The **Chameleon ruler** (Issue 007 acceptance): a chat turn that produces an
+    /// image emits a full `Image` content block **in its own `StreamEvent` stream**
+    /// — the same channel that carries its text — so it needs no `GenTask`
+    /// submit/poll/fetch job. This pins the design that a multimodal `ChatModel`'s
+    /// image output rides the content model, not the gen tier.
+    #[tokio::test]
+    async fn chameleon_chat_stream_emits_image_without_gentask() {
+        let (tx, mut events) = EventStream::channel(8);
+
+        // One chat turn: a text delta, then a full Image content block, over the
+        // single ChatModel output channel.
+        tx.send(StreamEvent::Text {
+            delta: "here is the picture you asked for: ".to_string(),
+        })
+        .await
+        .unwrap();
+        tx.send(StreamEvent::Content {
+            block: ContentBlock::Image {
+                source: MediaSource::Url {
+                    url: "https://example/cat.png".to_string(),
+                },
+                detail: None,
+            },
+        })
+        .await
+        .unwrap();
+        drop(tx);
+
+        let mut saw_text = false;
+        let mut image_url = None;
+        while let Some(event) = events.next().await {
+            match event {
+                StreamEvent::Text { .. } => saw_text = true,
+                StreamEvent::Content {
+                    block: ContentBlock::Image { source, .. },
+                } => {
+                    if let MediaSource::Url { url } = source {
+                        image_url = Some(url);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        assert!(saw_text, "the same stream carried the turn's text");
+        assert_eq!(
+            image_url.as_deref(),
+            Some("https://example/cat.png"),
+            "the chat stream emitted the Image block itself — no GenTask involved",
+        );
+    }
+}
