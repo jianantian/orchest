@@ -329,6 +329,19 @@ fn with_builtin_registers_renderful_gen_dialect() {
     assert_eq!(picked.descriptor.capability, Capability::GenTask);
 }
 
+#[cfg(feature = "visual")]
+#[test]
+fn with_builtin_registers_aliyun_gen_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .gen()
+        .provider("aliyun")
+        .select()
+        .expect("aliyun wanx gen-task is registered under the visual feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "wanx2.1-t2i-turbo");
+    assert_eq!(picked.descriptor.capability, Capability::GenTask);
+}
+
 #[cfg(feature = "stream")]
 #[test]
 fn with_builtin_registers_omni_realtime_dialect() {

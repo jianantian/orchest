@@ -3,4 +3,5 @@
 //! `reqwest`, abstracted from the old concrete `ImageGateway`. Registered through
 //! the wall via [`crate::gen_entries`].
 
+pub mod aliyun;
 pub mod renderful;

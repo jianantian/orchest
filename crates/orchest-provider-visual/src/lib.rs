@@ -15,7 +15,12 @@ use orchest_provider_core::registry::Entry;
 /// `GenTask` calls), so it fits the sync factory.
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn gen_entries() -> Vec<Entry<Box<dyn GenTask>>> {
-    vec![Entry::new(gen::renderful::entry_descriptor(), |cfg| {
-        Ok(Box::new(gen::renderful::from_provider_config(cfg)?) as Box<dyn GenTask>)
-    })]
+    vec![
+        Entry::new(gen::renderful::entry_descriptor(), |cfg| {
+            Ok(Box::new(gen::renderful::from_provider_config(cfg)?) as Box<dyn GenTask>)
+        }),
+        Entry::new(gen::aliyun::entry_descriptor(), |cfg| {
+            Ok(Box::new(gen::aliyun::from_provider_config(cfg)?) as Box<dyn GenTask>)
+        }),
+    ]
 }
