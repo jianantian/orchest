@@ -80,9 +80,14 @@ pub fn chat_entries() -> Vec<Entry<Box<dyn ChatModel>>> {
 /// ASR lives in `orchest-provider-stream`.
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn asr_entries() -> Vec<Entry<Box<dyn Asr>>> {
-    vec![Entry::new(asr::assemblyai::entry_descriptor(), |cfg| {
-        Ok(Box::new(asr::assemblyai::from_provider_config(cfg)?) as Box<dyn Asr>)
-    })]
+    vec![
+        Entry::new(asr::assemblyai::entry_descriptor(), |cfg| {
+            Ok(Box::new(asr::assemblyai::from_provider_config(cfg)?) as Box<dyn Asr>)
+        }),
+        Entry::new(asr::speechmatics::entry_descriptor(), |cfg| {
+            Ok(Box::new(asr::speechmatics::from_provider_config(cfg)?) as Box<dyn Asr>)
+        }),
+    ]
 }
 
 /// REST TTS dialects. Filled in Issue 006.

@@ -4,3 +4,4 @@
 //! [`crate::asr_entries`].
 
 pub mod assemblyai;
+pub mod speechmatics;

@@ -303,6 +303,19 @@ fn with_builtin_registers_assemblyai_batch_asr_dialect() {
     assert!(!picked.descriptor.streaming);
 }
 
+#[cfg(feature = "http")]
+#[test]
+fn with_builtin_registers_speechmatics_batch_asr_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .asr()
+        .provider("speechmatics")
+        .select()
+        .expect("speechmatics batch ASR is registered under the http feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "enhanced");
+    assert!(!picked.descriptor.streaming);
+}
+
 #[cfg(feature = "stream")]
 #[test]
 fn with_builtin_registers_omni_realtime_dialect() {
