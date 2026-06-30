@@ -355,6 +355,22 @@ fn with_builtin_registers_crazyrouter_gen_dialect() {
     assert_eq!(picked.descriptor.capability, Capability::GenTask);
 }
 
+#[cfg(feature = "visual")]
+#[test]
+fn with_builtin_registers_volcengine_gen_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .gen()
+        .provider("volcengine")
+        .select()
+        .expect("volcengine Ark gen-task is registered under the visual feature");
+    assert_eq!(
+        picked.descriptor.model.as_ref(),
+        "doubao-seedream-5-0-260128"
+    );
+    assert_eq!(picked.descriptor.capability, Capability::GenTask);
+}
+
 #[cfg(feature = "stream")]
 #[test]
 fn with_builtin_registers_omni_realtime_dialect() {

@@ -25,5 +25,8 @@ pub fn gen_entries() -> Vec<Entry<Box<dyn GenTask>>> {
         Entry::new(gen::crazyrouter::entry_descriptor(), |cfg| {
             Ok(Box::new(gen::crazyrouter::from_provider_config(cfg)?) as Box<dyn GenTask>)
         }),
+        Entry::new(gen::volcengine::entry_descriptor(), |cfg| {
+            Ok(Box::new(gen::volcengine::from_provider_config(cfg)?) as Box<dyn GenTask>)
+        }),
     ]
 }

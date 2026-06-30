@@ -15,6 +15,7 @@ use orchest_protocol::{ErrorCode, GenHandle, GenResult, GenStatus, ProtocolError
 pub mod aliyun;
 pub mod crazyrouter;
 pub mod renderful;
+pub mod volcengine;
 
 /// Adapts a **synchronous** gen API (the asset result is returned inline from the
 /// submit call) onto the [`GenTask`](orchest_protocol::GenTask) submit → poll →
