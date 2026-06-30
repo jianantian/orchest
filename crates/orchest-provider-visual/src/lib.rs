@@ -28,5 +28,8 @@ pub fn gen_entries() -> Vec<Entry<Box<dyn GenTask>>> {
         Entry::new(gen::volcengine::entry_descriptor(), |cfg| {
             Ok(Box::new(gen::volcengine::from_provider_config(cfg)?) as Box<dyn GenTask>)
         }),
+        Entry::new(gen::volcengine_video::entry_descriptor(), |cfg| {
+            Ok(Box::new(gen::volcengine_video::from_provider_config(cfg)?) as Box<dyn GenTask>)
+        }),
     ]
 }

@@ -13,3 +13,4 @@ pub mod aliyun;
 pub mod crazyrouter;
 pub mod renderful;
 pub mod volcengine;
+pub mod volcengine_video;

@@ -370,18 +370,38 @@ fn with_builtin_registers_crazyrouter_gen_dialect() {
 
 #[cfg(feature = "visual")]
 #[test]
-fn with_builtin_registers_volcengine_gen_dialect() {
+fn with_builtin_registers_volcengine_image_gen_dialect() {
+    // Two volcengine gen entries (image + video) share the provider, so pick by id.
     let reg = Registry::with_builtin();
     let picked = reg
         .gen()
-        .provider("volcengine")
+        .id("volcengine/doubao-seedream-5-0-260128")
         .select()
-        .expect("volcengine Ark gen-task is registered under the visual feature");
+        .expect("volcengine Ark image gen-task is registered under the visual feature");
     assert_eq!(
         picked.descriptor.model.as_ref(),
         "doubao-seedream-5-0-260128"
     );
-    assert_eq!(picked.descriptor.capability, Capability::GenTask);
+    assert!(picked
+        .descriptor
+        .output_modalities
+        .contains(&Modality::Image));
+}
+
+#[cfg(feature = "visual")]
+#[test]
+fn with_builtin_registers_volcengine_video_gen_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .gen()
+        .id("volcengine/doubao-seedance-1-0-pro")
+        .select()
+        .expect("volcengine Ark video gen-task is registered under the visual feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "doubao-seedance-1-0-pro");
+    assert!(picked
+        .descriptor
+        .output_modalities
+        .contains(&Modality::Video));
 }
 
 #[cfg(feature = "stream")]
