@@ -342,6 +342,19 @@ fn with_builtin_registers_aliyun_gen_dialect() {
     assert_eq!(picked.descriptor.capability, Capability::GenTask);
 }
 
+#[cfg(feature = "visual")]
+#[test]
+fn with_builtin_registers_crazyrouter_gen_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .gen()
+        .provider("crazyrouter")
+        .select()
+        .expect("crazyrouter gen-task is registered under the visual feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "crazyrouter-default");
+    assert_eq!(picked.descriptor.capability, Capability::GenTask);
+}
+
 #[cfg(feature = "stream")]
 #[test]
 fn with_builtin_registers_omni_realtime_dialect() {
