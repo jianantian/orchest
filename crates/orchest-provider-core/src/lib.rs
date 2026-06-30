@@ -17,6 +17,7 @@
 pub mod auth;
 pub mod gen;
 pub mod http;
+pub mod pricing;
 pub mod registry;
 pub mod retry;
 pub mod telemetry;
@@ -33,5 +34,6 @@ pub mod oss;
 pub use auth::{BearerAuth, HeaderAuth, OpenSpeechHeaders};
 pub use gen::SyncGenCache;
 pub use http::{build_client, shared_client, HttpClientConfig};
+pub use pricing::{Cost, Meter, Pricing};
 pub use retry::RetryPolicy;
 pub use telemetry::{new_trace_id, LatencyTimer};
