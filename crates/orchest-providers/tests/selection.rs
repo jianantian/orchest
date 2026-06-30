@@ -316,6 +316,19 @@ fn with_builtin_registers_speechmatics_batch_asr_dialect() {
     assert!(!picked.descriptor.streaming);
 }
 
+#[cfg(feature = "visual")]
+#[test]
+fn with_builtin_registers_renderful_gen_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .gen()
+        .provider("renderful")
+        .select()
+        .expect("renderful gen-task is registered under the visual feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "renderful-default");
+    assert_eq!(picked.descriptor.capability, Capability::GenTask);
+}
+
 #[cfg(feature = "stream")]
 #[test]
 fn with_builtin_registers_omni_realtime_dialect() {
