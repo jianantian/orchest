@@ -24,6 +24,7 @@ pub mod types;
 pub use types::*;
 
 pub mod asr;
+pub mod gen;
 
 pub mod providers;
 pub use providers::{
@@ -95,9 +96,13 @@ pub fn tts_entries() -> Vec<Entry<Box<dyn Tts>>> {
     Vec::new()
 }
 
-/// REST gen-task dialects (minimax music). Filled in Issue 007.
+/// REST gen-task dialects (minimax music). Synchronous REST generation presented
+/// over the submit → poll → fetch surface; construction is sync (fits the wall).
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn gen_entries() -> Vec<Entry<Box<dyn GenTask>>> {
-    Vec::new()
+    vec![Entry::new(gen::minimax_music::entry_descriptor(), |cfg| {
+        Ok(Box::new(gen::minimax_music::from_provider_config(cfg)?) as Box<dyn GenTask>)
+    })]
 }
 
 // ---------------------------------------------------------------------------

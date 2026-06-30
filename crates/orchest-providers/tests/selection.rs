@@ -316,6 +316,19 @@ fn with_builtin_registers_speechmatics_batch_asr_dialect() {
     assert!(!picked.descriptor.streaming);
 }
 
+#[cfg(feature = "http")]
+#[test]
+fn with_builtin_registers_minimax_music_gen_dialect() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .gen()
+        .provider("minimax")
+        .select()
+        .expect("minimax music gen-task is registered under the http feature");
+    assert_eq!(picked.descriptor.model.as_ref(), "music-1.5");
+    assert_eq!(picked.descriptor.capability, Capability::GenTask);
+}
+
 #[cfg(feature = "visual")]
 #[test]
 fn with_builtin_registers_renderful_gen_dialect() {

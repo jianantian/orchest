@@ -15,6 +15,7 @@
 //! so a pure-REST (LLM) consumer stays light.
 
 pub mod auth;
+pub mod gen;
 pub mod http;
 pub mod registry;
 pub mod retry;
@@ -30,6 +31,7 @@ pub mod ws;
 pub mod oss;
 
 pub use auth::{BearerAuth, HeaderAuth, OpenSpeechHeaders};
+pub use gen::SyncGenCache;
 pub use http::{build_client, shared_client, HttpClientConfig};
 pub use retry::RetryPolicy;
 pub use telemetry::{new_trace_id, LatencyTimer};
