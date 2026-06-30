@@ -135,9 +135,8 @@ pub trait GenTask: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Language(pub String);
 
-/// One-shot transcription request. The rich satellite `TranscribeRequest`
-/// (`agent-runtime-asr-providers`) converges onto this in Issue 006; until then
-/// dialect-specific knobs ride in `options`.
+/// One-shot transcription request. The former rich satellite `TranscribeRequest`
+/// has converged onto this (Issue 006); dialect-specific knobs ride in `options`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscribeRequest {
     pub audio: Bytes,

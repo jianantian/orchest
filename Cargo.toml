@@ -13,8 +13,6 @@ members = [
     "crates/agent-runtime-providers",
     "crates/agent-runtime-py",
     "crates/agent-runtime-node",
-    "crates/agent-runtime-asr-providers",
-    "crates/agent-runtime-tts-providers",
 ]
 
 [workspace.lints.clippy]
