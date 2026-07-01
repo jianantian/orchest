@@ -1,15 +1,15 @@
 //! Runtime metrics recorder example.
 //!
-//! Run with: cargo run -p agent-runtime-core --example observability_metrics
+//! Run with: cargo run -p orchest-runtime --example observability_metrics
 
 use std::sync::Arc;
 
-use agent_runtime_core::model::{
+use orchest_runtime::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun};
-use agent_runtime_core::tool::registry::ToolRegistry;
+use orchest_runtime::run::{AgentConfig, AgentRun};
+use orchest_runtime::tool::registry::ToolRegistry;
 use metrics_util::debugging::DebuggingRecorder;
 use tokio::sync::mpsc;
 
@@ -32,7 +32,7 @@ impl ModelAdapter for FinalModel {
     async fn complete(
         &self,
         _messages: &[Message],
-        _tools: &[agent_runtime_core::tool::ToolDef],
+        _tools: &[orchest_runtime::tool::ToolDef],
         _options: &RequestOptions,
         _tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {

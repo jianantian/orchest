@@ -1,5 +1,5 @@
 [package]
-name = "agent-runtime-py"
+name = "orchest-py"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-agent-runtime-core = { path = "../agent-runtime-core" }
+orchest-runtime = { path = "../orchest-runtime" }
 orchest-providers = { path = "../orchest-providers", features = ["llm"] }
 pyo3 = { version = "0.28", features = ["py-clone"] }
 async-trait = "0.1"

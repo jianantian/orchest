@@ -1,6 +1,6 @@
 """Tests for type aliases, tool registration, and event consumption helpers."""
 
-from agent_runtime import (
+from orchest import (
     Agent,
     AgentError,
     ApprovalDeniedError,
@@ -10,7 +10,7 @@ from agent_runtime import (
     SkillError,
     ToolError,
 )
-from agent_runtime.exceptions import from_code
+from orchest.exceptions import from_code
 
 
 # --- Exception hierarchy ---

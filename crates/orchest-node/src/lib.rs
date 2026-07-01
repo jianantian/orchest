@@ -1,7 +1,7 @@
 //! Node.js (napi-rs) bindings for the Orchest agent runtime.
 //!
 //! This crate only does type conversion and FFI glue between JavaScript and
-//! `agent-runtime-core`; all business logic lives in core. The public surface
+//! `orchest-runtime`; all business logic lives in core. The public surface
 //! is the `Agent` class exposed to Node via napi.
 
 use std::sync::{Arc, OnceLock};
@@ -15,20 +15,20 @@ use napi_derive::napi;
 use serde_json::Value;
 use tokio::sync::Mutex as TokioMutex;
 
-use agent_runtime_core::bindings::{
+use orchest_runtime::bindings::{
     budget_config_from_binding, parse_binding_approval, parse_binding_approval_mode,
     runtime_event_to_wire_value, BindingBudgetConfig, BindingNameStyle,
 };
-use agent_runtime_core::model::{
+use orchest_runtime::model::{
     CachePolicy, CompatibilityPolicy, ModelSpec, ProviderRuntimeConfig,
     RequestOptions as RustRequestOptions, ThinkingLevel,
 };
-use agent_runtime_core::run::{
+use orchest_runtime::run::{
     AgentConfig, AgentRun, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
 };
-use agent_runtime_core::tool::async_job::{JobHandle, JobStatus, PollFn};
-use agent_runtime_core::tool::registry::ToolRegistry;
-use agent_runtime_core::tool::{
+use orchest_runtime::tool::async_job::{JobHandle, JobStatus, PollFn};
+use orchest_runtime::tool::registry::ToolRegistry;
+use orchest_runtime::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolError, ToolExecutionMode, ToolMetadata,
     ToolOutput, ToolSource,
 };
@@ -600,7 +600,7 @@ impl Agent {
                 .map_err(|e| napi::Error::from_reason(format!("{}", e)))?;
         }
 
-        let model: Arc<dyn agent_runtime_core::model::ModelAdapter> = Arc::from(
+        let model: Arc<dyn orchest_runtime::model::ModelAdapter> = Arc::from(
             create_adapter_from_config(self.provider_config())
                 .map_err(|e| napi::Error::from_reason(format!("failed to create model: {e}")))?,
         );
@@ -648,7 +648,7 @@ impl Agent {
                 .map_err(|e| napi::Error::from_reason(format!("{}", e)))?;
         }
 
-        let model: Arc<dyn agent_runtime_core::model::ModelAdapter> = Arc::from(
+        let model: Arc<dyn orchest_runtime::model::ModelAdapter> = Arc::from(
             create_adapter_from_config(self.provider_config())
                 .map_err(|e| napi::Error::from_reason(format!("failed to create model: {e}")))?,
         );
@@ -703,7 +703,7 @@ impl Agent {
         rt.block_on(async {
             let guard = run_handle_ref.lock().await;
             if let Some(ref handle) = *guard {
-                let run_id = agent_runtime_core::run::RunId(
+                let run_id = orchest_runtime::run::RunId(
                     uuid::Uuid::parse_str(&run_id)
                         .map_err(|e| napi::Error::from_reason(format!("invalid run_id: {}", e)))?,
                 );
@@ -840,7 +840,7 @@ fn parse_cache_policy(value: &str) -> Result<CachePolicy, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_runtime_core::bindings::{runtime_event_value_to_wire_value, to_snake_case};
+    use orchest_runtime::bindings::{runtime_event_value_to_wire_value, to_snake_case};
 
     #[test]
     fn runtime_event_type_uses_snake_case_wire_format() {

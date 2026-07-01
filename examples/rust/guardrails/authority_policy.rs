@@ -5,15 +5,15 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
-use agent_runtime_core::events::RuntimeEvent;
-use agent_runtime_core::guardrail::{ToolInputGuardrail, ToolInputGuardrailAction};
-use agent_runtime_core::hook::ToolHookContext;
-use agent_runtime_core::model::{
+use orchest_runtime::events::RuntimeEvent;
+use orchest_runtime::guardrail::{ToolInputGuardrail, ToolInputGuardrailAction};
+use orchest_runtime::hook::ToolHookContext;
+use orchest_runtime::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun};
-use agent_runtime_core::tool::{
+use orchest_runtime::run::{AgentConfig, AgentRun};
+use orchest_runtime::tool::{
     registry::ToolRegistry, Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError,
     ToolExecutionMode, ToolMetadata, ToolOutput, ToolParallelism, ToolSource,
 };

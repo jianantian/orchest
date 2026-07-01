@@ -21,8 +21,8 @@ const { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = req
 const { dirname, join, resolve } = require("node:path");
 
 const repoRoot = resolve(__dirname, "../../..");
-const nativeSource = join(repoRoot, "target/debug/libagent_runtime_node.dylib");
-const nativeAddon = join(repoRoot, "target/debug/agent_runtime_node.node");
+const nativeSource = join(repoRoot, "target/debug/liborchest_node.dylib");
+const nativeAddon = join(repoRoot, "target/debug/orchest_node.node");
 const promptDir = join(repoRoot, "examples/support/deep_research_prompts");
 const envPath = join(repoRoot, ".env");
 

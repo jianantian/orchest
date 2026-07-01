@@ -1,3 +1,3 @@
 "use strict";
 
-module.exports = require("../agent_runtime_node.node");
+module.exports = require("../orchest_node.node");

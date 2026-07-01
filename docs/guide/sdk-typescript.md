@@ -1,6 +1,6 @@
 # SDK · TypeScript
 
-Orchest 的 TypeScript SDK 是 `@orchest/agent-runtime` 包（napi-rs 绑定到 Rust 核心）。Rust 核心概念见 [quickstart](./quickstart.md)；本文聚焦 TS/Node 用法。
+Orchest 的 TypeScript SDK 是 `@orchest/sdk` 包（napi-rs 绑定到 Rust 核心）。Rust 核心概念见 [quickstart](./quickstart.md)；本文聚焦 TS/Node 用法。
 
 ## 1. 安装
 
@@ -8,7 +8,7 @@ Orchest 的 TypeScript SDK 是 `@orchest/agent-runtime` 包（napi-rs 绑定到 
 
 ```bash
 npm install
-npm run build:native     # cargo build -p agent-runtime-node + 复制 .node 插件
+npm run build:native     # cargo build -p orchest-node + 复制 .node 插件
 ```
 
 > npm 发布计划于 v1.0。在那之前用 `npm run build:native` 从源码构建。
@@ -16,7 +16,7 @@ npm run build:native     # cargo build -p agent-runtime-node + 复制 .node 插�
 ## 2. 基础用法
 
 ```typescript
-import { Agent } from "@orchest/agent-runtime";
+import { Agent } from "@orchest/sdk";
 
 const agent = new Agent({
   model: "anthropic/claude-sonnet-4-6",

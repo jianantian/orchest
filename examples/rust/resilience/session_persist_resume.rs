@@ -5,14 +5,14 @@
 
 use std::sync::Arc;
 
-use agent_runtime_core::events::RuntimeEvent;
-use agent_runtime_core::model::{
+use orchest_runtime::events::RuntimeEvent;
+use orchest_runtime::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun};
-use agent_runtime_core::session::{InMemorySessionStore, SessionStore};
-use agent_runtime_core::tool::{registry::ToolRegistry, ToolDef};
+use orchest_runtime::run::{AgentConfig, AgentRun};
+use orchest_runtime::session::{InMemorySessionStore, SessionStore};
+use orchest_runtime::tool::{registry::ToolRegistry, ToolDef};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 

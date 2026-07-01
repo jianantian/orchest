@@ -4,14 +4,14 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_runtime_core::budget::BudgetConfig;
-use agent_runtime_core::events::RuntimeEvent;
-use agent_runtime_core::model::{ModelSpec, ProviderRuntimeConfig, RequestOptions};
-use agent_runtime_core::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
-use agent_runtime_core::tool::agent_as_tool::ContextMode;
-use agent_runtime_core::tool::builtin::WriteFileTool;
-use agent_runtime_core::tool::registry::ToolRegistry;
-use agent_runtime_core::tool::{
+use orchest_runtime::budget::BudgetConfig;
+use orchest_runtime::events::RuntimeEvent;
+use orchest_runtime::model::{ModelSpec, ProviderRuntimeConfig, RequestOptions};
+use orchest_runtime::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
+use orchest_runtime::tool::agent_as_tool::ContextMode;
+use orchest_runtime::tool::builtin::WriteFileTool;
+use orchest_runtime::tool::registry::ToolRegistry;
+use orchest_runtime::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
 use async_trait::async_trait;
@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 
 type ExampleAgentParts = (
     AgentConfig,
-    Arc<dyn agent_runtime_core::model::ModelAdapter>,
+    Arc<dyn orchest_runtime::model::ModelAdapter>,
     ToolRegistry,
 );
 
@@ -330,7 +330,7 @@ fn agent_config(
 fn provider_model(
     model_ref: String,
     max_tokens: Option<u32>,
-) -> Result<Arc<dyn agent_runtime_core::model::ModelAdapter>, Box<dyn std::error::Error>> {
+) -> Result<Arc<dyn orchest_runtime::model::ModelAdapter>, Box<dyn std::error::Error>> {
     let adapter = create_adapter_from_config(ProviderRuntimeConfig {
         model: model_ref,
         api_key: None,
@@ -357,7 +357,7 @@ fn build_web_search_agent() -> Result<ExampleAgentParts, Box<dyn std::error::Err
 
 fn build_deep_research_agent(
     web_config: AgentConfig,
-    web_model: Arc<dyn agent_runtime_core::model::ModelAdapter>,
+    web_model: Arc<dyn orchest_runtime::model::ModelAdapter>,
     web_registry: ToolRegistry,
     report_path: &str,
     min_calls: u32,

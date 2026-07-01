@@ -32,7 +32,7 @@ use removed `inherit_context(...)` helpers.
 Runnable example:
 
 ```bash
-cargo run -p agent-runtime-core --example agent_as_tool
+cargo run -p orchest-runtime --example agent_as_tool
 ```
 
 ## Pattern 2: Triage Handoff
@@ -63,8 +63,8 @@ rewritten history instead of the full conversation.
 Runnable examples:
 
 ```bash
-cargo run -p agent-runtime-core --example handoff_routing
-cargo run -p agent-runtime-core --example handoff_input_filter
+cargo run -p orchest-runtime --example handoff_routing
+cargo run -p orchest-runtime --example handoff_input_filter
 ```
 
 ## Pattern 3: Supervisor Watcher
@@ -97,9 +97,9 @@ handle.attach_watcher(Arc::new(SteeringWatcher), 256).await;
 Runnable examples:
 
 ```bash
-cargo run -p agent-runtime-core --example watcher_inject_message
-cargo run -p agent-runtime-core --example watcher_abort_on_pattern
-cargo run -p agent-runtime-core --example supervised_delegation
+cargo run -p orchest-runtime --example watcher_inject_message
+cargo run -p orchest-runtime --example watcher_abort_on_pattern
+cargo run -p orchest-runtime --example supervised_delegation
 ```
 
 ## When Existing Primitives Are Sufficient

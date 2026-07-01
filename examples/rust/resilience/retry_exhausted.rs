@@ -9,13 +9,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_runtime_core::events::RuntimeEvent;
-use agent_runtime_core::model::{
+use orchest_runtime::events::RuntimeEvent;
+use orchest_runtime::model::{
     Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, RequestOptions,
     StreamEvent,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun, BackoffStrategy, RetryPolicy};
-use agent_runtime_core::tool::registry::ToolRegistry;
+use orchest_runtime::run::{AgentConfig, AgentRun, BackoffStrategy, RetryPolicy};
+use orchest_runtime::tool::registry::ToolRegistry;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
@@ -38,7 +38,7 @@ impl ModelAdapter for RateLimitedModel {
     async fn complete(
         &self,
         _messages: &[Message],
-        _tools: &[agent_runtime_core::tool::ToolDef],
+        _tools: &[orchest_runtime::tool::ToolDef],
         _options: &RequestOptions,
         _tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {

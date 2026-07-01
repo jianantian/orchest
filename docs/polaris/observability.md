@@ -2,7 +2,7 @@
 
 Orchest 是底层 agent runtime SDK，不是黑盒 agent 产品。可观测性是 SDK 合同的一部分：调用方必须能用统一方式观察 agent run、model call、tool execution、MCP request、Skill loading、预算消耗和上游错误。
 
-本文是跨 `agent-runtime-core`、`agent-runtime-providers`、Python SDK、Node SDK 的权威规范。具体迭代文档可以说明如何落地，但不得重新定义一套日志、指标或 token 归因语义。
+本文是跨 `orchest-runtime`、`agent-runtime-providers`、Python SDK、Node SDK 的权威规范。具体迭代文档可以说明如何落地，但不得重新定义一套日志、指标或 token 归因语义。
 
 ## 三类输出通道
 
@@ -29,7 +29,7 @@ tracing = "0.1"
 metrics = "0.24"
 ```
 
-`agent-runtime-core` 和 `agent-runtime-providers` 不得把 `tracing-subscriber`、Prometheus exporter、OpenTelemetry exporter 作为 runtime dependency。二进制入口和宿主应用负责决定日志格式、采样、导出方式和后端。
+`orchest-runtime` 和 `agent-runtime-providers` 不得把 `tracing-subscriber`、Prometheus exporter、OpenTelemetry exporter 作为 runtime dependency。二进制入口和宿主应用负责决定日志格式、采样、导出方式和后端。
 
 测试可以使用 test-only subscriber/recorder：
 

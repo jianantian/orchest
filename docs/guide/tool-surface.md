@@ -136,9 +136,9 @@ The `guardrail_authority_policy` example shows this split:
 Run the examples from the workspace root:
 
 ```bash
-cargo run -p agent-runtime-core --example draft_commit_approval
-cargo run -p agent-runtime-core --example tool_search_discovery
-cargo run -p agent-runtime-core --example parallel_tool_execution
-cargo run -p agent-runtime-core --example approval_when_risky_side_effect
-cargo run -p agent-runtime-core --example guardrail_authority_policy
+cargo run -p orchest-runtime --example draft_commit_approval
+cargo run -p orchest-runtime --example tool_search_discovery
+cargo run -p orchest-runtime --example parallel_tool_execution
+cargo run -p orchest-runtime --example approval_when_risky_side_effect
+cargo run -p orchest-runtime --example guardrail_authority_policy
 ```

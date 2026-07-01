@@ -9,14 +9,14 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use agent_runtime_core::events::RuntimeEvent;
-use agent_runtime_core::handoff::{Handoff, HandoffTarget};
-use agent_runtime_core::model::{
+use orchest_runtime::events::RuntimeEvent;
+use orchest_runtime::handoff::{Handoff, HandoffTarget};
+use orchest_runtime::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun};
-use agent_runtime_core::tool::registry::ToolRegistry;
+use orchest_runtime::run::{AgentConfig, AgentRun};
+use orchest_runtime::tool::registry::ToolRegistry;
 use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -44,7 +44,7 @@ impl ModelAdapter for RoutingModel {
     async fn complete(
         &self,
         _messages: &[Message],
-        _tools: &[agent_runtime_core::tool::ToolDef],
+        _tools: &[orchest_runtime::tool::ToolDef],
         _options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {

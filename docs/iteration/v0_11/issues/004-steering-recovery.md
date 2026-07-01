@@ -10,7 +10,7 @@ Implement the `InjectCmd` injection scenario, add a second watcher to test multi
 
 ## Acceptance Criteria
 
-- [ ] Watcher returns `WatcherAction::Inject(message)` from `on_event()` at a predetermined point in the worker run (e.g., after the first tool call event). The injected message is visible in the worker event stream and changes the worker's next step. (`WatcherAction` is at `agent_runtime_core::run::watcher::WatcherAction`.)
+- [ ] Watcher returns `WatcherAction::Inject(message)` from `on_event()` at a predetermined point in the worker run (e.g., after the first tool call event). The injected message is visible in the worker event stream and changes the worker's next step. (`WatcherAction` is at `orchest_runtime::run::watcher::WatcherAction`.)
 - [ ] Worker processes the injection without panicking or losing existing state.
 - [ ] Two watchers are attached concurrently to the same worker run. Both receive all events. Event delivery order is the same for both watchers across repeated fake-model runs on the same machine.
 - [ ] Fault injection scenario: supervisor run includes a step that triggers `fault_trigger`. Worker run terminates with a failure. Supervisor detects the failure through the public failure detection API (not by catching a panic or checking a side channel).

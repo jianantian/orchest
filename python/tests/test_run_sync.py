@@ -1,5 +1,5 @@
-from agent_runtime import Agent, AgentError, BudgetExceededError
-from agent_runtime.exceptions import from_code
+from orchest import Agent, AgentError, BudgetExceededError
+from orchest.exceptions import from_code
 
 
 def test_from_code_budget() -> None:

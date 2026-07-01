@@ -7,9 +7,9 @@ members = [
     "crates/orchest-provider-stream",
     "crates/orchest-provider-visual",
     "crates/orchest-providers",
-    "crates/agent-runtime-core",
-    "crates/agent-runtime-py",
-    "crates/agent-runtime-node",
+    "crates/orchest-runtime",
+    "crates/orchest-py",
+    "crates/orchest-node",
 ]
 
 [workspace.lints.clippy]

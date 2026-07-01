@@ -1,7 +1,7 @@
 //! Python (PyO3) bindings for the Orchest agent runtime.
 //!
 //! This crate only does type conversion and FFI glue between Python and
-//! `agent-runtime-core`; all business logic lives in core. The public surface
+//! `orchest-runtime`; all business logic lives in core. The public surface
 //! is the `Agent` class exposed to Python via PyO3.
 
 use std::sync::Arc;
@@ -14,22 +14,22 @@ use pyo3::types::PyDict;
 use serde_json::Value;
 use tokio::sync::Mutex as TokioMutex;
 
-use agent_runtime_core::bindings::{
+use orchest_runtime::bindings::{
     budget_config_from_binding, parse_binding_approval, parse_binding_approval_mode,
     runtime_event_to_wire_value, BindingBudgetConfig, BindingNameStyle,
 };
-use agent_runtime_core::events::RuntimeEvent;
-use agent_runtime_core::model::{
+use orchest_runtime::events::RuntimeEvent;
+use orchest_runtime::model::{
     CachePolicy, CompatibilityPolicy, ModelSpec, ProviderRuntimeConfig, RequestOptions,
     ThinkingLevel,
 };
-use agent_runtime_core::run::{
+use orchest_runtime::run::{
     AgentConfig, AgentRun, ApprovalMode, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
 };
-use agent_runtime_core::tool::async_job::{JobHandle, JobStatus};
-use agent_runtime_core::tool::builtin::WriteFileTool;
-use agent_runtime_core::tool::registry::ToolRegistry;
-use agent_runtime_core::tool::{
+use orchest_runtime::tool::async_job::{JobHandle, JobStatus};
+use orchest_runtime::tool::builtin::WriteFileTool;
+use orchest_runtime::tool::registry::ToolRegistry;
+use orchest_runtime::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolError, ToolExecutionMode, ToolMetadata,
     ToolOutput, ToolSource,
 };
@@ -509,7 +509,7 @@ impl Agent {
         Ok(registry)
     }
 
-    fn build_model(&self) -> Result<Arc<dyn agent_runtime_core::model::ModelAdapter>, PyErr> {
+    fn build_model(&self) -> Result<Arc<dyn orchest_runtime::model::ModelAdapter>, PyErr> {
         let adapter = create_adapter_from_config(self.provider_config())
             .map_err(|e| PyRuntimeError::new_err(format!("failed to create model: {}", e)))?;
         Ok(Arc::from(adapter))
@@ -842,7 +842,7 @@ impl Agent {
         rt.block_on(async {
             let guard = run_handle_ref.lock().await;
             if let Some(ref handle) = *guard {
-                let run_id: agent_runtime_core::run::RunId = agent_runtime_core::run::RunId(
+                let run_id: orchest_runtime::run::RunId = orchest_runtime::run::RunId(
                     uuid::Uuid::parse_str(&run_id_str)
                         .map_err(|e| PyRuntimeError::new_err(format!("invalid run_id: {}", e)))?,
                 );
@@ -861,7 +861,7 @@ impl Agent {
 }
 
 #[pymodule]
-fn agent_runtime_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn orchest_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Agent>()?;
     Ok(())
 }

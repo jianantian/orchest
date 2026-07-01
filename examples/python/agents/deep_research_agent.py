@@ -43,7 +43,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from agent_runtime import Agent, RuntimeEvent
+from orchest import Agent, RuntimeEvent
 
 EXA_SEARCH_URL = "https://api.exa.ai/search"
 DEFAULT_REPORT_PATH = "target/deep-research-report.md"

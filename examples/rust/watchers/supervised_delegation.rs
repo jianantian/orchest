@@ -5,13 +5,13 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use agent_runtime_core::events::RuntimeEvent;
-use agent_runtime_core::model::{
+use orchest_runtime::events::RuntimeEvent;
+use orchest_runtime::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun, SupervisionStrategy, Watcher, WatcherAction};
-use agent_runtime_core::tool::{
+use orchest_runtime::run::{AgentConfig, AgentRun, SupervisionStrategy, Watcher, WatcherAction};
+use orchest_runtime::tool::{
     registry::ToolRegistry, Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata,
     ToolOutput, ToolSource,
 };
@@ -71,7 +71,7 @@ impl ModelAdapter for ScriptedModel {
 
 struct LongTask;
 
-use agent_runtime_core::tool::ToolDef;
+use orchest_runtime::tool::ToolDef;
 
 #[async_trait]
 impl Tool for LongTask {
@@ -94,8 +94,8 @@ impl Tool for LongTask {
             timeout: None,
             max_output_tokens: None,
             approval: Approval::Never,
-            execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
-            parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
+            execution_mode: orchest_runtime::tool::ToolExecutionMode::Normal,
+            parallelism: orchest_runtime::tool::ToolParallelism::Serial,
             cost_hint: None,
         }
     }

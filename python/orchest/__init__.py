@@ -2,7 +2,7 @@
 
 from typing import Any, TypeAlias
 
-from .agent_runtime_py import Agent
+from .orchest_py import Agent
 from .exceptions import (
     AgentError,
     ApprovalDeniedError,

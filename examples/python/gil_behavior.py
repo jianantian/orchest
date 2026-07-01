@@ -13,7 +13,7 @@ import os
 import threading
 import time
 
-from agent_runtime import Agent
+from orchest import Agent
 
 
 def main() -> None:

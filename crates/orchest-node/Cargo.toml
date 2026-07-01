@@ -1,5 +1,5 @@
 [package]
-name = "agent-runtime-node"
+name = "orchest-node"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-agent-runtime-core = { path = "../agent-runtime-core" }
+orchest-runtime = { path = "../orchest-runtime" }
 orchest-providers = { path = "../orchest-providers", features = ["llm"] }
 napi = { version = "2", features = ["napi8", "serde-json", "tokio_rt"] }
 napi-derive = "2"

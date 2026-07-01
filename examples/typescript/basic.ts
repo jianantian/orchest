@@ -2,7 +2,7 @@
  * Basic example: register tools and run an agent.
  *
  * Usage:
- *   cargo build -p agent-runtime-node
+ *   cargo build -p orchest-node
  *   npx ts-node --compiler-options '{"module":"CommonJS"}' examples/typescript/basic.ts
  */
 
@@ -15,8 +15,8 @@ const { copyFileSync, existsSync } = require("node:fs");
 const { join, resolve } = require("node:path");
 
 const repoRoot = resolve(__dirname, "../..");
-const nativeSource = join(repoRoot, "target/debug/libagent_runtime_node.dylib");
-const nativeAddon = join(repoRoot, "target/debug/agent_runtime_node.node");
+const nativeSource = join(repoRoot, "target/debug/liborchest_node.dylib");
+const nativeAddon = join(repoRoot, "target/debug/orchest_node.node");
 
 if (existsSync(nativeSource)) {
   copyFileSync(nativeSource, nativeAddon);

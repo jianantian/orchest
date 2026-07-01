@@ -4,14 +4,14 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use agent_runtime_core::events::RuntimeEvent;
-use agent_runtime_core::model::{
+use orchest_runtime::events::RuntimeEvent;
+use orchest_runtime::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun, SupervisionStrategy, Watcher, WatcherAction};
-use agent_runtime_core::tool::registry::ToolRegistry;
-use agent_runtime_core::tool::{
+use orchest_runtime::run::{AgentConfig, AgentRun, SupervisionStrategy, Watcher, WatcherAction};
+use orchest_runtime::tool::registry::ToolRegistry;
+use orchest_runtime::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput,
     ToolSource,
 };
@@ -57,8 +57,8 @@ impl Tool for PingTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
-            execution_mode: agent_runtime_core::tool::ToolExecutionMode::Normal,
-            parallelism: agent_runtime_core::tool::ToolParallelism::Serial,
+            execution_mode: orchest_runtime::tool::ToolExecutionMode::Normal,
+            parallelism: orchest_runtime::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,

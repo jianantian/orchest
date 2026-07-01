@@ -3,13 +3,13 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "agent-runtime-py"
+name = "orchest-py"
 version = "0.1.0"
 description = "Python SDK for Orchest Agent Runtime"
 requires-python = ">=3.11"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-manifest-path = "crates/agent-runtime-py/Cargo.toml"
-module-name = "agent_runtime.agent_runtime_py"
+manifest-path = "crates/orchest-py/Cargo.toml"
+module-name = "orchest.orchest_py"
 python-source = "python"

@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from agent_runtime import Agent
+from orchest import Agent
 
 agent = Agent(
     model="deepseek/deepseek-v4-pro",

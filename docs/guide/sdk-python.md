@@ -1,6 +1,6 @@
 # SDK · Python
 
-Orchest 的 Python SDK 是 `agent_runtime` 包（PyO3 绑定到 Rust 核心）。Rust 核心概念见 [quickstart](./quickstart.md)；本文聚焦 Python 用法。
+Orchest 的 Python SDK 是 `orchest` 包（PyO3 绑定到 Rust 核心）。Rust 核心概念见 [quickstart](./quickstart.md)；本文聚焦 Python 用法。
 
 ## 1. 安装
 
@@ -16,7 +16,7 @@ maturin develop          # 或：uvx maturin develop
 ## 2. 基础用法
 
 ```python
-from agent_runtime import Agent
+from orchest import Agent
 
 agent = Agent(
     model="anthropic/claude-sonnet-4-6",
@@ -88,7 +88,7 @@ for event in agent.run("What's the weather in Tokyo?"):
 
 ## 5. Event type 速查
 
-来自 `python/agent_runtime/__init__.pyi`：
+来自 `python/orchest/__init__.pyi`：
 
 ```
 run_started            model_call_started      model_stream_chunk
@@ -105,7 +105,7 @@ run_failed
 
 ## 6. 异常
 
-绑定层把内部错误转成 Python 异常（见 `python/agent_runtime/exceptions.pyi`）：
+绑定层把内部错误转成 Python 异常（见 `python/orchest/exceptions.pyi`）：
 
 - `AgentError`（基类，带可选 `code`）
 - `BudgetExceededError`
@@ -116,4 +116,4 @@ run_failed
 
 ## 7. 类型提示
 
-完整签名与 TypedDict 见类型存根 [`python/agent_runtime/__init__.pyi`](../../python/agent_runtime/__init__.pyi)，覆盖 `Agent`、`BudgetOptions`、`RequestOptions`、`RuntimeEvent` 等。
+完整签名与 TypedDict 见类型存根 [`python/orchest/__init__.pyi`](../../python/orchest/__init__.pyi)，覆盖 `Agent`、`BudgetOptions`、`RequestOptions`、`RuntimeEvent` 等。

@@ -4,15 +4,15 @@
 
 use std::sync::Arc;
 
-use agent_runtime_core::events::RuntimeEvent;
-use agent_runtime_core::guardrail::{OutputGuardrail, OutputGuardrailAction};
-use agent_runtime_core::hook::ModelHookContext;
-use agent_runtime_core::model::{
+use orchest_runtime::events::RuntimeEvent;
+use orchest_runtime::guardrail::{OutputGuardrail, OutputGuardrailAction};
+use orchest_runtime::hook::ModelHookContext;
+use orchest_runtime::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use agent_runtime_core::run::{AgentConfig, AgentRun};
-use agent_runtime_core::tool::{registry::ToolRegistry, ToolDef};
+use orchest_runtime::run::{AgentConfig, AgentRun};
+use orchest_runtime::tool::{registry::ToolRegistry, ToolDef};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 

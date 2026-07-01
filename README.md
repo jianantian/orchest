@@ -33,7 +33,7 @@ uvx maturin develop
 ```
 
 ```python
-from agent_runtime import Agent
+from orchest import Agent
 
 agent = Agent(
     model="anthropic/claude-sonnet-4-6",
@@ -53,7 +53,7 @@ npm install && npm run build:native
 ```
 
 ```typescript
-import { Agent } from "@orchest/agent-runtime";
+import { Agent } from "@orchest/sdk";
 
 const agent = new Agent({
   model: "anthropic/claude-sonnet-4-6",
@@ -87,12 +87,12 @@ API keys are read from the standard env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_K
 
 ```
 crates/
-  agent-runtime-core/     # Pure Rust — run loop, tool registry, skill loading, events
+  orchest-runtime/     # Pure Rust — run loop, tool registry, skill loading, events
   agent-runtime-providers/ # Model adapters (Anthropic, OpenAI, DeepSeek, OpenRouter)
-  agent-runtime-py/        # PyO3 binding
-  agent-runtime-node/      # napi-rs binding
+  orchest-py/        # PyO3 binding
+  orchest-node/      # napi-rs binding
 python/
-  agent_runtime/           # Python package with typed stubs
+  orchest/           # Python package with typed stubs
 js/                        # TypeScript SDK with native bindings
 examples/                  # Runnable demos (Python, TypeScript, Rust)
 docs/                      # Design docs, iteration PRDs, polaris principles
@@ -127,8 +127,8 @@ See [`AGENTS.md`](./AGENTS.md) for conventions, [`WORKFLOW.md`](./WORKFLOW.md) f
 |----------|----------|
 | [`docs/overview.md`](./docs/overview.md) | Everyone — concepts and philosophy |
 | [`docs/guide/quickstart.md`](./docs/guide/quickstart.md) | New users — zero to a running Rust agent |
-| [`docs/guide/sdk-python.md`](./docs/guide/sdk-python.md) | Python users — `agent_runtime` package guide |
-| [`docs/guide/sdk-typescript.md`](./docs/guide/sdk-typescript.md) | TypeScript users — `@orchest/agent-runtime` guide |
+| [`docs/guide/sdk-python.md`](./docs/guide/sdk-python.md) | Python users — `orchest` package guide |
+| [`docs/guide/sdk-typescript.md`](./docs/guide/sdk-typescript.md) | TypeScript users — `@orchest/sdk` guide |
 | [`docs/polaris/`](./docs/polaris/) | Contributors — design principles, non-goals, observability contract |
 | [`docs/iteration/`](./docs/iteration/) | Contributors — per-version PRDs and issue specs |
 | [`docs/review/`](./docs/review/) | Contributors — code review findings |
