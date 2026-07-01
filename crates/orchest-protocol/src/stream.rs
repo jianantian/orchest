@@ -236,11 +236,13 @@ mod tests {
             match event {
                 StreamEvent::Text { .. } => saw_text = true,
                 StreamEvent::Content {
-                    block: ContentBlock::Image { source, .. },
+                    block:
+                        ContentBlock::Image {
+                            source: MediaSource::Url { url },
+                            ..
+                        },
                 } => {
-                    if let MediaSource::Url { url } = source {
-                        image_url = Some(url);
-                    }
+                    image_url = Some(url);
                 }
                 _ => {}
             }

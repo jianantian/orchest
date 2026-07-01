@@ -92,16 +92,15 @@ impl Tool for CurrentTimeTool {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Configure a provider. The model string is `provider/model`; the API key
     //    is read from the ANTHROPIC_API_KEY environment variable.
-    let model: Arc<dyn ModelAdapter> =
-        Arc::from(agent_runtime_providers::create_adapter_from_config(
-            agent_runtime_providers::ProviderRuntimeConfig {
-                model: "anthropic/claude-sonnet-4-6".into(),
-                api_key: None,
-                api_key_env: Some("ANTHROPIC_API_KEY".into()),
-                api_url: None,
-                max_tokens: Some(1024),
-            },
-        )?);
+    let model: Arc<dyn ModelAdapter> = Arc::from(orchest_providers::create_adapter_from_config(
+        orchest_providers::ProviderRuntimeConfig {
+            model: "anthropic/claude-sonnet-4-6".into(),
+            api_key: None,
+            api_key_env: Some("ANTHROPIC_API_KEY".into()),
+            api_url: None,
+            max_tokens: Some(1024),
+        },
+    )?);
 
     // 2. Register the tool into a registry.
     let mut registry = ToolRegistry::new();

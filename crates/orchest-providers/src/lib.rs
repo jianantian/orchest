@@ -30,6 +30,20 @@ pub use registry::{Query, Registry};
 // set of entry/config types.
 pub use orchest_provider_core::registry::{Entry, Factory, ProviderConfig};
 
+/// Free-function construction of an LLM chat adapter from an explicit
+/// `provider/model` + credentials, surfaced through the wall (feature `http`).
+///
+/// The [`Registry`] identity/capability picks cover every **enumerable** model,
+/// but dynamic-gateway providers (OpenRouter) cannot be enumerated statically —
+/// so `node`/`py` and the runtime examples construct through this path. Keeping
+/// it here means consumers still depend only on `orchest-protocol` +
+/// `orchest-providers`, never on an impl crate directly.
+#[cfg(feature = "http")]
+pub use orchest_provider_http::{
+    create_adapter, create_adapter_from_config, normalize_provider_model, NormalizedProviderModel,
+    ProviderRuntimeConfig,
+};
+
 /// The vendor-namespaced facade (`orchest_providers::providers::volcengine::…`).
 pub mod providers {
     pub use crate::facade::*;

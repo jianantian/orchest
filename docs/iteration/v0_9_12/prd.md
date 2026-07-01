@@ -307,17 +307,17 @@ Recorded here and in ADR-0001.
 
 ## Acceptance Criteria
 
-- [ ] `docs/adr/0001-provider-unification.md` records the decisions with rationale; omni + Chameleon are hard acceptance.
-- [ ] `orchest-protocol` exposes unified error, one delta-granular event model (with typed extensions), one descriptor core (with typed extensions), and the capability traits incl. new `RealtimeSession`/`GenTask`; old `agent-runtime-model` types are aliased.
-- [ ] `orchest-provider-core` holds a single http/sse/ws/telemetry/auth stack; per-crate `http.rs`/`observability.rs` duplicates and the duplicate `CapabilitySource` are gone.
-- [ ] Each vendor's auth/client per wire dialect exists once; Volcengine's three endpoints are three L1 header strategies bound by L3 entries.
-- [ ] `agent-runtime-realtime-providers` is deleted; omni runs as `RealtimeSession` reusing `ContentBlock`/`ToolUse`.
-- [ ] `AsrModelCapabilities`-level detail survives as a typed extension (not flattened into the core).
-- [ ] Consumers select via capability query **and** identity pick through `orchest-providers`; no consumer references an impl crate or dialect.
-- [ ] `features = ["llm"]` yields a dependency tree with no `tokio-tungstenite`/OSS-signing (`cargo tree` evidence recorded).
-- [ ] `node/py` reach providers only through `orchest-protocol` + `orchest-providers` (insulated at the `core::model` alias during migration).
-- [ ] Both rulers fit with no provider-local content/event structs.
-- [ ] Migration lands in independent green phases; no single big-bang PR.
+- [x] `docs/adr/0001-provider-unification.md` records the decisions with rationale; omni + Chameleon are hard acceptance.
+- [x] `orchest-protocol` exposes unified error, one delta-granular event model (with typed extensions), one descriptor core (with typed extensions), and the capability traits incl. new `RealtimeSession`/`GenTask`; old `agent-runtime-model` types are aliased.
+- [x] `orchest-provider-core` holds a single http/sse/ws/telemetry/auth stack; per-crate `http.rs`/`observability.rs` duplicates and the duplicate `CapabilitySource` are gone.
+- [x] Each vendor's auth/client per wire dialect exists once; Volcengine's three endpoints are three L1 header strategies bound by L3 entries.
+- [x] `agent-runtime-realtime-providers` is deleted; omni runs as `RealtimeSession` reusing `ContentBlock`/`ToolUse`.
+- [x] `AsrModelCapabilities`-level detail survives as a typed extension (not flattened into the core).
+- [x] Consumers select via capability query **and** identity pick through `orchest-providers`; no consumer references an impl crate or dialect.
+- [x] `features = ["llm"]` yields a dependency tree with no `tokio-tungstenite`/OSS-signing (`cargo tree` evidence recorded — `docs/iteration/v0_9_12/issues/008-cleanup-bindings/evidence.md`).
+- [x] `node/py` reach providers only through `orchest-protocol` + `orchest-providers` (the free-function construction path is re-exported by the wall behind `feature = "http"`).
+- [x] Both rulers fit with no provider-local content/event structs.
+- [x] Migration lands in independent green phases; no single big-bang PR.
 
 ## Dependencies
 

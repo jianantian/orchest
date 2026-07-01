@@ -32,7 +32,7 @@ sqlite-session = ["dep:rusqlite"]
 libc = "0.2"
 
 [dev-dependencies]
-agent-runtime-providers = { path = "../agent-runtime-providers" }
+orchest-providers = { path = "../orchest-providers", features = ["llm"] }
 metrics-util = "0.20"
 
 [[test]]
@@ -42,6 +42,14 @@ path = "tests/ractor_poc.rs"
 [[example]]
 name = "basic_agent_run"
 path = "../../examples/rust/basic_agent_run.rs"
+
+[[example]]
+name = "rust_provider_runtime_deepseek"
+path = "../../examples/rust/providers/deepseek.rs"
+
+[[example]]
+name = "rust_provider_runtime_openrouter"
+path = "../../examples/rust/providers/openrouter.rs"
 
 [[example]]
 name = "rust_deep_research_agent"
