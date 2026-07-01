@@ -15,7 +15,10 @@ use orchest_protocol::{ErrorCode, GenHandle, GenResult, GenStatus, ProtocolError
 /// A per-provider cache that presents a synchronous gen result as a
 /// submit → poll → fetch job: [`store`](Self::store) the completed [`GenResult`]
 /// under a fresh id (returning the handle), [`status`](Self::status) reports
-/// `Done` while cached, and [`fetch`](Self::fetch) returns it.
+/// `Done` while cached, and [`fetch`](Self::fetch) returns it **once**, consuming
+/// the entry. Fetch is terminal in the submit → poll → fetch lifecycle, so
+/// consuming on fetch bounds the cache to in-flight (submitted-but-unfetched)
+/// results rather than retaining every asset for the process lifetime.
 #[derive(Default)]
 pub struct SyncGenCache {
     results: Mutex<HashMap<String, GenResult>>,
@@ -41,10 +44,12 @@ impl SyncGenCache {
         }
     }
 
-    /// Return the cached result for `handle`, or an error if it is unknown.
+    /// Return the cached result for `handle`, **consuming** it (fetch-once), or an
+    /// error if it is unknown or already fetched. Consuming here is what bounds the
+    /// cache — nothing else evicts.
     #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
     pub fn fetch(&self, handle: &GenHandle) -> Result<GenResult, ProtocolError> {
-        self.lock().get(&handle.id).cloned().ok_or_else(|| {
+        self.lock().remove(&handle.id).ok_or_else(|| {
             ProtocolError::new(
                 ErrorCode::InvalidRequest,
                 "unknown gen handle (already fetched or never submitted)",
@@ -75,6 +80,11 @@ mod tests {
         assert_eq!(handle.provider.as_deref(), Some("crazyrouter"));
         assert_eq!(cache.status(&handle), GenStatus::Done);
         assert_eq!(cache.fetch(&handle).unwrap(), result);
+
+        // fetch consumes: the entry is gone afterwards, so the cache does not
+        // retain results for the process lifetime. A second fetch/status fails.
+        assert_eq!(cache.status(&handle), GenStatus::Failed);
+        assert!(cache.fetch(&handle).is_err());
 
         let unknown = GenHandle {
             id: "nope".to_string(),
