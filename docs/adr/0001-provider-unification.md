@@ -174,7 +174,7 @@ compile-unit isolation. Only weight-tier crates with dialect modules satisfy the
 
 Tracked as the v0.9.12 issue breakdown (see PRD §Issue Breakdown):
 
-1. [ ] 001 — This ADR + capability-descriptor vocabulary; prove omni + Chameleon seat in it.
+1. [x] 001 — This ADR + capability-descriptor vocabulary; prove omni + Chameleon seat in it. (design note: `docs/iteration/v0_9_12/issues/001-protocol-design/design.md`)
 2. [ ] 002 — `orchest-protocol` spine (capability traits incl. new `RealtimeSession`/`GenTask`; one delta-granular event model + `SessionInput` + typed extensions; static descriptor core; unified error).
 3. [ ] 003 — `orchest-provider-core` extraction (one HTTP/SSE/WS/OSS/auth/telemetry stack).
 4. [ ] 004 — Registry + umbrella wall: reconcile `ProviderRegistry` + ASR `AsrRouter` (reuse `select_for_*`) into one multi-capability, descriptor-queryable registry; settle the selection API surface here.

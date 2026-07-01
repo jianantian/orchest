@@ -1,15 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/agent-runtime-model",
+    "crates/orchest-protocol",
+    "crates/orchest-provider-core",
+    "crates/orchest-provider-http",
+    "crates/orchest-provider-stream",
+    "crates/orchest-provider-visual",
+    "crates/orchest-providers",
     "crates/agent-runtime-core",
-    "crates/agent-runtime-aigc-providers",
-    "crates/agent-runtime-providers",
     "crates/agent-runtime-py",
     "crates/agent-runtime-node",
-    "crates/agent-runtime-asr-providers",
-    "crates/agent-runtime-tts-providers",
-    "crates/agent-runtime-realtime-providers",
 ]
 
 [workspace.lints.clippy]

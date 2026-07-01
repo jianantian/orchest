@@ -1,6 +1,7 @@
-//! Model adapter re-exports from `agent-runtime-model`.
+//! Model adapter re-exports from `orchest-protocol` (the provider-unification
+//! spine). `core` depends only on the spine — never on a concrete provider crate.
 
-pub use agent_runtime_model::{
+pub use orchest_protocol::{
     CacheCapability, CachePolicy, CapabilitySource, CompatibilityPolicy, ContentBlock, JsonSchema,
     Message, ModelAdapter, ModelCapabilities, ModelError, ModelPricing, ModelResponse, ModelSpec,
     OptionAdjustment, ProviderRuntimeConfig, ReasoningCapability, RequestOptions, Role, StopReason,

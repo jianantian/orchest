@@ -12,8 +12,8 @@ use agent_runtime_core::tool::registry::ToolRegistry;
 use agent_runtime_core::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
-use agent_runtime_providers::{create_adapter_from_config, ProviderRuntimeConfig};
 use async_trait::async_trait;
+use orchest_providers::{create_adapter_from_config, ProviderRuntimeConfig};
 use serde_json::json;
 
 // ── Tool ─────────────────────────────────────────────────────────────────────

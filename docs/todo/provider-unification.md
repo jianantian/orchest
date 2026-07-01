@@ -1,6 +1,8 @@
 # TODO: Provider 统一路线(omni 驱动)
 
-> 状态: Step 2 已完成,Step 3 待排期 | 记录于 2026-06-22
+> 状态: **全部完成** —— Step 3 由 v0.9.12（Provider 统一大重构）落地 | 记录于 2026-06-22,收尾于 2026-07-01
+> Step 3 的设计与验收见 [`docs/iteration/v0_9_12/prd.md`](../iteration/v0_9_12/prd.md);
+> ADR 见 [`docs/adr/0001-provider-unification.md`](../adr/0001-provider-unification.md)。
 > 这是 v0.9.10(Minimax 接入)之后的两步方向锚。先堆熵、再降熵 —— 用真实 provider 逼出需求,
 > 不投机设计抽象。详见各 step。
 
@@ -63,7 +65,11 @@ omni 输入侧直接复用。
 
 ---
 
-## Step 3 — 合 crate / Provider 统一(重构迭代,待排版本号)
+## Step 3 — 合 crate / Provider 统一(重构迭代,已完成:v0.9.12)
+
+> 落地为 v0.9.12,8 个 issue 全部完成:`orchest-protocol` 脊柱 + `orchest-provider-core` +
+> http/stream/visual 三层 impl crate + `orchest-providers` 墙;下面的原始设想全部兑现,
+> 且 omni + Chameleon 双标尺作为 ADR-0001 硬验收判据落成。详见 `docs/iteration/v0_9_12/`。
 
 有了 Step 1(Minimax 单厂商横跨 3 个 crate、3 套 `api.minimaxi.com` + Bearer + hex 重复)+
 Step 2(omni 形态需求)两份证据后,做架构重构:

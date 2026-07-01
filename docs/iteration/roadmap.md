@@ -39,6 +39,7 @@
 | hotfix 06-17 | 重构 | LLM Catalog 信息扩展（`Modality` / `ModelScene` / `ThinkingSpec`，`LlmModelEntry` 加 6 字段，18 条 model 数据填实，修复 DeepSeek `supports_thinking()` bug） |
 | v0.9.10 | 卫星 | Minimax 多模态 Provider 接入（多模态 ContentBlock 地基、Minimax LLM/TTS/Video/Voice/Music adapter，5 个 issue 全部落地） |
 | v0.9.11 | 卫星 | Omni Realtime Provider Evidence（Volcengine realtime 全双工 session、事件映射、barge-in/close/error 语义、live validation、provider-unification evidence） |
+| v0.9.12 | 重构 | Provider 统一（两维重组 + registry/umbrella 墙：`orchest-protocol` 脊柱 + `orchest-provider-core` + http/stream/visual 三层 impl crate + `orchest-providers` 墙；omni + Chameleon 双标尺；realtime/asr/tts/aigc 四个模态 crate 吸收，`agent-runtime-{model,providers}` shell 移除；node/py 只经 protocol + 墙；`features=["llm"]` 无 tungstenite/OSS；8 个 issue 全部落地） |
 
 ## 迭代编号约定
 
@@ -46,14 +47,6 @@
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
 
 ## 规划中
-
-### v0.9.12 — Provider 统一（大重构，规划）
-
-`docs/todo/provider-unification.md` Step 3 的落地迭代：承接 v0.9.10 Minimax 跨 crate 重复证据和 v0.9.11 omni 全双工形态证据，对 provider 架构做一次大重构。证伪"按模态分 crate"的两个反例——omni（端到端语音大模型，全双工跨模态）和 Chameleon（对话原生出图，turn × image）——作为硬验收标尺。
-
-核心切法按**两个独立维度**重组，中间用 registry/umbrella 墙隔开：**使用方**按能力查或按厂商/型号点名，**实现方**按可复用性分层（协议脊柱 + 基础组件/认证 + wire 方言），crate 边界只为隔离依赖重量。落点：5 个按模态切的 provider crate → `orchest-protocol` + `orchest-provider-core` + 3 个按重量切的 impl crate（http/stream/visual）+ `orchest-providers` umbrella，`agent-runtime-realtime-providers` 被吸收。详见 [`v0_9_12/prd.md`](./v0_9_12/prd.md) 与 [`docs/todo/provider-unification.md`](../todo/provider-unification.md)。
-
-**依赖**：v0.9.10 Minimax 多模态 Provider 接入、v0.9.11 omni realtime evidence；现有 ASR/TTS duplex streaming 作为生命周期/测试形态参考。重构迭代，provider 卫星线独立推进，不阻塞 v0.10 / v0.11 demo 主线。
 
 ### v0.10 — Demo A: 能力组合广度验证（规划）
 
@@ -131,8 +124,9 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
 ✅ v0.9.11: Omni Realtime Provider Evidence
             │
             ▼
-   后续: Provider 统一 / 合 crate
-        （docs/todo/provider-unification.md）
+✅ v0.9.12: Provider 统一（重构，已完成）
+        （orchest-protocol 脊柱 + http/stream/visual 三层 + orchest-providers 墙；
+         omni + Chameleon 双标尺；四个模态 crate 吸收 → docs/iteration/v0_9_12/）
 ```
 
 ## 能力缺口全景
