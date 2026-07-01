@@ -5,7 +5,7 @@
 > writing). Decisions that genuinely belong to a later issue are deferred explicitly and listed under
 > *Open Questions*.
 >
-> Inputs: [`prd.md`](../../prd.md) §Starting Point / §Target / §Decisions; [`ADR-0001`](../../../../adr/0001-provider-unification.md)
+> Inputs: [`prd.md`](../../prd.md) §Starting Point / §Target / §Decisions; [`ADR-0001`](../../../../../adr/0001-provider-unification.md)
 > Decision 5 ("common core + typed extensions", delta-granular event core, static descriptor core).
 >
 > Hard acceptance (ADR-0001): the shapes must seat **omni** (full-duplex; audio in / audio+text out;

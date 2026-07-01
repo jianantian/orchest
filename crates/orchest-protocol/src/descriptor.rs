@@ -1,7 +1,7 @@
 //! Unified capability descriptor — the queryable core the registry filters on,
 //! plus a typed per-capability extension slot that preserves detail.
 //!
-//! Designed in `docs/iteration/v0_9_12/issues/001-protocol-design/design.md` §2.
+//! Designed in `docs/archive/iteration/v0_9_12/issues/001-protocol-design/design.md` §2.
 //! The core holds **only** what the registry queries; rich per-capability detail
 //! (e.g. `AsrModelCapabilities`' endpointing/diarization) rides in [`CapabilityExt`]
 //! and is folded in by the modality-migration issues (006/007), not flattened.

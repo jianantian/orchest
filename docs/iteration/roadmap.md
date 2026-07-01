@@ -127,7 +127,7 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
             ▼
 ✅ v0.9.12: Provider 统一（重构，已完成）
         （orchest-protocol 脊柱 + http/stream/visual 三层 + orchest-provider 墙；
-         omni + Chameleon 双标尺；四个模态 crate 吸收 → docs/iteration/v0_9_12/）
+         omni + Chameleon 双标尺；四个模态 crate 吸收 → docs/archive/iteration/v0_9_12/）
             │
             ▼
 ✅ v0.9.13: core/node/py 改名收尾（重构，已完成）

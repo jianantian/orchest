@@ -6,7 +6,7 @@
 //! `Content`, `Lifecycle`, `Error`). Routing/control concerns ride in
 //! [`LifecycleEvent`]; modality-specific detail with no core meaning rides in
 //! [`CapabilityEventExt`]. Designed in
-//! `docs/iteration/v0_9_12/issues/001-protocol-design/design.md` §1.
+//! `docs/archive/iteration/v0_9_12/issues/001-protocol-design/design.md` §1.
 
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};

@@ -3,7 +3,7 @@
 //! the `Asr` / `Tts` / `VoiceManager` shapes that the satellite providers
 //! converge onto in Issue 006.
 //!
-//! Designed in `docs/iteration/v0_9_12/issues/001-protocol-design/design.md` §4.
+//! Designed in `docs/archive/iteration/v0_9_12/issues/001-protocol-design/design.md` §4.
 //! Parallel, opt-in traits — no god-trait. `ChatModel` itself lives in
 //! `crate::adapter`.
 

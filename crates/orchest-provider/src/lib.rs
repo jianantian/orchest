@@ -19,7 +19,7 @@
 //! ```
 //!
 //! The exact selection surface (PRD Decision 4) is recorded in
-//! `docs/iteration/v0_9_12/issues/004-registry-wall/selection-api.md`.
+//! `docs/archive/iteration/v0_9_12/issues/004-registry-wall/selection-api.md`.
 
 pub mod facade;
 pub mod registry;
