@@ -124,8 +124,9 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
 ✅ v0.9.11: Omni Realtime Provider Evidence
             │
             ▼
-   后续: Provider 统一 / 合 crate
-        （docs/todo/provider-unification.md）
+✅ v0.9.12: Provider 统一（重构，已完成）
+        （orchest-protocol 脊柱 + http/stream/visual 三层 + orchest-providers 墙；
+         omni + Chameleon 双标尺；四个模态 crate 吸收 → docs/iteration/v0_9_12/）
 ```
 
 ## 能力缺口全景
