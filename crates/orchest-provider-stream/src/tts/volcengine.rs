@@ -267,6 +267,27 @@ pub async fn run_tts_synthesis<T: ByteDuplex>(
         };
         match parse_frame(bytes) {
             Ok(frame) => {
+                // A SESSION_FAILED / CONNECTION_FAILED lifecycle frame is a fatal
+                // terminal the wire delivers as a `Meta` event (not an
+                // `MSG_ERROR_RESPONSE`). Surface it and stop, rather than dropping
+                // it (map_frame yields None for Meta) and reporting the truncated
+                // stream as a *successful* synthesis.
+                if let VolcengineFrame::Meta { event, payload, .. } = &frame {
+                    if *event == EVENT_SESSION_FAILED || *event == EVENT_CONNECTION_FAILED {
+                        let message = payload
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Volcengine TTS session failed")
+                            .to_string();
+                        let _ = events
+                            .send(StreamEvent::Error {
+                                error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
+                                fatal: true,
+                            })
+                            .await;
+                        break;
+                    }
+                }
                 let finished = matches!(
                     &frame,
                     VolcengineFrame::Meta { event, .. } if *event == EVENT_SESSION_FINISHED
@@ -702,5 +723,43 @@ mod tests {
             StreamEvent::Done { .. }
         ));
         handle.await.unwrap(); // synthesis terminated on SESSION_FINISHED
+    }
+
+    /// A SESSION_FAILED (153) meta frame must surface a fatal `Error` and end the
+    /// stream — not be silently dropped (which reported a failed synthesis as a
+    /// successful empty result). Characterizes the original unidirectional.rs
+    /// behavior the unification port had lost.
+    #[tokio::test]
+    async fn run_tts_synthesis_surfaces_session_failure() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+
+        let handle = tokio::spawn(run_tts_synthesis(transport, vec![0u8; 8], events_tx));
+        assert!(out_rx.recv().await.is_some()); // request frame sent
+
+        // The server rejects the session mid-stream via a meta frame (event 153).
+        in_tx
+            .send(WsFrame::Binary(server_meta_frame(
+                EVENT_SESSION_FAILED,
+                "s",
+                &json!({ "message": "quota exceeded" }),
+            )))
+            .await
+            .unwrap();
+
+        match events_rx.recv().await.expect("a fatal error event") {
+            StreamEvent::Error { fatal: true, error } => {
+                assert!(error.message.contains("quota exceeded"));
+            }
+            other => panic!("expected a fatal Error, got {other:?}"),
+        }
+        // The stream terminates on the failure — no Done, no further events.
+        assert!(events_rx.recv().await.is_none());
+        handle.await.unwrap();
     }
 }

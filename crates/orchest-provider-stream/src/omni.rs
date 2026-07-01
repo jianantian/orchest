@@ -137,7 +137,7 @@ pub fn map_server_event(
                     .unwrap_or("omni provider error")
                     .to_string(),
             ),
-            fatal: false,
+            fatal: true,
         }),
         _ => None,
     }
@@ -282,10 +282,15 @@ fn map_volc_frame(frame: VolcengineFrame) -> (Option<StreamEvent>, bool) {
             map_server_event(event as u16, &Value::Null, Some(Bytes::from(data))),
             false,
         ),
-        VolcengineFrame::Meta { event, payload, .. } => (
-            map_server_event(event as u16, &payload, None),
-            event == EVENT_SESSION_FINISHED,
-        ),
+        VolcengineFrame::Meta { event, payload, .. } => {
+            // SESSION_FINISHED is a clean terminal; a session/connection failure
+            // (mapped to a fatal Error above) is also terminal — don't linger in
+            // the duplex loop waiting for a close a failure won't cleanly send.
+            let terminal = event == EVENT_SESSION_FINISHED
+                || event == EV_SESSION_ERROR_A as i32
+                || event == EV_SESSION_ERROR_B as i32;
+            (map_server_event(event as u16, &payload, None), terminal)
+        }
         VolcengineFrame::Error { code, message } => (
             Some(StreamEvent::Error {
                 error: ProtocolError::new(
@@ -868,5 +873,74 @@ mod tests {
         assert_eq!(audio, vec![Bytes::from_static(b"aud")]);
         assert_eq!(text, "hi");
         handle.await.unwrap();
+    }
+
+    #[test]
+    fn session_failure_events_map_to_fatal_error() {
+        for id in [EV_SESSION_ERROR_A, EV_SESSION_ERROR_B] {
+            assert!(
+                matches!(
+                    map_server_event(id, &json!({ "error": "boom" }), None),
+                    Some(StreamEvent::Error { fatal: true, .. })
+                ),
+                "event {id} must map to a fatal error",
+            );
+        }
+    }
+
+    /// A session-failure meta frame (event 153) mid-call must surface a *fatal*
+    /// error and *terminate* the duplex loop — not linger (the old fatal:false,
+    /// non-terminal behavior) until the server drops the socket.
+    #[tokio::test]
+    async fn run_omni_session_terminates_on_session_failure() {
+        let (client, mut server) = duplex_pair();
+        let (_input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let handle = tokio::spawn(run_omni_session(
+            client,
+            "sess".to_string(),
+            json!({}),
+            input_rx,
+            events_tx,
+        ));
+
+        // handshake
+        expect_client_event(&mut server, EVENT_START_CONNECTION).await;
+        server
+            .send(WsFrame::Binary(server_meta_frame(
+                EVENT_CONNECTION_STARTED,
+                "sess",
+                &json!({}),
+            )))
+            .await
+            .unwrap();
+        expect_client_event(&mut server, EVENT_START_SESSION).await;
+        server
+            .send(WsFrame::Binary(server_meta_frame(
+                EVENT_SESSION_STARTED,
+                "sess",
+                &json!({}),
+            )))
+            .await
+            .unwrap();
+
+        // The server reports a session failure (event 153).
+        server
+            .send(WsFrame::Binary(server_meta_frame(
+                EV_SESSION_ERROR_B as i32,
+                "sess",
+                &json!({ "error": "boom" }),
+            )))
+            .await
+            .unwrap();
+
+        let mut saw_fatal = false;
+        while let Some(event) = events_rx.recv().await {
+            if let StreamEvent::Error { fatal, .. } = event {
+                saw_fatal = fatal;
+            }
+        }
+        assert!(saw_fatal, "session failure must surface a fatal error");
+        handle.await.unwrap(); // the run loop terminated (did not hang)
     }
 }
