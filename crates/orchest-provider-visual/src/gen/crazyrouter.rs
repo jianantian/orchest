@@ -4,7 +4,7 @@
 //!
 //! Crazyrouter is an OpenAI-images-compatible, **synchronous** dialect (Bearer):
 //! `POST {base}/v1/images/generations` returns `data[].url` inline — there is no
-//! job to poll. It uses [`SyncGenCache`](super::SyncGenCache) to present the
+//! job to poll. It uses [`SyncGenCache`] to present the
 //! submit → poll → fetch surface.
 
 use async_trait::async_trait;

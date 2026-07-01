@@ -5,7 +5,7 @@
 //! `POST {base}/v1/music_generation` (Bearer, JSON) is **synchronous**: it returns
 //! `data.audio` inline and signals failure via a non-zero `base_resp.status_code`.
 //! The spine path requests `output_format: url` so the asset is a URL; the result
-//! is presented over [`SyncGenCache`](orchest_provider_core::SyncGenCache).
+//! is presented over [`SyncGenCache`].
 
 use async_trait::async_trait;
 use orchest_protocol::{

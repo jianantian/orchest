@@ -4,7 +4,7 @@
 //! the wall via [`crate::gen_entries`].
 //!
 //! Synchronous upstreams (the result returns inline from submit, with no job id
-//! to poll) reuse [`SyncGenCache`](orchest_provider_core::SyncGenCache) to present
+//! to poll) reuse [`SyncGenCache`] to present
 //! the submit → poll → fetch surface.
 
 pub use orchest_provider_core::SyncGenCache;

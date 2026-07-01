@@ -4,7 +4,7 @@
 //!
 //! Ark image is OpenAI-images-compatible and **synchronous** (Bearer auth): `POST
 //! {base}/images/generations` returns `data[].url` inline. Like crazyrouter it
-//! uses [`SyncGenCache`](super::SyncGenCache) for the submit → poll → fetch
+//! uses [`SyncGenCache`] for the submit → poll → fetch
 //! surface. (The Ark image API authenticates with a Bearer key, not AK/SK
 //! signing.)
 
