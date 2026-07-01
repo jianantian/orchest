@@ -7,6 +7,7 @@
 
 use std::sync::{Arc, LazyLock};
 
+use async_trait::async_trait;
 use orchest::events::RuntimeEvent;
 use orchest::model::{ModelAdapter, StreamEvent};
 use orchest::run::{AgentConfig, AgentRun};
@@ -14,7 +15,6 @@ use orchest::tool::registry::ToolRegistry;
 use orchest::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
-use async_trait::async_trait;
 use orchest_provider::{create_adapter_from_config, ProviderRuntimeConfig};
 use serde_json::json;
 

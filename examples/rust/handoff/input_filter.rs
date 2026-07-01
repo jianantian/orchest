@@ -10,6 +10,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use orchest::events::RuntimeEvent;
 use orchest::handoff::{
     Handoff, HandoffError, HandoffInputData, HandoffInputFilter, HandoffTarget,
@@ -20,7 +21,6 @@ use orchest::model::{
 };
 use orchest::run::{AgentConfig, AgentRun};
 use orchest::tool::registry::ToolRegistry;
-use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::mpsc;
 

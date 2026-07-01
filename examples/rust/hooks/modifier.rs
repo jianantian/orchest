@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use orchest::events::RuntimeEvent;
 use orchest::hook::{Hook, ModelHookAction, ModelHookContext};
 use orchest::model::{
@@ -12,7 +13,6 @@ use orchest::model::{
 };
 use orchest::run::{AgentConfig, AgentRun};
 use orchest::tool::registry::ToolRegistry;
-use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 // ── Mock model ────────────────────────────────────────────────────────────────

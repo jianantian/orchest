@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use orchest::events::RuntimeEvent;
 use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
@@ -14,7 +15,6 @@ use orchest::tool::{
     registry::ToolRegistry, Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError,
     ToolMetadata, ToolOutput, ToolSource,
 };
-use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::mpsc;
 

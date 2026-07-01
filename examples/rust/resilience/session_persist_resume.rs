@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use orchest::events::RuntimeEvent;
 use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
@@ -13,7 +14,6 @@ use orchest::model::{
 use orchest::run::{AgentConfig, AgentRun};
 use orchest::session::{InMemorySessionStore, SessionStore};
 use orchest::tool::{registry::ToolRegistry, ToolDef};
-use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 // ── Mock model ────────────────────────────────────────────────────────────────

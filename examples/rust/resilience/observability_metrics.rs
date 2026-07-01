@@ -4,13 +4,13 @@
 
 use std::sync::Arc;
 
+use metrics_util::debugging::DebuggingRecorder;
 use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
 use orchest::run::{AgentConfig, AgentRun};
 use orchest::tool::registry::ToolRegistry;
-use metrics_util::debugging::DebuggingRecorder;
 use tokio::sync::mpsc;
 
 struct FinalModel;

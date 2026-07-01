@@ -9,6 +9,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use orchest::events::RuntimeEvent;
 use orchest::hook::LoopDetectionConfig;
 use orchest::model::{
@@ -17,10 +18,7 @@ use orchest::model::{
 };
 use orchest::run::{AgentConfig, AgentRun};
 use orchest::tool::registry::ToolRegistry;
-use orchest::tool::{
-    Approval, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
-};
-use async_trait::async_trait;
+use orchest::tool::{Approval, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 

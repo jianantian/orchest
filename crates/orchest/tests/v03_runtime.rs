@@ -382,8 +382,7 @@ fn sub_agent_budget_is_capped_by_parent_remaining() {
         max_cost_usd: Some(1.0),
     };
 
-    let capped =
-        orchest::run::SubAgentRuntime::cap_budget(&requested, &parent_remaining);
+    let capped = orchest::run::SubAgentRuntime::cap_budget(&requested, &parent_remaining);
 
     assert_eq!(capped.max_tokens, Some(40));
     assert_eq!(capped.max_tool_calls, Some(3));

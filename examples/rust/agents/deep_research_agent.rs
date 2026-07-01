@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use orchest::budget::BudgetConfig;
 use orchest::events::RuntimeEvent;
 use orchest::model::{ModelSpec, ProviderRuntimeConfig, RequestOptions};
@@ -14,7 +15,6 @@ use orchest::tool::registry::ToolRegistry;
 use orchest::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
-use async_trait::async_trait;
 use orchest_provider::{create_adapter_from_config, normalize_provider_model};
 use serde_json::{json, Value};
 

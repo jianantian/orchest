@@ -4,6 +4,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use orchest::budget::BudgetUsage;
 use orchest::events::RuntimeEvent;
 use orchest::guardrail::{ToolInputGuardrail, ToolInputGuardrailAction};
@@ -19,7 +20,6 @@ use orchest::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput,
     ToolSource,
 };
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 

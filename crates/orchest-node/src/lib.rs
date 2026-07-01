@@ -23,9 +23,7 @@ use orchest::model::{
     CachePolicy, CompatibilityPolicy, ModelSpec, ProviderRuntimeConfig,
     RequestOptions as RustRequestOptions, ThinkingLevel,
 };
-use orchest::run::{
-    AgentConfig, AgentRun, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
-};
+use orchest::run::{AgentConfig, AgentRun, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig};
 use orchest::tool::async_job::{JobHandle, JobStatus, PollFn};
 use orchest::tool::registry::ToolRegistry;
 use orchest::tool::{

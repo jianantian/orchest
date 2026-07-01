@@ -9,6 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use orchest::events::RuntimeEvent;
 use orchest::model::{
     Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, RequestOptions,
@@ -16,7 +17,6 @@ use orchest::model::{
 };
 use orchest::run::{AgentConfig, AgentRun, BackoffStrategy, RetryPolicy};
 use orchest::tool::registry::ToolRegistry;
-use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 // ── Always-failing model ──────────────────────────────────────────────────────

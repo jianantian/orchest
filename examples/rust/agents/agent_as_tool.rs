@@ -8,6 +8,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use orchest::events::RuntimeEvent;
 use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
@@ -17,7 +18,6 @@ use orchest::run::{AgentConfig, AgentRun};
 use orchest::tool::agent_as_tool::ContextMode;
 use orchest::tool::registry::ToolRegistry;
 use orchest::tool::ToolError;
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 

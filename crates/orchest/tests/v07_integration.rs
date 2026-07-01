@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use orchest::events::RuntimeEvent;
 use orchest::handoff::{Handoff, HandoffTarget};
 use orchest::hook::{Hook, LoopDetectionConfig, ModelHookAction, ModelHookContext};
@@ -13,10 +14,7 @@ use orchest::model::{
 };
 use orchest::run::{AgentConfig, AgentRun, BackoffStrategy, RetryPolicy};
 use orchest::tool::registry::ToolRegistry;
-use orchest::tool::{
-    Approval, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
-};
-use async_trait::async_trait;
+use orchest::tool::{Approval, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
