@@ -1250,7 +1250,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
- "orchest-providers",
+ "orchest-provider",
  "orchest-runtime",
  "serde_json",
  "tokio",
@@ -1267,6 +1267,20 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
+name = "orchest-provider"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "orchest-protocol",
+ "orchest-provider-core",
+ "orchest-provider-http",
+ "orchest-provider-stream",
+ "orchest-provider-visual",
+ "serde_json",
  "tokio",
 ]
 
@@ -1344,25 +1358,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "orchest-providers"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "orchest-protocol",
- "orchest-provider-core",
- "orchest-provider-http",
- "orchest-provider-stream",
- "orchest-provider-visual",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "orchest-py"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "orchest-providers",
+ "orchest-provider",
  "orchest-runtime",
  "pyo3",
  "pyo3-async-runtimes",
@@ -1382,7 +1382,7 @@ dependencies = [
  "metrics",
  "metrics-util",
  "orchest-protocol",
- "orchest-providers",
+ "orchest-provider",
  "ractor",
  "reqwest",
  "rusqlite",

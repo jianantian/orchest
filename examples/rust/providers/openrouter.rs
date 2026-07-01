@@ -13,7 +13,7 @@ use orchest_runtime::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
 use async_trait::async_trait;
-use orchest_providers::{create_adapter_from_config, ProviderRuntimeConfig};
+use orchest_provider::{create_adapter_from_config, ProviderRuntimeConfig};
 use serde_json::json;
 
 // ── Tool ─────────────────────────────────────────────────────────────────────

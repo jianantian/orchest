@@ -39,7 +39,7 @@
 | hotfix 06-17 | 重构 | LLM Catalog 信息扩展（`Modality` / `ModelScene` / `ThinkingSpec`，`LlmModelEntry` 加 6 字段，18 条 model 数据填实，修复 DeepSeek `supports_thinking()` bug） |
 | v0.9.10 | 卫星 | Minimax 多模态 Provider 接入（多模态 ContentBlock 地基、Minimax LLM/TTS/Video/Voice/Music adapter，5 个 issue 全部落地） |
 | v0.9.11 | 卫星 | Omni Realtime Provider Evidence（Volcengine realtime 全双工 session、事件映射、barge-in/close/error 语义、live validation、provider-unification evidence） |
-| v0.9.12 | 重构 | Provider 统一（两维重组 + registry/umbrella 墙：`orchest-protocol` 脊柱 + `orchest-provider-core` + http/stream/visual 三层 impl crate + `orchest-providers` 墙；omni + Chameleon 双标尺；realtime/asr/tts/aigc 四个模态 crate 吸收，`agent-runtime-{model,providers}` shell 移除；node/py 只经 protocol + 墙；`features=["llm"]` 无 tungstenite/OSS；8 个 issue 全部落地） |
+| v0.9.12 | 重构 | Provider 统一（两维重组 + registry/umbrella 墙：`orchest-protocol` 脊柱 + `orchest-provider-core` + http/stream/visual 三层 impl crate + `orchest-provider` 墙；omni + Chameleon 双标尺；realtime/asr/tts/aigc 四个模态 crate 吸收，`agent-runtime-{model,providers}` shell 移除；node/py 只经 protocol + 墙；`features=["llm"]` 无 tungstenite/OSS；8 个 issue 全部落地） |
 | v0.9.13 | 重构 | `core/node/py` 改名收尾（ADR-0001 Decision 2 的延后项）：`agent-runtime-core` → `orchest-runtime`，`agent-runtime-py` → `orchest-py`，`agent-runtime-node` → `orchest-node`；Python 包 `agent_runtime` → `orchest`，npm 包 `@orchest/agent-runtime` → `@orchest/sdk`；crate 目录、workspace members、跨 crate 依赖、示例、guide 文档同步更新 |
 
 ## 迭代编号约定
@@ -126,7 +126,7 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
             │
             ▼
 ✅ v0.9.12: Provider 统一（重构，已完成）
-        （orchest-protocol 脊柱 + http/stream/visual 三层 + orchest-providers 墙；
+        （orchest-protocol 脊柱 + http/stream/visual 三层 + orchest-provider 墙；
          omni + Chameleon 双标尺；四个模态 crate 吸收 → docs/iteration/v0_9_12/）
             │
             ▼

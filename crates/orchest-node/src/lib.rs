@@ -32,7 +32,7 @@ use orchest_runtime::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolError, ToolExecutionMode, ToolMetadata,
     ToolOutput, ToolSource,
 };
-use orchest_providers::{create_adapter_from_config, normalize_provider_model};
+use orchest_provider::{create_adapter_from_config, normalize_provider_model};
 
 fn parse_execution_mode_node(
     mode: Option<&str>,

@@ -8,7 +8,7 @@ use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ChatModel, Language, Modality, ModelCapabilities,
     ProtocolError, StreamingTranscribeRequest, TranscribeRequest, TranscribeResult,
 };
-use orchest_providers::{Entry, ProviderConfig, Registry};
+use orchest_provider::{Entry, ProviderConfig, Registry};
 
 // --- minimal fakes so factories can return real trait objects ---
 

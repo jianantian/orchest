@@ -32,7 +32,7 @@ sqlite-session = ["dep:rusqlite"]
 libc = "0.2"
 
 [dev-dependencies]
-orchest-providers = { path = "../orchest-providers", features = ["llm"] }
+orchest-provider = { path = "../orchest-provider", features = ["llm"] }
 metrics-util = "0.20"
 
 [[test]]

@@ -1,11 +1,11 @@
 [package]
-name = "orchest-providers"
+name = "orchest-provider"
 version = "0.1.0"
 edition = "2021"
 
 # THE WALL: the consumer-facing registry + vendor facade + feature flags
 # (v0.9.12 provider unification, Issue 004). Consumers depend on exactly
-# orchest-protocol + orchest-providers; impl crates and wire dialects are never
+# orchest-protocol + orchest-provider; impl crates and wire dialects are never
 # named. Concrete provider registrations + per-vendor feature/facade rows are
 # added by Issues 005/006/007.
 

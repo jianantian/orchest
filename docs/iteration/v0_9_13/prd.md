@@ -2,7 +2,7 @@
 
 ## 背景
 
-v0.9.12（Provider 统一）把 provider 层全部迁到 `orchest-*` 命名（`orchest-protocol`、`orchest-provider-core`、`orchest-provider-http/-stream/-visual`、`orchest-providers`）。ADR-0001 Decision 2 当时明确把非 provider 层的改名列为「follow-up, not a blocker」：
+v0.9.12（Provider 统一）把 provider 层全部迁到 `orchest-*` 命名（`orchest-protocol`、`orchest-provider-core`、`orchest-provider-http/-stream/-visual`、`orchest-provider`）。ADR-0001 Decision 2 当时明确把非 provider 层的改名列为「follow-up, not a blocker」：
 
 > Renaming the non-provider crates (`core/node/py`) is a follow-up, not a blocker.
 
@@ -24,6 +24,7 @@ v0.9.12（Provider 统一）把 provider 层全部迁到 `orchest-*` 命名（`o
 | Python 包/目录 `python/agent_runtime/`（`import agent_runtime`） | `python/orchest/`（`import orchest`） |
 | PyO3 native submodule `agent_runtime.agent_runtime_py` | `orchest.orchest_py` |
 | npm 包 `@orchest/agent-runtime` | `@orchest/sdk` |
+| crate `orchest-providers`（umbrella facade） | `orchest-provider`（与 `orchest-provider-{core,http,stream,visual}` 前缀一致） |
 | 原生产物文件名 `agent_runtime_node.node` | `orchest_node.node` |
 
 改动内容：

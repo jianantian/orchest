@@ -4,7 +4,7 @@
 //! Volcengine-Ark, Minimax), migrated here from `agent-runtime-providers` in
 //! Issue 005. They implement [`ChatModel`] (the renamed `ModelAdapter`) over a
 //! shared `reqwest` client + SSE decoder, and are registered through the wall
-//! (`orchest-providers`) via [`chat_entries`]. The deprecated
+//! (`orchest-provider`) via [`chat_entries`]. The deprecated
 //! `agent-runtime-providers` crate is now a thin re-export of this one, so
 //! `core/node/py` keep their `create_adapter_from_config` /
 //! `normalize_provider_model` / `ModelAdapter` entry points unchanged.

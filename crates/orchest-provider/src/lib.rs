@@ -1,12 +1,12 @@
-//! `orchest-providers` — THE WALL (v0.9.12 provider unification, Issue 004).
+//! `orchest-provider` — THE WALL (v0.9.12 provider unification, Issue 004).
 //!
-//! Consumers depend on exactly `orchest-protocol` + `orchest-providers` and
+//! Consumers depend on exactly `orchest-protocol` + `orchest-provider` and
 //! select providers by **capability query** or **identity pick** through one
 //! mechanism; impl crates and wire dialects are never named. `features` control
 //! compiled weight (`llm` pulls only the REST tier — no websocket/OSS).
 //!
 //! ```
-//! use orchest_providers::Registry;
+//! use orchest_provider::Registry;
 //! use orchest_protocol::Modality;
 //!
 //! let reg = Registry::with_builtin();         // whatever features enable
@@ -37,14 +37,14 @@ pub use orchest_provider_core::registry::{Entry, Factory, ProviderConfig};
 /// but dynamic-gateway providers (OpenRouter) cannot be enumerated statically —
 /// so `node`/`py` and the runtime examples construct through this path. Keeping
 /// it here means consumers still depend only on `orchest-protocol` +
-/// `orchest-providers`, never on an impl crate directly.
+/// `orchest-provider`, never on an impl crate directly.
 #[cfg(feature = "http")]
 pub use orchest_provider_http::{
     create_adapter, create_adapter_from_config, normalize_provider_model, NormalizedProviderModel,
     ProviderRuntimeConfig,
 };
 
-/// The vendor-namespaced facade (`orchest_providers::providers::volcengine::…`).
+/// The vendor-namespaced facade (`orchest_provider::providers::volcengine::…`).
 pub mod providers {
     pub use crate::facade::*;
 }

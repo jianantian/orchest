@@ -8,7 +8,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 orchest-runtime = { path = "../orchest-runtime" }
-orchest-providers = { path = "../orchest-providers", features = ["llm"] }
+orchest-provider = { path = "../orchest-provider", features = ["llm"] }
 napi = { version = "2", features = ["napi8", "serde-json", "tokio_rt"] }
 napi-derive = "2"
 async-trait = "0.1"

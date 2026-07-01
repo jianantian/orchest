@@ -1,9 +1,9 @@
 //! Registry entry + factory types (shared between the wall and the impl crates).
 //!
-//! These live in core — not in `orchest-providers` (the wall) — so the impl
+//! These live in core — not in `orchest-provider` (the wall) — so the impl
 //! crates can produce entries without depending on the wall (which would be a
 //! cycle: the wall depends on the impl crates behind features). The wall
-//! (`orchest-providers`, Issue 004) collects `Entry<H>`s and layers the
+//! (`orchest-provider`, Issue 004) collects `Entry<H>`s and layers the
 //! descriptor-queryable selection builder + vendor facade on top.
 
 use std::sync::Arc;
