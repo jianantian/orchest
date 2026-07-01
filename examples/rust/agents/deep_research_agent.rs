@@ -4,14 +4,14 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use orchest_runtime::budget::BudgetConfig;
-use orchest_runtime::events::RuntimeEvent;
-use orchest_runtime::model::{ModelSpec, ProviderRuntimeConfig, RequestOptions};
-use orchest_runtime::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
-use orchest_runtime::tool::agent_as_tool::ContextMode;
-use orchest_runtime::tool::builtin::WriteFileTool;
-use orchest_runtime::tool::registry::ToolRegistry;
-use orchest_runtime::tool::{
+use orchest::budget::BudgetConfig;
+use orchest::events::RuntimeEvent;
+use orchest::model::{ModelSpec, ProviderRuntimeConfig, RequestOptions};
+use orchest::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
+use orchest::tool::agent_as_tool::ContextMode;
+use orchest::tool::builtin::WriteFileTool;
+use orchest::tool::registry::ToolRegistry;
+use orchest::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
 use async_trait::async_trait;
@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 
 type ExampleAgentParts = (
     AgentConfig,
-    Arc<dyn orchest_runtime::model::ModelAdapter>,
+    Arc<dyn orchest::model::ModelAdapter>,
     ToolRegistry,
 );
 
@@ -330,7 +330,7 @@ fn agent_config(
 fn provider_model(
     model_ref: String,
     max_tokens: Option<u32>,
-) -> Result<Arc<dyn orchest_runtime::model::ModelAdapter>, Box<dyn std::error::Error>> {
+) -> Result<Arc<dyn orchest::model::ModelAdapter>, Box<dyn std::error::Error>> {
     let adapter = create_adapter_from_config(ProviderRuntimeConfig {
         model: model_ref,
         api_key: None,
@@ -357,7 +357,7 @@ fn build_web_search_agent() -> Result<ExampleAgentParts, Box<dyn std::error::Err
 
 fn build_deep_research_agent(
     web_config: AgentConfig,
-    web_model: Arc<dyn orchest_runtime::model::ModelAdapter>,
+    web_model: Arc<dyn orchest::model::ModelAdapter>,
     web_registry: ToolRegistry,
     report_path: &str,
     min_calls: u32,

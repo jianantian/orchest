@@ -7,7 +7,7 @@ members = [
     "crates/orchest-provider-stream",
     "crates/orchest-provider-visual",
     "crates/orchest-provider",
-    "crates/orchest-runtime",
+    "crates/orchest",
     "crates/orchest-py",
     "crates/orchest-node",
 ]

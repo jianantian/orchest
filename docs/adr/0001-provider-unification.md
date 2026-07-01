@@ -168,7 +168,7 @@ compile-unit isolation. Only weight-tier crates with dialect modules satisfy the
 
 **To revisit:**
 - Decision 4 — the registry selection API surface — settled against real call sites in Issue 004.
-- ~~Whether `agent-runtime-core/node/py` are renamed to `orchest-*` in a later pass.~~ Resolved in v0.9.13: renamed to `orchest-runtime`/`orchest-node`/`orchest-py` (plus the Python package `orchest` and npm package `@orchest/sdk`).
+- ~~Whether `agent-runtime-core/node/py` are renamed to `orchest-*` in a later pass.~~ Resolved in v0.9.13: renamed to `orchest`/`orchest-node`/`orchest-py` (plus the Python package `orchest` and npm package `@orchest/sdk`).
 
 ## Action Items
 

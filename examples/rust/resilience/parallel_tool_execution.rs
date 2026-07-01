@@ -6,13 +6,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use orchest_runtime::events::RuntimeEvent;
-use orchest_runtime::model::{
+use orchest::events::RuntimeEvent;
+use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use orchest_runtime::run::{AgentConfig, AgentRun};
-use orchest_runtime::tool::{
+use orchest::run::{AgentConfig, AgentRun};
+use orchest::tool::{
     registry::ToolRegistry, Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError,
     ToolMetadata, ToolOutput, ToolParallelism, ToolSource,
 };

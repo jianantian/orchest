@@ -4,7 +4,7 @@
 
 Orchest is a **low-level Rust SDK** that provides the agent runtime core for building AI agent applications. It is not a complete agent product — it is the engine that other agent products run on: responsible for the agent loop, state management, event streaming, tool dispatch, and skill loading.
 
-Current stage: **pre-1.0, actively implemented**. The Rust core (`orchest-runtime`) and the shared model crate (`agent-runtime-model`) are built out, alongside satellite provider crates for LLM, image/video (AIGC), ASR, and TTS. Design docs under `docs/` remain the authoritative implementation contract; code lives in `crates/`, `examples/`, and `skills/` per the Rust Project Conventions below. The living roadmap is [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md).
+Current stage: **pre-1.0, actively implemented**. The Rust core (`orchest`) and the shared model crate (`agent-runtime-model`) are built out, alongside satellite provider crates for LLM, image/video (AIGC), ASR, and TTS. Design docs under `docs/` remain the authoritative implementation contract; code lives in `crates/`, `examples/`, and `skills/` per the Rust Project Conventions below. The living roadmap is [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md).
 
 ---
 
@@ -76,7 +76,7 @@ The following decisions are settled. Do not propose alternatives without a compe
 - **Streaming output is a first-class concern** — not optional; model adapters use the unified `ModelAdapter::complete()` contract with streaming events delivered through the optional event channel, and `stream_chat()` is the convenience helper
 - **Sequential tool execution in v0.1** — keeps the approval gate simple; parallelism is a v0.2 optimization
 - **No sandbox until v0.3+** — but v0.3 must complete the `ScriptExecutor` trait abstraction and `capabilities` declaration
-- **Provider crates are independent satellites** — each modality (LLM, AIGC image/video, ASR, TTS) is its own crate depending on `agent-runtime-model`, not on `orchest-runtime`. Cross-modality consolidation (driven by omni / end-to-end speech models, and Chameleon-style image-out LLMs) is a **known future direction, not yet decided** — tracked in [`docs/todo/provider-unification.md`](./docs/todo/provider-unification.md). Do not merge provider crates ahead of that refactor, and do not assume the current single-modality split is permanent.
+- **Provider crates are independent satellites** — each modality (LLM, AIGC image/video, ASR, TTS) is its own crate depending on `agent-runtime-model`, not on `orchest`. Cross-modality consolidation (driven by omni / end-to-end speech models, and Chameleon-style image-out LLMs) is a **known future direction, not yet decided** — tracked in [`docs/todo/provider-unification.md`](./docs/todo/provider-unification.md). Do not merge provider crates ahead of that refactor, and do not assume the current single-modality split is permanent.
 
 ---
 
@@ -115,7 +115,7 @@ Polaris documents record **constraints that do not change across iterations**. E
 ```
 Cargo.toml                       # workspace root — no business logic here
 crates/
-  orchest-runtime/            # pure Rust core: run loop, tools, skills, sessions, guardrails, hooks — no FFI
+  orchest/            # pure Rust core: run loop, tools, skills, sessions, guardrails, hooks — no FFI
   agent-runtime-model/           # shared model-layer types: Message, ContentBlock, Role, RequestOptions, ModelAdapter
   agent-runtime-providers/       # LLM provider adapters: anthropic, openai, deepseek, openrouter, volcengine (+ minimax in v0.9.10)
   agent-runtime-aigc-providers/  # image + video generation gateway + asset persistence (+ music submodule in v0.9.10)
@@ -129,7 +129,7 @@ skills/                          # example skills
 
 Each satellite crate keeps its own `src/` layout (e.g. `providers/<vendor>/`, `catalog`, `gateway`, `storage`); see the crate's `lib.rs` for its module map.
 
-**Rule:** Runtime business logic lives in `orchest-runtime`; shared model types live in `agent-runtime-model`; provider adapters live in their respective satellite crates (each depends on `agent-runtime-model`, not on `orchest-runtime`). Binding crates only do type conversion and FFI glue — no business decisions.
+**Rule:** Runtime business logic lives in `orchest`; shared model types live in `agent-runtime-model`; provider adapters live in their respective satellite crates (each depends on `agent-runtime-model`, not on `orchest`). Binding crates only do type conversion and FFI glue — no business decisions.
 
 ### Dependencies
 
@@ -145,7 +145,7 @@ Each satellite crate keeps its own `src/` layout (e.g. `providers/<vendor>/`, `c
 | `pyo3` | Python binding | `extension-module` |
 | `napi` + `napi-derive` | Node.js binding | — |
 
-The table above is the **core** crate's locked dependency set. Satellite provider crates carry their own provider-specific deps (`reqwest`, `tokio-tungstenite`, `futures-util`, and crypto/`base64`/`hex` for signing and audio decoding), gated behind per-provider feature flags where optional (`orchest-runtime` stays dependency-light).
+The table above is the **core** crate's locked dependency set. Satellite provider crates carry their own provider-specific deps (`reqwest`, `tokio-tungstenite`, `futures-util`, and crypto/`base64`/`hex` for signing and audio decoding), gated behind per-provider feature flags where optional (`orchest` stays dependency-light).
 
 **Policy for adding new dependencies:**
 - Prefer std + tokio; do not introduce actor frameworks (locked decision)
@@ -178,7 +178,7 @@ The table above is the **core** crate's locked dependency set. Satellite provide
 
 ### Unsafe Policy
 
-- **`orchest-runtime` must contain no `unsafe` code**
+- **`orchest` must contain no `unsafe` code**
 - Binding crates (`orchest-py`, `orchest-node`) may use `unsafe` for FFI, but every `unsafe` block must:
   - Have a comment explaining the safety invariant
   - Contain only type conversion — no business logic inside `unsafe`

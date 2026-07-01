@@ -4,13 +4,13 @@
 
 use std::sync::Arc;
 
-use orchest_runtime::events::RuntimeEvent;
-use orchest_runtime::model::{
+use orchest::events::RuntimeEvent;
+use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use orchest_runtime::run::{AgentConfig, AgentRun};
-use orchest_runtime::tool::{
+use orchest::run::{AgentConfig, AgentRun};
+use orchest::tool::{
     registry::ToolRegistry, Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError,
     ToolMetadata, ToolOutput, ToolSource,
 };
@@ -128,8 +128,8 @@ impl Tool for ReadFileTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
-            execution_mode: orchest_runtime::tool::ToolExecutionMode::Normal,
-            parallelism: orchest_runtime::tool::ToolParallelism::Serial,
+            execution_mode: orchest::tool::ToolExecutionMode::Normal,
+            parallelism: orchest::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -166,8 +166,8 @@ impl Tool for WriteFileTool {
         &ToolMetadata {
             side_effect: true,
             approval: Approval::WhenRisky,
-            execution_mode: orchest_runtime::tool::ToolExecutionMode::Normal,
-            parallelism: orchest_runtime::tool::ToolParallelism::Serial,
+            execution_mode: orchest::tool::ToolExecutionMode::Normal,
+            parallelism: orchest::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,

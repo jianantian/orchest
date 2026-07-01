@@ -1243,6 +1243,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "orchest"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "httparse",
+ "libc",
+ "metrics",
+ "metrics-util",
+ "orchest-protocol",
+ "orchest-provider",
+ "ractor",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tiktoken-rs",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "which",
+]
+
+[[package]]
 name = "orchest-node"
 version = "0.1.0"
 dependencies = [
@@ -1250,8 +1279,8 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "orchest",
  "orchest-provider",
- "orchest-runtime",
  "serde_json",
  "tokio",
  "tracing",
@@ -1362,42 +1391,13 @@ name = "orchest-py"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "orchest",
  "orchest-provider",
- "orchest-runtime",
  "pyo3",
  "pyo3-async-runtimes",
  "serde_json",
  "tokio",
  "uuid",
-]
-
-[[package]]
-name = "orchest-runtime"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "futures-util",
- "httparse",
- "libc",
- "metrics",
- "metrics-util",
- "orchest-protocol",
- "orchest-provider",
- "ractor",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "tiktoken-rs",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "which",
 ]
 
 [[package]]

@@ -87,7 +87,7 @@ API keys are read from the standard env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_K
 
 ```
 crates/
-  orchest-runtime/     # Pure Rust — run loop, tool registry, skill loading, events
+  orchest/     # Pure Rust — run loop, tool registry, skill loading, events
   agent-runtime-providers/ # Model adapters (Anthropic, OpenAI, DeepSeek, OpenRouter)
   orchest-py/        # PyO3 binding
   orchest-node/      # napi-rs binding

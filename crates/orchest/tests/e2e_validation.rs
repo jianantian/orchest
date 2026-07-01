@@ -2,17 +2,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use orchest_runtime::budget::BudgetConfig;
-use orchest_runtime::events::RuntimeEvent;
-use orchest_runtime::model::{
+use orchest::budget::BudgetConfig;
+use orchest::events::RuntimeEvent;
+use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
     OptionAdjustment, RequestOptions, StopReason, StreamEvent, ThinkingLevel, TokenUsage,
 };
-use orchest_runtime::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
-use orchest_runtime::tool::async_job::{JobHandle, JobStatus};
-use orchest_runtime::tool::builtin::ReadFileTool;
-use orchest_runtime::tool::registry::ToolRegistry;
-use orchest_runtime::tool::{
+use orchest::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
+use orchest::tool::async_job::{JobHandle, JobStatus};
+use orchest::tool::builtin::ReadFileTool;
+use orchest::tool::registry::ToolRegistry;
+use orchest::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput,
     ToolSource,
 };
@@ -193,8 +193,8 @@ impl Tool for EchoTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
-            execution_mode: orchest_runtime::tool::ToolExecutionMode::Normal,
-            parallelism: orchest_runtime::tool::ToolParallelism::Serial,
+            execution_mode: orchest::tool::ToolExecutionMode::Normal,
+            parallelism: orchest::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -507,7 +507,7 @@ async fn e2e_config_serialization() {
 
 #[tokio::test]
 async fn e2e_run_state_serialization() {
-    let tool_call = orchest_runtime::tool::ToolCall {
+    let tool_call = orchest::tool::ToolCall {
         id: "call_state".into(),
         name: "async_echo".into(),
         input: json!({"text": "hello"}),
@@ -523,17 +523,17 @@ async fn e2e_run_state_serialization() {
                 Box<dyn std::future::Future<Output = Result<JobStatus, ToolError>> + Send>,
             >
     });
-    let state = orchest_runtime::run::RunState {
-        run_id: orchest_runtime::run::RunId::new(),
+    let state = orchest::run::RunState {
+        run_id: orchest::run::RunId::new(),
         schema_version: "0.1".into(),
         config: test_config(),
         messages: vec![Message {
-            role: orchest_runtime::model::Role::User,
+            role: orchest::model::Role::User,
             content: vec![ContentBlock::Text("hello".into())],
         }],
         available_tools: Vec::new(),
         step: 1,
-        status: orchest_runtime::run::RunStatus::WaitingForAsyncTool {
+        status: orchest::run::RunStatus::WaitingForAsyncTool {
             tool_call: tool_call.clone(),
             job_handle: JobHandle {
                 job_id: "job_state".into(),
@@ -544,7 +544,7 @@ async fn e2e_run_state_serialization() {
             },
             since: std::time::Instant::now(),
         },
-        budget_used: orchest_runtime::budget::BudgetUsage {
+        budget_used: orchest::budget::BudgetUsage {
             tokens_used: 1500,
             tool_calls_used: 3,
             cost_usd: 0.042,
@@ -552,7 +552,7 @@ async fn e2e_run_state_serialization() {
     };
 
     let json = serde_json::to_string(&state).expect("run state should serialize");
-    let deserialized: orchest_runtime::run::RunState =
+    let deserialized: orchest::run::RunState =
         serde_json::from_str(&json).expect("run state should deserialize");
 
     assert_eq!(deserialized.schema_version, "0.1");
@@ -561,7 +561,7 @@ async fn e2e_run_state_serialization() {
     assert_eq!(deserialized.budget_used.tokens_used, 1500);
     assert!(deserialized.available_tools.is_empty());
     match deserialized.status {
-        orchest_runtime::run::RunStatus::WaitingForAsyncTool {
+        orchest::run::RunStatus::WaitingForAsyncTool {
             tool_call,
             job_handle,
             ..
@@ -626,13 +626,13 @@ async fn e2e_skill_content_read_event() {
 
     let (event_tx, mut event_rx) = mpsc::channel(16);
     let ctx = ToolContext {
-        run_id: orchest_runtime::run::RunId::new(),
+        run_id: orchest::run::RunId::new(),
         run_depth: 0,
         tool_call_id: "read_skill".into(),
         event_tx: Some(event_tx),
         webhook_base_url: None,
-        approval_bus: orchest_runtime::run::ApprovalBus::default(),
-        remaining_budget: orchest_runtime::budget::BudgetConfig::default(),
+        approval_bus: orchest::run::ApprovalBus::default(),
+        remaining_budget: orchest::budget::BudgetConfig::default(),
         parent_messages: vec![],
     };
 
@@ -663,13 +663,13 @@ async fn e2e_read_file_known_risk_boundary_is_visible() {
     let tool = ReadFileTool::new();
     let (event_tx, mut event_rx) = mpsc::channel(16);
     let ctx = ToolContext {
-        run_id: orchest_runtime::run::RunId::new(),
+        run_id: orchest::run::RunId::new(),
         run_depth: 0,
         tool_call_id: "read_non_skill".into(),
         event_tx: Some(event_tx),
         webhook_base_url: None,
-        approval_bus: orchest_runtime::run::ApprovalBus::default(),
-        remaining_budget: orchest_runtime::budget::BudgetConfig::default(),
+        approval_bus: orchest::run::ApprovalBus::default(),
+        remaining_budget: orchest::budget::BudgetConfig::default(),
         parent_messages: vec![],
     };
 
@@ -690,13 +690,13 @@ async fn e2e_read_file_known_risk_boundary_is_visible() {
 
 #[tokio::test]
 async fn e2e_budget_usage_serialization() {
-    let usage = orchest_runtime::budget::BudgetUsage {
+    let usage = orchest::budget::BudgetUsage {
         tokens_used: 1500,
         tool_calls_used: 3,
         cost_usd: 0.042,
     };
     let json = serde_json::to_string(&usage).expect("usage should serialize");
-    let deserialized: orchest_runtime::budget::BudgetUsage =
+    let deserialized: orchest::budget::BudgetUsage =
         serde_json::from_str(&json).expect("usage should deserialize");
     assert_eq!(deserialized.tokens_used, 1500);
     assert_eq!(deserialized.tool_calls_used, 3);
@@ -798,8 +798,8 @@ impl Tool for AsyncEchoTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
-            execution_mode: orchest_runtime::tool::ToolExecutionMode::Normal,
-            parallelism: orchest_runtime::tool::ToolParallelism::Serial,
+            execution_mode: orchest::tool::ToolExecutionMode::Normal,
+            parallelism: orchest::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -985,8 +985,8 @@ impl Tool for GuardedTool {
         &ToolMetadata {
             side_effect: true,
             approval: Approval::Always,
-            execution_mode: orchest_runtime::tool::ToolExecutionMode::Normal,
-            parallelism: orchest_runtime::tool::ToolParallelism::Serial,
+            execution_mode: orchest::tool::ToolExecutionMode::Normal,
+            parallelism: orchest::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,

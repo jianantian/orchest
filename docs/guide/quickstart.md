@@ -20,14 +20,14 @@
 
 ```toml
 [dependencies]
-orchest-runtime = { git = "https://github.com/jianantian/orchest" }
+orchest = { git = "https://github.com/jianantian/orchest" }
 agent-runtime-providers = { git = "https://github.com/jianantian/orchest" }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 serde_json = "1"
 ```
 
-> Orchest 尚未发布到 crates.io（计划于 v1.0）。在那之前用 git 依赖；发布后改为 `orchest-runtime = "x.y"`。
+> Orchest 尚未发布到 crates.io（计划于 v1.0）。在那之前用 git 依赖；发布后改为 `orchest = "x.y"`。
 
 ## 3. 配置 provider
 
@@ -35,7 +35,7 @@ serde_json = "1"
 
 ```rust
 use std::sync::Arc;
-use orchest_runtime::model::ModelAdapter;
+use orchest::model::ModelAdapter;
 
 let model: Arc<dyn ModelAdapter> =
     Arc::from(agent_runtime_providers::create_adapter_from_config(
@@ -58,7 +58,7 @@ tool 是模型可以调用的能力。实现 `Tool` trait 的 6 个方法，包�
 
 ```rust
 use std::sync::OnceLock;
-use orchest_runtime::tool::{
+use orchest::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
 use async_trait::async_trait;
@@ -119,10 +119,10 @@ impl Tool for CurrentTimeTool {
 ## 5. 启动 run + 监听事件
 
 ```rust
-use orchest_runtime::events::RuntimeEvent;
-use orchest_runtime::model::StreamEvent;
-use orchest_runtime::run::{AgentConfig, AgentRun};
-use orchest_runtime::tool::registry::ToolRegistry;
+use orchest::events::RuntimeEvent;
+use orchest::model::StreamEvent;
+use orchest::run::{AgentConfig, AgentRun};
+use orchest::tool::registry::ToolRegistry;
 
 let mut registry = ToolRegistry::new();
 registry.register(Arc::new(CurrentTimeTool))?;
@@ -159,7 +159,7 @@ while let Some(event) = rx.recv().await {
 | `RunCompleted` | run 正常结束，带最终 `output` |
 | `RunFailed` | run 失败 |
 
-完整变体见 [`RuntimeEvent` 的 rustdoc](../../crates/orchest-runtime/src/events.rs)。
+完整变体见 [`RuntimeEvent` 的 rustdoc](../../crates/orchest/src/events.rs)。
 
 > 进阶：`RunHandle` 还有 `subscribe_events(capacity)` 可获得额外的事件订阅者（多方观察场景），以及 `inject_message` / `steer` / `abort` 用于运行中干预。起步阶段用 `start` 直接返回的 `rx` 即可。
 

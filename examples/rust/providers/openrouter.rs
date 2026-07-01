@@ -5,11 +5,11 @@
 
 use std::sync::{Arc, LazyLock};
 
-use orchest_runtime::events::RuntimeEvent;
-use orchest_runtime::model::{ModelAdapter, StreamEvent};
-use orchest_runtime::run::{AgentConfig, AgentRun};
-use orchest_runtime::tool::registry::ToolRegistry;
-use orchest_runtime::tool::{
+use orchest::events::RuntimeEvent;
+use orchest::model::{ModelAdapter, StreamEvent};
+use orchest::run::{AgentConfig, AgentRun};
+use orchest::tool::registry::ToolRegistry;
+use orchest::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
 use async_trait::async_trait;
@@ -31,8 +31,8 @@ fn weather_meta() -> &'static ToolMetadata {
     static M: LazyLock<ToolMetadata> = LazyLock::new(|| ToolMetadata {
         side_effect: false,
         approval: Approval::Never,
-        execution_mode: orchest_runtime::tool::ToolExecutionMode::Normal,
-        parallelism: orchest_runtime::tool::ToolParallelism::Serial,
+        execution_mode: orchest::tool::ToolExecutionMode::Normal,
+        parallelism: orchest::tool::ToolParallelism::Serial,
         cost_hint: None,
         timeout: None,
         max_output_tokens: None,

@@ -2,20 +2,20 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
-use orchest_runtime::budget::BudgetConfig;
-use orchest_runtime::events::RuntimeEvent;
-use orchest_runtime::model::{
+use orchest::budget::BudgetConfig;
+use orchest::events::RuntimeEvent;
+use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
     RequestOptions, Role, StopReason, StreamEvent, TokenUsage,
 };
-use orchest_runtime::run::{
+use orchest::run::{
     AgentConfig, AgentRun, ApprovalBus, ModelConfig, RunId, RuntimeConfig, SkillsConfig,
 };
-use orchest_runtime::skill::executor::BareSubprocessExecutor;
-use orchest_runtime::skill::{SkillDependencies, SkillEnvManager, SkillManifest};
-use orchest_runtime::tool::agent_as_tool::ContextMode;
-use orchest_runtime::tool::registry::ToolRegistry;
-use orchest_runtime::tool::{Tool, ToolContext, ToolOutput};
+use orchest::skill::executor::BareSubprocessExecutor;
+use orchest::skill::{SkillDependencies, SkillEnvManager, SkillManifest};
+use orchest::tool::agent_as_tool::ContextMode;
+use orchest::tool::registry::ToolRegistry;
+use orchest::tool::{Tool, ToolContext, ToolOutput};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
@@ -71,7 +71,7 @@ impl ModelAdapter for CodeExecModel {
     async fn complete(
         &self,
         messages: &[Message],
-        _tools: &[orchest_runtime::tool::ToolDef],
+        _tools: &[orchest::tool::ToolDef],
         _options: &RequestOptions,
         _tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
@@ -134,7 +134,7 @@ impl ModelAdapter for SubAgentModel {
     async fn complete(
         &self,
         messages: &[Message],
-        _tools: &[orchest_runtime::tool::ToolDef],
+        _tools: &[orchest::tool::ToolDef],
         _options: &RequestOptions,
         _tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
@@ -200,7 +200,7 @@ impl ModelAdapter for ContextEchoModel {
     async fn complete(
         &self,
         messages: &[Message],
-        _tools: &[orchest_runtime::tool::ToolDef],
+        _tools: &[orchest::tool::ToolDef],
         _options: &RequestOptions,
         _tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
@@ -383,7 +383,7 @@ fn sub_agent_budget_is_capped_by_parent_remaining() {
     };
 
     let capped =
-        orchest_runtime::run::SubAgentRuntime::cap_budget(&requested, &parent_remaining);
+        orchest::run::SubAgentRuntime::cap_budget(&requested, &parent_remaining);
 
     assert_eq!(capped.max_tokens, Some(40));
     assert_eq!(capped.max_tool_calls, Some(3));

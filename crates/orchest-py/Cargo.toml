@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-orchest-runtime = { path = "../orchest-runtime" }
+orchest = { path = "../orchest" }
 orchest-provider = { path = "../orchest-provider", features = ["llm"] }
 pyo3 = { version = "0.28", features = ["py-clone"] }
 async-trait = "0.1"

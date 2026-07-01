@@ -8,15 +8,15 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use orchest_runtime::events::RuntimeEvent;
-use orchest_runtime::model::{
+use orchest::events::RuntimeEvent;
+use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use orchest_runtime::run::{AgentConfig, AgentRun};
-use orchest_runtime::tool::agent_as_tool::ContextMode;
-use orchest_runtime::tool::registry::ToolRegistry;
-use orchest_runtime::tool::ToolError;
+use orchest::run::{AgentConfig, AgentRun};
+use orchest::tool::agent_as_tool::ContextMode;
+use orchest::tool::registry::ToolRegistry;
+use orchest::tool::ToolError;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -44,7 +44,7 @@ impl ModelAdapter for ParentModel {
     async fn complete(
         &self,
         messages: &[Message],
-        _tools: &[orchest_runtime::tool::ToolDef],
+        _tools: &[orchest::tool::ToolDef],
         _options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
@@ -115,7 +115,7 @@ impl ModelAdapter for ChildModel {
     async fn complete(
         &self,
         _messages: &[Message],
-        _tools: &[orchest_runtime::tool::ToolDef],
+        _tools: &[orchest::tool::ToolDef],
         _options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {

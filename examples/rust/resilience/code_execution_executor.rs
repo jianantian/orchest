@@ -1,17 +1,17 @@
 //! Explicit code execution executor example.
 //!
-//! Run with: cargo run -p orchest-runtime --example code_execution_executor
+//! Run with: cargo run -p orchest --example code_execution_executor
 
 use std::sync::Arc;
 
-use orchest_runtime::events::RuntimeEvent;
-use orchest_runtime::model::{
+use orchest::events::RuntimeEvent;
+use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use orchest_runtime::run::{AgentConfig, AgentRun};
-use orchest_runtime::skill::executor::BareSubprocessExecutor;
-use orchest_runtime::tool::registry::ToolRegistry;
+use orchest::run::{AgentConfig, AgentRun};
+use orchest::skill::executor::BareSubprocessExecutor;
+use orchest::tool::registry::ToolRegistry;
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -34,7 +34,7 @@ impl ModelAdapter for CodeExecModel {
     async fn complete(
         &self,
         messages: &[Message],
-        _tools: &[orchest_runtime::tool::ToolDef],
+        _tools: &[orchest::tool::ToolDef],
         _options: &RequestOptions,
         _tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {

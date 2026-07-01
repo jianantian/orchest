@@ -4,18 +4,18 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use orchest_runtime::budget::BudgetUsage;
-use orchest_runtime::events::RuntimeEvent;
-use orchest_runtime::guardrail::{ToolInputGuardrail, ToolInputGuardrailAction};
-use orchest_runtime::hook::{Hook, RunHookContext, ToolHookContext};
-use orchest_runtime::model::{
+use orchest::budget::BudgetUsage;
+use orchest::events::RuntimeEvent;
+use orchest::guardrail::{ToolInputGuardrail, ToolInputGuardrailAction};
+use orchest::hook::{Hook, RunHookContext, ToolHookContext};
+use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, Role, StopReason, StreamEvent, TokenUsage,
 };
-use orchest_runtime::run::{AgentConfig, AgentRun, RunId, Watcher, WatcherAction};
-use orchest_runtime::session::{InMemorySessionStore, SessionSnapshot, SessionStore};
-use orchest_runtime::tool::registry::ToolRegistry;
-use orchest_runtime::tool::{
+use orchest::run::{AgentConfig, AgentRun, RunId, Watcher, WatcherAction};
+use orchest::session::{InMemorySessionStore, SessionSnapshot, SessionStore};
+use orchest::tool::registry::ToolRegistry;
+use orchest::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput,
     ToolSource,
 };
@@ -193,8 +193,8 @@ impl Tool for WriteFileTool {
         &ToolMetadata {
             side_effect: true,
             approval: Approval::WhenRisky,
-            execution_mode: orchest_runtime::tool::ToolExecutionMode::Normal,
-            parallelism: orchest_runtime::tool::ToolParallelism::Serial,
+            execution_mode: orchest::tool::ToolExecutionMode::Normal,
+            parallelism: orchest::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -524,8 +524,8 @@ impl Tool for PingTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
-            execution_mode: orchest_runtime::tool::ToolExecutionMode::Normal,
-            parallelism: orchest_runtime::tool::ToolParallelism::Serial,
+            execution_mode: orchest::tool::ToolExecutionMode::Normal,
+            parallelism: orchest::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -776,7 +776,7 @@ async fn all_v08_features_combined() {
 #[cfg(feature = "sqlite-session")]
 mod sqlite_tests {
     use super::*;
-    use orchest_runtime::session::SqliteSessionStore;
+    use orchest::session::SqliteSessionStore;
     use tempfile::NamedTempFile;
 
     #[tokio::test]

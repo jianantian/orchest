@@ -5,13 +5,13 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use orchest_runtime::events::RuntimeEvent;
-use orchest_runtime::model::{
+use orchest::events::RuntimeEvent;
+use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use orchest_runtime::run::{AgentConfig, AgentRun, SupervisionStrategy, Watcher, WatcherAction};
-use orchest_runtime::tool::{
+use orchest::run::{AgentConfig, AgentRun, SupervisionStrategy, Watcher, WatcherAction};
+use orchest::tool::{
     registry::ToolRegistry, Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata,
     ToolOutput, ToolSource,
 };
@@ -71,7 +71,7 @@ impl ModelAdapter for ScriptedModel {
 
 struct LongTask;
 
-use orchest_runtime::tool::ToolDef;
+use orchest::tool::ToolDef;
 
 #[async_trait]
 impl Tool for LongTask {
@@ -94,8 +94,8 @@ impl Tool for LongTask {
             timeout: None,
             max_output_tokens: None,
             approval: Approval::Never,
-            execution_mode: orchest_runtime::tool::ToolExecutionMode::Normal,
-            parallelism: orchest_runtime::tool::ToolParallelism::Serial,
+            execution_mode: orchest::tool::ToolExecutionMode::Normal,
+            parallelism: orchest::tool::ToolParallelism::Serial,
             cost_hint: None,
         }
     }

@@ -9,15 +9,15 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use orchest_runtime::events::RuntimeEvent;
-use orchest_runtime::hook::LoopDetectionConfig;
-use orchest_runtime::model::{
+use orchest::events::RuntimeEvent;
+use orchest::hook::LoopDetectionConfig;
+use orchest::model::{
     ContentBlock, JsonSchema, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use orchest_runtime::run::{AgentConfig, AgentRun};
-use orchest_runtime::tool::registry::ToolRegistry;
-use orchest_runtime::tool::{
+use orchest::run::{AgentConfig, AgentRun};
+use orchest::tool::registry::ToolRegistry;
+use orchest::tool::{
     Approval, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
 use async_trait::async_trait;
@@ -46,8 +46,8 @@ impl Tool for SearchTool {
         &ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
-            execution_mode: orchest_runtime::tool::ToolExecutionMode::Normal,
-            parallelism: orchest_runtime::tool::ToolParallelism::Serial,
+            execution_mode: orchest::tool::ToolExecutionMode::Normal,
+            parallelism: orchest::tool::ToolParallelism::Serial,
             cost_hint: None,
             timeout: None,
             max_output_tokens: None,
@@ -81,7 +81,7 @@ impl ModelAdapter for LoopingModel {
     async fn complete(
         &self,
         _messages: &[Message],
-        _tools: &[orchest_runtime::tool::ToolDef],
+        _tools: &[orchest::tool::ToolDef],
         _options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {

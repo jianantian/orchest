@@ -4,17 +4,17 @@
 
 use std::sync::Arc;
 
-use orchest_runtime::events::RuntimeEvent;
-use orchest_runtime::hook::{
+use orchest::events::RuntimeEvent;
+use orchest::hook::{
     Hook, HookAction, ModelHookAction, ModelHookContext, RepeatedFailureHookContext,
     ToolHookContext,
 };
-use orchest_runtime::model::{
+use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use orchest_runtime::run::{AgentConfig, AgentRun};
-use orchest_runtime::tool::registry::ToolRegistry;
+use orchest::run::{AgentConfig, AgentRun};
+use orchest::tool::registry::ToolRegistry;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
@@ -37,7 +37,7 @@ impl ModelAdapter for MockModel {
     async fn complete(
         &self,
         _messages: &[Message],
-        _tools: &[orchest_runtime::tool::ToolDef],
+        _tools: &[orchest::tool::ToolDef],
         _options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {

@@ -1,7 +1,7 @@
 //! Python (PyO3) bindings for the Orchest agent runtime.
 //!
 //! This crate only does type conversion and FFI glue between Python and
-//! `orchest-runtime`; all business logic lives in core. The public surface
+//! `orchest`; all business logic lives in core. The public surface
 //! is the `Agent` class exposed to Python via PyO3.
 
 use std::sync::Arc;
@@ -14,22 +14,22 @@ use pyo3::types::PyDict;
 use serde_json::Value;
 use tokio::sync::Mutex as TokioMutex;
 
-use orchest_runtime::bindings::{
+use orchest::bindings::{
     budget_config_from_binding, parse_binding_approval, parse_binding_approval_mode,
     runtime_event_to_wire_value, BindingBudgetConfig, BindingNameStyle,
 };
-use orchest_runtime::events::RuntimeEvent;
-use orchest_runtime::model::{
+use orchest::events::RuntimeEvent;
+use orchest::model::{
     CachePolicy, CompatibilityPolicy, ModelSpec, ProviderRuntimeConfig, RequestOptions,
     ThinkingLevel,
 };
-use orchest_runtime::run::{
+use orchest::run::{
     AgentConfig, AgentRun, ApprovalMode, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
 };
-use orchest_runtime::tool::async_job::{JobHandle, JobStatus};
-use orchest_runtime::tool::builtin::WriteFileTool;
-use orchest_runtime::tool::registry::ToolRegistry;
-use orchest_runtime::tool::{
+use orchest::tool::async_job::{JobHandle, JobStatus};
+use orchest::tool::builtin::WriteFileTool;
+use orchest::tool::registry::ToolRegistry;
+use orchest::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolError, ToolExecutionMode, ToolMetadata,
     ToolOutput, ToolSource,
 };
@@ -509,7 +509,7 @@ impl Agent {
         Ok(registry)
     }
 
-    fn build_model(&self) -> Result<Arc<dyn orchest_runtime::model::ModelAdapter>, PyErr> {
+    fn build_model(&self) -> Result<Arc<dyn orchest::model::ModelAdapter>, PyErr> {
         let adapter = create_adapter_from_config(self.provider_config())
             .map_err(|e| PyRuntimeError::new_err(format!("failed to create model: {}", e)))?;
         Ok(Arc::from(adapter))
@@ -842,7 +842,7 @@ impl Agent {
         rt.block_on(async {
             let guard = run_handle_ref.lock().await;
             if let Some(ref handle) = *guard {
-                let run_id: orchest_runtime::run::RunId = orchest_runtime::run::RunId(
+                let run_id: orchest::run::RunId = orchest::run::RunId(
                     uuid::Uuid::parse_str(&run_id_str)
                         .map_err(|e| PyRuntimeError::new_err(format!("invalid run_id: {}", e)))?,
                 );

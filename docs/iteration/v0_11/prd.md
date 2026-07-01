@@ -106,14 +106,14 @@ Accurate public paths (confirmed against codebase before demo is written):
 
 | Seam API | Public type / method | Full path |
 |----------|---------------------|-----------|
-| Watcher construction | `LlmWatcher::builder()` | `orchest_runtime::run::llm_watcher::LlmWatcher` |
-| Watcher attachment | `RunHandle::attach_watcher(watcher, capacity)` | `orchest_runtime::run::handle::RunHandle` |
-| Steering from watcher | `WatcherAction::Inject(String)` / `WatcherAction::Steer(String)` returned from `on_event()` | `orchest_runtime::run::watcher::WatcherAction` |
-| Steering from external caller | `RunHandle::inject_message(msg)` / `RunHandle::steer(msg)` | `orchest_runtime::run::handle::RunHandle` |
-| Context mode | `SubAgentBuilder::context_mode(ContextMode::Fresh \| Fork { depth })` | `orchest_runtime::tool::agent_as_tool::ContextMode` |
-| Supervisor strategy | `AgentConfigBuilder::supervision_strategy(SupervisionStrategy::Restart { max_retries })` | `orchest_runtime::run::config::SupervisionStrategy` |
-| Failure observation | `RuntimeEvent::RunRestarted { attempt }` / `RunAborted { reason }` | `orchest_runtime::events::RuntimeEvent` |
-| Completion gate | `RuntimeEvent::RunCompleted { output }` / `RunFailed { error }` via `EventReceiver` | `orchest_runtime::run::handle::EventReceiver` |
+| Watcher construction | `LlmWatcher::builder()` | `orchest::run::llm_watcher::LlmWatcher` |
+| Watcher attachment | `RunHandle::attach_watcher(watcher, capacity)` | `orchest::run::handle::RunHandle` |
+| Steering from watcher | `WatcherAction::Inject(String)` / `WatcherAction::Steer(String)` returned from `on_event()` | `orchest::run::watcher::WatcherAction` |
+| Steering from external caller | `RunHandle::inject_message(msg)` / `RunHandle::steer(msg)` | `orchest::run::handle::RunHandle` |
+| Context mode | `SubAgentBuilder::context_mode(ContextMode::Fresh \| Fork { depth })` | `orchest::tool::agent_as_tool::ContextMode` |
+| Supervisor strategy | `AgentConfigBuilder::supervision_strategy(SupervisionStrategy::Restart { max_retries })` | `orchest::run::config::SupervisionStrategy` |
+| Failure observation | `RuntimeEvent::RunRestarted { attempt }` / `RunAborted { reason }` | `orchest::events::RuntimeEvent` |
+| Completion gate | `RuntimeEvent::RunCompleted { output }` / `RunFailed { error }` via `EventReceiver` | `orchest::run::handle::EventReceiver` |
 
 **Note**: `InjectCmd` and `SteerCmd` are `pub(crate)` internal types. Do not use them directly; use `WatcherAction` and `RunHandle` methods above.
 
@@ -123,8 +123,8 @@ These friction points are already known before the demo is written. The demo con
 
 | ID | Finding | Preliminary classification |
 |----|---------|---------------------------|
-| PSF-1 | `LlmWatcher` is not re-exported from `lib.rs`; import path is `orchest_runtime::run::llm_watcher::LlmWatcher` | Likely post-1.0 (path friction, not a correctness issue) unless Multivac M2 onboarding proves it is confusing |
-| PSF-2 | `ContextMode` is not re-exported from `lib.rs`; import path is `orchest_runtime::tool::agent_as_tool::ContextMode` | Same as PSF-1 |
+| PSF-1 | `LlmWatcher` is not re-exported from `lib.rs`; import path is `orchest::run::llm_watcher::LlmWatcher` | Likely post-1.0 (path friction, not a correctness issue) unless Multivac M2 onboarding proves it is confusing |
+| PSF-2 | `ContextMode` is not re-exported from `lib.rs`; import path is `orchest::tool::agent_as_tool::ContextMode` | Same as PSF-1 |
 | PSF-3 | Fake ASR/TTS providers live in `tests/fake_provider.rs` inside each provider crate; they are not accessible as normal dev-dependencies from an external crate. The demo must either vendor the struct or the crates must expose fakes through a `#[cfg(feature = "test-utils")]` feature gate | Likely seam blocker if the demo cannot easily construct fake providers for offline smoke; record workaround used |
 
 ## Validation Triage Rule

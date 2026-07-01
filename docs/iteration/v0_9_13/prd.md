@@ -18,7 +18,7 @@ v0.9.12（Provider 统一）把 provider 层全部迁到 `orchest-*` 命名（`o
 
 | 旧名 | 新名 |
 |------|------|
-| crate `agent-runtime-core` | `orchest-runtime` |
+| crate `agent-runtime-core` | `orchest` |
 | crate `agent-runtime-py` | `orchest-py` |
 | crate `agent-runtime-node` | `orchest-node` |
 | Python 包/目录 `python/agent_runtime/`（`import agent_runtime`） | `python/orchest/`（`import orchest`） |
@@ -45,7 +45,7 @@ v0.9.12（Provider 统一）把 provider 层全部迁到 `orchest-*` 命名（`o
 ## 验收标准
 
 - [ ] `cargo check --workspace --all-features` 通过
-- [ ] `cargo check -p orchest-runtime --examples` 通过（rust examples 全部编译）
+- [ ] `cargo check -p orchest --examples` 通过（rust examples 全部编译）
 - [ ] 全仓库(排除 `docs/archive/**`、`docs/research/**`、`docs/review/**`、`docs/todo/**`)不再出现 `agent-runtime-core`/`agent-runtime-py`/`agent-runtime-node`/`agent_runtime_core`/`agent_runtime_py`/`agent_runtime_node`，以及裸 `agent_runtime`（Python 包名）
 - [ ] `docs/adr/0001-provider-unification.md` 的 revisit 项标记为 resolved
 
@@ -54,7 +54,7 @@ v0.9.12（Provider 统一）把 provider 层全部迁到 `orchest-*` 命名（`o
 | 验证项 | 方法 |
 |--------|------|
 | Rust workspace 编译 | `cargo check --workspace --all-features` |
-| Rust examples 编译 | `cargo check -p orchest-runtime --examples` |
+| Rust examples 编译 | `cargo check -p orchest --examples` |
 | 无残留旧引用 | 全仓库 grep（排除 archive/research/review/todo） |
 
 ## 依赖
