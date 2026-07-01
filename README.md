@@ -87,10 +87,15 @@ API keys are read from the standard env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_K
 
 ```
 crates/
-  orchest/     # Pure Rust — run loop, tool registry, skill loading, events
-  agent-runtime-providers/ # Model adapters (Anthropic, OpenAI, DeepSeek, OpenRouter)
-  orchest-py/        # PyO3 binding
-  orchest-node/      # napi-rs binding
+  orchest/                # Pure Rust — run loop, tool registry, skill loading, events
+  orchest-protocol/       # Unified protocol spine (adapter traits, capabilities, streaming/error model)
+  orchest-provider-core/  # Shared building blocks: HTTP client, auth, OSS, SSE, WS, telemetry, pricing
+  orchest-provider-http/  # LLM (Anthropic, OpenAI, DeepSeek, OpenRouter, Volcengine, Minimax) + one-shot ASR
+  orchest-provider-stream/# Streaming ASR/TTS + omni realtime (WebSocket tier)
+  orchest-provider-visual/# Image/video generation (signed/polled tier)
+  orchest-provider/       # Umbrella facade + registry — the provider surface consumers depend on
+  orchest-py/             # PyO3 binding
+  orchest-node/           # napi-rs binding
 python/
   orchest/           # Python package with typed stubs
 js/                        # TypeScript SDK with native bindings

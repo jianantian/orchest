@@ -21,7 +21,7 @@
 ```toml
 [dependencies]
 orchest = { git = "https://github.com/jianantian/orchest" }
-agent-runtime-providers = { git = "https://github.com/jianantian/orchest" }
+orchest-provider = { git = "https://github.com/jianantian/orchest", features = ["llm"] }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 serde_json = "1"
@@ -38,8 +38,8 @@ use std::sync::Arc;
 use orchest::model::ModelAdapter;
 
 let model: Arc<dyn ModelAdapter> =
-    Arc::from(agent_runtime_providers::create_adapter_from_config(
-        agent_runtime_providers::ProviderRuntimeConfig {
+    Arc::from(orchest_provider::create_adapter_from_config(
+        orchest_provider::ProviderRuntimeConfig {
             model: "anthropic/claude-sonnet-4-6".into(),
             api_key: None,
             api_key_env: Some("ANTHROPIC_API_KEY".into()),

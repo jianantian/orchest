@@ -1,7 +1,7 @@
 //! OpenRouter provider example: Claude via OpenRouter with tool calling.
 //!
 //! Run with:
-//!   OPENROUTER_API_KEY=sk-... cargo run -p agent-runtime-providers --example rust_provider_runtime_openrouter
+//!   OPENROUTER_API_KEY=sk-... cargo run -p orchest --example rust_provider_runtime_openrouter
 
 use std::sync::{Arc, LazyLock};
 

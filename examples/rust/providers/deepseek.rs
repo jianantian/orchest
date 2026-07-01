@@ -3,7 +3,7 @@
 //! Uses deepseek-v4-flash (fast, cheap) with a weather tool.
 //!
 //! Run with:
-//!   DEEPSEEK_API_KEY=sk-... cargo run -p agent-runtime-providers --example rust_provider_runtime_deepseek
+//!   DEEPSEEK_API_KEY=sk-... cargo run -p orchest --example rust_provider_runtime_deepseek
 
 use std::sync::{Arc, LazyLock};
 

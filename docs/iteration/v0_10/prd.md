@@ -82,9 +82,9 @@ This is the breadth axis the iteration must cover. Each modality is present beca
 |----------------------|---------------------------|-------------------------------|-------------|
 | LLM (text) | model adapter | Core reasoning and writing | Required |
 | Multimodal image input | `ContentBlock::Image` + vision model adapter | Read a chart/screenshot in the corpus into the brief | Required |
-| ASR | `AsrProvider` gateway | Transcribe a recorded interview in the corpus | Required |
-| TTS | `TtsProvider` + `VoiceManager` | Synthesize an audio version of the brief | Required |
-| AIGC image generation | `agent-runtime-aigc-providers` gateway | Generate one figure/diagram for the brief | Optional — lowest freeze risk (oldest gateway, v0.6.1 + hotfixes). Add a minimal debug probe if cheap; if skipped, record it as a conscious coverage gap in the validation report |
+| ASR | `Asr` trait (via `orchest-provider` registry) | Transcribe a recorded interview in the corpus | Required |
+| TTS | `Tts` + `VoiceManager` traits (via `orchest-provider` registry) | Synthesize an audio version of the brief | Required |
+| AIGC image generation | `orchest-provider-visual` (via `orchest-provider` registry) | Generate one figure/diagram for the brief | Optional — lowest freeze risk. Add a minimal debug probe if cheap; if skipped, record it as a conscious coverage gap in the validation report |
 | AIGC video/music, audio-block input | — | — | Out of scope |
 
 **Offline discipline.** Every required modality must have a deterministic fake/stub provider so the `--fake` smoke path exercises the full multimedia flow (transcribe → read image → write → synthesize) without network credentials. Live provider runs for each modality are manual and env-var gated, documented in the validation report.
@@ -102,9 +102,9 @@ This is the breadth axis the iteration must cover. Each modality is present beca
 | Event stream | CLI renders model/tool/approval/session events without panics across all modalities |
 | SessionStore | Session save/resume works across process invocations |
 | Sub-agent or handoff | Reviewer sub-agent or handoff validates the draft brief |
-| ASR gateway | `AsrProvider` transcribes a corpus audio source; fake provider covers offline smoke |
+| ASR gateway | `Asr` impl transcribes a corpus audio source; fake provider covers offline smoke |
 | Multimodal image input | A corpus image is read through `ContentBlock::Image` into the model; fake vision path covers offline smoke |
-| TTS gateway | `TtsProvider` synthesizes an audio brief; fake provider covers offline smoke; skip path leaves no audio file |
+| TTS gateway | `Tts` impl synthesizes an audio brief; fake provider covers offline smoke; skip path leaves no audio file |
 | Documentation | README is enough for a new user to run the demo from source |
 
 ### Delegation Validation Boundary
@@ -174,9 +174,9 @@ v0.10 does not block on v0.11 scope being defined; it blocks only on v0.10 accep
 - v0.7 Agent-as-Tool + Handoff (the reviewer path; supervised delegation / LlmWatcher is **not** a v0.10 dependency — that surface is exercised in v0.11).
 - v0.9.5 Control-Flow Hardening (`ContextMode` for the reviewer sub-agent).
 - Session persistence from v0.8.
-- v0.6.1 Image AIGC Gateway (`agent-runtime-aigc-providers`) — for the optional AIGC stretch.
-- v0.9.1 / v0.9.6 ASR Provider Gateway (`agent-runtime-asr-providers`).
-- v0.9.3 TTS Provider Gateway (`agent-runtime-tts-providers`).
+- v0.6.1 Image AIGC Gateway, since v0.9.12 part of `orchest-provider-visual` — for the optional AIGC stretch.
+- v0.9.1 / v0.9.6 ASR Provider Gateway, since v0.9.12 the `Asr` trait behind `orchest-provider` (implemented across `orchest-provider-stream`/`orchest-provider-http`).
+- v0.9.3 TTS Provider Gateway, since v0.9.12 the `Tts`/`VoiceManager` traits behind `orchest-provider` (implemented in `orchest-provider-stream`).
 - v0.9.10 multimodal `ContentBlock` foundation (image input).
 
 ## Verification

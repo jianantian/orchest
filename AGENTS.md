@@ -4,7 +4,7 @@
 
 Orchest is a **low-level Rust SDK** that provides the agent runtime core for building AI agent applications. It is not a complete agent product — it is the engine that other agent products run on: responsible for the agent loop, state management, event streaming, tool dispatch, and skill loading.
 
-Current stage: **pre-1.0, actively implemented**. The Rust core (`orchest`) and the shared model crate (`agent-runtime-model`) are built out, alongside satellite provider crates for LLM, image/video (AIGC), ASR, and TTS. Design docs under `docs/` remain the authoritative implementation contract; code lives in `crates/`, `examples/`, and `skills/` per the Rust Project Conventions below. The living roadmap is [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md).
+Current stage: **pre-1.0, actively implemented**. The Rust core (`orchest`) and the shared protocol spine (`orchest-protocol`) are built out, alongside weight-tier provider crates (`orchest-provider-http`/`-stream`/`-visual`, covering LLM, ASR, TTS, and image/video AIGC) behind the `orchest-provider` registry wall. Design docs under `docs/` remain the authoritative implementation contract; code lives in `crates/`, `examples/`, and `skills/` per the Rust Project Conventions below. The living roadmap is [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md).
 
 ---
 
@@ -76,7 +76,7 @@ The following decisions are settled. Do not propose alternatives without a compe
 - **Streaming output is a first-class concern** — not optional; model adapters use the unified `ModelAdapter::complete()` contract with streaming events delivered through the optional event channel, and `stream_chat()` is the convenience helper
 - **Sequential tool execution in v0.1** — keeps the approval gate simple; parallelism is a v0.2 optimization
 - **No sandbox until v0.3+** — but v0.3 must complete the `ScriptExecutor` trait abstraction and `capabilities` declaration
-- **Provider crates are independent satellites** — each modality (LLM, AIGC image/video, ASR, TTS) is its own crate depending on `agent-runtime-model`, not on `orchest`. Cross-modality consolidation (driven by omni / end-to-end speech models, and Chameleon-style image-out LLMs) is a **known future direction, not yet decided** — tracked in [`docs/todo/provider-unification.md`](./docs/todo/provider-unification.md). Do not merge provider crates ahead of that refactor, and do not assume the current single-modality split is permanent.
+- **Provider crates are organized by wire-dialect weight, not by modality** (v0.9.12 Provider Unification, see [`docs/adr/0001-provider-unification.md`](./docs/adr/0001-provider-unification.md)) — `orchest-provider-http` (REST/SSE), `orchest-provider-stream` (WebSocket), `orchest-provider-visual` (signed/polled gen), each depending on `orchest-protocol` + `orchest-provider-core`, never on `orchest`. Consumers select providers only through the `orchest-provider` umbrella wall by capability query or identity pick — impl crates and wire dialects are never named outside it. Do not reintroduce a per-modality crate split (LLM/ASR/TTS/AIGC each as their own crate) — that was the pre-v0.9.12 architecture and was deliberately dissolved.
 
 ---
 
@@ -115,21 +115,22 @@ Polaris documents record **constraints that do not change across iterations**. E
 ```
 Cargo.toml                       # workspace root — no business logic here
 crates/
-  orchest/            # pure Rust core: run loop, tools, skills, sessions, guardrails, hooks — no FFI
-  agent-runtime-model/           # shared model-layer types: Message, ContentBlock, Role, RequestOptions, ModelAdapter
-  agent-runtime-providers/       # LLM provider adapters: anthropic, openai, deepseek, openrouter, volcengine (+ minimax in v0.9.10)
-  agent-runtime-aigc-providers/  # image + video generation gateway + asset persistence (+ music submodule in v0.9.10)
-  agent-runtime-asr-providers/   # speech-to-text providers (volcengine, aliyun) — duplex streaming
-  agent-runtime-tts-providers/   # text-to-speech + voice management providers (volcengine, aliyun; + minimax in v0.9.10)
-  orchest-py/              # PyO3 binding — no business logic
-  orchest-node/            # napi-rs binding — no business logic
+  orchest/                # pure Rust core: run loop, tools, skills, sessions, guardrails, hooks — no FFI
+  orchest-protocol/       # unified protocol spine: adapter traits, capability descriptor, streaming/error model
+  orchest-provider-core/  # shared L0/L1 building blocks: HTTP client, auth strategies, OSS, SSE, WS, telemetry, pricing
+  orchest-provider-http/  # REST/SSE tier: LLM (anthropic, openai, deepseek, openrouter, volcengine, minimax) + one-shot ASR
+  orchest-provider-stream/# WebSocket tier: streaming ASR/TTS dialects + omni realtime (openspeech, minimax-ws)
+  orchest-provider-visual/# signed/polled gen tier: image + video generation (aliyun, volcengine, crazyrouter, renderful, minimax)
+  orchest-provider/       # umbrella facade + registry — the only provider surface consumers depend on
+  orchest-py/             # PyO3 binding — no business logic
+  orchest-node/           # napi-rs binding — no business logic
 examples/
 skills/                          # example skills
 ```
 
-Each satellite crate keeps its own `src/` layout (e.g. `providers/<vendor>/`, `catalog`, `gateway`, `storage`); see the crate's `lib.rs` for its module map.
+Each provider-tier crate keeps its own `src/` layout (e.g. `asr/<vendor>/`, `tts/<vendor>/`, `gen/<vendor>/`, `catalog`); see the crate's `lib.rs` for its module map.
 
-**Rule:** Runtime business logic lives in `orchest`; shared model types live in `agent-runtime-model`; provider adapters live in their respective satellite crates (each depends on `agent-runtime-model`, not on `orchest`). Binding crates only do type conversion and FFI glue — no business decisions.
+**Rule:** Runtime business logic lives in `orchest`; the shared protocol/capability contract lives in `orchest-protocol`; provider adapters live in their respective weight-tier crates (`orchest-provider-http`/`-stream`/`-visual`, each depending on `orchest-protocol` + `orchest-provider-core`, never on `orchest`). Consumers (`orchest`, `orchest-py`, `orchest-node`) only depend on `orchest-protocol` + `orchest-provider` — impl crates and wire dialects are never named outside the wall. Binding crates only do type conversion and FFI glue — no business decisions.
 
 ### Dependencies
 

@@ -38,7 +38,7 @@ v0.9.12（Provider 统一）把 provider 层全部迁到 `orchest-*` 命名（`o
 ## 不在范围内
 
 - provider 层命名（v0.9.12 已完成，不动）
-- `AGENTS.md`/`README.md`/`docs/guide/quickstart.md`/`docs/polaris/observability.md` 里残留的、指向已在 v0.9.12 删除的旧 provider crate（`agent-runtime-model`/`agent-runtime-providers`/`agent-runtime-{aigc,asr,tts,realtime}-providers`）的过期引用——这是 v0.9.12 收尾时文档没跟上的独立问题，建议另开工单处理，不在本次改名范围内
+- ~~`AGENTS.md`/`README.md`/`docs/guide/quickstart.md`/`docs/polaris/observability.md` 里残留的、指向已在 v0.9.12 删除的旧 provider crate（`agent-runtime-model`/`agent-runtime-providers`/`agent-runtime-{aigc,asr,tts,realtime}-providers`）的过期引用——这是 v0.9.12 收尾时文档没跟上的独立问题~~（作为本迭代的追加提交一并修完，见下方"追加：v0.9.12 文档债清偿"）
 - 发布准备（crates.io / PyPI / npm 正式发布）——两个 SDK 包仍是 0.1.0 未发布状态，不受影响
 - `docs/archive/**` 下的历史迭代记录——保持原样，不做回溯性改名（会破坏历史记录的准确性）
 
@@ -60,3 +60,17 @@ v0.9.12（Provider 统一）把 provider 层全部迁到 `orchest-*` 命名（`o
 ## 依赖
 
 - v0.9.12（Provider 统一）已完成，本迭代是其 ADR revisit 项的收尾
+
+## 追加：v0.9.12 文档债清偿
+
+原本列在"不在范围内"、建议另开工单的 v0.9.12 文档滞后问题，实际在本迭代内一并处理了：
+
+- `AGENTS.md`：workspace structure 代码块、"Locked Design Decisions" 里过期的 provider 独立 crate 规则、开头的 stage 描述，全部改为反映当前的 weight-tier 架构（`orchest-protocol` + `orchest-provider-core` + `-http`/`-stream`/`-visual` + `orchest-provider` 墙）
+- `README.md`：workspace structure 代码块同步
+- `docs/guide/quickstart.md`：Cargo 依赖片段与 provider 构造代码改为 `orchest-provider`/`orchest_provider::create_adapter_from_config`（与 `examples/rust/basic_agent_run.rs` 实际代码保持一致）
+- `docs/polaris/observability.md`：两处 `agent-runtime-providers` 引用改为 `orchest-provider`
+- `examples/rust/providers/{deepseek,openrouter}.rs`：doc comment 里的 `cargo run -p agent-runtime-providers` 改为 `cargo run -p orchest`（examples 实际注册在 `orchest` 的 `[[example]]`，不是旧 provider crate）
+- `docs/iteration/v0_10/prd.md`（规划中、未执行）：`AsrProvider`/`TtsProvider`/`agent-runtime-aigc-providers` 等过期 trait/crate 名改为当前的 `Asr`/`Tts`/`VoiceManager` trait + `orchest-provider-visual`
+- `docs/iteration/v0_10/issues/005-multimedia-ingestion-audio-output.md`：`FakeAsrProvider`/`FakeTtsProvider` 的"pre-seeded finding"经核实后，实际测试替身已变成 `crates/orchest-provider/tests/selection.rs` 里私有的 `FakeChat`/`FakeAsr`，且当前没有 `FakeTtsProvider` 对应物——标注为"需在 v0.10 开工前重新核实"，而不是直接改名字了事
+
+`docs/adr/0001-provider-unification.md` 的 Context 段落（描述 v0.9.12 之前"五个 crate 按模态拆分"的旧状态）和 `docs/iteration/roadmap.md` 的"已完成"历史行（描述每个迭代当时交付了什么）**不改**——那是准确的历史记录，不是过期的当前状态声明。
