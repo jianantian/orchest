@@ -69,13 +69,13 @@ v0.10 至少验证一个轻量 reviewer sub-agent 或 handoff 路径（Agent-as-
 
 Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格的长运行 Supervised Delegation 是 Multivac M2 产品层的验证场景，不进 v0.11。
 
-**依赖**：v0.10 完成（验证报告中的 SD 摩擦点）、v0.9.5 Control-Flow Hardening、v0.9.4 Failure Semantics
+**依赖**：v0.10 完成（[验证报告](../review/v0_10_demo_validation.md)中的 SD 摩擦点）、v0.9.5 Control-Flow Hardening、v0.9.4 Failure Semantics
 
 ### v1.0 — 首次公开发布（规划）
 
 第一个公开发布到 crates.io 的版本。包含发布准备的全部内容：Cargo publish 元数据、license 定稿、release workflow、CHANGELOG、版本号策略文档。
 
-**依赖**：v0.11 Demo B 完成（Supervised Delegation API 经产品验证后才冻结公开 API）
+**依赖**：v0.11 Demo B 完成（Supervised Delegation API 经产品验证后才冻结公开 API）。发布前必须清偿两份验证报告各自的 release blocker 清单：[v0.10 Demo A 验证报告](../review/v0_10_demo_validation.md)（多模态图片输入无公开 API、ASR/TTS fake provider 缺失、`AgentRun::resume` 静默风险等 5 项）与 v0.11 Demo B 的 Seam Gap Analysis 报告（届时补链接）。v0.10 报告明确指出：未完成 live provider 验证前，不得仅凭该报告推进 v1.0。
 
 ### 依赖图
 
