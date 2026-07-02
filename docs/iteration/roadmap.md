@@ -75,7 +75,7 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
 
 第一个公开发布到 crates.io 的版本。包含发布准备的全部内容：Cargo publish 元数据、license 定稿、release workflow、CHANGELOG、版本号策略文档。
 
-**依赖**：v0.11 Demo B 完成（Supervised Delegation API 经产品验证后才冻结公开 API）。发布前必须清偿两份验证报告各自的 release blocker 清单：[v0.10 Demo A 验证报告](../review/v0_10_demo_validation.md)（多模态图片输入无公开 API、ASR/TTS fake provider 缺失、`AgentRun::resume` 静默风险等 5 项）与 v0.11 Demo B 的 Seam Gap Analysis 报告（届时补链接）。v0.10 报告明确指出：未完成 live provider 验证前，不得仅凭该报告推进 v1.0。
+**依赖**：v0.11 Demo B 完成（Supervised Delegation API 经产品验证后才冻结公开 API）。发布前必须清偿两份验证报告各自的 release blocker 清单：[v0.10 Demo A 验证报告](../review/v0_10_demo_validation.md)（5 项，各有独立追踪 issue，验收标准要求修复后重跑 Briefing Desk demo 验证：[#195](https://github.com/jianantian/orchest/issues/195) 多模态图片输入无公开 API、[#196](https://github.com/jianantian/orchest/issues/196) ASR/TTS fake provider 缺失、[#197](https://github.com/jianantian/orchest/issues/197) `AgentRun::resume` 无 input 参数、[#198](https://github.com/jianantian/orchest/issues/198) 反序列化 `AgentConfig` 静默丢失 session 持久化、[#199](https://github.com/jianantian/orchest/issues/199) `SubAgentBuilder::build()` panic）与 v0.11 Demo B 的 Seam Gap Analysis 报告（届时补链接）。v0.10 报告明确指出：未完成 live provider 验证前，不得仅凭该报告推进 v1.0。
 
 ### 依赖图
 

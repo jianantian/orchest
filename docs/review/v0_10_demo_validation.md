@@ -214,18 +214,30 @@ None found in `examples/demo/briefing-desk` itself at time of writing — all
 
 ## Triage
 
-| # | Finding | Category | Triage | Why |
-|---|---|---|---|---|
-| 1 | No public API path to real multimodal image input | Modality gateway friction | **Release blocker** | The gateway is unusable from application code without a core-API change — directly meets the PRD's own triage rule ("release blocker if the gateway is unusable from application code without workarounds, because v1.0 freezes those public APIs"). |
-| 2 | No reusable fake `Asr`/`Tts` in the workspace | Modality gateway friction | **Release blocker** | Same PRD rule: "missing fake provider hook" is explicitly named as a release-blocker-eligible finding. Both gateways otherwise work; only the *fake* path was unreachable pre-demo. |
-| 3 | `AgentRun::resume` has no input parameter, silent-wrong-behavior risk | API friction | **Release blocker** | Silent-wrong-behavior (not silent no-op) footguns in a freezing public API are exactly what pre-1.0 validation exists to catch. |
-| 4 | Deserialized `AgentConfig` silently drops session persistence | API friction | **Release blocker** | Same class as #3: silent data-loss shape, not merely confusing. |
-| 5 | `SubAgentBuilder::build()` panics instead of `Result` | API friction | **Release blocker** | Inconsistent with the rest of the builder surface; panics from application-level misuse are a worse failure mode than the `Result` used everywhere else. |
-| 6 | `ContextMode` re-export depth | API friction | Post-1.0 backlog | Cosmetic, one-line fix, does not affect correctness or safety. |
-| 7 | ASR/TTS construction idiom differs from chat's convenience function | API friction | Post-1.0 backlog | Works correctly once found; ergonomics-only. |
-| 8 | TTS empty `http`-tier registry, no compile-time signal | Modality gateway friction | Post-1.0 backlog | Matches the provider crate's own "filled in later" comment; not introduced by this iteration, and the `tts` feature alias already routes around it correctly. |
-| 9 | `quickstart.md` pointers lack prose for resume/Agent-as-Tool gotchas | Documentation friction | Post-1.0 backlog | Nice-to-have; the example files themselves are correct, just under-narrated. |
-| 10 | `AgentRun::resume` doc comment omits the input-parameter gotcha | Documentation friction | **Release blocker** (paired with #3) | The doc fix *is* the fix for #3 in the cheapest case — if the API shape doesn't change before v1.0, the doc comment must, at minimum. |
+| # | Finding | Category | Triage | Tracking | Why |
+|---|---|---|---|---|---|
+| 1 | No public API path to real multimodal image input | Modality gateway friction | **Release blocker** | [#195](https://github.com/jianantian/orchest/issues/195) | The gateway is unusable from application code without a core-API change — directly meets the PRD's own triage rule ("release blocker if the gateway is unusable from application code without workarounds, because v1.0 freezes those public APIs"). |
+| 2 | No reusable fake `Asr`/`Tts` in the workspace | Modality gateway friction | **Release blocker** | [#196](https://github.com/jianantian/orchest/issues/196) | Same PRD rule: "missing fake provider hook" is explicitly named as a release-blocker-eligible finding. Both gateways otherwise work; only the *fake* path was unreachable pre-demo. |
+| 3 | `AgentRun::resume` has no input parameter, silent-wrong-behavior risk | API friction | **Release blocker** | [#197](https://github.com/jianantian/orchest/issues/197) | Silent-wrong-behavior (not silent no-op) footguns in a freezing public API are exactly what pre-1.0 validation exists to catch. |
+| 4 | Deserialized `AgentConfig` silently drops session persistence | API friction | **Release blocker** | [#198](https://github.com/jianantian/orchest/issues/198) | Same class as #3: silent data-loss shape, not merely confusing. |
+| 5 | `SubAgentBuilder::build()` panics instead of `Result` | API friction | **Release blocker** | [#199](https://github.com/jianantian/orchest/issues/199) | Inconsistent with the rest of the builder surface; panics from application-level misuse are a worse failure mode than the `Result` used everywhere else. |
+| 6 | `ContextMode` re-export depth | API friction | Post-1.0 backlog | — | Cosmetic, one-line fix, does not affect correctness or safety. |
+| 7 | ASR/TTS construction idiom differs from chat's convenience function | API friction | Post-1.0 backlog | — | Works correctly once found; ergonomics-only. |
+| 8 | TTS empty `http`-tier registry, no compile-time signal | Modality gateway friction | Post-1.0 backlog | — | Matches the provider crate's own "filled in later" comment; not introduced by this iteration, and the `tts` feature alias already routes around it correctly. |
+| 9 | `quickstart.md` pointers lack prose for resume/Agent-as-Tool gotchas | Documentation friction | Post-1.0 backlog | — | Nice-to-have; the example files themselves are correct, just under-narrated. |
+| 10 | `AgentRun::resume` doc comment omits the input-parameter gotcha | Documentation friction | **Release blocker** (paired with #3) | [#197](https://github.com/jianantian/orchest/issues/197) | The doc fix *is* the fix for #3 in the cheapest case — if the API shape doesn't change before v1.0, the doc comment must, at minimum. |
+
+Each release-blocker row has a tracking issue, labeled `release-blocker`, whose
+acceptance criteria require re-running Briefing Desk (`cargo test -p
+briefing-desk-demo` and/or a manual `--fake`/live run, as applicable) after
+the fix and posting the output before the issue can close — so "the code
+changed" and "the finding is verified fixed" stay distinct, checkable states
+instead of collapsing into one merge. See
+[#195](https://github.com/jianantian/orchest/issues/195),
+[#196](https://github.com/jianantian/orchest/issues/196),
+[#197](https://github.com/jianantian/orchest/issues/197),
+[#198](https://github.com/jianantian/orchest/issues/198),
+[#199](https://github.com/jianantian/orchest/issues/199).
 
 Demo blockers (issues that would have prevented Briefing Desk itself from
 working, fixed inline during issues 001-005 rather than carried forward):
@@ -242,16 +254,20 @@ backlog:
 1. Add a small, deliberate public API surface for seeding a run with
    multimodal content — e.g. an `AgentRun::start`-equivalent accepting
    `Vec<ContentBlock>`/`Vec<Message>`, or narrowly publicizing the relevant
-   slice of `start_with_bus`. (Finding #1)
+   slice of `start_with_bus`. (Finding #1 —
+   [#195](https://github.com/jianantian/orchest/issues/195))
 2. Either ship a reusable fake `Asr`/`Tts` (e.g. a `orchest-provider`
    `testing` feature or module) or explicitly document that downstream
-   crates are expected to write their own, as this demo did. (Finding #2)
+   crates are expected to write their own, as this demo did. (Finding #2 —
+   [#196](https://github.com/jianantian/orchest/issues/196))
 3. Give `AgentRun::resume` either a way to append new input directly, or —
    at minimum — a prominent doc comment describing the manual-append
    requirement and the silent-no-persistence-if-forgotten gotcha. (Findings
-   #3, #4, #10)
+   #3, #4, #10 — [#197](https://github.com/jianantian/orchest/issues/197),
+   [#198](https://github.com/jianantian/orchest/issues/198))
 4. Change `SubAgentBuilder::build()` to return `Result` for consistency with
-   the rest of the builder-pattern surface. (Finding #5)
+   the rest of the builder-pattern surface. (Finding #5 —
+   [#199](https://github.com/jianantian/orchest/issues/199))
 
 None of these require new provider adapters or new runtime concepts — all
 four are narrow, targeted fixes to existing public surface, consistent with
