@@ -10,10 +10,13 @@ path = "src/main.rs"
 
 [dependencies]
 orchest = { path = "../../../crates/orchest", features = ["sqlite-session"] }
+orchest-protocol = { path = "../../../crates/orchest-protocol" }
+orchest-provider = { path = "../../../crates/orchest-provider", features = ["asr", "tts"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
+bytes = "1"
 
 [dev-dependencies]
 tempfile = "3"

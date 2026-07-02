@@ -7,17 +7,15 @@ exists: the goal is to dogfood the runtime's public API and the ASR/TTS/vision
 provider gateways through one small, real product before v1.0 freezes those
 surfaces.
 
-> **Status**: this issue (001) only defines the product spec and fixture corpus.
-> No runtime code exists yet — the CLI, tools, and provider wiring land in
-> issues 002-005. Running `cargo run` here does nothing until then.
-
 ## What it does
 
 Given a directory of mixed research materials and a question, Briefing Desk:
 
-1. Transcribes any recorded audio interviews in the corpus (ASR).
-2. Reads any chart/screenshot images in the corpus through a vision-capable model
-   (multimodal image input).
+1. Transcribes any recorded audio interviews in the corpus via ASR
+   (`orchest_protocol::Asr`, real or fake).
+2. Describes any chart/screenshot images in the corpus. This is a fixed
+   placeholder, not real vision-model input — see "Vision is not real" below
+   for why, and `docs/iteration/v0_10/validation-notes.md` for the finding.
 3. Searches and reads the plain-text/Markdown materials.
 4. Streams progress events to stdout as it works across all of the above.
 5. Asks for approval before writing the final Markdown brief.
@@ -56,16 +54,22 @@ for how findings during implementation get classified.
 
 ### What the agent must extract (checkable)
 
-- **From `chart.png`** (vision path): the three retention values by quarter —
-  38%, 40%, 42% — and that the trend is upward. This chart's Q3 number (42%)
-  matches `001`, not the conflicting 35% figure in `002`; the brief should use the
-  chart to help identify which written source it corroborates.
-- **From `interview.wav`** (ASR path): the interviewee's answer to "What would
-  happen if Loom disappeared tomorrow?" — a specific line about the team reverting
-  to spreadsheets and losing about two hours a day, described as "the real return
-  on investment nobody puts in a slide deck." This line exists **only** in the
-  audio; `005-interview-followup-notes.md` explicitly avoids repeating it verbatim
-  so the ASR path is not optional for producing a correct brief.
+- **From `chart.png`** (`describe_image` tool — see "Vision is not real"
+  below): the three retention values by quarter — 38%, 40%, 42% — and that
+  the trend is upward. This chart's Q3 number (42%) matches `001`, not the
+  conflicting 35% figure in `002`; the brief should use the chart to help
+  identify which written source it corroborates. Today this is a hardcoded
+  description, not a real read of the pixels, because no live counterpart is
+  possible yet (see below) — but the fixed text still asserts these specific
+  numbers, so the "does the brief cite the chart's numbers" check is real.
+- **From `interview.wav`** (`transcribe_audio` tool, real `Asr` trait,
+  fake or live): the interviewee's answer to "What would happen if Loom
+  disappeared tomorrow?" — a specific line about the team reverting to
+  spreadsheets and losing about two hours a day, described as "the real
+  return on investment nobody puts in a slide deck." This line exists
+  **only** in the audio; `005-interview-followup-notes.md` explicitly avoids
+  repeating it verbatim so the ASR path is not optional for producing a
+  correct brief.
 
 ## Regenerating media fixtures
 
@@ -108,22 +112,32 @@ cargo run -p briefing-desk-demo -- run \
   --fake
 ```
 
-This exercises the full pipeline offline: materials discovery, a fake ASR
-transcript per audio source, a fake vision description per image, a real
-`search_fixtures` -> `read_fixture` -> `review_report` -> `write_report` tool
-sequence against the text corpus, and a fake TTS audio file for whatever
-report got written (add `--no-tts` to skip that last step).
+This exercises the full pipeline offline, in order: `search_fixtures` ->
+`read_fixture` -> `transcribe_audio` -> `describe_image` -> `review_report`
+-> `write_report` -> `synthesize_brief`. `transcribe_audio`/`describe_image`
+only run if the corpus actually has audio/image sources (tool not registered
+otherwise); `synthesize_brief` only runs unless `--no-tts`. Each step's
+input is built from the real output of the steps before it — e.g. the ASR
+transcript and the image description both get folded into the draft that
+`review_report` and `write_report` see, so "the transcript feeds the brief"
+is literally true and checked in `tests/smoke.rs`, not just claimed.
 
 `review_report` is a lightweight reviewer sub-agent wired in through
 `AgentConfig::as_tool` (Agent-as-Tool, `ContextMode::Fresh` — the reviewer
 never sees the parent's conversation, only the draft it's asked to check).
 Its verdict is forwarded to the parent's event stream (`[reviewer] ...` lines)
-and gets appended into the written report. `write_report` requires approval —
-auto-approved unless `BRIEFING_DESK_FAKE_DENY_APPROVAL` is set, which
-exercises the deny path instead and leaves no report or audio file.
+and gets appended into the written report.
+
+`write_report` and `synthesize_brief` each independently require approval —
+auto-approved unless `BRIEFING_DESK_FAKE_DENY_APPROVAL` (for the write) or
+`BRIEFING_DESK_FAKE_DENY_TTS_APPROVAL` (for the synthesis) is set, so
+"write approved, TTS denied" and "write denied" are both independently
+testable. A denied `write_report` also skips `synthesize_brief` entirely —
+there is nothing to synthesize.
 
 `cargo test -p briefing-desk-demo` runs all of the above as automated smoke
-tests.
+tests, using `FakeAsr`/`FakeTts` (real `orchest_protocol::{Asr, Tts}` impls,
+deterministic, no network).
 
 ### Session persistence and resume
 
@@ -158,5 +172,45 @@ to make the context-preservation checkable.
 
 ### Live provider run
 
-Not yet available. Live model/ASR/TTS wiring lands in issue 005
-([#192](https://github.com/jianantian/orchest/issues/192)).
+ASR and TTS each have an independent, env-var-gated live path — set all three
+of a modality's variables to use a real provider from the
+`orchest_provider::Registry` instead of the fake:
+
+```bash
+# ASR: real transcription instead of FakeAsr
+export BRIEFING_DESK_ASR_PROVIDER=volcengine
+export BRIEFING_DESK_ASR_MODEL=<model id>
+export BRIEFING_DESK_ASR_API_KEY=<key>
+
+# TTS: real synthesis instead of FakeTts
+export BRIEFING_DESK_TTS_PROVIDER=volcengine
+export BRIEFING_DESK_TTS_MODEL=<model id>
+export BRIEFING_DESK_TTS_API_KEY=<key>
+
+cargo run -p briefing-desk-demo -- run \
+  --materials fixtures/research \
+  --question "Is Loom worth continued investment in Q4?" \
+  --output /tmp/brief.md \
+  --fake
+```
+
+`--fake` is still required — it governs the chat model only (still
+`FakeModel`; no v0.10 issue wires a live chat provider into this CLI). ASR
+and TTS liveness is controlled purely by the env vars above, independent of
+`--fake`. This path is manual and untested by CI (no credentials/network in
+this repo's test environment) — run it yourself and record the outcome
+(provider, model, date, result) in the v0.10 validation report.
+
+### Vision is not real
+
+`describe_image` always returns a fixed, hardcoded description, in both
+`--fake` and live mode — there is no live counterpart to flip on. Real
+`ContentBlock::Image` input needs a way to seed a run's message history with
+an image, but the only public entry point, `AgentRun::start`, takes a plain
+`String`, and the method that does accept `Vec<Message>`
+(`AgentRun::start_with_bus`) is `pub(crate)`; a tool can't inject an image
+into the next model turn either, since `ToolResult.content` is hard-typed
+`serde_json::Value`. There is currently no public Orchest API path to real
+vision-through-agent-loop at all. Recorded as a release-blocker finding in
+[`docs/iteration/v0_10/validation-notes.md`](../../../docs/iteration/v0_10/validation-notes.md)
+rather than worked around by adding new surface to `orchest` itself.

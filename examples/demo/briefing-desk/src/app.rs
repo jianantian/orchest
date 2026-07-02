@@ -14,15 +14,49 @@ use orchest::tool::registry::ToolRegistry;
 use orchest::tool::ToolError;
 
 use crate::fake_model::{FakeModel, ReviewerFakeModel};
-use crate::media;
+use crate::media::{
+    self, DescribeImageTool, FakeAsr, FakeTts, SynthesizeBriefTool, TranscribeAudioTool,
+};
 use crate::tools::{ReadFixtureTool, SearchFixturesTool, WriteReportTool};
 
 pub type DemoError = Box<dyn std::error::Error + Send + Sync>;
 
 /// Set (to any value) in `--fake` mode to make the approval loop auto-deny
-/// instead of auto-approve the report write, so both paths are testable from
-/// the CLI without an interactive prompt. Not consulted in live mode.
+/// `write_report` instead of auto-approving it, so both paths are testable
+/// from the CLI without an interactive prompt. Not consulted in live mode.
 const FAKE_DENY_APPROVAL_ENV: &str = "BRIEFING_DESK_FAKE_DENY_APPROVAL";
+
+/// Same idea as `FAKE_DENY_APPROVAL_ENV`, scoped to `synthesize_brief`
+/// specifically, so "write approved, TTS denied" is independently testable.
+const FAKE_DENY_TTS_APPROVAL_ENV: &str = "BRIEFING_DESK_FAKE_DENY_TTS_APPROVAL";
+
+/// If set (along with `_MODEL` and `_API_KEY`), `run` constructs a real ASR
+/// provider via the registry instead of `FakeAsr`. Manual/env-var-gated per
+/// the PRD — not exercised by any automated test in this repo.
+const LIVE_ASR_PROVIDER_ENV: &str = "BRIEFING_DESK_ASR_PROVIDER";
+const LIVE_ASR_MODEL_ENV: &str = "BRIEFING_DESK_ASR_MODEL";
+const LIVE_ASR_API_KEY_ENV: &str = "BRIEFING_DESK_ASR_API_KEY";
+
+/// Same idea as the `LIVE_ASR_*` triplet, for TTS.
+const LIVE_TTS_PROVIDER_ENV: &str = "BRIEFING_DESK_TTS_PROVIDER";
+const LIVE_TTS_MODEL_ENV: &str = "BRIEFING_DESK_TTS_MODEL";
+const LIVE_TTS_API_KEY_ENV: &str = "BRIEFING_DESK_TTS_API_KEY";
+
+fn live_asr_env() -> Option<(String, String, String)> {
+    Some((
+        std::env::var(LIVE_ASR_PROVIDER_ENV).ok()?,
+        std::env::var(LIVE_ASR_MODEL_ENV).ok()?,
+        std::env::var(LIVE_ASR_API_KEY_ENV).ok()?,
+    ))
+}
+
+fn live_tts_env() -> Option<(String, String, String)> {
+    Some((
+        std::env::var(LIVE_TTS_PROVIDER_ENV).ok()?,
+        std::env::var(LIVE_TTS_MODEL_ENV).ok()?,
+        std::env::var(LIVE_TTS_API_KEY_ENV).ok()?,
+    ))
+}
 
 /// Sessions persist under `.briefing-desk-sessions/<session-id>.sqlite3`,
 /// relative to the current working directory, so `run --session X` and a
@@ -76,13 +110,6 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
         args.materials.display()
     );
 
-    for audio in &corpus.audio {
-        println!("[transcribe] {}", media::fake_transcribe(audio));
-    }
-    for image in &corpus.images {
-        println!("[vision] {}", media::fake_read_image(image));
-    }
-
     let text_entries: Vec<(PathBuf, String)> = corpus
         .text
         .iter()
@@ -97,12 +124,43 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
     registry.register(Arc::new(SearchFixturesTool::new(text_entries)))?;
     registry.register(Arc::new(ReadFixtureTool::new(corpus.text.clone())))?;
     registry.register(reviewer_tool())?;
+
+    if !corpus.audio.is_empty() {
+        let asr = match live_asr_env() {
+            Some((provider, model, key)) => {
+                println!("[asr] live provider={provider} model={model}");
+                media::live_asr(&provider, &model, &key)?
+            }
+            None => Box::new(FakeAsr),
+        };
+        registry.register(Arc::new(TranscribeAudioTool::new(
+            corpus.audio.clone(),
+            asr,
+        )))?;
+    }
+    if !corpus.images.is_empty() {
+        registry.register(Arc::new(DescribeImageTool::new(corpus.images.clone())))?;
+    }
+
     registry.register(Arc::new(WriteReportTool::new(args.output.clone())))?;
 
+    if !args.no_tts {
+        let tts = match live_tts_env() {
+            Some((provider, model, key)) => {
+                println!("[tts] live provider={provider} model={model}");
+                media::live_tts(&provider, &model, &key)?
+            }
+            None => Box::new(FakeTts),
+        };
+        let audio_path = args.output.with_extension("wav");
+        registry.register(Arc::new(SynthesizeBriefTool::new(audio_path, tts)))?;
+    }
+
     let mut builder = AgentConfig::builder("fake/fake").system_prompt(
-        "You are Briefing Desk, a research-brief assistant. Search the materials, \
-         read the most relevant one, have review_report check your draft, then \
-         call write_report.",
+        "You are Briefing Desk, a research-brief assistant. Search the materials, read the \
+         most relevant one, transcribe any audio source and describe any image source if \
+         those tools are available, have review_report check your draft, then call \
+         write_report. If synthesize_brief is available, call it last.",
     );
 
     if let Some(id) = &args.session {
@@ -114,14 +172,15 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
     }
 
     let config = builder
-        .max_steps(8)
+        .max_steps(10)
         .build()
         .map_err(|e| format!("building agent config: {e}"))?;
 
-    let auto_deny = std::env::var_os(FAKE_DENY_APPROVAL_ENV).is_some();
+    let deny_write = std::env::var_os(FAKE_DENY_APPROVAL_ENV).is_some();
+    let deny_tts = std::env::var_os(FAKE_DENY_TTS_APPROVAL_ENV).is_some();
     let (handle, rx) =
         AgentRun::start(config, args.question.clone(), Arc::new(FakeModel), registry);
-    let brief = drain_events(handle, rx, auto_deny).await?;
+    let brief = drain_events(handle, rx, deny_write, deny_tts).await?;
     println!("[done] final message: {brief}");
 
     if args.output.exists() {
@@ -130,17 +189,16 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
         println!("[report] not written (denied, or the agent chose not to write)");
     }
 
+    let audio_path = args.output.with_extension("wav");
     if args.no_tts {
         println!("[synthesize] skipped (--no-tts)");
-    } else if args.output.exists() {
-        let audio_path = args.output.with_extension("wav");
-        media::fake_synthesize(&brief, &audio_path)?;
+    } else if audio_path.exists() {
         println!(
             "[synthesize] audio brief written to {}",
             audio_path.display()
         );
     } else {
-        println!("[synthesize] skipped (no report was written)");
+        println!("[synthesize] skipped (no report was written, or TTS approval was denied)");
     }
 
     Ok(())
@@ -178,9 +236,8 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
         .active_config
         .with_session_store(Arc::clone(&store), args.session.clone());
 
-    let auto_deny = std::env::var_os(FAKE_DENY_APPROVAL_ENV).is_some();
     let (handle, rx) = AgentRun::resume(snapshot, Arc::new(FakeModel), ToolRegistry::new());
-    let answer = drain_events(handle, rx, auto_deny).await?;
+    let answer = drain_events(handle, rx, false, false).await?;
     println!("[done] follow-up answer: {answer}");
 
     std::fs::write(&args.output, &answer)
@@ -190,11 +247,31 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
         args.output.display()
     );
 
+    // Resume has no registered tools (it answers directly from persisted
+    // history, see fake_model.rs), so TTS runs as a direct capability call
+    // here rather than through synthesize_brief.
     if args.no_tts {
         println!("[synthesize] skipped (--no-tts)");
     } else {
+        let tts: Box<dyn orchest_protocol::Tts> = match live_tts_env() {
+            Some((provider, model, key)) => {
+                println!("[tts] live provider={provider} model={model}");
+                media::live_tts(&provider, &model, &key)?
+            }
+            None => Box::new(FakeTts),
+        };
+        let result = tts
+            .synthesize(orchest_protocol::SynthesizeRequest {
+                text: answer.clone(),
+                voice: None,
+                format: orchest_protocol::AudioFormat::Wav,
+                options: serde_json::Value::Null,
+            })
+            .await
+            .map_err(|e| format!("TTS synthesis failed: {e}"))?;
         let audio_path = args.output.with_extension("wav");
-        media::fake_synthesize(&answer, &audio_path)?;
+        std::fs::write(&audio_path, &result.audio[..])
+            .map_err(|e| format!("writing {}: {e}", audio_path.display()))?;
         println!(
             "[synthesize] audio brief written to {}",
             audio_path.display()
@@ -240,12 +317,13 @@ fn reviewer_tool() -> Arc<dyn orchest::tool::Tool> {
 
 /// Drives an already-started run's event stream to completion: renders
 /// model/tool/approval/sub-agent/run-completion events to stdout, resolves
-/// any `ApprovalRequested` by auto-approving unless `auto_deny`, and returns
-/// the run's final text.
+/// any `ApprovalRequested` by auto-approving unless the relevant `deny_*`
+/// flag is set for that specific tool, and returns the run's final text.
 async fn drain_events(
     handle: RunHandle,
     mut rx: EventReceiver,
-    auto_deny: bool,
+    deny_write: bool,
+    deny_tts: bool,
 ) -> Result<String, DemoError> {
     let mut answer = None;
     while let Some(event) = rx.recv().await {
@@ -266,7 +344,11 @@ async fn drain_events(
                 error.message, error.kind, error.retry, error.code, error.next_step
             ),
             RuntimeEvent::ApprovalRequested { tool_call, .. } => {
-                let decision = !auto_deny;
+                let deny = match tool_call.name.as_str() {
+                    "synthesize_brief" => deny_tts,
+                    _ => deny_write,
+                };
+                let decision = !deny;
                 println!(
                     "[approval] requested for {} -> auto-{}",
                     tool_call.name,

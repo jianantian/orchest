@@ -6,8 +6,16 @@
 //! `examples/rust/resilience/session_persist_resume.rs`.
 //!
 //! [`FakeModel`] drives two deterministic behaviors by inspecting the running
-//! message history, with no internal mutable state:
-//! - **Fresh run**: search -> read -> review -> write, then finalize.
+//! message history and the tools actually registered, with no internal
+//! mutable state:
+//! - **Fresh run**: walks a fixed pipeline — search, read, transcribe_audio
+//!   and describe_image (only if those tools are registered, i.e. the corpus
+//!   actually has audio/image sources), review, write, synthesize_brief
+//!   (only if registered, i.e. not `--no-tts`) — skipping steps whose tool
+//!   isn't registered and stopping the synthesize step if the write was
+//!   denied. Each step's input is built from the *real* results of the steps
+//!   before it (e.g. `read_fixture`'s path comes from parsing
+//!   `search_fixtures`'s actual output).
 //! - **Resumed run with a follow-up question appended**: answer directly,
 //!   quoting a snippet of the original brief pulled out of history, proving
 //!   the resumed context actually carries the prior brief forward.
@@ -15,6 +23,8 @@
 //! [`ReviewerFakeModel`] backs the `review_report` Agent-as-Tool child: it
 //! always returns one canned verdict, ignoring its input (`ContextMode::Fresh`
 //! means it has no parent history to inspect anyway).
+
+use std::collections::HashSet;
 
 use async_trait::async_trait;
 use orchest::model::{
@@ -24,6 +34,19 @@ use orchest::model::{
 use orchest::tool::ToolDef;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
+
+/// Fixed step order. A step only runs if a tool of that name is registered
+/// (search/read/review/write always are; transcribe_audio/describe_image are
+/// corpus-dependent; synthesize_brief is absent under `--no-tts`).
+const PIPELINE: &[&str] = &[
+    "search_fixtures",
+    "read_fixture",
+    "transcribe_audio",
+    "describe_image",
+    "review_report",
+    "write_report",
+    "synthesize_brief",
+];
 
 pub struct FakeModel;
 
@@ -44,11 +67,11 @@ impl ModelAdapter for FakeModel {
     async fn complete(
         &self,
         messages: &[Message],
-        _tools: &[ToolDef],
+        tools: &[ToolDef],
         _options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
-        let content = plan(messages);
+        let content = plan(messages, tools);
         let stop_reason = if matches!(content.first(), Some(ContentBlock::ToolUse { .. })) {
             StopReason::ToolUse
         } else {
@@ -128,28 +151,78 @@ const REVIEW_VERDICT: &str = "Reviewed against the fixture corpus: the retention
 flagged rather than silently resolved; the interview quote is sourced via ASR, not the \
 follow-up-notes paraphrase. Approved.";
 
-fn plan(messages: &[Message]) -> Vec<ContentBlock> {
+fn plan(messages: &[Message], tools: &[ToolDef]) -> Vec<ContentBlock> {
     if let Some(question) = pending_follow_up_question(messages) {
         return vec![ContentBlock::Text(follow_up_answer(&question, messages))];
     }
 
-    match last_completed_tool(messages) {
-        None => vec![search_call()],
-        Some((name, result)) if name == "search_fixtures" => match top_search_hit_path(&result) {
-            Some(path) => vec![read_call(&path)],
-            None => vec![ContentBlock::Text(
-                "search_fixtures returned no results; nothing to read.".into(),
-            )],
-        },
-        Some((name, _)) if name == "read_fixture" => vec![review_call()],
-        Some((name, review_result)) if name == "review_report" => {
-            vec![write_call(&review_result)]
+    let available: HashSet<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+    let completed: HashSet<&str> = completed_tool_names(messages);
+
+    for step in PIPELINE {
+        if !available.contains(step) {
+            continue;
         }
-        Some((name, write_result)) if name == "write_report" => {
-            vec![ContentBlock::Text(final_message(Some(&write_result)))]
+        if *step == "synthesize_brief" && write_was_denied(messages) {
+            continue;
         }
-        Some(_) => vec![ContentBlock::Text("unexpected tool call sequence.".into())],
+        if completed.contains(step) {
+            continue;
+        }
+        return vec![build_call(step, messages, tools)];
     }
+
+    vec![ContentBlock::Text(finalize_message(messages))]
+}
+
+fn build_call(step: &str, messages: &[Message], tools: &[ToolDef]) -> ContentBlock {
+    match step {
+        "search_fixtures" => search_call(),
+        "read_fixture" => {
+            match find_tool_result(messages, "search_fixtures").and_then(top_search_hit_path) {
+                Some(path) => read_call(&path),
+                None => ContentBlock::Text(
+                    "search_fixtures returned no results; nothing to read.".into(),
+                ),
+            }
+        }
+        "transcribe_audio" => ContentBlock::ToolUse {
+            id: "call-transcribe".into(),
+            name: "transcribe_audio".into(),
+            input: json!({"path": default_path_for(tools, "transcribe_audio").unwrap_or_default()}),
+        },
+        "describe_image" => ContentBlock::ToolUse {
+            id: "call-describe".into(),
+            name: "describe_image".into(),
+            input: json!({"path": default_path_for(tools, "describe_image").unwrap_or_default()}),
+        },
+        "review_report" => review_call(&draft_brief(messages)),
+        "write_report" => write_call(&write_content(messages)),
+        "synthesize_brief" => ContentBlock::ToolUse {
+            id: "call-synthesize".into(),
+            name: "synthesize_brief".into(),
+            input: json!({"text": write_content(messages)}),
+        },
+        other => ContentBlock::Text(format!("unknown pipeline step '{other}'")),
+    }
+}
+
+/// Reads the real, discovered corpus path back out of a tool's own input
+/// schema (`properties.path.default`, set by `media.rs` at construction
+/// time from the actual `--materials` directory). The fake model has no
+/// other way to learn where `--materials` pointed — it never sees CLI args,
+/// only `ToolDef`s and message history — so this is how it stays correct
+/// regardless of whether `--materials` was relative or absolute.
+fn default_path_for(tools: &[ToolDef], tool_name: &str) -> Option<String> {
+    tools
+        .iter()
+        .find(|t| t.name == tool_name)?
+        .input_schema
+        .get("properties")?
+        .get("path")?
+        .get("default")?
+        .as_str()
+        .map(str::to_string)
 }
 
 /// True when the *most recent* message is a fresh user question appended
@@ -204,23 +277,50 @@ fn original_brief_snippet(messages: &[Message]) -> Option<String> {
         })
 }
 
-/// The tool name and result content of the most recently *completed* tool
-/// call, found by matching the last `ToolResult` back to its originating
-/// `ToolUse` by id.
-fn last_completed_tool(messages: &[Message]) -> Option<(String, Value)> {
+/// Every tool name that has at least one completed `ToolResult` in history.
+fn completed_tool_names(messages: &[Message]) -> HashSet<&str> {
     let blocks: Vec<&ContentBlock> = messages.iter().flat_map(|m| &m.content).collect();
-    let (tool_use_id, content) = blocks.iter().rev().find_map(|b| match b {
+    let result_ids: HashSet<&str> = blocks
+        .iter()
+        .filter_map(|b| match b {
+            ContentBlock::ToolResult { tool_use_id, .. } => Some(tool_use_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    blocks
+        .iter()
+        .filter_map(|b| match b {
+            ContentBlock::ToolUse { id, name, .. } if result_ids.contains(id.as_str()) => {
+                Some(name.as_str())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The result content of a specific tool's (first) completed call, found by
+/// matching its `ToolUse` id to a `ToolResult`.
+fn find_tool_result<'a>(messages: &'a [Message], name: &str) -> Option<&'a Value> {
+    let blocks: Vec<&ContentBlock> = messages.iter().flat_map(|m| &m.content).collect();
+    let id = blocks.iter().find_map(|b| match b {
+        ContentBlock::ToolUse { id, name: n, .. } if n == name => Some(id.clone()),
+        _ => None,
+    })?;
+    blocks.iter().find_map(|b| match b {
         ContentBlock::ToolResult {
             tool_use_id,
             content,
-        } => Some((tool_use_id.clone(), content.clone())),
+        } if *tool_use_id == id => Some(content),
         _ => None,
-    })?;
-    let name = blocks.iter().find_map(|b| match b {
-        ContentBlock::ToolUse { id, name, .. } if *id == tool_use_id => Some(name.clone()),
-        _ => None,
-    })?;
-    Some((name, content))
+    })
+}
+
+fn write_was_denied(messages: &[Message]) -> bool {
+    find_tool_result(messages, "write_report")
+        .and_then(|v| v.get("error"))
+        .and_then(|e| e.get("code"))
+        .and_then(Value::as_str)
+        == Some("APPROVAL_DENIED")
 }
 
 fn search_call() -> ContentBlock {
@@ -239,20 +339,15 @@ fn read_call(path: &str) -> ContentBlock {
     }
 }
 
-fn review_call() -> ContentBlock {
+fn review_call(draft: &str) -> ContentBlock {
     ContentBlock::ToolUse {
         id: "call-review".into(),
         name: "review_report".into(),
-        input: json!({"draft": FAKE_BRIEF}),
+        input: json!({"draft": draft}),
     }
 }
 
-fn write_call(review_result: &Value) -> ContentBlock {
-    let verdict = review_result
-        .get("output")
-        .and_then(Value::as_str)
-        .unwrap_or("(no verdict)");
-    let content = format!("{FAKE_BRIEF}\n---\nReviewer note: {verdict}\n");
+fn write_call(content: &str) -> ContentBlock {
     ContentBlock::ToolUse {
         id: "call-write".into(),
         name: "write_report".into(),
@@ -269,23 +364,49 @@ fn top_search_hit_path(search_result: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-fn final_message(write_result: Option<&Value>) -> String {
-    let denied = write_result
-        .and_then(|v| v.get("error"))
-        .and_then(|e| e.get("code"))
+/// Builds the draft brief from the base placeholder plus whatever
+/// transcribe_audio/describe_image results are available so far, so "the
+/// transcript feeds the brief" and "image-derived facts appear in the
+/// brief" are literally true and checkable, not just claimed.
+fn draft_brief(messages: &[Message]) -> String {
+    let mut sections = vec![FAKE_BRIEF.trim().to_string()];
+    if let Some(transcript) = find_tool_result(messages, "transcribe_audio")
+        .and_then(|v| v.get("transcript"))
         .and_then(Value::as_str)
-        == Some("APPROVAL_DENIED");
-    if denied {
+    {
+        sections.push(format!(
+            "\n## Interview transcript (via ASR)\n\n> {transcript}\n"
+        ));
+    }
+    if let Some(description) = find_tool_result(messages, "describe_image")
+        .and_then(|v| v.get("description"))
+        .and_then(Value::as_str)
+    {
+        sections.push(format!(
+            "\n## Chart (via vision placeholder)\n\n{description}\n"
+        ));
+    }
+    sections.join("\n")
+}
+
+fn write_content(messages: &[Message]) -> String {
+    let verdict = find_tool_result(messages, "review_report")
+        .and_then(|v| v.get("output"))
+        .and_then(Value::as_str)
+        .unwrap_or("(no verdict)");
+    format!("{}\n---\nReviewer note: {verdict}\n", draft_brief(messages))
+}
+
+fn finalize_message(messages: &[Message]) -> String {
+    if write_was_denied(messages) {
         "The report was not written because approval was denied.".to_string()
     } else {
         "Report written successfully.".to_string()
     }
 }
 
-/// Deterministic canned brief content passed to `write_report`. Report-shape
-/// compliance (issue 006) and real materials-aware reasoning (issue 005 for
-/// multimedia) are out of scope here — this only needs to exercise the
-/// search -> read -> review -> write -> approval pipeline offline.
+/// Base placeholder brief content. Report-shape compliance (issue 006) is out
+/// of scope here — this only needs to exercise the pipeline offline.
 const FAKE_BRIEF: &str = "\
 # Briefing Desk (fake smoke run)
 

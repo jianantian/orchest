@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 const DENY_APPROVAL_ENV: &str = "BRIEFING_DESK_FAKE_DENY_APPROVAL";
+const DENY_TTS_APPROVAL_ENV: &str = "BRIEFING_DESK_FAKE_DENY_TTS_APPROVAL";
 
 fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_briefing-desk"))
@@ -43,17 +44,20 @@ fn fake_run_search_reads_and_writes_brief_and_audio() {
 
     let stdout = String::from_utf8_lossy(&result.stdout);
     assert!(
-        stdout.contains("[transcribe]"),
-        "missing transcribe step: {stdout}"
-    );
-    assert!(stdout.contains("[vision]"), "missing vision step: {stdout}");
-    assert!(
         stdout.contains("search_fixtures started"),
         "missing search tool call: {stdout}"
     );
     assert!(
         stdout.contains("read_fixture started"),
         "missing read tool call: {stdout}"
+    );
+    assert!(
+        stdout.contains("transcribe_audio started"),
+        "missing ASR tool call: {stdout}"
+    );
+    assert!(
+        stdout.contains("describe_image started"),
+        "missing vision-placeholder tool call: {stdout}"
     );
     assert!(
         stdout.contains("review_report started"),
@@ -76,17 +80,73 @@ fn fake_run_search_reads_and_writes_brief_and_audio() {
         "missing write_report completion: {stdout}"
     );
     assert!(
-        stdout.contains("[synthesize]"),
-        "missing synthesize step: {stdout}"
+        stdout.contains("synthesize_brief started"),
+        "missing TTS tool call: {stdout}"
     );
 
     let brief = std::fs::read_to_string(&output).expect("brief written");
     assert!(!brief.trim().is_empty(), "brief should not be empty");
+    assert!(
+        brief.contains("Honestly? My team would go straight back to spreadsheets"),
+        "brief should include the ASR-transcribed interview quote: {brief}"
+    );
+    assert!(
+        brief.contains("Q1 38%, Q2 40%, Q3 42%"),
+        "brief should include the image-derived chart facts: {brief}"
+    );
 
     let audio = output.with_extension("wav");
     assert!(
         audio.exists(),
         "audio brief should exist by default (no --no-tts)"
+    );
+}
+
+#[test]
+fn fake_run_tts_denied_leaves_report_but_no_audio() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let output = tmp.path().join("brief.md");
+
+    let result = bin()
+        .env(DENY_TTS_APPROVAL_ENV, "1")
+        .args([
+            "run",
+            "--materials",
+            fixtures_dir().to_str().unwrap(),
+            "--question",
+            "Is Loom worth continued investment in Q4?",
+            "--output",
+            output.to_str().unwrap(),
+            "--fake",
+        ])
+        .output()
+        .expect("run briefing-desk");
+
+    assert!(
+        result.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        stdout.contains("[approval] granted for write_report"),
+        "write_report should still be approved independently of TTS: {stdout}"
+    );
+    assert!(
+        stdout.contains("[approval] denied for synthesize_brief"),
+        "missing TTS denial: {stdout}"
+    );
+    assert!(
+        !stdout.contains("synthesize_brief completed"),
+        "denied synthesize_brief must never execute: {stdout}"
+    );
+
+    assert!(output.exists(), "report should still be written");
+    assert!(
+        !output.with_extension("wav").exists(),
+        "denied TTS approval must leave no audio file"
     );
 }
 
