@@ -45,11 +45,13 @@ One branch covers the entire iteration or hotfix. Use a worktree so you can keep
 git checkout main && git pull
 
 # Iteration
-git worktree add ../orchest-v0_10 -b iteration/v0_10
+git worktree add .worktrees/v0_10 -b iteration/v0_10
 
 # Hotfix
-git worktree add ../orchest-hotfix-2026_06_17 -b hotfix/2026_06_17
+git worktree add .worktrees/hotfix-2026_06_17 -b hotfix/2026_06_17
 ```
+
+Worktrees live under `.worktrees/` (gitignored), not as sibling directories — keeps them contained inside the repo root.
 
 Branch naming:
 - Iteration: `iteration/v0_10`
@@ -60,7 +62,7 @@ Branch naming:
 Work through issues in dependency order. Each issue is exactly one commit.
 
 ```bash
-cd ../orchest-v0_10
+cd .worktrees/v0_10
 
 # Implement issue 001
 # ... make changes ...
@@ -99,7 +101,7 @@ All four must pass. Fix any failures before merging.
 Push the branch and open a PR:
 
 ```bash
-cd ../orchest-v0_10
+cd .worktrees/v0_10
 
 git push -u origin iteration/v0_10
 
@@ -119,7 +121,7 @@ gh pr merge --merge --repo jianantian/orchest <PR-number>
 # Clean up
 cd ~/Develop/orchest
 git checkout main && git pull
-git worktree remove ../orchest-v0_10
+git worktree remove .worktrees/v0_10
 git branch -d iteration/v0_10
 ```
 
@@ -135,12 +137,12 @@ After merge:
 If two iterations or hotfixes are running in parallel (no shared files), use separate worktrees:
 
 ```bash
-git worktree add ../orchest-v0_10        -b iteration/v0_10
-git worktree add ../orchest-hotfix-0617  -b hotfix/2026_06_17
+git worktree add .worktrees/v0_10        -b iteration/v0_10
+git worktree add .worktrees/hotfix-0617  -b hotfix/2026_06_17
 
 # Work in each independently
-cd ../orchest-v0_10       && cargo test
-cd ../orchest-hotfix-0617 && cargo test
+cd .worktrees/v0_10       && cargo test
+cd .worktrees/hotfix-0617 && cargo test
 
 # Open a PR for each and merge when approved
 gh pr create --repo jianantian/orchest --title "iteration: v0.10" --base main --body "..."
@@ -150,8 +152,8 @@ gh pr merge --merge --repo jianantian/orchest <PR-number-1>
 gh pr merge --merge --repo jianantian/orchest <PR-number-2>
 
 # Clean up
-git worktree remove ../orchest-v0_10
-git worktree remove ../orchest-hotfix-0617
+git worktree remove .worktrees/v0_10
+git worktree remove .worktrees/hotfix-0617
 git branch -d iteration/v0_10 hotfix/2026_06_17
 ```
 
@@ -207,7 +209,7 @@ git push
 gh issue create --repo jianantian/orchest --title "..." --label "v0.10" --body "..."
 
 # Start an iteration
-git worktree add ../orchest-v0_10 -b iteration/v0_10
+git worktree add .worktrees/v0_10 -b iteration/v0_10
 
 # Commit each issue (one commit = one issue)
 git commit -m "feat: <description> (closes #N)"
@@ -222,7 +224,7 @@ gh pr create --repo jianantian/orchest --title "iteration: v0.10" --base main --
 # Merge PR and clean up
 gh pr merge --merge --repo jianantian/orchest <PR-number>
 git checkout main && git pull
-git worktree remove ../orchest-v0_10 && git branch -d iteration/v0_10
+git worktree remove .worktrees/v0_10 && git branch -d iteration/v0_10
 
 # Check milestone progress
 gh api repos/jianantian/orchest/milestones --jq '.[] | "\(.title): \(.closed_issues)/\(.open_issues + .closed_issues)"'
