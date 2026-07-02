@@ -8,6 +8,15 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # rust-lld crashes with SIGBUS linking crates/orchest's example binaries on
+  # the standard runner once orchest-provider's asr/tts features are in the
+  # unified feature set (v0.10 demo) — reproduced even fully serial
+  # (`cargo build --examples --jobs 1`), so it isn't just concurrency; each
+  # link alone is heavy enough (openssl + rusqlite bundled + tokio-tungstenite
+  # statically linked). Applied job-wide (not just to that step) so every
+  # step shares one profile fingerprint instead of triggering a second,
+  # differently-configured rebuild partway through the job.
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
   check:
@@ -60,11 +69,6 @@ jobs:
         run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
       - name: cargo build --examples
-        # --jobs 1: even 2 concurrent links of these binaries OOMs rust-lld
-        # (SIGBUS) once orchest-provider's asr/tts features are in the
-        # unified feature set (v0.10 demo) — each link alone is heavy enough
-        # (openssl + rusqlite bundled + tokio-tungstenite statically linked)
-        # that serial linking is required on the standard runner.
         run: cargo build --examples --workspace --jobs 1
 
       - name: TS event wire naming check
