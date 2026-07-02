@@ -1,9 +1,11 @@
 //! Black-box smoke test for the `--fake` CLI path: no network credentials,
-//! exercises the full materials -> transcribe -> read-image -> write ->
+//! exercises the full materials -> search -> read -> write (approval) ->
 //! synthesize pipeline against the real issue-001 fixture corpus.
 
 use std::path::PathBuf;
 use std::process::Command;
+
+const DENY_APPROVAL_ENV: &str = "BRIEFING_DESK_FAKE_DENY_APPROVAL";
 
 fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_briefing-desk"))
@@ -14,7 +16,7 @@ fn fixtures_dir() -> PathBuf {
 }
 
 #[test]
-fn fake_run_writes_brief_and_audio() {
+fn fake_run_search_reads_and_writes_brief_and_audio() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let output = tmp.path().join("brief.md");
 
@@ -45,7 +47,26 @@ fn fake_run_writes_brief_and_audio() {
         "missing transcribe step: {stdout}"
     );
     assert!(stdout.contains("[vision]"), "missing vision step: {stdout}");
-    assert!(stdout.contains("[write]"), "missing write step: {stdout}");
+    assert!(
+        stdout.contains("search_fixtures started"),
+        "missing search tool call: {stdout}"
+    );
+    assert!(
+        stdout.contains("read_fixture started"),
+        "missing read tool call: {stdout}"
+    );
+    assert!(
+        stdout.contains("[approval] requested for write_report"),
+        "missing approval request: {stdout}"
+    );
+    assert!(
+        stdout.contains("[approval] granted for write_report"),
+        "missing approval grant: {stdout}"
+    );
+    assert!(
+        stdout.contains("write_report completed"),
+        "missing write_report completion: {stdout}"
+    );
     assert!(
         stdout.contains("[synthesize]"),
         "missing synthesize step: {stdout}"
@@ -58,6 +79,53 @@ fn fake_run_writes_brief_and_audio() {
     assert!(
         audio.exists(),
         "audio brief should exist by default (no --no-tts)"
+    );
+}
+
+#[test]
+fn fake_run_approval_denied_leaves_no_report() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let output = tmp.path().join("brief.md");
+
+    let result = bin()
+        .env(DENY_APPROVAL_ENV, "1")
+        .args([
+            "run",
+            "--materials",
+            fixtures_dir().to_str().unwrap(),
+            "--question",
+            "Is Loom worth continued investment in Q4?",
+            "--output",
+            output.to_str().unwrap(),
+            "--fake",
+        ])
+        .output()
+        .expect("run briefing-desk");
+
+    assert!(
+        result.status.success(),
+        "a denied approval should not itself be treated as a CLI failure: stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        stdout.contains("[approval] denied for write_report"),
+        "missing approval denial: {stdout}"
+    );
+    assert!(
+        !stdout.contains("write_report completed"),
+        "denied write_report must never execute: {stdout}"
+    );
+
+    assert!(
+        !output.exists(),
+        "denied approval must leave the output path absent"
+    );
+    assert!(
+        !output.with_extension("wav").exists(),
+        "denied approval must leave no audio file either"
     );
 }
 

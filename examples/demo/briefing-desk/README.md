@@ -109,10 +109,13 @@ cargo run -p briefing-desk-demo -- run \
 ```
 
 This exercises the full pipeline offline: materials discovery, a fake ASR
-transcript per audio source, a fake vision description per image, a canned
-model response, writing the brief, and a fake TTS audio file (add `--no-tts`
-to skip that last step). `cargo test -p briefing-desk-demo` runs this same
-path as an automated smoke test.
+transcript per audio source, a fake vision description per image, a real
+`search_fixtures` -> `read_fixture` -> `write_report` tool sequence against
+the text corpus (the last step requires approval — auto-approved unless
+`BRIEFING_DESK_FAKE_DENY_APPROVAL` is set, which exercises the deny path
+instead and leaves no report or audio file), and a fake TTS audio file for
+whatever report got written (add `--no-tts` to skip that last step).
+`cargo test -p briefing-desk-demo` runs both paths as automated smoke tests.
 
 ### Live provider run and resume flow
 
