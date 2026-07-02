@@ -98,6 +98,27 @@ friction"), not something to work around with a private import.
 
 ## Running the demo
 
-Not yet available — see issue 002 (CLI skeleton) and issue 004 (session resume).
-This section will document the fake-provider smoke run, the live provider run, and
-the resume flow once they exist.
+### Fake smoke run (no network credentials)
+
+```bash
+cargo run -p briefing-desk-demo -- run \
+  --materials fixtures/research \
+  --question "Is Loom worth continued investment in Q4?" \
+  --output /tmp/brief.md \
+  --fake
+```
+
+This exercises the full pipeline offline: materials discovery, a fake ASR
+transcript per audio source, a fake vision description per image, a canned
+model response, writing the brief, and a fake TTS audio file (add `--no-tts`
+to skip that last step). `cargo test -p briefing-desk-demo` runs this same
+path as an automated smoke test.
+
+### Live provider run and resume flow
+
+Not yet available. Live model/ASR/TTS wiring lands in issue 005
+([#192](https://github.com/jianantian/orchest/issues/192)); the `resume`
+subcommand currently parses its arguments but returns a stub error — real
+session persistence and resume land in issue 004
+([#191](https://github.com/jianantian/orchest/issues/191)). This section will
+be filled in as those land.
