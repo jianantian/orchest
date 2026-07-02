@@ -41,6 +41,7 @@
 | v0.9.11 | 卫星 | Omni Realtime Provider Evidence（Volcengine realtime 全双工 session、事件映射、barge-in/close/error 语义、live validation、provider-unification evidence） |
 | v0.9.12 | 重构 | Provider 统一（两维重组 + registry/umbrella 墙：`orchest-protocol` 脊柱 + `orchest-provider-core` + http/stream/visual 三层 impl crate + `orchest-provider` 墙；omni + Chameleon 双标尺；realtime/asr/tts/aigc 四个模态 crate 吸收，`agent-runtime-{model,providers}` shell 移除；node/py 只经 protocol + 墙；`features=["llm"]` 无 tungstenite/OSS；8 个 issue 全部落地） |
 | v0.9.13 | 重构 | `core/node/py` 改名收尾（ADR-0001 Decision 2 的延后项）：`agent-runtime-core` → `orchest`，`agent-runtime-py` → `orchest-py`，`agent-runtime-node` → `orchest-node`；Python 包 `agent_runtime` → `orchest`，npm 包 `@orchest/agent-runtime` → `@orchest/sdk`；crate 目录、workspace members、跨 crate 依赖、示例、guide 文档同步更新 |
+| v0.10 | 功能 | Demo A: Briefing Desk 能力组合广度验证（本地多媒体研究简报 agent；search/read/write 工具 + approval、real ASR/TTS gateway（`FakeAsr`/`FakeTts` 从零补全）、Agent-as-Tool reviewer sub-agent、跨进程 session persist + resume；6 个 issue 全部落地；[验证报告](../review/v0_10_demo_validation.md)产出 5 项 release blocker，均已建独立追踪 issue（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199)），最大发现：多模态图片输入当前无公开 API 可走） |
 
 ## 迭代编号约定
 
@@ -48,16 +49,6 @@
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
 
 ## 规划中
-
-### v0.10 — Demo A: 能力组合广度验证（规划）
-
-两轮 demo 验证策略的第一轮，**广度优先**：用一个真实但小的完整产品 dogfood SDK，验证运行时各能力在产品场景下的协同。广度覆盖两个轴——编排控制面（model/tool/approval/event/session/sub-agent）与**模态网关**（ASR/TTS/多模态图像输入）。v0.10 用 demo 证据决定哪些 API / 文档 / runtime 问题必须在公开发布前修。
-
-当前产品形态锁定为 **Briefing Desk**：本地**多媒体**研究简报 agent。它读取一组混合材料（Markdown/text 笔记 + 图表截图 + 录音访谈），转写音频（ASR）、读图（多模态图像输入）、检索文本，围绕用户问题生成报告，展示事件流，写文件前走 approval，可选合成简报音频版（TTS），并支持 session resume。模态不是为凑覆盖率而堆——研究简报工具本就自然地吸收访谈录音与图表。AIGC 生图为可选 stretch，视频/音乐与音频直喂 LLM 不在范围内。详见 [`v0_10/prd.md`](./v0_10/prd.md)。
-
-v0.10 至少验证一个轻量 reviewer sub-agent 或 handoff 路径（Agent-as-Tool 或 Handoff）。v0.10 验证报告中的 Supervised Delegation 摩擦点会直接移交 v0.11。
-
-**依赖**：v0.9.2 文档
 
 ### v0.11 — Demo B: Supervised Delegation 深度验证（规划）
 
@@ -156,3 +147,4 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
 | Image AIGC Gateway | ~~无~~ → **v0.6.1 已完成** | ✅ |
 | ASR Provider Gateway | ~~无~~ → **v0.9.1 已完成** | ✅ |
 | TTS Provider Gateway | ~~无统一 TTS provider crate~~ → **v0.9.3 已完成** | ✅ |
+| 多模态图片输入（`ContentBlock::Image` 经 agent loop） | v0.10 demo 验证发现：**无公开 API 可走**（`AgentRun::start` 只收 `String`；能收 `Vec<Message>` 的 `start_with_bus` 是 `pub(crate)`；`ToolResult.content` 定型为 `Value`，工具也塞不进去） | release blocker，追踪于 [#195](https://github.com/jianantian/orchest/issues/195) |
