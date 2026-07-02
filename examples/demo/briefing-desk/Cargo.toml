@@ -9,7 +9,7 @@ name = "briefing-desk"
 path = "src/main.rs"
 
 [dependencies]
-orchest = { path = "../../../crates/orchest" }
+orchest = { path = "../../../crates/orchest", features = ["sqlite-session"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }

@@ -6,10 +6,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use orchest::events::RuntimeEvent;
-use orchest::run::{AgentConfig, AgentRun};
+use orchest::model::{ContentBlock, Message, ModelAdapter, Role};
+use orchest::run::{AgentConfig, AgentRun, EventReceiver, RunHandle};
+use orchest::session::{SessionStore, SqliteSessionStore};
+use orchest::tool::agent_as_tool::ContextMode;
 use orchest::tool::registry::ToolRegistry;
+use orchest::tool::ToolError;
 
-use crate::fake_model::FakeModel;
+use crate::fake_model::{FakeModel, ReviewerFakeModel};
 use crate::media;
 use crate::tools::{ReadFixtureTool, SearchFixturesTool, WriteReportTool};
 
@@ -19,6 +23,23 @@ pub type DemoError = Box<dyn std::error::Error + Send + Sync>;
 /// instead of auto-approve the report write, so both paths are testable from
 /// the CLI without an interactive prompt. Not consulted in live mode.
 const FAKE_DENY_APPROVAL_ENV: &str = "BRIEFING_DESK_FAKE_DENY_APPROVAL";
+
+/// Sessions persist under `.briefing-desk-sessions/<session-id>.sqlite3`,
+/// relative to the current working directory, so `run --session X` and a
+/// later `resume --session X` (a separate process) agree on the same file.
+fn session_db_path(session_id: &str) -> PathBuf {
+    PathBuf::from(".briefing-desk-sessions").join(format!("{session_id}.sqlite3"))
+}
+
+fn open_session_store(session_id: &str) -> Result<SqliteSessionStore, DemoError> {
+    let path = session_db_path(session_id);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("creating {}: {e}", parent.display()))?;
+    }
+    SqliteSessionStore::open(&path)
+        .map_err(|e| format!("opening session store {}: {e}", path.display()).into())
+}
 
 pub struct RunArgs {
     pub materials: PathBuf,
@@ -44,10 +65,6 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
              live model/ASR/TTS wiring lands in issue 005"
                 .into(),
         );
-    }
-
-    if let Some(session) = &args.session {
-        println!("[session] {session} (persistence is a no-op in this issue; lands in issue 004)");
     }
 
     let corpus = media::discover(&args.materials)?;
@@ -79,10 +96,32 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(SearchFixturesTool::new(text_entries)))?;
     registry.register(Arc::new(ReadFixtureTool::new(corpus.text.clone())))?;
+    registry.register(reviewer_tool())?;
     registry.register(Arc::new(WriteReportTool::new(args.output.clone())))?;
 
+    let mut builder = AgentConfig::builder("fake/fake").system_prompt(
+        "You are Briefing Desk, a research-brief assistant. Search the materials, \
+         read the most relevant one, have review_report check your draft, then \
+         call write_report.",
+    );
+
+    if let Some(id) = &args.session {
+        let store: Arc<dyn SessionStore> = Arc::new(open_session_store(id)?);
+        builder = builder.session_store(store, id.clone());
+        println!("[session] persisting to {}", session_db_path(id).display());
+    } else {
+        println!("[session] no --session given; this run will not be resumable");
+    }
+
+    let config = builder
+        .max_steps(8)
+        .build()
+        .map_err(|e| format!("building agent config: {e}"))?;
+
     let auto_deny = std::env::var_os(FAKE_DENY_APPROVAL_ENV).is_some();
-    let brief = run_agent(&args.question, registry, auto_deny).await?;
+    let (handle, rx) =
+        AgentRun::start(config, args.question.clone(), Arc::new(FakeModel), registry);
+    let brief = drain_events(handle, rx, auto_deny).await?;
     println!("[done] final message: {brief}");
 
     if args.output.exists() {
@@ -108,40 +147,107 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
 }
 
 pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
+    if !args.fake {
+        return Err(
+            "live provider mode is not implemented yet (--fake required); \
+             live model/ASR/TTS wiring lands in issue 005"
+                .into(),
+        );
+    }
+
+    let store = open_session_store(&args.session)?;
+    let mut snapshot = store
+        .load(&args.session)
+        .await
+        .map_err(|e| format!("loading session '{}': {e}", args.session))?
+        .ok_or_else(|| {
+            format!(
+                "no persisted session found for '{}' at {}; run with --session {} first",
+                args.session,
+                session_db_path(&args.session).display(),
+                args.session
+            )
+        })?;
+
+    snapshot.messages.push(Message {
+        role: Role::User,
+        content: vec![ContentBlock::Text(args.question.clone())],
+    });
+    let store: Arc<dyn SessionStore> = Arc::new(store);
+    snapshot.active_config = snapshot
+        .active_config
+        .with_session_store(Arc::clone(&store), args.session.clone());
+
+    let auto_deny = std::env::var_os(FAKE_DENY_APPROVAL_ENV).is_some();
+    let (handle, rx) = AgentRun::resume(snapshot, Arc::new(FakeModel), ToolRegistry::new());
+    let answer = drain_events(handle, rx, auto_deny).await?;
+    println!("[done] follow-up answer: {answer}");
+
+    std::fs::write(&args.output, &answer)
+        .map_err(|e| format!("writing {}: {e}", args.output.display()))?;
     println!(
-        "[resume] session={} question={:?} output={} fake={} no_tts={} \
-         (accepted but not yet implemented)",
-        args.session,
-        args.question,
-        args.output.display(),
-        args.fake,
-        args.no_tts
+        "[report] follow-up answer written to {}",
+        args.output.display()
     );
-    Err("resume is not implemented yet; session persistence and resume land in issue 004".into())
+
+    if args.no_tts {
+        println!("[synthesize] skipped (--no-tts)");
+    } else {
+        let audio_path = args.output.with_extension("wav");
+        media::fake_synthesize(&answer, &audio_path)?;
+        println!(
+            "[synthesize] audio brief written to {}",
+            audio_path.display()
+        );
+    }
+
+    Ok(())
 }
 
-/// Runs the agent loop against `FakeModel` with the search/read/write tools
-/// registered, auto-resolving any approval request as soon as it is
-/// requested (approve unless `auto_deny`), and returns the completed run's
-/// final text.
-async fn run_agent(
-    question: &str,
-    registry: ToolRegistry,
+/// Wraps a lightweight reviewer sub-agent (Agent-as-Tool, `ContextMode::Fresh`
+/// so it never sees the parent's conversation) as a `review_report` tool the
+/// parent model calls before `write_report`.
+fn reviewer_tool() -> Arc<dyn orchest::tool::Tool> {
+    let reviewer_model: Arc<dyn ModelAdapter> = Arc::new(ReviewerFakeModel);
+    let reviewer_config = AgentConfig::builder("fake/reviewer")
+        .system_prompt(
+            "You are a report reviewer. Check the draft for accuracy against the corpus.",
+        )
+        .max_steps(2)
+        .build()
+        .expect("reviewer config is static and always valid");
+
+    reviewer_config
+        .as_tool(
+            "review_report",
+            "Reviews a draft report before it is finalized. Call this before write_report.",
+        )
+        .model(reviewer_model)
+        .registry(ToolRegistry::new())
+        .context_mode(ContextMode::Fresh)
+        .input_mapper(|input: serde_json::Value| {
+            input
+                .get("draft")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| ToolError::fatal("missing required parameter 'draft'"))
+        })
+        .output_extractor(|details: serde_json::Value| {
+            serde_json::json!({"output": details.get("output").cloned().unwrap_or(details)})
+        })
+        .build()
+}
+
+/// Drives an already-started run's event stream to completion: renders
+/// model/tool/approval/sub-agent/run-completion events to stdout, resolves
+/// any `ApprovalRequested` by auto-approving unless `auto_deny`, and returns
+/// the run's final text.
+async fn drain_events(
+    handle: RunHandle,
+    mut rx: EventReceiver,
     auto_deny: bool,
 ) -> Result<String, DemoError> {
-    let config = AgentConfig::builder("fake/fake")
-        .system_prompt(
-            "You are Briefing Desk, a research-brief assistant. Search the materials, \
-             read the most relevant one, then write the report.",
-        )
-        .max_steps(6)
-        .build()
-        .map_err(|e| format!("building agent config: {e}"))?;
-
-    let (handle, mut rx) =
-        AgentRun::start(config, question.to_string(), Arc::new(FakeModel), registry);
-
-    let mut brief = None;
+    let mut answer = None;
     while let Some(event) = rx.recv().await {
         match event {
             RuntimeEvent::ModelCallStarted { step } => println!("[model] step {step} started"),
@@ -174,8 +280,33 @@ async fn run_agent(
             RuntimeEvent::ApprovalDenied { tool_call, .. } => {
                 println!("[approval] denied for {}", tool_call.name)
             }
+            RuntimeEvent::SubAgentStarted { child_run_id, .. } => {
+                println!("[reviewer] started child={child_run_id}")
+            }
+            RuntimeEvent::SubAgentEvent {
+                child_run_id,
+                event,
+                ..
+            } => {
+                if let RuntimeEvent::RunCompleted { output } = event.as_ref() {
+                    println!("[reviewer] child={child_run_id} verdict={output}");
+                }
+            }
+            RuntimeEvent::SubAgentCompleted {
+                child_run_id,
+                output,
+                ..
+            } => {
+                println!("[reviewer] completed child={child_run_id} output={output}")
+            }
+            RuntimeEvent::SubAgentFailed {
+                child_run_id,
+                error,
+            } => {
+                println!("[reviewer] failed child={child_run_id} error={error}")
+            }
             RuntimeEvent::RunCompleted { output } => {
-                brief = Some(output.as_str().unwrap_or_default().to_string());
+                answer = Some(output.as_str().unwrap_or_default().to_string());
             }
             RuntimeEvent::RunFailed { error } => {
                 return Err(format!("agent run failed: {error}").into());
@@ -185,5 +316,5 @@ async fn run_agent(
     }
     handle.wait().await;
 
-    brief.ok_or_else(|| "agent run ended without producing output".into())
+    answer.ok_or_else(|| "agent run ended without producing output".into())
 }

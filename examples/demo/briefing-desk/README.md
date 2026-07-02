@@ -110,18 +110,53 @@ cargo run -p briefing-desk-demo -- run \
 
 This exercises the full pipeline offline: materials discovery, a fake ASR
 transcript per audio source, a fake vision description per image, a real
-`search_fixtures` -> `read_fixture` -> `write_report` tool sequence against
-the text corpus (the last step requires approval — auto-approved unless
-`BRIEFING_DESK_FAKE_DENY_APPROVAL` is set, which exercises the deny path
-instead and leaves no report or audio file), and a fake TTS audio file for
-whatever report got written (add `--no-tts` to skip that last step).
-`cargo test -p briefing-desk-demo` runs both paths as automated smoke tests.
+`search_fixtures` -> `read_fixture` -> `review_report` -> `write_report` tool
+sequence against the text corpus, and a fake TTS audio file for whatever
+report got written (add `--no-tts` to skip that last step).
 
-### Live provider run and resume flow
+`review_report` is a lightweight reviewer sub-agent wired in through
+`AgentConfig::as_tool` (Agent-as-Tool, `ContextMode::Fresh` — the reviewer
+never sees the parent's conversation, only the draft it's asked to check).
+Its verdict is forwarded to the parent's event stream (`[reviewer] ...` lines)
+and gets appended into the written report. `write_report` requires approval —
+auto-approved unless `BRIEFING_DESK_FAKE_DENY_APPROVAL` is set, which
+exercises the deny path instead and leaves no report or audio file.
+
+`cargo test -p briefing-desk-demo` runs all of the above as automated smoke
+tests.
+
+### Session persistence and resume
+
+Pass `--session <id>` to `run` to persist the session to
+`.briefing-desk-sessions/<id>.sqlite3` (relative to the current directory).
+A later `resume` — a genuinely separate process — loads that file, appends
+the follow-up question, and continues the same run:
+
+```bash
+cargo run -p briefing-desk-demo -- run \
+  --materials fixtures/research \
+  --question "Is Loom worth continued investment in Q4?" \
+  --output /tmp/brief.md \
+  --session demo-1 \
+  --fake
+
+cargo run -p briefing-desk-demo -- resume \
+  --session demo-1 \
+  --question "Has anything changed about the retention numbers?" \
+  --output /tmp/followup.md \
+  --fake
+```
+
+`run` without `--session` is ephemeral (not resumable) — this is a deliberate
+per-invocation choice, not a gap: `resume` requires `--session`, so a run
+without one was never going to be resumable regardless. Resume re-registers
+no materials tools (search/read/write/review); the follow-up is answered
+directly from the persisted conversation history, which already contains
+everything the original run read and wrote — the fake follow-up answer
+literally quotes a snippet of the original brief pulled out of that history
+to make the context-preservation checkable.
+
+### Live provider run
 
 Not yet available. Live model/ASR/TTS wiring lands in issue 005
-([#192](https://github.com/jianantian/orchest/issues/192)); the `resume`
-subcommand currently parses its arguments but returns a stub error — real
-session persistence and resume land in issue 004
-([#191](https://github.com/jianantian/orchest/issues/191)). This section will
-be filled in as those land.
+([#192](https://github.com/jianantian/orchest/issues/192)).

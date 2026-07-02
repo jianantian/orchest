@@ -56,6 +56,14 @@ fn fake_run_search_reads_and_writes_brief_and_audio() {
         "missing read tool call: {stdout}"
     );
     assert!(
+        stdout.contains("review_report started"),
+        "missing reviewer tool call: {stdout}"
+    );
+    assert!(
+        stdout.contains("[reviewer]"),
+        "reviewer sub-agent output should be visible in the event stream: {stdout}"
+    );
+    assert!(
         stdout.contains("[approval] requested for write_report"),
         "missing approval request: {stdout}"
     );
@@ -185,15 +193,16 @@ fn live_mode_without_fake_fails_clearly() {
 }
 
 #[test]
-fn resume_is_a_clear_stub_for_now() {
+fn resume_without_prior_session_fails_clearly() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let output = tmp.path().join("brief.md");
 
     let result = bin()
+        .current_dir(tmp.path())
         .args([
             "resume",
             "--session",
-            "does-not-matter-yet",
+            "never-ran",
             "--question",
             "Any update on retention?",
             "--output",
@@ -205,11 +214,87 @@ fn resume_is_a_clear_stub_for_now() {
 
     assert!(
         !result.status.success(),
-        "resume is not implemented until issue 004"
+        "resuming a session that was never run should fail"
     );
     let stderr = String::from_utf8_lossy(&result.stderr);
     assert!(
-        stderr.contains("issue 004"),
-        "stub error should point to issue 004: {stderr}"
+        stderr.contains("no persisted session found"),
+        "error should explain the session is missing: {stderr}"
+    );
+    assert!(
+        !output.exists(),
+        "no output should be written on the error path"
+    );
+}
+
+#[test]
+fn session_persists_across_processes_and_resume_references_original_brief() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let session_id = "smoke-test-session";
+    let first_output = tmp.path().join("brief.md");
+
+    let first = bin()
+        .current_dir(tmp.path())
+        .args([
+            "run",
+            "--materials",
+            fixtures_dir().to_str().unwrap(),
+            "--question",
+            "Is Loom worth continued investment in Q4?",
+            "--output",
+            first_output.to_str().unwrap(),
+            "--session",
+            session_id,
+            "--fake",
+        ])
+        .output()
+        .expect("run briefing-desk");
+    assert!(
+        first.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(
+        tmp.path()
+            .join(".briefing-desk-sessions")
+            .join(format!("{session_id}.sqlite3"))
+            .exists(),
+        "run --session should leave a sqlite session file behind"
+    );
+
+    // Resume in a genuinely separate process (new Command), same cwd so it
+    // finds the same session file — this is the real cross-process path, not
+    // an in-process handle reuse.
+    let follow_up_output = tmp.path().join("followup.md");
+    let second = bin()
+        .current_dir(tmp.path())
+        .args([
+            "resume",
+            "--session",
+            session_id,
+            "--question",
+            "Has anything changed about the retention numbers?",
+            "--output",
+            follow_up_output.to_str().unwrap(),
+            "--fake",
+        ])
+        .output()
+        .expect("run briefing-desk");
+    assert!(
+        second.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    let follow_up = std::fs::read_to_string(&follow_up_output).expect("follow-up answer written");
+    assert!(
+        follow_up.contains("Briefing Desk (fake smoke run)"),
+        "follow-up answer should reference content from the original brief, got: {follow_up}"
+    );
+    assert!(
+        follow_up.contains("Has anything changed about the retention numbers?"),
+        "follow-up answer should reference the new question, got: {follow_up}"
     );
 }
