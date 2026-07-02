@@ -1,6 +1,6 @@
 //! Briefing Desk: a local, multimedia research-brief demo built on Orchest.
 //! See `README.md` for the product spec. See issue docs under
-//! `docs/iteration/v0_10/issues/` for what each issue adds.
+//! `docs/archive/iteration/v0_10/issues/` for what each issue adds.
 
 mod app;
 mod fake_model;

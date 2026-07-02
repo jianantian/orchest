@@ -297,8 +297,9 @@ impl Tool for TranscribeAudioTool {
 /// hard-typed `serde_json::Value`, so a tool cannot inject an image into the
 /// next model turn either. There is currently no public Orchest API path to
 /// real vision-through-agent-loop at all — recorded as a release-blocker
-/// finding in `docs/iteration/v0_10/validation-notes.md` rather than worked
-/// around by adding new surface to `orchest` itself. This tool always
+/// finding in `docs/archive/iteration/v0_10/validation-notes.md` rather than
+/// worked around by adding new surface to `orchest` itself (tracked at
+/// https://github.com/jianantian/orchest/issues/195). This tool always
 /// returns a fixed description, in both `--fake` and (hypothetical) live
 /// mode, until that API gap closes.
 pub struct DescribeImageTool {

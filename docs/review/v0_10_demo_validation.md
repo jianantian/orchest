@@ -1,7 +1,7 @@
 # Briefing Desk — v0.10 Demo Validation Report
 
 Demo A of the two-round pre-v1.0 validation strategy (see
-[`docs/iteration/v0_10/prd.md`](../iteration/v0_10/prd.md)). Briefing Desk, a
+[`docs/archive/iteration/v0_10/prd.md`](../archive/iteration/v0_10/prd.md)). Briefing Desk, a
 local multimedia research-brief agent, was built against Orchest's public API
 only (issues 001-005) to dogfood the runtime's orchestration surface
 (model/tool/approval/event/session/sub-agent) and the ASR/TTS/multimodal
@@ -92,7 +92,7 @@ regardless, while the ASR/TTS env vars independently select real provider
 instances for those two steps only. Whoever runs this should record: exact
 command, provider, model, date, and outcome (success / error, with the
 `ProtocolError` if any) — either as an update to this report or a follow-up
-entry in `docs/iteration/v0_10/validation-notes.md`.
+entry in `docs/archive/iteration/v0_10/validation-notes.md`.
 
 ## Freeze Coverage Statement
 
@@ -116,7 +116,7 @@ conscious, argued choice, not an oversight.
 ## Findings
 
 Full raw findings, including per-issue context, live in
-[`docs/iteration/v0_10/validation-notes.md`](../iteration/v0_10/validation-notes.md).
+[`docs/archive/iteration/v0_10/validation-notes.md`](../archive/iteration/v0_10/validation-notes.md).
 This section is the consolidated, triaged version required by this issue.
 
 ### API friction
@@ -197,7 +197,7 @@ This section is the consolidated, triaged version required by this issue.
    should carry, and its absence is what caused the finding to require
    reading the implementation instead of the API contract.
 3. **`examples/demo/briefing-desk/README.md`** and
-   `docs/iteration/v0_10/prd.md` are, by contrast, in good shape — no gap
+   `docs/archive/iteration/v0_10/prd.md` are, by contrast, in good shape — no gap
    found reading them against the delivered code; both were kept in sync
    issue-by-issue rather than written up front and left stale.
 

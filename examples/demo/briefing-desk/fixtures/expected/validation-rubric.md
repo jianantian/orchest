@@ -3,7 +3,7 @@
 While building and running Briefing Desk (issues 002-006), classify every finding
 into exactly one of the five categories below before recording it in the
 validation report (issue 006). This rubric exists so the triage rule in
-`docs/iteration/v0_10/prd.md` ("Validation Triage Rule") has a consistent basis to
+`docs/archive/iteration/v0_10/prd.md` ("Validation Triage Rule") has a consistent basis to
 sort findings into demo blocker / release blocker / post-1.0 backlog.
 
 ## API friction

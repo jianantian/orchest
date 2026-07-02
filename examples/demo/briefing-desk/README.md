@@ -2,7 +2,7 @@
 
 Briefing Desk is a local, multimedia research-brief agent built on the Orchest
 SDK. It is the v0.10 validation demo — see
-[`docs/iteration/v0_10/prd.md`](../../../docs/iteration/v0_10/prd.md) for why it
+[`docs/archive/iteration/v0_10/prd.md`](../../../docs/archive/iteration/v0_10/prd.md) for why it
 exists: the goal is to dogfood the runtime's public API and the ASR/TTS/vision
 provider gateways through one small, real product before v1.0 freezes those
 surfaces.
@@ -15,7 +15,7 @@ Given a directory of mixed research materials and a question, Briefing Desk:
    (`orchest_protocol::Asr`, real or fake).
 2. Describes any chart/screenshot images in the corpus. This is a fixed
    placeholder, not real vision-model input — see "Vision is not real" below
-   for why, and `docs/iteration/v0_10/validation-notes.md` for the finding.
+   for why, and `docs/archive/iteration/v0_10/validation-notes.md` for the finding.
 3. Searches and reads the plain-text/Markdown materials.
 4. Streams progress events to stdout as it works across all of the above.
 5. Asks for approval before writing the final Markdown brief.
@@ -212,5 +212,6 @@ an image, but the only public entry point, `AgentRun::start`, takes a plain
 into the next model turn either, since `ToolResult.content` is hard-typed
 `serde_json::Value`. There is currently no public Orchest API path to real
 vision-through-agent-loop at all. Recorded as a release-blocker finding in
-[`docs/iteration/v0_10/validation-notes.md`](../../../docs/iteration/v0_10/validation-notes.md)
-rather than worked around by adding new surface to `orchest` itself.
+[`docs/archive/iteration/v0_10/validation-notes.md`](../../../docs/archive/iteration/v0_10/validation-notes.md)
+rather than worked around by adding new surface to `orchest` itself. See also
+the tracked issue: [#195](https://github.com/jianantian/orchest/issues/195).
