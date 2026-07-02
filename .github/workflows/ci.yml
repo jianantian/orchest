@@ -60,7 +60,10 @@ jobs:
         run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
       - name: cargo build --examples
-        run: cargo build --examples --workspace
+        # --jobs 2: linking this many example binaries in parallel on the
+        # standard runner OOMs rust-lld (SIGBUS) once orchest-provider's
+        # asr/tts features are in the unified feature set (v0.10 demo).
+        run: cargo build --examples --workspace --jobs 2
 
       - name: TS event wire naming check
         run: bash scripts/check-ts-event-wire-naming.sh
