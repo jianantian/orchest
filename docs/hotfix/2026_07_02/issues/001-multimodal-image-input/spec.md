@@ -27,12 +27,23 @@ pub struct RunInput {
     blocks: Vec<ContentBlock>,
 }
 
+/// `RunInput::from_blocks` 收到不属于"用户输入"语义的 block 时返回。
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("content block `{kind}` is not valid as run input (only Text/Image/Video/Audio are)")]
+pub struct RunInputError {
+    kind: &'static str,
+}
+
 impl RunInput {
     /// 纯文本输入(与旧 `input: String` 等价)。
     pub fn text(text: impl Into<String>) -> Self;
 
-    /// 从任意 content block 序列构造。调用方自组 `ContentBlock::Image` 等。
-    pub fn from_blocks(blocks: Vec<ContentBlock>) -> Self;
+    /// 从任意 content block 序列构造。只接受 `Text`/`Image`/`Video`/`Audio` 四种
+    /// 表达"用户可携带的输入内容"的 block;`ToolUse`/`ToolResult`/`Thinking`/
+    /// `MidConvSystem` 是 agent loop 内部产出或 provider 专属语义,塞进首个
+    /// user turn 是无效组合(例如凭空的 `ToolResult` 对不上任何 `tool_use_id`),
+    /// 一律拒绝而非静默接受或 panic。
+    pub fn from_blocks(blocks: Vec<ContentBlock>) -> Result<Self, RunInputError>;
 
     /// 便捷追加一张图片(常见路径:文本问题 + 一张图)。
     pub fn with_image(self, source: MediaSource) -> Self;
@@ -40,9 +51,8 @@ impl RunInput {
     pub(crate) fn into_blocks(self) -> Vec<ContentBlock>;
 }
 
-impl From<String> for RunInput          // Text block
-impl From<&str> for RunInput            // Text block
-impl From<Vec<ContentBlock>> for RunInput
+impl From<String> for RunInput          // Text block,infallible
+impl From<&str> for RunInput            // Text block,infallible
 ```
 
 签名变化:
@@ -56,12 +66,14 @@ pub fn start(config: AgentConfig, input: impl Into<RunInput>, ...) -> (RunHandle
 
 **兼容性**:`From<String>` 保证所有现存调用点(两个 SDK binding、全部 examples、agent_as_tool 内部转发)**零改动编译**。这是改 `start` 本体而非另加 `start_with_blocks` 兄弟入口的前提。
 
+**`from_blocks` 是 fallible,不进 `Into<RunInput>`**:`impl Into<RunInput>` 覆盖的两个 infallible 路径只有 `String`/`&str`(纯文本零成本兼容旧调用)。多模态输入必须显式 `RunInput::from_blocks(vec![...])?` 校验后再传给 `start`——不提供 `impl From<Vec<ContentBlock>> for RunInput`,因为 `From` 约定是 infallible 转换,校验逻辑放进不可失败的 trait 里等于放弃校验(要么悄悄放行非法 block,要么在 `From::from` 里 panic,两者都是本次要清偿的同类"builder 该报错却没报错"问题,详见 issue 004 的 `SubAgentBuilder`)。
+
 ### 决策 2:内部管线 `input: String` → `input: Vec<ContentBlock>`
 
 - `AgentRunArgs.input`(`run/actor.rs:120`)与 `start_with_bus` 的 `input` 参数改为 `Vec<ContentBlock>`(均非公开面,自由改)
 - actor 组装处(`actor.rs:285-288`)从 `vec![ContentBlock::Text(input)]` 改为直接使用 blocks
 - supervisor 重启克隆 `AgentRunArgs` 原样携带,无逻辑变化
-- 空输入语义保持现状不变:空 `String` 现在会生成空 Text block 的 user message,`RunInput::from_blocks(vec![])` 生成空 content 的 user message,不新增校验(与旧行为对齐,校验属 post-1.0 讨论)
+- 空输入语义保持现状不变:空 `String` 仍生成空 Text block 的 user message;`RunInput::from_blocks(vec![])` 是 `Ok`,生成空 content 的 user message——空 `Vec` 不含任何非法 block,校验不拦它,行为与旧 `input: String` 对齐
 
 ### 决策 3:补 re-export
 
@@ -92,14 +104,16 @@ pub fn start(config: AgentConfig, input: impl Into<RunInput>, ...) -> (RunHandle
 
 ## 测试
 
-1. `RunInput` 单元测试:`From<String>`/`From<&str>`/`from_blocks`/`with_image` 的 block 构成
-2. actor 级测试:`start` 传入含 Image 的 `RunInput`,断言发给 `ModelAdapter::complete()` 的 messages 中 user turn 携带 `ContentBlock::Image`(fake adapter 捕获入参,现有测试基建已有此模式)
-3. session 回归:含 Image block 的 run 经 `SessionStore` 存取后 blocks 无损(`ContentBlock` 本就 `Serialize`,钉住防回归)
-4. 现有全部测试零破坏(签名经 `Into` 兼容)
+1. `RunInput` 单元测试:`From<String>`/`From<&str>`/`with_image` 的 block 构成
+2. `from_blocks` 校验测试:`Text`/`Image`/`Video`/`Audio`(含四者混合、空 `Vec`)返回 `Ok`;`ToolUse`/`ToolResult`/`Thinking`/`MidConvSystem` 各自返回 `Err(RunInputError)` 且 `kind` 字段能定位具体 block 种类
+3. actor 级测试:`start` 传入含 Image 的 `RunInput`,断言发给 `ModelAdapter::complete()` 的 messages 中 user turn 携带 `ContentBlock::Image`(fake adapter 捕获入参,现有测试基建已有此模式)
+4. session 回归:含 Image block 的 run 经 `SessionStore` 存取后 blocks 无损(`ContentBlock` 本就 `Serialize`,钉住防回归)
+5. 现有全部测试零破坏(签名经 `Into` 兼容)
 
 ## 验收标准(对齐 GitHub #195)
 
 - [ ] `RunInput` 类型 + `AgentRun::start` 泛化落地,`MediaSource` 从 `orchest::model` 可达
+- [ ] `from_blocks` 对 `ToolUse`/`ToolResult`/`Thinking`/`MidConvSystem` 返回 `Err(RunInputError)`,对 `Text`/`Image`/`Video`/`Audio` 返回 `Ok`,测试覆盖全部 8 种 block
 - [ ] 现存调用点(binding、examples、内部)零改动编译;`cargo test --workspace` 过
 - [ ] `describe_image` 工具真实构造 `ContentBlock::Image` 并进入真实 `ModelAdapter::complete()` 调用
 - [ ] `cargo test -p briefing-desk-demo` + `--fake` 手动 run 重跑,输出贴回 #195 或关闭它的 PR
