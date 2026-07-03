@@ -28,13 +28,21 @@ GitHub: [#198](https://github.com/jianantian/orchest/issues/198) · release-bloc
 ## 落地与测试
 
 - `examples/demo/briefing-desk/src/app.rs` 的 `resume()` 适配 `Result` 返回(其重挂 store 的既有做法就是正确用法,保留)
+- **`examples/rust/resilience/session_persist_resume.rs:130` 也直接调
+  `AgentRun::resume(...)`,同样需要适配 `Result` 返回**——`docs/guide/quickstart.md:187`
+  按文件名点名引用这个 example,断了会导致文档指向一份编译不过的代码
 - 测试:带 `session_id` 的快照不重挂 store 直接 resume → `SessionStoreMissing`;重挂后成功;无 `session_id` 的快照(从未开启持久化)resume 不受影响
-- `with_session_store` rustdoc 补"resume 前必须重挂"说明
+- 文档:`with_session_store` rustdoc 补"resume 前必须重挂"说明;`SessionSnapshot`
+  自身的 doc comment(`crates/orchest/src/session/snapshot.rs:13-15`)已经写了
+  "`hooks`/`retry_policy`/`handoffs` 反序列化后为空,调用前需重新注册"——**漏了
+  `session_store`**(它也是 `#[serde(skip)]`,正是本 issue 要修的对象),本次一并补上,
+  这是调用方读快照类型时第一眼看到的地方,比 `with_session_store` 侧的说明更醒目
 - 重跑 `cargo test -p briefing-desk-demo`,输出贴回 #198 或关闭它的 PR
 
 ## 验收标准(对齐 GitHub #198)
 
 - [ ] resume 路径对"曾持久化但 store 缺失"响亮报错,`ConfigError` 新变体落地
-- [ ] demo `resume()` 适配并重跑,输出贴回 issue/PR
-- [ ] `with_session_store`/`resume` 文档补充
+- [ ] demo `resume()` 与 `examples/rust/resilience/session_persist_resume.rs` 均适配 `Result` 返回,`cargo test --workspace`(含 examples 编译)过
+- [ ] demo 测试重跑,输出贴回 issue/PR
+- [ ] `with_session_store` rustdoc 与 `SessionSnapshot` 自身 doc comment 都补充 `session_store` 重挂说明
 - [ ] `docs/review/v0_10_demo_validation.md` 更新(Triage #4 行)

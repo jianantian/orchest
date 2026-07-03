@@ -9,7 +9,7 @@ v0.10 验证报告与各 blocker issue 的验收标准都要求:修复后**重�
 ## 范围
 
 1. 全量重跑并留档:
-   - `cargo test -p briefing-desk-demo`(19 个自动化测试全绿)
+   - `cargo test -p briefing-desk-demo` 全绿(001/002/004/005 各自会新增测试,不钉死具体条数)
    - `--fake` 模式手动完整 run 一次(approval 流、session persist + resume、describe_image 真实 Image block 路径)
    - live 模式(env-var gated)至少验证一次真实 Anthropic 视觉调用,兑现报告"未完成 live provider 验证前不得推进 v1.0"的要求
 2. `docs/review/v0_10_demo_validation.md`:

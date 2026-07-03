@@ -12,7 +12,13 @@ GitHub: [#196](https://github.com/jianantian/orchest/issues/196) · release-bloc
 
 - `crates/orchest-provider` 新增 `pub mod fakes`,置于 `testing` Cargo feature 之后(`#[cfg(feature = "testing")]`),不进默认 feature,不污染生产依赖面
 - `fakes::FakeAsr` / `fakes::FakeTts` 实现 `orchest_protocol::{Asr, Tts}`,行为确定性(固定/可注入的 transcript 与合成字节),形态以 demo `media.rs` 现有两个 impl 为蓝本上移
-- `selection.rs` 的私有 `FakeAsr` 删除,改用共享版;demo 的 `FakeAsr`/`FakeTts` 改为依赖 `orchest-provider = { features = ["testing"] }`
+- demo 的 `FakeAsr`/`FakeTts` 改为依赖 `orchest-provider = { features = ["testing"] }`,删除本地手写版
+
+**`selection.rs` 里的私有 `FakeAsr` 不动**:那是一个 `(&str, &str)` 元组,
+`transcribe()` 直接 `unreachable!()`,只用于"按 `CapabilityDescriptor` 路由选型"
+的测试占位,和共享 fakes 模块要提供的"离线可用、确定性转写/合成"是两个不同
+目的的 test double。#196 的诉求是"下游缺可复用 fake",不涉及 `selection.rs`
+自己这份路由测试用的最小占位,没必要强制统一,徒增耦合。
 
 不选"文档化让下游自己写"路线:验证报告与 #196 的定性是 release-blocker-eligible("missing fake provider hook"),v1.0 冻结后下游做离线测试的第一件事就是找 fake,应由 provider crate 自带。
 
@@ -25,6 +31,6 @@ GitHub: [#196](https://github.com/jianantian/orchest/issues/196) · release-bloc
 ## 验收标准(对齐 GitHub #196)
 
 - [ ] `fakes` 模块 + `testing` feature 落地,`FakeAsr`/`FakeTts` 可被下游 import
-- [ ] demo 与 `selection.rs` 改用共享 fake,本地手写版删除
+- [ ] demo 改用共享 fake,本地手写版删除(`selection.rs` 的路由测试占位保持不动)
 - [ ] demo 测试重跑,输出贴回 issue/PR
 - [ ] `docs/review/v0_10_demo_validation.md` 更新(Triage #2 行)

@@ -9,10 +9,20 @@ GitHub: [#199](https://github.com/jianantian/orchest/issues/199) · release-bloc
 ## 方向(提案)
 
 ```rust
-pub fn build(self) -> Result<SubAgentTool, ConfigError>
+pub fn build(self) -> Result<Arc<dyn Tool>, ConfigError>
 ```
 
-复用 `ConfigError`(builder 缺字段正是配置错误),新增变体如 `ConfigError::MissingField { builder: &'static str, field: &'static str }`(或对齐 `ConfigError` 现有变体风格,实施时以现有命名惯例为准),不为两个缺字段场景引入新错误类型。
+`build()` 现有返回类型是 `Arc<dyn Tool>`(`agent_as_tool.rs:313`),只加 `Result` 外壳,不改动内层类型。
+
+复用 `ConfigError`(builder 缺字段正是配置错误),新增两个专属变体
+`SubAgentMissingModel` / `SubAgentMissingRegistry`,对齐 `ConfigError` 现有
+"一个变体对应一种具体错误"的风格(`MissingModel`、`InvalidMaxSteps(u32)` 等
+都是如此)。不引入 `MissingField { builder, field }` 这类泛化 struct 变体——
+那会让调用方 `match` 时分不清具体是哪个 builder 抛的。也不直接复用已有的
+`ConfigError::MissingModel`:那个变体是 `AgentConfigBuilder::build()` 校验
+`model.spec.model` 空字符串时抛的,与 `SubAgentBuilder` 缺 `.model()`
+(`Arc<dyn ModelAdapter>`)语义不同、字段类型也不同,复用会把两个 builder
+的错误混进同一变体。
 
 ## 落地与测试
 
