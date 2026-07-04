@@ -704,7 +704,10 @@ impl Agent {
                 .registry(child_registry)
                 .input_mapper(move |v| input_mapper(v))
                 .output_extractor(move |v| output_mapper(v))
-                .build(),
+                .build()
+                .map_err(|e| {
+                    PyRuntimeError::new_err(format!("failed to build sub-agent tool: {}", e))
+                })?,
         );
 
         Ok(())

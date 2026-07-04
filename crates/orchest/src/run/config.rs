@@ -682,6 +682,10 @@ pub enum ConfigError {
          call `.with_session_store(store, \"{session_id}\")` on the snapshot's active_config before resuming"
     )]
     SessionStoreMissing { session_id: String },
+    #[error("SubAgentBuilder requires .model() before .build()")]
+    SubAgentMissingModel,
+    #[error("SubAgentBuilder requires .registry() before .build()")]
+    SubAgentMissingRegistry,
 }
 
 // Runtime types

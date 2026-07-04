@@ -322,6 +322,7 @@ fn reviewer_tool() -> Arc<dyn orchest::tool::Tool> {
             serde_json::json!({"output": details.get("output").cloned().unwrap_or(details)})
         })
         .build()
+        .expect("reviewer_tool always sets .model() and .registry()")
 }
 
 /// Drives an already-started run's event stream to completion: renders

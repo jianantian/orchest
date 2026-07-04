@@ -3810,6 +3810,7 @@ fn make_spawn_sub_tool() -> Arc<dyn Tool> {
         .input_mapper(|_| Ok("child with approval".into()))
         .output_extractor(|details| details.get("output").cloned().unwrap_or(details.clone()))
         .build()
+        .unwrap()
 }
 
 #[tokio::test]

@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::events::RuntimeEvent;
 use crate::model::ModelAdapter;
-use crate::run::{AgentConfig, AgentRun, RunInput};
+use crate::run::{AgentConfig, AgentRun, ConfigError, RunInput};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
 
@@ -310,13 +310,9 @@ impl SubAgentBuilder {
         self
     }
 
-    pub fn build(self) -> Arc<dyn Tool> {
-        let model = self
-            .model
-            .expect("SubAgentBuilder requires .model() before .build()");
-        let registry = self
-            .registry
-            .expect("SubAgentBuilder requires .registry() before .build()");
+    pub fn build(self) -> Result<Arc<dyn Tool>, ConfigError> {
+        let model = self.model.ok_or(ConfigError::SubAgentMissingModel)?;
+        let registry = self.registry.ok_or(ConfigError::SubAgentMissingRegistry)?;
         let input_schema = self.input_schema.unwrap_or_else(
             || json!({"type": "object", "properties": {"input": {"type": "string"}}}),
         );
@@ -333,7 +329,7 @@ impl SubAgentBuilder {
             .output_extractor
             .unwrap_or_else(|| Arc::new(|details: Value| details));
 
-        Arc::new(AgentAsTool {
+        Ok(Arc::new(AgentAsTool {
             config: self.config,
             tool_name: self.tool_name,
             tool_description: self.tool_description,
@@ -349,6 +345,82 @@ impl SubAgentBuilder {
             input_mapper,
             output_extractor,
             context_mode: self.context_mode,
-        })
+        }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{ModelCapabilities, ModelError, ModelResponse, RequestOptions};
+    use tokio::sync::mpsc as tokio_mpsc;
+
+    struct NeverCalledModel;
+
+    #[async_trait]
+    impl ModelAdapter for NeverCalledModel {
+        fn provider_name(&self) -> &str {
+            "never-called"
+        }
+        fn model_name(&self) -> &str {
+            "never-called"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
+            &self,
+            _messages: &[crate::model::Message],
+            _tools: &[crate::model::ToolDef],
+            _options: &RequestOptions,
+            _tx: Option<tokio_mpsc::Sender<crate::model::StreamEvent>>,
+        ) -> Result<ModelResponse, ModelError> {
+            unimplemented!("build() never invokes the model")
+        }
+    }
+
+    fn test_agent_config() -> AgentConfig {
+        AgentConfig::builder("mock/model")
+            .system_prompt("test")
+            .max_steps(1)
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn build_fails_with_missing_model_when_model_not_set() {
+        let result = test_agent_config()
+            .as_tool("t", "d")
+            .registry(ToolRegistry::new())
+            .build();
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("build() should fail without .model()"),
+        };
+        assert!(matches!(err, ConfigError::SubAgentMissingModel));
+    }
+
+    #[test]
+    fn build_fails_with_missing_registry_when_registry_not_set() {
+        let result = test_agent_config()
+            .as_tool("t", "d")
+            .model(Arc::new(NeverCalledModel))
+            .build();
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("build() should fail without .registry()"),
+        };
+        assert!(matches!(err, ConfigError::SubAgentMissingRegistry));
+    }
+
+    #[test]
+    fn build_succeeds_when_model_and_registry_both_set() {
+        let tool = test_agent_config()
+            .as_tool("t", "d")
+            .model(Arc::new(NeverCalledModel))
+            .registry(ToolRegistry::new())
+            .build()
+            .unwrap();
+        assert_eq!(tool.name(), "t");
     }
 }
