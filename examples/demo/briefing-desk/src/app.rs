@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use orchest::events::RuntimeEvent;
-use orchest::model::{ContentBlock, Message, ModelAdapter, Role};
+use orchest::model::ModelAdapter;
 use orchest::run::{AgentConfig, AgentRun, EventReceiver, RunHandle, RunInput};
 use orchest::session::{SessionStore, SqliteSessionStore};
 use orchest::tool::agent_as_tool::ContextMode;
@@ -235,16 +235,17 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
             )
         })?;
 
-    snapshot.messages.push(Message {
-        role: Role::User,
-        content: vec![ContentBlock::Text(args.question.clone())],
-    });
     let store: Arc<dyn SessionStore> = Arc::new(store);
     snapshot.active_config = snapshot
         .active_config
         .with_session_store(Arc::clone(&store), args.session.clone());
 
-    let (handle, rx) = AgentRun::resume(snapshot, Arc::new(FakeModel), ToolRegistry::new());
+    let (handle, rx) = AgentRun::resume_with_input(
+        snapshot,
+        RunInput::text(args.question.clone()),
+        Arc::new(FakeModel),
+        ToolRegistry::new(),
+    );
     let answer = drain_events(handle, rx, false, false).await?;
     println!("[done] follow-up answer: {answer}");
 

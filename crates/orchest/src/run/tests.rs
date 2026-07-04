@@ -6484,3 +6484,65 @@ async fn start_with_image_run_input_reaches_model() {
         "user turn should carry the Image block from RunInput::with_image"
     );
 }
+
+#[tokio::test]
+async fn resume_with_input_appends_new_user_turn() {
+    use crate::session::{InMemorySessionStore, SessionStore};
+
+    // === Start phase ===
+    let store = Arc::new(InMemorySessionStore::new());
+    let mut cfg = test_config();
+    cfg.session_store = Some(store.clone() as Arc<dyn SessionStore>);
+    cfg.session_id = Some("resume-with-input-test".into());
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let registry = ToolRegistry::new();
+    let (handle, mut rx) = AgentRun::start(cfg, "original question".into(), model, registry);
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let mut snap = store
+        .load("resume-with-input-test")
+        .await
+        .expect("load")
+        .expect("some");
+    let original_message_count = snap.messages.len();
+    snap.active_config = snap.active_config.with_session_store(
+        store.clone() as Arc<dyn SessionStore>,
+        "resume-with-input-test",
+    );
+
+    // === Resume-with-input phase ===
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let model2: Arc<dyn ModelAdapter> = Arc::new(MessageCapturingModel {
+        captured: captured.clone(),
+    });
+    let (handle2, mut rx2) = AgentRun::resume_with_input(
+        snap,
+        RunInput::text("follow-up question"),
+        model2,
+        ToolRegistry::new(),
+    );
+    while rx2.recv().await.is_some() {}
+    handle2.wait().await;
+
+    let calls = captured.lock().unwrap();
+    let first_call = calls.first().expect("model should have been called");
+    assert_eq!(
+        first_call.len(),
+        original_message_count + 1,
+        "resume_with_input should append exactly one new message to the snapshot history"
+    );
+    let last = first_call.last().expect("at least one message");
+    assert_eq!(
+        last.role,
+        Role::User,
+        "appended message should be a user turn"
+    );
+    assert!(
+        last.content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::Text(t) if t == "follow-up question")),
+        "appended user turn should carry the new RunInput text"
+    );
+}

@@ -84,7 +84,15 @@ impl AgentRun {
         supervisor::spawn_supervised(run_id, args, approval_bus, event_rx)
     }
 
-    /// Resume a previous run from a persisted snapshot.
+    /// Resumes a previous run from a persisted snapshot exactly as it left
+    /// off — the message history is replayed unchanged.
+    ///
+    /// This is for continuing an interrupted run (crash, process restart),
+    /// not for asking a follow-up question: it does **not** append any new
+    /// input. Calling it on a snapshot whose last turn already produced a
+    /// final answer just re-invokes the model against unchanged history,
+    /// producing a stale or duplicate response. For a follow-up turn, use
+    /// [`AgentRun::resume_with_input`] instead.
     pub fn resume(
         snapshot: crate::session::SessionSnapshot,
         model: Arc<dyn ModelAdapter>,
@@ -97,6 +105,48 @@ impl AgentRun {
         let approval_bus = ApprovalBus::default();
         let resume = ResumeState {
             messages: snapshot.messages,
+            step: snapshot.step,
+            budget_used: snapshot.budget_used,
+        };
+        let args = AgentRunArgs {
+            run_id,
+            config,
+            input: vec![],
+            model,
+            registry,
+            event_tx,
+            approval_bus: approval_bus.clone(),
+            resume: Some(resume),
+            initial_messages: vec![],
+        };
+        supervisor::spawn_supervised(run_id, args, approval_bus, event_rx)
+    }
+
+    /// Resumes a previous run from a persisted snapshot and appends `input`
+    /// as a new user turn — the follow-up-question path (e.g. "continue this
+    /// session with a new question").
+    ///
+    /// Unlike [`AgentRun::resume`], which replays the snapshot unchanged,
+    /// this pushes `input` onto the snapshot's message history before
+    /// resuming, so the model is invoked against history plus the new turn.
+    pub fn resume_with_input(
+        snapshot: crate::session::SessionSnapshot,
+        input: RunInput,
+        model: Arc<dyn ModelAdapter>,
+        registry: ToolRegistry,
+    ) -> (RunHandle, EventReceiver) {
+        let mut config = snapshot.active_config.clone();
+        config.register_persistence_hook();
+        let run_id = snapshot.run_id;
+        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
+        let approval_bus = ApprovalBus::default();
+        let mut messages = snapshot.messages;
+        messages.push(crate::model::Message {
+            role: crate::model::Role::User,
+            content: input.into_blocks(),
+        });
+        let resume = ResumeState {
+            messages,
             step: snapshot.step,
             budget_used: snapshot.budget_used,
         };

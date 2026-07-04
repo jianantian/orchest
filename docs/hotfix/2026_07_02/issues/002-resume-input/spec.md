@@ -38,7 +38,19 @@ pub fn resume_with_input(
 
 ## 验收标准(对齐 GitHub #197)
 
-- [ ] `resume_with_input` 落地,demo `resume()` 改用它
-- [ ] `resume` doc comment 与 quickstart §8 补坑说明
-- [ ] demo 测试重跑,输出贴回 issue/PR
-- [ ] `docs/review/v0_10_demo_validation.md` 更新(Triage #3、#10 两行)
+- [x] `resume_with_input` 落地,demo `resume()` 改用它
+- [x] `resume` doc comment 与 quickstart §8 补坑说明
+- [x] demo 测试重跑,输出贴回 issue/PR
+- [x] `docs/review/v0_10_demo_validation.md` 更新(Triage #3、#10 两行)
+
+## 实现记录
+
+- 新增 `AgentRun::resume_with_input(snapshot, input: RunInput, model, registry)`(`crates/orchest/src/run/mod.rs`),把 `input.into_blocks()` 追加为快照消息尾部的一条 `Message { role: User, .. }` 后走与 `resume` 相同的 `ResumeState`/spawn 路径。`resume` 签名不变,rustdoc 补充"不追加输入,follow-up 用 `resume_with_input`"的说明。
+- `examples/demo/briefing-desk/src/app.rs` 的 `resume()` 删掉手动 `snapshot.messages.push(..)`,改用 `AgentRun::resume_with_input(snapshot, RunInput::text(args.question.clone()), ..)`;`ContentBlock`/`Message`/`Role` 导入随之清理为未使用。
+- 新测试:`resume_with_input_appends_new_user_turn`(`crates/orchest/src/run/tests.rs`)用 `MessageCapturingModel` 断言 resume 后发给模型的消息数恰好是快照消息数 + 1,且新增的一条是携带新文本的 `User` turn;既有 `resume_continues_from_snapshot` 保持不变,作为 `resume` 原语义的回归测试。
+- `docs/guide/quickstart.md` §8 的 `session_persist_resume.rs` 指引补充 `resume` vs `resume_with_input` 的语义区分。
+- `cargo test --workspace --features orchest/sqlite-session`:全部通过,0 failed
+- `cargo clippy --workspace --all-targets -- -D warnings`:无新增 finding(与 001 记录的两处既有基线 finding 一致,`orchest-provider/tests/selection.rs` 的 `result_large_err`、`run/tests.rs:2811` 的 `too_many_arguments`)
+- `cargo fmt --check`:通过
+- `bash scripts/lint-check.sh`:通过(exit 0)
+- `cargo test -p briefing-desk-demo`:20 个测试全绿,含 `session_persists_across_processes_and_resume_references_original_brief`
