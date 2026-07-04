@@ -29,7 +29,7 @@ v0.10 Demo A(Briefing Desk)验证报告([`docs/review/v0_10_demo_validation.md`]
 | 003 | 反序列化 `AgentConfig` 丢 session store 时响亮失败 | [#198](https://github.com/jianantian/orchest/issues/198) | 002(共用 resume 面,顺序改动避免冲突) |
 | 004 | `SubAgentBuilder::build()` 返回 `Result` | [#199](https://github.com/jianantian/orchest/issues/199) | 无 |
 | 005 | `orchest-provider` 提供可复用 fake `Asr`/`Tts` | [#196](https://github.com/jianantian/orchest/issues/196) | 无 |
-| 006 | Briefing Desk demo 重验证 + 报告/路线图收尾 | (实施时新建) | 001–005 |
+| 006 | Briefing Desk demo 重验证 + 报告/路线图收尾 | [#201](https://github.com/jianantian/orchest/issues/201) | 001–005 |
 
 依赖顺序:001 → 002 → 003;004、005 独立,可穿插;006 收尾。
 
@@ -44,11 +44,17 @@ v0.10 Demo A(Briefing Desk)验证报告([`docs/review/v0_10_demo_validation.md`]
 
 ## 验收标准
 
-- [ ] 001–005 各自 spec 的验收 checklist 全过
-- [ ] #195–#199 全部由 `closes #N` commit 关闭
-- [ ] `docs/review/v0_10_demo_validation.md` Triage 表 5 行 blocker 标注已修复(含 PR/commit 链接),Freeze Coverage Statement 更新
-- [ ] `docs/iteration/roadmap.md` 能力缺口表"多模态图片输入"行更新为已完成
-- [ ] `cargo test --workspace` / `cargo clippy --workspace -- -D warnings` / `cargo fmt --check` / `bash scripts/lint-check.sh` 全过
+- [x] 001–005 各自 spec 的验收 checklist 全过
+- [x] #195–#199 全部由 `closes #N` commit 关闭
+- [x] `docs/review/v0_10_demo_validation.md` Triage 表 5 行 blocker 标注已修复(含 commit 链接),Freeze Coverage Statement 更新
+- [x] `docs/iteration/roadmap.md` 能力缺口表"多模态图片输入"行更新为已完成
+- [x] `cargo test --workspace` / `cargo clippy --workspace -- -D warnings` / `cargo fmt --check` / `bash scripts/lint-check.sh` 全过
+
+补充说明:5 项 release blocker 全部清偿,但验证报告自己标注的 **live provider
+验证仍未完成**(本次实施环境无 LLM/ASR/TTS 凭证)——这不属于本 hotfix 5 个
+issue 的验收范围(它们各自的验收标准只要求 `--fake` 重跑),但 v1.0 发布前
+仍需由有凭证的维护者补做,详见 `docs/review/v0_10_demo_validation.md` 与
+`docs/iteration/roadmap.md` 的对应说明。
 
 ## 依赖
 

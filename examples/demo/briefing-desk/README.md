@@ -136,8 +136,10 @@ testable. A denied `write_report` also skips `synthesize_brief` entirely —
 there is nothing to synthesize.
 
 `cargo test -p briefing-desk-demo` runs all of the above as automated smoke
-tests, using `FakeAsr`/`FakeTts` (real `orchest_protocol::{Asr, Tts}` impls,
-deterministic, no network).
+tests, using `orchest_provider::fakes::{FakeAsr, FakeTts}` (real
+`orchest_protocol::{Asr, Tts}` impls, deterministic, no network) via
+`orchest-provider`'s `testing` feature — see
+[#196](https://github.com/jianantian/orchest/issues/196).
 
 ### Session persistence and resume
 
@@ -169,6 +171,15 @@ directly from the persisted conversation history, which already contains
 everything the original run read and wrote — the fake follow-up answer
 literally quotes a snippet of the original brief pulled out of that history
 to make the context-preservation checkable.
+
+Under the hood this CLI's `resume` command calls the public
+`AgentRun::resume_with_input(snapshot, RunInput::text(question), ..)`
+(added by [#197](https://github.com/jianantian/orchest/issues/197)) rather
+than hand-appending a message onto the loaded snapshot — see that function's
+rustdoc for how it differs from the input-free `AgentRun::resume`. It also
+re-attaches the session store before resuming; skipping that step now fails
+loudly with `ConfigError::SessionStoreMissing` instead of silently dropping
+persistence ([#198](https://github.com/jianantian/orchest/issues/198)).
 
 ### Live provider run
 
