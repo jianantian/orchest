@@ -330,7 +330,8 @@ async fn session_resume_with_hooks() {
             count: Arc::clone(&hook_count),
         }));
 
-    let (handle2, rx2) = AgentRun::resume(snap, Arc::new(SimpleEndModel), ToolRegistry::new());
+    let (handle2, rx2) =
+        AgentRun::resume(snap, Arc::new(SimpleEndModel), ToolRegistry::new()).unwrap();
     collect(rx2).await;
     handle2.wait().await;
 
@@ -396,7 +397,8 @@ async fn session_resume_after_handoff() {
     };
 
     // Resume from the post-handoff snapshot
-    let (handle, rx) = AgentRun::resume(snapshot, Arc::new(SimpleEndModel), ToolRegistry::new());
+    let (handle, rx) =
+        AgentRun::resume(snapshot, Arc::new(SimpleEndModel), ToolRegistry::new()).unwrap();
     assert_eq!(
         handle.run_id, run_id,
         "resumed run_id must match snapshot run_id"
@@ -849,7 +851,8 @@ mod sqlite_tests {
             .active_config
             .with_session_store(store.clone() as Arc<dyn SessionStore>, SID);
 
-        let (handle2, rx2) = AgentRun::resume(snap, Arc::new(SimpleEndModel), ToolRegistry::new());
+        let (handle2, rx2) =
+            AgentRun::resume(snap, Arc::new(SimpleEndModel), ToolRegistry::new()).unwrap();
         assert_eq!(handle2.run_id, first_run_id, "resumed run_id must match");
         collect(rx2).await;
         handle2.wait().await;

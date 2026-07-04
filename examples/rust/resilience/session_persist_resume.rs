@@ -127,7 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .active_config
         .with_session_store(store.clone() as Arc<dyn SessionStore>, SESSION_ID);
 
-    let (handle2, mut rx2) = AgentRun::resume(snap, Arc::new(EndModel), ToolRegistry::new());
+    let (handle2, mut rx2) = AgentRun::resume(snap, Arc::new(EndModel), ToolRegistry::new())?;
 
     println!(
         "[resume] run_id: {} (same as original: {})",

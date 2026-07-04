@@ -245,7 +245,7 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
         RunInput::text(args.question.clone()),
         Arc::new(FakeModel),
         ToolRegistry::new(),
-    );
+    )?;
     let answer = drain_events(handle, rx, false, false).await?;
     println!("[done] follow-up answer: {answer}");
 

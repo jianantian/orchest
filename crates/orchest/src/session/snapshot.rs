@@ -11,8 +11,12 @@ pub struct SessionSnapshot {
     pub step: u32,
     pub budget_used: crate::budget::BudgetUsage,
     /// The active agent config at the time of snapshot (reflects post-handoff agent).
-    /// `#[serde(skip)]` fields (hooks, retry_policy, handoffs) are empty after
-    /// deserialization; callers must re-register them before calling `AgentRun::resume`.
+    /// `#[serde(skip)]` fields (hooks, retry_policy, handoffs, session_store) are
+    /// empty after deserialization; callers must re-register them before calling
+    /// `AgentRun::resume`/`resume_with_input`. In particular, if the snapshot's
+    /// `session_id` is set (persistence was enabled) but `session_store` wasn't
+    /// re-attached via `with_session_store`, resume fails loudly with
+    /// `ConfigError::SessionStoreMissing` rather than silently dropping persistence.
     pub active_config: crate::run::AgentConfig,
 }
 

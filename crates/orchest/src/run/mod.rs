@@ -93,12 +93,19 @@ impl AgentRun {
     /// final answer just re-invokes the model against unchanged history,
     /// producing a stale or duplicate response. For a follow-up turn, use
     /// [`AgentRun::resume_with_input`] instead.
+    ///
+    /// Returns `ConfigError::SessionStoreMissing` if the snapshot's
+    /// `active_config.session_id` is set (persistence was enabled) but no
+    /// `session_store` is attached — deserializing a snapshot always drops
+    /// the store (`#[serde(skip)]`), so re-attach it first via
+    /// `active_config.with_session_store(store, session_id)`.
     pub fn resume(
         snapshot: crate::session::SessionSnapshot,
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
-    ) -> (RunHandle, EventReceiver) {
+    ) -> Result<(RunHandle, EventReceiver), ConfigError> {
         let mut config = snapshot.active_config.clone();
+        check_session_store_attached(&config)?;
         config.register_persistence_hook();
         let run_id = snapshot.run_id;
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
@@ -119,7 +126,12 @@ impl AgentRun {
             resume: Some(resume),
             initial_messages: vec![],
         };
-        supervisor::spawn_supervised(run_id, args, approval_bus, event_rx)
+        Ok(supervisor::spawn_supervised(
+            run_id,
+            args,
+            approval_bus,
+            event_rx,
+        ))
     }
 
     /// Resumes a previous run from a persisted snapshot and appends `input`
@@ -129,13 +141,17 @@ impl AgentRun {
     /// Unlike [`AgentRun::resume`], which replays the snapshot unchanged,
     /// this pushes `input` onto the snapshot's message history before
     /// resuming, so the model is invoked against history plus the new turn.
+    ///
+    /// Returns `ConfigError::SessionStoreMissing` under the same condition as
+    /// `resume` — see its rustdoc.
     pub fn resume_with_input(
         snapshot: crate::session::SessionSnapshot,
         input: RunInput,
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
-    ) -> (RunHandle, EventReceiver) {
+    ) -> Result<(RunHandle, EventReceiver), ConfigError> {
         let mut config = snapshot.active_config.clone();
+        check_session_store_attached(&config)?;
         config.register_persistence_hook();
         let run_id = snapshot.run_id;
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
@@ -161,7 +177,25 @@ impl AgentRun {
             resume: Some(resume),
             initial_messages: vec![],
         };
-        supervisor::spawn_supervised(run_id, args, approval_bus, event_rx)
+        Ok(supervisor::spawn_supervised(
+            run_id,
+            args,
+            approval_bus,
+            event_rx,
+        ))
+    }
+}
+
+/// A snapshot with `session_id` set had persistence enabled at snapshot time;
+/// deserializing always drops `session_store` (`#[serde(skip)]`), so resuming
+/// without re-attaching it would silently stop persisting. Snapshots that
+/// never had persistence (`session_id: None`) are unaffected.
+fn check_session_store_attached(config: &AgentConfig) -> Result<(), ConfigError> {
+    match (&config.session_id, &config.session_store) {
+        (Some(session_id), None) => Err(ConfigError::SessionStoreMissing {
+            session_id: session_id.clone(),
+        }),
+        _ => Ok(()),
     }
 }
 

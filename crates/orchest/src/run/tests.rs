@@ -5835,7 +5835,8 @@ async fn restart_after_resume_reuses_original_snapshot_when_store_absent() {
         active_config: config,
     };
 
-    let (handle, mut rx) = AgentRun::resume(snapshot, model, ToolRegistry::new());
+    let (handle, mut rx) =
+        AgentRun::resume(snapshot, model, ToolRegistry::new()).expect("no session_store to miss");
     assert_eq!(handle.run_id, run_id);
 
     let mut saw_restart = false;
@@ -6269,7 +6270,8 @@ async fn resume_continues_from_snapshot() {
     // === Resume phase ===
     let model2 = Arc::new(FakeModelAdapter::final_answer());
     let registry2 = ToolRegistry::new();
-    let (handle2, mut rx2) = AgentRun::resume(snap, model2, registry2);
+    let (handle2, mut rx2) =
+        AgentRun::resume(snap, model2, registry2).expect("session_store was re-attached");
 
     // run_id should be the same as original
     assert_eq!(
@@ -6522,7 +6524,8 @@ async fn resume_with_input_appends_new_user_turn() {
         RunInput::text("follow-up question"),
         model2,
         ToolRegistry::new(),
-    );
+    )
+    .expect("session_store was re-attached");
     while rx2.recv().await.is_some() {}
     handle2.wait().await;
 
@@ -6545,4 +6548,106 @@ async fn resume_with_input_appends_new_user_turn() {
             .any(|b| matches!(b, ContentBlock::Text(t) if t == "follow-up question")),
         "appended user turn should carry the new RunInput text"
     );
+}
+
+#[tokio::test]
+async fn resume_fails_loudly_when_persisted_session_store_not_reattached() {
+    use crate::session::SessionSnapshot;
+
+    // Simulates a deserialized snapshot: session_store is `#[serde(skip)]`,
+    // so a real load never carries it forward even though session_id survives.
+    let mut cfg = test_config();
+    cfg.session_id = Some("dropped-store-test".into());
+    cfg.session_store = None;
+
+    let snapshot = SessionSnapshot {
+        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
+        session_id: "dropped-store-test".into(),
+        run_id: RunId::new(),
+        messages: vec![Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text("hi".into())],
+        }],
+        step: 1,
+        budget_used: Default::default(),
+        active_config: cfg,
+    };
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let err = match AgentRun::resume(snapshot, model, ToolRegistry::new()) {
+        Err(e) => e,
+        Ok(_) => panic!("resume must fail loudly when session_store wasn't re-attached"),
+    };
+    assert!(matches!(
+        err,
+        ConfigError::SessionStoreMissing { session_id } if session_id == "dropped-store-test"
+    ));
+}
+
+#[tokio::test]
+async fn resume_with_input_fails_loudly_when_persisted_session_store_not_reattached() {
+    use crate::session::SessionSnapshot;
+
+    let mut cfg = test_config();
+    cfg.session_id = Some("dropped-store-test-2".into());
+    cfg.session_store = None;
+
+    let snapshot = SessionSnapshot {
+        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
+        session_id: "dropped-store-test-2".into(),
+        run_id: RunId::new(),
+        messages: vec![Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text("hi".into())],
+        }],
+        step: 1,
+        budget_used: Default::default(),
+        active_config: cfg,
+    };
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let err = match AgentRun::resume_with_input(
+        snapshot,
+        RunInput::text("follow-up"),
+        model,
+        ToolRegistry::new(),
+    ) {
+        Err(e) => e,
+        Ok(_) => panic!("resume_with_input must fail loudly when session_store wasn't re-attached"),
+    };
+    assert!(matches!(
+        err,
+        ConfigError::SessionStoreMissing { session_id } if session_id == "dropped-store-test-2"
+    ));
+}
+
+#[tokio::test]
+async fn resume_without_session_id_is_unaffected_by_session_store_check() {
+    use crate::session::SessionSnapshot;
+
+    // A snapshot that never had persistence enabled (session_id: None) must
+    // resume normally — the loud-failure check only fires for snapshots that
+    // once had persistence turned on.
+    let cfg = test_config();
+    assert!(cfg.session_id.is_none());
+    assert!(cfg.session_store.is_none());
+
+    let snapshot = SessionSnapshot {
+        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
+        session_id: "never-persisted".into(),
+        run_id: RunId::new(),
+        messages: vec![Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text("hi".into())],
+        }],
+        step: 1,
+        budget_used: Default::default(),
+        active_config: cfg,
+    };
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let (handle, mut rx) = AgentRun::resume(snapshot, model, ToolRegistry::new())
+        .expect("no session_id on active_config means the check doesn't apply");
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
 }
