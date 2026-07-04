@@ -174,6 +174,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sqlite_roundtrip_preserves_image_content_block() {
+        use crate::model::{ContentBlock, MediaSource, Message, Role};
+
+        let store = SqliteSessionStore::open_in_memory().unwrap();
+        let mut snap = make_snap("img-sess", 1);
+        snap.messages = vec![Message {
+            role: Role::User,
+            content: vec![
+                ContentBlock::Text("describe this".to_string()),
+                ContentBlock::Image {
+                    source: MediaSource::Url {
+                        url: "https://example.com/cat.png".to_string(),
+                    },
+                    detail: None,
+                },
+            ],
+        }];
+        store.save("img-sess", &snap).await.unwrap();
+        let loaded = store.load("img-sess").await.unwrap().expect("some");
+        assert_eq!(loaded.messages, snap.messages);
+    }
+
+    #[tokio::test]
     async fn sqlite_schema_version_mismatch() {
         let store = SqliteSessionStore::open_in_memory().unwrap();
         let snap = make_snap("sv-test", 0);

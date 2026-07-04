@@ -35,7 +35,7 @@ pub(crate) struct SupervisorState {
     approval_bus: ApprovalBus,
     session_store: Option<Arc<dyn SessionStore>>,
     session_id: Option<String>,
-    original_input: String,
+    original_input: Vec<crate::model::ContentBlock>,
     original_initial_messages: Vec<crate::model::Message>,
     original_resume: Option<ResumeState>,
     worker_handle: Option<ractor::concurrency::JoinHandle<()>>,

@@ -184,6 +184,10 @@ ANTHROPIC_API_KEY=sk-... cargo run --example basic_agent_run
 - **进阶示例**（[`examples/rust/`](../../examples/rust/)）：
   - 自定义 Hook：`hook_logging.rs` / `hook_abort.rs` / `hook_modifier.rs`
   - Guardrail：`guardrail_keyword_filter.rs` / `guardrail_output_sanitize.rs`
+  - 多模态图片输入：`multimodal_image_input.rs`——`AgentRun::start` 的 `input` 是
+    `RunInput`，`RunInput::text(..).with_image(source)` 可在一个 user turn 里携带
+    文本 + 图片（`RunInput::from_blocks` 还支持 video/audio，但只接受这四种
+    block；`ToolUse`/`ToolResult`/`Thinking`/`MidConvSystem` 会被拒绝）
   - Session 持久化 + 恢复：`session_persist_resume.rs`
   - Handoff：`handoff_routing.rs` / `handoff_input_filter.rs`
   - Mid-run steering / watcher：`watcher_inject_message.rs` / `watcher_abort_on_pattern.rs`

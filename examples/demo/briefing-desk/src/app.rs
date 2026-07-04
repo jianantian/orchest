@@ -7,13 +7,13 @@ use std::sync::Arc;
 
 use orchest::events::RuntimeEvent;
 use orchest::model::{ContentBlock, Message, ModelAdapter, Role};
-use orchest::run::{AgentConfig, AgentRun, EventReceiver, RunHandle};
+use orchest::run::{AgentConfig, AgentRun, EventReceiver, RunHandle, RunInput};
 use orchest::session::{SessionStore, SqliteSessionStore};
 use orchest::tool::agent_as_tool::ContextMode;
 use orchest::tool::registry::ToolRegistry;
 use orchest::tool::ToolError;
 
-use crate::fake_model::{FakeModel, ReviewerFakeModel};
+use crate::fake_model::{DescribeImageFakeModel, FakeModel, ReviewerFakeModel};
 use crate::media::{
     self, DescribeImageTool, FakeAsr, FakeTts, SynthesizeBriefTool, TranscribeAudioTool,
 };
@@ -139,7 +139,11 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
         )))?;
     }
     if !corpus.images.is_empty() {
-        registry.register(Arc::new(DescribeImageTool::new(corpus.images.clone())))?;
+        let vision_model: Arc<dyn ModelAdapter> = Arc::new(DescribeImageFakeModel);
+        registry.register(Arc::new(DescribeImageTool::new(
+            corpus.images.clone(),
+            vision_model,
+        )))?;
     }
 
     registry.register(Arc::new(WriteReportTool::new(args.output.clone())))?;
@@ -178,8 +182,12 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
 
     let deny_write = std::env::var_os(FAKE_DENY_APPROVAL_ENV).is_some();
     let deny_tts = std::env::var_os(FAKE_DENY_TTS_APPROVAL_ENV).is_some();
-    let (handle, rx) =
-        AgentRun::start(config, args.question.clone(), Arc::new(FakeModel), registry);
+    let (handle, rx) = AgentRun::start(
+        config,
+        RunInput::text(args.question.clone()),
+        Arc::new(FakeModel),
+        registry,
+    );
     let brief = drain_events(handle, rx, deny_write, deny_tts).await?;
     println!("[done] final message: {brief}");
 

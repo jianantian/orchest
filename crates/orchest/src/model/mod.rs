@@ -3,9 +3,9 @@
 
 pub use orchest_protocol::{
     CacheCapability, CachePolicy, CapabilitySource, CompatibilityPolicy, ContentBlock, JsonSchema,
-    Message, ModelAdapter, ModelCapabilities, ModelError, ModelPricing, ModelResponse, ModelSpec,
-    OptionAdjustment, ProviderRuntimeConfig, ReasoningCapability, RequestOptions, Role, StopReason,
-    StreamEvent, ThinkingLevel, TokenUsage, ToolDef, UpstreamErrorDetail,
+    MediaSource, Message, ModelAdapter, ModelCapabilities, ModelError, ModelPricing, ModelResponse,
+    ModelSpec, OptionAdjustment, ProviderRuntimeConfig, ReasoningCapability, RequestOptions, Role,
+    StopReason, StreamEvent, ThinkingLevel, TokenUsage, ToolDef, UpstreamErrorDetail,
 };
 
 /// Backward-compatible alias.

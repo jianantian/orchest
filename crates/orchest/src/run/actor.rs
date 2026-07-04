@@ -117,7 +117,7 @@ pub(crate) struct ResumeState {
 pub(crate) struct AgentRunArgs {
     pub run_id: RunId,
     pub config: AgentConfig,
-    pub input: String,
+    pub input: Vec<ContentBlock>,
     pub model: Arc<dyn ModelAdapter>,
     pub registry: ToolRegistry,
     pub event_tx: mpsc::Sender<RuntimeEvent>,
@@ -284,7 +284,7 @@ impl Actor for WorkerActor {
             msgs.extend(initial_messages);
             msgs.push(Message {
                 role: Role::User,
-                content: vec![ContentBlock::Text(input)],
+                content: input,
             });
             (msgs, 0, None)
         };

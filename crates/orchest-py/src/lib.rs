@@ -24,7 +24,8 @@ use orchest::model::{
     ThinkingLevel,
 };
 use orchest::run::{
-    AgentConfig, AgentRun, ApprovalMode, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig,
+    AgentConfig, AgentRun, ApprovalMode, ModelConfig, RunHandle, RunInput, RuntimeConfig,
+    SkillsConfig,
 };
 use orchest::tool::async_job::{JobHandle, JobStatus};
 use orchest::tool::builtin::WriteFileTool;
@@ -735,7 +736,7 @@ impl Agent {
         let events = py.detach(|| {
             rt.block_on(async {
                 let (handle, mut event_rx) =
-                    AgentRun::start(config, input, model_adapter, registry);
+                    AgentRun::start(config, RunInput::text(input), model_adapter, registry);
 
                 // Store the handle for respond_approval
                 {
@@ -800,7 +801,7 @@ impl Agent {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             rt.block_on(async move {
                 let (handle, mut event_rx) =
-                    AgentRun::start(config, input, model_adapter, registry);
+                    AgentRun::start(config, RunInput::text(input), model_adapter, registry);
                 {
                     let mut guard = run_handle_ref.lock().await;
                     *guard = Some(handle);

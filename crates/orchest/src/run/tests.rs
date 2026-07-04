@@ -2,8 +2,8 @@ use super::*;
 use crate::budget::BudgetConfig;
 use crate::events::{ApprovalContext, RuntimeEvent};
 use crate::model::{
-    ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
-    ModelStreamChunk, RequestOptions, Role, StopReason, StreamEvent, TokenUsage,
+    ContentBlock, MediaSource, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
+    ModelSpec, ModelStreamChunk, RequestOptions, Role, StopReason, StreamEvent, TokenUsage,
 };
 use crate::tool::async_job::{JobHandle, JobStatus};
 use crate::tool::registry::ToolRegistry;
@@ -6417,5 +6417,70 @@ async fn multi_watcher_both_receive_events() {
         events_a.len(),
         events_b.len(),
         "both watchers should see same number of events"
+    );
+}
+
+/// Captures the messages it was called with, so tests can assert on what
+/// content blocks actually reached `ModelAdapter::complete()`.
+struct MessageCapturingModel {
+    captured: Arc<Mutex<Vec<Vec<Message>>>>,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for MessageCapturingModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        self.captured.lock().unwrap().push(messages.to_vec());
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("described".into())],
+            stop_reason: StopReason::EndTurn,
+            usage: TokenUsage::default(),
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[tokio::test]
+async fn start_with_image_run_input_reaches_model() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(MessageCapturingModel {
+        captured: captured.clone(),
+    });
+    let registry = ToolRegistry::new();
+    let config = test_config();
+
+    let input = RunInput::text("describe this image").with_image(MediaSource::Url {
+        url: "https://example.com/cat.png".to_string(),
+    });
+    let (handle, mut rx) = AgentRun::start(config, input, model, registry);
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let calls = captured.lock().unwrap();
+    let first_call = calls.first().expect("model should have been called");
+    let user_turn = first_call
+        .iter()
+        .find(|m| m.role == Role::User)
+        .expect("user turn present");
+    assert!(
+        user_turn
+            .content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::Image { .. })),
+        "user turn should carry the Image block from RunInput::with_image"
     );
 }

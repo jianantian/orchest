@@ -15,8 +15,8 @@ pub(crate) mod webhook;
 
 pub use config::{
     AgentConfig, AgentConfigBuilder, AgentRun, ApprovalMode, CompactionConfig, ConfigError,
-    ModelConfig, RepeatedFailureConfig, RunId, RunState, RunStatus, RuntimeConfig, SkillsConfig,
-    SubAgentRuntime, SupervisionStrategy,
+    ModelConfig, RepeatedFailureConfig, RunId, RunInput, RunInputError, RunState, RunStatus,
+    RuntimeConfig, SkillsConfig, SubAgentRuntime, SupervisionStrategy,
 };
 pub use handle::{ApprovalBus, EventReceiver, RunHandle};
 pub use retry::{BackoffStrategy, RetryPolicy};
@@ -34,15 +34,23 @@ use actor::{AgentRunArgs, ResumeState};
 pub(crate) const EVENT_CHANNEL_CAPACITY: usize = 256;
 
 impl AgentRun {
+    /// Starts a fresh run with the given input as the first user turn.
+    ///
+    /// `input` accepts a plain `&str`/`String` (via `Into<RunInput>`) for
+    /// text-only input, or a `RunInput` built with `RunInput::text(..)`,
+    /// `.with_image(..)`, or `RunInput::from_blocks(..)` to include images,
+    /// video, or audio alongside text (see `RunInput` for what block kinds
+    /// are valid). The model adapter and its provider determine which of
+    /// those block kinds actually reach the underlying request.
     pub fn start(
         config: AgentConfig,
-        input: String,
+        input: RunInput,
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
     ) -> (RunHandle, EventReceiver) {
         Self::start_with_bus(
             config,
-            input,
+            input.into_blocks(),
             vec![],
             model,
             registry,
@@ -53,7 +61,7 @@ impl AgentRun {
     #[allow(clippy::too_many_arguments)] // justified: internal API collecting all run params
     pub(crate) fn start_with_bus(
         mut config: AgentConfig,
-        input: String,
+        input: Vec<crate::model::ContentBlock>,
         initial_messages: Vec<crate::model::Message>,
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
@@ -95,7 +103,7 @@ impl AgentRun {
         let args = AgentRunArgs {
             run_id,
             config,
-            input: String::new(),
+            input: vec![],
             model,
             registry,
             event_tx,

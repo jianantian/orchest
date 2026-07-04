@@ -15,7 +15,11 @@ GitHub: [#195](https://github.com/jianantian/orchest/issues/195) · release-bloc
 
 ## 设计决策
 
-### 决策 1:引入 `RunInput`,`AgentRun::start` 的 `input` 参数泛化为 `impl Into<RunInput>`
+### 决策 1:引入 `RunInput`,`AgentRun::start` 的 `input` 参数改为具体类型 `RunInput`
+
+**实现过程中推翻了最初"泛化为 `impl Into<RunInput>`"的方案**——原因是一个用
+`rustc` 实测验证过的 Rust 推断限制,记在下面,再给出改用具体类型 `RunInput`
+的理由。
 
 ```rust
 // crates/orchest/src/run/config.rs(与 AgentConfig 同模块,经 run/mod.rs pub use)
@@ -60,13 +64,42 @@ impl From<&str> for RunInput            // Text block,infallible
 ```rust
 // 之前
 pub fn start(config: AgentConfig, input: String, ...) -> (RunHandle, EventReceiver)
-// 之后
-pub fn start(config: AgentConfig, input: impl Into<RunInput>, ...) -> (RunHandle, EventReceiver)
+// 之后(最终落地版本,不是 impl Into<RunInput>)
+pub fn start(config: AgentConfig, input: RunInput, ...) -> (RunHandle, EventReceiver)
 ```
 
-**兼容性**:`From<String>` 保证所有现存调用点(两个 SDK binding、全部 examples、agent_as_tool 内部转发)**零改动编译**。这是改 `start` 本体而非另加 `start_with_blocks` 兄弟入口的前提。
+**为什么不是 `impl Into<RunInput>`**:全仓库现存调用点几乎都写成
+`AgentRun::start(config, "hi".into(), model, registry)`——字符串字面量后面跟
+`.into()`。用 `rustc` 单独验证过:当参数类型是 **泛型** `impl Into<RunInput>`
+时,`"hi".into()` 无法编译(`error[E0283]: type annotations needed`)。原因是
+标准库有一条反身性 blanket impl `impl<T> From<T> for T`,使 `&str:
+Into<&str>` 恒成立;参数类型一旦是不确定的泛型 `T: Into<RunInput>`,编译器就
+没有唯一的"期望类型"可以下推给 `.into()`,而 `&str` 同时满足
+`Into<&str>`(恒成立)、`Into<String>`、`Into<RunInput>` 等多个候选,产生歧义
+——这不是 `RunInput` 特有的缺陷,给 `impl Into<String>` 这种最常见的写法同样
+会复现(已用同一份 rustc 验证)。只有当参数类型是**具体类型**(非泛型)时,
+期望类型才会正确下推给 `.into()`,让编译器唯一确定要调用哪个 `From` 实现。
 
-**`from_blocks` 是 fallible,不进 `Into<RunInput>`**:`impl Into<RunInput>` 覆盖的两个 infallible 路径只有 `String`/`&str`(纯文本零成本兼容旧调用)。多模态输入必须显式 `RunInput::from_blocks(vec![...])?` 校验后再传给 `start`——不提供 `impl From<Vec<ContentBlock>> for RunInput`,因为 `From` 约定是 infallible 转换,校验逻辑放进不可失败的 trait 里等于放弃校验(要么悄悄放行非法 block,要么在 `From::from` 里 panic,两者都是本次要清偿的同类"builder 该报错却没报错"问题,详见 issue 004 的 `SubAgentBuilder`)。
+实测影响面:全仓库 `grep -c "AgentRun::start("` 命中 ~95 处,其中
+`crates/orchest/src/run/tests.rs`(75 处)、`guardrail/tests.rs`(6 处)、
+`examples/rust/*`(约 14 处)清一色是 `"字面量".into()` 写法。若采用泛型
+`impl Into<RunInput>`,这近 90 处全部编译失败,需要逐个改成去掉 `.into()`
+或改用 `.to_string()`。改用**具体类型 `RunInput`** 后,这近 90 处**零改动
+编译**(参数类型固定,`.into()` 的期望类型下推正常工作);代价转移到另一侧
+的少数调用点——凡是"变量已经是 `String` 类型、不写 `.into()` 直接传入"的
+调用点(`orchest-py/src/lib.rs:738,803`、`orchest-node/src/lib.rs:608,665`、
+`examples/demo/briefing-desk/src/app.rs` 的 `args.question.clone()`、
+`examples/rust/agents/deep_research_agent.rs` 的 `input` 变量,合计 5 处)
+需要补一个 `.into()` 或显式 `RunInput::text(..)`。5 处 vs. 90 处,具体类型
+是净大幅减少改动量的选择。
+
+**`from_blocks` 是 fallible**:不提供 `impl From<Vec<ContentBlock>> for
+RunInput`,因为 `From` 约定是 infallible 转换,校验逻辑放进不可失败的
+trait 里等于放弃校验(要么悄悄放行非法 block,要么在 `From::from` 里
+panic,两者都是本次要清偿的同类"builder 该报错却没报错"问题,详见 issue
+004 的 `SubAgentBuilder`)。多模态输入走独立的 `RunInput::from_blocks(vec![...])?`
+构造路径,校验通过后得到的 `RunInput` 再传给 `start`——因为 `start` 现在收
+具体类型 `RunInput`,这条路径不受上面的泛型歧义问题影响。
 
 ### 决策 2:内部管线 `input: String` → `input: Vec<ContentBlock>`
 
@@ -83,9 +116,10 @@ pub fn start(config: AgentConfig, input: impl Into<RunInput>, ...) -> (RunHandle
 
 | 备选 | 否决理由 |
 |------|---------|
-| A. 另加 `AgentRun::start_with_blocks(...)` 兄弟入口 | v1.0 即将冻结公开 API,两个并列入口意味着永久维护两份文档与两份 binding 映射;`impl Into<RunInput>` 一个入口覆盖两种用法且不破坏现有调用 |
+| A. 另加 `AgentRun::start_with_blocks(...)` 兄弟入口 | v1.0 即将冻结公开 API,两个并列入口意味着永久维护两份文档与两份 binding 映射;单一 `RunInput` 参数类型(`RunInput::text(..)` 覆盖纯文本、`.with_image(..)`/`from_blocks(..)` 覆盖多模态)一个入口覆盖两种用法,不需要兄弟入口 |
 | B. 窄化公开 `start_with_bus` | 会把 `ApprovalBus`、`initial_messages`(内部上下文注入语义)、8 参数签名一并冻结进 v1.0 公开面;`initial_messages` 的语义(system 与 user turn 之间的前置历史)也不是"图片输入"的正确表达 |
 | C. `AgentRun::start` 收 `Vec<Message>` 完整历史 | 完整历史播种是"上下文注入"特性,角色不变量(system 只能一条且在首位、user/assistant 交替性由 provider 各自约束)需要一套校验,超出本 blocker 的修复范围;内部 `initial_messages` 已服务唯一现存用例(Agent-as-Tool Fork) |
+| D. `input` 参数泛化为 `impl Into<RunInput>`(最初方案) | 用 rustc 实测证伪:全仓库 ~90 处 `"字面量".into()` 调用点在泛型参数下无法编译(见上方决策 1 的推导),只有 5 处"裸 `String` 变量"调用点受益。具体类型 `RunInput` 反过来:裸变量调用点补一个 `.into()`,字面量调用点零改动,净改动量小一个数量级 |
 
 ### 非目标(明确不做)
 
@@ -95,12 +129,13 @@ pub fn start(config: AgentConfig, input: impl Into<RunInput>, ...) -> (RunHandle
 
 ## demo 落地方式(验收标准第 2 条)
 
-`examples/demo/briefing-desk` 的 `DescribeImageTool`(`src/media.rs`,当前是文档化的固定文本占位)改为真实视觉调用:
+`examples/demo/briefing-desk` 的 `DescribeImageTool`(`src/media.rs`,原先是文档化的固定文本占位)改为真实视觉调用:
 
-- 工具构造时持有 `Arc<dyn ModelAdapter>`(demo 的 app 层已有 adapter 可传)
+- 工具构造时持有 `Arc<dyn ModelAdapter>`(`app.rs` 注册时传入)
 - `execute()` 读取 corpus 图片文件 → base64 → `ContentBlock::Image { source: MediaSource::Base64 { media_type, data }, detail: None }`,与一条描述指令文本一起组成单条 user message,直接调 `ModelAdapter::complete()`,把返回文本作为 tool result
-- `--fake` 模式:fake adapter 返回固定描述(现有 fake 基建),live 模式走真实 Anthropic 视觉调用(demo 的 live 模型即 Anthropic,其 adapter 已支持 Image 序列化)
-- 另在 demo 或 `examples/rust` 增加一条**入口路径**用法:`AgentRun::start(config, RunInput::text("描述这张图").with_image(source), ...)`,保证两条路径(user turn 携带 / 工具内直调)都有可运行示例
+- **`--fake` 模式**:新增专属的 `DescribeImageFakeModel`(`fake_model.rs`,与既有 `FakeModel`/`ReviewerFakeModel` 同模式),忽略实际图片字节返回固定描述——调用路径是真的(真实 `ContentBlock::Image` 构造 + 真实 `ModelAdapter::complete()` 调用),只有返回内容是确定性的假数据
+- **live 模式**:demo 当前完全没有 live 聊天模型的接线(`app.rs` 的 `run()` 在 `!args.fake` 时直接报错 "live provider mode is not implemented yet"——这是 demo 脚手架本身的既有结构性限制,不是 #195 的范围;#195 只保证"图片能到达 `ModelAdapter::complete()`"这条路径存在且类型正确,不负责给这个 demo 接一个从未有过的 live 聊天 provider)
+- 另在 `examples/rust/multimodal_image_input.rs` 增加一条**入口路径**用法:`AgentRun::start(config, RunInput::text("...").with_image(source), model, registry)`,与工具内直调(`DescribeImageTool`)一起覆盖两条路径
 
 ## 测试
 
@@ -108,14 +143,22 @@ pub fn start(config: AgentConfig, input: impl Into<RunInput>, ...) -> (RunHandle
 2. `from_blocks` 校验测试:`Text`/`Image`/`Video`/`Audio`(含四者混合、空 `Vec`)返回 `Ok`;`ToolUse`/`ToolResult`/`Thinking`/`MidConvSystem` 各自返回 `Err(RunInputError)` 且 `kind` 字段能定位具体 block 种类
 3. actor 级测试:`start` 传入含 Image 的 `RunInput`,断言发给 `ModelAdapter::complete()` 的 messages 中 user turn 携带 `ContentBlock::Image`(fake adapter 捕获入参,现有测试基建已有此模式)
 4. session 回归:含 Image block 的 run 经 `SessionStore` 存取后 blocks 无损(`ContentBlock` 本就 `Serialize`,钉住防回归)
-5. 现有全部测试零破坏(签名经 `Into` 兼容)
+5. 现有全部测试零破坏(内部 `"字面量".into()` 调用点靠具体类型参数保持零改动;5 处裸变量调用点补 `.into()`/`RunInput::text(..)`)
 
 ## 验收标准(对齐 GitHub #195)
 
-- [ ] `RunInput` 类型 + `AgentRun::start` 泛化落地,`MediaSource` 从 `orchest::model` 可达
-- [ ] `from_blocks` 对 `ToolUse`/`ToolResult`/`Thinking`/`MidConvSystem` 返回 `Err(RunInputError)`,对 `Text`/`Image`/`Video`/`Audio` 返回 `Ok`,测试覆盖全部 8 种 block
-- [ ] 现存调用点(binding、examples、内部)零改动编译;`cargo test --workspace` 过
-- [ ] `describe_image` 工具真实构造 `ContentBlock::Image` 并进入真实 `ModelAdapter::complete()` 调用
-- [ ] `cargo test -p briefing-desk-demo` + `--fake` 手动 run 重跑,输出贴回 #195 或关闭它的 PR
-- [ ] `docs/review/v0_10_demo_validation.md` Freeze Coverage Statement 的 "Multimodal image input" 行更新
-- [ ] `AgentRun::start` rustdoc 与 `docs/guide/quickstart.md` 补多模态输入说明
+- [x] `RunInput` 类型 + `AgentRun::start` 参数类型落地(具体类型 `RunInput`,非 `impl Into<RunInput>`——见决策 1 的 rustc 实测),`MediaSource` 从 `orchest::model` 可达
+- [x] `from_blocks` 对 `ToolUse`/`ToolResult`/`Thinking`/`MidConvSystem` 返回 `Err(RunInputError)`,对 `Text`/`Image`/`Video`/`Audio` 返回 `Ok`,测试覆盖全部 8 种 block(`crates/orchest/src/run/config.rs` 测试模块)
+- [x] `cargo check --workspace --all-targets` 过;仅 5 处"裸变量"调用点(2 py binding、2 node binding、1 demo)需要改动,其余 ~90 处内部 `"字面量".into()` 调用点零改动
+- [x] `describe_image` 工具真实构造 `ContentBlock::Image` 并进入真实 `ModelAdapter::complete()` 调用(`DescribeImageFakeModel` 承接 `--fake` 路径)
+- [x] `cargo test -p briefing-desk-demo`(20 个测试全绿)+ `--fake` 手动 run 重跑,行为与改动前一致(见下方输出)
+- [ ] `docs/review/v0_10_demo_validation.md` Freeze Coverage Statement 的 "Multimodal image input" 行更新——留给 006(demo 重验证 + 报告收尾)统一处理,不在本 issue 单独做
+- [x] `AgentRun::start` rustdoc 与 `docs/guide/quickstart.md` 补多模态输入说明
+
+## 实现记录
+
+- `cargo test --workspace --features orchest/sqlite-session`:全部通过,0 failed
+- `cargo clippy --workspace --all-targets -- -D warnings`:无新增 finding(仓库里有两处与本 issue 无关的既有 clippy 失败,`crates/orchest-provider/tests/selection.rs` 的 `result_large_err` 与 `crates/orchest/src/run/tests.rs:2811` 的 `too_many_arguments`,在改动前的基线提交上复现过,不属于本 issue 范围)
+- `cargo fmt --check`:通过
+- `bash scripts/lint-check.sh`:通过(exit 0)
+- `cargo run -p briefing-desk-demo -- run --materials examples/demo/briefing-desk/fixtures/research --question "..." --output <path> --fake`:手动跑通,`describe_image` 输出与改动前一致的固定描述文本,brief 正常生成

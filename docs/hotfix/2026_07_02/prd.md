@@ -39,7 +39,7 @@ v0.10 Demo A(Briefing Desk)验证报告([`docs/review/v0_10_demo_validation.md`]
 
 - **#195 只修入口方向**:user turn 能携带 `ContentBlock::Image` 进 agent loop。`ToolResult.content: Value` 的类型改造(工具向下一轮注入图片)**不做**,理由与替代路径见 001 spec 的"非目标"
 - **不动 provider 序列化层**:Anthropic/Minimax adapter 已能序列化 `ContentBlock::Image`(`orchest-provider-http` 的 `providers/{anthropic,minimax}/request.rs`),本次只打通 runtime 入口
-- **Python/TS SDK 的多模态入参暴露不做**:`impl Into<RunInput>` 保证两个 binding 现有 `String` 调用零改动编译;binding 层暴露 blocks 是 post-hotfix 工作
+- **Python/TS SDK 的多模态入参暴露不做**:`AgentRun::start` 改用具体类型 `RunInput` 后(见 001 spec 决策 1 的 rustc 实测,推翻了最初 `impl Into<RunInput>` 的方案),两个 binding 各自的调用点补一行 `RunInput::text(input)` 即可继续走纯文本;binding 层暴露 blocks 参数是 post-hotfix 工作
 - **post-1.0 backlog 项(验证报告 Triage #6–#9)不捎带**,保持 hotfix 聚焦
 
 ## 验收标准

@@ -201,17 +201,16 @@ and TTS liveness is controlled purely by the env vars above, independent of
 this repo's test environment) — run it yourself and record the outcome
 (provider, model, date, result) in the v0.10 validation report.
 
-### Vision is not real
+### Vision
 
-`describe_image` always returns a fixed, hardcoded description, in both
-`--fake` and live mode — there is no live counterpart to flip on. Real
-`ContentBlock::Image` input needs a way to seed a run's message history with
-an image, but the only public entry point, `AgentRun::start`, takes a plain
-`String`, and the method that does accept `Vec<Message>`
-(`AgentRun::start_with_bus`) is `pub(crate)`; a tool can't inject an image
-into the next model turn either, since `ToolResult.content` is hard-typed
-`serde_json::Value`. There is currently no public Orchest API path to real
-vision-through-agent-loop at all. Recorded as a release-blocker finding in
-[`docs/archive/iteration/v0_10/validation-notes.md`](../../../docs/archive/iteration/v0_10/validation-notes.md)
-rather than worked around by adding new surface to `orchest` itself. See also
-the tracked issue: [#195](https://github.com/jianantian/orchest/issues/195).
+`describe_image` builds a real `ContentBlock::Image` (base64-encoded corpus
+file) and drives a real `ModelAdapter::complete()` call — the public API path
+added by [#195](https://github.com/jianantian/orchest/issues/195):
+`AgentRun::start` now takes a `RunInput` (`RunInput::text(..).with_image(..)`
+or `RunInput::from_blocks(..)`), and any tool that holds a model adapter can
+do the same nested-call pattern `DescribeImageTool` uses in `media.rs`. In
+`--fake` mode the adapter is the deterministic `DescribeImageFakeModel`
+(`fake_model.rs`) — no network, but the call path is identical to what a live
+vision-capable chat adapter would see. There is still no live chat provider
+wired into this CLI (`--fake` remains required; see the previous section),
+so a genuinely live vision call isn't exercised by this demo yet.

@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::events::RuntimeEvent;
 use crate::model::ModelAdapter;
-use crate::run::{AgentConfig, AgentRun};
+use crate::run::{AgentConfig, AgentRun, RunInput};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
 
@@ -150,7 +150,7 @@ impl Tool for AgentAsTool {
 
         let (handle, mut child_rx) = AgentRun::start_with_bus(
             child_config,
-            child_input.clone(),
+            RunInput::text(child_input.clone()).into_blocks(),
             initial_messages,
             Arc::clone(&self.model),
             self.registry.clone(),

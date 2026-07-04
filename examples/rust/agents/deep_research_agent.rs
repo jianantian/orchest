@@ -515,7 +515,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[question] {question}");
 
     let input = research_instructions(&question, &report_path, min_calls)?;
-    let (handle, mut event_rx) = AgentRun::start(deep_config, input, deep_model, deep_registry);
+    let (handle, mut event_rx) =
+        AgentRun::start(deep_config, input.into(), deep_model, deep_registry);
     let mut events = Vec::new();
     while let Some(event) = event_rx.recv().await {
         print_event(&event);
