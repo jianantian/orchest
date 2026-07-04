@@ -151,6 +151,60 @@ const REVIEW_VERDICT: &str = "Reviewed against the fixture corpus: the retention
 flagged rather than silently resolved; the interview quote is sourced via ASR, not the \
 follow-up-notes paraphrase. Approved.";
 
+/// Deterministic vision model for `DescribeImageTool` (issue #195) under
+/// `--fake`. Ignores the actual image bytes it's sent — offline smoke has no
+/// real model to compare against — but the call itself is real: the tool
+/// builds a genuine `ContentBlock::Image` and this adapter's `complete()` is
+/// a genuine `ModelAdapter::complete()` invocation, exercising the exact
+/// runtime path a live vision call would take.
+pub struct DescribeImageFakeModel;
+
+#[async_trait]
+impl ModelAdapter for DescribeImageFakeModel {
+    fn provider_name(&self) -> &str {
+        "fake"
+    }
+
+    fn model_name(&self) -> &str {
+        "fake-vision-model"
+    }
+
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let usage = TokenUsage {
+            input_tokens: 12,
+            output_tokens: 6,
+            ..Default::default()
+        };
+        if let Some(ref tx) = tx {
+            let _ = tx
+                .send(StreamEvent::Done {
+                    usage: usage.clone(),
+                })
+                .await;
+        }
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text(FAKE_IMAGE_DESCRIPTION.to_string())],
+            usage,
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+const FAKE_IMAGE_DESCRIPTION: &str = "Bar chart of referral-channel 30-day retention by \
+quarter: Q1 38%, Q2 40%, Q3 42% — a steady upward trend, matching the 42% figure in \
+001-retention-dashboard-notes.md rather than the 35% figure in 002-support-ticket-summary.md.";
+
 fn plan(messages: &[Message], tools: &[ToolDef]) -> Vec<ContentBlock> {
     if let Some(question) = pending_follow_up_question(messages) {
         return vec![ContentBlock::Text(follow_up_answer(&question, messages))];
@@ -382,9 +436,7 @@ fn draft_brief(messages: &[Message]) -> String {
         .and_then(|v| v.get("description"))
         .and_then(Value::as_str)
     {
-        sections.push(format!(
-            "\n## Chart (via vision placeholder)\n\n{description}\n"
-        ));
+        sections.push(format!("\n## Chart (via vision model)\n\n{description}\n"));
     }
     sections.join("\n")
 }

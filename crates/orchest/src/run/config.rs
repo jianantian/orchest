@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::budget::{BudgetConfig, BudgetUsage};
-use crate::model::{Message, ModelSpec, RequestOptions};
+use crate::model::{ContentBlock, MediaSource, Message, ModelSpec, RequestOptions};
 use crate::skill::executor::ScriptExecutor;
 use crate::tool::mcp::McpServerConfig;
 use crate::tool::Tool;
@@ -41,6 +41,77 @@ impl Default for RunId {
 impl std::fmt::Display for RunId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+/// `RunInput::from_blocks` was given a content block that isn't valid as
+/// run input.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("content block `{kind}` is not valid as run input (only Text/Image/Video/Audio are)")]
+pub struct RunInputError {
+    kind: &'static str,
+}
+
+/// The input for a single user turn passed to [`AgentRun::start`] — plain
+/// text, or text combined with multimodal content such as images. Represents
+/// exactly one user turn, not a full message history.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunInput {
+    blocks: Vec<ContentBlock>,
+}
+
+impl RunInput {
+    /// Plain text input (equivalent to the former `input: String` parameter).
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            blocks: vec![ContentBlock::Text(text.into())],
+        }
+    }
+
+    /// Builds a `RunInput` from an explicit sequence of content blocks. Only
+    /// `Text`, `Image`, `Video`, and `Audio` blocks are valid as user-turn
+    /// input; `ToolUse`, `ToolResult`, `Thinking`, and `MidConvSystem` are
+    /// runtime-internal or provider-specific semantics and are rejected.
+    pub fn from_blocks(blocks: Vec<ContentBlock>) -> Result<Self, RunInputError> {
+        for block in &blocks {
+            let kind = match block {
+                ContentBlock::Text(_)
+                | ContentBlock::Image { .. }
+                | ContentBlock::Video { .. }
+                | ContentBlock::Audio { .. } => continue,
+                ContentBlock::ToolUse { .. } => "tool_use",
+                ContentBlock::ToolResult { .. } => "tool_result",
+                ContentBlock::Thinking { .. } => "thinking",
+                ContentBlock::MidConvSystem(_) => "mid_conv_system",
+            };
+            return Err(RunInputError { kind });
+        }
+        Ok(Self { blocks })
+    }
+
+    /// Appends an image block (common path: a text question plus one image).
+    pub fn with_image(mut self, source: MediaSource) -> Self {
+        self.blocks.push(ContentBlock::Image {
+            source,
+            detail: None,
+        });
+        self
+    }
+
+    pub(crate) fn into_blocks(self) -> Vec<ContentBlock> {
+        self.blocks
+    }
+}
+
+impl From<String> for RunInput {
+    fn from(text: String) -> Self {
+        Self::text(text)
+    }
+}
+
+impl From<&str> for RunInput {
+    fn from(text: &str) -> Self {
+        Self::text(text)
     }
 }
 
@@ -697,6 +768,100 @@ mod tests {
     fn missing_model_rejected() {
         let err = AgentConfig::builder("").build().unwrap_err();
         assert!(matches!(err, ConfigError::MissingModel));
+    }
+
+    #[test]
+    fn run_input_text_produces_single_text_block() {
+        let input = RunInput::text("hello");
+        assert_eq!(input.blocks, vec![ContentBlock::Text("hello".to_string())]);
+    }
+
+    #[test]
+    fn run_input_from_string_and_str() {
+        let a: RunInput = "hi".into();
+        let b: RunInput = String::from("hi").into();
+        assert_eq!(a, RunInput::text("hi"));
+        assert_eq!(b, RunInput::text("hi"));
+    }
+
+    #[test]
+    fn run_input_with_image_appends_block() {
+        let input = RunInput::text("describe this").with_image(MediaSource::Url {
+            url: "https://example.com/cat.png".to_string(),
+        });
+        assert_eq!(input.blocks.len(), 2);
+        assert!(matches!(input.blocks[1], ContentBlock::Image { .. }));
+    }
+
+    #[test]
+    fn run_input_from_blocks_accepts_text_image_video_audio() {
+        let blocks = vec![
+            ContentBlock::Text("hi".to_string()),
+            ContentBlock::Image {
+                source: MediaSource::Url {
+                    url: "https://example.com/a.png".to_string(),
+                },
+                detail: None,
+            },
+            ContentBlock::Video {
+                source: MediaSource::Url {
+                    url: "https://example.com/a.mp4".to_string(),
+                },
+                fps: None,
+                detail: None,
+                max_long_side_pixel: None,
+            },
+            ContentBlock::Audio {
+                source: MediaSource::Url {
+                    url: "https://example.com/a.mp3".to_string(),
+                },
+            },
+        ];
+        assert!(RunInput::from_blocks(blocks).is_ok());
+    }
+
+    #[test]
+    fn run_input_from_blocks_empty_is_ok() {
+        assert!(RunInput::from_blocks(vec![]).is_ok());
+    }
+
+    #[test]
+    fn run_input_from_blocks_rejects_tool_use() {
+        let err = RunInput::from_blocks(vec![ContentBlock::ToolUse {
+            id: "1".to_string(),
+            name: "x".to_string(),
+            input: serde_json::json!({}),
+        }])
+        .unwrap_err();
+        assert_eq!(err.kind, "tool_use");
+    }
+
+    #[test]
+    fn run_input_from_blocks_rejects_tool_result() {
+        let err = RunInput::from_blocks(vec![ContentBlock::ToolResult {
+            tool_use_id: "1".to_string(),
+            content: serde_json::json!({}),
+        }])
+        .unwrap_err();
+        assert_eq!(err.kind, "tool_result");
+    }
+
+    #[test]
+    fn run_input_from_blocks_rejects_thinking() {
+        let err = RunInput::from_blocks(vec![ContentBlock::Thinking {
+            text: None,
+            signature: None,
+            provider_details: None,
+        }])
+        .unwrap_err();
+        assert_eq!(err.kind, "thinking");
+    }
+
+    #[test]
+    fn run_input_from_blocks_rejects_mid_conv_system() {
+        let err =
+            RunInput::from_blocks(vec![ContentBlock::MidConvSystem("hi".to_string())]).unwrap_err();
+        assert_eq!(err.kind, "mid_conv_system");
     }
 
     #[test]

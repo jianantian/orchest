@@ -23,7 +23,9 @@ use orchest::model::{
     CachePolicy, CompatibilityPolicy, ModelSpec, ProviderRuntimeConfig,
     RequestOptions as RustRequestOptions, ThinkingLevel,
 };
-use orchest::run::{AgentConfig, AgentRun, ModelConfig, RunHandle, RuntimeConfig, SkillsConfig};
+use orchest::run::{
+    AgentConfig, AgentRun, ModelConfig, RunHandle, RunInput, RuntimeConfig, SkillsConfig,
+};
 use orchest::tool::async_job::{JobHandle, JobStatus, PollFn};
 use orchest::tool::registry::ToolRegistry;
 use orchest::tool::{
@@ -605,7 +607,8 @@ impl Agent {
 
         let run_handle_ref = Arc::clone(&self.run_handle);
 
-        let (handle, mut event_rx) = AgentRun::start(config, input, model, registry);
+        let (handle, mut event_rx) =
+            AgentRun::start(config, RunInput::text(input), model, registry);
 
         {
             let mut guard = run_handle_ref.lock().await;
@@ -662,7 +665,8 @@ impl Agent {
         let rt = shared_runtime();
 
         rt.block_on(async {
-            let (handle, mut event_rx) = AgentRun::start(config, input, model, registry);
+            let (handle, mut event_rx) =
+                AgentRun::start(config, RunInput::text(input), model, registry);
 
             {
                 let mut guard = run_handle_ref.lock().await;

@@ -1,13 +1,17 @@
-//! Materials discovery, ASR/TTS gateway tools, and the vision placeholder.
+//! Materials discovery, ASR/TTS gateway tools, and the vision tool.
 //!
 //! ASR and TTS are wired for real against `orchest_protocol::{Asr, Tts}`
 //! through `orchest_provider::Registry` (live path, env-var gated) with a
-//! deterministic fake impl of each for offline `--fake` smoke. Vision stays
-//! fake-only in both modes — see [`DescribeImageTool`]'s doc comment for why.
+//! deterministic fake impl of each for offline `--fake` smoke. `describe_image`
+//! (issue #195) follows the same shape: it builds a real `ContentBlock::Image`
+//! from the corpus file and drives a real `ModelAdapter::complete()` call —
+//! see [`DescribeImageTool`]'s doc comment.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
+use orchest::model::{ContentBlock, MediaSource, Message, ModelAdapter, RequestOptions, Role};
 use orchest::tool::{Approval, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput};
 use orchest_protocol::{
     Asr, AudioFormat, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, Modality,
@@ -289,30 +293,28 @@ impl Tool for TranscribeAudioTool {
     }
 }
 
-/// Fake-only placeholder for image understanding. Real vision input needs a
-/// `ContentBlock::Image` inside the model's message history, but the only
-/// public entry point — `AgentRun::start` — takes a plain `String`. The
-/// method that *does* accept `initial_messages: Vec<Message>`
-/// (`AgentRun::start_with_bus`) is `pub(crate)`, and `ToolResult.content` is
-/// hard-typed `serde_json::Value`, so a tool cannot inject an image into the
-/// next model turn either. There is currently no public Orchest API path to
-/// real vision-through-agent-loop at all — recorded as a release-blocker
-/// finding in `docs/archive/iteration/v0_10/validation-notes.md` rather than
-/// worked around by adding new surface to `orchest` itself (tracked at
-/// https://github.com/jianantian/orchest/issues/195). This tool always
-/// returns a fixed description, in both `--fake` and (hypothetical) live
-/// mode, until that API gap closes.
+/// Describes an image from the materials corpus by constructing a real
+/// `ContentBlock::Image` (base64-encoded file bytes) and driving a real
+/// `ModelAdapter::complete()` call — the public API path issue #195 added.
+/// Previously this returned a fixed string with no model call at all, since
+/// there was no public runtime API to get an image in front of a model; see
+/// `docs/archive/iteration/v0_10/validation-notes.md` for that history. In
+/// `--fake` mode the adapter is [`crate::fake_model::DescribeImageFakeModel`]
+/// (deterministic, no network); in live mode it is the same vision-capable
+/// chat adapter the caller constructs for the rest of the run.
 pub struct DescribeImageTool {
     allowed: Vec<PathBuf>,
+    model: Arc<dyn ModelAdapter>,
     metadata: ToolMetadata,
     input_schema: Value,
 }
 
 impl DescribeImageTool {
-    pub fn new(allowed: Vec<PathBuf>) -> Self {
+    pub fn new(allowed: Vec<PathBuf>, model: Arc<dyn ModelAdapter>) -> Self {
         let default_path = allowed.first().map(|p| p.display().to_string());
         Self {
             allowed,
+            model,
             metadata: ToolMetadata {
                 side_effect: false,
                 approval: Approval::Never,
@@ -333,9 +335,23 @@ impl DescribeImageTool {
     }
 }
 
-const FAKE_IMAGE_DESCRIPTION: &str = "Bar chart of referral-channel 30-day retention by \
-quarter: Q1 38%, Q2 40%, Q3 42% — a steady upward trend, matching the 42% figure in \
-001-retention-dashboard-notes.md rather than the 35% figure in 002-support-ticket-summary.md.";
+/// Maps a file extension to the MIME type `ContentBlock::Image`'s
+/// `MediaSource::Base64` needs. Corpus discovery (`discover()` below) only
+/// classifies png/jpg/jpeg/gif/webp as images, so this is exhaustive over
+/// what can actually reach here.
+fn media_type_for_extension(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_lowercase)
+        .as_deref()
+    {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        _ => "image/png",
+    }
+}
 
 #[async_trait]
 impl Tool for DescribeImageTool {
@@ -344,9 +360,7 @@ impl Tool for DescribeImageTool {
     }
 
     fn description(&self) -> &str {
-        "Describe an image source from the materials corpus. Placeholder: real vision-model \
-         input has no public Orchest API today (see validation-notes.md); this always returns \
-         a fixed description regardless of provider mode."
+        "Describe an image source from the materials corpus using a real vision model call."
     }
 
     fn input_schema(&self) -> &Value {
@@ -373,9 +387,46 @@ impl Tool for DescribeImageTool {
             ))
             .with_code("PATH_NOT_ALLOWED"));
         }
+
+        let bytes = std::fs::read(&path)
+            .map_err(|e| ToolError::fatal(format!("reading '{path_str}': {e}")))?;
+        let data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+        let media_type = media_type_for_extension(&path);
+
+        let message = Message {
+            role: Role::User,
+            content: vec![
+                ContentBlock::Text(
+                    "Describe this image in one or two sentences for a research brief.".to_string(),
+                ),
+                ContentBlock::Image {
+                    source: MediaSource::Base64 {
+                        media_type: media_type.to_string(),
+                        data,
+                    },
+                    detail: None,
+                },
+            ],
+        };
+
+        let response = self
+            .model
+            .complete(&[message], &[], &RequestOptions::default(), None)
+            .await
+            .map_err(|e| ToolError::fatal(format!("vision model call failed: {}", e.message)))?;
+
+        let description = response
+            .content
+            .into_iter()
+            .find_map(|block| match block {
+                ContentBlock::Text(text) => Some(text),
+                _ => None,
+            })
+            .ok_or_else(|| ToolError::fatal("vision model returned no text content"))?;
+
         Ok(ToolOutput::Immediate(json!({
             "path": path_str,
-            "description": FAKE_IMAGE_DESCRIPTION,
+            "description": description,
         })))
     }
 }
@@ -473,6 +524,7 @@ impl Tool for SynthesizeBriefTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fake_model::DescribeImageFakeModel;
 
     fn test_ctx() -> ToolContext {
         ToolContext {
@@ -545,9 +597,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn describe_image_tool_returns_fixed_description() {
-        let path = PathBuf::from("chart.png");
-        let tool = DescribeImageTool::new(vec![path.clone()]);
+    async fn describe_image_tool_calls_model_with_image_block() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("chart.png");
+        std::fs::write(&path, b"fake png bytes").expect("write fixture");
+
+        let model: Arc<dyn ModelAdapter> = Arc::new(DescribeImageFakeModel);
+        let tool = DescribeImageTool::new(vec![path.clone()], model);
         let output = tool
             .execute(json!({"path": path.to_str().unwrap()}), &test_ctx())
             .await
@@ -555,7 +611,18 @@ mod tests {
         let ToolOutput::Immediate(value) = output else {
             panic!("expected immediate output");
         };
-        assert_eq!(value["description"], FAKE_IMAGE_DESCRIPTION);
+        assert!(value["description"].as_str().is_some_and(|d| !d.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn describe_image_tool_rejects_disallowed_path() {
+        let model: Arc<dyn ModelAdapter> = Arc::new(DescribeImageFakeModel);
+        let tool = DescribeImageTool::new(vec![PathBuf::from("chart.png")], model);
+        let err = tool
+            .execute(json!({"path": "not-allowed.png"}), &test_ctx())
+            .await
+            .expect_err("disallowed path should error");
+        assert_eq!(err.code.as_deref(), Some("PATH_NOT_ALLOWED"));
     }
 
     #[tokio::test]
