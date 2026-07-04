@@ -13,11 +13,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use orchest::model::{ContentBlock, MediaSource, Message, ModelAdapter, RequestOptions, Role};
 use orchest::tool::{Approval, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput};
-use orchest_protocol::{
-    Asr, AudioFormat, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, Modality,
-    ProtocolError, RealtimeHandle, StreamingTranscribeRequest, SynthesizeRequest, SynthesizeResult,
-    TranscribeRequest, TranscribeResult, Tts,
-};
+use orchest_protocol::{Asr, AudioFormat, SynthesizeRequest, TranscribeRequest, Tts};
 use serde_json::{json, Value};
 
 use crate::app::DemoError;
@@ -99,6 +95,11 @@ pub fn live_tts(provider: &str, model: &str, api_key: &str) -> Result<Box<dyn Tt
 }
 
 // ── Fake Asr/Tts (offline --fake smoke) ─────────────────────────────────────
+//
+// Issue #196: these used to be local, hand-written `Asr`/`Tts` impls (the
+// exact gap the issue found — no reusable fake existed anywhere in the
+// workspace). Now backed by `orchest_provider::fakes`, gated behind that
+// crate's `testing` feature.
 
 /// The quotable line that exists only in `interview.wav` (see issue 001's
 /// fixture spec) — returning it here makes the ASR extraction requirement in
@@ -108,90 +109,14 @@ const FAKE_TRANSCRIPT: &str = "Interviewer: What would happen if Loom disappeare
 Priya: Honestly? My team would go straight back to spreadsheets and lose about two hours a \
 day. That's the real return on investment nobody puts in a slide deck.";
 
-pub struct FakeAsr;
-
-#[async_trait]
-impl Asr for FakeAsr {
-    fn provider_name(&self) -> &str {
-        "fake"
-    }
-
-    fn model_name(&self) -> &str {
-        "fake-asr"
-    }
-
-    fn descriptor(&self) -> CapabilityDescriptor {
-        CapabilityDescriptor::new("fake", "fake-asr", Capability::Asr)
-            .with_input_modalities([Modality::Audio])
-            .with_output_modalities([Modality::Text])
-    }
-
-    fn supported_languages(&self) -> &[Language] {
-        &[]
-    }
-
-    async fn transcribe(&self, req: TranscribeRequest) -> Result<TranscribeResult, ProtocolError> {
-        Ok(TranscribeResult {
-            text: FAKE_TRANSCRIPT.to_string(),
-            language: None,
-            diagnostic_metadata: json!({"fake": true, "input_bytes": req.audio.len()}),
-        })
-    }
-
-    async fn start_stream(
-        &self,
-        _req: StreamingTranscribeRequest,
-    ) -> Result<RealtimeHandle, ProtocolError> {
-        Err(ProtocolError::new(
-            ErrorCode::UnsupportedOperation,
-            "FakeAsr does not support streaming",
-        ))
-    }
+/// The demo's offline `Asr`: always transcribes to [`FAKE_TRANSCRIPT`].
+pub fn fake_asr() -> orchest_provider::fakes::FakeAsr {
+    orchest_provider::fakes::FakeAsr::new(FAKE_TRANSCRIPT)
 }
 
-pub struct FakeTts;
-
-#[async_trait]
-impl Tts for FakeTts {
-    fn provider_name(&self) -> &str {
-        "fake"
-    }
-
-    fn model_name(&self) -> &str {
-        "fake-tts"
-    }
-
-    fn descriptor(&self) -> CapabilityDescriptor {
-        CapabilityDescriptor::new("fake", "fake-tts", Capability::Tts)
-            .with_input_modalities([Modality::Text])
-            .with_output_modalities([Modality::Audio])
-    }
-
-    async fn synthesize(&self, req: SynthesizeRequest) -> Result<SynthesizeResult, ProtocolError> {
-        let marker = format!("FAKE AUDIO (fake TTS)\ntext_len={}\n", req.text.len());
-        Ok(SynthesizeResult {
-            audio: bytes::Bytes::from(marker.into_bytes()),
-            format: req.format,
-            diagnostic_metadata: json!({"fake": true}),
-        })
-    }
-
-    async fn stream_synthesize(
-        &self,
-        _req: SynthesizeRequest,
-    ) -> Result<EventStream, ProtocolError> {
-        Err(ProtocolError::new(
-            ErrorCode::UnsupportedOperation,
-            "FakeTts does not support streaming",
-        ))
-    }
-
-    async fn start_duplex_stream(&self) -> Result<RealtimeHandle, ProtocolError> {
-        Err(ProtocolError::new(
-            ErrorCode::UnsupportedOperation,
-            "FakeTts does not support duplex",
-        ))
-    }
+/// The demo's offline `Tts`: synthesizes the shared fake's default marker.
+pub fn fake_tts() -> orchest_provider::fakes::FakeTts {
+    orchest_provider::fakes::FakeTts::default()
 }
 
 // ── Tools ────────────────────────────────────────────────────────────────
@@ -541,7 +466,7 @@ mod tests {
 
     #[tokio::test]
     async fn fake_asr_transcribes_deterministically() {
-        let asr = FakeAsr;
+        let asr = fake_asr();
         let result = asr
             .transcribe(TranscribeRequest {
                 audio: bytes::Bytes::from_static(b"not really audio"),
@@ -556,7 +481,7 @@ mod tests {
 
     #[tokio::test]
     async fn fake_tts_synthesizes_deterministically() {
-        let tts = FakeTts;
+        let tts = fake_tts();
         let result = tts
             .synthesize(SynthesizeRequest {
                 text: "hello".into(),
@@ -575,7 +500,7 @@ mod tests {
         let path = dir.path().join("interview.wav");
         std::fs::write(&path, b"fake audio bytes").expect("write fixture");
 
-        let tool = TranscribeAudioTool::new(vec![path.clone()], Box::new(FakeAsr));
+        let tool = TranscribeAudioTool::new(vec![path.clone()], Box::new(fake_asr()));
         let output = tool
             .execute(json!({"path": path.to_str().unwrap()}), &test_ctx())
             .await
@@ -588,7 +513,8 @@ mod tests {
 
     #[tokio::test]
     async fn transcribe_audio_tool_rejects_disallowed_path() {
-        let tool = TranscribeAudioTool::new(vec![PathBuf::from("allowed.wav")], Box::new(FakeAsr));
+        let tool =
+            TranscribeAudioTool::new(vec![PathBuf::from("allowed.wav")], Box::new(fake_asr()));
         let err = tool
             .execute(json!({"path": "not-allowed.wav"}), &test_ctx())
             .await
@@ -629,7 +555,7 @@ mod tests {
     async fn synthesize_brief_tool_writes_exactly_one_file_and_marks_side_effect() {
         let dir = tempfile::tempdir().expect("tempdir");
         let output_path = dir.path().join("brief.wav");
-        let tool = SynthesizeBriefTool::new(output_path.clone(), Box::new(FakeTts));
+        let tool = SynthesizeBriefTool::new(output_path.clone(), Box::new(fake_tts()));
 
         tool.execute(json!({"text": "the brief"}), &test_ctx())
             .await

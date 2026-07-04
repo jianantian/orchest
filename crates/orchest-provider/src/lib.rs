@@ -20,8 +20,16 @@
 //!
 //! The exact selection surface (PRD Decision 4) is recorded in
 //! `docs/archive/iteration/v0_9_12/issues/004-registry-wall/selection-api.md`.
+//!
+//! The `testing` feature adds [`fakes`]: deterministic in-process
+//! `Asr`/`Tts` implementations for downstream crates that need offline
+//! tests or demos without hand-writing their own fake against
+//! `orchest_protocol`. It pulls no impl crate and no network deps, and is
+//! never enabled by default or by any other feature.
 
 pub mod facade;
+#[cfg(feature = "testing")]
+pub mod fakes;
 pub mod registry;
 
 pub use registry::{Query, Registry};

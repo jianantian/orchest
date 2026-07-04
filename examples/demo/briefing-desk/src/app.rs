@@ -14,9 +14,7 @@ use orchest::tool::registry::ToolRegistry;
 use orchest::tool::ToolError;
 
 use crate::fake_model::{DescribeImageFakeModel, FakeModel, ReviewerFakeModel};
-use crate::media::{
-    self, DescribeImageTool, FakeAsr, FakeTts, SynthesizeBriefTool, TranscribeAudioTool,
-};
+use crate::media::{self, DescribeImageTool, SynthesizeBriefTool, TranscribeAudioTool};
 use crate::tools::{ReadFixtureTool, SearchFixturesTool, WriteReportTool};
 
 pub type DemoError = Box<dyn std::error::Error + Send + Sync>;
@@ -131,7 +129,7 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
                 println!("[asr] live provider={provider} model={model}");
                 media::live_asr(&provider, &model, &key)?
             }
-            None => Box::new(FakeAsr),
+            None => Box::new(media::fake_asr()),
         };
         registry.register(Arc::new(TranscribeAudioTool::new(
             corpus.audio.clone(),
@@ -154,7 +152,7 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
                 println!("[tts] live provider={provider} model={model}");
                 media::live_tts(&provider, &model, &key)?
             }
-            None => Box::new(FakeTts),
+            None => Box::new(media::fake_tts()),
         };
         let audio_path = args.output.with_extension("wav");
         registry.register(Arc::new(SynthesizeBriefTool::new(audio_path, tts)))?;
@@ -267,7 +265,7 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
                 println!("[tts] live provider={provider} model={model}");
                 media::live_tts(&provider, &model, &key)?
             }
-            None => Box::new(FakeTts),
+            None => Box::new(media::fake_tts()),
         };
         let result = tts
             .synthesize(orchest_protocol::SynthesizeRequest {
