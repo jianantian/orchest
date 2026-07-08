@@ -325,7 +325,7 @@ fn with_builtin_registers_minimax_music_gen_dialect() {
         .provider("minimax")
         .select()
         .expect("minimax music gen-task is registered under the http feature");
-    assert_eq!(picked.descriptor.model.as_ref(), "music-1.5");
+    assert_eq!(picked.descriptor.model.as_ref(), "music-2.6");
     assert_eq!(picked.descriptor.capability, Capability::GenTask);
 }
 
