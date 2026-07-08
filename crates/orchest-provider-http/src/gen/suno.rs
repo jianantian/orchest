@@ -467,8 +467,14 @@ mod tests {
                 "V5_5",
                 &request("a calm piano track", json!({ "lyrics": lyrics })),
             );
-            assert_eq!(body["customMode"], false, "lyrics={lyrics} should not trigger custom mode");
-            assert_eq!(body["prompt"], "a calm piano track", "lyrics={lyrics} should not overwrite prompt");
+            assert_eq!(
+                body["customMode"], false,
+                "lyrics={lyrics} should not trigger custom mode"
+            );
+            assert_eq!(
+                body["prompt"], "a calm piano track",
+                "lyrics={lyrics} should not overwrite prompt"
+            );
         }
     }
 
