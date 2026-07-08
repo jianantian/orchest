@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use orchest::events::RuntimeEvent;
-use orchest::model::{ContentBlock, Message, ModelAdapter, Role};
+use orchest::model::ModelAdapter;
 use orchest::run::{AgentConfig, AgentRun, EventReceiver, RunHandle, RunInput};
 use orchest::session::{SessionStore, SqliteSessionStore};
 use orchest::tool::agent_as_tool::ContextMode;
@@ -14,9 +14,7 @@ use orchest::tool::registry::ToolRegistry;
 use orchest::tool::ToolError;
 
 use crate::fake_model::{DescribeImageFakeModel, FakeModel, ReviewerFakeModel};
-use crate::media::{
-    self, DescribeImageTool, FakeAsr, FakeTts, SynthesizeBriefTool, TranscribeAudioTool,
-};
+use crate::media::{self, DescribeImageTool, SynthesizeBriefTool, TranscribeAudioTool};
 use crate::tools::{ReadFixtureTool, SearchFixturesTool, WriteReportTool};
 
 pub type DemoError = Box<dyn std::error::Error + Send + Sync>;
@@ -131,7 +129,7 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
                 println!("[asr] live provider={provider} model={model}");
                 media::live_asr(&provider, &model, &key)?
             }
-            None => Box::new(FakeAsr),
+            None => Box::new(media::fake_asr()),
         };
         registry.register(Arc::new(TranscribeAudioTool::new(
             corpus.audio.clone(),
@@ -154,7 +152,7 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
                 println!("[tts] live provider={provider} model={model}");
                 media::live_tts(&provider, &model, &key)?
             }
-            None => Box::new(FakeTts),
+            None => Box::new(media::fake_tts()),
         };
         let audio_path = args.output.with_extension("wav");
         registry.register(Arc::new(SynthesizeBriefTool::new(audio_path, tts)))?;
@@ -235,16 +233,17 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
             )
         })?;
 
-    snapshot.messages.push(Message {
-        role: Role::User,
-        content: vec![ContentBlock::Text(args.question.clone())],
-    });
     let store: Arc<dyn SessionStore> = Arc::new(store);
     snapshot.active_config = snapshot
         .active_config
         .with_session_store(Arc::clone(&store), args.session.clone());
 
-    let (handle, rx) = AgentRun::resume(snapshot, Arc::new(FakeModel), ToolRegistry::new());
+    let (handle, rx) = AgentRun::resume_with_input(
+        snapshot,
+        RunInput::text(args.question.clone()),
+        Arc::new(FakeModel),
+        ToolRegistry::new(),
+    )?;
     let answer = drain_events(handle, rx, false, false).await?;
     println!("[done] follow-up answer: {answer}");
 
@@ -266,7 +265,7 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
                 println!("[tts] live provider={provider} model={model}");
                 media::live_tts(&provider, &model, &key)?
             }
-            None => Box::new(FakeTts),
+            None => Box::new(media::fake_tts()),
         };
         let result = tts
             .synthesize(orchest_protocol::SynthesizeRequest {
@@ -321,6 +320,7 @@ fn reviewer_tool() -> Arc<dyn orchest::tool::Tool> {
             serde_json::json!({"output": details.get("output").cloned().unwrap_or(details)})
         })
         .build()
+        .expect("reviewer_tool always sets .model() and .registry()")
 }
 
 /// Drives an already-started run's event stream to completion: renders

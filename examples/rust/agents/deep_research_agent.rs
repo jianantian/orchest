@@ -404,7 +404,7 @@ fn build_deep_research_agent(
             .output_extractor(|details: serde_json::Value| {
                 details.get("output").cloned().unwrap_or(details.clone())
             })
-            .build(),
+            .build()?,
     )?;
     registry.register(Arc::new(WriteFileTool::new_with_approval(Approval::Never)))?;
     Ok((config, model, registry))

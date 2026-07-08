@@ -533,7 +533,8 @@ async fn agent_as_tool_emits_sub_agent_events() {
         .output_extractor(|details: Value| {
             json!({"output": details.get("output").cloned().unwrap_or_else(|| details.clone())})
         })
-        .build();
+        .build()
+        .unwrap();
 
     let parent_config = AgentConfig::builder("mock/parent")
         .system_prompt("research assistant")

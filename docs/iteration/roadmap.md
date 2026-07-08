@@ -42,6 +42,7 @@
 | v0.9.12 | 重构 | Provider 统一（两维重组 + registry/umbrella 墙：`orchest-protocol` 脊柱 + `orchest-provider-core` + http/stream/visual 三层 impl crate + `orchest-provider` 墙；omni + Chameleon 双标尺；realtime/asr/tts/aigc 四个模态 crate 吸收，`agent-runtime-{model,providers}` shell 移除；node/py 只经 protocol + 墙；`features=["llm"]` 无 tungstenite/OSS；8 个 issue 全部落地） |
 | v0.9.13 | 重构 | `core/node/py` 改名收尾（ADR-0001 Decision 2 的延后项）：`agent-runtime-core` → `orchest`，`agent-runtime-py` → `orchest-py`，`agent-runtime-node` → `orchest-node`；Python 包 `agent_runtime` → `orchest`，npm 包 `@orchest/agent-runtime` → `@orchest/sdk`；crate 目录、workspace members、跨 crate 依赖、示例、guide 文档同步更新 |
 | v0.10 | 功能 | Demo A: Briefing Desk 能力组合广度验证（本地多媒体研究简报 agent；search/read/write 工具 + approval、real ASR/TTS gateway（`FakeAsr`/`FakeTts` 从零补全）、Agent-as-Tool reviewer sub-agent、跨进程 session persist + resume；6 个 issue 全部落地；[验证报告](../review/v0_10_demo_validation.md)产出 5 项 release blocker，均已建独立追踪 issue（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199)），最大发现：多模态图片输入当前无公开 API 可走） |
+| hotfix 2026-07-02 | 重构 | v0.10 验证报告 release blocker 清偿（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199) 全部关闭）：新增 `RunInput` 打通多模态图片输入公开入口、`AgentRun::resume_with_input` 支持带新问题续会话、resume 对「曾持久化但 session_store 缺失」响亮报错（`ConfigError::SessionStoreMissing`）、`SubAgentBuilder::build()` 改 `Result`、`orchest-provider` 新增可复用 `fakes::{FakeAsr, FakeTts}`（`testing` feature）；Briefing Desk demo 全量重跑（`cargo test -p briefing-desk-demo` 20/20 + 手动 `--fake` run/resume 全流程），[验证报告](../review/v0_10_demo_validation.md)与本表同步更新；live provider 验证仍未做（无凭证环境），v1.0 前必须补 |
 
 ## 迭代编号约定
 
@@ -66,7 +67,7 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
 
 第一个公开发布到 crates.io 的版本。包含发布准备的全部内容：Cargo publish 元数据、license 定稿、release workflow、CHANGELOG、版本号策略文档。
 
-**依赖**：v0.11 Demo B 完成（Supervised Delegation API 经产品验证后才冻结公开 API）。发布前必须清偿两份验证报告各自的 release blocker 清单：[v0.10 Demo A 验证报告](../review/v0_10_demo_validation.md)（5 项，各有独立追踪 issue，验收标准要求修复后重跑 Briefing Desk demo 验证：[#195](https://github.com/jianantian/orchest/issues/195) 多模态图片输入无公开 API、[#196](https://github.com/jianantian/orchest/issues/196) ASR/TTS fake provider 缺失、[#197](https://github.com/jianantian/orchest/issues/197) `AgentRun::resume` 无 input 参数、[#198](https://github.com/jianantian/orchest/issues/198) 反序列化 `AgentConfig` 静默丢失 session 持久化、[#199](https://github.com/jianantian/orchest/issues/199) `SubAgentBuilder::build()` panic）与 v0.11 Demo B 的 Seam Gap Analysis 报告（届时补链接）。v0.10 报告明确指出：未完成 live provider 验证前，不得仅凭该报告推进 v1.0。
+**依赖**：v0.11 Demo B 完成（Supervised Delegation API 经产品验证后才冻结公开 API）。发布前必须清偿两份验证报告各自的 release blocker 清单：[v0.10 Demo A 验证报告](../review/v0_10_demo_validation.md)的 5 项 release blocker **已全部由 hotfix 2026-07-02 清偿**（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199) 全部关闭，详见验证报告 Triage 表与本文档「已完成」表的 hotfix 2026-07-02 行），与 v0.11 Demo B 的 Seam Gap Analysis 报告（届时补链接）。**v0.10 报告的 live provider 验证仍未完成**（hotfix 2026-07-02 所在环境无 LLM/ASR/TTS 凭证）——未完成前，不得仅凭该报告推进 v1.0。
 
 ### 依赖图
 
@@ -147,4 +148,4 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
 | Image AIGC Gateway | ~~无~~ → **v0.6.1 已完成** | ✅ |
 | ASR Provider Gateway | ~~无~~ → **v0.9.1 已完成** | ✅ |
 | TTS Provider Gateway | ~~无统一 TTS provider crate~~ → **v0.9.3 已完成** | ✅ |
-| 多模态图片输入（`ContentBlock::Image` 经 agent loop） | v0.10 demo 验证发现：**无公开 API 可走**（`AgentRun::start` 只收 `String`；能收 `Vec<Message>` 的 `start_with_bus` 是 `pub(crate)`；`ToolResult.content` 定型为 `Value`，工具也塞不进去） | release blocker，追踪于 [#195](https://github.com/jianantian/orchest/issues/195) |
+| 多模态图片输入（`ContentBlock::Image` 经 agent loop） | ~~v0.10 demo 验证发现无公开 API 可走~~ → **hotfix 2026-07-02 已完成**：新增 `RunInput` 类型，`AgentRun::start(config, RunInput, ..)`；`RunInput::text(..)`/`.with_image(..)`/`.from_blocks(..)` 覆盖纯文本与多模态；demo `describe_image` 工具驱动真实 `ContentBlock::Image` → `ModelAdapter::complete()` 调用（[#195](https://github.com/jianantian/orchest/issues/195)） | ✅ |

@@ -32,7 +32,19 @@ pub fn build(self) -> Result<Arc<dyn Tool>, ConfigError>
 
 ## 验收标准(对齐 GitHub #199)
 
-- [ ] `build()` 签名改为 `Result`,不再有内部 `expect`
-- [ ] 所有调用方更新,`cargo test --workspace` 过
-- [ ] demo 测试重跑,输出贴回 issue/PR
-- [ ] `docs/review/v0_10_demo_validation.md` 更新(Triage #5 行)
+- [x] `build()` 签名改为 `Result`,不再有内部 `expect`
+- [x] 所有调用方更新,`cargo test --workspace` 过
+- [x] demo 测试重跑,输出贴回 issue/PR
+- [x] `docs/review/v0_10_demo_validation.md` 更新(Triage #5 行)
+
+## 实现记录
+
+- `SubAgentBuilder::build()` 签名改为 `Result<Arc<dyn Tool>, ConfigError>`(`crates/orchest/src/tool/agent_as_tool.rs`),内部 `.expect(...)` 换成 `.ok_or(ConfigError::SubAgentMissingModel)?` / `.ok_or(ConfigError::SubAgentMissingRegistry)?`
+- `ConfigError` 新增 `SubAgentMissingModel`、`SubAgentMissingRegistry` 两个专属变体(`crates/orchest/src/run/config.rs`),不复用已有的 `MissingModel`(语义与字段类型都不同,见 spec"方向"一节)
+- 调用方全部更新:`examples/rust/agents/agent_as_tool.rs`(`.unwrap()`)、`examples/rust/agents/deep_research_agent.rs`(`?`,函数已返回 `Box<dyn Error>`)、`crates/orchest-py/src/lib.rs`(`.map_err(PyRuntimeError::new_err)?`)、`crates/orchest/tests/{v03_runtime,v07_integration}.rs`、`crates/orchest/src/run/tests.rs`(均 `.unwrap()`)、`examples/demo/briefing-desk/src/app.rs` 的 `reviewer_tool()`(`.expect(..)`,该函数的两个调用点确实总是设置 `.model()`/`.registry()`)
+- 新测试(`crates/orchest/src/tool/agent_as_tool.rs` 新增 `mod tests`):缺 `model`→`SubAgentMissingModel`,缺 `registry`→`SubAgentMissingRegistry`,两者都设置→`Ok`
+- `cargo test --workspace --features orchest/sqlite-session`:全部通过(orchest lib 254 个测试,较 003 前新增 3 个)
+- `cargo clippy --workspace --all-targets -- -D warnings`:无新增 finding(与 001-003 记录的两处既有基线 finding 一致)
+- `cargo fmt --check`:通过
+- `bash scripts/lint-check.sh`:通过(exit 0)
+- `cargo test -p briefing-desk-demo`:20 个测试全绿

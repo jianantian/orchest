@@ -41,8 +41,21 @@ GitHub: [#198](https://github.com/jianantian/orchest/issues/198) · release-bloc
 
 ## 验收标准(对齐 GitHub #198)
 
-- [ ] resume 路径对"曾持久化但 store 缺失"响亮报错,`ConfigError` 新变体落地
-- [ ] demo `resume()` 与 `examples/rust/resilience/session_persist_resume.rs` 均适配 `Result` 返回,`cargo test --workspace`(含 examples 编译)过
-- [ ] demo 测试重跑,输出贴回 issue/PR
-- [ ] `with_session_store` rustdoc 与 `SessionSnapshot` 自身 doc comment 都补充 `session_store` 重挂说明
-- [ ] `docs/review/v0_10_demo_validation.md` 更新(Triage #4 行)
+- [x] resume 路径对"曾持久化但 store 缺失"响亮报错,`ConfigError` 新变体落地
+- [x] demo `resume()` 与 `examples/rust/resilience/session_persist_resume.rs` 均适配 `Result` 返回,`cargo test --workspace`(含 examples 编译)过
+- [x] demo 测试重跑,输出贴回 issue/PR
+- [x] `with_session_store` rustdoc 与 `SessionSnapshot` 自身 doc comment 都补充 `session_store` 重挂说明
+- [x] `docs/review/v0_10_demo_validation.md` 更新(Triage #4 行)
+
+## 实现记录
+
+- `ConfigError::SessionStoreMissing { session_id: String }` 新增(`crates/orchest/src/run/config.rs`),错误消息直接给出待补的 `.with_session_store(store, "<id>")` 调用
+- `resume`/`resume_with_input` 签名改为 `Result<(RunHandle, EventReceiver), ConfigError>`;共用私有 `check_session_store_attached(&AgentConfig)`(`crates/orchest/src/run/mod.rs`):`session_id: Some` 且 `session_store: None` 时返回 `Err`,否则(含 `session_id: None` 的从未持久化快照)放行
+- 调用方适配:`examples/demo/briefing-desk/src/app.rs` 的 `resume()`(`?` 传播进 `DemoError`)、`examples/rust/resilience/session_persist_resume.rs:130`(`?`)、`crates/orchest/tests/v08_integration.rs` 三处、`crates/orchest/src/run/tests.rs` 既有两处(均补 `.expect(..)`,场景本身不触发新检查)
+- 新测试(`crates/orchest/src/run/tests.rs`):`resume_fails_loudly_when_persisted_session_store_not_reattached`、`resume_with_input_fails_loudly_when_persisted_session_store_not_reattached`(均断言 `ConfigError::SessionStoreMissing`)、`resume_without_session_id_is_unaffected_by_session_store_check`(从未持久化的快照不受影响)
+- `with_session_store` rustdoc 与 `SessionSnapshot::active_config` 字段 doc comment 均补充 `session_store` 重挂 + 响亮报错的说明
+- `cargo test --workspace --features orchest/sqlite-session`:全部通过(orchest lib 251 个测试,较 002 前新增 3 个)
+- `cargo clippy --workspace --all-targets -- -D warnings`:无新增 finding(与 001/002 记录的两处既有基线 finding 一致)
+- `cargo fmt --check`:通过
+- `bash scripts/lint-check.sh`:通过(exit 0)
+- `cargo test -p briefing-desk-demo`:20 个测试全绿

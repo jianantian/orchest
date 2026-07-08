@@ -435,6 +435,13 @@ impl AgentConfig {
     }
 
     /// Attach a session store (post-build chainable form; mirrors `AgentConfigBuilder::session_store`).
+    ///
+    /// Required before `AgentRun::resume`/`resume_with_input` on any snapshot
+    /// whose `session_id` is set: `session_store` is `#[serde(skip)]`, so a
+    /// deserialized `AgentConfig` never carries a live store even if the
+    /// original run had one — resume calls it out with
+    /// `ConfigError::SessionStoreMissing` rather than silently dropping
+    /// persistence.
     pub fn with_session_store(
         mut self,
         store: Arc<dyn crate::session::SessionStore>,
@@ -670,6 +677,15 @@ pub enum ConfigError {
     InvalidMaxToolCalls(u32),
     #[error("repeated_failure.threshold must be > 0, got {0}")]
     InvalidRepeatedFailureThreshold(usize),
+    #[error(
+        "session '{session_id}' was persisted but no session_store is attached to resume it; \
+         call `.with_session_store(store, \"{session_id}\")` on the snapshot's active_config before resuming"
+    )]
+    SessionStoreMissing { session_id: String },
+    #[error("SubAgentBuilder requires .model() before .build()")]
+    SubAgentMissingModel,
+    #[error("SubAgentBuilder requires .registry() before .build()")]
+    SubAgentMissingRegistry,
 }
 
 // Runtime types

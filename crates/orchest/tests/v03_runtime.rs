@@ -240,6 +240,7 @@ fn make_spawn_child_tool() -> Arc<dyn Tool> {
         .input_mapper(|_| Ok("child task".into()))
         .output_extractor(|details| details.get("output").cloned().unwrap_or(details.clone()))
         .build()
+        .unwrap()
 }
 
 fn text_message(text: &str) -> Message {
@@ -277,6 +278,7 @@ fn context_echo_tool(context_mode: ContextMode) -> Arc<dyn Tool> {
         })
         .output_extractor(|details| details.get("output").cloned().unwrap_or(details.clone()))
         .build()
+        .unwrap()
 }
 
 #[test]
@@ -451,7 +453,8 @@ async fn agent_tool_runs_child_agent_with_isolated_context() {
                 .output_extractor(|details| {
                     details.get("output").cloned().unwrap_or(details.clone())
                 })
-                .build(),
+                .build()
+                .unwrap(),
         )
         .unwrap();
 

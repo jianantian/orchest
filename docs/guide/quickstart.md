@@ -188,7 +188,10 @@ ANTHROPIC_API_KEY=sk-... cargo run --example basic_agent_run
     `RunInput`，`RunInput::text(..).with_image(source)` 可在一个 user turn 里携带
     文本 + 图片（`RunInput::from_blocks` 还支持 video/audio，但只接受这四种
     block；`ToolUse`/`ToolResult`/`Thinking`/`MidConvSystem` 会被拒绝）
-  - Session 持久化 + 恢复：`session_persist_resume.rs`
+  - Session 持久化 + 恢复：`session_persist_resume.rs`——注意 `AgentRun::resume`
+    只原样重放快照历史（中断恢复场景），**不**追加任何输入；带新问题续会话
+    （follow-up 场景）要用 `AgentRun::resume_with_input(snapshot, RunInput::text("..."), ..)`，
+    它会把新输入追加为快照末尾的一条 user turn 再恢复
   - Handoff：`handoff_routing.rs` / `handoff_input_filter.rs`
   - Mid-run steering / watcher：`watcher_inject_message.rs` / `watcher_abort_on_pattern.rs`
   - Supervised Delegation：`supervised_delegation.rs`

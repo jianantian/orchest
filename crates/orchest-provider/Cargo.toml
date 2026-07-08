@@ -26,6 +26,11 @@ tts = ["http", "stream"]
 realtime = ["stream"]
 gen = ["http", "visual"]
 
+# Deterministic in-process `Asr`/`Tts` fakes (`fakes` module) for downstream
+# crates that need offline tests/demos without writing their own test double
+# (issue #196). Not part of any weight tier — no impl crate, no network deps.
+testing = ["dep:async-trait", "dep:bytes"]
+
 [dependencies]
 orchest-protocol = { path = "../orchest-protocol" }
 orchest-provider-core = { path = "../orchest-provider-core" }
@@ -34,6 +39,9 @@ serde_json = "1"
 orchest-provider-http = { path = "../orchest-provider-http", optional = true }
 orchest-provider-stream = { path = "../orchest-provider-stream", optional = true }
 orchest-provider-visual = { path = "../orchest-provider-visual", optional = true }
+
+async-trait = { version = "0.1", optional = true }
+bytes = { version = "1", optional = true }
 
 [dev-dependencies]
 async-trait = "0.1"

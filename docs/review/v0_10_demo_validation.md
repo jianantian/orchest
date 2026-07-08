@@ -18,6 +18,17 @@ file/function references. **No live provider run was performed** (see
 until one is completed or the release gate is consciously changed, per this
 issue's own instructions.
 
+**Update (hotfix 2026-07-02, issue 006 closeout)**: all 5 release-blocker
+findings below (#195–#199) are fixed and merged — see the Triage table and
+the Freeze Coverage Statement for what changed. The demo was fully re-run
+after all five landed (`cargo test -p briefing-desk-demo`, plus a manual
+`--fake run` + `--fake resume` end-to-end session); results below. **The live
+provider run is still not performed** — this environment has no
+LLM/ASR/TTS credentials — so the original gate stands unchanged: v1.0 must
+not proceed on live-path evidence until a maintainer with credentials runs
+the commands in "Live provider run" below, or the project consciously
+changes the release gate.
+
 ## Runs
 
 ### Fake smoke run
@@ -26,37 +37,47 @@ issue's own instructions.
 cargo test -p briefing-desk-demo
 ```
 
-- **Commit tested**: `f87574b514e3015a9ef8230db4d1e9f43e660db3` (issue 005,
-  `iteration/v0_10` branch)
-- **Date**: 2026-07-02
-- **Result**: 19/19 tests pass (12 unit + 7 black-box CLI smoke tests).
-  `cargo clippy -p briefing-desk-demo --all-targets -- -D warnings` and
-  `cargo fmt --check` both clean; `cargo check --workspace` clean.
+- **Commit tested (original v0.10 finding)**: `f87574b514e3015a9ef8230db4d1e9f43e660db3`
+  (issue 005, `iteration/v0_10` branch) — 19/19 tests pass
+- **Commit tested (hotfix 2026-07-02 closeout, issue 006)**: `8bb9a9b74f132f9e8db8464819d9364f25595fcd`
+  (after #195–#199 all merged) — **20/20 tests pass** (13 unit + 7 black-box
+  CLI smoke tests; +1 unit test vs. the original run, from issue 005's
+  `orchest-provider::fakes` migration). `cargo clippy --workspace --all-targets
+  -- -D warnings`, `cargo fmt --check`, `cargo test --workspace --features
+  orchest/sqlite-session`, and `bash scripts/lint-check.sh` all clean (same
+  two pre-existing, out-of-scope clippy findings as before: `result_large_err`
+  in `orchest-provider/tests/selection.rs`, `too_many_arguments` in
+  `orchest/src/run/tests.rs`).
 
 Manually re-run as a full end-to-end CLI session (not just the test binary)
-on the same commit, from a clean directory:
+on the post-hotfix commit, from a clean directory:
 
 ```bash
 cargo run -p briefing-desk-demo -- run \
   --materials examples/demo/briefing-desk/fixtures/research \
-  --question "Is Loom worth continued investment in Q4?" \
+  --question "What would happen if Loom disappeared tomorrow, and what does the retention dashboard say?" \
   --output /tmp/bd-006/brief.md \
-  --session v006-demo \
+  --session demo-session-006 \
   --fake
 # exit 0. search_fixtures -> read_fixture -> transcribe_audio ->
 # describe_image -> review_report (real Agent-as-Tool sub-run, verdict
 # visible in the event stream) -> write_report (approval granted) ->
 # synthesize_brief (approval granted). brief.md contains both the
-# ASR-transcribed interview quote and the image-derived chart numbers.
+# ASR-transcribed interview quote and the image-derived chart numbers
+# (describe_image's output references the same 42%/35% figures the
+# fixture corpus disagrees on — the real ContentBlock::Image path, not
+# a hard-coded string, since #195 landed).
 
 cargo run -p briefing-desk-demo -- resume \
-  --session v006-demo \
-  --question "Has anything changed about the retention numbers?" \
+  --session demo-session-006 \
+  --question "Follow up: which channel should we prioritize for Q4?" \
   --output /tmp/bd-006/followup.md \
   --fake
-# exit 0, genuinely separate process, same run_id preserved. Follow-up
-# answer quotes a snippet of the original brief pulled from the
-# cross-process persisted session.
+# exit 0, genuinely separate process, same run_id preserved (via
+# resume_with_input landed in #197 + the session_store re-attach check
+# from #198 — dropping the re-attach step now fails loudly instead of
+# silently). Follow-up answer references the original brief pulled from
+# the cross-process persisted session.
 ```
 
 ### Live provider run
@@ -102,9 +123,9 @@ freezes their API surface:
 | Gateway | Exercised? | Fake | Live | Notes |
 |---|---|---|---|---|
 | LLM (text, chat) | Partially | Yes (`FakeModel`, all 5 issues) | **No** | No v0.10 issue scoped wiring a live chat provider into this CLI; the runtime's chat-adapter path itself is separately exercised by `examples/rust/basic_agent_run.rs` and friends, just not from *this* demo. Flagged as a coverage gap, not a blocker — the chat/model adapter surface is the most mature and most independently-tested part of the runtime. |
-| ASR | **Yes** | Yes (`FakeAsr`, real `Asr` trait impl) | Wired, untested (no credentials) | `transcribe_audio` tool, real `orchest_protocol::Asr` + `orchest_provider::Registry` construction path. This is exactly the kind of newly-added satellite surface (v0.9.1/v0.9.6) the PRD wanted dogfooded. |
-| TTS | **Yes** | Yes (`FakeTts`, real `Tts` trait impl) | Wired, untested (no credentials) | `synthesize_brief` tool, same pattern as ASR. Independently approval-gated from `write_report`. |
-| Multimodal image input | **Yes (fixed)** | Yes (`DescribeImageFakeModel`, real `ContentBlock::Image` construction + real `ModelAdapter::complete()` call) | Not exercised (demo has no live chat adapter wiring at all — separate, pre-existing gap, not part of this fix) | Fixed by [#195](https://github.com/jianantian/orchest/issues/195): `AgentRun::start` now takes a `RunInput` (`RunInput::text(..).with_image(..)` or `.from_blocks(..)`), and `describe_image` builds a real `ContentBlock::Image` from the corpus file and drives it through a real `ModelAdapter::complete()` call. See `crates/orchest/src/run/config.rs` (`RunInput`) and `examples/demo/briefing-desk/src/media.rs` (`DescribeImageTool`). |
+| ASR | **Yes** | Yes (`orchest_provider::fakes::FakeAsr`, real `Asr` trait impl, since issue 005) | Wired, untested (no credentials) | `transcribe_audio` tool, real `orchest_protocol::Asr` + `orchest_provider::Registry` construction path. This is exactly the kind of newly-added satellite surface (v0.9.1/v0.9.6) the PRD wanted dogfooded. The demo's fake used to be hand-written locally; issue 005 moved it to `orchest-provider`'s `testing` feature so every downstream crate can reuse it. |
+| TTS | **Yes** | Yes (`orchest_provider::fakes::FakeTts`, real `Tts` trait impl, since issue 005) | Wired, untested (no credentials) | `synthesize_brief` tool, same pattern as ASR. Independently approval-gated from `write_report`. |
+| Multimodal image input | **Yes (fixed)** | Yes (`DescribeImageFakeModel`, real `ContentBlock::Image` construction + real `ModelAdapter::complete()` call) | Not exercised (demo has no live chat adapter wiring at all — separate, pre-existing gap, not part of this fix) | Fixed by [#195](https://github.com/jianantian/orchest/issues/195): `AgentRun::start` now takes a `RunInput` (`RunInput::text(..).with_image(..)` or `.from_blocks(..)`), and `describe_image` builds a real `ContentBlock::Image` from the corpus file and drives it through a real `ModelAdapter::complete()` call. See `crates/orchest/src/run/config.rs` (`RunInput`) and `examples/demo/briefing-desk/src/media.rs` (`DescribeImageTool`). **Covered, not a blocker as of hotfix 2026-07-02.** |
 | AIGC image generation | **Not exercised — consciously skipped** | — | — | Optional stretch per the PRD ("lowest freeze risk... if skipped, record it as a conscious coverage gap"). Skipped because the demo's materials-ingestion flow (search/read/transcribe/describe) didn't produce a genuine need for a generated figure — forcing one in would have been a contrived, low-signal integration. Risk accepted consciously: AIGC (`orchest-provider-visual`) is the most mature of the four modality gateways (v0.6.1 + two hotfix passes, `docs/archive/iteration/v0_6_1/`), with its own crate-level test coverage, unlike ASR/TTS/multimodal-image which are all v0.9.x-era and had zero non-test-internal usage anywhere in the repo before this demo (see findings below). |
 
 **Two gateways (ASR, TTS) go from zero real usage anywhere in the repository
@@ -216,16 +237,16 @@ None found in `examples/demo/briefing-desk` itself at time of writing — all
 
 | # | Finding | Category | Triage | Tracking | Why |
 |---|---|---|---|---|---|
-| 1 | No public API path to real multimodal image input | Modality gateway friction | **Release blocker** | [#195](https://github.com/jianantian/orchest/issues/195) | The gateway is unusable from application code without a core-API change — directly meets the PRD's own triage rule ("release blocker if the gateway is unusable from application code without workarounds, because v1.0 freezes those public APIs"). |
-| 2 | No reusable fake `Asr`/`Tts` in the workspace | Modality gateway friction | **Release blocker** | [#196](https://github.com/jianantian/orchest/issues/196) | Same PRD rule: "missing fake provider hook" is explicitly named as a release-blocker-eligible finding. Both gateways otherwise work; only the *fake* path was unreachable pre-demo. |
-| 3 | `AgentRun::resume` has no input parameter, silent-wrong-behavior risk | API friction | **Release blocker** | [#197](https://github.com/jianantian/orchest/issues/197) | Silent-wrong-behavior (not silent no-op) footguns in a freezing public API are exactly what pre-1.0 validation exists to catch. |
-| 4 | Deserialized `AgentConfig` silently drops session persistence | API friction | **Release blocker** | [#198](https://github.com/jianantian/orchest/issues/198) | Same class as #3: silent data-loss shape, not merely confusing. |
-| 5 | `SubAgentBuilder::build()` panics instead of `Result` | API friction | **Release blocker** | [#199](https://github.com/jianantian/orchest/issues/199) | Inconsistent with the rest of the builder surface; panics from application-level misuse are a worse failure mode than the `Result` used everywhere else. |
+| 1 | No public API path to real multimodal image input | Modality gateway friction | **Fixed** (hotfix 2026-07-02, issue 001, commit `5d912dc`) | [#195](https://github.com/jianantian/orchest/issues/195) | The gateway is unusable from application code without a core-API change — directly meets the PRD's own triage rule ("release blocker if the gateway is unusable from application code without workarounds, because v1.0 freezes those public APIs"). Resolved via the new `RunInput` type (`AgentRun::start(config, RunInput, ..)`); `describe_image` now builds a real `ContentBlock::Image` and drives a real `ModelAdapter::complete()` call. |
+| 2 | No reusable fake `Asr`/`Tts` in the workspace | Modality gateway friction | **Fixed** (hotfix 2026-07-02, issue 005, commit `8bb9a9b`) | [#196](https://github.com/jianantian/orchest/issues/196) | `orchest-provider` now ships `fakes::{FakeAsr, FakeTts}` behind a `testing` Cargo feature (no impl crate, no network deps); the demo's own hand-written fakes were deleted in favor of it. |
+| 3 | `AgentRun::resume` has no input parameter, silent-wrong-behavior risk | API friction | **Fixed** (hotfix 2026-07-02, issue 002, commit `39290e8`) | [#197](https://github.com/jianantian/orchest/issues/197) | Resolved via `AgentRun::resume_with_input(snapshot, RunInput, model, registry)` — a new entry point that appends the new input as a user turn onto the snapshot history before resuming; `resume` itself is unchanged (still replays history as-is, doc comment now says so explicitly). |
+| 4 | Deserialized `AgentConfig` silently drops session persistence | API friction | **Fixed** (hotfix 2026-07-02, issue 003, commit `7ceb0a4`) | [#198](https://github.com/jianantian/orchest/issues/198) | `resume`/`resume_with_input` now return `Result<_, ConfigError>` and reject with `ConfigError::SessionStoreMissing { session_id }` when the snapshot's `session_id` is set but `session_store` wasn't re-attached — no more silent stop of persistence. |
+| 5 | `SubAgentBuilder::build()` panics instead of `Result` | API friction | **Fixed** (hotfix 2026-07-02, issue 004, commit `256ae9e`) | [#199](https://github.com/jianantian/orchest/issues/199) | `build()` now returns `Result<Arc<dyn Tool>, ConfigError>` with two dedicated variants (`SubAgentMissingModel`/`SubAgentMissingRegistry`), matching the `Result`-returning convention used by `AgentConfigBuilder::build()` and `ToolRegistry::register()`. |
 | 6 | `ContextMode` re-export depth | API friction | Post-1.0 backlog | — | Cosmetic, one-line fix, does not affect correctness or safety. |
 | 7 | ASR/TTS construction idiom differs from chat's convenience function | API friction | Post-1.0 backlog | — | Works correctly once found; ergonomics-only. |
 | 8 | TTS empty `http`-tier registry, no compile-time signal | Modality gateway friction | Post-1.0 backlog | — | Matches the provider crate's own "filled in later" comment; not introduced by this iteration, and the `tts` feature alias already routes around it correctly. |
 | 9 | `quickstart.md` pointers lack prose for resume/Agent-as-Tool gotchas | Documentation friction | Post-1.0 backlog | — | Nice-to-have; the example files themselves are correct, just under-narrated. |
-| 10 | `AgentRun::resume` doc comment omits the input-parameter gotcha | Documentation friction | **Release blocker** (paired with #3) | [#197](https://github.com/jianantian/orchest/issues/197) | The doc fix *is* the fix for #3 in the cheapest case — if the API shape doesn't change before v1.0, the doc comment must, at minimum. |
+| 10 | `AgentRun::resume` doc comment omits the input-parameter gotcha | Documentation friction | **Fixed** (hotfix 2026-07-02, issue 002, commit `39290e8`) | [#197](https://github.com/jianantian/orchest/issues/197) | `resume`'s rustdoc now states explicitly that it does not append input and points to `resume_with_input` for the follow-up case; `docs/guide/quickstart.md` §8's `session_persist_resume.rs` pointer got the same note. |
 
 Each release-blocker row has a tracking issue, labeled `release-blocker`, whose
 acceptance criteria require re-running Briefing Desk (`cargo test -p
@@ -248,29 +269,34 @@ within its own issue and is not re-litigated here.
 
 ## Release-blocker fixes required before v1.0
 
-Grounded directly in the findings above, not inferred from unvalidated
-backlog:
+**All four fixed as of hotfix 2026-07-02** (issues 001–005, closing
+#195–#199). Kept below for the historical record of what was required and
+why; see the Triage table above for the as-fixed detail and commit links.
 
-1. Add a small, deliberate public API surface for seeding a run with
-   multimodal content — e.g. an `AgentRun::start`-equivalent accepting
-   `Vec<ContentBlock>`/`Vec<Message>`, or narrowly publicizing the relevant
-   slice of `start_with_bus`. (Finding #1 —
-   [#195](https://github.com/jianantian/orchest/issues/195))
-2. Either ship a reusable fake `Asr`/`Tts` (e.g. a `orchest-provider`
-   `testing` feature or module) or explicitly document that downstream
-   crates are expected to write their own, as this demo did. (Finding #2 —
+1. ~~Add a small, deliberate public API surface for seeding a run with
+   multimodal content~~ — **done**: `RunInput` (`AgentRun::start(config,
+   RunInput, ..)`), `RunInput::text(..)`/`.with_image(..)`/`.from_blocks(..)`.
+   (Finding #1 — [#195](https://github.com/jianantian/orchest/issues/195))
+2. ~~Either ship a reusable fake `Asr`/`Tts`... or explicitly document that
+   downstream crates are expected to write their own~~ — **done**:
+   `orchest-provider::fakes` behind a `testing` feature. (Finding #2 —
    [#196](https://github.com/jianantian/orchest/issues/196))
-3. Give `AgentRun::resume` either a way to append new input directly, or —
-   at minimum — a prominent doc comment describing the manual-append
-   requirement and the silent-no-persistence-if-forgotten gotcha. (Findings
-   #3, #4, #10 — [#197](https://github.com/jianantian/orchest/issues/197),
+3. ~~Give `AgentRun::resume` either a way to append new input directly, or —
+   at minimum — a prominent doc comment...~~ — **done**: both, actually —
+   `AgentRun::resume_with_input` for the follow-up-input path, plus
+   `resume`'s rustdoc now states it doesn't append input, plus (finding #4)
+   `resume`/`resume_with_input` now return `Result<_, ConfigError>` and
+   reject with `SessionStoreMissing` instead of silently dropping
+   persistence. (Findings #3, #4, #10 —
+   [#197](https://github.com/jianantian/orchest/issues/197),
    [#198](https://github.com/jianantian/orchest/issues/198))
-4. Change `SubAgentBuilder::build()` to return `Result` for consistency with
-   the rest of the builder-pattern surface. (Finding #5 —
+4. ~~Change `SubAgentBuilder::build()` to return `Result`~~ — **done**:
+   `Result<Arc<dyn Tool>, ConfigError>` with `SubAgentMissingModel`/
+   `SubAgentMissingRegistry`. (Finding #5 —
    [#199](https://github.com/jianantian/orchest/issues/199))
 
-None of these require new provider adapters or new runtime concepts — all
-four are narrow, targeted fixes to existing public surface, consistent with
+None of these required new provider adapters or new runtime concepts — all
+four were narrow, targeted fixes to existing public surface, consistent with
 the PRD's framing of v0.10 as deciding "which API/documentation fixes are
 release blockers," not opening new scope.
 

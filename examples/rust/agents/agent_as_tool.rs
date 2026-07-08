@@ -169,7 +169,8 @@ async fn main() {
         .output_extractor(|details: Value| {
             json!({"output": details.get("output").cloned().unwrap_or_else(|| details.clone())})
         })
-        .build();
+        .build()
+        .unwrap();
 
     let parent_config = AgentConfig::builder("mock/parent")
         .system_prompt("you are a research assistant")
