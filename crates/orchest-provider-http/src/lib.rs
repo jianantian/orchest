@@ -96,13 +96,26 @@ pub fn tts_entries() -> Vec<Entry<Box<dyn Tts>>> {
     Vec::new()
 }
 
-/// REST gen-task dialects (minimax music). Synchronous REST generation presented
-/// over the submit → poll → fetch surface; construction is sync (fits the wall).
+/// REST gen-task dialects (music generation). Synchronous REST generation
+/// (Minimax, Aliyun fun-music) is presented over the submit -> poll -> fetch
+/// surface via `SyncGenCache`; asynchronous REST generation (Mureka, Suno)
+/// uses real submit -> poll -> fetch. Construction is sync (fits the wall).
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn gen_entries() -> Vec<Entry<Box<dyn GenTask>>> {
-    vec![Entry::new(gen::minimax_music::entry_descriptor(), |cfg| {
-        Ok(Box::new(gen::minimax_music::from_provider_config(cfg)?) as Box<dyn GenTask>)
-    })]
+    vec![
+        Entry::new(gen::minimax_music::entry_descriptor(), |cfg| {
+            Ok(Box::new(gen::minimax_music::from_provider_config(cfg)?) as Box<dyn GenTask>)
+        }),
+        Entry::new(gen::mureka::entry_descriptor(), |cfg| {
+            Ok(Box::new(gen::mureka::from_provider_config(cfg)?) as Box<dyn GenTask>)
+        }),
+        Entry::new(gen::aliyun_music::entry_descriptor(), |cfg| {
+            Ok(Box::new(gen::aliyun_music::from_provider_config(cfg)?) as Box<dyn GenTask>)
+        }),
+        Entry::new(gen::suno::entry_descriptor(), |cfg| {
+            Ok(Box::new(gen::suno::from_provider_config(cfg)?) as Box<dyn GenTask>)
+        }),
+    ]
 }
 
 // ---------------------------------------------------------------------------

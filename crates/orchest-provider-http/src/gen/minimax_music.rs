@@ -16,8 +16,8 @@ use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::SyncGenCache;
 use serde_json::{json, Value};
 
-const DEFAULT_API_URL: &str = "https://api.minimaxi.com";
-const DEFAULT_MODEL: &str = "music-1.5";
+const DEFAULT_API_URL: &str = "https://api.minimax.io";
+const DEFAULT_MODEL: &str = "music-2.6";
 
 /// Minimax music gen-task configuration.
 #[derive(Debug, Clone)]
@@ -46,7 +46,9 @@ fn status_err(code: u16, body: String) -> ProtocolError {
 
 /// Build the `/v1/music_generation` body: `model` + `prompt`, `output_format:
 /// url`, and any [`GenRequest::params`] passthrough (`lyrics`, `audio_setting`,
-/// `aigc_watermark`, `is_instrumental`, …). `output_format` is forced to `url`.
+/// `aigc_watermark`, `is_instrumental`, `lyrics_optimizer`, `audio_url`,
+/// `audio_base64`, `cover_feature_id` for `music-cover`, …). `output_format`
+/// is forced to `url`.
 pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
     let mut body = json!({ "model": model, "prompt": request.prompt });
     if let Some(params) = request.params.as_object() {
@@ -89,9 +91,14 @@ pub fn build_result(response: &Value) -> Result<GenResult, ProtocolError> {
             }]
         })
         .unwrap_or_default();
+    let diagnostic_metadata = json!({
+        "provider": "minimax",
+        "trace_id": response.get("trace_id").and_then(Value::as_str).unwrap_or(""),
+        "extra_info": response.get("extra_info").cloned().unwrap_or(Value::Null),
+    });
     Ok(GenResult {
         assets,
-        diagnostic_metadata: json!({ "provider": "minimax" }),
+        diagnostic_metadata,
     })
 }
 
@@ -204,18 +211,49 @@ mod tests {
     #[test]
     fn submit_body_sets_model_prompt_and_forces_url_format() {
         let body = build_submit_body(
-            "music-1.5",
+            "music-2.6",
             &request(
                 "lofi beat",
                 json!({"lyrics": "la la", "is_instrumental": true, "output_format": "hex"}),
             ),
         );
-        assert_eq!(body["model"], "music-1.5");
+        assert_eq!(body["model"], "music-2.6");
         assert_eq!(body["prompt"], "lofi beat");
         assert_eq!(body["lyrics"], "la la");
         assert_eq!(body["is_instrumental"], true);
         // output_format is forced to url even if params asked for hex
         assert_eq!(body["output_format"], "url");
+    }
+
+    #[test]
+    fn submit_body_passes_through_cover_params() {
+        let body = build_submit_body(
+            "music-cover",
+            &request(
+                "upbeat synthwave cover",
+                json!({"audio_url": "https://ref/track.mp3", "lyrics": "[verse]\ncover lyrics"}),
+            ),
+        );
+        assert_eq!(body["model"], "music-cover");
+        assert_eq!(body["audio_url"], "https://ref/track.mp3");
+        assert_eq!(body["lyrics"], "[verse]\ncover lyrics");
+        assert_eq!(body["output_format"], "url");
+    }
+
+    #[test]
+    fn build_result_extracts_extra_info_into_metadata() {
+        let result = build_result(&json!({
+            "base_resp": {"status_code": 0, "status_msg": "success"},
+            "data": {"audio": "https://m/track.mp3"},
+            "trace_id": "abc123",
+            "extra_info": {"music_duration": 25364, "music_sample_rate": 44100}
+        }))
+        .unwrap();
+        assert_eq!(result.diagnostic_metadata["trace_id"], "abc123");
+        assert_eq!(
+            result.diagnostic_metadata["extra_info"]["music_duration"],
+            25364
+        );
     }
 
     #[test]

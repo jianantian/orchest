@@ -39,3 +39,31 @@ pub mod minimax {
     pub const API_KEY_ENV: &str = "MINIMAX_API_KEY";
     pub const API_URL_ENV: &str = "MINIMAX_API_URL";
 }
+
+pub mod mureka {
+    /// 默认 API URL。锚点: Mureka API Platform quickstart (`https://api.mureka.ai`)。
+    pub const API_URL: &str = "https://api.mureka.ai";
+    pub const API_KEY_ENV: &str = "MUREKA_API_KEY";
+    pub const API_URL_ENV: &str = "MUREKA_API_URL";
+    pub const DEFAULT_MODEL: &str = "auto";
+}
+
+pub mod aliyun_music {
+    /// 默认 API URL。锚点: `docs/external/aliyun/music-generation.md`
+    /// (`https://dashscope.aliyuncs.com/api/v1/services/audio/music/generation`)。
+    /// Workspace 专属域名 `{WorkspaceId}.cn-beijing.maas.aliyuncs.com` 也可用。
+    pub const API_URL: &str =
+        "https://dashscope.aliyuncs.com/api/v1/services/audio/music/generation";
+    pub const API_KEY_ENV: &str = "DASHSCOPE_API_KEY";
+    pub const API_URL_ENV: &str = "DASHSCOPE_API_URL";
+    pub const DEFAULT_MODEL: &str = "fun-music-v1";
+}
+
+pub mod suno {
+    /// 默认 API URL。锚点: Suno API (`https://api.sunoapi.org`)。
+    /// Suno 无官方公开 API,此处为第三方代理;base URL 可通过 `SUNO_API_URL` 覆盖。
+    pub const API_URL: &str = "https://api.sunoapi.org";
+    pub const API_KEY_ENV: &str = "SUNO_API_KEY";
+    pub const API_URL_ENV: &str = "SUNO_API_URL";
+    pub const DEFAULT_MODEL: &str = "V5_5";
+}
