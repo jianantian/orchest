@@ -59,14 +59,10 @@ fn build_chat_model() -> AppResult<Arc<dyn ChatModel>> {
 /// Build the music generation task from `MUSIC_GIFT_MUSIC_*` env vars via the
 /// registry.
 fn build_gen_task() -> AppResult<Arc<dyn GenTask>> {
-    let provider = std::env::var(MUSIC_PROVIDER_ENV).map_err(|_| {
-        AppError::Config(format!(
-            "no music provider configured: set {MUSIC_PROVIDER_ENV} (e.g. mureka)"
-        ))
-    })?;
-    let model = std::env::var(MUSIC_MODEL_ENV).unwrap_or_default();
-    let api_key = std::env::var(MUSIC_API_KEY_ENV).ok();
+    let provider = std::env::var(MUSIC_PROVIDER_ENV).unwrap_or_else(|_| "suno".to_string());
+    let model = std::env::var(MUSIC_MODEL_ENV).unwrap_or_else(|_| "V5_5".to_string());
     let api_url = std::env::var(MUSIC_API_URL_ENV).ok();
+    let api_key = std::env::var(MUSIC_API_KEY_ENV).ok();
 
     let registry = Registry::with_builtin();
     let mut config = ProviderConfig::new(&provider, &model);
