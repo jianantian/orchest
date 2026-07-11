@@ -67,3 +67,11 @@ pub mod suno {
     pub const API_URL_ENV: &str = "SUNO_API_URL";
     pub const DEFAULT_MODEL: &str = "V5_5";
 }
+
+pub mod elss {
+    /// 默认 API URL。锚点: Elss API gateway (`https://api.elss.ai`)。
+    /// Elss 是 OpenAI/Anthropic 兼容的 API 代理,同时接受 `x-api-key` 和
+    pub const API_URL: &str = "https://api.elss.ai";
+    pub const API_KEY_ENV: &str = "ELSS_API_KEY";
+    pub const API_URL_ENV: &str = "ELSS_API_URL";
+}
