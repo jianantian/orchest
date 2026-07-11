@@ -223,10 +223,9 @@ impl Tool for TranscribeAudioTool {
 /// `ModelAdapter::complete()` call — the public API path issue #195 added.
 /// Previously this returned a fixed string with no model call at all, since
 /// there was no public runtime API to get an image in front of a model; see
-/// `docs/archive/iteration/v0_10/validation-notes.md` for that history. In
-/// `--fake` mode the adapter is [`crate::fake_model::DescribeImageFakeModel`]
-/// (deterministic, no network); in live mode it is the same vision-capable
-/// chat adapter the caller constructs for the rest of the run.
+/// `docs/archive/iteration/v0_10/validation-notes.md` for that history. The
+/// adapter is the same vision-capable chat adapter the caller constructs for
+/// the rest of the run.
 pub struct DescribeImageTool {
     allowed: Vec<PathBuf>,
     model: Arc<dyn ModelAdapter>,
@@ -449,8 +448,48 @@ impl Tool for SynthesizeBriefTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake_model::DescribeImageFakeModel;
 
+    use async_trait::async_trait;
+    use orchest::model::{
+        ContentBlock, Message, ModelCapabilities, ModelError, ModelResponse, RequestOptions,
+        StopReason, StreamEvent, TokenUsage, ToolDef,
+    };
+    use tokio::sync::mpsc;
+
+    /// Minimal inline fake for testing DescribeImageTool - returns a fixed
+    /// description regardless of input. The real run uses a vision-capable
+    /// chat adapter; this just exercises the tool's plumbing.
+    struct FakeVisionModel;
+
+    #[async_trait]
+    impl ModelAdapter for FakeVisionModel {
+        fn provider_name(&self) -> &str {
+            "fake"
+        }
+
+        fn model_name(&self) -> &str {
+            "fake-vision"
+        }
+
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDef],
+            _options: &RequestOptions,
+            _tx: Option<mpsc::Sender<StreamEvent>>,
+        ) -> Result<ModelResponse, ModelError> {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("fake image description".into())],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
     fn test_ctx() -> ToolContext {
         ToolContext {
             run_id: orchest::run::RunId::new(),
@@ -528,7 +567,7 @@ mod tests {
         let path = dir.path().join("chart.png");
         std::fs::write(&path, b"fake png bytes").expect("write fixture");
 
-        let model: Arc<dyn ModelAdapter> = Arc::new(DescribeImageFakeModel);
+        let model: Arc<dyn ModelAdapter> = Arc::new(FakeVisionModel);
         let tool = DescribeImageTool::new(vec![path.clone()], model);
         let output = tool
             .execute(json!({"path": path.to_str().unwrap()}), &test_ctx())
@@ -542,7 +581,7 @@ mod tests {
 
     #[tokio::test]
     async fn describe_image_tool_rejects_disallowed_path() {
-        let model: Arc<dyn ModelAdapter> = Arc::new(DescribeImageFakeModel);
+        let model: Arc<dyn ModelAdapter> = Arc::new(FakeVisionModel);
         let tool = DescribeImageTool::new(vec![PathBuf::from("chart.png")], model);
         let err = tool
             .execute(json!({"path": "not-allowed.png"}), &test_ctx())

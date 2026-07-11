@@ -13,24 +13,14 @@ use orchest::tool::agent_as_tool::ContextMode;
 use orchest::tool::registry::ToolRegistry;
 use orchest::tool::ToolError;
 
-use crate::fake_model::{DescribeImageFakeModel, FakeModel, ReviewerFakeModel};
 use crate::media::{self, DescribeImageTool, SynthesizeBriefTool, TranscribeAudioTool};
 use crate::tools::{ReadFixtureTool, SearchFixturesTool, WriteReportTool};
 
 pub type DemoError = Box<dyn std::error::Error + Send + Sync>;
 
-/// Set (to any value) in `--fake` mode to make the approval loop auto-deny
-/// `write_report` instead of auto-approving it, so both paths are testable
-/// from the CLI without an interactive prompt. Not consulted in live mode.
-const FAKE_DENY_APPROVAL_ENV: &str = "BRIEFING_DESK_FAKE_DENY_APPROVAL";
-
-/// Same idea as `FAKE_DENY_APPROVAL_ENV`, scoped to `synthesize_brief`
-/// specifically, so "write approved, TTS denied" is independently testable.
-const FAKE_DENY_TTS_APPROVAL_ENV: &str = "BRIEFING_DESK_FAKE_DENY_TTS_APPROVAL";
-
 /// If set (along with `_MODEL` and `_API_KEY`), `run` constructs a real ASR
 /// provider via the registry instead of `FakeAsr`. Manual/env-var-gated per
-/// the PRD — not exercised by any automated test in this repo.
+/// the PRD - not exercised by any automated test in this repo.
 const LIVE_ASR_PROVIDER_ENV: &str = "BRIEFING_DESK_ASR_PROVIDER";
 const LIVE_ASR_MODEL_ENV: &str = "BRIEFING_DESK_ASR_MODEL";
 const LIVE_ASR_API_KEY_ENV: &str = "BRIEFING_DESK_ASR_API_KEY";
@@ -39,6 +29,17 @@ const LIVE_ASR_API_KEY_ENV: &str = "BRIEFING_DESK_ASR_API_KEY";
 const LIVE_TTS_PROVIDER_ENV: &str = "BRIEFING_DESK_TTS_PROVIDER";
 const LIVE_TTS_MODEL_ENV: &str = "BRIEFING_DESK_TTS_MODEL";
 const LIVE_TTS_API_KEY_ENV: &str = "BRIEFING_DESK_TTS_API_KEY";
+
+/// Chat model configuration. Set `BRIEFING_DESK_CHAT_MODEL` to a
+/// `provider/model` string (e.g. `anthropic/claude-sonnet-4-6`,
+/// `deepseek/deepseek-v4-flash`). The API key goes in `_API_KEY`; if unset,
+/// the provider factory's default key env is used (e.g. `ANTHROPIC_API_KEY`
+/// for the anthropic provider). `_API_URL` overrides the endpoint;
+/// `_MAX_TOKENS` overrides the output token ceiling.
+const LIVE_CHAT_MODEL_ENV: &str = "BRIEFING_DESK_CHAT_MODEL";
+const LIVE_CHAT_API_KEY_ENV: &str = "BRIEFING_DESK_CHAT_API_KEY";
+const LIVE_CHAT_API_URL_ENV: &str = "BRIEFING_DESK_CHAT_API_URL";
+const LIVE_CHAT_MAX_TOKENS_ENV: &str = "BRIEFING_DESK_CHAT_MAX_TOKENS";
 
 fn live_asr_env() -> Option<(String, String, String)> {
     Some((
@@ -54,6 +55,31 @@ fn live_tts_env() -> Option<(String, String, String)> {
         std::env::var(LIVE_TTS_MODEL_ENV).ok()?,
         std::env::var(LIVE_TTS_API_KEY_ENV).ok()?,
     ))
+}
+
+/// Constructs the chat model adapter from `BRIEFING_DESK_CHAT_*` env vars.
+/// The same adapter is reused for the main agent, vision (`describe_image`),
+/// and the `review_report` sub-agent.
+fn chat_model() -> Result<Arc<dyn ModelAdapter>, DemoError> {
+    let model = std::env::var(LIVE_CHAT_MODEL_ENV).map_err(|_| {
+        format!(
+            "no chat model configured: set {LIVE_CHAT_MODEL_ENV} to a provider/model string \
+                 (e.g. anthropic/claude-sonnet-4-6). See .env.example for all \
+                 BRIEFING_DESK_CHAT_* variables."
+        )
+    })?;
+    let config = orchest_provider::ProviderRuntimeConfig {
+        model,
+        api_key: std::env::var(LIVE_CHAT_API_KEY_ENV).ok(),
+        api_key_env: None,
+        api_url: std::env::var(LIVE_CHAT_API_URL_ENV).ok(),
+        max_tokens: std::env::var(LIVE_CHAT_MAX_TOKENS_ENV)
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok()),
+    };
+    let adapter = orchest_provider::create_adapter_from_config(config)
+        .map_err(|e| format!("constructing chat model: {e}"))?;
+    Ok(Arc::from(adapter))
 }
 
 /// Sessions persist under `.briefing-desk-sessions/<session-id>.sqlite3`,
@@ -78,7 +104,6 @@ pub struct RunArgs {
     pub question: String,
     pub output: PathBuf,
     pub session: Option<String>,
-    pub fake: bool,
     pub no_tts: bool,
 }
 
@@ -86,18 +111,15 @@ pub struct ResumeArgs {
     pub session: String,
     pub question: String,
     pub output: PathBuf,
-    pub fake: bool,
     pub no_tts: bool,
 }
 
 pub async fn run(args: RunArgs) -> Result<(), DemoError> {
-    if !args.fake {
-        return Err(
-            "live provider mode is not implemented yet (--fake required); \
-             live model/ASR/TTS wiring lands in issue 005"
-                .into(),
-        );
-    }
+    let model = chat_model()?;
+    println!(
+        "[model] {}",
+        std::env::var(LIVE_CHAT_MODEL_ENV).unwrap_or_default()
+    );
 
     let corpus = media::discover(&args.materials)?;
     println!(
@@ -121,7 +143,7 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(SearchFixturesTool::new(text_entries)))?;
     registry.register(Arc::new(ReadFixtureTool::new(corpus.text.clone())))?;
-    registry.register(reviewer_tool())?;
+    registry.register(reviewer_tool(&model)?)?;
 
     if !corpus.audio.is_empty() {
         let asr = match live_asr_env() {
@@ -137,10 +159,9 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
         )))?;
     }
     if !corpus.images.is_empty() {
-        let vision_model: Arc<dyn ModelAdapter> = Arc::new(DescribeImageFakeModel);
         registry.register(Arc::new(DescribeImageTool::new(
             corpus.images.clone(),
-            vision_model,
+            Arc::clone(&model),
         )))?;
     }
 
@@ -158,7 +179,7 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
         registry.register(Arc::new(SynthesizeBriefTool::new(audio_path, tts)))?;
     }
 
-    let mut builder = AgentConfig::builder("fake/fake").system_prompt(
+    let mut builder = AgentConfig::builder("briefing-desk/run").system_prompt(
         "You are Briefing Desk, a research-brief assistant. Search the materials, read the \
          most relevant one, transcribe any audio source and describe any image source if \
          those tools are available, have review_report check your draft, then call \
@@ -178,21 +199,19 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
         .build()
         .map_err(|e| format!("building agent config: {e}"))?;
 
-    let deny_write = std::env::var_os(FAKE_DENY_APPROVAL_ENV).is_some();
-    let deny_tts = std::env::var_os(FAKE_DENY_TTS_APPROVAL_ENV).is_some();
     let (handle, rx) = AgentRun::start(
         config,
         RunInput::text(args.question.clone()),
-        Arc::new(FakeModel),
+        model,
         registry,
     );
-    let brief = drain_events(handle, rx, deny_write, deny_tts).await?;
+    let brief = drain_events(handle, rx).await?;
     println!("[done] final message: {brief}");
 
     if args.output.exists() {
         println!("[report] written to {}", args.output.display());
     } else {
-        println!("[report] not written (denied, or the agent chose not to write)");
+        println!("[report] not written (the agent chose not to write)");
     }
 
     let audio_path = args.output.with_extension("wav");
@@ -204,21 +223,13 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
             audio_path.display()
         );
     } else {
-        println!("[synthesize] skipped (no report was written, or TTS approval was denied)");
+        println!("[synthesize] skipped (no report was written)");
     }
 
     Ok(())
 }
 
 pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
-    if !args.fake {
-        return Err(
-            "live provider mode is not implemented yet (--fake required); \
-             live model/ASR/TTS wiring lands in issue 005"
-                .into(),
-        );
-    }
-
     let store = open_session_store(&args.session)?;
     let mut snapshot = store
         .load(&args.session)
@@ -233,6 +244,12 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
             )
         })?;
 
+    let model = chat_model()?;
+    println!(
+        "[model] {}",
+        std::env::var(LIVE_CHAT_MODEL_ENV).unwrap_or_default()
+    );
+
     let store: Arc<dyn SessionStore> = Arc::new(store);
     snapshot.active_config = snapshot
         .active_config
@@ -241,10 +258,10 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
     let (handle, rx) = AgentRun::resume_with_input(
         snapshot,
         RunInput::text(args.question.clone()),
-        Arc::new(FakeModel),
+        model,
         ToolRegistry::new(),
     )?;
-    let answer = drain_events(handle, rx, false, false).await?;
+    let answer = drain_events(handle, rx).await?;
     println!("[done] follow-up answer: {answer}");
 
     std::fs::write(&args.output, &answer)
@@ -255,8 +272,8 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
     );
 
     // Resume has no registered tools (it answers directly from persisted
-    // history, see fake_model.rs), so TTS runs as a direct capability call
-    // here rather than through synthesize_brief.
+    // history), so TTS runs as a direct capability call here rather than
+    // through synthesize_brief.
     if args.no_tts {
         println!("[synthesize] skipped (--no-tts)");
     } else {
@@ -291,22 +308,21 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
 /// Wraps a lightweight reviewer sub-agent (Agent-as-Tool, `ContextMode::Fresh`
 /// so it never sees the parent's conversation) as a `review_report` tool the
 /// parent model calls before `write_report`.
-fn reviewer_tool() -> Arc<dyn orchest::tool::Tool> {
-    let reviewer_model: Arc<dyn ModelAdapter> = Arc::new(ReviewerFakeModel);
-    let reviewer_config = AgentConfig::builder("fake/reviewer")
+fn reviewer_tool(model: &Arc<dyn ModelAdapter>) -> Result<Arc<dyn orchest::tool::Tool>, DemoError> {
+    let reviewer_config = AgentConfig::builder("briefing-desk/reviewer")
         .system_prompt(
             "You are a report reviewer. Check the draft for accuracy against the corpus.",
         )
         .max_steps(2)
         .build()
-        .expect("reviewer config is static and always valid");
+        .map_err(|e| format!("building reviewer config: {e}"))?;
 
-    reviewer_config
+    let tool = reviewer_config
         .as_tool(
             "review_report",
             "Reviews a draft report before it is finalized. Call this before write_report.",
         )
-        .model(reviewer_model)
+        .model(Arc::clone(model))
         .registry(ToolRegistry::new())
         .context_mode(ContextMode::Fresh)
         .input_mapper(|input: serde_json::Value| {
@@ -320,19 +336,14 @@ fn reviewer_tool() -> Arc<dyn orchest::tool::Tool> {
             serde_json::json!({"output": details.get("output").cloned().unwrap_or(details)})
         })
         .build()
-        .expect("reviewer_tool always sets .model() and .registry()")
+        .map_err(|e| format!("building reviewer_tool: {e}"))?;
+    Ok(tool)
 }
 
 /// Drives an already-started run's event stream to completion: renders
-/// model/tool/approval/sub-agent/run-completion events to stdout, resolves
-/// any `ApprovalRequested` by auto-approving unless the relevant `deny_*`
-/// flag is set for that specific tool, and returns the run's final text.
-async fn drain_events(
-    handle: RunHandle,
-    mut rx: EventReceiver,
-    deny_write: bool,
-    deny_tts: bool,
-) -> Result<String, DemoError> {
+/// model/tool/approval/sub-agent/run-completion events to stdout, auto-approves
+/// any `ApprovalRequested`, and returns the run's final text.
+async fn drain_events(handle: RunHandle, mut rx: EventReceiver) -> Result<String, DemoError> {
     let mut answer = None;
     while let Some(event) = rx.recv().await {
         match event {
@@ -352,17 +363,8 @@ async fn drain_events(
                 error.message, error.kind, error.retry, error.code, error.next_step
             ),
             RuntimeEvent::ApprovalRequested { tool_call, .. } => {
-                let deny = match tool_call.name.as_str() {
-                    "synthesize_brief" => deny_tts,
-                    _ => deny_write,
-                };
-                let decision = !deny;
-                println!(
-                    "[approval] requested for {} -> auto-{}",
-                    tool_call.name,
-                    if decision { "approving" } else { "denying" }
-                );
-                let _ = handle.respond_approval(handle.run_id, decision).await;
+                println!("[approval] auto-approving {}", tool_call.name);
+                let _ = handle.respond_approval(handle.run_id, true).await;
             }
             RuntimeEvent::ApprovalGranted { tool_call, .. } => {
                 println!("[approval] granted for {}", tool_call.name)

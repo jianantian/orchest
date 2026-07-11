@@ -3,7 +3,6 @@
 //! `docs/archive/iteration/v0_10/issues/` for what each issue adds.
 
 mod app;
-mod fake_model;
 mod media;
 mod tools;
 
@@ -34,9 +33,6 @@ enum Commands {
         /// Session identifier for later resume.
         #[arg(long)]
         session: Option<String>,
-        /// Use deterministic fake model/ASR/TTS instead of live providers.
-        #[arg(long)]
-        fake: bool,
         /// Skip audio synthesis of the brief.
         #[arg(long)]
         no_tts: bool,
@@ -52,9 +48,6 @@ enum Commands {
         /// Where to write the updated Markdown brief.
         #[arg(long)]
         output: PathBuf,
-        /// Use deterministic fake model/ASR/TTS instead of live providers.
-        #[arg(long)]
-        fake: bool,
         /// Skip audio synthesis of the brief.
         #[arg(long)]
         no_tts: bool,
@@ -71,7 +64,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             question,
             output,
             session,
-            fake,
             no_tts,
         } => {
             app::run(app::RunArgs {
@@ -79,7 +71,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 question,
                 output,
                 session,
-                fake,
                 no_tts,
             })
             .await
@@ -88,14 +79,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             session,
             question,
             output,
-            fake,
             no_tts,
         } => {
             app::resume(app::ResumeArgs {
                 session,
                 question,
                 output,
-                fake,
                 no_tts,
             })
             .await
