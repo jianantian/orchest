@@ -14,7 +14,7 @@ Produce the seam gap analysis report that classifies each finding and updates th
 - [ ] Each finding is classified as one of: seam blocker / release blocker / post-1.0 backlog.
 - [ ] Seam blockers and release blockers are each filed as a separate v1.0 issue or added to the existing v1.0 issue list.
 - [ ] The seam gap analysis report is written to `docs/iteration/v0_11/seam-gap-analysis.md`.
-- [ ] The report documents the live provider run: exact command, provider, model, date, outcome, and any behavior differences from the fake-model run.
+- [ ] The report documents the live provider run: exact command, provider, model, date, outcome, and any behavior differences from the smoke test.
 - [ ] `docs/iteration/roadmap.md` is updated to mark v0.11 complete.
 - [ ] The Multivac M2 dependency list (in the Multivac product docs or ADR) is reviewed against the seam gap findings; any API that is not yet stable enough for M2 is flagged.
 
@@ -34,4 +34,4 @@ The seam gap analysis report must contain:
 
 The primary output of Demo B is not the demo itself—it is this report. A complete, honest report with two seam blockers is more valuable than a polished demo with zero findings.
 
-If the live provider run cannot be completed before v0.11 closes (e.g., no provider credentials available), the report must say so explicitly. The fake-model smoke path is still required.
+If the live provider run cannot be completed before v0.11 closes (e.g., no provider credentials available), the report must say so explicitly. The smoke test path (with RESEARCH_PIPELINE_CHAT_MODEL set) is still required.

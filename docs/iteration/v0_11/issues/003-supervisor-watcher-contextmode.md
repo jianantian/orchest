@@ -16,7 +16,7 @@ Implement the supervisor agent, attach an `LlmWatcher` to the worker run, and ex
 - [ ] `ContextMode::Fresh` path: `SubAgentBuilder::context_mode(ContextMode::Fresh)` — worker starts with no inherited parent messages. Test asserts that worker context contains no messages from supervisor history. Import path: `orchest::tool::agent_as_tool::ContextMode`.
 - [ ] `ContextMode::Fork { depth }` path: `SubAgentBuilder::context_mode(ContextMode::Fork { depth })` — worker inherits the most recent `depth` messages from supervisor history. Test asserts correct count.
 - [ ] `ContextMode::Fork` with no inheritable messages produces a clear error rather than silently falling back to `Fresh`.
-- [ ] Fake-model smoke test for the full supervisor → worker → watcher path passes without network access.
+- [ ] Smoke test for the full supervisor -> worker -> watcher path passes (skipped when RESEARCH_PIPELINE_CHAT_MODEL not set).
 - [ ] Any missing or confusing public API entry point encountered during implementation is recorded as a seam gap finding in a `FINDINGS.md` or inline in the validation notes.
 
 ## Notes

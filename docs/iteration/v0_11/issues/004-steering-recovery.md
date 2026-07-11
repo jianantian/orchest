@@ -12,11 +12,11 @@ Implement the `InjectCmd` injection scenario, add a second watcher to test multi
 
 - [ ] Watcher returns `WatcherAction::Inject(message)` from `on_event()` at a predetermined point in the worker run (e.g., after the first tool call event). The injected message is visible in the worker event stream and changes the worker's next step. (`WatcherAction` is at `orchest::run::watcher::WatcherAction`.)
 - [ ] Worker processes the injection without panicking or losing existing state.
-- [ ] Two watchers are attached concurrently to the same worker run. Both receive all events. Event delivery order is the same for both watchers across repeated fake-model runs on the same machine.
+- [ ] Two watchers are attached concurrently to the same worker run. Both receive all events. Event delivery order is the same for both watchers across repeated runs on the same machine.
 - [ ] Fault injection scenario: supervisor run includes a step that triggers `fault_trigger`. Worker run terminates with a failure. Supervisor detects the failure through the public failure detection API (not by catching a panic or checking a side channel).
-- [ ] Supervisor recovery: after failure detection, supervisor either restarts the worker or escalates to a summary output. The chosen path is exercised end-to-end in fake-model mode.
+- [ ] Supervisor recovery: after failure detection, supervisor either restarts the worker or escalates to a summary output. The chosen path is exercised end-to-end.
 - [ ] Completion gate: supervisor waits for worker done without relying on a fixed timeout. The mechanism used is documented in `FINDINGS.md` or validation notes.
-- [ ] Fake-model smoke test for the full path (inject → multi-watcher → fault → recovery → completion gate) passes and is deterministic.
+- [ ] Smoke test for the full path (inject -> multi-watcher -> fault -> recovery -> completion gate) passes and is deterministic.
 - [ ] All seam gaps found during this issue are added to `FINDINGS.md` with preliminary classification.
 
 ## Notes
@@ -25,7 +25,7 @@ Steering injection via `WatcherAction::Inject` works by returning the value from
 
 `RunHandle::inject_message()` / `RunHandle::steer()` are the external-caller alternatives; test these as well to verify both steering paths work.
 
-**Pre-seeded finding PSF-3**: Fake ASR/TTS providers are in `tests/fake_provider.rs` inside provider crates. This issue does not use them, but note any parallel fake-provider access issues with the fake model and record for issue 005.
+**Pre-seeded finding PSF-3**: Fake ASR/TTS providers are in `tests/fake_provider.rs` inside provider crates. This issue does not use them, but note any parallel fake-provider access issues and record for issue 005.
 
 Multi-watcher FIFO test should use a simple event counter assertion, not wall-clock ordering. Record the exact assertion used so issue 005 can evaluate whether the test proves the property.
 

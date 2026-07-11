@@ -22,10 +22,10 @@ examples/demo/research-pipeline/
 │   ├── watcher.rs                 # LlmWatcher impl + CountingWatcher for FIFO
 │   ├── fault.rs                   # fault_trigger tool + RepeatedFailureHook
 │   ├── events.rs                  # render_event for stdout (unwraps SubAgentEvent)
-│   └── fake_model.rs              # SupervisorFakeModel, WorkerFakeModel, WatcherFakeModel
+│   └── model.rs                     # model configuration: chat_model() helper, same pattern as briefing-desk
 └── tests/
     ├── helpers/
-    │   └── mod.rs                 # shared setup: fake models, tool registry, fixtures
+    │   └── mod.rs                 # shared setup: tool registry, fixtures
     └── smoke.rs                   # 9 focused test functions
 ```
 
@@ -44,6 +44,7 @@ path = "src/main.rs"
 
 [dependencies]
 orchest = { path = "../../../crates/orchest" }
+orchest-provider = { path = "../../../crates/orchest-provider", features = ["llm"] }
 orchest-protocol = { path = "../../../crates/orchest-protocol" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 async-trait = "0.1"
@@ -57,7 +58,6 @@ tempfile = "3"
 workspace = true
 ```
 
-Note: no `orchest-provider` dependency needed (no ASR/TTS/AIGC - Decision 11).
 No `sqlite-session` feature (no session persistence - Decision 16).
 
 ## Issue 001: Demo Spec and Scaffold
@@ -65,12 +65,12 @@ No `sqlite-session` feature (no session persistence - Decision 16).
 ### Deliverables
 
 1. `Cargo.toml` with workspace path dependencies (see above).
-2. `README.md` describing purpose, two-level delegation flow, fake-model
-   run command, live provider run command.
+2. `README.md` describing purpose, two-level delegation flow, run command
+   and env-var configuration, live provider run command.
 3. `fixtures/research/` symlink to Briefing Desk fixtures.
 4. `src/main.rs` stub (empty `main` or minimal clap skeleton).
 5. Seam API checklist in README or inline.
-6. Fake-model contract documented.
+6. Live model configuration documented.
 
 ### Seam API Checklist
 
@@ -90,26 +90,24 @@ No `sqlite-session` feature (no session persistence - Decision 16).
 | 12 | `RuntimeEvent::RunCompleted { output }` via `EventReceiver` | `orchest::run::handle::EventReceiver` | pending |
 | 13 | `RuntimeEvent::RunFailed { error }` via `EventReceiver` | `orchest::run::handle::EventReceiver` | pending |
 
-### Fake-Model Contract
+### Live Model Configuration
 
-**SupervisorFakeModel** (2 steps):
-1. Step 1: Emit tool call to delegation tool (`delegate_research`) with the
-   research question. Input includes `[FAULT]` marker if `--fault` flag set.
-2. Step 2: After receiving tool result, emit final text output (synthesized
-   brief or error summary).
+The demo uses a real LLM via environment variables, following the same
+pattern as the briefing-desk demo. `src/model.rs` exposes a `chat_model()`
+helper that reads env vars and constructs a chat model adapter via
+`create_adapter_from_config`.
 
-**WorkerFakeModel** (3-4 steps):
-1. Normal path: `search_corpus` -> `read_file` -> `write_draft` -> end turn.
-2. Fault path: `search_corpus` -> `fault_trigger` (if task input contains
-   `[FAULT]` marker).
-3. After steering injection (if an extra user message appears in history):
-   adjust next step (e.g., skip to `write_draft`).
+| Env Var | Purpose | Required |
+|---------|---------|----------|
+| `RESEARCH_PIPELINE_CHAT_MODEL` | Chat model spec (e.g. `openai/gpt-4o`) | yes |
+| `RESEARCH_PIPELINE_API_KEY` | Provider API key | yes |
+| `RESEARCH_PIPELINE_API_URL` | Provider base URL override | no |
+| `RESEARCH_PIPELINE_MAX_TOKENS` | Max response tokens | no |
 
-**WatcherFakeModel** (1 evaluation):
-1. On first evaluation: return `decide_action(action: "inject", message:
-   "Focus on the retention dashboard data")`.
-2. Subsequent evaluations: return `decide_action(action: "continue")`.
-3. Matches on substrings in formatted events (see Decision 19).
+Three `Arc` clones of the same chat model adapter are used: one for the
+supervisor, one for the worker, and one for the watcher. All three read
+the same env vars, so a single `RESEARCH_PIPELINE_CHAT_MODEL` setting
+covers the entire demo.
 
 ### Acceptance Criteria Mapping
 
@@ -117,7 +115,7 @@ No `sqlite-session` feature (no session persistence - Decision 16).
 - [ ] `README.md` describes purpose, flow, commands.
 - [ ] `fixtures/research/` symlink exists.
 - [ ] Seam API checklist added.
-- [ ] Fake-model contract documented.
+- [ ] Live model configuration documented.
 - [ ] No runtime code beyond `main.rs` stub.
 
 ## Issue 002: Worker Agent and Tool Set
@@ -126,7 +124,6 @@ No `sqlite-session` feature (no session persistence - Decision 16).
 
 - `src/worker.rs`: Worker agent construction + tool set registration.
 - `src/fault.rs`: `FaultTriggerTool` + `AbortOnFatalHook`.
-- `src/fake_model.rs`: `WorkerFakeModel`.
 - `src/events.rs`: `render_event` (initial version, no SubAgentEvent yet).
 
 ### Worker Tool Set
@@ -154,28 +151,13 @@ A `RepeatedFailureHook` that returns `Abort("fault_trigger returned Fatal
 error")`. Used with `repeated_failure_threshold(1)` on the worker config
 (Decision 3).
 
-### WorkerFakeModel Behavior
-
-Stateless, inspects message history and registered tools:
-
-1. If last user message contains `[FAULT]` marker: emit `search_corpus`
-   tool call, then on next step emit `fault_trigger` tool call.
-2. If last message is a `ToolResult` from `search_corpus`: emit `read_file`
-   call with first search hit path.
-3. If last message is a `ToolResult` from `read_file`: emit `write_draft`
-   call with synthesized content.
-4. If last message is a `ToolResult` from `write_draft`: emit final text
-   (end turn).
-5. If an extra user message appears in history (steering injection): skip
-   to step 4 (emit `write_draft` with adjusted content).
-
 ### Acceptance Criteria Mapping
 
 - [ ] Worker agent in `src/worker.rs`, accepts task via `ContextMode::Fresh`.
 - [ ] Tool set: `search_corpus`, `read_file`, `write_draft`, `fault_trigger`.
 - [ ] `fault_trigger` returns `ToolError(Fatal, Unsafe)`.
-- [ ] Worker emits tool-call + model-turn events in fake-model path.
-- [ ] Fake-model smoke test for worker passes.
+- [ ] Worker emits at least one tool-call event and one model-turn event.
+- [ ] Smoke test passes (skipped when RESEARCH_PIPELINE_CHAT_MODEL not set).
 - [ ] Worker is library component, not CLI entry point.
 
 ## Issue 003: Supervisor + LlmWatcher + ContextMode
@@ -184,19 +166,18 @@ Stateless, inspects message history and registered tools:
 
 - `src/supervisor.rs`: Supervisor agent + delegation orchestration.
 - `src/watcher.rs`: `LlmWatcher` construction + `CountingWatcher`.
-- `src/fake_model.rs`: Add `SupervisorFakeModel`, `WatcherFakeModel`.
 - `src/events.rs`: Add `SubAgentEvent` unwrapping in `render_event`.
 - `FINDINGS.md`: Record PSF-1, PSF-2 confirmations.
 
 ### Supervisor Agent Construction
 
 ```rust
-let supervisor_config = AgentConfig::builder("fake/supervisor")
+let supervisor_config = AgentConfig::builder("research-pipeline/supervisor")
     .system_prompt("You are a research supervisor. Delegate research tasks...")
     .max_steps(5)
     .build()?;
 
-let worker_config = AgentConfig::builder("fake/worker")
+let worker_config = AgentConfig::builder("research-pipeline/worker")
     .system_prompt("You are a research worker. Use search_corpus, read_file, write_draft.")
     .max_steps(10)
     .repeated_failure_threshold(1)
@@ -205,7 +186,7 @@ let worker_config = AgentConfig::builder("fake/worker")
 
 let delegation_tool = worker_config
     .as_tool("delegate_research", "Delegate a research task to the worker agent")
-    .model(Arc::new(WorkerFakeModel))
+    .model(Arc::clone(&model))
     .registry(worker_registry)
     .context_mode(ContextMode::Fresh)  // or Fork { depth: 2 }
     .build()?;
@@ -215,10 +196,10 @@ let delegation_tool = worker_config
 
 ```rust
 let watcher = LlmWatcher::builder()
-    .model(Arc::new(WatcherFakeModel))
+    .model(Arc::clone(&model))
     .eval_interval(1)
     .system_prompt("Monitor the worker's execution...")
-    .build();
+    .build()?;
 
 handle.attach_watcher(Arc::new(watcher), 1024).await;
 ```
@@ -257,7 +238,7 @@ Directly construct `ToolContext` with `parent_messages: vec![]`, call
 - [ ] `ContextMode::Fresh` path tested.
 - [ ] `ContextMode::Fork { depth }` path tested.
 - [ ] Fork with no messages produces clear error (unit test).
-- [ ] Fake-model smoke test passes.
+- [ ] Smoke test passes (skipped when RESEARCH_PIPELINE_CHAT_MODEL not set).
 - [ ] Findings recorded in `FINDINGS.md`.
 
 ## Issue 004: Steering Injection and Supervisor Recovery
@@ -273,7 +254,7 @@ Directly construct `ToolContext` with `parent_messages: vec![]`, call
 ### Steering Test: WatcherAction::Inject
 
 1. Attach `LlmWatcher` to supervisor's `RunHandle`.
-2. `WatcherFakeModel` returns `Inject("Focus on retention data")` on first
+2. Watcher returns `Inject("Focus on retention data")` on first
    evaluation.
 3. Observe: injection lands in supervisor's conversation (visible in
    supervisor event stream), NOT in worker's.
@@ -301,9 +282,9 @@ Same assertions. Same finding.
 
 ### Fault Injection Scenario
 
-1. Run with `--fault` flag. `SupervisorFakeModel` includes `[FAULT]` in
-   delegation input.
-2. `WorkerFakeModel` calls `search_corpus` then `fault_trigger`.
+1. Run with `--fault` flag. Supervisor system prompt includes fault
+   instruction.
+2. Worker calls `search_corpus` then `fault_trigger`.
 3. `fault_trigger` returns `ToolError(Fatal, Unsafe)`.
 4. `RepeatedFailureHook` returns `Abort` (threshold = 1).
 5. `RunFailed` emitted. Worker run terminates cleanly.
@@ -354,7 +335,7 @@ Same assertions. Same finding.
 - [ ] Supervisor detects failure via public API (SubAgentEvent wrapping RunFailed).
 - [ ] Supervisor recovery (escalation) runs end-to-end.
 - [ ] Completion gate: no fixed timeout.
-- [ ] Fake-model smoke test deterministic.
+- [ ] Smoke test deterministic.
 - [ ] All seam gaps recorded in `FINDINGS.md`.
 
 ## Issue 005: Seam Gap Analysis and Release-Blocker Triage
@@ -378,8 +359,7 @@ Same assertions. Same finding.
 4. **Seam blockers detail**: one subsection per SB with repro steps and
    proposed fix.
 5. **Release blockers detail**: same structure.
-6. **Live run log**: "Not performed" + exact command documented + v1.0
-   prerequisite flag.
+6. **Live run log**: command, provider, model, date, outcome.
 7. **Multivac M2 readiness verdict**: one sentence per seam API entry.
 
 ### Expected Findings (from Design Decisions)

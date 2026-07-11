@@ -184,24 +184,30 @@ what happens when drops are possible under backpressure.
 
 ---
 
-## Decision 7: Fake Models - Three Separate Types
+## Decision 7: Model Adapters - Single Chat Model, Three Roles
 
 ### Decision
 
-Three distinct fake model types, each `Arc::new(...)`'d independently:
+Three model adapters (supervisor, worker, watcher), all backed by the
+same chat model adapter constructed from the `RESEARCH_PIPELINE_CHAT_MODEL`
+env var via `orchest_provider::create_adapter_from_config`:
 
-| Model | Role | Behavior |
-|-------|------|----------|
-| `SupervisorFakeModel` | Supervisor agent | Emit delegation tool call -> synthesize final brief |
-| `WorkerFakeModel` | Worker agent | search_corpus -> read_file -> write_draft (normal) or search_corpus -> fault_trigger (fault path) |
-| `WatcherFakeModel` | LlmWatcher's model | Return `decide_action(action: "inject", message: "correction")` when event buffer contains a tool-call event |
+| Adapter | Role | Behavior (driven by system prompt + tool set) |
+|---------|------|-----------------------------------------------|
+| Supervisor adapter | Supervisor agent | Emit delegation tool call -> synthesize final brief |
+| Worker adapter | Worker agent | search_corpus -> read_file -> write_draft (normal) or search_corpus -> fault_trigger (fault path) |
+| Watcher adapter | LlmWatcher's model | Return `decide_action(action: "inject", message: "correction")` when event buffer contains a tool-call event |
 
-All stateless, inspecting message history and tools to decide the next step.
+Each adapter is an `Arc::clone(&model)` of the single chat model adapter.
+Behavior is determined by each agent's system prompt and tool set, not by
+the model adapter itself.
 
 ### Rationale
 
-Follows the Briefing Desk pattern. Clear separation of concerns,
-independently testable.
+Live LLM only. `RESEARCH_PIPELINE_CHAT_MODEL` configures the chat model
+via `create_adapter_from_config`. No custom model types. Each role is
+distinguished by its system prompt and tool set, not by a custom model
+implementation. Follows the v0.10 Briefing Desk live-only pattern.
 
 ---
 
@@ -216,9 +222,10 @@ Two distinct demo runs:
 2. **Fault run:** Supervisor delegates -> worker does search -> fault_trigger
    -> `RunFailed` -> supervisor detects failure -> escalation.
 
-The fault path is triggered by a task marker `[FAULT]` in the delegation
-input. The `WorkerFakeModel` checks for this marker and calls
-`fault_trigger` after `search_corpus` instead of proceeding to `read_file`.
+The fault path is triggered by the `--fault` CLI flag. The supervisor's
+system prompt instructs the worker (via the delegation tool call) to call
+`fault_trigger` after `search_corpus` instead of proceeding to
+`read_file`.
 
 ### Rationale
 
@@ -269,21 +276,21 @@ the `testing` feature. The Research Pipeline demo does not use ASR/TTS
 
 ---
 
-## Decision 12: Live Provider Run - Defer with Documentation
+## Decision 12: Live Provider Run - Primary Path
 
 ### Decision
 
-Defer the live run. The seam gap analysis states:
-
-1. Live run was not completed (no LLM credentials).
-2. Exact command and env vars documented.
-3. Fake-model smoke test covers the full API surface deterministically.
-4. Flagged as v1.0 prerequisite.
+Live-only demo. The `RESEARCH_PIPELINE_CHAT_MODEL` env var configures the
+chat model adapter via `orchest_provider::create_adapter_from_config`.
+Smoke tests skip automatically when the env var is unset (no LLM
+credentials available). Live-only; no custom model types.
 
 ### Rationale
 
-Follows the v0.10 precedent. The fake-model path is primary evidence; the
-live run is confirmation, not discovery.
+Follows the v0.10 Briefing Desk live-only pattern. The live run is the
+primary evidence path - the demo exercises the full Orchest API surface
+against a real LLM. Smoke tests gate on `RESEARCH_PIPELINE_CHAT_MODEL` and
+skip when unset, so CI without credentials doesn't fail.
 
 ---
 
@@ -355,10 +362,9 @@ are isolated and diagnostic.
 
 ### Decision
 
-Single `run` command with flags: `--question`, `--fake`, `--fault`,
-`--materials`. No subcommands. No resume. Stdout = event trace + final
-output. The seam gap analysis document is written by the developer, not by
-the binary.
+Single `run` command with flags: `--question`, `--fault`, `--materials`.
+No subcommands. No resume. Stdout = event trace + final output. The seam
+gap analysis document is written by the developer, not by the binary.
 
 ### Rationale
 
@@ -387,9 +393,9 @@ from this choice - that's the point of Demo B.
 
 **Both:**
 
-1. **`LlmWatcher`** for steering tests. Backed by `WatcherFakeModel`. Set
-   `eval_interval(1)`. Returns `Inject("correction")` when event buffer
-   contains a tool-call event.
+1. **`LlmWatcher`** for steering tests. Backed by the same chat model
+   adapter as the supervisor and worker. Set `eval_interval(1)`. Returns
+   `Inject("correction")` when event buffer contains a tool-call event.
 2. **Custom `CountingWatcher`** for the multi-watcher FIFO test.
    Deterministic, no model dependency.
 
@@ -410,8 +416,8 @@ from this choice - that's the point of Demo B.
 
 ### Decision
 
-Use `LlmWatcher` as-is. The `WatcherFakeModel` matches on substrings in
-the formatted event. The fragility IS the finding.
+Use `LlmWatcher` as-is. The watcher's LLM model receives the formatted
+event and must interpret it. The fragility IS the finding.
 
 ### Rationale
 
@@ -474,18 +480,18 @@ fix is straightforward: add a `ConfigError::WatcherMissingModel` variant.
 
 ---
 
-## Decision 23: Watcher Model - Separate Instance
+## Decision 23: Model Instances - Three Arc Clones
 
 ### Decision
 
-Three separate fake model instances: `SupervisorFakeModel`,
-`WorkerFakeModel`, `WatcherFakeModel`. Each `Arc::new(...)`'d
-independently.
+Three `Arc::clone(&model)` from the single chat model adapter. One clone
+for the supervisor agent, one for the worker agent, one for the
+`LlmWatcher`. No separate model types, no shared mutable state.
 
 ### Rationale
 
-Follows the Briefing Desk pattern. No shared state, no role detection
-logic. Each model's behavior is focused on its role.
+Follows the Briefing Desk live-only pattern. Each role is distinguished by
+its system prompt and tool set, not by a custom model implementation.
 
 ---
 

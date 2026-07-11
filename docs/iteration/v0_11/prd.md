@@ -67,7 +67,7 @@ The app may use workspace path dependencies and may import tool definitions from
 7. Supervisor synthesizes the worker result into a final output.
 8. Demo exits with a seam gap analysis report printed to stdout.
 
-A `--fake-model` mode exercises the full path using deterministic fake responses without network access.
+The demo requires a real LLM provider configured via `RESEARCH_PIPELINE_CHAT_MODEL` env var (e.g. `anthropic/claude-sonnet-4-6`). Smoke tests skip automatically when no provider is configured.
 
 ### Runtime Capabilities Under Test
 
@@ -147,8 +147,8 @@ Examples:
 
 | Issue | Title | Scope |
 |-------|-------|-------|
-| 001 | Demo spec and scaffold | Lock the delegation flow, fixture re-use plan, fake-model contract and seam API checklist |
-| 002 | Worker agent and tool set | Implement worker agent with research tools and fault_trigger; fake-model smoke path |
+| 001 | Demo spec and scaffold | Lock the delegation flow, fixture re-use plan and seam API checklist |
+| 002 | Worker agent and tool set | Implement worker agent with research tools and fault_trigger; smoke test |
 | 003 | Supervisor + LlmWatcher + ContextMode | Implement supervisor delegation, watcher attach/detach, ContextMode::Fresh and Fork paths |
 | 004 | Steering injection and supervisor recovery | Implement WatcherAction::Inject scenario, multi-watcher FIFO test, fault injection, supervisor recovery |
 | 005 | Seam gap analysis and release-blocker triage | Run full demo, document all seam gaps, classify as seam blocker / release blocker / post-1.0, update v1.0 scope |
@@ -156,7 +156,7 @@ Examples:
 ## Acceptance Criteria
 
 - [ ] `examples/demo/research-pipeline` exists and builds with workspace path dependencies.
-- [ ] Fake-model smoke test covers supervisor delegation, watcher attach, `WatcherAction::Inject` steering, `ContextMode` both variants, fault injection and recovery.
+- [ ] Smoke tests cover supervisor delegation, watcher attach, `WatcherAction::Inject` steering, `ContextMode` both variants, fault injection and recovery (skipped when `RESEARCH_PIPELINE_CHAT_MODEL` is not set).
 - [ ] Live run works when provider environment variables are configured.
 - [ ] `LlmWatcher` attach (`RunHandle::attach_watcher`) produces a visible event stream from the worker on stdout.
 - [ ] Steering injection via `WatcherAction::Inject` is processed by the worker and visible in events.
@@ -175,6 +175,19 @@ Examples:
 - v0.9.4 Failure Semantics (`RetryHint`, structured tool failure, `ErrorKind` taxonomy).
 - v0.9 Supervised Delegation runtime APIs (LlmWatcher, Steering, supervisor recovery, multi-watcher FIFO).
 
+## Environment Variables
+
+The demo uses a real LLM provider configured via environment variables:
+
+| Variable | Purpose | Required |
+|----------|---------|----------|
+| `RESEARCH_PIPELINE_CHAT_MODEL` | Chat model spec (e.g. `anthropic/claude-sonnet-4-6`) used for supervisor, worker and watcher adapters | Yes (for live run and smoke tests) |
+| `RESEARCH_PIPELINE_API_KEY` | API key for the configured provider | Yes (for live run and smoke tests) |
+| `RESEARCH_PIPELINE_API_URL` | Override API endpoint URL | No |
+| `RESEARCH_PIPELINE_MAX_TOKENS` | Override max response tokens | No |
+
+When `RESEARCH_PIPELINE_CHAT_MODEL` is not set, smoke tests skip automatically rather than failing.
+
 ## Verification
 
 Required local checks:
@@ -188,4 +201,4 @@ cargo test -p research-pipeline-demo
 
 The live provider run is manual and env-var gated. It must be documented in the seam gap analysis with exact command, provider, model, date and outcome.
 
-The multi-watcher FIFO test must run in `--fake-model` mode and must be deterministic across repeated runs on the same machine.
+The multi-watcher FIFO test must be deterministic across repeated runs on the same machine.
