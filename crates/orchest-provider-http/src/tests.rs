@@ -598,4 +598,6 @@ fn registry_lists_all_built_in_providers() {
     assert!(providers.contains(&"deepseek"));
     assert!(providers.contains(&"openrouter"));
     assert!(providers.contains(&"volcengine"));
+    assert!(providers.contains(&"minimax"));
+    assert!(providers.contains(&"elss"));
 }

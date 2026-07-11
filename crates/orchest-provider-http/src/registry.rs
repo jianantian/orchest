@@ -34,6 +34,7 @@ impl ProviderRegistry {
         reg.register(Box::new(super::providers::deepseek::DeepSeekFactory));
         reg.register(Box::new(super::providers::openrouter::OpenRouterFactory));
         reg.register(Box::new(super::providers::volcengine::VolcengineFactory));
+        reg.register(Box::new(super::providers::minimax::MinimaxFactory));
         reg.register(Box::new(super::providers::elss::ElssFactory));
         reg
     }
