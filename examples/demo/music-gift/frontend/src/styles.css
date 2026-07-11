@@ -1,0 +1,753 @@
+/* ============================================
+   Music Gift — Global Styles
+   Warm/gold palette, Cormorant Garamond display,
+   noise texture overlay, mobile-first layout.
+   ============================================ */
+
+:root {
+  --bg: #f7f3ec;
+  --bg2: #ede9e0;
+  --surface: #fffefb;
+  --surface2: #f0ebe1;
+  --text: #2a1f14;
+  --text2: #7a6a5a;
+  --text3: #b0a090;
+  --gold: #c8956c;
+  --gold-bg: rgba(200, 149, 108, 0.1);
+  --gold-light: rgba(200, 149, 108, 0.16);
+  --gold-border: rgba(200, 149, 108, 0.25);
+  --border: #e4dbd0;
+  --shadow: 0 1px 8px rgba(42, 31, 20, 0.07);
+  --shadow-lg: 0 12px 48px rgba(42, 31, 20, 0.1);
+  --radius: 8px;
+  --radius-lg: 20px;
+  --font-display: 'Cormorant Garamond', Georgia, serif;
+  --font-body: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--bg2);
+  font-family: var(--font-body);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#root {
+  width: 100%;
+  max-width: 520px;
+  min-height: 100dvh;
+  margin: 0 auto;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  box-shadow: 0 0 0 1px var(--border), 0 8px 40px rgba(42, 31, 20, 0.08);
+  overflow: hidden;
+}
+
+/* ── Noise texture overlay ─────────────────── */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.045;
+  background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E")
+    repeat;
+}
+
+/* ── Header ────────────────────────────────── */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  height: 52px;
+  background: rgba(247, 243, 236, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+}
+
+.app-logo {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.app-logo span {
+  color: var(--gold);
+  font-weight: 600;
+}
+
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.app-nav a {
+  text-decoration: none;
+  font-size: 13px;
+  color: var(--text2);
+  padding: 6px 12px;
+  border-radius: 100px;
+  transition: all 0.15s;
+  font-weight: 500;
+}
+
+.app-nav a:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.app-nav a.active {
+  color: var(--gold);
+  background: var(--gold-bg);
+}
+
+/* ── Main scroll area ──────────────────────── */
+.app-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+  min-height: 0;
+}
+
+/* ── Generic card ──────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 20px;
+}
+
+/* ── Form elements ─────────────────────────── */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.form-group:last-child {
+  margin-bottom: 0;
+}
+
+.form-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.form-input,
+.form-textarea,
+.form-select {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+}
+
+.form-input:focus,
+.form-textarea:focus,
+.form-select:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px var(--gold-bg);
+}
+
+.form-textarea {
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.5;
+}
+
+/* ── Buttons ───────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: var(--radius);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-decoration: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--gold);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #b8845c;
+}
+
+.btn-secondary {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+.btn-full {
+  width: 100%;
+}
+
+.btn-lg {
+  padding: 14px 24px;
+  font-size: 16px;
+}
+
+/* ── Loading spinner ───────────────────────── */
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--gold-bg);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Error message ─────────────────────────── */
+.error-msg {
+  color: #c44;
+  font-size: 14px;
+  padding: 10px 14px;
+  background: rgba(204, 68, 68, 0.06);
+  border-radius: var(--radius);
+  border: 1px solid rgba(204, 68, 68, 0.15);
+}
+
+/* ── Scrollbar ─────────────────────────────── */
+.app-main::-webkit-scrollbar {
+  width: 4px;
+}
+
+.app-main::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+
+/* ── Page layout ───────────────────────────── */
+.create-page,
+.gift-page,
+.playlist-page {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.loading-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 60px 20px;
+  color: var(--text3);
+  font-size: 14px;
+}
+
+/* ── MetaForm ──────────────────────────────── */
+.meta-form {
+  padding: 16px 20px;
+}
+
+.form-row {
+  display: flex;
+  gap: 12px;
+}
+
+.form-row .form-group {
+  flex: 1;
+}
+
+.photo-upload-area {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.photo-thumb {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.photo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.photo-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.photo-add {
+  width: 64px;
+  height: 64px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text3);
+  font-size: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.photo-add:hover {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+/* ── ChatStream ────────────────────────────── */
+.chat-stream {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 300px;
+}
+
+.chat-messages {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 0 12px;
+  overflow-y: auto;
+  min-height: 200px;
+}
+
+.chat-bubble {
+  max-width: 82%;
+  padding: 10px 14px;
+  border-radius: 16px;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-user {
+  align-self: flex-end;
+  background: var(--gold);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.chat-assistant {
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+
+.chat-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--gold);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.chat-input {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  resize: none;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.chat-input:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px var(--gold-bg);
+}
+
+.chat-send {
+  flex-shrink: 0;
+  min-width: 52px;
+  height: 42px;
+}
+
+/* ── LyricsCard ────────────────────────────── */
+.lyrics-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lyrics-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lyrics-title-display {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.lyrics-tags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lyrics-tag {
+  font-size: 12px;
+  color: var(--gold);
+  background: var(--gold-bg);
+  padding: 3px 10px;
+  border-radius: 100px;
+  font-weight: 500;
+}
+
+.lyrics-body {
+  font-family: var(--font-display);
+  font-size: 16px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.lyrics-edit {
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.6;
+  min-height: 200px;
+}
+
+.lyrics-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+/* ── AudioPlayer ───────────────────────────── */
+.audio-player {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+}
+
+.audio-player.compact {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+}
+
+.audio-play-btn {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: var(--gold);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.audio-player.compact .audio-play-btn {
+  width: 36px;
+  height: 36px;
+}
+
+.audio-play-btn:hover {
+  background: #b8845c;
+}
+
+.audio-play-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.audio-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.audio-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.audio-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.audio-time {
+  font-size: 11px;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.audio-progress {
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.audio-progress-fill {
+  height: 100%;
+  background: var(--gold);
+  border-radius: 2px;
+  transition: width 0.1s linear;
+}
+
+/* ── GiftPage ──────────────────────────────── */
+.gift-hero {
+  text-align: center;
+  padding: 20px 0;
+}
+
+.gift-title {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.gift-dedication {
+  color: var(--text2);
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.gift-style-tag {
+  display: inline-block;
+  font-size: 12px;
+  color: var(--gold);
+  background: var(--gold-bg);
+  padding: 3px 12px;
+  border-radius: 100px;
+}
+
+.gift-generating {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 32px;
+  color: var(--text2);
+}
+
+.gen-status {
+  font-size: 12px;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.gift-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 12px;
+}
+
+.gift-lyrics .lyrics-body {
+  font-size: 15px;
+}
+
+.gift-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  padding-top: 8px;
+}
+
+/* ── PlaylistPage ──────────────────────────── */
+.page-title {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.page-sub {
+  color: var(--text3);
+  font-size: 13px;
+  margin-top: -14px;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  color: var(--text3);
+  font-size: 14px;
+}
+
+.playlist-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.playlist-card {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.playlist-card-link {
+  text-decoration: none;
+  color: inherit;
+}
+
+.playlist-card-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.playlist-card-meta {
+  font-size: 13px;
+  color: var(--text2);
+  margin-top: 2px;
+}
+
+.playlist-card-style {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--gold);
+  margin-top: 4px;
+}
+
+.playlist-card-footer {
+  font-size: 12px;
+  color: var(--text3);
+  padding-top: 4px;
+}
