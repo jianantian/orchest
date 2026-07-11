@@ -277,21 +277,29 @@ The migration is non-breaking in Phase 1-2 (all existing model strings
 and APIs continue to work), with the cleanup in Phase 3 deferred to
 v1.0 when breaking changes are acceptable.
 
-## Open Questions
+## Resolved Questions
 
-1. **OpenAI Responses API scope**: Should `Protocol::Responses` be
-   implemented in this iteration or deferred? It's a new protocol with
-   different request/response shapes from Chat Completions.
+1. **OpenAI Responses API scope**: Implement after demo validation,
+   before v1.0. The Responses API's value is long-conversation latency
+   reduction and explicit cache control -- important for production but
+   not blocking demo work. `Protocol::Responses` is added as a third
+   protocol variant when implemented.
 
-2. **Gemini protocol**: Google's Gemini API has its own wire format
-   (not OpenAI-compatible). Should `Protocol::Gemini` be added now or
-   when a consumer needs it?
+2. **Gemini protocol**: Not adding. Google's Gemini wire format is not
+   industry mainstream; the OpenAI-compatible endpoint covers Gemini
+   access via gateways. If a direct Gemini protocol is needed later, it
+   follows the same `ProtocolFactory` pattern.
 
-3. **Provider-specific pricing/catalog**: DeepSeek and Volcengine have
-   provider-specific pricing tables. These stay in the provider entry,
-   not the protocol factory. Confirm this doesn't create awkward
-   coupling.
+3. **Pricing**: Pricing is `provider/model`, not protocol. The same
+   model served by different providers has different prices (e.g.
+   `anthropic/claude-sonnet-5` vs `elss/claude-sonnet-5`). Protocol
+   does not affect price. Pricing tables stay in the provider entry,
+   keyed by model name, completely independent of the protocol factory.
 
-4. **OpenRouter routing headers**: OpenRouter needs `X-Title` and
-   `Site-Url` headers. These fit naturally in `ProviderContext::extra_headers`.
-   Confirm no other provider needs per-request dynamic header logic.
+4. **OpenRouter routing headers**: OpenRouter's `X-OpenRouter-Title`
+   and `HTTP-Referer` are static header names with values read from
+   env vars (`OPENROUTER_APP_TITLE`, `OPENROUTER_SITE_URL`) at adapter
+   construction time -- not per-request dynamic. They fit naturally in
+   `ProviderContext::extra_headers` where the value is resolved (from
+   env var or config) during provider entry construction. No other
+   provider currently needs per-request dynamic header logic.
