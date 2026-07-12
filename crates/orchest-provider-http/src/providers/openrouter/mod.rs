@@ -53,8 +53,8 @@ pub struct OpenRouterConfig {
     pub api_key: Option<String>,
     pub api_url: Option<String>,
     /// Pre-resolved routing headers (`(name, value)`). On the protocol-factory
-    /// path these come from [`resolve_headers`](crate::protocol::resolve_headers)
-    /// applied to the entry's `HeaderValue::Env` declarations.
+    /// path these come from `protocol::resolve_headers` applied to the entry's
+    /// `HeaderValue::Env` declarations.
     pub extra_headers: Vec<(&'static str, String)>,
 }
 
