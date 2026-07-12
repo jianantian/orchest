@@ -884,3 +884,55 @@ fn anthropic_passes_service_tier_silently() {
     }];
     let _ = adapter.build_request_body(&messages, &[], &opts);
 }
+
+// ---------------------------------------------------------------------------
+// ADR-0002 slice 005: Anthropic on the MessagesProtocolFactory path.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn anthropic_migrated_to_messages_entry() {
+    let entry = crate::protocol::provider_entry("anthropic")
+        .expect("anthropic is migrated to the protocol path");
+    assert_eq!(entry.name, "anthropic");
+    assert_eq!(entry.protocols, &[crate::protocol::Protocol::Messages]);
+    // Canonical Messages — no profile.
+    assert!(entry
+        .profile_for(crate::protocol::Protocol::Messages)
+        .is_none());
+}
+
+#[test]
+fn messages_url_append_is_idempotent() {
+    use super::request::normalize_messages_url;
+    assert_eq!(
+        normalize_messages_url("https://api.anthropic.com"),
+        "https://api.anthropic.com/v1/messages"
+    );
+    assert_eq!(
+        normalize_messages_url("https://api.anthropic.com/v1/messages"),
+        "https://api.anthropic.com/v1/messages"
+    );
+}
+
+#[tokio::test]
+async fn create_adapter_from_config_routes_anthropic_through_new_path() {
+    let api_url = serve_sse_once(MINIMAL_SSE).await;
+
+    let adapter = crate::create_adapter_from_config(crate::ProviderRuntimeConfig {
+        model: "anthropic/claude-sonnet-5".into(),
+        api_key: Some("key".into()),
+        api_key_env: None,
+        api_url: Some(api_url),
+        max_tokens: Some(128),
+    })
+    .expect("anthropic resolves through the MessagesProtocolFactory path");
+
+    assert_eq!(adapter.provider_name(), "anthropic");
+    assert_eq!(adapter.model_name(), "claude-sonnet-5");
+
+    let response = adapter
+        .complete(&[], &[], &default_options(), None)
+        .await
+        .expect("request should complete");
+    assert!(matches!(&response.content[0], ContentBlock::Text(t) if t == "Hello"));
+}

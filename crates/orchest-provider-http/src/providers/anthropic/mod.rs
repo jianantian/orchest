@@ -322,6 +322,27 @@ impl crate::registry::ProviderFactory for AnthropicFactory {
     }
 }
 
+// ADR-0002 protocol-factory path (slice 005). Referenced as data by the Anthropic
+// `ProviderEntry.build_adapter`; MessagesProtocolFactory calls it without matching
+// on provider name (ADR rule 1). Transitional: wraps the canonical AnthropicAdapter
+// (Messages envelope: content blocks, thinking budget/signature, cache control,
+// SSE) until v0.12 collapses it into the Messages protocol core. Anthropic is
+// canonical Messages — no profile.
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (workspace convention)
+pub fn build_messages_adapter(
+    config: &orchest_provider_core::registry::ProviderConfig,
+    resolved: &crate::protocol::ResolvedModel<'_>,
+) -> Result<Box<dyn orchest_protocol::ChatModel>, orchest_protocol::ProtocolError> {
+    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
+        model: resolved.model.to_string(),
+        max_tokens: config.max_tokens.unwrap_or(crate::defaults::MAX_TOKENS),
+        api_key: config.api_key.clone(),
+        api_url: config.api_url.clone(),
+    })
+    .map_err(orchest_protocol::ProtocolError::from)?;
+    Ok(Box::new(adapter))
+}
+
 #[cfg(test)]
 pub(crate) mod test_util;
 

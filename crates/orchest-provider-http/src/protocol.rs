@@ -29,8 +29,7 @@ use crate::{
 /// no longer "the Anthropic adapter" but "an entry that speaks Messages".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
-    /// Anthropic Messages API (`/v1/messages`). Constructed from slice 005.
-    #[allow(dead_code)] // Messages factory + entries born in slice 005
+    /// Anthropic Messages API (`/v1/messages`).
     Messages,
     /// OpenAI Chat Completions API (`/v1/chat/completions`).
     Chat,
@@ -49,17 +48,17 @@ pub enum HeaderValue {
     Env(&'static str),
 }
 
-/// Transitional per-provider Chat constructor referenced (as data) by a
-/// [`ProviderEntry`]. This is how a `ProtocolFactory` builds the right wrapped
-/// adapter **without matching on provider name** (ADR rule 1): the entry carries
-/// its constructor, the factory just calls it. Phase 1 keeps each provider's
-/// existing adapter behind this pointer; v0.12 collapses the adapters into the
-/// protocol core and this indirection goes away.
-pub type ChatCtor =
+/// Transitional per-provider adapter constructor referenced (as data) by a
+/// [`ProviderEntry`], for either protocol. This is how a `ProtocolFactory` builds
+/// the right wrapped adapter **without matching on provider name** (ADR rule 1):
+/// the entry carries its constructor, the factory just calls it. Phase 1 keeps
+/// each provider's existing adapter behind this pointer; v0.12 collapses the
+/// adapters into the protocol cores and this indirection goes away.
+pub type AdapterCtor =
     fn(&ProviderConfig, &ResolvedModel<'_>) -> Result<Box<dyn ChatModel>, ProtocolError>;
 
 /// A provider entry: identity + protocol preferences + profiles, **no adapter
-/// logic of its own** (construction is delegated to the `build_chat` ctor).
+/// logic of its own** (construction is delegated to the `build_adapter` ctor).
 ///
 /// `protocol_aliases` / `path_overrides` / `extra_headers` are declared here (so
 /// the shape is stable for later slices) and left empty until the slice that
@@ -90,9 +89,9 @@ pub struct ProviderEntry {
     /// Behavior profiles per protocol, for providers that deviate from
     /// protocol-canonical behavior. Empty for fully compatible providers.
     pub profiles: &'static [(Protocol, &'static dyn ProviderProfile)],
-    /// Constructs the wrapped Chat adapter for this provider (transitional; see
-    /// [`ChatCtor`]).
-    pub build_chat: ChatCtor,
+    /// Constructs the wrapped adapter for this provider (transitional; see
+    /// [`AdapterCtor`]).
+    pub build_adapter: AdapterCtor,
 }
 
 impl ProviderEntry {
@@ -353,7 +352,7 @@ pub trait ProtocolFactory: Send + Sync {
 /// The canonical Chat Completions dialect, shared across Chat providers.
 ///
 /// Transitional (Phase 1): construction is delegated to the resolved provider's
-/// [`ProviderEntry::build_chat`] ctor, which wraps that provider's existing
+/// [`ProviderEntry::build_adapter`] ctor, which wraps that provider's existing
 /// adapter — so the factory never matches on provider name (ADR rule 1). The
 /// per-provider behavioral residual lives in the [`ProviderProfile`] attached to
 /// the entry (DeepSeek from slice 002). v0.12 collapses the wrapped adapters into
@@ -370,7 +369,28 @@ impl ProtocolFactory for ChatProtocolFactory {
         config: &ProviderConfig,
         resolved: &ResolvedModel<'_>,
     ) -> Result<Box<dyn ChatModel>, ProtocolError> {
-        (resolved.provider.build_chat)(config, resolved)
+        (resolved.provider.build_adapter)(config, resolved)
+    }
+}
+
+/// The canonical Anthropic Messages dialect (`/v1/messages`), shared across
+/// Messages providers. Symmetric with [`ChatProtocolFactory`]: construction is
+/// delegated to the entry's [`AdapterCtor`] (no provider-name match). Anthropic
+/// is canonical Messages with no profile; Messages-side profile dispatch reuses
+/// the same [`ProviderProfile`] trait when Minimax needs it (slice 006).
+pub struct MessagesProtocolFactory;
+
+impl ProtocolFactory for MessagesProtocolFactory {
+    fn protocol(&self) -> Protocol {
+        Protocol::Messages
+    }
+
+    fn create_adapter(
+        &self,
+        config: &ProviderConfig,
+        resolved: &ResolvedModel<'_>,
+    ) -> Result<Box<dyn ChatModel>, ProtocolError> {
+        (resolved.provider.build_adapter)(config, resolved)
     }
 }
 
@@ -390,7 +410,7 @@ static OPENAI_ENTRY: ProviderEntry = ProviderEntry {
     extra_headers: &[],
     // OpenAI is canonical Chat — no deviation, so no profile.
     profiles: &[],
-    build_chat: crate::providers::openai::build_chat_adapter,
+    build_adapter: crate::providers::openai::build_chat_adapter,
 };
 
 static DEEPSEEK_ENTRY: ProviderEntry = ProviderEntry {
@@ -406,7 +426,7 @@ static DEEPSEEK_ENTRY: ProviderEntry = ProviderEntry {
         Protocol::Chat,
         &crate::providers::deepseek::DEEPSEEK_PROFILE,
     )],
-    build_chat: crate::providers::deepseek::build_chat_adapter,
+    build_adapter: crate::providers::deepseek::build_chat_adapter,
 };
 
 static VOLCENGINE_ENTRY: ProviderEntry = ProviderEntry {
@@ -423,7 +443,7 @@ static VOLCENGINE_ENTRY: ProviderEntry = ProviderEntry {
         Protocol::Chat,
         &crate::providers::volcengine::VOLCENGINE_PROFILE,
     )],
-    build_chat: crate::providers::volcengine::build_chat_adapter,
+    build_adapter: crate::providers::volcengine::build_chat_adapter,
 };
 
 static OPENROUTER_ENTRY: ProviderEntry = ProviderEntry {
@@ -445,7 +465,20 @@ static OPENROUTER_ENTRY: ProviderEntry = ProviderEntry {
         Protocol::Chat,
         &crate::providers::openrouter::OPENROUTER_PROFILE,
     )],
-    build_chat: crate::providers::openrouter::build_chat_adapter,
+    build_adapter: crate::providers::openrouter::build_chat_adapter,
+};
+
+static ANTHROPIC_ENTRY: ProviderEntry = ProviderEntry {
+    name: "anthropic",
+    default_base_url: "https://api.anthropic.com",
+    default_api_key_env: "ANTHROPIC_API_KEY",
+    protocols: &[Protocol::Messages],
+    protocol_aliases: &[],
+    path_overrides: &[],
+    extra_headers: &[],
+    // Anthropic is canonical Messages — no deviation, so no profile.
+    profiles: &[],
+    build_adapter: crate::providers::anthropic::build_messages_adapter,
 };
 
 /// The migrated provider entry for `name`, or `None` if the provider is still on
@@ -456,6 +489,7 @@ pub fn provider_entry(name: &str) -> Option<&'static ProviderEntry> {
         "deepseek" => Some(&DEEPSEEK_ENTRY),
         "volcengine" => Some(&VOLCENGINE_ENTRY),
         "openrouter" => Some(&OPENROUTER_ENTRY),
+        "anthropic" => Some(&ANTHROPIC_ENTRY),
         _ => None,
     }
 }
@@ -465,7 +499,8 @@ pub fn provider_entry(name: &str) -> Option<&'static ProviderEntry> {
 pub fn protocol_factory(protocol: Protocol) -> Option<Box<dyn ProtocolFactory>> {
     match protocol {
         Protocol::Chat => Some(Box::new(ChatProtocolFactory)),
-        Protocol::Messages | Protocol::Responses => None,
+        Protocol::Messages => Some(Box::new(MessagesProtocolFactory)),
+        Protocol::Responses => None,
     }
 }
 
