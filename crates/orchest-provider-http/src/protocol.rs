@@ -19,7 +19,10 @@ use orchest_protocol::{ChatModel, ProtocolError};
 use orchest_provider_core::registry::ProviderConfig;
 
 use crate::catalog::LlmModelEntry;
-use crate::{CachePolicy, ContentBlock, OptionAdjustment, RequestOptions, ThinkingLevel};
+use crate::{
+    CachePolicy, CompatibilityPolicy, ContentBlock, ModelError, OptionAdjustment, RequestOptions,
+    ThinkingLevel,
+};
 
 /// Wire protocol (the dialect an adapter speaks), chat-scoped. This is the
 /// implementation seam ADR-0002 decouples from provider identity: a provider is
@@ -215,6 +218,76 @@ pub trait ProviderProfile: Send + Sync {
         _blocks: &[ContentBlock],
     ) {
     }
+
+    /// Declare support for a canonical option so shared `CompatibilityPolicy`
+    /// handling can degrade or error uniformly instead of each adapter carrying
+    /// its own branch. Default: permissive — the catalog schema carries no
+    /// output-exclusion flag yet, so a provider that cannot honor an option
+    /// declares it `Unsupported` explicitly (Volcengine, slice 003).
+    fn option_support(&self, _cx: &ResolvedModel<'_>, _option: RequestOption) -> OptionSupport {
+        OptionSupport::Supported
+    }
+}
+
+/// A canonical request option whose provider support is queried via
+/// [`ProviderProfile::option_support`]. Added by name as providers demonstrate
+/// the need (ADR rule 3); slice 003 births reasoning output exclusion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestOption {
+    /// Emit reasoning internally but exclude it from the response
+    /// (`include_thinking: false` while thinking is enabled).
+    ReasoningOutputExclusion,
+}
+
+/// The result of an [`ProviderProfile::option_support`] query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptionSupport {
+    Supported,
+    /// Unsupported, with the canonical error `code`/`message` to surface under
+    /// `CompatibilityPolicy::Strict`.
+    Unsupported {
+        code: &'static str,
+        message: &'static str,
+    },
+}
+
+/// Shared `CompatibilityPolicy` handling for reasoning output exclusion, driven
+/// by the profile's [`ProviderProfile::option_support`] declaration — so the
+/// Strict-errors / Coerce-degrades decision lives here once rather than in each
+/// adapter. Returns the effective thinking flag plus any degradation adjustment.
+#[allow(clippy::result_large_err)] // justified: ModelError carries diagnostic context (workspace convention)
+pub fn resolve_reasoning_exclusion(
+    profile: &dyn ProviderProfile,
+    cx: &ResolvedModel<'_>,
+    options: &RequestOptions,
+    thinking_enabled: bool,
+) -> Result<(bool, Option<OptionAdjustment>), ModelError> {
+    // Exclusion only matters when the caller wants thinking on but its output off.
+    if options.include_thinking || !thinking_enabled {
+        return Ok((thinking_enabled, None));
+    }
+    match profile.option_support(cx, RequestOption::ReasoningOutputExclusion) {
+        OptionSupport::Supported => Ok((thinking_enabled, None)),
+        OptionSupport::Unsupported { code, message } => match options.compatibility_policy {
+            CompatibilityPolicy::Strict => Err(ModelError {
+                message: message.into(),
+                code: Some(code.into()),
+                provider: Some(cx.provider.name.into()),
+                status: None,
+                retry_after_secs: None,
+                upstream: None,
+            }),
+            CompatibilityPolicy::Coerce => Ok((
+                false,
+                Some(OptionAdjustment {
+                    option: "include_thinking".into(),
+                    requested: json!(false),
+                    applied: json!(false),
+                    reason: "thinking_disabled_for_output_exclusion".into(),
+                }),
+            )),
+        },
+    }
 }
 
 /// A factory that builds an adapter for a specific wire protocol. Reusable
@@ -297,12 +370,30 @@ static DEEPSEEK_ENTRY: ProviderEntry = ProviderEntry {
     build_chat: crate::providers::deepseek::build_chat_adapter,
 };
 
+static VOLCENGINE_ENTRY: ProviderEntry = ProviderEntry {
+    name: "volcengine",
+    default_base_url: "https://ark.cn-beijing.volces.com/api/v3",
+    default_api_key_env: "ARK_API_KEY",
+    protocols: &[Protocol::Chat],
+    protocol_aliases: &[],
+    path_overrides: &[],
+    extra_headers: &[],
+    // Volcengine: OpenAI-compatible Chat with a distinct thinking shape and no
+    // reasoning-output exclusion.
+    profiles: &[(
+        Protocol::Chat,
+        &crate::providers::volcengine::VOLCENGINE_PROFILE,
+    )],
+    build_chat: crate::providers::volcengine::build_chat_adapter,
+};
+
 /// The migrated provider entry for `name`, or `None` if the provider is still on
 /// the legacy bridge.
 pub fn provider_entry(name: &str) -> Option<&'static ProviderEntry> {
     match name {
         "openai" => Some(&OPENAI_ENTRY),
         "deepseek" => Some(&DEEPSEEK_ENTRY),
+        "volcengine" => Some(&VOLCENGINE_ENTRY),
         _ => None,
     }
 }

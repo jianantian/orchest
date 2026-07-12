@@ -110,3 +110,83 @@ fn volcengine_downgrades_minimax_only_roles_with_adjustment() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// ADR-0002 slice 003: Volcengine on ChatProtocolFactory + VolcengineProfile.
+// ---------------------------------------------------------------------------
+
+use crate::protocol::{resolve_reasoning_exclusion, OptionSupport, ProviderProfile, RequestOption};
+use crate::CompatibilityPolicy;
+
+#[test]
+fn option_support_declares_reasoning_exclusion_unsupported() {
+    let adapter = adapter_with_url("http://localhost");
+    let support =
+        VOLCENGINE_PROFILE.option_support(&adapter.cx(), RequestOption::ReasoningOutputExclusion);
+    assert!(matches!(support, OptionSupport::Unsupported { .. }));
+}
+
+#[test]
+fn reasoning_exclusion_strict_errors_via_shared_handler() {
+    let adapter = adapter_with_url("http://localhost");
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::High,
+        include_thinking: false,
+        compatibility_policy: CompatibilityPolicy::Strict,
+        ..Default::default()
+    };
+    let err = resolve_reasoning_exclusion(adapter.profile, &adapter.cx(), &opts, true)
+        .expect_err("strict + unsupported exclusion must error");
+    assert_eq!(
+        err.code.as_deref(),
+        Some("unsupported_reasoning_output_exclusion")
+    );
+    assert_eq!(err.provider.as_deref(), Some("volcengine"));
+}
+
+#[test]
+fn reasoning_exclusion_coerce_degrades_via_shared_handler() {
+    let adapter = adapter_with_url("http://localhost");
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::High,
+        include_thinking: false,
+        compatibility_policy: CompatibilityPolicy::Coerce,
+        ..Default::default()
+    };
+    let (effective, adjustment) =
+        resolve_reasoning_exclusion(adapter.profile, &adapter.cx(), &opts, true)
+            .expect("coerce degrades rather than errors");
+    assert!(!effective, "thinking disabled to satisfy exclusion");
+    assert_eq!(
+        adjustment.expect("degradation recorded").reason,
+        "thinking_disabled_for_output_exclusion"
+    );
+}
+
+#[tokio::test]
+async fn create_adapter_from_config_routes_volcengine_through_new_path() {
+    let api_url = crate::providers::anthropic::test_util::serve_sse_once(
+        r#"data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}
+
+data: [DONE]
+
+"#,
+    )
+    .await;
+
+    let adapter = crate::create_adapter_from_config(crate::ProviderRuntimeConfig {
+        model: "volcengine/doubao-seed-2-1-turbo-260628".into(),
+        api_key: Some("key".into()),
+        api_key_env: None,
+        api_url: Some(api_url),
+        max_tokens: Some(128),
+    })
+    .expect("volcengine resolves through the protocol-factory path");
+
+    assert_eq!(adapter.provider_name(), "volcengine");
+    let response = adapter
+        .complete(&[], &[], &RequestOptions::default(), None)
+        .await
+        .expect("request should complete");
+    assert!(matches!(&response.content[0], crate::ContentBlock::Text(t) if t == "hi"));
+}

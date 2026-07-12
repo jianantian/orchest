@@ -4,7 +4,7 @@
 
 use serde_json::{json, Value};
 
-use crate::{CachePolicy, ContentBlock, Message, OptionAdjustment, RequestOptions, ToolDef};
+use crate::{ContentBlock, Message, OptionAdjustment, RequestOptions, ThinkingLevel, ToolDef};
 
 use crate::role_compat::{downgrade_minimax_role, CompatibleRole};
 
@@ -43,6 +43,7 @@ impl VolcengineAdapter {
     ) -> (Value, Vec<OptionAdjustment>) {
         let mut api_messages: Vec<Value> = Vec::new();
         let mut adjustments = Vec::new();
+        let cx = self.cx();
 
         for message in messages {
             let effective_role = downgrade_minimax_role(message.role, &mut adjustments);
@@ -185,38 +186,22 @@ impl VolcengineAdapter {
             );
         }
 
-        if thinking_enabled {
-            body["thinking"] = json!({"type": "enabled"});
+        // Reasoning dialect (thinking shape) + sampling gating are Volcengine's
+        // profile deviation. `thinking_enabled` reflects the effective decision
+        // (the reasoning-exclusion handling happened in `complete()`), so fold it
+        // into the options the profile lowers by forcing `thinking = Off`.
+        let effective_options = if thinking_enabled {
+            options.clone()
         } else {
-            body["thinking"] = json!({"type": "disabled"});
-        }
-
-        if options.thinking_budget_tokens.is_some() {
-            adjustments.push(OptionAdjustment {
-                option: "thinking_budget_tokens".into(),
-                requested: json!(options.thinking_budget_tokens),
-                applied: json!(null),
-                reason: "unsupported_by_provider".into(),
-            });
-        }
-
-        if options.cache_policy != CachePolicy::Auto && options.cache_policy != CachePolicy::None {
-            adjustments.push(OptionAdjustment {
-                option: "cache_policy".into(),
-                requested: json!(format!("{:?}", options.cache_policy)),
-                applied: json!("Auto"),
-                reason: "volcengine_cache_automatic".into(),
-            });
-        }
-
-        if !thinking_enabled {
-            if let Some(temp) = options.temperature {
-                body["temperature"] = json!(temp);
+            RequestOptions {
+                thinking: ThinkingLevel::Off,
+                ..options.clone()
             }
-            if let Some(tp) = options.top_p {
-                body["top_p"] = json!(tp);
-            }
-        }
+        };
+        adjustments.extend(
+            self.profile
+                .lower_options(&cx, &effective_options, &mut body),
+        );
 
         (body, adjustments)
     }
