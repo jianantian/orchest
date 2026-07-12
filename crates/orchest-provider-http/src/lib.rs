@@ -268,7 +268,9 @@ pub fn normalize_provider_model(model: &str) -> Result<NormalizedProviderModel<'
         ));
     }
 
-    if registry.get(provider).is_none() {
+    // A provider is valid if it has a legacy factory OR a migrated entry (elss is
+    // entry-only after its dissolution in slice 009).
+    if registry.get(provider).is_none() && protocol::provider_entry(provider).is_none() {
         return Err(unknown_provider(provider, &registry));
     }
 

@@ -33,9 +33,9 @@ pub enum Protocol {
     Messages,
     /// OpenAI Chat Completions API (`/v1/chat/completions`).
     Chat,
-    /// OpenAI Responses API (`/v1/responses`). Identifier only — stateful, out
-    /// of scope for Phases 1–2, no factory behind it (ADR "Caution on Responses").
-    #[allow(dead_code)] // parseable/routable identifier; wired in slice 008
+    /// OpenAI Responses API (`/v1/responses`). Parseable/routable identifier —
+    /// stateful, out of scope for Phases 1–2, no factory behind it (ADR "Caution
+    /// on Responses").
     Responses,
 }
 
@@ -78,8 +78,8 @@ pub struct ProviderEntry {
     /// (explicit selection lands in slice 008).
     pub protocols: &'static [Protocol],
     /// Provider-scoped aliases for the protocol segment of the model string
-    /// (e.g. elss: `("anthropic", Messages)`, `("openai", Chat)`). Slice 009.
-    #[allow(dead_code)] // consumed by the model-string grammar in slices 008/009
+    /// (e.g. elss: `("anthropic", Messages)`, `("openai", Chat)`). Read by
+    /// [`recognize_protocol`].
     pub protocol_aliases: &'static [(&'static str, Protocol)],
     /// Per-protocol endpoint path overrides for non-standard layouts
     /// (e.g. minimax: `(Messages, "/anthropic/v1/messages")`). The wrapped
@@ -123,12 +123,11 @@ impl std::fmt::Debug for ProviderEntry {
 /// downstream rediscovers them from the model name.
 #[derive(Debug)]
 pub struct ResolvedModel<'a> {
-    /// The resolved provider entry — carries the Chat ctor, profiles, and
+    /// The resolved provider entry — carries the adapter ctor, profiles, and
     /// URL/header data. Read by the factory dispatch and profile lookup.
     pub provider: &'a ProviderEntry,
-    // `protocol` is resolved and carried now so the shape is final, but is not
-    // yet read (explicit-protocol routing that branches on it lands in slice 008).
-    #[allow(dead_code)] // read by explicit-protocol routing from slice 008
+    /// The resolved protocol. Read by ctors that dispatch on it (e.g. the Elss
+    /// gateway builds the Messages or Chat adapter accordingly).
     pub protocol: Protocol,
     /// Bare model name (provider prefix stripped).
     pub model: &'a str,
@@ -520,6 +519,24 @@ static MINIMAX_ENTRY: ProviderEntry = ProviderEntry {
     build_adapter: crate::providers::minimax::build_messages_adapter,
 };
 
+static ELSS_ENTRY: ProviderEntry = ProviderEntry {
+    name: "elss",
+    default_base_url: "https://api.elss.ai",
+    default_api_key_env: "ELSS_API_KEY",
+    // Elss is a dual-protocol gateway with zero adapter code.
+    protocols: &[Protocol::Messages, Protocol::Chat],
+    // Provider-scoped aliases keep the shipped three-segment forms working; they
+    // are NOT global (openrouter/anthropic/... is unaffected).
+    protocol_aliases: &[
+        ("anthropic", Protocol::Messages),
+        ("openai", Protocol::Chat),
+    ],
+    path_overrides: &[],
+    extra_headers: &[],
+    profiles: &[],
+    build_adapter: crate::providers::elss::build_adapter,
+};
+
 /// The migrated provider entry for `name`, or `None` if the provider is still on
 /// the legacy bridge.
 pub fn provider_entry(name: &str) -> Option<&'static ProviderEntry> {
@@ -530,6 +547,7 @@ pub fn provider_entry(name: &str) -> Option<&'static ProviderEntry> {
         "openrouter" => Some(&OPENROUTER_ENTRY),
         "anthropic" => Some(&ANTHROPIC_ENTRY),
         "minimax" => Some(&MINIMAX_ENTRY),
+        "elss" => Some(&ELSS_ENTRY),
         _ => None,
     }
 }

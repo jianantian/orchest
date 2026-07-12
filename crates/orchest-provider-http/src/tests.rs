@@ -681,5 +681,14 @@ fn registry_lists_all_built_in_providers() {
     assert!(providers.contains(&"openrouter"));
     assert!(providers.contains(&"volcengine"));
     assert!(providers.contains(&"minimax"));
-    assert!(providers.contains(&"elss"));
+    // elss is dissolved (slice 009): it has no legacy factory, only a
+    // ProviderEntry, so it is intentionally absent from the legacy registry.
+    assert!(!providers.contains(&"elss"));
+}
+
+#[test]
+fn elss_is_a_valid_provider_via_its_entry() {
+    // Even without a legacy factory, elss parses (validated through its entry).
+    let normalized = normalize_provider_model("elss/claude-sonnet-5").expect("elss is valid");
+    assert_eq!(normalized.provider, "elss");
 }

@@ -35,7 +35,8 @@ impl ProviderRegistry {
         reg.register(Box::new(super::providers::openrouter::OpenRouterFactory));
         reg.register(Box::new(super::providers::volcengine::VolcengineFactory));
         reg.register(Box::new(super::providers::minimax::MinimaxFactory));
-        reg.register(Box::new(super::providers::elss::ElssFactory));
+        // Elss is dissolved (ADR-0002 slice 009): a pure ProviderEntry with no
+        // legacy factory. It is reachable only through the protocol-factory path.
         reg
     }
 
