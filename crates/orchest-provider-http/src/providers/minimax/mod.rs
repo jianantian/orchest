@@ -217,7 +217,7 @@ impl ModelAdapter for MinimaxAdapter {
         let start = Instant::now();
         let response = crate::http::shared_client()
             .post(&self.api_url)
-            .header("authorization", format!("Bearer {}", &self.api_key))
+            .header("authorization", format!("Bearer {}", self.api_key))
             .header("content-type", "application/json")
             .json(&body)
             .send()
