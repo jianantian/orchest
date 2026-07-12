@@ -310,35 +310,6 @@ impl ModelAdapter for VolcengineAdapter {
 // Factory
 // ---------------------------------------------------------------------------
 
-pub struct VolcengineFactory;
-
-impl crate::registry::ProviderFactory for VolcengineFactory {
-    fn provider_name(&self) -> &'static str {
-        "volcengine"
-    }
-
-    fn create_adapter(
-        &self,
-        model: &str,
-        max_tokens: u32,
-        api_key: String,
-        api_url: Option<String>,
-    ) -> Result<Box<dyn ModelAdapter>, ModelError> {
-        Ok(Box::new(VolcengineAdapter::from_config(
-            VolcengineConfig {
-                model: model.to_string(),
-                max_tokens,
-                api_key: Some(api_key),
-                api_url,
-            },
-        )?))
-    }
-
-    fn default_api_key_env(&self) -> &'static str {
-        defaults::volcengine::API_KEY_ENV
-    }
-}
-
 // ADR-0002 protocol-factory path (slice 003). Referenced as data by the
 // Volcengine `ProviderEntry.build_chat`; the factory never matches on provider
 // name (ADR rule 1). Transitional wrapping; collapsed into the Chat core in v0.12.

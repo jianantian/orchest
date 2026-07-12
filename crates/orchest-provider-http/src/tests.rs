@@ -260,7 +260,7 @@ fn provider_config_api_key_precedence_explicit_then_env() {
     let _env_guard = EnvVarGuard::set(env_name, "env-key");
 
     let registry = ProviderRegistry::new();
-    let default_env = registry.get("openai").unwrap().default_api_key_env();
+    let default_env = registry.get("openai").unwrap().default_api_key_env;
     let explicit = resolve_api_key(default_env, Some("explicit-key"), Some(env_name))
         .expect("explicit key wins");
     let from_env = resolve_api_key(default_env, None, Some(env_name)).expect("env key resolves");
@@ -277,7 +277,7 @@ fn provider_config_api_key_env_override_does_not_fall_back_to_provider_default()
     let _openai_env_guard = EnvVarGuard::set("OPENAI_API_KEY", "global-openai-key");
 
     let registry = ProviderRegistry::new();
-    let default_env = registry.get("openai").unwrap().default_api_key_env();
+    let default_env = registry.get("openai").unwrap().default_api_key_env;
     let err = match resolve_api_key(default_env, None, Some(local_env_name)) {
         Ok(_) => {
             panic!("missing local api_key_env should fail instead of using OPENAI_API_KEY")
@@ -295,7 +295,7 @@ fn provider_config_missing_provider_key_does_not_use_other_provider_env() {
     let _anthropic_env_guard = EnvVarGuard::set("ANTHROPIC_API_KEY", "anthropic-key");
 
     let registry = ProviderRegistry::new();
-    let default_env = registry.get("openai").unwrap().default_api_key_env();
+    let default_env = registry.get("openai").unwrap().default_api_key_env;
     let err = match resolve_api_key(default_env, None, None) {
         Ok(_) => panic!("openai config should not use ANTHROPIC_API_KEY"),
         Err(err) => err,
@@ -681,9 +681,9 @@ fn registry_lists_all_built_in_providers() {
     assert!(providers.contains(&"openrouter"));
     assert!(providers.contains(&"volcengine"));
     assert!(providers.contains(&"minimax"));
-    // elss is dissolved (slice 009): it has no legacy factory, only a
-    // ProviderEntry, so it is intentionally absent from the legacy registry.
-    assert!(!providers.contains(&"elss"));
+    // After Phase 3 the registry stores ProviderEntry, so elss (entry-only) is
+    // included like every other provider.
+    assert!(providers.contains(&"elss"));
 }
 
 #[test]

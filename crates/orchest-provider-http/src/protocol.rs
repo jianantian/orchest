@@ -416,10 +416,8 @@ impl ProtocolFactory for MessagesProtocolFactory {
     }
 }
 
-/// The provider entries already migrated to the protocol-factory path. Grows one
-/// entry per slice; a provider absent here stays on the legacy `ProviderFactory`
-/// bridge. Slices 001–002 migrate OpenAI (canonical, no profile) and DeepSeek
-/// (Chat + `DeepSeekProfile`).
+/// The built-in provider entries. Every provider resolves through the protocol
+/// factories from its entry (there is no longer a legacy fallback).
 static OPENAI_ENTRY: ProviderEntry = ProviderEntry {
     name: "openai",
     // Base URL, not the complete endpoint; the wrapped adapter's
@@ -540,19 +538,26 @@ static ELSS_ENTRY: ProviderEntry = ProviderEntry {
     build_adapter: crate::providers::elss::build_adapter,
 };
 
-/// The migrated provider entry for `name`, or `None` if the provider is still on
-/// the legacy bridge.
+/// Every built-in provider entry — the single source of truth the registry and
+/// the parser enumerate.
+static ALL_ENTRIES: &[&ProviderEntry] = &[
+    &OPENAI_ENTRY,
+    &DEEPSEEK_ENTRY,
+    &VOLCENGINE_ENTRY,
+    &OPENROUTER_ENTRY,
+    &ANTHROPIC_ENTRY,
+    &MINIMAX_ENTRY,
+    &ELSS_ENTRY,
+];
+
+/// All built-in provider entries.
+pub fn all_provider_entries() -> &'static [&'static ProviderEntry] {
+    ALL_ENTRIES
+}
+
+/// The provider entry for `name`, or `None` for an unknown provider.
 pub fn provider_entry(name: &str) -> Option<&'static ProviderEntry> {
-    match name {
-        "openai" => Some(&OPENAI_ENTRY),
-        "deepseek" => Some(&DEEPSEEK_ENTRY),
-        "volcengine" => Some(&VOLCENGINE_ENTRY),
-        "openrouter" => Some(&OPENROUTER_ENTRY),
-        "anthropic" => Some(&ANTHROPIC_ENTRY),
-        "minimax" => Some(&MINIMAX_ENTRY),
-        "elss" => Some(&ELSS_ENTRY),
-        _ => None,
-    }
+    ALL_ENTRIES.iter().copied().find(|e| e.name == name)
 }
 
 /// Recognize an explicit protocol segment in a model string (ADR "Parsing

@@ -265,9 +265,9 @@ fn registry_includes_minimax() {
         names.contains(&"minimax"),
         "minimax should be a registered provider: {names:?}"
     );
-    let factory = registry.get("minimax").expect("minimax factory");
-    assert_eq!(factory.provider_name(), "minimax");
-    assert_eq!(factory.default_api_key_env(), "MINIMAX_API_KEY");
+    let entry = registry.get("minimax").expect("minimax entry");
+    assert_eq!(entry.name, "minimax");
+    assert_eq!(entry.default_api_key_env, "MINIMAX_API_KEY");
 }
 
 // ---------------------------------------------------------------------------

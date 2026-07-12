@@ -40,7 +40,7 @@ pub(crate) mod sse;
 
 pub mod telemetry;
 
-pub use registry::{ProviderFactory, ProviderRegistry};
+pub use registry::ProviderRegistry;
 
 use std::future::Future;
 use std::sync::Arc;
@@ -140,28 +140,13 @@ pub fn create_adapter(
 pub fn create_adapter_from_config(
     config: ProviderRuntimeConfig,
 ) -> Result<Box<dyn ModelAdapter>, ModelError> {
-    let registry = ProviderRegistry::new();
     let normalized = normalize_provider_model(&config.model)?;
-
-    // ADR-0002 protocol-factory path (slice 001): providers with a migrated
-    // `ProviderEntry` resolve through a `ProtocolFactory`; the rest stay on the
-    // legacy `ProviderFactory` bridge below until their slice migrates them.
-    if let Some(entry) = protocol::provider_entry(normalized.provider) {
-        return create_adapter_via_protocol(entry, &normalized, &config);
-    }
-
-    let factory = registry
-        .get(normalized.provider)
-        .ok_or_else(|| unknown_provider(normalized.provider, &registry))?;
-
-    let api_key = resolve_api_key(
-        factory.default_api_key_env(),
-        config.api_key.as_deref(),
-        config.api_key_env.as_deref(),
-    )?;
-    let max_tokens = config.max_tokens.unwrap_or(defaults::MAX_TOKENS);
-
-    factory.create_adapter(normalized.model, max_tokens, api_key, config.api_url)
+    // All providers resolve through the protocol-factory path (ADR-0002 Phase 3).
+    // `normalize_provider_model` has already validated the provider, so the entry
+    // is present.
+    let entry = protocol::provider_entry(normalized.provider)
+        .ok_or_else(|| unknown_provider(normalized.provider))?;
+    create_adapter_via_protocol(entry, &normalized, &config)
 }
 
 /// Resolve `normalized` into a [`ResolvedModel`](protocol::ResolvedModel) and
@@ -244,7 +229,6 @@ pub struct NormalizedProviderModel<'a> {
 /// alias; otherwise it stays part of the model name (so multi-segment ids like
 /// `openrouter/<vendor>/<model>` are preserved).
 pub fn normalize_provider_model(model: &str) -> Result<NormalizedProviderModel<'_>, ModelError> {
-    let registry = ProviderRegistry::new();
     let trimmed = model.trim();
     if trimmed.is_empty() {
         return Err(ModelError::internal(
@@ -268,10 +252,8 @@ pub fn normalize_provider_model(model: &str) -> Result<NormalizedProviderModel<'
         ));
     }
 
-    // A provider is valid if it has a legacy factory OR a migrated entry (elss is
-    // entry-only after its dissolution in slice 009).
-    if registry.get(provider).is_none() && protocol::provider_entry(provider).is_none() {
-        return Err(unknown_provider(provider, &registry));
+    if protocol::provider_entry(provider).is_none() {
+        return Err(unknown_provider(provider));
     }
 
     // Vocabulary-based protocol segment: recognize the next segment as a protocol
@@ -340,8 +322,8 @@ fn non_empty_api_key(value: &str) -> Result<String, ModelError> {
     }
 }
 
-fn unknown_provider(provider: &str, registry: &ProviderRegistry) -> ModelError {
-    let supported = registry.supported_providers().join(", ");
+fn unknown_provider(provider: &str) -> ModelError {
+    let supported = ProviderRegistry::new().supported_providers().join(", ");
     ModelError::internal(
         format!("unknown provider '{provider}': supported providers are {supported}"),
         "unknown_provider",

@@ -317,36 +317,6 @@ impl ModelAdapter for DeepSeekAdapter {
     }
 }
 
-// ProviderFactory implementation
-
-pub struct DeepSeekFactory;
-
-impl crate::registry::ProviderFactory for DeepSeekFactory {
-    fn provider_name(&self) -> &'static str {
-        "deepseek"
-    }
-
-    fn create_adapter(
-        &self,
-        model: &str,
-        max_tokens: u32,
-        api_key: String,
-        api_url: Option<String>,
-    ) -> Result<Box<dyn ModelAdapter>, ModelError> {
-        let adapter = DeepSeekAdapter::from_config(DeepSeekConfig {
-            model: model.to_string(),
-            max_tokens,
-            api_key: Some(api_key),
-            api_url,
-        })?;
-        Ok(Box::new(adapter))
-    }
-
-    fn default_api_key_env(&self) -> &'static str {
-        crate::defaults::deepseek::API_KEY_ENV
-    }
-}
-
 // ADR-0002 protocol-factory path (slice 002). Referenced as data by the DeepSeek
 // `ProviderEntry.build_chat`; `ChatProtocolFactory` calls it without matching on
 // provider name (ADR rule 1). Transitional: wraps `DeepSeekAdapter`, whose

@@ -276,39 +276,6 @@ impl ModelAdapter for OpenRouterAdapter {
     }
 }
 
-// ProviderFactory implementation
-
-pub struct OpenRouterFactory;
-
-impl crate::registry::ProviderFactory for OpenRouterFactory {
-    fn provider_name(&self) -> &'static str {
-        "openrouter"
-    }
-
-    fn create_adapter(
-        &self,
-        model: &str,
-        max_tokens: u32,
-        api_key: String,
-        api_url: Option<String>,
-    ) -> Result<Box<dyn ModelAdapter>, ModelError> {
-        let entry =
-            crate::protocol::provider_entry("openrouter").expect("openrouter entry is registered");
-        let adapter = OpenRouterAdapter::from_config(OpenRouterConfig {
-            model: model.to_string(),
-            max_tokens,
-            api_key: Some(api_key),
-            api_url,
-            extra_headers: crate::protocol::resolve_headers(entry),
-        })?;
-        Ok(Box::new(adapter))
-    }
-
-    fn default_api_key_env(&self) -> &'static str {
-        crate::defaults::openrouter::API_KEY_ENV
-    }
-}
-
 // ADR-0002 protocol-factory path (slice 004). Referenced as data by the
 // OpenRouter `ProviderEntry.build_chat`; the factory never matches on provider
 // name (ADR rule 1). Routing headers are resolved from the entry's
