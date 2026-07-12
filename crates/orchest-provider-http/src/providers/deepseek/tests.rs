@@ -433,3 +433,49 @@ fn deepseek_downgrades_minimax_only_roles_with_adjustment() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// ADR-0002 slice 002: DeepSeek on the ChatProtocolFactory + DeepSeekProfile path.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn deepseek_migrated_to_protocol_entry_with_profile() {
+    let entry = crate::protocol::provider_entry("deepseek")
+        .expect("deepseek is migrated to the protocol path");
+    assert_eq!(entry.name, "deepseek");
+    assert!(
+        entry.profile_for(crate::protocol::Protocol::Chat).is_some(),
+        "deepseek carries a Chat profile"
+    );
+}
+
+#[tokio::test]
+async fn create_adapter_from_config_routes_deepseek_through_new_path() {
+    let api_url = serve_sse_once(
+        r#"data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}
+
+data: [DONE]
+
+"#,
+    )
+    .await;
+
+    let adapter = crate::create_adapter_from_config(crate::ProviderRuntimeConfig {
+        model: "deepseek/deepseek-v4-flash".into(),
+        api_key: Some("key".into()),
+        api_key_env: None,
+        api_url: Some(api_url),
+        max_tokens: Some(128),
+    })
+    .expect("deepseek resolves through the protocol-factory path");
+
+    assert_eq!(adapter.provider_name(), "deepseek");
+    assert_eq!(adapter.model_name(), "deepseek-v4-flash");
+
+    let response = adapter
+        .complete(&[], &[], &default_options(), None)
+        .await
+        .expect("request should complete");
+    assert!(matches!(&response.content[0], ContentBlock::Text(t) if t == "hi"));
+    assert_eq!(response.usage.input_tokens, 3);
+}

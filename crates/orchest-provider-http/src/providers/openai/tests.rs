@@ -385,7 +385,7 @@ fn openai_migrated_to_protocol_entry() {
     assert_eq!(entry.default_api_key_env, "OPENAI_API_KEY");
     // Providers not yet migrated stay on the legacy bridge.
     assert!(provider_entry("anthropic").is_none());
-    assert!(provider_entry("deepseek").is_none());
+    assert!(provider_entry("minimax").is_none());
 }
 
 #[test]

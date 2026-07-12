@@ -13,10 +13,13 @@
 //! wall-level (`orchest-provider`) or consumer-level (`orchest`/`orchest-node`/
 //! `orchest-py`) type.
 
+use serde_json::{json, Value};
+
 use orchest_protocol::{ChatModel, ProtocolError};
 use orchest_provider_core::registry::ProviderConfig;
 
 use crate::catalog::LlmModelEntry;
+use crate::{CachePolicy, ContentBlock, OptionAdjustment, RequestOptions, ThinkingLevel};
 
 /// Wire protocol (the dialect an adapter speaks), chat-scoped. This is the
 /// implementation seam ADR-0002 decouples from provider identity: a provider is
@@ -45,17 +48,21 @@ pub enum HeaderValue {
     Env(&'static str),
 }
 
-/// A provider entry: identity + protocol preferences, **no adapter logic**.
+/// Transitional per-provider Chat constructor referenced (as data) by a
+/// [`ProviderEntry`]. This is how a `ProtocolFactory` builds the right wrapped
+/// adapter **without matching on provider name** (ADR rule 1): the entry carries
+/// its constructor, the factory just calls it. Phase 1 keeps each provider's
+/// existing adapter behind this pointer; v0.12 collapses the adapters into the
+/// protocol core and this indirection goes away.
+pub type ChatCtor =
+    fn(&ProviderConfig, &ResolvedModel<'_>) -> Result<Box<dyn ChatModel>, ProtocolError>;
+
+/// A provider entry: identity + protocol preferences + profiles, **no adapter
+/// logic of its own** (construction is delegated to the `build_chat` ctor).
 ///
-/// Slice 001 populates only the fields OpenAI needs; `protocol_aliases` /
-/// `path_overrides` / `extra_headers` are declared here (so the shape is stable
-/// for later slices) and left empty. The `profiles` field is born with
-/// [`ProviderProfile`] in slice 002.
-// Several fields are declared here so the entry shape is stable for later
-// slices but are not consumed until the slice that introduces the routing that
-// reads them (noted per field). Silenced with justification rather than trimmed,
-// to keep the ADR-0002 entry shape visible from slice 001.
-#[derive(Debug)]
+/// `protocol_aliases` / `path_overrides` / `extra_headers` are declared here (so
+/// the shape is stable for later slices) and left empty until the slice that
+/// reads them.
 pub struct ProviderEntry {
     pub name: &'static str,
     /// Base URL (scheme + host, optionally a path prefix) — NOT a complete
@@ -80,6 +87,31 @@ pub struct ProviderEntry {
     /// (e.g. openrouter env-var headers). Slice 004.
     #[allow(dead_code)] // consumed by header injection in slice 004
     pub extra_headers: &'static [(&'static str, HeaderValue)],
+    /// Behavior profiles per protocol, for providers that deviate from
+    /// protocol-canonical behavior. Empty for fully compatible providers.
+    pub profiles: &'static [(Protocol, &'static dyn ProviderProfile)],
+    /// Constructs the wrapped Chat adapter for this provider (transitional; see
+    /// [`ChatCtor`]).
+    pub build_chat: ChatCtor,
+}
+
+impl ProviderEntry {
+    /// The profile attached to this entry for `protocol`, if any.
+    pub fn profile_for(&self, protocol: Protocol) -> Option<&'static dyn ProviderProfile> {
+        self.profiles
+            .iter()
+            .find(|(p, _)| *p == protocol)
+            .map(|(_, profile)| *profile)
+    }
+}
+
+impl std::fmt::Debug for ProviderEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderEntry")
+            .field("name", &self.name)
+            .field("protocols", &self.protocols)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Resolved once by the registry when a model string is parsed, then handed to
@@ -88,20 +120,101 @@ pub struct ProviderEntry {
 /// downstream rediscovers them from the model name.
 #[derive(Debug)]
 pub struct ResolvedModel<'a> {
-    // `provider`/`protocol`/`catalog` are read by profile hooks (slice 002) and
-    // the capability wiring (slice 007); slice 001 only needs `model` to build
-    // the wrapped adapter, but resolves the full context now so the shape the
-    // factory receives is final.
-    #[allow(dead_code)] // read by profile hooks from slice 002
+    /// The resolved provider entry — carries the Chat ctor, profiles, and
+    /// URL/header data. Read by the factory dispatch and profile lookup.
     pub provider: &'a ProviderEntry,
-    #[allow(dead_code)] // read by profile hooks / explicit routing from slice 002
+    // `protocol` is resolved and carried now so the shape is final, but is not
+    // yet read (explicit-protocol routing that branches on it lands in slice 008).
+    #[allow(dead_code)] // read by explicit-protocol routing from slice 008
     pub protocol: Protocol,
     /// Bare model name (provider prefix stripped).
     pub model: &'a str,
     /// The model's catalog entry — the canonical source of capability facts.
     /// `None` for dynamic-gateway models that cannot be enumerated statically.
-    #[allow(dead_code)] // read as the canonical capability source from slice 007
     pub catalog: Option<&'a LlmModelEntry>,
+}
+
+/// Narrow, named extension surface for provider-specific behavior *within* a
+/// Chat protocol — the home of Problem 5's residual. Every hook has a default =
+/// the protocol-canonical behavior; a profile overrides only what its provider
+/// actually deviates on.
+///
+/// Hooks are added **by name, one at a time, when a real provider demonstrates
+/// the need** (ADR rule 3). This slice births `lower_options` + `replay_reasoning`
+/// for DeepSeek; `map_role` / `interpret_usage` / `option_support` /
+/// `normalize_error` arrive with the providers that need them (slices 003/004/006).
+/// There is deliberately **no** generic `modify_request(&mut body)` escape hatch:
+/// each hook's scope is its name.
+pub trait ProviderProfile: Send + Sync {
+    /// Lower canonical request options (thinking level, sampling) onto the wire
+    /// body, reporting any degradation as `OptionAdjustment`s. Default:
+    /// Chat-canonical `reasoning_effort` lowering, with reasoning support read
+    /// from `cx.catalog` (ADR "Capability metadata"). DeepSeek overrides this
+    /// with its top-level `thinking: {type}` dialect.
+    fn lower_options(
+        &self,
+        cx: &ResolvedModel<'_>,
+        options: &RequestOptions,
+        body: &mut Value,
+    ) -> Vec<OptionAdjustment> {
+        let mut adjustments = Vec::new();
+
+        let supports_reasoning = cx.catalog.map(|c| c.thinking.is_some()).unwrap_or(false);
+        if options.thinking != ThinkingLevel::Off && supports_reasoning {
+            let effort = match options.thinking {
+                ThinkingLevel::Off => unreachable!(),
+                ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
+                ThinkingLevel::Medium => "medium",
+                ThinkingLevel::High | ThinkingLevel::XHigh | ThinkingLevel::Max => "high",
+            };
+            body["reasoning_effort"] = json!(effort);
+        } else if options.thinking != ThinkingLevel::Off {
+            adjustments.push(OptionAdjustment {
+                option: "thinking".into(),
+                requested: json!(format!("{:?}", options.thinking)),
+                applied: json!("Off"),
+                reason: "unsupported_reasoning_model".into(),
+            });
+        }
+
+        if options.thinking_budget_tokens.is_some() {
+            adjustments.push(OptionAdjustment {
+                option: "thinking_budget_tokens".into(),
+                requested: json!(options.thinking_budget_tokens),
+                applied: json!(null),
+                reason: "unsupported_by_provider".into(),
+            });
+        }
+
+        if options.cache_policy == CachePolicy::Long {
+            adjustments.push(OptionAdjustment {
+                option: "cache_policy".into(),
+                requested: json!("Long"),
+                applied: json!("Auto"),
+                reason: "unsupported_cache_retention".into(),
+            });
+        }
+
+        if let Some(temp) = options.temperature {
+            body["temperature"] = json!(temp);
+        }
+        if let Some(tp) = options.top_p {
+            body["top_p"] = json!(tp);
+        }
+
+        adjustments
+    }
+
+    /// Re-inject prior assistant reasoning when replaying a historical assistant
+    /// message. Default: no replay (canonical Chat drops Thinking blocks, as
+    /// OpenAI does). DeepSeek overrides this to emit `reasoning_content`.
+    fn replay_reasoning(
+        &self,
+        _cx: &ResolvedModel<'_>,
+        _assistant_msg: &mut Value,
+        _blocks: &[ContentBlock],
+    ) {
+    }
 }
 
 /// A factory that builds an adapter for a specific wire protocol. Reusable
@@ -125,13 +238,14 @@ pub trait ProtocolFactory: Send + Sync {
     ) -> Result<Box<dyn ChatModel>, ProtocolError>;
 }
 
-/// The canonical OpenAI Chat Completions dialect.
+/// The canonical Chat Completions dialect, shared across Chat providers.
 ///
-/// Transitional (Phase 1): this factory *wraps* the existing
-/// [`OpenAiAdapter`](crate::providers::openai::OpenAiAdapter), which already owns
-/// the canonical Chat envelope (messages array, tool-call assembly, SSE decode,
-/// `stream_options.include_usage`) and canonical-path append/idempotency via its
-/// `normalize_chat_url`. v0.12 collapses that adapter's logic into this core.
+/// Transitional (Phase 1): construction is delegated to the resolved provider's
+/// [`ProviderEntry::build_chat`] ctor, which wraps that provider's existing
+/// adapter — so the factory never matches on provider name (ADR rule 1). The
+/// per-provider behavioral residual lives in the [`ProviderProfile`] attached to
+/// the entry (DeepSeek from slice 002). v0.12 collapses the wrapped adapters into
+/// this core and the ctor indirection goes away.
 pub struct ChatProtocolFactory;
 
 impl ProtocolFactory for ChatProtocolFactory {
@@ -144,32 +258,43 @@ impl ProtocolFactory for ChatProtocolFactory {
         config: &ProviderConfig,
         resolved: &ResolvedModel<'_>,
     ) -> Result<Box<dyn ChatModel>, ProtocolError> {
-        use crate::providers::openai::{OpenAiAdapter, OpenAiConfig};
-
-        let adapter = OpenAiAdapter::from_config(OpenAiConfig {
-            model: resolved.model.to_string(),
-            max_tokens: config.max_tokens.unwrap_or(crate::defaults::MAX_TOKENS),
-            api_key: config.api_key.clone(),
-            api_url: config.api_url.clone(),
-        })
-        .map_err(ProtocolError::from)?;
-        Ok(Box::new(adapter))
+        (resolved.provider.build_chat)(config, resolved)
     }
 }
 
 /// The provider entries already migrated to the protocol-factory path. Grows one
 /// entry per slice; a provider absent here stays on the legacy `ProviderFactory`
-/// bridge. Slice 001 migrates OpenAI only.
+/// bridge. Slices 001–002 migrate OpenAI (canonical, no profile) and DeepSeek
+/// (Chat + `DeepSeekProfile`).
 static OPENAI_ENTRY: ProviderEntry = ProviderEntry {
     name: "openai",
-    // Base URL, not the complete endpoint; ChatProtocolFactory (via the wrapped
-    // adapter's normalize_chat_url) appends `/v1/chat/completions`.
+    // Base URL, not the complete endpoint; the wrapped adapter's
+    // normalize_chat_url appends `/v1/chat/completions`.
     default_base_url: "https://api.openai.com",
     default_api_key_env: "OPENAI_API_KEY",
     protocols: &[Protocol::Chat],
     protocol_aliases: &[],
     path_overrides: &[],
     extra_headers: &[],
+    // OpenAI is canonical Chat — no deviation, so no profile.
+    profiles: &[],
+    build_chat: crate::providers::openai::build_chat_adapter,
+};
+
+static DEEPSEEK_ENTRY: ProviderEntry = ProviderEntry {
+    name: "deepseek",
+    default_base_url: "https://api.deepseek.com",
+    default_api_key_env: "DEEPSEEK_API_KEY",
+    protocols: &[Protocol::Chat],
+    protocol_aliases: &[],
+    path_overrides: &[],
+    extra_headers: &[],
+    // DeepSeek is OpenAI-compatible Chat with a reasoning-dialect deviation.
+    profiles: &[(
+        Protocol::Chat,
+        &crate::providers::deepseek::DEEPSEEK_PROFILE,
+    )],
+    build_chat: crate::providers::deepseek::build_chat_adapter,
 };
 
 /// The migrated provider entry for `name`, or `None` if the provider is still on
@@ -177,6 +302,7 @@ static OPENAI_ENTRY: ProviderEntry = ProviderEntry {
 pub fn provider_entry(name: &str) -> Option<&'static ProviderEntry> {
     match name {
         "openai" => Some(&OPENAI_ENTRY),
+        "deepseek" => Some(&DEEPSEEK_ENTRY),
         _ => None,
     }
 }
@@ -187,5 +313,82 @@ pub fn protocol_factory(protocol: Protocol) -> Option<Box<dyn ProtocolFactory>> 
     match protocol {
         Protocol::Chat => Some(Box::new(ChatProtocolFactory)),
         Protocol::Messages | Protocol::Responses => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A profile that overrides nothing — every hook is the protocol-canonical
+    /// default. Stands in for a fully compatible provider.
+    struct NoProfile;
+    impl ProviderProfile for NoProfile {}
+
+    fn resolved(model: &'static str, model_id: &'static str) -> ResolvedModel<'static> {
+        ResolvedModel {
+            provider: provider_entry("deepseek").unwrap(),
+            protocol: Protocol::Chat,
+            model,
+            catalog: crate::catalog::find_model(model_id),
+        }
+    }
+
+    #[test]
+    fn canonical_lower_options_emits_reasoning_effort_for_thinking_model() {
+        // deepseek-v4-flash declares thinking support in the catalog.
+        let cx = resolved("deepseek-v4-flash", "deepseek/deepseek-v4-flash");
+        let opts = RequestOptions {
+            thinking: ThinkingLevel::Medium,
+            temperature: Some(0.5),
+            ..Default::default()
+        };
+        let mut body = json!({});
+        let adj = NoProfile.lower_options(&cx, &opts, &mut body);
+        assert_eq!(body["reasoning_effort"], "medium");
+        assert_eq!(body["temperature"], 0.5);
+        assert!(adj.is_empty());
+    }
+
+    #[test]
+    fn canonical_lower_options_records_adjustment_for_non_thinking_model() {
+        // gpt-5.4 has no thinking support in the catalog.
+        let cx = ResolvedModel {
+            provider: provider_entry("openai").unwrap(),
+            protocol: Protocol::Chat,
+            model: "gpt-5.4",
+            catalog: crate::catalog::find_model("openai/gpt-5.4"),
+        };
+        let opts = RequestOptions {
+            thinking: ThinkingLevel::High,
+            ..Default::default()
+        };
+        let mut body = json!({});
+        let adj = NoProfile.lower_options(&cx, &opts, &mut body);
+        assert!(body.get("reasoning_effort").is_none());
+        assert!(adj
+            .iter()
+            .any(|a| a.reason == "unsupported_reasoning_model"));
+    }
+
+    #[test]
+    fn canonical_replay_reasoning_is_noop() {
+        let cx = resolved("deepseek-v4-flash", "deepseek/deepseek-v4-flash");
+        let mut msg = json!({"role": "assistant"});
+        let blocks = vec![
+            ContentBlock::Thinking {
+                text: Some("hidden".into()),
+                signature: None,
+                provider_details: None,
+            },
+            ContentBlock::ToolUse {
+                id: "call_1".into(),
+                name: "f".into(),
+                input: json!({}),
+            },
+        ];
+        NoProfile.replay_reasoning(&cx, &mut msg, &blocks);
+        // Canonical Chat drops Thinking — no reasoning_content injected.
+        assert!(msg.get("reasoning_content").is_none());
     }
 }

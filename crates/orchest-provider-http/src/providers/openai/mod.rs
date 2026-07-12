@@ -302,5 +302,24 @@ impl crate::registry::ProviderFactory for OpenAiFactory {
     }
 }
 
+// ADR-0002 protocol-factory path (slice 001). Referenced as data by the OpenAI
+// `ProviderEntry.build_chat`; the `ChatProtocolFactory` calls it without matching
+// on provider name (ADR rule 1). Transitional: wraps the canonical `OpenAiAdapter`
+// until v0.12 collapses it into the Chat protocol core.
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (workspace convention)
+pub fn build_chat_adapter(
+    config: &orchest_provider_core::registry::ProviderConfig,
+    resolved: &crate::protocol::ResolvedModel<'_>,
+) -> Result<Box<dyn orchest_protocol::ChatModel>, orchest_protocol::ProtocolError> {
+    let adapter = OpenAiAdapter::from_config(OpenAiConfig {
+        model: resolved.model.to_string(),
+        max_tokens: config.max_tokens.unwrap_or(crate::defaults::MAX_TOKENS),
+        api_key: config.api_key.clone(),
+        api_url: config.api_url.clone(),
+    })
+    .map_err(orchest_protocol::ProtocolError::from)?;
+    Ok(Box::new(adapter))
+}
+
 #[cfg(test)]
 mod tests;
