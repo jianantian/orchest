@@ -66,6 +66,19 @@ fn complete_endpoint_api_url_is_respected() {
 }
 
 #[test]
+fn same_model_two_protocols_user_story() {
+    // ADR Problem 4: the same Claude model, reached over either protocol by an
+    // explicit segment — Messages (prompt caching) vs Chat (OpenAI tool-use parity).
+    let messages = build("elss/messages/claude-sonnet-5", "https://api.elss.ai");
+    assert_eq!(messages.provider_name(), "anthropic");
+    assert_eq!(messages.model_name(), "claude-sonnet-5");
+
+    let chat = build("elss/chat/claude-sonnet-5", "https://api.elss.ai");
+    assert_eq!(chat.provider_name(), "openai");
+    assert_eq!(chat.model_name(), "claude-sonnet-5");
+}
+
+#[test]
 fn aliases_are_provider_scoped_not_global() {
     // OpenRouter declares no aliases, so its `anthropic` segment stays part of the
     // model name — Elss's aliases must not leak globally.
