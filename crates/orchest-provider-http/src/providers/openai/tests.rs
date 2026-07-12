@@ -367,3 +367,102 @@ fn openai_downgrades_minimax_only_roles_with_adjustment() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// ADR-0002 slice 001: OpenAI on the ChatProtocolFactory path.
+// ---------------------------------------------------------------------------
+
+use crate::protocol::{
+    provider_entry, ChatProtocolFactory, Protocol, ProtocolFactory, ResolvedModel,
+};
+use orchest_provider_core::registry::ProviderConfig;
+
+#[test]
+fn openai_migrated_to_protocol_entry() {
+    let entry = provider_entry("openai").expect("openai is migrated to the protocol path");
+    assert_eq!(entry.name, "openai");
+    assert_eq!(entry.protocols, &[Protocol::Chat]);
+    assert_eq!(entry.default_api_key_env, "OPENAI_API_KEY");
+    // Providers not yet migrated stay on the legacy bridge.
+    assert!(provider_entry("anthropic").is_none());
+    assert!(provider_entry("deepseek").is_none());
+}
+
+#[test]
+fn chat_protocol_factory_builds_openai_adapter() {
+    let entry = provider_entry("openai").unwrap();
+    let resolved = ResolvedModel {
+        provider: entry,
+        protocol: Protocol::Chat,
+        model: "gpt-4.1",
+        catalog: crate::catalog::find_model("openai/gpt-4.1"),
+    };
+    let config = ProviderConfig {
+        provider: "openai".into(),
+        model: "gpt-4.1".into(),
+        api_key: Some("key".into()),
+        api_url: Some("http://localhost/v1/chat/completions".into()),
+        max_tokens: Some(256),
+        options: serde_json::Value::Null,
+    };
+
+    let adapter = ChatProtocolFactory
+        .create_adapter(&config, &resolved)
+        .expect("factory builds the canonical Chat adapter");
+    assert_eq!(adapter.provider_name(), "openai");
+    assert_eq!(adapter.model_name(), "gpt-4.1");
+}
+
+#[tokio::test]
+async fn create_adapter_from_config_routes_openai_through_new_path() {
+    // End-to-end through the crate entry point: parse -> ResolvedModel ->
+    // ChatProtocolFactory -> wrapped OpenAiAdapter -> live SSE decode. The mock
+    // ignores the request path, so this also exercises canonical-path append
+    // (the base URL below has no `/v1/chat/completions`).
+    let api_url = serve_sse_once(
+        r#"data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}
+
+data: [DONE]
+
+"#,
+    )
+    .await;
+
+    let adapter = crate::create_adapter_from_config(crate::ProviderRuntimeConfig {
+        model: "openai/gpt-4.1".into(),
+        api_key: Some("key".into()),
+        api_key_env: None,
+        api_url: Some(api_url),
+        max_tokens: Some(128),
+    })
+    .expect("openai resolves through the protocol-factory path");
+
+    assert_eq!(adapter.provider_name(), "openai");
+    assert_eq!(adapter.model_name(), "gpt-4.1");
+
+    let response = adapter
+        .complete(&[], &[], &default_options(), None)
+        .await
+        .expect("request should complete");
+    assert!(matches!(&response.content[0], ContentBlock::Text(t) if t == "hi"));
+    assert_eq!(response.usage.input_tokens, 3);
+}
+
+#[test]
+fn chat_url_append_is_idempotent() {
+    // Canonical-path append covering the wrapped adapter's normalize_chat_url:
+    // a base URL gains `/v1/chat/completions`; a complete endpoint is unchanged.
+    use super::request::normalize_chat_url;
+    assert_eq!(
+        normalize_chat_url("https://api.openai.com"),
+        "https://api.openai.com/v1/chat/completions"
+    );
+    assert_eq!(
+        normalize_chat_url("https://api.openai.com/v1"),
+        "https://api.openai.com/v1/chat/completions"
+    );
+    assert_eq!(
+        normalize_chat_url("https://api.openai.com/v1/chat/completions"),
+        "https://api.openai.com/v1/chat/completions"
+    );
+}

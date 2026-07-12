@@ -177,10 +177,10 @@ fn provider_config_api_key_precedence_explicit_then_env() {
     let _env_guard = EnvVarGuard::set(env_name, "env-key");
 
     let registry = ProviderRegistry::new();
-    let factory = registry.get("openai").unwrap();
-    let explicit =
-        resolve_api_key(factory, Some("explicit-key"), Some(env_name)).expect("explicit key wins");
-    let from_env = resolve_api_key(factory, None, Some(env_name)).expect("env key resolves");
+    let default_env = registry.get("openai").unwrap().default_api_key_env();
+    let explicit = resolve_api_key(default_env, Some("explicit-key"), Some(env_name))
+        .expect("explicit key wins");
+    let from_env = resolve_api_key(default_env, None, Some(env_name)).expect("env key resolves");
 
     assert_eq!(explicit, "explicit-key");
     assert_eq!(from_env, "env-key");
@@ -194,8 +194,8 @@ fn provider_config_api_key_env_override_does_not_fall_back_to_provider_default()
     let _openai_env_guard = EnvVarGuard::set("OPENAI_API_KEY", "global-openai-key");
 
     let registry = ProviderRegistry::new();
-    let factory = registry.get("openai").unwrap();
-    let err = match resolve_api_key(factory, None, Some(local_env_name)) {
+    let default_env = registry.get("openai").unwrap().default_api_key_env();
+    let err = match resolve_api_key(default_env, None, Some(local_env_name)) {
         Ok(_) => {
             panic!("missing local api_key_env should fail instead of using OPENAI_API_KEY")
         }
@@ -212,8 +212,8 @@ fn provider_config_missing_provider_key_does_not_use_other_provider_env() {
     let _anthropic_env_guard = EnvVarGuard::set("ANTHROPIC_API_KEY", "anthropic-key");
 
     let registry = ProviderRegistry::new();
-    let factory = registry.get("openai").unwrap();
-    let err = match resolve_api_key(factory, None, None) {
+    let default_env = registry.get("openai").unwrap().default_api_key_env();
+    let err = match resolve_api_key(default_env, None, None) {
         Ok(_) => panic!("openai config should not use ANTHROPIC_API_KEY"),
         Err(err) => err,
     };

@@ -34,6 +34,7 @@ pub use providers::{
 };
 
 pub(crate) mod http;
+pub(crate) mod protocol;
 pub(crate) mod role_compat;
 pub(crate) mod sse;
 
@@ -142,18 +143,75 @@ pub fn create_adapter_from_config(
     let registry = ProviderRegistry::new();
     let normalized = normalize_provider_model(&config.model)?;
 
+    // ADR-0002 protocol-factory path (slice 001): providers with a migrated
+    // `ProviderEntry` resolve through a `ProtocolFactory`; the rest stay on the
+    // legacy `ProviderFactory` bridge below until their slice migrates them.
+    if let Some(entry) = protocol::provider_entry(normalized.provider) {
+        return create_adapter_via_protocol(entry, &normalized, &config);
+    }
+
     let factory = registry
         .get(normalized.provider)
         .ok_or_else(|| unknown_provider(normalized.provider, &registry))?;
 
     let api_key = resolve_api_key(
-        factory,
+        factory.default_api_key_env(),
         config.api_key.as_deref(),
         config.api_key_env.as_deref(),
     )?;
     let max_tokens = config.max_tokens.unwrap_or(defaults::MAX_TOKENS);
 
     factory.create_adapter(normalized.model, max_tokens, api_key, config.api_url)
+}
+
+/// Resolve `normalized` into a [`ResolvedModel`](protocol::ResolvedModel) and
+/// construct through the protocol factory for the entry's preferred protocol.
+/// Explicit protocol selection from the model string lands in slice 008; slice
+/// 001 always takes the first (preferred) protocol.
+fn create_adapter_via_protocol(
+    entry: &'static protocol::ProviderEntry,
+    normalized: &NormalizedProviderModel<'_>,
+    config: &ProviderRuntimeConfig,
+) -> Result<Box<dyn ModelAdapter>, ModelError> {
+    let proto = *entry.protocols.first().ok_or_else(|| {
+        ModelError::internal(
+            format!("provider '{}' declares no protocols", entry.name),
+            "no_protocol",
+        )
+    })?;
+
+    let factory = protocol::protocol_factory(proto).ok_or_else(|| {
+        ModelError::internal(
+            format!("no protocol factory for {proto:?}"),
+            "no_protocol_factory",
+        )
+    })?;
+
+    let api_key = resolve_api_key(
+        entry.default_api_key_env,
+        config.api_key.as_deref(),
+        config.api_key_env.as_deref(),
+    )?;
+
+    let resolved = protocol::ResolvedModel {
+        provider: entry,
+        protocol: proto,
+        model: normalized.model,
+        catalog: catalog::find_model(&config.model),
+    };
+
+    let provider_config = ProviderConfig {
+        provider: entry.name.to_string(),
+        model: normalized.model.to_string(),
+        api_key: Some(api_key),
+        api_url: config.api_url.clone(),
+        max_tokens: config.max_tokens,
+        options: serde_json::Value::Null,
+    };
+
+    factory
+        .create_adapter(&provider_config, &resolved)
+        .map_err(ModelError::from)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,7 +255,7 @@ pub fn normalize_provider_model(model: &str) -> Result<NormalizedProviderModel<'
 }
 
 fn resolve_api_key(
-    factory: &dyn ProviderFactory,
+    default_env: &str,
     explicit: Option<&str>,
     api_key_env: Option<&str>,
 ) -> Result<String, ModelError> {
@@ -220,11 +278,10 @@ fn resolve_api_key(
         };
     }
 
-    let env_name = factory.default_api_key_env();
-    match std::env::var(env_name) {
+    match std::env::var(default_env) {
         Ok(value) => non_empty_api_key(&value),
         Err(_) => Err(ModelError::internal(
-            format!("{env_name} not set and no api_key provided"),
+            format!("{default_env} not set and no api_key provided"),
             "missing_api_key",
         )),
     }
