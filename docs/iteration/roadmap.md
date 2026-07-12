@@ -63,11 +63,19 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
 
 **依赖**：v0.10 完成（[验证报告](../review/v0_10_demo_validation.md)中的 SD 摩擦点）、v0.9.5 Control-Flow Hardening、v0.9.4 Failure Semantics
 
+### v0.12 — ADR-0002 Phase 3：移除 legacy adapter/factory（重构，规划）
+
+[ADR-0002](../adr/0002-protocol-provider-decoupling.md) 的 protocol × provider 解耦分三阶段。Phase 1-2（非破坏：protocol factory + profile 抽取、catalog 事实来源、`provider/[protocol/]model` 语法、Elss 溶解）在 [hotfix 2026-07-12](../hotfix/2026_07_12/prd.md) 落地。Phase 3 是**破坏性收尾**——删除 legacy `ProviderFactory` trait 与冗余 `*Adapter` 结构，registry 只存 `ProviderEntry`。
+
+**必须在 v1.0 冻结前完成**：v0.x 仍可自由破坏公开 API，v1.0 才冻结公开面。若 Phase 3 拖到 v1.0 之后，等于在冻结点上破坏。故独立成 v0.12 重构迭代，排在 v1.0 之前。详见 [`v0_12/prd.md`](./v0_12/prd.md)。
+
+**依赖**：hotfix 2026-07-12 全部 10 个 slice 完成（六个 provider 全走 protocol factory 后才能删 legacy 层）。
+
 ### v1.0 — 首次公开发布（规划）
 
 第一个公开发布到 crates.io 的版本。包含发布准备的全部内容：Cargo publish 元数据、license 定稿、release workflow、CHANGELOG、版本号策略文档。
 
-**依赖**：v0.11 Demo B 完成（Supervised Delegation API 经产品验证后才冻结公开 API）。发布前必须清偿两份验证报告各自的 release blocker 清单：[v0.10 Demo A 验证报告](../review/v0_10_demo_validation.md)的 5 项 release blocker **已全部由 hotfix 2026-07-02 清偿**（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199) 全部关闭，详见验证报告 Triage 表与本文档「已完成」表的 hotfix 2026-07-02 行），与 v0.11 Demo B 的 Seam Gap Analysis 报告（届时补链接）。**v0.10 报告的 live provider 验证仍未完成**（hotfix 2026-07-02 所在环境无 LLM/ASR/TTS 凭证）——未完成前，不得仅凭该报告推进 v1.0。
+**依赖**：v0.11 Demo B 完成（Supervised Delegation API 经产品验证后才冻结公开 API）、v0.12 完成（ADR-0002 Phase 3 的 legacy adapter/factory 移除必须在冻结前落地）。发布前必须清偿两份验证报告各自的 release blocker 清单：[v0.10 Demo A 验证报告](../review/v0_10_demo_validation.md)的 5 项 release blocker **已全部由 hotfix 2026-07-02 清偿**（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199) 全部关闭，详见验证报告 Triage 表与本文档「已完成」表的 hotfix 2026-07-02 行），与 v0.11 Demo B 的 Seam Gap Analysis 报告（届时补链接）。**v0.10 报告的 live provider 验证仍未完成**（hotfix 2026-07-02 所在环境无 LLM/ASR/TTS 凭证）——未完成前，不得仅凭该报告推进 v1.0。
 
 ### 依赖图
 
@@ -104,6 +112,9 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
             │
             ▼
    v0.11: Demo B — Supervised Delegation 深度验证（Research Pipeline）
+            │
+            ▼
+   v0.12: ADR-0002 Phase 3 — legacy adapter/factory 移除（重构，v1.0 冻结前）
             │
             ▼
    v1.0: 首次公开发布（crates.io + release workflow + license 定稿）
