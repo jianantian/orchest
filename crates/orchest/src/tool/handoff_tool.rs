@@ -59,7 +59,7 @@ impl Tool for HandoffTool {
                 .map_err(|e| ToolError::fatal(e.to_string()))?,
         };
 
-        let transfer_message = format!("Transferring session to '{}'.", &self.handoff.tool_name);
+        let transfer_message = format!("Transferring session to '{}'.", self.handoff.tool_name);
 
         Ok(ToolOutput::Handoff(Box::new(HandoffResult {
             target_agent,
