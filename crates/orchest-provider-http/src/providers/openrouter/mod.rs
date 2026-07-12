@@ -1,5 +1,6 @@
 //! OpenRouter adapter implementation (multi-provider routing).
 
+mod profile;
 mod request;
 
 use std::env;
@@ -7,17 +8,20 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::{
     CacheCapability, CapabilitySource, Message, ModelAdapter, ModelCapabilities, ModelError,
-    ModelResponse, OptionAdjustment, ReasoningCapability, RequestOptions, StreamEvent,
-    ThinkingLevel, ToolDef, UpstreamErrorDetail,
+    ModelResponse, ReasoningCapability, RequestOptions, StreamEvent, ThinkingLevel, ToolDef,
+    UpstreamErrorDetail,
 };
 
+use crate::catalog::LlmModelEntry;
+use crate::protocol::{Protocol, ProviderEntry, ProviderProfile, ResolvedModel};
 use crate::{defaults, telemetry};
 
+pub use profile::{OpenRouterProfile, OPENROUTER_PROFILE};
 use request::normalize_chat_url;
 
 pub struct OpenRouterAdapter {
@@ -25,8 +29,12 @@ pub struct OpenRouterAdapter {
     pub(super) api_url: String,
     pub(super) model: String,
     pub(super) max_tokens: u32,
-    pub(super) app_title: Option<String>,
-    pub(super) site_url: Option<String>,
+    /// Routing headers, resolved from the entry (or config) at construction.
+    pub(super) extra_headers: Vec<(&'static str, String)>,
+    /// ADR-0002 resolution context for the profile hooks (see `cx`).
+    entry: &'static ProviderEntry,
+    catalog: Option<&'static LlmModelEntry>,
+    profile: &'static dyn ProviderProfile,
 }
 
 impl std::fmt::Debug for OpenRouterAdapter {
@@ -44,8 +52,10 @@ pub struct OpenRouterConfig {
     pub max_tokens: u32,
     pub api_key: Option<String>,
     pub api_url: Option<String>,
-    pub app_title: Option<String>,
-    pub site_url: Option<String>,
+    /// Pre-resolved routing headers (`(name, value)`). On the protocol-factory
+    /// path these come from [`resolve_headers`](crate::protocol::resolve_headers)
+    /// applied to the entry's `HeaderValue::Env` declarations.
+    pub extra_headers: Vec<(&'static str, String)>,
 }
 
 impl OpenRouterAdapter {
@@ -71,21 +81,33 @@ impl OpenRouterAdapter {
             ));
         }
 
-        let app_title = config
-            .app_title
-            .or_else(|| env::var("OPENROUTER_APP_TITLE").ok());
-        let site_url = config
-            .site_url
-            .or_else(|| env::var("OPENROUTER_SITE_URL").ok());
+        let entry = crate::protocol::provider_entry("openrouter")
+            .expect("openrouter entry is registered on the protocol path");
+        let catalog = crate::catalog::find_model(&config.model);
+        let profile = entry
+            .profile_for(Protocol::Chat)
+            .expect("openrouter entry carries a Chat profile");
 
         Ok(Self {
             api_key,
             api_url: normalize_chat_url(&api_url),
             model: config.model,
             max_tokens: config.max_tokens,
-            app_title,
-            site_url,
+            extra_headers: config.extra_headers,
+            entry,
+            catalog,
+            profile,
         })
+    }
+
+    /// The ADR-0002 resolution context for this adapter, rebuilt per request.
+    pub(super) fn cx(&self) -> ResolvedModel<'_> {
+        ResolvedModel {
+            provider: self.entry,
+            protocol: Protocol::Chat,
+            model: &self.model,
+            catalog: self.catalog,
+        }
     }
 }
 
@@ -147,11 +169,8 @@ impl ModelAdapter for OpenRouterAdapter {
             .bearer_auth(&self.api_key)
             .json(&body);
 
-        if let Some(ref title) = self.app_title {
-            request = request.header("X-OpenRouter-Title", title);
-        }
-        if let Some(ref url) = self.site_url {
-            request = request.header("HTTP-Referer", url);
+        for (name, value) in &self.extra_headers {
+            request = request.header(*name, value);
         }
 
         let start = Instant::now();
@@ -217,20 +236,17 @@ impl ModelAdapter for OpenRouterAdapter {
         })?;
 
         let content = sse.content;
-        let usage = sse.usage;
+        let mut usage = sse.usage;
         let stop_reason = sse.stop_reason;
         let first_token_latency = sse.first_token_latency;
 
-        let has_usage = usage.input_tokens > 0 || usage.output_tokens > 0;
-        if !has_usage {
-            telemetry::record_usage_missing("openrouter", &self.model);
-            option_adjustments.push(OptionAdjustment {
-                option: "usage".into(),
-                requested: json!(null),
-                applied: json!(null),
-                reason: "usage_not_reported".into(),
-            });
-        }
+        // Usage-missing handling is the canonical interpret_usage default,
+        // shared with OpenAI/DeepSeek.
+        option_adjustments.extend(self.profile.interpret_usage(
+            &self.cx(),
+            &Value::Null,
+            &mut usage,
+        ));
 
         if let Some(ref tx) = tx {
             let _ = tx
@@ -276,13 +292,14 @@ impl crate::registry::ProviderFactory for OpenRouterFactory {
         api_key: String,
         api_url: Option<String>,
     ) -> Result<Box<dyn ModelAdapter>, ModelError> {
+        let entry =
+            crate::protocol::provider_entry("openrouter").expect("openrouter entry is registered");
         let adapter = OpenRouterAdapter::from_config(OpenRouterConfig {
             model: model.to_string(),
             max_tokens,
             api_key: Some(api_key),
             api_url,
-            app_title: None,
-            site_url: None,
+            extra_headers: crate::protocol::resolve_headers(entry),
         })?;
         Ok(Box::new(adapter))
     }
@@ -290,6 +307,26 @@ impl crate::registry::ProviderFactory for OpenRouterFactory {
     fn default_api_key_env(&self) -> &'static str {
         crate::defaults::openrouter::API_KEY_ENV
     }
+}
+
+// ADR-0002 protocol-factory path (slice 004). Referenced as data by the
+// OpenRouter `ProviderEntry.build_chat`; the factory never matches on provider
+// name (ADR rule 1). Routing headers are resolved from the entry's
+// HeaderValue::Env declarations here. Transitional wrapping; collapsed in v0.12.
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (workspace convention)
+pub fn build_chat_adapter(
+    config: &orchest_provider_core::registry::ProviderConfig,
+    resolved: &ResolvedModel<'_>,
+) -> Result<Box<dyn orchest_protocol::ChatModel>, orchest_protocol::ProtocolError> {
+    let adapter = OpenRouterAdapter::from_config(OpenRouterConfig {
+        model: resolved.model.to_string(),
+        max_tokens: config.max_tokens.unwrap_or(crate::defaults::MAX_TOKENS),
+        api_key: config.api_key.clone(),
+        api_url: config.api_url.clone(),
+        extra_headers: crate::protocol::resolve_headers(resolved.provider),
+    })
+    .map_err(orchest_protocol::ProtocolError::from)?;
+    Ok(Box::new(adapter))
 }
 
 #[cfg(test)]

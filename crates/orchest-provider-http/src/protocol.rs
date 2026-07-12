@@ -21,7 +21,7 @@ use orchest_provider_core::registry::ProviderConfig;
 use crate::catalog::LlmModelEntry;
 use crate::{
     CachePolicy, CompatibilityPolicy, ContentBlock, ModelError, OptionAdjustment, RequestOptions,
-    ThinkingLevel,
+    ThinkingLevel, TokenUsage,
 };
 
 /// Wire protocol (the dialect an adapter speaks), chat-scoped. This is the
@@ -41,10 +41,8 @@ pub enum Protocol {
 }
 
 /// Value source for a provider header. `Env` values are read at *adapter
-/// construction* time by the protocol factory — a runtime env-var value cannot
+/// construction* time (via [`resolve_headers`]) — a runtime env-var value cannot
 /// be `'static`, so the entry stores the env-var *name*, not the value.
-// Constructed once `extra_headers` is populated by header injection in slice 004.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub enum HeaderValue {
     Static(&'static str),
@@ -87,8 +85,7 @@ pub struct ProviderEntry {
     #[allow(dead_code)] // consumed by the Messages factory in slice 006
     pub path_overrides: &'static [(Protocol, &'static str)],
     /// Provider-specific headers injected into every request
-    /// (e.g. openrouter env-var headers). Slice 004.
-    #[allow(dead_code)] // consumed by header injection in slice 004
+    /// (e.g. openrouter env-var headers), resolved via [`resolve_headers`].
     pub extra_headers: &'static [(&'static str, HeaderValue)],
     /// Behavior profiles per protocol, for providers that deviate from
     /// protocol-canonical behavior. Empty for fully compatible providers.
@@ -227,6 +224,48 @@ pub trait ProviderProfile: Send + Sync {
     fn option_support(&self, _cx: &ResolvedModel<'_>, _option: RequestOption) -> OptionSupport {
         OptionSupport::Supported
     }
+
+    /// Interpret provider-specific usage reporting into canonical `TokenUsage`,
+    /// returning any degradation adjustments. Default: the canonical
+    /// usage-missing handling shared by OpenAI / DeepSeek / OpenRouter — when a
+    /// provider reports no usage, record telemetry and a `usage_not_reported`
+    /// adjustment. `raw` is the provider's raw usage value for profiles that need
+    /// to reinterpret specific fields (unused by the default).
+    fn interpret_usage(
+        &self,
+        cx: &ResolvedModel<'_>,
+        _raw: &Value,
+        usage: &mut TokenUsage,
+    ) -> Vec<OptionAdjustment> {
+        if usage.input_tokens == 0 && usage.output_tokens == 0 {
+            crate::telemetry::record_usage_missing(cx.provider.name, cx.model);
+            vec![OptionAdjustment {
+                option: "usage".into(),
+                requested: json!(null),
+                applied: json!(null),
+                reason: "usage_not_reported".into(),
+            }]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+/// Resolve an entry's static/env headers to concrete `(name, value)` pairs at
+/// adapter-construction time. `Env` values are read from the environment now (a
+/// runtime value cannot be `'static`); unset env vars are skipped.
+pub fn resolve_headers(entry: &ProviderEntry) -> Vec<(&'static str, String)> {
+    entry
+        .extra_headers
+        .iter()
+        .filter_map(|(name, value)| {
+            let resolved = match value {
+                HeaderValue::Static(s) => Some((*s).to_string()),
+                HeaderValue::Env(var) => std::env::var(var).ok(),
+            };
+            resolved.map(|v| (*name, v))
+        })
+        .collect()
 }
 
 /// A canonical request option whose provider support is queried via
@@ -387,6 +426,28 @@ static VOLCENGINE_ENTRY: ProviderEntry = ProviderEntry {
     build_chat: crate::providers::volcengine::build_chat_adapter,
 };
 
+static OPENROUTER_ENTRY: ProviderEntry = ProviderEntry {
+    name: "openrouter",
+    default_base_url: "https://openrouter.ai/api",
+    default_api_key_env: "OPENROUTER_API_KEY",
+    protocols: &[Protocol::Chat],
+    protocol_aliases: &[],
+    path_overrides: &[],
+    // Routing headers whose values come from the environment at construction.
+    extra_headers: &[
+        (
+            "X-OpenRouter-Title",
+            HeaderValue::Env("OPENROUTER_APP_TITLE"),
+        ),
+        ("HTTP-Referer", HeaderValue::Env("OPENROUTER_SITE_URL")),
+    ],
+    profiles: &[(
+        Protocol::Chat,
+        &crate::providers::openrouter::OPENROUTER_PROFILE,
+    )],
+    build_chat: crate::providers::openrouter::build_chat_adapter,
+};
+
 /// The migrated provider entry for `name`, or `None` if the provider is still on
 /// the legacy bridge.
 pub fn provider_entry(name: &str) -> Option<&'static ProviderEntry> {
@@ -394,6 +455,7 @@ pub fn provider_entry(name: &str) -> Option<&'static ProviderEntry> {
         "openai" => Some(&OPENAI_ENTRY),
         "deepseek" => Some(&DEEPSEEK_ENTRY),
         "volcengine" => Some(&VOLCENGINE_ENTRY),
+        "openrouter" => Some(&OPENROUTER_ENTRY),
         _ => None,
     }
 }

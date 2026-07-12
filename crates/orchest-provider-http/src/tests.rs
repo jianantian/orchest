@@ -495,8 +495,7 @@ fn all_adapters_report_normalized_capabilities() {
                 max_tokens: 4096,
                 api_key: Some("key".into()),
                 api_url: Some("http://localhost".into()),
-                app_title: None,
-                site_url: None,
+                extra_headers: vec![],
             })
             .unwrap(),
         ),
