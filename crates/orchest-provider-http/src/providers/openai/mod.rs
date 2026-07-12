@@ -29,6 +29,10 @@ pub struct OpenAiAdapter {
     pub(super) api_url: String,
     pub(super) model: String,
     pub(super) max_tokens: u32,
+    /// The model's catalog row — the canonical source of capability facts
+    /// (ADR "Capability metadata"). `None` for models absent from the catalog,
+    /// which fall back to the documented name-prefix tables.
+    pub(super) catalog: Option<&'static crate::catalog::LlmModelEntry>,
 }
 
 impl std::fmt::Debug for OpenAiAdapter {
@@ -73,20 +77,38 @@ impl OpenAiAdapter {
             ));
         }
 
+        let model = config
+            .model
+            .strip_prefix("openai/")
+            .unwrap_or(&config.model)
+            .to_string();
+        let catalog = crate::catalog::find_model(&model);
+
         Ok(Self {
             api_key,
             api_url: normalize_chat_url(&api_url),
-            model: config
-                .model
-                .strip_prefix("openai/")
-                .unwrap_or(&config.model)
-                .to_string(),
+            model,
             max_tokens: config.max_tokens,
+            catalog,
         })
     }
 
+    /// Reasoning support: canonical from the catalog row; the name-prefix table
+    /// is a documented fallback only for models absent from the catalog.
     fn supports_reasoning(&self) -> bool {
-        request::supports_reasoning_model(&self.model)
+        match self.catalog {
+            Some(entry) => entry.thinking.is_some(),
+            None => request::supports_reasoning_model(&self.model),
+        }
+    }
+
+    /// Context window: canonical from the catalog row; the name-prefix table is a
+    /// documented fallback only for models absent from the catalog.
+    fn context_window(&self) -> u64 {
+        match self.catalog {
+            Some(entry) => entry.context_window,
+            None => request::openai_context_window(&self.model),
+        }
     }
 }
 
@@ -128,7 +150,7 @@ impl ModelAdapter for OpenAiAdapter {
                 long_ttl: false,
             },
             max_output_tokens: Some(self.max_tokens),
-            context_window_size: Some(request::openai_context_window(&self.model)),
+            context_window_size: Some(self.context_window()),
             source: CapabilitySource::Static,
             pricing: Some(crate::pricing::openai_pricing(&self.model)),
         }

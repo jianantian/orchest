@@ -578,12 +578,13 @@ mod tests {
 
     #[test]
     fn canonical_lower_options_records_adjustment_for_non_thinking_model() {
-        // gpt-5.4 has no thinking support in the catalog.
+        // A model absent from the catalog: the canonical default treats reasoning
+        // as unsupported (it reads only the catalog, no name-prefix fallback).
         let cx = ResolvedModel {
             provider: provider_entry("openai").unwrap(),
             protocol: Protocol::Chat,
-            model: "gpt-5.4",
-            catalog: crate::catalog::find_model("openai/gpt-5.4"),
+            model: "made-up-model",
+            catalog: crate::catalog::find_model("openai/made-up-model"),
         };
         let opts = RequestOptions {
             thinking: ThinkingLevel::High,

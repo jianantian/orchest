@@ -465,3 +465,45 @@ fn chat_url_append_is_idempotent() {
         "https://api.openai.com/v1/chat/completions"
     );
 }
+
+// ---------------------------------------------------------------------------
+// ADR-0002 slice 007: catalog is the canonical source of capability facts;
+// the name-prefix tables are documented fallbacks for unlisted models.
+// ---------------------------------------------------------------------------
+
+fn adapter_for(model: &str) -> OpenAiAdapter {
+    OpenAiAdapter::from_config(OpenAiConfig {
+        model: model.into(),
+        max_tokens: 128,
+        api_key: Some("key".into()),
+        api_url: Some("http://localhost".into()),
+    })
+    .expect("adapter")
+}
+
+#[test]
+fn capabilities_read_from_catalog_for_listed_model() {
+    // gpt-5.4 is in the catalog: reasoning support + context window come from it.
+    let caps = adapter_for("gpt-5.4").capabilities();
+    assert!(caps.reasoning.supported);
+    assert_eq!(caps.context_window_size, Some(1_000_000));
+}
+
+#[test]
+fn unlisted_model_falls_back_to_prefix_tables() {
+    // o3-mini is absent from the catalog: the documented prefix fallback applies.
+    let reasoning = adapter_for("o3-mini");
+    assert!(
+        reasoning.capabilities().reasoning.supported,
+        "o3-mini reasoning via prefix fallback"
+    );
+    assert_eq!(
+        reasoning.capabilities().context_window_size,
+        Some(128_000),
+        "unlisted context window via fallback default"
+    );
+
+    // gpt-4o is absent from the catalog and not a reasoning prefix → false.
+    let non_reasoning = adapter_for("gpt-4o");
+    assert!(!non_reasoning.capabilities().reasoning.supported);
+}

@@ -268,7 +268,11 @@ fn openai_models() -> LlmProviderInfo {
             context_window: 1_000_000,
             max_input_tokens: None,
             max_output_tokens: None,
-            thinking: None,
+            // GPT-5 series are reasoning models (canonical source for the
+            // adapter's reasoning support; replaces the o1/o3/o4/gpt-5 prefix).
+            thinking: Some(ThinkingSpec {
+                max_thinking_tokens: None,
+            }),
             input_modalities: &[Modality::Text, Modality::Image],
             output_modalities: &[Modality::Text],
             scenes: &[ModelScene::General, ModelScene::Coding, ModelScene::Agent],
@@ -282,7 +286,11 @@ fn openai_models() -> LlmProviderInfo {
             context_window: 1_000_000,
             max_input_tokens: None,
             max_output_tokens: None,
-            thinking: None,
+            // GPT-5 series are reasoning models (canonical source for the
+            // adapter's reasoning support; replaces the o1/o3/o4/gpt-5 prefix).
+            thinking: Some(ThinkingSpec {
+                max_thinking_tokens: None,
+            }),
             input_modalities: &[Modality::Text, Modality::Image],
             output_modalities: &[Modality::Text],
             scenes: &[ModelScene::General, ModelScene::Coding],
@@ -296,7 +304,11 @@ fn openai_models() -> LlmProviderInfo {
             context_window: 400_000,
             max_input_tokens: None,
             max_output_tokens: None,
-            thinking: None,
+            // GPT-5 series are reasoning models (canonical source for the
+            // adapter's reasoning support; replaces the o1/o3/o4/gpt-5 prefix).
+            thinking: Some(ThinkingSpec {
+                max_thinking_tokens: None,
+            }),
             input_modalities: &[Modality::Text, Modality::Image],
             output_modalities: &[Modality::Text],
             scenes: &[ModelScene::General],
@@ -310,7 +322,11 @@ fn openai_models() -> LlmProviderInfo {
             context_window: 400_000,
             max_input_tokens: None,
             max_output_tokens: None,
-            thinking: None,
+            // GPT-5 series are reasoning models (canonical source for the
+            // adapter's reasoning support; replaces the o1/o3/o4/gpt-5 prefix).
+            thinking: Some(ThinkingSpec {
+                max_thinking_tokens: None,
+            }),
             input_modalities: &[Modality::Text, Modality::Image],
             output_modalities: &[Modality::Text],
             scenes: &[ModelScene::General],
