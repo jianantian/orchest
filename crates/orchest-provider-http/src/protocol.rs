@@ -21,7 +21,7 @@ use orchest_provider_core::registry::ProviderConfig;
 use crate::catalog::LlmModelEntry;
 use crate::{
     CachePolicy, CompatibilityPolicy, ContentBlock, ModelError, OptionAdjustment, RequestOptions,
-    ThinkingLevel, TokenUsage,
+    Role, ThinkingLevel, TokenUsage,
 };
 
 /// Wire protocol (the dialect an adapter speaks), chat-scoped. This is the
@@ -80,8 +80,10 @@ pub struct ProviderEntry {
     #[allow(dead_code)] // consumed by the model-string grammar in slices 008/009
     pub protocol_aliases: &'static [(&'static str, Protocol)],
     /// Per-protocol endpoint path overrides for non-standard layouts
-    /// (e.g. minimax: `(Messages, "/anthropic/v1/messages")`). Slice 006.
-    #[allow(dead_code)] // consumed by the Messages factory in slice 006
+    /// (e.g. minimax: `(Messages, "/anthropic/v1/messages")`). Declared here in
+    /// slice 006; the wrapped adapter's `normalize_messages_url` produces the path
+    /// today, and factory-driven URL resolution consumes this in slice 008.
+    #[allow(dead_code)] // consumed by URL resolution in slice 008
     pub path_overrides: &'static [(Protocol, &'static str)],
     /// Provider-specific headers injected into every request
     /// (e.g. openrouter env-var headers), resolved via [`resolve_headers`].
@@ -224,6 +226,18 @@ pub trait ProviderProfile: Send + Sync {
         OptionSupport::Supported
     }
 
+    /// Map a canonical role onto the provider-accepted wire role. Default: the
+    /// canonical Messages mapping, which downgrades Minimax-only roles (as the
+    /// Chat providers do via `role_compat`). Minimax overrides this to emit its
+    /// native roles (`user_system` / `group` / `sample_message_*`).
+    fn map_role(&self, _cx: &ResolvedModel<'_>, role: &Role) -> WireRole {
+        WireRole(match role {
+            Role::Assistant => "assistant",
+            Role::System | Role::UserSystem => "system",
+            _ => "user",
+        })
+    }
+
     /// Interpret provider-specific usage reporting into canonical `TokenUsage`,
     /// returning any degradation adjustments. Default: the canonical
     /// usage-missing handling shared by OpenAI / DeepSeek / OpenRouter — when a
@@ -276,6 +290,10 @@ pub enum RequestOption {
     /// (`include_thinking: false` while thinking is enabled).
     ReasoningOutputExclusion,
 }
+
+/// A provider-accepted wire role name, produced by [`ProviderProfile::map_role`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WireRole(pub &'static str);
 
 /// The result of an [`ProviderProfile::option_support`] query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -481,6 +499,25 @@ static ANTHROPIC_ENTRY: ProviderEntry = ProviderEntry {
     build_adapter: crate::providers::anthropic::build_messages_adapter,
 };
 
+static MINIMAX_ENTRY: ProviderEntry = ProviderEntry {
+    name: "minimax",
+    default_base_url: "https://api.minimaxi.com",
+    default_api_key_env: "MINIMAX_API_KEY",
+    protocols: &[Protocol::Messages],
+    protocol_aliases: &[],
+    // Minimax's Anthropic-compatible endpoint is /anthropic/v1/messages, not the
+    // canonical /v1/messages.
+    path_overrides: &[(Protocol::Messages, "/anthropic/v1/messages")],
+    extra_headers: &[],
+    // Minimax is Anthropic-Messages-compatible with the widest Messages-side
+    // deviation (role downgrade + thinking:{type,display} dialect).
+    profiles: &[(
+        Protocol::Messages,
+        &crate::providers::minimax::MINIMAX_PROFILE,
+    )],
+    build_adapter: crate::providers::minimax::build_messages_adapter,
+};
+
 /// The migrated provider entry for `name`, or `None` if the provider is still on
 /// the legacy bridge.
 pub fn provider_entry(name: &str) -> Option<&'static ProviderEntry> {
@@ -490,6 +527,7 @@ pub fn provider_entry(name: &str) -> Option<&'static ProviderEntry> {
         "volcengine" => Some(&VOLCENGINE_ENTRY),
         "openrouter" => Some(&OPENROUTER_ENTRY),
         "anthropic" => Some(&ANTHROPIC_ENTRY),
+        "minimax" => Some(&MINIMAX_ENTRY),
         _ => None,
     }
 }

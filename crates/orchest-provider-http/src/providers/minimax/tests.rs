@@ -269,3 +269,71 @@ fn registry_includes_minimax() {
     assert_eq!(factory.provider_name(), "minimax");
     assert_eq!(factory.default_api_key_env(), "MINIMAX_API_KEY");
 }
+
+// ---------------------------------------------------------------------------
+// ADR-0002 slice 006: Minimax on MessagesProtocolFactory + MinimaxProfile.
+// ---------------------------------------------------------------------------
+
+use crate::protocol::{Protocol, ProviderProfile};
+
+#[test]
+fn minimax_migrated_to_messages_entry_with_profile_and_path_override() {
+    let entry = crate::protocol::provider_entry("minimax").expect("minimax migrated");
+    assert_eq!(entry.protocols, &[Protocol::Messages]);
+    assert!(entry.profile_for(Protocol::Messages).is_some());
+    // path_overrides declares the non-standard Anthropic-compatible endpoint.
+    assert_eq!(
+        entry.path_overrides,
+        &[(Protocol::Messages, "/anthropic/v1/messages")]
+    );
+}
+
+#[test]
+fn map_role_emits_native_minimax_roles() {
+    let adapter = make_adapter("http://localhost");
+    let cx = adapter.cx();
+    for (role, expected) in [
+        (Role::User, "user"),
+        (Role::Tool, "user"),
+        (Role::Assistant, "assistant"),
+        (Role::UserSystem, "user_system"),
+        (Role::Group, "group"),
+        (Role::SampleMessageUser, "sample_message_user"),
+        (Role::SampleMessageAi, "sample_message_ai"),
+    ] {
+        assert_eq!(MINIMAX_PROFILE.map_role(&cx, &role).0, expected, "{role:?}");
+    }
+}
+
+#[test]
+fn minimax_hits_anthropic_compatible_path() {
+    // Base URL gets Minimax's /anthropic/v1/messages path (not canonical /v1/messages).
+    let adapter = make_adapter("https://api.minimaxi.com");
+    assert!(
+        adapter.api_url.ends_with("/anthropic/v1/messages"),
+        "got {}",
+        adapter.api_url
+    );
+}
+
+#[tokio::test]
+async fn create_adapter_from_config_routes_minimax_through_new_path() {
+    let api_url = serve_sse_once(SIMPLE_SSE).await;
+
+    let adapter = crate::create_adapter_from_config(crate::ProviderRuntimeConfig {
+        model: "minimax/MiniMax-M3".into(),
+        api_key: Some("key".into()),
+        api_key_env: None,
+        api_url: Some(api_url),
+        max_tokens: Some(128),
+    })
+    .expect("minimax resolves through the MessagesProtocolFactory path");
+
+    assert_eq!(adapter.provider_name(), "minimax");
+    assert_eq!(adapter.model_name(), "MiniMax-M3");
+
+    let _ = adapter
+        .complete(&[], &[], &default_options(), None)
+        .await
+        .expect("request should complete");
+}

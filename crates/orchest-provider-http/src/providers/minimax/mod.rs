@@ -6,6 +6,7 @@
 //! Image / Video / MidConvSystem 真实序列化、4 个 Minimax-only Role、`service_tier`。
 //! 鉴权用 `Authorization: Bearer ${api_key}`(锚点 `llm/api.md:1354-1362`)。
 
+mod profile;
 mod request;
 mod response;
 
@@ -23,8 +24,11 @@ use crate::{
     ReasoningCapability, RequestOptions, StreamEvent, ThinkingLevel, ToolDef, UpstreamErrorDetail,
 };
 
+use crate::catalog::LlmModelEntry;
+use crate::protocol::{Protocol, ProviderEntry, ProviderProfile, ResolvedModel};
 use crate::{defaults, telemetry};
 
+pub use profile::{MinimaxProfile, MINIMAX_PROFILE};
 use request::normalize_messages_url;
 use response::consume_event_stream;
 
@@ -33,6 +37,10 @@ pub struct MinimaxAdapter {
     api_url: String,
     model: String,
     max_tokens: u32,
+    /// ADR-0002 resolution context for the profile hooks (see `cx`).
+    entry: &'static ProviderEntry,
+    catalog: Option<&'static LlmModelEntry>,
+    profile: &'static dyn ProviderProfile,
 }
 
 impl std::fmt::Debug for MinimaxAdapter {
@@ -80,12 +88,32 @@ impl MinimaxAdapter {
             ));
         }
 
+        let entry = crate::protocol::provider_entry("minimax")
+            .expect("minimax entry is registered on the protocol path");
+        let catalog = crate::catalog::find_model(&config.model);
+        let profile = entry
+            .profile_for(Protocol::Messages)
+            .expect("minimax entry carries a Messages profile");
+
         Ok(Self {
             api_key,
             api_url: normalize_messages_url(&api_url),
             model: config.model,
             max_tokens: config.max_tokens,
+            entry,
+            catalog,
+            profile,
         })
+    }
+
+    /// The ADR-0002 resolution context for this adapter, rebuilt per request.
+    pub(super) fn cx(&self) -> ResolvedModel<'_> {
+        ResolvedModel {
+            provider: self.entry,
+            protocol: Protocol::Messages,
+            model: &self.model,
+            catalog: self.catalog,
+        }
     }
 
     /// MiniMax-M3 是带 1M 上下文 + 原生多模态的 frontier 模型,支持 adaptive thinking;
@@ -315,6 +343,26 @@ impl crate::registry::ProviderFactory for MinimaxFactory {
     fn default_api_key_env(&self) -> &'static str {
         defaults::minimax::API_KEY_ENV
     }
+}
+
+// ADR-0002 protocol-factory path (slice 006). Referenced as data by the Minimax
+// `ProviderEntry.build_adapter`; MessagesProtocolFactory calls it without matching
+// on provider name (ADR rule 1). Transitional: wraps MinimaxAdapter, whose request
+// builder now sources its role + thinking-dialect divergence from MinimaxProfile.
+// v0.12 collapses this into the Messages protocol core.
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (workspace convention)
+pub fn build_messages_adapter(
+    config: &orchest_provider_core::registry::ProviderConfig,
+    resolved: &ResolvedModel<'_>,
+) -> Result<Box<dyn orchest_protocol::ChatModel>, orchest_protocol::ProtocolError> {
+    let adapter = MinimaxAdapter::from_config(MinimaxConfig {
+        model: resolved.model.to_string(),
+        max_tokens: config.max_tokens.unwrap_or(crate::defaults::MAX_TOKENS),
+        api_key: config.api_key.clone(),
+        api_url: config.api_url.clone(),
+    })
+    .map_err(orchest_protocol::ProtocolError::from)?;
+    Ok(Box::new(adapter))
 }
 
 #[cfg(test)]

@@ -383,8 +383,7 @@ fn openai_migrated_to_protocol_entry() {
     assert_eq!(entry.name, "openai");
     assert_eq!(entry.protocols, &[Protocol::Chat]);
     assert_eq!(entry.default_api_key_env, "OPENAI_API_KEY");
-    // Providers not yet migrated stay on the legacy bridge.
-    assert!(provider_entry("minimax").is_none());
+    // Elss is the only provider still on the legacy bridge.
     assert!(provider_entry("elss").is_none());
 }
 
