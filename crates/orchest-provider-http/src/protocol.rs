@@ -1,12 +1,14 @@
 //! ADR-0002 protocol layer: wire-dialect factories decoupled from provider identity.
 //!
-//! Born in hotfix slice 001 as the walking skeleton — OpenAI routes through
-//! [`ChatProtocolFactory`] while the other five LLM providers stay on the legacy
-//! [`ProviderFactory`](crate::registry::ProviderFactory) bridge (see
-//! `create_adapter_from_config`). Machinery is introduced only as far as this one
-//! path needs it; profiles ([`ProviderProfile`] and its hooks) are born in slice
-//! 002, the Messages factory in 005, the full `provider/[protocol/]model` grammar
-//! and URL-resolution rules in 008.
+//! After the 2026-07-12 hotfix (Phases 1–2) all six LLM providers plus the Elss
+//! gateway route through a [`ProtocolFactory`] — Chat ([`ChatProtocolFactory`]) or
+//! Messages ([`MessagesProtocolFactory`]) — selected from the resolved
+//! [`ProviderEntry`]. Per-provider behavioral residual rides in a
+//! [`ProviderProfile`] attached to the entry; canonical behavior is the hook
+//! defaults. During this transitional (wrapping) phase each factory delegates
+//! construction to the entry's [`AdapterCtor`], which wraps the provider's
+//! existing adapter; v0.12 collapses those adapters into the protocol cores and
+//! removes the ctor indirection and the legacy `ProviderFactory` bridge.
 //!
 //! [`Protocol`] is **chat-scoped and lives entirely below the ADR-0001 wall**: it
 //! is `pub(crate)`, never re-exported at the crate root, and never appears in a
@@ -142,11 +144,12 @@ pub struct ResolvedModel<'a> {
 /// actually deviates on.
 ///
 /// Hooks are added **by name, one at a time, when a real provider demonstrates
-/// the need** (ADR rule 3). This slice births `lower_options` + `replay_reasoning`
-/// for DeepSeek; `map_role` / `interpret_usage` / `option_support` /
-/// `normalize_error` arrive with the providers that need them (slices 003/004/006).
-/// There is deliberately **no** generic `modify_request(&mut body)` escape hatch:
-/// each hook's scope is its name.
+/// the need** (ADR rule 3): `lower_options` + `replay_reasoning` (DeepSeek),
+/// `option_support` (Volcengine), `interpret_usage` (OpenRouter), `map_role`
+/// (Minimax). `normalize_error` from the ADR sketch is intentionally NOT here —
+/// no provider has needed it yet, so it stays unwritten. There is deliberately
+/// **no** generic `modify_request(&mut body)` escape hatch: each hook's scope is
+/// its name.
 pub trait ProviderProfile: Send + Sync {
     /// Lower canonical request options (thinking level, sampling) onto the wire
     /// body, reporting any degradation as `OptionAdjustment`s. Default:
