@@ -168,6 +168,89 @@ fn provider_config_openrouter_preserves_nested_model_name() {
         normalize_provider_model("openrouter/anthropic/claude-sonnet-4").expect("normalizes");
     assert_eq!(normalized.provider, "openrouter");
     assert_eq!(normalized.model, "anthropic/claude-sonnet-4");
+    // The second segment is NOT a protocol (anthropic is neither a canonical name
+    // nor an openrouter alias), so auto-detection applies.
+    assert_eq!(normalized.protocol, None);
+}
+
+// ADR-0002 slice 008: vocabulary-based grammar + auto-detection.
+
+#[test]
+fn two_segment_forms_auto_detect_protocol() {
+    for model in [
+        "anthropic/claude-sonnet-5",
+        "openai/gpt-4.1",
+        "deepseek/deepseek-v4-flash",
+    ] {
+        let n = normalize_provider_model(model).expect("normalizes");
+        assert_eq!(
+            n.protocol, None,
+            "{model} leaves protocol to auto-detection"
+        );
+    }
+}
+
+#[test]
+fn explicit_protocol_segment_is_parsed() {
+    use crate::protocol::Protocol;
+    let n = normalize_provider_model("openai/chat/gpt-4.1").expect("normalizes");
+    assert_eq!(n.provider, "openai");
+    assert_eq!(n.protocol, Some(Protocol::Chat));
+    assert_eq!(n.model, "gpt-4.1");
+
+    // Canonical names are reserved words for the protocol segment.
+    let m = normalize_provider_model("anthropic/messages/claude-sonnet-5").expect("normalizes");
+    assert_eq!(m.protocol, Some(Protocol::Messages));
+    assert_eq!(m.model, "claude-sonnet-5");
+}
+
+#[test]
+fn explicit_protocol_noop_equivalent_routes() {
+    // openai/chat/gpt-... routes identically to openai/gpt-... (Chat is the
+    // auto-detected protocol for openai anyway).
+    let adapter = create_adapter_from_config(ProviderRuntimeConfig {
+        model: "openai/chat/gpt-4.1".into(),
+        api_key: Some("key".into()),
+        api_key_env: None,
+        api_url: Some("http://localhost".into()),
+        max_tokens: Some(64),
+    })
+    .expect("explicit chat protocol resolves");
+    assert_eq!(adapter.provider_name(), "openai");
+    assert_eq!(adapter.model_name(), "gpt-4.1");
+}
+
+#[test]
+fn explicit_unsupported_protocol_errors() {
+    // openai supports only Chat; requesting messages must error, not fall back.
+    let result = create_adapter_from_config(ProviderRuntimeConfig {
+        model: "openai/messages/gpt-4.1".into(),
+        api_key: Some("key".into()),
+        api_key_env: None,
+        api_url: Some("http://localhost".into()),
+        max_tokens: Some(64),
+    });
+    match result {
+        Err(err) => assert_eq!(err.code.as_deref(), Some("unsupported_protocol")),
+        Ok(_) => panic!("unsupported protocol must error"),
+    }
+}
+
+#[test]
+fn responses_is_never_auto_detected_but_has_no_factory() {
+    // Responses is opt-in only: explicit selection on a provider that doesn't
+    // list it is unsupported, and it is never chosen by auto-detection.
+    let result = create_adapter_from_config(ProviderRuntimeConfig {
+        model: "openai/responses/gpt-4.1".into(),
+        api_key: Some("key".into()),
+        api_key_env: None,
+        api_url: Some("http://localhost".into()),
+        max_tokens: Some(64),
+    });
+    match result {
+        Err(err) => assert_eq!(err.code.as_deref(), Some("unsupported_protocol")),
+        Ok(_) => panic!("responses is not supported by openai"),
+    }
 }
 
 #[test]

@@ -66,9 +66,11 @@ pub type AdapterCtor =
 pub struct ProviderEntry {
     pub name: &'static str,
     /// Base URL (scheme + host, optionally a path prefix) — NOT a complete
-    /// endpoint. The protocol factory appends the canonical path. Full
-    /// URL-resolution rules are consolidated in slice 008.
-    #[allow(dead_code)] // consumed by URL resolution in slice 008
+    /// endpoint. The rule is base URL + idempotent append of the canonical path;
+    /// today each wrapped adapter's `normalize_*_url` implements it (with lenient
+    /// `/v1`//`/v3` handling). Physical consolidation into one resolver lands with
+    /// the v0.12 adapter collapse, where the lenient forms can change together.
+    #[allow(dead_code)] // consumed by URL resolution at the v0.12 collapse
     pub default_base_url: &'static str,
     pub default_api_key_env: &'static str,
     /// Protocols this provider supports, in preference order. The first is the
@@ -80,10 +82,10 @@ pub struct ProviderEntry {
     #[allow(dead_code)] // consumed by the model-string grammar in slices 008/009
     pub protocol_aliases: &'static [(&'static str, Protocol)],
     /// Per-protocol endpoint path overrides for non-standard layouts
-    /// (e.g. minimax: `(Messages, "/anthropic/v1/messages")`). Declared here in
-    /// slice 006; the wrapped adapter's `normalize_messages_url` produces the path
-    /// today, and factory-driven URL resolution consumes this in slice 008.
-    #[allow(dead_code)] // consumed by URL resolution in slice 008
+    /// (e.g. minimax: `(Messages, "/anthropic/v1/messages")`). The wrapped
+    /// adapter's `normalize_messages_url` produces the path today; factory-driven
+    /// URL resolution consumes this at the v0.12 collapse (see `default_base_url`).
+    #[allow(dead_code)] // consumed by URL resolution at the v0.12 collapse
     pub path_overrides: &'static [(Protocol, &'static str)],
     /// Provider-specific headers injected into every request
     /// (e.g. openrouter env-var headers), resolved via [`resolve_headers`].
@@ -529,6 +531,44 @@ pub fn provider_entry(name: &str) -> Option<&'static ProviderEntry> {
         "anthropic" => Some(&ANTHROPIC_ENTRY),
         "minimax" => Some(&MINIMAX_ENTRY),
         _ => None,
+    }
+}
+
+/// Recognize an explicit protocol segment in a model string (ADR "Parsing
+/// rule"): a canonical protocol name (`messages`/`chat`/`responses`) or a
+/// provider-scoped alias from `protocol_aliases`. Returns `None` if the segment
+/// is neither — in which case the caller keeps it as part of the model name
+/// (this is what preserves `openrouter/<vendor>/<model>`). Canonical names are
+/// therefore reserved words for the protocol segment.
+pub fn recognize_protocol(provider: &str, segment: &str) -> Option<Protocol> {
+    match segment {
+        "messages" => Some(Protocol::Messages),
+        "chat" => Some(Protocol::Chat),
+        "responses" => Some(Protocol::Responses),
+        _ => provider_entry(provider).and_then(|e| {
+            e.protocol_aliases
+                .iter()
+                .find(|(alias, _)| *alias == segment)
+                .map(|(_, proto)| *proto)
+        }),
+    }
+}
+
+/// Auto-detect the protocol for a model string with no explicit segment (ADR
+/// "Auto-detection and precedence"): the model-prefix table (`claude-*` →
+/// Messages, everything else → Chat) filtered by the provider's supported
+/// protocols, falling back to the provider's first (preferred) protocol when the
+/// table's pick is unsupported. `Responses` is never auto-detected.
+pub fn auto_detect_protocol(entry: &ProviderEntry, model: &str) -> Option<Protocol> {
+    let table_pick = if model.starts_with("claude-") {
+        Protocol::Messages
+    } else {
+        Protocol::Chat
+    };
+    if entry.protocols.contains(&table_pick) {
+        Some(table_pick)
+    } else {
+        entry.protocols.first().copied()
     }
 }
 

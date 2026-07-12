@@ -165,20 +165,34 @@ pub fn create_adapter_from_config(
 }
 
 /// Resolve `normalized` into a [`ResolvedModel`](protocol::ResolvedModel) and
-/// construct through the protocol factory for the entry's preferred protocol.
-/// Explicit protocol selection from the model string lands in slice 008; slice
-/// 001 always takes the first (preferred) protocol.
+/// construct through the protocol factory. The protocol is the explicit segment
+/// if the model string carried one (erroring if the provider doesn't support
+/// it), else auto-detected per the ADR precedence rules (slice 008).
 fn create_adapter_via_protocol(
     entry: &'static protocol::ProviderEntry,
     normalized: &NormalizedProviderModel<'_>,
     config: &ProviderRuntimeConfig,
 ) -> Result<Box<dyn ModelAdapter>, ModelError> {
-    let proto = *entry.protocols.first().ok_or_else(|| {
-        ModelError::internal(
-            format!("provider '{}' declares no protocols", entry.name),
-            "no_protocol",
-        )
-    })?;
+    let proto = match normalized.protocol {
+        Some(explicit) => {
+            if !entry.protocols.contains(&explicit) {
+                return Err(ModelError::internal(
+                    format!(
+                        "protocol {explicit:?} is not supported by provider '{}'",
+                        entry.name
+                    ),
+                    "unsupported_protocol",
+                ));
+            }
+            explicit
+        }
+        None => protocol::auto_detect_protocol(entry, normalized.model).ok_or_else(|| {
+            ModelError::internal(
+                format!("provider '{}' declares no protocols", entry.name),
+                "no_protocol",
+            )
+        })?,
+    };
 
     let factory = protocol::protocol_factory(proto).ok_or_else(|| {
         ModelError::internal(
@@ -197,7 +211,7 @@ fn create_adapter_via_protocol(
         provider: entry,
         protocol: proto,
         model: normalized.model,
-        catalog: catalog::find_model(&config.model),
+        catalog: catalog::find_model(normalized.model),
     };
 
     let provider_config = ProviderConfig {
@@ -217,9 +231,18 @@ fn create_adapter_via_protocol(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NormalizedProviderModel<'a> {
     pub provider: &'a str,
+    /// The explicit protocol from a `provider/protocol/model` string, or `None`
+    /// when the protocol is left to auto-detection (ADR-0002 slice 008). Added as
+    /// a new field; existing callers that read `provider`/`model` are unaffected.
+    pub protocol: Option<protocol::Protocol>,
     pub model: &'a str,
 }
 
+/// Parse a model string into provider + optional explicit protocol + model,
+/// using the ADR-0002 vocabulary-based rule: the segment after the provider is a
+/// protocol **only** if it is a canonical protocol name or a provider-declared
+/// alias; otherwise it stays part of the model name (so multi-segment ids like
+/// `openrouter/<vendor>/<model>` are preserved).
 pub fn normalize_provider_model(model: &str) -> Result<NormalizedProviderModel<'_>, ModelError> {
     let registry = ProviderRegistry::new();
     let trimmed = model.trim();
@@ -230,28 +253,44 @@ pub fn normalize_provider_model(model: &str) -> Result<NormalizedProviderModel<'
         ));
     }
 
-    let Some((provider, model_name)) = trimmed.split_once('/') else {
+    let Some((provider, rest)) = trimmed.split_once('/') else {
         return Ok(NormalizedProviderModel {
             provider: "anthropic",
+            protocol: None,
             model: trimmed,
         });
     };
 
-    if provider.is_empty() || model_name.is_empty() {
+    if provider.is_empty() || rest.is_empty() {
         return Err(ModelError::internal(
             format!("invalid model string '{model}': expected 'provider/model'"),
             "invalid_model",
         ));
     }
 
-    if registry.get(provider).is_some() {
-        Ok(NormalizedProviderModel {
-            provider,
-            model: model_name,
-        })
-    } else {
-        Err(unknown_provider(provider, &registry))
+    if registry.get(provider).is_none() {
+        return Err(unknown_provider(provider, &registry));
     }
+
+    // Vocabulary-based protocol segment: recognize the next segment as a protocol
+    // only if it is a canonical name or a provider alias, else it is model text.
+    if let Some((maybe_protocol, model_rest)) = rest.split_once('/') {
+        if !model_rest.is_empty() {
+            if let Some(proto) = protocol::recognize_protocol(provider, maybe_protocol) {
+                return Ok(NormalizedProviderModel {
+                    provider,
+                    protocol: Some(proto),
+                    model: model_rest,
+                });
+            }
+        }
+    }
+
+    Ok(NormalizedProviderModel {
+        provider,
+        protocol: None,
+        model: rest,
+    })
 }
 
 fn resolve_api_key(
