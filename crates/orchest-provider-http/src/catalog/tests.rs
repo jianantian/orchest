@@ -1,8 +1,9 @@
 use super::*;
 
 #[test]
-fn catalog_has_six_providers() {
-    assert_eq!(list_providers().len(), 6);
+fn catalog_has_expected_provider_count() {
+    // 6 model providers + the Elss dual-protocol gateway (slice 010).
+    assert_eq!(list_providers().len(), 7);
 }
 
 #[test]

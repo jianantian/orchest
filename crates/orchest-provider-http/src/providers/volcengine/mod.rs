@@ -8,6 +8,7 @@
 //! and `complete()`'s control flow; `request` builds the Chat Completions
 //! request body and helpers.
 
+mod profile;
 mod request;
 
 use std::env;
@@ -15,17 +16,20 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::{
-    CacheCapability, CapabilitySource, CompatibilityPolicy, Message, ModelAdapter,
-    ModelCapabilities, ModelError, ModelResponse, OptionAdjustment, ReasoningCapability,
-    RequestOptions, StopReason, StreamEvent, ThinkingLevel, ToolDef, UpstreamErrorDetail,
+    CacheCapability, CapabilitySource, Message, ModelAdapter, ModelCapabilities, ModelError,
+    ModelResponse, ReasoningCapability, RequestOptions, StopReason, StreamEvent, ThinkingLevel,
+    ToolDef, UpstreamErrorDetail,
 };
 
+use crate::catalog::LlmModelEntry;
+use crate::protocol::{Protocol, ProviderEntry, ProviderProfile, ResolvedModel};
 use crate::{defaults, telemetry};
 
+pub use profile::{VolcengineProfile, VOLCENGINE_PROFILE};
 use request::map_stop_reason;
 pub(crate) use request::normalize_chat_url;
 
@@ -34,6 +38,10 @@ pub struct VolcengineAdapter {
     pub(super) api_url: String,
     model: String,
     max_tokens: u32,
+    /// ADR-0002 resolution context for the profile hooks (see `cx`).
+    entry: &'static ProviderEntry,
+    catalog: Option<&'static LlmModelEntry>,
+    profile: &'static dyn ProviderProfile,
 }
 
 impl std::fmt::Debug for VolcengineAdapter {
@@ -76,16 +84,37 @@ impl VolcengineAdapter {
             ));
         }
 
+        let model = config
+            .model
+            .strip_prefix("volcengine/")
+            .unwrap_or(&config.model)
+            .to_string();
+        let entry = crate::protocol::provider_entry("volcengine")
+            .expect("volcengine entry is registered on the protocol path");
+        let catalog = crate::catalog::find_model(&model);
+        let profile = entry
+            .profile_for(Protocol::Chat)
+            .expect("volcengine entry carries a Chat profile");
+
         Ok(Self {
             api_key,
             api_url: normalize_chat_url(&api_url),
-            model: config
-                .model
-                .strip_prefix("volcengine/")
-                .unwrap_or(&config.model)
-                .to_string(),
+            model,
             max_tokens: config.max_tokens,
+            entry,
+            catalog,
+            profile,
         })
+    }
+
+    /// The ADR-0002 resolution context for this adapter, rebuilt per request.
+    pub(super) fn cx(&self) -> ResolvedModel<'_> {
+        ResolvedModel {
+            provider: self.entry,
+            protocol: Protocol::Chat,
+            model: &self.model,
+            catalog: self.catalog,
+        }
     }
 
     /// Resolve this adapter's catalog entry, if any.
@@ -94,7 +123,7 @@ impl VolcengineAdapter {
     /// keyed off the same OpenAI-compatible API). Callers MUST treat that
     /// case conservatively rather than fall back to name-prefix guessing.
     fn catalog_entry(&self) -> Option<&'static crate::catalog::LlmModelEntry> {
-        crate::catalog::find_model(&self.model)
+        self.catalog
     }
 
     pub(super) fn supports_thinking(&self) -> bool {
@@ -158,36 +187,19 @@ impl ModelAdapter for VolcengineAdapter {
     ) -> Result<ModelResponse, ModelError> {
         let thinking_enabled = options.thinking != ThinkingLevel::Off && self.supports_thinking();
 
-        let effective_thinking = if !options.include_thinking && thinking_enabled {
-            match options.compatibility_policy {
-                CompatibilityPolicy::Strict => {
-                    return Err(ModelError {
-                        message: "Volcengine does not support output exclusion for reasoning"
-                            .into(),
-                        code: Some("unsupported_reasoning_output_exclusion".into()),
-                        provider: Some("volcengine".into()),
-                        status: None,
-                        retry_after_secs: None,
-                        upstream: None,
-                    });
-                }
-                CompatibilityPolicy::Coerce => false,
-            }
-        } else {
-            thinking_enabled
-        };
+        // Reasoning output exclusion is handled uniformly via the profile's
+        // option_support declaration + shared CompatibilityPolicy logic.
+        let (effective_thinking, exclusion_adjustment) =
+            crate::protocol::resolve_reasoning_exclusion(
+                self.profile,
+                &self.cx(),
+                options,
+                thinking_enabled,
+            )?;
 
         let (body, mut option_adjustments) =
             self.build_request_body(messages, tools, options, effective_thinking);
-
-        if !options.include_thinking && thinking_enabled && !effective_thinking {
-            option_adjustments.push(OptionAdjustment {
-                option: "include_thinking".into(),
-                requested: json!(false),
-                applied: json!(false),
-                reason: "thinking_disabled_for_output_exclusion".into(),
-            });
-        }
+        option_adjustments.extend(exclusion_adjustment);
 
         let start = Instant::now();
         let response = crate::http::shared_client()
@@ -325,6 +337,24 @@ impl crate::registry::ProviderFactory for VolcengineFactory {
     fn default_api_key_env(&self) -> &'static str {
         defaults::volcengine::API_KEY_ENV
     }
+}
+
+// ADR-0002 protocol-factory path (slice 003). Referenced as data by the
+// Volcengine `ProviderEntry.build_chat`; the factory never matches on provider
+// name (ADR rule 1). Transitional wrapping; collapsed into the Chat core in v0.12.
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (workspace convention)
+pub fn build_chat_adapter(
+    config: &orchest_provider_core::registry::ProviderConfig,
+    resolved: &ResolvedModel<'_>,
+) -> Result<Box<dyn orchest_protocol::ChatModel>, orchest_protocol::ProtocolError> {
+    let adapter = VolcengineAdapter::from_config(VolcengineConfig {
+        model: resolved.model.to_string(),
+        max_tokens: config.max_tokens.unwrap_or(crate::defaults::MAX_TOKENS),
+        api_key: config.api_key.clone(),
+        api_url: config.api_url.clone(),
+    })
+    .map_err(orchest_protocol::ProtocolError::from)?;
+    Ok(Box::new(adapter))
 }
 
 #[cfg(test)]

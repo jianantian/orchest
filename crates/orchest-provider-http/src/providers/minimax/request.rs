@@ -5,10 +5,7 @@
 
 use serde_json::{json, Value};
 
-use crate::{
-    CachePolicy, ContentBlock, MediaSource, Message, OptionAdjustment, RequestOptions, Role,
-    ThinkingLevel, ToolDef,
-};
+use crate::{ContentBlock, MediaSource, Message, OptionAdjustment, RequestOptions, Role, ToolDef};
 
 use super::MinimaxAdapter;
 
@@ -33,6 +30,7 @@ impl MinimaxAdapter {
         let mut system_parts = Vec::new();
         let mut api_messages = Vec::new();
         let mut adjustments = Vec::new();
+        let cx = self.cx();
 
         for msg in messages {
             match msg.role {
@@ -44,20 +42,9 @@ impl MinimaxAdapter {
                     }
                 }
                 _ => {
-                    let api_role = match msg.role {
-                        Role::User | Role::Tool => "user",
-                        Role::Assistant => "assistant",
-                        Role::System => unreachable!(),
-                        // Minimax-only roles — 直接输出对应字符串
-                        // (`docs/external/minimax/llm/api.md:1088-1091`)。
-                        Role::UserSystem => "user_system",
-                        Role::Group => "group",
-                        Role::SampleMessageUser => "sample_message_user",
-                        Role::SampleMessageAi => "sample_message_ai",
-                    };
-
+                    // Role mapping is Minimax's profile deviation (native roles).
+                    let api_role = self.profile.map_role(&cx, &msg.role).0;
                     let content = build_content_blocks(&msg.content, &mut adjustments);
-
                     api_messages.push(json!({"role": api_role, "content": content}));
                 }
             }
@@ -90,86 +77,10 @@ impl MinimaxAdapter {
             body["tools"] = json!(tool_defs);
         }
 
-        // ThinkingLevel mapping
-        match options.thinking {
-            ThinkingLevel::Off => {
-                body["thinking"] = json!({"type": "disabled"});
-            }
-            level => {
-                if self.supports_adaptive() {
-                    let effort = match level {
-                        ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
-                        ThinkingLevel::Medium => "medium",
-                        ThinkingLevel::High => "high",
-                        ThinkingLevel::XHigh => "xhigh",
-                        ThinkingLevel::Max => "max",
-                        ThinkingLevel::Off => unreachable!(),
-                    };
-                    body["thinking"] = json!({"type": "adaptive"});
-
-                    if options.include_thinking {
-                        body["thinking"]["display"] = json!("summarized");
-                    } else {
-                        body["thinking"]["display"] = json!("omitted");
-                    }
-
-                    body["output_config"] = json!({"effort": effort});
-
-                    if options.thinking_budget_tokens.is_some() {
-                        adjustments.push(OptionAdjustment {
-                            option: "thinking_budget_tokens".into(),
-                            requested: json!(options.thinking_budget_tokens),
-                            applied: json!(null),
-                            reason: "unsupported_in_adaptive_thinking".into(),
-                        });
-                    }
-                } else {
-                    let budget = options.thinking_budget_tokens.unwrap_or(match level {
-                        ThinkingLevel::Minimal => 1024,
-                        ThinkingLevel::Low => 4096,
-                        ThinkingLevel::Medium => 10240,
-                        ThinkingLevel::High => 32768,
-                        ThinkingLevel::XHigh => 65536,
-                        ThinkingLevel::Max => effective_max_tokens,
-                        ThinkingLevel::Off => unreachable!(),
-                    });
-                    body["thinking"] = json!({
-                        "type": "enabled",
-                        "budget_tokens": budget,
-                    });
-
-                    if options.include_thinking {
-                        body["thinking"]["display"] = json!("summarized");
-                    } else {
-                        body["thinking"]["display"] = json!("omitted");
-                    }
-                }
-            }
-        }
-
-        // CachePolicy mapping
-        match options.cache_policy {
-            CachePolicy::Auto => {
-                body["cache_control"] = json!({"type": "ephemeral"});
-            }
-            CachePolicy::Long => {
-                body["cache_control"] = json!({"type": "ephemeral", "ttl": "1h"});
-            }
-            CachePolicy::None => {}
-        }
-
-        // temperature / top_p
-        if let Some(temp) = options.temperature {
-            body["temperature"] = json!(temp);
-        }
-        if let Some(tp) = options.top_p {
-            body["top_p"] = json!(tp);
-        }
-
-        // service_tier 透传(`llm/api.md:807`,可选 `standard` / `priority`)。
-        if let Some(tier) = &options.service_tier {
-            body["service_tier"] = json!(tier);
-        }
+        // Thinking dialect (`thinking: {type, display}`), cache control, sampling,
+        // and service_tier are Minimax's profile deviation. The budget-token
+        // ceiling reads `body["max_tokens"]`, set just above.
+        adjustments.extend(self.profile.lower_options(&cx, options, &mut body));
 
         (body, adjustments)
     }

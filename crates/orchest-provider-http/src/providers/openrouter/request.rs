@@ -8,7 +8,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::{
-    ContentBlock, Message, ModelError, OptionAdjustment, RequestOptions, ThinkingLevel, ToolDef,
+    ContentBlock, Message, ModelError, OptionAdjustment, RequestOptions, ToolDef,
     UpstreamErrorDetail,
 };
 
@@ -77,6 +77,7 @@ impl OpenRouterAdapter {
     ) -> Result<(Value, Vec<OptionAdjustment>), ModelError> {
         let mut api_messages: Vec<Value> = Vec::new();
         let mut adjustments = Vec::new();
+        let cx = self.cx();
 
         for message in messages {
             let effective_role = downgrade_minimax_role(message.role, &mut adjustments);
@@ -235,39 +236,8 @@ impl OpenRouterAdapter {
             );
         }
 
-        // ThinkingLevel → reasoning object
-        if options.thinking != ThinkingLevel::Off {
-            let mut reasoning = json!({});
-
-            if let Some(budget) = options.thinking_budget_tokens {
-                reasoning["max_tokens"] = json!(budget);
-            } else {
-                let effort = match options.thinking {
-                    ThinkingLevel::Off => "none",
-                    ThinkingLevel::Minimal => "minimal",
-                    ThinkingLevel::Low => "low",
-                    ThinkingLevel::Medium => "medium",
-                    ThinkingLevel::High => "high",
-                    ThinkingLevel::XHigh => "xhigh",
-                    ThinkingLevel::Max => "max",
-                };
-                reasoning["effort"] = json!(effort);
-            }
-
-            if !options.include_thinking {
-                reasoning["exclude"] = json!(true);
-            }
-
-            body["reasoning"] = reasoning;
-        }
-
-        // temperature / top_p
-        if let Some(temp) = options.temperature {
-            body["temperature"] = json!(temp);
-        }
-        if let Some(tp) = options.top_p {
-            body["top_p"] = json!(tp);
-        }
+        // Reasoning-object dialect + sampling are OpenRouter's profile deviation.
+        adjustments.extend(self.profile.lower_options(&cx, options, &mut body));
 
         Ok((body, adjustments))
     }

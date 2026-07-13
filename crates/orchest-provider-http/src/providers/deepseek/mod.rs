@@ -16,13 +16,25 @@ use crate::{
     RequestOptions, StopReason, StreamEvent, ThinkingLevel, ToolDef, UpstreamErrorDetail,
 };
 
+use crate::catalog::LlmModelEntry;
+use crate::protocol::{Protocol, ProviderEntry, ProviderProfile, ResolvedModel};
 use crate::{defaults, telemetry};
+
+mod profile;
+pub use profile::{DeepSeekProfile, DEEPSEEK_PROFILE};
 
 pub struct DeepSeekAdapter {
     pub(super) api_key: String,
     pub(super) api_url: String,
     pub(super) model: String,
     pub(super) max_tokens: u32,
+    /// ADR-0002 resolution context, used to build a [`ResolvedModel`] for the
+    /// profile hooks. `entry` is always the DeepSeek entry; `catalog` is the
+    /// model's catalog row (or `None` for unlisted models).
+    pub(super) entry: &'static ProviderEntry,
+    pub(super) catalog: Option<&'static LlmModelEntry>,
+    /// The behavioral profile driving option lowering + reasoning replay.
+    pub(super) profile: &'static dyn ProviderProfile,
 }
 
 impl std::fmt::Debug for DeepSeekAdapter {
@@ -65,12 +77,34 @@ impl DeepSeekAdapter {
             ));
         }
 
+        let entry = crate::protocol::provider_entry("deepseek")
+            .expect("deepseek entry is registered on the protocol path");
+        let catalog = crate::catalog::find_model(&config.model);
+        let profile = entry
+            .profile_for(Protocol::Chat)
+            .expect("deepseek entry carries a Chat profile");
+
         Ok(Self {
             api_key,
             api_url: request::normalize_chat_url(&api_url),
             model: config.model,
             max_tokens: config.max_tokens,
+            entry,
+            catalog,
+            profile,
         })
+    }
+
+    /// The ADR-0002 resolution context for this adapter, rebuilt per request so
+    /// the profile hooks receive the provider entry, protocol, model, and catalog
+    /// row without the adapter having to retain a borrowed `ResolvedModel`.
+    pub(super) fn cx(&self) -> ResolvedModel<'_> {
+        ResolvedModel {
+            provider: self.entry,
+            protocol: Protocol::Chat,
+            model: &self.model,
+            catalog: self.catalog,
+        }
     }
 
     fn supports_thinking(&self) -> bool {
@@ -311,6 +345,26 @@ impl crate::registry::ProviderFactory for DeepSeekFactory {
     fn default_api_key_env(&self) -> &'static str {
         crate::defaults::deepseek::API_KEY_ENV
     }
+}
+
+// ADR-0002 protocol-factory path (slice 002). Referenced as data by the DeepSeek
+// `ProviderEntry.build_chat`; `ChatProtocolFactory` calls it without matching on
+// provider name (ADR rule 1). Transitional: wraps `DeepSeekAdapter`, whose
+// request builder now sources its reasoning-dialect divergence from
+// `DeepSeekProfile`. v0.12 collapses this into the Chat protocol core.
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (workspace convention)
+pub fn build_chat_adapter(
+    config: &orchest_provider_core::registry::ProviderConfig,
+    resolved: &ResolvedModel<'_>,
+) -> Result<Box<dyn orchest_protocol::ChatModel>, orchest_protocol::ProtocolError> {
+    let adapter = DeepSeekAdapter::from_config(DeepSeekConfig {
+        model: resolved.model.to_string(),
+        max_tokens: config.max_tokens.unwrap_or(crate::defaults::MAX_TOKENS),
+        api_key: config.api_key.clone(),
+        api_url: config.api_url.clone(),
+    })
+    .map_err(orchest_protocol::ProtocolError::from)?;
+    Ok(Box::new(adapter))
 }
 
 #[cfg(test)]

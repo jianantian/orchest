@@ -345,14 +345,22 @@ fn with_builtin_registers_renderful_gen_dialect() {
 #[cfg(feature = "visual")]
 #[test]
 fn with_builtin_registers_aliyun_gen_dialect() {
+    // "aliyun" hosts two gen dialects across features — the visual wanx image
+    // model here and the http fun-music audio model — so select by id, matching
+    // the volcengine image/video pattern below. (`.provider("aliyun")` is
+    // ambiguous once both the http and visual features are enabled together.)
     let reg = Registry::with_builtin();
     let picked = reg
         .gen()
-        .provider("aliyun")
+        .id("aliyun/wanx2.1-t2i-turbo")
         .select()
         .expect("aliyun wanx gen-task is registered under the visual feature");
     assert_eq!(picked.descriptor.model.as_ref(), "wanx2.1-t2i-turbo");
     assert_eq!(picked.descriptor.capability, Capability::GenTask);
+    assert!(picked
+        .descriptor
+        .output_modalities
+        .contains(&Modality::Image));
 }
 
 #[cfg(feature = "visual")]

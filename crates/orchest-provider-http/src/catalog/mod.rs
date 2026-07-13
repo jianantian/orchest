@@ -268,7 +268,11 @@ fn openai_models() -> LlmProviderInfo {
             context_window: 1_000_000,
             max_input_tokens: None,
             max_output_tokens: None,
-            thinking: None,
+            // GPT-5 series are reasoning models (canonical source for the
+            // adapter's reasoning support; replaces the o1/o3/o4/gpt-5 prefix).
+            thinking: Some(ThinkingSpec {
+                max_thinking_tokens: None,
+            }),
             input_modalities: &[Modality::Text, Modality::Image],
             output_modalities: &[Modality::Text],
             scenes: &[ModelScene::General, ModelScene::Coding, ModelScene::Agent],
@@ -282,7 +286,11 @@ fn openai_models() -> LlmProviderInfo {
             context_window: 1_000_000,
             max_input_tokens: None,
             max_output_tokens: None,
-            thinking: None,
+            // GPT-5 series are reasoning models (canonical source for the
+            // adapter's reasoning support; replaces the o1/o3/o4/gpt-5 prefix).
+            thinking: Some(ThinkingSpec {
+                max_thinking_tokens: None,
+            }),
             input_modalities: &[Modality::Text, Modality::Image],
             output_modalities: &[Modality::Text],
             scenes: &[ModelScene::General, ModelScene::Coding],
@@ -296,7 +304,11 @@ fn openai_models() -> LlmProviderInfo {
             context_window: 400_000,
             max_input_tokens: None,
             max_output_tokens: None,
-            thinking: None,
+            // GPT-5 series are reasoning models (canonical source for the
+            // adapter's reasoning support; replaces the o1/o3/o4/gpt-5 prefix).
+            thinking: Some(ThinkingSpec {
+                max_thinking_tokens: None,
+            }),
             input_modalities: &[Modality::Text, Modality::Image],
             output_modalities: &[Modality::Text],
             scenes: &[ModelScene::General],
@@ -310,7 +322,11 @@ fn openai_models() -> LlmProviderInfo {
             context_window: 400_000,
             max_input_tokens: None,
             max_output_tokens: None,
-            thinking: None,
+            // GPT-5 series are reasoning models (canonical source for the
+            // adapter's reasoning support; replaces the o1/o3/o4/gpt-5 prefix).
+            thinking: Some(ThinkingSpec {
+                max_thinking_tokens: None,
+            }),
             input_modalities: &[Modality::Text, Modality::Image],
             output_modalities: &[Modality::Text],
             scenes: &[ModelScene::General],
@@ -736,6 +752,24 @@ fn openrouter_provider() -> LlmProviderInfo {
     }
 }
 
+fn elss_provider() -> LlmProviderInfo {
+    // Elss is a dual-protocol gateway (ADR-0002 slice 010): the same model can be
+    // reached over either wire protocol, selected in the model string.
+    LlmProviderInfo {
+        provider_id: "elss",
+        display_name: "Elss",
+        models: LlmModelList::Dynamic {
+            description: "Elss (https://elss.ai) is a gateway exposing one key for Anthropic \
+                (Messages, preserves prompt caching / thinking) and OpenAI (Chat). Select the \
+                protocol in the model string — elss/messages/<model> or elss/chat/<model> — or \
+                omit it for auto-detection (claude-* -> Messages, else Chat). The provider-alias \
+                forms elss/anthropic/<model> and elss/openai/<model> remain valid.",
+            model_id_format: "elss/[protocol/]<model>  (protocol = messages | chat)",
+            model_id_example: "elss/messages/claude-sonnet-5",
+        },
+    }
+}
+
 fn build_catalog() -> Vec<LlmProviderInfo> {
     vec![
         anthropic_models(),
@@ -744,6 +778,7 @@ fn build_catalog() -> Vec<LlmProviderInfo> {
         volcengine_models(),
         minimax_models(),
         openrouter_provider(),
+        elss_provider(),
     ]
 }
 

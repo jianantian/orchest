@@ -20,8 +20,10 @@ fn make_adapter(api_url: &str) -> OpenRouterAdapter {
         max_tokens: 4096,
         api_key: Some("test-key".into()),
         api_url: Some(api_url.into()),
-        app_title: Some("TestApp".into()),
-        site_url: Some("https://example.com".into()),
+        extra_headers: vec![
+            ("X-OpenRouter-Title", "TestApp".into()),
+            ("HTTP-Referer", "https://example.com".into()),
+        ],
     })
     .expect("adapter should be created")
 }
@@ -33,8 +35,7 @@ fn default_api_url() {
         max_tokens: 4096,
         api_key: Some("key".into()),
         api_url: None,
-        app_title: None,
-        site_url: None,
+        extra_headers: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -50,8 +51,7 @@ fn config_api_key_takes_precedence() {
         max_tokens: 4096,
         api_key: Some("explicit-key".into()),
         api_url: Some("http://localhost".into()),
-        app_title: None,
-        site_url: None,
+        extra_headers: vec![],
     });
     assert!(adapter.is_ok());
 }
@@ -64,8 +64,7 @@ fn missing_api_key_error_code() {
         max_tokens: 4096,
         api_key: Some("".into()),
         api_url: Some("http://localhost".into()),
-        app_title: None,
-        site_url: None,
+        extra_headers: vec![],
     });
     // Empty string is still Some, so it succeeds (non-empty validation isn't done on key)
     assert!(adapter.is_ok());
@@ -410,4 +409,109 @@ fn openrouter_downgrades_minimax_only_roles_with_adjustment() {
             "{role:?} should record role adjustment"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0002 slice 004: OpenRouter on ChatProtocolFactory + OpenRouterProfile,
+// interpret_usage hook, and HeaderValue::Env resolution.
+// ---------------------------------------------------------------------------
+
+use crate::protocol::{provider_entry, resolve_headers, HeaderValue, ProviderProfile};
+use crate::TokenUsage;
+
+#[test]
+fn interpret_usage_reports_missing_usage() {
+    let adapter = make_adapter("http://localhost");
+    let mut usage = TokenUsage::default();
+    let adjustments =
+        OPENROUTER_PROFILE.interpret_usage(&adapter.cx(), &serde_json::Value::Null, &mut usage);
+    assert!(adjustments
+        .iter()
+        .any(|a| a.option == "usage" && a.reason == "usage_not_reported"));
+}
+
+#[test]
+fn interpret_usage_passes_present_usage() {
+    let adapter = make_adapter("http://localhost");
+    let mut usage = TokenUsage {
+        input_tokens: 10,
+        output_tokens: 5,
+        ..Default::default()
+    };
+    let adjustments =
+        OPENROUTER_PROFILE.interpret_usage(&adapter.cx(), &serde_json::Value::Null, &mut usage);
+    assert!(adjustments.is_empty());
+}
+
+#[test]
+fn entry_declares_env_routing_headers() {
+    let entry = provider_entry("openrouter").expect("openrouter migrated");
+    let names: Vec<_> = entry.extra_headers.iter().map(|(n, _)| *n).collect();
+    assert!(names.contains(&"X-OpenRouter-Title"));
+    assert!(names.contains(&"HTTP-Referer"));
+    assert!(entry
+        .extra_headers
+        .iter()
+        .all(|(_, v)| matches!(v, HeaderValue::Env(_))));
+}
+
+#[test]
+fn resolve_headers_reads_env_values() {
+    // This test exclusively owns these env vars.
+    let saved_title = std::env::var("OPENROUTER_APP_TITLE").ok();
+    let saved_site = std::env::var("OPENROUTER_SITE_URL").ok();
+    std::env::set_var("OPENROUTER_APP_TITLE", "MyApp");
+    std::env::remove_var("OPENROUTER_SITE_URL");
+
+    let entry = provider_entry("openrouter").unwrap();
+    let headers = resolve_headers(entry);
+    // Set var resolves; unset var is skipped.
+    assert_eq!(
+        headers
+            .iter()
+            .find(|(n, _)| *n == "X-OpenRouter-Title")
+            .map(|(_, v)| v.as_str()),
+        Some("MyApp")
+    );
+    assert!(headers.iter().all(|(n, _)| *n != "HTTP-Referer"));
+
+    match saved_title {
+        Some(v) => std::env::set_var("OPENROUTER_APP_TITLE", v),
+        None => std::env::remove_var("OPENROUTER_APP_TITLE"),
+    }
+    if let Some(v) = saved_site {
+        std::env::set_var("OPENROUTER_SITE_URL", v);
+    }
+}
+
+#[tokio::test]
+async fn create_adapter_from_config_routes_openrouter_multi_segment() {
+    let api_url = serve_sse_once(
+        r#"data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}
+
+data: [DONE]
+
+"#,
+    )
+    .await;
+
+    // Multi-segment model id: the second segment ("anthropic") stays part of the
+    // model name, not treated as a protocol.
+    let adapter = crate::create_adapter_from_config(crate::ProviderRuntimeConfig {
+        model: "openrouter/anthropic/claude-opus-4-8".into(),
+        api_key: Some("key".into()),
+        api_key_env: None,
+        api_url: Some(api_url),
+        max_tokens: Some(128),
+    })
+    .expect("openrouter multi-segment resolves through the protocol-factory path");
+
+    assert_eq!(adapter.provider_name(), "openrouter");
+    assert_eq!(adapter.model_name(), "anthropic/claude-opus-4-8");
+
+    let response = adapter
+        .complete(&[], &[], &default_options(), None)
+        .await
+        .expect("request should complete");
+    assert!(matches!(&response.content[0], ContentBlock::Text(t) if t == "hi"));
 }

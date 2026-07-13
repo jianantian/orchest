@@ -5,8 +5,7 @@
 use serde_json::{json, Value};
 
 use crate::{
-    CachePolicy, ContentBlock, Message, OptionAdjustment, RequestOptions, StopReason,
-    ThinkingLevel, ToolDef,
+    ContentBlock, Message, OptionAdjustment, RequestOptions, StopReason, ThinkingLevel, ToolDef,
 };
 
 use crate::role_compat::{downgrade_minimax_role, CompatibleRole};
@@ -45,6 +44,7 @@ impl DeepSeekAdapter {
     ) -> (Value, Vec<OptionAdjustment>) {
         let mut api_messages: Vec<Value> = Vec::new();
         let mut adjustments = Vec::new();
+        let cx = self.cx();
 
         for message in messages {
             let effective_role = downgrade_minimax_role(message.role, &mut adjustments);
@@ -94,14 +94,8 @@ impl DeepSeekAdapter {
                     }
                 }
                 CompatibleRole::Assistant => {
-                    let has_tool_calls = message
-                        .content
-                        .iter()
-                        .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
-
                     let mut text_parts = Vec::new();
                     let mut tool_calls_arr = Vec::new();
-                    let mut reasoning_text: Option<String> = None;
 
                     for block in &message.content {
                         match block {
@@ -116,9 +110,6 @@ impl DeepSeekAdapter {
                                     }
                                 }));
                             }
-                            ContentBlock::Thinking { text: Some(t), .. } if has_tool_calls => {
-                                reasoning_text = Some(t.clone());
-                            }
                             _ => {}
                         }
                     }
@@ -132,9 +123,10 @@ impl DeepSeekAdapter {
                     if !tool_calls_arr.is_empty() {
                         msg["tool_calls"] = Value::Array(tool_calls_arr);
                     }
-                    if let Some(rt) = reasoning_text {
-                        msg["reasoning_content"] = json!(rt);
-                    }
+                    // Reasoning replay is DeepSeek's profile deviation
+                    // (`reasoning_content`); canonical Chat drops Thinking blocks.
+                    self.profile
+                        .replay_reasoning(&cx, &mut msg, &message.content);
                     api_messages.push(msg);
                 }
                 CompatibleRole::Tool => {
@@ -187,47 +179,23 @@ impl DeepSeekAdapter {
             );
         }
 
-        // ThinkingLevel → thinking + reasoning_effort
-        if thinking_enabled {
-            body["thinking"] = json!({"type": "enabled"});
-            let effort = match options.thinking {
-                ThinkingLevel::XHigh | ThinkingLevel::Max => "max",
-                _ => "high",
-            };
-            body["reasoning_effort"] = json!(effort);
+        // Reasoning dialect (thinking/reasoning_effort) + sampling gating are
+        // DeepSeek's profile deviation. `thinking_enabled` already reflects the
+        // effective decision (the include_thinking / output-exclusion handling
+        // happens in `complete()`), so fold it into the options the profile
+        // lowers by forcing `thinking = Off` when disabled.
+        let effective_options = if thinking_enabled {
+            options.clone()
         } else {
-            body["thinking"] = json!({"type": "disabled"});
-        }
-
-        // thinking_budget_tokens is not supported by DeepSeek
-        if options.thinking_budget_tokens.is_some() {
-            adjustments.push(OptionAdjustment {
-                option: "thinking_budget_tokens".into(),
-                requested: json!(options.thinking_budget_tokens),
-                applied: json!(null),
-                reason: "unsupported_by_provider".into(),
-            });
-        }
-
-        // CachePolicy — DeepSeek caching is fully automatic
-        if options.cache_policy != CachePolicy::Auto && options.cache_policy != CachePolicy::None {
-            adjustments.push(OptionAdjustment {
-                option: "cache_policy".into(),
-                requested: json!(format!("{:?}", options.cache_policy)),
-                applied: json!("Auto"),
-                reason: "deepseek_cache_automatic".into(),
-            });
-        }
-
-        // Sampling parameters — omit when thinking is enabled
-        if !thinking_enabled {
-            if let Some(temp) = options.temperature {
-                body["temperature"] = json!(temp);
+            RequestOptions {
+                thinking: ThinkingLevel::Off,
+                ..options.clone()
             }
-            if let Some(tp) = options.top_p {
-                body["top_p"] = json!(tp);
-            }
-        }
+        };
+        adjustments.extend(
+            self.profile
+                .lower_options(&cx, &effective_options, &mut body),
+        );
 
         (body, adjustments)
     }

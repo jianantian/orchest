@@ -23,6 +23,10 @@ pub(super) fn normalize_chat_url(value: &str) -> String {
     }
 }
 
+/// **Fallback only** (ADR "Capability metadata"): the canonical source of
+/// reasoning support is the catalog row (`ResolvedModel::catalog`). This
+/// name-prefix table is consulted solely for models absent from the catalog
+/// (unlisted previews); it must never be the primary mechanism.
 pub(super) fn supports_reasoning_model(model: &str) -> bool {
     let name = model.split_once('/').map_or(model, |(_, m)| m);
     name.starts_with("o1")
@@ -31,6 +35,9 @@ pub(super) fn supports_reasoning_model(model: &str) -> bool {
         || name.starts_with("gpt-5")
 }
 
+/// **Fallback only** (ADR "Capability metadata"): the canonical source of the
+/// context window is the catalog row. This name-prefix table is consulted solely
+/// for models absent from the catalog.
 pub(super) fn openai_context_window(model: &str) -> u64 {
     let name = model.split_once('/').map_or(model, |(_, m)| m);
     if name.starts_with("gpt-5.5") || name == "gpt-5.4" {

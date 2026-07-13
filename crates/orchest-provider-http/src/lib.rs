@@ -34,6 +34,7 @@ pub use providers::{
 };
 
 pub(crate) mod http;
+pub(crate) mod protocol;
 pub(crate) mod role_compat;
 pub(crate) mod sse;
 
@@ -142,12 +143,19 @@ pub fn create_adapter_from_config(
     let registry = ProviderRegistry::new();
     let normalized = normalize_provider_model(&config.model)?;
 
+    // ADR-0002 protocol-factory path (slice 001): providers with a migrated
+    // `ProviderEntry` resolve through a `ProtocolFactory`; the rest stay on the
+    // legacy `ProviderFactory` bridge below until their slice migrates them.
+    if let Some(entry) = protocol::provider_entry(normalized.provider) {
+        return create_adapter_via_protocol(entry, &normalized, &config);
+    }
+
     let factory = registry
         .get(normalized.provider)
         .ok_or_else(|| unknown_provider(normalized.provider, &registry))?;
 
     let api_key = resolve_api_key(
-        factory,
+        factory.default_api_key_env(),
         config.api_key.as_deref(),
         config.api_key_env.as_deref(),
     )?;
@@ -156,12 +164,85 @@ pub fn create_adapter_from_config(
     factory.create_adapter(normalized.model, max_tokens, api_key, config.api_url)
 }
 
+/// Resolve `normalized` into a [`ResolvedModel`](protocol::ResolvedModel) and
+/// construct through the protocol factory. The protocol is the explicit segment
+/// if the model string carried one (erroring if the provider doesn't support
+/// it), else auto-detected per the ADR precedence rules (slice 008).
+fn create_adapter_via_protocol(
+    entry: &'static protocol::ProviderEntry,
+    normalized: &NormalizedProviderModel<'_>,
+    config: &ProviderRuntimeConfig,
+) -> Result<Box<dyn ModelAdapter>, ModelError> {
+    let proto = match normalized.protocol {
+        Some(explicit) => {
+            if !entry.protocols.contains(&explicit) {
+                return Err(ModelError::internal(
+                    format!(
+                        "protocol {explicit:?} is not supported by provider '{}'",
+                        entry.name
+                    ),
+                    "unsupported_protocol",
+                ));
+            }
+            explicit
+        }
+        None => protocol::auto_detect_protocol(entry, normalized.model).ok_or_else(|| {
+            ModelError::internal(
+                format!("provider '{}' declares no protocols", entry.name),
+                "no_protocol",
+            )
+        })?,
+    };
+
+    let factory = protocol::protocol_factory(proto).ok_or_else(|| {
+        ModelError::internal(
+            format!("no protocol factory for {proto:?}"),
+            "no_protocol_factory",
+        )
+    })?;
+
+    let api_key = resolve_api_key(
+        entry.default_api_key_env,
+        config.api_key.as_deref(),
+        config.api_key_env.as_deref(),
+    )?;
+
+    let resolved = protocol::ResolvedModel {
+        provider: entry,
+        protocol: proto,
+        model: normalized.model,
+        catalog: catalog::find_model(normalized.model),
+    };
+
+    let provider_config = ProviderConfig {
+        provider: entry.name.to_string(),
+        model: normalized.model.to_string(),
+        api_key: Some(api_key),
+        api_url: config.api_url.clone(),
+        max_tokens: config.max_tokens,
+        options: serde_json::Value::Null,
+    };
+
+    factory
+        .create_adapter(&provider_config, &resolved)
+        .map_err(ModelError::from)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NormalizedProviderModel<'a> {
     pub provider: &'a str,
+    /// The explicit protocol from a `provider/protocol/model` string, or `None`
+    /// when the protocol is left to auto-detection (ADR-0002 slice 008). Added as
+    /// a new field; existing callers that read `provider`/`model` are unaffected.
+    pub protocol: Option<protocol::Protocol>,
     pub model: &'a str,
 }
 
+/// Parse a model string into provider + optional explicit protocol + model,
+/// using the ADR-0002 vocabulary-based rule: the segment after the provider is a
+/// protocol **only** if it is a canonical protocol name or a provider-declared
+/// alias; otherwise it stays part of the model name (so multi-segment ids like
+/// `openrouter/<vendor>/<model>` are preserved).
 pub fn normalize_provider_model(model: &str) -> Result<NormalizedProviderModel<'_>, ModelError> {
     let registry = ProviderRegistry::new();
     let trimmed = model.trim();
@@ -172,32 +253,50 @@ pub fn normalize_provider_model(model: &str) -> Result<NormalizedProviderModel<'
         ));
     }
 
-    let Some((provider, model_name)) = trimmed.split_once('/') else {
+    let Some((provider, rest)) = trimmed.split_once('/') else {
         return Ok(NormalizedProviderModel {
             provider: "anthropic",
+            protocol: None,
             model: trimmed,
         });
     };
 
-    if provider.is_empty() || model_name.is_empty() {
+    if provider.is_empty() || rest.is_empty() {
         return Err(ModelError::internal(
             format!("invalid model string '{model}': expected 'provider/model'"),
             "invalid_model",
         ));
     }
 
-    if registry.get(provider).is_some() {
-        Ok(NormalizedProviderModel {
-            provider,
-            model: model_name,
-        })
-    } else {
-        Err(unknown_provider(provider, &registry))
+    // A provider is valid if it has a legacy factory OR a migrated entry (elss is
+    // entry-only after its dissolution in slice 009).
+    if registry.get(provider).is_none() && protocol::provider_entry(provider).is_none() {
+        return Err(unknown_provider(provider, &registry));
     }
+
+    // Vocabulary-based protocol segment: recognize the next segment as a protocol
+    // only if it is a canonical name or a provider alias, else it is model text.
+    if let Some((maybe_protocol, model_rest)) = rest.split_once('/') {
+        if !model_rest.is_empty() {
+            if let Some(proto) = protocol::recognize_protocol(provider, maybe_protocol) {
+                return Ok(NormalizedProviderModel {
+                    provider,
+                    protocol: Some(proto),
+                    model: model_rest,
+                });
+            }
+        }
+    }
+
+    Ok(NormalizedProviderModel {
+        provider,
+        protocol: None,
+        model: rest,
+    })
 }
 
 fn resolve_api_key(
-    factory: &dyn ProviderFactory,
+    default_env: &str,
     explicit: Option<&str>,
     api_key_env: Option<&str>,
 ) -> Result<String, ModelError> {
@@ -220,11 +319,10 @@ fn resolve_api_key(
         };
     }
 
-    let env_name = factory.default_api_key_env();
-    match std::env::var(env_name) {
+    match std::env::var(default_env) {
         Ok(value) => non_empty_api_key(&value),
         Err(_) => Err(ModelError::internal(
-            format!("{env_name} not set and no api_key provided"),
+            format!("{default_env} not set and no api_key provided"),
             "missing_api_key",
         )),
     }
