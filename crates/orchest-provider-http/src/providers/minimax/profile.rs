@@ -1,16 +1,20 @@
-//! Minimax's Messages [`ProviderProfile`] (ADR-0002 slice 006).
+//! Minimax's Messages [`ProviderProfile`] (ADR-0002 Phase 3).
 //!
 //! Minimax is Anthropic-Messages-compatible but forks the most on the Messages
 //! side — the stress test for the profile model. It deviates on **roles** (native
-//! Minimax-only roles instead of a downgrade) and **option lowering** (the
-//! `thinking: {type, display}` dialect + `service_tier`). Crucially it does NOT
-//! change content-block encoding or stream-event shape, so per the ADR
+//! Minimax-only roles instead of a downgrade), **multimodal content encoding**
+//! (real Image/Video/MidConvSystem serialization, Audio dropped), adaptive-thinking
+//! detection, `Bearer` auth, and capability facts. Crucially it does NOT change the
+//! stream-event shape or the `thinking: {type, display}` dialect, so per the ADR
 //! "dialect-fork threshold" it stays a profile, not a new protocol.
 
 use serde_json::{json, Value};
 
-use crate::protocol::{ProviderProfile, ResolvedModel, WireRole};
-use crate::{CachePolicy, OptionAdjustment, RequestOptions, Role, ThinkingLevel};
+use crate::protocol::{ProviderProfile, ResolvedModel};
+use crate::{
+    CacheCapability, CapabilitySource, ContentBlock, MediaSource, ModelCapabilities, ModelPricing,
+    OptionAdjustment, ReasoningCapability, Role, ThinkingLevel,
+};
 
 /// The Minimax Messages profile. Zero-sized; behavior is in the hook impls.
 pub struct MinimaxProfile;
@@ -18,12 +22,43 @@ pub struct MinimaxProfile;
 /// The singleton attached to the Minimax `ProviderEntry`.
 pub static MINIMAX_PROFILE: MinimaxProfile = MinimaxProfile;
 
+impl MinimaxProfile {
+    fn supports_adaptive(model: &str) -> bool {
+        model.starts_with("MiniMax-M3")
+    }
+
+    fn context_window(model: &str) -> u64 {
+        // `llm/desc.md:21-29` 模型表:M3 1M,M2 系列 204_800。
+        if model.starts_with("MiniMax-M3") {
+            1_000_000
+        } else {
+            204_800
+        }
+    }
+
+    fn media_source_value(source: &MediaSource) -> Value {
+        match source {
+            MediaSource::Url { url } => json!({"type": "url", "url": url}),
+            MediaSource::Base64 { media_type, data } => json!({
+                "type": "base64",
+                "media_type": media_type,
+                "data": data,
+            }),
+        }
+    }
+}
+
 impl ProviderProfile for MinimaxProfile {
     /// Minimax accepts its own roles natively (rather than downgrading them like
-    /// the Chat providers do). `System` is handled by the adapter as a top-level
+    /// the Chat providers do). `System` is handled by the core as a top-level
     /// `system` field, so it is not produced here.
-    fn map_role(&self, _cx: &ResolvedModel<'_>, role: &Role) -> WireRole {
-        WireRole(match role {
+    fn messages_wire_role(
+        &self,
+        _cx: &ResolvedModel<'_>,
+        role: &Role,
+        _adjustments: &mut Vec<OptionAdjustment>,
+    ) -> &'static str {
+        match role {
             Role::User | Role::Tool => "user",
             Role::Assistant => "assistant",
             Role::System => "system", // handled as top-level system; unreachable here
@@ -31,100 +66,120 @@ impl ProviderProfile for MinimaxProfile {
             Role::Group => "group",
             Role::SampleMessageUser => "sample_message_user",
             Role::SampleMessageAi => "sample_message_ai",
-        })
+        }
     }
 
-    /// Minimax's `thinking: {type, display}` dialect (adaptive vs budget_tokens),
-    /// cache control, sampling, and `service_tier` pass-through. Reads the already
-    /// serialized `max_tokens` from `body` for the budget-token ceiling. Adaptive
-    /// support is derived from the resolved model id.
-    fn lower_options(
+    fn messages_supports_adaptive(&self, cx: &ResolvedModel<'_>) -> bool {
+        Self::supports_adaptive(cx.model)
+    }
+
+    /// `Authorization: Bearer ${api_key}`(锚点 `llm/api.md:1354-1362`)。
+    fn messages_auth_headers(
         &self,
-        cx: &ResolvedModel<'_>,
-        options: &RequestOptions,
-        body: &mut Value,
-    ) -> Vec<OptionAdjustment> {
-        let mut adjustments = Vec::new();
-        let supports_adaptive = cx.model.starts_with("MiniMax-M3");
-        let effective_max_tokens = body["max_tokens"].as_u64().unwrap_or(0) as u32;
+        _cx: &ResolvedModel<'_>,
+        api_key: &str,
+    ) -> Vec<(&'static str, String)> {
+        vec![
+            ("authorization", format!("Bearer {api_key}")),
+            ("content-type", "application/json".to_string()),
+        ]
+    }
 
-        match options.thinking {
-            ThinkingLevel::Off => {
-                body["thinking"] = json!({"type": "disabled"});
-            }
-            level => {
-                if supports_adaptive {
-                    let effort = match level {
-                        ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
-                        ThinkingLevel::Medium => "medium",
-                        ThinkingLevel::High => "high",
-                        ThinkingLevel::XHigh => "xhigh",
-                        ThinkingLevel::Max => "max",
-                        ThinkingLevel::Off => unreachable!(),
-                    };
-                    body["thinking"] = json!({"type": "adaptive"});
-                    body["thinking"]["display"] = if options.include_thinking {
-                        json!("summarized")
-                    } else {
-                        json!("omitted")
-                    };
-                    body["output_config"] = json!({"effort": effort});
-
-                    if options.thinking_budget_tokens.is_some() {
-                        adjustments.push(OptionAdjustment {
-                            option: "thinking_budget_tokens".into(),
-                            requested: json!(options.thinking_budget_tokens),
-                            applied: json!(null),
-                            reason: "unsupported_in_adaptive_thinking".into(),
-                        });
-                    }
-                } else {
-                    let budget = options.thinking_budget_tokens.unwrap_or(match level {
-                        ThinkingLevel::Minimal => 1024,
-                        ThinkingLevel::Low => 4096,
-                        ThinkingLevel::Medium => 10240,
-                        ThinkingLevel::High => 32768,
-                        ThinkingLevel::XHigh => 65536,
-                        ThinkingLevel::Max => effective_max_tokens,
-                        ThinkingLevel::Off => unreachable!(),
-                    });
-                    body["thinking"] = json!({
-                        "type": "enabled",
-                        "budget_tokens": budget,
-                    });
-                    body["thinking"]["display"] = if options.include_thinking {
-                        json!("summarized")
-                    } else {
-                        json!("omitted")
-                    };
+    /// `Image`/`Video`/`MidConvSystem` 走真实序列化(锚点 `llm/api.md:1136-1321`);
+    /// `Audio` 在当前 LLM API 不被接受(Step 2 omni 占位),丢弃并记录 OptionAdjustment。
+    fn encode_multimodal_block(
+        &self,
+        _cx: &ResolvedModel<'_>,
+        block: &ContentBlock,
+        adjustments: &mut Vec<OptionAdjustment>,
+    ) -> Option<Value> {
+        match block {
+            // Minimax 原生支持 image,与 Anthropic 同 schema(`llm/api.md:1215-1305`)。
+            ContentBlock::Image { source, detail } => {
+                let mut obj = json!({"type": "image", "source": Self::media_source_value(source)});
+                if let Some(d) = detail {
+                    obj["detail"] = json!(d);
                 }
+                Some(obj)
             }
-        }
-
-        match options.cache_policy {
-            CachePolicy::Auto => {
-                body["cache_control"] = json!({"type": "ephemeral"});
+            // Minimax 视频 block,专属字段 fps / max_long_side_pixel(`llm/api.md:1334-1343`)。
+            ContentBlock::Video {
+                source,
+                fps,
+                detail,
+                max_long_side_pixel,
+            } => {
+                let mut obj = json!({"type": "video", "source": Self::media_source_value(source)});
+                if let Some(f) = fps {
+                    obj["fps"] = json!(f);
+                }
+                if let Some(d) = detail {
+                    obj["detail"] = json!(d);
+                }
+                if let Some(m) = max_long_side_pixel {
+                    obj["max_long_side_pixel"] = json!(m);
+                }
+                Some(obj)
             }
-            CachePolicy::Long => {
-                body["cache_control"] = json!({"type": "ephemeral", "ttl": "1h"});
+            // Minimax 对话中途插入的系统指令(`llm/api.md:1202-1211`)。
+            ContentBlock::MidConvSystem(text) => {
+                Some(json!({"type": "mid_conv_system", "text": text}))
             }
-            CachePolicy::None => {}
+            // Minimax LLM API 当前不接 audio block(Step 2 omni 占位);记录后丢弃。
+            ContentBlock::Audio { .. } => {
+                adjustments.push(OptionAdjustment {
+                    option: "content_block".into(),
+                    requested: json!("audio"),
+                    applied: json!(null),
+                    reason: "minimax_audio_block_unsupported_in_llm_api".into(),
+                });
+                None
+            }
+            _ => None,
         }
+    }
 
-        if let Some(temp) = options.temperature {
-            body["temperature"] = json!(temp);
+    fn capabilities(&self, cx: &ResolvedModel<'_>, max_output_tokens: u32) -> ModelCapabilities {
+        let supports_adaptive = Self::supports_adaptive(cx.model);
+        let efforts = if supports_adaptive {
+            vec![
+                ThinkingLevel::Off,
+                ThinkingLevel::Minimal,
+                ThinkingLevel::Low,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High,
+                ThinkingLevel::XHigh,
+                ThinkingLevel::Max,
+            ]
+        } else {
+            vec![
+                ThinkingLevel::Off,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High,
+                ThinkingLevel::Max,
+            ]
+        };
+        ModelCapabilities {
+            streaming: true,
+            tool_use: true,
+            parallel_tool_use: true,
+            reasoning: ReasoningCapability {
+                supported: true,
+                efforts,
+                budget_tokens: !supports_adaptive,
+                output_exclusion: true,
+                replay_metadata_required: true,
+            },
+            prompt_cache: CacheCapability {
+                supported: true,
+                explicit_breakpoints: true,
+                long_ttl: true,
+            },
+            max_output_tokens: Some(max_output_tokens),
+            context_window_size: Some(Self::context_window(cx.model)),
+            source: CapabilitySource::Static,
+            // Minimax catalog 暂无定价数据;返回零成本占位。
+            pricing: Some(ModelPricing::flat_text("USD", 0.0, 0.0)),
         }
-        if let Some(tp) = options.top_p {
-            body["top_p"] = json!(tp);
-        }
-
-        // service_tier pass-through. Kept on RequestOptions for now (moving
-        // gateway meta-options onto ProviderConfig::options per ADR Q10 is a
-        // consumer-surface change, deferred out of this non-breaking hotfix).
-        if let Some(tier) = &options.service_tier {
-            body["service_tier"] = json!(tier);
-        }
-
-        adjustments
     }
 }

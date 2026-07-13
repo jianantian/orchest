@@ -1,6 +1,11 @@
-use super::*;
+use super::{normalize_messages_url, resolve_url, MINIMAX_PROFILE};
+use crate::messages::MessagesAdapter;
+use crate::protocol::{Protocol, ProviderProfile, ResolvedModel};
 use crate::providers::anthropic::test_util::*;
-use crate::{ContentBlock, MediaSource, Message, RequestOptions, Role, StopReason, ThinkingLevel};
+use crate::ModelAdapter;
+use crate::{
+    defaults, ContentBlock, MediaSource, Message, RequestOptions, Role, StopReason, ThinkingLevel,
+};
 
 fn default_options() -> RequestOptions {
     RequestOptions {
@@ -9,33 +14,39 @@ fn default_options() -> RequestOptions {
     }
 }
 
-fn make_adapter(api_url: &str) -> MinimaxAdapter {
-    MinimaxAdapter::from_config(MinimaxConfig {
-        model: "MiniMax-M3".into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: Some(api_url.into()),
-    })
-    .expect("adapter should be created")
+/// The shared Messages core carrying Minimax's entry + profile. `api_url` is the
+/// already-resolved endpoint (URL resolution is covered separately).
+fn make_adapter(api_url: &str) -> MessagesAdapter {
+    MessagesAdapter::for_test("minimax", "MiniMax-M3", api_url, 128)
+}
+
+fn adapter_with(model: &str) -> MessagesAdapter {
+    MessagesAdapter::for_test("minimax", model, "http://localhost", 128)
+}
+
+/// A throwaway Minimax resolution context for exercising profile hooks directly.
+fn ctx(model: &str) -> ResolvedModel<'_> {
+    let entry = crate::protocol::provider_entry("minimax").expect("minimax entry");
+    ResolvedModel {
+        provider: entry,
+        protocol: Protocol::Messages,
+        model,
+        catalog: crate::catalog::find_model(model),
+    }
 }
 
 #[test]
 fn uses_default_api_url_when_not_provided() {
-    let adapter = MinimaxAdapter::from_config(MinimaxConfig {
-        model: "MiniMax-M3".into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: None,
-    })
-    .expect("adapter should be created");
-    assert_eq!(adapter.api_url, defaults::minimax::API_URL);
+    assert_eq!(
+        resolve_url(None).expect("default url resolves"),
+        defaults::minimax::API_URL
+    );
 }
 
 #[test]
 fn normalize_messages_url_appends_anthropic_path_when_missing() {
-    let adapter = make_adapter("https://api.minimaxi.com");
     assert_eq!(
-        adapter.api_url,
+        resolve_url(Some("https://api.minimaxi.com")).expect("url resolves"),
         "https://api.minimaxi.com/anthropic/v1/messages"
     );
 }
@@ -49,30 +60,24 @@ fn provider_name_and_model_name() {
 
 #[test]
 fn m3_supports_adaptive_m2_does_not() {
-    let m3 = make_adapter("http://localhost");
-    assert!(m3.supports_adaptive());
-    let m2 = MinimaxAdapter::from_config(MinimaxConfig {
-        model: "MiniMax-M2.7".into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
-    assert!(!m2.supports_adaptive());
+    assert!(MINIMAX_PROFILE.messages_supports_adaptive(&ctx("MiniMax-M3")));
+    assert!(!MINIMAX_PROFILE.messages_supports_adaptive(&ctx("MiniMax-M2.7")));
 }
 
 #[test]
 fn context_window_size_per_model() {
-    let m3 = make_adapter("http://localhost");
-    assert_eq!(m3.context_window_size(), 1_000_000);
-    let m2 = MinimaxAdapter::from_config(MinimaxConfig {
-        model: "MiniMax-M2.7-highspeed".into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
-    assert_eq!(m2.context_window_size(), 204_800);
+    assert_eq!(
+        adapter_with("MiniMax-M3")
+            .capabilities()
+            .context_window_size,
+        Some(1_000_000)
+    );
+    assert_eq!(
+        adapter_with("MiniMax-M2.7-highspeed")
+            .capabilities()
+            .context_window_size,
+        Some(204_800)
+    );
 }
 
 #[test]
@@ -87,7 +92,7 @@ fn serializes_image_url_natively() {
             detail: None,
         }],
     }];
-    let (body, adjustments) = adapter.build_request_body(&messages, &[], &default_options());
+    let (body, adjustments) = adapter.request_body_for_test(&messages, &[], &default_options());
     assert!(adjustments.is_empty(), "image is natively supported");
     let block = &body["messages"][0]["content"][0];
     assert_eq!(block["type"], "image");
@@ -108,7 +113,7 @@ fn serializes_image_base64_with_detail() {
             detail: Some("high".into()),
         }],
     }];
-    let (body, _) = adapter.build_request_body(&messages, &[], &default_options());
+    let (body, _) = adapter.request_body_for_test(&messages, &[], &default_options());
     let block = &body["messages"][0]["content"][0];
     assert_eq!(block["source"]["type"], "base64");
     assert_eq!(block["source"]["media_type"], "image/png");
@@ -129,7 +134,7 @@ fn serializes_video_with_minimax_fields() {
             max_long_side_pixel: Some(720),
         }],
     }];
-    let (body, adjustments) = adapter.build_request_body(&messages, &[], &default_options());
+    let (body, adjustments) = adapter.request_body_for_test(&messages, &[], &default_options());
     assert!(adjustments.is_empty());
     let block = &body["messages"][0]["content"][0];
     assert_eq!(block["type"], "video");
@@ -144,7 +149,7 @@ fn serializes_mid_conv_system() {
         role: Role::User,
         content: vec![ContentBlock::MidConvSystem("be brief".into())],
     }];
-    let (body, adjustments) = adapter.build_request_body(&messages, &[], &default_options());
+    let (body, adjustments) = adapter.request_body_for_test(&messages, &[], &default_options());
     assert!(adjustments.is_empty());
     let block = &body["messages"][0]["content"][0];
     assert_eq!(block["type"], "mid_conv_system");
@@ -162,7 +167,7 @@ fn audio_block_drops_with_adjustment() {
             },
         }],
     }];
-    let (body, adjustments) = adapter.build_request_body(&messages, &[], &default_options());
+    let (body, adjustments) = adapter.request_body_for_test(&messages, &[], &default_options());
     assert_eq!(body["messages"][0]["content"].as_array().unwrap().len(), 0);
     assert_eq!(adjustments.len(), 1);
     assert_eq!(
@@ -184,7 +189,7 @@ fn minimax_only_roles_serialize_actual_strings() {
             role,
             content: vec![ContentBlock::Text("hi".into())],
         }];
-        let (body, adjustments) = adapter.build_request_body(&messages, &[], &default_options());
+        let (body, adjustments) = adapter.request_body_for_test(&messages, &[], &default_options());
         assert_eq!(body["messages"][0]["role"], expected, "{role:?}");
         assert!(
             adjustments.is_empty(),
@@ -204,7 +209,7 @@ fn service_tier_appears_in_body() {
         role: Role::User,
         content: vec![ContentBlock::Text("hi".into())],
     }];
-    let (body, _) = adapter.build_request_body(&messages, &[], &opts);
+    let (body, _) = adapter.request_body_for_test(&messages, &[], &opts);
     assert_eq!(body["service_tier"], "priority");
 }
 
@@ -215,7 +220,7 @@ fn service_tier_absent_when_none() {
         role: Role::User,
         content: vec![ContentBlock::Text("hi".into())],
     }];
-    let (body, _) = adapter.build_request_body(&messages, &[], &default_options());
+    let (body, _) = adapter.request_body_for_test(&messages, &[], &default_options());
     assert!(body.get("service_tier").is_none());
 }
 
@@ -265,16 +270,14 @@ fn registry_includes_minimax() {
         names.contains(&"minimax"),
         "minimax should be a registered provider: {names:?}"
     );
-    let factory = registry.get("minimax").expect("minimax factory");
-    assert_eq!(factory.provider_name(), "minimax");
-    assert_eq!(factory.default_api_key_env(), "MINIMAX_API_KEY");
+    let entry = registry.get("minimax").expect("minimax entry");
+    assert_eq!(entry.name, "minimax");
+    assert_eq!(entry.default_api_key_env, "MINIMAX_API_KEY");
 }
 
 // ---------------------------------------------------------------------------
-// ADR-0002 slice 006: Minimax on MessagesProtocolFactory + MinimaxProfile.
+// ADR-0002: Minimax on MessagesProtocolFactory + MinimaxProfile.
 // ---------------------------------------------------------------------------
-
-use crate::protocol::{Protocol, ProviderProfile};
 
 #[test]
 fn minimax_migrated_to_messages_entry_with_profile_and_path_override() {
@@ -289,9 +292,9 @@ fn minimax_migrated_to_messages_entry_with_profile_and_path_override() {
 }
 
 #[test]
-fn map_role_emits_native_minimax_roles() {
-    let adapter = make_adapter("http://localhost");
-    let cx = adapter.cx();
+fn wire_role_emits_native_minimax_roles() {
+    let cx = ctx("MiniMax-M3");
+    let mut adjustments = Vec::new();
     for (role, expected) in [
         (Role::User, "user"),
         (Role::Tool, "user"),
@@ -301,19 +304,22 @@ fn map_role_emits_native_minimax_roles() {
         (Role::SampleMessageUser, "sample_message_user"),
         (Role::SampleMessageAi, "sample_message_ai"),
     ] {
-        assert_eq!(MINIMAX_PROFILE.map_role(&cx, &role).0, expected, "{role:?}");
+        assert_eq!(
+            MINIMAX_PROFILE.messages_wire_role(&cx, &role, &mut adjustments),
+            expected,
+            "{role:?}"
+        );
     }
+    assert!(
+        adjustments.is_empty(),
+        "Minimax native roles record no adjustment"
+    );
 }
 
 #[test]
 fn minimax_hits_anthropic_compatible_path() {
     // Base URL gets Minimax's /anthropic/v1/messages path (not canonical /v1/messages).
-    let adapter = make_adapter("https://api.minimaxi.com");
-    assert!(
-        adapter.api_url.ends_with("/anthropic/v1/messages"),
-        "got {}",
-        adapter.api_url
-    );
+    assert!(normalize_messages_url("https://api.minimaxi.com").ends_with("/anthropic/v1/messages"));
 }
 
 #[tokio::test]
