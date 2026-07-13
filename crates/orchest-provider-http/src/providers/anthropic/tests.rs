@@ -1,9 +1,15 @@
 use tokio::sync::mpsc;
 
 use super::test_util::*;
-use super::*;
-use crate::{CachePolicy, ContentBlock, StopReason};
-use response::map_stop_reason;
+use super::{resolve_url, ANTHROPIC_PROFILE};
+use crate::messages::response::map_stop_reason;
+use crate::messages::MessagesAdapter;
+use crate::protocol::{Protocol, ProviderProfile, ResolvedModel};
+use crate::ModelAdapter;
+use crate::{
+    defaults, CachePolicy, CapabilitySource, ContentBlock, MediaSource, Message, RequestOptions,
+    Role, StopReason, StreamEvent, ThinkingLevel,
+};
 
 const MINIMAL_SSE: &str = r#"event: message_start
 data: {"message":{"usage":{"input_tokens":10}}}
@@ -32,66 +38,57 @@ fn default_options() -> RequestOptions {
     }
 }
 
-fn make_adapter(api_url: &str) -> AnthropicAdapter {
-    AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-test".into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: Some(api_url.into()),
-    })
-    .expect("adapter should be created")
+/// The shared Messages core carrying Anthropic's entry + profile. `api_url` is the
+/// already-resolved endpoint (URL resolution is covered separately).
+fn make_adapter(api_url: &str) -> MessagesAdapter {
+    MessagesAdapter::for_test("anthropic", "claude-test", api_url, 128)
+}
+
+fn adapter_with(model: &str, max_tokens: u32) -> MessagesAdapter {
+    MessagesAdapter::for_test("anthropic", model, "http://localhost", max_tokens)
+}
+
+/// Whether Anthropic's profile treats `model` as adaptive-thinking, via a
+/// throwaway resolution context (the shared core's gate).
+fn supports_adaptive(model: &str) -> bool {
+    let entry = crate::protocol::provider_entry("anthropic").expect("anthropic entry");
+    let cx = ResolvedModel {
+        provider: entry,
+        protocol: Protocol::Messages,
+        model,
+        catalog: crate::catalog::find_model(model),
+    };
+    ANTHROPIC_PROFILE.messages_supports_adaptive(&cx)
 }
 
 #[test]
 fn uses_default_api_url() {
-    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-test".into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: None,
-    })
-    .expect("adapter should be created");
-
-    assert_eq!(adapter.api_url, defaults::anthropic::API_URL);
+    assert_eq!(
+        resolve_url(None).expect("default url resolves"),
+        defaults::anthropic::API_URL
+    );
 }
 
 #[test]
 fn uses_custom_api_url() {
     let api_url = "https://compatible.example.com/v1/messages";
-    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-test".into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: Some(api_url.into()),
-    })
-    .expect("adapter should be created");
-
-    assert_eq!(adapter.api_url, api_url);
+    assert_eq!(
+        resolve_url(Some(api_url)).expect("custom url resolves"),
+        api_url
+    );
 }
 
 #[test]
 fn appends_messages_endpoint() {
-    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-test".into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: Some("https://openrouter.ai/api".into()),
-    })
-    .expect("adapter should be created");
-
-    assert_eq!(adapter.api_url, "https://openrouter.ai/api/v1/messages");
+    assert_eq!(
+        resolve_url(Some("https://openrouter.ai/api")).expect("url resolves"),
+        "https://openrouter.ai/api/v1/messages"
+    );
 }
 
 #[test]
 fn rejects_empty_api_url() {
-    let result = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-test".into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: Some(" ".into()),
-    });
-
-    let error = result.expect_err("empty api url should be rejected");
+    let error = resolve_url(Some(" ")).expect_err("empty api url should be rejected");
     assert_eq!(error.code.as_deref(), Some("invalid_api_url"));
 }
 
@@ -228,58 +225,40 @@ data: {}
 
 #[test]
 fn thinking_level_maps_to_budget() {
-    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-3-opus".into(), // old model, uses enabled mode
-        max_tokens: 4096,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
+    let adapter = adapter_with("claude-3-opus", 4096); // old model, uses enabled mode
 
     let opts = RequestOptions {
         thinking: ThinkingLevel::High,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter.request_body_for_test(&[], &[], &opts);
     assert_eq!(body["thinking"]["type"], "enabled");
     assert_eq!(body["thinking"]["budget_tokens"], 32768);
 }
 
 #[test]
 fn thinking_budget_override() {
-    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-3-opus".into(),
-        max_tokens: 4096,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
+    let adapter = adapter_with("claude-3-opus", 4096);
 
     let opts = RequestOptions {
         thinking: ThinkingLevel::High,
         thinking_budget_tokens: Some(8000),
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter.request_body_for_test(&[], &[], &opts);
     assert_eq!(body["thinking"]["budget_tokens"], 8000);
 }
 
 #[test]
 fn thinking_budget_ignored_in_adaptive_reports_adjustment() {
-    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-sonnet-4-20250514".into(),
-        max_tokens: 4096,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
+    let adapter = adapter_with("claude-sonnet-4-20250514", 4096);
 
     let opts = RequestOptions {
         thinking: ThinkingLevel::High,
         thinking_budget_tokens: Some(8000),
         ..Default::default()
     };
-    let (body, adjustments) = adapter.build_request_body(&[], &[], &opts);
+    let (body, adjustments) = adapter.request_body_for_test(&[], &[], &opts);
     assert_eq!(body["thinking"]["type"], "adaptive");
     assert_eq!(body["output_config"]["effort"], "high");
     assert!(body["thinking"].get("budget_tokens").is_none());
@@ -289,13 +268,7 @@ fn thinking_budget_ignored_in_adaptive_reports_adjustment() {
 
 #[test]
 fn adaptive_uses_output_config_effort() {
-    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-opus-4-20250514".into(),
-        max_tokens: 4096,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
+    let adapter = adapter_with("claude-opus-4-20250514", 4096);
 
     for (level, expected) in [
         (ThinkingLevel::Low, "low"),
@@ -308,7 +281,7 @@ fn adaptive_uses_output_config_effort() {
             thinking: level,
             ..Default::default()
         };
-        let (body, _) = adapter.build_request_body(&[], &[], &opts);
+        let (body, _) = adapter.request_body_for_test(&[], &[], &opts);
         assert_eq!(body["thinking"]["type"], "adaptive");
         assert_eq!(body["output_config"]["effort"], expected, "level {level:?}");
     }
@@ -316,58 +289,40 @@ fn adaptive_uses_output_config_effort() {
 
 #[test]
 fn include_thinking_false_maps_to_omitted() {
-    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-sonnet-4-20250514".into(),
-        max_tokens: 4096,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
+    let adapter = adapter_with("claude-sonnet-4-20250514", 4096);
 
     let opts = RequestOptions {
         thinking: ThinkingLevel::High,
         include_thinking: false,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter.request_body_for_test(&[], &[], &opts);
     assert_eq!(body["thinking"]["display"], "omitted");
 }
 
 #[test]
 fn cache_policy_auto_adds_top_level_cache_control() {
-    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-test".into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
+    let adapter = adapter_with("claude-test", 128);
 
     let opts = RequestOptions {
         thinking: ThinkingLevel::Off,
         cache_policy: CachePolicy::Auto,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter.request_body_for_test(&[], &[], &opts);
     assert_eq!(body["cache_control"]["type"], "ephemeral");
 }
 
 #[test]
 fn cache_policy_long_sets_1h_ttl() {
-    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-test".into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
+    let adapter = adapter_with("claude-test", 128);
 
     let opts = RequestOptions {
         thinking: ThinkingLevel::Off,
         cache_policy: CachePolicy::Long,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter.request_body_for_test(&[], &[], &opts);
     assert_eq!(body["cache_control"]["ttl"], "1h");
 }
 
@@ -409,20 +364,14 @@ data: {}
 
 #[test]
 fn temperature_forwarded() {
-    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-test".into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
+    let adapter = adapter_with("claude-test", 128);
 
     let opts = RequestOptions {
         thinking: ThinkingLevel::Off,
         temperature: Some(0.7),
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter.request_body_for_test(&[], &[], &opts);
     assert!(
         body["temperature"].as_f64().unwrap() > 0.69
             && body["temperature"].as_f64().unwrap() < 0.71
@@ -431,23 +380,8 @@ fn temperature_forwarded() {
 
 #[test]
 fn adaptive_vs_enabled_mode() {
-    let adaptive = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-sonnet-4-20250514".into(),
-        max_tokens: 4096,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
-    assert!(adaptive.supports_adaptive());
-
-    let enabled = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-3-opus".into(),
-        max_tokens: 4096,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
-    assert!(!enabled.supports_adaptive());
+    assert!(supports_adaptive("claude-sonnet-4-20250514"));
+    assert!(!supports_adaptive("claude-3-opus"));
 }
 
 #[tokio::test]
@@ -571,20 +505,14 @@ async fn tx_none_skips_events() {
 
 #[test]
 fn max_tokens_override() {
-    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-test".into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
+    let adapter = adapter_with("claude-test", 128);
 
     let opts = RequestOptions {
         thinking: ThinkingLevel::Off,
         max_tokens: Some(4096),
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter.request_body_for_test(&[], &[], &opts);
     assert_eq!(body["max_tokens"], 4096);
 
     let opts_none = RequestOptions {
@@ -592,7 +520,7 @@ fn max_tokens_override() {
         max_tokens: None,
         ..Default::default()
     };
-    let (body2, _) = adapter.build_request_body(&[], &[], &opts_none);
+    let (body2, _) = adapter.request_body_for_test(&[], &[], &opts_none);
     assert_eq!(body2["max_tokens"], 128);
 }
 
@@ -688,27 +616,14 @@ async fn done_usage_matches_model_response() {
 
 #[test]
 fn provider_name_and_model_name() {
-    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-sonnet-4-20250514".into(),
-        max_tokens: 4096,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
-
+    let adapter = adapter_with("claude-sonnet-4-20250514", 4096);
     assert_eq!(adapter.provider_name(), "anthropic");
     assert_eq!(adapter.model_name(), "claude-sonnet-4-20250514");
 }
 
 #[test]
 fn capabilities_reports_static_source() {
-    let adapter = AnthropicAdapter::from_config(AnthropicConfig {
-        model: "claude-sonnet-4-20250514".into(),
-        max_tokens: 4096,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
+    let adapter = adapter_with("claude-sonnet-4-20250514", 4096);
 
     let caps = adapter.capabilities();
     assert!(caps.streaming);
@@ -745,8 +660,6 @@ async fn stop_reason_mapping() {
 // MidConvSystem drop + Minimax-only role downgrade.
 // ---------------------------------------------------------------------------
 
-use crate::{MediaSource, Message, Role};
-
 #[test]
 fn anthropic_serializes_image_url() {
     let adapter = make_adapter("http://example.com/v1/messages");
@@ -760,7 +673,7 @@ fn anthropic_serializes_image_url() {
             detail: None,
         }],
     }];
-    let (body, adjustments) = adapter.build_request_body(&messages, &[], &opts);
+    let (body, adjustments) = adapter.request_body_for_test(&messages, &[], &opts);
     assert!(adjustments.is_empty(), "image is natively supported");
     let blocks = &body["messages"][0]["content"];
     assert_eq!(blocks[0]["type"], "image");
@@ -782,7 +695,7 @@ fn anthropic_serializes_image_base64() {
             detail: Some("high".into()),
         }],
     }];
-    let (body, _) = adapter.build_request_body(&messages, &[], &opts);
+    let (body, _) = adapter.request_body_for_test(&messages, &[], &opts);
     let source = &body["messages"][0]["content"][0]["source"];
     assert_eq!(source["type"], "base64");
     assert_eq!(source["media_type"], "image/png");
@@ -812,7 +725,7 @@ fn anthropic_drops_video_audio_mid_conv_system_with_adjustments() {
             ContentBlock::MidConvSystem("reset persona".into()),
         ],
     }];
-    let (body, adjustments) = adapter.build_request_body(&messages, &[], &opts);
+    let (body, adjustments) = adapter.request_body_for_test(&messages, &[], &opts);
     assert_eq!(body["messages"][0]["content"].as_array().unwrap().len(), 0);
     assert_eq!(adjustments.len(), 3);
     let reasons: Vec<_> = adjustments.iter().map(|a| a.reason.as_str()).collect();
@@ -834,8 +747,8 @@ fn anthropic_downgrades_minimax_user_system_role() {
         role: Role::UserSystem,
         content: vec![ContentBlock::Text("be a pirate".into())],
     }];
-    let (body, adjustments) = adapter.build_request_body(&messages, &[], &opts);
-    // Anthropic's match leaves UserSystem in the non-system arm (api_role = "user").
+    let (body, adjustments) = adapter.request_body_for_test(&messages, &[], &opts);
+    // The default (Anthropic) role mapping downgrades UserSystem to "user".
     assert_eq!(body["messages"][0]["role"], "user");
     let adj = adjustments
         .iter()
@@ -855,7 +768,7 @@ fn anthropic_downgrades_minimax_group_and_sample_roles() {
             role,
             content: vec![ContentBlock::Text("hi".into())],
         }];
-        let (body, adjustments) = adapter.build_request_body(&messages, &[], &opts);
+        let (body, adjustments) = adapter.request_body_for_test(&messages, &[], &opts);
         assert_eq!(
             body["messages"][0]["role"], "user",
             "downgrade for {role:?}"
@@ -870,9 +783,9 @@ fn anthropic_downgrades_minimax_group_and_sample_roles() {
 }
 
 #[test]
-fn anthropic_passes_service_tier_silently() {
-    // service_tier is LLM-only; Anthropic adapter doesn't forward it today, but it
-    // must not break the build. This pins the field's presence on RequestOptions.
+fn anthropic_forwards_service_tier() {
+    // service_tier is a Messages-wire meta-option carried by the shared core;
+    // Anthropic callers rarely set it, but it round-trips when present.
     let adapter = make_adapter("http://example.com/v1/messages");
     let opts = RequestOptions {
         service_tier: Some("priority".into()),
@@ -882,11 +795,12 @@ fn anthropic_passes_service_tier_silently() {
         role: Role::User,
         content: vec![ContentBlock::Text("hi".into())],
     }];
-    let _ = adapter.build_request_body(&messages, &[], &opts);
+    let (body, _) = adapter.request_body_for_test(&messages, &[], &opts);
+    assert_eq!(body["service_tier"], "priority");
 }
 
 // ---------------------------------------------------------------------------
-// ADR-0002 slice 005: Anthropic on the MessagesProtocolFactory path.
+// ADR-0002: Anthropic on the MessagesProtocolFactory path.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -894,16 +808,14 @@ fn anthropic_migrated_to_messages_entry() {
     let entry = crate::protocol::provider_entry("anthropic")
         .expect("anthropic is migrated to the protocol path");
     assert_eq!(entry.name, "anthropic");
-    assert_eq!(entry.protocols, &[crate::protocol::Protocol::Messages]);
-    // Canonical Messages — no profile.
-    assert!(entry
-        .profile_for(crate::protocol::Protocol::Messages)
-        .is_none());
+    assert_eq!(entry.protocols, &[Protocol::Messages]);
+    // Post-collapse, Anthropic's capability/auth/encoding facts ride a profile.
+    assert!(entry.profile_for(Protocol::Messages).is_some());
 }
 
 #[test]
 fn messages_url_append_is_idempotent() {
-    use super::request::normalize_messages_url;
+    use super::normalize_messages_url;
     assert_eq!(
         normalize_messages_url("https://api.anthropic.com"),
         "https://api.anthropic.com/v1/messages"
