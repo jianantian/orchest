@@ -1,7 +1,7 @@
 //! Minimax Messages profile + construction (ADR-0002 Phase 3). Anthropic-Messages
 //! compatible (`POST /anthropic/v1/messages`) over the shared
 //! `MessagesAdapter`; its divergence (native roles, real
-//! multimodal blocks, `Bearer` auth, capability facts) lives in [`MinimaxProfile`].
+//! multimodal blocks, `Bearer` auth, capability facts) lives in [`MinimaxProfile`](profile::MinimaxProfile).
 
 mod profile;
 mod request;
@@ -15,7 +15,7 @@ use crate::defaults;
 use crate::protocol::ResolvedModel;
 use crate::ModelError;
 
-pub use profile::{MinimaxProfile, MINIMAX_PROFILE};
+pub use profile::MINIMAX_PROFILE;
 use request::normalize_messages_url;
 
 fn resolve_api_key(config: &ProviderConfig) -> Result<String, ModelError> {

@@ -1,6 +1,6 @@
 //! Anthropic Messages profile + construction (ADR-0002 Phase 3). Canonical
 //! Messages over the shared `MessagesAdapter`; deviations live
-//! in [`AnthropicProfile`].
+//! in [`AnthropicProfile`](profile::AnthropicProfile).
 
 mod profile;
 mod request;
@@ -14,7 +14,7 @@ use crate::defaults;
 use crate::protocol::ResolvedModel;
 use crate::ModelError;
 
-pub use profile::{AnthropicProfile, ANTHROPIC_PROFILE};
+pub use profile::ANTHROPIC_PROFILE;
 use request::normalize_messages_url;
 
 #[cfg(test)]

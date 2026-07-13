@@ -1,6 +1,6 @@
 //! OpenRouter Chat profile + construction (ADR-0002 Phase 3). OpenAI-compatible
 //! multi-provider gateway over the shared [`ChatAdapter`](crate::chat); deviations
-//! live in [`OpenRouterProfile`], and the routing headers ride on the entry
+//! live in [`OpenRouterProfile`](profile::OpenRouterProfile), and the routing headers ride on the entry
 //! (`HeaderValue::Env`, resolved by the shared core).
 
 mod profile;
@@ -15,7 +15,7 @@ use crate::defaults;
 use crate::protocol::ResolvedModel;
 use crate::ModelError;
 
-pub use profile::{OpenRouterProfile, OPENROUTER_PROFILE};
+pub use profile::OPENROUTER_PROFILE;
 
 fn resolve_api_key(config: &ProviderConfig) -> Result<String, ModelError> {
     config

@@ -1,6 +1,6 @@
 //! Volcengine Ark Chat profile + construction (ADR-0002 Phase 3). OpenAI-compatible
 //! Chat over the shared [`ChatAdapter`](crate::chat); deviations live in
-//! [`VolcengineProfile`].
+//! [`VolcengineProfile`](profile::VolcengineProfile).
 
 mod profile;
 mod request;
@@ -14,7 +14,7 @@ use crate::defaults;
 use crate::protocol::ResolvedModel;
 use crate::ModelError;
 
-pub use profile::{VolcengineProfile, VOLCENGINE_PROFILE};
+pub use profile::VOLCENGINE_PROFILE;
 
 fn resolve_api_key(config: &ProviderConfig) -> Result<String, ModelError> {
     config

@@ -1,6 +1,6 @@
 //! Minimax Messages endpoint normalization. The request body is built by the
 //! shared [`MessagesAdapter`](crate::messages); Minimax's divergence lives in
-//! [`MinimaxProfile`](super::MinimaxProfile).
+//! [`MinimaxProfile`](super::profile::MinimaxProfile).
 
 pub(super) fn normalize_messages_url(value: &str) -> String {
     let trimmed = value.trim().trim_end_matches('/');

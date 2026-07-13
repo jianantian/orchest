@@ -1,6 +1,6 @@
 //! DeepSeek Chat profile + construction (ADR-0002 Phase 3). OpenAI-compatible
 //! Chat over the shared [`ChatAdapter`](crate::chat); the reasoning-dialect
-//! deviation lives in [`DeepSeekProfile`].
+//! deviation lives in [`DeepSeekProfile`](profile::DeepSeekProfile).
 
 mod profile;
 mod request;
@@ -14,7 +14,7 @@ use crate::defaults;
 use crate::protocol::ResolvedModel;
 use crate::ModelError;
 
-pub use profile::{DeepSeekProfile, DEEPSEEK_PROFILE};
+pub use profile::DEEPSEEK_PROFILE;
 
 fn resolve_api_key(config: &ProviderConfig) -> Result<String, ModelError> {
     config

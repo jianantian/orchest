@@ -26,7 +26,10 @@ pub use types::*;
 pub mod asr;
 pub mod gen;
 
-pub mod providers;
+// Post-ADR-0002 the LLM provider modules are pure entry + profile + construction
+// helpers reached only through the entry surface (`chat_entries` / `create_adapter*`
+// / the registry) — not part of the public surface v1.0 freezes.
+pub(crate) mod providers;
 
 pub(crate) mod chat;
 pub(crate) mod http;
