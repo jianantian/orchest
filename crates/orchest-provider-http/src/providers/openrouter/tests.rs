@@ -1,6 +1,7 @@
 use tokio::sync::mpsc;
 
 use super::*;
+use crate::chat::ChatAdapter;
 use crate::providers::anthropic::test_util::*;
 use crate::{
     CapabilitySource, ContentBlock, Message, RequestOptions, Role, StopReason, StreamEvent,
@@ -14,64 +15,42 @@ fn default_options() -> RequestOptions {
     }
 }
 
-fn make_adapter(api_url: &str) -> OpenRouterAdapter {
-    OpenRouterAdapter::from_config(OpenRouterConfig {
-        model: "anthropic/claude-sonnet-4".into(),
-        max_tokens: 4096,
-        api_key: Some("test-key".into()),
-        api_url: Some(api_url.into()),
-        extra_headers: vec![
-            ("X-OpenRouter-Title", "TestApp".into()),
-            ("HTTP-Referer", "https://example.com".into()),
-        ],
-    })
-    .expect("adapter should be created")
+fn make_adapter(api_url: &str) -> ChatAdapter {
+    ChatAdapter::for_test("openrouter", "anthropic/claude-sonnet-4", api_url, 4096)
 }
 
 #[test]
 fn default_api_url() {
-    let adapter = OpenRouterAdapter::from_config(OpenRouterConfig {
-        model: "anthropic/claude-sonnet-4".into(),
-        max_tokens: 4096,
-        api_key: Some("key".into()),
-        api_url: None,
-        extra_headers: vec![],
-    })
-    .unwrap();
     assert_eq!(
-        adapter.api_url,
+        super::resolve_url(None).unwrap(),
         "https://openrouter.ai/api/v1/chat/completions"
     );
 }
 
 #[test]
 fn config_api_key_takes_precedence() {
-    let adapter = OpenRouterAdapter::from_config(OpenRouterConfig {
-        model: "anthropic/claude-sonnet-4".into(),
-        max_tokens: 4096,
-        api_key: Some("explicit-key".into()),
-        api_url: Some("http://localhost".into()),
-        extra_headers: vec![],
-    });
-    assert!(adapter.is_ok());
+    use orchest_provider_core::registry::ProviderConfig;
+    let config =
+        ProviderConfig::new("openrouter", "anthropic/claude-sonnet-4").with_api_key("explicit-key");
+    assert!(super::resolve_api_key(&config).is_ok());
 }
 
 #[test]
-fn missing_api_key_error_code() {
-    // Temporarily ensure no env var by testing the error message pattern
-    let adapter = OpenRouterAdapter::from_config(OpenRouterConfig {
-        model: "anthropic/claude-sonnet-4".into(),
-        max_tokens: 4096,
-        api_key: Some("".into()),
-        api_url: Some("http://localhost".into()),
-        extra_headers: vec![],
-    });
-    // Empty string is still Some, so it succeeds (non-empty validation isn't done on key)
-    assert!(adapter.is_ok());
+fn empty_api_key_still_resolves() {
+    use orchest_provider_core::registry::ProviderConfig;
+    // Empty string is still Some (non-empty validation isn't done here).
+    let config = ProviderConfig::new("openrouter", "anthropic/claude-sonnet-4").with_api_key("");
+    assert!(super::resolve_api_key(&config).is_ok());
 }
 
 #[tokio::test]
 async fn sends_custom_headers() {
+    // The routing headers come from env-declared HeaderValue::Env on the entry.
+    let saved_title = std::env::var("OPENROUTER_APP_TITLE").ok();
+    let saved_site = std::env::var("OPENROUTER_SITE_URL").ok();
+    std::env::set_var("OPENROUTER_APP_TITLE", "TestApp");
+    std::env::set_var("OPENROUTER_SITE_URL", "https://example.com");
+
     let (api_url, capture_rx) = serve_sse_once_capture(
         r#"data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}
 
@@ -101,6 +80,15 @@ data: [DONE]
         raw_lower.contains("authorization: bearer test-key"),
         "should contain Authorization header"
     );
+
+    match saved_title {
+        Some(v) => std::env::set_var("OPENROUTER_APP_TITLE", v),
+        None => std::env::remove_var("OPENROUTER_APP_TITLE"),
+    }
+    match saved_site {
+        Some(v) => std::env::set_var("OPENROUTER_SITE_URL", v),
+        None => std::env::remove_var("OPENROUTER_SITE_URL"),
+    }
 }
 
 #[test]
@@ -108,7 +96,9 @@ fn model_passthrough() {
     let adapter = make_adapter("http://localhost");
     assert_eq!(adapter.model_name(), "anthropic/claude-sonnet-4");
 
-    let (body, _) = adapter.build_request_body(&[], &[], &default_options());
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &default_options())
+        .expect("body");
     assert_eq!(body["model"], "anthropic/claude-sonnet-4");
 }
 
@@ -219,7 +209,9 @@ fn reasoning_object_from_thinking_level() {
         thinking: ThinkingLevel::High,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["reasoning"]["effort"], "high");
     assert!(body["reasoning"].get("max_tokens").is_none());
 
@@ -227,14 +219,18 @@ fn reasoning_object_from_thinking_level() {
         thinking: ThinkingLevel::Max,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["reasoning"]["effort"], "max");
 
     let opts = RequestOptions {
         thinking: ThinkingLevel::Minimal,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["reasoning"]["effort"], "minimal");
 }
 
@@ -248,7 +244,9 @@ fn reasoning_effort_and_max_tokens_are_exclusive() {
         thinking_budget_tokens: Some(10000),
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["reasoning"]["max_tokens"], 10000);
     assert!(body["reasoning"].get("effort").is_none());
 
@@ -258,7 +256,9 @@ fn reasoning_effort_and_max_tokens_are_exclusive() {
         thinking_budget_tokens: None,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["reasoning"]["effort"], "high");
     assert!(body["reasoning"].get("max_tokens").is_none());
 }
@@ -272,7 +272,9 @@ fn include_thinking_false_sends_exclude() {
         include_thinking: false,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["reasoning"]["exclude"], true);
 
     // include_thinking: true → no exclude field
@@ -281,7 +283,9 @@ fn include_thinking_false_sends_exclude() {
         include_thinking: true,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert!(body["reasoning"].get("exclude").is_none());
 }
 
@@ -313,7 +317,9 @@ fn replays_multiple_reasoning_detail_blocks_without_reasoning_blocks() {
         ],
     }];
 
-    let (body, _) = adapter.build_request_body(&messages, &[], &default_options());
+    let (body, _) = adapter
+        .request_body_for_test(&messages, &[], &default_options())
+        .expect("body");
     let msg = &body["messages"][0];
 
     assert!(msg.get("reasoning_blocks").is_none());
@@ -349,7 +355,7 @@ fn invalid_reasoning_replay_details_return_error() {
     }];
 
     let err = adapter
-        .try_build_request_body(&messages, &[], &default_options())
+        .request_body_for_test(&messages, &[], &default_options())
         .expect_err("invalid replay metadata should fail");
 
     assert_eq!(err.code.as_deref(), Some("invalid_reasoning_replay"));
@@ -399,7 +405,7 @@ fn openrouter_downgrades_minimax_only_roles_with_adjustment() {
             content: vec![ContentBlock::Text("hi".into())],
         }];
         let (body, adjustments) = adapter
-            .try_build_request_body(&messages, &[], &opts)
+            .request_body_for_test(&messages, &[], &opts)
             .expect("valid request");
         assert_eq!(body["messages"][0]["role"], expected_api_role, "{role:?}");
         assert!(
@@ -416,15 +422,25 @@ fn openrouter_downgrades_minimax_only_roles_with_adjustment() {
 // interpret_usage hook, and HeaderValue::Env resolution.
 // ---------------------------------------------------------------------------
 
-use crate::protocol::{provider_entry, resolve_headers, HeaderValue, ProviderProfile};
+use crate::protocol::{
+    provider_entry, resolve_headers, HeaderValue, Protocol, ProviderProfile, ResolvedModel,
+};
 use crate::TokenUsage;
+
+fn cx() -> ResolvedModel<'static> {
+    ResolvedModel {
+        provider: provider_entry("openrouter").unwrap(),
+        protocol: Protocol::Chat,
+        model: "anthropic/claude-sonnet-4",
+        catalog: None,
+    }
+}
 
 #[test]
 fn interpret_usage_reports_missing_usage() {
-    let adapter = make_adapter("http://localhost");
     let mut usage = TokenUsage::default();
     let adjustments =
-        OPENROUTER_PROFILE.interpret_usage(&adapter.cx(), &serde_json::Value::Null, &mut usage);
+        OPENROUTER_PROFILE.interpret_usage(&cx(), &serde_json::Value::Null, &mut usage);
     assert!(adjustments
         .iter()
         .any(|a| a.option == "usage" && a.reason == "usage_not_reported"));
@@ -432,14 +448,13 @@ fn interpret_usage_reports_missing_usage() {
 
 #[test]
 fn interpret_usage_passes_present_usage() {
-    let adapter = make_adapter("http://localhost");
     let mut usage = TokenUsage {
         input_tokens: 10,
         output_tokens: 5,
         ..Default::default()
     };
     let adjustments =
-        OPENROUTER_PROFILE.interpret_usage(&adapter.cx(), &serde_json::Value::Null, &mut usage);
+        OPENROUTER_PROFILE.interpret_usage(&cx(), &serde_json::Value::Null, &mut usage);
     assert!(adjustments.is_empty());
 }
 

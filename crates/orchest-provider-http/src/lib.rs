@@ -27,12 +27,9 @@ pub mod asr;
 pub mod gen;
 
 pub mod providers;
-pub use providers::{
-    AnthropicAdapter, AnthropicConfig, DeepSeekAdapter, DeepSeekConfig, MinimaxAdapter,
-    MinimaxConfig, OpenAiAdapter, OpenAiConfig, OpenRouterAdapter, OpenRouterConfig,
-    VolcengineAdapter, VolcengineConfig,
-};
+pub use providers::{AnthropicAdapter, AnthropicConfig, MinimaxAdapter, MinimaxConfig};
 
+pub(crate) mod chat;
 pub(crate) mod http;
 pub(crate) mod protocol;
 pub(crate) mod role_compat;

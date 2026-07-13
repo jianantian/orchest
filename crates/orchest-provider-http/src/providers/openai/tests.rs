@@ -1,6 +1,7 @@
 use tokio::sync::mpsc;
 
 use super::*;
+use crate::chat::ChatAdapter;
 use crate::providers::anthropic::test_util::*;
 use crate::{
     CachePolicy, CompatibilityPolicy, ContentBlock, Message, RequestOptions, Role, StopReason,
@@ -15,26 +16,22 @@ fn default_options() -> RequestOptions {
     }
 }
 
-fn make_adapter(api_url: &str) -> OpenAiAdapter {
-    OpenAiAdapter::from_config(OpenAiConfig {
-        model: "gpt-4o-mini".into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: Some(api_url.into()),
-    })
-    .expect("adapter should be created")
+fn make_adapter(api_url: &str) -> ChatAdapter {
+    ChatAdapter::for_test("openai", "gpt-4o-mini", api_url, 128)
 }
 
 #[test]
 fn strips_prefix() {
-    let adapter = OpenAiAdapter::from_config(OpenAiConfig {
+    // The provider prefix is stripped by the parser, not the adapter.
+    let adapter = crate::create_adapter_from_config(crate::ProviderRuntimeConfig {
         model: "openai/gpt-4o-mini".into(),
-        max_tokens: 128,
         api_key: Some("key".into()),
+        api_key_env: None,
         api_url: Some("http://localhost/v1/chat/completions".into()),
+        max_tokens: Some(128),
     })
     .expect("adapter");
-    assert_eq!(adapter.model, "gpt-4o-mini");
+    assert_eq!(adapter.model_name(), "gpt-4o-mini");
 }
 
 #[tokio::test]
@@ -116,7 +113,9 @@ fn build_request_body_serializes_correctly() {
         },
     ];
 
-    let (body, _) = adapter.build_request_body(&messages, &[], &default_options());
+    let (body, _) = adapter
+        .request_body_for_test(&messages, &[], &default_options())
+        .expect("body");
     let api_msgs = body["messages"].as_array().unwrap();
 
     assert_eq!(api_msgs[0]["role"], "system");
@@ -153,19 +152,14 @@ data: [DONE]
 
 #[test]
 fn thinking_level_maps_to_reasoning_effort() {
-    let adapter = OpenAiAdapter::from_config(OpenAiConfig {
-        model: "o3-mini".into(),
-        max_tokens: 4096,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
-
+    let adapter = ChatAdapter::for_test("openai", "o3-mini", "http://localhost", 4096);
     let opts = RequestOptions {
         thinking: ThinkingLevel::High,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["reasoning_effort"], "high");
 }
 
@@ -178,7 +172,9 @@ fn unsupported_reasoning_coerce_reports_adjustment() {
         ..Default::default()
     };
 
-    let (body, adjustments) = adapter.build_request_body(&[], &[], &opts);
+    let (body, adjustments) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
 
     assert!(body.get("reasoning_effort").is_none());
     assert!(adjustments.iter().any(|adjustment| {
@@ -213,32 +209,28 @@ data: [DONE]
 
 #[test]
 fn thinking_off_omits_reasoning_effort() {
-    let adapter = OpenAiAdapter::from_config(OpenAiConfig {
-        model: "o3-mini".into(),
-        max_tokens: 4096,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
-
+    let adapter = ChatAdapter::for_test("openai", "o3-mini", "http://localhost", 4096);
     let opts = RequestOptions {
         thinking: ThinkingLevel::Off,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert!(body.get("reasoning_effort").is_none());
 }
 
 #[test]
 fn cache_policy_long_reports_adjustment() {
     let adapter = make_adapter("http://localhost");
-
     let opts = RequestOptions {
         thinking: ThinkingLevel::Off,
         cache_policy: CachePolicy::Long,
         ..Default::default()
     };
-    let (_, adjustments) = adapter.build_request_body(&[], &[], &opts);
+    let (_, adjustments) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert!(adjustments
         .iter()
         .any(|a| a.reason == "unsupported_cache_retention"));
@@ -268,30 +260,34 @@ data: [DONE]
 #[test]
 fn temperature_forwarded() {
     let adapter = make_adapter("http://localhost");
-
     let opts = RequestOptions {
         thinking: ThinkingLevel::Off,
         temperature: Some(0.5),
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert!(body["temperature"].as_f64().unwrap() > 0.49);
 }
 
 #[test]
 fn max_tokens_override() {
     let adapter = make_adapter("http://localhost");
-
     let opts = RequestOptions {
         thinking: ThinkingLevel::Off,
         max_tokens: Some(8192),
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["max_tokens"], 8192);
 
     let opts_none = default_options();
-    let (body2, _) = adapter.build_request_body(&[], &[], &opts_none);
+    let (body2, _) = adapter
+        .request_body_for_test(&[], &[], &opts_none)
+        .expect("body");
     assert_eq!(body2["max_tokens"], 128);
 }
 
@@ -357,7 +353,9 @@ fn openai_downgrades_minimax_only_roles_with_adjustment() {
             role,
             content: vec![ContentBlock::Text("hi".into())],
         }];
-        let (body, adjustments) = adapter.build_request_body(&messages, &[], &opts);
+        let (body, adjustments) = adapter
+            .request_body_for_test(&messages, &[], &opts)
+            .expect("body");
         assert_eq!(body["messages"][0]["role"], expected_api_role, "{role:?}");
         assert!(
             adjustments
@@ -369,55 +367,22 @@ fn openai_downgrades_minimax_only_roles_with_adjustment() {
 }
 
 // ---------------------------------------------------------------------------
-// ADR-0002 slice 001: OpenAI on the ChatProtocolFactory path.
+// Entry / routing.
 // ---------------------------------------------------------------------------
 
-use crate::protocol::{
-    provider_entry, ChatProtocolFactory, Protocol, ProtocolFactory, ResolvedModel,
-};
-use orchest_provider_core::registry::ProviderConfig;
+use crate::protocol::{provider_entry, Protocol};
 
 #[test]
 fn openai_migrated_to_protocol_entry() {
-    let entry = provider_entry("openai").expect("openai is migrated to the protocol path");
+    let entry = provider_entry("openai").expect("openai is a protocol entry");
     assert_eq!(entry.name, "openai");
     assert_eq!(entry.protocols, &[Protocol::Chat]);
     assert_eq!(entry.default_api_key_env, "OPENAI_API_KEY");
-    // A genuinely unknown provider has no entry.
     assert!(provider_entry("gemini").is_none());
 }
 
-#[test]
-fn chat_protocol_factory_builds_openai_adapter() {
-    let entry = provider_entry("openai").unwrap();
-    let resolved = ResolvedModel {
-        provider: entry,
-        protocol: Protocol::Chat,
-        model: "gpt-4.1",
-        catalog: crate::catalog::find_model("openai/gpt-4.1"),
-    };
-    let config = ProviderConfig {
-        provider: "openai".into(),
-        model: "gpt-4.1".into(),
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost/v1/chat/completions".into()),
-        max_tokens: Some(256),
-        options: serde_json::Value::Null,
-    };
-
-    let adapter = ChatProtocolFactory
-        .create_adapter(&config, &resolved)
-        .expect("factory builds the canonical Chat adapter");
-    assert_eq!(adapter.provider_name(), "openai");
-    assert_eq!(adapter.model_name(), "gpt-4.1");
-}
-
 #[tokio::test]
-async fn create_adapter_from_config_routes_openai_through_new_path() {
-    // End-to-end through the crate entry point: parse -> ResolvedModel ->
-    // ChatProtocolFactory -> wrapped OpenAiAdapter -> live SSE decode. The mock
-    // ignores the request path, so this also exercises canonical-path append
-    // (the base URL below has no `/v1/chat/completions`).
+async fn create_adapter_from_config_routes_openai() {
     let api_url = serve_sse_once(
         r#"data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}
 
@@ -449,8 +414,6 @@ data: [DONE]
 
 #[test]
 fn chat_url_append_is_idempotent() {
-    // Canonical-path append covering the wrapped adapter's normalize_chat_url:
-    // a base URL gains `/v1/chat/completions`; a complete endpoint is unchanged.
     use super::request::normalize_chat_url;
     assert_eq!(
         normalize_chat_url("https://api.openai.com"),
@@ -467,23 +430,15 @@ fn chat_url_append_is_idempotent() {
 }
 
 // ---------------------------------------------------------------------------
-// ADR-0002 slice 007: catalog is the canonical source of capability facts;
-// the name-prefix tables are documented fallbacks for unlisted models.
+// Capability facts: catalog canonical; name-prefix fallback for unlisted models.
 // ---------------------------------------------------------------------------
 
-fn adapter_for(model: &str) -> OpenAiAdapter {
-    OpenAiAdapter::from_config(OpenAiConfig {
-        model: model.into(),
-        max_tokens: 128,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .expect("adapter")
+fn adapter_for(model: &str) -> ChatAdapter {
+    ChatAdapter::for_test("openai", model, "http://localhost", 128)
 }
 
 #[test]
 fn capabilities_read_from_catalog_for_listed_model() {
-    // gpt-5.4 is in the catalog: reasoning support + context window come from it.
     let caps = adapter_for("gpt-5.4").capabilities();
     assert!(caps.reasoning.supported);
     assert_eq!(caps.context_window_size, Some(1_000_000));
@@ -491,7 +446,6 @@ fn capabilities_read_from_catalog_for_listed_model() {
 
 #[test]
 fn unlisted_model_falls_back_to_prefix_tables() {
-    // o3-mini is absent from the catalog: the documented prefix fallback applies.
     let reasoning = adapter_for("o3-mini");
     assert!(
         reasoning.capabilities().reasoning.supported,
@@ -503,7 +457,6 @@ fn unlisted_model_falls_back_to_prefix_tables() {
         "unlisted context window via fallback default"
     );
 
-    // gpt-4o is absent from the catalog and not a reasoning prefix → false.
     let non_reasoning = adapter_for("gpt-4o");
     assert!(!non_reasoning.capabilities().reasoning.supported);
 }

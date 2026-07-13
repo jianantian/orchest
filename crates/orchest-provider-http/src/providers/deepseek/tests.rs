@@ -2,7 +2,9 @@ use serde_json::json;
 use tokio::sync::mpsc;
 
 use super::*;
+use crate::chat::ChatAdapter;
 use crate::providers::anthropic::test_util::*;
+use crate::{CompatibilityPolicy, Message, RequestOptions, StreamEvent, ThinkingLevel};
 use crate::{ContentBlock, Role};
 
 fn default_options() -> RequestOptions {
@@ -12,51 +14,30 @@ fn default_options() -> RequestOptions {
     }
 }
 
-fn make_adapter(api_url: &str) -> DeepSeekAdapter {
-    DeepSeekAdapter::from_config(DeepSeekConfig {
-        model: "deepseek-chat".into(),
-        max_tokens: 4096,
-        api_key: Some("test-key".into()),
-        api_url: Some(api_url.into()),
-    })
-    .expect("adapter should be created")
+fn make_adapter(api_url: &str) -> ChatAdapter {
+    ChatAdapter::for_test("deepseek", "deepseek-chat", api_url, 4096)
 }
 
 #[test]
 fn default_api_url() {
-    let adapter = DeepSeekAdapter::from_config(DeepSeekConfig {
-        model: "deepseek-chat".into(),
-        max_tokens: 4096,
-        api_key: Some("key".into()),
-        api_url: None,
-    })
-    .unwrap();
     assert_eq!(
-        adapter.api_url,
+        super::resolve_url(None).unwrap(),
         "https://api.deepseek.com/v1/chat/completions"
     );
 }
 
 #[test]
-
 fn env_var_resolution() {
     // Remove DEEPSEEK_API_KEY from the environment so the test is
     // deterministic regardless of ambient shell configuration.
     let saved = std::env::var("DEEPSEEK_API_KEY").ok();
     std::env::remove_var("DEEPSEEK_API_KEY");
 
-    let result = DeepSeekAdapter::from_config(DeepSeekConfig {
-        model: "deepseek-chat".into(),
-        max_tokens: 4096,
-        api_key: None,
-        api_url: Some("http://localhost".into()),
-    });
-    // Without DEEPSEEK_API_KEY set, this should fail.
+    let config = orchest_provider_core::registry::ProviderConfig::new("deepseek", "deepseek-chat");
+    let result = super::resolve_api_key(&config);
     assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert_eq!(err.code.as_deref(), Some("missing_api_key"));
+    assert_eq!(result.unwrap_err().code.as_deref(), Some("missing_api_key"));
 
-    // Restore the env var if it was previously set.
     if let Some(val) = saved {
         std::env::set_var("DEEPSEEK_API_KEY", val);
     }
@@ -68,7 +49,9 @@ fn thinking_off_disables_reasoning() {
         thinking: ThinkingLevel::Off,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts, false);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["thinking"]["type"], "disabled");
     assert!(body.get("reasoning_effort").is_none());
 }
@@ -82,7 +65,9 @@ fn thinking_levels_map_to_high_and_max() {
         thinking: ThinkingLevel::Minimal,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts, true);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["thinking"]["type"], "enabled");
     assert_eq!(body["reasoning_effort"], "high");
 
@@ -91,7 +76,9 @@ fn thinking_levels_map_to_high_and_max() {
         thinking: ThinkingLevel::Low,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts, true);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["reasoning_effort"], "high");
 
     // Medium → high
@@ -99,7 +86,9 @@ fn thinking_levels_map_to_high_and_max() {
         thinking: ThinkingLevel::Medium,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts, true);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["reasoning_effort"], "high");
 
     // High → high
@@ -107,7 +96,9 @@ fn thinking_levels_map_to_high_and_max() {
         thinking: ThinkingLevel::High,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts, true);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["reasoning_effort"], "high");
 
     // XHigh → max
@@ -115,7 +106,9 @@ fn thinking_levels_map_to_high_and_max() {
         thinking: ThinkingLevel::XHigh,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts, true);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["reasoning_effort"], "max");
 
     // Max → max
@@ -123,7 +116,9 @@ fn thinking_levels_map_to_high_and_max() {
         thinking: ThinkingLevel::Max,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts, true);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["reasoning_effort"], "max");
 }
 
@@ -134,7 +129,9 @@ fn thinking_is_top_level_not_extra_body() {
         thinking: ThinkingLevel::High,
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts, true);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     // thinking must be a top-level field
     assert!(body.get("thinking").is_some());
     assert_eq!(body["thinking"]["type"], "enabled");
@@ -153,7 +150,9 @@ fn omits_sampling_when_thinking_enabled() {
         top_p: Some(0.9),
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts, true);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert!(body.get("temperature").is_none());
     assert!(body.get("top_p").is_none());
 
@@ -164,7 +163,9 @@ fn omits_sampling_when_thinking_enabled() {
         top_p: Some(0.9),
         ..Default::default()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts, false);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert!(body.get("temperature").is_some());
     assert!(body.get("top_p").is_some());
 }
@@ -238,7 +239,9 @@ fn replays_reasoning_for_tool_call_turns() {
     }];
 
     let opts = default_options();
-    let (body, _) = adapter.build_request_body(&messages, &[], &opts, false);
+    let (body, _) = adapter
+        .request_body_for_test(&messages, &[], &opts)
+        .expect("body");
     let msg = &body["messages"][0];
     assert_eq!(msg["reasoning_content"], "I should call the tool");
     assert!(msg["tool_calls"].as_array().unwrap().len() == 1);
@@ -260,7 +263,9 @@ fn omits_reasoning_for_non_tool_call_turns() {
     }];
 
     let opts = default_options();
-    let (body, _) = adapter.build_request_body(&messages, &[], &opts, false);
+    let (body, _) = adapter
+        .request_body_for_test(&messages, &[], &opts)
+        .expect("body");
     let msg = &body["messages"][0];
     assert!(msg.get("reasoning_content").is_none());
     assert_eq!(msg["content"], "Here's my answer.");
@@ -363,47 +368,32 @@ fn max_tokens_override() {
         max_tokens: Some(8192),
         ..default_options()
     };
-    let (body, _) = adapter.build_request_body(&[], &[], &opts, false);
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &opts)
+        .expect("body");
     assert_eq!(body["max_tokens"], 8192);
 
-    let (body2, _) = adapter.build_request_body(&[], &[], &default_options(), false);
+    let (body2, _) = adapter
+        .request_body_for_test(&[], &[], &default_options())
+        .expect("body");
     assert_eq!(body2["max_tokens"], 4096);
 }
 
 #[test]
 fn v4_pro_supports_thinking() {
-    // v4-pro supports thinking per official thinking_mode guide
-    // (https://api-docs.deepseek.com/zh-cn/guides/thinking_mode).
-    // Regression test for issue 007: supports_thinking() previously excluded v4-pro.
-    let adapter = DeepSeekAdapter::from_config(DeepSeekConfig {
-        model: "deepseek-v4-pro".into(),
-        api_url: Some("http://localhost".into()),
-        api_key: Some("test".into()),
-        max_tokens: 4096,
-    })
-    .expect("v4-pro adapter should construct");
+    // v4-pro supports thinking per official thinking_mode guide.
+    let adapter = ChatAdapter::for_test("deepseek", "deepseek-v4-pro", "http://localhost", 4096);
     assert!(
-        adapter.supports_thinking(),
-        "deepseek-v4-pro should support thinking"
-    );
-    let caps = adapter.capabilities();
-    assert!(
-        caps.reasoning.supported,
+        adapter.capabilities().reasoning.supported,
         "v4-pro capabilities should report reasoning.supported = true"
     );
 }
 
 #[test]
 fn v4_flash_supports_thinking() {
-    let adapter = DeepSeekAdapter::from_config(DeepSeekConfig {
-        model: "deepseek-v4-flash".into(),
-        api_url: Some("http://localhost".into()),
-        api_key: Some("test".into()),
-        max_tokens: 4096,
-    })
-    .expect("v4-flash adapter should construct");
+    let adapter = ChatAdapter::for_test("deepseek", "deepseek-v4-flash", "http://localhost", 4096);
     assert!(
-        adapter.supports_thinking(),
+        adapter.capabilities().reasoning.supported,
         "deepseek-v4-flash should support thinking"
     );
 }
@@ -423,7 +413,9 @@ fn deepseek_downgrades_minimax_only_roles_with_adjustment() {
             role,
             content: vec![ContentBlock::Text("hi".into())],
         }];
-        let (body, adjustments) = adapter.build_request_body(&messages, &[], &opts, false);
+        let (body, adjustments) = adapter
+            .request_body_for_test(&messages, &[], &opts)
+            .expect("body");
         assert_eq!(body["messages"][0]["role"], expected_api_role, "{role:?}");
         assert!(
             adjustments

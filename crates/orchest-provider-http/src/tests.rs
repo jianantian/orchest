@@ -554,34 +554,24 @@ fn all_adapters_report_normalized_capabilities() {
             })
             .unwrap(),
         ),
-        Box::new(
-            OpenAiAdapter::from_config(OpenAiConfig {
-                model: "gpt-4o".into(),
-                max_tokens: 4096,
-                api_key: Some("key".into()),
-                api_url: Some("http://localhost".into()),
-            })
-            .unwrap(),
-        ),
-        Box::new(
-            DeepSeekAdapter::from_config(DeepSeekConfig {
-                model: "deepseek-chat".into(),
-                max_tokens: 4096,
-                api_key: Some("key".into()),
-                api_url: Some("http://localhost".into()),
-            })
-            .unwrap(),
-        ),
-        Box::new(
-            OpenRouterAdapter::from_config(OpenRouterConfig {
-                model: "anthropic/claude-sonnet-4".into(),
-                max_tokens: 4096,
-                api_key: Some("key".into()),
-                api_url: Some("http://localhost".into()),
-                extra_headers: vec![],
-            })
-            .unwrap(),
-        ),
+        Box::new(crate::chat::ChatAdapter::for_test(
+            "openai",
+            "gpt-4o",
+            "http://localhost",
+            4096,
+        )),
+        Box::new(crate::chat::ChatAdapter::for_test(
+            "deepseek",
+            "deepseek-chat",
+            "http://localhost",
+            4096,
+        )),
+        Box::new(crate::chat::ChatAdapter::for_test(
+            "openrouter",
+            "anthropic/claude-sonnet-4",
+            "http://localhost",
+            4096,
+        )),
     ];
 
     for adapter in &adapters {
@@ -625,13 +615,7 @@ fn provider_reasons_are_not_lost() {
 
 #[test]
 fn system_role_maps_per_provider() {
-    let adapter = OpenAiAdapter::from_config(OpenAiConfig {
-        model: "gpt-4o".into(),
-        max_tokens: 4096,
-        api_key: Some("key".into()),
-        api_url: Some("http://localhost".into()),
-    })
-    .unwrap();
+    let adapter = crate::chat::ChatAdapter::for_test("openai", "gpt-4o", "http://localhost", 4096);
 
     let messages = [Message {
         role: Role::System,

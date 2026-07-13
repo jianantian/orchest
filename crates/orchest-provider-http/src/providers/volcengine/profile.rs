@@ -1,28 +1,34 @@
-//! Volcengine's Chat [`ProviderProfile`] (ADR-0002 slice 003).
+//! Volcengine's Chat [`ProviderProfile`] (ADR-0002 Phase 3).
 //!
-//! Volcengine (Ark) is OpenAI-compatible Chat with two deviations: its thinking
-//! field is a bare `thinking: {type}` (no `reasoning_effort`), and it cannot
-//! exclude reasoning output. `lower_options` owns the first; `option_support`
-//! declares the second so the shared `CompatibilityPolicy` handling
-//! ([`resolve_reasoning_exclusion`](crate::protocol::resolve_reasoning_exclusion))
-//! degrades/errors uniformly instead of a private adapter branch.
+//! Volcengine (Ark) is OpenAI-compatible Chat over the shared
+//! [`ChatAdapter`](crate::chat) with a bare `thinking: {type}` dialect (no
+//! `reasoning_effort`), `reasoning_content` replay, catalog-driven capability
+//! probing, and no reasoning-output exclusion. Its reasoning gate is silent (an
+//! unlisted model just disables thinking, with no error even under Strict).
 
 use serde_json::{json, Value};
 
-use crate::protocol::{OptionSupport, ProviderProfile, RequestOption, ResolvedModel};
-use crate::{CachePolicy, OptionAdjustment, RequestOptions, ThinkingLevel};
+use crate::protocol::{
+    AdjustmentSpec, AppliedValue, OptionSupport, ProviderProfile, RequestOption, ResolvedModel,
+};
+use crate::{
+    CacheCapability, CachePolicy, CapabilitySource, ContentBlock, ModelCapabilities, ModelError,
+    OptionAdjustment, ReasoningCapability, RequestOptions, ThinkingLevel, TokenUsage,
+};
 
-/// The Volcengine Chat profile. Zero-sized; all behavior is in the hook impls.
+/// The Volcengine Chat profile.
 pub struct VolcengineProfile;
 
 /// The singleton attached to the Volcengine `ProviderEntry`.
 pub static VOLCENGINE_PROFILE: VolcengineProfile = VolcengineProfile;
 
+impl VolcengineProfile {
+    fn supports_thinking(cx: &ResolvedModel<'_>) -> bool {
+        cx.catalog.map(|m| m.thinking.is_some()).unwrap_or(false)
+    }
+}
+
 impl ProviderProfile for VolcengineProfile {
-    /// Volcengine expresses reasoning as a bare top-level `thinking: {type}`
-    /// (no `reasoning_effort`) and omits sampling when thinking is enabled.
-    /// `options.thinking == Off` here reflects the effective decision (the shared
-    /// exclusion handling ran before this hook).
     fn lower_options(
         &self,
         _cx: &ResolvedModel<'_>,
@@ -36,15 +42,6 @@ impl ProviderProfile for VolcengineProfile {
             body["thinking"] = json!({"type": "enabled"});
         } else {
             body["thinking"] = json!({"type": "disabled"});
-        }
-
-        if options.thinking_budget_tokens.is_some() {
-            adjustments.push(OptionAdjustment {
-                option: "thinking_budget_tokens".into(),
-                requested: json!(options.thinking_budget_tokens),
-                applied: json!(null),
-                reason: "unsupported_by_provider".into(),
-            });
         }
 
         if options.cache_policy != CachePolicy::Auto && options.cache_policy != CachePolicy::None {
@@ -68,13 +65,112 @@ impl ProviderProfile for VolcengineProfile {
         adjustments
     }
 
-    /// Volcengine cannot exclude reasoning output. Everything else is canonical.
-    fn option_support(&self, _cx: &ResolvedModel<'_>, option: RequestOption) -> OptionSupport {
+    fn replay_reasoning(
+        &self,
+        _cx: &ResolvedModel<'_>,
+        assistant_msg: &mut Value,
+        blocks: &[ContentBlock],
+    ) -> Result<(), ModelError> {
+        let has_tool_calls = blocks
+            .iter()
+            .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
+        if !has_tool_calls {
+            return Ok(());
+        }
+        let reasoning = blocks.iter().rev().find_map(|b| match b {
+            ContentBlock::Thinking { text: Some(t), .. } => Some(t.clone()),
+            _ => None,
+        });
+        if let Some(text) = reasoning {
+            assistant_msg["reasoning_content"] = json!(text);
+        }
+        Ok(())
+    }
+
+    fn option_support(&self, cx: &ResolvedModel<'_>, option: RequestOption) -> OptionSupport {
         match option {
-            RequestOption::ReasoningOutputExclusion => OptionSupport::Unsupported {
-                code: "unsupported_reasoning_output_exclusion",
-                message: "Volcengine does not support output exclusion for reasoning",
+            // Reasoning is silently gated on catalog support (no error, no adjustment).
+            RequestOption::Reasoning => {
+                if Self::supports_thinking(cx) {
+                    OptionSupport::Supported
+                } else {
+                    OptionSupport::Unsupported {
+                        strict_error: None,
+                        disables_thinking: true,
+                        adjustment: None,
+                    }
+                }
+            }
+            RequestOption::ThinkingBudget => OptionSupport::Unsupported {
+                strict_error: None,
+                disables_thinking: false,
+                adjustment: Some(AdjustmentSpec {
+                    option: "thinking_budget_tokens",
+                    applied: AppliedValue::Null,
+                    reason: "unsupported_by_provider",
+                }),
             },
+            RequestOption::ReasoningOutputExclusion => OptionSupport::Unsupported {
+                strict_error: Some((
+                    "unsupported_reasoning_output_exclusion",
+                    "Volcengine does not support output exclusion for reasoning",
+                )),
+                disables_thinking: true,
+                adjustment: Some(AdjustmentSpec {
+                    option: "include_thinking",
+                    applied: AppliedValue::Bool(false),
+                    reason: "thinking_disabled_for_output_exclusion",
+                }),
+            },
+        }
+    }
+
+    fn chat_sse_reasoning(
+        &self,
+        _cx: &ResolvedModel<'_>,
+    ) -> (Option<&'static str>, Option<&'static str>) {
+        (Some("reasoning_content"), None)
+    }
+
+    /// Volcengine records no usage-missing adjustment (unlike OpenAI/DeepSeek/OpenRouter).
+    fn interpret_usage(
+        &self,
+        _cx: &ResolvedModel<'_>,
+        _raw: &Value,
+        _usage: &mut TokenUsage,
+    ) -> Vec<OptionAdjustment> {
+        Vec::new()
+    }
+
+    fn capabilities(&self, cx: &ResolvedModel<'_>, max_output_tokens: u32) -> ModelCapabilities {
+        let thinks = Self::supports_thinking(cx);
+        ModelCapabilities {
+            streaming: true,
+            tool_use: true,
+            parallel_tool_use: true,
+            reasoning: ReasoningCapability {
+                supported: thinks,
+                efforts: if thinks {
+                    vec![ThinkingLevel::High, ThinkingLevel::Max]
+                } else {
+                    vec![]
+                },
+                budget_tokens: false,
+                output_exclusion: false,
+                replay_metadata_required: false,
+            },
+            prompt_cache: CacheCapability {
+                supported: true,
+                explicit_breakpoints: false,
+                long_ttl: false,
+            },
+            max_output_tokens: Some(max_output_tokens),
+            context_window_size: cx.catalog.map(|m| m.context_window).or(Some(128_000)),
+            source: CapabilitySource::Static,
+            pricing: cx
+                .catalog
+                .and_then(|m| m.pricing.clone())
+                .or_else(|| Some(crate::pricing::volcengine_pricing(cx.model))),
         }
     }
 }

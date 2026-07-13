@@ -11,9 +11,8 @@ pub mod openai;
 pub mod openrouter;
 pub mod volcengine;
 
+// Chat providers (openai/deepseek/volcengine/openrouter) are pure entry +
+// profile over the shared ChatAdapter (ADR-0002 Phase 3) — no vendor adapter
+// types. Anthropic/Minimax (Messages) are collapsed in the follow-on.
 pub use anthropic::{AnthropicAdapter, AnthropicConfig};
-pub use deepseek::{DeepSeekAdapter, DeepSeekConfig};
 pub use minimax::{MinimaxAdapter, MinimaxConfig};
-pub use openai::{OpenAiAdapter, OpenAiConfig};
-pub use openrouter::{OpenRouterAdapter, OpenRouterConfig};
-pub use volcengine::{VolcengineAdapter, VolcengineConfig};
