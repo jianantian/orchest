@@ -1,7 +1,6 @@
 //! OpenAI Chat profile + construction (ADR-0002 Phase 3).
 //!
-//! OpenAI is canonical Chat Completions over the shared [`ChatAdapter`]
-//! (crate::chat). Its only deviations, carried here as [`OpenAiProfile`]:
+//! OpenAI is canonical Chat Completions over the shared `ChatAdapter` (crate::chat). Its only deviations, carried here as [`OpenAiProfile`]:
 //! - reasoning / thinking-budget option support (Strict errors), and
 //! - capability facts — `openai_pricing` plus name-prefix fallbacks for
 //!   reasoning support / context window when a model is absent from the catalog.

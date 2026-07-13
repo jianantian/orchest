@@ -27,10 +27,10 @@ pub mod asr;
 pub mod gen;
 
 pub mod providers;
-pub use providers::{AnthropicAdapter, AnthropicConfig, MinimaxAdapter, MinimaxConfig};
 
 pub(crate) mod chat;
 pub(crate) mod http;
+pub(crate) mod messages;
 pub(crate) mod protocol;
 pub(crate) mod role_compat;
 pub(crate) mod sse;

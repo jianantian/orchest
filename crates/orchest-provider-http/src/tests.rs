@@ -545,15 +545,12 @@ async fn helpers_use_model_adapter_complete() {
 #[test]
 fn all_adapters_report_normalized_capabilities() {
     let adapters: Vec<Box<dyn ModelAdapter>> = vec![
-        Box::new(
-            AnthropicAdapter::from_config(AnthropicConfig {
-                model: "claude-sonnet-4".into(),
-                max_tokens: 4096,
-                api_key: Some("key".into()),
-                api_url: Some("http://localhost".into()),
-            })
-            .unwrap(),
-        ),
+        Box::new(crate::messages::MessagesAdapter::for_test(
+            "anthropic",
+            "claude-sonnet-4",
+            "http://localhost",
+            4096,
+        )),
         Box::new(crate::chat::ChatAdapter::for_test(
             "openai",
             "gpt-4o",

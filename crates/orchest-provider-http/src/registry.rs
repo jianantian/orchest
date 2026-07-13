@@ -1,10 +1,10 @@
-//! Provider registry over [`ProviderEntry`].
+//! Provider registry over `ProviderEntry`.
 //!
 //! After ADR-0002 Phase 3 the legacy `ProviderFactory` trait and per-provider
 //! `*Factory` structs are gone: construction goes through the protocol factories
-//! ([`ChatProtocolFactory`](crate::protocol::ChatProtocolFactory) /
-//! [`MessagesProtocolFactory`](crate::protocol::MessagesProtocolFactory)) selected
-//! from the resolved [`ProviderEntry`]. This registry is now just an enumerable
+//! (`ChatProtocolFactory` /
+//! `MessagesProtocolFactory`) selected
+//! from the resolved `ProviderEntry`. This registry is now just an enumerable
 //! view over the built-in entries (identity + protocols + aliases + path
 //! overrides + headers + profiles) used for provider-name validation and
 //! diagnostics.

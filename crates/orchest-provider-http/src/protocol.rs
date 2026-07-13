@@ -148,7 +148,7 @@ pub struct ResolvedModel<'a> {
 ///
 /// Hooks are added **by name, one at a time, when a real provider demonstrates
 /// the need** (ADR rule 3): `lower_options` + `replay_reasoning` (DeepSeek),
-/// `option_support` (Volcengine), `interpret_usage` (OpenRouter), `map_role`
+/// `option_support` (Volcengine), `interpret_usage` (OpenRouter), `messages_wire_role`
 /// (Minimax). `normalize_error` from the ADR sketch is intentionally NOT here —
 /// no provider has needed it yet, so it stays unwritten. There is deliberately
 /// **no** generic `modify_request(&mut body)` escape hatch: each hook's scope is
@@ -224,16 +224,41 @@ pub trait ProviderProfile: Send + Sync {
         OptionSupport::Supported
     }
 
-    /// Map a canonical role onto the provider-accepted wire role. Default: the
-    /// canonical Messages mapping, which downgrades Minimax-only roles (as the
-    /// Chat providers do via `role_compat`). Minimax overrides this to emit its
-    /// native roles (`user_system` / `group` / `sample_message_*`).
-    fn map_role(&self, _cx: &ResolvedModel<'_>, role: &Role) -> WireRole {
-        WireRole(match role {
+    /// Map a canonical non-System role onto the provider-accepted Messages wire
+    /// role, recording any downgrade as an `OptionAdjustment`. Default: the
+    /// canonical Messages mapping (Anthropic) — Minimax-only roles are dropped to
+    /// `user` with a `minimax_only_role_dropped` adjustment. Minimax overrides to
+    /// emit its native roles (`user_system` / `group` / `sample_message_*`) with
+    /// no adjustment.
+    fn messages_wire_role(
+        &self,
+        _cx: &ResolvedModel<'_>,
+        role: &Role,
+        adjustments: &mut Vec<OptionAdjustment>,
+    ) -> &'static str {
+        match role {
+            Role::User | Role::Tool => "user",
             Role::Assistant => "assistant",
-            Role::System | Role::UserSystem => "system",
-            _ => "user",
-        })
+            Role::System => "user", // System is handled separately by the core.
+            Role::UserSystem => {
+                adjustments.push(OptionAdjustment {
+                    option: "role".into(),
+                    requested: json!("user_system"),
+                    applied: json!("user"),
+                    reason: "minimax_only_role_dropped".into(),
+                });
+                "user"
+            }
+            Role::Group | Role::SampleMessageUser | Role::SampleMessageAi => {
+                adjustments.push(OptionAdjustment {
+                    option: "role".into(),
+                    requested: json!(format!("{role:?}")),
+                    applied: json!("user"),
+                    reason: "minimax_only_role_dropped".into(),
+                });
+                "user"
+            }
+        }
     }
 
     /// Interpret provider-specific usage reporting into canonical `TokenUsage`,
@@ -279,6 +304,40 @@ pub trait ProviderProfile: Send + Sync {
     /// fallback) is not fully captured by the catalog override this.
     fn capabilities(&self, cx: &ResolvedModel<'_>, max_output_tokens: u32) -> ModelCapabilities {
         canonical_chat_capabilities(cx, max_output_tokens)
+    }
+
+    // -- Messages-protocol hooks (used by the shared MessagesAdapter) -------
+
+    /// Whether the model uses adaptive thinking (`thinking: {type: adaptive}` +
+    /// `output_config`) vs. explicit `budget_tokens`. Default `false`. Anthropic
+    /// and Minimax override with their model checks.
+    fn messages_supports_adaptive(&self, _cx: &ResolvedModel<'_>) -> bool {
+        false
+    }
+
+    /// Encode a **multimodal** content block (`Image` / `Video` / `Audio` /
+    /// `MidConvSystem`) for the Messages wire; the shared core encodes the common
+    /// blocks (text / thinking / tool_use / tool_result). Return `Some(json)` to
+    /// include it, or `None` to drop it (pushing an `OptionAdjustment`). This is
+    /// the narrow, named home for the per-provider content-encoding divergence
+    /// (ADR rule 4 dialect-fork consideration — see the v0.12 slice 002 spec).
+    fn encode_multimodal_block(
+        &self,
+        _cx: &ResolvedModel<'_>,
+        _block: &ContentBlock,
+        _adjustments: &mut Vec<OptionAdjustment>,
+    ) -> Option<Value> {
+        None
+    }
+
+    /// The Messages auth headers for `api_key`. Default: `Authorization: Bearer`.
+    /// Anthropic overrides with `x-api-key` + `anthropic-version`.
+    fn messages_auth_headers(
+        &self,
+        _cx: &ResolvedModel<'_>,
+        api_key: &str,
+    ) -> Vec<(&'static str, String)> {
+        vec![("authorization", format!("Bearer {api_key}"))]
     }
 }
 
@@ -330,6 +389,13 @@ impl ProviderProfile for CanonicalChat {}
 /// The shared no-op profile singleton.
 pub static CANONICAL_CHAT: CanonicalChat = CanonicalChat;
 
+/// The Messages-core fallback profile (canonical Messages hook defaults). Used
+/// only when an entry declares no Messages profile; Anthropic/Minimax always do.
+pub struct CanonicalMessages;
+impl ProviderProfile for CanonicalMessages {}
+/// The shared Messages fallback profile singleton.
+pub static CANONICAL_MESSAGES: CanonicalMessages = CanonicalMessages;
+
 /// Resolve an entry's static/env headers to concrete `(name, value)` pairs at
 /// adapter-construction time. `Env` values are read from the environment now (a
 /// runtime value cannot be `'static`); unset env vars are skipped.
@@ -361,10 +427,6 @@ pub enum RequestOption {
     /// (`include_thinking: false` while thinking is enabled).
     ReasoningOutputExclusion,
 }
-
-/// A provider-accepted wire role name, produced by [`ProviderProfile::map_role`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WireRole(pub &'static str);
 
 /// The value recorded in a degradation [`OptionAdjustment`]'s `applied` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -672,8 +734,13 @@ static ANTHROPIC_ENTRY: ProviderEntry = ProviderEntry {
     protocol_aliases: &[],
     path_overrides: &[],
     extra_headers: &[],
-    // Anthropic is canonical Messages — no deviation, so no profile.
-    profiles: &[],
+    // Anthropic is the canonical Messages reference, but the collapsed core still
+    // needs its capability facts, x-api-key auth, adaptive detection, and
+    // image-only multimodal encoding as profile data.
+    profiles: &[(
+        Protocol::Messages,
+        &crate::providers::anthropic::ANTHROPIC_PROFILE,
+    )],
     build_adapter: crate::providers::anthropic::build_messages_adapter,
 };
 

@@ -1,7 +1,9 @@
-//! Consumes the Minimax Messages API's SSE stream into a normalized
-//! [`StreamOutcome`]. Minimax 的 SSE 事件格式与 Anthropic 完全兼容(同 `message_start` /
-//! `content_block_delta` / `thinking_delta` / `message_stop`),因此本文件是
-//! [`crate::providers::anthropic::response`] 的 fork,逻辑同步演化时需要双向回流。
+//! Shared Anthropic-Messages SSE consumer (ADR-0002 Phase 3). Drains a Messages
+//! API byte stream (message_start / content_block_delta / thinking_delta /
+//! message_stop) into a [`StreamOutcome`], forwarding deltas to an optional event
+//! sender. Provider-agnostic: it only needs the byte stream, a provider tag for
+//! error attribution, and the sender. Both Anthropic and Minimax speak this exact
+//! wire format.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -13,7 +15,7 @@ use tokio::sync::mpsc;
 
 use crate::{ContentBlock, ModelError, StopReason, StreamEvent, TokenUsage, UpstreamErrorDetail};
 
-pub(super) fn map_stop_reason(raw: &str) -> StopReason {
+pub(crate) fn map_stop_reason(raw: &str) -> StopReason {
     match raw {
         "end_turn" => StopReason::EndTurn,
         "tool_use" => StopReason::ToolUse,
