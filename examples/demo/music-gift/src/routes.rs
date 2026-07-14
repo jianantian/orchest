@@ -18,7 +18,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 use uuid::Uuid;
 
-use orchest_protocol::{ChatModel, GenAsset, GenHandle, GenRequest, GenStatus, GenTask};
+use orchest_protocol::{ChatModel, ContentBlock, GenAsset, GenHandle, GenRequest, GenStatus, GenTask, Message, RequestOptions, Role};
 
 use crate::agent::{
     build_messages, build_photo_blocks, build_system_message, drive_stream, parse_lyrics,
@@ -47,6 +47,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .route("/generate/{id}/status", get(generate_status))
         .route("/generate/{id}/stream", get(generate_stream))
         .route("/gift/{id}/like", post(like_gift))
+        .route("/countdown-section/{id}", get(get_countdown_section))
         .route("/photos", post(upload_photos))
         .with_state(state.clone());
 
@@ -167,6 +168,23 @@ pub async fn create_gift(
         }
     }
 
+    // Check for birthday info before meta is moved into the gift.
+    let birthday: Option<String> = meta
+        .get("birthday")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let gift_name: String = meta
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Someone")
+        .to_string();
+
+    let countdown_status = if birthday.is_some() {
+        Some("pending".to_string())
+    } else {
+        None
+    };
+
     let gift = Gift {
         id: id.clone(),
         kind: req.kind,
@@ -176,6 +194,7 @@ pub async fn create_gift(
         photos: req.photos.into_iter().take(5).collect(),
         gen_handle: None,
         gen_status: None,
+        countdown_status,
         creator_token: creator_token.clone(),
         published: true,
         likes: Vec::new(),
@@ -185,6 +204,16 @@ pub async fn create_gift(
 
     state.gift_store.create(&gift)?;
 
+    // Spawn background countdown generation if birthday is present.
+    if let Some(bday) = birthday {
+        let model = state.chat_model.clone();
+        let store = state.gift_store.clone();
+        let data_dir = state.data_dir.clone();
+        let gift_id = id.clone();
+        tokio::spawn(async move {
+            generate_countdown(&model, &store, &data_dir, &gift_id, &gift_name, &bday).await;
+        });
+    }
     Ok((
         StatusCode::CREATED,
         Json(CreateGiftResponse { id, creator_token }),
@@ -369,7 +398,7 @@ pub async fn generate_stream(
 async fn load_gen_handle(state: &AppState, id: &str) -> AppResult<GenHandle> {
     let gift = state.gift_store.get(id)?;
     let json = gift.gen_handle.ok_or_else(|| AppError::BadRequest("not submitted".into()))?;
-    Ok(serde_json::from_str(&json).map_err(|e| AppError::BadRequest(format!("bad handle: {e}")))?)
+    serde_json::from_str(&json).map_err(|e| AppError::BadRequest(format!("bad handle: {e}")))
 }
 
 // ── GET /api/generate/:id/status — legacy poll ────────────────────────────
@@ -560,6 +589,113 @@ fn unix_now() -> String {
         .unwrap_or_else(|_| "0".to_string())
 }
 
+
+// ---------------------------------------------------------------------------
+// GET /api/countdown-section/:id - countdown HTML
+// ---------------------------------------------------------------------------
+
+pub async fn get_countdown_section(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<impl IntoResponse> {
+    let gift = state.gift_store.get(&id)?;
+    match gift.countdown_status.as_deref() {
+        Some("ready") => {
+            let path = state.data_dir.join("countdown").join(format!("{id}.html"));
+            let html = tokio::fs::read_to_string(&path).await.map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => {
+                    AppError::NotFound(format!("countdown HTML not found for gift {id}"))
+                }
+                _ => AppError::Io(e),
+            })?;
+            Ok((
+                StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                html,
+            )
+                .into_response())
+        }
+        Some("pending") => Ok((
+            StatusCode::ACCEPTED,
+            Json(json!({"status": "pending"})),
+        )
+            .into_response()),
+        _ => Ok((
+            StatusCode::NOT_FOUND,
+            Json(json!({"status": gift.countdown_status.as_deref().unwrap_or("unavailable")})),
+        )
+            .into_response()),
+    }
+}
+
+/// Generate birthday countdown HTML via the LLM and save it to disk.
+#[allow(clippy::too_many_arguments)]
+async fn generate_countdown(
+    model: &Arc<dyn ChatModel>,
+    store: &GiftStore,
+    data_dir: &std::path::Path,
+    gift_id: &str,
+    name: &str,
+    birthday: &str,
+) {
+    let prompt = format!(
+        "Generate a birthday countdown HTML page for {name} whose birthday is on {birthday}. \
+         Create a beautiful, animated countdown timer showing days remaining until the next birthday. \
+         Use CSS animations, a festive but elegant design, and make it a complete standalone HTML document. \
+         Output ONLY the HTML code, starting with <!DOCTYPE html>. Do not wrap in code fences."
+    );
+    let messages = [Message {
+        role: Role::User,
+        content: vec![ContentBlock::Text(prompt)],
+    }];
+    let options = RequestOptions::default();
+
+    let result = model.complete(&messages, &[], &options, None).await;
+    match result {
+        Ok(response) => {
+            let html = response
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text(t) => Some(t.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            // Strip markdown code fences if present.
+            let html = html
+                .trim()
+                .strip_prefix("```html")
+                .unwrap_or(&html)
+                .strip_suffix("```")
+                .unwrap_or(html.trim())
+                .trim()
+                .to_string();
+
+            // Ensure the countdown directory exists.
+            let dir = data_dir.join("countdown");
+            if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+                eprintln!("countdown: failed to create dir {}: {e}", dir.display());
+                let _ = store.update_countdown_status(gift_id, "failed");
+                return;
+            }
+
+            let path = dir.join(format!("{gift_id}.html"));
+            if let Err(e) = tokio::fs::write(&path, &html).await {
+                eprintln!("countdown: failed to write {}: {e}", path.display());
+                let _ = store.update_countdown_status(gift_id, "failed");
+                return;
+            }
+
+            let _ = store.update_countdown_status(gift_id, "ready");
+        }
+        Err(e) => {
+            eprintln!("countdown: LLM error for gift {gift_id}: {e}");
+            let _ = store.update_countdown_status(gift_id, "failed");
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

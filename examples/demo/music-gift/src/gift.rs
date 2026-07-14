@@ -19,6 +19,7 @@ pub struct Gift {
     pub photos: Vec<String>,
     pub gen_handle: Option<String>,
     pub gen_status: Option<String>,
+    pub countdown_status: Option<String>,
     pub creator_token: String,
     pub published: bool,
     pub likes: Vec<String>,
@@ -50,9 +51,12 @@ impl GiftStore {
                 published    INTEGER NOT NULL DEFAULT 1,
                 likes        TEXT NOT NULL DEFAULT '[]',
                 created_at   TEXT NOT NULL,
-                published_at TEXT
+                published_at TEXT,
+                countdown_status TEXT
             );",
         )?;
+        // Migration: add countdown_status column for dbs created before this feature.
+        let _ = conn.execute("ALTER TABLE gifts ADD COLUMN countdown_status TEXT", []);
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -66,8 +70,8 @@ impl GiftStore {
             .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute(
             "INSERT INTO gifts (id, kind, lyrics, meta, audio_url, photos, gen_handle,
-             gen_status, creator_token, published, likes, created_at, published_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             gen_status, countdown_status, creator_token, published, likes, created_at, published_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 gift.id,
                 gift.kind,
@@ -77,6 +81,7 @@ impl GiftStore {
                 serde_json::to_string(&gift.photos)?,
                 gift.gen_handle,
                 gift.gen_status,
+                gift.countdown_status.clone(),
                 gift.creator_token,
                 gift.published as i32,
                 serde_json::to_string(&gift.likes)?,
@@ -95,7 +100,7 @@ impl GiftStore {
             .map_err(|e| AppError::Database(e.to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT id, kind, lyrics, meta, audio_url, photos, gen_handle, gen_status,
-             creator_token, published, likes, created_at, published_at
+             countdown_status, creator_token, published, likes, created_at, published_at
              FROM gifts WHERE id = ?1",
         )?;
         let gift = stmt
@@ -117,7 +122,7 @@ impl GiftStore {
             .map_err(|e| AppError::Database(e.to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT id, kind, lyrics, meta, audio_url, photos, gen_handle, gen_status,
-             creator_token, published, likes, created_at, published_at
+             countdown_status, creator_token, published, likes, created_at, published_at
              FROM gifts WHERE published = 1 ORDER BY published_at DESC",
         )?;
         let gifts = stmt
@@ -175,6 +180,22 @@ impl GiftStore {
         Ok(())
     }
 
+    /// Update the countdown generation status.
+    pub fn update_countdown_status(&self, id: &str, status: &str) -> AppResult<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = conn.execute(
+            "UPDATE gifts SET countdown_status = ?2 WHERE id = ?1",
+            params![id, status],
+        )?;
+        if rows == 0 {
+            return Err(AppError::NotFound(format!("gift {id} not found")));
+        }
+        Ok(())
+    }
+
     /// Add a like (idempotent by viewer id).
     pub fn like(&self, id: &str, viewer_id: &str) -> AppResult<usize> {
         let conn = self
@@ -195,7 +216,7 @@ impl GiftStore {
     fn get_inner(conn: &Connection, id: &str) -> AppResult<Gift> {
         let mut stmt = conn.prepare(
             "SELECT id, kind, lyrics, meta, audio_url, photos, gen_handle, gen_status,
-             creator_token, published, likes, created_at, published_at
+             countdown_status, creator_token, published, likes, created_at, published_at
              FROM gifts WHERE id = ?1",
         )?;
         stmt.query_row(params![id], row_to_gift)
@@ -212,7 +233,7 @@ impl GiftStore {
 fn row_to_gift(row: &rusqlite::Row<'_>) -> rusqlite::Result<Gift> {
     let meta_str: String = row.get(3)?;
     let photos_str: String = row.get(5)?;
-    let likes_str: String = row.get(10)?;
+    let likes_str: String = row.get(11)?;
     let meta: Value = serde_json::from_str(&meta_str).unwrap_or(Value::Null);
     let photos: Vec<String> = serde_json::from_str(&photos_str).unwrap_or_default();
     let likes: Vec<String> = serde_json::from_str(&likes_str).unwrap_or_default();
@@ -226,10 +247,11 @@ fn row_to_gift(row: &rusqlite::Row<'_>) -> rusqlite::Result<Gift> {
         photos,
         gen_handle: row.get(6)?,
         gen_status: row.get(7)?,
-        creator_token: row.get(8)?,
-        published: row.get::<_, i32>(9)? != 0,
+        countdown_status: row.get(8)?,
+        creator_token: row.get(9)?,
+        published: row.get::<_, i32>(10)? != 0,
         likes,
-        created_at: row.get(11)?,
-        published_at: row.get(12)?,
+        created_at: row.get(12)?,
+        published_at: row.get(13)?,
     })
 }

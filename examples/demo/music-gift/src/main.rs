@@ -43,6 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Ensure data directory exists
     std::fs::create_dir_all(&cli.data_dir)?;
+    std::fs::create_dir_all(cli.data_dir.join("countdown"))?;
 
     // Open SQLite gift store
     let db_path = cli.data_dir.join("gifts.db");
