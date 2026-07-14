@@ -130,9 +130,19 @@ export default function GiftPage() {
         <AudioPlayer src={gift.audio_url} title={title} />
       ) : generating ? (
         <div className="gift-generating">
-          <span className="spinner" />
-          <p>Generating music…</p>
-          <span className="gen-status">{genStatus}</span>
+          <div className="gen-label">
+            Creating your song
+            <span className="gen-dots">
+              <span /><span /><span />
+            </span>
+          </div>
+          <div className="gen-bar-wrap">
+            <div className="gen-bar-fill" />
+          </div>
+          <div className="gen-meta">
+            <span>{genStatus || 'preparing…'}</span>
+            <span>This may take a minute</span>
+          </div>
         </div>
       ) : (
         <button className="btn btn-primary btn-lg btn-full" onClick={() => void handleGenerate()}>
