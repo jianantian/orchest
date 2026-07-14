@@ -75,7 +75,7 @@ pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
         "model": model,
         "customMode": false,
         "instrumental": false,
-        "callBackUrl": "",
+        "callBackUrl": "https://localhost/suno-callback",
         "prompt": request.prompt,
     });
 
@@ -95,6 +95,14 @@ pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
             }
         }
 
+        // Override callBackUrl from params if provided, so callers can set a
+        // real webhook endpoint. Keep the default dummy URL for polling mode.
+        if let Some(cb) = params.get("callBackUrl").and_then(Value::as_str) {
+            if !cb.is_empty() {
+                body["callBackUrl"] = json!(cb);
+            }
+        }
+
         for key in PASSTHROUGH_PARAMS {
             if let Some(value) = params.get(*key) {
                 body[*key] = value.clone();
@@ -110,7 +118,10 @@ pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
 /// a [`GenAsset::Url`] (Suno serves `.mp3`). The track titles are surfaced in
 /// `diagnostic_metadata` for traceability.
 fn build_result(data: &Value) -> GenResult {
-    let tracks = data.get("response").and_then(Value::as_array);
+    let tracks = data
+        .get("response")
+        .and_then(|r| r.get("sunoData"))
+        .and_then(Value::as_array);
     let assets = tracks
         .map(|tracks| {
             tracks
@@ -392,7 +403,7 @@ mod tests {
         assert_eq!(body["model"], "V5_5");
         assert_eq!(body["customMode"], false);
         assert_eq!(body["instrumental"], false);
-        assert_eq!(body["callBackUrl"], "");
+        assert_eq!(body["callBackUrl"], "https://localhost/suno-callback");
         assert_eq!(body["prompt"], "a calm piano track");
     }
 
@@ -491,10 +502,12 @@ mod tests {
     fn build_result_extracts_two_assets_and_titles() {
         let data = json!({
             "status": "SUCCESS",
-            "response": [
-                { "audioUrl": "https://suno/track1.mp3", "title": "First" },
-                { "audioUrl": "https://suno/track2.mp3", "title": "Second" },
-            ]
+            "response": {
+                "sunoData": [
+                    { "audioUrl": "https://suno/track1.mp3", "title": "First" },
+                    { "audioUrl": "https://suno/track2.mp3", "title": "Second" },
+                ]
+            }
         });
         let result = build_result(&data);
         assert_eq!(
@@ -519,10 +532,12 @@ mod tests {
     fn build_result_skips_items_without_audio_url() {
         let data = json!({
             "status": "SUCCESS",
-            "response": [
-                { "audioUrl": "https://suno/track1.mp3", "title": "First" },
-                { "audioUrl": "", "title": "Empty" },
-            ]
+            "response": {
+                "sunoData": [
+                    { "audioUrl": "https://suno/track1.mp3", "title": "First" },
+                    { "audioUrl": "", "title": "Empty" },
+                ]
+            }
         });
         let result = build_result(&data);
         assert_eq!(result.assets.len(), 1);
@@ -537,7 +552,7 @@ mod tests {
 
     #[test]
     fn build_result_empty_response_yields_no_assets() {
-        let data = json!({ "status": "SUCCESS", "response": [] });
+        let data = json!({ "status": "SUCCESS", "response": {"sunoData": []} });
         let result = build_result(&data);
         assert!(result.assets.is_empty());
         assert_eq!(result.diagnostic_metadata["provider"], "suno");

@@ -288,18 +288,19 @@ pub async fn generate_music(
         .and_then(Value::as_str)
         .unwrap_or("healing and warm");
     let base_prompt = "high quality music production";
+    let lyrics = gift.lyrics.unwrap_or_default();
     let prompt = format!("{style}, {base_prompt}");
 
-    let lyrics = gift.lyrics.unwrap_or_default();
-    let model = gift
-        .meta
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or("auto");
 
+    let title = gift
+        .meta
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("Gift Song");
     let params = json!({
         "lyrics": lyrics,
-        "model": model,
+        "style": style,
+        "title": title,
     });
 
     let gen_req = GenRequest { prompt, params };
@@ -353,13 +354,10 @@ pub async fn generate_status(
     let handle: GenHandle = serde_json::from_str(&handle_json)
         .map_err(|e| AppError::BadRequest(format!("invalid gen handle: {e}")))?;
 
-    let status = state.gen_task.poll(&handle).await;
-    let status = match status {
+    let status = match state.gen_task.poll(&handle).await {
         Ok(s) => s,
-        Err(e) => {
-            state.gift_store.mark_gen_failed(&id)?;
-            return Err(AppError::Gen(e.to_string()));
-        }
+        // Transient network error: don't mark as failed, let the caller retry
+        Err(e) => return Err(AppError::Gen(e.to_string())),
     };
 
     let status_str = match status {
