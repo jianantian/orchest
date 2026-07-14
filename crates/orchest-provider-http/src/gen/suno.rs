@@ -172,6 +172,16 @@ enum JobState {
     Done(GenResult),
 }
 
+
+// TODO: callback URL support. The Suno API supports webhook callbacks
+// (text / first / complete stages) via the `callBackUrl` field. Currently
+// the adapter uses a dummy URL and relies on polling. To support callbacks:
+// 1. Accept an optional `callBackUrl` in `SunoMusicConfig` (or GenRequest
+//    params, which already works as a passthrough).
+// 2. Expose a way for the caller to register a webhook endpoint.
+// 3. Either store the callback data in a shared cache (like the current
+//    `JobState`) or notify via a channel.
+// This is low priority — polling works fine for 30-60s generation times.
 /// The Suno music gen provider as the spine [`GenTask`].
 pub struct SunoMusicGen {
     config: SunoMusicConfig,
