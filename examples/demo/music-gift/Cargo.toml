@@ -23,11 +23,11 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
-regex-lite = "0.1"
 tokio-stream = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
+ureq = { version = "2", features = ["json"] }
 
 [lints]
 workspace = true

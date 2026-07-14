@@ -483,18 +483,25 @@ pub async fn upload_photos(
 
 /// Parse a `data:image/...;base64,...` URL into (media_type, raw_bytes).
 fn parse_data_url(data_url: &str) -> AppResult<(String, Vec<u8>)> {
-    let re = regex_lite::Regex::new(r"^data:image/(jpeg|png|webp);base64,(.+)$")
-        .map_err(|e| AppError::BadRequest(format!("regex error: {e}")))?;
-    let caps = re
-        .captures(data_url)
+    // Format: data:image/<format>;base64,<data>
+    let after_prefix = data_url
+        .strip_prefix("data:image/")
         .ok_or_else(|| AppError::BadRequest("invalid data URL".to_string()))?;
-    let format = caps.get(1).unwrap().as_str();
-    let b64 = caps.get(2).unwrap().as_str();
+    let (format, after_format) = after_prefix
+        .split_once(';')
+        .ok_or_else(|| AppError::BadRequest("invalid data URL".to_string()))?;
+    if !["jpeg", "png", "webp"].contains(&format) {
+        return Err(AppError::BadRequest(format!(
+            "unsupported image format: {format}"
+        )));
+    }
+    let b64 = after_format
+        .strip_prefix("base64,")
+        .ok_or_else(|| AppError::BadRequest("invalid data URL".to_string()))?;
     let media_type = match format {
         "jpeg" => "image/jpeg",
         "png" => "image/png",
-        "webp" => "image/webp",
-        _ => "image/jpeg",
+        _ => "image/webp",
     };
     let data = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)?;
     Ok((media_type.to_string(), data))
@@ -506,4 +513,48 @@ fn unix_now() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs().to_string())
         .unwrap_or_else(|_| "0".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_data_url_jpeg() {
+        let (mime, data) = parse_data_url("data:image/jpeg;base64,dGVzdA==").unwrap();
+        assert_eq!(mime, "image/jpeg");
+        assert_eq!(data, b"test");
+    }
+
+    #[test]
+    fn parse_data_url_png() {
+        let (mime, data) = parse_data_url("data:image/png;base64,cG5n").unwrap();
+        assert_eq!(mime, "image/png");
+        assert_eq!(data, b"png");
+    }
+
+    #[test]
+    fn parse_data_url_webp() {
+        let (mime, data) = parse_data_url("data:image/webp;base64,d2VicA==").unwrap();
+        assert_eq!(mime, "image/webp");
+        assert_eq!(data, b"webp");
+    }
+
+    #[test]
+    fn parse_data_url_rejects_invalid_prefix() {
+        assert!(parse_data_url("not-a-data-url").is_err());
+        assert!(parse_data_url("data:text/plain;base64,abc").is_err());
+    }
+
+    #[test]
+    fn parse_data_url_rejects_unsupported_format() {
+        assert!(parse_data_url("data:image/gif;base64,abc").is_err());
+    }
+
+    #[test]
+    fn unix_now_returns_non_empty() {
+        let now = unix_now();
+        assert!(!now.is_empty());
+        assert!(now.parse::<u64>().unwrap() > 1700000000); // after 2023
+    }
 }

@@ -324,3 +324,78 @@ pub async fn drive_stream(
 
     Ok(full_text)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_lyrics_extracts_all_tags() {
+        let text = "<<<LYRICS>>>\n[verse 1]\nHello world\n[chorus]\nSing loud\n<<<END>>>
+<<<STYLE>>>warm and gentle<<<STYLE_END>>>
+<<<TITLE>>>Hello<<<TITLE_END>>>
+<<<VOCAL>>>female<<<VOCAL_END>>>";
+        let result = parse_lyrics(text);
+        assert!(result.has_lyrics);
+        assert!(result.lyrics.contains("[verse 1]"));
+        assert_eq!(result.style, "warm and gentle");
+        assert_eq!(result.title, "Hello");
+        assert_eq!(result.vocal, "female");
+    }
+
+    #[test]
+    fn parse_lyrics_uses_defaults_when_tags_missing() {
+        let text = "Just some text without any tags";
+        let result = parse_lyrics(text);
+        assert!(!result.has_lyrics);
+        assert_eq!(result.style, DEFAULT_STYLE);
+        assert_eq!(result.title, "");
+        assert_eq!(result.vocal, "female");
+    }
+
+    #[test]
+    fn parse_lyrics_validates_vocal_gender() {
+        let text = "<<<LYRICS>>>\ntest\n<<<END>>><<<VOCAL>>>invalid<<<VOCAL_END>>>";
+        let result = parse_lyrics(text);
+        assert_eq!(result.vocal, "female"); // falls back to default
+
+        let text2 = "<<<LYRICS>>>\ntest\n<<<END>>><<<VOCAL>>>male<<<VOCAL_END>>>";
+        let result2 = parse_lyrics(text2);
+        assert_eq!(result2.vocal, "male");
+    }
+
+    #[test]
+    fn build_messages_injects_photo_blocks_into_first_user_message() {
+        let system = Message {
+            role: Role::System,
+            content: vec![ContentBlock::Text("system prompt".into())],
+        };
+        let incoming = vec![IncomingMessage {
+            role: "user".into(),
+            content: "hello".into(),
+        }];
+        let photos = vec![ContentBlock::Image {
+            source: MediaSource::Base64 {
+                media_type: "image/jpeg".into(),
+                data: "fake".into(),
+            },
+            detail: None,
+        }];
+        let messages = build_messages(system, &incoming, &photos);
+        assert_eq!(messages.len(), 2); // system + user
+        let user_content = &messages[1].content;
+        assert_eq!(user_content.len(), 2); // photo + text
+    }
+
+    #[test]
+    fn build_system_message_includes_meta() {
+        let meta = serde_json::json!({"name": "Alice"});
+        let msg = build_system_message(&meta, 0);
+        let content = match &msg.content[0] {
+            ContentBlock::Text(s) => s.clone(),
+            _ => String::new(),
+        };
+        assert!(content.contains("Alice"));
+        assert!(content.contains("Known info"));
+    }
+}
