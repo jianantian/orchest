@@ -59,7 +59,8 @@ export default function GiftPage() {
         // Load countdown section if gift has one
         loadCountdown(g.id, g.countdown_status);
       })
-
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load gift"))
+      .finally(() => setLoading(false));
     return () => { esRef.current?.close(); };
   }, [id, startPolling]);
 
