@@ -59,13 +59,15 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         router = router.nest_service("/audio", tower_http::services::ServeDir::new(audio_dir));
     }
 
-    // Serve static frontend files as fallback for non-API routes.
-    // TODO: SPA routing - /playlist and /gift/:id currently return 404.
-    // Fix with a catch-all that serves index.html for unmatched GET requests.
+    // SPA: ServeDir for static files, with index.html fallback for 404s so
+    // react-router handles client-side routes (/playlist, /gift/:id, etc.)
     if let Some(dir) = static_dir {
-        router = router.fallback_service(tower_http::services::ServeDir::new(dir));
+        let index_path = dir.join("index.html");
+        let index_html = std::fs::read_to_string(&index_path).unwrap_or_default();
+        let spa = tower_http::services::ServeDir::new(&dir)
+            .not_found_service(tower_http::services::ServeFile::new(index_path));
+        router = router.fallback_service(spa);
     }
-
     router
 }
 
