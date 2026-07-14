@@ -16,7 +16,7 @@ use orchest_protocol::{GenAsset, GenHandle, GenRequest, GenStatus, GenTask};
 
 use crate::error::{AppError, AppResult};
 use crate::gift::GiftStore;
-
+use crate::lrc;
 // ── Response types ──────────────────────────────────────────────────────────
 
 /// Response for POST /api/generate/:id — submit.
@@ -127,15 +127,32 @@ impl MusicGenTool {
         };
 
         if status == GenStatus::Done {
-            // Fetch the result
             match self.gen_task.fetch(&handle).await {
                 Ok(result) => {
                     let audio_url = result.assets.first().and_then(|asset| match asset {
                         GenAsset::Url { url, .. } => Some(url.clone()),
                         GenAsset::Bytes { .. } => None,
                     });
+                    let duration = result
+                        .diagnostic_metadata
+                        .get("duration_secs")
+                        .and_then(Value::as_f64);
                     if let Some(url) = &audio_url {
                         store.update_audio(gift_id, url)?;
+                    }
+                    if let Some(d) = duration {
+                        store.update_duration(gift_id, d)?;
+                    }
+                    // Spawn LRC generation asynchronously
+                    if let (Some(lyrics), Some(d)) = (&gift.lyrics, duration) {
+                        let store_clone = store.clone();
+                        let id_clone = gift_id.to_string();
+                        let lyrics_clone = lyrics.clone();
+                        tokio::spawn(async move {
+                            if let Some(lrc_text) = lrc::generate_lrc(&lyrics_clone, d) {
+                                let _ = store_clone.update_lrc(&id_clone, &lrc_text, Some(d));
+                            }
+                        });
                     }
                     return Ok(GenStatusResponse {
                         id: gift_id.to_string(),

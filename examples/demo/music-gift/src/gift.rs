@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
 
-/// A music gift: lyrics + metadata + (eventually) generated audio.
+/// A music gift: lyrics + metadata + generated audio.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Gift {
     pub id: String,
@@ -20,6 +20,8 @@ pub struct Gift {
     pub gen_handle: Option<String>,
     pub gen_status: Option<String>,
     pub countdown_status: Option<String>,
+    pub lrc: Option<String>,
+    pub duration_secs: Option<f64>,
     pub creator_token: String,
     pub published: bool,
     pub likes: Vec<String>,
@@ -27,213 +29,155 @@ pub struct Gift {
     pub published_at: Option<String>,
 }
 
-/// Thread-safe SQLite gift store.
 #[derive(Clone)]
 pub struct GiftStore {
     conn: Arc<Mutex<Connection>>,
 }
 
+const SELECT_COLS: &str = "\
+    SELECT id, kind, lyrics, meta, audio_url, photos, gen_handle, gen_status, \
+           countdown_status, lrc, duration_secs, creator_token, published, likes, \
+           created_at, published_at FROM gifts";
+
 impl GiftStore {
-    /// Open (or create) the gift database at `path`, initializing the schema.
     pub fn open(path: &str) -> AppResult<Self> {
         let conn = Connection::open(path)?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS gifts (
-                id           TEXT PRIMARY KEY,
-                kind         TEXT NOT NULL,
-                lyrics       TEXT,
-                meta         TEXT NOT NULL,
-                audio_url    TEXT,
-                photos       TEXT NOT NULL DEFAULT '[]',
-                gen_handle   TEXT,
-                gen_status   TEXT,
-                creator_token TEXT NOT NULL,
-                published    INTEGER NOT NULL DEFAULT 1,
-                likes        TEXT NOT NULL DEFAULT '[]',
-                created_at   TEXT NOT NULL,
-                published_at TEXT,
-                countdown_status TEXT
+                id              TEXT PRIMARY KEY,
+                kind            TEXT NOT NULL,
+                lyrics          TEXT,
+                meta            TEXT NOT NULL,
+                audio_url       TEXT,
+                photos          TEXT NOT NULL DEFAULT '[]',
+                gen_handle      TEXT,
+                gen_status      TEXT,
+                creator_token   TEXT NOT NULL,
+                published       INTEGER NOT NULL DEFAULT 1,
+                likes           TEXT NOT NULL DEFAULT '[]',
+                created_at      TEXT NOT NULL,
+                published_at    TEXT,
+                countdown_status TEXT,
+                lrc             TEXT,
+                duration_secs   REAL
             );",
         )?;
-        // Migration: add countdown_status column for dbs created before this feature.
         let _ = conn.execute("ALTER TABLE gifts ADD COLUMN countdown_status TEXT", []);
-        Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
-        })
+        let _ = conn.execute("ALTER TABLE gifts ADD COLUMN lrc TEXT", []);
+        let _ = conn.execute("ALTER TABLE gifts ADD COLUMN duration_secs REAL", []);
+        Ok(Self { conn: Arc::new(Mutex::new(conn)) })
     }
 
-    /// Create a new gift record.
     pub fn create(&self, gift: &Gift) -> AppResult<()> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute(
             "INSERT INTO gifts (id, kind, lyrics, meta, audio_url, photos, gen_handle,
-             gen_status, countdown_status, creator_token, published, likes, created_at, published_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+             gen_status, countdown_status, lrc, duration_secs, creator_token, published,
+             likes, created_at, published_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
             params![
-                gift.id,
-                gift.kind,
-                gift.lyrics,
+                gift.id, gift.kind, gift.lyrics,
                 serde_json::to_string(&gift.meta)?,
-                gift.audio_url,
-                serde_json::to_string(&gift.photos)?,
-                gift.gen_handle,
-                gift.gen_status,
-                gift.countdown_status.clone(),
-                gift.creator_token,
-                gift.published as i32,
+                gift.audio_url, serde_json::to_string(&gift.photos)?,
+                gift.gen_handle, gift.gen_status, gift.countdown_status,
+                gift.lrc, gift.duration_secs,
+                gift.creator_token, gift.published as i32,
                 serde_json::to_string(&gift.likes)?,
-                gift.created_at,
-                gift.published_at,
+                gift.created_at, gift.published_at,
             ],
         )?;
         Ok(())
     }
 
-    /// Fetch a gift by id.
     pub fn get(&self, id: &str) -> AppResult<Gift> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        let mut stmt = conn.prepare(
-            "SELECT id, kind, lyrics, meta, audio_url, photos, gen_handle, gen_status,
-             countdown_status, creator_token, published, likes, created_at, published_at
-             FROM gifts WHERE id = ?1",
-        )?;
-        let gift = stmt
-            .query_row(params![id], row_to_gift)
-            .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => {
-                    AppError::NotFound(format!("gift {id} not found"))
-                }
-                other => AppError::Database(other.to_string()),
-            })?;
-        Ok(gift)
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let sql = format!("{SELECT_COLS} WHERE id = ?1");
+        let mut stmt = conn.prepare(&sql)?;
+        stmt.query_row(params![id], row_to_gift).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => AppError::NotFound(format!("gift {id} not found")),
+            other => AppError::Database(other.to_string()),
+        })
     }
-
-    /// List all published gifts, newest first.
     pub fn list_published(&self) -> AppResult<Vec<Gift>> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        let mut stmt = conn.prepare(
-            "SELECT id, kind, lyrics, meta, audio_url, photos, gen_handle, gen_status,
-             countdown_status, creator_token, published, likes, created_at, published_at
-             FROM gifts WHERE published = 1 ORDER BY published_at DESC",
-        )?;
-        let gifts = stmt
-            .query_map([], row_to_gift)?
-            .filter_map(Result::ok)
-            .collect();
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let sql = format!("{SELECT_COLS} WHERE published = 1 ORDER BY published_at DESC");
+        let mut stmt = conn.prepare(&sql)?;
+        let gifts: Vec<Gift> = stmt.query_map([], row_to_gift)?.filter_map(Result::ok).collect();
         Ok(gifts)
     }
 
-    /// Update the generation handle + status on a gift.
     pub fn update_gen(&self, id: &str, handle_json: &str, status: &str) -> AppResult<()> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        let rows = conn.execute(
-            "UPDATE gifts SET gen_handle = ?2, gen_status = ?3 WHERE id = ?1",
-            params![id, handle_json, status],
-        )?;
-        if rows == 0 {
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute("UPDATE gifts SET gen_handle=?2, gen_status=?3 WHERE id=?1", params![id, handle_json, status])? == 0 {
             return Err(AppError::NotFound(format!("gift {id} not found")));
         }
         Ok(())
     }
 
-    /// Set the audio URL and mark generation as done.
     pub fn update_audio(&self, id: &str, audio_url: &str) -> AppResult<()> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        let rows = conn.execute(
-            "UPDATE gifts SET audio_url = ?2, gen_status = 'done' WHERE id = ?1",
-            params![id, audio_url],
-        )?;
-        if rows == 0 {
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute("UPDATE gifts SET audio_url=?2, gen_status='done' WHERE id=?1", params![id, audio_url])? == 0 {
             return Err(AppError::NotFound(format!("gift {id} not found")));
         }
         Ok(())
     }
 
-    /// Mark generation as failed.
     pub fn mark_gen_failed(&self, id: &str) -> AppResult<()> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        let rows = conn.execute(
-            "UPDATE gifts SET gen_status = 'failed' WHERE id = ?1",
-            params![id],
-        )?;
-        if rows == 0 {
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute("UPDATE gifts SET gen_status='failed' WHERE id=?1", params![id])? == 0 {
             return Err(AppError::NotFound(format!("gift {id} not found")));
         }
         Ok(())
     }
 
-    /// Update the countdown generation status.
     pub fn update_countdown_status(&self, id: &str, status: &str) -> AppResult<()> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        let rows = conn.execute(
-            "UPDATE gifts SET countdown_status = ?2 WHERE id = ?1",
-            params![id, status],
-        )?;
-        if rows == 0 {
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute("UPDATE gifts SET countdown_status=?2 WHERE id=?1", params![id, status])? == 0 {
             return Err(AppError::NotFound(format!("gift {id} not found")));
         }
         Ok(())
     }
 
-    /// Add a like (idempotent by viewer id).
+    pub fn update_duration(&self, id: &str, secs: f64) -> AppResult<()> {
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute("UPDATE gifts SET duration_secs=?2 WHERE id=?1", params![id, secs])? == 0 {
+            return Err(AppError::NotFound(format!("gift {id} not found")));
+        }
+        Ok(())
+    }
+
+    pub fn update_lrc(&self, id: &str, lrc: &str, dur: Option<f64>) -> AppResult<()> {
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute("UPDATE gifts SET lrc=?2, duration_secs=?3 WHERE id=?1", params![id, lrc, dur])? == 0 {
+            return Err(AppError::NotFound(format!("gift {id} not found")));
+        }
+        Ok(())
+    }
+
     pub fn like(&self, id: &str, viewer_id: &str) -> AppResult<usize> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
         let mut gift = Self::get_inner(&conn, id)?;
         if !gift.likes.iter().any(|l| l == viewer_id) {
             gift.likes.push(viewer_id.to_string());
-            conn.execute(
-                "UPDATE gifts SET likes = ?2 WHERE id = ?1",
-                params![id, serde_json::to_string(&gift.likes)?],
-            )?;
+            conn.execute("UPDATE gifts SET likes=?2 WHERE id=?1", params![id, serde_json::to_string(&gift.likes)?])?;
         }
         Ok(gift.likes.len())
     }
 
     fn get_inner(conn: &Connection, id: &str) -> AppResult<Gift> {
-        let mut stmt = conn.prepare(
-            "SELECT id, kind, lyrics, meta, audio_url, photos, gen_handle, gen_status,
-             countdown_status, creator_token, published, likes, created_at, published_at
-             FROM gifts WHERE id = ?1",
-        )?;
-        stmt.query_row(params![id], row_to_gift)
-            .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => {
-                    AppError::NotFound(format!("gift {id} not found"))
-                }
-                other => AppError::Database(other.to_string()),
-            })
+        let sql = format!("{SELECT_COLS} WHERE id = ?1");
+        let mut stmt = conn.prepare(&sql)?;
+        stmt.query_row(params![id], row_to_gift).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => AppError::NotFound(format!("gift {id} not found")),
+            other => AppError::Database(other.to_string()),
+        })
     }
 }
 
-/// Map a rusqlite row to a `Gift`.
 fn row_to_gift(row: &rusqlite::Row<'_>) -> rusqlite::Result<Gift> {
     let meta_str: String = row.get(3)?;
     let photos_str: String = row.get(5)?;
-    let likes_str: String = row.get(11)?;
+    let likes_str: String = row.get(13)?;
     let meta: Value = serde_json::from_str(&meta_str).unwrap_or(Value::Null);
     let photos: Vec<String> = serde_json::from_str(&photos_str).unwrap_or_default();
     let likes: Vec<String> = serde_json::from_str(&likes_str).unwrap_or_default();
@@ -248,10 +192,12 @@ fn row_to_gift(row: &rusqlite::Row<'_>) -> rusqlite::Result<Gift> {
         gen_handle: row.get(6)?,
         gen_status: row.get(7)?,
         countdown_status: row.get(8)?,
-        creator_token: row.get(9)?,
-        published: row.get::<_, i32>(10)? != 0,
+        lrc: row.get(9)?,
+        duration_secs: row.get(10)?,
+        creator_token: row.get(11)?,
+        published: row.get::<_, i32>(12)? != 0,
         likes,
-        created_at: row.get(12)?,
-        published_at: row.get(13)?,
+        created_at: row.get(14)?,
+        published_at: row.get(15)?,
     })
 }

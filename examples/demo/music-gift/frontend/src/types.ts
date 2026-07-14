@@ -56,6 +56,8 @@ export interface Gift {
   created_at: string;
   published_at: string | null;
   countdown_status?: string | null;
+  lrc?: string | null;
+  duration_secs?: number | null;
 }
 
 /** Response from POST /api/gift. */

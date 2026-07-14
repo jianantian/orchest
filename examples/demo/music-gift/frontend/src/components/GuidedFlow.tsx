@@ -4,7 +4,7 @@ import { createGift, generateMusic, pollGenerateStatus, streamChat } from "../ap
 import { useI18n, getMonths } from "../i18n";
 import { ReviewCard, type ReviewData } from "./ReviewCard";
 import { MusicCard, type MusicCardState } from "./MusicCard";
-
+import { PillsRow, GoldPill, InlineInput, BirthdayPicker } from "./ChatUI";
 interface StepState {
   relationship: string;
   relationshipLabel: string;
@@ -459,10 +459,10 @@ export function GuidedFlow({ onNavigate }: { onNavigate: (giftId: string) => voi
         {/* Structured UI items */}
         {uiItems.map((item, i) => {
           if (item.type === "pills") {
-            return <Pills key={`p-${i}`} options={item.options} onSelect={item.onSelect} />;
+            return <PillsRow key={`p-${i}`} options={item.options} onSelect={item.onSelect} />;
           }
           if (item.type === "pill") {
-            return <Pill key={`pl-${i}`} label={item.label} gold={item.gold} onSelect={item.onSelect} />;
+            return <GoldPill key={`pl-${i}`} label={item.label} onClick={item.onSelect} />;
           }
           if (item.type === "input") {
             return <InlineInput key={`in-${i}`} placeholder={item.placeholder} onSubmit={item.onSubmit} />;
@@ -527,147 +527,5 @@ export function GuidedFlow({ onNavigate }: { onNavigate: (giftId: string) => voi
       </div>
 
     </div>
-  );
-}
-
-// ── Sub-components ────────────────────────────────────
-
-function Pills({ options, onSelect }: { options: Array<{ label: string; value: string }>; onSelect: (v: string, l: string) => void }) {
-  const [selected, setSelected] = useState<string | null>(null);
-
-  return (
-    <div className="pills-wrap">
-      {options.map((o) => (
-        <span
-          key={o.value}
-          className={`pill ${selected === o.value ? "on" : ""}`}
-          onClick={() => {
-            setSelected(o.value);
-            onSelect(o.value, o.label);
-          }}
-          role="button"
-          tabIndex={0}
-        >
-          {o.label}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function Pill({ label, gold, onSelect }: { label: string; gold?: boolean; onSelect: () => void }) {
-  return (
-    <div className="pills-wrap">
-      <span
-        className="pill"
-        style={gold ? { color: "var(--gold)", borderColor: "var(--gold)" } : undefined}
-        onClick={onSelect}
-        role="button"
-        tabIndex={0}
-      >
-        {label}
-      </span>
-    </div>
-  );
-}
-
-function InlineInput({ placeholder, onSubmit }: { placeholder: string; onSubmit: (v: string) => void }) {
-  const [value, setValue] = useState("");
-
-  function done() {
-    const v = value.trim();
-    if (!v) return;
-    onSubmit(v);
-  }
-
-  return (
-    <div className="inline-input">
-      <input
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") done();
-        }}
-        placeholder={placeholder}
-        maxLength={30}
-        autoFocus
-      />
-      <button onClick={done}>OK</button>
-    </div>
-  );
-}
-
-
-function daysInMonth(month: number): number {
-  if (month === 2) return 28;
-  if ([4, 6, 9, 11].includes(month)) return 30;
-  return 31;
-}
-function BirthdayPicker({
-  months,
-  skipLabel,
-  onPick,
-}: {
-  months: string[];
-  skipLabel: string;
-  onPick: (bday: { month: number; day: number } | null) => void;
-}) {
-  const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
-  const [day, setDay] = useState("");
-
-  function selectMonth(idx: number) {
-    setSelectedMonth(idx);
-  }
-
-  function submitDay() {
-    const d = parseInt(day, 10);
-    if (d >= 1 && d <= daysInMonth(selectedMonth ?? 1) && selectedMonth !== null) {
-      onPick({ month: selectedMonth + 1, day: d });
-    }
-  }
-
-
-  return (
-    <>
-      <div className="bday-grid">
-        {months.map((m, i) => (
-          <button key={m} className={selectedMonth === i ? "on" : ""} onClick={() => selectMonth(i)}>
-            {m}
-          </button>
-        ))}
-      </div>
-      {selectedMonth !== null && (
-        <div className="inline-input" style={{ marginTop: 8 }}>
-          <input
-            type="number"
-            value={day}
-            onChange={(e) => {
-              const raw = e.target.value;
-              // Allow empty input while typing
-              if (raw === "") { setDay(""); return; }
-              let v = parseInt(raw, 10);
-              if (isNaN(v)) return;
-              // Wrap: below 1 → last day of month, above max → 1
-              const maxDay = daysInMonth(selectedMonth + 1);
-              if (v < 1) v = maxDay;
-              else if (v > maxDay) v = 1;
-              setDay(String(v));
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submitDay();
-            }}
-            placeholder="Day"
-            style={{ width: 80 }}
-            autoFocus
-          />
-          <button onClick={submitDay}>OK</button>
-        </div>
-      )}
-      <div style={{ alignSelf: "flex-start", marginTop: 6 }}>
-        <button className="btn-small" onClick={() => onPick(null)}>
-          {skipLabel}
-        </button>
-      </div>
-    </>
   );
 }

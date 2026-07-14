@@ -106,6 +106,8 @@ pub struct GenResult {
     pub assets: Vec<GenAsset>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub diagnostic_metadata: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lrc: Option<String>,
 }
 
 /// Signed/polled generation capability (image/video), abstracted from

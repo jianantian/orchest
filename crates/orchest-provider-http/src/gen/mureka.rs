@@ -214,9 +214,9 @@ pub fn build_result(response: &Value, trace_id: &str) -> Result<GenResult, Proto
     Ok(GenResult {
         assets,
         diagnostic_metadata,
+        lrc: None,
     })
 }
-
 /// Extract a [`ErrorCode::ProviderTaskFailed`] from a `status: "failed"`
 /// response. The `error` field (if present and non-empty) is the message;
 /// otherwise a generic message is used.

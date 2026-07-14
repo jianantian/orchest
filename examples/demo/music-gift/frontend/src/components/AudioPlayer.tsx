@@ -1,45 +1,53 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from "react";
 
 interface AudioPlayerProps {
   src: string;
   title?: string;
   compact?: boolean;
+  onTimeUpdate?: (currentTime: number) => void;
+  onDuration?: (duration: number) => void;
 }
 
-export default function AudioPlayer({ src, title, compact }: AudioPlayerProps) {
+export default function AudioPlayer({ src, title, compact, onTimeUpdate, onDuration }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [current, setCurrent] = useState(0);
   const [loading, setLoading] = useState(true);
+  const onTimeRef = useRef(onTimeUpdate);
+  const onDurRef = useRef(onDuration);
 
   useEffect(() => {
+    onTimeRef.current = onTimeUpdate;
+    onDurRef.current = onDuration;
     const el = audioRef.current;
     if (!el) return;
-    const audio = el; // non-null alias for closures
+    const audio = el;
 
     function onLoaded() {
       setDuration(audio.duration || 0);
       setLoading(false);
+      onDurRef.current?.(audio.duration || 0);
     }
     function onTime() {
       setCurrent(audio.currentTime);
+      onTimeRef.current?.(audio.currentTime);
     }
     function onEnd() {
       setPlaying(false);
       setCurrent(0);
     }
 
-    audio.addEventListener('loadedmetadata', onLoaded);
-    audio.addEventListener('timeupdate', onTime);
-    audio.addEventListener('ended', onEnd);
-    audio.addEventListener('canplay', onLoaded);
+    audio.addEventListener("loadedmetadata", onLoaded);
+    audio.addEventListener("timeupdate", onTime);
+    audio.addEventListener("ended", onEnd);
+    audio.addEventListener("canplay", onLoaded);
 
     return () => {
-      audio.removeEventListener('loadedmetadata', onLoaded);
-      audio.removeEventListener('timeupdate', onTime);
-      audio.removeEventListener('ended', onEnd);
-      audio.removeEventListener('canplay', onLoaded);
+      audio.removeEventListener("loadedmetadata", onLoaded);
+      audio.removeEventListener("timeupdate", onTime);
+      audio.removeEventListener("ended", onEnd);
+      audio.removeEventListener("canplay", onLoaded);
     };
   }, [src]);
 
@@ -67,16 +75,16 @@ export default function AudioPlayer({ src, title, compact }: AudioPlayerProps) {
   const pct = duration > 0 ? (current / duration) * 100 : 0;
 
   function fmt(t: number): string {
-    if (!t || isNaN(t)) return '0:00';
+    if (!t || isNaN(t)) return "0:00";
     const m = Math.floor(t / 60);
     const s = Math.floor(t % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
+    return `${m}:${s.toString().padStart(2, "0")}`;
   }
 
   return (
-    <div className={compact ? 'audio-player compact' : 'audio-player'}>
+    <div className={compact ? "audio-player compact" : "audio-player"}>
       <audio ref={audioRef} src={src} preload="metadata" />
-      <button className="audio-play-btn" onClick={toggle} disabled={loading} aria-label={playing ? 'Pause' : 'Play'}>
+      <button className="audio-play-btn" onClick={toggle} disabled={loading} aria-label={playing ? "Pause" : "Play"}>
         {loading ? (
           <span className="spinner" />
         ) : playing ? (

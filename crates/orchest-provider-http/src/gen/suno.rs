@@ -122,6 +122,7 @@ fn build_result(data: &Value) -> GenResult {
         .get("response")
         .and_then(|r| r.get("sunoData"))
         .and_then(Value::as_array);
+
     let assets = tracks
         .map(|tracks| {
             tracks
@@ -140,29 +141,36 @@ fn build_result(data: &Value) -> GenResult {
         })
         .unwrap_or_default();
 
-    let titles = tracks
+    let titles: Vec<String> = tracks
         .map(|tracks| {
             tracks
                 .iter()
-                .map(|track| {
-                    track
-                        .get("title")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string()
-                })
-                .collect::<Vec<_>>()
+                .map(|t| t.get("title").and_then(Value::as_str).unwrap_or("").to_string())
+                .collect()
         })
         .unwrap_or_default();
+
+    let cover_url = tracks
+        .and_then(|t| t.first())
+        .and_then(|t| t.get("imageUrl").or_else(|| t.get("image_url")))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+
+    let duration: Option<f64> = tracks
+        .and_then(|t| t.first())
+        .and_then(|t| t.get("duration").and_then(Value::as_f64));
 
     let diagnostic_metadata = json!({
         "provider": "suno",
         "titles": titles,
+        "cover_url": cover_url,
+        "duration_secs": duration,
     });
 
     GenResult {
         assets,
         diagnostic_metadata,
+        lrc: None,
     }
 }
 

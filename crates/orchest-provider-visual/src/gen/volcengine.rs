@@ -174,10 +174,10 @@ impl GenTask for VolcengineGen {
         let result = GenResult {
             assets: parse_assets(&value),
             diagnostic_metadata: json!({ "provider": "volcengine" }),
+            lrc: None,
         };
         Ok(self.cache.store("volcengine", result))
     }
-
     async fn poll(&self, handle: &GenHandle) -> Result<GenStatus, ProtocolError> {
         Ok(self.cache.status(handle))
     }

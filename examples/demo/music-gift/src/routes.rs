@@ -37,6 +37,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .route("/generate/{id}", post(generate_music))
         .route("/generate/{id}/status", get(generate_status))
         .route("/generate/{id}/stream", get(generate_stream))
+        .route("/gift/{id}/lrc", get(get_gift_lrc))
         .route("/gift/{id}/like", post(like_gift))
         .route("/countdown-section/{id}", get(get_countdown_section))
         .route("/photos", post(upload_photos))
@@ -205,6 +206,8 @@ pub async fn create_gift(
         gen_handle: None,
         gen_status: None,
         countdown_status,
+        lrc: None,
+        duration_secs: None,
         creator_token: creator_token.clone(),
         published: true,
         likes: Vec::new(),
@@ -491,9 +494,20 @@ pub async fn get_countdown_section(
     }
 }
 
-#[cfg(test)]
+// ── GET /api/gift/:id/lrc — return LRC text ────────────────────────────────
+
+pub async fn get_gift_lrc(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<impl IntoResponse> {
+    let gift = state.gift_store.get(&id)?;
+    match gift.lrc {
+        Some(lrc) => Ok((StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], lrc)),
+        None => Err(AppError::NotFound("LRC not available".to_string())),
+    }
+}
 mod tests {
-    use super::*;
+    
 
     #[test]
     fn parse_data_url_jpeg() {

@@ -9,6 +9,7 @@ mod agent;
 mod config;
 mod error;
 mod gift;
+mod lrc;
 mod prompts;
 mod routes;
 mod state;

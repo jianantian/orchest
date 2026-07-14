@@ -3,8 +3,8 @@ import { useParams } from "react-router-dom";
 import type { Gift } from "../types";
 import { generateMusic, getGift, likeGift } from "../api";
 import AudioPlayer from "../components/AudioPlayer";
+import { LRCViewer, parseLRC, type LRCLine } from "../components/LRCViewer";
 import { UnwrapStage, shouldShowUnwrap } from "../components/UnwrapStage";
-
 export default function GiftPage() {
   const { id } = useParams<{ id: string }>();
   const [gift, setGift] = useState<Gift | null>(null);
@@ -18,6 +18,8 @@ export default function GiftPage() {
   const [countdownHtml, setCountdownHtml] = useState<string | null>(null);
   const [countdownPending, setCountdownPending] = useState(false);
   const esRef = useRef<EventSource | null>(null);
+  const [lrcLines, setLrcLines] = useState<LRCLine[] | null>(null);
+  const [currentTime, setCurrentTime] = useState(0);
   const cdPollRef = useRef<number | undefined>(undefined);
 
   const startPolling = useCallback(() => {
@@ -58,6 +60,7 @@ export default function GiftPage() {
         }
         // Load countdown section if gift has one
         loadCountdown(g.id, g.countdown_status);
+        if (g.lrc) setLrcLines(parseLRC(g.lrc));
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load gift"))
       .finally(() => setLoading(false));
@@ -175,7 +178,7 @@ export default function GiftPage() {
         )}
 
         {gift.audio_url ? (
-          <AudioPlayer src={gift.audio_url} title={title} />
+          <AudioPlayer src={gift.audio_url} title={title} onTimeUpdate={setCurrentTime} />
         ) : generating ? (
           <div className="gift-generating">
             <div className="gen-label">
@@ -200,11 +203,18 @@ export default function GiftPage() {
 
         {error && <div className="error-msg">{error}</div>}
 
-        {gift.lyrics && (
+        {lrcLines && lrcLines.length > 0 ? (
+          <div className="gift-lyrics-card">
+            <LRCViewer lines={lrcLines} currentTime={currentTime} onSeek={(t) => {
+              const audio = document.querySelector("audio");
+              if (audio) audio.currentTime = t;
+            }} />
+          </div>
+        ) : gift.lyrics ? (
           <div className="gift-lyrics-card">
             {renderLyrics(gift.lyrics)}
           </div>
-        )}
+        ) : null}
 
         <div className="gift-actions">
           <button className="btn btn-secondary" onClick={() => void handleLike()}>
