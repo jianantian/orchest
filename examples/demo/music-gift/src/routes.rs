@@ -55,7 +55,9 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         router = router.nest_service("/audio", tower_http::services::ServeDir::new(audio_dir));
     }
 
-    // Serve static frontend files if provided
+    // Serve static frontend files as fallback for non-API routes.
+    // TODO: SPA routing - /playlist and /gift/:id currently return 404.
+    // Fix with a catch-all that serves index.html for unmatched GET requests.
     if let Some(dir) = static_dir {
         router = router.fallback_service(tower_http::services::ServeDir::new(dir));
     }
