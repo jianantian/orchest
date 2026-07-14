@@ -1,11 +1,10 @@
 //! Axum route handlers for all API endpoints.
 
-use std::convert::Infallible;
-use tower::ServiceExt;
-use std::path::PathBuf;
-use std::sync::Arc;
 
-use tokio::time::{sleep, Duration};
+use std::convert::Infallible;
+
+use std::path::PathBuf;
+
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -19,23 +18,14 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 use uuid::Uuid;
 
-use orchest_protocol::{ChatModel, ContentBlock, GenAsset, GenHandle, GenRequest, GenStatus, GenTask, Message, RequestOptions, Role};
-
 use crate::agent::{
     build_messages, build_photo_blocks, build_system_message, drive_stream, parse_lyrics,
     start_stream, ChatRequest, SseEvent,
 };
 use crate::error::{AppError, AppResult};
-use crate::gift::{Gift, GiftStore};
-
-/// Shared application state injected into all handlers.
-#[derive(Clone)]
-pub struct AppState {
-    pub chat_model: Arc<dyn ChatModel>,
-    pub gen_task: Arc<dyn GenTask>,
-    pub gift_store: GiftStore,
-    pub data_dir: PathBuf,
-}
+use crate::gift::Gift;
+use crate::state::AppState;
+use crate::tools::music_gen::MusicGenTool;
 
 /// Build the full router with all API routes + static file serving.
 pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
@@ -233,7 +223,7 @@ pub async fn create_gift(
         let lyrics = gift_lyrics.clone();
         let name = gift_name.clone();
         tokio::spawn(async move {
-            generate_countdown(&model, &store, &data_dir, &gift_id, &name, &bday, &scenario, &lyrics).await;
+            crate::tools::countdown::generate_countdown(&model, &store, &data_dir, &gift_id, &name, &bday, &scenario, &lyrics).await;
         });
     }
     Ok((
@@ -325,179 +315,30 @@ pub async fn list_playlist(State(state): State<AppState>) -> AppResult<impl Into
 // POST /api/generate/:id - submit music generation
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
-pub struct GenerateResponse {
-    pub id: String,
-    pub status: String,
-    pub handle: Option<String>,
-}
-
 pub async fn generate_music(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
-    let gift = state.gift_store.get(&id)?;
-
-    let style = gift
-        .meta
-        .get("style")
-        .and_then(Value::as_str)
-        .unwrap_or("healing and warm");
-    let base_prompt = "high quality music production";
-    let lyrics = gift.lyrics.unwrap_or_default();
-    let prompt = format!("{style}, {base_prompt}");
-
-
-    let title = gift
-        .meta
-        .get("title")
-        .and_then(Value::as_str)
-        .unwrap_or("Gift Song");
-    let params = json!({
-        "lyrics": lyrics,
-        "style": style,
-        "title": title,
-    });
-
-    let gen_req = GenRequest { prompt, params };
-    let handle = state.gen_task.submit(gen_req).await?;
-    let handle_json = serde_json::to_string(&handle)?;
-
-    state.gift_store.update_gen(&id, &handle_json, "pending")?;
-
-    Ok((
-        StatusCode::OK,
-        Json(GenerateResponse {
-            id: id.clone(),
-            status: "pending".to_string(),
-            handle: Some(handle_json),
-        }),
-    ))
+    let tool = MusicGenTool::new(state.gen_task.clone());
+    let resp = tool.submit(&state.gift_store, &id).await?;
+    Ok((StatusCode::OK, Json(resp)))
 }
-
-// ── GET /api/generate/:id/stream — SSE streaming status ──────────────────
-
 pub async fn generate_stream(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(8);
-
-    tokio::spawn(async move {
-        let handle = match load_gen_handle(&state, &id).await {
-            Ok(h) => h,
-            Err(_) => { let _ = tx.send(Ok(Event::default().data("{\"status\":\"error\"}"))).await; return; }
-        };
-        let _ = tx.send(Ok(Event::default().data("{\"status\":\"pending\"}"))).await;
-
-        for _ in 0..48 { // poll up to 4 minutes
-            sleep(Duration::from_secs(5)).await;
-            match state.gen_task.poll(&handle).await {
-                Ok(GenStatus::Done) => {
-                    match state.gen_task.fetch(&handle).await {
-                        Ok(result) => {
-                            let url = result.assets.first().and_then(|a| match a {
-                                GenAsset::Url { url, .. } => Some(url.clone()),
-                                _ => None,
-                            });
-                            if let Some(ref u) = url { let _ = state.gift_store.update_audio(&id, u); }
-                            let _ = tx.send(Ok(Event::default().data(json!({"status":"done","audio_url":url}).to_string()))).await;
-                        }
-                        Err(_) => { let _ = state.gift_store.mark_gen_failed(&id); let _ = tx.send(Ok(Event::default().data("{\"status\":\"failed\"}"))).await; }
-                    }
-                    return;
-                }
-                Ok(GenStatus::Failed) => { let _ = state.gift_store.mark_gen_failed(&id); let _ = tx.send(Ok(Event::default().data("{\"status\":\"failed\"}"))).await; return; }
-                Ok(GenStatus::Running) => { let _ = tx.send(Ok(Event::default().data("{\"status\":\"running\"}"))).await; }
-                _ => {} // pending or error, keep polling
-            }
-        }
-        let _ = tx.send(Ok(Event::default().data("{\"status\":\"timeout\"}"))).await;
-    });
-    Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default())
-}
-
-async fn load_gen_handle(state: &AppState, id: &str) -> AppResult<GenHandle> {
-    let gift = state.gift_store.get(id)?;
-    let json = gift.gen_handle.ok_or_else(|| AppError::BadRequest("not submitted".into()))?;
-    serde_json::from_str(&json).map_err(|e| AppError::BadRequest(format!("bad handle: {e}")))
+    MusicGenTool::stream(state.gen_task.clone(), state.gift_store.clone(), id)
 }
 
 // ── GET /api/generate/:id/status — legacy poll ────────────────────────────
-
-#[derive(Debug, Serialize)]
-pub struct GenStatusResponse {
-    pub id: String, pub status: String, pub audio_url: Option<String>,
-}
 
 pub async fn generate_status(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
-    let gift = state.gift_store.get(&id)?;
-    if gift.gen_status.as_deref() == Some("done") {
-        return Ok(Json(GenStatusResponse {
-            id,
-            status: "done".to_string(),
-            audio_url: gift.audio_url,
-        }));
-    }
-
-    // If no handle, generation hasn't been submitted
-    let handle_json = match &gift.gen_handle {
-        Some(h) => h.clone(),
-        None => return Err(AppError::BadRequest("generation not submitted".to_string())),
-    };
-
-    let handle: GenHandle = serde_json::from_str(&handle_json)
-        .map_err(|e| AppError::BadRequest(format!("invalid gen handle: {e}")))?;
-
-    let status = match state.gen_task.poll(&handle).await {
-        Ok(s) => s,
-        // Transient network error: don't mark as failed, let the caller retry
-        Err(e) => return Err(AppError::Gen(e.to_string())),
-    };
-
-    let status_str = match status {
-        GenStatus::Pending => "pending",
-        GenStatus::Running => "running",
-        GenStatus::Done => "done",
-        GenStatus::Failed => "failed",
-    };
-
-    if status == GenStatus::Done {
-        // Fetch the result
-        match state.gen_task.fetch(&handle).await {
-            Ok(result) => {
-                let audio_url = result.assets.first().and_then(|asset| match asset {
-                    GenAsset::Url { url, .. } => Some(url.clone()),
-                    GenAsset::Bytes { .. } => None,
-                });
-                if let Some(url) = &audio_url {
-                    state.gift_store.update_audio(&id, url)?;
-                }
-                return Ok(Json(GenStatusResponse {
-                    id,
-                    status: "done".to_string(),
-                    audio_url,
-                }));
-            }
-            Err(e) => {
-                state.gift_store.mark_gen_failed(&id)?;
-                return Err(AppError::Gen(e.to_string()));
-            }
-        }
-    }
-
-    if status == GenStatus::Failed {
-        state.gift_store.mark_gen_failed(&id)?;
-    }
-
-    Ok(Json(GenStatusResponse {
-        id,
-        status: status_str.to_string(),
-        audio_url: None,
-    }))
+    let tool = MusicGenTool::new(state.gen_task.clone());
+    let resp = tool.poll(&state.gift_store, &id).await?;
+    Ok(Json(resp))
 }
 
 // ---------------------------------------------------------------------------
@@ -650,195 +491,6 @@ pub async fn get_countdown_section(
     }
 }
 
-/// Generate birthday countdown HTML via the LLM and save it to disk.
-/// Build a countdown prompt matching the original Moment app's format.
-#[allow(clippy::too_many_arguments)]
-fn build_countdown_prompt(
-    name: &str,
-    scenario: &str,
-    month: &str,
-    day: &str,
-    days_until: i64,
-    target_date: &str,
-    lyric_snippet: &str,
-    previous_error: &str,
-) -> String {
-    let retry_note = if previous_error.is_empty() {
-        String::new()
-    } else {
-        format!("\n\n【IMPORTANT】Previous generation failed: {previous_error}. Please ensure this is fixed in this attempt.")
-    };
-
-    format!(
-        r#"You are a creative frontend engineer. Generate an embeddable birthday countdown HTML block for the person below. It will be inserted at the top of an existing page, with a music player and lyrics below.
-
-【Person Info】
-Name/nickname: {name}
-Birthday: {month} {day} ({days_until} days away)
-Countdown target date (MUST use this exact value): {target_date}
-Personal scene: {scenario}
-
-【Lyrics snippet (extract key imagery to strongly tie this block to their story)】
-{lyric_snippet}
-
-【Output format (strict)】
-Output must be a self-contained HTML block with this structure:
-
-<style>
-  /* All styles here, all selectors must start with #birthday-section for namespace isolation */
-  /* @import url() allowed for Google Fonts, no other external resources */
-</style>
-
-<div id="birthday-section">
-  <!-- All content here -->
-</div>
-
-<script>
-  (function() {{
-    /* All JS in IIFE to avoid global pollution */
-    /* Use document.getElementById / querySelector to access elements in the div above */
-    /* Don't use DOMContentLoaded — execute directly (elements are already in DOM) */
-  }})();
-</script>
-
-Forbidden: <!DOCTYPE>, <html>, <head>, <body> tags.
-Output only the three blocks above, no explanatory text.
-
-【Design requirements】
-1. Background: match the outer page #f7f3ec or pick a warm coordinating tone; padding 24-32px
-2. 1-2 accent colors drawn from the person's story; warm hand-drawn illustration style
-3. 2-3 simple SVG line illustrations (viewBox="0 0 100 100"):
-   - Stroke only, no fill; stroke-linecap:round; stroke-linejoin:round; stroke-width 2-3px
-   - Must relate to the person's specific story — no generic cakes or balloons
-4. Live countdown to the second via setInterval, showing days/hours/minutes/seconds in large type
-   【CRITICAL】Countdown target must use the date string "{target_date}" exactly: new Date('{target_date}'). Do not calculate the year yourself.
-5. 1-2 delightful interactions (must use addEventListener), themed to the story:
-   - walking scene → click ground to leave footprints; music scene → click note to make it bounce; etc.
-6. The person's name + one personal line drawn from the lyrics/scene (max 30 chars, avoid clichés like "wishing you...")
-7. Bottom padding = 0 — music player card sits directly below, seamless join{retry_note}"#
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn generate_countdown(
-    model: &Arc<dyn ChatModel>,
-    store: &GiftStore,
-    data_dir: &std::path::Path,
-    gift_id: &str,
-    name: &str,
-    birthday: &str,
-    scenario: &str,
-    lyric_snippet: &str,
-) {
-    // Parse birthday into month, day, days_until, and target_date
-    let (month, day, days_until, target_date) = match parse_birthday_info(birthday) {
-        Some(v) => v,
-        None => {
-            let _ = store.update_countdown_status(gift_id, "failed");
-            return;
-        }
-    };
-
-    let prompt = build_countdown_prompt(
-        name, scenario, &month, &day, days_until, &target_date, lyric_snippet, "",
-    );
-
-    let messages = [Message {
-        role: Role::User,
-        content: vec![ContentBlock::Text(prompt)],
-    }];
-    let options = RequestOptions {
-        max_tokens: Some(8192),
-        ..Default::default()
-    };
-
-    let result = model.complete(&messages, &[], &options, None).await;
-    match result {
-        Ok(response) => {
-            let html = response
-                .content
-                .iter()
-                .filter_map(|b| match b {
-                    ContentBlock::Text(t) => Some(t.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            // Strip markdown code fences if present.
-            let html = strip_code_fences(&html);
-
-            let dir = data_dir.join("countdown");
-            if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-                eprintln!("countdown: failed to create dir {}: {e}", dir.display());
-                let _ = store.update_countdown_status(gift_id, "failed");
-                return;
-            }
-
-            let path = dir.join(format!("{gift_id}.html"));
-            if let Err(e) = tokio::fs::write(&path, &html).await {
-                eprintln!("countdown: failed to write {}: {e}", path.display());
-                let _ = store.update_countdown_status(gift_id, "failed");
-                return;
-            }
-
-            let _ = store.update_countdown_status(gift_id, "ready");
-        }
-        Err(e) => {
-            eprintln!("countdown: LLM error for gift {gift_id}: {e}");
-            let _ = store.update_countdown_status(gift_id, "failed");
-        }
-    }
-}
-
-/// Parse a birthday string like "YYYY-MM-DD" or "MM-DD" into month, day,
-/// days until next occurrence, and ISO target date string.
-fn parse_birthday_info(birthday: &str) -> Option<(String, String, i64, String)> {
-    let parts: Vec<&str> = birthday.split('-').collect();
-    let (month_str, day_str) = if parts.len() == 3 {
-        (parts[1], parts[2])
-    } else if parts.len() == 2 {
-        (parts[0], parts[1])
-    } else {
-        return None;
-    };
-
-    let month_num: u32 = month_str.parse().ok()?;
-    let day_num: u32 = day_str.parse().ok()?;
-    if !(1..=12).contains(&month_num) || !(1..=31).contains(&day_num) {
-        return None;
-    }
-
-    let months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    let month_name = months.get(month_num as usize - 1)?;
-
-    // Calculate days until next birthday
-    let now = chrono::Local::now().date_naive();
-    let current_year = now.format("%Y").to_string();
-    let target_str = format!("{current_year}-{month_num:02}-{day_num:02}");
-    let target = chrono::NaiveDate::parse_from_str(&target_str, "%Y-%m-%d").ok()?;
-    let mut days_until = (target - now).num_days();
-    if days_until < 0 {
-        // Birthday has passed this year, target next year
-        days_until += 365;
-    }
-
-    Some((
-        month_name.to_string(),
-        day_str.to_string(),
-        days_until,
-        target_str,
-    ))
-}
-
-fn strip_code_fences(html: &str) -> String {
-    let trimmed = html.trim();
-    let without_open = trimmed.strip_prefix("```html")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .unwrap_or(trimmed);
-    let without_close = without_open.strip_suffix("```").unwrap_or(without_open);
-    without_close.trim().to_string()
-}
 #[cfg(test)]
 mod tests {
     use super::*;

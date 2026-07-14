@@ -9,13 +9,17 @@ mod agent;
 mod config;
 mod error;
 mod gift;
+mod prompts;
 mod routes;
+mod state;
+mod tools;
 
 use std::path::PathBuf;
 
 use clap::Parser;
 
-use routes::{build_router, AppState};
+use routes::build_router;
+use state::AppState;
 
 #[derive(Parser)]
 #[command(name = "music-gift", about = "AI music gift demo on the Orchest SDK")]
