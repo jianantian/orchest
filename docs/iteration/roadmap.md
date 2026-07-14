@@ -43,6 +43,8 @@
 | v0.9.13 | 重构 | `core/node/py` 改名收尾（ADR-0001 Decision 2 的延后项）：`agent-runtime-core` → `orchest`，`agent-runtime-py` → `orchest-py`，`agent-runtime-node` → `orchest-node`；Python 包 `agent_runtime` → `orchest`，npm 包 `@orchest/agent-runtime` → `@orchest/sdk`；crate 目录、workspace members、跨 crate 依赖、示例、guide 文档同步更新 |
 | v0.10 | 功能 | Demo A: Briefing Desk 能力组合广度验证（本地多媒体研究简报 agent；search/read/write 工具 + approval、real ASR/TTS gateway（`FakeAsr`/`FakeTts` 从零补全）、Agent-as-Tool reviewer sub-agent、跨进程 session persist + resume；6 个 issue 全部落地；[验证报告](../review/v0_10_demo_validation.md)产出 5 项 release blocker，均已建独立追踪 issue（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199)），最大发现：多模态图片输入当前无公开 API 可走） |
 | hotfix 2026-07-02 | 重构 | v0.10 验证报告 release blocker 清偿（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199) 全部关闭）：新增 `RunInput` 打通多模态图片输入公开入口、`AgentRun::resume_with_input` 支持带新问题续会话、resume 对「曾持久化但 session_store 缺失」响亮报错（`ConfigError::SessionStoreMissing`）、`SubAgentBuilder::build()` 改 `Result`、`orchest-provider` 新增可复用 `fakes::{FakeAsr, FakeTts}`（`testing` feature）；Briefing Desk demo 全量重跑（`cargo test -p briefing-desk-demo` 20/20 + 手动 `--fake` run/resume 全流程），[验证报告](../review/v0_10_demo_validation.md)与本表同步更新；live provider 验证仍未做（无凭证环境），v1.0 前必须补 |
+| hotfix 2026-07-12 | 重构 | ADR-0002 Phase 1–2（非破坏）：六个 provider 全走 protocol factory + `ProviderProfile` 抽取、catalog 作为能力事实来源、`provider/[protocol/]model` 语法、Elss 溶解为纯 `ProviderEntry`；10 个 slice 全部落地（[#204](https://github.com/jianantian/orchest/pull/204)） |
+| v0.12 | 重构 | ADR-0002 Phase 3（破坏性收尾）：删除 legacy `ProviderFactory` trait 与 per-provider `*Factory`/`*Adapter` 结构，四个 Chat adapter 收敛为共享 `ChatAdapter`、两个 Messages adapter 收敛为共享 `MessagesAdapter`，provider 差异降为 `ProviderProfile` 数据（`option_support` 数据化 Strict/degrade、`capabilities`、`chat_sse_reasoning`、fallible `replay_reasoning`、canonical stop-reason 映射 + Messages 四个 hook：`messages_wire_role`/`encode_multimodal_block`/`messages_supports_adaptive`/`messages_auth_headers`）；registry 只存 `ProviderEntry`；每 provider 请求/响应逐字节保持，完整 per-provider 测试套件迁移到共享核；公开面收窄 + v1.0 迁移说明（[migration-notes](./v0_12/migration-notes.md)）；3 个 slice 全部落地（[#205](https://github.com/jianantian/orchest/pull/205) → hotfix，[#206](https://github.com/jianantian/orchest/pull/206) → main） |
 
 ## 迭代编号约定
 
@@ -62,14 +64,6 @@
 Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格的长运行 Supervised Delegation 是 Multivac M2 产品层的验证场景，不进 v0.11。
 
 **依赖**：v0.10 完成（[验证报告](../review/v0_10_demo_validation.md)中的 SD 摩擦点）、v0.9.5 Control-Flow Hardening、v0.9.4 Failure Semantics
-
-### v0.12 — ADR-0002 Phase 3：移除 legacy adapter/factory（重构，规划）
-
-[ADR-0002](../adr/0002-protocol-provider-decoupling.md) 的 protocol × provider 解耦分三阶段。Phase 1-2（非破坏：protocol factory + profile 抽取、catalog 事实来源、`provider/[protocol/]model` 语法、Elss 溶解）在 [hotfix 2026-07-12](../hotfix/2026_07_12/prd.md) 落地。Phase 3 是**破坏性收尾**——删除 legacy `ProviderFactory` trait 与冗余 `*Adapter` 结构，registry 只存 `ProviderEntry`。
-
-**必须在 v1.0 冻结前完成**：v0.x 仍可自由破坏公开 API，v1.0 才冻结公开面。若 Phase 3 拖到 v1.0 之后，等于在冻结点上破坏。故独立成 v0.12 重构迭代，排在 v1.0 之前。详见 [`v0_12/prd.md`](./v0_12/prd.md)。
-
-**依赖**：hotfix 2026-07-12 全部 10 个 slice 完成（六个 provider 全走 protocol factory 后才能删 legacy 层）。
 
 ### v1.0 — 首次公开发布（规划）
 
