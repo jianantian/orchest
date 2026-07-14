@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import type { Gift } from '../types';
-import { generateMusic, getGift, likeGift, pollGenerateStatus } from '../api';
-import AudioPlayer from '../components/AudioPlayer';
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
+import type { Gift } from "../types";
+import { generateMusic, getGift, likeGift, pollGenerateStatus } from "../api";
+import AudioPlayer from "../components/AudioPlayer";
+import { UnwrapStage, shouldShowUnwrap } from "../components/UnwrapStage";
 
 export default function GiftPage() {
   const { id } = useParams<{ id: string }>();
@@ -15,25 +16,33 @@ export default function GiftPage() {
   const [likeCount, setLikeCount] = useState(0);
   const [copied, setCopied] = useState(false);
   const pollRef = useRef<number | undefined>(undefined);
+  const retryRef = useRef(0);
+  const MAX_RETRIES = 30; // ~90 seconds at 3s interval
 
   const startPolling = useCallback(() => {
     clearInterval(pollRef.current);
+    retryRef.current = 0;
     pollRef.current = setInterval(async () => {
       if (!id) return;
       try {
+        retryRef.current++;
         const status = await pollGenerateStatus(id);
         setGenStatus(status.status);
-        if (status.status === 'done') {
+        if (status.status === "done") {
           setGenerating(false);
-          setGift((g) => (g ? { ...g, audio_url: status.audio_url, gen_status: 'done' } : g));
+          setGift((g) => (g ? { ...g, audio_url: status.audio_url, gen_status: "done" } : g));
           clearInterval(pollRef.current);
-        } else if (status.status === 'failed') {
+        } else if (status.status === "failed") {
           setGenerating(false);
-          setError('Music generation failed');
+          setError("Music generation failed");
           clearInterval(pollRef.current);
         }
       } catch {
-        // Keep polling on transient errors
+        if (retryRef.current >= MAX_RETRIES) {
+          setGenerating(false);
+          setError("Music generation is taking longer than expected. Check back later.");
+          clearInterval(pollRef.current);
+        }
       }
     }, 3000);
   }, [id]);
@@ -46,38 +55,36 @@ export default function GiftPage() {
         setGift(g);
         setLikeCount(g.likes.length);
         setGenStatus(g.gen_status);
-        if (g.gen_status === 'pending' || g.gen_status === 'running') {
+        if (g.gen_status === "pending" || g.gen_status === "running") {
           setGenerating(true);
           startPolling();
         }
       })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load gift'))
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load gift"))
       .finally(() => setLoading(false));
 
-    return () => {
-      clearInterval(pollRef.current);
-    };
+    return () => clearInterval(pollRef.current);
   }, [id, startPolling]);
 
   async function handleGenerate() {
     if (!id) return;
     setGenerating(true);
     setError(null);
-    setGenStatus('pending');
+    setGenStatus("pending");
     try {
       await generateMusic(id);
       startPolling();
     } catch (e) {
       setGenerating(false);
       setGenStatus(null);
-      setError(e instanceof Error ? e.message : 'Generation failed');
+      setError(e instanceof Error ? e.message : "Generation failed");
     }
   }
 
   async function handleLike() {
     if (!id) return;
-    const viewerId = localStorage.getItem('viewer_id') || crypto.randomUUID();
-    localStorage.setItem('viewer_id', viewerId);
+    const viewerId = localStorage.getItem("viewer_id") || crypto.randomUUID();
+    localStorage.setItem("viewer_id", viewerId);
     try {
       const res = await likeGift(id, viewerId);
       setLiked(res.liked);
@@ -109,64 +116,96 @@ export default function GiftPage() {
 
   if (!gift) return null;
 
-  const title = gift.meta.title ?? 'Untitled';
-  const style = gift.meta.style ?? '';
-  const name = gift.meta.name ?? '';
-  const relationship = gift.meta.relationship ?? '';
+  const title = gift.meta.title ?? "Untitled";
+  const style = gift.meta.style ?? "";
+  const name = gift.meta.name ?? "";
+  const relationship = gift.meta.relationship ?? "";
+  const showUnwrap = id ? shouldShowUnwrap(id) : false;
 
   return (
-    <div className="gift-page">
-      <div className="gift-hero">
-        <h1 className="gift-title">{title}</h1>
-        {name && (
-          <p className="gift-dedication">
-            for {name}{relationship && `, ${relationship}`}
-          </p>
+    <>
+      {showUnwrap && <UnwrapStage title={title} name={name} />}
+      <div className="gift-page">
+        <div className="gift-hero">
+          <h1 className="gift-title">{title}</h1>
+          {name && (
+            <p className="gift-dedication">
+              for {name}{relationship && `, ${relationship}`}
+            </p>
+          )}
+          {style && <span className="gift-style-tag">♪ {style}</span>}
+        </div>
+
+        {gift.audio_url ? (
+          <AudioPlayer src={gift.audio_url} title={title} />
+        ) : generating ? (
+          <div className="gift-generating">
+            <div className="gen-label">
+              Creating your song
+              <span className="gen-dots">
+                <span /><span /><span />
+              </span>
+            </div>
+            <div className="gen-bar-wrap">
+              <div className="gen-bar-fill" />
+            </div>
+            <div className="gen-meta">
+              <span>{genStatus || "preparing…"}</span>
+              <span>This may take a minute</span>
+            </div>
+          </div>
+        ) : (
+          <button className="btn btn-primary btn-lg btn-full" onClick={() => void handleGenerate()}>
+            Generate Music
+          </button>
         )}
-        {style && <span className="gift-style-tag">♪ {style}</span>}
-      </div>
 
-      {gift.audio_url ? (
-        <AudioPlayer src={gift.audio_url} title={title} />
-      ) : generating ? (
-        <div className="gift-generating">
-          <div className="gen-label">
-            Creating your song
-            <span className="gen-dots">
-              <span /><span /><span />
-            </span>
+        {error && <div className="error-msg">{error}</div>}
+
+        {gift.lyrics && (
+          <div className="gift-lyrics-card">
+            <h3 className="gift-section-title">Lyrics</h3>
+            <div className="lyric-lines">{renderLyrics(gift.lyrics)}</div>
           </div>
-          <div className="gen-bar-wrap">
-            <div className="gen-bar-fill" />
-          </div>
-          <div className="gen-meta">
-            <span>{genStatus || 'preparing…'}</span>
-            <span>This may take a minute</span>
-          </div>
+        )}
+
+        <div className="gift-actions">
+          <button className="btn btn-secondary" onClick={() => void handleLike()}>
+            {liked ? "♥" : "♡"} {likeCount}
+          </button>
+          <button className="btn btn-secondary" onClick={handleShare}>
+            {copied ? "Copied!" : "Share"}
+          </button>
         </div>
-      ) : (
-        <button className="btn btn-primary btn-lg btn-full" onClick={() => void handleGenerate()}>
-          Generate Music
-        </button>
-      )}
-
-      {error && <div className="error-msg">{error}</div>}
-
-      {gift.lyrics && (
-        <div className="card gift-lyrics">
-          <h3 className="gift-section-title">Lyrics</h3>
-          <pre className="lyrics-body">{gift.lyrics}</pre>
-        </div>
-      )}
-
-      <div className="gift-actions">
-        <button className="btn btn-secondary" onClick={() => void handleLike()}>
-          {liked ? '♥' : '♡'} {likeCount}
-        </button>
-        <button className="btn btn-secondary" onClick={handleShare}>
-          {copied ? 'Copied!' : 'Share'}
-        </button>
       </div>
-    </div>
+    </>
   );
+}
+
+/** Render lyrics with [verse]/[chorus] section labels in reference style. */
+function renderLyrics(text: string) {
+  const lines = text.split("\n");
+  const elements: React.ReactNode[] = [];
+  let currentSection: string | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const match = line.match(/^\[([^\]]+)\]/i);
+    if (match) {
+      currentSection = match[1];
+      elements.push(
+        <div key={`s-${i}`} className="lyric-section-label">
+          {currentSection}
+        </div>,
+      );
+    } else if (line) {
+      elements.push(
+        <p key={i} className="lyric-line">{line}</p>,
+      );
+    } else {
+      elements.push(<br key={i} />);
+    }
+  }
+
+  return elements;
 }
