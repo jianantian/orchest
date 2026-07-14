@@ -1,6 +1,7 @@
 //! Axum route handlers for all API endpoints.
 
 use std::convert::Infallible;
+use tower::ServiceExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -58,15 +59,26 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
     if std::fs::create_dir_all(&audio_dir).is_ok() {
         router = router.nest_service("/audio", tower_http::services::ServeDir::new(audio_dir));
     }
-
-    // SPA: ServeDir for static files, with index.html fallback for 404s so
-    // react-router handles client-side routes (/playlist, /gift/:id, etc.)
+    // SPA: ServeDir handles static files. Two explicit routes serve index.html
+    // for the client-side routes that react-router manages.
     if let Some(dir) = static_dir {
         let index_path = dir.join("index.html");
         let index_html = std::fs::read_to_string(&index_path).unwrap_or_default();
-        let spa = tower_http::services::ServeDir::new(&dir)
-            .not_found_service(tower_http::services::ServeFile::new(index_path));
-        router = router.fallback_service(spa);
+
+        let html = std::sync::Arc::new(index_html);
+        let h1 = html.clone();
+        let h2 = html.clone();
+        let h3 = html.clone();
+
+        async fn spa_fallback(State(html): State<std::sync::Arc<String>>) -> axum::response::Html<String> {
+            axum::response::Html((*html).clone())
+        }
+
+        router = router
+            .route("/gift/{id}", get(spa_fallback).with_state(h1))
+            .route("/playlist", get(spa_fallback).with_state(h2))
+            .route("/", get(spa_fallback).with_state(h3))
+            .fallback_service(tower_http::services::ServeDir::new(dir));
     }
     router
 }
