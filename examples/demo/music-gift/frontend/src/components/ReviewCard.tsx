@@ -121,7 +121,7 @@ export function ReviewCard({
       </div>
 
       <button
-        className="btn-primary btn-full"
+        className="btn-primary btn-lg btn-full"
         onClick={handleSubmit}
         disabled={disabled}
       >

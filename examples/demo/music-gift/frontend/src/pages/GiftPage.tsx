@@ -202,8 +202,7 @@ export default function GiftPage() {
 
         {gift.lyrics && (
           <div className="gift-lyrics-card">
-            <h3 className="gift-section-title">Lyrics</h3>
-            <div className="lyric-lines">{renderLyrics(gift.lyrics)}</div>
+            {renderLyrics(gift.lyrics)}
           </div>
         )}
 
@@ -220,30 +219,45 @@ export default function GiftPage() {
   );
 }
 
-/** Render lyrics with [verse]/[chorus] section labels in reference style. */
-function renderLyrics(text: string) {
-  const lines = text.split("\n");
-  const elements: React.ReactNode[] = [];
-  let currentSection: string | null = null;
+/** Render lyrics matching reference: parse [Section] markers, <br> between lines. */
+function renderLyrics(raw: string) {
+  // Strip <<<MARKER>>> tags
+  let text = raw.replace(/<<<[A-Z_]+>>>[^<]*<<<[A-Z_]+>>>/g, "").replace(/<<<[A-Z_]+>>>/g, "").trim();
+  const sections = parseLyrics(text);
+  if (!sections.length) return <div className="lyric-lines">{text}</div>;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    const match = line.match(/^\[([^\]]+)\]/i);
-    if (match) {
-      currentSection = match[1];
-      elements.push(
-        <div key={`s-${i}`} className="lyric-section-label">
-          {currentSection}
-        </div>,
-      );
-    } else if (line) {
-      elements.push(
-        <p key={i} className="lyric-line">{line}</p>,
-      );
+  return sections.map((s, i) => (
+    <div key={i} className="lyric-section">
+      <div className="lyric-label">{s.label}</div>
+      <div className="lyric-lines">
+        {s.lines.map((line, j) => (
+          <span key={j}>
+            {j > 0 && <br />}
+            {line}
+          </span>
+        ))}
+      </div>
+    </div>
+  ));
+}
+
+function parseLyrics(raw: string): Array<{ label: string; lines: string[] }> {
+  const parts = raw.split(/\[([^\]]+)\]/).filter(Boolean);
+  const sections: Array<{ label: string; content: string }> = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const label = parts[i].trim();
+    const content = parts[i + 1]?.trim() || "";
+    if (content) sections.push({ label, content });
+  }
+  // Merge consecutive choruses
+  const merged: Array<{ label: string; content: string }> = [];
+  for (const s of sections) {
+    const last = merged[merged.length - 1];
+    if (last && last.label === s.label && last.label.toLowerCase().includes("chorus")) {
+      last.content += "\n\n" + s.content;
     } else {
-      elements.push(<br key={i} />);
+      merged.push({ ...s });
     }
   }
-
-  return elements;
+  return merged.map((s) => ({ label: s.label, lines: s.content.split("\n").map((l) => l.trim()).filter(Boolean) }));
 }

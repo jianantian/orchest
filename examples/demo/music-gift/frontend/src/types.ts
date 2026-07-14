@@ -55,6 +55,7 @@ export interface Gift {
   likes: string[];
   created_at: string;
   published_at: string | null;
+  countdown_status?: string | null;
 }
 
 /** Response from POST /api/gift. */
