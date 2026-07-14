@@ -22,8 +22,9 @@ use orchest_provider_core::registry::ProviderConfig;
 
 use crate::catalog::LlmModelEntry;
 use crate::{
-    CachePolicy, CompatibilityPolicy, ContentBlock, ModelError, OptionAdjustment, RequestOptions,
-    Role, ThinkingLevel, TokenUsage,
+    CacheCapability, CachePolicy, CapabilitySource, CompatibilityPolicy, ContentBlock,
+    ModelCapabilities, ModelError, OptionAdjustment, ReasoningCapability, RequestOptions, Role,
+    ThinkingLevel, TokenUsage,
 };
 
 /// Wire protocol (the dialect an adapter speaks), chat-scoped. This is the
@@ -126,8 +127,9 @@ impl std::fmt::Debug for ProviderEntry {
 #[derive(Debug)]
 pub struct ResolvedModel<'a> {
     /// The resolved provider entry — carries the adapter ctor, profiles, and
-    /// URL/header data. Read by the factory dispatch and profile lookup.
-    pub provider: &'a ProviderEntry,
+    /// URL/header data. Read by the factory dispatch and profile lookup. Entries
+    /// are `'static`, so an adapter can retain this.
+    pub provider: &'static ProviderEntry,
     /// The resolved protocol. Read by ctors that dispatch on it (e.g. the Elss
     /// gateway builds the Messages or Chat adapter accordingly).
     pub protocol: Protocol,
@@ -135,7 +137,8 @@ pub struct ResolvedModel<'a> {
     pub model: &'a str,
     /// The model's catalog entry — the canonical source of capability facts.
     /// `None` for dynamic-gateway models that cannot be enumerated statically.
-    pub catalog: Option<&'a LlmModelEntry>,
+    /// Catalog rows are `'static`, so an adapter can retain this.
+    pub catalog: Option<&'static LlmModelEntry>,
 }
 
 /// Narrow, named extension surface for provider-specific behavior *within* a
@@ -145,7 +148,7 @@ pub struct ResolvedModel<'a> {
 ///
 /// Hooks are added **by name, one at a time, when a real provider demonstrates
 /// the need** (ADR rule 3): `lower_options` + `replay_reasoning` (DeepSeek),
-/// `option_support` (Volcengine), `interpret_usage` (OpenRouter), `map_role`
+/// `option_support` (Volcengine), `interpret_usage` (OpenRouter), `messages_wire_role`
 /// (Minimax). `normalize_error` from the ADR sketch is intentionally NOT here —
 /// no provider has needed it yet, so it stays unwritten. There is deliberately
 /// **no** generic `modify_request(&mut body)` escape hatch: each hook's scope is
@@ -158,14 +161,17 @@ pub trait ProviderProfile: Send + Sync {
     /// with its top-level `thinking: {type}` dialect.
     fn lower_options(
         &self,
-        cx: &ResolvedModel<'_>,
+        _cx: &ResolvedModel<'_>,
         options: &RequestOptions,
         body: &mut Value,
     ) -> Vec<OptionAdjustment> {
+        // `options` are the *effective* options: `resolve_chat_preflight` has
+        // already errored/degraded unsupported reasoning + budget, so thinking is
+        // Off for models that don't support it and those adjustments are recorded
+        // upstream — this default only shapes the body.
         let mut adjustments = Vec::new();
 
-        let supports_reasoning = cx.catalog.map(|c| c.thinking.is_some()).unwrap_or(false);
-        if options.thinking != ThinkingLevel::Off && supports_reasoning {
+        if options.thinking != ThinkingLevel::Off {
             let effort = match options.thinking {
                 ThinkingLevel::Off => unreachable!(),
                 ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
@@ -173,22 +179,6 @@ pub trait ProviderProfile: Send + Sync {
                 ThinkingLevel::High | ThinkingLevel::XHigh | ThinkingLevel::Max => "high",
             };
             body["reasoning_effort"] = json!(effort);
-        } else if options.thinking != ThinkingLevel::Off {
-            adjustments.push(OptionAdjustment {
-                option: "thinking".into(),
-                requested: json!(format!("{:?}", options.thinking)),
-                applied: json!("Off"),
-                reason: "unsupported_reasoning_model".into(),
-            });
-        }
-
-        if options.thinking_budget_tokens.is_some() {
-            adjustments.push(OptionAdjustment {
-                option: "thinking_budget_tokens".into(),
-                requested: json!(options.thinking_budget_tokens),
-                applied: json!(null),
-                reason: "unsupported_by_provider".into(),
-            });
         }
 
         if options.cache_policy == CachePolicy::Long {
@@ -212,13 +202,17 @@ pub trait ProviderProfile: Send + Sync {
 
     /// Re-inject prior assistant reasoning when replaying a historical assistant
     /// message. Default: no replay (canonical Chat drops Thinking blocks, as
-    /// OpenAI does). DeepSeek overrides this to emit `reasoning_content`.
+    /// OpenAI does). DeepSeek/Volcengine override this to emit `reasoning_content`;
+    /// OpenRouter emits `reasoning_details` and may error on invalid replay data
+    /// (hence fallible).
+    #[allow(clippy::result_large_err)] // justified: ModelError carries diagnostic context (workspace convention)
     fn replay_reasoning(
         &self,
         _cx: &ResolvedModel<'_>,
         _assistant_msg: &mut Value,
         _blocks: &[ContentBlock],
-    ) {
+    ) -> Result<(), ModelError> {
+        Ok(())
     }
 
     /// Declare support for a canonical option so shared `CompatibilityPolicy`
@@ -230,16 +224,41 @@ pub trait ProviderProfile: Send + Sync {
         OptionSupport::Supported
     }
 
-    /// Map a canonical role onto the provider-accepted wire role. Default: the
-    /// canonical Messages mapping, which downgrades Minimax-only roles (as the
-    /// Chat providers do via `role_compat`). Minimax overrides this to emit its
-    /// native roles (`user_system` / `group` / `sample_message_*`).
-    fn map_role(&self, _cx: &ResolvedModel<'_>, role: &Role) -> WireRole {
-        WireRole(match role {
+    /// Map a canonical non-System role onto the provider-accepted Messages wire
+    /// role, recording any downgrade as an `OptionAdjustment`. Default: the
+    /// canonical Messages mapping (Anthropic) — Minimax-only roles are dropped to
+    /// `user` with a `minimax_only_role_dropped` adjustment. Minimax overrides to
+    /// emit its native roles (`user_system` / `group` / `sample_message_*`) with
+    /// no adjustment.
+    fn messages_wire_role(
+        &self,
+        _cx: &ResolvedModel<'_>,
+        role: &Role,
+        adjustments: &mut Vec<OptionAdjustment>,
+    ) -> &'static str {
+        match role {
+            Role::User | Role::Tool => "user",
             Role::Assistant => "assistant",
-            Role::System | Role::UserSystem => "system",
-            _ => "user",
-        })
+            Role::System => "user", // System is handled separately by the core.
+            Role::UserSystem => {
+                adjustments.push(OptionAdjustment {
+                    option: "role".into(),
+                    requested: json!("user_system"),
+                    applied: json!("user"),
+                    reason: "minimax_only_role_dropped".into(),
+                });
+                "user"
+            }
+            Role::Group | Role::SampleMessageUser | Role::SampleMessageAi => {
+                adjustments.push(OptionAdjustment {
+                    option: "role".into(),
+                    requested: json!(format!("{role:?}")),
+                    applied: json!("user"),
+                    reason: "minimax_only_role_dropped".into(),
+                });
+                "user"
+            }
+        }
     }
 
     /// Interpret provider-specific usage reporting into canonical `TokenUsage`,
@@ -266,7 +285,116 @@ pub trait ProviderProfile: Send + Sync {
             Vec::new()
         }
     }
+
+    /// The Chat SSE reasoning field names `(reasoning_delta_field,
+    /// reasoning_details_field)` passed to the SSE decoder. Default `(None, None)`
+    /// — canonical Chat (OpenAI) carries no separate reasoning stream. DeepSeek
+    /// (`reasoning`), Volcengine (`reasoning_content`), and OpenRouter
+    /// (`reasoning` + `reasoning_details`) override this.
+    fn chat_sse_reasoning(
+        &self,
+        _cx: &ResolvedModel<'_>,
+    ) -> (Option<&'static str>, Option<&'static str>) {
+        (None, None)
+    }
+
+    /// Report the model's capabilities. Default: the catalog-driven canonical Chat
+    /// capabilities. Providers whose reasoning-capability detail (effort list,
+    /// budget/exclusion flags, replay-metadata, source, pricing, name-prefix
+    /// fallback) is not fully captured by the catalog override this.
+    fn capabilities(&self, cx: &ResolvedModel<'_>, max_output_tokens: u32) -> ModelCapabilities {
+        canonical_chat_capabilities(cx, max_output_tokens)
+    }
+
+    // -- Messages-protocol hooks (used by the shared MessagesAdapter) -------
+
+    /// Whether the model uses adaptive thinking (`thinking: {type: adaptive}` +
+    /// `output_config`) vs. explicit `budget_tokens`. Default `false`. Anthropic
+    /// and Minimax override with their model checks.
+    fn messages_supports_adaptive(&self, _cx: &ResolvedModel<'_>) -> bool {
+        false
+    }
+
+    /// Encode a **multimodal** content block (`Image` / `Video` / `Audio` /
+    /// `MidConvSystem`) for the Messages wire; the shared core encodes the common
+    /// blocks (text / thinking / tool_use / tool_result). Return `Some(json)` to
+    /// include it, or `None` to drop it (pushing an `OptionAdjustment`). This is
+    /// the narrow, named home for the per-provider content-encoding divergence
+    /// (ADR rule 4 dialect-fork consideration — see the v0.12 slice 002 spec).
+    fn encode_multimodal_block(
+        &self,
+        _cx: &ResolvedModel<'_>,
+        _block: &ContentBlock,
+        _adjustments: &mut Vec<OptionAdjustment>,
+    ) -> Option<Value> {
+        None
+    }
+
+    /// The Messages auth headers for `api_key`. Default: `Authorization: Bearer`.
+    /// Anthropic overrides with `x-api-key` + `anthropic-version`.
+    fn messages_auth_headers(
+        &self,
+        _cx: &ResolvedModel<'_>,
+        api_key: &str,
+    ) -> Vec<(&'static str, String)> {
+        vec![("authorization", format!("Bearer {api_key}"))]
+    }
 }
+
+/// Canonical Chat capabilities read from the catalog (the
+/// [`ProviderProfile::capabilities`] default). Reasoning support / context window
+/// come from `cx.catalog`; when absent (dynamic/unlisted models) reasoning is
+/// assumed unsupported and the context window unknown — providers with a
+/// name-prefix fallback override.
+pub fn canonical_chat_capabilities(
+    cx: &ResolvedModel<'_>,
+    max_output_tokens: u32,
+) -> ModelCapabilities {
+    let supports_reasoning = cx.catalog.map(|c| c.thinking.is_some()).unwrap_or(false);
+    ModelCapabilities {
+        streaming: true,
+        tool_use: true,
+        parallel_tool_use: true,
+        reasoning: ReasoningCapability {
+            supported: supports_reasoning,
+            efforts: if supports_reasoning {
+                vec![
+                    ThinkingLevel::Low,
+                    ThinkingLevel::Medium,
+                    ThinkingLevel::High,
+                ]
+            } else {
+                vec![]
+            },
+            budget_tokens: false,
+            output_exclusion: false,
+            replay_metadata_required: false,
+        },
+        prompt_cache: CacheCapability {
+            supported: true,
+            explicit_breakpoints: false,
+            long_ttl: false,
+        },
+        max_output_tokens: Some(max_output_tokens),
+        context_window_size: cx.catalog.map(|c| c.context_window),
+        source: CapabilitySource::Static,
+        pricing: cx.catalog.and_then(|c| c.pricing.clone()),
+    }
+}
+
+/// A profile that overrides nothing — the protocol-canonical behavior. Used as
+/// the Chat core's fallback when an entry declares no profile.
+pub struct CanonicalChat;
+impl ProviderProfile for CanonicalChat {}
+/// The shared no-op profile singleton.
+pub static CANONICAL_CHAT: CanonicalChat = CanonicalChat;
+
+/// The Messages-core fallback profile (canonical Messages hook defaults). Used
+/// only when an entry declares no Messages profile; Anthropic/Minimax always do.
+pub struct CanonicalMessages;
+impl ProviderProfile for CanonicalMessages {}
+/// The shared Messages fallback profile singleton.
+pub static CANONICAL_MESSAGES: CanonicalMessages = CanonicalMessages;
 
 /// Resolve an entry's static/env headers to concrete `(name, value)` pairs at
 /// adapter-construction time. `Env` values are read from the environment now (a
@@ -286,67 +414,178 @@ pub fn resolve_headers(entry: &ProviderEntry) -> Vec<(&'static str, String)> {
 }
 
 /// A canonical request option whose provider support is queried via
-/// [`ProviderProfile::option_support`]. Added by name as providers demonstrate
-/// the need (ADR rule 3); slice 003 births reasoning output exclusion.
+/// [`ProviderProfile::option_support`] and applied uniformly by
+/// [`resolve_chat_preflight`]. Added by name as providers demonstrate the need
+/// (ADR rule 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestOption {
+    /// Reasoning/thinking itself — a model may not support it at all.
+    Reasoning,
+    /// A caller-specified thinking token budget (`thinking_budget_tokens`).
+    ThinkingBudget,
     /// Emit reasoning internally but exclude it from the response
     /// (`include_thinking: false` while thinking is enabled).
     ReasoningOutputExclusion,
 }
 
-/// A provider-accepted wire role name, produced by [`ProviderProfile::map_role`].
+/// The value recorded in a degradation [`OptionAdjustment`]'s `applied` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WireRole(pub &'static str);
+pub enum AppliedValue {
+    Null,
+    Bool(bool),
+    Str(&'static str),
+}
 
-/// The result of an [`ProviderProfile::option_support`] query.
+impl AppliedValue {
+    fn to_json(self) -> Value {
+        match self {
+            AppliedValue::Null => Value::Null,
+            AppliedValue::Bool(b) => json!(b),
+            AppliedValue::Str(s) => json!(s),
+        }
+    }
+}
+
+/// The `OptionAdjustment` a provider records when it degrades an unsupported
+/// option. `requested` is supplied by [`resolve_chat_preflight`] from the actual
+/// value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdjustmentSpec {
+    pub option: &'static str,
+    pub applied: AppliedValue,
+    pub reason: &'static str,
+}
+
+/// The result of a [`ProviderProfile::option_support`] query. `Unsupported`
+/// carries the provider's exact behavior as data, so [`resolve_chat_preflight`]
+/// reproduces each provider's Strict/degrade semantics and reason strings without
+/// a per-provider branch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptionSupport {
     Supported,
-    /// Unsupported, with the canonical error `code`/`message` to surface under
-    /// `CompatibilityPolicy::Strict`.
     Unsupported {
-        code: &'static str,
-        message: &'static str,
+        /// Error `(code, message)` surfaced under `CompatibilityPolicy::Strict`.
+        /// `None` → Strict degrades silently like Coerce (e.g. Volcengine
+        /// disabling thinking on an unlisted model raises no error).
+        strict_error: Option<(&'static str, &'static str)>,
+        /// Whether degrading turns thinking off (reasoning / exclusion) rather
+        /// than merely dropping the option (thinking budget).
+        disables_thinking: bool,
+        /// The adjustment recorded when degrading. `None` → degrade silently
+        /// (e.g. Volcengine disabling thinking records no adjustment).
+        adjustment: Option<AdjustmentSpec>,
     },
 }
 
-/// Shared `CompatibilityPolicy` handling for reasoning output exclusion, driven
-/// by the profile's [`ProviderProfile::option_support`] declaration — so the
-/// Strict-errors / Coerce-degrades decision lives here once rather than in each
-/// adapter. Returns the effective thinking flag plus any degradation adjustment.
+/// Apply the shared `CompatibilityPolicy` handling for the reasoning/budget/
+/// exclusion options, driven by the profile's [`ProviderProfile::option_support`]
+/// declarations — so the Strict-errors / degrade decision lives here once rather
+/// than in each adapter. Returns the effective options (thinking possibly turned
+/// off) plus the degradation adjustments, or an error under Strict.
 #[allow(clippy::result_large_err)] // justified: ModelError carries diagnostic context (workspace convention)
-pub fn resolve_reasoning_exclusion(
+pub fn resolve_chat_preflight(
     profile: &dyn ProviderProfile,
     cx: &ResolvedModel<'_>,
     options: &RequestOptions,
-    thinking_enabled: bool,
-) -> Result<(bool, Option<OptionAdjustment>), ModelError> {
-    // Exclusion only matters when the caller wants thinking on but its output off.
-    if options.include_thinking || !thinking_enabled {
-        return Ok((thinking_enabled, None));
+) -> Result<(RequestOptions, Vec<OptionAdjustment>), ModelError> {
+    let mut effective = options.clone();
+    let mut adjustments = Vec::new();
+
+    if options.thinking != ThinkingLevel::Off {
+        apply_option(
+            profile,
+            cx,
+            RequestOption::Reasoning,
+            options.compatibility_policy,
+            json!(format!("{:?}", options.thinking)),
+            &mut effective,
+            &mut adjustments,
+        )?;
     }
-    match profile.option_support(cx, RequestOption::ReasoningOutputExclusion) {
-        OptionSupport::Supported => Ok((thinking_enabled, None)),
-        OptionSupport::Unsupported { code, message } => match options.compatibility_policy {
-            CompatibilityPolicy::Strict => Err(ModelError {
+
+    if options.thinking_budget_tokens.is_some() {
+        apply_option(
+            profile,
+            cx,
+            RequestOption::ThinkingBudget,
+            options.compatibility_policy,
+            json!(options.thinking_budget_tokens),
+            &mut effective,
+            &mut adjustments,
+        )?;
+    }
+
+    // Exclusion only matters when thinking is (still) on but its output is off.
+    if !options.include_thinking && effective.thinking != ThinkingLevel::Off {
+        apply_option(
+            profile,
+            cx,
+            RequestOption::ReasoningOutputExclusion,
+            options.compatibility_policy,
+            json!(false),
+            &mut effective,
+            &mut adjustments,
+        )?;
+    }
+
+    Ok((effective, adjustments))
+}
+
+#[allow(clippy::result_large_err, clippy::too_many_arguments)] // justified: ModelError carries diagnostic context; args are the shared option-application inputs
+fn apply_option(
+    profile: &dyn ProviderProfile,
+    cx: &ResolvedModel<'_>,
+    option: RequestOption,
+    policy: CompatibilityPolicy,
+    requested: Value,
+    effective: &mut RequestOptions,
+    adjustments: &mut Vec<OptionAdjustment>,
+) -> Result<(), ModelError> {
+    let OptionSupport::Unsupported {
+        strict_error,
+        disables_thinking,
+        adjustment,
+    } = profile.option_support(cx, option)
+    else {
+        return Ok(());
+    };
+
+    if policy == CompatibilityPolicy::Strict {
+        if let Some((code, message)) = strict_error {
+            return Err(ModelError {
                 message: message.into(),
                 code: Some(code.into()),
                 provider: Some(cx.provider.name.into()),
                 status: None,
                 retry_after_secs: None,
                 upstream: None,
-            }),
-            CompatibilityPolicy::Coerce => Ok((
-                false,
-                Some(OptionAdjustment {
-                    option: "include_thinking".into(),
-                    requested: json!(false),
-                    applied: json!(false),
-                    reason: "thinking_disabled_for_output_exclusion".into(),
-                }),
-            )),
-        },
+            });
+        }
+    }
+
+    if disables_thinking {
+        effective.thinking = ThinkingLevel::Off;
+    }
+    if let Some(a) = adjustment {
+        adjustments.push(OptionAdjustment {
+            option: a.option.into(),
+            requested,
+            applied: a.applied.to_json(),
+            reason: a.reason.into(),
+        });
+    }
+    Ok(())
+}
+
+/// Canonical Chat stop-reason post-processing: the SSE decoder already maps the
+/// standard finish reasons; this folds the extra non-standard mapping
+/// (`insufficient_system_resource -> Interrupted`) into the shared path (a no-op
+/// for providers that never emit it).
+pub fn normalize_chat_stop_reason(stop: crate::StopReason) -> crate::StopReason {
+    use crate::StopReason;
+    match stop {
+        StopReason::Other(raw) if raw == "insufficient_system_resource" => StopReason::Interrupted,
+        other => other,
     }
 }
 
@@ -416,10 +655,8 @@ impl ProtocolFactory for MessagesProtocolFactory {
     }
 }
 
-/// The provider entries already migrated to the protocol-factory path. Grows one
-/// entry per slice; a provider absent here stays on the legacy `ProviderFactory`
-/// bridge. Slices 001–002 migrate OpenAI (canonical, no profile) and DeepSeek
-/// (Chat + `DeepSeekProfile`).
+/// The built-in provider entries. Every provider resolves through the protocol
+/// factories from its entry (there is no longer a legacy fallback).
 static OPENAI_ENTRY: ProviderEntry = ProviderEntry {
     name: "openai",
     // Base URL, not the complete endpoint; the wrapped adapter's
@@ -430,8 +667,7 @@ static OPENAI_ENTRY: ProviderEntry = ProviderEntry {
     protocol_aliases: &[],
     path_overrides: &[],
     extra_headers: &[],
-    // OpenAI is canonical Chat — no deviation, so no profile.
-    profiles: &[],
+    profiles: &[(Protocol::Chat, &crate::providers::openai::OPENAI_PROFILE)],
     build_adapter: crate::providers::openai::build_chat_adapter,
 };
 
@@ -498,8 +734,13 @@ static ANTHROPIC_ENTRY: ProviderEntry = ProviderEntry {
     protocol_aliases: &[],
     path_overrides: &[],
     extra_headers: &[],
-    // Anthropic is canonical Messages — no deviation, so no profile.
-    profiles: &[],
+    // Anthropic is the canonical Messages reference, but the collapsed core still
+    // needs its capability facts, x-api-key auth, adaptive detection, and
+    // image-only multimodal encoding as profile data.
+    profiles: &[(
+        Protocol::Messages,
+        &crate::providers::anthropic::ANTHROPIC_PROFILE,
+    )],
     build_adapter: crate::providers::anthropic::build_messages_adapter,
 };
 
@@ -540,19 +781,26 @@ static ELSS_ENTRY: ProviderEntry = ProviderEntry {
     build_adapter: crate::providers::elss::build_adapter,
 };
 
-/// The migrated provider entry for `name`, or `None` if the provider is still on
-/// the legacy bridge.
+/// Every built-in provider entry — the single source of truth the registry and
+/// the parser enumerate.
+static ALL_ENTRIES: &[&ProviderEntry] = &[
+    &OPENAI_ENTRY,
+    &DEEPSEEK_ENTRY,
+    &VOLCENGINE_ENTRY,
+    &OPENROUTER_ENTRY,
+    &ANTHROPIC_ENTRY,
+    &MINIMAX_ENTRY,
+    &ELSS_ENTRY,
+];
+
+/// All built-in provider entries.
+pub fn all_provider_entries() -> &'static [&'static ProviderEntry] {
+    ALL_ENTRIES
+}
+
+/// The provider entry for `name`, or `None` for an unknown provider.
 pub fn provider_entry(name: &str) -> Option<&'static ProviderEntry> {
-    match name {
-        "openai" => Some(&OPENAI_ENTRY),
-        "deepseek" => Some(&DEEPSEEK_ENTRY),
-        "volcengine" => Some(&VOLCENGINE_ENTRY),
-        "openrouter" => Some(&OPENROUTER_ENTRY),
-        "anthropic" => Some(&ANTHROPIC_ENTRY),
-        "minimax" => Some(&MINIMAX_ENTRY),
-        "elss" => Some(&ELSS_ENTRY),
-        _ => None,
-    }
+    ALL_ENTRIES.iter().copied().find(|e| e.name == name)
 }
 
 /// Recognize an explicit protocol segment in a model string (ADR "Parsing
@@ -638,14 +886,17 @@ mod tests {
     }
 
     #[test]
-    fn canonical_lower_options_records_adjustment_for_non_thinking_model() {
-        // A model absent from the catalog: the canonical default treats reasoning
-        // as unsupported (it reads only the catalog, no name-prefix fallback).
+    fn canonical_lower_options_emits_reasoning_effort_without_a_support_gate() {
+        // The canonical default no longer gates on model support — that moved to
+        // `option_support` + `resolve_chat_preflight`. `lower_options` only shapes
+        // the body; the pre-flight would have disabled thinking upstream for a
+        // provider that doesn't support it. The canonical `option_support` is
+        // permissive (Supported).
         let cx = ResolvedModel {
             provider: provider_entry("openai").unwrap(),
             protocol: Protocol::Chat,
             model: "made-up-model",
-            catalog: crate::catalog::find_model("openai/made-up-model"),
+            catalog: None,
         };
         let opts = RequestOptions {
             thinking: ThinkingLevel::High,
@@ -653,10 +904,12 @@ mod tests {
         };
         let mut body = json!({});
         let adj = NoProfile.lower_options(&cx, &opts, &mut body);
-        assert!(body.get("reasoning_effort").is_none());
-        assert!(adj
-            .iter()
-            .any(|a| a.reason == "unsupported_reasoning_model"));
+        assert_eq!(body["reasoning_effort"], "high");
+        assert!(adj.is_empty());
+        assert!(matches!(
+            NoProfile.option_support(&cx, RequestOption::Reasoning),
+            OptionSupport::Supported
+        ));
     }
 
     #[test]
@@ -675,7 +928,7 @@ mod tests {
                 input: json!({}),
             },
         ];
-        NoProfile.replay_reasoning(&cx, &mut msg, &blocks);
+        NoProfile.replay_reasoning(&cx, &mut msg, &blocks).unwrap();
         // Canonical Chat drops Thinking — no reasoning_content injected.
         assert!(msg.get("reasoning_content").is_none());
     }

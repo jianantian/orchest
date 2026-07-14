@@ -1,28 +1,55 @@
-//! OpenRouter's Chat [`ProviderProfile`] (ADR-0002 slice 004).
+//! OpenRouter's Chat [`ProviderProfile`] (ADR-0002 Phase 3).
 //!
-//! OpenRouter is a multi-provider gateway, OpenAI-compatible Chat with its own
-//! `reasoning` object dialect. `lower_options` owns that. Usage-missing handling
-//! is the canonical default ([`ProviderProfile::interpret_usage`]) shared with
-//! OpenAI/DeepSeek, so it is not overridden here. Reasoning replay
-//! (`reasoning_details`) stays inline in the adapter for now — it is fallible
-//! (invalid replay is an error), which the `replay_reasoning` hook signature does
-//! not carry; it migrates when the adapters collapse in v0.12.
+//! OpenRouter is a multi-provider gateway, OpenAI-compatible Chat over the shared
+//! [`ChatAdapter`](crate::chat) with its own `reasoning` object dialect and
+//! `reasoning_details` replay (fallible — invalid replay data is an error). Its
+//! routing headers ride on the entry (`HeaderValue::Env`); usage-missing handling
+//! is the canonical default. It supports reasoning, budget, and exclusion.
+
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::protocol::{ProviderProfile, ResolvedModel};
-use crate::{OptionAdjustment, RequestOptions, ThinkingLevel};
+use crate::protocol::{OptionSupport, ProviderProfile, RequestOption, ResolvedModel};
+use crate::{
+    CacheCapability, CapabilitySource, ContentBlock, ModelCapabilities, ModelError,
+    OptionAdjustment, ReasoningCapability, RequestOptions, ThinkingLevel, UpstreamErrorDetail,
+};
 
-/// The OpenRouter Chat profile. Zero-sized; behavior is in the hook impls.
+/// The OpenRouter Chat profile.
 pub struct OpenRouterProfile;
 
 /// The singleton attached to the OpenRouter `ProviderEntry`.
 pub static OPENROUTER_PROFILE: OpenRouterProfile = OpenRouterProfile;
 
+fn append_reasoning_details(target: &mut Vec<Value>, details: &Value) -> Result<(), ModelError> {
+    match details {
+        Value::Array(items) => {
+            target.extend(items.iter().cloned());
+            Ok(())
+        }
+        Value::Object(_) => {
+            target.push(details.clone());
+            Ok(())
+        }
+        other => Err(ModelError {
+            message: format!(
+                "OpenRouter reasoning replay details must be object or array, got {other}"
+            ),
+            code: Some("invalid_reasoning_replay".into()),
+            provider: Some("openrouter".into()),
+            status: None,
+            retry_after_secs: None,
+            upstream: Some(Arc::new(UpstreamErrorDetail {
+                code: None,
+                message: None,
+                body: Some(other.clone()),
+            })),
+        }),
+    }
+}
+
 impl ProviderProfile for OpenRouterProfile {
-    /// OpenRouter expresses reasoning as a `reasoning` object: `max_tokens` when
-    /// a budget is set, otherwise a granular `effort`, plus `exclude: true` when
-    /// the caller wants reasoning off the response. Sampling is always forwarded.
     fn lower_options(
         &self,
         _cx: &ResolvedModel<'_>,
@@ -57,7 +84,90 @@ impl ProviderProfile for OpenRouterProfile {
         if let Some(tp) = options.top_p {
             body["top_p"] = json!(tp);
         }
-
         Vec::new()
+    }
+
+    fn replay_reasoning(
+        &self,
+        _cx: &ResolvedModel<'_>,
+        assistant_msg: &mut Value,
+        blocks: &[ContentBlock],
+    ) -> Result<(), ModelError> {
+        let has_tool_calls = blocks
+            .iter()
+            .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
+        if !has_tool_calls {
+            return Ok(());
+        }
+        let mut reasoning_text: Option<String> = None;
+        let mut reasoning_details: Vec<Value> = Vec::new();
+        for block in blocks {
+            if let ContentBlock::Thinking {
+                text,
+                provider_details,
+                ..
+            } = block
+            {
+                if let Some(details) = provider_details {
+                    append_reasoning_details(&mut reasoning_details, details)?;
+                } else if reasoning_details.is_empty() {
+                    if let Some(t) = text {
+                        reasoning_text = Some(match reasoning_text {
+                            Some(existing) => format!("{existing}{t}"),
+                            None => t.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        if !reasoning_details.is_empty() {
+            assistant_msg["reasoning_details"] = Value::Array(reasoning_details);
+        } else if let Some(reasoning) = reasoning_text {
+            assistant_msg["reasoning"] = json!(reasoning);
+        }
+        Ok(())
+    }
+
+    fn option_support(&self, _cx: &ResolvedModel<'_>, _option: RequestOption) -> OptionSupport {
+        // OpenRouter supports reasoning, budget, and output exclusion.
+        OptionSupport::Supported
+    }
+
+    fn chat_sse_reasoning(
+        &self,
+        _cx: &ResolvedModel<'_>,
+    ) -> (Option<&'static str>, Option<&'static str>) {
+        (Some("reasoning"), Some("reasoning_details"))
+    }
+
+    fn capabilities(&self, _cx: &ResolvedModel<'_>, max_output_tokens: u32) -> ModelCapabilities {
+        ModelCapabilities {
+            streaming: true,
+            tool_use: true,
+            parallel_tool_use: true,
+            reasoning: ReasoningCapability {
+                supported: true,
+                efforts: vec![
+                    ThinkingLevel::Minimal,
+                    ThinkingLevel::Low,
+                    ThinkingLevel::Medium,
+                    ThinkingLevel::High,
+                    ThinkingLevel::XHigh,
+                    ThinkingLevel::Max,
+                ],
+                budget_tokens: true,
+                output_exclusion: true,
+                replay_metadata_required: true,
+            },
+            prompt_cache: CacheCapability {
+                supported: true,
+                explicit_breakpoints: false,
+                long_ttl: false,
+            },
+            max_output_tokens: Some(max_output_tokens),
+            context_window_size: None,
+            source: CapabilitySource::Assumed,
+            pricing: None,
+        }
     }
 }

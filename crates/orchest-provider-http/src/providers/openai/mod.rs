@@ -1,130 +1,89 @@
-//! OpenAI adapter implementation.
+//! OpenAI Chat profile + construction (ADR-0002 Phase 3).
 //!
-//! Split by concern: this file owns the adapter struct, capability
-//! reporting, and `complete()`'s control flow; `request` builds the
-//! chat completions request body.
+//! OpenAI is canonical Chat Completions over the shared `ChatAdapter` (crate::chat). Its only deviations, carried here as [`OpenAiProfile`]:
+//! - reasoning / thinking-budget option support (Strict errors), and
+//! - capability facts — `openai_pricing` plus name-prefix fallbacks for
+//!   reasoning support / context window when a model is absent from the catalog.
 
 mod request;
 
 use std::env;
-use std::sync::Arc;
-use std::time::Instant;
 
-use async_trait::async_trait;
-use serde_json::{json, Value};
-use tokio::sync::mpsc;
+use orchest_protocol::{ChatModel, ProtocolError};
+use orchest_provider_core::registry::ProviderConfig;
 
-use crate::{
-    CacheCapability, CapabilitySource, CompatibilityPolicy, Message, ModelAdapter,
-    ModelCapabilities, ModelError, ModelResponse, OptionAdjustment, ReasoningCapability,
-    RequestOptions, StreamEvent, ThinkingLevel, ToolDef, UpstreamErrorDetail,
+use crate::protocol::{
+    AdjustmentSpec, AppliedValue, OptionSupport, ProviderProfile, RequestOption, ResolvedModel,
 };
-
-use crate::{defaults, telemetry};
+use crate::{
+    defaults, CacheCapability, CapabilitySource, ModelCapabilities, ModelError,
+    ReasoningCapability, ThinkingLevel,
+};
 
 use request::normalize_chat_url;
 
-pub struct OpenAiAdapter {
-    pub(super) api_key: String,
-    pub(super) api_url: String,
-    pub(super) model: String,
-    pub(super) max_tokens: u32,
-    /// The model's catalog row — the canonical source of capability facts
-    /// (ADR "Capability metadata"). `None` for models absent from the catalog,
-    /// which fall back to the documented name-prefix tables.
-    pub(super) catalog: Option<&'static crate::catalog::LlmModelEntry>,
-}
+/// The OpenAI Chat profile.
+pub struct OpenAiProfile;
 
-impl std::fmt::Debug for OpenAiAdapter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenAiAdapter")
-            .field("api_url", &self.api_url)
-            .field("model", &self.model)
-            .field("max_tokens", &self.max_tokens)
-            .finish()
+/// The singleton attached to the OpenAI `ProviderEntry`.
+pub static OPENAI_PROFILE: OpenAiProfile = OpenAiProfile;
+
+impl OpenAiProfile {
+    /// Reasoning support: canonical from the catalog row; the name-prefix table is
+    /// a documented fallback only for models absent from the catalog.
+    fn supports_reasoning(cx: &ResolvedModel<'_>) -> bool {
+        cx.catalog
+            .map(|c| c.thinking.is_some())
+            .unwrap_or_else(|| request::supports_reasoning_model(cx.model))
+    }
+
+    /// Context window: catalog first, name-prefix fallback otherwise.
+    fn context_window(cx: &ResolvedModel<'_>) -> u64 {
+        cx.catalog
+            .map(|c| c.context_window)
+            .unwrap_or_else(|| request::openai_context_window(cx.model))
     }
 }
 
-pub struct OpenAiConfig {
-    pub model: String,
-    pub max_tokens: u32,
-    pub api_key: Option<String>,
-    pub api_url: Option<String>,
-}
-
-impl OpenAiAdapter {
-    pub fn from_config(config: OpenAiConfig) -> Result<Self, ModelError> {
-        let api_key = config
-            .api_key
-            .or_else(|| env::var("OPENAI_API_KEY").ok())
-            .ok_or_else(|| {
-                ModelError::internal(
-                    "OPENAI_API_KEY not set and no api_key provided",
-                    "missing_api_key",
-                )
-            })?;
-
-        let api_url = config
-            .api_url
-            .or_else(|| env::var("OPENAI_API_URL").ok())
-            .or_else(|| env::var("OPENAI_BASE_URL").ok())
-            .unwrap_or_else(|| defaults::openai::API_URL.to_string());
-
-        if api_url.trim().is_empty() {
-            return Err(ModelError::internal(
-                "OpenAI API URL cannot be empty",
-                "invalid_api_url",
-            ));
-        }
-
-        let model = config
-            .model
-            .strip_prefix("openai/")
-            .unwrap_or(&config.model)
-            .to_string();
-        let catalog = crate::catalog::find_model(&model);
-
-        Ok(Self {
-            api_key,
-            api_url: normalize_chat_url(&api_url),
-            model,
-            max_tokens: config.max_tokens,
-            catalog,
-        })
-    }
-
-    /// Reasoning support: canonical from the catalog row; the name-prefix table
-    /// is a documented fallback only for models absent from the catalog.
-    fn supports_reasoning(&self) -> bool {
-        match self.catalog {
-            Some(entry) => entry.thinking.is_some(),
-            None => request::supports_reasoning_model(&self.model),
+impl ProviderProfile for OpenAiProfile {
+    fn option_support(&self, cx: &ResolvedModel<'_>, option: RequestOption) -> OptionSupport {
+        match option {
+            RequestOption::Reasoning => {
+                if Self::supports_reasoning(cx) {
+                    OptionSupport::Supported
+                } else {
+                    OptionSupport::Unsupported {
+                        strict_error: Some((
+                            "unsupported_reasoning_model",
+                            "model does not declare OpenAI reasoning support",
+                        )),
+                        disables_thinking: true,
+                        adjustment: Some(AdjustmentSpec {
+                            option: "thinking",
+                            applied: AppliedValue::Str("Off"),
+                            reason: "unsupported_reasoning_model",
+                        }),
+                    }
+                }
+            }
+            RequestOption::ThinkingBudget => OptionSupport::Unsupported {
+                strict_error: Some((
+                    "unsupported_thinking_budget",
+                    "thinking_budget_tokens is not supported by OpenAI",
+                )),
+                disables_thinking: false,
+                adjustment: Some(AdjustmentSpec {
+                    option: "thinking_budget_tokens",
+                    applied: AppliedValue::Null,
+                    reason: "unsupported_by_provider",
+                }),
+            },
+            RequestOption::ReasoningOutputExclusion => OptionSupport::Supported,
         }
     }
 
-    /// Context window: canonical from the catalog row; the name-prefix table is a
-    /// documented fallback only for models absent from the catalog.
-    fn context_window(&self) -> u64 {
-        match self.catalog {
-            Some(entry) => entry.context_window,
-            None => request::openai_context_window(&self.model),
-        }
-    }
-}
-
-#[async_trait]
-impl ModelAdapter for OpenAiAdapter {
-    fn provider_name(&self) -> &str {
-        "openai"
-    }
-
-    fn model_name(&self) -> &str {
-        &self.model
-    }
-
-    fn capabilities(&self) -> ModelCapabilities {
-        let supports_reasoning = self.supports_reasoning();
-
+    fn capabilities(&self, cx: &ResolvedModel<'_>, max_output_tokens: u32) -> ModelCapabilities {
+        let supports_reasoning = Self::supports_reasoning(cx);
         ModelCapabilities {
             streaming: true,
             tool_use: true,
@@ -149,198 +108,56 @@ impl ModelAdapter for OpenAiAdapter {
                 explicit_breakpoints: false,
                 long_ttl: false,
             },
-            max_output_tokens: Some(self.max_tokens),
-            context_window_size: Some(self.context_window()),
+            max_output_tokens: Some(max_output_tokens),
+            context_window_size: Some(Self::context_window(cx)),
             source: CapabilitySource::Static,
-            pricing: Some(crate::pricing::openai_pricing(&self.model)),
+            pricing: Some(crate::pricing::openai_pricing(cx.model)),
         }
     }
+}
 
-    async fn complete(
-        &self,
-        messages: &[Message],
-        tools: &[ToolDef],
-        options: &RequestOptions,
-        tx: Option<mpsc::Sender<StreamEvent>>,
-    ) -> Result<ModelResponse, ModelError> {
-        let _span = telemetry::model_complete_span("openai", &self.model, tx.is_some());
-
-        if options.compatibility_policy == CompatibilityPolicy::Strict
-            && options.thinking_budget_tokens.is_some()
-        {
-            return Err(ModelError::internal(
-                "thinking_budget_tokens is not supported by OpenAI",
-                "unsupported_thinking_budget",
-            ));
-        }
-        if options.compatibility_policy == CompatibilityPolicy::Strict
-            && options.thinking != ThinkingLevel::Off
-            && !self.supports_reasoning()
-        {
-            return Err(ModelError::internal(
-                format!(
-                    "model '{}' does not declare OpenAI reasoning support",
-                    self.model
-                ),
-                "unsupported_reasoning_model",
-            ));
-        }
-
-        let (body, mut option_adjustments) = self.build_request_body(messages, tools, options);
-
-        let start = Instant::now();
-        let response = crate::http::shared_client()
-            .post(&self.api_url)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                telemetry::record_model_error("openai", &self.model, start.elapsed());
-                ModelError {
-                    message: e.to_string(),
-                    code: Some("request_failed".into()),
-                    provider: Some("openai".into()),
-                    status: None,
-                    retry_after_secs: None,
-                    upstream: None,
-                }
-            })?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let body_text = response.text().await.unwrap_or_default();
-            let upstream_body: Option<Value> = serde_json::from_str(&body_text).ok();
-            let (upstream_code, upstream_msg) = upstream_body
-                .as_ref()
-                .and_then(|b| b.get("error"))
-                .map(|err| {
-                    (
-                        err.get("type").and_then(|v| v.as_str()).map(String::from),
-                        err.get("message")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                    )
-                })
-                .unwrap_or((None, None));
-
-            telemetry::record_model_error("openai", &self.model, start.elapsed());
-            return Err(ModelError {
-                message: format!("API returned {status}: {body_text}"),
-                code: Some(status.to_string()),
-                provider: Some("openai".into()),
-                status: Some(status),
-                retry_after_secs: None,
-                upstream: Some(Arc::new(UpstreamErrorDetail {
-                    code: upstream_code,
-                    message: upstream_msg,
-                    body: upstream_body,
-                })),
-            });
-        }
-
-        let stream = response.bytes_stream();
-        let tx_ref = tx.as_ref();
-
-        let sse = crate::sse::parse_openai_sse_stream(stream, tx_ref, None, None, start)
-            .await
-            .map_err(|mut e| {
-                telemetry::record_model_error("openai", &self.model, start.elapsed());
-                e.provider = Some("openai".into());
-                e
-            })?;
-
-        let content = sse.content;
-        let usage = sse.usage;
-        let stop_reason = sse.stop_reason;
-        let first_token_latency = sse.first_token_latency;
-
-        let has_usage = usage.input_tokens > 0 || usage.output_tokens > 0;
-        if !has_usage {
-            telemetry::record_usage_missing("openai", &self.model);
-            option_adjustments.push(OptionAdjustment {
-                option: "usage".into(),
-                requested: json!(null),
-                applied: json!(null),
-                reason: "usage_not_reported".into(),
-            });
-        }
-
-        if let Some(ref tx) = tx {
-            let _ = tx
-                .send(StreamEvent::Done {
-                    usage: usage.clone(),
-                })
-                .await;
-        }
-
-        let duration = start.elapsed();
-        telemetry::record_model_success(
-            "openai",
-            &self.model,
-            duration,
-            usage.input_tokens,
-            usage.output_tokens,
-            first_token_latency,
-            Some(duration),
-        );
-
-        Ok(ModelResponse {
-            content,
-            usage,
-            stop_reason,
-            option_adjustments,
+/// Resolve the OpenAI API key (explicit `config` or `OPENAI_API_KEY`).
+fn resolve_api_key(config: &ProviderConfig) -> Result<String, ModelError> {
+    config
+        .api_key
+        .clone()
+        .or_else(|| env::var("OPENAI_API_KEY").ok())
+        .ok_or_else(|| {
+            ModelError::internal(
+                "OPENAI_API_KEY not set and no api_key provided",
+                "missing_api_key",
+            )
         })
-    }
 }
 
-// ProviderFactory implementation
-
-pub struct OpenAiFactory;
-
-impl crate::registry::ProviderFactory for OpenAiFactory {
-    fn provider_name(&self) -> &'static str {
-        "openai"
+/// Resolve the OpenAI endpoint (config / `OPENAI_API_URL` / `OPENAI_BASE_URL` /
+/// default) and append the canonical Chat path.
+fn resolve_url(config_api_url: Option<&str>) -> Result<String, ModelError> {
+    let api_url = config_api_url
+        .map(String::from)
+        .or_else(|| env::var("OPENAI_API_URL").ok())
+        .or_else(|| env::var("OPENAI_BASE_URL").ok())
+        .unwrap_or_else(|| defaults::openai::API_URL.to_string());
+    if api_url.trim().is_empty() {
+        return Err(ModelError::internal(
+            "OpenAI API URL cannot be empty",
+            "invalid_api_url",
+        ));
     }
-
-    fn create_adapter(
-        &self,
-        model: &str,
-        max_tokens: u32,
-        api_key: String,
-        api_url: Option<String>,
-    ) -> Result<Box<dyn ModelAdapter>, ModelError> {
-        let adapter = OpenAiAdapter::from_config(OpenAiConfig {
-            model: model.to_string(),
-            max_tokens,
-            api_key: Some(api_key),
-            api_url,
-        })?;
-        Ok(Box::new(adapter))
-    }
-
-    fn default_api_key_env(&self) -> &'static str {
-        crate::defaults::openai::API_KEY_ENV
-    }
+    Ok(normalize_chat_url(&api_url))
 }
 
-// ADR-0002 protocol-factory path (slice 001). Referenced as data by the OpenAI
-// `ProviderEntry.build_chat`; the `ChatProtocolFactory` calls it without matching
-// on provider name (ADR rule 1). Transitional: wraps the canonical `OpenAiAdapter`
-// until v0.12 collapses it into the Chat protocol core.
+/// ADR-0002 Chat construction: builds the shared [`ChatAdapter`](crate::chat)
+/// with OpenAI's resolved endpoint + profile (referenced as data by the OpenAI
+/// `ProviderEntry.build_adapter`; no provider-name match in the core).
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (workspace convention)
 pub fn build_chat_adapter(
-    config: &orchest_provider_core::registry::ProviderConfig,
-    resolved: &crate::protocol::ResolvedModel<'_>,
-) -> Result<Box<dyn orchest_protocol::ChatModel>, orchest_protocol::ProtocolError> {
-    let adapter = OpenAiAdapter::from_config(OpenAiConfig {
-        model: resolved.model.to_string(),
-        max_tokens: config.max_tokens.unwrap_or(crate::defaults::MAX_TOKENS),
-        api_key: config.api_key.clone(),
-        api_url: config.api_url.clone(),
-    })
-    .map_err(orchest_protocol::ProtocolError::from)?;
-    Ok(Box::new(adapter))
+    config: &ProviderConfig,
+    resolved: &ResolvedModel<'_>,
+) -> Result<Box<dyn ChatModel>, ProtocolError> {
+    let api_key = resolve_api_key(config).map_err(ProtocolError::from)?;
+    let api_url = resolve_url(config.api_url.as_deref()).map_err(ProtocolError::from)?;
+    crate::chat::ChatAdapter::build(config, resolved, api_key, api_url)
 }
 
 #[cfg(test)]

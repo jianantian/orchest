@@ -9,7 +9,7 @@
 //! 返回类型 `CompatibleRole` 只覆盖通用 4 角色,使下游 `match` 自动穷尽 ——
 //! 编译器担保 Minimax-only role 已在此处被消解。
 //!
-//! `MinimaxAdapter`(`providers/minimax/`)直接序列化原 `Role`,**不**走此 helper。
+//! Minimax(`MinimaxProfile.messages_wire_role`)直接序列化原 `Role`,**不**走此 helper。
 
 use crate::{OptionAdjustment, Role};
 use serde_json::json;

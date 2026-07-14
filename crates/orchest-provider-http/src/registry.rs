@@ -1,56 +1,37 @@
-//! ProviderFactory trait and ProviderRegistry for adapter creation.
+//! Provider registry over `ProviderEntry`.
+//!
+//! After ADR-0002 Phase 3 the legacy `ProviderFactory` trait and per-provider
+//! `*Factory` structs are gone: construction goes through the protocol factories
+//! (`ChatProtocolFactory` /
+//! `MessagesProtocolFactory`) selected
+//! from the resolved `ProviderEntry`. This registry is now just an enumerable
+//! view over the built-in entries (identity + protocols + aliases + path
+//! overrides + headers + profiles) used for provider-name validation and
+//! diagnostics.
 
-use std::collections::HashMap;
+use crate::protocol::{all_provider_entries, ProviderEntry};
 
-use orchest_protocol::{ModelAdapter, ModelError};
-
-/// Trait for provider-specific adapter creation. Each provider implements this
-/// to register itself with the [`ProviderRegistry`].
-pub trait ProviderFactory: Send + Sync {
-    fn provider_name(&self) -> &'static str;
-    fn create_adapter(
-        &self,
-        model: &str,
-        max_tokens: u32,
-        api_key: String,
-        api_url: Option<String>,
-    ) -> Result<Box<dyn ModelAdapter>, ModelError>;
-    fn default_api_key_env(&self) -> &'static str;
-}
-
-/// Registry of provider factories. Centralises adapter creation so new
-/// providers only need to implement [`ProviderFactory`] and register.
+/// An enumerable registry of built-in provider entries.
 pub struct ProviderRegistry {
-    factories: HashMap<&'static str, Box<dyn ProviderFactory>>,
+    entries: &'static [&'static ProviderEntry],
 }
 
 impl ProviderRegistry {
     pub fn new() -> Self {
-        let mut reg = Self {
-            factories: HashMap::new(),
-        };
-        reg.register(Box::new(super::providers::anthropic::AnthropicFactory));
-        reg.register(Box::new(super::providers::openai::OpenAiFactory));
-        reg.register(Box::new(super::providers::deepseek::DeepSeekFactory));
-        reg.register(Box::new(super::providers::openrouter::OpenRouterFactory));
-        reg.register(Box::new(super::providers::volcengine::VolcengineFactory));
-        reg.register(Box::new(super::providers::minimax::MinimaxFactory));
-        // Elss is dissolved (ADR-0002 slice 009): a pure ProviderEntry with no
-        // legacy factory. It is reachable only through the protocol-factory path.
-        reg
+        Self {
+            entries: all_provider_entries(),
+        }
     }
 
-    pub fn register(&mut self, factory: Box<dyn ProviderFactory>) {
-        self.factories.insert(factory.provider_name(), factory);
+    /// The entry for `provider`, or `None` if unknown.
+    pub fn get(&self, provider: &str) -> Option<&'static ProviderEntry> {
+        self.entries.iter().copied().find(|e| e.name == provider)
     }
 
-    pub fn get(&self, provider: &str) -> Option<&dyn ProviderFactory> {
-        self.factories.get(provider).map(|f| f.as_ref())
-    }
-
-    pub fn supported_providers(&self) -> Vec<&str> {
-        let mut names: Vec<_> = self.factories.keys().copied().collect();
-        names.sort();
+    /// Sorted list of supported provider names.
+    pub fn supported_providers(&self) -> Vec<&'static str> {
+        let mut names: Vec<_> = self.entries.iter().map(|e| e.name).collect();
+        names.sort_unstable();
         names
     }
 }

@@ -1,22 +1,20 @@
 use super::*;
+use crate::chat::ChatAdapter;
+use crate::{RequestOptions, ThinkingLevel};
 
-fn adapter_with_url(api_url: &str) -> VolcengineAdapter {
-    VolcengineAdapter::from_config(VolcengineConfig {
-        model: "doubao-seed-2-1-turbo-260628".into(),
-        max_tokens: 4096,
-        api_key: Some("test-key".into()),
-        api_url: Some(api_url.into()),
-    })
-    .unwrap()
+fn adapter_with_url(api_url: &str) -> ChatAdapter {
+    ChatAdapter::for_test("volcengine", "doubao-seed-2-1-turbo-260628", api_url, 4096)
 }
 
 #[test]
 fn strips_volcengine_prefix_from_model() {
-    let adapter = VolcengineAdapter::from_config(VolcengineConfig {
+    // The provider prefix is stripped by the parser.
+    let adapter = crate::create_adapter_from_config(crate::ProviderRuntimeConfig {
         model: "volcengine/doubao-seed-2-1-turbo-260628".into(),
-        max_tokens: 4096,
         api_key: Some("key".into()),
+        api_key_env: None,
         api_url: Some("http://localhost".into()),
+        max_tokens: Some(4096),
     })
     .unwrap();
     assert_eq!(adapter.model_name(), "doubao-seed-2-1-turbo-260628");
@@ -26,11 +24,13 @@ fn strips_volcengine_prefix_from_model() {
 fn normalize_url_appends_chat_completions() {
     // normalize_chat_url is brought in via `use super::*` (re-imported in mod.rs)
     assert_eq!(
-        normalize_chat_url("https://ark.cn-beijing.volces.com/api/v3"),
+        super::request::normalize_chat_url("https://ark.cn-beijing.volces.com/api/v3"),
         "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
     );
     assert_eq!(
-        normalize_chat_url("https://ark.cn-beijing.volces.com/api/v3/chat/completions"),
+        super::request::normalize_chat_url(
+            "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+        ),
         "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
     );
 }
@@ -38,36 +38,38 @@ fn normalize_url_appends_chat_completions() {
 #[test]
 fn doubao_seed_supports_thinking() {
     let adapter = adapter_with_url("http://localhost");
-    assert!(adapter.supports_thinking());
+    assert!(adapter.capabilities().reasoning.supported);
 }
 
 #[test]
 fn thinking_enabled_in_request_body() {
     let adapter = adapter_with_url("http://localhost");
-    let (body, _) = adapter.build_request_body(
-        &[],
-        &[],
-        &RequestOptions {
-            thinking: ThinkingLevel::High,
-            ..Default::default()
-        },
-        true,
-    );
+    let (body, _) = adapter
+        .request_body_for_test(
+            &[],
+            &[],
+            &RequestOptions {
+                thinking: ThinkingLevel::High,
+                ..Default::default()
+            },
+        )
+        .expect("body");
     assert_eq!(body["thinking"]["type"], "enabled");
 }
 
 #[test]
 fn thinking_disabled_in_request_body() {
     let adapter = adapter_with_url("http://localhost");
-    let (body, _) = adapter.build_request_body(
-        &[],
-        &[],
-        &RequestOptions {
-            thinking: ThinkingLevel::Off,
-            ..Default::default()
-        },
-        false,
-    );
+    let (body, _) = adapter
+        .request_body_for_test(
+            &[],
+            &[],
+            &RequestOptions {
+                thinking: ThinkingLevel::Off,
+                ..Default::default()
+            },
+        )
+        .expect("body");
     assert_eq!(body["thinking"]["type"], "disabled");
 }
 
@@ -99,8 +101,9 @@ fn volcengine_downgrades_minimax_only_roles_with_adjustment() {
             role,
             content: vec![crate::ContentBlock::Text("hi".into())],
         }];
-        let (body, adjustments) =
-            adapter.build_request_body(&messages, &[], &RequestOptions::default(), false);
+        let (body, adjustments) = adapter
+            .request_body_for_test(&messages, &[], &RequestOptions::default())
+            .expect("body");
         assert_eq!(body["messages"][0]["role"], expected_api_role, "{role:?}");
         assert!(
             adjustments
@@ -115,27 +118,36 @@ fn volcengine_downgrades_minimax_only_roles_with_adjustment() {
 // ADR-0002 slice 003: Volcengine on ChatProtocolFactory + VolcengineProfile.
 // ---------------------------------------------------------------------------
 
-use crate::protocol::{resolve_reasoning_exclusion, OptionSupport, ProviderProfile, RequestOption};
+use crate::protocol::{
+    provider_entry, resolve_chat_preflight, OptionSupport, Protocol, ProviderProfile,
+    RequestOption, ResolvedModel,
+};
 use crate::CompatibilityPolicy;
+
+fn cx() -> ResolvedModel<'static> {
+    ResolvedModel {
+        provider: provider_entry("volcengine").unwrap(),
+        protocol: Protocol::Chat,
+        model: "doubao-seed-2-1-turbo-260628",
+        catalog: crate::catalog::find_model("doubao-seed-2-1-turbo-260628"),
+    }
+}
 
 #[test]
 fn option_support_declares_reasoning_exclusion_unsupported() {
-    let adapter = adapter_with_url("http://localhost");
-    let support =
-        VOLCENGINE_PROFILE.option_support(&adapter.cx(), RequestOption::ReasoningOutputExclusion);
+    let support = VOLCENGINE_PROFILE.option_support(&cx(), RequestOption::ReasoningOutputExclusion);
     assert!(matches!(support, OptionSupport::Unsupported { .. }));
 }
 
 #[test]
-fn reasoning_exclusion_strict_errors_via_shared_handler() {
-    let adapter = adapter_with_url("http://localhost");
+fn reasoning_exclusion_strict_errors_via_preflight() {
     let opts = RequestOptions {
         thinking: ThinkingLevel::High,
         include_thinking: false,
         compatibility_policy: CompatibilityPolicy::Strict,
         ..Default::default()
     };
-    let err = resolve_reasoning_exclusion(adapter.profile, &adapter.cx(), &opts, true)
+    let err = resolve_chat_preflight(&VOLCENGINE_PROFILE, &cx(), &opts)
         .expect_err("strict + unsupported exclusion must error");
     assert_eq!(
         err.code.as_deref(),
@@ -145,22 +157,19 @@ fn reasoning_exclusion_strict_errors_via_shared_handler() {
 }
 
 #[test]
-fn reasoning_exclusion_coerce_degrades_via_shared_handler() {
-    let adapter = adapter_with_url("http://localhost");
+fn reasoning_exclusion_coerce_degrades_via_preflight() {
     let opts = RequestOptions {
         thinking: ThinkingLevel::High,
         include_thinking: false,
         compatibility_policy: CompatibilityPolicy::Coerce,
         ..Default::default()
     };
-    let (effective, adjustment) =
-        resolve_reasoning_exclusion(adapter.profile, &adapter.cx(), &opts, true)
-            .expect("coerce degrades rather than errors");
-    assert!(!effective, "thinking disabled to satisfy exclusion");
-    assert_eq!(
-        adjustment.expect("degradation recorded").reason,
-        "thinking_disabled_for_output_exclusion"
-    );
+    let (effective, adjustments) = resolve_chat_preflight(&VOLCENGINE_PROFILE, &cx(), &opts)
+        .expect("coerce degrades rather than errors");
+    assert_eq!(effective.thinking, ThinkingLevel::Off);
+    assert!(adjustments
+        .iter()
+        .any(|a| a.reason == "thinking_disabled_for_output_exclusion"));
 }
 
 #[tokio::test]
