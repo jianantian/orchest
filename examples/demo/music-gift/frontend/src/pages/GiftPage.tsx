@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import type { Gift } from "../types";
-import { generateMusic, getGift, likeGift, pollGenerateStatus } from "../api";
+import { generateMusic, getGift, likeGift } from "../api";
 import AudioPlayer from "../components/AudioPlayer";
 import { UnwrapStage, shouldShowUnwrap } from "../components/UnwrapStage";
 
@@ -15,36 +15,33 @@ export default function GiftPage() {
   const [liked, setLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(0);
   const [copied, setCopied] = useState(false);
-  const pollRef = useRef<number | undefined>(undefined);
-  const retryRef = useRef(0);
-  const MAX_RETRIES = 30; // ~90 seconds at 3s interval
+  const [countdownHtml, setCountdownHtml] = useState<string | null>(null);
+  const [countdownPending, setCountdownPending] = useState(false);
+  const esRef = useRef<EventSource | null>(null);
+  const cdPollRef = useRef<number | undefined>(undefined);
 
   const startPolling = useCallback(() => {
-    clearInterval(pollRef.current);
-    retryRef.current = 0;
-    pollRef.current = setInterval(async () => {
-      if (!id) return;
+    esRef.current?.close();
+    if (!id) return;
+    const es = new EventSource(`/api/generate/${id}/stream`);
+    esRef.current = es;
+    es.onmessage = (e) => {
       try {
-        retryRef.current++;
-        const status = await pollGenerateStatus(id);
-        setGenStatus(status.status);
-        if (status.status === "done") {
+        const data = JSON.parse(e.data);
+        setGenStatus(data.status);
+        if (data.status === "done") {
           setGenerating(false);
-          setGift((g) => (g ? { ...g, audio_url: status.audio_url, gen_status: "done" } : g));
-          clearInterval(pollRef.current);
-        } else if (status.status === "failed") {
+          setGift((g) => (g ? { ...g, audio_url: data.audio_url, gen_status: "done" } : g));
+          es.close();
+        } else if (data.status === "failed" || data.status === "timeout" || data.status === "error") {
           setGenerating(false);
-          setError("Music generation failed");
-          clearInterval(pollRef.current);
+          if (data.status === "failed") setError("Music generation failed");
+          else if (data.status === "timeout") setError("Generation timed out. Try again.");
+          es.close();
         }
-      } catch {
-        if (retryRef.current >= MAX_RETRIES) {
-          setGenerating(false);
-          setError("Music generation is taking longer than expected. Check back later.");
-          clearInterval(pollRef.current);
-        }
-      }
-    }, 3000);
+      } catch { /* ignore parse errors */ }
+    };
+    es.onerror = () => { es.close(); setGenerating(false); };
   }, [id]);
 
   useEffect(() => {
@@ -59,11 +56,11 @@ export default function GiftPage() {
           setGenerating(true);
           startPolling();
         }
+        // Load countdown section if gift has one
+        loadCountdown(g.id, g.countdown_status);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load gift"))
-      .finally(() => setLoading(false));
 
-    return () => clearInterval(pollRef.current);
+    return () => { esRef.current?.close(); };
   }, [id, startPolling]);
 
   async function handleGenerate() {
@@ -102,6 +99,31 @@ export default function GiftPage() {
     });
   }
 
+  async function loadCountdown(giftId: string, cdStatus?: string | null) {
+    if (cdStatus === "ready") {
+      try {
+        const res = await fetch(`/api/countdown-section/${giftId}`);
+        if (res.ok) setCountdownHtml(await res.text());
+      } catch {
+        // Countdown is optional
+      }
+    } else if (cdStatus === "pending") {
+      setCountdownPending(true);
+      cdPollRef.current = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/countdown-section/${giftId}`);
+          if (res.ok) {
+            clearInterval(cdPollRef.current);
+            setCountdownPending(false);
+            setCountdownHtml(await res.text());
+          }
+        } catch {
+          // Keep polling
+        }
+      }, 5000);
+    }
+  }
+
   if (loading) {
     return (
       <div className="gift-page loading-page">
@@ -135,6 +157,21 @@ export default function GiftPage() {
           )}
           {style && <span className="gift-style-tag">♪ {style}</span>}
         </div>
+
+
+        {/* Countdown section — LLM-generated interactive scene */}
+        {countdownPending && (
+          <div className="countdown-placeholder">
+            <span className="cd-spinner" />
+            <span>Creating a special scene for {name || "you"}…</span>
+          </div>
+        )}
+        {countdownHtml && (
+          <div
+            className="countdown-section"
+            dangerouslySetInnerHTML={{ __html: countdownHtml }}
+          />
+        )}
 
         {gift.audio_url ? (
           <AudioPlayer src={gift.audio_url} title={title} />

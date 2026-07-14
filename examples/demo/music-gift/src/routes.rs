@@ -1,8 +1,10 @@
 //! Axum route handlers for all API endpoints.
 
+use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tokio::time::{sleep, Duration};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -43,6 +45,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .route("/playlist", get(list_playlist))
         .route("/generate/{id}", post(generate_music))
         .route("/generate/{id}/status", get(generate_status))
+        .route("/generate/{id}/stream", get(generate_stream))
         .route("/gift/{id}/like", post(like_gift))
         .route("/photos", post(upload_photos))
         .with_state(state.clone());
@@ -321,15 +324,59 @@ pub async fn generate_music(
     ))
 }
 
-// ---------------------------------------------------------------------------
-// GET /api/generate/:id/status - poll music generation status
-// ---------------------------------------------------------------------------
+// ── GET /api/generate/:id/stream — SSE streaming status ──────────────────
+
+pub async fn generate_stream(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(8);
+
+    tokio::spawn(async move {
+        let handle = match load_gen_handle(&state, &id).await {
+            Ok(h) => h,
+            Err(_) => { let _ = tx.send(Ok(Event::default().data("{\"status\":\"error\"}"))).await; return; }
+        };
+        let _ = tx.send(Ok(Event::default().data("{\"status\":\"pending\"}"))).await;
+
+        for _ in 0..48 { // poll up to 4 minutes
+            sleep(Duration::from_secs(5)).await;
+            match state.gen_task.poll(&handle).await {
+                Ok(GenStatus::Done) => {
+                    match state.gen_task.fetch(&handle).await {
+                        Ok(result) => {
+                            let url = result.assets.first().and_then(|a| match a {
+                                GenAsset::Url { url, .. } => Some(url.clone()),
+                                _ => None,
+                            });
+                            if let Some(ref u) = url { let _ = state.gift_store.update_audio(&id, u); }
+                            let _ = tx.send(Ok(Event::default().data(json!({"status":"done","audio_url":url}).to_string()))).await;
+                        }
+                        Err(_) => { let _ = state.gift_store.mark_gen_failed(&id); let _ = tx.send(Ok(Event::default().data("{\"status\":\"failed\"}"))).await; }
+                    }
+                    return;
+                }
+                Ok(GenStatus::Failed) => { let _ = state.gift_store.mark_gen_failed(&id); let _ = tx.send(Ok(Event::default().data("{\"status\":\"failed\"}"))).await; return; }
+                Ok(GenStatus::Running) => { let _ = tx.send(Ok(Event::default().data("{\"status\":\"running\"}"))).await; }
+                _ => {} // pending or error, keep polling
+            }
+        }
+        let _ = tx.send(Ok(Event::default().data("{\"status\":\"timeout\"}"))).await;
+    });
+    Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default())
+}
+
+async fn load_gen_handle(state: &AppState, id: &str) -> AppResult<GenHandle> {
+    let gift = state.gift_store.get(id)?;
+    let json = gift.gen_handle.ok_or_else(|| AppError::BadRequest("not submitted".into()))?;
+    Ok(serde_json::from_str(&json).map_err(|e| AppError::BadRequest(format!("bad handle: {e}")))?)
+}
+
+// ── GET /api/generate/:id/status — legacy poll ────────────────────────────
 
 #[derive(Debug, Serialize)]
 pub struct GenStatusResponse {
-    pub id: String,
-    pub status: String,
-    pub audio_url: Option<String>,
+    pub id: String, pub status: String, pub audio_url: Option<String>,
 }
 
 pub async fn generate_status(
@@ -337,8 +384,6 @@ pub async fn generate_status(
     Path(id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
     let gift = state.gift_store.get(&id)?;
-
-    // If already done, return the audio URL
     if gift.gen_status.as_deref() == Some("done") {
         return Ok(Json(GenStatusResponse {
             id,
