@@ -1,6 +1,6 @@
 # Issue 002:DeepSeek 首个 Chat profile — 诞生 `ProviderProfile`
 
-Parent: [ADR-0002](../../../../adr/0002-protocol-provider-decoupling.md) Phase 1 · AFK · 依赖 001
+Parent: [ADR-0002](../../../../../adr/0002-protocol-provider-decoupling.md) Phase 1 · AFK · 依赖 001
 
 ## 现状
 

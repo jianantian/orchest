@@ -1,6 +1,6 @@
 # Issue 007:catalog 成为能力事实的唯一来源
 
-Parent: [ADR-0002](../../../../adr/0002-protocol-provider-decoupling.md) Phase 1("Capability metadata")· AFK · 依赖 001
+Parent: [ADR-0002](../../../../../adr/0002-protocol-provider-decoupling.md) Phase 1("Capability metadata")· AFK · 依赖 001
 
 ## 现状
 

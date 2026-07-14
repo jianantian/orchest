@@ -1,6 +1,6 @@
 # Issue 003:Volcengine Chat profile — `option_support`
 
-Parent: [ADR-0002](../../../../adr/0002-protocol-provider-decoupling.md) Phase 1 · AFK · 依赖 002
+Parent: [ADR-0002](../../../../../adr/0002-protocol-provider-decoupling.md) Phase 1 · AFK · 依赖 002
 
 ## 现状
 

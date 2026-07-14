@@ -1,6 +1,6 @@
 # Issue 005:Messages 协议 tracer — Anthropic 走 `MessagesProtocolFactory`
 
-Parent: [ADR-0002](../../../../adr/0002-protocol-provider-decoupling.md) Phase 1 · AFK · 依赖 001
+Parent: [ADR-0002](../../../../../adr/0002-protocol-provider-decoupling.md) Phase 1 · AFK · 依赖 001
 
 ## 现状
 

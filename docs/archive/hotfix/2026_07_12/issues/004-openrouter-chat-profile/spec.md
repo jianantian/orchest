@@ -1,6 +1,6 @@
 # Issue 004:OpenRouter Chat profile — `interpret_usage` + `HeaderValue::Env`
 
-Parent: [ADR-0002](../../../../adr/0002-protocol-provider-decoupling.md) Phase 1 · AFK · 依赖 002
+Parent: [ADR-0002](../../../../../adr/0002-protocol-provider-decoupling.md) Phase 1 · AFK · 依赖 002
 
 ## 现状
 

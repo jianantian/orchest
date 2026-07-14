@@ -1,6 +1,6 @@
 # Issue 010:显式协议选择 — 消费者面 + 文档 + binding 回归
 
-Parent: [ADR-0002](../../../../adr/0002-protocol-provider-decoupling.md) Phase 2 · AFK · 依赖 009
+Parent: [ADR-0002](../../../../../adr/0002-protocol-provider-decoupling.md) Phase 2 · AFK · 依赖 009
 
 ## 现状
 

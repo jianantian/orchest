@@ -2,7 +2,7 @@
 
 ## 背景
 
-[ADR-0002](../../adr/0002-protocol-provider-decoupling.md)(已 Accepted,2026-07-11)确立
+[ADR-0002](../../../adr/0002-protocol-provider-decoupling.md)(已 Accepted,2026-07-11)确立
 **protocol core + provider entry + provider profile** 三层模型:把 wire 协议方言从
 provider 名字上解耦,让"完全兼容某协议的 provider = 纯配置(零代码)","有扩展的
 provider = 一个小 profile","真正的新 wire 协议 = 一个新 ProtocolFactory"。

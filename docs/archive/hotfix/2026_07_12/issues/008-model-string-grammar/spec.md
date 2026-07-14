@@ -1,6 +1,6 @@
 # Issue 008:model-string 语法 — `provider/[protocol/]model` 解析
 
-Parent: [ADR-0002](../../../../adr/0002-protocol-provider-decoupling.md) Phase 2 · AFK · 依赖 001 + 005
+Parent: [ADR-0002](../../../../../adr/0002-protocol-provider-decoupling.md) Phase 2 · AFK · 依赖 001 + 005
 
 ## 现状
 

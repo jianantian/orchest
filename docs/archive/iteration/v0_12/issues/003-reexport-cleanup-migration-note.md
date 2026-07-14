@@ -1,6 +1,6 @@
 # 003 · Public re-export cleanup + v1.0 migration note + binding sync
 
-Parent: [ADR-0002](../../../adr/0002-protocol-provider-decoupling.md) Phase 3 · [v0.12 PRD](../prd.md)
+Parent: [ADR-0002](../../../../adr/0002-protocol-provider-decoupling.md) Phase 3 · [v0.12 PRD](../prd.md)
 
 ## Background
 
