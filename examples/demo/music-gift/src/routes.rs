@@ -19,8 +19,8 @@ use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 use crate::agent::{
-    build_messages, build_photo_blocks, build_system_message, drive_stream, parse_lyrics,
-    start_stream, ChatRequest, SseEvent,
+    build_messages, build_photo_blocks, build_system_message, parse_lyrics,
+    run_chat_agent, ChatRequest, SseEvent,
 };
 use crate::error::{AppError, AppResult};
 use crate::gift::Gift;
@@ -90,13 +90,10 @@ pub async fn chat_handler(
     let system_msg = build_system_message(&req.meta, photo_blocks.len());
     let messages = build_messages(system_msg, &req.messages, &photo_blocks);
 
-    let stream = start_stream(state.chat_model.clone(), messages);
-
-    // Channel of SseEvent items; the spawned task pushes, the SSE stream pulls.
     let (tx, rx) = mpsc::channel::<SseEvent>(64);
 
     tokio::spawn(async move {
-        let result = drive_stream(stream, tx.clone()).await;
+        let result = run_chat_agent(state.chat_model.clone(), messages, tx.clone()).await;
         match result {
             Ok(full_text) => {
                 let parsed = parse_lyrics(&full_text);
@@ -202,6 +199,7 @@ pub async fn create_gift(
         lyrics: req.lyrics,
         meta,
         audio_url: None,
+        cover_url: None,
         photos: req.photos.into_iter().take(5).collect(),
         gen_handle: None,
         gen_status: None,
@@ -506,8 +504,10 @@ pub async fn get_gift_lrc(
         None => Err(AppError::NotFound("LRC not available".to_string())),
     }
 }
+#[cfg(test)]
+
 mod tests {
-    
+    use super::*;
 
     #[test]
     fn parse_data_url_jpeg() {

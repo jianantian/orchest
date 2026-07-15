@@ -1,19 +1,17 @@
-//! System prompt, lyrics parsing, and chat streaming bridge.
+//! System prompt, lyrics parsing, and chat agent loop.
 
 use std::sync::Arc;
 
-use orchest_protocol::{
-    ChatModel, ContentBlock, EventStream, MediaSource, Message, RequestOptions, Role, StreamEvent,
-    ToolDef,
-};
+use orchest::events::RuntimeEvent;
+use orchest::run::{AgentConfig, AgentRun, RunInput};
+use orchest::tool::registry::ToolRegistry;
+use orchest_protocol::{ChatModel, ContentBlock, MediaSource, Message, Role, StreamEvent};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::error::{AppError, AppResult};
-
 use crate::prompts::SYSTEM_PROMPT;
-
 
 /// Default style if the LLM didn't emit one.
 const DEFAULT_STYLE: &str = "healing and warm";
@@ -29,34 +27,23 @@ pub struct ParsedLyrics {
 }
 
 /// Parse the LLM's full text response for structured lyrics tags.
-///
-/// Tags (matching the original JS app):
-/// - `<<<LYRICS>>>...<<<END>>>` - the lyrics body
-/// - `<<<STYLE>>>...<<<STYLE_END>>>` - style description
-/// - `<<<TITLE>>>...<<<TITLE_END>>>` - song title
-/// - `<<<VOCAL>>>female|male<<<VOCAL_END>>>` - vocal gender
 pub fn parse_lyrics(full_text: &str) -> ParsedLyrics {
     let has_lyrics = full_text.contains("<<<LYRICS>>>");
-
     let lyrics = extract_between(full_text, "<<<LYRICS>>>", "<<<END>>>")
         .unwrap_or_default()
         .trim()
         .to_string();
-
     let style = extract_between(full_text, "<<<STYLE>>>", "<<<STYLE_END>>>")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| DEFAULT_STYLE.to_string());
-
     let title = extract_between(full_text, "<<<TITLE>>>", "<<<TITLE_END>>>")
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
-
     let vocal = extract_between(full_text, "<<<VOCAL>>>", "<<<VOCAL_END>>>")
         .map(|s| s.trim().to_lowercase())
         .filter(|s| s == "female" || s == "male")
         .unwrap_or_else(|| "female".to_string());
-
     ParsedLyrics {
         has_lyrics,
         lyrics,
@@ -66,7 +53,6 @@ pub fn parse_lyrics(full_text: &str) -> ParsedLyrics {
     }
 }
 
-/// Extract the substring between `open` and `close` tags.
 fn extract_between(text: &str, open: &str, close: &str) -> Option<String> {
     let start = text.find(open)? + open.len();
     let rest = &text[start..];
@@ -74,16 +60,12 @@ fn extract_between(text: &str, open: &str, close: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
-/// Build the system message, optionally appending meta (known info) and a photo
-/// note.
 pub fn build_system_message(meta: &Value, photo_count: usize) -> Message {
-    let mut system = SYSTEM_PROMPT.clone();
-
+    let mut system = SYSTEM_PROMPT.to_string();
     if !meta.is_null() {
         system.push_str("\n\nKnown info:\n");
         system.push_str(&serde_json::to_string_pretty(meta).unwrap_or_default());
     }
-
     if photo_count > 0 {
         let plural = if photo_count == 1 { "" } else { "s" };
         system.push_str(&format!(
@@ -93,14 +75,12 @@ pub fn build_system_message(meta: &Value, photo_count: usize) -> Message {
              or directly in the lyrics. Don't describe the photo abstractly."
         ));
     }
-
     Message {
         role: Role::System,
         content: vec![ContentBlock::Text(system)],
     }
 }
 
-/// Load photos from disk and construct `ContentBlock::Image` blocks for vision.
 pub fn build_photo_blocks(photos: &[String], data_dir: &str) -> Vec<ContentBlock> {
     let photos_dir = std::path::Path::new(data_dir).join("photos");
     let mut blocks = Vec::new();
@@ -131,7 +111,6 @@ pub fn build_photo_blocks(photos: &[String], data_dir: &str) -> Vec<ContentBlock
     blocks
 }
 
-/// Request body for the chat endpoint.
 #[derive(Debug, Deserialize)]
 pub struct ChatRequest {
     pub messages: Vec<IncomingMessage>,
@@ -148,15 +127,12 @@ fn default_lang() -> String {
     "en".to_string()
 }
 
-/// A message as received from the frontend (simpler than the protocol's Message).
 #[derive(Debug, Deserialize)]
 pub struct IncomingMessage {
     pub role: String,
     pub content: String,
 }
 
-/// Convert incoming messages to protocol Messages, prepending the system message
-/// and optionally injecting photo blocks into the first user message.
 pub fn build_messages(
     system_msg: Message,
     incoming: &[IncomingMessage],
@@ -164,39 +140,31 @@ pub fn build_messages(
 ) -> Vec<Message> {
     let mut messages = vec![system_msg];
     let mut photo_injected = false;
-
     for msg in incoming {
         let role = match msg.role.as_str() {
             "assistant" => Role::Assistant,
             "system" => Role::System,
             _ => Role::User,
         };
-
         if role == Role::User && !photo_injected && !photo_blocks.is_empty() {
-            // Prepend photo blocks to the first user message
             let mut content = photo_blocks.to_vec();
             content.push(ContentBlock::Text(msg.content.clone()));
             messages.push(Message { role, content });
             photo_injected = true;
         } else if role != Role::System {
-            // Skip system messages from incoming (we build our own)
             messages.push(Message {
                 role,
                 content: vec![ContentBlock::Text(msg.content.clone())],
             });
         }
     }
-
     messages
 }
 
-/// SSE events sent to the frontend (serialized as JSON in the SSE data field).
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub enum SseEvent {
-    Delta {
-        text: String,
-    },
+    Delta { text: String },
     Done {
         has_lyrics: bool,
         lyrics: String,
@@ -204,58 +172,59 @@ pub enum SseEvent {
         title: String,
         vocal: String,
     },
-    Error {
-        error: String,
-    },
+    Error { error: String },
 }
 
-/// Start a streaming chat completion and return an `EventStream` to pull from.
-pub fn start_stream(model: Arc<dyn ChatModel>, messages: Vec<Message>) -> EventStream {
-    let options = RequestOptions {
-        max_tokens: Some(2048),
-        ..Default::default()
-    };
-    orchest_provider_http::events(model, messages, Vec::<ToolDef>::new(), options)
-}
-
-/// Drive the event stream, collecting text and sending `SseEvent`s via `tx`.
-///
-/// Returns the full accumulated text on success, or an error if the stream
-/// ended with a fatal error.
-pub async fn drive_stream(
-    mut stream: EventStream,
+/// Start a chat agent run using Orchest's AgentRun and stream events via tx.
+/// Returns the full text output.
+pub async fn run_chat_agent(
+    model: Arc<dyn ChatModel>,
+    messages: Vec<Message>,
     tx: mpsc::Sender<SseEvent>,
 ) -> AppResult<String> {
-    let mut full_text = String::new();
-    let mut had_error = false;
+    let config = AgentConfig::builder("music-gift/chat")
+        .max_steps(1)
+        .build()
+        .map_err(|e| AppError::Llm(format!("building agent config: {e}")))?;
 
-    while let Some(event) = stream.next().await {
+    let blocks: Vec<ContentBlock> = messages.iter().flat_map(|m| m.content.clone()).collect();
+
+    let input = RunInput::from_blocks(blocks)
+        .map_err(|e| AppError::Llm(e.to_string()))?;
+    let (handle, mut rx) =
+        AgentRun::start(config, input, model as Arc<dyn orchest::model::ModelAdapter>, ToolRegistry::new());
+
+    let mut full_text = String::new();
+
+    while let Some(event) = rx.recv().await {
+        #[allow(clippy::collapsible_match)]
         match event {
-            StreamEvent::Text { delta } => {
-                full_text.push_str(&delta);
-                let _ = tx
-                    .send(SseEvent::Delta {
-                        text: delta.clone(),
-                    })
-                    .await;
-            }
-            StreamEvent::Error { error, fatal } => {
-                let msg = error.to_string();
-                let _ = tx.send(SseEvent::Error { error: msg }).await;
-                if fatal {
-                    had_error = true;
-                    break;
+            RuntimeEvent::ModelStreamChunk { delta } => {
+                if let StreamEvent::Text { delta: text } = delta {
+                    full_text.push_str(&text);
+                    let _ = tx
+                        .send(SseEvent::Delta {
+                            text: text.clone(),
+                        })
+                        .await;
                 }
             }
-            StreamEvent::Done { .. } => break,
+            RuntimeEvent::RunCompleted { output } => {
+                if full_text.is_empty() {
+                    if let Some(text) = output.as_str() {
+                        full_text = text.to_string();
+                    }
+                }
+            }
+            RuntimeEvent::RunFailed { error } => {
+                let _ = tx.send(SseEvent::Error { error }).await;
+                return Err(AppError::Llm("agent run failed".to_string()));
+            }
             _ => {}
         }
     }
 
-    if had_error {
-        return Err(AppError::Llm("stream ended with fatal error".to_string()));
-    }
-
+    handle.wait().await;
     Ok(full_text)
 }
 
@@ -291,7 +260,7 @@ mod tests {
     fn parse_lyrics_validates_vocal_gender() {
         let text = "<<<LYRICS>>>\ntest\n<<<END>>><<<VOCAL>>>invalid<<<VOCAL_END>>>";
         let result = parse_lyrics(text);
-        assert_eq!(result.vocal, "female"); // falls back to default
+        assert_eq!(result.vocal, "female");
 
         let text2 = "<<<LYRICS>>>\ntest\n<<<END>>><<<VOCAL>>>male<<<VOCAL_END>>>";
         let result2 = parse_lyrics(text2);
@@ -316,9 +285,9 @@ mod tests {
             detail: None,
         }];
         let messages = build_messages(system, &incoming, &photos);
-        assert_eq!(messages.len(), 2); // system + user
+        assert_eq!(messages.len(), 2);
         let user_content = &messages[1].content;
-        assert_eq!(user_content.len(), 2); // photo + text
+        assert_eq!(user_content.len(), 2);
     }
 
     #[test]
