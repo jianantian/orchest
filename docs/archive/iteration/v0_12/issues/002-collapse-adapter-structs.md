@@ -1,6 +1,6 @@
 # 002 · Collapse redundant `*Adapter` structs into protocol cores
 
-Parent: [ADR-0002](../../../adr/0002-protocol-provider-decoupling.md) Phase 3 · [v0.12 PRD](../prd.md)
+Parent: [ADR-0002](../../../../adr/0002-protocol-provider-decoupling.md) Phase 3 · [v0.12 PRD](../prd.md)
 
 ## Background
 

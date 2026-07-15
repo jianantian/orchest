@@ -2,7 +2,7 @@
 
 ## 背景
 
-v0.10 Demo A(Briefing Desk)验证报告([`docs/review/v0_10_demo_validation.md`](../../review/v0_10_demo_validation.md))产出 5 项 release blocker,均已建独立 GitHub issue([#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199))。路线图明确:v1.0 发布前必须清偿这 5 项,且"修复后必须重跑 Briefing Desk demo 验证",code-only 修复不算关闭。
+v0.10 Demo A(Briefing Desk)验证报告([`docs/review/v0_10_demo_validation.md`](../../../review/v0_10_demo_validation.md))产出 5 项 release blocker,均已建独立 GitHub issue([#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199))。路线图明确:v1.0 发布前必须清偿这 5 项,且"修复后必须重跑 Briefing Desk demo 验证",code-only 修复不算关闭。
 
 本 hotfix 一次性清偿全部 5 项,外加一个收尾 issue(demo 重验证 + 验证报告/路线图更新)。
 

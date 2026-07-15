@@ -1,6 +1,6 @@
 # Issue 006:Minimax Messages profile — `map_role` + `path_overrides`
 
-Parent: [ADR-0002](../../../../adr/0002-protocol-provider-decoupling.md) Phase 1 · AFK · 依赖 002 + 005
+Parent: [ADR-0002](../../../../../adr/0002-protocol-provider-decoupling.md) Phase 1 · AFK · 依赖 002 + 005
 
 ## 现状
 

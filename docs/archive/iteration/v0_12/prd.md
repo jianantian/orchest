@@ -2,7 +2,7 @@
 
 ## Background
 
-[ADR-0002](../../adr/0002-protocol-provider-decoupling.md) decouples wire protocol from
+[ADR-0002](../../../adr/0002-protocol-provider-decoupling.md) decouples wire protocol from
 provider identity via a three-layer model (protocol core + provider entry + provider
 profile) across three migration phases. Phases 1–2 are non-breaking and land in
 [hotfix 2026-07-12](../../hotfix/2026_07_12/prd.md): the protocol factories, provider

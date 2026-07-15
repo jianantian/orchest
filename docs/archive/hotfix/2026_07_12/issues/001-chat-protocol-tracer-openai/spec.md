@@ -1,6 +1,6 @@
 # Issue 001:Chat 协议 tracer — OpenAI 走 `ChatProtocolFactory`
 
-Parent: [ADR-0002](../../../../adr/0002-protocol-provider-decoupling.md) Phase 1 · AFK · 无依赖
+Parent: [ADR-0002](../../../../../adr/0002-protocol-provider-decoupling.md) Phase 1 · AFK · 无依赖
 
 ## 现状
 

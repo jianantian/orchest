@@ -1,6 +1,6 @@
 # Issue 009:Elss 溶解为纯 `ProviderEntry` + `protocol_aliases`
 
-Parent: [ADR-0002](../../../../adr/0002-protocol-provider-decoupling.md) Phase 2 · AFK · 依赖 008
+Parent: [ADR-0002](../../../../../adr/0002-protocol-provider-decoupling.md) Phase 2 · AFK · 依赖 008
 
 ## 现状
 
