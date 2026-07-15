@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
     pub email: Option<String>,
@@ -52,10 +53,6 @@ impl AuthStore {
                     id           TEXT PRIMARY KEY,
                     email        TEXT UNIQUE,
                     phone        TEXT UNIQUE,
-                CREATE TABLE IF NOT EXISTS users (
-                    id           TEXT PRIMARY KEY,
-                    email        TEXT UNIQUE,
-                    phone        TEXT UNIQUE,
                     display_name TEXT NOT NULL,
                     avatar_url   TEXT,
                     provider     TEXT NOT NULL,
@@ -80,8 +77,9 @@ impl AuthStore {
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL
                 );
-                ALTER TABLE gifts ADD COLUMN creator_id TEXT REFERENCES users(id);
             ",)?;
+            // creator_id might already exist
+            let _ = c.execute("ALTER TABLE gifts ADD COLUMN creator_id TEXT REFERENCES users(id)", []);
         }
         Ok(Self { conn })
     }
@@ -130,6 +128,31 @@ impl AuthStore {
             params![id, email, phone, display_name, Option::<String>::None, provider, provider_id, now],
         )?;
         Ok(User { id, email: email.map(String::from), phone: phone.map(String::from), display_name: display_name.to_string(), avatar_url: None, provider: provider.to_string(), created_at: now })
+    }
+
+    pub fn create_user_with_password(&self, email: &str, password: &str, display_name: &str) -> AppResult<User> {
+        let hash = hash_password(password);
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let id = Uuid::new_v4().to_string();
+        let now = unix_now();
+        conn.execute(
+            "INSERT INTO users (id, email, phone, display_name, avatar_url, provider, password_hash, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![id, email, Option::<String>::None, display_name, Option::<String>::None, "email", hash, now],
+        )?;
+        Ok(User { id, email: Some(email.to_string()), phone: None, display_name: display_name.to_string(), avatar_url: None, provider: "email".to_string(), created_at: now })
+    }
+
+    pub fn verify_password(&self, email: &str, password: &str) -> AppResult<Option<User>> {
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let mut stmt = conn.prepare("SELECT id, email, phone, display_name, avatar_url, provider, created_at, password_hash FROM users WHERE email = ?1")?;
+        let result = stmt.query_row(params![email], |row| {
+            let hash: Option<String> = row.get(7)?;
+            Ok((row_to_user(row)?, hash))
+        });
+        match result {
+            Ok((user, Some(hash))) if verify_password_hash(password, &hash) => Ok(Some(user)),
+            _ => Ok(None),
+        }
     }
 
     pub fn find_or_create_by_email(&self, email: &str, provider: &str) -> AppResult<User> {
@@ -453,3 +476,59 @@ fn row_to_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
 
 fn unix_now() -> String { chrono::Utc::now().timestamp().to_string() }
 fn unix_after(secs: i64) -> String { (chrono::Utc::now().timestamp() + secs).to_string() }
+
+// ── Password hashing ─────────────────────────────────
+
+fn hash_password(pw: &str) -> String {
+    use argon2::{password_hash::{PasswordHasher, SaltString}, Argon2};
+    use rand_core::OsRng;
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default().hash_password(pw.as_bytes(), &salt).unwrap().to_string()
+}
+
+fn verify_password_hash(pw: &str, hash: &str) -> bool {
+    use argon2::{password_hash::PasswordVerifier, Argon2};
+    let parsed = argon2::PasswordHash::new(hash).ok();
+    parsed.map(|h| Argon2::default().verify_password(pw.as_bytes(), &h).is_ok()).unwrap_or(false)
+}
+
+// ── Register / Login ────────────────────────────────────
+
+use serde_json::json;
+
+#[derive(Deserialize)]
+pub struct RegisterRequest { pub email: String, pub password: String, pub display_name: String }
+#[derive(Deserialize)]
+pub struct LoginRequest { pub email: String, pub password: String }
+
+pub async fn handle_register(
+    State(state): State<crate::state::AppState>,
+    Json(body): Json<RegisterRequest>,
+) -> impl IntoResponse {
+    if body.email.is_empty() || !body.email.contains('@') {
+        return (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error":"INVALID_EMAIL"}))).into_response();
+    }
+    if body.password.len() < 8 {
+        return (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error":"WEAK_PASSWORD"}))).into_response();
+    }
+    match state.auth_store.create_user_with_password(&body.email, &body.password, &body.display_name) {
+        Ok(user) => {
+            let session = state.auth_store.create_session(&user.id).unwrap();
+            (StatusCode::OK, Json(AuthResponse { user, token: session.token })).into_response()
+        }
+        Err(_) => (StatusCode::CONFLICT, Json(json!({"error":"EMAIL_EXISTS"}))).into_response(),
+    }
+}
+
+pub async fn handle_login(
+    State(state): State<crate::state::AppState>,
+    Json(body): Json<LoginRequest>,
+) -> impl IntoResponse {
+    match state.auth_store.verify_password(&body.email, &body.password) {
+        Ok(Some(user)) => {
+            let session = state.auth_store.create_session(&user.id).unwrap();
+            (StatusCode::OK, Json(AuthResponse { user, token: session.token })).into_response()
+        }
+        _ => (StatusCode::UNAUTHORIZED, Json(json!({"error":"INVALID_CREDENTIALS"}))).into_response(),
+    }
+}

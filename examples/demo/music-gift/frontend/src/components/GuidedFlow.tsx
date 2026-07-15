@@ -1,73 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatMessage, GiftMeta } from "../types";
+import { useEffect, useRef, useState } from "react";
+import type { ChatMessage } from "../types";
 import { streamChat } from "../api";
 import { useI18n, getMonths } from "../i18n";
 import { useMusicGen } from "../hooks/useMusicGen";
+import { useGuidedState, clearGuided, type FlowStep } from "../hooks/useGuidedState";
 import { DEFAULT_STYLE_TAGS } from "../lib/styles";
 import { ReviewCard, type ReviewData } from "./ReviewCard";
 import { MusicCard } from "./MusicCard";
 import { PillsRow, GoldPill, InlineInput, BirthdayPicker } from "./ChatUI";
 
-interface StepState {
-  relationship: string;
-  relationshipLabel: string;
-  name: string;
-  gender: string;
-  birthday: { month: number; day: number } | null;
-  scenario: string;
-  scenarioLabel: string;
-}
-
-type FlowStep =
-  | "greet"
-  | "relationship"
-  | "name"
-  | "gender"
-  | "birthday"
-  | "scenario"
-  | "chat"
-  | "review"
-  | "music"
-  | "paste";
-
-interface BubbleItem {
-  type: "bot" | "user";
-  text: string;
-}
-
-interface PillsItem {
-  type: "pills";
-  options: Array<{ label: string; value: string }>;
-  onSelect: (value: string, label: string) => void;
-}
-
-interface PillItem {
-  type: "pill";
-  label: string;
-  gold?: boolean;
-  onSelect: () => void;
-}
-
-interface InputItem {
-  type: "input";
-  placeholder: string;
-  onSubmit: (value: string) => void;
-}
-
-interface BirthdayItem {
-  type: "birthday";
-  onPick: (bday: { month: number; day: number } | null) => void;
-}
-
-type UIItem = BubbleItem | PillsItem | PillItem | InputItem | BirthdayItem;
-
 const RELATIONSHIPS = [
-  { label: "rel_kid", value: "kid" },
-  { label: "rel_partner", value: "partner" },
-  { label: "rel_friend", value: "friend" },
-  { label: "rel_parent", value: "parent" },
-  { label: "rel_pet", value: "pet" },
-  { label: "rel_custom", value: "__custom__" },
+  { label: "rel_kid", value: "kid" }, { label: "rel_partner", value: "partner" },
+  { label: "rel_friend", value: "friend" }, { label: "rel_parent", value: "parent" },
+  { label: "rel_pet", value: "pet" }, { label: "rel_custom", value: "__custom__" },
 ];
 
 function scenarioList(rel: string, t: (k: string) => string): Array<{ label: string; value: string }> {
@@ -83,403 +28,191 @@ function scenarioList(rel: string, t: (k: string) => string): Array<{ label: str
   return [...labels.map((l) => ({ label: l, value: l.toLowerCase().replace(/\s+/g, "") })), { label: t("scenario_custom"), value: "__custom__" }];
 }
 
-const GS_KEY = "moment_guided";
-interface Ps { step: string; meta: StepState; bubbles: BubbleItem[]; messages: ChatMessage[]; lyrics: string; style: string; title: string; vocal: string; }
-function loadPs(): Ps | null { try { return JSON.parse(sessionStorage.getItem(GS_KEY) ?? "null"); } catch { return null; } }
-function savePs(s: Ps) { try { sessionStorage.setItem(GS_KEY, JSON.stringify(s)); } catch { /* quota */ } }
+// ── Derive bubbles from structured state ─────────────────
+
+function derivedBubbles(step: FlowStep, meta: ReturnType<typeof useGuidedState>["meta"], t: (k: string) => string, months: string[]): Array<{ role: "bot" | "user"; text: string }> {
+  const b: Array<{ role: "bot" | "user"; text: string }> = [];
+  const push = (role: "bot" | "user", text: string) => { if (text) b.push({ role, text }); };
+
+  if (step === "greet" || step === "relationship") {
+    push("bot", t("greet"));
+    if (step === "relationship") push("bot", t("relationship_q"));
+    return b;
+  }
+
+  push("bot", t("greet"));
+  push("bot", t("relationship_q"));
+  push("user", meta.relationshipLabel);
+  push("bot", t("name_q"));
+
+  if (step === "name") return b;
+
+  push("user", meta.name);
+
+  if (meta.relationship !== "pet") {
+    push("bot", t("gender_q"));
+    if (step === "gender") return b;
+    push("user", meta.gender);
+  }
+
+  push("bot", t("bday_q"));
+  if (step === "birthday") return b;
+  push("user", meta.birthday ? `${months[meta.birthday.month - 1]} ${meta.birthday.day}` : t("bday_skip"));
+  push("bot", t("scenario_q"));
+  if (step === "scenario") return b;
+  push("user", meta.scenarioLabel);
+
+  return b;
+}
+
+// ── Component ────────────────────────────────────────────
 
 export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId: string) => void; onSwitchToFree?: () => void }) {
   const { t, lang } = useI18n();
   const months = getMonths(lang);
-  const r = loadPs();
-  const [step, setStep] = useState<FlowStep>((r?.step as FlowStep) ?? "greet");
-  const [meta, setMeta] = useState<StepState>(r?.meta ?? {
-    relationship: "", relationshipLabel: "", name: "", gender: "",
-    birthday: null, scenario: "", scenarioLabel: "",
-  });
-  const metaRef = useRef(meta);
-  metaRef.current = meta;
+  const { step, meta, messages, metaRef, actions: act, wasRestored } = useGuidedState(lang);
 
-  const [messages, setMessages] = useState<ChatMessage[]>(r?.messages ?? []);
-  const [bubbles, setBubbles] = useState<BubbleItem[]>(r?.bubbles ?? []);
-  const [uiItems, setUiItems] = useState<UIItem[]>([]);
-  const [streaming, setStreaming] = useState(false);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
-
-  const [lyrics, setLyrics] = useState(r?.lyrics ?? "");
-  const [inferredStyle, setInferredStyle] = useState(r?.style ?? "");
-  const [inferredTitle, setInferredTitle] = useState(r?.title ?? "");
-  const [inferredVocal, setInferredVocal] = useState(r?.vocal ?? "female");
-
-  // Music generation hook
+  const [streaming, setStreaming] = useState(false);
+  const [showInstrumental, setShowInstrumental] = useState(false);
   const gen = useMusicGen();
-
-  // Lyrics state
-  const chatRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const initRef = useRef(false);
 
-  const scrollToBottom = useCallback(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, []);
+  const bubbles = derivedBubbles(step, meta, t, months);
 
+  // Auto-scroll
+  const lastCount = useRef(0);
+  const cnt = bubbles.length + (step === "chat" ? messages.length : 0);
+  if (cnt !== lastCount.current) { lastCount.current = cnt; setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50); }
+  // Init flow
+  const initRan = useRef(wasRestored);
   useEffect(() => {
-    scrollToBottom();
-  }, [bubbles, uiItems, messages, scrollToBottom]);
-
-  // Start flow
-  useEffect(() => {
-    if (initRef.current) return;
-    initRef.current = true;
-
-    setTimeout(() => {
-      addBot(t("greet"));
-      setTimeout(() => {
-        addBot(t("relationship_q"));
-        showRelPills();
-      }, 400);
-    }, 200);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Auto-save to sessionStorage
-  useEffect(() => {
-    if (step === "greet" && bubbles.length === 0) return;
-    savePs({ step, meta, bubbles, messages: messages.slice(-20), lyrics, style: inferredStyle, title: inferredTitle, vocal: inferredVocal });
-  }, [step, meta, bubbles, messages, lyrics, inferredStyle, inferredTitle, inferredVocal]);
-
-  function addBot(text: string) {
-    setBubbles((prev) => [...prev, { type: "bot", text }]);
-  }
-
-  function addUser(text: string) {
-    setBubbles((prev) => [...prev, { type: "user", text }]);
-  }
-
-  // --- Relationship ---
-
-  function showRelPills() {
-    const options = RELATIONSHIPS.map((r) => ({ label: t(r.label), value: r.value }));
-    setUiItems([
-      {
-        type: "pills",
-        options,
-        onSelect: (value, label) => {
-          if (value === "__custom__") {
-            // Show custom input
-            setUiItems([{ type: "input", placeholder: t("rel_custom_placeholder"), onSubmit: (v) => handleRelPick("custom", v) }]);
-          } else {
-            handleRelPick(value, label);
-          }
-        },
-      },
-    ]);
-    // Instrumental shortcut appears after delay
-    setTimeout(() => {
-      setUiItems((prev) => [
-        ...prev,
-        { type: "pill", label: t("instrumental_btn"), gold: true, onSelect: () => startInstrumental() },
-      ]);
-    }, 500);
-  }
+    if (!wasRestored && step === "greet") {
+      initRan.current = true;
+      const t = setTimeout(() => act.go("relationship"), 400);
+      return () => clearTimeout(t);
+    }
+  }, [wasRestored, step]);
+  useEffect(() => { if (step === "relationship") { const t = setTimeout(() => setShowInstrumental(true), 600); return () => clearTimeout(t); } }, [step]);
 
   function handleRelPick(value: string, label: string) {
-    setMeta((prev) => ({ ...prev, relationship: value, relationshipLabel: label }));
-    addUser(label);
-    setUiItems([]);
-    setTimeout(() => {
-      addBot(t("name_q"));
-      setUiItems([{ type: "input", placeholder: t("name_placeholder"), onSubmit: handleName }]);
-    }, 350);
+    act.setMeta({ ...metaRef.current, relationship: value === "__custom__" ? "custom" : value, relationshipLabel: label });
+    act.go(value === "pet" ? "scenario" : "name");
   }
 
   function handleName(name: string) {
-    setMeta((prev) => ({ ...prev, name }));
-    addUser(name);
-    setUiItems([]);
-
-    if (metaRef.current.relationship === "pet") {
-      setTimeout(() => goScenario(), 350);
-    } else {
-      setTimeout(() => {
-        addBot(t("gender_q"));
-        setUiItems([
-          {
-            type: "pills",
-            options: [
-              { label: t("gender_male"), value: "male" },
-              { label: t("gender_female"), value: "female" },
-            ],
-            onSelect: (_, label) => handleGender(label),
-          },
-        ]);
-      }, 350);
-    }
+    act.setMeta({ ...metaRef.current, name });
+    act.go(metaRef.current.relationship === "pet" ? "scenario" : "gender");
   }
 
   function handleGender(label: string) {
-    setMeta((prev) => ({ ...prev, gender: label }));
-    addUser(label);
-    setUiItems([]);
-    setTimeout(() => {
-      addBot(t("bday_q"));
-      setUiItems([{ type: "birthday", onPick: handleBirthday }]);
-    }, 350);
+    act.setMeta({ ...metaRef.current, gender: label });
+    act.go("birthday");
   }
 
   function handleBirthday(bday: { month: number; day: number } | null) {
-    setMeta((prev) => ({ ...prev, birthday: bday }));
-    if (bday) {
-      addUser(`${months[bday.month - 1]} ${bday.day}`);
-    } else {
-      addUser(t("bday_skip"));
-    }
-    setUiItems([]);
-    setTimeout(() => goScenario(), 350);
-  }
-
-  function goScenario() {
-    addBot(t("scenario_q"));
-    const scenarios = scenarioList(metaRef.current.relationship, t);
-    setUiItems([
-      {
-        type: "pills",
-        options: scenarios,
-        onSelect: (value, label) => {
-          if (value === "__custom__") {
-            setUiItems([{ type: "input", placeholder: t("scenario_custom_placeholder"), onSubmit: (v) => handleScenario(v, v) }]);
-          } else {
-            handleScenario(value, label);
-          }
-        },
-      },
-    ]);
+    act.setMeta({ ...metaRef.current, birthday: bday });
+    act.go("scenario");
   }
 
   function handleScenario(value: string, label: string) {
-    setMeta((prev) => ({ ...prev, scenario: value, scenarioLabel: label }));
-    addUser(label);
-    setUiItems([]);
-    setStep("chat");
-    // Start the LLM call
-    setTimeout(() => startChat(null), 350);
+    if (value === "__custom__") return;
+    act.setMeta({ ...metaRef.current, scenario: value, scenarioLabel: label });
+    act.go("chat");
+    setTimeout(() => startChat(null), 400);
   }
 
-  // --- Free chat ---
+
+  // ── Chat ────────────────────────────────────────
 
   async function startChat(userText: string | null) {
-    const isAutoStart = userText === null;
-    const userMsg: ChatMessage = { role: "user", content: userText || "hi" };
-    const chatMsgs: ChatMessage[] = isAutoStart
-      ? [userMsg]
-      : [...messages, userMsg];
-
-    // Only show typed user messages, not the auto-generated "hi"
-    if (!isAutoStart) {
-      setMessages((prev) => [...prev, userMsg]);
-    }
-    setStreaming(true);
-    setError(null);
-
-    let assistantText = "";
+    const msgs: ChatMessage[] = userText
+      ? [...messages, { role: "user" as const, content: userText }]
+      : [{ role: "user" as const, content: "hi" }];
+    if (userText) act.setMsg(msgs);
+    setStreaming(true); setError(null);
+    let full = "";
 
     try {
       const m = metaRef.current;
-      const giftMeta: GiftMeta = {
-        lang,
-        name: m.name,
-        relationship: m.relationshipLabel,
-        scenario: m.scenarioLabel,
-        gender: m.gender,
-      };
-
-      const gen = streamChat({ messages: chatMsgs, meta: giftMeta, photos: [] });
-
-      for await (const event of gen) {
-        if (event.type === "Delta") {
-          assistantText += event.text;
-          if (isAutoStart) {
-            setMessages([{ role: "assistant", content: assistantText }]);
-          } else {
-            setMessages([...chatMsgs, { role: "assistant", content: assistantText }]);
+      const gen = streamChat({ messages: msgs, meta: { lang, name: m.name, relationship: m.relationshipLabel, scenario: m.scenarioLabel, gender: m.gender }, photos: [] });
+      for await (const e of gen) {
+        if (e.type === "Delta") {
+          full += e.text;
+          act.setMsg(userText ? [...msgs, { role: "assistant", content: full }] : [{ role: "assistant", content: full }]);
+          if (full.includes("<<<LYRICS>>>")) {
+            const lm = full.match(/<<<LYRICS>>>([\s\S]*?)<<<END>>>/);
+            if (lm) { act.setMsg([{ role: "assistant", content: full }]); setStreaming(false); act.go("review"); return; }
           }
-
-          const hasLyrics = assistantText.includes("<<<LYRICS>>>");
-          if (hasLyrics) {
-            const lyricsMatch = assistantText.match(/<<<LYRICS>>>([\s\S]*?)<<<END>>>/);
-            const styleMatch = assistantText.match(/<<<STYLE>>>([\s\S]*?)<<<STYLE_END>>>/);
-            const titleMatch = assistantText.match(/<<<TITLE>>>([\s\S]*?)<<<TITLE_END>>>/);
-            const vocalMatch = assistantText.match(/<<<VOCAL>>>([\s\S]*?)<<<VOCAL_END>>>/);
-
-            if (lyricsMatch) {
-              setLyrics(lyricsMatch[1].trim());
-              setInferredStyle(styleMatch?.[1]?.trim() ?? "");
-              setInferredTitle(titleMatch?.[1]?.trim() ?? "");
-              setInferredVocal(vocalMatch?.[1]?.trim() ?? "female");
-              setStreaming(false);
-              setStep("review");
-              addBot(t("lyrics_ready"));
-              return;
-            }
-          }
-        } else if (event.type === "Done" || event.type === "Error") {
-          if (event.type === "Error") setError(event.error);
-        }
+        } else if (e.type === "Error") setError(e.error);
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Chat failed");
-    } finally {
-      setStreaming(false);
-    }
+    } catch (e) { setError(e instanceof Error ? e.message : "Chat failed"); }
+    finally { setStreaming(false); }
   }
 
   async function handleChatSend() {
-    const text = input.trim();
-    if (!text || streaming) return;
-    setInput("");
-    await startChat(text);
+    const text = input.trim(); if (!text || streaming) return;
+    setInput(""); await startChat(text);
   }
 
-  // --- Review ---
+  // ── Review / Music ──────────────────────────────
 
-  // --- Review → Music Gen ---
+  const lastMsg = messages.filter((m) => m.role === "assistant").pop();
+  const lyrics = lastMsg?.content?.match(/<<<LYRICS>>>([\s\S]*?)<<<END>>>/)?.[1]?.trim() ?? "";
+  const style = lastMsg?.content?.match(/<<<STYLE>>>([\s\S]*?)<<<STYLE_END>>>/)?.[1]?.trim() ?? "";
+  const title = lastMsg?.content?.match(/<<<TITLE>>>([\s\S]*?)<<<TITLE_END>>>/)?.[1]?.trim() ?? "";
+  const vocal = lastMsg?.content?.match(/<<<VOCAL>>>([\s\S]*?)<<<VOCAL_END>>>/)?.[1]?.trim() ?? "female";
 
   async function handleReviewSubmit(data: ReviewData) {
-    setError(null);
-    setStep("music");
-
     const m = metaRef.current;
-    await gen.start({
-      lyrics: data.lyrics,
-      style: data.style,
-      title: data.title,
-      vocal: data.vocal,
-      meta: {
-        name: m.name,
-        relationship: m.relationshipLabel,
-        scenario: m.scenarioLabel,
-        gender: m.gender,
-      },
-      lang,
-    });
+    setError(null); act.go("music");
+    await gen.start({ lyrics: data.lyrics, style: data.style, title: data.title, vocal: data.vocal, meta: { name: m.name, relationship: m.relationshipLabel, scenario: m.scenarioLabel, gender: m.gender }, lang });
     if (gen.error) setError(gen.error);
   }
 
-  function handleMusicOpen() {
-    if (gen.giftId) {
-      try { sessionStorage.removeItem(GS_KEY); } catch { /* ignore */ }
-      onNavigate(gen.giftId);
-    }
-  }
+  function handleMusicOpen() { if (gen.giftId) { clearGuided(); onNavigate(gen.giftId); } }
+  function handleMusicRetry() { if (gen.giftId) gen.retry(gen.giftId); }
 
-  function handleMusicRetry() {
-    if (gen.giftId) gen.retry(gen.giftId);
-  }
+  // ── Pills configuration per step ─────────────────
 
-  // --- Instrumental ---
-  function startInstrumental() {
-    setBubbles([]);
-    setUiItems([]);
-    onSwitchToFree?.();
-  }
+  const relPills = RELATIONSHIPS.map((r) => ({ label: t(r.label), value: r.value }));
+  const genderPills = [{ label: t("gender_male"), value: "male" }, { label: t("gender_female"), value: "female" }];
+  const scenPills = scenarioList(meta.relationship, t);
 
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleChatSend();
-    }
-  }
+  // ── Render ──────────────────────────────────────
 
-  // --- Render ---
+  const inChat = step === "chat" || step === "review" || step === "music";
 
   return (
     <div className="chat-panel">
-      {/* Dot indicators */}
-      <span className="dot-row">
-        <span className={`dot ${step === "greet" || step === "relationship" || step === "name" || step === "gender" || step === "birthday" || step === "scenario" ? "on" : ""} ${["chat", "review", "music"].includes(step) ? "past" : ""}`} />
-        <span className={`dot ${["chat", "review", "music"].includes(step) ? "on" : ""}`} />
-      </span>
+      <span className="dot-row"><span className={`dot ${!inChat ? "on" : "past"}`} /><span className={`dot ${inChat ? "on" : ""}`} /></span>
+      <div className="chat-messages guided">
+        {bubbles.map((b, i) => <div key={`b-${i}`} className={`bubble ${b.role}`}>{b.text}</div>)}
 
-      {/* Chat area */}
-      <div className="chat-messages guided" ref={chatRef}>
-        {/* Structured bubbles */}
-        {bubbles.map((b, i) => (
-          <div key={`b-${i}`} className={`bubble ${b.type}`}>
-            {b.text}
-          </div>
-        ))}
+        {step === "relationship" && <PillsRow options={relPills} onSelect={handleRelPick} />}
+        {step === "relationship" && showInstrumental && <GoldPill label={t("instrumental_btn")} onClick={() => onSwitchToFree?.()} />}
 
-        {/* Structured UI items */}
-        {uiItems.map((item, i) => {
-          if (item.type === "pills") {
-            return <PillsRow key={`p-${i}`} options={item.options} onSelect={item.onSelect} />;
-          }
-          if (item.type === "pill") {
-            return <GoldPill key={`pl-${i}`} label={item.label} onClick={item.onSelect} />;
-          }
-          if (item.type === "input") {
-            return <InlineInput key={`in-${i}`} placeholder={item.placeholder} onSubmit={item.onSubmit} />;
-          }
-          if (item.type === "birthday") {
-            return <BirthdayPicker key={`bd-${i}`} months={months} skipLabel={t("bday_skip")} onPick={item.onPick} />;
-          }
-          return null;
-        })}
+        {step === "name" && <InlineInput placeholder={t("name_placeholder")} onSubmit={handleName} />}
 
-        {/* Free chat messages */}
-        {step === "chat" &&
-          messages.map((msg, i) => (
-            <div key={`msg-${i}`} className={`bubble ${msg.role === "assistant" ? "bot" : msg.role}`}>
-              {msg.content.replace(/<<<[^>]+>>>/g, "")}
-            </div>
-          ))}
+        {step === "gender" && <PillsRow options={genderPills} onSelect={(_, l) => handleGender(l)} />}
 
-        {/* Review card */}
-        {step === "review" && (
-          <ReviewCard
-            lyrics={lyrics}
-            style={inferredStyle}
-            title={inferredTitle}
-            vocal={inferredVocal}
-            styleTags={DEFAULT_STYLE_TAGS}
-            onSubmit={handleReviewSubmit}
-            creating={gen.state === "generating"}
-          />
-        )}
-        {/* Music card */}
-        {step === "music" && gen.giftId && (
-          <MusicCard initialState={gen.state === "ready" ? "ready" : gen.state === "error" ? "error" : "generating"} onOpen={handleMusicOpen} onRetry={handleMusicRetry} />
-        )}
+        {step === "birthday" && <BirthdayPicker months={months} skipLabel={t("bday_skip")} onPick={handleBirthday} />}
+
+        {step === "scenario" && <PillsRow options={scenPills} onSelect={handleScenario} />}
+
+
+        {step === "chat" && messages.map((msg, i) => <div key={`m-${i}`} className={`bubble ${msg.role === "assistant" ? "bot" : msg.role}`}>{msg.content.replace(/<<<[^>]+>>>/g, "")}</div>)}
+        {step === "review" && lyrics && <ReviewCard lyrics={lyrics} style={style} title={title} vocal={vocal} styleTags={DEFAULT_STYLE_TAGS} onSubmit={handleReviewSubmit} creating={gen.state === "generating"} />}
+        {step === "music" && gen.giftId && <MusicCard initialState={gen.state === "ready" ? "ready" : gen.state === "error" ? "error" : "generating"} onOpen={handleMusicOpen} onRetry={handleMusicRetry} />}
 
         <div ref={bottomRef} />
       </div>
-
       {error && <div className="error-msg" style={{ margin: "0 16px 8px" }}>{error}</div>}
-
-      {/* Chat input bar — always visible */}
       <div className="chat-bar">
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          rows={1}
-          disabled={streaming}
-        />
-        <button
-          className="chat-send-btn"
-          onClick={handleChatSend}
-          disabled={streaming}
-          aria-label="Send"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M2 21l21-9L2 3v7l15 2-15 2z" />
-          </svg>
-        </button>
+        <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); } }} rows={1} disabled={streaming || !(step === "chat" || step === "review")} />
+        <button className="chat-send-btn" onClick={handleChatSend} disabled={streaming} aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z" /></svg></button>
       </div>
-
     </div>
   );
 }

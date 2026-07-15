@@ -1,6 +1,4 @@
 //! Axum route handlers for all API endpoints.
-
-
 use std::convert::Infallible;
 
 use std::path::PathBuf;
@@ -26,28 +24,8 @@ use crate::error::{AppError, AppResult};
 use crate::gift::Gift;
 use crate::state::AppState;
 use crate::tools::music_gen::MusicGenTool;
-use crate::auth;
-
 /// Build the full router with all API routes + static file serving.
 pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
-    let auth = Router::new()
-        .route("/auth/send-link", post(auth::handle_send_link))
-        .route("/auth/verify", get(auth::handle_verify))
-        .route("/auth/me", get(auth::handle_me))
-        .route("/auth/logout", post(auth::handle_logout))
-        .route("/auth/oauth/google", get(auth::handle_google_login))
-        .route("/auth/oauth/google/cb", get(auth::handle_google_callback));
-
-    let api = Router::new()
-        .merge(auth)
-        .route("/chat", post(chat_handler))
-        .route("/gift", post(create_gift))
-        .route("/gift/{id}", get(get_gift))
-        .route("/playlist", get(list_playlist))
-        .route("/generate/{id}", post(generate_music))
-        .route("/generate/{id}/status", get(generate_status))
-        .route("/generate/{id}/stream", get(generate_stream))
-        .route("/gift/{id}/lrc", get(get_gift_lrc))
         .route("/gift/{id}/like", post(like_gift))
         .route("/countdown-section/{id}", get(get_countdown_section))
         .route("/photos", post(upload_photos))
@@ -342,9 +320,8 @@ pub async fn generate_music(
     let relationship = gift.meta.get("relationship").and_then(Value::as_str).unwrap_or("");
 
     let prompt = crate::tools::music_gen::generate_music_prompt(
-        state.chat_model.clone(), &provider, &lyrics, style, title, "female", scene, name, Some(relationship),
+        state.music_prompt_model.clone(), &provider, &lyrics, style, title, "female", scene, name, Some(relationship),
     ).await.unwrap_or_else(|_| format!("{style}, high quality music production"));
-
     let tool = MusicGenTool::new(state.gen_task.clone());
     let resp = tool.submit(&state.gift_store, &id, &prompt).await?;
     Ok((StatusCode::OK, Json(resp)))
@@ -477,8 +454,6 @@ fn unix_now() -> String {
         .map(|d| d.as_secs().to_string())
         .unwrap_or_else(|_| "0".to_string())
 }
-
-
 // ---------------------------------------------------------------------------
 // GET /api/countdown-section/:id - countdown HTML
 // ---------------------------------------------------------------------------

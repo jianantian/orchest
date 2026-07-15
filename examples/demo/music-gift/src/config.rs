@@ -21,6 +21,11 @@ const CHAT_API_KEY_ENV: &str = "MUSIC_GIFT_CHAT_API_KEY";
 const CHAT_API_URL_ENV: &str = "MUSIC_GIFT_CHAT_API_URL";
 const CHAT_MAX_TOKENS_ENV: &str = "MUSIC_GIFT_CHAT_MAX_TOKENS";
 
+/// Per-component model overrides. Each falls back to the chat model env vars
+/// if not set — most deployments use one provider for everything.
+const COUNTDOWN_MODEL_ENV: &str = "MUSIC_GIFT_COUNTDOWN_MODEL";
+const MUSIC_PROMPT_MODEL_ENV: &str = "MUSIC_GIFT_MUSIC_PROMPT_MODEL";
+
 const MUSIC_PROVIDER_ENV: &str = "MUSIC_GIFT_MUSIC_PROVIDER";
 const MUSIC_MODEL_ENV: &str = "MUSIC_GIFT_MUSIC_MODEL";
 const MUSIC_API_KEY_ENV: &str = "MUSIC_GIFT_MUSIC_API_KEY";
@@ -32,6 +37,8 @@ const DEFAULT_PORT: u16 = 3000;
 /// All configuration needed to start the server.
 pub struct AppConfig {
     pub chat_model: Arc<dyn ChatModel>,
+    pub countdown_model: Arc<dyn ChatModel>,
+    pub music_prompt_model: Arc<dyn ChatModel>,
     pub gen_task: Arc<dyn GenTask>,
     pub port: u16,
     pub countdown_tool: Option<Arc<dyn Tool>>,
@@ -62,6 +69,27 @@ fn build_chat_model() -> AppResult<Arc<dyn ChatModel>> {
         .map_err(|e| AppError::Config(format!("constructing chat model: {e}")))?;
     // Box<dyn ModelAdapter> -> Arc<dyn ChatModel>: ModelAdapter is an alias for
     // ChatModel, so the box already is a Box<dyn ChatModel>.
+    Ok(Arc::from(adapter))
+}
+
+/// Build a model adapter from a specific env var prefix, falling back to the
+/// main chat model env vars. For optional per-component model configuration:
+/// set `{prefix}_MODEL` to override, or leave unset to share the chat model.
+fn build_model_or_default(model_env: &str) -> AppResult<Arc<dyn ChatModel>> {
+    let model = std::env::var(model_env).or_else(|_| std::env::var(CHAT_MODEL_ENV)).map_err(|_| {
+        AppError::Config(format!("no model configured: set {CHAT_MODEL_ENV} or {model_env}"))
+    })?;
+    let config = ProviderRuntimeConfig {
+        model,
+        api_key: std::env::var(CHAT_API_KEY_ENV).ok(),
+        api_key_env: None,
+        api_url: std::env::var(CHAT_API_URL_ENV).ok(),
+        max_tokens: std::env::var(CHAT_MAX_TOKENS_ENV)
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok()),
+    };
+    let adapter = create_adapter_from_config(config)
+        .map_err(|e| AppError::Config(format!("constructing model ({model_env}): {e}")))?;
     Ok(Arc::from(adapter))
 }
 
@@ -133,14 +161,18 @@ pub fn build_countdown_tool(
 /// Load all configuration from environment variables.
 pub fn load_config() -> AppResult<AppConfig> {
     let chat_model = build_chat_model()?;
+    let countdown_model = build_model_or_default(COUNTDOWN_MODEL_ENV)?;
+    let music_prompt_model = build_model_or_default(MUSIC_PROMPT_MODEL_ENV)?;
     let gen_task = build_gen_task()?;
-    let countdown_tool = build_countdown_tool(chat_model.clone());
+    let countdown_tool = build_countdown_tool(countdown_model.clone());
     let port = std::env::var(PORT_ENV)
         .ok()
         .and_then(|s| s.trim().parse::<u16>().ok())
         .unwrap_or(DEFAULT_PORT);
     Ok(AppConfig {
         chat_model,
+        countdown_model,
+        music_prompt_model,
         gen_task,
         port,
         countdown_tool,

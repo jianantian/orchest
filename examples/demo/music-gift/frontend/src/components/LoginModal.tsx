@@ -1,12 +1,19 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 
+type Mode = "magic" | "password";
+
 export function LoginModal() {
-  useAuth(); // ensures auth context is active
+  const { refresh } = useAuth();
   const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<Mode>("magic");
+  const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [sent, setSent] = useState(false);
-  const [sending, setSending] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     function onOpen() { setOpen(true); }
@@ -17,7 +24,8 @@ export function LoginModal() {
   async function handleSendLink(e: React.FormEvent) {
     e.preventDefault();
     if (!email.includes("@")) return;
-    setSending(true);
+    setLoading(true);
+    setError(null);
     try {
       await fetch("/api/auth/send-link", {
         method: "POST",
@@ -26,9 +34,42 @@ export function LoginModal() {
       });
       setSent(true);
     } catch {
-      // ignore
+      setError("Failed to send link");
     } finally {
-      setSending(false);
+      setLoading(false);
+    }
+  }
+
+  async function handlePasswordSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email.includes("@")) return;
+    setLoading(true);
+    setError(null);
+
+    const endpoint = isRegister ? "/api/auth/register" : "/api/auth/login";
+    const body: Record<string, string> = { email, password };
+    if (isRegister) body.display_name = displayName || email.split("@")[0];
+
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error === "EMAIL_EXISTS" ? "Email already registered" :
+                 data.error === "INVALID_CREDENTIALS" ? "Wrong email or password" :
+                 data.error === "WEAK_PASSWORD" ? "Password must be at least 8 characters" :
+                 data.error || "Something went wrong");
+        return;
+      }
+      await refresh();
+      setOpen(false);
+    } catch {
+      setError("Network error");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -53,34 +94,49 @@ export function LoginModal() {
           Continue with Google
         </button>
 
-        <div className="login-divider">
-          <span>or</span>
+        <div className="login-divider"><span>or</span></div>
+
+        {/* Mode tabs */}
+        <div className="login-tabs">
+          <button className={`login-tab ${mode === "magic" ? "on" : ""}`} onClick={() => setMode("magic")}>Magic link</button>
+          <button className={`login-tab ${mode === "password" ? "on" : ""}`} onClick={() => setMode("password")}>Password</button>
         </div>
 
-        <form onSubmit={handleSendLink}>
-          <input
-            className="login-input"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="your@email.com"
-            required
-            disabled={sending}
-          />
-          <button className="login-btn" type="submit" disabled={sending || !email.includes("@")}>
-            {sending ? "Sending…" : sent ? "Link sent! Check your email" : "Send magic link"}
+        <form onSubmit={mode === "magic" ? handleSendLink : handlePasswordSubmit}>
+          <input className="login-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="your@email.com" required disabled={loading} />
+
+          {mode === "password" && (
+            <>
+              {isRegister && (
+                <input className="login-input" type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Display name" required disabled={loading} />
+              )}
+              <input className="login-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" required minLength={8} disabled={loading} />
+            </>
+          )}
+
+          {error && <p className="login-error">{error}</p>}
+
+          <button className="login-btn" type="submit" disabled={loading || !email.includes("@")}>
+            {loading ? "Please wait…" :
+             mode === "magic" ? (sent ? "Link sent! Check your email" : "Send magic link") :
+             isRegister ? "Create account" : "Sign in"}
           </button>
         </form>
 
-        {sent && (
-          <p className="login-hint">
-            No password needed — tap the link in your email to sign in.
+        {mode === "password" && (
+          <p className="login-toggle">
+            {isRegister ? "Already have an account?" : "Don't have an account?"}{" "}
+            <button className="login-link-text" onClick={() => { setIsRegister(!isRegister); setError(null); }}>
+              {isRegister ? "Sign in" : "Create one"}
+            </button>
           </p>
         )}
 
-        <button className="login-close" onClick={() => setOpen(false)}>
-          Close
-        </button>
+        {mode === "magic" && sent && (
+          <p className="login-hint">No password needed — tap the link in your email to sign in.</p>
+        )}
+
+        <button className="login-close" onClick={() => setOpen(false)}>Close</button>
       </div>
     </div>
   );
