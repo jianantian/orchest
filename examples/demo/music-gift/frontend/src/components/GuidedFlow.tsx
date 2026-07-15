@@ -75,7 +75,6 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
-  const [showInstrumental, setShowInstrumental] = useState(false);
   const gen = useMusicGen();
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -85,17 +84,12 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
   const lastCount = useRef(0);
   const cnt = bubbles.length + (step === "chat" ? messages.length : 0);
   if (cnt !== lastCount.current) { lastCount.current = cnt; setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50); }
-  // Init flow
-  const initRan = useRef(wasRestored);
+  // Init flow on first mount
   useEffect(() => {
-    if (!wasRestored && step === "greet") {
-      initRan.current = true;
-      const t = setTimeout(() => act.go("relationship"), 400);
-      return () => clearTimeout(t);
-    }
-  }, [wasRestored, step]);
-  useEffect(() => { if (step === "relationship") { const t = setTimeout(() => setShowInstrumental(true), 600); return () => clearTimeout(t); } }, [step]);
-
+    if (wasRestored) return;
+    const id = setTimeout(() => act.go("relationship"), 500);
+    return () => clearTimeout(id);
+  }, []);
   function handleRelPick(value: string, label: string) {
     act.setMeta({ ...metaRef.current, relationship: value === "__custom__" ? "custom" : value, relationshipLabel: label });
     act.go(value === "pet" ? "scenario" : "name");
@@ -191,7 +185,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
         {bubbles.map((b, i) => <div key={`b-${i}`} className={`bubble ${b.role}`}>{b.text}</div>)}
 
         {step === "relationship" && <PillsRow options={relPills} onSelect={handleRelPick} />}
-        {step === "relationship" && showInstrumental && <GoldPill label={t("instrumental_btn")} onClick={() => onSwitchToFree?.()} />}
+        {step === "relationship" && <GoldPill label={t("instrumental_btn")} onClick={() => onSwitchToFree?.()} />}
 
         {step === "name" && <InlineInput placeholder={t("name_placeholder")} onSubmit={handleName} />}
 

@@ -26,7 +26,17 @@ use crate::state::AppState;
 use crate::tools::music_gen::MusicGenTool;
 /// Build the full router with all API routes + static file serving.
 pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
+    let api = Router::new()
+        .route("/chat", post(chat_handler))
+        .route("/gift", post(create_gift))
+        .route("/gift/{id}", get(get_gift))
+        .route("/playlist", get(list_playlist))
+        .route("/generate/{id}", post(generate_music))
+        .route("/generate/{id}/status", get(generate_status))
+        .route("/generate/{id}/stream", get(generate_stream))
+        .route("/gift/{id}/lrc", get(get_gift_lrc))
         .route("/gift/{id}/like", post(like_gift))
+        .route("/polish-music-prompt", post(polish_music_prompt))
         .route("/countdown-section/{id}", get(get_countdown_section))
         .route("/photos", post(upload_photos))
         .with_state(state.clone());
@@ -333,6 +343,46 @@ pub async fn generate_stream(
     MusicGenTool::stream(state.gen_task.clone(), state.gift_store.clone(), id)
 }
 
+// ── POST /api/polish-music-prompt — generate optimized music prompt ──────
+
+#[derive(Debug, Deserialize)]
+pub struct PolishPromptRequest {
+    pub lyrics: String,
+    pub style: String,
+    #[serde(default = "default_provider")]
+    pub provider: String,
+    pub title: Option<String>,
+    pub vocal: Option<String>,
+    pub scene: Option<String>,
+    pub name: Option<String>,
+    pub relationship: Option<String>,
+}
+
+fn default_provider() -> String { "suno".into() }
+
+#[derive(Debug, Serialize)]
+pub struct PolishPromptResponse {
+    pub prompt: String,
+}
+
+pub async fn polish_music_prompt(
+    State(state): State<AppState>,
+    Json(req): Json<PolishPromptRequest>,
+) -> AppResult<impl IntoResponse> {
+    let prompt = crate::tools::music_gen::generate_music_prompt(
+        state.music_prompt_model.clone(),
+        &req.provider,
+        &req.lyrics,
+        &req.style,
+        req.title.as_deref().unwrap_or(""),
+        req.vocal.as_deref().unwrap_or("female"),
+        req.scene.as_deref().unwrap_or(""),
+        req.name.as_deref().unwrap_or(""),
+        req.relationship.as_deref(),
+    ).await.unwrap_or_else(|_| format!("{}, high quality music production", req.style));
+
+    Ok(Json(PolishPromptResponse { prompt }))
+}
 // ── GET /api/generate/:id/status — legacy poll ────────────────────────────
 
 pub async fn generate_status(
@@ -343,11 +393,6 @@ pub async fn generate_status(
     let resp = tool.poll(&state.gift_store, &id).await?;
     Ok(Json(resp))
 }
-
-// ---------------------------------------------------------------------------
-// POST /api/gift/:id/like - like a gift
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Deserialize)]
 pub struct LikeRequest {
     pub viewer_id: String,

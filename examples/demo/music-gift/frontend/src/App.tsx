@@ -49,7 +49,7 @@ function AppContent() {
                 {user.display_name[0].toUpperCase()}
               </button>
             ) : (
-              <button className="login-link" onClick={login}>Sign in</button>
+              <button className="login-link" onClick={login}>{t("sign_in")}</button>
             )
           )}
         </div>
