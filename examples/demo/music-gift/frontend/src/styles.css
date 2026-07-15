@@ -666,6 +666,18 @@ body::after {
 .section-header { display: flex; align-items: center; justify-content: space-between; }
 .section-title { font-family: var(--font-display); font-size: 18px; font-weight: 500; color: var(--text); letter-spacing: 0.02em; margin: 0; }
 
+/* Section actions row */
+.section-actions { display: flex; gap: 4px; }
+
+/* Inline prompt bar (Write / Edit / Personalize) */
+.prompt-bar { margin-bottom: 8px; }
+.prompt-bar-input {
+  width: 100%; padding: 9px 14px; border: 1px solid var(--gold); border-radius: 8px;
+  background: var(--surface); font-size: 13px; font-family: inherit; color: var(--text); outline: none;
+}
+.prompt-bar-input::placeholder { color: var(--text3); }
+.polish-status { font-size: 12px; color: var(--text3); display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+
 /* Lyrics manuscript */
 .lyrics-manuscript { width: 100%; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); font-family: var(--font-display); font-size: 17px; line-height: 1.8; color: var(--text); resize: vertical; min-height: 180px; }
 .lyrics-manuscript::placeholder { color: var(--text3); font-style: italic; font-size: 16px; }
