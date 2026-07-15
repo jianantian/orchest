@@ -145,9 +145,9 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
           <input type="text" className="style-input" value={styleInput} onChange={e => setStyleInput(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); commitStyleInput(); } else if (e.key === "Backspace" && !styleInput && selectedStyles.length > 0) removeStyle(selectedStyles[selectedStyles.length - 1]); }}
             placeholder={t("free_style_ph")} />
-          {selectedStyles.length > 0 && <div className="style-chips">{selectedStyles.map(s => <span key={s} className="style-chip" onClick={() => removeStyle(s)}>{s} <span className="chip-x">×</span></span>)}</div>}
+          {selectedStyles.length > 0 && <div className="style-chips">{selectedStyles.map(s => <span key={s} className="style-chip" onClick={() => removeStyle(s)} role="button" tabIndex={0} onKeyDown={e => e.key === "Enter" && removeStyle(s)}>{s} <XIcon /></span>)}</div>}
           <div className="style-suggestions">
-            <button className="suggest-refresh" onClick={refreshSuggestions} title="More styles">↻</button>
+            <button className="suggest-refresh" onClick={refreshSuggestions} title="More styles" aria-label="Refresh style suggestions">↻</button>
             {suggestions.map(s => <button key={s} className="suggest-chip" onClick={() => addStyle(s)}>{s}</button>)}
           </div>
 
@@ -181,7 +181,7 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
         {gen.state === "generating" ? <><span className="spinner" /> Generating…</> : "Create Song"}
       </button>
 
-      {(error || gen.error) && <p className="error-msg">{error || gen.error}</p>}
+      {(error || gen.error) && <p className="error-msg" role="alert">{error || gen.error}</p>}
       {gen.giftId && <MusicCard initialState={musicState} onOpen={() => onNavigate(gen.giftId!)} onRetry={() => gen.retry(gen.giftId!)} />}
     </div>
   );

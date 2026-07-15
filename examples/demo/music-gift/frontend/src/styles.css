@@ -683,7 +683,7 @@ body::after {
 .prompt-bar { margin-bottom: 8px; }
 .prompt-bar-input {
   width: 100%; padding: 9px 14px; border: 1px solid var(--gold); border-radius: 8px;
-  background: var(--surface); font-size: 13px; font-family: inherit; color: var(--text); outline: none;
+  background: var(--surface); font-size: 13px; font-family: inherit; color: var(--text);
 }
 .prompt-bar-input::placeholder { color: var(--text3); }
 .polish-status { font-size: 12px; color: var(--text3); display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
@@ -691,40 +691,51 @@ body::after {
 /* Lyrics manuscript */
 .lyrics-manuscript { width: 100%; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); font-family: var(--font-display); font-size: 17px; line-height: 1.8; color: var(--text); resize: vertical; min-height: 180px; }
 .lyrics-manuscript::placeholder { color: var(--text3); font-style: italic; font-size: 16px; }
-.lyrics-manuscript:focus { outline: none; border-color: var(--gold); }
+.lyrics-manuscript:focus-visible { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px rgba(200,149,108,0.2); }
 .lyrics-manuscript:disabled { opacity: 0.4; }
 
 /* Style composer */
 .style-composer { display: flex; flex-direction: column; gap: 10px; }
-.style-input { width: 100%; padding: 10px 0; border: none; border-bottom: 1px solid var(--border); background: transparent; font-size: 15px; font-family: inherit; color: var(--text); outline: none; }
+.style-input { width: 100%; padding: 10px 0; border: none; border-bottom: 1px solid var(--border); background: transparent; font-size: 15px; font-family: inherit; color: var(--text); }
 .style-input::placeholder { color: var(--text3); }
-.style-input:focus { border-color: var(--gold); }
+.style-input:focus-visible { outline: none; border-color: var(--gold); }
 
 .style-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .style-chips .style-chip { display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border: 1px solid var(--gold-light); border-radius: 100px; background: var(--gold-bg); font-size: 13px; color: var(--gold); cursor: pointer; transition: background 0.18s; }
 .style-chips .style-chip:hover { background: var(--gold-light); }
-.style-chips .chip-x { font-size: 14px; opacity: 0.5; }
+.style-chips .style-chip:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+.style-chips .style-chip svg { width: 12px; height: 12px; opacity: 0.6; }
 
 .style-suggestions { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .suggest-refresh { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 50%; background: transparent; font-size: 14px; color: var(--text2); cursor: pointer; flex-shrink: 0; }
 .suggest-refresh:hover { border-color: var(--gold); color: var(--gold); }
+.suggest-refresh:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
 .suggest-chip { padding: 4px 10px; border: 1px solid var(--border); border-radius: 100px; background: transparent; font-size: 12px; font-family: inherit; color: var(--text2); cursor: pointer; white-space: nowrap; transition: all 0.15s; }
 .suggest-chip:hover { border-color: var(--gold); color: var(--gold); }
 
+.suggest-chip:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
 /* Title */
-.title-input { width: 100%; padding: 12px 0; border: none; border-bottom: 1px solid var(--border); background: transparent; font-family: var(--font-display); font-size: 28px; font-weight: 500; color: var(--text); outline: none; letter-spacing: 0.01em; }
+.title-input { width: 100%; padding: 12px 0; border: none; border-bottom: 1px solid var(--border); background: transparent; font-family: var(--font-display); font-size: 28px; font-weight: 500; color: var(--text); letter-spacing: 0.01em; }
 .title-input::placeholder { color: var(--text3); font-style: italic; }
-.title-input:focus { border-color: var(--gold); }
-
+.title-input:focus-visible { outline: none; border-color: var(--gold); }
+.btn-ghost { min-height: 36px; padding: 6px 12px; border: none; border-radius: 100px; background: transparent; font-size: 13px; font-family: inherit; font-weight: 500; color: var(--text2); cursor: pointer; transition: all 0.18s; display: inline-flex; align-items: center; gap: 4px; }
 /* Create button */
 .btn-create { width: 100%; padding: 16px 0; border: none; border-radius: 12px; background: var(--gold); color: #fff; font-family: inherit; font-size: 16px; font-weight: 600; cursor: pointer; letter-spacing: 0.03em; margin-top: 4px; transition: background 0.2s, transform 0.1s; }
-.btn-ghost { min-height: 32px; padding: 6px 12px; border: none; border-radius: 100px; background: transparent; font-size: 13px; font-family: inherit; font-weight: 500; color: var(--text2); cursor: pointer; transition: all 0.18s; display: inline-flex; align-items: center; gap: 4px; }
+.btn-ghost:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+.btn-create:hover { background: #b8845e; }
+.btn-create:active { transform: scale(0.98); }
+.btn-create:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-create:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(200,149,108,0.3); }
+
 .btn-ghost .btn-icon { color: var(--gold); font-size: 14px; line-height: 1; }
 .btn-ghost:hover { color: var(--gold); background: var(--gold-bg); }
 
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--gold); border-radius: 50%; animation: spin 0.6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; opacity: 0.5; }
+}
 /* =============================================
    GUIDED FLOW (Chat Wizard)
    ============================================= */
@@ -733,7 +744,6 @@ body::after {
 
 /* Dot indicators (step progress) — absolute top-right */
 .dot-row {
-  position: absolute; top: 16px; right: 20px; display: flex; gap: 6px; z-index: 5;
 }
 .dot {
   width: 8px; height: 8px; border-radius: 50%;
