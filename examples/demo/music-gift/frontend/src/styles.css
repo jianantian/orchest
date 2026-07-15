@@ -661,12 +661,15 @@ body::after {
 .mode-btn.active { background: var(--surface); box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
 .mode-btn.active .mode-label { color: var(--gold); font-weight: 600; }
 
-/* Vocal sub-options (checkbox pills) */
-.vocal-sub { display: flex; gap: 8px; margin: -6px 0 2px; }
-.vocal-check { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border: 1px solid var(--border); border-radius: 100px; font-size: 13px; color: var(--text2); cursor: pointer; transition: all 0.18s; }
-.vocal-check input { display: none; }
-.vocal-check.on { border-color: var(--gold-light); background: var(--gold-bg); color: var(--gold); font-weight: 500; }
-.vocal-check .check-icon { font-size: 14px; line-height: 1; }
+/* More Options (collapsible, inside style composer) */
+.more-options { margin-top: 6px; }
+.btn-more { padding: 2px 0; border: none; background: transparent; font-size: 12px; font-family: inherit; color: var(--text3); cursor: pointer; letter-spacing: 0.02em; }
+.btn-more:hover { color: var(--gold); }
+.more-body { margin-top: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); display: flex; flex-direction: column; gap: 8px; }
+.more-label { font-size: 11px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.05em; margin: 0; }
+.gender-select { display: flex; gap: 6px; }
+.gender-opt { flex: 1; padding: 7px 0; border: 1px solid var(--border); border-radius: 8px; background: transparent; font-size: 13px; font-family: inherit; color: var(--text2); cursor: pointer; transition: all 0.15s; }
+.gender-opt.on { border-color: var(--gold-light); background: var(--gold-bg); color: var(--gold); font-weight: 500; }
 
 /* Sections */
 .editorial-section { display: flex; flex-direction: column; gap: 10px; }

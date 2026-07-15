@@ -12,8 +12,8 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
   const gen = useMusicGen();
 
   const [instrumental, setInstrumental] = useState(false);
-  const [vocalFemale, setVocalFemale] = useState(false);
-  const [vocalMale, setVocalMale] = useState(false);
+  const [vocalGender, setVocalGender] = useState<"female" | "male" | null>(null);
+  const [showMoreOptions, setShowMoreOptions] = useState(false);
   const [lyrics, setLyrics] = useState("");
   const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
   const [styleInput, setStyleInput] = useState("");
@@ -30,7 +30,7 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
   const [error, setError] = useState<string | null>(null);
   const lyricsRef = useRef<HTMLTextAreaElement>(null);
 
-  const vocal = !instrumental && (vocalFemale || vocalMale) ? `${vocalFemale ? "female" : ""}${vocalMale ? " male" : ""}`.trim().replace(" ", ",") : undefined;
+  const vocal = !instrumental ? vocalGender || undefined : undefined;
 
   function addStyle(s: string) { if (s && !selectedStyles.includes(s)) setSelectedStyles(p => [...p, s]); }
   function removeStyle(s: string) { setSelectedStyles(p => p.filter(x => x !== s)); }
@@ -99,18 +99,6 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
           <span className="mode-label">Instrumental</span>
         </button>
       </div>
-      {!instrumental && (
-        <div className="vocal-sub">
-          <label className={`vocal-check ${vocalFemale ? "on" : ""}`}>
-            <input type="checkbox" checked={vocalFemale} onChange={e => setVocalFemale(e.target.checked)} />
-            <span className="check-icon">♀</span> Female
-          </label>
-          <label className={`vocal-check ${vocalMale ? "on" : ""}`}>
-            <input type="checkbox" checked={vocalMale} onChange={e => setVocalMale(e.target.checked)} />
-            <span className="check-icon">♂</span> Male
-          </label>
-        </div>
-      )}
 
       {/* ═══ Lyrics ═══ */}
       <section className="editorial-section">
@@ -161,6 +149,24 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
             <button className="suggest-refresh" onClick={refreshSuggestions} title="More styles">↻</button>
             {suggestions.map(s => <button key={s} className="suggest-chip" onClick={() => addStyle(s)}>{s}</button>)}
           </div>
+
+          {/* Vocal Gender — in More Options */}
+          {!instrumental && (
+            <div className="more-options">
+              <button className="btn-more" type="button" onClick={() => setShowMoreOptions(!showMoreOptions)}>
+                {showMoreOptions ? "▾" : "▸"} More Options
+              </button>
+              {showMoreOptions && (
+                <div className="more-body">
+                  <p className="more-label">Vocal Gender</p>
+                  <div className="gender-select">
+                    <button className={`gender-opt ${vocalGender === "female" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "female" ? null : "female")}>♀ Female</button>
+                    <button className={`gender-opt ${vocalGender === "male" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "male" ? null : "male")}>♂ Male</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </section>
 
