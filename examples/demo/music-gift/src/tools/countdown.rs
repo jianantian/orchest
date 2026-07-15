@@ -1,17 +1,16 @@
 //! Countdown HTML generation — Agent-as-Tool subagent.
 //!
 //! A lightweight Orchest subagent that generates a birthday countdown HTML
-//! block. It runs with [`ContextMode::Fresh`] (no parent conversation
+//! block. It runs with `ContextMode::Fresh` (no parent conversation
 //! context), receiving only the birthday/scenario info as structured input.
+//!
+//! The tool is built once at startup (see [`crate::config::build_countdown_tool`])
+//! and reused across all `run_countdown` calls.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::Local;
-use orchest::model::ModelAdapter;
-use orchest::run::AgentConfig;
-use orchest::tool::agent_as_tool::ContextMode;
-use orchest::tool::registry::ToolRegistry;
 use serde_json::Value;
 
 use crate::gift::GiftStore;
@@ -26,7 +25,7 @@ pub struct CountdownParams {
 }
 
 impl CountdownParams {
-    fn month_day(&self) -> Option<(String, String, i64, String)> {
+    pub(crate) fn month_day(&self) -> Option<(String, String, i64, String)> {
         parse_birthday_info(&self.birthday)
     }
 }
@@ -38,44 +37,12 @@ pub struct CountdownSink {
     pub gift_id: String,
 }
 
-/// Build a countdown subagent as an Orchest tool.
-pub fn countdown_tool(
-    model: Arc<dyn ModelAdapter>,
-) -> Result<Arc<dyn orchest::tool::Tool>, Box<dyn std::error::Error + Send + Sync>> {
-    let config = AgentConfig::builder("music-gift/countdown")
-        .system_prompt(COUNTDOWN_TEMPLATE.as_str())
-        .max_steps(1)
-        .build()
-        .map_err(|e| format!("building countdown config: {e}"))?;
-
-    let tool = config
-        .as_tool("generate_countdown", "Generate a birthday countdown HTML block.")
-        .model(model)
-        .registry(ToolRegistry::new())
-        .context_mode(ContextMode::Fresh)
-        .input_mapper(|input: Value| {
-            let params = countdown_params_from_json(&input);
-            let prompt = build_prompt(&params);
-            Ok(prompt)
-        })
-        .output_extractor(|output: Value| {
-            let html = output.get("output").and_then(Value::as_str).unwrap_or("");
-            serde_json::json!({ "html": strip_code_fences(html) })
-        })
-        .build()
-        .map_err(|e| format!("building countdown tool: {e}"))?;
-
-    Ok(tool)
-}
-
-/// Execute the countdown subagent and save the result to disk.
+/// Execute the pre-built countdown subagent and save the result to disk.
 pub async fn run_countdown(
-    model: Arc<dyn ModelAdapter>,
+    tool: Arc<dyn orchest::tool::Tool>,
     params: &CountdownParams,
     sink: &CountdownSink,
 ) -> Result<(), String> {
-    let tool = countdown_tool(model).map_err(|e| format!("failed to build tool: {e}"))?;
-
     let input = serde_json::json!({
         "name": params.name,
         "birthday": params.birthday,
@@ -109,7 +76,7 @@ pub async fn run_countdown(
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-fn countdown_params_from_json(input: &Value) -> CountdownParams {
+pub(crate) fn countdown_params_from_json(input: &Value) -> CountdownParams {
     CountdownParams {
         name: input.get("name").and_then(Value::as_str).unwrap_or("Someone").into(),
         birthday: input.get("birthday").and_then(Value::as_str).unwrap_or("").into(),
@@ -118,7 +85,7 @@ fn countdown_params_from_json(input: &Value) -> CountdownParams {
     }
 }
 
-fn build_prompt(p: &CountdownParams) -> String {
+pub(crate) fn build_prompt(p: &CountdownParams) -> String {
     let (month, day, days_until, target_date) = p.month_day().unwrap_or_else(|| {
         ("Jan".into(), "1".into(), 0, "2025-01-01".into())
     });
@@ -169,7 +136,7 @@ fn parse_birthday_info(birthday: &str) -> Option<(String, String, i64, String)> 
     Some((month_name.to_string(), day_str.to_string(), days_until, target_str))
 }
 
-fn strip_code_fences(html: &str) -> String {
+pub(crate) fn strip_code_fences(html: &str) -> String {
     let trimmed = html.trim();
     let without_open = trimmed.strip_prefix("```html")
         .or_else(|| trimmed.strip_prefix("```"))
@@ -178,7 +145,7 @@ fn strip_code_fences(html: &str) -> String {
     without_close.trim().to_string()
 }
 
-fn tool_context() -> orchest::tool::ToolContext {
+pub(crate) fn tool_context() -> orchest::tool::ToolContext {
     orchest::tool::ToolContext {
         run_id: orchest::run::RunId::new(),
         run_depth: 0,

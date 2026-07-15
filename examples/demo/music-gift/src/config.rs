@@ -2,11 +2,19 @@
 
 use std::sync::Arc;
 
+use orchest::model::ModelAdapter;
+use orchest::run::AgentConfig;
+use orchest::tool::agent_as_tool::ContextMode;
+use orchest::tool::registry::ToolRegistry;
+use orchest::tool::Tool;
 use orchest_protocol::{ChatModel, GenTask};
 use orchest_provider::registry::Registry;
 use orchest_provider::{create_adapter_from_config, ProviderConfig, ProviderRuntimeConfig};
 
 use crate::error::{AppError, AppResult};
+use crate::prompts::COUNTDOWN_TEMPLATE;
+use crate::tools::countdown;
+
 
 const CHAT_MODEL_ENV: &str = "MUSIC_GIFT_CHAT_MODEL";
 const CHAT_API_KEY_ENV: &str = "MUSIC_GIFT_CHAT_API_KEY";
@@ -26,6 +34,7 @@ pub struct AppConfig {
     pub chat_model: Arc<dyn ChatModel>,
     pub gen_task: Arc<dyn GenTask>,
     pub port: u16,
+    pub countdown_tool: Option<Arc<dyn Tool>>,
 }
 
 /// Build the chat model adapter from `MUSIC_GIFT_CHAT_*` env vars.
@@ -86,10 +95,46 @@ fn build_gen_task() -> AppResult<Arc<dyn GenTask>> {
     Ok(Arc::from(gen_task))
 }
 
+
+/// Build the countdown subagent tool once at startup.
+///
+/// Returns `None` if the countdown prompt template is empty
+/// (i.e., the prompt file is missing or blank).
+pub fn build_countdown_tool(
+    model: Arc<dyn ModelAdapter>,
+) -> Option<Arc<dyn Tool>> {
+    if COUNTDOWN_TEMPLATE.is_empty() {
+        return None;
+    }
+
+    let config = AgentConfig::builder("music-gift/countdown")
+        .system_prompt(COUNTDOWN_TEMPLATE.as_str())
+        .max_steps(1)
+        .build()
+        .ok()?;
+
+    config
+        .as_tool("generate_countdown", "Generate a birthday countdown HTML block.")
+        .model(model)
+        .registry(ToolRegistry::new())
+        .context_mode(ContextMode::Fresh)
+        .input_mapper(|input: serde_json::Value| {
+            let params = countdown::countdown_params_from_json(&input);
+            let prompt = countdown::build_prompt(&params);
+            Ok(prompt)
+        })
+        .output_extractor(|output: serde_json::Value| {
+            let html = output.get("output").and_then(serde_json::Value::as_str).unwrap_or("");
+            serde_json::json!({ "html": countdown::strip_code_fences(html) })
+        })
+        .build()
+        .ok()
+}
 /// Load all configuration from environment variables.
 pub fn load_config() -> AppResult<AppConfig> {
     let chat_model = build_chat_model()?;
     let gen_task = build_gen_task()?;
+    let countdown_tool = build_countdown_tool(chat_model.clone());
     let port = std::env::var(PORT_ENV)
         .ok()
         .and_then(|s| s.trim().parse::<u16>().ok())
@@ -98,5 +143,6 @@ pub fn load_config() -> AppResult<AppConfig> {
         chat_model,
         gen_task,
         port,
+        countdown_tool,
     })
 }

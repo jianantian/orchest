@@ -66,6 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         gen_task: config.gen_task,
         gift_store,
         data_dir: cli.data_dir,
+        countdown_tool: config.countdown_tool,
     };
 
     let app = build_router(state, static_dir);

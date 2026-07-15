@@ -4,7 +4,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use orchest::tool::Tool;
 use orchest_protocol::{ChatModel, GenTask};
+
 
 use crate::gift::GiftStore;
 
@@ -15,4 +17,5 @@ pub struct AppState {
     pub gen_task: Arc<dyn GenTask>,
     pub gift_store: GiftStore,
     pub data_dir: PathBuf,
+    pub countdown_tool: Option<Arc<dyn Tool>>,
 }

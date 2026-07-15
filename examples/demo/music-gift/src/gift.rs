@@ -141,6 +141,7 @@ impl GiftStore {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn update_duration(&self, id: &str, secs: f64) -> AppResult<()> {
         let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
         if conn.execute("UPDATE gifts SET duration_secs=?2 WHERE id=?1", params![id, secs])? == 0 {
@@ -149,6 +150,7 @@ impl GiftStore {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn update_lrc(&self, id: &str, lrc: &str, dur: Option<f64>) -> AppResult<()> {
         let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
         if conn.execute("UPDATE gifts SET lrc=?2, duration_secs=?3 WHERE id=?1", params![id, lrc, dur])? == 0 {
@@ -157,6 +159,7 @@ impl GiftStore {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn update_cover_url(&self, id: &str, url: &str) -> AppResult<()> {
         let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
         if conn.execute("UPDATE gifts SET cover_url=?2 WHERE id=?1", params![id, url])? == 0 {

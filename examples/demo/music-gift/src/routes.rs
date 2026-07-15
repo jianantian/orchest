@@ -215,8 +215,7 @@ pub async fn create_gift(
 
     state.gift_store.create(&gift)?;
 
-    if let Some(bday) = birthday {
-        let model = state.chat_model.clone();
+    if let (Some(bday), Some(tool)) = (birthday, state.countdown_tool.clone()) {
         let params = crate::tools::countdown::CountdownParams {
             name: gift_name.clone(),
             birthday: bday,
@@ -228,7 +227,7 @@ pub async fn create_gift(
             data_dir: state.data_dir.clone(),
             gift_id: id.clone(),
         };
-        tokio::spawn(async move { let _ = crate::tools::countdown::run_countdown(model, &params, &sink).await; });
+        tokio::spawn(async move { let _ = crate::tools::countdown::run_countdown(tool, &params, &sink).await; });
     }
     Ok((
         StatusCode::CREATED,

@@ -16,7 +16,7 @@ use orchest_protocol::{GenAsset, GenHandle, GenRequest, GenStatus, GenTask};
 
 use crate::error::{AppError, AppResult};
 use crate::gift::GiftStore;
-use crate::lrc;
+
 // ── Response types ──────────────────────────────────────────────────────────
 
 /// Response for POST /api/generate/:id — submit.
@@ -100,7 +100,6 @@ impl MusicGenTool {
             });
         }
 
-        // If no handle, generation hasn't been submitted
         let handle_json = match &gift.gen_handle {
             Some(h) => h.clone(),
             None => {
@@ -115,51 +114,20 @@ impl MusicGenTool {
 
         let status = match self.gen_task.poll(&handle).await {
             Ok(s) => s,
-            // Transient network error: don't mark as failed, let the caller retry
             Err(e) => return Err(AppError::Gen(e.to_string())),
         };
 
-        let status_str = match status {
-            GenStatus::Pending => "pending",
-            GenStatus::Running => "running",
-            GenStatus::Done => "done",
-            GenStatus::Failed => "failed",
-        };
-
         if status == GenStatus::Done {
-            match self.gen_task.fetch(&handle).await {
-                Ok(result) => {
-                    let audio_url = result.assets.first().and_then(|asset| match asset {
-                        GenAsset::Url { url, .. } => Some(url.clone()),
-                        GenAsset::Bytes { .. } => None,
-                    });
-                    let duration = result
-                        .diagnostic_metadata
-                        .get("duration_secs")
-                        .and_then(Value::as_f64);
-                    if let Some(url) = &audio_url {
-                        store.update_audio(gift_id, url)?;
-                    }
-                    if let Some(d) = duration {
-                        store.update_duration(gift_id, d)?;
-                    }
-                    // Extract and store cover image URL
-                    if let Some(cover) = result.diagnostic_metadata.get("cover_url").and_then(Value::as_str) {
-                        if !cover.is_empty() {
-                            let _ = store.update_cover_url(gift_id, cover);
-                        }
-                    }
-                    // Spawn LRC generation asynchronously
-                    if let (Some(lyrics), Some(d)) = (&gift.lyrics, duration) {
-                        let store_clone = store.clone();
-                        let id_clone = gift_id.to_string();
-                        let lyrics_clone = lyrics.clone();
-                        tokio::spawn(async move {
-                            if let Some(lrc_text) = lrc::generate_lrc(&lyrics_clone, d) {
-                                let _ = store_clone.update_lrc(&id_clone, &lrc_text, Some(d));
-                            }
-                        });
-                    }
+            match handle_done(
+                self.gen_task.as_ref(),
+                store,
+                gift_id,
+                gift.lyrics.as_deref(),
+                &handle,
+            )
+            .await
+            {
+                Ok(audio_url) => {
                     return Ok(GenStatusResponse {
                         id: gift_id.to_string(),
                         status: "done".to_string(),
@@ -168,10 +136,17 @@ impl MusicGenTool {
                 }
                 Err(e) => {
                     store.mark_gen_failed(gift_id)?;
-                    return Err(AppError::Gen(e.to_string()));
+                    return Err(e);
                 }
             }
         }
+
+        let status_str = match status {
+            GenStatus::Pending => "pending",
+            GenStatus::Running => "running",
+            GenStatus::Done => unreachable!(),
+            GenStatus::Failed => "failed",
+        };
 
         if status == GenStatus::Failed {
             store.mark_gen_failed(gift_id)?;
@@ -186,8 +161,8 @@ impl MusicGenTool {
 
     /// Stream SSE generation status events until the job completes or times out.
     ///
-    /// Same logic as the original `generate_stream` handler (poll loop + load
-    /// handle + SSE wrapping).
+    /// Same logic as the original `generate_stream` handler (poll loop +
+    /// SSE wrapping).
     pub fn stream(
         gen_task: Arc<dyn GenTask>,
         store: GiftStore,
@@ -196,8 +171,8 @@ impl MusicGenTool {
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(8);
 
         tokio::spawn(async move {
-            let handle = match load_gen_handle(&store, &gift_id).await {
-                Ok(h) => h,
+            let gift = match store.get(&gift_id) {
+                Ok(g) => g,
                 Err(_) => {
                     let _ = tx
                         .send(Ok(Event::default().data("{\"status\":\"error\"}")))
@@ -205,6 +180,25 @@ impl MusicGenTool {
                     return;
                 }
             };
+            let handle: GenHandle = match gift.gen_handle.as_deref() {
+                Some(json) => match serde_json::from_str(json) {
+                    Ok(h) => h,
+                    Err(_) => {
+                        let _ = tx
+                            .send(Ok(Event::default().data("{\"status\":\"error\"}")))
+                            .await;
+                        return;
+                    }
+                },
+                None => {
+                    let _ = tx
+                        .send(Ok(Event::default().data("{\"status\":\"error\"}")))
+                        .await;
+                    return;
+                }
+            };
+            let lyrics = gift.lyrics.as_deref();
+
             let _ = tx
                 .send(Ok(Event::default().data("{\"status\":\"pending\"}")))
                 .await;
@@ -214,18 +208,20 @@ impl MusicGenTool {
                 sleep(Duration::from_secs(5)).await;
                 match gen_task.poll(&handle).await {
                     Ok(GenStatus::Done) => {
-                        match gen_task.fetch(&handle).await {
-                            Ok(result) => {
-                                let url = result.assets.first().and_then(|a| match a {
-                                    GenAsset::Url { url, .. } => Some(url.clone()),
-                                    _ => None,
-                                });
-                                if let Some(ref u) = url {
-                                    let _ = store.update_audio(&gift_id, u);
-                                }
+                        match handle_done(
+                            gen_task.as_ref(),
+                            &store,
+                            &gift_id,
+                            lyrics,
+                            &handle,
+                        )
+                        .await
+                        {
+                            Ok(audio_url) => {
                                 let _ = tx
                                     .send(Ok(Event::default().data(
-                                        json!({"status":"done","audio_url":url}).to_string(),
+                                        json!({"status":"done","audio_url":audio_url})
+                                            .to_string(),
                                     )))
                                     .await;
                             }
@@ -264,11 +260,30 @@ impl MusicGenTool {
     }
 }
 
-/// Load and deserialize a `GenHandle` from the gift store.
-async fn load_gen_handle(store: &GiftStore, id: &str) -> AppResult<GenHandle> {
-    let gift = store.get(id)?;
-    let json = gift
-        .gen_handle
-        .ok_or_else(|| AppError::BadRequest("not submitted".into()))?;
-    serde_json::from_str(&json).map_err(|e| AppError::BadRequest(format!("bad handle: {e}")))
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Fetch completed generation assets, extract the first audio URL, and update
+/// the store.
+async fn handle_done(
+    gen_task: &dyn GenTask,
+    store: &GiftStore,
+    gift_id: &str,
+    _lyrics: Option<&str>,
+    handle: &GenHandle,
+) -> AppResult<Option<String>> {
+    let result = gen_task
+        .fetch(handle)
+        .await
+        .map_err(|e| AppError::Gen(e.to_string()))?;
+
+    let url = result.assets.first().and_then(|a| match a {
+        GenAsset::Url { url, .. } => Some(url.clone()),
+        _ => None,
+    });
+
+    if let Some(ref u) = url {
+        store.update_audio(gift_id, u)?;
+    }
+
+    Ok(url)
 }
