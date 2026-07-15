@@ -24,6 +24,7 @@
   --radius-lg:   20px;
   --font-display:   'Cormorant Garamond', Georgia, serif;
   --font-serif-cn:  STSong, 'Songti SC', 'Source Han Serif SC', Georgia, serif;
+  --font-sans-cn:    'Source Han Sans SC', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-body:      -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif;
 }
 
@@ -317,8 +318,7 @@ body::after {
   align-self: flex-start;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-bottom-left-radius: 6px;
-  font-family: var(--font-serif-cn);
+  font-family: var(--font-sans-cn);
   font-size: 15px;
 }
 
@@ -745,7 +745,7 @@ body::after {
 .bubble.bot {
   align-self: flex-start; background: var(--surface);
   border: 1px solid var(--border); border-bottom-left-radius: 6px;
-  font-family: var(--font-serif-cn); font-size: 15px;
+  font-family: var(--font-sans-cn); font-size: 15px;
 }
 .bubble.user {
   align-self: flex-end; background: var(--gold-bg);
