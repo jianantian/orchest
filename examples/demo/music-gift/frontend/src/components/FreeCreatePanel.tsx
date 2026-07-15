@@ -153,15 +153,16 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
             ))}
           </div>
         )}
-        {!instrumental && (
-          <div className="vocal-row">
-            <span>{t("free_vocal")}</span>
-            <div className="vocal-toggle">
-              <button className={`vocal-btn ${vocal === "female" ? "on" : ""}`} onClick={() => setVocal("female")}>♀ Female</button>
-              <button className={`vocal-btn ${vocal === "male" ? "on" : ""}`} onClick={() => setVocal("male")}>♂ Male</button>
-            </div>
+        <div className="card-foot-row">
+          <label className="toggle-switch">
+            <input type="checkbox" checked={instrumental} onChange={(e) => setInstrumental(e.target.checked)} />
+            <span>{t("free_instrumental")}</span>
+          </label>
+          <div className="vocal-toggle">
+            <button className={`vocal-btn ${vocal === "female" ? "on" : ""}`} onClick={() => setVocal("female")}>♀ Female</button>
+            <button className={`vocal-btn ${vocal === "male" ? "on" : ""}`} onClick={() => setVocal("male")}>♂ Male</button>
           </div>
-        )}
+        </div>
         <div className="style-suggest-row">
           <button className="btn-refresh" type="button" onClick={refreshSuggestions}>🔄</button>
           <div className="style-suggest-strip">

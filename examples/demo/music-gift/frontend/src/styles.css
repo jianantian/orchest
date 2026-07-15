@@ -748,17 +748,15 @@ body::after {
 .style-chip .remove { cursor: pointer; font-size: 14px; line-height: 1; opacity: 0.6; transition: opacity 0.12s; }
 .style-chip .remove:hover { opacity: 1; }
 
-/* Vocal row inside style card */
-.vocal-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
-.vocal-row span { font-size: 13px; color: var(--text2); }
-.vocal-toggle { display: flex; gap: 18px; }
+/* Card foot row: instrumental + vocal side by side */
+.card-foot-row { display: flex; align-items: center; gap: 20px; margin-top: 12px; }
+.vocal-toggle { display: flex; gap: 12px; }
 .vocal-btn {
   padding: 4px 0; border: none; background: transparent;
   font-size: 14px; font-family: inherit; color: var(--text3);
   cursor: pointer; transition: color 0.18s;
 }
 .vocal-btn.on { color: var(--gold); font-weight: 600; }
-
 /* Title input */
 .title-input-wrap { position: relative; width: 100%; }
 .title-input-wrap input {
