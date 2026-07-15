@@ -1,0 +1,152 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e8]:
+    - generic [ref=e10]:
+      - link [ref=e12] [cursor=pointer]:
+        - /url: /home
+        - img "Suno Logo" [ref=e13]
+      - generic [ref=e20]:
+        - button "Log in" [ref=e21] [cursor=pointer]
+        - button "Join Suno for free" [ref=e23] [cursor=pointer]
+    - generic [ref=e1107]:
+      - generic [ref=e1109]:
+        - button [ref=e1111] [cursor=pointer]
+        - generic [ref=e1116]:
+          - generic [ref=e1117]: Turn any idea into a song
+          - generic [ref=e1118]: Beat, lyrics, or both
+      - generic [ref=e1120]:
+        - generic [ref=e1121]:
+          - generic [ref=e1122]: Describe your lyrics
+          - tablist [ref=e1131]:
+            - tab "Auto" [selected] [ref=e1132]
+            - tab "Write Lyrics" [ref=e1136] [cursor=pointer]
+        - generic [ref=e1138]:
+          - textbox "Describe your lyrics" [ref=e1140]
+          - button [disabled] [ref=e1143]
+        - generic [ref=e1149]:
+          - switch "Instrumental" [ref=e1150] [cursor=pointer]
+          - checkbox [ref=e1152]
+          - generic [ref=e1153]: Instrumental
+      - generic [ref=e1154]:
+        - generic [ref=e1155] [cursor=pointer]:
+          - generic [ref=e1156]: Styles
+          - button [ref=e1162]
+        - generic [ref=e1167]:
+          - textbox "Enter style tags" [ref=e1169]
+          - generic [ref=e1171]:
+            - generic:
+              - button [ref=e1172] [cursor=pointer]
+              - generic [ref=e1180]:
+                - button "Future bass" [ref=e1181] [cursor=pointer]
+                - button "Chillwave" [ref=e1183] [cursor=pointer]
+                - button "Shoegaze" [ref=e1185] [cursor=pointer]
+                - button "Tech house" [ref=e1187] [cursor=pointer]
+                - button "Classical" [ref=e1189] [cursor=pointer]
+                - button "Ska" [ref=e1191] [cursor=pointer]
+                - button "Reggae" [ref=e1193] [cursor=pointer]
+                - button "Samba" [ref=e1195] [cursor=pointer]
+                - button "Boom bap" [ref=e1197] [cursor=pointer]
+                - button "Dream Pop" [ref=e1199] [cursor=pointer]
+                - button "Bedroom pop" [ref=e1201] [cursor=pointer]
+                - button "Glitch Hop" [ref=e1203] [cursor=pointer]
+                - button "Amapiano" [ref=e1205] [cursor=pointer]
+                - button "Math Rock" [ref=e1207] [cursor=pointer]
+                - button "City pop" [ref=e1209] [cursor=pointer]
+                - button "Synthwave" [ref=e1211] [cursor=pointer]
+                - button "Chicago Blues" [ref=e1213] [cursor=pointer]
+                - button "Organic house" [ref=e1215] [cursor=pointer]
+                - button "Trance" [ref=e1217] [cursor=pointer]
+                - button "Barbershop quartet" [ref=e1219] [cursor=pointer]
+                - button "Country" [ref=e1221] [cursor=pointer]
+                - button "Mariachi" [ref=e1223] [cursor=pointer]
+                - button "Drill" [ref=e1225] [cursor=pointer]
+                - button "Dancehall" [ref=e1227] [cursor=pointer]
+                - button "Brass band" [ref=e1229] [cursor=pointer]
+                - button "Breakbeat" [ref=e1231] [cursor=pointer]
+                - button "Synthpop" [ref=e1233] [cursor=pointer]
+                - button "Techno" [ref=e1235] [cursor=pointer]
+                - button "Flamenco" [ref=e1237] [cursor=pointer]
+                - button "Afrobeats" [ref=e1239] [cursor=pointer]
+                - button "Rockabilly" [ref=e1241] [cursor=pointer]
+                - button "Bachata" [ref=e1243] [cursor=pointer]
+                - button "Symphonic metal" [ref=e1245] [cursor=pointer]
+                - button "Doo-wop" [ref=e1247] [cursor=pointer]
+                - button "Cumbia" [ref=e1249] [cursor=pointer]
+                - button "Afro-Cuban jazz" [ref=e1251] [cursor=pointer]
+                - button "Tango" [ref=e1253] [cursor=pointer]
+                - button "Swing" [ref=e1255] [cursor=pointer]
+                - button "Trap R&B" [ref=e1257] [cursor=pointer]
+                - button "Disco" [ref=e1259] [cursor=pointer]
+                - button "Chanson" [ref=e1261] [cursor=pointer]
+                - button "Grunge" [ref=e1263] [cursor=pointer]
+                - button "Surf Rock" [ref=e1265] [cursor=pointer]
+                - button "Funk" [ref=e1267] [cursor=pointer]
+                - button "Afroswing" [ref=e1269] [cursor=pointer]
+                - button "Afro-Rock" [ref=e1271] [cursor=pointer]
+                - button "Ambient techno" [ref=e1273] [cursor=pointer]
+                - button "Americana" [ref=e1275] [cursor=pointer]
+                - button "R&B" [ref=e1277] [cursor=pointer]
+                - button "Electropop" [ref=e1279] [cursor=pointer]
+                - button "Lo-Fi" [ref=e1281] [cursor=pointer]
+                - button "Dubstep" [ref=e1283] [cursor=pointer]
+                - button "Hip Hop" [ref=e1285] [cursor=pointer]
+                - button "Soul" [ref=e1287] [cursor=pointer]
+      - generic [ref=e1289]:
+        - generic [ref=e1290] [cursor=pointer]:
+          - generic [ref=e1291]: Audio
+          - button [ref=e1296]
+        - generic [ref=e1304]:
+          - button [ref=e1305] [cursor=pointer]
+          - button [ref=e1310] [cursor=pointer]
+      - button "Create" [ref=e1315] [cursor=pointer]
+    - generic [ref=e1039]:
+      - generic [ref=e1040]:
+        - generic [ref=e1041]:
+          - generic [ref=e1043]:
+            - generic [ref=e1044]: Brand
+            - link "About" [ref=e1046] [cursor=pointer]:
+              - /url: https://suno.com/about
+            - link "Work at Suno" [ref=e1048] [cursor=pointer]:
+              - /url: https://suno.com/careers
+            - link "Blog" [ref=e1050] [cursor=pointer]:
+              - /url: https://suno.com/blog?tag=all
+            - link "Pricing" [ref=e1052] [cursor=pointer]:
+              - /url: https://suno.com/pricing
+            - link "Hub" [ref=e1054] [cursor=pointer]:
+              - /url: https://suno.com/hub
+          - generic [ref=e1056]:
+            - generic [ref=e1057]: Support
+            - link "Help" [ref=e1059] [cursor=pointer]:
+              - /url: https://help.suno.com/
+            - link "Contact Us" [ref=e1061] [cursor=pointer]:
+              - /url: https://help.suno.com/en/articles/2551617
+            - link "Community Guidelines" [ref=e1063] [cursor=pointer]:
+              - /url: https://suno.com/community-guidelines
+            - link "FAQs" [ref=e1065] [cursor=pointer]:
+              - /url: https://help.suno.com
+            - link "Terms of Service" [ref=e1067] [cursor=pointer]:
+              - /url: https://suno.com/terms-of-service
+            - link "Privacy Policy" [ref=e1069] [cursor=pointer]:
+              - /url: https://suno.com/privacy-policy
+            - button "Your Privacy Choices" [ref=e1071] [cursor=pointer]
+        - generic [ref=e1074]:
+          - link [ref=e1075] [cursor=pointer]:
+            - /url: https://x.com/suno
+          - link [ref=e1079] [cursor=pointer]:
+            - /url: https://www.instagram.com/sunomusic
+          - link [ref=e1083] [cursor=pointer]:
+            - /url: https://www.tiktok.com/@sunomusic
+          - link [ref=e1087] [cursor=pointer]:
+            - /url: https://www.youtube.com/@suno
+          - link [ref=e1091] [cursor=pointer]:
+            - /url: https://discord.com/invite/suno
+      - generic [ref=e1095]:
+        - generic [ref=e1096]: © 2026 Suno, Inc.
+        - button "Language" [ref=e1097] [cursor=pointer]:
+          - generic [ref=e1101]: English
+  - alert [ref=e1102]
+  - generic:
+    - region "Bottom notifications"
+  - generic:
+    - region "Top notifications"
+  - generic:
+    - region "Bottom edge notifications"

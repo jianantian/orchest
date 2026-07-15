@@ -17,46 +17,45 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
   const gen = useMusicGen();
 
   const [lyrics, setLyrics] = useState("");
-  const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
+  const [lyricsMode, setLyricsMode] = useState<"auto" | "write">("auto");
   const [styleInput, setStyleInput] = useState("");
-  const [vocal, setVocal] = useState("female");
-  const [title, setTitle] = useState("");
+  const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>(() => shuffleStyles([], 14));
+  const [vocal, setVocal] = useState("female");
   const [instrumental, setInstrumental] = useState(false);
   const [polishing, setPolishing] = useState(false);
   const [expanding, setExpanding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lyricsRef = useRef<HTMLTextAreaElement>(null);
 
-  function addStyle(style: string) {
-    if (!style || selectedStyles.includes(style)) return;
-    setSelectedStyles((prev) => [...prev, style]);
+  function addStyle(s: string) {
+    if (!s || selectedStyles.includes(s)) return;
+    setSelectedStyles((prev) => [...prev, s]);
   }
-  function removeStyle(style: string) {
-    setSelectedStyles((prev) => prev.filter((s) => s !== style));
-  }
-  function refreshSuggestions() {
-    setSuggestions(shuffleStyles(selectedStyles, 14));
+  function removeStyle(s: string) {
+    setSelectedStyles((prev) => prev.filter((x) => x !== s));
   }
   function commitStyleInput() {
     const text = styleInput.trim();
     if (text) addStyle(text);
     setStyleInput("");
   }
+  function refreshSuggestions() {
+    setSuggestions(shuffleStyles(selectedStyles, 14));
+  }
 
   async function handlePolish() {
-    const text = lyrics.trim();
-    if (!text) return;
+    const styleStr = selectedStyles.join(", ") || styleInput.trim() || "warm acoustic";
+    if (!styleStr) return;
     setPolishing(true);
     try {
       const res = await fetch("/api/polish-music-prompt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          lyrics: text,
-          style: selectedStyles.join(", ") || "warm acoustic",
+          lyrics: lyrics.trim() || undefined,
+          style: styleStr,
           vocal,
-          title: title.trim() || undefined,
           provider: "suno",
         }),
       });
@@ -69,13 +68,12 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
   }
 
   async function handleExpand() {
-    const text = lyrics.trim();
-    if (!text) return;
+    if (!lyrics.trim()) return;
     setExpanding(true);
     try {
       const messages: ChatMessage[] = [
-        { role: "system", content: "You are a professional songwriter. Expand the user's input into complete song lyrics with structural tags like [verse], [chorus], [bridge]. Output ONLY the lyrics. No explanations." },
-        { role: "user", content: `Expand into a complete song:\n\n${text}` },
+        { role: "system", content: "Expand into complete lyrics with [verse], [chorus], [bridge] tags. Output ONLY the lyrics." },
+        { role: "user", content: `Expand:\n\n${lyrics.trim()}` },
       ];
       let full = "";
       for await (const event of streamChat({ messages, meta: { lang }, photos: [] })) {
@@ -90,11 +88,11 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
   async function handleGenerate(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    const style = selectedStyles.join(", ") || "warm acoustic";
+    const style = selectedStyles.join(", ") || styleInput.trim() || "warm acoustic";
     if (instrumental && !lyrics.trim()) {
       await gen.start({ lyrics: "", style, lang, photos });
     } else {
-      await gen.start({ lyrics: lyrics.trim() || "instrumental", style, title: title.trim(), vocal, lang, photos });
+      await gen.start({ lyrics: lyrics.trim() || "instrumental", style, vocal, lang, photos });
     }
     if (gen.error) setError(gen.error);
   }
@@ -105,46 +103,64 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
     : "generating" as const;
 
   return (
-    <div className="free-panel">
-      {/* Lyrics */}
+    <div className="free-panel suno-advanced">
+      {/* === 1. Describe your lyrics === */}
       <div className="create-card">
         <div className="create-card-head">
-          <span className="create-label">{t("free_lyrics")}</span>
+          <span className="create-label">{t("free_lyrics_desc") || "Describe your lyrics"}</span>
+          <div className="tab-group">
+            <button className={`tab-btn ${lyricsMode === "auto" ? "active" : ""}`} onClick={() => setLyricsMode("auto")}>Auto</button>
+            <button className={`tab-btn ${lyricsMode === "write" ? "active" : ""}`} onClick={() => setLyricsMode("write")}>Write Lyrics</button>
+          </div>
+        </div>
+        <div className="lyrics-wrap">
+          <textarea
+            ref={lyricsRef}
+            value={lyrics}
+            onChange={(e) => setLyrics(e.target.value)}
+            placeholder={lyricsMode === "auto" ? "Describe what the song should be about…" : "Write your own lyrics with [verse], [chorus], [bridge] tags…"}
+            disabled={instrumental}
+            style={instrumental ? { opacity: 0.35 } : undefined}
+            rows={lyricsMode === "write" ? 5 : 3}
+          />
+        </div>
+        <div className="card-foot-row">
           <label className="toggle-switch">
             <input type="checkbox" checked={instrumental} onChange={(e) => setInstrumental(e.target.checked)} />
             <span>{t("free_instrumental")}</span>
           </label>
-        </div>
-        <div className="lyrics-wrap">
-          <textarea ref={lyricsRef} value={lyrics} onChange={(e) => setLyrics(e.target.value)}
-            placeholder={t("paste_lyrics_ph")} disabled={instrumental}
-            style={instrumental ? { opacity: 0.35 } : undefined} />
-        </div>
-        {!instrumental && (
-          <div className="lyrics-actions-row">
-            <button className={`btn-ghost${expanding ? " loading" : ""}`} type="button" onClick={handleExpand} disabled={expanding}>
-              {expanding ? <span className="spinner" /> : <span className="btn-icon">📝</span>}
-              {expanding ? "" : t("free_expand")}
-            </button>
+          <div className="vocal-toggle inline">
+            <button className={`vocal-btn ${vocal === "female" ? "on" : ""}`} onClick={() => setVocal("female")}>♀</button>
+            <button className={`vocal-btn ${vocal === "male" ? "on" : ""}`} onClick={() => setVocal("male")}>♂</button>
           </div>
-        )}
+          {lyricsMode === "write" && (
+            <button className={`btn-ghost btn-sm${expanding ? " loading" : ""}`} type="button" onClick={handleExpand} disabled={expanding}>
+              {expanding ? <span className="spinner" /> : "📝"} Expand
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Style + Vocal + Polish */}
+      {/* === 2. Styles === */}
       <div className="create-card">
-        <span className="create-label">{t("free_style")}</span>
-        <div className="style-input-wrap">
-          <textarea value={styleInput} onChange={(e) => setStyleInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") { e.preventDefault(); commitStyleInput(); }
-              else if (e.key === "Backspace" && !styleInput && selectedStyles.length > 0) {
-                removeStyle(selectedStyles[selectedStyles.length - 1]);
-              }
-            }}
-            onBlur={commitStyleInput} placeholder={t("free_style_ph")} rows={2} />
-          <button className="btn-ghost btn-sm" type="button" onClick={handlePolish} disabled={polishing}>
+        <div className="create-card-head">
+          <span className="create-label">Styles</span>
+          <button className={`btn-ghost btn-sm${polishing ? " loading" : ""}`} type="button" onClick={handlePolish} disabled={polishing}>
             {polishing ? <span className="spinner" /> : "✨"} Polish
           </button>
+        </div>
+        <div className="style-input-wrap">
+          <input
+            type="text"
+            value={styleInput}
+            onChange={(e) => setStyleInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); commitStyleInput(); }
+              else if (e.key === "Backspace" && !styleInput && selectedStyles.length > 0)
+                removeStyle(selectedStyles[selectedStyles.length - 1]);
+            }}
+            placeholder="Enter style tags"
+          />
         </div>
         {selectedStyles.length > 0 && (
           <div className="selected-styles">
@@ -153,36 +169,17 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
             ))}
           </div>
         )}
-        {!instrumental && (
-          <div className="vocal-row">
-            <span>{t("free_vocal")}</span>
-            <div className="vocal-toggle">
-              <button className={`vocal-btn ${vocal === "female" ? "on" : ""}`} onClick={() => setVocal("female")}>♀ Female</button>
-              <button className={`vocal-btn ${vocal === "male" ? "on" : ""}`} onClick={() => setVocal("male")}>♂ Male</button>
-            </div>
-          </div>
-        )}
-        <div className="style-suggest-row">
-          <button className="btn-refresh" type="button" onClick={refreshSuggestions}>🔄</button>
-          <div className="style-suggest-strip">
-            {suggestions.map((s) => (
-              <button key={s} className="style-suggest-chip" type="button" onClick={() => addStyle(s)}>{s}</button>
-            ))}
-          </div>
+        <div className="style-preset-grid">
+          {suggestions.map((s) => (
+            <button key={s} className="style-preset-btn" type="button" onClick={() => addStyle(s)}>{s}</button>
+          ))}
+          <button className="style-preset-btn refresh-btn" type="button" onClick={refreshSuggestions}>🔄</button>
         </div>
       </div>
 
-      {/* Title */}
-      <div className="create-card">
-        <span className="create-label">{t("free_title")}</span>
-        <div className="title-input-wrap">
-          <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("free_title_ph")} maxLength={50} />
-          <span className="title-char-count">{title.length}/50</span>
-        </div>
-      </div>
-
+      {/* === 3. Create === */}
       <button className="btn-primary btn-lg btn-full" onClick={handleGenerate} disabled={gen.state === "generating"}>
-        {gen.state === "generating" ? <><span className="spinner" /> {t("free_generating")}</> : t("free_generate")}
+        {gen.state === "generating" ? <><span className="spinner" /> {t("free_generating")}</> : "🎵 Create"}
       </button>
 
       {(error || gen.error) && <div className="error-msg">{error || gen.error}</div>}
