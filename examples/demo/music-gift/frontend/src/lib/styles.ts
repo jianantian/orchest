@@ -1,4 +1,8 @@
-/** Shared style catalog for music genre/mood/instrument suggestions. */
+
+export const DEFAULT_STYLE_TAGS = [
+  "pop", "rock", "jazz", "electronic", "folk", "r&b",
+  "romantic", "upbeat", "melancholic", "energetic", "sentimental",
+];
 
 export const STYLE_CATALOG: string[] = [
   "pop", "rock", "rap", "electronic", "jazz", "classical", "folk", "r&b", "soul",

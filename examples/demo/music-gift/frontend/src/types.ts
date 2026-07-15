@@ -47,6 +47,7 @@ export interface Gift {
   lyrics: string | null;
   meta: GiftMeta;
   audio_url: string | null;
+  cover_url?: string | null;
   photos: string[];
   gen_handle: string | null;
   gen_status: string | null;

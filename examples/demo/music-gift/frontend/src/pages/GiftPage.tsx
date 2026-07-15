@@ -3,7 +3,8 @@ import { useParams } from "react-router-dom";
 import type { Gift } from "../types";
 import { generateMusic, getGift, likeGift } from "../api";
 import AudioPlayer from "../components/AudioPlayer";
-import { LRCViewer, parseLRC, type LRCLine } from "../components/LRCViewer";
+import { LRCViewer, type LRCLine } from "../components/LRCViewer";
+import { parseLRC } from "../lib/lrc";
 import { UnwrapStage, shouldShowUnwrap } from "../components/UnwrapStage";
 export default function GiftPage() {
   const { id } = useParams<{ id: string }>();

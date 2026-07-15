@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage, GiftMeta } from "../types";
-import { createGift, generateMusic, pollGenerateStatus, streamChat } from "../api";
+import { streamChat } from "../api";
 import { useI18n, getMonths } from "../i18n";
+import { useMusicGen } from "../hooks/useMusicGen";
+import { DEFAULT_STYLE_TAGS } from "../lib/styles";
 import { ReviewCard, type ReviewData } from "./ReviewCard";
-import { MusicCard, type MusicCardState } from "./MusicCard";
+import { MusicCard } from "./MusicCard";
 import { PillsRow, GoldPill, InlineInput, BirthdayPicker } from "./ChatUI";
+
 interface StepState {
   relationship: string;
   relationshipLabel: string;
@@ -80,7 +83,7 @@ function scenarioList(rel: string, t: (k: string) => string): Array<{ label: str
   return [...labels.map((l) => ({ label: l, value: l.toLowerCase().replace(/\s+/g, "") })), { label: t("scenario_custom"), value: "__custom__" }];
 }
 
-export function GuidedFlow({ onNavigate }: { onNavigate: (giftId: string) => void }) {
+export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId: string) => void; onSwitchToFree?: () => void }) {
   const { t, lang } = useI18n();
   const months = getMonths(lang);
 
@@ -106,11 +109,10 @@ export function GuidedFlow({ onNavigate }: { onNavigate: (giftId: string) => voi
   const [inferredTitle, setInferredTitle] = useState("");
   const [inferredVocal, setInferredVocal] = useState("female");
 
-  // Music card
-  const [creating, setCreating] = useState(false);
-  const [musicState, setMusicState] = useState<MusicCardState>("generating");
-  const [giftId, setGiftId] = useState<string | null>(null);
+  // Music generation hook
+  const gen = useMusicGen();
 
+  // Lyrics state
   const chatRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -333,102 +335,43 @@ export function GuidedFlow({ onNavigate }: { onNavigate: (giftId: string) => voi
 
   // --- Review ---
 
+  // --- Review → Music Gen ---
+
   async function handleReviewSubmit(data: ReviewData) {
-    setCreating(true);
     setError(null);
     setStep("music");
-    setMusicState("generating");
 
-    try {
-      const m = metaRef.current;
-      const giftMeta: GiftMeta = {
-        lang,
+    const m = metaRef.current;
+    await gen.start({
+      lyrics: data.lyrics,
+      style: data.style,
+      title: data.title,
+      vocal: data.vocal,
+      meta: {
         name: m.name,
         relationship: m.relationshipLabel,
         scenario: m.scenarioLabel,
         gender: m.gender,
-        title: data.title,
-        vocal: data.vocal,
-      };
-
-      const res = await createGift({
-        lyrics: data.lyrics,
-        kind: "song",
-        meta: giftMeta,
-        photos: [],
-        style: data.style,
-      });
-
-      const id = res.id;
-      setGiftId(id);
-      await generateMusic(id);
-
-      const poll = setInterval(async () => {
-        try {
-          const status = await pollGenerateStatus(id);
-          if (status.status === "done") {
-            clearInterval(poll);
-            setMusicState("ready");
-            setCreating(false);
-          } else if (status.status === "failed") {
-            clearInterval(poll);
-            setMusicState("error");
-            setCreating(false);
-            setError("Generation failed");
-          }
-        } catch {
-          // Keep polling
-        }
-      }, 3000);
-    } catch (e) {
-      setMusicState("error");
-      setCreating(false);
-      setError(e instanceof Error ? e.message : "Creation failed");
-    }
+      },
+      lang,
+    });
+    if (gen.error) setError(gen.error);
   }
 
   function handleMusicOpen() {
-    if (giftId) onNavigate(giftId);
+    if (gen.giftId) onNavigate(gen.giftId);
   }
 
-  async function handleMusicRetry() {
-    if (!giftId) return;
-    setMusicState("generating");
-    setError(null);
-    try {
-      await generateMusic(giftId);
-      const poll = setInterval(async () => {
-        try {
-          const status = await pollGenerateStatus(giftId);
-          if (status.status === "done") {
-            clearInterval(poll);
-            setMusicState("ready");
-          } else if (status.status === "failed") {
-            clearInterval(poll);
-            setMusicState("error");
-            setError("Generation failed");
-          }
-        } catch {
-          // Keep polling
-        }
-      }, 3000);
-    } catch (e) {
-      setMusicState("error");
-      setError(e instanceof Error ? e.message : "Retry failed");
-    }
+  function handleMusicRetry() {
+    if (gen.giftId) gen.retry(gen.giftId);
   }
 
   // --- Instrumental ---
-
   function startInstrumental() {
     setBubbles([]);
     setUiItems([]);
-    // Delegate to free create for simplicity
-    // In reference, this opens an instrumental wizard
-    // For now, switch to free tab
-    window.dispatchEvent(new CustomEvent("switch-tab", { detail: "free" }));
+    onSwitchToFree?.();
   }
-
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -488,15 +431,14 @@ export function GuidedFlow({ onNavigate }: { onNavigate: (giftId: string) => voi
             style={inferredStyle}
             title={inferredTitle}
             vocal={inferredVocal}
-            styleTags={["pop", "rock", "jazz", "electronic", "folk", "r&b", "romantic", "upbeat", "melancholic"]}
+            styleTags={DEFAULT_STYLE_TAGS}
             onSubmit={handleReviewSubmit}
-            creating={creating}
+            creating={gen.state === "generating"}
           />
         )}
-
         {/* Music card */}
-        {step === "music" && giftId && (
-          <MusicCard initialState={musicState} onOpen={handleMusicOpen} onRetry={handleMusicRetry} />
+        {step === "music" && gen.giftId && (
+          <MusicCard initialState={gen.state === "ready" ? "ready" : gen.state === "error" ? "error" : "generating"} onOpen={handleMusicOpen} onRetry={handleMusicRetry} />
         )}
 
         <div ref={bottomRef} />

@@ -8,7 +8,6 @@ use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
 
-/// A music gift: lyrics + metadata + generated audio.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Gift {
     pub id: String,
@@ -16,6 +15,7 @@ pub struct Gift {
     pub lyrics: Option<String>,
     pub meta: Value,
     pub audio_url: Option<String>,
+    pub cover_url: Option<String>,
     pub photos: Vec<String>,
     pub gen_handle: Option<String>,
     pub gen_status: Option<String>,
@@ -35,9 +35,9 @@ pub struct GiftStore {
 }
 
 const SELECT_COLS: &str = "\
-    SELECT id, kind, lyrics, meta, audio_url, photos, gen_handle, gen_status, \
-           countdown_status, lrc, duration_secs, creator_token, published, likes, \
-           created_at, published_at FROM gifts";
+    SELECT id, kind, lyrics, meta, audio_url, cover_url, photos, gen_handle, \
+           gen_status, countdown_status, lrc, duration_secs, creator_token, \
+           published, likes, created_at, published_at FROM gifts";
 
 impl GiftStore {
     pub fn open(path: &str) -> AppResult<Self> {
@@ -49,6 +49,7 @@ impl GiftStore {
                 lyrics          TEXT,
                 meta            TEXT NOT NULL,
                 audio_url       TEXT,
+                cover_url       TEXT,
                 photos          TEXT NOT NULL DEFAULT '[]',
                 gen_handle      TEXT,
                 gen_status      TEXT,
@@ -62,23 +63,24 @@ impl GiftStore {
                 duration_secs   REAL
             );",
         )?;
-        let _ = conn.execute("ALTER TABLE gifts ADD COLUMN countdown_status TEXT", []);
-        let _ = conn.execute("ALTER TABLE gifts ADD COLUMN lrc TEXT", []);
-        let _ = conn.execute("ALTER TABLE gifts ADD COLUMN duration_secs REAL", []);
+        for col in ["countdown_status", "lrc", "duration_secs", "cover_url"] {
+            let _ = conn.execute(&format!("ALTER TABLE gifts ADD COLUMN {col} TEXT"), []);
+        }
         Ok(Self { conn: Arc::new(Mutex::new(conn)) })
     }
 
     pub fn create(&self, gift: &Gift) -> AppResult<()> {
         let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute(
-            "INSERT INTO gifts (id, kind, lyrics, meta, audio_url, photos, gen_handle,
-             gen_status, countdown_status, lrc, duration_secs, creator_token, published,
-             likes, created_at, published_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+            "INSERT INTO gifts (id, kind, lyrics, meta, audio_url, cover_url, photos, gen_handle, \
+             gen_status, countdown_status, lrc, duration_secs, creator_token, published, \
+             likes, created_at, published_at) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
             params![
                 gift.id, gift.kind, gift.lyrics,
                 serde_json::to_string(&gift.meta)?,
-                gift.audio_url, serde_json::to_string(&gift.photos)?,
+                gift.audio_url, gift.cover_url,
+                serde_json::to_string(&gift.photos)?,
                 gift.gen_handle, gift.gen_status, gift.countdown_status,
                 gift.lrc, gift.duration_secs,
                 gift.creator_token, gift.published as i32,
@@ -98,6 +100,7 @@ impl GiftStore {
             other => AppError::Database(other.to_string()),
         })
     }
+
     pub fn list_published(&self) -> AppResult<Vec<Gift>> {
         let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
         let sql = format!("{SELECT_COLS} WHERE published = 1 ORDER BY published_at DESC");
@@ -154,6 +157,14 @@ impl GiftStore {
         Ok(())
     }
 
+    pub fn update_cover_url(&self, id: &str, url: &str) -> AppResult<()> {
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute("UPDATE gifts SET cover_url=?2 WHERE id=?1", params![id, url])? == 0 {
+            return Err(AppError::NotFound(format!("gift {id} not found")));
+        }
+        Ok(())
+    }
+
     pub fn like(&self, id: &str, viewer_id: &str) -> AppResult<usize> {
         let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
         let mut gift = Self::get_inner(&conn, id)?;
@@ -176,8 +187,8 @@ impl GiftStore {
 
 fn row_to_gift(row: &rusqlite::Row<'_>) -> rusqlite::Result<Gift> {
     let meta_str: String = row.get(3)?;
-    let photos_str: String = row.get(5)?;
-    let likes_str: String = row.get(13)?;
+    let photos_str: String = row.get(6)?;
+    let likes_str: String = row.get(14)?;
     let meta: Value = serde_json::from_str(&meta_str).unwrap_or(Value::Null);
     let photos: Vec<String> = serde_json::from_str(&photos_str).unwrap_or_default();
     let likes: Vec<String> = serde_json::from_str(&likes_str).unwrap_or_default();
@@ -188,16 +199,17 @@ fn row_to_gift(row: &rusqlite::Row<'_>) -> rusqlite::Result<Gift> {
         lyrics: row.get(2)?,
         meta,
         audio_url: row.get(4)?,
+        cover_url: row.get(5)?,
         photos,
-        gen_handle: row.get(6)?,
-        gen_status: row.get(7)?,
-        countdown_status: row.get(8)?,
-        lrc: row.get(9)?,
-        duration_secs: row.get(10)?,
-        creator_token: row.get(11)?,
-        published: row.get::<_, i32>(12)? != 0,
+        gen_handle: row.get(7)?,
+        gen_status: row.get(8)?,
+        countdown_status: row.get(9)?,
+        lrc: row.get(10)?,
+        duration_secs: row.get(11)?,
+        creator_token: row.get(12)?,
+        published: row.get::<_, i32>(13)? != 0,
         likes,
-        created_at: row.get(14)?,
-        published_at: row.get(15)?,
+        created_at: row.get(15)?,
+        published_at: row.get(16)?,
     })
 }

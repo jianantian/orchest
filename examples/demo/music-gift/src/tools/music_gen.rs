@@ -143,6 +143,12 @@ impl MusicGenTool {
                     if let Some(d) = duration {
                         store.update_duration(gift_id, d)?;
                     }
+                    // Extract and store cover image URL
+                    if let Some(cover) = result.diagnostic_metadata.get("cover_url").and_then(Value::as_str) {
+                        if !cover.is_empty() {
+                            let _ = store.update_cover_url(gift_id, cover);
+                        }
+                    }
                     // Spawn LRC generation asynchronously
                     if let (Some(lyrics), Some(d)) = (&gift.lyrics, duration) {
                         let store_clone = store.clone();

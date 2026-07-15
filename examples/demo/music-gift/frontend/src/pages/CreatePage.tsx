@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useI18n } from "../i18n";
 import { GuidedFlow } from "../components/GuidedFlow";
@@ -11,17 +11,12 @@ export default function CreatePage() {
   const { t, lang } = useI18n();
   const [tab, setTab] = useState<CreateTab>("guided");
 
-  useEffect(() => {
-    function onSwitch(e: Event) {
-      const detail = (e as CustomEvent<string>).detail;
-      if (detail === "free") setTab("free");
-    }
-    window.addEventListener("switch-tab", onSwitch);
-    return () => window.removeEventListener("switch-tab", onSwitch);
-  }, []);
-
   function handleNavigate(giftId: string) {
     navigate(`/gift/${giftId}`);
+  }
+
+  function handleSwitchToFree() {
+    setTab("free");
   }
 
   return (
@@ -42,7 +37,7 @@ export default function CreatePage() {
       </div>
 
       {tab === "guided" ? (
-        <GuidedFlow onNavigate={handleNavigate} />
+        <GuidedFlow onNavigate={handleNavigate} onSwitchToFree={handleSwitchToFree} />
       ) : (
         <FreeCreatePanel lang={lang} photos={[]} onNavigate={handleNavigate} />
       )}
