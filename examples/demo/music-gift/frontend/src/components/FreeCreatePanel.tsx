@@ -4,6 +4,7 @@ import { useI18n } from "../i18n";
 import { shuffleStyles } from "../lib/styles";
 import { useMusicGen } from "../hooks/useMusicGen";
 import { MusicCard } from "./MusicCard";
+import { MicIcon, MusicNoteIcon, PencilIcon, SparklesIcon, ExpandIcon, XIcon, FemaleIcon, MaleIcon } from "./Icons";
 
 export interface FreeCreatePanelProps { photos: string[]; lang: string; onNavigate: (giftId: string) => void; }
 
@@ -91,11 +92,11 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
       {/* ═══ Top: Vocal / Instrumental ═══ */}
       <div className="mode-bar">
         <button className={`mode-btn ${!instrumental ? "active" : ""}`} onClick={() => setInstrumental(false)}>
-          <span className="mode-icon">🎤</span>
+          <span className="mode-icon"><MicIcon /></span>
           <span className="mode-label">Vocal</span>
         </button>
         <button className={`mode-btn ${instrumental ? "active" : ""}`} onClick={() => setInstrumental(true)}>
-          <span className="mode-icon">🎵</span>
+          <span className="mode-icon"><MusicNoteIcon /></span>
           <span className="mode-label">Instrumental</span>
         </button>
       </div>
@@ -106,9 +107,9 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
           <h3 className="section-title">{t("free_lyrics")}</h3>
           <div className="section-actions">
             {!instrumental && <>
-              <button className={`btn-ghost btn-sm${writing ? " loading" : ""}`} onClick={() => setShowPromptBar(showPromptBar === "write" ? null : "write")} disabled={writing}>{writing ? <span className="spinner" /> : "✏️"} Write</button>
-              {lyrics.trim() && <button className={`btn-ghost btn-sm${editing ? " loading" : ""}`} onClick={() => setShowPromptBar(showPromptBar === "edit" ? null : "edit")} disabled={editing}>{editing ? <span className="spinner" /> : "✨"} Edit</button>}
-              <button className={`btn-ghost btn-sm${expanding ? " loading" : ""}`} onClick={handleExpand} disabled={expanding}>{expanding ? <span className="spinner" /> : "📝"} Expand</button>
+              <button className={`btn-ghost btn-sm${writing ? " loading" : ""}`} onClick={() => setShowPromptBar(showPromptBar === "write" ? null : "write")} disabled={writing}>{writing ? <span className="spinner" /> : <PencilIcon />} Write</button>
+              {lyrics.trim() && <button className={`btn-ghost btn-sm${editing ? " loading" : ""}`} onClick={() => setShowPromptBar(showPromptBar === "edit" ? null : "edit")} disabled={editing}>{editing ? <span className="spinner" /> : <SparklesIcon />} Edit</button>}
+              <button className={`btn-ghost btn-sm${expanding ? " loading" : ""}`} onClick={handleExpand} disabled={expanding}>{expanding ? <span className="spinner" /> : <ExpandIcon />} Expand</button>
             </>}
           </div>
         </div>
@@ -129,7 +130,7 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
       <section className="editorial-section">
         <div className="section-header">
           <h3 className="section-title">{t("free_style")}</h3>
-          <button className="btn-ghost btn-sm" onClick={() => setShowPolishPrompt(!showPolishPrompt)}>{showPolishPrompt ? "✕" : "✨"} Personalize</button>
+          <button className="btn-ghost btn-sm" onClick={() => setShowPolishPrompt(!showPolishPrompt)}>{showPolishPrompt ? <XIcon /> : <SparklesIcon />} Personalize</button>
         </div>
         {showPolishPrompt && (
           <div className="prompt-bar">
@@ -160,8 +161,8 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
                 <div className="more-body">
                   <p className="more-label">Vocal Gender</p>
                   <div className="gender-select">
-                    <button className={`gender-opt ${vocalGender === "female" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "female" ? null : "female")}>♀ Female</button>
-                    <button className={`gender-opt ${vocalGender === "male" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "male" ? null : "male")}>♂ Male</button>
+                    <button className={`gender-opt ${vocalGender === "female" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "female" ? null : "female")}><FemaleIcon /> Female</button>
+                    <button className={`gender-opt ${vocalGender === "male" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "male" ? null : "male")}><MaleIcon /> Male</button>
                   </div>
                 </div>
               )}
