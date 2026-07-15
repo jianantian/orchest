@@ -51,7 +51,7 @@ struct Section {
 /// Split lyrics into sections by `[Label]` markers.
 fn parse_sections(raw: &str) -> Vec<Section> {
     let parts: Vec<&str> = raw.split(&['[', ']']).collect();
-    let mut sections: Vec<Section> = Vec::new();
+    let mut sections: Vec<Section> = Vec::with_capacity(parts.len() / 2);
     let mut i = 0;
     while i + 1 < parts.len() {
         let label = parts[i].trim().to_string();
