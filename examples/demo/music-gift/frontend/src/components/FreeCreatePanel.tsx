@@ -1,5 +1,4 @@
 import { useRef, useState, type FormEvent } from "react";
-import type { ChatMessage } from "../types";
 import { streamChat } from "../api";
 import { useI18n } from "../i18n";
 import { shuffleStyles } from "../lib/styles";
