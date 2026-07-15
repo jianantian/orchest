@@ -9,7 +9,6 @@ use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
     pub email: Option<String>,
@@ -53,10 +52,15 @@ impl AuthStore {
                     id           TEXT PRIMARY KEY,
                     email        TEXT UNIQUE,
                     phone        TEXT UNIQUE,
+                CREATE TABLE IF NOT EXISTS users (
+                    id           TEXT PRIMARY KEY,
+                    email        TEXT UNIQUE,
+                    phone        TEXT UNIQUE,
                     display_name TEXT NOT NULL,
                     avatar_url   TEXT,
                     provider     TEXT NOT NULL,
                     provider_id  TEXT,
+                    password_hash TEXT,
                     created_at   TEXT NOT NULL,
                     UNIQUE(provider, provider_id)
                 );

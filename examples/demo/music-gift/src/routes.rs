@@ -210,7 +210,6 @@ pub async fn create_gift(
         meta,
         audio_url: None,
         cover_url: None,
-        creator_id: None,
         photos: req.photos.into_iter().take(5).collect(),
         gen_handle: None,
         gen_status: None,
@@ -333,8 +332,21 @@ pub async fn generate_music(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
+    let gift = state.gift_store.get(&id)?;
+    let provider = std::env::var("MUSIC_GIFT_MUSIC_PROVIDER").unwrap_or_else(|_| "suno".into());
+    let lyrics = gift.lyrics.unwrap_or_default();
+    let style = gift.meta.get("style").and_then(Value::as_str).unwrap_or("healing and warm");
+    let title = gift.meta.get("title").and_then(Value::as_str).unwrap_or("");
+    let name = gift.meta.get("name").and_then(Value::as_str).unwrap_or("");
+    let scene = gift.meta.get("scenario").and_then(Value::as_str).unwrap_or("");
+    let relationship = gift.meta.get("relationship").and_then(Value::as_str).unwrap_or("");
+
+    let prompt = crate::tools::music_gen::generate_music_prompt(
+        state.chat_model.clone(), &provider, &lyrics, style, title, "female", scene, name, Some(relationship),
+    ).await.unwrap_or_else(|_| format!("{style}, high quality music production"));
+
     let tool = MusicGenTool::new(state.gen_task.clone());
-    let resp = tool.submit(&state.gift_store, &id).await?;
+    let resp = tool.submit(&state.gift_store, &id, &prompt).await?;
     Ok((StatusCode::OK, Json(resp)))
 }
 pub async fn generate_stream(

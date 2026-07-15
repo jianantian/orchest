@@ -108,6 +108,59 @@ body::after {
   background-repeat: no-repeat;
   background-position: right 6px center;
 }
+
+.header-right { display: flex; align-items: center; gap: 8px; }
+.login-link {
+  padding: 5px 14px; border: 1px solid var(--border);
+  border-radius: 100px; background: transparent;
+  font-size: 12px; font-family: inherit; color: var(--text2);
+  cursor: pointer; transition: all 0.15s;
+}
+.login-link:hover { border-color: var(--gold); color: var(--gold); }
+.user-btn {
+  width: 30px; height: 30px; border: none; border-radius: 50%;
+  background: var(--gold); color: #fff; font-size: 13px;
+  font-weight: 600; cursor: pointer; transition: all 0.15s;
+  display: flex; align-items: center; justify-content: center;
+}
+.user-btn:hover { filter: brightness(1.08); }
+
+/* Login modal */
+.login-overlay {
+  position: fixed; inset: 0; z-index: 8000;
+  background: rgba(0,0,0,0.25); display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.login-modal {
+  background: var(--surface); border-radius: 20px; padding: 32px 28px;
+  width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 16px;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.12);
+  animation: modalIn 0.25s ease;
+}
+@keyframes modalIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+.login-title { font-family: var(--font-display); font-size: 24px; color: var(--text); text-align: center; margin: 0; }
+.login-input {
+  width: 100%; padding: 12px 16px; border: 1px solid var(--border);
+  border-radius: 12px; font-size: 15px; font-family: inherit; outline: none; color: var(--text);
+}
+.login-input:focus { border-color: var(--gold); }
+.login-btn {
+  width: 100%; padding: 14px 0; border: 1px solid var(--border);
+  border-radius: 12px; background: transparent; font-size: 15px;
+  font-family: inherit; cursor: pointer; color: var(--text); transition: all 0.15s;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+}
+.login-btn:hover { border-color: var(--gold); background: var(--gold-bg); }
+.login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.oauth-btn { font-weight: 500; }
+.login-divider { display: flex; align-items: center; gap: 12px; color: var(--text3); font-size: 12px; }
+.login-divider::before, .login-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.login-hint { text-align: center; font-size: 12px; color: var(--text3); margin: 0; }
+.login-close {
+  width: 100%; padding: 8px 0; border: none; background: transparent;
+  font-size: 13px; font-family: inherit; color: var(--text3); cursor: pointer;
+}
+.login-close:hover { color: var(--text2); }
 .lang-switch:hover { border-color: var(--gold); color: var(--gold); }
 
 /* ── Main scroll area ──────────────────────── */

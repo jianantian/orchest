@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 
 export function LoginModal() {
-  const { refresh } = useAuth();
+  useAuth(); // ensures auth context is active
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);

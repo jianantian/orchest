@@ -55,7 +55,7 @@ impl MusicGenTool {
     /// Submit a music generation job for the gift and persist the handle.
     ///
     /// Same logic as the original `generate_music` handler.
-    pub async fn submit(&self, store: &GiftStore, gift_id: &str) -> AppResult<GenerateResponse> {
+    pub async fn submit(&self, store: &GiftStore, gift_id: &str, prompt: &str) -> AppResult<GenerateResponse> {
         let gift = store.get(gift_id)?;
 
         let style = gift
@@ -63,10 +63,7 @@ impl MusicGenTool {
             .get("style")
             .and_then(Value::as_str)
             .unwrap_or("healing and warm");
-        let base_prompt = "high quality music production";
         let lyrics = gift.lyrics.unwrap_or_default();
-        let prompt = format!("{style}, {base_prompt}");
-
         let title = gift
             .meta
             .get("title")
@@ -78,7 +75,7 @@ impl MusicGenTool {
             "title": title,
         });
 
-        let gen_req = GenRequest { prompt, params };
+        let gen_req = GenRequest { prompt: prompt.to_string(), params };
         let handle = self.gen_task.submit(gen_req).await?;
         let handle_json = serde_json::to_string(&handle)?;
 
