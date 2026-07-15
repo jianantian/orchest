@@ -83,31 +83,34 @@ function scenarioList(rel: string, t: (k: string) => string): Array<{ label: str
   return [...labels.map((l) => ({ label: l, value: l.toLowerCase().replace(/\s+/g, "") })), { label: t("scenario_custom"), value: "__custom__" }];
 }
 
+const GS_KEY = "moment_guided";
+interface Ps { step: string; meta: StepState; bubbles: BubbleItem[]; messages: ChatMessage[]; lyrics: string; style: string; title: string; vocal: string; }
+function loadPs(): Ps | null { try { return JSON.parse(sessionStorage.getItem(GS_KEY) ?? "null"); } catch { return null; } }
+function savePs(s: Ps) { try { sessionStorage.setItem(GS_KEY, JSON.stringify(s)); } catch { /* quota */ } }
+
 export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId: string) => void; onSwitchToFree?: () => void }) {
   const { t, lang } = useI18n();
   const months = getMonths(lang);
-
-  const [step, setStep] = useState<FlowStep>("greet");
-  const [meta, setMeta] = useState<StepState>({
+  const r = loadPs();
+  const [step, setStep] = useState<FlowStep>((r?.step as FlowStep) ?? "greet");
+  const [meta, setMeta] = useState<StepState>(r?.meta ?? {
     relationship: "", relationshipLabel: "", name: "", gender: "",
     birthday: null, scenario: "", scenarioLabel: "",
   });
   const metaRef = useRef(meta);
   metaRef.current = meta;
 
-  // Chat state
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [bubbles, setBubbles] = useState<BubbleItem[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(r?.messages ?? []);
+  const [bubbles, setBubbles] = useState<BubbleItem[]>(r?.bubbles ?? []);
   const [uiItems, setUiItems] = useState<UIItem[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // Lyrics
-  const [lyrics, setLyrics] = useState("");
-  const [inferredStyle, setInferredStyle] = useState("");
-  const [inferredTitle, setInferredTitle] = useState("");
-  const [inferredVocal, setInferredVocal] = useState("female");
+  const [lyrics, setLyrics] = useState(r?.lyrics ?? "");
+  const [inferredStyle, setInferredStyle] = useState(r?.style ?? "");
+  const [inferredTitle, setInferredTitle] = useState(r?.title ?? "");
+  const [inferredVocal, setInferredVocal] = useState(r?.vocal ?? "female");
 
   // Music generation hook
   const gen = useMusicGen();
@@ -140,6 +143,12 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
     }, 200);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-save to sessionStorage
+  useEffect(() => {
+    if (step === "greet" && bubbles.length === 0) return;
+    savePs({ step, meta, bubbles, messages: messages.slice(-20), lyrics, style: inferredStyle, title: inferredTitle, vocal: inferredVocal });
+  }, [step, meta, bubbles, messages, lyrics, inferredStyle, inferredTitle, inferredVocal]);
 
   function addBot(text: string) {
     setBubbles((prev) => [...prev, { type: "bot", text }]);
@@ -359,7 +368,10 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
   }
 
   function handleMusicOpen() {
-    if (gen.giftId) onNavigate(gen.giftId);
+    if (gen.giftId) {
+      try { sessionStorage.removeItem(GS_KEY); } catch { /* ignore */ }
+      onNavigate(gen.giftId);
+    }
   }
 
   function handleMusicRetry() {
