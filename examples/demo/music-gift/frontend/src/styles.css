@@ -748,7 +748,9 @@ body::after {
 .style-chip .remove { cursor: pointer; font-size: 14px; line-height: 1; opacity: 0.6; transition: opacity 0.12s; }
 .style-chip .remove:hover { opacity: 1; }
 
-/* Vocal toggle */
+/* Vocal row inside style card */
+.vocal-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.vocal-row span { font-size: 13px; color: var(--text2); }
 .vocal-toggle { display: flex; gap: 18px; }
 .vocal-btn {
   padding: 4px 0; border: none; background: transparent;

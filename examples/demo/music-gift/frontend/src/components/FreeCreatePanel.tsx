@@ -31,45 +31,40 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
   function addStyle(style: string) {
     if (!style || selectedStyles.includes(style)) return;
     setSelectedStyles((prev) => [...prev, style]);
-    setSuggestions(shuffleStyles([...selectedStyles, style], 14));
   }
-
   function removeStyle(style: string) {
     setSelectedStyles((prev) => prev.filter((s) => s !== style));
   }
-
   function refreshSuggestions() {
     setSuggestions(shuffleStyles(selectedStyles, 14));
   }
-
   function commitStyleInput() {
-    const raw = styleInput.trim();
-    if (!raw) return;
-    raw.split(/[,，;；\n]/).map((s) => s.trim()).filter(Boolean).forEach(addStyle);
+    const text = styleInput.trim();
+    if (text) addStyle(text);
     setStyleInput("");
-  }
-
-  async function callLyricsAPI(action: "polish" | "expand", input: string): Promise<string> {
-    const systemMsg = action === "polish"
-      ? "You are a professional lyric editor. Polish the following lyrics, preserving meaning and emotion while improving expression and rhythm. Output ONLY the polished lyrics. No explanations, no markup."
-      : "You are a professional songwriter. Expand the user's input into complete song lyrics with structural tags like [verse], [chorus], [bridge]. Output ONLY the lyrics. No explanations.";
-    const userMsg = action === "polish" ? `Polish these lyrics:\n\n${input}` : `Expand into a complete song:\n\n${input}`;
-    const messages: ChatMessage[] = [
-      { role: "system", content: systemMsg },
-      { role: "user", content: userMsg },
-    ];
-    let full = "";
-    for await (const event of streamChat({ messages, meta: { lang }, photos: [] })) {
-      if (event.type === "Delta") full += event.text;
-    }
-    return full.trim() || input;
   }
 
   async function handlePolish() {
     const text = lyrics.trim();
     if (!text) return;
     setPolishing(true);
-    try { setLyrics(await callLyricsAPI("polish", text)); } catch { /* best-effort */ }
+    try {
+      const res = await fetch("/api/polish-music-prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lyrics: text,
+          style: selectedStyles.join(", ") || "warm acoustic",
+          vocal,
+          title: title.trim() || undefined,
+          provider: "suno",
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setStyleInput(data.prompt);
+      }
+    } catch { /* best-effort */ }
     finally { setPolishing(false); }
   }
 
@@ -77,30 +72,29 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
     const text = lyrics.trim();
     if (!text) return;
     setExpanding(true);
-    try { setLyrics(await callLyricsAPI("expand", text)); } catch { /* best-effort */ }
+    try {
+      const messages: ChatMessage[] = [
+        { role: "system", content: "You are a professional songwriter. Expand the user's input into complete song lyrics with structural tags like [verse], [chorus], [bridge]. Output ONLY the lyrics. No explanations." },
+        { role: "user", content: `Expand into a complete song:\n\n${text}` },
+      ];
+      let full = "";
+      for await (const event of streamChat({ messages, meta: { lang }, photos: [] })) {
+        if (event.type === "Delta") full += event.text;
+      }
+      const result = full.trim();
+      if (result) setLyrics(result);
+    } catch { /* best-effort */ }
     finally { setExpanding(false); }
   }
 
   async function handleGenerate(e: FormEvent) {
     e.preventDefault();
     setError(null);
-
+    const style = selectedStyles.join(", ") || "warm acoustic";
     if (instrumental && !lyrics.trim()) {
-      await gen.start({
-        lyrics: "",
-        style: selectedStyles.join(", ") || "healing and warm",
-        lang,
-        photos,
-      });
+      await gen.start({ lyrics: "", style, lang, photos });
     } else {
-      await gen.start({
-        lyrics: lyrics.trim() || "instrumental",
-        style: selectedStyles.join(", ") || "healing and warm",
-        title: title.trim(),
-        vocal,
-        lang,
-        photos,
-      });
+      await gen.start({ lyrics: lyrics.trim() || "instrumental", style, title: title.trim(), vocal, lang, photos });
     }
     if (gen.error) setError(gen.error);
   }
@@ -112,7 +106,7 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
 
   return (
     <div className="free-panel">
-      {/* Lyrics card */}
+      {/* Lyrics */}
       <div className="create-card">
         <div className="create-card-head">
           <span className="create-label">{t("free_lyrics")}</span>
@@ -122,21 +116,12 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
           </label>
         </div>
         <div className="lyrics-wrap">
-          <textarea
-            ref={lyricsRef}
-            value={lyrics}
-            onChange={(e) => setLyrics(e.target.value)}
-            placeholder={t("paste_lyrics_ph")}
-            disabled={instrumental}
-            style={instrumental ? { opacity: 0.35 } : undefined}
-          />
+          <textarea ref={lyricsRef} value={lyrics} onChange={(e) => setLyrics(e.target.value)}
+            placeholder={t("paste_lyrics_ph")} disabled={instrumental}
+            style={instrumental ? { opacity: 0.35 } : undefined} />
         </div>
         {!instrumental && (
           <div className="lyrics-actions-row">
-            <button className={`btn-ghost${polishing ? " loading" : ""}`} type="button" onClick={handlePolish} disabled={polishing}>
-              {polishing ? <span className="spinner" /> : <span className="btn-icon">✨</span>}
-              {polishing ? "" : t("free_polish")}
-            </button>
             <button className={`btn-ghost${expanding ? " loading" : ""}`} type="button" onClick={handleExpand} disabled={expanding}>
               {expanding ? <span className="spinner" /> : <span className="btn-icon">📝</span>}
               {expanding ? "" : t("free_expand")}
@@ -145,32 +130,36 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
         )}
       </div>
 
-      {/* Style card */}
+      {/* Style + Vocal + Polish */}
       <div className="create-card">
         <span className="create-label">{t("free_style")}</span>
         <div className="style-input-wrap">
-          <textarea
-            value={styleInput}
-            onChange={(e) => setStyleInput(e.target.value)}
+          <textarea value={styleInput} onChange={(e) => setStyleInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") { e.preventDefault(); commitStyleInput(); }
               else if (e.key === "Backspace" && !styleInput && selectedStyles.length > 0) {
                 removeStyle(selectedStyles[selectedStyles.length - 1]);
               }
             }}
-            onBlur={commitStyleInput}
-            placeholder={t("free_style_ph")}
-            rows={2}
-          />
+            onBlur={commitStyleInput} placeholder={t("free_style_ph")} rows={2} />
+          <button className="btn-ghost btn-sm" type="button" onClick={handlePolish} disabled={polishing}>
+            {polishing ? <span className="spinner" /> : "✨"} Polish
+          </button>
         </div>
         {selectedStyles.length > 0 && (
           <div className="selected-styles">
             {selectedStyles.map((s) => (
-              <span key={s} className="style-chip">
-                {s}
-                <span className="remove" onClick={() => removeStyle(s)} role="button" tabIndex={0}>×</span>
-              </span>
+              <span key={s} className="style-chip">{s}<span className="remove" onClick={() => removeStyle(s)} role="button" tabIndex={0}>×</span></span>
             ))}
+          </div>
+        )}
+        {!instrumental && (
+          <div className="vocal-row">
+            <span>{t("free_vocal")}</span>
+            <div className="vocal-toggle">
+              <button className={`vocal-btn ${vocal === "female" ? "on" : ""}`} onClick={() => setVocal("female")}>♀ Female</button>
+              <button className={`vocal-btn ${vocal === "male" ? "on" : ""}`} onClick={() => setVocal("male")}>♂ Male</button>
+            </div>
           </div>
         )}
         <div className="style-suggest-row">
@@ -183,18 +172,7 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
         </div>
       </div>
 
-      {/* Vocal card */}
-      {!instrumental && (
-        <div className="create-card inline-row">
-          <span className="create-label">{t("free_vocal")}</span>
-          <div className="vocal-toggle">
-            <button className={`vocal-btn ${vocal === "female" ? "on" : ""}`} onClick={() => setVocal("female")}>{t("review_vocal_female")}</button>
-            <button className={`vocal-btn ${vocal === "male" ? "on" : ""}`} onClick={() => setVocal("male")}>{t("review_vocal_male")}</button>
-          </div>
-        </div>
-      )}
-
-      {/* Title card */}
+      {/* Title */}
       <div className="create-card">
         <span className="create-label">{t("free_title")}</span>
         <div className="title-input-wrap">
