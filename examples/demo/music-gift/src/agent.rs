@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::error::{AppError, AppResult};
-use crate::prompts::SYSTEM_PROMPT;
+use crate::prompts::{SYSTEM_PROMPT, LYRICS_SKILL};
 
 /// Default style if the LLM didn't emit one.
 const DEFAULT_STYLE: &str = "healing and warm";
@@ -61,7 +61,7 @@ fn extract_between(text: &str, open: &str, close: &str) -> Option<String> {
 }
 
 pub fn build_system_message(meta: &Value, photo_count: usize) -> Message {
-    let mut system = SYSTEM_PROMPT.to_string();
+    let mut system = format!("{}\n\n{}", SYSTEM_PROMPT.as_str(), LYRICS_SKILL.as_str());
     if !meta.is_null() {
         system.push_str("\n\nKnown info:\n");
         system.push_str(&serde_json::to_string_pretty(meta).unwrap_or_default());

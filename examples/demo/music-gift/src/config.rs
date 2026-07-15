@@ -13,20 +13,17 @@ const CHAT_API_KEY_ENV: &str = "MUSIC_GIFT_CHAT_API_KEY";
 const CHAT_API_URL_ENV: &str = "MUSIC_GIFT_CHAT_API_URL";
 const CHAT_MAX_TOKENS_ENV: &str = "MUSIC_GIFT_CHAT_MAX_TOKENS";
 
-/// Dedicated model for countdown generation. Falls back to the chat model
-/// env vars if not set — most deployments use the same provider for both.
-const COUNTDOWN_MODEL_ENV: &str = "MUSIC_GIFT_COUNTDOWN_MODEL";
-const COUNTDOWN_API_KEY_ENV: &str = "MUSIC_GIFT_COUNTDOWN_API_KEY";
-const COUNTDOWN_API_URL_ENV: &str = "MUSIC_GIFT_COUNTDOWN_API_URL";
-const COUNTDOWN_MAX_TOKENS_ENV: &str = "MUSIC_GIFT_COUNTDOWN_MAX_TOKENS";
-
 const MUSIC_PROVIDER_ENV: &str = "MUSIC_GIFT_MUSIC_PROVIDER";
 const MUSIC_MODEL_ENV: &str = "MUSIC_GIFT_MUSIC_MODEL";
 const MUSIC_API_KEY_ENV: &str = "MUSIC_GIFT_MUSIC_API_KEY";
 const MUSIC_API_URL_ENV: &str = "MUSIC_GIFT_MUSIC_API_URL";
+
+const PORT_ENV: &str = "MUSIC_GIFT_PORT";
+const DEFAULT_PORT: u16 = 3000;
+
+/// All configuration needed to start the server.
 pub struct AppConfig {
     pub chat_model: Arc<dyn ChatModel>,
-    pub countdown_model: Arc<dyn ChatModel>,
     pub gen_task: Arc<dyn GenTask>,
     pub port: u16,
 }
