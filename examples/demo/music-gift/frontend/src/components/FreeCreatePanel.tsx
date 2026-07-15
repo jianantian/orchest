@@ -94,17 +94,10 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
         {selectedStyles.length > 0 && (
           <div className="selected-styles">{selectedStyles.map(s => <span key={s} className="style-chip">{s}<span className="remove" onClick={() => removeStyle(s)} role="button" tabIndex={0}>×</span></span>)}</div>
         )}
-        <div className="card-foot-row">
-          <label className="toggle-switch">
-            <input type="checkbox" checked={instrumental} onChange={e => setInstrumental(e.target.checked)} />
-            <span>{t("free_instrumental")}</span>
-          </label>
-          {!instrumental && (
-            <div className="vocal-toggle">
-              <button className={`vocal-btn ${vocal === "female" ? "on" : ""}`} onClick={() => setVocal("female")}>♀ Female</button>
-              <button className={`vocal-btn ${vocal === "male" ? "on" : ""}`} onClick={() => setVocal("male")}>♂ Male</button>
-            </div>
-          )}
+        <div className="vocal-row-unified">
+          <button className={`vocal-chip ${!instrumental && vocal === "female" ? "on" : ""}`} onClick={() => { setInstrumental(false); setVocal("female"); }}>♀ Female</button>
+          <button className={`vocal-chip ${!instrumental && vocal === "male" ? "on" : ""}`} onClick={() => { setInstrumental(false); setVocal("male"); }}>♂ Male</button>
+          <button className={`vocal-chip ${instrumental ? "on" : ""}`} onClick={() => { setInstrumental(true); }}>🎵 Instrumental</button>
         </div>
         <div className="style-suggest-row">
           <button className="btn-refresh" type="button" onClick={refreshSuggestions}>🔄</button>
