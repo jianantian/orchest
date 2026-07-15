@@ -12,9 +12,13 @@ use serde_json::{json, Value};
 use tokio::time::{sleep, Duration};
 use tokio_stream::wrappers::ReceiverStream;
 
-use orchest_protocol::{GenAsset, GenHandle, GenRequest, GenStatus, GenTask};
+use orchest_protocol::{
+    ChatModel, ContentBlock, GenAsset, GenHandle, GenRequest, GenStatus, GenTask, Message,
+    RequestOptions, Role,
+};
 
 use crate::error::{AppError, AppResult};
+use crate::prompts::MUSIC_PROMPT_SKILLS;
 use crate::gift::GiftStore;
 
 // ── Response types ──────────────────────────────────────────────────────────
@@ -286,4 +290,92 @@ async fn handle_done(
     }
 
     Ok(url)
+}
+// ── Music Prompt Generation ──────────────────────────────────────────────────
+
+#[allow(dead_code, clippy::too_many_arguments)]
+/// Generate an optimized music-generation prompt using a provider-specific skill.
+///
+/// Loads the skill template for `provider` ("suno", "mureka", "minimax"),
+/// substitutes the song info, calls the LLM, and returns the generated prompt
+/// string from the JSON response.
+pub async fn generate_music_prompt(
+    chat_model: Arc<dyn ChatModel>,
+    provider: &str,
+    lyrics: &str,
+    style: &str,
+    title: &str,
+    vocal: &str,
+    scene: &str,
+    name: &str,
+    relationship: Option<&str>,
+) -> AppResult<String> {
+    let skill_template = MUSIC_PROMPT_SKILLS.get(provider).ok_or_else(|| {
+        AppError::BadRequest(format!("unknown music provider: {provider}"))
+    })?;
+
+    let relationship = relationship.unwrap_or("friend");
+
+    let user_message = skill_template
+        .replace("{lyrics}", lyrics)
+        .replace("{style}", style)
+        .replace("{title}", title)
+        .replace("{vocal}", vocal)
+        .replace("{scene}", scene)
+        .replace("{name}", name)
+        .replace("{relationship}", relationship);
+
+    let messages = vec![Message {
+        role: Role::User,
+        content: vec![ContentBlock::Text(user_message)],
+    }];
+
+    let options = RequestOptions::default();
+
+    let response = chat_model
+        .complete(&messages, &[], &options, None)
+        .await
+        .map_err(|e| AppError::Llm(e.to_string()))?;
+
+    let text: String = response
+        .content
+        .iter()
+        .filter_map(|block| {
+            if let ContentBlock::Text(t) = block {
+                Some(t.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Try the raw text as JSON first, then look for a code-fenced block.
+    let json_str = serde_json::from_str::<Value>(&text)
+        .ok()
+        .map(|_| text.clone())
+        .or_else(|| extract_json_block(&text));
+
+    if let Some(json_str) = json_str {
+        if let Ok(parsed) = serde_json::from_str::<Value>(&json_str) {
+            let prompt = parsed
+                .get("prompt")
+                .or_else(|| parsed.get("base_prompt"))
+                .and_then(Value::as_str)
+                .unwrap_or(&text);
+            return Ok(prompt.to_string());
+        }
+    }
+
+    // Fallback: return the raw text trimmed.
+    Ok(text.trim().to_string())
+}
+
+#[allow(dead_code)]
+/// Extract the content of the first ```json ... ``` fenced code block.
+fn extract_json_block(text: &str) -> Option<String> {
+    let start_marker = "```json\n";
+    let start = text.find(start_marker)? + start_marker.len();
+    let rest = &text[start..];
+    let end = rest.find("\n```")?;
+    Some(rest[..end].to_string())
 }

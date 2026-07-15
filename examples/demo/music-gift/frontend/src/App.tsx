@@ -1,11 +1,23 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import { useI18n, LANGS, LANG_LABELS, type Lang } from "./i18n";
+import { AuthProvider, useAuth } from "./hooks/useAuth";
+import { LoginModal } from "./components/LoginModal";
 import CreatePage from "./pages/CreatePage";
 import GiftPage from "./pages/GiftPage";
 import PlaylistPage from "./pages/PlaylistPage";
 
 export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+      <LoginModal />
+    </AuthProvider>
+  );
+}
+
+function AppContent() {
   const { t, lang, setLang } = useI18n();
+  const { user, loading, login, logout } = useAuth();
 
   return (
     <>
@@ -21,17 +33,26 @@ export default function App() {
             {t("nav_playlist")}
           </NavLink>
         </nav>
-        <select
-          className="lang-switch"
-          value={lang}
-          onChange={(e) => setLang(e.target.value as Lang)}
-        >
-          {LANGS.map((l) => (
-            <option key={l} value={l}>
-              {LANG_LABELS[l]}
-            </option>
-          ))}
-        </select>
+        <div className="header-right">
+          <select
+            className="lang-switch"
+            value={lang}
+            onChange={(e) => setLang(e.target.value as Lang)}
+          >
+            {LANGS.map((l) => (
+              <option key={l} value={l}>{LANG_LABELS[l]}</option>
+            ))}
+          </select>
+          {!loading && (
+            user ? (
+              <button className="user-btn" onClick={logout} title={user.display_name}>
+                {user.display_name[0].toUpperCase()}
+              </button>
+            ) : (
+              <button className="login-link" onClick={login}>Sign in</button>
+            )
+          )}
+        </div>
       </header>
       <main className="app-main">
         <Routes>

@@ -1,7 +1,7 @@
 
 export const DEFAULT_STYLE_TAGS = [
-  "pop", "rock", "jazz", "electronic", "folk", "r&b",
-  "romantic", "upbeat", "melancholic", "energetic", "sentimental",
+  "warm acoustic", "lively pop", "gentle ballad", "upbeat folk",
+  "soulful R&B", "dreamy indie", "energetic rock", "tender lullaby",
 ];
 
 export const STYLE_CATALOG: string[] = [

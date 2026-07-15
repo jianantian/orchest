@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::error::{AppError, AppResult};
+use crate::tools::collect_info;
 
 /// Default style if the LLM didn't emit one.
 const DEFAULT_STYLE: &str = "healing and warm";
@@ -84,16 +85,21 @@ pub async fn run_chat_agent(
     tx: mpsc::Sender<SseEvent>,
 ) -> AppResult<String> {
     let config = AgentConfig::builder("music-gift/chat")
-        .max_steps(1)
+        .max_steps(5)
         .build()
         .map_err(|e| AppError::Llm(format!("building agent config: {e}")))?;
+
+    let mut tool_registry = ToolRegistry::new();
+    tool_registry
+        .register(collect_info::create_tool())
+        .map_err(|e| AppError::Llm(format!("registering collect_info: {e}")))?;
 
     let blocks: Vec<ContentBlock> = messages.iter().flat_map(|m| m.content.clone()).collect();
 
     let input = RunInput::from_blocks(blocks)
         .map_err(|e| AppError::Llm(e.to_string()))?;
     let (handle, mut rx) =
-        AgentRun::start(config, input, model as Arc<dyn orchest::model::ModelAdapter>, ToolRegistry::new());
+        AgentRun::start(config, input, model as Arc<dyn orchest::model::ModelAdapter>, tool_registry);
 
     let mut full_text = String::new();
 

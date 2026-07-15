@@ -5,6 +5,7 @@
 //!
 //! See `README.md` for the full product spec.
 
+mod auth;
 mod agent;
 mod config;
 mod error;
@@ -61,14 +62,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         None
     };
 
+    // Auth store — separate connection, same DB file
+    let auth_store = {
+        let conn = rusqlite::Connection::open(&db_path)?;
+        auth::AuthStore::open(std::sync::Arc::new(std::sync::Mutex::new(conn)))?
+    };
+
     let state = AppState {
         chat_model: config.chat_model,
         gen_task: config.gen_task,
         gift_store,
+        auth_store,
         data_dir: cli.data_dir,
         countdown_tool: config.countdown_tool,
     };
-
     let app = build_router(state, static_dir);
 
     let addr = format!("0.0.0.0:{port}");

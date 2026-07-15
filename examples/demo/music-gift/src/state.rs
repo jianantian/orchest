@@ -8,14 +8,16 @@ use orchest::tool::Tool;
 use orchest_protocol::{ChatModel, GenTask};
 
 
+use crate::auth::AuthStore;
 use crate::gift::GiftStore;
 
-/// Application state injected into all axum handlers via `State<AppState>`.
 #[derive(Clone)]
 pub struct AppState {
     pub chat_model: Arc<dyn ChatModel>,
     pub gen_task: Arc<dyn GenTask>,
     pub gift_store: GiftStore,
+    #[allow(dead_code)]
+    pub auth_store: AuthStore,
     pub data_dir: PathBuf,
     pub countdown_tool: Option<Arc<dyn Tool>>,
 }

@@ -26,10 +26,20 @@ use crate::error::{AppError, AppResult};
 use crate::gift::Gift;
 use crate::state::AppState;
 use crate::tools::music_gen::MusicGenTool;
+use crate::auth;
 
 /// Build the full router with all API routes + static file serving.
 pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
+    let auth = Router::new()
+        .route("/auth/send-link", post(auth::handle_send_link))
+        .route("/auth/verify", get(auth::handle_verify))
+        .route("/auth/me", get(auth::handle_me))
+        .route("/auth/logout", post(auth::handle_logout))
+        .route("/auth/oauth/google", get(auth::handle_google_login))
+        .route("/auth/oauth/google/cb", get(auth::handle_google_callback));
+
     let api = Router::new()
+        .merge(auth)
         .route("/chat", post(chat_handler))
         .route("/gift", post(create_gift))
         .route("/gift/{id}", get(get_gift))
@@ -200,6 +210,7 @@ pub async fn create_gift(
         meta,
         audio_url: None,
         cover_url: None,
+        creator_id: None,
         photos: req.photos.into_iter().take(5).collect(),
         gen_handle: None,
         gen_status: None,
