@@ -651,121 +651,63 @@ body::after {
 .tab-btn:hover { color: var(--text2); }
 .tab-btn.active { color: var(--gold); border-bottom-color: var(--gold); }
 
-.free-panel { display: flex; flex-direction: column; padding: 16px 16px 32px; gap: 12px; }
+.free-panel.editorial { display: flex; flex-direction: column; gap: 28px; padding: 20px 20px 36px; }
 
-.free-panel > .btn-primary,
-.free-panel > .btn-primary.btn-lg.btn-full { margin-top: 4px; }
-.create-card-head { display: flex; align-items: center; justify-content: space-between; }
-.create-label { font-size: 15px; font-weight: 600; color: var(--text); }
-.create-card.inline-row { flex-direction: row; align-items: center; justify-content: space-between; padding: 14px 18px; }
+/* Mode bar — what are we making? */
+.mode-bar { display: flex; gap: 2px; background: var(--surface2); border-radius: 14px; padding: 4px; margin-bottom: 4px; }
+.mode-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 12px 0; border: none; border-radius: 11px; background: transparent; font-family: inherit; cursor: pointer; transition: all 0.2s; }
+.mode-btn .mode-icon { font-size: 16px; line-height: 1; }
+.mode-btn .mode-label { font-size: 13px; font-weight: 500; color: var(--text2); }
+.mode-btn.active { background: var(--surface); box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+.mode-btn.active .mode-label { color: var(--gold); font-weight: 600; }
 
-/* Lyrics textarea */
-.lyrics-wrap textarea {
-  width: 100%; min-height: 200px; padding: 8px 4px;
-  border: none; background: transparent;
-  font-size: 15px; line-height: 1.7;
-  font-family: var(--font-serif-cn); color: var(--text);
-  resize: vertical; outline: none;
-}
-.lyrics-wrap textarea::placeholder { color: var(--text3); }
+/* Sections */
+.editorial-section { display: flex; flex-direction: column; gap: 10px; }
+.section-header { display: flex; align-items: center; justify-content: space-between; }
+.section-title { font-family: var(--font-display); font-size: 18px; font-weight: 500; color: var(--text); letter-spacing: 0.02em; margin: 0; }
 
-/* Lyrics actions */
-.lyrics-actions-row { display: flex; gap: 6px; align-self: flex-end; margin-top: -4px; }
-.btn-ghost {
-  padding: 6px 12px; border: none; border-radius: 100px;
-  background: transparent; font-size: 13px; font-family: inherit;
-  font-weight: 500; color: var(--text2); cursor: pointer;
-  transition: all 0.18s; display: inline-flex; align-items: center; gap: 4px;
-}
+/* Lyrics manuscript */
+.lyrics-manuscript { width: 100%; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); font-family: var(--font-display); font-size: 17px; line-height: 1.8; color: var(--text); resize: vertical; min-height: 180px; }
+.lyrics-manuscript::placeholder { color: var(--text3); font-style: italic; font-size: 16px; }
+.lyrics-manuscript:focus { outline: none; border-color: var(--gold); }
+.lyrics-manuscript:disabled { opacity: 0.4; }
+
+/* Style composer */
+.style-composer { display: flex; flex-direction: column; gap: 10px; }
+.style-input { width: 100%; padding: 10px 0; border: none; border-bottom: 1px solid var(--border); background: transparent; font-size: 15px; font-family: inherit; color: var(--text); outline: none; }
+.style-input::placeholder { color: var(--text3); }
+.style-input:focus { border-color: var(--gold); }
+
+.style-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.style-chips .style-chip { display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border: 1px solid var(--gold-light); border-radius: 100px; background: var(--gold-bg); font-size: 13px; color: var(--gold); cursor: pointer; transition: background 0.18s; }
+.style-chips .style-chip:hover { background: var(--gold-light); }
+.style-chips .chip-x { font-size: 14px; opacity: 0.5; }
+
+.style-suggestions { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.suggest-refresh { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 50%; background: transparent; font-size: 14px; color: var(--text2); cursor: pointer; flex-shrink: 0; }
+.suggest-refresh:hover { border-color: var(--gold); color: var(--gold); }
+.suggest-chip { padding: 4px 10px; border: 1px solid var(--border); border-radius: 100px; background: transparent; font-size: 12px; font-family: inherit; color: var(--text2); cursor: pointer; white-space: nowrap; transition: all 0.15s; }
+.suggest-chip:hover { border-color: var(--gold); color: var(--gold); }
+
+/* Title */
+.title-input { width: 100%; padding: 12px 0; border: none; border-bottom: 1px solid var(--border); background: transparent; font-family: var(--font-display); font-size: 28px; font-weight: 500; color: var(--text); outline: none; letter-spacing: 0.01em; }
+.title-input::placeholder { color: var(--text3); font-style: italic; }
+.title-input:focus { border-color: var(--gold); }
+
+/* Create button */
+.btn-create { width: 100%; padding: 16px 0; border: none; border-radius: 12px; background: var(--gold); color: #fff; font-family: inherit; font-size: 16px; font-weight: 600; cursor: pointer; letter-spacing: 0.03em; margin-top: 4px; transition: background 0.2s, transform 0.1s; }
+.btn-create:hover { background: #b8845e; }
+.btn-create:active { transform: scale(0.98); }
+.btn-create:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.error-msg { color: #d44; font-size: 13px; text-align: center; }
+
+.btn-ghost { padding: 6px 12px; border: none; border-radius: 100px; background: transparent; font-size: 13px; font-family: inherit; font-weight: 500; color: var(--text2); cursor: pointer; transition: all 0.18s; display: inline-flex; align-items: center; gap: 4px; }
 .btn-ghost:hover { color: var(--gold); background: var(--gold-bg); }
 .btn-ghost .btn-icon { color: var(--gold); font-size: 14px; line-height: 1; }
 
-/* Toggle switch (instrumental) */
-.toggle-switch { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text2); }
-.toggle-switch input[type=checkbox] {
-  appearance: none; -webkit-appearance: none;
-  width: 36px; height: 20px; border-radius: 100px;
-  background: var(--surface2); cursor: pointer; position: relative;
-  transition: background 0.2s; flex-shrink: 0; border: 1px solid var(--border);
-}
-.toggle-switch input[type=checkbox]::after {
-  content: ""; position: absolute;
-  width: 16px; height: 16px; border-radius: 50%;
-  background: #fff; top: 1px; left: 1px;
-  transition: transform 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.18);
-}
-.toggle-switch input[type=checkbox]:checked { background: var(--gold); border-color: var(--gold); }
-.toggle-switch input[type=checkbox]:checked::after { transform: translateX(16px); }
-
-/* Style input */
-.style-input-wrap textarea {
-  width: 100%; min-height: 60px; padding: 4px;
-  border: none; background: transparent;
-  font-size: 14px; line-height: 1.5; font-family: inherit;
-  color: var(--text); resize: none; outline: none;
-}
-.style-input-wrap textarea::placeholder { color: var(--text3); }
-
-/* Style suggestions */
-.style-suggest-row { display: flex; align-items: center; gap: 8px; }
-.btn-refresh {
-  flex-shrink: 0; width: 32px; height: 32px;
-  border: 1px solid var(--border); border-radius: 50%;
-  background: transparent; font-size: 14px; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  color: var(--text2); transition: all 0.15s;
-}
-.btn-refresh:hover { border-color: var(--gold); color: var(--gold); }
-
-.style-suggest-strip {
-  flex: 1; display: flex; gap: 6px; overflow-x: auto;
-  overflow-y: hidden; scrollbar-width: none; padding: 2px 0;
-}
-.style-suggest-strip::-webkit-scrollbar { display: none; }
-
-.style-suggest-chip {
-  flex-shrink: 0; padding: 6px 12px;
-  border: 1px solid var(--border); border-radius: 100px;
-  background: transparent; font-size: 13px; color: var(--text2);
-  cursor: pointer; white-space: nowrap; transition: all 0.15s;
-  font-family: inherit;
-}
-.style-suggest-chip:hover { border-color: var(--gold); color: var(--gold); background: var(--gold-bg); }
-.style-suggest-chip::before { content: "+"; color: var(--text3); font-size: 14px; margin-right: 4px; }
-.style-suggest-chip:hover::before { color: var(--gold); }
-
-/* Selected style chips */
-.selected-styles { display: flex; flex-wrap: wrap; gap: 6px; }
-.selected-styles:empty { display: none; }
-.style-chip {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 5px 10px; border: 1px solid var(--gold);
-  border-radius: 100px; background: var(--gold-bg);
-  font-size: 12px; color: var(--gold); font-weight: 500;
-  animation: chipPop 0.2s ease;
-}
-@keyframes chipPop { 0% { opacity: 0; transform: scale(0.9); } 100% { opacity: 1; transform: scale(1); } }
-.style-chip .remove { cursor: pointer; font-size: 14px; line-height: 1; opacity: 0.6; transition: opacity 0.12s; }
-.style-chip .remove:hover { opacity: 1; }
-
-/* Unified vocal selector: Female / Male / Instrumental */
-.vocal-row-unified { display: flex; gap: 1px; background: var(--surface2); border-radius: 10px; padding: 3px; margin-top: 12px; }
-.vocal-chip {
-  flex: 1; padding: 7px 0; border: none; border-radius: 8px; background: transparent;
-  font-size: 13px; font-family: inherit; font-weight: 500; color: var(--text2); cursor: pointer;
-}
-.vocal-chip.on { background: var(--surface); color: var(--gold); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-.title-input-wrap { position: relative; width: 100%; }
-.title-input-wrap input {
-  width: 100%; padding: 4px 52px 4px 0;
-  border: none; background: transparent;
-  font-size: 14px; font-family: inherit; color: var(--text); outline: none;
-}
-.title-input-wrap input::placeholder { color: var(--text3); }
-.title-char-count {
-  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
-  font-size: 12px; color: var(--text3); pointer-events: none;
-}
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--gold); border-radius: 50%; animation: spin 0.6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* =============================================
    GUIDED FLOW (Chat Wizard)

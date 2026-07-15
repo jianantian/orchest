@@ -8,21 +8,24 @@ import { MusicCard } from "./MusicCard";
 
 export interface FreeCreatePanelProps { photos: string[]; lang: string; onNavigate: (giftId: string) => void; }
 
+type VocalMode = "female" | "male" | "instrumental";
+
 export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelProps) {
   const { t } = useI18n();
   const gen = useMusicGen();
 
+  const [vocalMode, setVocalMode] = useState<VocalMode>("female");
   const [lyrics, setLyrics] = useState("");
   const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
   const [styleInput, setStyleInput] = useState("");
-  const [vocal, setVocal] = useState("female");
   const [title, setTitle] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>(() => shuffleStyles([], 14));
-  const [instrumental, setInstrumental] = useState(false);
   const [polishing, setPolishing] = useState(false);
   const [expanding, setExpanding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lyricsRef = useRef<HTMLTextAreaElement>(null);
+
+  const instrumental = vocalMode === "instrumental";
 
   function addStyle(s: string) { if (s && !selectedStyles.includes(s)) setSelectedStyles(p => [...p, s]); }
   function removeStyle(s: string) { setSelectedStyles(p => p.filter(x => x !== s)); }
@@ -34,9 +37,9 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
     if (!styleStr) return;
     setPolishing(true);
     try {
-      const res = await fetch("/api/polish-music-prompt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lyrics: lyrics.trim() || undefined, style: styleStr, vocal, provider: "suno" }) });
+      const res = await fetch("/api/polish-music-prompt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lyrics: lyrics.trim() || undefined, style: styleStr, vocal: instrumental ? "female" : vocalMode, provider: "suno" }) });
       if (res.ok) { const d = await res.json(); setStyleInput(d.prompt); }
-    } catch { /* best-effort */ }
+    } catch { /* */ }
     finally { setPolishing(false); }
   }
 
@@ -47,78 +50,114 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
       const msgs: ChatMessage[] = [{ role: "system", content: "Expand into complete lyrics with [verse],[chorus],[bridge] tags. Output ONLY the lyrics." }, { role: "user", content: `Expand:\n\n${lyrics.trim()}` }];
       let full = "";
       for await (const e of streamChat({ messages: msgs, meta: { lang }, photos: [] })) { if (e.type === "Delta") full += e.text; }
-      const r = full.trim(); if (r) setLyrics(r);
-    } catch { /* best-effort */ }
+      if (full.trim()) setLyrics(full.trim());
+    } catch { /* */ }
     finally { setExpanding(false); }
   }
 
   async function handleGenerate(e: FormEvent) {
     e.preventDefault(); setError(null);
     const style = selectedStyles.join(", ") || styleInput.trim() || "warm acoustic";
-    await gen.start({ lyrics: instrumental ? "" : lyrics.trim() || "instrumental", style, vocal: instrumental ? undefined : vocal, lang, photos });
+    await gen.start({ lyrics: instrumental ? "" : lyrics.trim() || "instrumental", style, vocal: instrumental ? undefined : vocalMode, lang, photos });
     if (gen.error) setError(gen.error);
   }
 
   const musicState = gen.state === "idle" ? "generating" as const : gen.state === "ready" ? "ready" as const : gen.state === "error" ? "error" as const : "generating" as const;
 
   return (
-    <div className="free-panel">
-      {/* ① Lyrics */}
-      <div className="create-card">
-        <div className="create-card-head">
-          <span className="create-label">{t("free_lyrics")}</span>
+    <div className="free-panel editorial">
+      {/* ═══ Mode selector — what are we making? ═══ */}
+      <div className="mode-bar">
+        <button className={`mode-btn ${vocalMode === "female" ? "active" : ""}`} onClick={() => setVocalMode("female")}>
+          <span className="mode-icon">♀</span>
+          <span className="mode-label">Female</span>
+        </button>
+        <button className={`mode-btn ${vocalMode === "male" ? "active" : ""}`} onClick={() => setVocalMode("male")}>
+          <span className="mode-icon">♂</span>
+          <span className="mode-label">Male</span>
+        </button>
+        <button className={`mode-btn ${vocalMode === "instrumental" ? "active" : ""}`} onClick={() => setVocalMode("instrumental")}>
+          <span className="mode-icon">🎵</span>
+          <span className="mode-label">Instrumental</span>
+        </button>
+      </div>
+
+      {/* ═══ Lyrics — the manuscript ═══ */}
+      <section className="editorial-section">
+        <div className="section-header">
+          <h3 className="section-title">{t("free_lyrics")}</h3>
           {!instrumental && (
             <button className={`btn-ghost btn-sm${expanding ? " loading" : ""}`} type="button" onClick={handleExpand} disabled={expanding}>
               {expanding ? <span className="spinner" /> : "📝"} {t("free_expand")}
             </button>
           )}
         </div>
-        <div className="lyrics-wrap">
-          <textarea ref={lyricsRef} value={lyrics} onChange={e => setLyrics(e.target.value)}
-            placeholder={t("paste_lyrics_ph")} disabled={instrumental}
-            style={instrumental ? { opacity: 0.35 } : undefined} />
-        </div>
-      </div>
+        <textarea
+          ref={lyricsRef}
+          className="lyrics-manuscript"
+          value={lyrics}
+          onChange={e => setLyrics(e.target.value)}
+          placeholder={instrumental ? "Instrumental — no lyrics needed" : t("paste_lyrics_ph")}
+          disabled={instrumental}
+          rows={instrumental ? 2 : 7}
+        />
+      </section>
 
-      {/* ② Style + Vocal + Instrumental */}
-      <div className="create-card">
-        <span className="create-label">{t("free_style")}</span>
-        <div className="style-input-wrap">
-          <textarea value={styleInput} onChange={e => setStyleInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); commitStyleInput(); } else if (e.key === "Backspace" && !styleInput && selectedStyles.length > 0) removeStyle(selectedStyles[selectedStyles.length - 1]); }}
-            onBlur={commitStyleInput} placeholder={t("free_style_ph")} rows={2} />
+      {/* ═══ Style — expressive tools ═══ */}
+      <section className="editorial-section">
+        <div className="section-header">
+          <h3 className="section-title">{t("free_style")}</h3>
           <button className="btn-ghost btn-sm" type="button" onClick={handlePolish} disabled={polishing}>
             {polishing ? <span className="spinner" /> : "✨"} Polish
           </button>
         </div>
-        {selectedStyles.length > 0 && (
-          <div className="selected-styles">{selectedStyles.map(s => <span key={s} className="style-chip">{s}<span className="remove" onClick={() => removeStyle(s)} role="button" tabIndex={0}>×</span></span>)}</div>
-        )}
-        <div className="vocal-row-unified">
-          <button className={`vocal-chip ${!instrumental && vocal === "female" ? "on" : ""}`} onClick={() => { setInstrumental(false); setVocal("female"); }}>♀ Female</button>
-          <button className={`vocal-chip ${!instrumental && vocal === "male" ? "on" : ""}`} onClick={() => { setInstrumental(false); setVocal("male"); }}>♂ Male</button>
-          <button className={`vocal-chip ${instrumental ? "on" : ""}`} onClick={() => { setInstrumental(true); }}>🎵 Instrumental</button>
+        <div className="style-composer">
+          <input
+            type="text"
+            className="style-input"
+            value={styleInput}
+            onChange={e => setStyleInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter") { e.preventDefault(); commitStyleInput(); }
+              else if (e.key === "Backspace" && !styleInput && selectedStyles.length > 0) removeStyle(selectedStyles[selectedStyles.length - 1]);
+            }}
+            placeholder={t("free_style_ph")}
+          />
+          {selectedStyles.length > 0 && (
+            <div className="style-chips">
+              {selectedStyles.map(s => (
+                <span key={s} className="style-chip" onClick={() => removeStyle(s)}>{s} <span className="chip-x">×</span></span>
+              ))}
+            </div>
+          )}
+          <div className="style-suggestions">
+            <button className="suggest-refresh" onClick={refreshSuggestions} title="More styles">↻</button>
+            {suggestions.map(s => (
+              <button key={s} className="suggest-chip" onClick={() => addStyle(s)}>{s}</button>
+            ))}
+          </div>
         </div>
-        <div className="style-suggest-row">
-          <button className="btn-refresh" type="button" onClick={refreshSuggestions}>🔄</button>
-          <div className="style-suggest-strip">{suggestions.map(s => <button key={s} className="style-suggest-chip" type="button" onClick={() => addStyle(s)}>{s}</button>)}</div>
-        </div>
-      </div>
+      </section>
 
-      {/* ③ Title */}
-      <div className="create-card">
-        <span className="create-label">{t("free_title")}</span>
-        <div className="title-input-wrap">
-          <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder={t("free_title_ph")} maxLength={50} />
-          <span className="title-char-count">{title.length}/50</span>
-        </div>
-      </div>
+      {/* ═══ Title ═══ */}
+      <section className="editorial-section">
+        <h3 className="section-title">{t("free_title")}</h3>
+        <input
+          type="text"
+          className="title-input"
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+          placeholder={t("free_title_ph")}
+          maxLength={50}
+        />
+      </section>
 
-      <button className="btn-primary btn-lg btn-full" onClick={handleGenerate} disabled={gen.state === "generating"}>
-        {gen.state === "generating" ? <><span className="spinner" /> {t("free_generating")}</> : "🎵 " + (t("free_generate") || "Create Song")}
+      {/* ═══ Create ═══ */}
+      <button className="btn-create" onClick={handleGenerate} disabled={gen.state === "generating"}>
+        {gen.state === "generating" ? <><span className="spinner" /> Generating…</> : "Create Song"}
       </button>
 
-      {(error || gen.error) && <div className="error-msg">{error || gen.error}</div>}
+      {(error || gen.error) && <p className="error-msg">{error || gen.error}</p>}
 
       {gen.giftId && <MusicCard initialState={musicState} onOpen={() => onNavigate(gen.giftId!)} onRetry={() => gen.retry(gen.giftId!)} />}
     </div>
