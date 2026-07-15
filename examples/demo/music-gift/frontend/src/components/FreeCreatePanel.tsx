@@ -153,19 +153,22 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
 
           {/* Vocal Gender — in More Options */}
           {!instrumental && (
-            <div className="more-options">
+            <div className="more-options" data-open={showMoreOptions ? "true" : "false"}>
               <button className="btn-more" type="button" onClick={() => setShowMoreOptions(!showMoreOptions)}>
-                {showMoreOptions ? "▾" : "▸"} More Options
+                <span className="t-acc-chevron">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 6.5L8 10.5L12 6.5"/></svg>
+                </span>
+                More Options
               </button>
-              {showMoreOptions && (
-                <div className="more-body">
+              <div className="t-acc-panel">
+                <div className="more-body t-acc-panel-inner">
                   <p className="more-label">Vocal Gender</p>
                   <div className="gender-select">
                     <button className={`gender-opt ${vocalGender === "female" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "female" ? null : "female")}><FemaleIcon /> Female</button>
                     <button className={`gender-opt ${vocalGender === "male" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "male" ? null : "male")}><MaleIcon /> Male</button>
                   </div>
                 </div>
-              )}
+              </div>
             </div>
           )}
         </div>

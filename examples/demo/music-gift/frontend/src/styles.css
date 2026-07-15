@@ -28,6 +28,46 @@
   --font-body:      -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif;
 }
 
+/* ── Motion tokens (transitions-dev) ────────── */
+:root {
+  --resize-dur: 300ms;
+  --resize-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --dropdown-open-dur: 250ms;
+  --dropdown-close-dur: 150ms;
+  --dropdown-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --modal-open-dur: 250ms;
+  --modal-close-dur: 150ms;
+  --modal-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --panel-open-dur: 400ms;
+  --panel-close-dur: 350ms;
+  --panel-translate-y: 100px;
+  --panel-blur: 2px;
+  --panel-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --icon-swap-dur: 250ms;
+  --icon-swap-blur: 2px;
+  --icon-swap-start-scale: 0.25;
+  --icon-swap-ease: ease-in-out;
+  --shake-distance: 6px;
+  --shake-dur-a: 80ms;
+  --shake-dur-b: 60ms;
+  --shake-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --skeleton-dur: 1000ms;
+  --reveal-dur: 400ms;
+  --reveal-blur: 2px;
+  --reveal-ease: ease-in-out;
+  --acc-expand: 250ms;
+  --acc-collapse: 250ms;
+  --acc-chevron: 250ms;
+  --acc-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --tabs-dur: 250ms;
+  --tabs-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --stagger-dur: 500ms;
+  --stagger-distance: 12px;
+  --stagger-stagger: 40ms;
+  --stagger-blur: 3px;
+  --stagger-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
@@ -82,7 +122,7 @@ body::after {
 .app-nav a {
   text-decoration: none; font-size: 13px; color: var(--text2);
   padding: 6px 12px; border-radius: 100px;
-  transition: all 0.15s; font-weight: 500;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s; font-weight: 500;
 }
 .app-nav a:hover { background: var(--surface2); color: var(--text); }
 .app-nav a.active { color: var(--gold); background: var(--gold-bg); }
@@ -99,7 +139,7 @@ body::after {
   letter-spacing: 0.04em;
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
   -webkit-appearance: none;
   appearance: none;
   outline: none;
@@ -114,13 +154,13 @@ body::after {
   padding: 5px 14px; border: 1px solid var(--border);
   border-radius: 100px; background: transparent;
   font-size: 12px; font-family: inherit; color: var(--text2);
-  cursor: pointer; transition: all 0.15s;
+  cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
 }
 .login-link:hover { border-color: var(--gold); color: var(--gold); }
 .user-btn {
   width: 30px; height: 30px; border: none; border-radius: 50%;
   background: var(--gold); color: #fff; font-size: 13px;
-  font-weight: 600; cursor: pointer; transition: all 0.15s;
+  font-weight: 600; cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
   display: flex; align-items: center; justify-content: center;
 }
 .user-btn:hover { filter: brightness(1.08); }
@@ -147,7 +187,7 @@ body::after {
 .login-btn {
   width: 100%; padding: 14px 0; border: 1px solid var(--border);
   border-radius: 12px; background: transparent; font-size: 15px;
-  font-family: inherit; cursor: pointer; color: var(--text); transition: all 0.15s;
+  font-family: inherit; cursor: pointer; color: var(--text); transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
   display: flex; align-items: center; justify-content: center; gap: 10px;
 }
 .login-btn:hover { border-color: var(--gold); background: var(--gold-bg); }
@@ -160,7 +200,7 @@ body::after {
 .login-close:hover { color: var(--text2); }
 
 .login-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin: -4px 0 4px; }
-.login-tab { flex: 1; padding: 10px 0; border: none; background: transparent; font-size: 13px; font-family: inherit; color: var(--text3); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
+.login-tab { flex: 1; padding: 10px 0; border: none; background: transparent; font-size: 13px; font-family: inherit; color: var(--text3); cursor: pointer; border-bottom: 2px solid transparent; transition: background 0.2s, border-color 0.2s, color 0.2s, opacity 0.2s; }
 .login-tab.on { color: var(--gold); border-bottom-color: var(--gold); font-weight: 500; }
 .login-error { font-size: 12px; color: #c44; margin: 0; text-align: center; }
 .login-toggle { font-size: 12px; color: var(--text3); text-align: center; margin: 0; }
@@ -229,7 +269,7 @@ body::after {
   padding: 10px 20px;
   border: none; border-radius: 100px;
   font-family: inherit; font-size: 15px; font-weight: 600;
-  cursor: pointer; transition: all 0.18s;
+  cursor: pointer; transition: background 0.18s, border-color 0.18s, color 0.18s, opacity 0.18s;
   text-decoration: none;
   -webkit-appearance: none; appearance: none;
 }
@@ -283,6 +323,15 @@ body::after {
   border-radius: var(--radius);
   border: 1px solid rgba(204, 68, 68, 0.15);
 }
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+.error-msg.shaking { animation: shake 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
 
 /* ── Scrollbar ─────────────────────────────── */
 .app-main::-webkit-scrollbar { width: 4px; }
@@ -339,7 +388,7 @@ body::after {
   color: var(--text3); font-size: 24px;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
 }
 .photo-add:hover { border-color: var(--gold); color: var(--gold); }
 
@@ -463,7 +512,7 @@ body::after {
   color: #fff;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  transition: all 0.18s;
+  transition: background 0.18s, border-color 0.18s, color 0.18s, opacity 0.18s;
   box-shadow: 0 4px 20px rgba(200, 149, 108, 0.35);
 }
 .audio-play-btn:hover {
@@ -645,7 +694,7 @@ body::after {
   border: none; background: transparent;
   font-size: 13px; font-family: inherit; font-weight: 500;
   color: var(--text3); cursor: pointer;
-  border-bottom: 2px solid transparent; transition: all 0.2s;
+  border-bottom: 2px solid transparent; transition: background 0.2s, border-color 0.2s, color 0.2s, opacity 0.2s;
   letter-spacing: 0.01em;
 }
 .tab-btn:hover { color: var(--text2); }
@@ -655,20 +704,35 @@ body::after {
 
 /* Mode bar — what are we making? */
 .mode-bar { display: flex; gap: 2px; background: var(--surface2); border-radius: 14px; padding: 4px; margin-bottom: 4px; }
-.mode-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 12px 0; border: none; border-radius: 11px; background: transparent; font-family: inherit; cursor: pointer; transition: all 0.2s; }
+.mode-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 12px 0; border: none; border-radius: 11px; background: transparent; font-family: inherit; cursor: pointer; transition: background 0.2s, border-color 0.2s, color 0.2s, opacity 0.2s; }
 .mode-btn .mode-icon { font-size: 16px; line-height: 1; }
 .mode-btn .mode-label { font-size: 13px; font-weight: 500; color: var(--text2); }
 .mode-btn.active { background: var(--surface); box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
 .mode-btn.active .mode-label { color: var(--gold); font-weight: 600; }
 
-/* More Options (collapsible, inside style composer) */
+/* More Options — accordion transition */
 .more-options { margin-top: 6px; }
-.btn-more { padding: 2px 0; border: none; background: transparent; font-size: 12px; font-family: inherit; color: var(--text3); cursor: pointer; letter-spacing: 0.02em; }
+.btn-more { padding: 2px 0; border: none; background: transparent; font-size: 12px; font-family: inherit; color: var(--text3); cursor: pointer; letter-spacing: 0.02em; display: inline-flex; align-items: center; gap: 4px; }
 .btn-more:hover { color: var(--gold); }
+
+.more-options .t-acc-panel { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--acc-collapse) var(--acc-ease); }
+.more-options[data-open="true"] .t-acc-panel { grid-template-rows: 1fr; transition: grid-template-rows var(--acc-expand) var(--acc-ease); }
+.more-options .t-acc-panel-inner { overflow: hidden; opacity: 0; filter: blur(2px); transition: opacity var(--acc-collapse) var(--acc-ease), filter var(--acc-collapse) var(--acc-ease); }
+.more-options[data-open="true"] .t-acc-panel-inner { opacity: 1; filter: blur(0); transition: opacity var(--acc-expand) var(--acc-ease), filter var(--acc-expand) var(--acc-ease); }
+.more-options .t-acc-chevron { display: inline-flex; transform: scaleY(1); transform-origin: center; transition: transform var(--acc-chevron) var(--acc-ease); vertical-align: middle; }
+.more-options .t-acc-chevron path { vector-effect: non-scaling-stroke; }
+.more-options[data-open="true"] .t-acc-chevron { transform: scaleY(-1); }
+
 .more-body { margin-top: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); display: flex; flex-direction: column; gap: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .more-options .t-acc-panel,
+  .more-options .t-acc-panel-inner,
+  .more-options .t-acc-chevron { transition: none !important; }
+}
 .more-label { font-size: 11px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.05em; margin: 0; }
 .gender-select { display: flex; gap: 6px; }
-.gender-opt { flex: 1; padding: 7px 0; border: 1px solid var(--border); border-radius: 8px; background: transparent; font-size: 13px; font-family: inherit; color: var(--text2); cursor: pointer; transition: all 0.15s; }
+.gender-opt { flex: 1; padding: 7px 0; border: 1px solid var(--border); border-radius: 8px; background: transparent; font-size: 13px; font-family: inherit; color: var(--text2); cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s; }
 .gender-opt.on { border-color: var(--gold-light); background: var(--gold-bg); color: var(--gold); font-weight: 500; }
 
 /* Sections */
@@ -710,7 +774,7 @@ body::after {
 .suggest-refresh { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 50%; background: transparent; font-size: 14px; color: var(--text2); cursor: pointer; flex-shrink: 0; }
 .suggest-refresh:hover { border-color: var(--gold); color: var(--gold); }
 .suggest-refresh:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
-.suggest-chip { padding: 4px 10px; border: 1px solid var(--border); border-radius: 100px; background: transparent; font-size: 12px; font-family: inherit; color: var(--text2); cursor: pointer; white-space: nowrap; transition: all 0.15s; }
+.suggest-chip { padding: 4px 10px; border: 1px solid var(--border); border-radius: 100px; background: transparent; font-size: 12px; font-family: inherit; color: var(--text2); cursor: pointer; white-space: nowrap; transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s; }
 .suggest-chip:hover { border-color: var(--gold); color: var(--gold); }
 
 .suggest-chip:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
@@ -718,7 +782,7 @@ body::after {
 .title-input { width: 100%; padding: 12px 0; border: none; border-bottom: 1px solid var(--border); background: transparent; font-family: var(--font-display); font-size: 28px; font-weight: 500; color: var(--text); letter-spacing: 0.01em; }
 .title-input::placeholder { color: var(--text3); font-style: italic; }
 .title-input:focus-visible { outline: none; border-color: var(--gold); }
-.btn-ghost { min-height: 36px; padding: 6px 12px; border: none; border-radius: 100px; background: transparent; font-size: 13px; font-family: inherit; font-weight: 500; color: var(--text2); cursor: pointer; transition: all 0.18s; display: inline-flex; align-items: center; gap: 4px; }
+.btn-ghost { min-height: 36px; padding: 6px 12px; border: none; border-radius: 100px; background: transparent; font-size: 13px; font-family: inherit; font-weight: 500; color: var(--text2); cursor: pointer; transition: background 0.18s, border-color 0.18s, color 0.18s, opacity 0.18s; display: inline-flex; align-items: center; gap: 4px; }
 /* Create button */
 .btn-create { width: 100%; padding: 16px 0; border: none; border-radius: 12px; background: var(--gold); color: #fff; font-family: inherit; font-size: 16px; font-weight: 600; cursor: pointer; letter-spacing: 0.03em; margin-top: 4px; transition: background 0.2s, transform 0.1s; }
 .btn-ghost:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
@@ -747,7 +811,7 @@ body::after {
 }
 .dot {
   width: 8px; height: 8px; border-radius: 50%;
-  background: var(--border); transition: all 0.3s;
+  background: var(--border); transition: width 0.3s cubic-bezier(0.22,1,0.36,1), background 0.3s, opacity 0.3s;
 }
 .dot.on { background: var(--gold); width: 22px; border-radius: 4px; }
 .dot.past { background: var(--gold); opacity: 0.4; }
@@ -786,7 +850,7 @@ body::after {
   padding: 9px 17px; border: 1px solid var(--border);
   border-radius: 100px; background: var(--surface);
   font-size: 13px; color: var(--text2); cursor: pointer;
-  transition: all 0.18s; user-select: none;
+  transition: background 0.18s, border-color 0.18s, color 0.18s, opacity 0.18s; user-select: none;
   font-family: inherit;
 }
 .pill:hover { border-color: var(--gold); color: var(--text); }
@@ -820,7 +884,7 @@ body::after {
   padding: 10px 6px; border: 1px solid var(--border);
   border-radius: 12px; background: var(--surface);
   font-size: 12px; cursor: pointer; color: var(--text2);
-  font-family: inherit; transition: all 0.18s;
+  font-family: inherit; transition: background 0.18s, border-color 0.18s, color 0.18s, opacity 0.18s;
   text-align: center; white-space: nowrap;
 }
 .bday-grid button:hover,
@@ -834,7 +898,7 @@ body::after {
   padding: 7px 16px; border: 1px solid var(--border);
   border-radius: 100px; background: var(--surface);
   font-size: 12px; font-family: inherit; color: var(--text2);
-  cursor: pointer; transition: all 0.15s;
+  cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
 }
 .btn-small:hover { border-color: var(--gold); color: var(--gold); }
 
@@ -868,7 +932,7 @@ body::after {
 .style-tag {
   padding: 5px 12px; border: 1px solid var(--border); border-radius: 100px;
   font-size: 12px; cursor: pointer; color: var(--text3);
-  transition: all 0.15s; user-select: none; background: var(--bg);
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s; user-select: none; background: var(--bg);
 }
 .style-tag.on { background: var(--gold-bg); border-color: var(--gold); color: var(--gold); }
 
@@ -878,7 +942,7 @@ body::after {
   flex: 1; padding: 9px 0; border: 1px solid var(--border);
   border-radius: 100px; background: var(--bg); font-size: 13px;
   cursor: pointer; color: var(--text2); text-align: center;
-  transition: all 0.15s; font-family: inherit;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s; font-family: inherit;
 }
 .toggle-btn.on { background: var(--gold-bg); border-color: var(--gold); color: var(--gold); font-weight: 500; }
 
@@ -904,7 +968,7 @@ body::after {
   border: none; border-radius: 50%; background: var(--gold);
   color: #fff; font-size: 16px; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
 }
 .chat-send-btn:disabled { opacity: 0.4; pointer-events: none; }
 .chat-send-btn:active { transform: scale(0.92); }
@@ -1261,7 +1325,7 @@ body.locked { overflow: hidden; }
   font-family: var(--font-serif-cn);
   font-size: 14px; line-height: 1.5;
   color: var(--text3); opacity: 0.45;
-  transition: all 0.3s ease;
+  transition: color 0.3s ease, opacity 0.3s ease, font-size 0.3s ease, margin 0.3s ease;
   cursor: pointer; user-select: none;
 }
 .lrc-line.active {
