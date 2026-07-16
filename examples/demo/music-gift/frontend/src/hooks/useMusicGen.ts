@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import type { CreateGiftRequest, GiftMeta } from "../types";
-import { createGift, generateMusic, pollGenerateStatus } from "../api";
+import { createGift, generateMusic } from "../api";
 
 export type MusicGenState = "idle" | "generating" | "ready" | "error";
 
@@ -13,7 +13,42 @@ export function useMusicGen() {
   const [state, setState] = useState<MusicGenState>("idle");
   const [giftId, setGiftId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  const esRef = useRef<EventSource | null>(null);
+
+  /** Open an SSE stream for generation status updates. */
+  function watchStream(id: string) {
+    // Close any existing stream
+    esRef.current?.close();
+
+    const es = new EventSource(`/api/generate/${id}/stream`);
+    esRef.current = es;
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.status === "done") {
+          es.close();
+          setState("ready");
+        } else if (data.status === "failed") {
+          es.close();
+          setState("error");
+          setError(data.error ?? "Generation failed");
+        }
+        // "pending" → keep waiting
+      } catch {
+        // Ignore malformed events
+      }
+    };
+
+    es.onerror = () => {
+      // EventSource auto-reconnects; if after several attempts it still
+      // fails, close and treat as error.
+      if (es.readyState === EventSource.CLOSED) {
+        setState("error");
+        setError("Connection lost during generation");
+      }
+    };
+  }
 
   const start = useCallback(
     async (params: {
@@ -48,22 +83,8 @@ export function useMusicGen() {
 
         await generateMusic(id);
 
-        clearInterval(pollRef.current);
-        pollRef.current = setInterval(async () => {
-          try {
-            const status = await pollGenerateStatus(id);
-            if (status.status === "done") {
-              clearInterval(pollRef.current);
-              setState("ready");
-            } else if (status.status === "failed") {
-              clearInterval(pollRef.current);
-              setState("error");
-              setError("Generation failed");
-            }
-          } catch {
-            // Keep polling on transient errors
-          }
-        }, 3000);
+        // Start SSE stream for live status — no polling
+        watchStream(id);
       } catch (e) {
         setState("error");
         setError(e instanceof Error ? e.message : "Creation failed");
@@ -78,22 +99,7 @@ export function useMusicGen() {
     setGiftId(id);
     try {
       await generateMusic(id);
-      clearInterval(pollRef.current);
-      pollRef.current = setInterval(async () => {
-        try {
-          const status = await pollGenerateStatus(id);
-          if (status.status === "done") {
-            clearInterval(pollRef.current);
-            setState("ready");
-          } else if (status.status === "failed") {
-            clearInterval(pollRef.current);
-            setState("error");
-            setError("Generation failed");
-          }
-        } catch {
-          // Keep polling
-        }
-      }, 3000);
+      watchStream(id);
     } catch (e) {
       setState("error");
       setError(e instanceof Error ? e.message : "Retry failed");
@@ -101,7 +107,8 @@ export function useMusicGen() {
   }, []);
 
   const reset = useCallback(() => {
-    clearInterval(pollRef.current);
+    esRef.current?.close();
+    esRef.current = null;
     setState("idle");
     setGiftId(null);
     setError(null);
