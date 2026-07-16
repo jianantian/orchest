@@ -135,6 +135,25 @@
 
   /* Toggle buttons: active state more visible */
   .toggle-btn.on { background: var(--gold-bg); }
+
+  /* Unwrap stage: invert the cream gradient to dark warm tones */
+  #unwrap-stage {
+    background: radial-gradient(ellipse at 50% 35%, #2a1a10 0%, #1f1410 35%, #1a100c 75%, #130c08 100%);
+  }
+
+  /* Primary button: use dark-mode gold gradient */
+  .btn-primary {
+    background: linear-gradient(135deg, #e0b07a, #d4a574);
+    box-shadow: 0 2px 12px rgba(212, 165, 116, 0.25);
+  }
+  .btn-primary:hover:not(:disabled) {
+    box-shadow: 0 4px 18px rgba(212, 165, 116, 0.35);
+  }
+
+  /* Audio play button: dark-mode gold glow */
+  .audio-play-btn {
+    box-shadow: 0 4px 20px rgba(212, 165, 116, 0.25);
+  }
 }
 
 /* ── Motion tokens (transitions-dev) ────────── */
@@ -653,7 +672,7 @@ body::after {
 }
 .audio-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--gold), #e0b07a);
+  background: linear-gradient(90deg, var(--gold), var(--gold-action));
   border-radius: 2px;
   transition: width 0.2s linear;
 }
@@ -709,7 +728,7 @@ body::after {
 }
 .gen-bar-fill {
   height: 100%; width: 0%;
-  background: linear-gradient(90deg, var(--gold), #e0b07a);
+  background: linear-gradient(90deg, var(--gold), var(--gold-action));
   border-radius: 2px;
   animation: genBarPulse 2s ease-in-out infinite;
 }
