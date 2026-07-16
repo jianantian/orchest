@@ -206,7 +206,14 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
         {step === "birthday" && <BirthdayPicker months={months} skipLabel={t("bday_skip")} onPick={handleBirthday} />}
 
         {step === "scenario" && <PillsRow options={scenPills} onSelect={handleScenario} />}
-        {step === "chat" && messages.map((msg, i) => <div key={`m-${i}`} className={`bubble ${msg.role === "assistant" ? "bot" : msg.role}`}>{msg.content.replace(/<<<[^>]+>>>/g, "")}</div>)}
+        {step === "chat" && messages.map((msg, i) => {
+          const raw = msg.content;
+          // Stop at <<<LYRICS>>> — lyrics belong in ReviewCard, not the chat bubble
+          const display = msg.role === "assistant"
+            ? raw.split("<<<LYRICS>>>")[0].replace(/<<<[^>]+>>>/g, "")
+            : raw.replace(/<<<[^>]+>>>/g, "");
+          return <div key={`m-${i}`} className={`bubble ${msg.role === "assistant" ? "bot" : msg.role}`}>{display}</div>;
+        })}
 
         {/* Typing indicator: shown while waiting for the first assistant response */}
         {streaming && step === "chat" && messages.filter(m => m.role === "assistant").length === 0 && (
