@@ -23,7 +23,7 @@ use crate::agent::{
 use crate::error::{AppError, AppResult};
 use crate::gift::Gift;
 use crate::state::AppState;
-use crate::tools::music_gen::MusicGenTool;
+use crate::tools::music_gen::{EnrichedPrompt, MusicGenTool};
 /// Build the full router with all API routes + static file serving.
 pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
     let api = Router::new()
@@ -329,11 +329,17 @@ pub async fn generate_music(
     let scene = gift.meta.get("scenario").and_then(Value::as_str).unwrap_or("");
     let relationship = gift.meta.get("relationship").and_then(Value::as_str).unwrap_or("");
 
-    let prompt = crate::tools::music_gen::generate_music_prompt(
+    // Validate lyrics — warnings logged for Suno quality tuning.
+    let _validation = crate::tools::lyrics_validator::validate_lyrics(&lyrics);
+    for w in &_validation.warnings {
+        eprintln!("[music-gift] lyrics warn [{id}]: {w}");
+    }
+
+    let enriched = crate::tools::music_gen::generate_music_prompt(
         state.music_prompt_model.clone(), &provider, &lyrics, style, title, "female", scene, name, Some(relationship),
-    ).await.unwrap_or_else(|_| format!("{style}, high quality music production"));
+    ).await.unwrap_or_else(|_| EnrichedPrompt::fallback(style));
     let tool = MusicGenTool::new(state.gen_task.clone());
-    let resp = tool.submit(&state.gift_store, &id, &prompt).await?;
+    let resp = tool.submit(&state.gift_store, &id, &enriched).await?;
     Ok((StatusCode::OK, Json(resp)))
 }
 pub async fn generate_stream(
@@ -369,7 +375,7 @@ pub async fn polish_music_prompt(
     State(state): State<AppState>,
     Json(req): Json<PolishPromptRequest>,
 ) -> AppResult<impl IntoResponse> {
-    let prompt = crate::tools::music_gen::generate_music_prompt(
+    let enriched = crate::tools::music_gen::generate_music_prompt(
         state.music_prompt_model.clone(),
         &req.provider,
         &req.lyrics,
@@ -379,9 +385,8 @@ pub async fn polish_music_prompt(
         req.scene.as_deref().unwrap_or(""),
         req.name.as_deref().unwrap_or(""),
         req.relationship.as_deref(),
-    ).await.unwrap_or_else(|_| format!("{}, high quality music production", req.style));
-
-    Ok(Json(PolishPromptResponse { prompt }))
+    ).await.unwrap_or_else(|_| EnrichedPrompt::fallback(&req.style));
+    Ok(Json(PolishPromptResponse { prompt: enriched.prompt }))
 }
 // ── GET /api/generate/:id/status — legacy poll ────────────────────────────
 

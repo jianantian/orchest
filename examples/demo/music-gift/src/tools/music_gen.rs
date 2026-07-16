@@ -39,6 +39,42 @@ pub struct GenStatusResponse {
     pub audio_url: Option<String>,
 }
 
+/// Structured prompt output from the LLM enrichment step.
+#[derive(Debug, Clone, Serialize)]
+pub struct EnrichedPrompt {
+    pub prompt: String,
+    pub genre: Vec<String>,
+    pub tempo: String,
+    pub mood: Vec<String>,
+    pub vocal_style: String,
+    pub instrumentation: String,
+    pub production: String,
+    pub exclude: String,
+    pub style_tags: Vec<String>,
+}
+
+impl EnrichedPrompt {
+    pub fn fallback(style: &str) -> Self {
+        Self {
+            prompt: format!("{style}, high quality music production"),
+            genre: vec![],
+            tempo: String::new(),
+            mood: vec![],
+            vocal_style: String::new(),
+            instrumentation: String::new(),
+            production: String::new(),
+            exclude: String::new(),
+            style_tags: vec![],
+        }
+    }
+}
+
+impl std::fmt::Display for EnrichedPrompt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.prompt)
+    }
+}
+
 // ── Tool ────────────────────────────────────────────────────────────────────
 
 /// Thin wrapper around `Arc<dyn GenTask>` with the submit/poll/stream lifecycle
@@ -54,8 +90,7 @@ impl MusicGenTool {
 
     /// Submit a music generation job for the gift and persist the handle.
     ///
-    /// Same logic as the original `generate_music` handler.
-    pub async fn submit(&self, store: &GiftStore, gift_id: &str, prompt: &str) -> AppResult<GenerateResponse> {
+    pub async fn submit(&self, store: &GiftStore, gift_id: &str, enriched: &EnrichedPrompt) -> AppResult<GenerateResponse> {
         let gift = store.get(gift_id)?;
 
         let style = gift
@@ -73,9 +108,16 @@ impl MusicGenTool {
             "lyrics": lyrics,
             "style": style,
             "title": title,
+            "genre": enriched.genre,
+            "tempo": enriched.tempo,
+            "mood": enriched.mood,
+            "vocal_style": enriched.vocal_style,
+            "instrumentation": enriched.instrumentation,
+            "production": enriched.production,
+            "exclude": enriched.exclude,
         });
 
-        let gen_req = GenRequest { prompt: prompt.to_string(), params };
+        let gen_req = GenRequest { prompt: enriched.prompt.clone(), params };
         let handle = self.gen_task.submit(gen_req).await?;
         let handle_json = serde_json::to_string(&handle)?;
 
@@ -290,12 +332,10 @@ async fn handle_done(
 }
 // ── Music Prompt Generation ──────────────────────────────────────────────────
 
-#[allow(dead_code, clippy::too_many_arguments)]
-/// Generate an optimized music-generation prompt using a provider-specific skill.
+/// Generate a structured, enriched music-generation prompt using the provider skill.
 ///
-/// Loads the skill template for `provider` ("suno", "mureka", "minimax"),
-/// substitutes the song info, calls the LLM, and returns the generated prompt
-/// string from the JSON response.
+/// Returns an `EnrichedPrompt` with all six style dimensions plus exclude tags,
+/// not just the flat Suno prompt string.
 pub async fn generate_music_prompt(
     chat_model: Arc<dyn ChatModel>,
     provider: &str,
@@ -306,7 +346,7 @@ pub async fn generate_music_prompt(
     scene: &str,
     name: &str,
     relationship: Option<&str>,
-) -> AppResult<String> {
+) -> AppResult<EnrichedPrompt> {
     let skill_template = MUSIC_PROMPT_SKILLS.get(provider).ok_or_else(|| {
         AppError::BadRequest(format!("unknown music provider: {provider}"))
     })?;
@@ -346,7 +386,6 @@ pub async fn generate_music_prompt(
         })
         .collect();
 
-    // Try the raw text as JSON first, then look for a code-fenced block.
     let json_str = serde_json::from_str::<Value>(&text)
         .ok()
         .map(|_| text.clone())
@@ -358,13 +397,41 @@ pub async fn generate_music_prompt(
                 .get("prompt")
                 .or_else(|| parsed.get("base_prompt"))
                 .and_then(Value::as_str)
-                .unwrap_or(&text);
-            return Ok(prompt.to_string());
+                .unwrap_or(&text)
+                .to_string();
+
+            let genre = parsed.get("genre").and_then(json_array).unwrap_or_default();
+            let tempo = parsed.get("tempo").and_then(str_or_empty).unwrap_or_default();
+            let mood = parsed.get("mood").and_then(json_array).unwrap_or_default();
+            let vocal_style = parsed.get("vocal_style").and_then(str_or_empty).unwrap_or_else(|| vocal.to_string());
+            let instrumentation = parsed.get("instrumentation").and_then(str_or_empty).unwrap_or_default();
+            let production = parsed.get("production").and_then(str_or_empty).unwrap_or_default();
+            let exclude = parsed.get("exclude").and_then(str_or_empty).unwrap_or_default();
+            let style_tags = parsed.get("style_tags").and_then(json_array).unwrap_or_default();
+
+            return Ok(EnrichedPrompt {
+                prompt,
+                genre,
+                tempo,
+                mood,
+                vocal_style,
+                instrumentation,
+                production,
+                exclude,
+                style_tags,
+            });
         }
     }
 
-    // Fallback: return the raw text trimmed.
-    Ok(text.trim().to_string())
+    Ok(EnrichedPrompt::fallback(style))
+}
+
+fn json_array(v: &Value) -> Option<Vec<String>> {
+    v.as_array().map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+}
+
+fn str_or_empty(v: &Value) -> Option<String> {
+    v.as_str().map(String::from)
 }
 
 #[allow(dead_code)]
