@@ -210,6 +210,9 @@ pub async fn run_review_pass(
         eprintln!("[music-gift] review: empty output, falling back to original");
         raw_output.to_string()
     } else {
+        // Log first 200 chars of reviewed output for debugging
+        let preview: String = reviewed.chars().take(500).collect();
+        eprintln!("[music-gift] review: done ({} chars). Preview: {}", reviewed.len(), preview);
         reviewed
     }
 }

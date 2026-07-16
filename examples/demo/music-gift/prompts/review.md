@@ -9,83 +9,84 @@ annotations (the format below). Your task is to review and fix.
 
 ═══ 10-POINT REVIEW CHECKLIST ═══
 
-Run every check. Auto-fix where possible, flag where not.
+Run every check. AUTO-FIX: pronunciation, performance cues, artist names.
+FLAG only: everything else.
 
-1. ☐ PRONUNCIATION (AUTO-FIX) — Every homograph MUST be phonetically spelled
-   in the lyrics. Apply these fixes directly:
+**CRITICAL: Every section tag MUST have a performance cue. This is the #1
+quality factor for Suno V5. Bare tags produce flat, generic output. Even if
+the original author didn't provide cues, you MUST add them.**
+
+1. ☐ PRONUNCIATION (AUTO-FIX) — Apply phonetic spelling directly in lyrics:
    live(verb)→liv  live(adj)→lyve  read(past)→red  read(pres)→reed
    lead(metal)→led  lead(guide)→leed  wind(twist)→wynd
    tear(rip)→tare  tear(cry)→teer  bow(bend)→bow  bass(music)→bayss
    close(shut)→cloze  close(near)→close
    Acronyms: spell out → "NASA"→"N-A-S-A"  "SQL"→"S-Q-L"
 
-2. ☐ PERFORMANCE CUES (AUTO-FIX) — Every section tag MUST have a delivery cue.
-   If bare: infer the emotional tone from the lyrics and add a cue.
-   ❌ [verse 1]      ✅ [verse 1 — quiet, confessional]
-   ❌ [chorus]        ✅ [chorus — soaring, anthemic]
-   ❌ [bridge]        ✅ [bridge — raw, breaking]
-   Keep ≤3 cues per section.
+2. ☐ PERFORMANCE CUES (AUTO-FIX — NON-NEGOTIABLE) — Suno V5 REQUIRES cues
+   on every section tag. Infer the emotional tone from surrounding lyrics:
+   ❌ [verse 1]     ✅ [verse 1 — tender, intimate]
+   ❌ [verse 2]     ✅ [verse 2 — bright, hopeful]
+   ❌ [chorus]      ✅ [chorus — soaring, anthemic]
+   ❌ [bridge]      ✅ [bridge — raw, breaking]
+   ≤3 cues per section. Every single tag. No exceptions.
 
-3. ☐ STRUCTURE TAGS (FLAG) — Section tags present ([verse], [chorus]).
-   At least 2 chorus sections. Flag if missing.
+3. ☐ STRUCTURE TAGS (FLAG) — Has [verse]/[chorus] tags? ≥2 choruses?
 
-4. ☐ WORD COUNT (FLAG) — 200-400 words for standard songs. Flag if under 100
-   or over 600.
+4. ☐ WORD COUNT (FLAG) — 200-400 words standard. Flag <100 or >600.
 
-5. ☐ SECTION LENGTH (FLAG) — Check against genre limits. See table below. Flag
-   any section exceeding its max lines:
-   Pop/Verse:8  Chorus:6 | Rock/Verse:8  Chorus:6 | HipHop/Verse:8  Chorus:6
-   Folk/Verse:8 | Electronic/Verse:6 | Ballad/Verse:6 | Ambient/Verse:4
+5. ☐ SECTION LENGTH (FLAG) — vs genre limits:
+   Pop/Verse≤8 Chorus≤6 | Rock/Verse≤8 | Folk/Verse≤8
+   Electronic/Verse≤6 | Ballad/Verse≤6 | Ambient/Verse≤4
 
-6. ☐ RHYME (FLAG) — Self-rhymes (word rhyming with itself), lazy repeats
-   (mind/mind, time/time), forced rhymes. Flag, do not rewrite.
+6. ☐ RHYME (FLAG) — Self-rhymes, lazy repeats, forced rhymes. Flag only.
 
-7. ☐ TWIN VERSES (FLAG) — Does V2 just rephrase V1 with synonyms? Flag it.
+7. ☐ TWIN VERSES (FLAG) — V2 rephrasing V1? Flag it.
 
-8. ☐ VERSE-CHORUS ECHO (FLAG) — Do the last 2 lines of any verse share a key
-   phrase, rhyme word, or image with the first 2 lines of the chorus? Flag it.
+8. ☐ VERSE-CHORUS ECHO (FLAG) — Last 2 verse lines share phrase/rhyme
+   with first 2 chorus lines? Flag it.
 
-9. ☐ PITFALLS (FLAG) — Check for: filler phrases, inverted word order for
-   rhyme, clichés ("cold as ice", "heart of gold"), generic abstractions.
+9. ☐ PITFALLS (FLAG) — Filler phrases, inverted word order for rhyme,
+   clichés ("cold as ice", "heart of gold"), generic abstractions.
 
-10. ☐ ARTIST NAMES (AUTO-FIX) — If lyrics or style contain any artist name,
-    replace with genre/style description. E.g. "like Adele" → "soulful ballad".
+10. ☐ ARTIST NAMES (AUTO-FIX) — Replace with genre/style descriptions.
+   "like Adele" → "soulful ballad style"
 
-═══ YOUR OUTPUT FORMAT ═══
+═══ YOUR OUTPUT ═══
 
-Return the corrected output. Keep the original format EXACTLY — same tags,
-same structure. Only fix the issues found. If nothing to fix, return the
-original unchanged.
+Return the COMPLETE corrected output. Keep the EXACT format — same tags,
+same structure. Only fix the issues found. Section tags MUST have cues.
 
 <<<LYRICS>>>
-... (corrected lyrics with phonetic spellings and performance cues)
+... (corrected lyrics — every section tag has a cue, all homographs phonetically spelled)
 <<<STYLE>>>...<<<STYLE_END>>>
 <<<TITLE>>>...<<<TITLE_END>>>
 <<<VOCAL>>>...<<<VOCAL_END>>>
 
-Then append a review summary:
+Append this review summary:
 
 ---
 ## Review Pass
 
-| Point | Status | Detail |
-|-------|--------|--------|
-| Pronunciation | ✅ / 🔧 | 2 homographs fixed: live→lyve, read→red |
-| Performance Cues | ✅ / 🔧 | 4 bare tags given cues |
-| Structure Tags | ✅ / ⚠️ | All present |
-| Word Count | 247 | Within range |
-| Section Length | ✅ / ⚠️ | V2 at 8 lines — at max for pop |
-| Rhyme | ✅ | No issues |
-| Twin Verses | ✅ | V2 distinct from V1 |
-| Verse-Chorus Echo | ✅ | Clean |
-| Pitfalls | ✅ | No clichés found |
-| Artist Names | ✅ | None detected |
+| # | Check | Status | Detail |
+|---|-------|--------|--------|
+| 1 | Pronunciation | ✅ / 🔧 | N homographs fixed |
+| 2 | Performance Cues | ✅ / 🔧 | N tags given cues |
+| 3 | Structure Tags | ✅ / ⚠️ | |
+| 4 | Word Count | N | |
+| 5 | Section Length | ✅ / ⚠️ | |
+| 6 | Rhyme | ✅ | |
+| 7 | Twin Verses | ✅ | |
+| 8 | Verse-Chorus Echo | ✅ | |
+| 9 | Pitfalls | ✅ | |
+| 10 | Artist Names | ✅ | |
 
-Verdict: READY / NEEDS FIXES (N issues)
+Verdict: READY / NEEDS FIXES (N issues, M auto-fixed)
 
 ═══ CRITICAL RULES ═══
 
-- NEVER add new content, new verses, new metaphors. You correct only.
+- NEVER add new content, new verses, new metaphors. Correct only.
 - NEVER change the emotional tone or narrative.
-- ALWAYS preserve the original formatting tags (<<<LYRICS>>>, etc.).
-- If pronunciation is ambiguous (can't determine meaning), flag it — don't guess.
+- ALWAYS preserve the original formatting tags.
+- If pronunciation is ambiguous, flag it — don't guess.
+- Performance cues are MANDATORY on every single section tag.
