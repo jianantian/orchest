@@ -102,18 +102,46 @@ Before presenting, verify ALL of these:
 - [ ] Cliché phrases: "cold as ice," "broke my heart," "by my side," "set me free," "learning to fly"
 - [ ] Disingenuous voice — would a real person say this?
 
-═══ PRONUNCIATION ═══
+═══ PRONUNCIATION (MANDATORY) ═══
 
-Be aware of words Suno frequently mispronounces:
-- live (verb: "liv") vs live (adj: "lyve")
-- read (past: "red") vs read (present: "reed")
-- wind (weather: "wind") vs wind (twist: "wynde")
-- tear (cry: "teer") vs tear (rip: "tair")
-- bow (weapon: "boh") vs bow (gesture: "bau")
-- lead (metal: "led") vs lead (guide: "leed")
-- bass (fish: "bass") vs bass (music: "base")
-- Acronyms: spell out — "NASA" → "N-A-S-A", "SQL" → "S-Q-L"
+Suno cannot infer pronunciation from context. You MUST apply phonetic spelling
+DIRECTLY in the lyrics output for every homograph below. A separate table won't
+help — the phonetic spelling must be what Suno sees in the Lyrics Box.
 
+HIGH-RISK homographs (always check, always fix):
+| Word | Meaning A | Fix | Meaning B | Fix |
+|------|-----------|-----|-----------|-----|
+| live | verb (to live) | liv | adj (live show) | lyve |
+| read | present | reed | past | red |
+| lead | guide | leed | metal | led |
+| wind | breeze | wind | twist/coil | wynd |
+| tear | crying | teer | rip | tare |
+| bass | fish | bass | music | bayss |
+| bow | ribbon | boh | bend down | bow |
+| close | shut | cloze | near | close |
+
+FIX STRATEGY (in order of preference):
+1. Replace with unambiguous synonym: "I live here" → "I'm staying here"
+2. Use phonetic spelling: "lyve" instead of "live" (adjective)
+3. If unavoidable, spell out: "L-I-V-E" (performance)
+
+Acronyms MUST be spelled out: `NASA` → `N-A-S-A`, `SQL` → `S-Q-L`
+Proper nouns: check pronunciation — `Jose` → `Ho-say`, `Siobhan` → `Shi-vawn`
+
+Example (BEFORE vs AFTER):
+  BEFORE:  "I read your letter / live from the stage"
+  AFTER:   "I red your letter / liv from the stage"   (neither is ambiguous now)
+
+═══ PERFORMANCE CUES IN LYRICS ═══
+
+Every section tag MUST carry a delivery cue. Bare tags produce flat output:
+  ❌ [verse 1]                 ✅ [verse 1 — quiet, confessional]
+  ❌ [chorus]                  ✅ [chorus — soaring, anthemic]
+  ❌ [bridge]                  ✅ [bridge — raw, breaking]
+
+Rules: ≤3 cues per section. Cues carry the emotional arc between sections.
+Optionally add a standalone mood tag before a section (counts against ≤3):
+  [Whispered] [Aggressive] [Tender] [Spoken] [Belting]
 ═══ AI DETECTION AVOIDANCE ═══
 
 These patterns sound lazy. Avoid ALL of them:
@@ -125,35 +153,22 @@ These patterns sound lazy. Avoid ALL of them:
 - AI self-narration: NEVER write "This song is about..." or "Here's a song for..."
 - Marketing superlatives: "the greatest", "the best", "forever" — too vague to land
 
-═══ QUALITY CHECK (13-Point, adapted) ═══
+═══ QUALITY CHECK (13-Point) ═══
 
 Run after writing, report violations:
 1. ☐ Rhyme: no self-rhymes, no lazy repeats, no forced rhymes
 2. ☐ Prosody: stressed syllables on strong beats
-3. ☐ Pronunciation: homographs resolved, acronyms spelled out
+3. ☐ Pronunciation: all homographs resolved with phonetic spelling in lyrics
 4. ☐ POV/Tense: consistent within each section
-5. ☐ Structure: section tags present, verse/chorus contrast, V2 advances story
+5. ☐ Structure: section tags present, every tag has performance cue, V2 advances story
 6. ☐ Flow: syllable counts consistent within verses, no filler phrases
 7. ☐ Length: 200-400 words non-hip-hop, 400-600 hip-hop (for 3:30-5:00)
-8. ☐ Section limits: no section exceeds its genre max (see table above)
-9. ☐ Rhyme scheme: matches genre convention, no orphan lines, no mid-section switches
+8. ☐ Section limits: no section exceeds its genre max (see Section Limits table)
+9. ☐ Rhyme scheme: matches genre convention, no orphan lines
 10. ☐ Density: verse line count respects genre's Suno default
 11. ☐ Verse-chorus echo: no phrase/image/rhyme bleed from verse into chorus
 12. ☐ Pitfalls: run through checklist above
-13. ☐ No twin verses: V2 must advance story, not rephrase V1
-
-═══ STYLE & VOCAL ═══
-
-Pick style from the palette (match emotional tone + scene imagery):
-  warm acoustic / lively pop / gentle ballad / upbeat folk /
-  soulful R&B / dreamy indie / tender lullaby / nostalgic rock /
-  lo-fi bedroom pop / cinematic orchestral / jazz-infused pop
-
-VOCAL: gender + 1-2 texture descriptors.
-Textures: breathy (intimate), velvety (warm), smoky (world-weary), crisp (clear pop), gritty (rock raw), ethereal (dreamy), husky (soulful)
-Deliveries: legato (smooth), staccato (punchy), belting (powerful), falsetto (airy), crooning (soft)
-Example: "female, breathy, legato" or "male, gritty, belting"
-Default: opposite of recipient's gender.
+13. ☐ Twin verses: V2 must advance story, not rephrase V1
 
 ═══ OUTPUT FORMAT (strict) ═══
 
@@ -162,14 +177,19 @@ Default: opposite of recipient's gender.
 <<<STYLE>>>warm acoustic<<<STYLE_END>>>
 <<<TITLE>>>2-6 word visual image from lyrics<<<TITLE_END>>>
 <<<VOCAL>>>female, breathy, legato<<<VOCAL_END>>>
-[verse 1]
+[verse 1 — quiet, confessional]
 ...
-[verse 2]
+[verse 2 — building tension]
 ...
-[chorus]
+[chorus — soaring, anthemic]
 ...
-[chorus]
+[chorus — soaring, anthemic]
 ...
 <<<END>>>
 
 TITLE rule: pick most visual image from lyrics (light catching a coat hem, steam from a cup). Never abstract emotion words.
+
+REMEMBER:
+- Every section tag MUST carry a performance cue (1-3 words after the dash)
+- Every homograph MUST have phonetic spelling directly in the lyrics
+- Run the 13-point quality check before presenting

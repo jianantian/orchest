@@ -1,7 +1,26 @@
-//! Lyrics validation — runs before Suno generation to catch structural issues.
+//! Lyrics validation — runs before Suno generation to catch structural issues
+//! and content problems (artist name blocklist, section tags, word count, etc.).
 //!
-//! Returns warnings that are included in the generation params so Suno
-//! has context to compensate.
+//! Returns warnings that are logged before Suno submission.
+
+/// Suno V5 rejects content containing artist/band names. This compact blocklist
+/// covers the most common false positives from LLM-generated text.
+const ARTIST_BLOCKLIST: &[&str] = &[
+    "sarah brightman", "enya", "adele", "ed sheeran", "taylor swift",
+    "beyonce", "billie eilish", "the weeknd", "drake", "bad bunny",
+    "nirvana", "the beatles", "queen", "metallica", "coldplay",
+    "maroon 5", "bruno mars", "ariana grande",
+];
+
+/// Check if text contains any blocked artist names.
+fn check_artist_names(text: &str) -> Vec<String> {
+    let lowered = text.to_lowercase();
+    ARTIST_BLOCKLIST
+        .iter()
+        .filter(|name| lowered.contains(*name))
+        .map(|name| format!("Artist name '{}' found in lyrics — Suno will likely reject this. Replace with genre/style descriptors.", name))
+        .collect()
+}
 
 /// Result of lyrics validation.
 #[derive(Debug, Default)]
@@ -17,12 +36,17 @@ pub struct LyricsValidation {
 /// Validate lyrics and return warnings + stats.
 ///
 /// Checks:
-/// 1. Has [Verse] or [Chorus] section tags
-/// 2. At least 2 chorus sections for song structure
-/// 3. Word count (warns if under 100 or over 600)
-/// 4. No twin verses (V1 first line == V2 first line)
+/// 1. Artist name blocklist
+/// 2. Has [Verse] or [Chorus] structure tags
+/// 3. At least 2 chorus sections for song structure
+/// 4. Word count (warns if under 100 or over 600)
+/// 5. No twin verses (V1 first line == V2 first line)
 pub fn validate_lyrics(lyrics: &str) -> LyricsValidation {
     let mut v = LyricsValidation::default();
+
+    // Artist name blocklist check
+    let artist_warnings = check_artist_names(lyrics);
+    v.warnings.extend(artist_warnings);
 
     // Count section tags
     let lowered = lyrics.to_lowercase();
@@ -66,7 +90,7 @@ pub fn validate_lyrics(lyrics: &str) -> LyricsValidation {
         }
         if in_verse && !trimmed.is_empty() {
             verse_starts.push(trimmed);
-            in_verse = false; // Only capture first line of each verse
+            in_verse = false;
         }
     }
     for i in 0..verse_starts.len() {
@@ -81,4 +105,9 @@ pub fn validate_lyrics(lyrics: &str) -> LyricsValidation {
     }
 
     v
+}
+
+/// Also run the artist name check against the generated style prompt.
+pub fn check_style_prompt(prompt: &str) -> Vec<String> {
+    check_artist_names(prompt)
 }

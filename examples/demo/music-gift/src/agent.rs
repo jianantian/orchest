@@ -135,6 +135,85 @@ pub async fn run_chat_agent(
     Ok(full_text)
 }
 
+/// Review system prompt compiled into the binary.
+static REVIEW_PROMPT: &str = include_str!("../prompts/review.md");
+
+/// Run a second-pass review agent on the raw chat output.
+///
+/// The reviewer checks pronunciation, performance cues, structure,
+/// and content issues using a 10-point checklist derived from
+/// bitwize-music's lyric-reviewer skill (CC0).
+///
+/// Returns corrected output in the same tag format. Falls back to
+/// the original on error.
+pub async fn run_review_pass(
+    model: Arc<dyn ChatModel>,
+    raw_output: &str,
+) -> String {
+    let config = match AgentConfig::builder("music-gift/review")
+        .max_steps(1)
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[music-gift] review: building config: {e}");
+            return raw_output.to_string();
+        }
+    };
+    let messages = vec![
+        Message {
+            role: orchest_protocol::Role::System,
+            content: vec![ContentBlock::Text(REVIEW_PROMPT.to_string())],
+        },
+        Message {
+            role: orchest_protocol::Role::User,
+            content: vec![ContentBlock::Text(raw_output.to_string())],
+        },
+    ];
+
+    let blocks: Vec<ContentBlock> = messages.into_iter().flat_map(|m| m.content).collect();
+    let input = match RunInput::from_blocks(blocks) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("[music-gift] review: building input: {e}");
+            return raw_output.to_string();
+        }
+    };
+
+    let tool_registry = ToolRegistry::new(); // Review agent uses no tools.
+    let (handle, mut rx) = AgentRun::start(config, input, model, tool_registry);
+
+    let mut reviewed = String::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            RuntimeEvent::ModelStreamChunk { delta } => {
+                if let StreamEvent::Text { delta: text } = delta {
+                    reviewed.push_str(&text);
+                }
+            }
+            RuntimeEvent::RunCompleted { output } => {
+                if reviewed.is_empty() {
+                    if let Some(text) = output.as_str() {
+                        reviewed = text.to_string();
+                    }
+                }
+            }
+            RuntimeEvent::RunFailed { error } => {
+                eprintln!("[music-gift] review: agent failed: {error}");
+            }
+            _ => {}
+        }
+    }
+    handle.wait().await;
+
+    if reviewed.is_empty() {
+        eprintln!("[music-gift] review: empty output, falling back to original");
+        raw_output.to_string()
+    } else {
+        reviewed
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use orchest_protocol::{MediaSource, Role};

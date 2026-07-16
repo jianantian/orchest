@@ -90,11 +90,14 @@ pub async fn chat_handler(
 
     let (tx, rx) = mpsc::channel::<SseEvent>(64);
 
+    let review_model = state.chat_model.clone();
     tokio::spawn(async move {
         let result = run_chat_agent(state.chat_model.clone(), messages, tx.clone()).await;
         match result {
             Ok(full_text) => {
-                let parsed = parse_lyrics(&full_text);
+                // Second pass: review agent checks pronunciation, cues, structure
+                let reviewed = crate::agent::run_review_pass(review_model, &full_text).await;
+                let parsed = parse_lyrics(&reviewed);
                 let done = SseEvent::Done {
                     has_lyrics: parsed.has_lyrics,
                     lyrics: parsed.lyrics,
@@ -338,6 +341,13 @@ pub async fn generate_music(
     let enriched = crate::tools::music_gen::generate_music_prompt(
         state.music_prompt_model.clone(), &provider, &lyrics, style, title, "female", scene, name, Some(relationship),
     ).await.unwrap_or_else(|_| EnrichedPrompt::fallback(style));
+
+    // Check generated style prompt for artist names
+    let style_warnings = crate::tools::lyrics_validator::check_style_prompt(&enriched.prompt);
+    for w in &style_warnings {
+        eprintln!("[music-gift] style warn [{id}]: {w}");
+    }
+
     let tool = MusicGenTool::new(state.gen_task.clone());
     let resp = tool.submit(&state.gift_store, &id, &enriched).await?;
     Ok((StatusCode::OK, Json(resp)))
