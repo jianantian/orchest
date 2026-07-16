@@ -15,6 +15,8 @@ export interface ReviewCardProps {
   styleTags: string[];
   onSubmit: (data: ReviewData) => void;
   creating: boolean;
+  /** Review summary from the second-pass quality reviewer (Markdown table). */
+  review?: string;
 }
 
 export function ReviewCard({
@@ -25,12 +27,16 @@ export function ReviewCard({
   styleTags,
   onSubmit,
   creating,
+  review,
 }: ReviewCardProps) {
   const [lyrics, setLyrics] = useState(initialLyrics);
   const [style, setStyle] = useState(initialStyle);
   const [title, setTitle] = useState(initialTitle);
   const [vocal, setVocal] = useState(initialVocal);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [reviewExpanded, setReviewExpanded] = useState(false);
+
+  const reviewFixes = review ? (review.match(/🔧/g) || []).length : 0;
 
   function toggleTag(tag: string) {
     setSelectedTags((prev) =>
@@ -55,6 +61,23 @@ export function ReviewCard({
       <div className="review-header">Review your song</div>
       <div className="review-sub">Edit anything before creating</div>
 
+      {review && (
+        <div className={`review-badge ${reviewExpanded ? "expanded" : ""}`}>
+          <button
+            className="review-badge-btn"
+            onClick={() => setReviewExpanded(!reviewExpanded)}
+            aria-expanded={reviewExpanded}
+          >
+            <span className="review-badge-icon">&#10003;</span>
+            Quality checked
+            {reviewFixes > 0 && <span className="review-fixes"> · {reviewFixes} fix{reviewFixes !== 1 ? "es" : ""}</span>}
+            <span className="review-chevron">{reviewExpanded ? "▲" : "▼"}</span>
+          </button>
+          {reviewExpanded && (
+            <pre className="review-detail">{review}</pre>
+          )}
+        </div>
+      )}
       <textarea
         className="review-textarea"
         value={lyrics}

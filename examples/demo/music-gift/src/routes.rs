@@ -98,12 +98,14 @@ pub async fn chat_handler(
                 // Second pass: review agent checks pronunciation, cues, structure
                 let reviewed = crate::agent::run_review_pass(review_model, &full_text).await;
                 let parsed = parse_lyrics(&reviewed);
+                let review = crate::agent::extract_review_summary(&reviewed);
                 let done = SseEvent::Done {
                     has_lyrics: parsed.has_lyrics,
                     lyrics: parsed.lyrics,
                     style: parsed.style,
                     title: parsed.title,
                     vocal: parsed.vocal,
+                    review,
                 };
                 let _ = tx.send(done).await;
             }

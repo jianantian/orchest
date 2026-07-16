@@ -120,13 +120,16 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
 
   // ── Chat ────────────────────────────────────────
 
+  const [review, setReview] = useState<string | null>(null);
+
   async function startChat(userText: string | null) {
     const msgs: ChatMessage[] = userText
       ? [...messages, { role: "user" as const, content: userText }]
       : [{ role: "user" as const, content: "hi" }];
     if (userText) act.setMsg(msgs);
-    setStreaming(true); setError(null);
+    setStreaming(true); setError(null); setReview(null);
     let full = "";
+    let done = false;
 
     try {
       const m = metaRef.current;
@@ -135,14 +138,20 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
         if (e.type === "Delta") {
           full += e.text;
           act.setMsg(userText ? [...msgs, { role: "assistant", content: full }] : [{ role: "assistant", content: full }]);
-          if (full.includes("<<<LYRICS>>>")) {
-            const lm = full.match(/<<<LYRICS>>>([\s\S]*?)<<<END>>>/);
-            if (lm) { act.setMsg([{ role: "assistant", content: full }]); setStreaming(false); act.go("review"); return; }
+        } else if (e.type === "Done") {
+          done = true;
+          if (e.has_lyrics) {
+            // Done event carries the reviewed lyrics from the review pass
+            act.setMsg([{ role: "assistant", content: full || "" }]);
+            setReview(e.review ?? null);
           }
         } else if (e.type === "Error") setError(e.error);
       }
     } catch (e) { setError(e instanceof Error ? e.message : "Chat failed"); }
-    finally { setStreaming(false); }
+    finally {
+      setStreaming(false);
+      if (done && full.includes("<<<LYRICS>>>")) act.go("review");
+    }
   }
 
   async function handleChatSend() {
@@ -150,8 +159,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
     setInput(""); await startChat(text);
   }
 
-  // ── Review / Music ──────────────────────────────
-
+  // ── Extracted from the last assistant message ──
   const lastMsg = messages.filter((m) => m.role === "assistant").pop();
   const lyrics = lastMsg?.content?.match(/<<<LYRICS>>>([\s\S]*?)<<<END>>>/)?.[1]?.trim() ?? "";
   const style = lastMsg?.content?.match(/<<<STYLE>>>([\s\S]*?)<<<STYLE_END>>>/)?.[1]?.trim() ?? "";
@@ -197,7 +205,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
 
 
         {step === "chat" && messages.map((msg, i) => <div key={`m-${i}`} className={`bubble ${msg.role === "assistant" ? "bot" : msg.role}`}>{msg.content.replace(/<<<[^>]+>>>/g, "")}</div>)}
-        {step === "review" && lyrics && <ReviewCard lyrics={lyrics} style={style} title={title} vocal={vocal} styleTags={DEFAULT_STYLE_TAGS} onSubmit={handleReviewSubmit} creating={gen.state === "generating"} />}
+        {step === "review" && lyrics && <ReviewCard lyrics={lyrics} style={style} title={title} vocal={vocal} styleTags={DEFAULT_STYLE_TAGS} onSubmit={handleReviewSubmit} creating={gen.state === "generating"} review={review ?? undefined} />}
         {step === "music" && gen.giftId && <MusicCard initialState={gen.state === "ready" ? "ready" : gen.state === "error" ? "error" : "generating"} onOpen={handleMusicOpen} onRetry={handleMusicRetry} />}
 
         <div ref={bottomRef} />

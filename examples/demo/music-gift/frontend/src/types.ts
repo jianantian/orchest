@@ -27,7 +27,6 @@ export interface ChatRequest {
   photos: string[];
 }
 
-/** SSE events from POST /api/chat — tagged union via `type` discriminator. */
 export type SseEvent =
   | { type: 'Delta'; text: string }
   | {
@@ -37,6 +36,7 @@ export type SseEvent =
       style: string;
       title: string;
       vocal: string;
+      review?: string;
     }
   | { type: 'Error'; error: string };
 

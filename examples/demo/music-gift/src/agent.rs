@@ -59,6 +59,22 @@ fn extract_between(text: &str, open: &str, close: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+/// Extract the "## Review Pass" table from the reviewed output (if present).
+///
+/// The reviewer appends a review summary after the `<<<END>>>` tag.
+pub fn extract_review_summary(reviewed: &str) -> Option<String> {
+    if let Some(idx) = reviewed.find("## Review Pass") {
+        let summary: String = reviewed[idx..]
+            .lines()
+            .take_while(|l| !l.is_empty() || l.starts_with('|') || l.starts_with('#') || l.starts_with("Verdict") || l.starts_with('-'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if summary.is_empty() { None } else { Some(summary) }
+    } else {
+        None
+    }
+}
+
 
 pub mod message;
 pub use message::*;
@@ -73,10 +89,11 @@ pub enum SseEvent {
         style: String,
         title: String,
         vocal: String,
+        /// Review report from the second-pass review agent (may be empty if review skipped).
+        review: Option<String>,
     },
     Error { error: String },
 }
-
 /// Start a chat agent run using Orchest's AgentRun and stream events via tx.
 /// Returns the full text output.
 pub async fn run_chat_agent(
