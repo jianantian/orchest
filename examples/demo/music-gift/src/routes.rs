@@ -95,10 +95,21 @@ pub async fn chat_handler(
         let result = run_chat_agent(state.chat_model.clone(), messages, tx.clone()).await;
         match result {
             Ok(full_text) => {
-                // Second pass: review agent checks pronunciation, cues, structure
-                let reviewed = crate::agent::run_review_pass(review_model, &full_text).await;
+                let has_lyrics = full_text.contains("<<<LYRICS>>>");
+                // Only run review pass when the agent actually generated lyrics.
+                // Skip it for follow-up questions — the reviewer gets confused
+                // by conversational text.
+                let reviewed = if has_lyrics {
+                    crate::agent::run_review_pass(review_model, &full_text).await
+                } else {
+                    full_text.clone()
+                };
                 let parsed = parse_lyrics(&reviewed);
-                let review = crate::agent::extract_review_summary(&reviewed);
+                let review = if has_lyrics {
+                    crate::agent::extract_review_summary(&reviewed)
+                } else {
+                    None
+                };
                 let done = SseEvent::Done {
                     has_lyrics: parsed.has_lyrics,
                     lyrics: parsed.lyrics,
