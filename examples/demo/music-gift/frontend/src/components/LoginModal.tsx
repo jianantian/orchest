@@ -133,7 +133,7 @@ export function LoginModal() {
         )}
 
         {mode === "magic" && sent && (
-          <p className="login-hint">No password needed — tap the link in your email to sign in.</p>
+          <p className="login-hint">No password needed. Tap the link in your email to sign in.</p>
         )}
 
         <button className="login-close" onClick={() => setOpen(false)}>Close</button>

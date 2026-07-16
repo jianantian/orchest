@@ -122,7 +122,7 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
           </div>
         )}
         <textarea ref={lyricsRef} className="lyrics-manuscript" value={lyrics} onChange={e => setLyrics(e.target.value)}
-          placeholder={instrumental ? "Instrumental — no lyrics needed" : t("paste_lyrics_ph")}
+          placeholder={instrumental ? "Instrumental, no lyrics needed" : t("paste_lyrics_ph")}
           disabled={instrumental} rows={instrumental ? 2 : 7} />
       </section>
 
