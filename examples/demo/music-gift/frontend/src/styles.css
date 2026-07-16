@@ -78,6 +78,63 @@
   .face.velvet { background: #1a0e06; }
   .face.lit-top { background: linear-gradient(180deg, #4a3828, #3a2a1c); }
   #box-shadow { background: radial-gradient(ellipse at center, rgba(0,0,0,0.4), transparent 70%); }
+
+  /* ── Free Create panel dark-mode refinements ── */
+
+  /* Mode bar: lift from the dark background with a soft border */
+  .mode-bar { background: var(--surface); border: 1px solid var(--border); }
+  .mode-btn.active {
+    background: var(--surface2);
+    box-shadow: 0 1px 6px rgba(212, 165, 116, 0.12), inset 0 1px 0 rgba(255,255,255,0.03);
+  }
+
+  /* Suggest chips: subtle surface tone so they feel interactive */
+  .suggest-chip {
+    background: var(--surface);
+    color: var(--text2);
+  }
+  .suggest-chip:hover {
+    border-color: var(--gold);
+    color: var(--gold);
+    background: var(--gold-bg);
+  }
+  .suggest-refresh:hover {
+    border-color: var(--gold);
+    color: var(--gold);
+  }
+
+  /* Create button hover: brighter gold, not darker */
+  .btn-create:hover { background: #d49960; }
+
+  /* Accent prompt bar: gold border on dark surface reads clearly */
+  .prompt-bar-input {
+    background: var(--surface);
+    border-color: var(--gold-action);
+  }
+
+  /* More Options accordion body: tighten padding for dark */
+  .more-body { background: var(--bg); }
+
+  /* Gender options: the toggle needs a background tone */
+  .gender-opt { border-color: var(--border); }
+  .gender-opt.on {
+    border-color: var(--gold-border);
+    background: var(--gold-bg);
+    color: var(--gold);
+  }
+
+  /* Spinner: brighter track for dark visibility */
+  .spinner { border-color: var(--border); }
+
+  /* Review badge: match dark-mode gold tone */
+  .review-badge-btn { background: rgba(212, 165, 116, 0.12); }
+  .review-badge-btn:hover { background: rgba(212, 165, 116, 0.22); }
+
+  /* Style tags in review: subtle surface instead of bg */
+  .style-tag { background: var(--surface); }
+
+  /* Toggle buttons: active state more visible */
+  .toggle-btn.on { background: var(--gold-bg); }
 }
 
 /* ── Motion tokens (transitions-dev) ────────── */
