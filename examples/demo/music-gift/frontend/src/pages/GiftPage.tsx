@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import type { Gift } from "../types";
 import { generateMusic, getGift, likeGift } from "../api";
 import AudioPlayer from "../components/AudioPlayer";
@@ -219,6 +219,7 @@ export default function GiftPage() {
         ) : null}
 
         <div className="gift-actions">
+          <Link to="/" className="btn btn-secondary">Edit & Try Again</Link>
           <button className="btn btn-secondary" onClick={() => void handleLike()}>
             {liked ? "♥" : "♡"} {likeCount}
           </button>

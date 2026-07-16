@@ -177,7 +177,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
     if (gen.error) setError(gen.error);
   }
 
-  function handleMusicOpen() { if (gen.giftId) { clearGuided(); onNavigate(gen.giftId); } }
+  function handleMusicOpen() { if (gen.giftId) { onNavigate(gen.giftId); } }
   function handleMusicRetry() { if (gen.giftId) gen.retry(gen.giftId); }
 
   // ── Pills configuration per step ─────────────────
@@ -197,7 +197,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
         {bubbles.map((b, i) => <div key={`b-${i}`} className={`bubble ${b.role}`}>{b.text}</div>)}
 
         {step === "relationship" && <PillsRow options={relPills} onSelect={handleRelPick} />}
-        {step === "relationship" && <GoldPill label={t("instrumental_btn")} onClick={() => onSwitchToFree?.()} />}
+        {step === "relationship" && <GoldPill label={t("instrumental_btn")} onClick={() => { clearGuided(); onSwitchToFree?.(); }} />}
 
         {step === "name" && <InlineInput placeholder={t("name_placeholder")} onSubmit={handleName} />}
 
