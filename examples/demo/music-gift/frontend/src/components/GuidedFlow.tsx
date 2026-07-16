@@ -168,8 +168,12 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
 
   async function handleReviewSubmit(data: ReviewData) {
     const m = metaRef.current;
-    setError(null); act.go("music");
-    await gen.start({ lyrics: data.lyrics, style: data.style, title: data.title, vocal: data.vocal, meta: { name: m.name, relationship: m.relationshipLabel, scenario: m.scenarioLabel, gender: m.gender }, lang });
+    setError(null);
+    // Start generation first — sets state to "generating" synchronously,
+    // so MusicCard never sees "idle"
+    const genPromise = gen.start({ lyrics: data.lyrics, style: data.style, title: data.title, vocal: data.vocal, meta: { name: m.name, relationship: m.relationshipLabel, scenario: m.scenarioLabel, gender: m.gender }, lang });
+    act.go("music");
+    await genPromise;
     if (gen.error) setError(gen.error);
   }
 
@@ -202,9 +206,22 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
         {step === "birthday" && <BirthdayPicker months={months} skipLabel={t("bday_skip")} onPick={handleBirthday} />}
 
         {step === "scenario" && <PillsRow options={scenPills} onSelect={handleScenario} />}
-
-
         {step === "chat" && messages.map((msg, i) => <div key={`m-${i}`} className={`bubble ${msg.role === "assistant" ? "bot" : msg.role}`}>{msg.content.replace(/<<<[^>]+>>>/g, "")}</div>)}
+
+        {/* Typing indicator: shown while waiting for the first assistant response */}
+        {streaming && step === "chat" && messages.filter(m => m.role === "assistant").length === 0 && (
+          <div className="bubble bot typing-indicator" aria-label="Assistant is typing">
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+          </div>
+        )}
+
+        {/* Pre-generation transition: gen.start() fired but no giftId yet */}
+        {step === "music" && !gen.giftId && gen.state === "generating" && (
+          <div className="bubble bot" style={{ opacity: 0.7 }}>Creating your gift, one moment...</div>
+        )}
+
         {step === "review" && lyrics && <ReviewCard lyrics={lyrics} style={style} title={title} vocal={vocal} styleTags={DEFAULT_STYLE_TAGS} onSubmit={handleReviewSubmit} creating={gen.state === "generating"} review={review ?? undefined} />}
         {step === "music" && gen.giftId && <MusicCard initialState={gen.state === "ready" ? "ready" : gen.state === "error" ? "error" : "generating"} onOpen={handleMusicOpen} onRetry={handleMusicRetry} />}
 

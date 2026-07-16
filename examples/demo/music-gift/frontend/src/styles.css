@@ -1020,6 +1020,27 @@ body::after {
   color: var(--text); font-size: 14px;
 }
 
+/* ── Typing indicator (chat waiting) ────────── */
+.typing-indicator {
+  display: inline-flex; gap: 4px; padding: 14px 18px;
+}
+.typing-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--text3);
+  animation: typingBounce 1.4s ease-in-out infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typingBounce {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-dot { animation: none; opacity: 0.6; }
+}
+
 /* Pills (interactive options) */
 .pills-wrap {
   display: flex; flex-wrap: wrap; gap: 8px;
