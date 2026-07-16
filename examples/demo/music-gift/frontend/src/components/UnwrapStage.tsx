@@ -3,11 +3,13 @@ import { useEffect, useRef, useState } from "react";
 interface UnwrapStageProps {
   title: string;
   name: string;
+  onClose?: () => void;
 }
+
 
 const MOTE_COUNT = 12;
 
-export function UnwrapStage({ title, name }: UnwrapStageProps) {
+export function UnwrapStage({ title, name, onClose }: UnwrapStageProps) {
   const [closing, setClosing] = useState(false);
   const sceneRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef(false);
@@ -74,6 +76,7 @@ export function UnwrapStage({ title, name }: UnwrapStageProps) {
 
     setTimeout(() => stage.classList.add("closing"), 2000);
     setTimeout(() => {
+      onClose?.();
       stage.remove();
       try {
         const giftId = location.pathname.split("/").pop();

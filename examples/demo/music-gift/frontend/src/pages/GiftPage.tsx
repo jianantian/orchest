@@ -19,6 +19,7 @@ export default function GiftPage() {
   const [countdownHtml, setCountdownHtml] = useState<string | null>(null);
   const [countdownPending, setCountdownPending] = useState(false);
   const esRef = useRef<EventSource | null>(null);
+  const [revealed, setRevealed] = useState(false);
   const [lrcLines, setLrcLines] = useState<LRCLine[] | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const cdPollRef = useRef<number | undefined>(undefined);
@@ -151,8 +152,8 @@ export default function GiftPage() {
 
   return (
     <>
-      {showUnwrap && <UnwrapStage title={title} name={name} />}
-      <div className="gift-page">
+      {showUnwrap && <UnwrapStage title={title} name={name} onClose={() => setRevealed(true)} />}
+      <div className={`gift-page${revealed ? " revealed" : ""}`}>
         <div className="gift-hero">
           <h1 className="gift-title">{title}</h1>
           {name && (

@@ -478,6 +478,48 @@ body::after {
   display: flex; flex-direction: column; gap: 18px;
 }
 
+/* ── Gift page reveal stagger (after Unwrap) ── */
+.gift-page.revealed .gift-hero {
+  animation: giftReveal 0.8s 0.1s cubic-bezier(0.22,1,0.36,1) both;
+}
+.gift-page.revealed .gift-lyrics-card {
+  animation: giftReveal 0.8s 0.25s cubic-bezier(0.22,1,0.36,1) both;
+}
+.gift-page.revealed .audio-player,
+.gift-page.revealed .gift-generating,
+.gift-page.revealed .btn-primary {
+  animation: giftReveal 0.8s 0.4s cubic-bezier(0.22,1,0.36,1) both;
+}
+.gift-page.revealed .gift-actions {
+  animation: giftReveal 0.8s 0.55s cubic-bezier(0.22,1,0.36,1) both;
+}
+.gift-page.revealed .countdown-section {
+  animation: giftReveal 0.8s 0.35s cubic-bezier(0.22,1,0.36,1) both;
+}
+.gift-page.revealed .countdown-placeholder {
+  animation: giftReveal 0.8s 0.2s cubic-bezier(0.22,1,0.36,1) both;
+}
+
+@keyframes giftReveal {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gift-page.revealed .gift-hero,
+  .gift-page.revealed .gift-lyrics-card,
+  .gift-page.revealed .audio-player,
+  .gift-page.revealed .gift-generating,
+  .gift-page.revealed .btn-primary,
+  .gift-page.revealed .gift-actions,
+  .gift-page.revealed .countdown-section,
+  .gift-page.revealed .countdown-placeholder {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .loading-page {
   display: flex; align-items: center; justify-content: center;
   gap: 10px; padding: 60px 20px;
@@ -961,7 +1003,6 @@ body::after {
   display: flex; flex-direction: column; gap: 10px;
   -webkit-overflow-scrolling: touch;
 }
-
 .bubble {
   max-width: 88%; padding: 10px 15px; border-radius: 18px;
   font-size: 14px; line-height: 1.55;
@@ -970,12 +1011,13 @@ body::after {
 .bubble.bot {
   align-self: flex-start; background: var(--surface);
   border: 1px solid var(--border); border-bottom-left-radius: 6px;
-  font-family: var(--font-sans-cn); font-size: 15px;
+  font-family: var(--font-display); font-size: 16px; line-height: 1.7;
+  letter-spacing: 0.01em;
 }
 .bubble.user {
   align-self: flex-end; background: var(--gold-bg);
   border: 1px solid var(--gold-light); border-bottom-right-radius: 6px;
-  color: var(--text);
+  color: var(--text); font-size: 14px;
 }
 
 /* Pills (interactive options) */
