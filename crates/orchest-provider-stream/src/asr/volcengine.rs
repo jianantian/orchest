@@ -228,7 +228,7 @@ const ROLLING_SEGMENT_ID: &str = "rolling";
 /// utterance maps to one segment (`utt{start_time}`, `Snapshot`), and its
 /// `Provisional` updates and final `Committed` share that segment id. A
 /// response with no utterances but a non-empty rolling `text` maps to the fixed
-/// [`ROLLING_SEGMENT_ID`] segment (committed iff the frame is last). The final
+/// `ROLLING_SEGMENT_ID` segment (committed iff the frame is last). The final
 /// frame additionally emits `EndOfSpeech`; an error frame becomes a single
 /// fatal `Error`. Both are unaffected by the diff.
 #[derive(Debug, Default)]
@@ -322,8 +322,9 @@ impl VolcengineMapper {
 
 /// Drive one ASR streaming session over `transport`: client [`SessionInput`]
 /// audio is framed as openspeech audio-only requests and sent; server frames are
-/// parsed and projected onto `events` via [`map_frame`]. Closing `input` flushes
-/// a final audio frame; the loop ends on the last server frame or transport EOF.
+/// parsed and projected onto `events` via [`VolcengineMapper`]. Closing `input`
+/// flushes a final audio frame; the loop ends on the last server frame or
+/// transport EOF.
 pub async fn run_asr_stream<T: ByteDuplex>(
     mut transport: T,
     mut input: mpsc::Receiver<SessionInput>,
