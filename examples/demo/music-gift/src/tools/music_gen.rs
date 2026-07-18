@@ -20,8 +20,8 @@ use orchest_protocol::{
 };
 
 use crate::error::{AppError, AppResult};
-use crate::prompts::MUSIC_PROMPT_SKILLS;
 use crate::gift::GiftStore;
+use crate::prompts::MUSIC_PROMPT_SKILLS;
 
 // ── Response types ──────────────────────────────────────────────────────────
 
@@ -174,7 +174,10 @@ pub async fn submit(
         "exclude": enriched.exclude,
     });
 
-    let gen_req = GenRequest { prompt: enriched.prompt.clone(), params };
+    let gen_req = GenRequest {
+        prompt: enriched.prompt.clone(),
+        params,
+    };
     let handle = gen_task.submit(gen_req).await?;
     let handle_json = serde_json::to_string(&handle)?;
 
@@ -206,11 +209,7 @@ pub async fn poll(
 
     let handle_json = match &gift.gen_handle {
         Some(h) => h.clone(),
-        None => {
-            return Err(AppError::BadRequest(
-                "generation not submitted".to_string(),
-            ))
-        }
+        None => return Err(AppError::BadRequest("generation not submitted".to_string())),
     };
 
     let handle: GenHandle = serde_json::from_str(&handle_json)
@@ -313,29 +312,18 @@ pub fn stream(
             sleep(Duration::from_secs(5)).await;
             match gen_task.poll(&handle).await {
                 Ok(GenStatus::Done) => {
-                    match handle_done(
-                        gen_task.as_ref(),
-                        &store,
-                        &gift_id,
-                        lyrics,
-                        &handle,
-                    )
-                    .await
-                    {
+                    match handle_done(gen_task.as_ref(), &store, &gift_id, lyrics, &handle).await {
                         Ok(audio_url) => {
                             let _ = tx
                                 .send(Ok(Event::default().data(
-                                    json!({"status":"done","audio_url":audio_url})
-                                        .to_string(),
+                                    json!({"status":"done","audio_url":audio_url}).to_string(),
                                 )))
                                 .await;
                         }
                         Err(_) => {
                             let _ = store.mark_gen_failed(&gift_id);
                             let _ = tx
-                                .send(Ok(Event::default().data(
-                                    "{\"status\":\"failed\"}",
-                                )))
+                                .send(Ok(Event::default().data("{\"status\":\"failed\"}")))
                                 .await;
                         }
                     }
@@ -504,13 +492,31 @@ pub async fn generate_music_prompt(
                 .to_string();
 
             let genre = parsed.get("genre").and_then(json_array).unwrap_or_default();
-            let tempo = parsed.get("tempo").and_then(str_or_empty).unwrap_or_default();
+            let tempo = parsed
+                .get("tempo")
+                .and_then(str_or_empty)
+                .unwrap_or_default();
             let mood = parsed.get("mood").and_then(json_array).unwrap_or_default();
-            let vocal_style = parsed.get("vocal_style").and_then(str_or_empty).unwrap_or_else(|| input.vocal.to_string());
-            let instrumentation = parsed.get("instrumentation").and_then(str_or_empty).unwrap_or_default();
-            let production = parsed.get("production").and_then(str_or_empty).unwrap_or_default();
-            let exclude = parsed.get("exclude").and_then(str_or_empty).unwrap_or_default();
-            let style_tags = parsed.get("style_tags").and_then(json_array).unwrap_or_default();
+            let vocal_style = parsed
+                .get("vocal_style")
+                .and_then(str_or_empty)
+                .unwrap_or_else(|| input.vocal.to_string());
+            let instrumentation = parsed
+                .get("instrumentation")
+                .and_then(str_or_empty)
+                .unwrap_or_default();
+            let production = parsed
+                .get("production")
+                .and_then(str_or_empty)
+                .unwrap_or_default();
+            let exclude = parsed
+                .get("exclude")
+                .and_then(str_or_empty)
+                .unwrap_or_default();
+            let style_tags = parsed
+                .get("style_tags")
+                .and_then(json_array)
+                .unwrap_or_default();
 
             return Ok(EnrichedPrompt {
                 prompt,
@@ -530,7 +536,11 @@ pub async fn generate_music_prompt(
 }
 
 fn json_array(v: &Value) -> Option<Vec<String>> {
-    v.as_array().map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+    v.as_array().map(|arr| {
+        arr.iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect()
+    })
 }
 
 fn str_or_empty(v: &Value) -> Option<String> {

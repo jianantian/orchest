@@ -50,7 +50,10 @@ pub async fn run_countdown(
         "lyric_snippet": params.lyric_snippet,
     });
 
-    let result = tool.execute(input, &tool_context()).await.map_err(|e| e.to_string())?;
+    let result = tool
+        .execute(input, &tool_context())
+        .await
+        .map_err(|e| e.to_string())?;
 
     // An agent-as-tool always answers with `Structured` (it carries the child
     // run's budget usage); `model_output` is what our output_extractor built,
@@ -58,9 +61,14 @@ pub async fn run_countdown(
     // countdown fail here.
     let html = match result {
         orchest::tool::ToolOutput::Immediate(value)
-        | orchest::tool::ToolOutput::Structured { model_output: value, .. } => {
-            value.get("html").and_then(Value::as_str).unwrap_or("").to_string()
-        }
+        | orchest::tool::ToolOutput::Structured {
+            model_output: value,
+            ..
+        } => value
+            .get("html")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
         other => return Err(format!("unexpected countdown tool output: {other:?}")),
     };
 
@@ -74,7 +82,9 @@ pub async fn run_countdown(
     let path = dir.join(format!("{}.html", sink.gift_id));
     std::fs::write(&path, &html).map_err(|e| format!("write countdown HTML: {e}"))?;
 
-    sink.store.update_countdown_status(&sink.gift_id, "ready").map_err(|e| e.to_string())?;
+    sink.store
+        .update_countdown_status(&sink.gift_id, "ready")
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -83,17 +93,33 @@ pub async fn run_countdown(
 
 pub(crate) fn countdown_params_from_json(input: &Value) -> CountdownParams {
     CountdownParams {
-        name: input.get("name").and_then(Value::as_str).unwrap_or(crate::gift::GiftMeta::DEFAULT_NAME).into(),
-        birthday: input.get("birthday").and_then(Value::as_str).unwrap_or("").into(),
-        scenario: input.get("scenario").and_then(Value::as_str).unwrap_or("").into(),
-        lyric_snippet: input.get("lyric_snippet").and_then(Value::as_str).unwrap_or("").into(),
+        name: input
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or(crate::gift::GiftMeta::DEFAULT_NAME)
+            .into(),
+        birthday: input
+            .get("birthday")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .into(),
+        scenario: input
+            .get("scenario")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .into(),
+        lyric_snippet: input
+            .get("lyric_snippet")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .into(),
     }
 }
 
 pub(crate) fn build_prompt(p: &CountdownParams) -> String {
-    let (month, day, days_until, target_date) = p.month_day().unwrap_or_else(|| {
-        ("Jan".into(), "1".into(), 0, "2025-01-01".into())
-    });
+    let (month, day, days_until, target_date) = p
+        .month_day()
+        .unwrap_or_else(|| ("Jan".into(), "1".into(), 0, "2025-01-01".into()));
 
     let template = COUNTDOWN_TEMPLATE.as_str();
     if template.is_empty() {
@@ -128,7 +154,9 @@ fn parse_birthday_info(birthday: &str) -> Option<(String, String, i64, String)> 
     if !(1..=12).contains(&month_num) || !(1..=31).contains(&day_num) {
         return None;
     }
-    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     let month_name = months.get(month_num as usize - 1)?;
     let now = Local::now().date_naive();
     let current_year = now.format("%Y").to_string();
@@ -138,12 +166,18 @@ fn parse_birthday_info(birthday: &str) -> Option<(String, String, i64, String)> 
     if days_until < 0 {
         days_until += 365;
     }
-    Some((month_name.to_string(), day_str.to_string(), days_until, target_str))
+    Some((
+        month_name.to_string(),
+        day_str.to_string(),
+        days_until,
+        target_str,
+    ))
 }
 
 pub(crate) fn strip_code_fences(html: &str) -> String {
     let trimmed = html.trim();
-    let without_open = trimmed.strip_prefix("```html")
+    let without_open = trimmed
+        .strip_prefix("```html")
         .or_else(|| trimmed.strip_prefix("```"))
         .unwrap_or(trimmed);
     let without_close = without_open.strip_suffix("```").unwrap_or(without_open);

@@ -57,7 +57,10 @@ pub fn generate_lrc(lyrics: &str, duration_secs: f64) -> Option<String> {
         return None;
     }
 
-    let total_weight: f64 = sections.iter().map(|s| section_weight(&s.label) * s.lines.len() as f64).sum();
+    let total_weight: f64 = sections
+        .iter()
+        .map(|s| section_weight(&s.label) * s.lines.len() as f64)
+        .sum();
     if total_weight <= 0.0 {
         return None;
     }
@@ -90,8 +93,16 @@ struct Section {
 }
 
 const SECTION_KEYWORDS: &[&str] = &[
-    "verse", "chorus", "bridge", "intro", "outro", "pre-chorus", "prechorus",
-    "hook", "refrain", "interlude",
+    "verse",
+    "chorus",
+    "bridge",
+    "intro",
+    "outro",
+    "pre-chorus",
+    "prechorus",
+    "hook",
+    "refrain",
+    "interlude",
 ];
 
 /// If a line is a whole-line section header like `[Chorus]` or
@@ -143,7 +154,10 @@ fn parse_sections(raw: &str) -> Vec<Section> {
                 last.label.eq_ignore_ascii_case(&label) && label.to_lowercase().contains("chorus")
             });
             if !merge_into_prev {
-                sections.push(Section { label, lines: Vec::new() });
+                sections.push(Section {
+                    label,
+                    lines: Vec::new(),
+                });
             }
         } else if let Some(text) = content_line(trimmed) {
             if let Some(last) = sections.last_mut() {
@@ -234,15 +248,30 @@ mod tests {
         use orchest_protocol::{TimedSegment, TimedText};
         let tt = TimedText {
             segments: vec![
-                TimedSegment { text: "[Verse 1 —".into(), start: 8.94, end: None },
-                TimedSegment { text: "tender]".into(), start: 9.06, end: None },
-                TimedSegment { text: "月光洒在窗前".into(), start: 9.18, end: None },
+                TimedSegment {
+                    text: "[Verse 1 —".into(),
+                    start: 8.94,
+                    end: None,
+                },
+                TimedSegment {
+                    text: "tender]".into(),
+                    start: 9.06,
+                    end: None,
+                },
+                TimedSegment {
+                    text: "月光洒在窗前".into(),
+                    start: 9.18,
+                    end: None,
+                },
             ],
         };
         let lrc = timed_text_to_lrc(&tt).unwrap();
         let lines: Vec<_> = lrc.lines().collect();
         assert_eq!(lines.len(), 1, "tag segments should render nothing: {lrc}");
-        assert!(!lrc.contains("Verse") && !lrc.contains("tender"), "tag leaked: {lrc}");
+        assert!(
+            !lrc.contains("Verse") && !lrc.contains("tender"),
+            "tag leaked: {lrc}"
+        );
         assert!(lines[0].ends_with("月光洒在窗前"));
         assert!(lines[0].starts_with("[00:09."));
     }
@@ -252,14 +281,22 @@ mod tests {
     /// standalone accents must be skipped, and leading inline tags stripped.
     #[test]
     fn tolerates_inline_voice_tags() {
-        let lyrics = "[Verse 1 — tender]\n[Whispered] 那天风很轻\n你笑了\n[Chorus — soaring]\n跑吧 朵朵";
+        let lyrics =
+            "[Verse 1 — tender]\n[Whispered] 那天风很轻\n你笑了\n[Chorus — soaring]\n跑吧 朵朵";
         let lrc = generate_lrc(lyrics, 90.0).unwrap();
         let lines: Vec<_> = lrc.lines().collect();
         // 3 lyric lines: the whispered line (tag stripped), "你笑了", "跑吧 朵朵".
         assert_eq!(lines.len(), 3);
-        assert!(lines[0].ends_with("那天风很轻"), "leading tag not stripped: {}", lines[0]);
+        assert!(
+            lines[0].ends_with("那天风很轻"),
+            "leading tag not stripped: {}",
+            lines[0]
+        );
         assert!(!lrc.contains("[Whispered]"));
-        assert!(!lrc.contains("Verse 1"), "section header leaked into lyrics");
+        assert!(
+            !lrc.contains("Verse 1"),
+            "section header leaked into lyrics"
+        );
         assert!(lrc.contains("跑吧 朵朵"));
     }
 }

@@ -39,7 +39,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     std::fs::create_dir_all(cli.data_dir.join("countdown"))?;
     let skills_dir = std::env::current_dir()?.join("skills");
     if !skills_dir.exists() {
-        eprintln!("[music-gift] skills directory not found at {:?}, agent will lack lyrics skill", skills_dir);
+        eprintln!(
+            "[music-gift] skills directory not found at {:?}, agent will lack lyrics skill",
+            skills_dir
+        );
     }
 
     let db_path = cli.data_dir.join("gifts.db");
@@ -48,7 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Auth shares gifts.db (AuthStore::open runs `ALTER TABLE gifts ADD COLUMN
     // creator_id`, so it must see the gifts table). Opened after gift_store so
     // that table already exists; a separate connection to the same file.
-    let auth_conn = std::sync::Arc::new(std::sync::Mutex::new(rusqlite::Connection::open(&db_path)?));
+    let auth_conn =
+        std::sync::Arc::new(std::sync::Mutex::new(rusqlite::Connection::open(&db_path)?));
     let auth_store = auth::AuthStore::open(auth_conn)?;
 
     let port = cli.port.unwrap_or(config.port);

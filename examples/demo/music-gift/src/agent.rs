@@ -27,7 +27,10 @@ pub struct ParsedLyrics {
 
 /// Parse the LLM's full text response for structured lyrics tags.
 pub fn parse_lyrics(full_text: &str) -> ParsedLyrics {
-    let lyrics = extract_lyrics(full_text).unwrap_or_default().trim().to_string();
+    let lyrics = extract_lyrics(full_text)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     // A lyric block that parsed to nothing is not a lyric, whatever tags the
     // model emitted. Reporting has_lyrics=true with empty lyrics let an empty
     // string flow all the way to the music provider.
@@ -144,12 +147,15 @@ pub fn extract_review_summary(reviewed: &str) -> Option<String> {
             .collect::<Vec<_>>()
             .join("\n");
         let summary = summary.trim();
-        if summary.is_empty() { None } else { Some(summary.to_string()) }
+        if summary.is_empty() {
+            None
+        } else {
+            Some(summary.to_string())
+        }
     } else {
         None
     }
 }
-
 
 pub mod message;
 pub use message::*;
@@ -157,7 +163,9 @@ pub use message::*;
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub enum SseEvent {
-    Delta { text: String },
+    Delta {
+        text: String,
+    },
     /// Emitted when the review pass starts (after the chat stream ends, before
     /// `Done`). The review is a second full LLM call taking tens of seconds;
     /// without an event the client sits silent with a disabled input.
@@ -171,7 +179,9 @@ pub enum SseEvent {
         /// Review report from the second-pass review agent (may be empty if review skipped).
         review: Option<String>,
     },
-    Error { error: String },
+    Error {
+        error: String,
+    },
 }
 /// Start a chat agent run using Orchest's AgentRun and stream events via tx.
 /// Returns the full text output.
@@ -181,8 +191,7 @@ pub async fn run_chat_agent(
     tx: mpsc::Sender<SseEvent>,
     skills_dir: Option<&str>,
 ) -> AppResult<String> {
-    let mut builder = AgentConfig::builder("music-gift/chat")
-        .max_steps(5);
+    let mut builder = AgentConfig::builder("music-gift/chat").max_steps(5);
     if let Some(dir) = skills_dir {
         builder = builder.skills_dir(dir);
     }
@@ -200,7 +209,9 @@ pub async fn run_chat_agent(
     if let Some(dir) = skills_dir {
         let skill_path = Path::new(dir).join("lyrics-writer").join("SKILL.md");
         if skill_path.exists() {
-            read_file.register_skill("lyrics-writer".to_string(), skill_path).await;
+            read_file
+                .register_skill("lyrics-writer".to_string(), skill_path)
+                .await;
         }
     }
     tool_registry
@@ -208,10 +219,13 @@ pub async fn run_chat_agent(
         .map_err(|e| AppError::Llm(format!("registering read_file: {e}")))?;
 
     let blocks: Vec<ContentBlock> = messages.iter().flat_map(|m| m.content.clone()).collect();
-    let input = RunInput::from_blocks(blocks)
-        .map_err(|e| AppError::Llm(e.to_string()))?;
-    let (handle, mut rx) =
-        AgentRun::start(config, input, model as Arc<dyn orchest::model::ModelAdapter>, tool_registry);
+    let input = RunInput::from_blocks(blocks).map_err(|e| AppError::Llm(e.to_string()))?;
+    let (handle, mut rx) = AgentRun::start(
+        config,
+        input,
+        model as Arc<dyn orchest::model::ModelAdapter>,
+        tool_registry,
+    );
     let mut full_text = String::new();
 
     while let Some(event) = rx.recv().await {
@@ -220,11 +234,7 @@ pub async fn run_chat_agent(
             RuntimeEvent::ModelStreamChunk { delta } => {
                 if let StreamEvent::Text { delta: text } = delta {
                     full_text.push_str(&text);
-                    let _ = tx
-                        .send(SseEvent::Delta {
-                            text: text.clone(),
-                        })
-                        .await;
+                    let _ = tx.send(SseEvent::Delta { text: text.clone() }).await;
                 }
             }
             RuntimeEvent::RunCompleted { output } => {
@@ -267,10 +277,7 @@ static REVIEW_PROMPT: &str = include_str!("../prompts/review.md");
 ///
 /// Returns corrected output in the same tag format. Falls back to
 /// the original on error.
-pub async fn run_review_pass(
-    model: Arc<dyn ChatModel>,
-    raw_output: &str,
-) -> String {
+pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> String {
     let config = match AgentConfig::builder("music-gift/review")
         .max_steps(1)
         .build()
@@ -307,7 +314,9 @@ pub async fn run_review_pass(
     let mut reviewed = String::new();
     while let Some(event) = rx.recv().await {
         match event {
-            RuntimeEvent::ModelStreamChunk { delta: StreamEvent::Text { delta: text } } => {
+            RuntimeEvent::ModelStreamChunk {
+                delta: StreamEvent::Text { delta: text },
+            } => {
                 reviewed.push_str(&text);
             }
             RuntimeEvent::RunCompleted { output } => {
@@ -331,15 +340,19 @@ pub async fn run_review_pass(
     } else {
         // Log first 200 chars of reviewed output for debugging
         let preview: String = reviewed.chars().take(500).collect();
-        eprintln!("[music-gift] review: done ({} chars). Preview: {}", reviewed.len(), preview);
+        eprintln!(
+            "[music-gift] review: done ({} chars). Preview: {}",
+            reviewed.len(),
+            preview
+        );
         reviewed
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use orchest_protocol::{MediaSource, Role};
     use super::*;
+    use orchest_protocol::{MediaSource, Role};
 
     #[test]
     fn parse_lyrics_extracts_all_tags() {
@@ -394,7 +407,11 @@ mod tests {
 [verse 1 — gentle]\n你摔了又站起来\n[chorus — soaring]\n骑吧 阿杰\n<<<END>>>";
         let result = parse_lyrics(raw);
         assert!(result.has_lyrics);
-        assert!(!result.lyrics.contains("<<<"), "lyrics still polluted: {:?}", result.lyrics);
+        assert!(
+            !result.lyrics.contains("<<<"),
+            "lyrics still polluted: {:?}",
+            result.lyrics
+        );
         assert!(result.lyrics.starts_with("[verse 1 — gentle]"));
         assert!(result.lyrics.contains("骑吧 阿杰"));
         // Tags are still extracted for their own fields.

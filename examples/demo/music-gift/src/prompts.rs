@@ -11,7 +11,6 @@ use std::sync::LazyLock;
 pub static SYSTEM_PROMPT: LazyLock<String> =
     LazyLock::new(|| include_str!("../prompts/system.md").to_string());
 
-
 /// Template for the birthday countdown HTML generator.
 ///
 /// Placeholders substituted at runtime by `tools::countdown::build_countdown_prompt`:

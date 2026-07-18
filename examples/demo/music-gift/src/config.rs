@@ -15,7 +15,6 @@ use crate::error::{AppError, AppResult};
 use crate::prompts::COUNTDOWN_TEMPLATE;
 use crate::tools::countdown;
 
-
 const CHAT_MODEL_ENV: &str = "MUSIC_GIFT_CHAT_MODEL";
 const CHAT_API_KEY_ENV: &str = "MUSIC_GIFT_CHAT_API_KEY";
 const CHAT_API_URL_ENV: &str = "MUSIC_GIFT_CHAT_API_URL";
@@ -78,9 +77,13 @@ fn build_chat_model() -> AppResult<Arc<dyn ChatModel>> {
 /// main chat model env vars. For optional per-component model configuration:
 /// set `{prefix}_MODEL` to override, or leave unset to share the chat model.
 fn build_model_or_default(model_env: &str) -> AppResult<Arc<dyn ChatModel>> {
-    let model = std::env::var(model_env).or_else(|_| std::env::var(CHAT_MODEL_ENV)).map_err(|_| {
-        AppError::Config(format!("no model configured: set {CHAT_MODEL_ENV} or {model_env}"))
-    })?;
+    let model = std::env::var(model_env)
+        .or_else(|_| std::env::var(CHAT_MODEL_ENV))
+        .map_err(|_| {
+            AppError::Config(format!(
+                "no model configured: set {CHAT_MODEL_ENV} or {model_env}"
+            ))
+        })?;
     let config = ProviderRuntimeConfig {
         model,
         api_key: std::env::var(CHAT_API_KEY_ENV).ok(),
@@ -130,14 +133,11 @@ fn build_gen_task(provider: &str) -> AppResult<Arc<dyn GenTask>> {
     Ok(Arc::from(gen_task))
 }
 
-
 /// Build the countdown subagent tool once at startup.
 ///
 /// Returns `None` if the countdown prompt template is empty
 /// (i.e., the prompt file is missing or blank).
-pub fn build_countdown_tool(
-    model: Arc<dyn ModelAdapter>,
-) -> Option<Arc<dyn Tool>> {
+pub fn build_countdown_tool(model: Arc<dyn ModelAdapter>) -> Option<Arc<dyn Tool>> {
     if COUNTDOWN_TEMPLATE.is_empty() {
         eprintln!("[music-gift] countdown disabled: template is empty");
         return None;
@@ -156,7 +156,10 @@ pub fn build_countdown_tool(
     };
 
     config
-        .as_tool("generate_countdown", "Generate a birthday countdown HTML block.")
+        .as_tool(
+            "generate_countdown",
+            "Generate a birthday countdown HTML block.",
+        )
         .model(model)
         .registry(ToolRegistry::new())
         .context_mode(ContextMode::Fresh)
@@ -166,7 +169,10 @@ pub fn build_countdown_tool(
             Ok(prompt)
         })
         .output_extractor(|output: serde_json::Value| {
-            let html = output.get("output").and_then(serde_json::Value::as_str).unwrap_or("");
+            let html = output
+                .get("output")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
             serde_json::json!({ "html": countdown::strip_code_fences(html) })
         })
         .build()

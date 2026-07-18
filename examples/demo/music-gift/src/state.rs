@@ -7,7 +7,6 @@ use std::sync::Arc;
 use orchest::tool::Tool;
 use orchest_protocol::{ChatModel, GenTask};
 
-
 use crate::auth::AuthStore;
 use crate::gift::GiftStore;
 

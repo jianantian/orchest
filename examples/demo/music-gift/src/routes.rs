@@ -18,8 +18,8 @@ use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 use crate::agent::{
-    build_messages, build_photo_blocks, build_system_message, parse_lyrics,
-    run_chat_agent, ChatRequest, SseEvent,
+    build_messages, build_photo_blocks, build_system_message, parse_lyrics, run_chat_agent,
+    ChatRequest, SseEvent,
 };
 use crate::error::{AppError, AppResult};
 use crate::gift::{Gift, GiftMeta};
@@ -49,7 +49,10 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .route("/auth/send-link", post(crate::auth::handle_send_link))
         .route("/auth/verify", get(crate::auth::handle_verify))
         .route("/auth/oauth/google", get(crate::auth::handle_google_login))
-        .route("/auth/oauth/google/cb", get(crate::auth::handle_google_callback))
+        .route(
+            "/auth/oauth/google/cb",
+            get(crate::auth::handle_google_callback),
+        )
         .with_state(state.clone());
 
     let mut router = Router::new().nest("/api", api);
@@ -70,7 +73,9 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         let h2 = html.clone();
         let h3 = html.clone();
 
-        async fn spa_fallback(State(html): State<std::sync::Arc<String>>) -> axum::response::Html<String> {
+        async fn spa_fallback(
+            State(html): State<std::sync::Arc<String>>,
+        ) -> axum::response::Html<String> {
             axum::response::Html((*html).clone())
         }
 
@@ -104,7 +109,13 @@ pub async fn chat_handler(
     let review_model = state.chat_model.clone();
     tokio::spawn(async move {
         let skills_dir = state.skills_dir.to_string_lossy().to_string();
-        let result = run_chat_agent(state.chat_model.clone(), messages, tx.clone(), Some(&skills_dir)).await;
+        let result = run_chat_agent(
+            state.chat_model.clone(),
+            messages,
+            tx.clone(),
+            Some(&skills_dir),
+        )
+        .await;
         match result {
             Ok(full_text) => {
                 let has_lyrics = full_text.contains("<<<LYRICS>>>");
@@ -480,8 +491,12 @@ pub async fn polish_music_prompt(
             relationship: req.relationship.as_deref(),
             lang: req.lang.as_deref().unwrap_or(GiftMeta::DEFAULT_LANG),
         },
-    ).await.unwrap_or_else(|_| EnrichedPrompt::fallback(&req.style));
-    Ok(Json(PolishPromptResponse { prompt: enriched.prompt }))
+    )
+    .await
+    .unwrap_or_else(|_| EnrichedPrompt::fallback(&req.style));
+    Ok(Json(PolishPromptResponse {
+        prompt: enriched.prompt,
+    }))
 }
 // ── GET /api/generate/:id/status — legacy poll ────────────────────────────
 
@@ -610,12 +625,14 @@ pub async fn get_countdown_section(
     match gift.countdown_status.as_deref() {
         Some("ready") => {
             let path = state.data_dir.join("countdown").join(format!("{id}.html"));
-            let html = tokio::fs::read_to_string(&path).await.map_err(|e| match e.kind() {
-                std::io::ErrorKind::NotFound => {
-                    AppError::NotFound(format!("countdown HTML not found for gift {id}"))
-                }
-                _ => AppError::Io(e),
-            })?;
+            let html = tokio::fs::read_to_string(&path)
+                .await
+                .map_err(|e| match e.kind() {
+                    std::io::ErrorKind::NotFound => {
+                        AppError::NotFound(format!("countdown HTML not found for gift {id}"))
+                    }
+                    _ => AppError::Io(e),
+                })?;
             Ok((
                 StatusCode::OK,
                 [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
@@ -623,11 +640,9 @@ pub async fn get_countdown_section(
             )
                 .into_response())
         }
-        Some("pending") => Ok((
-            StatusCode::ACCEPTED,
-            Json(json!({"status": "pending"})),
-        )
-            .into_response()),
+        Some("pending") => {
+            Ok((StatusCode::ACCEPTED, Json(json!({"status": "pending"}))).into_response())
+        }
         _ => Ok((
             StatusCode::NOT_FOUND,
             Json(json!({"status": gift.countdown_status.as_deref().unwrap_or("unavailable")})),
@@ -644,7 +659,14 @@ pub async fn get_gift_lrc(
 ) -> AppResult<impl IntoResponse> {
     let gift = state.gift_store.get(&id)?;
     match gift.lrc {
-        Some(lrc) => Ok((StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], lrc)),
+        Some(lrc) => Ok((
+            StatusCode::OK,
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "text/plain; charset=utf-8",
+            )],
+            lrc,
+        )),
         None => Err(AppError::NotFound("LRC not available".to_string())),
     }
 }

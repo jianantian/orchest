@@ -45,7 +45,8 @@ pub fn create_tool() -> Arc<dyn Tool> {
             }
         },
         "required": ["complete", "name", "scene", "emotion", "missing_fields"]
-    })).expect("collect_info output schema");
+    }))
+    .expect("collect_info output schema");
 
     let metadata = ToolMetadata::default();
 
@@ -167,12 +168,11 @@ mod tests {
         });
         let result = validate(&input);
         assert!(!result["complete"].as_bool().unwrap());
+        assert_eq!(result["missing_fields"].as_array().unwrap().len(), 1);
         assert_eq!(
-            result["missing_fields"].as_array().unwrap().len(),
-            1
-        );
-        assert_eq!(
-            result["missing_fields"].as_array().unwrap()[0].as_str().unwrap(),
+            result["missing_fields"].as_array().unwrap()[0]
+                .as_str()
+                .unwrap(),
             "scene"
         );
     }

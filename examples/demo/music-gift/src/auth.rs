@@ -77,15 +77,22 @@ impl AuthStore {
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL
                 );
-            ",)?;
+            ",
+            )?;
             // creator_id might already exist
-            let _ = c.execute("ALTER TABLE gifts ADD COLUMN creator_id TEXT REFERENCES users(id)", []);
+            let _ = c.execute(
+                "ALTER TABLE gifts ADD COLUMN creator_id TEXT REFERENCES users(id)",
+                [],
+            );
         }
         Ok(Self { conn })
     }
 
     pub fn find_by_email(&self, email: &str) -> AppResult<Option<User>> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT id, email, phone, display_name, avatar_url, provider, created_at FROM users WHERE email = ?1"
         )?;
@@ -93,7 +100,10 @@ impl AuthStore {
     }
 
     pub fn find_by_phone(&self, phone: &str) -> AppResult<Option<User>> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT id, email, phone, display_name, avatar_url, provider, created_at FROM users WHERE phone = ?1"
         )?;
@@ -101,15 +111,23 @@ impl AuthStore {
     }
 
     pub fn find_by_provider(&self, provider: &str, provider_id: &str) -> AppResult<Option<User>> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT id, email, phone, display_name, avatar_url, provider, created_at FROM users WHERE provider = ?1 AND provider_id = ?2"
         )?;
-        Ok(stmt.query_row(params![provider, provider_id], row_to_user).ok())
+        Ok(stmt
+            .query_row(params![provider, provider_id], row_to_user)
+            .ok())
     }
 
     pub fn find_user(&self, id: &str) -> AppResult<Option<User>> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT id, email, phone, display_name, avatar_url, provider, created_at FROM users WHERE id = ?1"
         )?;
@@ -117,33 +135,67 @@ impl AuthStore {
     }
 
     pub fn create_user(
-        &self, email: Option<&str>, phone: Option<&str>, display_name: &str,
-        provider: &str, provider_id: Option<&str>,
+        &self,
+        email: Option<&str>,
+        phone: Option<&str>,
+        display_name: &str,
+        provider: &str,
+        provider_id: Option<&str>,
     ) -> AppResult<User> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let id = Uuid::new_v4().to_string();
         let now = unix_now();
         conn.execute(
             "INSERT INTO users (id, email, phone, display_name, avatar_url, provider, provider_id, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
             params![id, email, phone, display_name, Option::<String>::None, provider, provider_id, now],
         )?;
-        Ok(User { id, email: email.map(String::from), phone: phone.map(String::from), display_name: display_name.to_string(), avatar_url: None, provider: provider.to_string(), created_at: now })
+        Ok(User {
+            id,
+            email: email.map(String::from),
+            phone: phone.map(String::from),
+            display_name: display_name.to_string(),
+            avatar_url: None,
+            provider: provider.to_string(),
+            created_at: now,
+        })
     }
 
-    pub fn create_user_with_password(&self, email: &str, password: &str, display_name: &str) -> AppResult<User> {
+    pub fn create_user_with_password(
+        &self,
+        email: &str,
+        password: &str,
+        display_name: &str,
+    ) -> AppResult<User> {
         let hash = hash_password(password);
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let id = Uuid::new_v4().to_string();
         let now = unix_now();
         conn.execute(
             "INSERT INTO users (id, email, phone, display_name, avatar_url, provider, password_hash, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
             params![id, email, Option::<String>::None, display_name, Option::<String>::None, "email", hash, now],
         )?;
-        Ok(User { id, email: Some(email.to_string()), phone: None, display_name: display_name.to_string(), avatar_url: None, provider: "email".to_string(), created_at: now })
+        Ok(User {
+            id,
+            email: Some(email.to_string()),
+            phone: None,
+            display_name: display_name.to_string(),
+            avatar_url: None,
+            provider: "email".to_string(),
+            created_at: now,
+        })
     }
 
     pub fn verify_password(&self, email: &str, password: &str) -> AppResult<Option<User>> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let mut stmt = conn.prepare("SELECT id, email, phone, display_name, avatar_url, provider, created_at, password_hash FROM users WHERE email = ?1")?;
         let result = stmt.query_row(params![email], |row| {
             let hash: Option<String> = row.get(7)?;
@@ -156,7 +208,9 @@ impl AuthStore {
     }
 
     pub fn find_or_create_by_email(&self, email: &str, provider: &str) -> AppResult<User> {
-        if let Some(user) = self.find_by_email(email)? { return Ok(user); }
+        if let Some(user) = self.find_by_email(email)? {
+            return Ok(user);
+        }
         let name = email.split('@').next().unwrap_or(email);
         self.create_user(Some(email), None, name, provider, None)
     }
@@ -164,7 +218,10 @@ impl AuthStore {
     // ── Sessions ────────────────────────────────────
 
     pub fn create_session(&self, user_id: &str) -> AppResult<Session> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let id = Uuid::new_v4().to_string();
         let token = Uuid::new_v4().simple().to_string();
         let now = unix_now();
@@ -173,11 +230,20 @@ impl AuthStore {
             "INSERT INTO sessions (id, user_id, token, created_at, expires_at) VALUES (?1,?2,?3,?4,?5)",
             params![id, user_id, token, now, expires],
         )?;
-        Ok(Session { id, user_id: user_id.to_string(), token, created_at: now, expires_at: expires })
+        Ok(Session {
+            id,
+            user_id: user_id.to_string(),
+            token,
+            created_at: now,
+            expires_at: expires,
+        })
     }
 
     pub fn validate_session(&self, token: &str) -> AppResult<Option<User>> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT u.id, u.email, u.phone, u.display_name, u.avatar_url, u.provider, u.created_at \
              FROM sessions s JOIN users u ON s.user_id = u.id \
@@ -188,15 +254,25 @@ impl AuthStore {
     }
 
     pub fn revoke_session(&self, token: &str) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute("DELETE FROM sessions WHERE token = ?1", params![token])?;
         Ok(())
     }
 
     // ── Magic tokens ────────────────────────────────
 
-    pub fn create_magic_token(&self, email: Option<&str>, phone: Option<&str>) -> AppResult<MagicToken> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+    pub fn create_magic_token(
+        &self,
+        email: Option<&str>,
+        phone: Option<&str>,
+    ) -> AppResult<MagicToken> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let id = Uuid::new_v4().to_string();
         let token = Uuid::new_v4().simple().to_string();
         let now = unix_now();
@@ -205,24 +281,43 @@ impl AuthStore {
             "INSERT INTO magic_tokens (id, email, phone, token, used, created_at, expires_at) VALUES (?1,?2,?3,?4,0,?5,?6)",
             params![id, email, phone, token, now, expires],
         )?;
-        Ok(MagicToken { id, email: email.map(String::from), phone: phone.map(String::from), token, created_at: now, expires_at: expires })
+        Ok(MagicToken {
+            id,
+            email: email.map(String::from),
+            phone: phone.map(String::from),
+            token,
+            created_at: now,
+            expires_at: expires,
+        })
     }
 
     pub fn redeem_magic_token(&self, token: &str) -> AppResult<Option<MagicToken>> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT id, email, phone, token, used, created_at, expires_at FROM magic_tokens \
-             WHERE token = ?1 AND used = 0 AND expires_at > ?2"
+             WHERE token = ?1 AND used = 0 AND expires_at > ?2",
         )?;
         let now = unix_now();
-        let mt = stmt.query_row(params![token, now], |row| {
-            Ok(MagicToken {
-                id: row.get(0)?, email: row.get(1)?, phone: row.get(2)?,
-                token: row.get(3)?, created_at: row.get(5)?, expires_at: row.get(6)?,
+        let mt = stmt
+            .query_row(params![token, now], |row| {
+                Ok(MagicToken {
+                    id: row.get(0)?,
+                    email: row.get(1)?,
+                    phone: row.get(2)?,
+                    token: row.get(3)?,
+                    created_at: row.get(5)?,
+                    expires_at: row.get(6)?,
+                })
             })
-        }).ok();
+            .ok();
         if mt.is_some() {
-            conn.execute("UPDATE magic_tokens SET used = 1 WHERE token = ?1", params![token])?;
+            conn.execute(
+                "UPDATE magic_tokens SET used = 1 WHERE token = ?1",
+                params![token],
+            )?;
         }
         Ok(mt)
     }
@@ -243,8 +338,13 @@ pub async fn send_magic_link_email(to: &str, token: &str, base_url: &str) -> Res
     let link = format!("{base_url}/api/auth/verify?token={token}");
 
     let email = Message::builder()
-        .from(from.parse().map_err(|e: lettre::address::AddressError| e.to_string())?)
-        .to(to.parse().map_err(|e: lettre::address::AddressError| e.to_string())?)
+        .from(
+            from.parse()
+                .map_err(|e: lettre::address::AddressError| e.to_string())?,
+        )
+        .to(to
+            .parse()
+            .map_err(|e: lettre::address::AddressError| e.to_string())?)
         .subject("Your Moment login link")
         .header(ContentType::TEXT_HTML)
         .body(format!(
@@ -266,7 +366,12 @@ pub async fn send_magic_link_email(to: &str, token: &str, base_url: &str) -> Res
 
 // ── Route handlers ───────────────────────────────────────
 
-use axum::{extract::{Query, State}, http::StatusCode, response::{IntoResponse, Redirect}, Json};
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Redirect},
+    Json,
+};
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 
 #[derive(Deserialize)]
@@ -287,11 +392,19 @@ pub async fn handle_send_link(
 ) -> impl IntoResponse {
     if let Some(email) = &req.email {
         if email.is_empty() || !email.contains('@') {
-            return (StatusCode::UNPROCESSABLE_ENTITY, Json(serde_json::json!({"error":"INVALID_EMAIL"})));
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({"error":"INVALID_EMAIL"})),
+            );
         }
         let mt = match state.auth_store.create_magic_token(Some(email), None) {
             Ok(t) => t,
-            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"INTERNAL"}))),
+            Err(_) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error":"INTERNAL"})),
+                )
+            }
         };
 
         let base_url = std::env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into());
@@ -302,7 +415,10 @@ pub async fn handle_send_link(
         return (StatusCode::OK, Json(serde_json::json!({"ok":true})));
     }
 
-    (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"EMAIL_OR_PHONE_REQUIRED"})))
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({"error":"EMAIL_OR_PHONE_REQUIRED"})),
+    )
 }
 
 #[derive(Deserialize)]
@@ -321,10 +437,10 @@ pub async fn handle_verify(
     };
 
     let provider = if mt.email.is_some() { "email" } else { "phone" };
-    let user = match state.auth_store.find_or_create_by_email(
-        mt.email.as_deref().unwrap_or(""),
-        provider,
-    ) {
+    let user = match state
+        .auth_store
+        .find_or_create_by_email(mt.email.as_deref().unwrap_or(""), provider)
+    {
         Ok(u) => u,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response(),
     };
@@ -343,7 +459,11 @@ pub async fn handle_verify(
         .build();
 
     let base_url = std::env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into());
-    (jar.add(cookie), Redirect::to(&format!("{base_url}/?auth_done=1"))).into_response()
+    (
+        jar.add(cookie),
+        Redirect::to(&format!("{base_url}/?auth_done=1")),
+    )
+        .into_response()
 }
 
 pub async fn handle_me(
@@ -354,9 +474,17 @@ pub async fn handle_me(
     match token {
         Some(t) => match state.auth_store.validate_session(&t) {
             Ok(Some(user)) => (StatusCode::OK, Json(user)).into_response(),
-            _ => (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error":"NOT_AUTHENTICATED"}))).into_response(),
+            _ => (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error":"NOT_AUTHENTICATED"})),
+            )
+                .into_response(),
         },
-        None => (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error":"NOT_AUTHENTICATED"}))).into_response(),
+        None => (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"NOT_AUTHENTICATED"})),
+        )
+            .into_response(),
     }
 }
 
@@ -373,7 +501,6 @@ pub async fn handle_logout(
         .build();
     (jar.add(cookie), Json(serde_json::json!({"ok":true})))
 }
-
 
 // ── Google OAuth ─────────────────────────────────────────
 
@@ -428,7 +555,10 @@ pub async fn handle_google_callback(
         Err(_) => return (StatusCode::UNAUTHORIZED, "OAuth failed").into_response(),
     };
 
-    let access_token = token_data.get("access_token").and_then(|v| v.as_str()).unwrap_or("");
+    let access_token = token_data
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if access_token.is_empty() {
         return (StatusCode::UNAUTHORIZED, "OAuth failed").into_response();
     }
@@ -446,11 +576,17 @@ pub async fn handle_google_callback(
 
     let google_id = user_data.get("sub").and_then(|v| v.as_str()).unwrap_or("");
     let email = user_data.get("email").and_then(|v| v.as_str());
-    let name = user_data.get("name").and_then(|v| v.as_str()).unwrap_or("User");
+    let name = user_data
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("User");
 
     let user = match state.auth_store.find_by_provider("google", google_id) {
         Ok(Some(u)) => u,
-        _ => state.auth_store.create_user(email, None, name, "google", Some(google_id)).unwrap(),
+        _ => state
+            .auth_store
+            .create_user(email, None, name, "google", Some(google_id))
+            .unwrap(),
     };
 
     let session = state.auth_store.create_session(&user.id).unwrap();
@@ -464,32 +600,52 @@ pub async fn handle_google_callback(
         .build();
 
     let base_url = std::env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into());
-    (jar.add(cookie), Redirect::to(&format!("{base_url}/?auth_done=1"))).into_response()
+    (
+        jar.add(cookie),
+        Redirect::to(&format!("{base_url}/?auth_done=1")),
+    )
+        .into_response()
 }
 fn row_to_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
     Ok(User {
-        id: row.get(0)?, email: row.get(1)?, phone: row.get(2)?,
-        display_name: row.get(3)?, avatar_url: row.get(4)?,
-        provider: row.get(5)?, created_at: row.get(6)?,
+        id: row.get(0)?,
+        email: row.get(1)?,
+        phone: row.get(2)?,
+        display_name: row.get(3)?,
+        avatar_url: row.get(4)?,
+        provider: row.get(5)?,
+        created_at: row.get(6)?,
     })
 }
 
-fn unix_now() -> String { chrono::Utc::now().timestamp().to_string() }
-fn unix_after(secs: i64) -> String { (chrono::Utc::now().timestamp() + secs).to_string() }
+fn unix_now() -> String {
+    chrono::Utc::now().timestamp().to_string()
+}
+fn unix_after(secs: i64) -> String {
+    (chrono::Utc::now().timestamp() + secs).to_string()
+}
 
 // ── Password hashing ─────────────────────────────────
 
 fn hash_password(pw: &str) -> String {
-    use argon2::{password_hash::{PasswordHasher, SaltString}, Argon2};
+    use argon2::{
+        password_hash::{PasswordHasher, SaltString},
+        Argon2,
+    };
     use rand_core::OsRng;
     let salt = SaltString::generate(&mut OsRng);
-    Argon2::default().hash_password(pw.as_bytes(), &salt).unwrap().to_string()
+    Argon2::default()
+        .hash_password(pw.as_bytes(), &salt)
+        .unwrap()
+        .to_string()
 }
 
 fn verify_password_hash(pw: &str, hash: &str) -> bool {
     use argon2::{password_hash::PasswordVerifier, Argon2};
     let parsed = argon2::PasswordHash::new(hash).ok();
-    parsed.map(|h| Argon2::default().verify_password(pw.as_bytes(), &h).is_ok()).unwrap_or(false)
+    parsed
+        .map(|h| Argon2::default().verify_password(pw.as_bytes(), &h).is_ok())
+        .unwrap_or(false)
 }
 
 // ── Register / Login ────────────────────────────────────
@@ -497,9 +653,16 @@ fn verify_password_hash(pw: &str, hash: &str) -> bool {
 use serde_json::json;
 
 #[derive(Deserialize)]
-pub struct RegisterRequest { pub email: String, pub password: String, pub display_name: String }
+pub struct RegisterRequest {
+    pub email: String,
+    pub password: String,
+    pub display_name: String,
+}
 #[derive(Deserialize)]
-pub struct LoginRequest { pub email: String, pub password: String }
+pub struct LoginRequest {
+    pub email: String,
+    pub password: String,
+}
 
 /// Build the session cookie set on every successful sign-in. The frontend
 /// authenticates by calling `/api/auth/me`, which reads this cookie — so
@@ -520,16 +683,35 @@ pub async fn handle_register(
     Json(body): Json<RegisterRequest>,
 ) -> impl IntoResponse {
     if body.email.is_empty() || !body.email.contains('@') {
-        return (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error":"INVALID_EMAIL"}))).into_response();
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error":"INVALID_EMAIL"})),
+        )
+            .into_response();
     }
     if body.password.len() < 8 {
-        return (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error":"WEAK_PASSWORD"}))).into_response();
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error":"WEAK_PASSWORD"})),
+        )
+            .into_response();
     }
-    match state.auth_store.create_user_with_password(&body.email, &body.password, &body.display_name) {
+    match state.auth_store.create_user_with_password(
+        &body.email,
+        &body.password,
+        &body.display_name,
+    ) {
         Ok(user) => {
             let session = state.auth_store.create_session(&user.id).unwrap();
             let cookie = session_cookie(session.token.clone());
-            (jar.add(cookie), Json(AuthResponse { user, token: session.token })).into_response()
+            (
+                jar.add(cookie),
+                Json(AuthResponse {
+                    user,
+                    token: session.token,
+                }),
+            )
+                .into_response()
         }
         Err(_) => (StatusCode::CONFLICT, Json(json!({"error":"EMAIL_EXISTS"}))).into_response(),
     }
@@ -540,12 +722,26 @@ pub async fn handle_login(
     jar: CookieJar,
     Json(body): Json<LoginRequest>,
 ) -> impl IntoResponse {
-    match state.auth_store.verify_password(&body.email, &body.password) {
+    match state
+        .auth_store
+        .verify_password(&body.email, &body.password)
+    {
         Ok(Some(user)) => {
             let session = state.auth_store.create_session(&user.id).unwrap();
             let cookie = session_cookie(session.token.clone());
-            (jar.add(cookie), Json(AuthResponse { user, token: session.token })).into_response()
+            (
+                jar.add(cookie),
+                Json(AuthResponse {
+                    user,
+                    token: session.token,
+                }),
+            )
+                .into_response()
         }
-        _ => (StatusCode::UNAUTHORIZED, Json(json!({"error":"INVALID_CREDENTIALS"}))).into_response(),
+        _ => (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error":"INVALID_CREDENTIALS"})),
+        )
+            .into_response(),
     }
 }

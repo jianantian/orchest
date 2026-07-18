@@ -6,10 +6,24 @@
 /// Suno V5 rejects content containing artist/band names. This compact blocklist
 /// covers the most common false positives from LLM-generated text.
 const ARTIST_BLOCKLIST: &[&str] = &[
-    "sarah brightman", "enya", "adele", "ed sheeran", "taylor swift",
-    "beyonce", "billie eilish", "the weeknd", "drake", "bad bunny",
-    "nirvana", "the beatles", "queen", "metallica", "coldplay",
-    "maroon 5", "bruno mars", "ariana grande",
+    "sarah brightman",
+    "enya",
+    "adele",
+    "ed sheeran",
+    "taylor swift",
+    "beyonce",
+    "billie eilish",
+    "the weeknd",
+    "drake",
+    "bad bunny",
+    "nirvana",
+    "the beatles",
+    "queen",
+    "metallica",
+    "coldplay",
+    "maroon 5",
+    "bruno mars",
+    "ariana grande",
 ];
 
 /// Check if text contains any blocked artist names.
@@ -50,9 +64,12 @@ pub fn validate_lyrics(lyrics: &str) -> LyricsValidation {
 
     // Count section tags
     let lowered = lyrics.to_lowercase();
-    v.section_count = lowered.matches("[verse").count() + lowered.matches("[chorus").count()
-        + lowered.matches("[bridge").count() + lowered.matches("[pre-chorus").count()
-        + lowered.matches("[intro").count() + lowered.matches("[outro").count()
+    v.section_count = lowered.matches("[verse").count()
+        + lowered.matches("[chorus").count()
+        + lowered.matches("[bridge").count()
+        + lowered.matches("[pre-chorus").count()
+        + lowered.matches("[intro").count()
+        + lowered.matches("[outro").count()
         + lowered.matches("[instrumental").count();
     v.verse_count = lowered.matches("[verse").count();
     v.chorus_count = lowered.matches("[chorus").count();
@@ -62,16 +79,27 @@ pub fn validate_lyrics(lyrics: &str) -> LyricsValidation {
     v.word_count = lyrics.split_whitespace().count();
 
     if !v.has_structure_tags {
-        v.warnings.push("No section tags ([Verse], [Chorus]) found. Suno may not structure the song well.".into());
+        v.warnings.push(
+            "No section tags ([Verse], [Chorus]) found. Suno may not structure the song well."
+                .into(),
+        );
     }
     if v.chorus_count < 2 {
-        v.warnings.push("Less than 2 chorus sections. Songs need a repeating chorus for structure.".into());
+        v.warnings.push(
+            "Less than 2 chorus sections. Songs need a repeating chorus for structure.".into(),
+        );
     }
     if v.word_count < 100 {
-        v.warnings.push(format!("Lyrics too short ({} words). Aim for 200-400 words for a full song.", v.word_count));
+        v.warnings.push(format!(
+            "Lyrics too short ({} words). Aim for 200-400 words for a full song.",
+            v.word_count
+        ));
     }
     if v.word_count > 600 {
-        v.warnings.push(format!("Lyrics too long ({} words). Suno may truncate or rush the delivery.", v.word_count));
+        v.warnings.push(format!(
+            "Lyrics too long ({} words). Suno may truncate or rush the delivery.",
+            v.word_count
+        ));
     }
 
     // Check for twin verses (identical first lines)

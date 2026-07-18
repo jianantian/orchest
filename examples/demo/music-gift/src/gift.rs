@@ -148,53 +148,81 @@ impl GiftStore {
         for col in ["countdown_status", "lrc", "duration_secs", "cover_url"] {
             let _ = conn.execute(&format!("ALTER TABLE gifts ADD COLUMN {col} TEXT"), []);
         }
-        Ok(Self { conn: Arc::new(Mutex::new(conn)) })
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+        })
     }
 
     pub fn create(&self, gift: &Gift) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute(
             "INSERT INTO gifts (id, kind, lyrics, meta, audio_url, cover_url, photos, gen_handle, \
              gen_status, countdown_status, lrc, duration_secs, creator_token, published, \
              likes, created_at, published_at) \
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
             params![
-                gift.id, gift.kind, gift.lyrics,
+                gift.id,
+                gift.kind,
+                gift.lyrics,
                 serde_json::to_string(&gift.meta)?,
-                gift.audio_url, gift.cover_url,
+                gift.audio_url,
+                gift.cover_url,
                 serde_json::to_string(&gift.photos)?,
-                gift.gen_handle, gift.gen_status, gift.countdown_status,
-                gift.lrc, gift.duration_secs,
-                gift.creator_token, gift.published as i32,
+                gift.gen_handle,
+                gift.gen_status,
+                gift.countdown_status,
+                gift.lrc,
+                gift.duration_secs,
+                gift.creator_token,
+                gift.published as i32,
                 serde_json::to_string(&gift.likes)?,
-                gift.created_at, gift.published_at,
+                gift.created_at,
+                gift.published_at,
             ],
         )?;
         Ok(())
     }
 
     pub fn get(&self, id: &str) -> AppResult<Gift> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let sql = format!("{SELECT_COLS} WHERE id = ?1");
         let mut stmt = conn.prepare(&sql)?;
-        stmt.query_row(params![id], row_to_gift).map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => AppError::NotFound(format!("gift {id} not found")),
-            other => AppError::Database(other.to_string()),
-        })
+        stmt.query_row(params![id], row_to_gift)
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    AppError::NotFound(format!("gift {id} not found"))
+                }
+                other => AppError::Database(other.to_string()),
+            })
     }
 
     pub fn list_published(&self) -> AppResult<Vec<Gift>> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let sql = format!("{SELECT_COLS} WHERE published = 1 ORDER BY published_at DESC");
         let mut stmt = conn.prepare(&sql)?;
-        let gifts: Vec<Gift> = stmt.query_map([], row_to_gift)?.filter_map(Result::ok).collect();
+        let gifts: Vec<Gift> = stmt
+            .query_map([], row_to_gift)?
+            .filter_map(Result::ok)
+            .collect();
         Ok(gifts)
     }
 
     /// Toggle listing on the public playlist. The gift stays reachable by id
     /// either way, so a link already sent to someone keeps working.
     pub fn set_published(&self, id: &str, published: bool, now: &str) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let published_at: Option<&str> = if published { Some(now) } else { None };
         if conn.execute(
             "UPDATE gifts SET published=?2, published_at=?3 WHERE id=?1",
@@ -207,7 +235,10 @@ impl GiftStore {
     }
 
     pub fn delete(&self, id: &str) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         if conn.execute("DELETE FROM gifts WHERE id=?1", params![id])? == 0 {
             return Err(AppError::NotFound(format!("gift {id} not found")));
         }
@@ -215,40 +246,75 @@ impl GiftStore {
     }
 
     pub fn update_gen(&self, id: &str, handle_json: &str, status: &str) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
-        if conn.execute("UPDATE gifts SET gen_handle=?2, gen_status=?3 WHERE id=?1", params![id, handle_json, status])? == 0 {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute(
+            "UPDATE gifts SET gen_handle=?2, gen_status=?3 WHERE id=?1",
+            params![id, handle_json, status],
+        )? == 0
+        {
             return Err(AppError::NotFound(format!("gift {id} not found")));
         }
         Ok(())
     }
 
     pub fn update_audio(&self, id: &str, audio_url: &str) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
-        if conn.execute("UPDATE gifts SET audio_url=?2, gen_status='done' WHERE id=?1", params![id, audio_url])? == 0 {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute(
+            "UPDATE gifts SET audio_url=?2, gen_status='done' WHERE id=?1",
+            params![id, audio_url],
+        )? == 0
+        {
             return Err(AppError::NotFound(format!("gift {id} not found")));
         }
         Ok(())
     }
 
     pub fn mark_gen_failed(&self, id: &str) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
-        if conn.execute("UPDATE gifts SET gen_status='failed' WHERE id=?1", params![id])? == 0 {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute(
+            "UPDATE gifts SET gen_status='failed' WHERE id=?1",
+            params![id],
+        )? == 0
+        {
             return Err(AppError::NotFound(format!("gift {id} not found")));
         }
         Ok(())
     }
 
     pub fn update_countdown_status(&self, id: &str, status: &str) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
-        if conn.execute("UPDATE gifts SET countdown_status=?2 WHERE id=?1", params![id, status])? == 0 {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute(
+            "UPDATE gifts SET countdown_status=?2 WHERE id=?1",
+            params![id, status],
+        )? == 0
+        {
             return Err(AppError::NotFound(format!("gift {id} not found")));
         }
         Ok(())
     }
 
     pub fn update_lrc(&self, id: &str, lrc: &str, dur: Option<f64>) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
-        if conn.execute("UPDATE gifts SET lrc=?2, duration_secs=?3 WHERE id=?1", params![id, lrc, dur])? == 0 {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute(
+            "UPDATE gifts SET lrc=?2, duration_secs=?3 WHERE id=?1",
+            params![id, lrc, dur],
+        )? == 0
+        {
             return Err(AppError::NotFound(format!("gift {id} not found")));
         }
         Ok(())
@@ -258,19 +324,32 @@ impl GiftStore {
     /// `creator_token` remains the only mutation check, and gifts created
     /// without a session keep `creator_id` NULL.
     pub fn update_creator_id(&self, id: &str, creator_id: &str) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
-        if conn.execute("UPDATE gifts SET creator_id=?2 WHERE id=?1", params![id, creator_id])? == 0 {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute(
+            "UPDATE gifts SET creator_id=?2 WHERE id=?1",
+            params![id, creator_id],
+        )? == 0
+        {
             return Err(AppError::NotFound(format!("gift {id} not found")));
         }
         Ok(())
     }
 
     pub fn like(&self, id: &str, viewer_id: &str) -> AppResult<usize> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let mut gift = Self::get_inner(&conn, id)?;
         if !gift.likes.iter().any(|l| l == viewer_id) {
             gift.likes.push(viewer_id.to_string());
-            conn.execute("UPDATE gifts SET likes=?2 WHERE id=?1", params![id, serde_json::to_string(&gift.likes)?])?;
+            conn.execute(
+                "UPDATE gifts SET likes=?2 WHERE id=?1",
+                params![id, serde_json::to_string(&gift.likes)?],
+            )?;
         }
         Ok(gift.likes.len())
     }
@@ -278,10 +357,13 @@ impl GiftStore {
     fn get_inner(conn: &Connection, id: &str) -> AppResult<Gift> {
         let sql = format!("{SELECT_COLS} WHERE id = ?1");
         let mut stmt = conn.prepare(&sql)?;
-        stmt.query_row(params![id], row_to_gift).map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => AppError::NotFound(format!("gift {id} not found")),
-            other => AppError::Database(other.to_string()),
-        })
+        stmt.query_row(params![id], row_to_gift)
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    AppError::NotFound(format!("gift {id} not found"))
+                }
+                other => AppError::Database(other.to_string()),
+            })
     }
 }
 

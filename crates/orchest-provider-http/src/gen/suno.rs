@@ -145,7 +145,12 @@ fn build_result(data: &Value) -> GenResult {
         .map(|tracks| {
             tracks
                 .iter()
-                .map(|t| t.get("title").and_then(Value::as_str).unwrap_or("").to_string())
+                .map(|t| {
+                    t.get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string()
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -210,7 +215,6 @@ enum JobState {
     Done(GenResult),
 }
 
-
 // TODO: callback URL support. The Suno API supports webhook callbacks
 // (text / first / complete stages) via the `callBackUrl` field. Currently
 // the adapter uses a dummy URL and relies on polling. To support callbacks:
@@ -259,7 +263,9 @@ impl SunoMusicGen {
             .send()
             .await;
         let Ok(resp) = resp else { return (None, None) };
-        let Ok(value) = resp.json::<Value>().await else { return (None, None) };
+        let Ok(value) = resp.json::<Value>().await else {
+            return (None, None);
+        };
         if value.get("code").and_then(Value::as_i64) != Some(200) {
             return (None, None);
         }
@@ -438,8 +444,7 @@ impl GenTask for SunoMusicGen {
                 // trait shape. Best-effort — a failure leaves timed_text = None
                 // and the consumer falls back to its own estimate.
                 if let Some(audio_id) = primary_audio_id(&data) {
-                    let (timed_text, hoot_cer) =
-                        self.fetch_timed_text(&handle.id, &audio_id).await;
+                    let (timed_text, hoot_cer) = self.fetch_timed_text(&handle.id, &audio_id).await;
                     result.timed_text = timed_text;
                     if let (Some(cer), Some(obj)) =
                         (hoot_cer, result.diagnostic_metadata.as_object_mut())
