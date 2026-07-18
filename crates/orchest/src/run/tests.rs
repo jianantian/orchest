@@ -192,6 +192,178 @@ async fn context_window_exceeded_fails_before_model_call() {
     ));
 }
 
+// ── Abnormal stop_reason terminates the run (hotfix 2026_07_18b #216) ────────
+
+/// Always answers with an abnormal stop_reason and no tool_use.
+struct AbnormalStopModel {
+    call_count: AtomicU32,
+    captured: Arc<Mutex<Vec<Vec<Message>>>>,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for AbnormalStopModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        self.call_count.fetch_add(1, Ordering::SeqCst);
+        self.captured.lock().unwrap().push(messages.to_vec());
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("partial".into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::ContextWindowExceeded,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[tokio::test]
+async fn abnormal_stop_reason_without_tool_use_fails_run_immediately() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let model = Arc::new(AbnormalStopModel {
+        call_count: AtomicU32::new(0),
+        captured: Arc::clone(&captured),
+    });
+    let model_for_run: Arc<dyn ModelAdapter> = model.clone();
+
+    let log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut config = test_config();
+    config.hooks.push(Arc::new(RecordingHook {
+        label: "A",
+        log: Arc::clone(&log),
+    }));
+
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model_for_run, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::RunFailed { error }
+                if error.contains("abnormal_stop_reason") && error.contains("ContextWindowExceeded")
+        )),
+        "run must fail with the stop_reason carried in the error"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        "run must not complete"
+    );
+    assert_eq!(
+        model.call_count.load(Ordering::SeqCst),
+        1,
+        "model must be called exactly once — no empty-User-message retry loop"
+    );
+    let calls = captured.lock().unwrap();
+    assert!(
+        calls
+            .iter()
+            .flatten()
+            .all(|m| !(m.role == Role::User && m.content.is_empty())),
+        "no empty-content User message may be pushed"
+    );
+    assert!(
+        log.lock().unwrap().iter().any(|s| s == "A:on_run_error"),
+        "on_run_error hook must fire, same as the step-limit failure path"
+    );
+}
+
+/// First call: tool_use paired with an abnormal stop_reason; then EndTurn.
+struct AbnormalStopToolCallModel {
+    call_count: AtomicU32,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for AbnormalStopToolCallModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let count = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if count == 0 {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "call_1".into(),
+                    name: "echo".into(),
+                    input: json!({"text": "hello"}),
+                }],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::ContextWindowExceeded,
+                option_adjustments: vec![],
+            })
+        } else {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("done".into())],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+#[tokio::test]
+async fn abnormal_stop_reason_with_tool_use_dispatches_tools() {
+    let model = Arc::new(AbnormalStopToolCallModel {
+        call_count: AtomicU32::new(0),
+    });
+    let model_for_run: Arc<dyn ModelAdapter> = model.clone();
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeTool::echo())).unwrap();
+
+    let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model_for_run, registry);
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        "tool_use with an abnormal stop_reason still dispatches tools and completes"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunFailed { .. })),
+        "no failure when tool_use is present"
+    );
+    assert_eq!(model.call_count.load(Ordering::SeqCst), 2);
+}
+
 struct ManyStreamChunksModel {
     chunks: usize,
 }
