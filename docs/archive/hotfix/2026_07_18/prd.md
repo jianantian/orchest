@@ -53,7 +53,7 @@
 
 - [x] 001–003 各自 spec 的验收 checklist 全过
 - [x] 四件套(`cargo test --workspace` / `cargo clippy --workspace -- -D warnings` / `cargo fmt --check` / `bash scripts/lint-check.sh`)全过
-- [ ] merge 后 roadmap 已完成表加本 hotfix 行,docs 归档至 `docs/archive/hotfix/2026_07_18`
+- [x] merge 后 roadmap 已完成表加本 hotfix 行,docs 归档至 `docs/archive/hotfix/2026_07_18`
 
 ## 依赖
 
