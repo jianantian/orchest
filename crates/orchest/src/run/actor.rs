@@ -950,7 +950,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         }
     }
 
-    match response.stop_reason {
+    match &response.stop_reason {
         StopReason::EndTurn if tool_uses.is_empty() => {
             let output = json!(text_parts.join(""));
             state.refresh_terminal_hook_ctx(step);
@@ -973,6 +973,24 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
             )
             .await;
             emit(&subs, RuntimeEvent::RunCompleted { output }).await;
+            return false;
+        }
+        // Abnormal stop (e.g. ContextWindowExceeded) with no tool calls:
+        // falling through to the tool phase would push an empty-content User
+        // message and re-call the model on the same context until max_steps,
+        // burning tokens and diluting the failure. Fail the run immediately
+        // instead, through the same on_run_error path as step-limit failures.
+        reason if tool_uses.is_empty() => {
+            let error = format!("abnormal_stop_reason: {reason:?}");
+            state.refresh_terminal_hook_ctx(step);
+            crate::hook::runner::run_on_run_error(
+                &state.config.hooks,
+                &state.run_hook_ctx,
+                &error,
+                primary(&subs),
+            )
+            .await;
+            emit(&subs, RuntimeEvent::RunFailed { error }).await;
             return false;
         }
         _ => {}
