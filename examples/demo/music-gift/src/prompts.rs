@@ -1,8 +1,8 @@
 //! Prompt templates for the music-gift demo.
 //!
-//! Static prompts (`SYSTEM_PROMPT`, `LYRICS_SKILL`, `COUNTDOWN_TEMPLATE`) are
-//! embedded at compile time via `include_str!`. Music prompt skills are loaded
-//! from disk at startup so providers can be added without recompilation.
+//! Static prompts (`SYSTEM_PROMPT`, `COUNTDOWN_TEMPLATE`) are embedded at
+//! compile time via `include_str!`. Music prompt skills are loaded from disk
+//! at startup so providers can be added without recompilation.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -19,7 +19,6 @@ pub static SYSTEM_PROMPT: LazyLock<String> =
 /// `{target_date}`, `{lyric_snippet}`, `{previous_error}`.
 pub static COUNTDOWN_TEMPLATE: LazyLock<String> =
     LazyLock::new(|| include_str!("../prompts/countdown.md").to_string());
-#[allow(dead_code)]
 /// Per-provider music prompt generation skills loaded at startup.
 pub static MUSIC_PROMPT_SKILLS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
     let mut m = HashMap::new();

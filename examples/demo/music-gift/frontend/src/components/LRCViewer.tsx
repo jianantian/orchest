@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { type LRCLine, parseLRC } from "../lib/lrc";
-
-export { type LRCLine, parseLRC };
+import { type LRCLine } from "../lib/lrc";
 
 export interface LRCViewerProps {
   lines: LRCLine[];

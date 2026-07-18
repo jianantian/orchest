@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import type { CreateGiftRequest, GiftMeta } from "../types";
-import { createGift, generateMusic } from "../api";
+import { createGift, generateMusic, watchGeneration, type GenerationWatch } from "../api";
 import { rememberCreatorToken } from "../lib/creator";
 
 export type MusicGenState = "idle" | "generating" | "ready" | "error";
@@ -10,45 +10,38 @@ export interface MusicGenResult {
   audioUrl: string | null;
 }
 
+/**
+ * Outcome of one start() call. Returned so callers can branch on failure
+ * directly — reading `error` from the hook right after `await start(...)`
+ * would see the stale closure from the previous render.
+ */
+export type MusicGenStartResult =
+  | { ok: true; giftId: string }
+  | { ok: false; error: string };
+
 export function useMusicGen() {
   const [state, setState] = useState<MusicGenState>("idle");
   const [giftId, setGiftId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const esRef = useRef<EventSource | null>(null);
+  const watchRef = useRef<GenerationWatch | null>(null);
 
-  /** Open an SSE stream for generation status updates. */
+  /** Open an SSE watch for generation status updates. */
   function watchStream(id: string) {
-    // Close any existing stream
-    esRef.current?.close();
-
-    const es = new EventSource(`/api/generate/${id}/stream`);
-    esRef.current = es;
-
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.status === "done") {
-          es.close();
-          setState("ready");
-        } else if (data.status === "failed") {
-          es.close();
-          setState("error");
-          setError(data.error ?? "Generation failed");
-        }
-        // "pending" → keep waiting
-      } catch {
-        // Ignore malformed events
-      }
-    };
-
-    es.onerror = () => {
-      // EventSource auto-reconnects; if after several attempts it still
-      // fails, close and treat as error.
-      if (es.readyState === EventSource.CLOSED) {
+    // Close any existing watch
+    watchRef.current?.close();
+    watchRef.current = watchGeneration(id, {
+      onDone: () => setState("ready"),
+      onFailed: (reason) => {
         setState("error");
-        setError("Connection lost during generation");
-      }
-    };
+        setError(
+          reason === "timeout"
+            ? "Generation timed out. Try again."
+            : reason === "connection-lost"
+              ? "Connection lost during generation"
+              : "Generation failed",
+        );
+      },
+    });
   }
 
   const start = useCallback(
@@ -62,7 +55,7 @@ export function useMusicGen() {
       meta?: Partial<GiftMeta>;
       lang?: string;
       photos?: string[];
-    }) => {
+    }): Promise<MusicGenStartResult> => {
       setState("generating");
       setError(null);
 
@@ -89,11 +82,14 @@ export function useMusicGen() {
 
         await generateMusic(id);
 
-        // Start SSE stream for live status — no polling
+        // Start SSE watch for live status — no polling
         watchStream(id);
+        return { ok: true, giftId: id };
       } catch (e) {
+        const message = e instanceof Error ? e.message : "Creation failed";
         setState("error");
-        setError(e instanceof Error ? e.message : "Creation failed");
+        setError(message);
+        return { ok: false, error: message };
       }
     },
     [],
@@ -113,8 +109,8 @@ export function useMusicGen() {
   }, []);
 
   const reset = useCallback(() => {
-    esRef.current?.close();
-    esRef.current = null;
+    watchRef.current?.close();
+    watchRef.current = null;
     setState("idle");
     setGiftId(null);
     setError(null);

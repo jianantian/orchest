@@ -188,3 +188,54 @@ for them. A future change should give `GenAsset` semantic roles (audio / cover /
 timed-text) and lift duration into typed metadata, at which point
 `diagnostic_metadata` returns to holding only genuinely diagnostic data. Left out
 of the Finding 1 change to keep that change focused and its blast radius minimal.
+
+---
+
+## Finding 3 · Calling a tool once requires hand-constructing `ToolContext`
+
+**API surface:** `orchest::tool::Tool::execute` / `orchest::tool::ToolContext`
+**Classification:** missing SDK helper ("call a tool once")
+**Status:** recorded, not fixed
+
+The countdown subagent is invoked outside any agent run — a plain "call this
+tool with this input, once" (`src/tools/countdown.rs:153-163`). But `execute`
+takes a `&ToolContext`, so the caller must mint a throwaway context by hand:
+`RunId::new()`, `ApprovalBus::default()`, `run_depth: 0`, a made-up
+`tool_call_id`, `event_tx: None`, default budget, empty `parent_messages`.
+None of these are meaningful for a one-shot call; all of them are forced.
+A `ToolContext::oneshot()` (or a `Tool::call(input)` convenience that builds
+the trivial context internally) would remove the boilerplate and, more
+importantly, keep callers from having to know which fields are safe to fake.
+
+---
+
+## Finding 4 · `ToolContext` is too hard to construct in tests
+
+**API surface:** `orchest::tool::ToolContext`
+**Classification:** missing SDK helper (test ergonomics)
+**Status:** recorded, not fixed
+
+Because there is no easy way to build a `ToolContext` in a unit test, the
+`collect_info` test (`src/tools/collect_info.rs:108`) gives up on executing
+the tool and instead **copies the validation body into the test module**,
+testing the copy instead of the real callback. The two implementations can
+now drift silently — the test would keep passing if the tool's actual logic
+changed. Finding 3's helper would fix this too: any supported way to execute
+a tool outside a run lets tests exercise the real code path.
+
+---
+
+## Finding 5 · `ChatModel` vs `ModelAdapter`: one trait, two names, a manual cast
+
+**API surface:** `orchest::model::ModelAdapter` / `orchest_protocol::ChatModel`
+**Classification:** API ergonomics (redundant alias leaks into call sites)
+**Status:** recorded, not fixed
+
+`ModelAdapter` is an alias for `ChatModel` (see the note at
+`src/config.rs:70-72`), yet the boundary is not transparent to callers:
+`AgentRun::start` takes `Arc<dyn ModelAdapter>`, so a held
+`Arc<dyn ChatModel>` needs an explicit `as Arc<dyn ModelAdapter>` cast
+(`src/agent.rs:216`). An alias that requires a cast at use sites is an alias
+in name only. Either the runtime should accept `Arc<dyn ChatModel>` directly
+(or a generic `Into`/`From`), or the alias should be collapsed to a single
+canonical name so no conversion is ever needed.

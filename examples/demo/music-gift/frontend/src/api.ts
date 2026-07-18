@@ -5,11 +5,9 @@ import type {
   ChatRequest,
   CreateGiftRequest,
   CreateGiftResponse,
-  GenStatusResponse,
   GenerateResponse,
   Gift,
   LikeResponse,
-  PhotoUploadResponse,
   PlaylistResponse,
   SseEvent,
 } from './types';
@@ -96,13 +94,6 @@ export async function generateMusic(id: string): Promise<GenerateResponse> {
   return res.json() as Promise<GenerateResponse>;
 }
 
-/** GET /api/generate/:id/status — poll music generation status. */
-export async function pollGenerateStatus(id: string): Promise<GenStatusResponse> {
-  const res = await fetch(`/api/generate/${id}/status`);
-  if (!res.ok) throw new Error(`Poll status failed: ${res.status}`);
-  return res.json() as Promise<GenStatusResponse>;
-}
-
 /** DELETE /api/gift/:id — permanently remove a gift. Creator only. */
 export async function deleteGift(id: string, creatorToken: string): Promise<void> {
   const res = await fetch(`/api/gift/${id}`, {
@@ -137,13 +128,70 @@ export async function likeGift(id: string, viewerId: string): Promise<LikeRespon
   return res.json() as Promise<LikeResponse>;
 }
 
-/** POST /api/photos — upload base64 photos, returns server paths. */
-export async function uploadPhotos(dataUrls: string[]): Promise<PhotoUploadResponse> {
-  const res = await fetch('/api/photos', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ photos: dataUrls }),
-  });
-  if (!res.ok) throw new Error(`Upload photos failed: ${res.status}`);
-  return res.json() as Promise<PhotoUploadResponse>;
+/** Statuses emitted by GET /api/generate/:id/stream (SSE). */
+export type GenerationStatus = 'pending' | 'running' | 'done' | 'failed' | 'timeout';
+
+export interface GenerationWatchHandlers {
+  /** In-progress update. */
+  onProgress?: (status: 'pending' | 'running') => void;
+  /** Terminal success — carries the audio URL (null if the backend omitted it). */
+  onDone?: (audioUrl: string | null) => void;
+  /**
+   * Terminal failure: the job failed or timed out, or the stream was lost
+   * for good. The backend's bare `{"status":"error"}` (gift or gen handle
+   * missing) is normalized to `failed`.
+   */
+  onFailed?: (reason: 'failed' | 'timeout' | 'connection-lost') => void;
+}
+
+export interface GenerationWatch {
+  close: () => void;
+}
+
+/**
+ * Watch a music generation job over SSE until a terminal status.
+ *
+ * The single owner of the /api/generate/:id/stream wire contract: EventSource
+ * construction, JSON parsing, and the status union. Malformed events and
+ * unknown statuses are ignored (keep waiting). Transient drops auto-reconnect
+ * (EventSource default); only a permanently closed stream — e.g. a non-SSE
+ * error response — reports `connection-lost`.
+ */
+export function watchGeneration(id: string, handlers: GenerationWatchHandlers): GenerationWatch {
+  const es = new EventSource(`/api/generate/${id}/stream`);
+
+  es.onmessage = (event) => {
+    let data: { status?: unknown; audio_url?: unknown };
+    try {
+      data = JSON.parse(event.data);
+    } catch {
+      return; // Ignore malformed events
+    }
+    switch (data.status) {
+      case 'pending':
+      case 'running':
+        handlers.onProgress?.(data.status);
+        break;
+      case 'done':
+        es.close();
+        handlers.onDone?.(typeof data.audio_url === 'string' ? data.audio_url : null);
+        break;
+      case 'failed':
+      case 'error': // Sent when the gift or its gen handle is gone
+      case 'timeout':
+        es.close();
+        handlers.onFailed?.(data.status === 'timeout' ? 'timeout' : 'failed');
+        break;
+      default:
+        break; // Unknown status — keep waiting
+    }
+  };
+
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED) {
+      handlers.onFailed?.('connection-lost');
+    }
+  };
+
+  return { close: () => es.close() };
 }

@@ -81,8 +81,10 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
   async function handleGenerate(e: FormEvent) {
     e.preventDefault(); setError(null);
     const style = selectedStyles.join(", ") || styleInput.trim() || "warm acoustic";
-    await gen.start({ lyrics: instrumental ? "" : lyrics.trim() || "instrumental", kind: instrumental ? "instrumental" : "song", style, title: title.trim() || undefined, vocal, lang, photos });
-    if (gen.error) setError(gen.error);
+    // Branch on the returned result: `gen.error` here would be the stale
+    // closure from this render, always the pre-start value.
+    const result = await gen.start({ lyrics: instrumental ? "" : lyrics.trim() || "instrumental", kind: instrumental ? "instrumental" : "song", style, title: title.trim() || undefined, vocal, lang, photos });
+    if (!result.ok) setError(result.error);
   }
 
   const musicState = gen.state === "idle" ? "generating" as const : gen.state === "ready" ? "ready" as const : gen.state === "error" ? "error" as const : "generating" as const;

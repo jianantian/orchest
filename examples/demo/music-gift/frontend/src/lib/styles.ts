@@ -1,9 +1,4 @@
 
-export const DEFAULT_STYLE_TAGS = [
-  "warm acoustic", "lively pop", "gentle ballad", "upbeat folk",
-  "soulful R&B", "dreamy indie", "energetic rock", "tender lullaby",
-];
-
 export const STYLE_CATALOG: string[] = [
   "pop", "rock", "rap", "electronic", "jazz", "classical", "folk", "r&b", "soul",
   "latin", "metal", "blues", "country", "punk",
@@ -28,16 +23,19 @@ export function shuffleStyles(exclude: string[], count = 14): string[] {
   return a.slice(0, count);
 }
 
-/** Section weight factors for LRC time distribution. */
-export const SECTION_WEIGHTS: Record<string, number> = {
-  intro: 0.7,
-  verse: 1.0,
-  "pre-chorus": 1.1,
-  prechorus: 1.1,
-  chorus: 1.0,
-  bridge: 0.9,
-  outro: 0.5,
-};
+/**
+ * Strip <<<MARKER>>> scaffolding from model output: marker-delimited blocks
+ * (content included), then any orphaned lone markers.
+ *
+ * Marker set the backend can emit (see src/agent.rs `strip_meta_tags`, which
+ * applies the same pair-then-lone removal server-side): <<<LYRICS>>>,
+ * <<<END>>>, <<<STYLE>>>/<<<STYLE_END>>>, <<<TITLE>>>/<<<TITLE_END>>>,
+ * <<<VOCAL>>>/<<<VOCAL_END>>>, <<<READY>>>. Does not trim — callers that need
+ * it (e.g. lyric rendering) trim at the call site.
+ */
+export function stripMarkers(raw: string): string {
+  return raw.replace(/<<<[A-Z_]+>>>[^<]*<<<[A-Z_]+>>>/g, "").replace(/<<<[A-Z_]+>>>/g, "");
+}
 
 /** Parse lyrics into sections by [Label] markers. */
 export function parseLyrics(raw: string): Array<{ label: string; lines: string[] }> {
@@ -48,6 +46,7 @@ export function parseLyrics(raw: string): Array<{ label: string; lines: string[]
     const content = parts[i + 1]?.trim() || "";
     if (content) sections.push({ label, content });
   }
+  // Merge consecutive choruses
   const merged: Array<{ label: string; content: string }> = [];
   for (const s of sections) {
     const last = merged[merged.length - 1];

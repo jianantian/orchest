@@ -118,7 +118,9 @@ fn gift_crud_without_providers() {
     assert!(get_resp.is_ok(), "get gift should succeed");
     let gift: serde_json::Value = get_resp.unwrap().into_json().expect("json");
     assert_eq!(gift["id"].as_str().unwrap(), gift_id);
-    assert_eq!(gift["published"], serde_json::Value::Bool(true));
+    // Gifts are created private (published: false) — the creator lists them
+    // explicitly via POST /api/gift/:id/publish.
+    assert_eq!(gift["published"], serde_json::Value::Bool(false));
 
     // Like the gift
     let like_resp = ureq::post(&format!("{base}/api/gift/{gift_id}/like"))

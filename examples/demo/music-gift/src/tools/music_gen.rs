@@ -1,7 +1,9 @@
-//! Music generation tool wrapping `GenTask` for submit/poll/stream.
+//! Music generation: the `/api/generate/*` pipeline over `GenTask`
+//! (submit/poll/stream) plus LLM prompt enrichment.
 //!
-//! Extracted from the route handlers so routes stay thin. Logic is copied
-//! exactly from the original handlers — behavior is unchanged.
+//! Extracted from the route handlers so routes stay thin — `generate` owns
+//! all generation policy (validation, the empty-lyrics rule, enrichment,
+//! submission); handlers only map results to HTTP.
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -75,232 +77,291 @@ impl std::fmt::Display for EnrichedPrompt {
     }
 }
 
-// ── Tool ────────────────────────────────────────────────────────────────────
+// ── Generate pipeline ───────────────────────────────────────────────────────
 
-/// Thin wrapper around `Arc<dyn GenTask>` with the submit/poll/stream lifecycle
-/// matching the `/api/generate/*` handlers exactly.
-pub struct MusicGenTool {
-    gen_task: Arc<dyn GenTask>,
+/// Typed generation inputs derived from the gift — exactly the fields
+/// `GenRequest.params` is built from. `submit` takes these instead of
+/// re-fetching the gift and re-deriving them from raw meta.
+pub struct GenSubmission {
+    pub lyrics: String,
+    pub style: String,
+    pub title: String,
 }
 
-impl MusicGenTool {
-    pub fn new(gen_task: Arc<dyn GenTask>) -> Self {
-        Self { gen_task }
+/// The full generate pipeline: read the gift, validate lyrics, refuse to
+/// generate a lyric-less song, enrich the style prompt via the prompt model
+/// (falling back to the raw style on any enrichment failure), check the
+/// enriched prompt for artist names, and submit the job.
+///
+/// All generation policy lives here; the route handler only maps the result
+/// to HTTP. `provider` is the startup-resolved provider identity, not a
+/// per-request env re-read.
+pub async fn generate(
+    gen_task: &Arc<dyn GenTask>,
+    store: &GiftStore,
+    prompt_model: &Arc<dyn ChatModel>,
+    provider: &str,
+    gift_id: &str,
+) -> AppResult<GenerateResponse> {
+    let gift = store.get(gift_id)?;
+    let meta = gift.meta();
+    let lyrics = gift.lyrics.clone().unwrap_or_default();
+    let style = meta.style_or_default();
+
+    // Validate lyrics — warnings logged for Suno quality tuning.
+    let validation = crate::tools::lyrics_validator::validate_lyrics(&lyrics);
+    for w in &validation.warnings {
+        eprintln!("[music-gift] lyrics warn [{gift_id}]: {w}");
     }
 
-    /// Submit a music generation job for the gift and persist the handle.
-    ///
-    pub async fn submit(&self, store: &GiftStore, gift_id: &str, enriched: &EnrichedPrompt) -> AppResult<GenerateResponse> {
-        let gift = store.get(gift_id)?;
+    // A song gift with no lyrics is never what the user asked for: the provider
+    // would invent its own (in its own language). Refuse rather than burn a
+    // generation on it.
+    if gift.kind != "instrumental" && lyrics.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "cannot generate a song with empty lyrics".to_string(),
+        ));
+    }
 
-        let style = gift
-            .meta
-            .get("style")
-            .and_then(Value::as_str)
-            .unwrap_or("healing and warm");
-        let lyrics = gift.lyrics.unwrap_or_default();
-        let title = gift
-            .meta
-            .get("title")
-            .and_then(Value::as_str)
-            .unwrap_or("Gift Song");
-        let params = json!({
-            "lyrics": lyrics,
-            "style": style,
-            "title": title,
-            "genre": enriched.genre,
-            "tempo": enriched.tempo,
-            "mood": enriched.mood,
-            "vocal_style": enriched.vocal_style,
-            "instrumentation": enriched.instrumentation,
-            "production": enriched.production,
-            "exclude": enriched.exclude,
+    let enriched = generate_music_prompt(
+        prompt_model.clone(),
+        &MusicPromptInput {
+            provider,
+            lyrics: &lyrics,
+            style,
+            title: meta.title.as_deref().unwrap_or(""),
+            vocal: meta.vocal_or_default(),
+            scene: meta.scenario.as_deref().unwrap_or(""),
+            name: meta.name.as_deref().unwrap_or(""),
+            relationship: Some(meta.relationship.as_deref().unwrap_or("")),
+            lang: meta.lang_or_default(),
+        },
+    )
+    .await
+    .unwrap_or_else(|_| EnrichedPrompt::fallback(style));
+
+    // Check generated style prompt for artist names
+    for w in &crate::tools::lyrics_validator::check_style_prompt(&enriched.prompt) {
+        eprintln!("[music-gift] style warn [{gift_id}]: {w}");
+    }
+
+    let submission = GenSubmission {
+        lyrics,
+        style: style.to_string(),
+        title: meta.title_or_default().to_string(),
+    };
+    submit(gen_task, store, gift_id, &submission, &enriched).await
+}
+
+/// Submit a music generation job for the gift and persist the handle.
+pub async fn submit(
+    gen_task: &Arc<dyn GenTask>,
+    store: &GiftStore,
+    gift_id: &str,
+    submission: &GenSubmission,
+    enriched: &EnrichedPrompt,
+) -> AppResult<GenerateResponse> {
+    let params = json!({
+        "lyrics": submission.lyrics,
+        "style": submission.style,
+        "title": submission.title,
+        "genre": enriched.genre,
+        "tempo": enriched.tempo,
+        "mood": enriched.mood,
+        "vocal_style": enriched.vocal_style,
+        "instrumentation": enriched.instrumentation,
+        "production": enriched.production,
+        "exclude": enriched.exclude,
+    });
+
+    let gen_req = GenRequest { prompt: enriched.prompt.clone(), params };
+    let handle = gen_task.submit(gen_req).await?;
+    let handle_json = serde_json::to_string(&handle)?;
+
+    store.update_gen(gift_id, &handle_json, "pending")?;
+
+    Ok(GenerateResponse {
+        id: gift_id.to_string(),
+        status: "pending".to_string(),
+        handle: Some(handle_json),
+    })
+}
+
+/// Poll for the generation job status and fetch assets when done.
+///
+/// Same logic as the original `generate_status` handler.
+pub async fn poll(
+    gen_task: &Arc<dyn GenTask>,
+    store: &GiftStore,
+    gift_id: &str,
+) -> AppResult<GenStatusResponse> {
+    let gift = store.get(gift_id)?;
+    if gift.gen_status.as_deref() == Some("done") {
+        return Ok(GenStatusResponse {
+            id: gift_id.to_string(),
+            status: "done".to_string(),
+            audio_url: gift.audio_url,
         });
-
-        let gen_req = GenRequest { prompt: enriched.prompt.clone(), params };
-        let handle = self.gen_task.submit(gen_req).await?;
-        let handle_json = serde_json::to_string(&handle)?;
-
-        store.update_gen(gift_id, &handle_json, "pending")?;
-
-        Ok(GenerateResponse {
-            id: gift_id.to_string(),
-            status: "pending".to_string(),
-            handle: Some(handle_json),
-        })
     }
 
-    /// Poll for the generation job status and fetch assets when done.
-    ///
-    /// Same logic as the original `generate_status` handler.
-    pub async fn poll(&self, store: &GiftStore, gift_id: &str) -> AppResult<GenStatusResponse> {
-        let gift = store.get(gift_id)?;
-        if gift.gen_status.as_deref() == Some("done") {
-            return Ok(GenStatusResponse {
-                id: gift_id.to_string(),
-                status: "done".to_string(),
-                audio_url: gift.audio_url,
-            });
+    let handle_json = match &gift.gen_handle {
+        Some(h) => h.clone(),
+        None => {
+            return Err(AppError::BadRequest(
+                "generation not submitted".to_string(),
+            ))
         }
+    };
 
-        let handle_json = match &gift.gen_handle {
-            Some(h) => h.clone(),
-            None => {
-                return Err(AppError::BadRequest(
-                    "generation not submitted".to_string(),
-                ))
+    let handle: GenHandle = serde_json::from_str(&handle_json)
+        .map_err(|e| AppError::BadRequest(format!("invalid gen handle: {e}")))?;
+
+    let status = match gen_task.poll(&handle).await {
+        Ok(s) => s,
+        Err(e) => return Err(AppError::Gen(e.to_string())),
+    };
+
+    if status == GenStatus::Done {
+        match handle_done(
+            gen_task.as_ref(),
+            store,
+            gift_id,
+            gift.lyrics.as_deref(),
+            &handle,
+        )
+        .await
+        {
+            Ok(audio_url) => {
+                return Ok(GenStatusResponse {
+                    id: gift_id.to_string(),
+                    status: "done".to_string(),
+                    audio_url,
+                });
             }
-        };
-
-        let handle: GenHandle = serde_json::from_str(&handle_json)
-            .map_err(|e| AppError::BadRequest(format!("invalid gen handle: {e}")))?;
-
-        let status = match self.gen_task.poll(&handle).await {
-            Ok(s) => s,
-            Err(e) => return Err(AppError::Gen(e.to_string())),
-        };
-
-        if status == GenStatus::Done {
-            match handle_done(
-                self.gen_task.as_ref(),
-                store,
-                gift_id,
-                gift.lyrics.as_deref(),
-                &handle,
-            )
-            .await
-            {
-                Ok(audio_url) => {
-                    return Ok(GenStatusResponse {
-                        id: gift_id.to_string(),
-                        status: "done".to_string(),
-                        audio_url,
-                    });
-                }
-                Err(e) => {
-                    store.mark_gen_failed(gift_id)?;
-                    return Err(e);
-                }
+            Err(e) => {
+                store.mark_gen_failed(gift_id)?;
+                return Err(e);
             }
         }
-
-        let status_str = match status {
-            GenStatus::Pending => "pending",
-            GenStatus::Running => "running",
-            GenStatus::Done => unreachable!(),
-            GenStatus::Failed => "failed",
-        };
-
-        if status == GenStatus::Failed {
-            store.mark_gen_failed(gift_id)?;
-        }
-
-        Ok(GenStatusResponse {
-            id: gift_id.to_string(),
-            status: status_str.to_string(),
-            audio_url: None,
-        })
     }
 
-    /// Stream SSE generation status events until the job completes or times out.
-    ///
-    /// Same logic as the original `generate_stream` handler (poll loop +
-    /// SSE wrapping).
-    pub fn stream(
-        gen_task: Arc<dyn GenTask>,
-        store: GiftStore,
-        gift_id: String,
-    ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
-        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(8);
+    let status_str = match status {
+        GenStatus::Pending => "pending",
+        GenStatus::Running => "running",
+        GenStatus::Done => unreachable!(),
+        GenStatus::Failed => "failed",
+    };
 
-        tokio::spawn(async move {
-            let gift = match store.get(&gift_id) {
-                Ok(g) => g,
+    if status == GenStatus::Failed {
+        store.mark_gen_failed(gift_id)?;
+    }
+
+    Ok(GenStatusResponse {
+        id: gift_id.to_string(),
+        status: status_str.to_string(),
+        audio_url: None,
+    })
+}
+
+/// Stream SSE generation status events until the job completes or times out.
+///
+/// Same logic as the original `generate_stream` handler (poll loop +
+/// SSE wrapping). Re-fetches the gift itself: it runs after the HTTP
+/// response, in its own spawned task.
+pub fn stream(
+    gen_task: Arc<dyn GenTask>,
+    store: GiftStore,
+    gift_id: String,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(8);
+
+    tokio::spawn(async move {
+        let gift = match store.get(&gift_id) {
+            Ok(g) => g,
+            Err(_) => {
+                let _ = tx
+                    .send(Ok(Event::default().data("{\"status\":\"error\"}")))
+                    .await;
+                return;
+            }
+        };
+        let handle: GenHandle = match gift.gen_handle.as_deref() {
+            Some(json) => match serde_json::from_str(json) {
+                Ok(h) => h,
                 Err(_) => {
                     let _ = tx
                         .send(Ok(Event::default().data("{\"status\":\"error\"}")))
                         .await;
                     return;
                 }
-            };
-            let handle: GenHandle = match gift.gen_handle.as_deref() {
-                Some(json) => match serde_json::from_str(json) {
-                    Ok(h) => h,
-                    Err(_) => {
-                        let _ = tx
-                            .send(Ok(Event::default().data("{\"status\":\"error\"}")))
-                            .await;
-                        return;
+            },
+            None => {
+                let _ = tx
+                    .send(Ok(Event::default().data("{\"status\":\"error\"}")))
+                    .await;
+                return;
+            }
+        };
+        let lyrics = gift.lyrics.as_deref();
+
+        let _ = tx
+            .send(Ok(Event::default().data("{\"status\":\"pending\"}")))
+            .await;
+
+        for _ in 0..48 {
+            // poll up to 4 minutes
+            sleep(Duration::from_secs(5)).await;
+            match gen_task.poll(&handle).await {
+                Ok(GenStatus::Done) => {
+                    match handle_done(
+                        gen_task.as_ref(),
+                        &store,
+                        &gift_id,
+                        lyrics,
+                        &handle,
+                    )
+                    .await
+                    {
+                        Ok(audio_url) => {
+                            let _ = tx
+                                .send(Ok(Event::default().data(
+                                    json!({"status":"done","audio_url":audio_url})
+                                        .to_string(),
+                                )))
+                                .await;
+                        }
+                        Err(_) => {
+                            let _ = store.mark_gen_failed(&gift_id);
+                            let _ = tx
+                                .send(Ok(Event::default().data(
+                                    "{\"status\":\"failed\"}",
+                                )))
+                                .await;
+                        }
                     }
-                },
-                None => {
+                    return;
+                }
+                Ok(GenStatus::Failed) => {
+                    let _ = store.mark_gen_failed(&gift_id);
                     let _ = tx
-                        .send(Ok(Event::default().data("{\"status\":\"error\"}")))
+                        .send(Ok(Event::default().data("{\"status\":\"failed\"}")))
                         .await;
                     return;
                 }
-            };
-            let lyrics = gift.lyrics.as_deref();
-
-            let _ = tx
-                .send(Ok(Event::default().data("{\"status\":\"pending\"}")))
-                .await;
-
-            for _ in 0..48 {
-                // poll up to 4 minutes
-                sleep(Duration::from_secs(5)).await;
-                match gen_task.poll(&handle).await {
-                    Ok(GenStatus::Done) => {
-                        match handle_done(
-                            gen_task.as_ref(),
-                            &store,
-                            &gift_id,
-                            lyrics,
-                            &handle,
-                        )
-                        .await
-                        {
-                            Ok(audio_url) => {
-                                let _ = tx
-                                    .send(Ok(Event::default().data(
-                                        json!({"status":"done","audio_url":audio_url})
-                                            .to_string(),
-                                    )))
-                                    .await;
-                            }
-                            Err(_) => {
-                                let _ = store.mark_gen_failed(&gift_id);
-                                let _ = tx
-                                    .send(Ok(Event::default().data(
-                                        "{\"status\":\"failed\"}",
-                                    )))
-                                    .await;
-                            }
-                        }
-                        return;
-                    }
-                    Ok(GenStatus::Failed) => {
-                        let _ = store.mark_gen_failed(&gift_id);
-                        let _ = tx
-                            .send(Ok(Event::default().data("{\"status\":\"failed\"}")))
-                            .await;
-                        return;
-                    }
-                    Ok(GenStatus::Running) => {
-                        let _ = tx
-                            .send(Ok(Event::default().data("{\"status\":\"running\"}")))
-                            .await;
-                    }
-                    _ => {} // pending or error, keep polling
+                Ok(GenStatus::Running) => {
+                    let _ = tx
+                        .send(Ok(Event::default().data("{\"status\":\"running\"}")))
+                        .await;
                 }
+                _ => {} // pending or error, keep polling
             }
-            let _ = tx
-                .send(Ok(Event::default().data("{\"status\":\"timeout\"}")))
-                .await;
-        });
+        }
+        let _ = tx
+            .send(Ok(Event::default().data("{\"status\":\"timeout\"}")))
+            .await;
+    });
 
-        Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default())
-    }
+    Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default())
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -476,7 +537,6 @@ fn str_or_empty(v: &Value) -> Option<String> {
     v.as_str().map(String::from)
 }
 
-#[allow(dead_code)]
 /// Extract the content of the first ```json ... ``` fenced code block.
 fn extract_json_block(text: &str) -> Option<String> {
     let start_marker = "```json\n";

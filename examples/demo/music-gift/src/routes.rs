@@ -9,6 +9,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json};
 use axum::routing::{get, post};
 use axum::Router;
+use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -21,9 +22,9 @@ use crate::agent::{
     run_chat_agent, ChatRequest, SseEvent,
 };
 use crate::error::{AppError, AppResult};
-use crate::gift::Gift;
+use crate::gift::{Gift, GiftMeta};
 use crate::state::AppState;
-use crate::tools::music_gen::{EnrichedPrompt, MusicGenTool};
+use crate::tools::music_gen::EnrichedPrompt;
 /// Build the full router with all API routes + static file serving.
 pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
     let api = Router::new()
@@ -183,6 +184,7 @@ pub struct CreateGiftResponse {
 
 pub async fn create_gift(
     State(state): State<AppState>,
+    jar: CookieJar,
     Json(req): Json<CreateGiftRequest>,
 ) -> AppResult<impl IntoResponse> {
     let id = Uuid::new_v4().simple().to_string()[..12].to_string();
@@ -200,20 +202,10 @@ pub async fn create_gift(
     }
 
     // Check for birthday info before meta is moved into the gift.
-    let birthday: Option<String> = meta
-        .get("birthday")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let gift_name: String = meta
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Someone")
-        .to_string();
-    let gift_scenario: String = meta
-        .get("scenario")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let meta_view = GiftMeta::from_value(&meta);
+    let birthday: Option<String> = meta_view.birthday.clone();
+    let gift_name: String = meta_view.name_or_default().to_string();
+    let gift_scenario: String = meta_view.scenario.clone().unwrap_or_default();
     let gift_lyrics: String = req.lyrics.clone().unwrap_or_default();
 
     let countdown_status = if birthday.is_some() {
@@ -245,6 +237,22 @@ pub async fn create_gift(
     };
 
     state.gift_store.create(&gift)?;
+
+    // Best-effort ownership link: a valid session records the user on the
+    // gift; anything else (no cookie, expired session, lookup failure) just
+    // leaves creator_id NULL. The creator_token flow is unaffected and stays
+    // the only mutation check.
+    if let Some(token) = jar.get("session_token") {
+        match state.auth_store.validate_session(token.value()) {
+            Ok(Some(user)) => {
+                if let Err(e) = state.gift_store.update_creator_id(&id, &user.id) {
+                    eprintln!("[music-gift] creator_id link failed [{id}]: {e}");
+                }
+            }
+            Ok(None) => {}
+            Err(e) => eprintln!("[music-gift] session validation failed [{id}]: {e}"),
+        }
+    }
 
     if let (Some(bday), Some(tool)) = (birthday, state.countdown_tool.clone()) {
         let params = crate::tools::countdown::CountdownParams {
@@ -388,41 +396,20 @@ pub async fn list_playlist(State(state): State<AppState>) -> AppResult<impl Into
     let items: Vec<PlaylistItem> = gifts
         .into_iter()
         .filter(|g| g.audio_url.is_some())
-        .map(|g| PlaylistItem {
-            id: g.id,
-            title: g
-                .meta
-                .get("title")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            name: g
-                .meta
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            relationship: g
-                .meta
-                .get("relationship")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            style: g
-                .meta
-                .get("style")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            lang: g
-                .meta
-                .get("lang")
-                .and_then(Value::as_str)
-                .unwrap_or("en")
-                .to_string(),
-            audio_url: g.audio_url,
-            likes: g.likes.len(),
-            published_at: g.published_at,
+        .map(|g| {
+            let m = g.meta();
+            PlaylistItem {
+                id: g.id,
+                title: m.title.unwrap_or_default(),
+                name: m.name.unwrap_or_default(),
+                relationship: m.relationship.unwrap_or_default(),
+                // Display falls back to empty, not the generation default.
+                style: m.style.unwrap_or_default(),
+                lang: m.lang.unwrap_or_else(|| GiftMeta::DEFAULT_LANG.to_string()),
+                audio_url: g.audio_url,
+                likes: g.likes.len(),
+                published_at: g.published_at,
+            }
         })
         .collect();
     Ok(Json(PlaylistResponse { items }))
@@ -436,55 +423,21 @@ pub async fn generate_music(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
-    let gift = state.gift_store.get(&id)?;
-    let provider = std::env::var("MUSIC_GIFT_MUSIC_PROVIDER").unwrap_or_else(|_| "suno".into());
-    let lyrics = gift.lyrics.unwrap_or_default();
-    let style = gift.meta.get("style").and_then(Value::as_str).unwrap_or("healing and warm");
-    let title = gift.meta.get("title").and_then(Value::as_str).unwrap_or("");
-    let name = gift.meta.get("name").and_then(Value::as_str).unwrap_or("");
-    let scene = gift.meta.get("scenario").and_then(Value::as_str).unwrap_or("");
-    let relationship = gift.meta.get("relationship").and_then(Value::as_str).unwrap_or("");
-    let vocal = gift.meta.get("vocal").and_then(Value::as_str).unwrap_or("female");
-    let lang = gift.meta.get("lang").and_then(Value::as_str).unwrap_or("en");
-
-    // Validate lyrics — warnings logged for Suno quality tuning.
-    let _validation = crate::tools::lyrics_validator::validate_lyrics(&lyrics);
-    for w in &_validation.warnings {
-        eprintln!("[music-gift] lyrics warn [{id}]: {w}");
-    }
-
-    // A song gift with no lyrics is never what the user asked for: the provider
-    // would invent its own (in its own language). Refuse rather than burn a
-    // generation on it.
-    if gift.kind != "instrumental" && lyrics.trim().is_empty() {
-        return Err(AppError::BadRequest(
-            "cannot generate a song with empty lyrics".to_string(),
-        ));
-    }
-
-    let enriched = crate::tools::music_gen::generate_music_prompt(
-        state.music_prompt_model.clone(),
-        &crate::tools::music_gen::MusicPromptInput {
-            provider: &provider, lyrics: &lyrics, style, title, vocal, scene, name,
-            relationship: Some(relationship), lang,
-        },
-    ).await.unwrap_or_else(|_| EnrichedPrompt::fallback(style));
-
-    // Check generated style prompt for artist names
-    let style_warnings = crate::tools::lyrics_validator::check_style_prompt(&enriched.prompt);
-    for w in &style_warnings {
-        eprintln!("[music-gift] style warn [{id}]: {w}");
-    }
-
-    let tool = MusicGenTool::new(state.gen_task.clone());
-    let resp = tool.submit(&state.gift_store, &id, &enriched).await?;
+    let resp = crate::tools::music_gen::generate(
+        &state.gen_task,
+        &state.gift_store,
+        &state.music_prompt_model,
+        &state.music_provider,
+        &id,
+    )
+    .await?;
     Ok((StatusCode::OK, Json(resp)))
 }
 pub async fn generate_stream(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
-    MusicGenTool::stream(state.gen_task.clone(), state.gift_store.clone(), id)
+    crate::tools::music_gen::stream(state.gen_task.clone(), state.gift_store.clone(), id)
 }
 
 // ── POST /api/polish-music-prompt — generate optimized music prompt ──────
@@ -493,8 +446,10 @@ pub async fn generate_stream(
 pub struct PolishPromptRequest {
     pub lyrics: String,
     pub style: String,
-    #[serde(default = "default_provider")]
-    pub provider: String,
+    /// Optional per-request override; falls back to the startup-resolved
+    /// provider on `AppState`.
+    #[serde(default)]
+    pub provider: Option<String>,
     pub title: Option<String>,
     pub vocal: Option<String>,
     pub scene: Option<String>,
@@ -502,8 +457,6 @@ pub struct PolishPromptRequest {
     pub relationship: Option<String>,
     pub lang: Option<String>,
 }
-
-fn default_provider() -> String { "suno".into() }
 
 #[derive(Debug, Serialize)]
 pub struct PolishPromptResponse {
@@ -517,15 +470,15 @@ pub async fn polish_music_prompt(
     let enriched = crate::tools::music_gen::generate_music_prompt(
         state.music_prompt_model.clone(),
         &crate::tools::music_gen::MusicPromptInput {
-            provider: &req.provider,
+            provider: req.provider.as_deref().unwrap_or(&state.music_provider),
             lyrics: &req.lyrics,
             style: &req.style,
             title: req.title.as_deref().unwrap_or(""),
-            vocal: req.vocal.as_deref().unwrap_or("female"),
+            vocal: req.vocal.as_deref().unwrap_or(GiftMeta::DEFAULT_VOCAL),
             scene: req.scene.as_deref().unwrap_or(""),
             name: req.name.as_deref().unwrap_or(""),
             relationship: req.relationship.as_deref(),
-            lang: req.lang.as_deref().unwrap_or("en"),
+            lang: req.lang.as_deref().unwrap_or(GiftMeta::DEFAULT_LANG),
         },
     ).await.unwrap_or_else(|_| EnrichedPrompt::fallback(&req.style));
     Ok(Json(PolishPromptResponse { prompt: enriched.prompt }))
@@ -536,8 +489,7 @@ pub async fn generate_status(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
-    let tool = MusicGenTool::new(state.gen_task.clone());
-    let resp = tool.poll(&state.gift_store, &id).await?;
+    let resp = crate::tools::music_gen::poll(&state.gen_task, &state.gift_store, &id).await?;
     Ok(Json(resp))
 }
 #[derive(Debug, Deserialize)]

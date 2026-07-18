@@ -12,7 +12,6 @@ path = "src/main.rs"
 orchest = { path = "../../../crates/orchest", features = ["sqlite-session"] }
 orchest-protocol = { path = "../../../crates/orchest-protocol" }
 orchest-provider = { path = "../../../crates/orchest-provider", features = ["llm", "gen"] }
-orchest-provider-http = { path = "../../../crates/orchest-provider-http" }
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 tower-http = { version = "0.6", features = ["fs", "cors"] }

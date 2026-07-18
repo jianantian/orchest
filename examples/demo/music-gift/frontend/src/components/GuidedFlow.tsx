@@ -6,6 +6,7 @@ import { useGuidedState, clearGuided, type FlowStep, type GuidedMessage, type St
 import { ReviewCard, type ReviewData } from "./ReviewCard";
 import { MusicCard } from "./MusicCard";
 import { PillsRow, GoldPill, InlineInput, BirthdayPicker } from "./ChatUI";
+import { stripMarkers } from "../lib/styles";
 
 /** The backend parses birthday as "MM-DD"; omitted entirely when skipped. */
 function birthdayParam(b: StepMeta["birthday"]): string | undefined {
@@ -327,8 +328,8 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
           const raw = msg.content;
           // Stop at <<<LYRICS>>> — lyrics belong in ReviewCard, not the chat bubble
           const display = msg.role === "assistant"
-            ? raw.split("<<<LYRICS>>>")[0].replace(/<<<[^>]+>>>/g, "")
-            : raw.replace(/<<<[^>]+>>>/g, "");
+            ? stripMarkers(raw.split("<<<LYRICS>>>")[0])
+            : stripMarkers(raw);
           if (!display.trim()) return null;
           return <div key={`m-${i}`} className={`bubble ${msg.role === "assistant" ? "bot" : msg.role}`}>{display}</div>;
         })}

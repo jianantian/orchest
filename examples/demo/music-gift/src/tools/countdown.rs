@@ -83,7 +83,7 @@ pub async fn run_countdown(
 
 pub(crate) fn countdown_params_from_json(input: &Value) -> CountdownParams {
     CountdownParams {
-        name: input.get("name").and_then(Value::as_str).unwrap_or("Someone").into(),
+        name: input.get("name").and_then(Value::as_str).unwrap_or(crate::gift::GiftMeta::DEFAULT_NAME).into(),
         birthday: input.get("birthday").and_then(Value::as_str).unwrap_or("").into(),
         scenario: input.get("scenario").and_then(Value::as_str).unwrap_or("").into(),
         lyric_snippet: input.get("lyric_snippet").and_then(Value::as_str).unwrap_or("").into(),

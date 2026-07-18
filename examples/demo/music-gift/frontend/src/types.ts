@@ -53,7 +53,6 @@ export interface Gift {
   photos: string[];
   gen_handle: string | null;
   gen_status: string | null;
-  /** Not sent by GET /api/gift/:id — see lib/creator.ts. */
   published: boolean;
   likes: string[];
   created_at: string;
@@ -103,21 +102,9 @@ export interface GenerateResponse {
   handle: string | null;
 }
 
-/** Response from GET /api/generate/:id/status. */
-export interface GenStatusResponse {
-  id: string;
-  status: 'pending' | 'running' | 'done' | 'failed';
-  audio_url: string | null;
-}
-
 /** Response from POST /api/gift/:id/like. */
 export interface LikeResponse {
   ok: boolean;
   likes: number;
   liked: boolean;
-}
-
-/** Response from POST /api/photos. */
-export interface PhotoUploadResponse {
-  urls: string[];
 }

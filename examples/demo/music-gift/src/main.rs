@@ -60,10 +60,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let state = AppState {
         chat_model: config.chat_model,
-        countdown_model: config.countdown_model,
         music_prompt_model: config.music_prompt_model,
         skills_dir,
         gen_task: config.gen_task,
+        music_provider: config.music_provider,
         gift_store,
         auth_store,
         data_dir: cli.data_dir,

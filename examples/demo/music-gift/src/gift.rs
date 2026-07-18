@@ -13,6 +13,8 @@ pub struct Gift {
     pub id: String,
     pub kind: String,
     pub lyrics: Option<String>,
+    /// Raw meta JSON as stored/sent on the wire. Read it through
+    /// [`Gift::meta`] — never by string key.
     pub meta: Value,
     pub audio_url: Option<String>,
     pub cover_url: Option<String>,
@@ -31,6 +33,82 @@ pub struct Gift {
     pub likes: Vec<String>,
     pub created_at: String,
     pub published_at: Option<String>,
+}
+
+impl Gift {
+    /// Typed view over the raw `meta` JSON. Malformed or non-object meta
+    /// degrades to all-defaults, matching the old per-key `.get()` reads.
+    pub fn meta(&self) -> GiftMeta {
+        GiftMeta::from_value(&self.meta)
+    }
+}
+
+/// Typed view over `Gift.meta`.
+///
+/// The stored column and the wire format stay an untyped JSON object; this
+/// struct is the canonical home for the known keys and their defaults, so
+/// handlers and tools stop re-deriving them per call site. Unknown keys the
+/// frontend sends (e.g. `gender`, `model`) are preserved verbatim in
+/// [`GiftMeta::extra`], so meta round-trips losslessly.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GiftMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relationship: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scenario: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lang: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vocal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub birthday: Option<String>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl GiftMeta {
+    /// Fallback music style when neither the user nor the LLM picked one.
+    pub const DEFAULT_STYLE: &'static str = "healing and warm";
+    /// Fallback vocal gender.
+    pub const DEFAULT_VOCAL: &'static str = "female";
+    /// Fallback UI/lyrics language.
+    pub const DEFAULT_LANG: &'static str = "en";
+    /// Fallback title for the generation request — an untitled gift still
+    /// needs a name for the provider. (Display sites use empty instead.)
+    pub const DEFAULT_SONG_TITLE: &'static str = "Gift Song";
+    /// Fallback recipient name (countdown copy).
+    pub const DEFAULT_NAME: &'static str = "Someone";
+
+    /// Parse a typed view from the raw stored meta JSON.
+    pub fn from_value(value: &Value) -> Self {
+        Self::deserialize(value).unwrap_or_default()
+    }
+
+    pub fn style_or_default(&self) -> &str {
+        self.style.as_deref().unwrap_or(Self::DEFAULT_STYLE)
+    }
+
+    pub fn vocal_or_default(&self) -> &str {
+        self.vocal.as_deref().unwrap_or(Self::DEFAULT_VOCAL)
+    }
+
+    pub fn lang_or_default(&self) -> &str {
+        self.lang.as_deref().unwrap_or(Self::DEFAULT_LANG)
+    }
+
+    pub fn title_or_default(&self) -> &str {
+        self.title.as_deref().unwrap_or(Self::DEFAULT_SONG_TITLE)
+    }
+
+    pub fn name_or_default(&self) -> &str {
+        self.name.as_deref().unwrap_or(Self::DEFAULT_NAME)
+    }
 }
 
 #[derive(Clone)]
@@ -168,16 +246,6 @@ impl GiftStore {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub fn update_duration(&self, id: &str, secs: f64) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
-        if conn.execute("UPDATE gifts SET duration_secs=?2 WHERE id=?1", params![id, secs])? == 0 {
-            return Err(AppError::NotFound(format!("gift {id} not found")));
-        }
-        Ok(())
-    }
-
-    #[allow(dead_code)]
     pub fn update_lrc(&self, id: &str, lrc: &str, dur: Option<f64>) -> AppResult<()> {
         let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
         if conn.execute("UPDATE gifts SET lrc=?2, duration_secs=?3 WHERE id=?1", params![id, lrc, dur])? == 0 {
@@ -186,10 +254,12 @@ impl GiftStore {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub fn update_cover_url(&self, id: &str, url: &str) -> AppResult<()> {
+    /// Link a gift to an authenticated user. Purely additive metadata: the
+    /// `creator_token` remains the only mutation check, and gifts created
+    /// without a session keep `creator_id` NULL.
+    pub fn update_creator_id(&self, id: &str, creator_id: &str) -> AppResult<()> {
         let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
-        if conn.execute("UPDATE gifts SET cover_url=?2 WHERE id=?1", params![id, url])? == 0 {
+        if conn.execute("UPDATE gifts SET creator_id=?2 WHERE id=?1", params![id, creator_id])? == 0 {
             return Err(AppError::NotFound(format!("gift {id} not found")));
         }
         Ok(())
@@ -242,4 +312,52 @@ fn row_to_gift(row: &rusqlite::Row<'_>) -> rusqlite::Result<Gift> {
         created_at: row.get(15)?,
         published_at: row.get(16)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn meta_accessors_apply_canonical_defaults() {
+        let m = GiftMeta::from_value(&json!({}));
+        assert_eq!(m.style_or_default(), GiftMeta::DEFAULT_STYLE);
+        assert_eq!(m.vocal_or_default(), GiftMeta::DEFAULT_VOCAL);
+        assert_eq!(m.lang_or_default(), GiftMeta::DEFAULT_LANG);
+        assert_eq!(m.title_or_default(), GiftMeta::DEFAULT_SONG_TITLE);
+        assert_eq!(m.name_or_default(), GiftMeta::DEFAULT_NAME);
+        assert!(m.birthday.is_none());
+    }
+
+    #[test]
+    fn meta_present_keys_win_over_defaults() {
+        let m = GiftMeta::from_value(&json!({"style": "warm folk", "vocal": "male"}));
+        assert_eq!(m.style_or_default(), "warm folk");
+        assert_eq!(m.vocal_or_default(), "male");
+    }
+
+    /// Serializing a parsed view must reproduce the exact same JSON keys —
+    /// known keys under their original names, unknown ones preserved verbatim.
+    #[test]
+    fn meta_round_trips_known_and_unknown_keys() {
+        let raw = json!({
+            "name": "Alice",
+            "birthday": "05-12",
+            "gender": "female",
+            "model": "V5_5",
+        });
+        let m = GiftMeta::from_value(&raw);
+        assert_eq!(m.name.as_deref(), Some("Alice"));
+        assert_eq!(m.birthday.as_deref(), Some("05-12"));
+        let out = serde_json::to_value(&m).unwrap();
+        assert_eq!(out, raw);
+    }
+
+    /// Non-object meta degrades to defaults, like the old per-key `.get()`.
+    #[test]
+    fn meta_from_non_object_yields_defaults() {
+        let m = GiftMeta::from_value(&json!("not an object"));
+        assert_eq!(m.style_or_default(), GiftMeta::DEFAULT_STYLE);
+    }
 }

@@ -1459,7 +1459,6 @@ dependencies = [
  "orchest",
  "orchest-protocol",
  "orchest-provider",
- "orchest-provider-http",
  "rand_core 0.6.4",
  "reqwest",
  "rusqlite",

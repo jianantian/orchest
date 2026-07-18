@@ -12,10 +12,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::error::{AppError, AppResult};
+use crate::gift::GiftMeta;
 use crate::tools::collect_info;
-
-/// Default style if the LLM didn't emit one.
-const DEFAULT_STYLE: &str = "healing and warm";
 
 /// Parsed lyrics result extracted from the LLM's full response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,7 +35,7 @@ pub fn parse_lyrics(full_text: &str) -> ParsedLyrics {
     let style = extract_between(full_text, "<<<STYLE>>>", "<<<STYLE_END>>>")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| DEFAULT_STYLE.to_string());
+        .unwrap_or_else(|| GiftMeta::DEFAULT_STYLE.to_string());
     let title = extract_between(full_text, "<<<TITLE>>>", "<<<TITLE_END>>>")
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
@@ -54,11 +52,11 @@ pub fn parse_lyrics(full_text: &str) -> ParsedLyrics {
             } else if low.contains("male") || s.contains('男') {
                 "male"
             } else {
-                "female"
+                GiftMeta::DEFAULT_VOCAL
             }
             .to_string()
         })
-        .unwrap_or_else(|| "female".to_string());
+        .unwrap_or_else(|| GiftMeta::DEFAULT_VOCAL.to_string());
     ParsedLyrics {
         has_lyrics,
         lyrics,
@@ -362,7 +360,7 @@ mod tests {
         let text = "Just some text without any tags";
         let result = parse_lyrics(text);
         assert!(!result.has_lyrics);
-        assert_eq!(result.style, DEFAULT_STYLE);
+        assert_eq!(result.style, GiftMeta::DEFAULT_STYLE);
         assert_eq!(result.title, "");
         assert_eq!(result.vocal, "female");
     }

@@ -1,97 +1,122 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import type { Gift } from "../types";
-import { generateMusic, getGift, likeGift } from "../api";
+import { generateMusic, getGift, likeGift, watchGeneration, type GenerationWatch } from "../api";
 import AudioPlayer from "../components/AudioPlayer";
-import { LRCViewer, type LRCLine } from "../components/LRCViewer";
-import { parseLRC } from "../lib/lrc";
+import { LRCViewer } from "../components/LRCViewer";
+import { parseLRC, type LRCLine } from "../lib/lrc";
+import { parseLyrics, stripMarkers } from "../lib/styles";
 import { UnwrapStage, shouldShowUnwrap } from "../components/UnwrapStage";
 import { CountdownFrame } from "../components/CountdownFrame";
 import { clearGuided } from "../hooks/useGuidedState";
 import { useI18n } from "../i18n";
 import { creatorToken, forgetCreatorToken } from "../lib/creator";
 import { deleteGift, setGiftPublished } from "../api";
+
+/** Generation phase of a loaded gift (the `ready` pipeline variant). */
+type GenPhase =
+  /** No audio yet and no job running — shows the Generate button. */
+  | { kind: "awaiting" }
+  /** A generation job is in flight; `status` is the last SSE progress label. */
+  | { kind: "generating"; status: string | null }
+  /** Audio is available (gift.audio_url set). */
+  | { kind: "ready" }
+  /** Terminal failure — the message lives in the shared `error` state. */
+  | { kind: "failed" };
+
+/**
+ * Load/generation pipeline for the gift page: loading → ready(gen) | failed.
+ * Like/share/delete interaction state deliberately stays out of this union.
+ */
+type GiftPipeline =
+  | { kind: "loading" }
+  | { kind: "failed"; message: string }
+  | { kind: "ready"; gift: Gift; gen: GenPhase };
+
 export default function GiftPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { t } = useI18n();
-  const [gift, setGift] = useState<Gift | null>(null);
+  const [pipeline, setPipeline] = useState<GiftPipeline>({ kind: "loading" });
+  /** Errors shown inline on a loaded gift: generation + like/publish/delete. */
+  const [error, setError] = useState<string | null>(null);
   const [published, setPublished] = useState(false);
   const [publishBusy, setPublishBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [generating, setGenerating] = useState(false);
-  const [genStatus, setGenStatus] = useState<string | null>(null);
   const [liked, setLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(0);
   const [copied, setCopied] = useState(false);
   const [countdownHtml, setCountdownHtml] = useState<string | null>(null);
   const [countdownPending, setCountdownPending] = useState(false);
-  const esRef = useRef<EventSource | null>(null);
+  const watchRef = useRef<GenerationWatch | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [lrcLines, setLrcLines] = useState<LRCLine[] | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const cdPollRef = useRef<number | undefined>(undefined);
 
-  const startPolling = useCallback(() => {
-    esRef.current?.close();
+  const startWatch = useCallback(() => {
+    watchRef.current?.close();
     if (!id) return;
-    const es = new EventSource(`/api/generate/${id}/stream`);
-    esRef.current = es;
-    es.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        setGenStatus(data.status);
-        if (data.status === "done") {
-          setGenerating(false);
-          setGift((g) => (g ? { ...g, audio_url: data.audio_url, gen_status: "done" } : g));
-          es.close();
-        } else if (data.status === "failed" || data.status === "timeout" || data.status === "error") {
-          setGenerating(false);
-          if (data.status === "failed") setError("Music generation failed");
-          else if (data.status === "timeout") setError("Generation timed out. Try again.");
-          es.close();
-        }
-      } catch { /* ignore parse errors */ }
-    };
-    es.onerror = () => { es.close(); setGenerating(false); };
+    watchRef.current = watchGeneration(id, {
+      onProgress: (status) =>
+        setPipeline((p) =>
+          p.kind === "ready" && p.gen.kind === "generating"
+            ? { ...p, gen: { ...p.gen, status } }
+            : p,
+        ),
+      onDone: (audioUrl) =>
+        setPipeline((p) =>
+          p.kind === "ready"
+            ? { ...p, gift: { ...p.gift, audio_url: audioUrl, gen_status: "done" }, gen: { kind: "ready" } }
+            : p,
+        ),
+      onFailed: (reason) => {
+        setPipeline((p) => (p.kind === "ready" ? { ...p, gen: { kind: "failed" } } : p));
+        setError(
+          reason === "timeout"
+            ? "Generation timed out. Try again."
+            : reason === "connection-lost"
+              ? "Connection lost during generation"
+              : "Music generation failed",
+        );
+      },
+    });
   }, [id]);
 
   useEffect(() => {
     if (!id) return;
-    setLoading(true);
+    setPipeline({ kind: "loading" });
     getGift(id)
       .then((g) => {
-        setGift(g);
         setPublished(g.published);
         setLikeCount(g.likes.length);
-        setGenStatus(g.gen_status);
-        if (g.gen_status === "pending" || g.gen_status === "running") {
-          setGenerating(true);
-          startPolling();
-        }
+        const gen: GenPhase = g.audio_url
+          ? { kind: "ready" }
+          : g.gen_status === "pending" || g.gen_status === "running"
+            ? { kind: "generating", status: g.gen_status }
+            : { kind: "awaiting" };
+        setPipeline({ kind: "ready", gift: g, gen });
+        if (gen.kind === "generating") startWatch();
         // Load countdown section if gift has one
         loadCountdown(g.id, g.countdown_status);
         if (g.lrc) setLrcLines(parseLRC(g.lrc));
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load gift"))
-      .finally(() => setLoading(false));
-    return () => { esRef.current?.close(); };
-  }, [id, startPolling]);
+      .catch((e) =>
+        setPipeline({ kind: "failed", message: e instanceof Error ? e.message : "Failed to load gift" }),
+      );
+    return () => { watchRef.current?.close(); };
+  }, [id, startWatch]);
 
   async function handleGenerate() {
     if (!id) return;
-    setGenerating(true);
+    setPipeline((p) => (p.kind === "ready" ? { ...p, gen: { kind: "generating", status: "pending" } } : p));
     setError(null);
-    setGenStatus("pending");
     try {
       await generateMusic(id);
-      startPolling();
+      startWatch();
     } catch (e) {
-      setGenerating(false);
-      setGenStatus(null);
+      setPipeline((p) => (p.kind === "ready" ? { ...p, gen: { kind: "failed" } } : p));
       setError(e instanceof Error ? e.message : "Generation failed");
     }
   }
@@ -175,7 +200,7 @@ export default function GiftPage() {
     }
   }
 
-  if (loading) {
+  if (pipeline.kind === "loading") {
     return (
       <div className="gift-page loading-page">
         <span className="spinner" /> Loading gift…
@@ -183,11 +208,11 @@ export default function GiftPage() {
     );
   }
 
-  if (error && !gift) {
-    return <div className="gift-page"><div className="error-msg">{error}</div></div>;
+  if (pipeline.kind === "failed") {
+    return <div className="gift-page"><div className="error-msg">{pipeline.message}</div></div>;
   }
 
-  if (!gift) return null;
+  const { gift, gen } = pipeline;
 
   const title = gift.meta.title ?? "Untitled";
   const style = gift.meta.style ?? "";
@@ -222,7 +247,7 @@ export default function GiftPage() {
 
         {gift.audio_url ? (
           <AudioPlayer src={gift.audio_url} title={title} onTimeUpdate={setCurrentTime} />
-        ) : generating ? (
+        ) : gen.kind === "generating" ? (
           <div className="gift-generating">
             <div className="gen-label">
               Creating your song
@@ -234,7 +259,7 @@ export default function GiftPage() {
               <div className="gen-bar-fill" />
             </div>
             <div className="gen-meta">
-              <span>{genStatus || "preparing…"}</span>
+              <span>{gen.status || "preparing…"}</span>
               <span>This may take a minute</span>
             </div>
           </div>
@@ -308,8 +333,7 @@ export default function GiftPage() {
 
 /** Render lyrics matching reference: parse [Section] markers, <br> between lines. */
 function renderLyrics(raw: string) {
-  // Strip <<<MARKER>>> tags
-  let text = raw.replace(/<<<[A-Z_]+>>>[^<]*<<<[A-Z_]+>>>/g, "").replace(/<<<[A-Z_]+>>>/g, "").trim();
+  const text = stripMarkers(raw).trim();
   const sections = parseLyrics(text);
   if (!sections.length) return <div className="lyric-lines">{text}</div>;
 
@@ -326,25 +350,4 @@ function renderLyrics(raw: string) {
       </div>
     </div>
   ));
-}
-
-function parseLyrics(raw: string): Array<{ label: string; lines: string[] }> {
-  const parts = raw.split(/\[([^\]]+)\]/).filter(Boolean);
-  const sections: Array<{ label: string; content: string }> = [];
-  for (let i = 0; i < parts.length; i += 2) {
-    const label = parts[i].trim();
-    const content = parts[i + 1]?.trim() || "";
-    if (content) sections.push({ label, content });
-  }
-  // Merge consecutive choruses
-  const merged: Array<{ label: string; content: string }> = [];
-  for (const s of sections) {
-    const last = merged[merged.length - 1];
-    if (last && last.label === s.label && last.label.toLowerCase().includes("chorus")) {
-      last.content += "\n\n" + s.content;
-    } else {
-      merged.push({ ...s });
-    }
-  }
-  return merged.map((s) => ({ label: s.label, lines: s.content.split("\n").map((l) => l.trim()).filter(Boolean) }));
 }

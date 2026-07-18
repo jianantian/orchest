@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! LRC generation engine.
 //!
 //! Priority chain:

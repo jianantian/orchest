@@ -37,9 +37,11 @@ const DEFAULT_PORT: u16 = 3000;
 /// All configuration needed to start the server.
 pub struct AppConfig {
     pub chat_model: Arc<dyn ChatModel>,
-    pub countdown_model: Arc<dyn ChatModel>,
     pub music_prompt_model: Arc<dyn ChatModel>,
     pub gen_task: Arc<dyn GenTask>,
+    /// Music provider identity (e.g. "suno"), resolved once here from
+    /// `MUSIC_GIFT_MUSIC_PROVIDER`. Handlers must use this, never re-read env.
+    pub music_provider: String,
     pub port: u16,
     pub countdown_tool: Option<Arc<dyn Tool>>,
 }
@@ -93,16 +95,21 @@ fn build_model_or_default(model_env: &str) -> AppResult<Arc<dyn ChatModel>> {
     Ok(Arc::from(adapter))
 }
 
+/// Resolve the music provider identity from `MUSIC_GIFT_MUSIC_PROVIDER`.
+/// Called once at startup; the result travels on `AppConfig`/`AppState`.
+fn music_provider() -> String {
+    std::env::var(MUSIC_PROVIDER_ENV).unwrap_or_else(|_| "suno".to_string())
+}
+
 /// Build the music generation task from `MUSIC_GIFT_MUSIC_*` env vars via the
 /// registry.
-fn build_gen_task() -> AppResult<Arc<dyn GenTask>> {
-    let provider = std::env::var(MUSIC_PROVIDER_ENV).unwrap_or_else(|_| "suno".to_string());
+fn build_gen_task(provider: &str) -> AppResult<Arc<dyn GenTask>> {
     let model = std::env::var(MUSIC_MODEL_ENV).unwrap_or_else(|_| "V5_5".to_string());
     let api_url = std::env::var(MUSIC_API_URL_ENV).ok();
     let api_key = std::env::var(MUSIC_API_KEY_ENV).ok();
 
     let registry = Registry::with_builtin();
-    let mut config = ProviderConfig::new(&provider, &model);
+    let mut config = ProviderConfig::new(provider, &model);
     if let Some(key) = api_key {
         config = config.with_api_key(key);
     }
@@ -112,7 +119,7 @@ fn build_gen_task() -> AppResult<Arc<dyn GenTask>> {
 
     let gen_task = registry
         .gen()
-        .provider(&provider)
+        .provider(provider)
         .build(&config)
         .map_err(|e| {
             AppError::Config(format!(
@@ -171,7 +178,8 @@ pub fn load_config() -> AppResult<AppConfig> {
     let chat_model = build_chat_model()?;
     let countdown_model = build_model_or_default(COUNTDOWN_MODEL_ENV)?;
     let music_prompt_model = build_model_or_default(MUSIC_PROMPT_MODEL_ENV)?;
-    let gen_task = build_gen_task()?;
+    let music_provider = music_provider();
+    let gen_task = build_gen_task(&music_provider)?;
     let countdown_tool = build_countdown_tool(countdown_model.clone());
     let port = std::env::var(PORT_ENV)
         .ok()
@@ -179,9 +187,9 @@ pub fn load_config() -> AppResult<AppConfig> {
         .unwrap_or(DEFAULT_PORT);
     Ok(AppConfig {
         chat_model,
-        countdown_model,
         music_prompt_model,
         gen_task,
+        music_provider,
         port,
         countdown_tool,
     })
