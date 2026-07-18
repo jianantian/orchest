@@ -248,7 +248,10 @@ impl MessagesAdapter {
                     // failing with a 400, and record the adjustment
                     // (polaris/observability: adjustments visible, never silent).
                     if budget >= effective_max_tokens {
-                        let raised = budget + crate::defaults::THINKING_COMPLETION_BUDGET;
+                        // saturating_add: a pathological explicit budget near
+                        // u32::MAX must not panic (debug) or wrap (release).
+                        let raised =
+                            budget.saturating_add(crate::defaults::THINKING_COMPLETION_BUDGET);
                         adjustments.push(OptionAdjustment {
                             option: "max_tokens".into(),
                             requested: json!(effective_max_tokens),
@@ -261,13 +264,15 @@ impl MessagesAdapter {
             }
         }
 
-        // Prompt-caching breakpoint. Anthropic accepts `cache_control` only on
-        // content blocks (the `system` field takes a string or an array of
-        // text blocks), never as a top-level request field — a top-level key
-        // was at best ignored, so prompt caching never engaged. Single
-        // breakpoint: on the last system block (which requires the block-array
-        // form of `system`) when a system prompt is present, else on the last
-        // content block of the last message carrying any blocks.
+        // Prompt-caching breakpoint. The Anthropic API documents both a
+        // top-level `cache_control` (auto-applied to the last cacheable
+        // block) and per-block markers; we emit a single explicit block-level
+        // breakpoint for deterministic placement, and because
+        // Anthropic-compatible endpoints (e.g. Minimax) document only the
+        // block-level form. Placement: the last system block (block-array
+        // form of `system`) when a system prompt is present, else the last
+        // cacheable content block of the conversation. Thinking blocks carry
+        // no `cache_control` in the API schema, so they are skipped.
         // `CachePolicy::None` emits no `cache_control` anywhere.
         let cache_control = match options.cache_policy {
             CachePolicy::Auto => Some(json!({"type": "ephemeral"})),
@@ -282,10 +287,21 @@ impl MessagesAdapter {
                     "cache_control": cc,
                 }]);
             } else if let Some(msgs) = body["messages"].as_array_mut() {
-                for msg in msgs.iter_mut().rev() {
-                    if let Some(block) = msg["content"].as_array_mut().and_then(|b| b.last_mut()) {
-                        block["cache_control"] = cc.clone();
-                        break;
+                'outer: for msg in msgs.iter_mut().rev() {
+                    if let Some(blocks) = msg["content"].as_array_mut() {
+                        for block in blocks.iter_mut().rev() {
+                            // Thinking blocks (incl. redacted) carry no
+                            // `cache_control` per the API schema — skip to
+                            // the next cacheable block.
+                            if matches!(
+                                block["type"].as_str(),
+                                Some("thinking") | Some("redacted_thinking")
+                            ) {
+                                continue;
+                            }
+                            block["cache_control"] = cc.clone();
+                            break 'outer;
+                        }
                     }
                 }
             }

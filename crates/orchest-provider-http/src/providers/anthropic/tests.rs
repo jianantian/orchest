@@ -506,6 +506,86 @@ fn cache_policy_none_emits_no_cache_control_anywhere() {
     );
 }
 
+#[test]
+fn thinking_budget_equal_to_max_tokens_is_lifted() {
+    // Anthropic requires strictly max_tokens > budget_tokens: the equality
+    // path (ThinkingLevel::Max pins budget = effective max_tokens) must also
+    // lift, not 400.
+    let adapter = adapter_with("claude-3-opus", 8192);
+
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Max,
+        ..Default::default()
+    };
+    let (body, adjustments) = adapter.request_body_for_test(&[], &[], &opts);
+    assert_eq!(body["thinking"]["budget_tokens"], 8192);
+    assert_eq!(body["max_tokens"], 8192 + 4096);
+    assert!(
+        adjustments.iter().any(|a| a.option == "max_tokens"),
+        "equality path records the lift"
+    );
+}
+
+#[test]
+fn cache_policy_auto_no_system_empty_messages_emits_no_breakpoint() {
+    let adapter = adapter_with("claude-test", 128);
+
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Off,
+        cache_policy: CachePolicy::Auto,
+        ..Default::default()
+    };
+    let (body, _) = adapter.request_body_for_test(&[], &[], &opts);
+    assert!(
+        !contains_cache_control(&body),
+        "nothing to attach to: no cache_control anywhere"
+    );
+}
+
+#[test]
+fn cache_policy_auto_skips_thinking_block_for_cacheable_one() {
+    // Thinking blocks carry no `cache_control` in the API schema: when the
+    // last block is a thinking block, the breakpoint must fall back to the
+    // previous cacheable block instead of tagging the thinking block.
+    let adapter = adapter_with("claude-test", 128);
+
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Off,
+        cache_policy: CachePolicy::Auto,
+        ..Default::default()
+    };
+    let messages = vec![Message {
+        role: Role::Assistant,
+        content: vec![
+            ContentBlock::Text("answer".into()),
+            ContentBlock::Thinking {
+                text: Some("hmm".into()),
+                signature: None,
+                provider_details: None,
+            },
+        ],
+    }];
+    let (body, _) = adapter.request_body_for_test(&messages, &[], &opts);
+    let msgs = body["messages"].as_array().expect("messages array");
+    let blocks = msgs[0]["content"].as_array().expect("content blocks");
+    let text_block = blocks
+        .iter()
+        .find(|b| b["type"] == "text")
+        .expect("text block");
+    assert_eq!(
+        text_block["cache_control"],
+        serde_json::json!({"type": "ephemeral"})
+    );
+    let thinking_block = blocks
+        .iter()
+        .find(|b| b["type"] == "thinking")
+        .expect("thinking block");
+    assert!(
+        thinking_block.get("cache_control").is_none(),
+        "thinking blocks carry no cache_control"
+    );
+}
+
 #[tokio::test]
 async fn cache_usage_mapped_to_token_usage() {
     let api_url = serve_sse_once(
