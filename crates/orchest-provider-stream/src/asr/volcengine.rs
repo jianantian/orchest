@@ -11,8 +11,9 @@
 use async_trait::async_trait;
 use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
-    Modality, ProtocolError, RealtimeHandle, SessionInput, StreamEvent, StreamingTranscribeRequest,
-    TranscribeRequest, TranscribeResult, TranscriptStability,
+    Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
+    StreamingTranscribeRequest, TranscribeRequest, TranscribeResult, TranscriptStability,
+    TranscriptUpdateKind,
 };
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
@@ -212,63 +213,106 @@ fn parse_server_response(
 // Frame → unified event mapping (the semantic core of the `Asr` reader loop)
 // ---------------------------------------------------------------------------
 
-/// Project one decoded [`VolcengineFrame`] onto unified [`StreamEvent`]s — the
-/// bridge the streaming `Asr` reader loop emits onto its `EventStream`.
+/// Fixed segment id for the rolling-text fallback branch: a response with no
+/// utterance list carries no native segment identity, so all of it maps to one
+/// synthetic segment.
+const ROLLING_SEGMENT_ID: &str = "rolling";
+
+/// Stateful projector of decoded [`VolcengineFrame`]s onto unified
+/// [`StreamEvent`]s — the bridge the streaming `Asr` reader loop emits onto its
+/// `EventStream`.
 ///
-/// Each utterance becomes a `Transcript`: `Committed` once the recognizer marks
-/// it `definite`, else `Provisional` (revisable). A response with no utterances
-/// but a non-empty rolling `text` yields one transcript (committed iff this is
-/// the last frame). The final frame additionally emits `EndOfSpeech`. An error
-/// frame becomes a single fatal `Error`.
-pub fn map_frame(frame: VolcengineFrame) -> Vec<StreamEvent> {
-    match frame {
-        VolcengineFrame::ServerResponse {
-            payload, is_last, ..
-        } => {
-            let mut events = Vec::new();
-            if let Some(result) = payload.result {
-                match result.utterances {
-                    Some(utterances) if !utterances.is_empty() => {
-                        for utt in utterances {
+/// With `result_type: "single"` the server resends the **full** utterance list
+/// every frame, so the mapper diffs each utterance (keyed by its native
+/// `start_time`) against what it last emitted and only emits on change: one
+/// utterance maps to one segment (`utt{start_time}`, `Snapshot`), and its
+/// `Provisional` updates and final `Committed` share that segment id. A
+/// response with no utterances but a non-empty rolling `text` maps to the fixed
+/// `ROLLING_SEGMENT_ID` segment (committed iff the frame is last). The final
+/// frame additionally emits `EndOfSpeech`; an error frame becomes a single
+/// fatal `Error`. Both are unaffected by the diff.
+#[derive(Debug, Default)]
+pub struct VolcengineMapper {
+    /// `start_time` → last emitted `(text, definite)`.
+    emitted: std::collections::HashMap<i32, (String, bool)>,
+    /// Last emitted rolling `(text, committed)`.
+    rolling: Option<(String, bool)>,
+}
+
+impl VolcengineMapper {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Project one frame onto events for what changed since the previous frame.
+    pub fn map(&mut self, frame: VolcengineFrame) -> Vec<StreamEvent> {
+        match frame {
+            VolcengineFrame::ServerResponse {
+                payload, is_last, ..
+            } => {
+                let mut events = Vec::new();
+                if let Some(result) = payload.result {
+                    match result.utterances {
+                        Some(utterances) if !utterances.is_empty() => {
+                            for utt in utterances {
+                                if self
+                                    .emitted
+                                    .get(&utt.start_time)
+                                    .is_some_and(|(t, d)| t == &utt.text && *d == utt.definite)
+                                {
+                                    continue;
+                                }
+                                self.emitted
+                                    .insert(utt.start_time, (utt.text.clone(), utt.definite));
+                                events.push(StreamEvent::Transcript {
+                                    text: utt.text,
+                                    stability: if utt.definite {
+                                        TranscriptStability::Committed
+                                    } else {
+                                        TranscriptStability::Provisional
+                                    },
+                                    segment: Some(SegmentRef {
+                                        segment_id: Some(format!("utt{}", utt.start_time)),
+                                        update_kind: TranscriptUpdateKind::Snapshot,
+                                    }),
+                                });
+                            }
+                        }
+                        _ if !result.text.is_empty()
+                            && self.rolling.as_ref() != Some(&(result.text.clone(), is_last)) =>
+                        {
+                            self.rolling = Some((result.text.clone(), is_last));
                             events.push(StreamEvent::Transcript {
-                                text: utt.text,
-                                stability: if utt.definite {
+                                text: result.text,
+                                stability: if is_last {
                                     TranscriptStability::Committed
                                 } else {
                                     TranscriptStability::Provisional
                                 },
-                                segment: None,
+                                segment: Some(SegmentRef {
+                                    segment_id: Some(ROLLING_SEGMENT_ID.to_string()),
+                                    update_kind: TranscriptUpdateKind::Snapshot,
+                                }),
                             });
                         }
+                        _ => {}
                     }
-                    _ if !result.text.is_empty() => {
-                        events.push(StreamEvent::Transcript {
-                            text: result.text,
-                            stability: if is_last {
-                                TranscriptStability::Committed
-                            } else {
-                                TranscriptStability::Provisional
-                            },
-                            segment: None,
-                        });
-                    }
-                    _ => {}
                 }
+                if is_last {
+                    events.push(StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                        segment: None,
+                    }));
+                }
+                events
             }
-            if is_last {
-                events.push(StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
-                    segment: None,
-                }));
-            }
-            events
+            VolcengineFrame::ErrorResponse { code, message } => vec![StreamEvent::Error {
+                error: ProtocolError::new(
+                    ErrorCode::ProviderTaskFailed,
+                    format!("Volcengine ASR error {code}: {message}"),
+                ),
+                fatal: true,
+            }],
         }
-        VolcengineFrame::ErrorResponse { code, message } => vec![StreamEvent::Error {
-            error: ProtocolError::new(
-                ErrorCode::ProviderTaskFailed,
-                format!("Volcengine ASR error {code}: {message}"),
-            ),
-            fatal: true,
-        }],
     }
 }
 
@@ -278,13 +322,15 @@ pub fn map_frame(frame: VolcengineFrame) -> Vec<StreamEvent> {
 
 /// Drive one ASR streaming session over `transport`: client [`SessionInput`]
 /// audio is framed as openspeech audio-only requests and sent; server frames are
-/// parsed and projected onto `events` via [`map_frame`]. Closing `input` flushes
-/// a final audio frame; the loop ends on the last server frame or transport EOF.
+/// parsed and projected onto `events` via [`VolcengineMapper`]. Closing `input`
+/// flushes a final audio frame; the loop ends on the last server frame or
+/// transport EOF.
 pub async fn run_asr_stream<T: ByteDuplex>(
     mut transport: T,
     mut input: mpsc::Receiver<SessionInput>,
     events: mpsc::Sender<StreamEvent>,
 ) {
+    let mut mapper = VolcengineMapper::new();
     let mut input_open = true;
     loop {
         tokio::select! {
@@ -314,7 +360,7 @@ pub async fn run_asr_stream<T: ByteDuplex>(
                             frame,
                             VolcengineFrame::ServerResponse { is_last: true, .. }
                         );
-                        for event in map_frame(frame) {
+                        for event in mapper.map(frame) {
                             if events.send(event).await.is_err() {
                                 return;
                             }
@@ -671,43 +717,103 @@ mod tests {
         }
     }
 
-    #[test]
-    fn map_frame_emits_transcript_per_utterance_with_stability() {
-        let payload = VolcenginePayload {
+    fn utterance(text: &str, definite: bool, start_time: i32) -> VolcengineUtterance {
+        VolcengineUtterance {
+            text: text.into(),
+            definite,
+            start_time,
+            end_time: start_time + 500,
+            words: None,
+            additions: None,
+        }
+    }
+
+    fn utterances_payload(utterances: Vec<VolcengineUtterance>) -> VolcenginePayload {
+        VolcenginePayload {
             result: Some(VolcengineResult {
                 text: "ignored when utterances present".into(),
-                utterances: Some(vec![
-                    VolcengineUtterance {
-                        text: "hello".into(),
-                        definite: false,
-                        start_time: 0,
-                        end_time: 1,
-                        words: None,
-                        additions: None,
-                    },
-                    VolcengineUtterance {
-                        text: "hello world".into(),
-                        definite: true,
-                        start_time: 0,
-                        end_time: 2,
-                        words: None,
-                        additions: None,
-                    },
-                ]),
+                utterances: Some(utterances),
             }),
             audio_info: None,
-        };
-        let events = map_frame(server(false, payload));
+        }
+    }
+
+    #[test]
+    fn mapper_emits_per_utterance_with_native_segment_ids() {
+        let mut mapper = VolcengineMapper::new();
+        let events = mapper.map(server(
+            false,
+            utterances_payload(vec![
+                utterance("hello", false, 0),
+                utterance("world", true, 500),
+            ]),
+        ));
         assert_eq!(events.len(), 2);
         assert!(matches!(
-            events[0],
+            &events[0],
             StreamEvent::Transcript {
                 stability: TranscriptStability::Provisional,
+                segment: Some(SegmentRef {
+                    segment_id,
+                    update_kind: TranscriptUpdateKind::Snapshot,
+                }),
                 ..
-            }
+            } if segment_id.as_deref() == Some("utt0")
         ));
         assert!(matches!(
-            events[1],
+            &events[1],
+            StreamEvent::Transcript {
+                stability: TranscriptStability::Committed,
+                segment: Some(SegmentRef { segment_id, .. }),
+                ..
+            } if segment_id.as_deref() == Some("utt500")
+        ));
+    }
+
+    #[test]
+    fn mapper_suppresses_unchanged_utterances_on_resend() {
+        let mut mapper = VolcengineMapper::new();
+        // `result_type: "single"` resends the same definite utterance every frame.
+        let frame = || {
+            server(
+                false,
+                utterances_payload(vec![utterance("hello", true, 100)]),
+            )
+        };
+        assert_eq!(mapper.map(frame()).len(), 1);
+        assert!(mapper.map(frame()).is_empty());
+    }
+
+    #[test]
+    fn mapper_shares_segment_id_across_provisional_and_committed() {
+        let mut mapper = VolcengineMapper::new();
+        let first = mapper.map(server(
+            false,
+            utterances_payload(vec![utterance("he", false, 450)]),
+        ));
+        let second = mapper.map(server(
+            false,
+            utterances_payload(vec![utterance("hello", false, 450)]),
+        ));
+        let third = mapper.map(server(
+            false,
+            utterances_payload(vec![utterance("hello", true, 450)]),
+        ));
+        for events in [&first, &second, &third] {
+            assert_eq!(events.len(), 1);
+            assert!(matches!(
+                &events[0],
+                StreamEvent::Transcript {
+                    segment: Some(SegmentRef {
+                        segment_id,
+                        update_kind: TranscriptUpdateKind::Snapshot,
+                    }),
+                    ..
+                } if segment_id.as_deref() == Some("utt450")
+            ));
+        }
+        assert!(matches!(
+            third[0],
             StreamEvent::Transcript {
                 stability: TranscriptStability::Committed,
                 ..
@@ -715,32 +821,54 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn map_frame_last_text_only_commits_and_ends_speech() {
-        let payload = VolcenginePayload {
+    fn rolling_payload(text: &str) -> VolcenginePayload {
+        VolcenginePayload {
             result: Some(VolcengineResult {
-                text: "final".into(),
+                text: text.into(),
                 utterances: None,
             }),
             audio_info: None,
-        };
-        let events = map_frame(server(true, payload));
+        }
+    }
+
+    #[test]
+    fn mapper_rolling_branch_uses_fixed_segment_and_commits_on_last() {
+        let mut mapper = VolcengineMapper::new();
+        let first = mapper.map(server(false, rolling_payload("fin")));
+        assert_eq!(first.len(), 1);
         assert!(matches!(
-            events[0],
+            &first[0],
+            StreamEvent::Transcript {
+                stability: TranscriptStability::Provisional,
+                segment: Some(SegmentRef {
+                    segment_id,
+                    update_kind: TranscriptUpdateKind::Snapshot,
+                }),
+                ..
+            } if segment_id.as_deref() == Some(ROLLING_SEGMENT_ID)
+        ));
+        // Same rolling text mid-stream: suppressed by the diff.
+        assert!(mapper.map(server(false, rolling_payload("fin"))).is_empty());
+        // Same text on the last frame still commits (the stability transition).
+        let last = mapper.map(server(true, rolling_payload("fin")));
+        assert_eq!(last.len(), 2);
+        assert!(matches!(
+            &last[0],
             StreamEvent::Transcript {
                 stability: TranscriptStability::Committed,
                 ..
             }
         ));
         assert!(matches!(
-            events[1],
-            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
+            &last[1],
+            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment: None })
         ));
     }
 
     #[test]
-    fn map_frame_error_is_fatal() {
-        let events = map_frame(VolcengineFrame::ErrorResponse {
+    fn mapper_error_is_fatal() {
+        let mut mapper = VolcengineMapper::new();
+        let events = mapper.map(VolcengineFrame::ErrorResponse {
             code: 45000001,
             message: "bad".into(),
         });

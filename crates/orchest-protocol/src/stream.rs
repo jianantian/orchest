@@ -54,6 +54,15 @@ pub enum TranscriptUpdateKind {
 }
 
 /// Identifies which transcript segment an event refers to.
+///
+/// Cross-dialect contract: the `Provisional` updates of one segment are always
+/// [`TranscriptUpdateKind::Snapshot`] — each carries the segment's full current
+/// text and replaces the previous one — and the `Committed` that finalizes the
+/// segment shares the same `segment_id`. `Append` is reserved for natively
+/// incremental token streams (e.g. soniox final tokens), where each event
+/// carries only the new suffix. Segment ids are derived from each provider's
+/// native protocol (utterance start times, sentence begin times, …) or
+/// synthesized by the dialect mapper when the wire carries no segment identity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SegmentRef {
     pub segment_id: Option<String>,
@@ -136,6 +145,9 @@ pub enum StreamEvent {
     },
 
     // --- transcript (asr / omni) ---
+    /// A transcript fragment. `segment` identifies the sentence/segment this
+    /// update refers to — see [`SegmentRef`] for the cross-dialect
+    /// snapshot/append contract.
     Transcript {
         text: String,
         stability: TranscriptStability,
