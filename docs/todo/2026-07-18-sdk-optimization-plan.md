@@ -73,6 +73,8 @@ music-gift 的 guided pipeline(引导收集 → chat 写词 → review 审核 �
 **现状**: `ContextWindowExceeded` 等非 EndTurn/MaxTokens 且无 tool_use 时,流程落入工具阶段并 push 一条**空 content 的 User 消息**(`actor.rs:1538-1544`),step+1 后用相同上下文再次调用,直到 max_steps(默认 100)耗尽。
 **建议**: 该分支直接 `RunFailed`(带 stop_reason),不 push 空消息。
 **验收**: 构造异常 stop_reason 的 model stub,run 立即失败且 messages 中无空 User 消息。
+**状态(2026-07-18)**: 已在 hotfix/2026_07_18b 修复(#216,PR #217,待合并)。
+**后续(code review 记录)**: `StopSequence`/`Refusal` 这类"带内容的终止"目前也落入 RunFailed 桶(非回归——旧行为同样失败,只是更慢更贵);后续迭代可将这两个 variant 映射为完成(带截断/拒绝标记)而非 RunFailed。
 
 ---
 
