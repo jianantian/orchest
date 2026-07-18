@@ -24,7 +24,14 @@ deepgram 的「同一句话 interim 共享同一 start」与 aliyun 的 `begin_t
 
 ## 验收标准
 
-- [ ] deepgram Transcript 携带来自 `start` 的 segment_id,Provisional/Committed 同 id;`speech_final` 的 EndOfSpeech 带该段
-- [ ] aliyun Transcript 携带来自 `begin_time` 的 segment_id(缺省计数器兜底),Provisional/Committed 同 id
-- [ ] 不新增事件种类;两家现有测试更新后全绿
-- [ ] `cargo test -p orchest-provider-stream` 通过
+- [x] deepgram Transcript 携带来自 `start` 的 segment_id,Provisional/Committed 同 id;`speech_final` 的 EndOfSpeech 带该段
+- [x] aliyun Transcript 携带来自 `begin_time` 的 segment_id(缺省计数器兜底),Provisional/Committed 同 id
+- [x] 不新增事件种类;两家现有测试更新后全绿
+- [x] `cargo test -p orchest-provider-stream` 通过
+
+## 实现记录
+
+- deepgram:`ResultsMessage` 增加 `start: f64`(serde default 0.0),`DeepgramResult` 同名字段;`map_result` 保持纯函数,segment_id = `seg{(start*1000) as u64}`,`Snapshot`;`speech_final` 的 `EndOfSpeech` 填 `Some(同 ref)`
+- aliyun:`Sentence` 增加 `begin_time`/`end_time: Option<i64>`;`map_event` → `AliyunMapper { fallback_counter: u64 }`,有 `begin_time` 用 `seg{ms}`,否则 `s{n}` 且 `sentence_end` 后递增;`task-finished` 的 `EndOfSpeech` 保持 `segment: None`
+- 测试:deepgram 的 `results()` fixture 加 `start` 参数,新增缺 `start` → `seg0` 用例与 interim/final/endpoint 同 id 用例;aliyun 新增 `begin_time` 路径(`seg1200` 同 id)与计数器路径(`s0,s0,s1`)用例
+- clippy 一处 `unnecessary_filter_map`(测试收集改 `.map`)已修;`cargo test -p orchest-provider-stream` 71 通过,clippy/fmt 净

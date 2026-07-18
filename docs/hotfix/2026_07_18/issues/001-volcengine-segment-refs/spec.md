@@ -33,8 +33,16 @@ GitHub: [#210](https://github.com/jianantian/orchest/issues/210) · 无依赖(�
 
 ## 验收标准
 
-- [ ] volcengine 发出的 Transcript 全部携带 `Some(SegmentRef)`,segment_id 来自 utterance `start_time`(rolling 分支为 `"rolling"`)
-- [ ] 未变化 utterance 不重复发事件(单测固定)
-- [ ] 同句 Provisional→Committed 共享 segment_id(单测固定)
-- [ ] `stream.rs` 文档注释写入跨方言不变量
-- [ ] `cargo test -p orchest-provider-stream` 通过
+- [x] volcengine 发出的 Transcript 全部携带 `Some(SegmentRef)`,segment_id 来自 utterance `start_time`(rolling 分支为 `"rolling"`)
+- [x] 未变化 utterance 不重复发事件(单测固定)
+- [x] 同句 Provisional→Committed 共享 segment_id(单测固定)
+- [x] `stream.rs` 文档注释写入跨方言不变量
+- [x] `cargo test -p orchest-provider-stream` 通过
+
+## 实现记录
+
+- `map_frame` 纯函数 → `VolcengineMapper`(`volcengine.rs`):`emitted: HashMap<i32,(String,bool)>` 按 `start_time` diff,只在 text/definite 变化时发事件;rolling 分支以 `Option<(String,bool)>` 跟踪 `(text, committed)`,同文本末帧仍能补 Committed 稳定性跃迁
+- segment_id = `utt{start_time}`,Provisional/Committed 均 `Snapshot`;rolling 分支固定段 `"rolling"`;`is_last` 的 `EndOfSpeech` 保持 `segment: None`(流级信号)
+- `crates/orchest-protocol/src/stream.rs`:`SegmentRef` 与 `StreamEvent::Transcript` 文档注释写入跨方言契约(Snapshot 全量替换 / Committed 同 id / Append 仅原生增量流)
+- 测试:utterance/rolling 两个 fixture helper + 5 个 mapper 测试(原生 id、重发抑制、id 共享、rolling 固定段与末帧提交、fatal error);`run_asr_stream` 端到端测试不动
+- clippy 一处 `collapsible_match`(rolling 分支 if 并入 match guard)已修;`cargo test -p orchest-provider-stream` 68 通过,clippy/fmt 净

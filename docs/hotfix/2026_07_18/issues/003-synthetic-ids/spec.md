@@ -26,7 +26,14 @@ soniox 的「一个永恒 final 段」是刻意简化:Soniox 的 endpoint 检测
 
 ## 验收标准
 
-- [ ] elevenlabs Transcript 携带计数器 segment_id,同句 Partial/Committed 同 id,Committed 后换新 id
-- [ ] soniox Committed 为 `Append` + 段 `"final"`,Provisional 为 `Snapshot` + 段 `"tail"`
-- [ ] 不新增事件种类;两家现有测试更新后全绿
-- [ ] `cargo test -p orchest-provider-stream` 通过
+- [x] elevenlabs Transcript 携带计数器 segment_id,同句 Partial/Committed 同 id,Committed 后换新 id
+- [x] soniox Committed 为 `Append` + 段 `"final"`,Provisional 为 `Snapshot` + 段 `"tail"`
+- [x] 不新增事件种类;两家现有测试更新后全绿
+- [x] `cargo test -p orchest-provider-stream` 通过
+
+## 实现记录
+
+- elevenlabs:`map_message` → `ElevenLabsMapper { current: u64 }`,Partial/Committed 共享 `s{current}`(`Snapshot`),Committed 发出后递增;`run_elevenlabs_stream` 持有实例
+- soniox:`map_message` 保持纯函数;新增 `pub const FINAL_SEGMENT_ID = "final"` / `TAIL_SEGMENT_ID = "tail"`(公开常量,消费端可直接引用),Committed = `Append`@final、Provisional = `Snapshot`@tail;`finished` 的 `EndOfSpeech` 保持 `segment: None`
+- 测试:elevenlabs 新增 id 共享/递增用例(`s0,s0,s1`);soniox 的 map 测试补段断言(Append@final / Snapshot@tail / EndOfSpeech None)
+- `cargo test -p orchest-provider-stream` 72 通过,clippy/fmt 净
