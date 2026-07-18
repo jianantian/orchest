@@ -247,10 +247,34 @@ impl MessagesAdapter {
             }
         }
 
-        match options.cache_policy {
-            CachePolicy::Auto => body["cache_control"] = json!({"type": "ephemeral"}),
-            CachePolicy::Long => body["cache_control"] = json!({"type": "ephemeral", "ttl": "1h"}),
-            CachePolicy::None => {}
+        // Prompt-caching breakpoint. Anthropic accepts `cache_control` only on
+        // content blocks (the `system` field takes a string or an array of
+        // text blocks), never as a top-level request field — a top-level key
+        // was at best ignored, so prompt caching never engaged. Single
+        // breakpoint: on the last system block (which requires the block-array
+        // form of `system`) when a system prompt is present, else on the last
+        // content block of the last message carrying any blocks.
+        // `CachePolicy::None` emits no `cache_control` anywhere.
+        let cache_control = match options.cache_policy {
+            CachePolicy::Auto => Some(json!({"type": "ephemeral"})),
+            CachePolicy::Long => Some(json!({"type": "ephemeral", "ttl": "1h"})),
+            CachePolicy::None => None,
+        };
+        if let Some(cc) = cache_control {
+            if !system_parts.is_empty() {
+                body["system"] = json!([{
+                    "type": "text",
+                    "text": system_parts.join("\n\n"),
+                    "cache_control": cc,
+                }]);
+            } else if let Some(msgs) = body["messages"].as_array_mut() {
+                for msg in msgs.iter_mut().rev() {
+                    if let Some(block) = msg["content"].as_array_mut().and_then(|b| b.last_mut()) {
+                        block["cache_control"] = cc.clone();
+                        break;
+                    }
+                }
+            }
         }
         if let Some(temp) = options.temperature {
             body["temperature"] = json!(temp);

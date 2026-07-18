@@ -300,8 +300,33 @@ fn include_thinking_false_maps_to_omitted() {
     assert_eq!(body["thinking"]["display"], "omitted");
 }
 
+/// Recursive wire-level assertion helper: true when `cache_control` appears
+/// anywhere under `v`.
+fn contains_cache_control(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Object(map) => {
+            map.contains_key("cache_control") || map.values().any(contains_cache_control)
+        }
+        serde_json::Value::Array(arr) => arr.iter().any(contains_cache_control),
+        _ => false,
+    }
+}
+
+fn system_and_user_messages() -> Vec<Message> {
+    vec![
+        Message {
+            role: Role::System,
+            content: vec![ContentBlock::Text("be helpful".into())],
+        },
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text("hi".into())],
+        },
+    ]
+}
+
 #[test]
-fn cache_policy_auto_adds_top_level_cache_control() {
+fn cache_policy_auto_breakpoint_on_last_system_block() {
     let adapter = adapter_with("claude-test", 128);
 
     let opts = RequestOptions {
@@ -309,12 +334,69 @@ fn cache_policy_auto_adds_top_level_cache_control() {
         cache_policy: CachePolicy::Auto,
         ..Default::default()
     };
-    let (body, _) = adapter.request_body_for_test(&[], &[], &opts);
-    assert_eq!(body["cache_control"]["type"], "ephemeral");
+    let (body, _) = adapter.request_body_for_test(&system_and_user_messages(), &[], &opts);
+    assert!(
+        body.get("cache_control").is_none(),
+        "no top-level cache_control"
+    );
+    let system = body["system"]
+        .as_array()
+        .expect("system switches to block-array form");
+    let last = system.last().expect("at least one system block");
+    assert_eq!(last["type"], "text");
+    assert_eq!(last["text"], "be helpful");
+    assert_eq!(
+        last["cache_control"],
+        serde_json::json!({"type": "ephemeral"})
+    );
+    assert!(
+        !contains_cache_control(&body["messages"]),
+        "single breakpoint: messages stay clean"
+    );
 }
 
 #[test]
-fn cache_policy_long_sets_1h_ttl() {
+fn cache_policy_auto_breakpoint_on_last_message_block_without_system() {
+    let adapter = adapter_with("claude-test", 128);
+
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Off,
+        cache_policy: CachePolicy::Auto,
+        ..Default::default()
+    };
+    let messages = vec![
+        Message {
+            role: Role::User,
+            content: vec![
+                ContentBlock::Text("first".into()),
+                ContentBlock::Text("second".into()),
+            ],
+        },
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text("last".into())],
+        },
+    ];
+    let (body, _) = adapter.request_body_for_test(&messages, &[], &opts);
+    assert!(
+        body.get("cache_control").is_none(),
+        "no top-level cache_control"
+    );
+    assert!(body.get("system").is_none());
+    let msgs = body["messages"].as_array().expect("messages array");
+    assert!(
+        !contains_cache_control(&msgs[0]),
+        "earlier messages carry no breakpoint"
+    );
+    let blocks = msgs[1]["content"].as_array().expect("content blocks");
+    assert_eq!(
+        blocks.last().expect("last block")["cache_control"],
+        serde_json::json!({"type": "ephemeral"})
+    );
+}
+
+#[test]
+fn cache_policy_long_sets_1h_ttl_on_block() {
     let adapter = adapter_with("claude-test", 128);
 
     let opts = RequestOptions {
@@ -322,8 +404,33 @@ fn cache_policy_long_sets_1h_ttl() {
         cache_policy: CachePolicy::Long,
         ..Default::default()
     };
-    let (body, _) = adapter.request_body_for_test(&[], &[], &opts);
-    assert_eq!(body["cache_control"]["ttl"], "1h");
+    let (body, _) = adapter.request_body_for_test(&system_and_user_messages(), &[], &opts);
+    assert!(body.get("cache_control").is_none());
+    let system = body["system"].as_array().expect("system block array");
+    assert_eq!(
+        system.last().expect("last system block")["cache_control"],
+        serde_json::json!({"type": "ephemeral", "ttl": "1h"})
+    );
+}
+
+#[test]
+fn cache_policy_none_emits_no_cache_control_anywhere() {
+    let adapter = adapter_with("claude-test", 128);
+
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Off,
+        cache_policy: CachePolicy::None,
+        ..Default::default()
+    };
+    let (body, _) = adapter.request_body_for_test(&system_and_user_messages(), &[], &opts);
+    assert!(
+        !contains_cache_control(&body),
+        "no cache_control anywhere on the wire body"
+    );
+    assert!(
+        body["system"].is_string(),
+        "system stays a plain string without caching"
+    );
 }
 
 #[tokio::test]
