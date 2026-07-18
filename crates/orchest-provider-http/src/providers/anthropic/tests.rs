@@ -301,7 +301,233 @@ fn include_thinking_false_maps_to_omitted() {
 }
 
 #[test]
-fn cache_policy_auto_adds_top_level_cache_control() {
+fn thinking_budget_lifts_max_tokens_for_default_options() {
+    // Default options (thinking Medium → budget 10240) on a non-adaptive
+    // model: the 4096 max_tokens default is below the budget, which Anthropic
+    // rejects with a 400 — lift it and record the adjustment.
+    let adapter = adapter_with("claude-3-opus", 4096);
+
+    let (body, adjustments) = adapter.request_body_for_test(&[], &[], &RequestOptions::default());
+    let budget = body["thinking"]["budget_tokens"]
+        .as_u64()
+        .expect("budget_tokens present");
+    let max_tokens = body["max_tokens"].as_u64().expect("max_tokens present");
+    assert!(
+        max_tokens > budget,
+        "wire must satisfy max_tokens > budget_tokens"
+    );
+    assert_eq!(max_tokens, 10240 + 4096);
+    let adj = adjustments
+        .iter()
+        .find(|a| a.option == "max_tokens")
+        .expect("max_tokens adjustment recorded");
+    assert_eq!(adj.requested, serde_json::json!(4096));
+    assert_eq!(adj.applied, serde_json::json!(10240 + 4096));
+    assert_eq!(adj.reason, "max_tokens_below_thinking_budget");
+}
+
+#[test]
+fn explicit_max_tokens_below_budget_lifted_and_recorded() {
+    let adapter = adapter_with("claude-3-opus", 4096);
+
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Low, // budget 4096
+        max_tokens: Some(2048),
+        ..Default::default()
+    };
+    let (body, adjustments) = adapter.request_body_for_test(&[], &[], &opts);
+    assert_eq!(body["thinking"]["budget_tokens"], 4096);
+    assert_eq!(body["max_tokens"], 4096 + 4096);
+    let adj = adjustments
+        .iter()
+        .find(|a| a.option == "max_tokens")
+        .expect("max_tokens adjustment recorded");
+    assert_eq!(adj.requested, serde_json::json!(2048));
+    assert_eq!(adj.applied, serde_json::json!(4096 + 4096));
+}
+
+#[test]
+fn budget_below_max_tokens_is_not_adjusted() {
+    let adapter = adapter_with("claude-3-opus", 8192);
+
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Low, // budget 4096 < 8192
+        ..Default::default()
+    };
+    let (body, adjustments) = adapter.request_body_for_test(&[], &[], &opts);
+    assert_eq!(body["thinking"]["budget_tokens"], 4096);
+    assert_eq!(body["max_tokens"], 8192, "legal combination untouched");
+    assert!(
+        adjustments.iter().all(|a| a.option != "max_tokens"),
+        "no adjustment recorded"
+    );
+}
+
+#[test]
+fn adaptive_path_leaves_max_tokens_alone() {
+    let adapter = adapter_with("claude-sonnet-4-20250514", 4096);
+
+    let (body, adjustments) = adapter.request_body_for_test(&[], &[], &RequestOptions::default());
+    assert_eq!(body["thinking"]["type"], "adaptive");
+    assert_eq!(body["max_tokens"], 4096);
+    assert!(adjustments.iter().all(|a| a.option != "max_tokens"));
+}
+
+/// Recursive wire-level assertion helper: true when `cache_control` appears
+/// anywhere under `v`.
+fn contains_cache_control(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Object(map) => {
+            map.contains_key("cache_control") || map.values().any(contains_cache_control)
+        }
+        serde_json::Value::Array(arr) => arr.iter().any(contains_cache_control),
+        _ => false,
+    }
+}
+
+fn system_and_user_messages() -> Vec<Message> {
+    vec![
+        Message {
+            role: Role::System,
+            content: vec![ContentBlock::Text("be helpful".into())],
+        },
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text("hi".into())],
+        },
+    ]
+}
+
+#[test]
+fn cache_policy_auto_breakpoint_on_last_system_block() {
+    let adapter = adapter_with("claude-test", 128);
+
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Off,
+        cache_policy: CachePolicy::Auto,
+        ..Default::default()
+    };
+    let (body, _) = adapter.request_body_for_test(&system_and_user_messages(), &[], &opts);
+    assert!(
+        body.get("cache_control").is_none(),
+        "no top-level cache_control"
+    );
+    let system = body["system"]
+        .as_array()
+        .expect("system switches to block-array form");
+    let last = system.last().expect("at least one system block");
+    assert_eq!(last["type"], "text");
+    assert_eq!(last["text"], "be helpful");
+    assert_eq!(
+        last["cache_control"],
+        serde_json::json!({"type": "ephemeral"})
+    );
+    assert!(
+        !contains_cache_control(&body["messages"]),
+        "single breakpoint: messages stay clean"
+    );
+}
+
+#[test]
+fn cache_policy_auto_breakpoint_on_last_message_block_without_system() {
+    let adapter = adapter_with("claude-test", 128);
+
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Off,
+        cache_policy: CachePolicy::Auto,
+        ..Default::default()
+    };
+    let messages = vec![
+        Message {
+            role: Role::User,
+            content: vec![
+                ContentBlock::Text("first".into()),
+                ContentBlock::Text("second".into()),
+            ],
+        },
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text("last".into())],
+        },
+    ];
+    let (body, _) = adapter.request_body_for_test(&messages, &[], &opts);
+    assert!(
+        body.get("cache_control").is_none(),
+        "no top-level cache_control"
+    );
+    assert!(body.get("system").is_none());
+    let msgs = body["messages"].as_array().expect("messages array");
+    assert!(
+        !contains_cache_control(&msgs[0]),
+        "earlier messages carry no breakpoint"
+    );
+    let blocks = msgs[1]["content"].as_array().expect("content blocks");
+    assert_eq!(
+        blocks.last().expect("last block")["cache_control"],
+        serde_json::json!({"type": "ephemeral"})
+    );
+}
+
+#[test]
+fn cache_policy_long_sets_1h_ttl_on_block() {
+    let adapter = adapter_with("claude-test", 128);
+
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Off,
+        cache_policy: CachePolicy::Long,
+        ..Default::default()
+    };
+    let (body, _) = adapter.request_body_for_test(&system_and_user_messages(), &[], &opts);
+    assert!(body.get("cache_control").is_none());
+    let system = body["system"].as_array().expect("system block array");
+    assert_eq!(
+        system.last().expect("last system block")["cache_control"],
+        serde_json::json!({"type": "ephemeral", "ttl": "1h"})
+    );
+}
+
+#[test]
+fn cache_policy_none_emits_no_cache_control_anywhere() {
+    let adapter = adapter_with("claude-test", 128);
+
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Off,
+        cache_policy: CachePolicy::None,
+        ..Default::default()
+    };
+    let (body, _) = adapter.request_body_for_test(&system_and_user_messages(), &[], &opts);
+    assert!(
+        !contains_cache_control(&body),
+        "no cache_control anywhere on the wire body"
+    );
+    assert!(
+        body["system"].is_string(),
+        "system stays a plain string without caching"
+    );
+}
+
+#[test]
+fn thinking_budget_equal_to_max_tokens_is_lifted() {
+    // Anthropic requires strictly max_tokens > budget_tokens: the equality
+    // path (ThinkingLevel::Max pins budget = effective max_tokens) must also
+    // lift, not 400.
+    let adapter = adapter_with("claude-3-opus", 8192);
+
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Max,
+        ..Default::default()
+    };
+    let (body, adjustments) = adapter.request_body_for_test(&[], &[], &opts);
+    assert_eq!(body["thinking"]["budget_tokens"], 8192);
+    assert_eq!(body["max_tokens"], 8192 + 4096);
+    assert!(
+        adjustments.iter().any(|a| a.option == "max_tokens"),
+        "equality path records the lift"
+    );
+}
+
+#[test]
+fn cache_policy_auto_no_system_empty_messages_emits_no_breakpoint() {
     let adapter = adapter_with("claude-test", 128);
 
     let opts = RequestOptions {
@@ -310,20 +536,54 @@ fn cache_policy_auto_adds_top_level_cache_control() {
         ..Default::default()
     };
     let (body, _) = adapter.request_body_for_test(&[], &[], &opts);
-    assert_eq!(body["cache_control"]["type"], "ephemeral");
+    assert!(
+        !contains_cache_control(&body),
+        "nothing to attach to: no cache_control anywhere"
+    );
 }
 
 #[test]
-fn cache_policy_long_sets_1h_ttl() {
+fn cache_policy_auto_skips_thinking_block_for_cacheable_one() {
+    // Thinking blocks carry no `cache_control` in the API schema: when the
+    // last block is a thinking block, the breakpoint must fall back to the
+    // previous cacheable block instead of tagging the thinking block.
     let adapter = adapter_with("claude-test", 128);
 
     let opts = RequestOptions {
         thinking: ThinkingLevel::Off,
-        cache_policy: CachePolicy::Long,
+        cache_policy: CachePolicy::Auto,
         ..Default::default()
     };
-    let (body, _) = adapter.request_body_for_test(&[], &[], &opts);
-    assert_eq!(body["cache_control"]["ttl"], "1h");
+    let messages = vec![Message {
+        role: Role::Assistant,
+        content: vec![
+            ContentBlock::Text("answer".into()),
+            ContentBlock::Thinking {
+                text: Some("hmm".into()),
+                signature: None,
+                provider_details: None,
+            },
+        ],
+    }];
+    let (body, _) = adapter.request_body_for_test(&messages, &[], &opts);
+    let msgs = body["messages"].as_array().expect("messages array");
+    let blocks = msgs[0]["content"].as_array().expect("content blocks");
+    let text_block = blocks
+        .iter()
+        .find(|b| b["type"] == "text")
+        .expect("text block");
+    assert_eq!(
+        text_block["cache_control"],
+        serde_json::json!({"type": "ephemeral"})
+    );
+    let thinking_block = blocks
+        .iter()
+        .find(|b| b["type"] == "thinking")
+        .expect("thinking block");
+    assert!(
+        thinking_block.get("cache_control").is_none(),
+        "thinking blocks carry no cache_control"
+    );
 }
 
 #[tokio::test]

@@ -12,8 +12,9 @@
 use async_trait::async_trait;
 use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
-    Modality, ProtocolError, RealtimeHandle, SessionInput, StreamEvent, StreamingTranscribeRequest,
-    TranscribeRequest, TranscribeResult, TranscriptStability,
+    Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
+    StreamingTranscribeRequest, TranscribeRequest, TranscribeResult, TranscriptStability,
+    TranscriptUpdateKind,
 };
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
@@ -42,6 +43,10 @@ pub struct DeepgramResult {
     /// Deepgram `speech_final`: an endpoint (end of utterance) was detected.
     pub speech_final: bool,
     pub confidence: Option<f64>,
+    /// Deepgram `start`: seconds offset of this speech segment in the stream.
+    /// Interim updates of one utterance share the same `start`, so it doubles
+    /// as the segment identity (`seg{start_ms}`).
+    pub start: f64,
 }
 
 /// Parse one Deepgram text message. `Results` → [`DeepgramResult`]; `Error` →
@@ -85,13 +90,22 @@ fn parse_results(value: serde_json::Value) -> Result<DeepgramResult, ProtocolErr
         is_final: message.is_final,
         speech_final: message.speech_final,
         confidence: alternative.and_then(|a| a.confidence),
+        start: message.start,
     })
 }
 
 /// Project a Deepgram result onto unified events: a non-empty transcript becomes
 /// a `Transcript` (`Committed` once `is_final`, else `Provisional`); a detected
-/// endpoint (`speech_final`) additionally emits `EndOfSpeech`.
+/// endpoint (`speech_final`) additionally emits `EndOfSpeech`. The segment
+/// identity comes from the native `start` offset (`seg{start_ms}`, `Snapshot`):
+/// interim updates and the final of one utterance share it.
 pub fn map_result(result: &DeepgramResult) -> Vec<StreamEvent> {
+    let segment = || {
+        Some(SegmentRef {
+            segment_id: Some(format!("seg{}", (result.start * 1000.0) as u64)),
+            update_kind: TranscriptUpdateKind::Snapshot,
+        })
+    };
     let mut events = Vec::new();
     if !result.transcript.is_empty() {
         events.push(StreamEvent::Transcript {
@@ -101,12 +115,12 @@ pub fn map_result(result: &DeepgramResult) -> Vec<StreamEvent> {
             } else {
                 TranscriptStability::Provisional
             },
-            segment: None,
+            segment: segment(),
         });
     }
     if result.speech_final {
         events.push(StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
-            segment: None,
+            segment: segment(),
         }));
     }
     events
@@ -118,6 +132,9 @@ struct ResultsMessage {
     is_final: bool,
     #[serde(default)]
     speech_final: bool,
+    /// Seconds offset of the segment start in the audio stream.
+    #[serde(default)]
+    start: f64,
     channel: Channel,
 }
 
@@ -345,11 +362,12 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn results(transcript: &str, is_final: bool, speech_final: bool) -> String {
+    fn results(transcript: &str, is_final: bool, speech_final: bool, start: f64) -> String {
         json!({
             "type": "Results",
             "is_final": is_final,
             "speech_final": speech_final,
+            "start": start,
             "channel": {"alternatives": [{"transcript": transcript, "confidence": 0.9}]}
         })
         .to_string()
@@ -394,7 +412,7 @@ mod tests {
 
         // a final result -> Committed transcript + EndOfSpeech
         in_tx
-            .send(WsFrame::Text(results("done", true, true)))
+            .send(WsFrame::Text(results("done", true, true, 1.25)))
             .await
             .unwrap();
         assert!(matches!(
@@ -421,7 +439,7 @@ mod tests {
 
     #[test]
     fn parses_interim_and_final_results() {
-        let interim = parse_message(&results("hello", false, false)).unwrap();
+        let interim = parse_message(&results("hello", false, false, 0.5)).unwrap();
         assert_eq!(
             interim,
             DeepgramMessage::Result(DeepgramResult {
@@ -429,14 +447,43 @@ mod tests {
                 is_final: false,
                 speech_final: false,
                 confidence: Some(0.9),
+                start: 0.5,
             })
         );
-        match parse_message(&results("hello world", true, true)).unwrap() {
+        match parse_message(&results("hello world", true, true, 0.5)).unwrap() {
             DeepgramMessage::Result(r) => {
                 assert!(r.is_final && r.speech_final);
             }
             other => panic!("expected Result, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn missing_start_defaults_to_zero() {
+        let raw = json!({
+            "type": "Results",
+            "is_final": false,
+            "channel": {"alternatives": [{"transcript": "hi"}]}
+        })
+        .to_string();
+        match parse_message(&raw).unwrap() {
+            DeepgramMessage::Result(r) => assert_eq!(r.start, 0.0),
+            other => panic!("expected Result, got {other:?}"),
+        }
+        let events = map_result(&DeepgramResult {
+            transcript: "hi".into(),
+            is_final: false,
+            speech_final: false,
+            confidence: None,
+            start: 0.0,
+        });
+        assert!(matches!(
+            &events[0],
+            StreamEvent::Transcript {
+                segment: Some(SegmentRef { segment_id, .. }),
+                ..
+            } if segment_id.as_deref() == Some("seg0")
+        ));
     }
 
     #[test]
@@ -463,35 +510,59 @@ mod tests {
             is_final: false,
             speech_final: false,
             confidence: None,
+            start: 1.25,
         });
         assert_eq!(events.len(), 1);
         assert!(matches!(
-            events[0],
+            &events[0],
             StreamEvent::Transcript {
                 stability: TranscriptStability::Provisional,
+                segment: Some(SegmentRef {
+                    segment_id,
+                    update_kind: TranscriptUpdateKind::Snapshot,
+                }),
                 ..
-            }
+            } if segment_id.as_deref() == Some("seg1250")
         ));
     }
 
     #[test]
-    fn map_result_final_with_endpoint_emits_committed_and_end_of_speech() {
-        let events = map_result(&DeepgramResult {
+    fn map_result_shares_segment_id_across_interim_final_and_endpoint() {
+        let interim = map_result(&DeepgramResult {
+            transcript: "do".into(),
+            is_final: false,
+            speech_final: false,
+            confidence: None,
+            start: 2.5,
+        });
+        let r#final = map_result(&DeepgramResult {
             transcript: "done".into(),
             is_final: true,
             speech_final: true,
             confidence: Some(0.8),
+            start: 2.5,
         });
         assert!(matches!(
-            events[0],
+            &interim[0],
             StreamEvent::Transcript {
-                stability: TranscriptStability::Committed,
+                stability: TranscriptStability::Provisional,
+                segment: Some(SegmentRef { segment_id, .. }),
                 ..
-            }
+            } if segment_id.as_deref() == Some("seg2500")
         ));
         assert!(matches!(
-            events[1],
-            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
+            &r#final[0],
+            StreamEvent::Transcript {
+                stability: TranscriptStability::Committed,
+                segment: Some(SegmentRef { segment_id, .. }),
+                ..
+            } if segment_id.as_deref() == Some("seg2500")
+        ));
+        assert!(matches!(
+            &r#final[1],
+            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                segment: Some(SegmentRef { segment_id, .. }),
+            }) if segment_id.as_deref() == Some("seg2500")
         ));
     }
 
@@ -502,6 +573,7 @@ mod tests {
             is_final: true,
             speech_final: false,
             confidence: None,
+            start: 0.0,
         })
         .is_empty());
     }

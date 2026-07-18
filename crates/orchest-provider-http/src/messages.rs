@@ -243,14 +243,68 @@ impl MessagesAdapter {
                     });
                     body["thinking"] = json!({"type": "enabled", "budget_tokens": budget});
                     body["thinking"]["display"] = json!(display);
+                    // Anthropic requires max_tokens > budget_tokens; lift
+                    // max_tokens to budget + completion budget instead of
+                    // failing with a 400, and record the adjustment
+                    // (polaris/observability: adjustments visible, never silent).
+                    if budget >= effective_max_tokens {
+                        // saturating_add: a pathological explicit budget near
+                        // u32::MAX must not panic (debug) or wrap (release).
+                        let raised =
+                            budget.saturating_add(crate::defaults::THINKING_COMPLETION_BUDGET);
+                        adjustments.push(OptionAdjustment {
+                            option: "max_tokens".into(),
+                            requested: json!(effective_max_tokens),
+                            applied: json!(raised),
+                            reason: "max_tokens_below_thinking_budget".into(),
+                        });
+                        body["max_tokens"] = json!(raised);
+                    }
                 }
             }
         }
 
-        match options.cache_policy {
-            CachePolicy::Auto => body["cache_control"] = json!({"type": "ephemeral"}),
-            CachePolicy::Long => body["cache_control"] = json!({"type": "ephemeral", "ttl": "1h"}),
-            CachePolicy::None => {}
+        // Prompt-caching breakpoint. The Anthropic API documents both a
+        // top-level `cache_control` (auto-applied to the last cacheable
+        // block) and per-block markers; we emit a single explicit block-level
+        // breakpoint for deterministic placement, and because
+        // Anthropic-compatible endpoints (e.g. Minimax) document only the
+        // block-level form. Placement: the last system block (block-array
+        // form of `system`) when a system prompt is present, else the last
+        // cacheable content block of the conversation. Thinking blocks carry
+        // no `cache_control` in the API schema, so they are skipped.
+        // `CachePolicy::None` emits no `cache_control` anywhere.
+        let cache_control = match options.cache_policy {
+            CachePolicy::Auto => Some(json!({"type": "ephemeral"})),
+            CachePolicy::Long => Some(json!({"type": "ephemeral", "ttl": "1h"})),
+            CachePolicy::None => None,
+        };
+        if let Some(cc) = cache_control {
+            if !system_parts.is_empty() {
+                body["system"] = json!([{
+                    "type": "text",
+                    "text": system_parts.join("\n\n"),
+                    "cache_control": cc,
+                }]);
+            } else if let Some(msgs) = body["messages"].as_array_mut() {
+                'outer: for msg in msgs.iter_mut().rev() {
+                    if let Some(blocks) = msg["content"].as_array_mut() {
+                        for block in blocks.iter_mut().rev() {
+                            // Thinking blocks (incl. redacted) carry no
+                            // `cache_control` per the API schema — skip to
+                            // the next cacheable block.
+                            if matches!(
+                                block["type"].as_str(),
+                                Some("thinking") | Some("redacted_thinking")
+                            ) {
+                                continue;
+                            }
+                            block["cache_control"] = cc.clone();
+                            break 'outer;
+                        }
+                    }
+                }
+            }
         }
         if let Some(temp) = options.temperature {
             body["temperature"] = json!(temp);

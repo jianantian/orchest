@@ -3,6 +3,11 @@
 
 pub const MAX_TOKENS: u32 = 4096;
 
+/// Completion headroom added on top of `thinking.budget_tokens` when
+/// `max_tokens` must be lifted to satisfy Anthropic's
+/// `max_tokens > budget_tokens` requirement (Messages protocol).
+pub const THINKING_COMPLETION_BUDGET: u32 = 4096;
+
 pub mod anthropic {
     pub const API_URL: &str = "https://api.anthropic.com/v1/messages";
     pub const API_VERSION: &str = "2023-06-01";

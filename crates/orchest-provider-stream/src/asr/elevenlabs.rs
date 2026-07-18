@@ -11,8 +11,9 @@ use async_trait::async_trait;
 use base64::Engine;
 use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, Modality,
-    ProtocolError, RealtimeHandle, SessionInput, StreamEvent, StreamingTranscribeRequest,
-    TranscribeRequest, TranscribeResult, TranscriptStability,
+    ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
+    StreamingTranscribeRequest, TranscribeRequest, TranscribeResult, TranscriptStability,
+    TranscriptUpdateKind,
 };
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
@@ -71,24 +72,50 @@ pub fn parse_message(text: &str) -> Result<ElevenLabsMessage, ProtocolError> {
     })
 }
 
-/// Project an ElevenLabs message onto unified events.
-pub fn map_message(message: ElevenLabsMessage) -> Vec<StreamEvent> {
-    match message {
-        ElevenLabsMessage::Partial(text) if !text.is_empty() => vec![StreamEvent::Transcript {
-            text,
-            stability: TranscriptStability::Provisional,
-            segment: None,
-        }],
-        ElevenLabsMessage::Committed(text) if !text.is_empty() => vec![StreamEvent::Transcript {
-            text,
-            stability: TranscriptStability::Committed,
-            segment: None,
-        }],
-        ElevenLabsMessage::Error(message) => vec![StreamEvent::Error {
-            error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
-            fatal: true,
-        }],
-        _ => Vec::new(),
+/// Stateful projector of ElevenLabs messages onto unified events. The wire has
+/// no segment identity, so a synthesized `s{n}` id (`Snapshot`) is shared by a
+/// partial and its committed transcript; the counter advances on each commit.
+#[derive(Debug, Default)]
+pub struct ElevenLabsMapper {
+    current: u64,
+}
+
+impl ElevenLabsMapper {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn segment(&self) -> Option<SegmentRef> {
+        Some(SegmentRef {
+            segment_id: Some(format!("s{}", self.current)),
+            update_kind: TranscriptUpdateKind::Snapshot,
+        })
+    }
+
+    pub fn map(&mut self, message: ElevenLabsMessage) -> Vec<StreamEvent> {
+        match message {
+            ElevenLabsMessage::Partial(text) if !text.is_empty() => {
+                vec![StreamEvent::Transcript {
+                    text,
+                    stability: TranscriptStability::Provisional,
+                    segment: self.segment(),
+                }]
+            }
+            ElevenLabsMessage::Committed(text) if !text.is_empty() => {
+                let events = vec![StreamEvent::Transcript {
+                    text,
+                    stability: TranscriptStability::Committed,
+                    segment: self.segment(),
+                }];
+                self.current += 1;
+                events
+            }
+            ElevenLabsMessage::Error(message) => vec![StreamEvent::Error {
+                error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
+                fatal: true,
+            }],
+            _ => Vec::new(),
+        }
     }
 }
 
@@ -106,13 +133,14 @@ pub fn build_audio_message(data: &[u8], commit: bool, sample_rate: u32) -> Strin
 
 /// Drive one ElevenLabs session: client audio is sent as `input_audio_chunk`
 /// **text** frames (base64); input end sends a `commit` frame. Inbound **text**
-/// transcripts project via [`map_message`]. Ends on a fatal error or EOF.
+/// transcripts project via [`ElevenLabsMapper`]. Ends on a fatal error or EOF.
 pub async fn run_elevenlabs_stream<T: ByteDuplex>(
     mut transport: T,
     sample_rate: u32,
     mut input: mpsc::Receiver<SessionInput>,
     events: mpsc::Sender<StreamEvent>,
 ) {
+    let mut mapper = ElevenLabsMapper::new();
     let mut input_open = true;
     loop {
         tokio::select! {
@@ -135,7 +163,7 @@ pub async fn run_elevenlabs_stream<T: ByteDuplex>(
                 Some(text) => match parse_message(text) {
                     Ok(message) => {
                         let is_error = matches!(message, ElevenLabsMessage::Error(_));
-                        for unified in map_message(message) {
+                        for unified in mapper.map(message) {
                             if events.send(unified).await.is_err() {
                                 return;
                             }
@@ -329,24 +357,54 @@ mod tests {
 
     #[test]
     fn maps_stability_and_errors() {
+        let mut mapper = ElevenLabsMapper::new();
         assert!(matches!(
-            map_message(ElevenLabsMessage::Partial("x".into())).as_slice(),
+            mapper
+                .map(ElevenLabsMessage::Partial("x".into()))
+                .as_slice(),
             [StreamEvent::Transcript {
                 stability: TranscriptStability::Provisional,
                 ..
             }]
         ));
         assert!(matches!(
-            map_message(ElevenLabsMessage::Committed("x".into())).as_slice(),
+            mapper
+                .map(ElevenLabsMessage::Committed("x".into()))
+                .as_slice(),
             [StreamEvent::Transcript {
                 stability: TranscriptStability::Committed,
                 ..
             }]
         ));
         assert!(matches!(
-            map_message(ElevenLabsMessage::Error("e".into())).as_slice(),
+            mapper.map(ElevenLabsMessage::Error("e".into())).as_slice(),
             [StreamEvent::Error { fatal: true, .. }]
         ));
+    }
+
+    #[test]
+    fn mapper_shares_counter_id_and_advances_on_commit() {
+        let mut mapper = ElevenLabsMapper::new();
+        let ids: Vec<String> = [
+            ElevenLabsMessage::Partial("he".into()),
+            ElevenLabsMessage::Committed("hello".into()),
+            ElevenLabsMessage::Partial("wo".into()),
+        ]
+        .into_iter()
+        .map(|m| match mapper.map(m).into_iter().next() {
+            Some(StreamEvent::Transcript {
+                segment:
+                    Some(SegmentRef {
+                        segment_id: Some(id),
+                        update_kind: TranscriptUpdateKind::Snapshot,
+                    }),
+                ..
+            }) => id,
+            other => panic!("expected Transcript with segment, got {other:?}"),
+        })
+        .collect();
+        // A partial and its committed share the id; the next partial advances it.
+        assert_eq!(ids, ["s0", "s0", "s1"]);
     }
 
     #[test]
