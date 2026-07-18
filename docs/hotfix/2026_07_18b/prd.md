@@ -7,7 +7,7 @@
 
 music-gift demo 生成质量梳理发现三处"全使用方静默中招"的 SDK 缺陷,均小、独立、修复收益立竿见影:
 
-1. **cache_control 写错位置**: Anthropic Messages 请求把 `cache_control` 写在 body 顶层,而 API 只接受 content block 级。默认配置下**每个** Anthropic 请求都携带该非法字段——最好情况被静默忽略(prompt caching 从未生效),严格端点返回 400。
+1. **cache_control 断点位置**: Anthropic Messages 请求把 `cache_control` 写在 body 顶层。按现行 vendor 文档(`docs/external/anthropic/api.md` Create a Message 参数表:顶层 `cache_control` "automatically applies a cache_control marker to the last cacheable block"),顶层写法在 Anthropic 侧**合法**——真实动机是:(a) 顶层写法把断点位置交给 API 决定,无法显式控制;(b) Anthropic-compatible 端点(如 Minimax,`docs/external/minimax/llm/activate_cache.md`)只文档化 block 级形态,顶层字段在这些端点行为未定义。(更正记录:初稿称"顶层不合法、缓存从未生效、严格端点 400",经 code review 对照 `api.md:1149-1151` 证伪。)
 2. **thinking budget 与 max_tokens 默认组合非法**: `RequestOptions` 默认 thinking=Medium(非 adaptive 模型映射 `budget_tokens=10240`),适配器 max_tokens 默认 4096;Anthropic 要求 max_tokens > budget_tokens → 默认配置 + 非 adaptive 模型直接 400。
 3. **异常 stop_reason 空转**: 模型返回非 EndTurn/MaxTokens 的 stop_reason 且无 tool_use 时,run 不失败,反而 push 一条空 content 的 User 消息,用相同上下文反复调用直到 max_steps(默认 100)耗尽——烧 token 后仍失败。
 
@@ -30,6 +30,6 @@ music-gift demo 生成质量梳理发现三处"全使用方静默中招"的 SDK 
 
 ## Out of scope
 
-- cache breakpoint 多断点策略(本 hotfix 只修位置合法性 + 单一合理断点)
+- cache breakpoint 多断点策略(本 hotfix 只做单一合理断点的位置调整)
 - 模型重试默认策略(SDK-C4)、上下文管理默认值(SDK-C3)——留后续迭代
 - `MaxTokens` 截断标记(SDK-B2)——留后续迭代,003 只处理异常 stop_reason
