@@ -17,10 +17,10 @@
 
 ## 验收标准
 
-- [ ] 默认 Auto 且 system 非空:wire body 无顶层 `cache_control`,最后一个 system block 带 `cache_control: {"type":"ephemeral"}`
-- [ ] system 为空:断点落在最后一条消息的最后一个 content block
-- [ ] `Long`:block 上带 `ttl:"1h"`;`Off`:body 任何位置无 `cache_control`
-- [ ] 现有 cache policy 相关测试更新,新增断点位置断言;四件套全绿
+- [x] 默认 Auto 且 system 非空:wire body 无顶层 `cache_control`,最后一个 system block 带 `cache_control: {"type":"ephemeral"}`
+- [x] system 为空:断点落在最后一条消息的最后一个 content block
+- [x] `Long`:block 上带 `ttl:"1h"`;`Off`:body 任何位置无 `cache_control`
+- [x] 现有 cache policy 相关测试更新,新增断点位置断言;四件套全绿
 
 ## 实施要点(hotfix 内嵌 plan)
 

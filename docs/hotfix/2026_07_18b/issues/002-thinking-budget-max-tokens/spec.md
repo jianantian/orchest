@@ -12,11 +12,11 @@ Messages 适配器构造请求时校验:thinking 开启且 `budget_tokens >= max
 
 ## 验收标准
 
-- [ ] 默认 options + 非 adaptive 模型:wire 上 `max_tokens > budget_tokens`,且 `option_adjustments` 有对应记录
-- [ ] 用户显式 `max_tokens ≤ budget_tokens`:同样抬升 + 记录,不产生 400
-- [ ] `budget_tokens < max_tokens` 的合法组合:不调整、无记录
-- [ ] adaptive 模型路径与 Chat 协议路径行为不变
-- [ ] 新增测试覆盖以上分支;四件套全绿
+- [x] 默认 options + 非 adaptive 模型:wire 上 `max_tokens > budget_tokens`,且 `option_adjustments` 有对应记录
+- [x] 用户显式 `max_tokens ≤ budget_tokens`:同样抬升 + 记录,不产生 400
+- [x] `budget_tokens < max_tokens` 的合法组合:不调整、无记录
+- [x] adaptive 模型路径与 Chat 协议路径行为不变
+- [x] 新增测试覆盖以上分支;四件套全绿
 
 ## 实施要点(hotfix 内嵌 plan)
 

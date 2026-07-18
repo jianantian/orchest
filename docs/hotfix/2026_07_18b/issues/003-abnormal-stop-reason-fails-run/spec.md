@@ -16,11 +16,11 @@
 
 ## 验收标准
 
-- [ ] model stub 返回异常 stop_reason 且无 tool_use:run 立即 `RunFailed`,错误含 stop_reason,messages 中无空 User 消息,且只调用模型一次
-- [ ] 异常 stop_reason 但有 tool_use:正常走工具分发
-- [ ] `EndTurn`/`MaxTokens` 完成路径行为不变(现有测试不回归)
-- [ ] `on_run_error` hook 被调用(与限额失败路径行为一致)
-- [ ] 新增测试;四件套全绿
+- [x] model stub 返回异常 stop_reason 且无 tool_use:run 立即 `RunFailed`,错误含 stop_reason,messages 中无空 User 消息,且只调用模型一次
+- [x] 异常 stop_reason 但有 tool_use:正常走工具分发
+- [x] `EndTurn`/`MaxTokens` 完成路径行为不变(现有测试不回归)
+- [x] `on_run_error` hook 被调用(与限额失败路径行为一致)
+- [x] 新增测试;四件套全绿
 
 ## 实施要点(hotfix 内嵌 plan)
 
