@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from "react";
 import type { CreateGiftRequest, GiftMeta } from "../types";
 import { createGift, generateMusic } from "../api";
+import { rememberCreatorToken } from "../lib/creator";
 
 export type MusicGenState = "idle" | "generating" | "ready" | "error";
 
@@ -56,6 +57,8 @@ export function useMusicGen() {
       style: string;
       title?: string;
       vocal?: string;
+      /** "instrumental" is the only kind allowed to have empty lyrics. */
+      kind?: "song" | "instrumental";
       meta?: Partial<GiftMeta>;
       lang?: string;
       photos?: string[];
@@ -66,7 +69,7 @@ export function useMusicGen() {
       try {
         const req: CreateGiftRequest = {
           lyrics: params.lyrics,
-          kind: "song",
+          kind: params.kind ?? "song",
           meta: {
             lang: params.lang ?? "en",
             title: params.title,
@@ -79,6 +82,9 @@ export function useMusicGen() {
 
         const res = await createGift(req);
         const id = res.id;
+        // The only time the server hands us this token — keep it or the gift
+        // can never be unlisted or deleted from this browser.
+        rememberCreatorToken(id, res.creator_token);
         setGiftId(id);
 
         await generateMusic(id);

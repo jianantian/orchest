@@ -29,133 +29,6 @@
   --font-body:      -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif;
 }
 
-/* ── Dark mode — deep warm editorial ────────── */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg:          #1a1410;
-    --bg2:         #211a14;
-    --surface:     #241c16;
-    --surface2:    #2a2018;
-    --text:        #e8ddd0;
-    --text2:       #b0a090;
-    --text3:       #7a6a5a;
-    --gold:        #d4a574;
-    --gold-action: #e0b07a;
-    --gold-bg:     rgba(212, 165, 116, 0.10);
-    --gold-light:  rgba(212, 165, 116, 0.16);
-    --gold-border: rgba(212, 165, 116, 0.22);
-    --border:      #3a2a1c;
-    --shadow:      0 1px 8px rgba(0, 0, 0, 0.25);
-    --shadow-lg:   0 12px 48px rgba(0, 0, 0, 0.35);
-  }
-  html, body { background: #130f0c; }
-  #root { box-shadow: 0 0 0 1px var(--border), 0 8px 40px rgba(0, 0, 0, 0.4); }
-  .app-header { background: rgba(26, 20, 16, 0.82); }
-
-  /* Manuscript — dark paper rules */
-  .lyrics-manuscript {
-    background-image:
-      repeating-linear-gradient(transparent, transparent 33px, rgba(180,160,140,0.08) 34px);
-    box-shadow: inset 0 1px 6px rgba(0,0,0,0.2), inset 0 -2px 4px rgba(0,0,0,0.15);
-  }
-
-  /* Unwrap stage — stays dark, sync golds */
-  #unwrap-headline { color: #e8d5b8; }
-  #unwrap-eyebrow { color: #c4a074; }
-  .ornament .line, .ornament .dia { background: #d4a574; }
-  .ornament .dia { box-shadow: 0 0 8px rgba(212,165,116,0.4); }
-  #unwrap-stage::before {
-    background:
-      radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.35) 100%),
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
-  }
-  #tap-hint { color: #c4a074; }
-  #tap-hint .arrow { background: linear-gradient(180deg, transparent, #d4a574, transparent); }
-  .wordmark { color: #c4a074; }
-  .mono-letter { color: #d4a574; }
-  .face.cream { background: linear-gradient(135deg, #3a2a1c, #2a1a10); }
-  .face.shadowed { background: linear-gradient(135deg, #2a1a10, #1a1008); }
-  .face.velvet { background: #1a0e06; }
-  .face.lit-top { background: linear-gradient(180deg, #4a3828, #3a2a1c); }
-  #box-shadow { background: radial-gradient(ellipse at center, rgba(0,0,0,0.4), transparent 70%); }
-
-  /* ── Free Create panel dark-mode refinements ── */
-
-  /* Mode bar: lift from the dark background with a soft border */
-  .mode-bar { background: var(--surface); border: 1px solid var(--border); }
-  .mode-btn.active {
-    background: var(--surface2);
-    box-shadow: 0 1px 6px rgba(212, 165, 116, 0.12), inset 0 1px 0 rgba(255,255,255,0.03);
-  }
-
-  /* Suggest chips: subtle surface tone so they feel interactive */
-  .suggest-chip {
-    background: var(--surface);
-    color: var(--text2);
-  }
-  .suggest-chip:hover {
-    border-color: var(--gold);
-    color: var(--gold);
-    background: var(--gold-bg);
-  }
-  .suggest-refresh:hover {
-    border-color: var(--gold);
-    color: var(--gold);
-  }
-
-  /* Create button hover: brighter gold, not darker */
-  .btn-create:hover { background: #d49960; }
-
-  /* Accent prompt bar: gold border on dark surface reads clearly */
-  .prompt-bar-input {
-    background: var(--surface);
-    border-color: var(--gold-action);
-  }
-
-  /* More Options accordion body: tighten padding for dark */
-  .more-body { background: var(--bg); }
-
-  /* Gender options: the toggle needs a background tone */
-  .gender-opt { border-color: var(--border); }
-  .gender-opt.on {
-    border-color: var(--gold-border);
-    background: var(--gold-bg);
-    color: var(--gold);
-  }
-
-  /* Spinner: brighter track for dark visibility */
-  .spinner { border-color: var(--border); }
-
-  /* Review badge: match dark-mode gold tone */
-  .review-badge-btn { background: rgba(212, 165, 116, 0.12); }
-  .review-badge-btn:hover { background: rgba(212, 165, 116, 0.22); }
-
-  /* Style tags in review: subtle surface instead of bg */
-  .style-tag { background: var(--surface); }
-
-  /* Toggle buttons: active state more visible */
-  .toggle-btn.on { background: var(--gold-bg); }
-
-  /* Unwrap stage: invert the cream gradient to dark warm tones */
-  #unwrap-stage {
-    background: radial-gradient(ellipse at 50% 35%, #2a1a10 0%, #1f1410 35%, #1a100c 75%, #130c08 100%);
-  }
-
-  /* Primary button: use dark-mode gold gradient */
-  .btn-primary {
-    background: linear-gradient(135deg, #e0b07a, #d4a574);
-    box-shadow: 0 2px 12px rgba(212, 165, 116, 0.25);
-  }
-  .btn-primary:hover:not(:disabled) {
-    box-shadow: 0 4px 18px rgba(212, 165, 116, 0.35);
-  }
-
-  /* Audio play button: dark-mode gold glow */
-  .audio-play-btn {
-    box-shadow: 0 4px 20px rgba(212, 165, 116, 0.25);
-  }
-}
-
 /* ── Motion tokens (transitions-dev) ────────── */
 :root {
   --resize-dur: 300ms;
@@ -986,9 +859,44 @@ body::after {
 
 
 
-/* Dot indicators (step progress) — absolute top-right */
-.dot-row {
+/* Step progress + restart, on its own row above the message list so it
+   never overlaps a right-aligned user bubble. */
+.chat-panel-top {
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  padding: 10px 16px 0;
 }
+.dot-row { display: flex; align-items: center; gap: 5px; }
+.restart-btn {
+  width: 24px; height: 24px; padding: 0;
+  border: 1px solid var(--border); border-radius: 50%;
+  background: var(--surface); color: var(--text3);
+  font-family: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.18s, border-color 0.18s, color 0.18s, transform 0.18s;
+}
+.restart-btn:hover { color: var(--gold); border-color: var(--gold); transform: rotate(-45deg); }
+.restart-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+
+.restart-confirm {
+  position: absolute; top: 42px; right: 16px; z-index: 6;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--gold-border); border-radius: 12px;
+  background: var(--surface); box-shadow: var(--shadow-lg);
+  animation: bubblePop 0.2s ease;
+}
+.restart-q { font-size: 12px; color: var(--text2); white-space: nowrap; }
+.restart-yes, .restart-no {
+  padding: 4px 10px; border-radius: 100px; border: 1px solid var(--border);
+  background: transparent; font-family: inherit; font-size: 12px; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.restart-yes { color: var(--gold); border-color: var(--gold-border); }
+.restart-yes:hover { background: var(--gold-bg); }
+.restart-no { color: var(--text3); }
+.restart-no:hover { color: var(--text2); border-color: var(--text3); }
+
 .dot {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--border); transition: width 0.3s cubic-bezier(0.22,1,0.36,1), background 0.3s, opacity 0.3s;
@@ -1039,6 +947,14 @@ body::after {
 
 @media (prefers-reduced-motion: reduce) {
   .typing-dot { animation: none; opacity: 0.6; }
+}
+
+/* ── Review-pass indicator (second LLM call after the stream) ── */
+.reviewing-indicator {
+  display: inline-flex; align-items: center; gap: 4px; padding: 14px 18px;
+}
+.reviewing-label {
+  margin-left: 6px; font-size: 13px; color: var(--text3);
 }
 
 /* Pills (interactive options) */
@@ -1531,7 +1447,7 @@ body.locked { overflow: hidden; }
 @keyframes cdSpin { to { transform: rotate(360deg); } }
 
 .countdown-section {
-  width: 100%; overflow: hidden;
+  display: block; width: 100%; overflow: hidden;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
@@ -1560,4 +1476,212 @@ body.locked { overflow: hidden; }
 .lrc-line.active {
   font-size: 18px; font-weight: 500;
   color: var(--gold); opacity: 1;
+}
+
+/* ── Creator-only controls (visibility + delete) ──────────
+   Theme-neutral: built from vars so no dark-mode override is needed. */
+.owner-panel {
+  margin-top: 28px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--surface);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.owner-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  cursor: pointer;
+}
+.owner-label {
+  display: flex; flex-direction: column; gap: 2px;
+  font-size: 14px; color: var(--text);
+}
+.owner-hint { font-size: 11px; color: var(--text3); }
+.owner-switch {
+  appearance: none; flex-shrink: 0;
+  width: 40px; height: 22px; border-radius: 100px;
+  border: 1px solid var(--border); background: var(--surface2);
+  position: relative; cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+.owner-switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--text3); transition: transform 0.2s, background 0.2s;
+}
+.owner-switch:checked { background: var(--gold-bg); border-color: var(--gold); }
+.owner-switch:checked::after { transform: translateX(18px); background: var(--gold); }
+.owner-switch:disabled { opacity: 0.5; cursor: default; }
+.owner-switch:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+
+.owner-delete {
+  align-self: flex-start; padding: 0; border: none; background: none;
+  font-family: inherit; font-size: 12px; color: var(--text3);
+  cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+  transition: color 0.15s;
+}
+.owner-delete:hover { color: #c0554a; }
+.owner-confirm { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.owner-confirm-q { font-size: 12px; color: var(--text2); }
+.owner-delete-yes, .owner-delete-no {
+  padding: 4px 10px; border-radius: 100px; border: 1px solid var(--border);
+  background: transparent; font-family: inherit; font-size: 12px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.owner-delete-yes { color: #c0554a; border-color: rgba(192, 85, 74, 0.4); }
+.owner-delete-yes:hover:not(:disabled) { background: rgba(192, 85, 74, 0.1); }
+.owner-delete-no { color: var(--text3); }
+.owner-delete-no:hover:not(:disabled) { color: var(--text2); border-color: var(--text3); }
+.owner-delete-yes:disabled, .owner-delete-no:disabled { opacity: 0.5; cursor: default; }
+
+.playlist-card { position: relative; }
+.playlist-unlist {
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  width: 22px; height: 22px; padding: 0;
+  border: 1px solid var(--border); border-radius: 50%;
+  background: var(--surface); color: var(--text3);
+  font-family: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+.playlist-card:hover .playlist-unlist,
+.playlist-unlist:focus-visible { opacity: 1; }
+.playlist-unlist:hover { color: var(--gold); border-color: var(--gold); }
+.playlist-unlist:disabled { opacity: 1; cursor: default; }
+
+/* Touch devices have no hover — keep the control permanently visible. */
+@media (hover: none) {
+  .playlist-unlist { opacity: 1; }
+}
+
+
+/* ============================================
+   Dark mode — deep warm editorial
+
+   MUST stay last: these rules override base rules at equal
+   specificity, so anything appended below them wins instead.
+   ============================================ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:          #1a1410;
+    --bg2:         #211a14;
+    --surface:     #241c16;
+    --surface2:    #2a2018;
+    --text:        #e8ddd0;
+    --text2:       #b0a090;
+    --text3:       #7a6a5a;
+    --gold:        #d4a574;
+    --gold-action: #e0b07a;
+    --gold-bg:     rgba(212, 165, 116, 0.10);
+    --gold-light:  rgba(212, 165, 116, 0.16);
+    --gold-border: rgba(212, 165, 116, 0.22);
+    --border:      #3a2a1c;
+    --shadow:      0 1px 8px rgba(0, 0, 0, 0.25);
+    --shadow-lg:   0 12px 48px rgba(0, 0, 0, 0.35);
+  }
+  html, body { background: #130f0c; }
+  #root { box-shadow: 0 0 0 1px var(--border), 0 8px 40px rgba(0, 0, 0, 0.4); }
+  .app-header { background: rgba(26, 20, 16, 0.82); }
+
+  /* Manuscript — dark paper rules */
+  .lyrics-manuscript {
+    background-image:
+      repeating-linear-gradient(transparent, transparent 33px, rgba(180,160,140,0.08) 34px);
+    box-shadow: inset 0 1px 6px rgba(0,0,0,0.2), inset 0 -2px 4px rgba(0,0,0,0.15);
+  }
+
+  /* Unwrap stage — stays dark, sync golds */
+  #unwrap-headline { color: #e8d5b8; }
+  #unwrap-eyebrow { color: #c4a074; }
+  .ornament .line, .ornament .dia { background: #d4a574; }
+  .ornament .dia { box-shadow: 0 0 8px rgba(212,165,116,0.4); }
+  #unwrap-stage::before {
+    background:
+      radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.35) 100%),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  }
+  #tap-hint { color: #c4a074; }
+  #tap-hint .arrow { background: linear-gradient(180deg, transparent, #d4a574, transparent); }
+  .wordmark { color: #c4a074; }
+  .mono-letter { color: #d4a574; }
+  .face.cream { background: linear-gradient(135deg, #3a2a1c, #2a1a10); }
+  .face.shadowed { background: linear-gradient(135deg, #2a1a10, #1a1008); }
+  .face.velvet { background: #1a0e06; }
+  .face.lit-top { background: linear-gradient(180deg, #4a3828, #3a2a1c); }
+  #box-shadow { background: radial-gradient(ellipse at center, rgba(0,0,0,0.4), transparent 70%); }
+
+  /* ── Free Create panel dark-mode refinements ── */
+
+  /* Mode bar: lift from the dark background with a soft border */
+  .mode-bar { background: var(--surface); border: 1px solid var(--border); }
+  .mode-btn.active {
+    background: var(--surface2);
+    box-shadow: 0 1px 6px rgba(212, 165, 116, 0.12), inset 0 1px 0 rgba(255,255,255,0.03);
+  }
+
+  /* Suggest chips: subtle surface tone so they feel interactive */
+  .suggest-chip {
+    background: var(--surface);
+    color: var(--text2);
+  }
+  .suggest-chip:hover {
+    border-color: var(--gold);
+    color: var(--gold);
+    background: var(--gold-bg);
+  }
+  .suggest-refresh:hover {
+    border-color: var(--gold);
+    color: var(--gold);
+  }
+
+  /* Create button hover: brighter gold, not darker */
+  .btn-create:hover { background: #d49960; }
+
+  /* Accent prompt bar: gold border on dark surface reads clearly */
+  .prompt-bar-input {
+    background: var(--surface);
+    border-color: var(--gold-action);
+  }
+
+  /* More Options accordion body: tighten padding for dark */
+  .more-body { background: var(--bg); }
+
+  /* Gender options: the toggle needs a background tone */
+  .gender-opt { border-color: var(--border); }
+  .gender-opt.on {
+    border-color: var(--gold-border);
+    background: var(--gold-bg);
+    color: var(--gold);
+  }
+
+  /* Spinner: brighter track for dark visibility */
+  .spinner { border-color: var(--border); }
+
+  /* Review badge: match dark-mode gold tone */
+  .review-badge-btn { background: rgba(212, 165, 116, 0.12); }
+  .review-badge-btn:hover { background: rgba(212, 165, 116, 0.22); }
+
+  /* Style tags in review: subtle surface instead of bg */
+  .style-tag { background: var(--surface); }
+
+  /* Toggle buttons: active state more visible */
+  .toggle-btn.on { background: var(--gold-bg); }
+
+  /* Unwrap stage: invert the cream gradient to dark warm tones */
+  #unwrap-stage {
+    background: radial-gradient(ellipse at 50% 35%, #2a1a10 0%, #1f1410 35%, #1a100c 75%, #130c08 100%);
+  }
+
+  /* Primary button: use dark-mode gold gradient */
+  .btn-primary {
+    background: linear-gradient(135deg, #e0b07a, #d4a574);
+    box-shadow: 0 2px 12px rgba(212, 165, 116, 0.25);
+  }
+  .btn-primary:hover:not(:disabled) {
+    box-shadow: 0 4px 18px rgba(212, 165, 116, 0.35);
+  }
+
+  /* Audio play button: dark-mode gold glow */
+  .audio-play-btn {
+    box-shadow: 0 4px 20px rgba(212, 165, 116, 0.25);
+  }
 }

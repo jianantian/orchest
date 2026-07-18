@@ -9,18 +9,32 @@ interface UnwrapStageProps {
 
 const MOTE_COUNT = 12;
 
+type Phase = "idle" | "opening" | "closing";
+
 export function UnwrapStage({ title, name, onClose }: UnwrapStageProps) {
-  const [closing, setClosing] = useState(false);
+  // Drive the whole lifecycle through React state. The previous version called
+  // stage.remove() to tear itself down imperatively — but this node is
+  // React-owned, so when the parent then re-rendered and unmounted <UnwrapStage>
+  // React's removeChild hit a node that was already gone, threw, and blanked
+  // the entire app on a recipient's first screen. Never touch the node
+  // directly; let React add and remove it.
+  const [phase, setPhase] = useState<Phase>("idle");
+  const stageRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef(false);
   const posRef = useRef({ x: 0, y: 0 });
+  const timers = useRef<number[]>([]);
 
   useEffect(() => {
-    // Spawn floating motes
-    const motes: HTMLDivElement[] = [];
-    const stage = document.getElementById("unwrap-stage");
+    const stage = stageRef.current;
     if (!stage) return;
 
+    // Lock background scroll while the overlay is up (the CSS existed but
+    // nothing ever added the class, so this never actually worked).
+    document.body.classList.add("locked");
+
+    // Spawn floating motes
+    const motes: HTMLDivElement[] = [];
     for (let i = 0; i < MOTE_COUNT; i++) {
       const m = document.createElement("div");
       m.className = "mote";
@@ -60,36 +74,39 @@ export function UnwrapStage({ title, name, onClose }: UnwrapStageProps) {
     stage.addEventListener("mouseleave", handleLeave);
 
     return () => {
+      document.body.classList.remove("locked");
       stage.removeEventListener("mousemove", handleMove);
       stage.removeEventListener("mouseleave", handleLeave);
+      motes.forEach((m) => m.remove());
+      timers.current.forEach(clearTimeout);
     };
   }, []);
 
   function handleOpen() {
-    if (closing) return;
-    setClosing(true);
-    const stage = document.getElementById("unwrap-stage");
-    if (!stage) return;
+    if (phase !== "idle") return;
+    setPhase("opening");
 
-    document.body.classList.remove("locked");
-    stage.classList.add("opening");
-
-    setTimeout(() => stage.classList.add("closing"), 2000);
-    setTimeout(() => {
-      onClose?.();
-      stage.remove();
-      try {
-        const giftId = location.pathname.split("/").pop();
-        if (giftId) sessionStorage.setItem(`moment_unwrapped_${giftId}`, "1");
-      } catch {
-        // ignore
-      }
-    }, 3500);
+    timers.current.push(
+      window.setTimeout(() => setPhase("closing"), 2000),
+      window.setTimeout(() => {
+        // Persist the flag BEFORE onClose so the parent's re-render recomputes
+        // shouldShowUnwrap() as false and unmounts us cleanly — React removes
+        // the node, we never do.
+        try {
+          const giftId = location.pathname.split("/").pop();
+          if (giftId) sessionStorage.setItem(`moment_unwrapped_${giftId}`, "1");
+        } catch {
+          // ignore
+        }
+        onClose?.();
+      }, 3500),
+    );
   }
 
+  const stageClass = phase === "closing" ? "opening closing" : phase === "opening" ? "opening" : "";
 
   return (
-    <div id="unwrap-stage" role="button" aria-label="Open your gift" tabIndex={0} onClick={handleOpen}>
+    <div ref={stageRef} id="unwrap-stage" className={stageClass} role="button" aria-label="Open your gift" tabIndex={0} onClick={handleOpen}>
       <div id="unwrap-titles">
         <div id="unwrap-eyebrow">A Moment, for you</div>
         <div id="unwrap-headline">

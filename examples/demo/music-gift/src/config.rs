@@ -132,14 +132,21 @@ pub fn build_countdown_tool(
     model: Arc<dyn ModelAdapter>,
 ) -> Option<Arc<dyn Tool>> {
     if COUNTDOWN_TEMPLATE.is_empty() {
+        eprintln!("[music-gift] countdown disabled: template is empty");
         return None;
     }
 
-    let config = AgentConfig::builder("music-gift/countdown")
+    let config = match AgentConfig::builder("music-gift/countdown")
         .system_prompt(COUNTDOWN_TEMPLATE.as_str())
         .max_steps(1)
         .build()
-        .ok()?;
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[music-gift] countdown disabled: building config: {e}");
+            return None;
+        }
+    };
 
     config
         .as_tool("generate_countdown", "Generate a birthday countdown HTML block.")
@@ -156,6 +163,7 @@ pub fn build_countdown_tool(
             serde_json::json!({ "html": countdown::strip_code_fences(html) })
         })
         .build()
+        .inspect_err(|e| eprintln!("[music-gift] countdown disabled: building tool: {e}"))
         .ok()
 }
 /// Load all configuration from environment variables.

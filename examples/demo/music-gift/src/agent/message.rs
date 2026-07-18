@@ -4,10 +4,10 @@ use orchest_protocol::{ContentBlock, MediaSource, Message, Role};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::prompts::{LYRICS_SKILL, SYSTEM_PROMPT};
+use crate::prompts::SYSTEM_PROMPT;
 
 pub fn build_system_message(meta: &Value, photo_count: usize) -> Message {
-    let mut system = format!("{}\n\n{}", SYSTEM_PROMPT.as_str(), LYRICS_SKILL.as_str());
+    let mut system = SYSTEM_PROMPT.as_str().to_string();
     if !meta.is_null() {
         system.push_str("\n\nKnown info:\n");
         system.push_str(&serde_json::to_string_pretty(meta).unwrap_or_default());

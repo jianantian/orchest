@@ -1,14 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import type { Gift } from "../types";
 import { generateMusic, getGift, likeGift } from "../api";
 import AudioPlayer from "../components/AudioPlayer";
 import { LRCViewer, type LRCLine } from "../components/LRCViewer";
 import { parseLRC } from "../lib/lrc";
 import { UnwrapStage, shouldShowUnwrap } from "../components/UnwrapStage";
+import { CountdownFrame } from "../components/CountdownFrame";
+import { clearGuided } from "../hooks/useGuidedState";
+import { useI18n } from "../i18n";
+import { creatorToken, forgetCreatorToken } from "../lib/creator";
+import { deleteGift, setGiftPublished } from "../api";
 export default function GiftPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { t } = useI18n();
   const [gift, setGift] = useState<Gift | null>(null);
+  const [published, setPublished] = useState(false);
+  const [publishBusy, setPublishBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -54,6 +65,7 @@ export default function GiftPage() {
     getGift(id)
       .then((g) => {
         setGift(g);
+        setPublished(g.published);
         setLikeCount(g.likes.length);
         setGenStatus(g.gen_status);
         if (g.gen_status === "pending" || g.gen_status === "running") {
@@ -94,6 +106,39 @@ export default function GiftPage() {
       setLikeCount(res.likes);
     } catch {
       // Like is best-effort
+    }
+  }
+
+  async function handlePublishToggle(next: boolean) {
+    const token = id ? creatorToken(id) : null;
+    if (!id || !token) return;
+    setPublishBusy(true);
+    setError(null);
+    const prev = published;
+    setPublished(next); // optimistic — revert below if the server disagrees
+    try {
+      await setGiftPublished(id, token, next);
+    } catch (e) {
+      setPublished(prev);
+      setError(e instanceof Error ? e.message : "Could not change visibility");
+    } finally {
+      setPublishBusy(false);
+    }
+  }
+
+  async function handleDelete() {
+    const token = id ? creatorToken(id) : null;
+    if (!id || !token) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await deleteGift(id, token);
+      forgetCreatorToken(id);
+      navigate("/playlist");
+    } catch (e) {
+      setDeleting(false);
+      setConfirmDelete(false);
+      setError(e instanceof Error ? e.message : "Could not delete this gift");
     }
   }
 
@@ -149,6 +194,7 @@ export default function GiftPage() {
   const name = gift.meta.name ?? "";
   const relationship = gift.meta.relationship ?? "";
   const showUnwrap = id ? shouldShowUnwrap(id) : false;
+  const owned = id ? creatorToken(id) !== null : false;
 
   return (
     <>
@@ -172,12 +218,7 @@ export default function GiftPage() {
             <span>Creating a special scene for {name || "you"}…</span>
           </div>
         )}
-        {countdownHtml && (
-          <div
-            className="countdown-section"
-            dangerouslySetInnerHTML={{ __html: countdownHtml }}
-          />
-        )}
+        {countdownHtml && <CountdownFrame html={countdownHtml} />}
 
         {gift.audio_url ? (
           <AudioPlayer src={gift.audio_url} title={title} onTimeUpdate={setCurrentTime} />
@@ -219,7 +260,7 @@ export default function GiftPage() {
         ) : null}
 
         <div className="gift-actions">
-          <Link to="/" className="btn btn-secondary">Edit & Try Again</Link>
+          <Link to="/" className="btn btn-secondary" onClick={clearGuided}>Create Another</Link>
           <button className="btn btn-secondary" onClick={() => void handleLike()}>
             {liked ? "♥" : "♡"} {likeCount}
           </button>
@@ -227,6 +268,39 @@ export default function GiftPage() {
             {copied ? "Copied!" : "Share"}
           </button>
         </div>
+
+        {owned && (
+          <div className="owner-panel">
+            <label className="owner-row">
+              <span className="owner-label">
+                {t("publish_label")}
+                <span className="owner-hint">{t("publish_hint")}</span>
+              </span>
+              <input
+                type="checkbox"
+                className="owner-switch"
+                checked={published}
+                disabled={publishBusy}
+                onChange={(e) => void handlePublishToggle(e.target.checked)}
+              />
+            </label>
+            {confirmDelete ? (
+              <div className="owner-confirm">
+                <span className="owner-confirm-q">{t("delete_q")}</span>
+                <button className="owner-delete-yes" disabled={deleting} onClick={() => void handleDelete()}>
+                  {deleting ? <span className="spinner" /> : t("delete_yes")}
+                </button>
+                <button className="owner-delete-no" disabled={deleting} onClick={() => setConfirmDelete(false)}>
+                  {t("delete_cancel")}
+                </button>
+              </div>
+            ) : (
+              <button className="owner-delete" onClick={() => setConfirmDelete(true)}>
+                {t("delete_gift")}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </>
   );

@@ -103,6 +103,29 @@ export async function pollGenerateStatus(id: string): Promise<GenStatusResponse>
   return res.json() as Promise<GenStatusResponse>;
 }
 
+/** DELETE /api/gift/:id — permanently remove a gift. Creator only. */
+export async function deleteGift(id: string, creatorToken: string): Promise<void> {
+  const res = await fetch(`/api/gift/${id}`, {
+    method: 'DELETE',
+    headers: { 'X-Creator-Token': creatorToken },
+  });
+  if (!res.ok) throw new Error(`Delete gift failed: ${res.status}`);
+}
+
+/** POST /api/gift/:id/publish — list/unlist on the public playlist. Creator only. */
+export async function setGiftPublished(
+  id: string,
+  creatorToken: string,
+  published: boolean,
+): Promise<void> {
+  const res = await fetch(`/api/gift/${id}/publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Creator-Token': creatorToken },
+    body: JSON.stringify({ published }),
+  });
+  if (!res.ok) throw new Error(`Publish toggle failed: ${res.status}`);
+}
+
 /** POST /api/gift/:id/like — like a gift (idempotent by viewer id). */
 export async function likeGift(id: string, viewerId: string): Promise<LikeResponse> {
   const res = await fetch(`/api/gift/${id}/like`, {

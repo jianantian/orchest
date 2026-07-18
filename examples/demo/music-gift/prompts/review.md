@@ -59,9 +59,13 @@ same structure. Only fix the issues found. Section tags MUST have cues.
 
 <<<LYRICS>>>
 ... (corrected lyrics — every section tag has a cue, all homographs phonetically spelled)
+<<<END>>>
 <<<STYLE>>>...<<<STYLE_END>>>
 <<<TITLE>>>...<<<TITLE_END>>>
 <<<VOCAL>>>...<<<VOCAL_END>>>
+
+The `<<<END>>>` terminator after the lyrics is REQUIRED — the parser uses it to
+find where the lyrics stop. Omitting it discards the entire lyric.
 
 Append this review summary:
 

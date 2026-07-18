@@ -10,6 +10,11 @@ INPUT:
 - scene_keywords: {scene}
 - name: {name}
 - relationship: {relationship}
+- language: {lang}
+
+The song is sung in {lang}. State the language explicitly in the style prompt
+(e.g. "{lang} vocals") so the provider does not default to English, and keep
+every style descriptor in English regardless of the sung language.
 
 ═══ PERFORMANCE CUES (Critical — Every Section) ═══
 

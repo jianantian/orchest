@@ -88,18 +88,21 @@ export function InlineInput({
 export function BirthdayPicker({
   months,
   skipLabel,
+  dayPlaceholder,
   onPick,
 }: {
   months: string[];
   skipLabel: string;
+  dayPlaceholder: string;
   onPick: (bday: { month: number; day: number } | null) => void;
 }) {
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [day, setDay] = useState("");
 
   function submitDay() {
+    if (selectedMonth === null) return;
     const d = parseInt(day, 10);
-    if (d >= 1 && d <= daysInMonth(selectedMonth ?? 1) && selectedMonth !== null) {
+    if (d >= 1 && d <= daysInMonth(selectedMonth + 1)) {
       onPick({ month: selectedMonth + 1, day: d });
     }
   }
@@ -121,15 +124,12 @@ export function BirthdayPicker({
             onChange={(e) => {
               const raw = e.target.value;
               if (raw === "") { setDay(""); return; }
-              let v = parseInt(raw, 10);
+              const v = parseInt(raw, 10);
               if (isNaN(v)) return;
-              const maxDay = daysInMonth(selectedMonth + 1);
-              if (v < 1) v = maxDay;
-              else if (v > maxDay) v = 1;
-              setDay(String(v));
+              setDay(String(Math.min(Math.max(v, 1), daysInMonth(selectedMonth + 1))));
             }}
             onKeyDown={(e) => { if (e.key === "Enter") submitDay(); }}
-            placeholder="Day"
+            placeholder={dayPlaceholder}
             style={{ width: 80 }}
             autoFocus
           />
@@ -145,8 +145,9 @@ export function BirthdayPicker({
   );
 }
 
+/** `month` is 1-indexed. Feb allows 29 — a birthday has no year to check against. */
 function daysInMonth(month: number): number {
-  if (month === 2) return 28;
+  if (month === 2) return 29;
   if ([4, 6, 9, 11].includes(month)) return 30;
   return 31;
 }

@@ -8,6 +8,7 @@ use orchest::tool::Tool;
 use orchest_protocol::{ChatModel, GenTask};
 
 
+use crate::auth::AuthStore;
 use crate::gift::GiftStore;
 
 #[derive(Clone)]
@@ -17,7 +18,9 @@ pub struct AppState {
     pub music_prompt_model: Arc<dyn ChatModel>,
     pub gen_task: Arc<dyn GenTask>,
     pub gift_store: GiftStore,
+    pub auth_store: AuthStore,
     #[allow(dead_code)]
     pub data_dir: PathBuf,
+    pub skills_dir: PathBuf,
     pub countdown_tool: Option<Arc<dyn Tool>>,
 }

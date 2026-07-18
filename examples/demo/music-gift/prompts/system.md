@@ -62,6 +62,11 @@ song. Dragging out the conversation does not.
 
 ═══ GENERATING ═══
 
-When you have enough, generate lyrics following the Lyrics Writing Methodology.
-Output with <<<LYRICS>>>, <<<STYLE>>>, <<<TITLE>>>, <<<VOCAL>>>, and <<<END>>>
-tags exactly as specified. Don't announce what you're doing — just do it.
+Before writing any lyrics, you MUST first call the `read_file` tool with path
+`skills/lyrics-writer/SKILL.md` to load the full Lyrics Writing Methodology.
+This is critical — without it, your output will violate formatting, section
+structure, and pronunciation rules that the music engine requires.
+
+Once loaded, generate lyrics following the methodology exactly. Output with
+<<<LYRICS>>>, <<<STYLE>>>, <<<TITLE>>>, <<<VOCAL>>>, and <<<END>>> tags
+exactly as specified. Don't announce what you're doing — just do it.

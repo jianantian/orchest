@@ -1,6 +1,7 @@
 //! Music Gift demo - axum server bootstrap.
 
 mod agent;
+mod auth;
 mod config;
 mod error;
 mod gift;
@@ -36,9 +37,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     std::fs::create_dir_all(&cli.data_dir)?;
     std::fs::create_dir_all(cli.data_dir.join("countdown"))?;
+    let skills_dir = std::env::current_dir()?.join("skills");
+    if !skills_dir.exists() {
+        eprintln!("[music-gift] skills directory not found at {:?}, agent will lack lyrics skill", skills_dir);
+    }
 
     let db_path = cli.data_dir.join("gifts.db");
     let gift_store = gift::GiftStore::open(&db_path.to_string_lossy())?;
+
+    // Auth shares gifts.db (AuthStore::open runs `ALTER TABLE gifts ADD COLUMN
+    // creator_id`, so it must see the gifts table). Opened after gift_store so
+    // that table already exists; a separate connection to the same file.
+    let auth_conn = std::sync::Arc::new(std::sync::Mutex::new(rusqlite::Connection::open(&db_path)?));
+    let auth_store = auth::AuthStore::open(auth_conn)?;
 
     let port = cli.port.unwrap_or(config.port);
     let static_dir = if cli.static_dir.exists() {
@@ -51,8 +62,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         chat_model: config.chat_model,
         countdown_model: config.countdown_model,
         music_prompt_model: config.music_prompt_model,
+        skills_dir,
         gen_task: config.gen_task,
         gift_store,
+        auth_store,
         data_dir: cli.data_dir,
         countdown_tool: config.countdown_tool,
     };

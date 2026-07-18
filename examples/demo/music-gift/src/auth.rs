@@ -501,8 +501,22 @@ pub struct RegisterRequest { pub email: String, pub password: String, pub displa
 #[derive(Deserialize)]
 pub struct LoginRequest { pub email: String, pub password: String }
 
+/// Build the session cookie set on every successful sign-in. The frontend
+/// authenticates by calling `/api/auth/me`, which reads this cookie — so
+/// register/login/verify/oauth must all set it, not just return the token.
+pub fn session_cookie(token: String) -> Cookie<'static> {
+    Cookie::build(("session_token", token))
+        .path("/")
+        .http_only(true)
+        .secure(false) // TODO: true in production
+        .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .max_age(time::Duration::days(7))
+        .build()
+}
+
 pub async fn handle_register(
     State(state): State<crate::state::AppState>,
+    jar: CookieJar,
     Json(body): Json<RegisterRequest>,
 ) -> impl IntoResponse {
     if body.email.is_empty() || !body.email.contains('@') {
@@ -514,7 +528,8 @@ pub async fn handle_register(
     match state.auth_store.create_user_with_password(&body.email, &body.password, &body.display_name) {
         Ok(user) => {
             let session = state.auth_store.create_session(&user.id).unwrap();
-            (StatusCode::OK, Json(AuthResponse { user, token: session.token })).into_response()
+            let cookie = session_cookie(session.token.clone());
+            (jar.add(cookie), Json(AuthResponse { user, token: session.token })).into_response()
         }
         Err(_) => (StatusCode::CONFLICT, Json(json!({"error":"EMAIL_EXISTS"}))).into_response(),
     }
@@ -522,12 +537,14 @@ pub async fn handle_register(
 
 pub async fn handle_login(
     State(state): State<crate::state::AppState>,
+    jar: CookieJar,
     Json(body): Json<LoginRequest>,
 ) -> impl IntoResponse {
     match state.auth_store.verify_password(&body.email, &body.password) {
         Ok(Some(user)) => {
             let session = state.auth_store.create_session(&user.id).unwrap();
-            (StatusCode::OK, Json(AuthResponse { user, token: session.token })).into_response()
+            let cookie = session_cookie(session.token.clone());
+            (jar.add(cookie), Json(AuthResponse { user, token: session.token })).into_response()
         }
         _ => (StatusCode::UNAUTHORIZED, Json(json!({"error":"INVALID_CREDENTIALS"}))).into_response(),
     }

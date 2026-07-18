@@ -44,7 +44,7 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
     if (!base) return;
     setPolishing(true);
     try {
-      const res = await fetch("/api/polish-music-prompt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lyrics: lyrics.trim() || undefined, style: base, prompt: polishPrompt.trim() || undefined, vocal, provider: "suno" }) });
+      const res = await fetch("/api/polish-music-prompt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lyrics: lyrics.trim() || undefined, style: base, prompt: polishPrompt.trim() || undefined, vocal, provider: "suno", lang }) });
       if (res.ok) { const d = await res.json(); setStyleInput(d.prompt); setPolishPrompt(""); }
     } catch { /* */ }
     finally { setPolishing(false); }
@@ -81,7 +81,7 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
   async function handleGenerate(e: FormEvent) {
     e.preventDefault(); setError(null);
     const style = selectedStyles.join(", ") || styleInput.trim() || "warm acoustic";
-    await gen.start({ lyrics: instrumental ? "" : lyrics.trim() || "instrumental", style, vocal, lang, photos });
+    await gen.start({ lyrics: instrumental ? "" : lyrics.trim() || "instrumental", kind: instrumental ? "instrumental" : "song", style, title: title.trim() || undefined, vocal, lang, photos });
     if (gen.error) setError(gen.error);
   }
 

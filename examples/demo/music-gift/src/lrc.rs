@@ -50,36 +50,69 @@ struct Section {
     lines: Vec<String>,
 }
 
-/// Split lyrics into sections by `[Label]` markers.
+const SECTION_KEYWORDS: &[&str] = &[
+    "verse", "chorus", "bridge", "intro", "outro", "pre-chorus", "prechorus",
+    "hook", "refrain", "interlude",
+];
+
+/// If a line is a whole-line section header like `[Chorus]` or
+/// `[Verse 1 — tender]`, return its label. Inline delivery tags such as
+/// `[Whispered] I love you` are content, not headers, and standalone accent
+/// tags like `[Whispered]` carry no section keyword, so neither is matched.
+fn section_label(line: &str) -> Option<String> {
+    let inner = line.strip_prefix('[')?.strip_suffix(']')?;
+    if inner.contains('[') {
+        return None; // more than one tag on the line — not a bare header
+    }
+    let lower = inner.to_lowercase();
+    SECTION_KEYWORDS
+        .iter()
+        .any(|k| lower.contains(k))
+        .then(|| inner.trim().to_string())
+}
+
+/// A lyric line, with any leading delivery tag (`[Whispered] …`) stripped.
+/// Returns `None` for lines that are only a bracket tag (voice accents,
+/// `[Instrumental]`, `[Guitar solo]`) — those carry no sung text.
+fn content_line(line: &str) -> Option<String> {
+    let mut s = line.trim();
+    if s.starts_with('[') {
+        if let Some(end) = s.find(']') {
+            s = s[end + 1..].trim();
+        }
+    }
+    (!s.is_empty()).then(|| s.to_string())
+}
+
+/// Split lyrics into sections by whole-line `[Label]` headers.
+///
+/// Parses line by line rather than splitting on every `[`/`]`, so inline voice
+/// tags (`[Whispered]`, `[Belting]`) inside a lyric line don't get mistaken for
+/// section boundaries — the previous split-based parser corrupted every song
+/// that used them.
 fn parse_sections(raw: &str) -> Vec<Section> {
-    let parts: Vec<&str> = raw.split(&['[', ']']).collect();
-    let mut sections: Vec<Section> = Vec::with_capacity(parts.len() / 2);
-    let mut i = 0;
-    while i + 1 < parts.len() {
-        let label = parts[i].trim().to_string();
-        let content = parts.get(i + 1).map(|s| s.trim()).unwrap_or("");
-        if !label.is_empty() && !content.is_empty() {
-            let lines: Vec<String> = content
-                .lines()
-                .map(|l| l.trim().to_string())
-                .filter(|l| !l.is_empty())
-                .collect();
-            if !lines.is_empty() {
-                // Merge consecutive choruses
-                if let Some(last) = sections.last_mut() {
-                    if last.label.eq_ignore_ascii_case(&label)
-                        && label.to_lowercase().contains("chorus")
-                    {
-                        last.lines.extend(lines);
-                        i += 2;
-                        continue;
-                    }
-                }
-                sections.push(Section { label, lines });
+    let mut sections: Vec<Section> = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(label) = section_label(trimmed) {
+            // Merge a repeated chorus into the one before it instead of opening
+            // a new section, so its lines flow together.
+            let merge_into_prev = sections.last().is_some_and(|last| {
+                last.label.eq_ignore_ascii_case(&label) && label.to_lowercase().contains("chorus")
+            });
+            if !merge_into_prev {
+                sections.push(Section { label, lines: Vec::new() });
+            }
+        } else if let Some(text) = content_line(trimmed) {
+            if let Some(last) = sections.last_mut() {
+                last.lines.push(text);
             }
         }
-        i += 2;
     }
+    sections.retain(|s| !s.lines.is_empty());
     sections
 }
 
@@ -124,5 +157,21 @@ mod tests {
         let lrc = generate_lrc(lyrics, 60.0).unwrap();
         let lines: Vec<_> = lrc.lines().collect();
         assert_eq!(lines.len(), 2);
+    }
+
+    /// Inline voice tags used to be mistaken for section boundaries and split
+    /// lyric lines apart. Section headers with em-dash cues must still parse,
+    /// standalone accents must be skipped, and leading inline tags stripped.
+    #[test]
+    fn tolerates_inline_voice_tags() {
+        let lyrics = "[Verse 1 — tender]\n[Whispered] 那天风很轻\n你笑了\n[Chorus — soaring]\n跑吧 朵朵";
+        let lrc = generate_lrc(lyrics, 90.0).unwrap();
+        let lines: Vec<_> = lrc.lines().collect();
+        // 3 lyric lines: the whispered line (tag stripped), "你笑了", "跑吧 朵朵".
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].ends_with("那天风很轻"), "leading tag not stripped: {}", lines[0]);
+        assert!(!lrc.contains("[Whispered]"));
+        assert!(!lrc.contains("Verse 1"), "section header leaked into lyrics");
+        assert!(lrc.contains("跑吧 朵朵"));
     }
 }

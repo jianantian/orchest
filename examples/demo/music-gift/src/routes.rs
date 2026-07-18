@@ -4,7 +4,7 @@ use std::convert::Infallible;
 use std::path::PathBuf;
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json};
 use axum::routing::{get, post};
@@ -29,7 +29,8 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
     let api = Router::new()
         .route("/chat", post(chat_handler))
         .route("/gift", post(create_gift))
-        .route("/gift/{id}", get(get_gift))
+        .route("/gift/{id}", get(get_gift).delete(delete_gift))
+        .route("/gift/{id}/publish", post(set_gift_published))
         .route("/playlist", get(list_playlist))
         .route("/generate/{id}", post(generate_music))
         .route("/generate/{id}/status", get(generate_status))
@@ -39,6 +40,15 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .route("/polish-music-prompt", post(polish_music_prompt))
         .route("/countdown-section/{id}", get(get_countdown_section))
         .route("/photos", post(upload_photos))
+        // Auth (module wired via crate::auth)
+        .route("/auth/me", get(crate::auth::handle_me))
+        .route("/auth/logout", post(crate::auth::handle_logout))
+        .route("/auth/register", post(crate::auth::handle_register))
+        .route("/auth/login", post(crate::auth::handle_login))
+        .route("/auth/send-link", post(crate::auth::handle_send_link))
+        .route("/auth/verify", get(crate::auth::handle_verify))
+        .route("/auth/oauth/google", get(crate::auth::handle_google_login))
+        .route("/auth/oauth/google/cb", get(crate::auth::handle_google_callback))
         .with_state(state.clone());
 
     let mut router = Router::new().nest("/api", api);
@@ -92,7 +102,8 @@ pub async fn chat_handler(
 
     let review_model = state.chat_model.clone();
     tokio::spawn(async move {
-        let result = run_chat_agent(state.chat_model.clone(), messages, tx.clone()).await;
+        let skills_dir = state.skills_dir.to_string_lossy().to_string();
+        let result = run_chat_agent(state.chat_model.clone(), messages, tx.clone(), Some(&skills_dir)).await;
         match result {
             Ok(full_text) => {
                 let has_lyrics = full_text.contains("<<<LYRICS>>>");
@@ -100,6 +111,10 @@ pub async fn chat_handler(
                 // Skip it for follow-up questions — the reviewer gets confused
                 // by conversational text.
                 let reviewed = if has_lyrics {
+                    // The review pass is a second full LLM call (tens of
+                    // seconds). Tell the client before going quiet, or the UI
+                    // sits frozen with a disabled input and no explanation.
+                    let _ = tx.send(SseEvent::Reviewing).await;
                     crate::agent::run_review_pass(review_model, &full_text).await
                 } else {
                     full_text.clone()
@@ -221,10 +236,12 @@ pub async fn create_gift(
         lrc: None,
         duration_secs: None,
         creator_token: creator_token.clone(),
-        published: true,
+        // Private by default: a gift is personal until its creator chooses to
+        // list it. It stays reachable by id, so sharing the link still works.
+        published: false,
         likes: Vec::new(),
-        created_at: now.clone(),
-        published_at: Some(now),
+        created_at: now,
+        published_at: None,
     };
 
     state.gift_store.create(&gift)?;
@@ -241,7 +258,16 @@ pub async fn create_gift(
             data_dir: state.data_dir.clone(),
             gift_id: id.clone(),
         };
-        tokio::spawn(async move { let _ = crate::tools::countdown::run_countdown(tool, &params, &sink).await; });
+        let cd_id = id.clone();
+        tokio::spawn(async move {
+            // Discarding this Result made every countdown failure invisible:
+            // the gift just sat on countdown_status="pending" forever, and the
+            // frontend polled a file that was never going to appear.
+            if let Err(e) = crate::tools::countdown::run_countdown(tool, &params, &sink).await {
+                eprintln!("[music-gift] countdown failed [{cd_id}]: {e}");
+                let _ = sink.store.update_countdown_status(&cd_id, "failed");
+            }
+        });
     }
     Ok((
         StatusCode::CREATED,
@@ -259,6 +285,80 @@ pub async fn get_gift(
 ) -> AppResult<impl IntoResponse> {
     let gift = state.gift_store.get(&id)?;
     Ok(Json(gift))
+}
+
+// ---------------------------------------------------------------------------
+// Creator-only operations
+//
+// `creator_token` is the only ownership proof available: it is minted at
+// creation and returned once, to that client. Anyone holding a gift id can
+// view it (that is how sharing works), so mutating routes must check the token.
+// ---------------------------------------------------------------------------
+
+const CREATOR_TOKEN_HEADER: &str = "x-creator-token";
+
+fn verify_creator(gift: &Gift, headers: &HeaderMap) -> AppResult<()> {
+    let presented = headers
+        .get(CREATOR_TOKEN_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    if presented.is_empty() || presented != gift.creator_token {
+        return Err(AppError::Forbidden(
+            "only the creator can modify this gift".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+// DELETE /api/gift/:id - permanently remove a gift and its audio file
+pub async fn delete_gift(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> AppResult<impl IntoResponse> {
+    let gift = state.gift_store.get(&id)?;
+    verify_creator(&gift, &headers)?;
+
+    // Best-effort file cleanup: the row is the source of truth, so a stray
+    // file must not fail the delete.
+    if let Some(url) = gift.audio_url.as_deref() {
+        if let Some(file) = url.strip_prefix("/audio/") {
+            if !file.is_empty() && !file.contains("..") && !file.contains('/') {
+                let path = state.data_dir.join("audio").join(file);
+                if let Err(e) = std::fs::remove_file(&path) {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        eprintln!("[music-gift] delete [{id}]: audio cleanup: {e}");
+                    }
+                }
+            }
+        }
+    }
+    let cd = state.data_dir.join("countdown").join(format!("{id}.html"));
+    let _ = std::fs::remove_file(cd);
+
+    state.gift_store.delete(&id)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetPublishedRequest {
+    pub published: bool,
+}
+
+// POST /api/gift/:id/publish - list or unlist on the public playlist
+pub async fn set_gift_published(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<SetPublishedRequest>,
+) -> AppResult<impl IntoResponse> {
+    let gift = state.gift_store.get(&id)?;
+    verify_creator(&gift, &headers)?;
+    // Must match create_gift's format: published_at is string-sorted by
+    // `ORDER BY published_at DESC`, so a mixed format corrupts the ordering.
+    let now = unix_now();
+    state.gift_store.set_published(&id, req.published, &now)?;
+    Ok(Json(json!({ "ok": true, "published": req.published })))
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +444,8 @@ pub async fn generate_music(
     let name = gift.meta.get("name").and_then(Value::as_str).unwrap_or("");
     let scene = gift.meta.get("scenario").and_then(Value::as_str).unwrap_or("");
     let relationship = gift.meta.get("relationship").and_then(Value::as_str).unwrap_or("");
+    let vocal = gift.meta.get("vocal").and_then(Value::as_str).unwrap_or("female");
+    let lang = gift.meta.get("lang").and_then(Value::as_str).unwrap_or("en");
 
     // Validate lyrics — warnings logged for Suno quality tuning.
     let _validation = crate::tools::lyrics_validator::validate_lyrics(&lyrics);
@@ -351,8 +453,21 @@ pub async fn generate_music(
         eprintln!("[music-gift] lyrics warn [{id}]: {w}");
     }
 
+    // A song gift with no lyrics is never what the user asked for: the provider
+    // would invent its own (in its own language). Refuse rather than burn a
+    // generation on it.
+    if gift.kind != "instrumental" && lyrics.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "cannot generate a song with empty lyrics".to_string(),
+        ));
+    }
+
     let enriched = crate::tools::music_gen::generate_music_prompt(
-        state.music_prompt_model.clone(), &provider, &lyrics, style, title, "female", scene, name, Some(relationship),
+        state.music_prompt_model.clone(),
+        &crate::tools::music_gen::MusicPromptInput {
+            provider: &provider, lyrics: &lyrics, style, title, vocal, scene, name,
+            relationship: Some(relationship), lang,
+        },
     ).await.unwrap_or_else(|_| EnrichedPrompt::fallback(style));
 
     // Check generated style prompt for artist names
@@ -385,6 +500,7 @@ pub struct PolishPromptRequest {
     pub scene: Option<String>,
     pub name: Option<String>,
     pub relationship: Option<String>,
+    pub lang: Option<String>,
 }
 
 fn default_provider() -> String { "suno".into() }
@@ -400,14 +516,17 @@ pub async fn polish_music_prompt(
 ) -> AppResult<impl IntoResponse> {
     let enriched = crate::tools::music_gen::generate_music_prompt(
         state.music_prompt_model.clone(),
-        &req.provider,
-        &req.lyrics,
-        &req.style,
-        req.title.as_deref().unwrap_or(""),
-        req.vocal.as_deref().unwrap_or("female"),
-        req.scene.as_deref().unwrap_or(""),
-        req.name.as_deref().unwrap_or(""),
-        req.relationship.as_deref(),
+        &crate::tools::music_gen::MusicPromptInput {
+            provider: &req.provider,
+            lyrics: &req.lyrics,
+            style: &req.style,
+            title: req.title.as_deref().unwrap_or(""),
+            vocal: req.vocal.as_deref().unwrap_or("female"),
+            scene: req.scene.as_deref().unwrap_or(""),
+            name: req.name.as_deref().unwrap_or(""),
+            relationship: req.relationship.as_deref(),
+            lang: req.lang.as_deref().unwrap_or("en"),
+        },
     ).await.unwrap_or_else(|_| EnrichedPrompt::fallback(&req.style));
     Ok(Json(PolishPromptResponse { prompt: enriched.prompt }))
 }

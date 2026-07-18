@@ -22,6 +22,10 @@ pub struct Gift {
     pub countdown_status: Option<String>,
     pub lrc: Option<String>,
     pub duration_secs: Option<f64>,
+    /// Ownership proof. Never serialized: any viewer may GET a gift by id
+    /// (that is how sharing works), so echoing the token would hand every
+    /// viewer the ability to delete it. Returned once, at creation only.
+    #[serde(skip_serializing, default)]
     pub creator_token: String,
     pub published: bool,
     pub likes: Vec<String>,
@@ -107,6 +111,29 @@ impl GiftStore {
         let mut stmt = conn.prepare(&sql)?;
         let gifts: Vec<Gift> = stmt.query_map([], row_to_gift)?.filter_map(Result::ok).collect();
         Ok(gifts)
+    }
+
+    /// Toggle listing on the public playlist. The gift stays reachable by id
+    /// either way, so a link already sent to someone keeps working.
+    pub fn set_published(&self, id: &str, published: bool, now: &str) -> AppResult<()> {
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        let published_at: Option<&str> = if published { Some(now) } else { None };
+        if conn.execute(
+            "UPDATE gifts SET published=?2, published_at=?3 WHERE id=?1",
+            params![id, published as i32, published_at],
+        )? == 0
+        {
+            return Err(AppError::NotFound(format!("gift {id} not found")));
+        }
+        Ok(())
+    }
+
+    pub fn delete(&self, id: &str) -> AppResult<()> {
+        let conn = self.conn.lock().map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute("DELETE FROM gifts WHERE id=?1", params![id])? == 0 {
+            return Err(AppError::NotFound(format!("gift {id} not found")));
+        }
+        Ok(())
     }
 
     pub fn update_gen(&self, id: &str, handle_json: &str, status: &str) -> AppResult<()> {

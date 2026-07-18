@@ -305,13 +305,13 @@ impl MusicGenTool {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-/// Fetch completed generation assets, extract the first audio URL, and update
-/// the store.
+/// Fetch completed generation assets, extract the first audio URL, generate
+/// synced lyrics (LRC), and update the store.
 async fn handle_done(
     gen_task: &dyn GenTask,
     store: &GiftStore,
     gift_id: &str,
-    _lyrics: Option<&str>,
+    lyrics: Option<&str>,
     handle: &GenHandle,
 ) -> AppResult<Option<String>> {
     let result = gen_task
@@ -328,6 +328,25 @@ async fn handle_done(
         store.update_audio(gift_id, u)?;
     }
 
+    // Synced lyrics for the scrolling viewer. Prefer a provider-supplied LRC;
+    // otherwise align our own from the lyrics + the track duration the provider
+    // reports in diagnostic_metadata. Best-effort — never fail generation over it.
+    let duration = result
+        .diagnostic_metadata
+        .get("duration_secs")
+        .and_then(serde_json::Value::as_f64);
+    let lrc = result.lrc.clone().or_else(|| {
+        match (lyrics, duration) {
+            (Some(text), Some(dur)) if dur > 0.0 => crate::lrc::generate_lrc(text, dur),
+            _ => None,
+        }
+    });
+    if let Some(lrc) = lrc {
+        if let Err(e) = store.update_lrc(gift_id, &lrc, duration) {
+            eprintln!("[music-gift] lrc store failed [{gift_id}]: {e}");
+        }
+    }
+
     Ok(url)
 }
 // ── Music Prompt Generation ──────────────────────────────────────────────────
@@ -336,31 +355,51 @@ async fn handle_done(
 ///
 /// Returns an `EnrichedPrompt` with all six style dimensions plus exclude tags,
 /// not just the flat Suno prompt string.
+/// Map a UI language code to a name the prompt model will recognise.
+fn lang_name(lang: &str) -> &str {
+    match lang {
+        "zh" => "Chinese (Mandarin)",
+        "fr" => "French",
+        "es" => "Spanish",
+        "ru" => "Russian",
+        _ => "English",
+    }
+}
+
+/// Everything the provider skill template needs to build a music prompt.
+/// Grouped into a struct so the fields travel together (and to keep the
+/// function within a sane argument count).
+pub struct MusicPromptInput<'a> {
+    pub provider: &'a str,
+    pub lyrics: &'a str,
+    pub style: &'a str,
+    pub title: &'a str,
+    pub vocal: &'a str,
+    pub scene: &'a str,
+    pub name: &'a str,
+    pub relationship: Option<&'a str>,
+    pub lang: &'a str,
+}
+
 pub async fn generate_music_prompt(
     chat_model: Arc<dyn ChatModel>,
-    provider: &str,
-    lyrics: &str,
-    style: &str,
-    title: &str,
-    vocal: &str,
-    scene: &str,
-    name: &str,
-    relationship: Option<&str>,
+    input: &MusicPromptInput<'_>,
 ) -> AppResult<EnrichedPrompt> {
-    let skill_template = MUSIC_PROMPT_SKILLS.get(provider).ok_or_else(|| {
-        AppError::BadRequest(format!("unknown music provider: {provider}"))
+    let skill_template = MUSIC_PROMPT_SKILLS.get(input.provider).ok_or_else(|| {
+        AppError::BadRequest(format!("unknown music provider: {}", input.provider))
     })?;
 
-    let relationship = relationship.unwrap_or("friend");
+    let relationship = input.relationship.unwrap_or("friend");
 
     let user_message = skill_template
-        .replace("{lyrics}", lyrics)
-        .replace("{style}", style)
-        .replace("{title}", title)
-        .replace("{vocal}", vocal)
-        .replace("{scene}", scene)
-        .replace("{name}", name)
-        .replace("{relationship}", relationship);
+        .replace("{lyrics}", input.lyrics)
+        .replace("{style}", input.style)
+        .replace("{title}", input.title)
+        .replace("{vocal}", input.vocal)
+        .replace("{scene}", input.scene)
+        .replace("{name}", input.name)
+        .replace("{relationship}", relationship)
+        .replace("{lang}", lang_name(input.lang));
 
     let messages = vec![Message {
         role: Role::User,
@@ -403,7 +442,7 @@ pub async fn generate_music_prompt(
             let genre = parsed.get("genre").and_then(json_array).unwrap_or_default();
             let tempo = parsed.get("tempo").and_then(str_or_empty).unwrap_or_default();
             let mood = parsed.get("mood").and_then(json_array).unwrap_or_default();
-            let vocal_style = parsed.get("vocal_style").and_then(str_or_empty).unwrap_or_else(|| vocal.to_string());
+            let vocal_style = parsed.get("vocal_style").and_then(str_or_empty).unwrap_or_else(|| input.vocal.to_string());
             let instrumentation = parsed.get("instrumentation").and_then(str_or_empty).unwrap_or_default();
             let production = parsed.get("production").and_then(str_or_empty).unwrap_or_default();
             let exclude = parsed.get("exclude").and_then(str_or_empty).unwrap_or_default();
@@ -423,7 +462,7 @@ pub async fn generate_music_prompt(
         }
     }
 
-    Ok(EnrichedPrompt::fallback(style))
+    Ok(EnrichedPrompt::fallback(input.style))
 }
 
 fn json_array(v: &Value) -> Option<Vec<String>> {

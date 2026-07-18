@@ -29,6 +29,8 @@ export interface ChatRequest {
 
 export type SseEvent =
   | { type: 'Delta'; text: string }
+  /** Emitted when the lyric review pass starts (after Deltas end, before Done). */
+  | { type: 'Reviewing' }
   | {
       type: 'Done';
       has_lyrics: boolean;
@@ -51,7 +53,7 @@ export interface Gift {
   photos: string[];
   gen_handle: string | null;
   gen_status: string | null;
-  creator_token: string;
+  /** Not sent by GET /api/gift/:id — see lib/creator.ts. */
   published: boolean;
   likes: string[];
   created_at: string;

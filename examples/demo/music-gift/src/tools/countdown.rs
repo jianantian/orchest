@@ -52,11 +52,16 @@ pub async fn run_countdown(
 
     let result = tool.execute(input, &tool_context()).await.map_err(|e| e.to_string())?;
 
+    // An agent-as-tool always answers with `Structured` (it carries the child
+    // run's budget usage); `model_output` is what our output_extractor built,
+    // i.e. `{ "html": ... }`. Matching only on `Immediate` made every single
+    // countdown fail here.
     let html = match result {
-        orchest::tool::ToolOutput::Immediate(value) => {
+        orchest::tool::ToolOutput::Immediate(value)
+        | orchest::tool::ToolOutput::Structured { model_output: value, .. } => {
             value.get("html").and_then(Value::as_str).unwrap_or("").to_string()
         }
-        _ => return Err("unexpected async output from countdown subagent".into()),
+        other => return Err(format!("unexpected countdown tool output: {other:?}")),
     };
 
     if html.is_empty() {
