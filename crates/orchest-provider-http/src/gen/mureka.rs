@@ -214,7 +214,7 @@ pub fn build_result(response: &Value, trace_id: &str) -> Result<GenResult, Proto
     Ok(GenResult {
         assets,
         diagnostic_metadata,
-        lrc: None,
+        timed_text: None,
     })
 }
 /// Extract a [`ErrorCode::ProviderTaskFailed`] from a `status: "failed"`

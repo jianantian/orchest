@@ -179,7 +179,7 @@ impl GenTask for CrazyrouterGen {
         let result = GenResult {
             assets: parse_assets(&value),
             diagnostic_metadata: json!({ "provider": "crazyrouter" }),
-            lrc: None,
+            timed_text: None,
         };
         Ok(self.cache.store("crazyrouter", result))
     }

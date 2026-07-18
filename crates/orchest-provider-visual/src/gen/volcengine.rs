@@ -174,7 +174,7 @@ impl GenTask for VolcengineGen {
         let result = GenResult {
             assets: parse_assets(&value),
             diagnostic_metadata: json!({ "provider": "volcengine" }),
-            lrc: None,
+            timed_text: None,
         };
         Ok(self.cache.store("volcengine", result))
     }

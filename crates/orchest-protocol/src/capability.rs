@@ -100,14 +100,44 @@ pub enum GenAsset {
     },
 }
 
+/// A sequence of text segments each carrying a time span — the structured form
+/// behind aligned lyrics, ASR transcripts, and TTS word timings. Generic across
+/// modalities; consumers render it to LRC / SRT / VTT / a custom UI. Granularity
+/// (word vs line) is whatever the provider supplies.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TimedText {
+    pub segments: Vec<TimedSegment>,
+}
+
+/// One timed span of text within a [`TimedText`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TimedSegment {
+    /// Provider-verbatim text; may carry the provider's own markup (e.g. section
+    /// tags). The SDK does not clean it — the consumer owns presentation cleanup,
+    /// so the protocol stays faithful to what the provider returned.
+    pub text: String,
+    /// Start offset in seconds from the media's beginning.
+    pub start: f64,
+    /// End offset in seconds, when the provider supplies one. `None` = unknown
+    /// (some sources give only a start; LRC rendering needs only start). A
+    /// consumer needing a span can infer it from the next segment's start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<f64>,
+}
+
 /// The completed output of a generation job.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GenResult {
     pub assets: Vec<GenAsset>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub diagnostic_metadata: Value,
+    /// Structured timed text aligned to the primary product (`assets[0]`) —
+    /// aligned lyrics, transcript, or word timings. Replaces the former
+    /// `lrc: Option<String>`, which leaked LRC-the-format and music-the-modality
+    /// into a type shared across image/video/music. The consumer renders it to
+    /// whatever subtitle/karaoke format it needs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lrc: Option<String>,
+    pub timed_text: Option<TimedText>,
 }
 
 /// Signed/polled generation capability (image/video), abstracted from

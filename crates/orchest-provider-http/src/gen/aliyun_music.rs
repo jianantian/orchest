@@ -97,7 +97,7 @@ pub fn parse_result(response: &Value) -> Result<GenResult, ProtocolError> {
     Ok(GenResult {
         assets,
         diagnostic_metadata,
-        lrc: None,
+        timed_text: None,
     })
 }
 

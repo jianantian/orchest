@@ -3,9 +3,50 @@
 //! LRC generation engine.
 //!
 //! Priority chain:
-//! 1. Provider-supplied LRC (stored directly, no processing needed)
-//! 2. Text-based alignment (parses lyrics sections, distributes by weight)
-//! 3. Future: forced alignment via whisper-rs
+//! 1. Provider forced-alignment via [`orchest_protocol::TimedText`] — rendered
+//!    to LRC by [`timed_text_to_lrc`] (real per-line timing).
+//! 2. Text-based alignment (parses lyrics sections, distributes by weight) —
+//!    the estimate fallback when the provider gives no timed text.
+
+use orchest_protocol::TimedText;
+
+/// Render provider forced-aligned [`TimedText`] to LRC.
+///
+/// Each segment's real lyric lines — section headers and inline delivery tags
+/// stripped by [`content_line`] — are emitted at that segment's `start`
+/// (block-level alignment, exact enough for a scrolling view). Text is
+/// provider-verbatim until here; cleanup is the consumer's job by design.
+/// Returns `None` if nothing renders.
+pub fn timed_text_to_lrc(tt: &TimedText) -> Option<String> {
+    let mut out = String::new();
+    // Strip `[..]` tags with a state machine that spans segments: word-level
+    // alignment can split a header like `[Verse 1 — tender]` across two
+    // segments (`[Verse 1 —`, `tender]`), so per-segment cleanup isn't enough.
+    let mut in_tag = false;
+    for seg in &tt.segments {
+        let mut clean = String::new();
+        for ch in seg.text.chars() {
+            match ch {
+                '[' => in_tag = true,
+                ']' => in_tag = false,
+                c if !in_tag => clean.push(c),
+                _ => {}
+            }
+        }
+        for line in clean.lines() {
+            let line = line.trim();
+            if !line.is_empty() {
+                let mins = (seg.start as u64) / 60;
+                let secs = seg.start % 60.0;
+                out.push_str(&format!("[{:02}:{:05.2}]{}\n", mins, secs, line));
+            }
+        }
+    }
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    (!out.is_empty()).then_some(out)
+}
 
 /// Generate LRC text from structured lyrics and audio duration.
 ///
@@ -157,6 +198,55 @@ mod tests {
         let lrc = generate_lrc(lyrics, 60.0).unwrap();
         let lines: Vec<_> = lrc.lines().collect();
         assert_eq!(lines.len(), 2);
+    }
+
+    /// Provider forced-aligned timed text renders to LRC at real per-segment
+    /// times, with section headers and inline delivery tags stripped.
+    #[test]
+    fn timed_text_renders_lrc_stripping_tags() {
+        use orchest_protocol::{TimedSegment, TimedText};
+        let tt = TimedText {
+            segments: vec![
+                TimedSegment {
+                    text: "[Verse 1 — gentle]\n晨光爬上窗台\n".into(),
+                    start: 11.011,
+                    end: Some(16.676),
+                },
+                TimedSegment {
+                    text: "[Whispered] 你还在睡".into(),
+                    start: 16.835,
+                    end: None,
+                },
+            ],
+        };
+        let lrc = timed_text_to_lrc(&tt).unwrap();
+        let lines: Vec<_> = lrc.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("[00:11."), "line 0: {}", lines[0]);
+        assert!(lines[0].ends_with("晨光爬上窗台"));
+        assert!(lines[1].starts_with("[00:16."), "line 1: {}", lines[1]);
+        assert!(lines[1].ends_with("你还在睡")); // inline [Whispered] stripped
+        assert!(!lrc.contains("Verse") && !lrc.contains("Whispered"));
+    }
+
+    /// Word-level alignment can split a section header across two segments; the
+    /// cross-segment state machine must still strip it whole.
+    #[test]
+    fn timed_text_strips_tag_split_across_segments() {
+        use orchest_protocol::{TimedSegment, TimedText};
+        let tt = TimedText {
+            segments: vec![
+                TimedSegment { text: "[Verse 1 —".into(), start: 8.94, end: None },
+                TimedSegment { text: "tender]".into(), start: 9.06, end: None },
+                TimedSegment { text: "月光洒在窗前".into(), start: 9.18, end: None },
+            ],
+        };
+        let lrc = timed_text_to_lrc(&tt).unwrap();
+        let lines: Vec<_> = lrc.lines().collect();
+        assert_eq!(lines.len(), 1, "tag segments should render nothing: {lrc}");
+        assert!(!lrc.contains("Verse") && !lrc.contains("tender"), "tag leaked: {lrc}");
+        assert!(lines[0].ends_with("月光洒在窗前"));
+        assert!(lines[0].starts_with("[00:09."));
     }
 
     /// Inline voice tags used to be mistaken for section boundaries and split

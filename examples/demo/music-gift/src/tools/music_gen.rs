@@ -328,19 +328,22 @@ async fn handle_done(
         store.update_audio(gift_id, u)?;
     }
 
-    // Synced lyrics for the scrolling viewer. Prefer a provider-supplied LRC;
-    // otherwise align our own from the lyrics + the track duration the provider
-    // reports in diagnostic_metadata. Best-effort — never fail generation over it.
+    // Synced lyrics for the scrolling viewer. Prefer the provider's forced
+    // alignment (structured TimedText → rendered to LRC); fall back to our own
+    // text estimate from lyrics + reported duration only when the provider gave
+    // no timed text. Best-effort — never fail generation over it.
     let duration = result
         .diagnostic_metadata
         .get("duration_secs")
         .and_then(serde_json::Value::as_f64);
-    let lrc = result.lrc.clone().or_else(|| {
-        match (lyrics, duration) {
+    let lrc = result
+        .timed_text
+        .as_ref()
+        .and_then(crate::lrc::timed_text_to_lrc)
+        .or_else(|| match (lyrics, duration) {
             (Some(text), Some(dur)) if dur > 0.0 => crate::lrc::generate_lrc(text, dur),
             _ => None,
-        }
-    });
+        });
     if let Some(lrc) = lrc {
         if let Err(e) = store.update_lrc(gift_id, &lrc, duration) {
             eprintln!("[music-gift] lrc store failed [{gift_id}]: {e}");

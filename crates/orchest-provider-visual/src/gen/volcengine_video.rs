@@ -229,7 +229,7 @@ impl GenTask for VolcengineVideoGen {
         Ok(GenResult {
             assets: parse_assets(&response),
             diagnostic_metadata: json!({ "provider": "volcengine", "status": map_status(&response) }),
-            lrc: None,
+            timed_text: None,
         })
     }
 }

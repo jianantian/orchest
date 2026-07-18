@@ -228,7 +228,7 @@ impl GenTask for AliyunGen {
         Ok(GenResult {
             assets: parse_assets(&response),
             diagnostic_metadata: json!({ "provider": "aliyun", "status": map_status(&response) }),
-            lrc: None,
+            timed_text: None,
         })
     }
 }

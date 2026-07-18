@@ -16,7 +16,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use orchest_protocol::{
     Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenHandle, GenRequest, GenResult,
-    GenStatus, GenTask, Modality, ProtocolError,
+    GenStatus, GenTask, Modality, ProtocolError, TimedSegment, TimedText,
 };
 use orchest_provider_core::registry::ProviderConfig;
 use serde_json::{json, Value};
@@ -170,8 +170,38 @@ fn build_result(data: &Value) -> GenResult {
     GenResult {
         assets,
         diagnostic_metadata,
-        lrc: None,
+        timed_text: None,
     }
+}
+
+/// The primary track's id (Suno's `audioId`) from a `record-info` `data` payload.
+/// Needed to request that track's aligned lyrics.
+fn primary_audio_id(data: &Value) -> Option<String> {
+    data.get("response")
+        .and_then(|r| r.get("sunoData"))
+        .and_then(Value::as_array)
+        .and_then(|a| a.first())
+        .and_then(|t| t.get("id"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+/// Map a `get-timestamped-lyrics` `data` payload onto [`TimedText`]. Text is
+/// kept provider-verbatim (Suno's `word` chunks may carry section tags/newlines);
+/// the consumer cleans it at render time. Returns `None` when there are no words.
+fn parse_timed_text(data: &Value) -> Option<TimedText> {
+    let segments: Vec<TimedSegment> = data
+        .get("alignedWords")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(|w| {
+            let text = w.get("word").and_then(Value::as_str)?.to_string();
+            let start = w.get("startS").and_then(Value::as_f64)?;
+            let end = w.get("endS").and_then(Value::as_f64);
+            Some(TimedSegment { text, start, end })
+        })
+        .collect();
+    (!segments.is_empty()).then_some(TimedText { segments })
 }
 
 /// In-flight job state for the async submit -> poll -> fetch lifecycle.
@@ -208,6 +238,35 @@ impl SunoMusicGen {
         self.jobs
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Fetch forced-aligned lyrics for one track. Best-effort: any failure
+    /// (network, non-200, no words) yields `(None, None)` so it never breaks
+    /// the poll. Returns the aligned text plus the provider's overall
+    /// confidence (`hootCer`) for the consumer's trust decision.
+    async fn fetch_timed_text(
+        &self,
+        task_id: &str,
+        audio_id: &str,
+    ) -> (Option<TimedText>, Option<f64>) {
+        let resp = crate::http::shared_client()
+            .post(format!(
+                "{}/api/v1/generate/get-timestamped-lyrics",
+                self.config.api_base_url
+            ))
+            .bearer_auth(&self.config.api_key)
+            .json(&json!({ "taskId": task_id, "audioId": audio_id }))
+            .send()
+            .await;
+        let Ok(resp) = resp else { return (None, None) };
+        let Ok(value) = resp.json::<Value>().await else { return (None, None) };
+        if value.get("code").and_then(Value::as_i64) != Some(200) {
+            return (None, None);
+        }
+        let data = value.get("data");
+        let hoot_cer = data.and_then(|d| d.get("hootCer")).and_then(Value::as_f64);
+        let timed_text = data.and_then(parse_timed_text);
+        (timed_text, hoot_cer)
     }
 }
 
@@ -372,7 +431,22 @@ impl GenTask for SunoMusicGen {
                 Ok(GenStatus::Running)
             }
             "SUCCESS" => {
-                let result = build_result(&data);
+                let mut result = build_result(&data);
+                // Secondary fetch: forced-aligned lyrics for the primary track.
+                // A separate Suno endpoint (taskId + audioId); its result fills
+                // GenResult.timed_text without touching the submit→poll→fetch
+                // trait shape. Best-effort — a failure leaves timed_text = None
+                // and the consumer falls back to its own estimate.
+                if let Some(audio_id) = primary_audio_id(&data) {
+                    let (timed_text, hoot_cer) =
+                        self.fetch_timed_text(&handle.id, &audio_id).await;
+                    result.timed_text = timed_text;
+                    if let (Some(cer), Some(obj)) =
+                        (hoot_cer, result.diagnostic_metadata.as_object_mut())
+                    {
+                        obj.insert("alignment_hoot_cer".to_string(), json!(cer));
+                    }
+                }
                 self.lock()
                     .insert(handle.id.clone(), JobState::Done(result));
                 Ok(GenStatus::Done)
@@ -413,6 +487,38 @@ mod tests {
             prompt: prompt.to_string(),
             params,
         }
+    }
+
+    #[test]
+    fn parse_timed_text_maps_aligned_words_verbatim() {
+        // Shape returned by get-timestamped-lyrics (observed live). Word chunks
+        // carry section tags/newlines; kept verbatim for the consumer to clean.
+        let data = json!({
+            "alignedWords": [
+                {"word": "[Verse 1]\n晨光爬上窗台\n", "startS": 11.011, "endS": 16.676, "success": true},
+                {"word": "你还在睡\n\n", "startS": 16.835, "endS": 21.638, "success": true}
+            ],
+            "hootCer": 0.6
+        });
+        let tt = parse_timed_text(&data).unwrap();
+        assert_eq!(tt.segments.len(), 2);
+        assert_eq!(tt.segments[0].start, 11.011);
+        assert_eq!(tt.segments[0].end, Some(16.676));
+        assert!(tt.segments[0].text.contains("晨光爬上窗台"));
+        assert!(tt.segments[0].text.contains("[Verse 1]")); // verbatim, not cleaned
+    }
+
+    #[test]
+    fn parse_timed_text_none_when_no_words() {
+        assert!(parse_timed_text(&json!({ "alignedWords": [] })).is_none());
+        assert!(parse_timed_text(&json!({})).is_none());
+    }
+
+    #[test]
+    fn primary_audio_id_takes_first_track() {
+        let data = json!({ "response": { "sunoData": [{"id": "aud-1"}, {"id": "aud-2"}] } });
+        assert_eq!(primary_audio_id(&data), Some("aud-1".to_string()));
+        assert_eq!(primary_audio_id(&json!({})), None);
     }
 
     #[test]
