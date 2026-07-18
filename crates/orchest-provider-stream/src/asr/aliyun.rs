@@ -10,8 +10,9 @@
 use async_trait::async_trait;
 use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
-    Modality, ProtocolError, RealtimeHandle, SessionInput, StreamEvent, StreamingTranscribeRequest,
-    TranscribeRequest, TranscribeResult, TranscriptStability,
+    Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
+    StreamingTranscribeRequest, TranscribeRequest, TranscribeResult, TranscriptStability,
+    TranscriptUpdateKind,
 };
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
@@ -69,6 +70,12 @@ pub struct Sentence {
     pub text: String,
     #[serde(default)]
     pub sentence_end: bool,
+    /// Native sentence begin/end offsets (ms) — the segment identity
+    /// (`seg{begin_time}`); absent on some models, hence optional.
+    #[serde(default)]
+    pub begin_time: Option<i64>,
+    #[serde(default)]
+    pub end_time: Option<i64>,
 }
 
 /// Build the `run-task` text frame opening a recognition session.
@@ -129,50 +136,82 @@ pub fn parse_server_event(text: &str) -> Result<ServerEvent, ProtocolError> {
     })
 }
 
-/// Project a DashScope event onto unified events: `result-generated` →
-/// `Transcript` (`Committed` once `sentence_end`, else `Provisional`);
-/// `task-finished` → `EndOfSpeech`; `task-failed` → a fatal `Error`.
-pub fn map_event(event: ServerEvent) -> Vec<StreamEvent> {
-    match event.header.event.as_str() {
-        "result-generated" => {
-            let sentence = event
-                .payload
-                .and_then(|p| p.output)
-                .and_then(|o| o.sentence);
-            match sentence {
-                Some(s) if !s.text.is_empty() => vec![StreamEvent::Transcript {
-                    text: s.text,
-                    stability: if s.sentence_end {
-                        TranscriptStability::Committed
-                    } else {
-                        TranscriptStability::Provisional
-                    },
-                    segment: None,
-                }],
-                _ => Vec::new(),
+/// Stateful projector of DashScope events onto unified events:
+/// `result-generated` → `Transcript` (`Committed` once `sentence_end`, else
+/// `Provisional`); `task-finished` → `EndOfSpeech` (stream-level, no segment);
+/// `task-failed` → a fatal `Error`.
+///
+/// Segment identity comes from the sentence's native `begin_time`
+/// (`seg{begin_time}`, `Snapshot`); when the wire omits it, a synthesized
+/// `s{n}` counter is used, bumped each time a sentence commits so its
+/// provisional updates and the final share the id.
+#[derive(Debug, Default)]
+pub struct AliyunMapper {
+    fallback_counter: u64,
+}
+
+impl AliyunMapper {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn map(&mut self, event: ServerEvent) -> Vec<StreamEvent> {
+        match event.header.event.as_str() {
+            "result-generated" => {
+                let sentence = event
+                    .payload
+                    .and_then(|p| p.output)
+                    .and_then(|o| o.sentence);
+                match sentence {
+                    Some(s) if !s.text.is_empty() => {
+                        let segment_id = match s.begin_time {
+                            Some(ms) => format!("seg{ms}"),
+                            None => {
+                                let id = format!("s{}", self.fallback_counter);
+                                if s.sentence_end {
+                                    self.fallback_counter += 1;
+                                }
+                                id
+                            }
+                        };
+                        vec![StreamEvent::Transcript {
+                            text: s.text,
+                            stability: if s.sentence_end {
+                                TranscriptStability::Committed
+                            } else {
+                                TranscriptStability::Provisional
+                            },
+                            segment: Some(SegmentRef {
+                                segment_id: Some(segment_id),
+                                update_kind: TranscriptUpdateKind::Snapshot,
+                            }),
+                        }]
+                    }
+                    _ => Vec::new(),
+                }
             }
+            "task-finished" => vec![StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                segment: None,
+            })],
+            "task-failed" => {
+                let message = event
+                    .header
+                    .error_message
+                    .or(event.header.error_code)
+                    .unwrap_or_else(|| "aliyun task failed".to_string());
+                vec![StreamEvent::Error {
+                    error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
+                    fatal: true,
+                }]
+            }
+            _ => Vec::new(),
         }
-        "task-finished" => vec![StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
-            segment: None,
-        })],
-        "task-failed" => {
-            let message = event
-                .header
-                .error_message
-                .or(event.header.error_code)
-                .unwrap_or_else(|| "aliyun task failed".to_string());
-            vec![StreamEvent::Error {
-                error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
-                fatal: true,
-            }]
-        }
-        _ => Vec::new(),
     }
 }
 
 /// Drive one DashScope session: send `run_task` (text), client audio as
 /// **binary**, `finish_task` (text) on input end; inbound **text** events project
-/// via [`map_event`]. Ends on `task-finished` / `task-failed` / transport EOF.
+/// via [`AliyunMapper`]. Ends on `task-finished` / `task-failed` / transport EOF.
 pub async fn run_aliyun_stream<T: ByteDuplex>(
     mut transport: T,
     run_task: String,
@@ -183,6 +222,7 @@ pub async fn run_aliyun_stream<T: ByteDuplex>(
     if transport.send(WsFrame::Text(run_task)).await.is_err() {
         return;
     }
+    let mut mapper = AliyunMapper::new();
     let mut input_open = true;
     loop {
         tokio::select! {
@@ -205,7 +245,7 @@ pub async fn run_aliyun_stream<T: ByteDuplex>(
                             event.header.event.as_str(),
                             "task-finished" | "task-failed"
                         );
-                        for unified in map_event(event) {
+                        for unified in mapper.map(event) {
                             if events.send(unified).await.is_err() {
                                 return;
                             }
@@ -376,8 +416,18 @@ mod tests {
     use super::*;
 
     fn event(name: &str, text: Option<&str>, sentence_end: bool) -> String {
-        let payload = text
-            .map(|t| json!({"output": {"sentence": {"text": t, "sentence_end": sentence_end}}}));
+        event_at(name, text, sentence_end, None)
+    }
+
+    fn event_at(
+        name: &str,
+        text: Option<&str>,
+        sentence_end: bool,
+        begin_time: Option<i64>,
+    ) -> String {
+        let payload = text.map(|t| {
+            json!({"output": {"sentence": {"text": t, "sentence_end": sentence_end, "begin_time": begin_time}}})
+        });
         json!({"header": {"event": name}, "payload": payload}).to_string()
     }
 
@@ -390,10 +440,11 @@ mod tests {
 
     #[test]
     fn maps_result_generated_with_stability() {
+        let mut mapper = AliyunMapper::new();
         let provisional =
             parse_server_event(&event("result-generated", Some("hi"), false)).unwrap();
         assert!(matches!(
-            map_event(provisional).as_slice(),
+            mapper.map(provisional).as_slice(),
             [StreamEvent::Transcript {
                 stability: TranscriptStability::Provisional,
                 ..
@@ -401,7 +452,7 @@ mod tests {
         ));
         let committed = parse_server_event(&event("result-generated", Some("hi"), true)).unwrap();
         assert!(matches!(
-            map_event(committed).as_slice(),
+            mapper.map(committed).as_slice(),
             [StreamEvent::Transcript {
                 stability: TranscriptStability::Committed,
                 ..
@@ -410,18 +461,72 @@ mod tests {
     }
 
     #[test]
+    fn mapper_uses_native_begin_time_as_segment_id() {
+        let mut mapper = AliyunMapper::new();
+        let provisional =
+            parse_server_event(&event_at("result-generated", Some("你"), false, Some(1200)))
+                .unwrap();
+        let committed = parse_server_event(&event_at(
+            "result-generated",
+            Some("你好"),
+            true,
+            Some(1200),
+        ))
+        .unwrap();
+        for events in [mapper.map(provisional), mapper.map(committed)] {
+            assert!(matches!(
+                &events[0],
+                StreamEvent::Transcript {
+                    segment: Some(SegmentRef {
+                        segment_id,
+                        update_kind: TranscriptUpdateKind::Snapshot,
+                    }),
+                    ..
+                } if segment_id.as_deref() == Some("seg1200")
+            ));
+        }
+    }
+
+    #[test]
+    fn mapper_falls_back_to_counter_without_begin_time() {
+        let mut mapper = AliyunMapper::new();
+        let p1 = parse_server_event(&event("result-generated", Some("he"), false)).unwrap();
+        let c1 = parse_server_event(&event("result-generated", Some("hello"), true)).unwrap();
+        let p2 = parse_server_event(&event("result-generated", Some("wo"), false)).unwrap();
+        let ids: Vec<String> = [p1, c1, p2]
+            .into_iter()
+            .map(|e| match mapper.map(e).into_iter().next() {
+                Some(StreamEvent::Transcript {
+                    segment:
+                        Some(SegmentRef {
+                            segment_id: Some(id),
+                            ..
+                        }),
+                    ..
+                }) => id,
+                other => panic!("expected Transcript with segment, got {other:?}"),
+            })
+            .collect();
+        // Provisional and its committed share the id; the next sentence bumps it.
+        assert_eq!(ids, ["s0", "s0", "s1"]);
+    }
+
+    #[test]
     fn maps_finished_and_failed() {
+        let mut mapper = AliyunMapper::new();
         let finished = parse_server_event(&event("task-finished", None, false)).unwrap();
         assert!(matches!(
-            map_event(finished).as_slice(),
-            [StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })]
+            mapper.map(finished).as_slice(),
+            [StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                segment: None
+            })]
         ));
         let failed = parse_server_event(
             &json!({"header": {"event": "task-failed", "error_message": "boom"}}).to_string(),
         )
         .unwrap();
         assert!(matches!(
-            map_event(failed).as_slice(),
+            mapper.map(failed).as_slice(),
             [StreamEvent::Error { fatal: true, .. }]
         ));
     }
