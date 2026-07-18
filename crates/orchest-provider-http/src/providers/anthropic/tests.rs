@@ -300,6 +300,79 @@ fn include_thinking_false_maps_to_omitted() {
     assert_eq!(body["thinking"]["display"], "omitted");
 }
 
+#[test]
+fn thinking_budget_lifts_max_tokens_for_default_options() {
+    // Default options (thinking Medium → budget 10240) on a non-adaptive
+    // model: the 4096 max_tokens default is below the budget, which Anthropic
+    // rejects with a 400 — lift it and record the adjustment.
+    let adapter = adapter_with("claude-3-opus", 4096);
+
+    let (body, adjustments) = adapter.request_body_for_test(&[], &[], &RequestOptions::default());
+    let budget = body["thinking"]["budget_tokens"]
+        .as_u64()
+        .expect("budget_tokens present");
+    let max_tokens = body["max_tokens"].as_u64().expect("max_tokens present");
+    assert!(
+        max_tokens > budget,
+        "wire must satisfy max_tokens > budget_tokens"
+    );
+    assert_eq!(max_tokens, 10240 + 4096);
+    let adj = adjustments
+        .iter()
+        .find(|a| a.option == "max_tokens")
+        .expect("max_tokens adjustment recorded");
+    assert_eq!(adj.requested, serde_json::json!(4096));
+    assert_eq!(adj.applied, serde_json::json!(10240 + 4096));
+    assert_eq!(adj.reason, "max_tokens_below_thinking_budget");
+}
+
+#[test]
+fn explicit_max_tokens_below_budget_lifted_and_recorded() {
+    let adapter = adapter_with("claude-3-opus", 4096);
+
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Low, // budget 4096
+        max_tokens: Some(2048),
+        ..Default::default()
+    };
+    let (body, adjustments) = adapter.request_body_for_test(&[], &[], &opts);
+    assert_eq!(body["thinking"]["budget_tokens"], 4096);
+    assert_eq!(body["max_tokens"], 4096 + 4096);
+    let adj = adjustments
+        .iter()
+        .find(|a| a.option == "max_tokens")
+        .expect("max_tokens adjustment recorded");
+    assert_eq!(adj.requested, serde_json::json!(2048));
+    assert_eq!(adj.applied, serde_json::json!(4096 + 4096));
+}
+
+#[test]
+fn budget_below_max_tokens_is_not_adjusted() {
+    let adapter = adapter_with("claude-3-opus", 8192);
+
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Low, // budget 4096 < 8192
+        ..Default::default()
+    };
+    let (body, adjustments) = adapter.request_body_for_test(&[], &[], &opts);
+    assert_eq!(body["thinking"]["budget_tokens"], 4096);
+    assert_eq!(body["max_tokens"], 8192, "legal combination untouched");
+    assert!(
+        adjustments.iter().all(|a| a.option != "max_tokens"),
+        "no adjustment recorded"
+    );
+}
+
+#[test]
+fn adaptive_path_leaves_max_tokens_alone() {
+    let adapter = adapter_with("claude-sonnet-4-20250514", 4096);
+
+    let (body, adjustments) = adapter.request_body_for_test(&[], &[], &RequestOptions::default());
+    assert_eq!(body["thinking"]["type"], "adaptive");
+    assert_eq!(body["max_tokens"], 4096);
+    assert!(adjustments.iter().all(|a| a.option != "max_tokens"));
+}
+
 /// Recursive wire-level assertion helper: true when `cache_control` appears
 /// anywhere under `v`.
 fn contains_cache_control(v: &serde_json::Value) -> bool {

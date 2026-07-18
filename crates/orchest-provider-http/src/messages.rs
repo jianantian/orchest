@@ -243,6 +243,20 @@ impl MessagesAdapter {
                     });
                     body["thinking"] = json!({"type": "enabled", "budget_tokens": budget});
                     body["thinking"]["display"] = json!(display);
+                    // Anthropic requires max_tokens > budget_tokens; lift
+                    // max_tokens to budget + completion budget instead of
+                    // failing with a 400, and record the adjustment
+                    // (polaris/observability: adjustments visible, never silent).
+                    if budget >= effective_max_tokens {
+                        let raised = budget + crate::defaults::THINKING_COMPLETION_BUDGET;
+                        adjustments.push(OptionAdjustment {
+                            option: "max_tokens".into(),
+                            requested: json!(effective_max_tokens),
+                            applied: json!(raised),
+                            reason: "max_tokens_below_thinking_budget".into(),
+                        });
+                        body["max_tokens"] = json!(raised);
+                    }
                 }
             }
         }
