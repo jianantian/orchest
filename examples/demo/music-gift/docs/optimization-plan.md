@@ -4,6 +4,10 @@
 > 来源: guided pipeline 全链路实测梳理,所有问题均经代码核实并附文件:行号。
 > SDK 侧配套计划见 [`docs/todo/2026-07-18-sdk-optimization-plan.md`](../../../docs/todo/2026-07-18-sdk-optimization-plan.md)(文中以 SDK-A1、SDK-B2 等引用)。
 > 本 demo 的定位是暴露 SDK 缺口 —— 纯 demo 可修的立即修;依赖 SDK 缺口的标注依赖,不绕过。
+>
+> **核验记录(2026-07-18)**: 架构评审重构 `2f4f880` 后逐项复核——D1-D16 **全部仍然成立**(重构忠实、无 wire 变更),
+> 行号已全部更新为重构后位置;`GenSubmission` 类型化未顺带修 D1(仅 lyrics/style/title 三字段);
+> 重构新引入两个小问题记为 D17。
 
 ## 背景:质量问题的三个根因
 
@@ -20,13 +24,14 @@
 ### D1. Suno 提交参数对齐:英文 style + vocalGender + instrumental + negativeTags
 
 **问题**:
-- `style` 传的是前端 i18n 中文标签("治愈温暖"四个汉字)直进 Suno `style` 字段(`frontend/src/i18n.tsx:530` → `src/routes.rs:442` → `src/tools/music_gen.rs:96-100`);
+- `style` 传的是前端 i18n 中文标签("治愈温暖"四个汉字)直进 Suno `style` 字段(`frontend/src/i18n.tsx:380-390` STYLE_TAGS → `GuidedFlow.tsx:364` → ReviewCard → `useMusicGen.start` → meta.style → `src/tools/music_gen.rs:164-175` 进 params.style);
 - 用户选的人声性别只进了被丢弃的 `vocal_style`,Suno 的 `vocalGender` passthrough 存在(`crates/orchest-provider-http/src/gen/suno.rs:57`)却没人填;
 - `exclude` key 名与 Suno 的 `negativeTags` 不匹配,静默丢弃;
-- 纯音乐(kind="instrumental")礼物不传 `params.instrumental`,Suno 收到 `instrumental:false` → "纯音乐"可能带人声。
+- 重构后的类型化 `GenSubmission`(`music_gen.rs:85-89`)只有 `lyrics/style/title` 三字段,**连 kind 都没有**——instrumental 判断(`music_gen.rs:120`)不进 submit,纯音乐礼物仍收到 `instrumental:false`;
+- params 的 7 个 key(`genre/tempo/mood/vocal_style/instrumentation/production/exclude`,`music_gen.rs:164-175`)全部不在 `suno.rs:53-63` 白名单,静默丢弃。
 **修法**:
 - i18n 风格标签加英文映射表(label 给用户看,英文 tag 给 provider);
-- `vocal` → `vocalGender`("male"/"female"),`exclude` → `negativeTags`,kind="instrumental" → `instrumental: true`;
+- `GenSubmission` 扩字段(vocal/kind 等),`vocal` → `vocalGender`("male"/"female"),`exclude` → `negativeTags`,kind="instrumental" → `instrumental: true`;
 - 提交前构造 params 时对齐 `suno.rs:53-63` 的 PASSTHROUGH 白名单逐 key 核对。
 **验收**: Suno 请求体中 `style` 为英文、`vocalGender` 与前端选择一致、`negativeTags` 生效;instrumental 礼物收到无人声结果;其余 provider(mureka/minimax)路径不回归。
 **注**: SDK-B1 落地后(未知 key warning)可再加一层防回归。
@@ -34,16 +39,17 @@
 ### D2. 静默失败链全部加日志 + 降级可见
 
 **问题**:
-- music prompt 改写失败 `routes.rs:471` `.unwrap_or_else(|_| …)` 连错误日志都不打;
-- `music_gen.rs:468` JSON 解析失败静默回退 `EnrichedPrompt::fallback(style)` = `"{style}, high quality music production"`;
-- review pass 失败/空输出静默回退原始文本,只 `eprintln`(`src/agent.rs:322-338`);
-- `lyrics_validator` 全部检查 + `check_style_prompt` 只 `eprintln` 不阻断(`routes.rs:451-454, 474`)——且 `check_style_prompt` 检查的是根本不会发给 Suno 的 enriched.prompt,真正上线的 raw style 从不被检查。
+- music prompt 改写失败 `.unwrap_or_else` 连错误日志都不打(`music_gen.rs:141`;polish 端点同款 `routes.rs:483`);
+- JSON 解析失败静默回退 `EnrichedPrompt::fallback(style)` = `"{style}, high quality music production"`(`music_gen.rs:529`);
+- review pass 失败/空输出静默回退原始文本,只 `eprintln`(`src/agent.rs:281/299/321/329`);
+- `lyrics_validator` 全部检查 + `check_style_prompt` 只 `eprintln` 不阻断(`music_gen.rs:113-115, 144-146`)——且 `check_style_prompt` 检查的是根本不会发给 Suno 的 enriched.prompt,真正上线的 submission.style 从不被检查;
+- `Done` 事件无 `degraded` 字段(`agent.rs:165-173`)。
 **修法**: 统一改 `tracing::warn!`(带 gift_id / 阶段 / 原因);`Done` 事件或 gift 记录里加 `degraded: ["review", "music_prompt", …]` 标记,前端可提示"本次生成跳过了审核";`check_style_prompt` 改为检查实际提交的 style 字段。
 **验收**: 任一环节失败,server.log 有结构化 warn 且前端能感知降级;fallback 发生时礼物页可见提示。
 
 ### D3. countdown 日期语义修复(时区 + 闰年)
 
-**问题**: prompt 要求 `new Date('{target_date}')`(`prompts/countdown.md:42`),`new Date('2026-01-15')` 按 **UTC 零点**解析——中国时区倒计时**提前 8 小时归零**(样例 `data/countdown/4594127a41aa.html:210` 即为实例);`parse_birthday_info` 对今年已过的生日直接 `+365`(`src/tools/countdown.rs:138-139`),闰年/2 月 29 日出错。
+**问题**: prompt 要求 `new Date('{target_date}')`(`prompts/countdown.md:42`),`new Date('2026-01-15')` 按 **UTC 零点**解析——中国时区倒计时**提前 8 小时归零**(样例 `data/countdown/4594127a41aa.html:210` 即为实例);`parse_birthday_info` 对今年已过的生日直接 `+365`(`src/tools/countdown.rs:138-140`),闰年/2 月 29 日出错。
 **修法**: prompt 改为生成本地零点构造(`new Date(y, m-1, d)` 或显式 local midnight);`parse_birthday_info` 用日历加法算"下一个该月日",2/29 按 2/28 或 3/1 文档化处理。
 **验收**: 东八区环境生成的倒计时归零时刻为当地生日 00:00;2/29 生日的用例有明确行为+测试。
 
@@ -51,7 +57,7 @@
 
 **问题**:
 - prompt 无响应式要求、无 CJK 字体指导(样例 Baloo 2 只有拉丁字形,中文名全落回系统字体)、无复杂度预算(与 4096 token 上限叠加必截断)、未禁 emoji(样例糖果雨 🍬🍭 与 SVG 线稿风格冲突)、无输出完整性自检;
-- 截断的 HTML 会以 `ready` 落盘,未闭合 `<script>` → JS 全废,倒计时定格;
+- 截断的 HTML 会以 `ready` 落盘,未闭合 `<script>` → JS 全废,倒计时定格;`run_countdown` 只查空串(`countdown.rs:67-69`);
 - `{previous_error}` 占位符(`prompts/countdown.md:46`;`countdown.rs:114` 替换为空串)说明规划过带错重试但**未实现**。
 **修法**:
 - prompt 增加:输出预算(如"单个 SVG 图标 ≤ 3 个,总长度克制")、CJK 字体栈(系统中文字体 fallback)、禁 emoji 一律 SVG、响应式(clamp/flex-wrap 底线)、**必须以 `</script>` 结束**;
@@ -62,10 +68,11 @@
 ### D5. countdown 安全 + 生命周期兜底
 
 **问题**:
-- `/api/countdown-section/{id}` 裸 serve `text/html` 且无 CSP/sandbox 响应头(`routes.rs:667-672`):直接打开 URL 时内联脚本在应用源执行,可携带 HttpOnly cookie 代发请求;name/lyrics 用户输入直进 prompt,prompt injection 攻击面真实存在(iframe 路径已安全,`CountdownFrame.tsx:63` sandbox 正确);
-- 前端轮询死循环:`failed` 后服务器返回 404,`res.ok` 为 false 不清 interval,永远轮询(`GiftPage.tsx:163-174`);初始即 failed 则完全静默;
+- `/api/countdown-section/{id}` 裸 serve `text/html` 且无 CSP/sandbox 响应头(`routes.rs:611-624`):直接打开 URL 时内联脚本在应用源执行,可携带 HttpOnly cookie 代发请求;name/lyrics 用户输入直进 prompt,prompt injection 攻击面真实存在(iframe 路径已安全,`CountdownFrame.tsx` `sandbox="allow-scripts"` 正确);
+- 前端轮询死循环:`failed` 后服务器返回 404,`res.ok` 为 false 不清 interval,永远轮询(`GiftPage.tsx:186-200`);初始即 failed 则完全静默(`loadCountdown` 只认 ready/pending);countdown 轮询 interval 在组件卸载/id 切换时无 cleanup(cdPollRef 不在 effect 清理);
 - `std::fs::write` 非原子(`countdown.rs:75`),崩溃留半截文件。
-**修法**: 路由加 `Content-Security-Policy: sandbox` 或 `default-src 'none'` 类响应头;前端非 200 清 interval + 轮询总时长上限 + failed 态 UI 占位;写入改临时文件 + rename。
+- 注:重构的 watchGeneration 修的是**音乐生成** SSE 的 timeout 卡死,与本项精神同向但不是本条目;countdown 逻辑重构未碰。
+**修法**: 路由加 `Content-Security-Policy: sandbox` 或 `default-src 'none'` 类响应头;前端非 200 清 interval + 轮询总时长上限 + effect cleanup + failed 态 UI 占位;写入改临时文件 + rename。
 **验收**: 直接打开 countdown URL 时脚本不执行(DevTools 验证);failed 后网络面板无持续轮询;kill -9 中途不产生半截 html。
 
 ---
@@ -74,45 +81,45 @@
 
 ### D6. 取消拍平:system prompt + 多轮历史各归其位 【依赖 SDK-A1】
 
-**问题**: `run_chat_agent` 把 system 文本+照片+全部历史 flat_map 成单条 user 消息(`src/agent.rs:212`),`AgentConfig` 从不调 `.system_prompt()`,wire 上 `system: ""`、多轮历史无角色标记;review pass 同样拍平(`agent.rs:297`);`build_messages` 静默丢弃 incoming system 消息(`src/agent/message.rs:100`,FreeCreatePanel 自由模式指令从未生效)。SDK-A1 落地前这是 SDK 逼出来的变通。
+**问题**: `run_chat_agent` 把 system 文本+照片+全部历史 flat_map 成单条 user 消息(`src/agent.rs:210-212`),`AgentConfig` 从不调 `.system_prompt()`(`agent.rs:184-191`),wire 上 `system: ""`、多轮历史无角色标记;review pass 同样拍平(`agent.rs:295-296`);`build_messages` 静默丢弃 incoming system 消息(`src/agent/message.rs:100`,FreeCreatePanel 自由模式指令从未生效)。SDK-A1 落地前这是 SDK 逼出来的变通。
 **修法**: SDK-A1 后,`.system_prompt(build_system_message(meta))` + initial_messages 传完整角色结构;review pass 同理;`message.rs:100` 对 incoming system 显式拼接或报错,不再静默丢。
 **验收**: Anthropic 请求 wire 上 `system` 非空、历史 user/assistant 角色边界完整;自由模式 system 指令生效。
-**同步修**: `docs/guided-pipeline.md:108, 236` 称 review pass "用 review.md 做系统 prompt"——实现与文档一致后再核对文档。
+**同步修**: `docs/guided-pipeline.md:108` 称 review pass "用 review.md 做系统 prompt"——实现与文档一致后再核对文档。
 
 ### D7. SKILL.md 加载强制化 【SDK-D1 落地前用临时方案】
 
-**问题**: 写词方法论是否生效全靠模型自觉 `read_file`(system.md:65-68);拍平削弱指令权重,模型不调则整套方法论不进上下文;路径相对 CWD(`crates/orchest/src/tool/builtin.rs:140`),CWD 不对直接 READ_ERROR 白烧 max_steps(仅 5 步)预算。
-**修法(临时)**: 后端直接把 SKILL.md 内容拼进 system prompt(牺牲渐进披露换可靠性),skill 文件改纯数据源;`skills_dir` 用绝对路径。
+**问题**: 写词方法论是否生效全靠模型自觉 `read_file`(system.md:65-68 指示 + `agent.rs:198-208` 注册);拍平削弱指令权重,模型不调则整套方法论不进上下文;SDK 按 CWD 相对路径读(`crates/orchest/src/tool/builtin.rs:139-141`),CWD 不对直接 READ_ERROR 白烧 max_steps(仅 5 步)预算。注:`main.rs:40` 的 skills_dir 本是绝对路径,路径半项天然满足。
+**修法(临时)**: 后端直接把 SKILL.md 内容拼进 system prompt(牺牲渐进披露换可靠性),skill 文件改纯数据源。
 **修法(正式)**: SDK-D1(零配置渐进式披露)落地后移除临时拼接——模型经 Level 1 元数据知晓 lyrics-writer、自主 `load_skill` 加载正文;同时删掉 system.md 手写路径与预注册 read_file,作为 SDK-D1 易用性验收口径的实证用例。
 **验收**: 连续 N 次生成,SKILL.md 内容每次都在上下文中(以日志/事件验证),不依赖模型自觉。
 
 ### D8. collect_info schema 与 system.md 冲突消解
 
-**问题**: 工具强制 `name/scene/emotion_direction` 三必填(`src/tools/collect_info.rs:32`),system.md 却说"信息够就直接生成、最多问 2 个问题"——模型要么为凑字段编造,要么纠结不调。
+**问题**: 工具强制 `name/scene/emotion_direction` 三必填(`src/tools/collect_info.rs:32`),system.md 却说"信息够就直接生成、最多问 2 个问题"(`system.md:26/52-55`)——模型要么为凑字段编造,要么纠结不调。
 **修法**: 字段改可选(由 prompt 约束收集纪律),或 system.md 明确"调 collect_info 时机"。
 **验收**: 信息齐全时模型直接生成不纠结;信息不足时追问且不乱编字段。
 
 ### D9. 元标签输出格式统一
 
-**问题**: SKILL.md 把 `<<<STYLE>>>/<<<TITLE>>>/<<<VOCAL>>>` 放在 `<<<LYRICS>>>` 块**内部**(SKILL.md:180-193),review.md 放在 `<<<END>>>` **之后**(review.md:60-65);`agent.rs:73-79` 注释自认两套打架,靠 `strip_meta_tags` 兜底——review pass 回退时解析路径完全不同。
+**问题**: SKILL.md 把 `<<<STYLE>>>/<<<TITLE>>>/<<<VOCAL>>>` 放在 `<<<LYRICS>>>` 块**内部**(SKILL.md:180-193),review.md 放在 `<<<END>>>` **之后**(review.md:60-65);`agent.rs:71-77` 注释自认两套打架,靠 `strip_meta_tags` 兜底——review pass 回退时解析路径完全不同。
 **修法**: 两处 prompt 统一为一种格式(建议 END 之后),解析只留一条主路径 + 明确错误分支。
 **验收**: 同一歌词经"有/无 review pass"两条路径解析结果一致;`strip_meta_tags` 兜底删除或仅做防御。
 
 ### D10. review.md 中文歌词适配
 
-**问题**: 10 点清单里发音表全是英文 homograph(live/read/lead…),phonetic 拼写规则对中文歌词无意义,但 reviewer 被命令 "AUTO-FIX … No exceptions",可能为改而改、误伤中文歌词;错拼修正(liv/lyve)会原样进 Suno 歌词框。
+**问题**: 10 点清单里发音表全是英文 homograph(`review.md:19-24`,live/read/lead…),phonetic 拼写规则对中文歌词无意义,但 reviewer 被命令 "AUTO-FIX … No exceptions",可能为改而改、误伤中文歌词;错拼修正(liv/lyve)会原样进 Suno 歌词框。
 **修法**: review.md 按歌词语言分节,英文规则显式标注"仅英文歌词适用";中文歌词只审结构/押韵/字数类项。
 **验收**: 中文歌词经 review pass 后无非预期改写(对比输入输出 diff 只动该动的项)。
 
 ### D11. 校验门:关键项从 warning 升级为阻断 + 重试
 
-**问题**: `lyrics_validator` 所有检查(结构标签、chorus≥2、词数 100-600、双生 verse、艺人名块单)只 warning(`routes.rs:451-454`);对照组 bitwize-music 的 pre-generation-check 是 fail 阻断,本 demo 没有任何 gate 会阻断——`docs/quality-gaps.md` "cover 5 of 6 gates" 的叙述与实现不符。
+**问题**: `lyrics_validator` 所有检查(结构标签、chorus≥2、词数 100-600、双生 verse、艺人名块单)只 warning(`music_gen.rs:112-115`);全链路唯一硬拒绝是空歌词(`music_gen.rs:120-124`);对照组 bitwize-music 的 pre-generation-check 是 fail 阻断,本 demo 没有任何 gate 会阻断——`docs/quality-gaps.md:55` "cover 5 of 6 gates" 的叙述与实现不符。
 **修法**: 关键项(无结构标签、词数越界、艺人名命中)失败 → 不提交 Suno,带问题清单回 review pass 重试一轮,再失败向前端报错。
 **验收**: 构造坏歌词,生成被阻断且前端可见原因;质量 gate 语义与 quality-gaps.md 叙述对齐(同步改文档)。
 
 ### D12. countdown 生成参数独立配置 【依赖 SDK-A2】
 
-**问题**: countdown 复用 `MUSIC_GIFT_CHAT_MAX_TOKENS`(config.rs:87-89),无专用变量,默认 4096;temperature 等无法配置(SDK 缺口)。
+**问题**: countdown 子代理由 `build_model_or_default(COUNTDOWN_MODEL_ENV)` 构建(`config.rs:179` → `build_countdown_tool` `.model(model)` `config.rs:160`),模型取 `MUSIC_GIFT_COUNTDOWN_MODEL` 否则回落 chat model;max_tokens 仍只读 `MUSIC_GIFT_CHAT_MAX_TOKENS`(`config.rs:89-91`),无专用变量;temperature 等无法配置(SDK-A2 缺口)。注:重构删除的只是从未被读的 `AppConfig/AppState.countdown_model` 结构字段,不影响本项前提。
 **修法**: 加 `MUSIC_GIFT_COUNTDOWN_MAX_TOKENS`(默认调大,如 8192);SDK-A2 后 countdown 子代理显式设低 temperature。
 **验收**: 环境变量可独立控制 countdown 输出预算;temperature 覆盖生效。
 
@@ -122,23 +129,23 @@
 
 ### D13. countdown 模板双重注入清理
 
-**问题**: 原始模板(含字面 `{name}` 占位符)作 system prompt(`src/config.rs:140`),替换版又作 user message——模板进两次,浪费 token 且占位符原文干扰模型。
+**问题**: 原始模板(含字面 `{name}` 占位符)作 system prompt(`src/config.rs:147`),替换版又作 user message(`config.rs:163-167` + `countdown.rs:106-115`)——模板进两次,浪费 token 且占位符原文干扰模型。
 **修法**: system prompt 用固定角色描述,替换后模板只作 user message。
 **验收**: 每次 countdown 调用 prompt token 数下降,输出质量不回归。
 
 ### D14. countdown 可观测性补齐
 
-**问题**: `tool_context()` 里 `event_tx: None`(`countdown.rs:153-163`)零事件;失败仅 `eprintln`(`routes.rs:267`)。
-**修法**: 接上事件通道(生成开始/完成/失败),失败进结构化日志。
+**问题**: `tool_context()` 里 `event_tx: None`(`countdown.rs:158`,函数体 153-164)零事件;失败仅 `eprintln`(`routes.rs:275`)。
+**修法**: 接上事件通道(生成开始/完成/失败),失败进结构化日志;SDK-G1(`ToolContext::oneshot()`)落地后可顺带去掉手工伪造 context 的样板。
 **验收**: countdown 生成全过程在 server.log 可追溯。
 
 ### D15. 文档纠偏(guided-pipeline.md / quality-gaps.md)
 
 **问题**(与实现的偏差,修复后以代码为准回写):
-- guided-pipeline.md 未提拍平行为(D6 修前,文档把 `/api/chat` 描述为多轮对话链路,实现上每轮都是全新 AgentRun + 单 user 消息);
-- guided-pipeline.md Step 8 #3 的 EnrichedPrompt 八维度描述给人的印象是驱动音乐生成——实际 Suno 默认链路全丢(D1 修后恢复成立);
-- quality-gaps.md "Closed" 表多处不成立:Exclude Styles / Artist names 检查 / pronunciation 强制 / suno.md 八维度——产物都不上线;真正 closed 的只有歌词文本内 performance cues;
-- quality-gaps.md "cover 5 of 6 gates" vs 实际无任何阻断 gate(D11)。
+- guided-pipeline.md 经重构更新后仍全文未提拍平;`:108` 仍称 review pass"用 review.md 做系统 prompt"(实现是拍平成单条 user 消息);
+- guided-pipeline.md Step 8(`:171-185`)仍展示 EnrichedPrompt 八维输出进 submit、未注明 Suno 默认链路全丢(D1 修后恢复成立);
+- quality-gaps.md 完全未动:"Closed" 表(`:11-17`)多处不成立——Exclude Styles / Artist names 检查 / pronunciation 强制 / suno.md 八维度,产物都不上线;真正 closed 的只有歌词文本内 performance cues;
+- quality-gaps.md `:55` "cover 5 of 6 gates" vs 实际无任何阻断 gate(D11)。
 **修法**: D1/D6/D11 落地后逐项回写;修前先在两份文档加"当前实现偏差"警示段,避免误导。
 **验收**: 文档描述与代码行为逐条一致。
 
@@ -148,6 +155,14 @@
 **修法**: demo 侧加 dev-only 事件 subscriber:订阅 RuntimeEvent + 每次 LLM 调用的请求/响应,落 `data/trajectory/{run_id}.jsonl`,README 写明含敏感数据仅限本地。
 **验收**: 本地跑一次 guided 流程,能从 JSONL 复盘每个阶段的模型输入(wire 级)。
 **注**: 这与 D2(失败日志)互补——D2 管"哪环挂了",D16 管"当时给模型看了什么"。
+
+### D17. 重构遗留小问题(2f4f880 核验发现)
+
+**问题**:
+- `GiftMeta::from_value` 全有或全无(`src/gift.rs:89-91`):meta 反序列化失败 → `unwrap_or_default()` 全部字段回落默认;旧的逐 key 读取只丢坏的那个 key——一个畸形 key(如 `style: 123`)会把 name/birthday 等好 key 一起吞掉,`create_gift` 的 birthday 判定(`routes.rs:205`)同受影响。实际风险低(需前端发畸形 meta),但与注释声称的 "matching the old per-key reads" 不符;
+- `poll()` 的 `unreachable!()`(`music_gen.rs:251`)依赖上方 `if status == Done` 块两个分支都 return——当前成立,给未来改动留地雷。
+**修法**: `GiftMeta` 改逐字段容错(serde `#[serde(default)]` per-field 或手动逐 key);`poll()` 改 exhaustive match 消掉 `unreachable!()`。
+**验收**: 畸形单 key 不影响其余 key 解析(新增单测);`poll()` 无 `unreachable!()`。
 
 ---
 
@@ -168,7 +183,7 @@ P1(SDK hotfix/迭代落地后跟进):
   SDK-B2 ──→ D4 截断判定改 stop_reason(先有结尾校验兜底)
   D8-D11 不依赖 SDK,可与 P0 并行
 
-P2(随手做):D13 D14 D15 D16
+P2(随手做):D13 D14 D15 D16 D17
 ```
 
 **验收总口径**: P0 + D6 完成后,跑一次端到端 guided 流程(中文、女声、生日场景),确认:① Suno 请求体含英文 style/vocalGender/negativeTags;② wire 上 system 非空、历史角色完整;③ 任一环节注入故障,日志与前端均可见;④ countdown 归零时刻为本地生日零点,HTML 无 emoji/响应式不破版。
