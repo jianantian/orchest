@@ -11,8 +11,9 @@
 use async_trait::async_trait;
 use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
-    Modality, ProtocolError, RealtimeHandle, SessionInput, StreamEvent, StreamingTranscribeRequest,
-    TranscribeRequest, TranscribeResult, TranscriptStability,
+    Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
+    StreamingTranscribeRequest, TranscribeRequest, TranscribeResult, TranscriptStability,
+    TranscriptUpdateKind,
 };
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
@@ -77,9 +78,18 @@ pub fn parse_message(text: &str) -> Result<SonioxMessage, ProtocolError> {
     })
 }
 
-/// Project a Soniox message onto unified events: committed tokens → a
-/// `Committed` `Transcript`, the revisable tail → a `Provisional` `Transcript`,
-/// and `finished` → `EndOfSpeech`. An `Error` becomes a single fatal `Error`.
+/// Segment id of the ever-growing committed token stream: final tokens arrive
+/// as increments, so they all `Append` to this one segment.
+pub const FINAL_SEGMENT_ID: &str = "final";
+
+/// Segment id of the revisable non-final tail: each message's tail is a full
+/// snapshot of the current hypothesis, replacing the previous one.
+pub const TAIL_SEGMENT_ID: &str = "tail";
+
+/// Project a Soniox message onto unified events: committed tokens → an `Append`
+/// `Committed` `Transcript` on [`FINAL_SEGMENT_ID`], the revisable tail → a
+/// `Snapshot` `Provisional` `Transcript` on [`TAIL_SEGMENT_ID`], and `finished`
+/// → `EndOfSpeech`. An `Error` becomes a single fatal `Error`.
 pub fn map_message(message: SonioxMessage) -> Vec<StreamEvent> {
     match message {
         SonioxMessage::Tokens {
@@ -92,14 +102,20 @@ pub fn map_message(message: SonioxMessage) -> Vec<StreamEvent> {
                 events.push(StreamEvent::Transcript {
                     text: final_text,
                     stability: TranscriptStability::Committed,
-                    segment: None,
+                    segment: Some(SegmentRef {
+                        segment_id: Some(FINAL_SEGMENT_ID.to_string()),
+                        update_kind: TranscriptUpdateKind::Append,
+                    }),
                 });
             }
             if !provisional_text.is_empty() {
                 events.push(StreamEvent::Transcript {
                     text: provisional_text,
                     stability: TranscriptStability::Provisional,
-                    segment: None,
+                    segment: Some(SegmentRef {
+                        segment_id: Some(TAIL_SEGMENT_ID.to_string()),
+                        update_kind: TranscriptUpdateKind::Snapshot,
+                    }),
                 });
             }
             if finished {
@@ -469,22 +485,30 @@ mod tests {
             finished: true,
         });
         assert!(matches!(
-            events[0],
+            &events[0],
             StreamEvent::Transcript {
                 stability: TranscriptStability::Committed,
+                segment: Some(SegmentRef {
+                    segment_id,
+                    update_kind: TranscriptUpdateKind::Append,
+                }),
                 ..
-            }
+            } if segment_id.as_deref() == Some(FINAL_SEGMENT_ID)
         ));
         assert!(matches!(
-            events[1],
+            &events[1],
             StreamEvent::Transcript {
                 stability: TranscriptStability::Provisional,
+                segment: Some(SegmentRef {
+                    segment_id,
+                    update_kind: TranscriptUpdateKind::Snapshot,
+                }),
                 ..
-            }
+            } if segment_id.as_deref() == Some(TAIL_SEGMENT_ID)
         ));
         assert!(matches!(
-            events[2],
-            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
+            &events[2],
+            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment: None })
         ));
     }
 
