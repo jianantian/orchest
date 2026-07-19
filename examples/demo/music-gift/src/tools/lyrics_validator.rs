@@ -51,7 +51,7 @@ pub struct LyricsValidation {
 ///
 /// Checks:
 /// 1. Artist name blocklist
-/// 2. Has [Verse] or [Chorus] structure tags
+/// 2. Has `[Verse]` or `[Chorus]` structure tags
 /// 3. At least 2 chorus sections for song structure
 /// 4. Word count (warns if under 100 or over 600)
 /// 5. No twin verses (V1 first line == V2 first line)
