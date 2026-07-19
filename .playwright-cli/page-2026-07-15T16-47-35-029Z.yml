@@ -1,0 +1,6 @@
+- generic [ref=f1e3]:
+  - generic [ref=f1e6]:
+    - heading "您的连接已中断" [level=1] [ref=f1e7]
+    - paragraph [ref=f1e8]: 检测到了网络变化。
+    - generic [ref=f1e9]: ERR_NETWORK_CHANGED
+  - button "重新加载" [ref=f1e12] [cursor=pointer]

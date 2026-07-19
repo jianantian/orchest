@@ -1,0 +1,201 @@
+import { useRef, useState, type FormEvent } from "react";
+import { streamChat } from "../api";
+import { useI18n } from "../i18n";
+import { shuffleStyles } from "../lib/styles";
+import { isImeComposing } from "../lib/ime";
+import { useMusicGen } from "../hooks/useMusicGen";
+import { MusicCard } from "./MusicCard";
+import { MicIcon, MusicNoteIcon, PencilIcon, SparklesIcon, ExpandIcon, XIcon, FemaleIcon, MaleIcon } from "./Icons";
+
+export interface FreeCreatePanelProps { photos: string[]; lang: string; onNavigate: (giftId: string) => void; }
+
+export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelProps) {
+  const { t } = useI18n();
+  const gen = useMusicGen();
+
+  const [instrumental, setInstrumental] = useState(false);
+  const [vocalGender, setVocalGender] = useState<"female" | "male" | null>(null);
+  const [showMoreOptions, setShowMoreOptions] = useState(false);
+  const [lyrics, setLyrics] = useState("");
+  const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
+  const [styleInput, setStyleInput] = useState("");
+  const [title, setTitle] = useState("");
+  const [suggestions, setSuggestions] = useState<string[]>(() => shuffleStyles([], 14));
+  const [polishing, setPolishing] = useState(false);
+  const [polishPrompt, setPolishPrompt] = useState("");
+  const [showPolishPrompt, setShowPolishPrompt] = useState(false);
+  const [writing, setWriting] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [expanding, setExpanding] = useState(false);
+  const [promptInput, setPromptInput] = useState("");
+  const [showPromptBar, setShowPromptBar] = useState<"write" | "edit" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const lyricsRef = useRef<HTMLTextAreaElement>(null);
+
+  const vocal = !instrumental ? vocalGender || undefined : undefined;
+
+  function addStyle(s: string) { if (s && !selectedStyles.includes(s)) setSelectedStyles(p => [...p, s]); }
+  function removeStyle(s: string) { setSelectedStyles(p => p.filter(x => x !== s)); }
+  function refreshSuggestions() { setSuggestions(shuffleStyles(selectedStyles, 14)); }
+  function commitStyleInput() { const t = styleInput.trim(); if (t) addStyle(t); setStyleInput(""); }
+
+  async function handlePolish() {
+    setShowPolishPrompt(false);
+    const base = selectedStyles.join(", ") || styleInput.trim() || "warm acoustic";
+    if (!base) return;
+    setPolishing(true);
+    try {
+      const res = await fetch("/api/polish-music-prompt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lyrics: lyrics.trim() || undefined, style: base, prompt: polishPrompt.trim() || undefined, vocal, provider: "suno", lang }) });
+      if (res.ok) { const d = await res.json(); setStyleInput(d.prompt); setPolishPrompt(""); }
+    } catch { /* */ }
+    finally { setPolishing(false); }
+  }
+
+  async function handleAiAction(action: "write" | "edit") {
+    const prompt = promptInput.trim();
+    if (!prompt) return;
+    setShowPromptBar(null); setPromptInput("");
+    if (action === "write") setWriting(true); else setEditing(true);
+    try {
+      const s = action === "write"
+        ? "You are a professional songwriter. Write complete song lyrics with [verse], [chorus], [bridge] tags based on the user's description. Output ONLY the lyrics."
+        : "You are a professional lyric editor. Edit the provided lyrics based on the user's instructions. Keep structure. Output ONLY the edited lyrics.";
+      const u = action === "write" ? prompt : `Instructions: ${prompt}\n\nOriginal lyrics:\n${lyrics}`;
+      let full = "";
+      for await (const e of streamChat({ messages: [{ role: "system", content: s }, { role: "user", content: u }], meta: { lang }, photos: [] })) { if (e.type === "Delta") full += e.text; }
+      if (full.trim()) setLyrics(full.trim());
+    } catch { /* */ }
+    finally { if (action === "write") setWriting(false); else setEditing(false); }
+  }
+
+  async function handleExpand() {
+    if (!lyrics.trim()) return;
+    setExpanding(true);
+    try {
+      let full = "";
+      for await (const e of streamChat({ messages: [{ role: "system", content: "Expand into complete lyrics with [verse],[chorus],[bridge] tags. Output ONLY the lyrics." }, { role: "user", content: `Expand:\n\n${lyrics.trim()}` }], meta: { lang }, photos: [] })) { if (e.type === "Delta") full += e.text; }
+      if (full.trim()) setLyrics(full.trim());
+    } catch { /* */ }
+    finally { setExpanding(false); }
+  }
+
+  async function handleGenerate(e: FormEvent) {
+    e.preventDefault(); setError(null);
+    // Vocal mode requires lyrics — never substitute a placeholder: Suno
+    // would sing the word "instrumental" as if it were the lyrics.
+    if (!instrumental && !lyrics.trim()) return;
+    const style = selectedStyles.join(", ") || styleInput.trim() || "warm acoustic";
+    // Branch on the returned result: `gen.error` here would be the stale
+    // closure from this render, always the pre-start value.
+    const result = await gen.start({ lyrics: instrumental ? "" : lyrics.trim(), kind: instrumental ? "instrumental" : "song", style, title: title.trim() || undefined, vocal, lang, photos });
+    if (!result.ok) setError(result.error);
+  }
+
+  /** Vocal mode with no lyrics yet: submission is blocked (see handleGenerate). */
+  const needsLyrics = !instrumental && !lyrics.trim();
+
+  const musicState = gen.state === "idle" ? "generating" as const : gen.state === "ready" ? "ready" as const : gen.state === "error" ? "error" as const : "generating" as const;
+
+  return (
+    <div className="free-panel editorial">
+      {/* ═══ Top: Vocal / Instrumental ═══ */}
+      <div className="mode-bar">
+        <button className={`mode-btn ${!instrumental ? "active" : ""}`} onClick={() => setInstrumental(false)}>
+          <span className="mode-icon"><MicIcon /></span>
+          <span className="mode-label">{t("vocal")}</span>
+        </button>
+        <button className={`mode-btn ${instrumental ? "active" : ""}`} onClick={() => setInstrumental(true)}>
+          <span className="mode-icon"><MusicNoteIcon /></span>
+          <span className="mode-label">{t("instrumental")}</span>
+        </button>
+      </div>
+
+      {/* ═══ Lyrics ═══ */}
+      <section className="editorial-section">
+        <div className="section-header">
+          <h3 className="section-title">{t("free_lyrics")}</h3>
+          <div className="section-actions">
+            {!instrumental && <>
+              <button className={`btn-ghost btn-sm${writing ? " loading" : ""}`} onClick={() => setShowPromptBar(showPromptBar === "write" ? null : "write")} disabled={writing}>{writing ? <span className="spinner" /> : <PencilIcon />} {t("lyrics_write")}</button>
+              {lyrics.trim() && <button className={`btn-ghost btn-sm${editing ? " loading" : ""}`} onClick={() => setShowPromptBar(showPromptBar === "edit" ? null : "edit")} disabled={editing}>{editing ? <span className="spinner" /> : <SparklesIcon />} {t("lyrics_edit")}</button>}
+              <button className={`btn-ghost btn-sm${expanding ? " loading" : ""}`} onClick={handleExpand} disabled={expanding}>{expanding ? <span className="spinner" /> : <ExpandIcon />} {t("lyrics_expand")}</button>
+            </>}
+          </div>
+        </div>
+        {showPromptBar && (
+          <div className="prompt-bar">
+            <input type="text" className="prompt-bar-input" value={promptInput} onChange={e => setPromptInput(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && !isImeComposing(e)) handleAiAction(showPromptBar); else if (e.key === "Escape") { setShowPromptBar(null); setPromptInput(""); } }}
+              placeholder={showPromptBar === "write" ? t("write_prompt_ph") : t("edit_prompt_ph")}
+              autoFocus />
+          </div>
+        )}
+        <textarea ref={lyricsRef} className="lyrics-manuscript" value={lyrics} onChange={e => setLyrics(e.target.value)}
+          placeholder={instrumental ? t("instrumental_ph") : t("paste_lyrics_ph")}
+          disabled={instrumental} rows={instrumental ? 2 : 7} />
+      </section>
+
+      {/* ═══ Style ═══ */}
+      <section className="editorial-section">
+        <div className="section-header">
+          <h3 className="section-title">{t("free_style")}</h3>
+          <button className="btn-ghost btn-sm" onClick={() => setShowPolishPrompt(!showPolishPrompt)}>{showPolishPrompt ? <XIcon /> : <SparklesIcon />} {t("personalize")}</button>
+        </div>
+        {showPolishPrompt && (
+          <div className="prompt-bar">
+            <input type="text" className="prompt-bar-input" value={polishPrompt} onChange={e => setPolishPrompt(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && !isImeComposing(e)) handlePolish(); else if (e.key === "Escape") { setShowPolishPrompt(false); setPolishPrompt(""); } }}
+              placeholder={t("polish_ph")}
+              autoFocus />
+          </div>
+        )}
+        {polishing && <p className="polish-status"><span className="spinner" /> {t("personalizing")}</p>}
+        <div className="style-composer">
+          <input type="text" className="style-input" value={styleInput} onChange={e => setStyleInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && !isImeComposing(e)) { e.preventDefault(); commitStyleInput(); } else if (e.key === "Backspace" && !styleInput && selectedStyles.length > 0) removeStyle(selectedStyles[selectedStyles.length - 1]); }}
+            placeholder={t("free_style_ph")} />
+          {selectedStyles.length > 0 && <div className="style-chips">{selectedStyles.map(s => <span key={s} className="style-chip" onClick={() => removeStyle(s)} role="button" tabIndex={0} onKeyDown={e => e.key === "Enter" && removeStyle(s)}>{s} <XIcon /></span>)}</div>}
+          <div className="style-suggestions">
+            <button className="suggest-refresh" onClick={refreshSuggestions} title="More styles" aria-label="Refresh style suggestions">↻</button>
+            {suggestions.map(s => <button key={s} className="suggest-chip" onClick={() => addStyle(s)}>{s}</button>)}
+          </div>
+
+          {/* Vocal Gender — in More Options */}
+          {!instrumental && (
+            <div className="more-options" data-open={showMoreOptions ? "true" : "false"}>
+              <button className="btn-more" type="button" onClick={() => setShowMoreOptions(!showMoreOptions)}>
+                <span className="t-acc-chevron">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 6.5L8 10.5L12 6.5"/></svg>
+                </span>
+                {t("more_options")}
+              </button>
+              <div className="t-acc-panel">
+                <div className="more-body t-acc-panel-inner">
+                  <p className="more-label">{t("vocal_gender")}</p>
+                  <div className="gender-select">
+                    <button className={`gender-opt ${vocalGender === "female" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "female" ? null : "female")}><FemaleIcon /> {t("gender_female")}</button>
+                    <button className={`gender-opt ${vocalGender === "male" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "male" ? null : "male")}><MaleIcon /> {t("gender_male")}</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ═══ Title ═══ */}
+      <section className="editorial-section">
+        <h3 className="section-title">{t("free_title")}</h3>
+        <input type="text" className="title-input" value={title} onChange={e => setTitle(e.target.value)} placeholder={t("free_title_ph")} maxLength={50} />
+      </section>
+
+      {needsLyrics && <p className="polish-status">{t("lyrics_required")}</p>}
+      <button className="btn-create" onClick={handleGenerate} disabled={gen.state === "generating" || needsLyrics}>
+        {gen.state === "generating" ? <><span className="spinner" /> {t("generating")}</> : t("create_song")}
+      </button>
+
+      {(error || gen.error) && <p className="error-msg" role="alert">{error || gen.error}</p>}
+      {gen.giftId && <MusicCard initialState={musicState} onOpen={() => onNavigate(gen.giftId!)} onRetry={() => gen.retry(gen.giftId!)} />}
+    </div>
+  );
+}

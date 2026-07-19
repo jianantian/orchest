@@ -12,7 +12,6 @@ path = "src/main.rs"
 orchest = { path = "../../../crates/orchest", features = ["sqlite-session"] }
 orchest-protocol = { path = "../../../crates/orchest-protocol" }
 orchest-provider = { path = "../../../crates/orchest-provider", features = ["llm", "gen"] }
-orchest-provider-http = { path = "../../../crates/orchest-provider-http" }
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 tower-http = { version = "0.6", features = ["fs", "cors"] }
@@ -23,11 +22,19 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
-regex-lite = "0.1"
 tokio-stream = "0.1"
+chrono = { version = "0.4.45", features = ["clock"] }
+tower = "0.5.3"
+lettre = { version = "0.11", features = ["tokio1", "tokio1-native-tls"] }
+axum-extra = { version = "0.10", features = ["cookie"] }
+time = "0.3"
+reqwest = { version = "0.12", features = ["json"] }
+argon2 = "0.5"
+rand_core = { version = "0.6", features = ["std"] }
 
 [dev-dependencies]
 tempfile = "3"
+ureq = { version = "2", features = ["json"] }
 
 [lints]
 workspace = true

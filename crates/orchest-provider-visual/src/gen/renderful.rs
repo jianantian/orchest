@@ -228,6 +228,7 @@ impl GenTask for RenderfulGen {
         Ok(GenResult {
             assets: parse_assets(&response),
             diagnostic_metadata: json!({ "provider": "renderful", "status": map_status(&response) }),
+            timed_text: None,
         })
     }
 }

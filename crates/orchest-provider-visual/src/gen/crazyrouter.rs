@@ -179,10 +179,10 @@ impl GenTask for CrazyrouterGen {
         let result = GenResult {
             assets: parse_assets(&value),
             diagnostic_metadata: json!({ "provider": "crazyrouter" }),
+            timed_text: None,
         };
         Ok(self.cache.store("crazyrouter", result))
     }
-
     async fn poll(&self, handle: &GenHandle) -> Result<GenStatus, ProtocolError> {
         Ok(self.cache.status(handle))
     }

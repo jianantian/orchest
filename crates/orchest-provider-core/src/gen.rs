@@ -75,6 +75,7 @@ mod tests {
         let result = GenResult {
             assets: Vec::new(),
             diagnostic_metadata: json!({ "k": "v" }),
+            timed_text: None,
         };
         let handle = cache.store("crazyrouter", result.clone());
         assert_eq!(handle.provider.as_deref(), Some("crazyrouter"));

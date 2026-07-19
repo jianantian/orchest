@@ -27,9 +27,10 @@ export interface ChatRequest {
   photos: string[];
 }
 
-/** SSE events from POST /api/chat — tagged union via `type` discriminator. */
 export type SseEvent =
   | { type: 'Delta'; text: string }
+  /** Emitted when the lyric review pass starts (after Deltas end, before Done). */
+  | { type: 'Reviewing' }
   | {
       type: 'Done';
       has_lyrics: boolean;
@@ -37,6 +38,7 @@ export type SseEvent =
       style: string;
       title: string;
       vocal: string;
+      review?: string;
     }
   | { type: 'Error'; error: string };
 
@@ -47,14 +49,17 @@ export interface Gift {
   lyrics: string | null;
   meta: GiftMeta;
   audio_url: string | null;
+  cover_url?: string | null;
   photos: string[];
   gen_handle: string | null;
   gen_status: string | null;
-  creator_token: string;
   published: boolean;
   likes: string[];
   created_at: string;
   published_at: string | null;
+  countdown_status?: string | null;
+  lrc?: string | null;
+  duration_secs?: number | null;
 }
 
 /** Response from POST /api/gift. */
@@ -97,21 +102,9 @@ export interface GenerateResponse {
   handle: string | null;
 }
 
-/** Response from GET /api/generate/:id/status. */
-export interface GenStatusResponse {
-  id: string;
-  status: 'pending' | 'running' | 'done' | 'failed';
-  audio_url: string | null;
-}
-
 /** Response from POST /api/gift/:id/like. */
 export interface LikeResponse {
   ok: boolean;
   likes: number;
   liked: boolean;
-}
-
-/** Response from POST /api/photos. */
-export interface PhotoUploadResponse {
-  urls: string[];
 }
