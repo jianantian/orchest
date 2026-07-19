@@ -122,6 +122,12 @@ music-gift 的 guided pipeline(引导收集 → chat 写词 → review 审核 �
 **建议**: 统一为协议层规范 role(以 Anthropic tool_result 惯例为准),迁移说明写入 changelog。
 **验收**: 两条路径回插 role 一致;现有测试更新。
 
+### C8. openrouter 测试环境变量竞态(P2)
+
+**现状**(PR #218 评审附带发现): `providers::openrouter::tests::sends_custom_headers` 与 `resolve_headers_reads_env_values` 裸改 `OPENROUTER_APP_TITLE`/`OPENROUTER_SITE_URL` 环境变量,未走 `tests.rs` 的 `ENV_LOCK`——存在并行测试竞态 flake 面(评审中曾观测到一次失败,后续 16 次复跑未复现)。
+**建议**: 两个测试改用 `ENV_LOCK` 串行化(与 tests.rs 其他 env 测试一致)。
+**验收**: 高频复跑不再出现 env 相关 flake。
+
 ---
 
 ## D · Skill 机制(skill 化推广的前提)

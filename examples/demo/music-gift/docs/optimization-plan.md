@@ -8,6 +8,11 @@
 > **核验记录(2026-07-18)**: 架构评审重构 `2f4f880` 后逐项复核——D1-D16 **全部仍然成立**(重构忠实、无 wire 变更),
 > 行号已全部更新为重构后位置;`GenSubmission` 类型化未顺带修 D1(仅 lyrics/style/title 三字段);
 > 重构新引入两个小问题记为 D17。
+>
+> **评审记录(2026-07-18,PR #218 code review)**: 合并前评审修复 1 Critical(smoke 测试失效)+ 15 Important
+> (后端:generate 鉴权+幂等、auth 可达 panic、body limit 死代码、SQLite busy_timeout、stream 超时收尾、prompt 模板 CWD 依赖;
+> 前端:IME Enter 误提交、宠物 transcript 伪造、music 步恢复死胡同、自定义场景死按钮、空歌词兜底、Playlist 错误分层、LRC 滚动自抑制、LRC 行高破版、i18n 补全 68 key×5)。
+> 两路评审的剩余 Minor 收录为 D18(后端)/D19(前端)。
 
 ## 背景:质量问题的三个根因
 
@@ -164,6 +169,38 @@
 **修法**: `GiftMeta` 改逐字段容错(serde `#[serde(default)]` per-field 或手动逐 key);`poll()` 改 exhaustive match 消掉 `unreachable!()`。
 **验收**: 畸形单 key 不影响其余 key 解析(新增单测);`poll()` 无 `unreachable!()`。
 
+### D18. 后端健壮性 Minor 批(PR #218 评审收录)
+
+**来源**: 2026-07-18 PR #218 code review 后端 chunk 的 Minor 清单(当轮 Critical/Important 已修)。行号以评审时为准,可能已漂移。
+- `agent.rs` + `routes.rs`:RunFailed 时客户端收到两个 Error 事件(真实错误 + 泛化 "agent run failed"),留一条且不丢原始信息
+- `routes.rs` like_gift:viewer_id 客户端自报、无长度上限、无 unlike 路径;likes 数组随 GET 公开——点赞可注水
+- `music_gen.rs` poll():只对 done 短路;failed 的 gift 会拿旧 handle 再 poll provider,行为依赖 provider
+- `countdown.rs`:birthday 解析失败回落硬编码 `"2025-01-01"`(已过去);建议 create_gift 校验 `M-D` 格式,失败不触发 countdown
+- `lyrics_validator.rs`:子串匹配误报(`queen` 常用词、`enya ⊂ kenya`);`word_count` 按 whitespace 切分对中文无意义——**D11 升级阻断前必须先修**,否则误杀
+- `auth.rs`:OAuth `state` 硬编码不校验(登录 CSRF);send-link 无限流;过期 sessions/magic_tokens 永不清理
+- `error.rs`:500 响应把内部错误串(DB 错误、文件路径)回给客户端;SSE Error 事件同样——随 D2 落地统一收
+- `routes.rs` verify_creator 非常量时间比较 token(demo 低风险);gift id 只取 UUID 前 12 hex(48 bit,建议 ≥16)
+- 照片生命周期:delete_gift 不清 `data/photos/` 孤儿文件;`/photos/{name}` 无路由 serve(需确认前端是否破图);`ChatRequest.photos` 数量无上限(逐个读盘+base64 进 LLM 上下文,成本放大道)
+- `Cargo.toml`:tower-http `cors` feature 启用但无 CorsLayer——删 feature 或补 layer
+- 两份 `unix_now`(routes.rs / auth.rs);`ChatRequest.lang` 接收后弃置(删字段或真用)
+
+### D19. 前端打磨 Minor 批(PR #218 评审收录)
+
+**来源**: 2026-07-18 PR #218 code review 前端 chunk 的 Minor 清单(当轮 Important 已修)。
+- `useMusicGen.watchStream` 无 unmount cleanup;`GuidedFlow.startChat` fetch/rAF 无 AbortSignal——中途切页对卸载组件 setState
+- sessionStorage 恢复只 catch JSON 语法错误,无形状校验(旧版本漂移 → 渲染期 crash);建议加 version 字段
+- 切语言即丢快照(lang 不匹配丢弃);已存气泡 label 保留旧语言混排
+- 键盘可访问性系统性缺口:`role="button"` 无 onKeyDown(Enter/Space 不触发)多处——换原生 `<button>` 或补 key handler
+- 场景 pill 双击触发两条后端聊天流(双倍 LLM 调用):PillsRow 选中后禁用或 startChat 挡重入
+- `GiftPage.handleShare` 无 clipboard 降级(非安全上下文 undefined 同步抛);`liked` 不持久(刷新消失);`AudioPlayer.toggle` play() reject 无 catch
+- polish:响应未校验(`d: any`,prompt 缺失时受控变非受控);`provider:"suno"` 硬编码(后端换 mureka/minimax 时模板错配,与 D1 同源)
+- `ReviewCard` 标签连接符 `、` 与语言无关;`GiftPage` LRC seek 用 `document.querySelector("audio")`(脆弱,改转发 ref);review 审核报告不持久化(刷新即丢)
+- `LoginModal` 无 Esc 关闭/焦点管理;`useAuth` logout fetch 失败 unhandled rejection
+- `GuidedFlow` 渲染体内 setTimeout(StrictMode 双发);mount-only effect 缺依赖(补注释)
+- `watchGeneration` onDone 边界:audio_url 为 null 时状态自相矛盾(置 ready 但渲染回落 "Generate Music")
+- PlaylistPage 多 AudioPlayer 无播放互斥
+- i18n 清单外残留硬编码:GuidedFlow aria-label、GiftPage "Untitled"/"for {name}"、PlaylistPage "Untitled"、UnwrapStage aria、FreeCreatePanel title/aria
+
 ---
 
 ## 依赖关系与建议执行顺序
@@ -183,7 +220,7 @@ P1(SDK hotfix/迭代落地后跟进):
   SDK-B2 ──→ D4 截断判定改 stop_reason(先有结尾校验兜底)
   D8-D11 不依赖 SDK,可与 P0 并行
 
-P2(随手做):D13 D14 D15 D16 D17
+P2(随手做):D13 D14 D15 D16 D17 D18 D19
 ```
 
 **验收总口径**: P0 + D6 完成后,跑一次端到端 guided 流程(中文、女声、生日场景),确认:① Suno 请求体含英文 style/vocalGender/negativeTags;② wire 上 system 非空、历史角色完整;③ 任一环节注入故障,日志与前端均可见;④ countdown 归零时刻为本地生日零点,HTML 无 emoji/响应式不破版。
