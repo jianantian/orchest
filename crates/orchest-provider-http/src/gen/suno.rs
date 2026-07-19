@@ -62,6 +62,10 @@ const PASSTHROUGH_PARAMS: &[&str] = &[
     "personaModel",
 ];
 
+/// Per-request cap on the best-effort `get-timestamped-lyrics` call during
+/// `fetch` — much tighter than the shared client's 300s default.
+const TIMED_TEXT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Build the `/api/v1/generate` body. Defaults to non-custom mode
 /// (`customMode: false`, `instrumental: false`) with `prompt` as the creative
 /// description. When `params.lyrics` is present the dialect switches to custom
@@ -180,12 +184,20 @@ fn build_result(data: &Value) -> GenResult {
 }
 
 /// The primary track's id (Suno's `audioId`) from a `record-info` `data` payload.
-/// Needed to request that track's aligned lyrics.
+/// Needed to request that track's aligned lyrics. Uses the same predicate as
+/// the asset list — the first track with a non-empty `audioUrl` — so the
+/// aligned lyrics attach to the same track `assets[0]` points at.
 fn primary_audio_id(data: &Value) -> Option<String> {
     data.get("response")
         .and_then(|r| r.get("sunoData"))
-        .and_then(Value::as_array)
-        .and_then(|a| a.first())
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|track| {
+            track
+                .get("audioUrl")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.is_empty())
+        })
         .and_then(|t| t.get("id"))
         .and_then(Value::as_str)
         .map(ToString::to_string)
@@ -212,7 +224,13 @@ fn parse_timed_text(data: &Value) -> Option<TimedText> {
 /// In-flight job state for the async submit -> poll -> fetch lifecycle.
 enum JobState {
     Pending,
-    Done(GenResult),
+    Done {
+        result: GenResult,
+        /// The primary track's id (Suno `audioId`), captured by `poll` from the
+        /// `record-info` payload. `fetch` needs it to request that track's
+        /// aligned lyrics; the payload itself is gone by then.
+        primary_audio_id: Option<String>,
+    },
 }
 
 // TODO: callback URL support. The Suno API supports webhook callbacks
@@ -246,7 +264,7 @@ impl SunoMusicGen {
 
     /// Fetch forced-aligned lyrics for one track. Best-effort: any failure
     /// (network, non-200, no words) yields `(None, None)` so it never breaks
-    /// the poll. Returns the aligned text plus the provider's overall
+    /// the fetch. Returns the aligned text plus the provider's overall
     /// confidence (`hootCer`) for the consumer's trust decision.
     async fn fetch_timed_text(
         &self,
@@ -260,18 +278,41 @@ impl SunoMusicGen {
             ))
             .bearer_auth(&self.config.api_key)
             .json(&json!({ "taskId": task_id, "audioId": audio_id }))
+            // Best-effort side call: cap it tightly so a hanging endpoint
+            // can't stall the main fetch behind the shared client's 300s
+            // default.
+            .timeout(TIMED_TEXT_TIMEOUT)
             .send()
             .await;
-        let Ok(resp) = resp else { return (None, None) };
-        let Ok(value) = resp.json::<Value>().await else {
-            return (None, None);
+        let resp = match resp {
+            Ok(resp) => resp,
+            Err(e) => {
+                tracing::debug!(task_id, error = %e, "suno timed-lyrics request failed");
+                return (None, None);
+            }
         };
-        if value.get("code").and_then(Value::as_i64) != Some(200) {
+        let value = match resp.json::<Value>().await {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::debug!(task_id, error = %e, "suno timed-lyrics response not JSON");
+                return (None, None);
+            }
+        };
+        let code = value.get("code").and_then(Value::as_i64);
+        if code != Some(200) {
+            tracing::debug!(
+                task_id,
+                code,
+                "suno timed-lyrics endpoint returned non-200 code"
+            );
             return (None, None);
         }
         let data = value.get("data");
         let hoot_cer = data.and_then(|d| d.get("hootCer")).and_then(Value::as_f64);
         let timed_text = data.and_then(parse_timed_text);
+        if timed_text.is_none() {
+            tracing::debug!(task_id, "suno timed-lyrics returned no aligned words");
+        }
         (timed_text, hoot_cer)
     }
 }
@@ -437,23 +478,19 @@ impl GenTask for SunoMusicGen {
                 Ok(GenStatus::Running)
             }
             "SUCCESS" => {
-                let mut result = build_result(&data);
-                // Secondary fetch: forced-aligned lyrics for the primary track.
-                // A separate Suno endpoint (taskId + audioId); its result fills
-                // GenResult.timed_text without touching the submit→poll→fetch
-                // trait shape. Best-effort — a failure leaves timed_text = None
-                // and the consumer falls back to its own estimate.
-                if let Some(audio_id) = primary_audio_id(&data) {
-                    let (timed_text, hoot_cer) = self.fetch_timed_text(&handle.id, &audio_id).await;
-                    result.timed_text = timed_text;
-                    if let (Some(cer), Some(obj)) =
-                        (hoot_cer, result.diagnostic_metadata.as_object_mut())
-                    {
-                        obj.insert("alignment_hoot_cer".to_string(), json!(cer));
-                    }
-                }
-                self.lock()
-                    .insert(handle.id.clone(), JobState::Done(result));
+                // Store the generated result only. The secondary
+                // get-timestamped-lyrics call belongs to `fetch` (Finding 1
+                // layering) — `poll` may be repeated after SUCCESS, which
+                // would re-fire the lyrics request every time.
+                let result = build_result(&data);
+                let primary_audio_id = primary_audio_id(&data);
+                self.lock().insert(
+                    handle.id.clone(),
+                    JobState::Done {
+                        result,
+                        primary_audio_id,
+                    },
+                );
                 Ok(GenStatus::Done)
             }
             "FAILED" => Err(ProtocolError::new(
@@ -470,7 +507,28 @@ impl GenTask for SunoMusicGen {
     async fn fetch(&self, handle: &GenHandle) -> Result<GenResult, ProtocolError> {
         let state = self.lock().remove(&handle.id);
         match state {
-            Some(JobState::Done(result)) => Ok(result),
+            Some(JobState::Done {
+                mut result,
+                primary_audio_id,
+            }) => {
+                // Secondary call: forced-aligned lyrics for the primary track.
+                // A separate Suno endpoint (taskId + audioId); its result fills
+                // GenResult.timed_text without touching the submit→poll→fetch
+                // trait shape. Best-effort — a failure leaves timed_text = None
+                // and the consumer falls back to its own estimate. `fetch` is
+                // normally invoked once, so one extra read-only request here is
+                // acceptable.
+                if let Some(audio_id) = primary_audio_id {
+                    let (timed_text, hoot_cer) = self.fetch_timed_text(&handle.id, &audio_id).await;
+                    result.timed_text = timed_text;
+                    if let (Some(cer), Some(obj)) =
+                        (hoot_cer, result.diagnostic_metadata.as_object_mut())
+                    {
+                        obj.insert("alignment_hoot_cer".to_string(), json!(cer));
+                    }
+                }
+                Ok(result)
+            }
             Some(JobState::Pending) => Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,
                 "job not done, poll first",
@@ -520,10 +578,31 @@ mod tests {
     }
 
     #[test]
-    fn primary_audio_id_takes_first_track() {
-        let data = json!({ "response": { "sunoData": [{"id": "aud-1"}, {"id": "aud-2"}] } });
-        assert_eq!(primary_audio_id(&data), Some("aud-1".to_string()));
+    fn parse_timed_text_missing_end_s_yields_none_end() {
+        // Not all sources supply an end; `None` = unknown, the consumer
+        // infers the span from the next segment's start if it needs one.
+        let data = json!({ "alignedWords": [{"word": "hello", "startS": 1.25}] });
+        let tt = parse_timed_text(&data).unwrap();
+        assert_eq!(tt.segments[0].start, 1.25);
+        assert_eq!(tt.segments[0].end, None);
+    }
+
+    #[test]
+    fn primary_audio_id_matches_first_track_with_audio_url() {
+        // Same predicate as the asset list (first track with a non-empty
+        // audioUrl), so the aligned lyrics attach to the track assets[0]
+        // points at — a leading track without audio must not steal it.
+        let data = json!({ "response": { "sunoData": [
+            {"id": "aud-no-url"},
+            {"id": "aud-empty-url", "audioUrl": ""},
+            {"id": "aud-2", "audioUrl": "https://suno/track2.mp3"}
+        ] } });
+        assert_eq!(primary_audio_id(&data), Some("aud-2".to_string()));
         assert_eq!(primary_audio_id(&json!({})), None);
+        assert_eq!(
+            primary_audio_id(&json!({ "response": { "sunoData": [{"id": "a"}] } })),
+            None
+        );
     }
 
     #[test]
@@ -686,5 +765,191 @@ mod tests {
         assert!(result.assets.is_empty());
         assert_eq!(result.diagnostic_metadata["provider"], "suno");
         assert_eq!(result.diagnostic_metadata["titles"], json!([]));
+    }
+
+    // -------------------------------------------------------------------
+    // fetch wiring: submit → poll → fetch against a local mock Suno server
+    // -------------------------------------------------------------------
+
+    use std::sync::{Arc, Mutex as StdMutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// A minimal mock of the Suno proxy. Routes on the request path across the
+    /// three endpoints the adapter calls, answering each from a canned body;
+    /// `lyrics_status`/`lyrics_body` shape the get-timestamped-lyrics response
+    /// so tests can exercise its failure path. Every request line
+    /// (`METHOD path`) is recorded for assertions.
+    struct MockSunoServer {
+        base_url: String,
+        request_lines: Arc<StdMutex<Vec<String>>>,
+    }
+
+    impl MockSunoServer {
+        fn request_lines(&self) -> Vec<String> {
+            self.request_lines
+                .lock()
+                .expect("request lines lock")
+                .clone()
+        }
+    }
+
+    async fn serve_suno(lyrics_status: u16, lyrics_body: &'static str) -> MockSunoServer {
+        const SUBMIT_BODY: &str = r#"{"code":200,"msg":"success","data":{"taskId":"task-1"}}"#;
+        const RECORD_INFO_BODY: &str = r#"{"code":200,"msg":"success","data":{"taskId":"task-1","status":"SUCCESS","response":{"sunoData":[{"id":"aud-1","audioUrl":"https://suno/track1.mp3","title":"First"},{"id":"aud-2","audioUrl":"https://suno/track2.mp3","title":"Second"}]}}}"#;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test server should bind");
+        let address = listener
+            .local_addr()
+            .expect("test server should have local address");
+        let request_lines = Arc::new(StdMutex::new(Vec::new()));
+        let captured = Arc::clone(&request_lines);
+
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let captured = Arc::clone(&captured);
+                tokio::spawn(async move {
+                    let request = read_request(&mut socket).await;
+                    let request_line = request.lines().next().unwrap_or("").to_string();
+                    captured
+                        .lock()
+                        .expect("request lines lock")
+                        .push(request_line.clone());
+                    let path = request_line.split_whitespace().nth(1).unwrap_or("");
+                    let (status, body) =
+                        if path.starts_with("/api/v1/generate/get-timestamped-lyrics") {
+                            (lyrics_status, lyrics_body)
+                        } else if path.starts_with("/api/v1/generate/record-info") {
+                            (200, RECORD_INFO_BODY)
+                        } else {
+                            (200, SUBMIT_BODY)
+                        };
+                    let response = format!(
+                        "HTTP/1.1 {status} Reply\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    socket
+                        .write_all(response.as_bytes())
+                        .await
+                        .expect("test server should write response");
+                });
+            }
+        });
+
+        MockSunoServer {
+            base_url: format!("http://{address}"),
+            request_lines,
+        }
+    }
+
+    /// Read one full HTTP request (headers + body, per content-length).
+    async fn read_request(socket: &mut tokio::net::TcpStream) -> String {
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = socket.read(&mut chunk).await.expect("read request");
+            if n == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&chunk[..n]);
+            let Some(header_end) = buffer.windows(4).position(|w| w == b"\r\n\r\n") else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&buffer[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            if buffer.len() >= header_end + 4 + content_length {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&buffer).into_owned()
+    }
+
+    fn gen_for(server: &MockSunoServer) -> SunoMusicGen {
+        SunoMusicGen::new(SunoMusicConfig {
+            model: "V5".to_string(),
+            api_key: "test-key".to_string(),
+            api_base_url: server.base_url.clone(),
+        })
+    }
+
+    #[tokio::test]
+    async fn fetch_populates_timed_text_via_lyrics_endpoint() {
+        const LYRICS_BODY: &str = r#"{"code":200,"msg":"success","data":{"alignedWords":[{"word":"[Verse 1]\n晨光爬上窗台\n","startS":11.011,"endS":16.676,"success":true},{"word":"你还在睡\n","startS":16.835,"endS":21.638,"success":true}],"hootCer":0.6}}"#;
+        let server = serve_suno(200, LYRICS_BODY).await;
+        let gen = gen_for(&server);
+
+        let handle = gen
+            .submit(request("a song", json!({})))
+            .await
+            .expect("submit");
+        // Poll twice: a repeated poll after SUCCESS must not re-fire the
+        // lyrics request (the bug this fixes).
+        for _ in 0..2 {
+            let status = gen.poll(&handle).await.expect("poll");
+            assert_eq!(status, GenStatus::Done);
+        }
+        // The lyrics call belongs to fetch: poll alone must not fire it, no
+        // matter how often SUCCESS is polled.
+        assert!(
+            !server
+                .request_lines()
+                .iter()
+                .any(|l| l.contains("get-timestamped-lyrics")),
+            "poll must not call the lyrics endpoint: {:?}",
+            server.request_lines()
+        );
+
+        let result = gen.fetch(&handle).await.expect("fetch");
+        let timed_text = result.timed_text.expect("timed_text populated");
+        assert_eq!(timed_text.segments.len(), 2);
+        assert_eq!(timed_text.segments[0].start, 11.011);
+        assert_eq!(timed_text.segments[0].end, Some(16.676));
+        assert!(timed_text.segments[0].text.contains("晨光爬上窗台"));
+        assert_eq!(result.diagnostic_metadata["alignment_hoot_cer"], json!(0.6));
+        assert_eq!(result.assets.len(), 2);
+
+        let lyrics_calls = server
+            .request_lines()
+            .iter()
+            .filter(|l| l.contains("get-timestamped-lyrics"))
+            .count();
+        assert_eq!(lyrics_calls, 1, "lyrics endpoint called once, by fetch");
+    }
+
+    #[tokio::test]
+    async fn fetch_returns_result_when_lyrics_endpoint_fails() {
+        // Non-JSON 500 from the lyrics endpoint: best-effort fallback — the
+        // generation result still comes back intact with timed_text = None.
+        let server = serve_suno(500, "upstream exploded").await;
+        let gen = gen_for(&server);
+
+        let handle = gen
+            .submit(request("a song", json!({})))
+            .await
+            .expect("submit");
+        let status = gen.poll(&handle).await.expect("poll");
+        assert_eq!(status, GenStatus::Done);
+
+        let result = gen.fetch(&handle).await.expect("fetch still succeeds");
+        assert!(result.timed_text.is_none());
+        assert!(result
+            .diagnostic_metadata
+            .get("alignment_hoot_cer")
+            .is_none());
+        assert_eq!(result.assets.len(), 2);
     }
 }
