@@ -364,6 +364,86 @@ async fn abnormal_stop_reason_with_tool_use_dispatches_tools() {
     assert_eq!(model.call_count.load(Ordering::SeqCst), 2);
 }
 
+// ── RunCompleted carries the completing turn's stop_reason (v0_13 #220) ─────
+
+/// Always answers with a fixed stop_reason and no tool_use.
+struct FixedStopReasonModel {
+    stop_reason: StopReason,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for FixedStopReasonModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("partial".into())],
+            usage: TokenUsage::default(),
+            stop_reason: self.stop_reason.clone(),
+            option_adjustments: vec![],
+        })
+    }
+}
+
+async fn collect_run_events(model: Arc<FixedStopReasonModel>) -> Vec<RuntimeEvent> {
+    let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, ToolRegistry::new());
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+    events
+}
+
+#[tokio::test]
+async fn run_completed_marks_end_turn_stop_reason() {
+    let model = Arc::new(FixedStopReasonModel {
+        stop_reason: StopReason::EndTurn,
+    });
+
+    let events = collect_run_events(model).await;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::RunCompleted { output, stop_reason }
+                if output.as_str() == Some("partial") && *stop_reason == StopReason::EndTurn
+        )),
+        "EndTurn completion must carry stop_reason EndTurn"
+    );
+}
+
+#[tokio::test]
+async fn run_completed_marks_max_tokens_truncation() {
+    let model = Arc::new(FixedStopReasonModel {
+        stop_reason: StopReason::MaxTokens,
+    });
+
+    let events = collect_run_events(model).await;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::RunCompleted { output, stop_reason }
+                if output.as_str() == Some("partial") && *stop_reason == StopReason::MaxTokens
+        )),
+        "MaxTokens completion must be distinguishable via stop_reason MaxTokens"
+    );
+}
+
 struct ManyStreamChunksModel {
     chunks: usize,
 }
@@ -5184,7 +5264,7 @@ async fn static_handoff_switches_agent_and_completes() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("hello from billing"))),
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output, .. } if output.as_str() == Some("hello from billing"))),
         "run should complete under billing agent"
     );
 }
@@ -5227,7 +5307,7 @@ async fn handoff_transition_exposes_target_config_and_history() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("handoff_config_and_history_ok"))),
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output, .. } if output.as_str() == Some("handoff_config_and_history_ok"))),
         "target model should see target config and carried history"
     );
 }
@@ -5279,7 +5359,7 @@ async fn handoff_filter_failure_keeps_original_agent_state_coherent() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("handoff_failed_under_triage"))),
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output, .. } if output.as_str() == Some("handoff_failed_under_triage"))),
         "original agent should continue with structured handoff error"
     );
 }
@@ -5390,7 +5470,7 @@ async fn multi_handoff_in_one_turn_only_first_executed() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("got_error"))),
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output, .. } if output.as_str() == Some("got_error"))),
         "second handoff should produce an error result visible to the model"
     );
 }
@@ -5596,7 +5676,7 @@ async fn after_model_rewrites_response_into_history() {
     let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
     let mut output: Option<Value> = None;
     while let Some(e) = rx.recv().await {
-        if let RuntimeEvent::RunCompleted { output: o } = &e {
+        if let RuntimeEvent::RunCompleted { output: o, .. } = &e {
             output = Some(o.clone());
         }
     }

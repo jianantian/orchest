@@ -380,7 +380,7 @@ async fn drain_events(handle: RunHandle, mut rx: EventReceiver) -> Result<String
                 event,
                 ..
             } => {
-                if let RuntimeEvent::RunCompleted { output } = event.as_ref() {
+                if let RuntimeEvent::RunCompleted { output, .. } = event.as_ref() {
                     println!("[reviewer] child={child_run_id} verdict={output}");
                 }
             }
@@ -397,7 +397,7 @@ async fn drain_events(handle: RunHandle, mut rx: EventReceiver) -> Result<String
             } => {
                 println!("[reviewer] failed child={child_run_id} error={error}")
             }
-            RuntimeEvent::RunCompleted { output } => {
+            RuntimeEvent::RunCompleted { output, .. } => {
                 answer = Some(output.as_str().unwrap_or_default().to_string());
             }
             RuntimeEvent::RunFailed { error } => {

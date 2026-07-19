@@ -15,13 +15,14 @@
 
 ## 验收标准
 
-- [ ] `MaxTokens` 完成时,事件携带的标记与 `EndTurn` 完成可区分
-- [ ] 旧形状的事件 JSON 仍可反序列化(`serde(default)`)
-- [ ] Py/Node 绑定透出该字段
-- [ ] rustdoc 写明消费方语义
-- [ ] 测试:两种 stop_reason 的事件断言 + serde 兼容断言
-- [ ] 四件套 + cargo doc 全绿
+- [x] `MaxTokens` 完成时,事件携带的标记与 `EndTurn` 完成可区分
+- [x] 旧形状的事件 JSON 仍可反序列化(`serde(default)`)
+- [x] Py/Node 绑定透出该字段
+- [x] rustdoc 写明消费方语义
+- [x] 测试:两种 stop_reason 的事件断言 + serde 兼容断言
+- [x] 四件套 + cargo doc 全绿
 
 ## 备注
 
 - demo countdown 的截断判定从"结尾校验兜底"升级为读标记,属 demo 侧后续(optimization-plan D4 注)。
+- 字段形态(2026-07):取 `stop_reason: StopReason` 而非 `truncated: bool`——信息最全(未来 StopSequence 等其他完成原因同样可读),且不引入可由 stop_reason 派生的冗余布尔;`#[serde(default = …EndTurn)]` 让旧 JSON 按"非截断"解读。wire 上为 serde 形状字符串(如 `"MaxTokens"`),Py/Node 经 `runtime_event_to_wire_value` 自动透传,类型声明同步于 `python/orchest/__init__.pyi` 与 `js/index.d.ts`/`js/index.ts`。

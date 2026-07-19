@@ -416,7 +416,7 @@ async fn sub_agent_request_forwards_events_and_completes_parent_tool_result() {
                 saw_started = true;
                 assert_ne!(parent_run_id, child_run_id);
             }
-            RuntimeEvent::SubAgentEvent { event, .. } if matches!(event.as_ref(), RuntimeEvent::RunCompleted { output } if output == "child done") =>
+            RuntimeEvent::SubAgentEvent { event, .. } if matches!(event.as_ref(), RuntimeEvent::RunCompleted { output, .. } if output == "child done") =>
             {
                 saw_child_completion = true;
             }
@@ -470,7 +470,7 @@ async fn agent_tool_runs_child_agent_with_isolated_context() {
     let mut final_output = None;
     while let Some(event) = rx.recv().await {
         match event {
-            RuntimeEvent::SubAgentEvent { event, .. } if matches!(event.as_ref(), RuntimeEvent::RunCompleted { output } if output == "child done") =>
+            RuntimeEvent::SubAgentEvent { event, .. } if matches!(event.as_ref(), RuntimeEvent::RunCompleted { output, .. } if output == "child done") =>
             {
                 saw_child_done = true;
             }
@@ -479,7 +479,7 @@ async fn agent_tool_runs_child_agent_with_isolated_context() {
                 assert_eq!(output["output"], "child done");
                 assert!(output.get("child_run_id").is_some());
             }
-            RuntimeEvent::RunCompleted { output } => {
+            RuntimeEvent::RunCompleted { output, .. } => {
                 final_output = Some(output);
             }
             _ => {}

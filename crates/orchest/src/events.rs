@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::budget::{BudgetConfig, BudgetUsage};
-use crate::model::{ModelStreamChunk, OptionAdjustment, TokenUsage};
+use crate::model::{ModelStreamChunk, OptionAdjustment, StopReason, TokenUsage};
 use crate::run::RunId;
 use crate::tool::async_job::JobStatus;
 use crate::tool::{ToolCall, ToolError, ToolMetadata};
@@ -193,8 +193,23 @@ pub enum RuntimeEvent {
         attempt: u32,
     },
 
+    /// The run finished normally; `output` is the final assistant text.
+    ///
+    /// `stop_reason` carries the model's stop reason for the completing turn:
+    /// [`StopReason::EndTurn`] means the output is complete, while
+    /// [`StopReason::MaxTokens`] means the model hit the token cap and
+    /// `output` is **truncated**. Consumers must read this marker before
+    /// treating `output` as final: on truncation, decide whether to continue
+    /// generation (ask the model to keep writing), retry with a larger token
+    /// budget, or surface an error. Persisting truncated output as-is (e.g.
+    /// half-written HTML) is the failure mode this field exists to prevent.
     RunCompleted {
         output: Value,
+        /// Why the completing model call stopped. Defaults to
+        /// [`StopReason::EndTurn`] when deserializing events emitted before
+        /// this field existed (they only distinguished normal completion).
+        #[serde(default = "default_run_completed_stop_reason")]
+        stop_reason: StopReason,
     },
     RunFailed {
         error: String,
@@ -202,6 +217,13 @@ pub enum RuntimeEvent {
     RunAborted {
         reason: Option<String>,
     },
+}
+
+/// Serde default for `RunCompleted::stop_reason` on events serialized before
+/// the field existed: those only distinguished normal completion, so
+/// `EndTurn` (not truncated) is the faithful reading.
+fn default_run_completed_stop_reason() -> StopReason {
+    StopReason::EndTurn
 }
 
 #[cfg(test)]
@@ -218,6 +240,7 @@ mod tests {
             child_run_id,
             event: Box::new(RuntimeEvent::RunCompleted {
                 output: json!("done"),
+                stop_reason: StopReason::EndTurn,
             }),
         };
 
@@ -235,8 +258,49 @@ mod tests {
                 assert_eq!(child, child_run_id);
                 assert!(matches!(
                     event.as_ref(),
-                    RuntimeEvent::RunCompleted { output } if output == "done"
+                    RuntimeEvent::RunCompleted { output, .. } if output == "done"
                 ));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_completed_stop_reason_round_trips_through_serde() {
+        let event = RuntimeEvent::RunCompleted {
+            output: json!("cut off"),
+            stop_reason: StopReason::MaxTokens,
+        };
+
+        let value = serde_json::to_value(&event).expect("serialize event");
+        assert_eq!(
+            value,
+            json!({"RunCompleted": {"output": "cut off", "stop_reason": "MaxTokens"}})
+        );
+        let deserialized: RuntimeEvent = serde_json::from_value(value).expect("deserialize event");
+        assert!(matches!(
+            deserialized,
+            RuntimeEvent::RunCompleted {
+                stop_reason: StopReason::MaxTokens,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn run_completed_without_stop_reason_deserializes_as_end_turn() {
+        // Events serialized before the stop_reason field existed carry only
+        // `output`; they must still deserialize (serde default).
+        let legacy = json!({"RunCompleted": {"output": "done"}});
+        let event: RuntimeEvent = serde_json::from_value(legacy).expect("deserialize legacy event");
+
+        match event {
+            RuntimeEvent::RunCompleted {
+                output,
+                stop_reason,
+            } => {
+                assert_eq!(output, json!("done"));
+                assert_eq!(stop_reason, StopReason::EndTurn);
             }
             other => panic!("unexpected event: {other:?}"),
         }

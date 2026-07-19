@@ -188,6 +188,7 @@ impl Tool for AgentAsTool {
                 }
                 RuntimeEvent::RunCompleted {
                     output: child_output,
+                    ..
                 } => {
                     output = child_output.clone();
                 }

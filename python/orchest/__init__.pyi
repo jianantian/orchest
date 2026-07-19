@@ -282,6 +282,10 @@ class SubAgentFailedEvent(TypedDict):
 class RunCompletedEvent(TypedDict):
     type: Literal["run_completed"]
     output: JsonValue
+    # Why the completing model call stopped: "EndTurn" means `output` is
+    # complete; "MaxTokens" means it is truncated — continue generation,
+    # retry with a larger token budget, or fail; do not persist as-is.
+    stop_reason: str
     run_depth: int
     child_run_id: str | None
 

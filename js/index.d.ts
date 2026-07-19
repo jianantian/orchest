@@ -92,6 +92,24 @@ export type StreamEvent =
   | { Done: { usage: TokenUsage } }
   | unknown;
 
+/**
+ * Model stop reason for the completing turn, in the core serde JSON shape.
+ * "EndTurn" means the output is complete; "MaxTokens" means it is truncated —
+ * continue generation, retry with a larger token budget, or fail; do not
+ * persist truncated output as-is.
+ */
+export type StopReason =
+  | "EndTurn"
+  | "ToolUse"
+  | "MaxTokens"
+  | "StopSequence"
+  | "ContentFilter"
+  | "Refusal"
+  | "ContextWindowExceeded"
+  | "Pause"
+  | "Interrupted"
+  | { Other: string };
+
 export type RuntimeEvent =
   | { type: "run_started"; run_id: string; run_depth: number }
   | { type: "model_call_started"; step: number; run_depth: number }
@@ -120,7 +138,7 @@ export type RuntimeEvent =
   | { type: "run_restarted"; attempt: number; run_depth: number }
   | { type: "run_aborted"; reason: string | null; run_depth: number; child_run_id: string | null }
   | { type: "events_dropped"; subscriber_id: number; count: number; run_depth: number; child_run_id: string | null }
-  | { type: "run_completed"; output: unknown; run_depth: number }
+  | { type: "run_completed"; output: unknown; stop_reason: StopReason; run_depth: number }
   | { type: "run_failed"; error: string; run_depth: number };
 
 export interface HistoryMessage {

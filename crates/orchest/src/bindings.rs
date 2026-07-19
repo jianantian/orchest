@@ -205,4 +205,20 @@ mod tests {
         assert_eq!(to_snake_case("ApprovalDenied"), "approval_denied");
         assert_eq!(to_snake_case("AsyncToolProgress"), "async_tool_progress");
     }
+
+    #[test]
+    fn run_completed_wire_value_carries_stop_reason() {
+        // Py/Node bindings receive events through this wire shape; the
+        // truncation marker must survive the conversion.
+        let event = crate::events::RuntimeEvent::RunCompleted {
+            output: json!("cut off"),
+            stop_reason: crate::model::StopReason::MaxTokens,
+        };
+
+        let converted = super::runtime_event_to_wire_value(&event).expect("serialize event");
+
+        assert_eq!(converted["type"], "run_completed");
+        assert_eq!(converted["output"], json!("cut off"));
+        assert_eq!(converted["stop_reason"], json!("MaxTokens"));
+    }
 }

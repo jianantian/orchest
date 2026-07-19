@@ -960,7 +960,14 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 primary(&subs),
             )
             .await;
-            emit(&subs, RuntimeEvent::RunCompleted { output }).await;
+            emit(
+                &subs,
+                RuntimeEvent::RunCompleted {
+                    output,
+                    stop_reason: StopReason::EndTurn,
+                },
+            )
+            .await;
             return false;
         }
         StopReason::MaxTokens if tool_uses.is_empty() => {
@@ -972,7 +979,14 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 primary(&subs),
             )
             .await;
-            emit(&subs, RuntimeEvent::RunCompleted { output }).await;
+            emit(
+                &subs,
+                RuntimeEvent::RunCompleted {
+                    output,
+                    stop_reason: StopReason::MaxTokens,
+                },
+            )
+            .await;
             return false;
         }
         // Abnormal stop (e.g. ContextWindowExceeded) with no tool calls:

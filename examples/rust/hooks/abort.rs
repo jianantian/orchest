@@ -128,7 +128,7 @@ async fn main() {
             RuntimeEvent::HookPanicked { hook_name, message } => {
                 println!("[event] HookPanicked hook={hook_name} msg={message}");
             }
-            RuntimeEvent::RunCompleted { output } => println!("[event] RunCompleted: {output}"),
+            RuntimeEvent::RunCompleted { output, .. } => println!("[event] RunCompleted: {output}"),
             _ => {}
         }
     }
