@@ -108,10 +108,18 @@ impl SkillScanner {
     }
 
     fn find_skill_md(dir: &Path) -> Option<PathBuf> {
-        for name in &["SKILL.md", "skill.md"] {
-            let path = dir.join(name);
-            if path.exists() {
-                return Some(path);
+        // Match exact on-disk filenames instead of `exists()`: on
+        // case-insensitive filesystems `SKILL.md`.exists() also succeeds for
+        // a lowercase skill.md, which would record the wrong casing.
+        // allow-blocking-io: called inside spawn_blocking
+        let names: Vec<std::ffi::OsString> = std::fs::read_dir(dir)
+            .ok()?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name())
+            .collect();
+        for name in ["SKILL.md", "skill.md"] {
+            if names.iter().any(|n| n.as_os_str() == name) {
+                return Some(dir.join(name));
             }
         }
         None
@@ -138,7 +146,13 @@ impl SkillScanner {
             reason: format!("invalid frontmatter YAML: {e}"),
         })?;
 
+        // Keep the actual manifest filename (SKILL.md or skill.md) anchored
+        // at the canonicalized dir, so consumers never re-derive the casing.
         let abs_dir = std::fs::canonicalize(skill_dir).unwrap_or_else(|_| skill_dir.to_path_buf()); // allow-blocking-io: called inside spawn_blocking
+        let skill_md_path = match md_path.file_name() {
+            Some(file_name) => abs_dir.join(file_name),
+            None => md_path.to_path_buf(),
+        };
 
         let bundled_tools = raw
             .bundled_tools
@@ -163,6 +177,7 @@ impl SkillScanner {
             name: raw.name,
             description: raw.description,
             path: abs_dir,
+            skill_md_path,
             allowed_tools: raw.allowed_tools,
             bundled_tools,
             dependencies: raw.dependencies,
@@ -286,6 +301,24 @@ bundled_tools:
         assert_eq!(manifests[0].bundled_tools.len(), 1);
         assert_eq!(manifests[0].bundled_tools[0].name, "greet");
         assert_eq!(manifests[0].bundled_tools[0].executable, "python");
+    }
+
+    #[test]
+    fn scan_records_actual_skill_md_filename() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lower_dir = tmp.path().join("lower_skill");
+        fs::create_dir_all(&lower_dir).unwrap();
+        fs::write(
+            lower_dir.join("skill.md"),
+            "---\nname: lower_skill\ndescription: lowercase manifest\n---\n# Lower\n",
+        )
+        .unwrap();
+
+        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        assert!(outcome.warnings.is_empty());
+        assert_eq!(outcome.manifests.len(), 1);
+        let manifest = &outcome.manifests[0];
+        assert_eq!(manifest.skill_md_path, manifest.path.join("skill.md"));
     }
 
     #[test]

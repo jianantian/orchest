@@ -34,6 +34,7 @@ libc = "0.2"
 [dev-dependencies]
 orchest-provider = { path = "../orchest-provider", features = ["llm"] }
 metrics-util = "0.20"
+tracing-subscriber = { version = "0.3", features = ["fmt", "registry"] }
 
 [[test]]
 name = "ractor_poc"

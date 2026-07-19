@@ -289,6 +289,7 @@ fn skill_env_manager_uses_hashed_python_cache_dir() {
         name: "demo".into(),
         description: "demo".into(),
         path: tmp.path().join("demo"),
+        skill_md_path: tmp.path().join("demo").join("SKILL.md"),
         allowed_tools: None,
         bundled_tools: vec![],
         dependencies: SkillDependencies {

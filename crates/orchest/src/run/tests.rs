@@ -3608,7 +3608,7 @@ bundled_tools:
 }
 
 #[tokio::test]
-async fn register_skills_duplicate_tool_name_errors() {
+async fn register_skills_duplicate_tool_name_errors_in_strict_mode() {
     use std::fs;
 
     let tmp = tempfile::tempdir().unwrap();
@@ -3646,8 +3646,10 @@ bundled_tools:
 
     let (tx, _rx) = mpsc::channel(16);
     let mut registry = ToolRegistry::new();
+    let mut cfg = skills_cfg(tmp.path(), None);
+    cfg.strict = true;
 
-    let result = skills::register_skills(&skills_cfg(tmp.path(), None), &mut registry, &tx).await;
+    let result = skills::register_skills(&cfg, &mut registry, &tx).await;
 
     assert!(result.is_err());
     let err = result.unwrap_err();
@@ -4243,6 +4245,341 @@ bundled_tools:
         .iter()
         .any(|e| matches!(e, RuntimeEvent::ToolCallCompleted { tool, .. } if tool == "run_tool"));
     assert!(tool_completed, "run_tool should execute via skill loading");
+}
+
+// ── Registration resilience (issue 003) ─────────────────────────────────────
+
+/// Writes a skill with one bash bundled tool. `create_script: false` leaves
+/// the declared script missing, so tool construction fails at registration.
+fn create_skill_with_tool(
+    root: &std::path::Path,
+    dir_name: &str,
+    skill_name: &str,
+    tool_name: &str,
+    create_script: bool,
+) {
+    use std::fs;
+    let dir = root.join(dir_name);
+    fs::create_dir_all(dir.join("scripts")).unwrap();
+    fs::write(
+        dir.join("SKILL.md"),
+        format!(
+            r#"---
+name: {skill_name}
+description: {skill_name} desc
+bundled_tools:
+  - name: {tool_name}
+    description: tool
+    executable: bash
+    script: scripts/run.sh
+---
+"#
+        ),
+    )
+    .unwrap();
+    if create_script {
+        fs::write(dir.join("scripts/run.sh"), "#!/bin/sh\necho '{}'").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                dir.join("scripts/run.sh"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn register_skills_tolerates_bad_skill_and_keeps_good_ones() {
+    let tmp = tempfile::tempdir().unwrap();
+    create_skill_with_tool(tmp.path(), "good_skill", "good_skill", "good_tool", true);
+    // Bad: the bundled tool script does not exist, so canonicalize fails.
+    create_skill_with_tool(tmp.path(), "bad_skill", "bad_skill", "bad_tool", false);
+
+    let (tx, mut rx) = mpsc::channel(16);
+    let mut registry = ToolRegistry::new();
+
+    let registration = skills::register_skills(&skills_cfg(tmp.path(), None), &mut registry, &tx)
+        .await
+        .unwrap();
+
+    // The good skill is fully usable; the bad one is skipped atomically.
+    assert!(registry.contains("good_tool"));
+    assert!(!registry.contains("bad_tool"));
+    // The skipped skill is not disclosed either (no prompt injection, and
+    // load_skill cannot resolve it).
+    assert_eq!(registration.disclosed.len(), 1);
+    assert_eq!(registration.disclosed[0].name, "good_skill");
+
+    drop(tx);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    let warning = events.iter().find_map(|e| match e {
+        RuntimeEvent::SkillLoadWarning { path, reason } => Some((path, reason)),
+        _ => None,
+    });
+    let (path, reason) = warning.expect("expected SkillLoadWarning for the bad skill");
+    assert!(
+        path.ends_with("bad_skill/SKILL.md") || path.ends_with("bad_skill\\SKILL.md"),
+        "unexpected warning path: {path}"
+    );
+    assert!(
+        reason.contains("failed to create bundled tool 'bad_tool'"),
+        "unexpected warning reason: {reason}"
+    );
+    // Only registered skills can run, so only they warn about missing
+    // capabilities: good_skill warns (scripts/ without capabilities),
+    // bad_skill does not.
+    assert!(events.iter().any(|e| matches!(
+        e,
+        RuntimeEvent::SkillMissingCapabilities { skill_name } if skill_name == "good_skill"
+    )));
+    assert!(!events.iter().any(|e| matches!(
+        e,
+        RuntimeEvent::SkillMissingCapabilities { skill_name } if skill_name == "bad_skill"
+    )));
+}
+
+#[tokio::test]
+async fn register_skills_strict_mode_fails_on_bad_skill() {
+    let tmp = tempfile::tempdir().unwrap();
+    create_skill_with_tool(tmp.path(), "bad_skill", "bad_skill", "bad_tool", false);
+
+    let (tx, _rx) = mpsc::channel(16);
+    let mut registry = ToolRegistry::new();
+    let mut cfg = skills_cfg(tmp.path(), None);
+    cfg.strict = true;
+
+    let err = skills::register_skills(&cfg, &mut registry, &tx)
+        .await
+        .unwrap_err();
+    assert!(
+        err.contains("failed to create bundled tool 'bad_tool'"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn run_starts_with_bad_skill_and_serves_good_skill() {
+    let tmp = tempfile::tempdir().unwrap();
+    create_skill_with_tool(tmp.path(), "good_skill", "good_skill", "good_tool", true);
+    create_skill_with_tool(tmp.path(), "bad_skill", "bad_skill", "bad_tool", false);
+
+    let mut config = test_config();
+    config.skills.dir = Some(tmp.path().to_str().unwrap().to_string());
+
+    let model = Arc::new(CaptureFirstCallModel::new());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model.clone(), ToolRegistry::new());
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    // The run starts and completes normally despite the bad skill.
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::SkillLoadWarning { .. })));
+
+    // The model is offered the good skill's tool, never the bad one's.
+    let seen = model.seen.lock().unwrap();
+    let (_, tool_names) = &seen[0];
+    assert!(tool_names.iter().any(|n| n == "good_tool"));
+    assert!(!tool_names.iter().any(|n| n == "bad_tool"));
+}
+
+#[tokio::test]
+async fn strict_mode_fails_run_on_bad_skill() {
+    let tmp = tempfile::tempdir().unwrap();
+    create_skill_with_tool(tmp.path(), "bad_skill", "bad_skill", "bad_tool", false);
+
+    let mut config = test_config();
+    config.skills.dir = Some(tmp.path().to_str().unwrap().to_string());
+    config.skills.strict = true;
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    let error = events.iter().find_map(|e| match e {
+        RuntimeEvent::RunFailed { error } => Some(error.clone()),
+        _ => None,
+    });
+    let error = error.expect("expected RunFailed in strict mode");
+    assert!(
+        error.contains("skill loading failed"),
+        "unexpected RunFailed error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn register_skills_duplicate_skill_name_first_wins() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Directory paths sort aaa_dup before zzz_dup, so aaa_dup registers and
+    // zzz_dup is skipped deterministically.
+    create_skill_with_tool(tmp.path(), "aaa_dup", "dup_skill", "tool_aaa", true);
+    create_skill_with_tool(tmp.path(), "zzz_dup", "dup_skill", "tool_zzz", true);
+
+    let (tx, mut rx) = mpsc::channel(16);
+    let mut registry = ToolRegistry::new();
+
+    let registration = skills::register_skills(&skills_cfg(tmp.path(), None), &mut registry, &tx)
+        .await
+        .unwrap();
+
+    assert!(registry.contains("tool_aaa"));
+    assert!(!registry.contains("tool_zzz"));
+    assert_eq!(registration.disclosed.len(), 1);
+    assert!(registration.disclosed[0].dir.ends_with("aaa_dup"));
+
+    drop(tx);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    let reason = events.iter().find_map(|e| match e {
+        RuntimeEvent::SkillLoadWarning { reason, .. } => Some(reason.clone()),
+        _ => None,
+    });
+    let reason = reason.expect("expected duplicate-name SkillLoadWarning");
+    assert!(
+        reason.contains("duplicate skill name 'dup_skill'"),
+        "unexpected warning reason: {reason}"
+    );
+}
+
+#[tokio::test]
+async fn register_skills_strict_mode_fails_on_duplicate_skill_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    create_skill_with_tool(tmp.path(), "aaa_dup", "dup_skill", "tool_aaa", true);
+    create_skill_with_tool(tmp.path(), "zzz_dup", "dup_skill", "tool_zzz", true);
+
+    let (tx, _rx) = mpsc::channel(16);
+    let mut registry = ToolRegistry::new();
+    let mut cfg = skills_cfg(tmp.path(), None);
+    cfg.strict = true;
+
+    let err = skills::register_skills(&cfg, &mut registry, &tx)
+        .await
+        .unwrap_err();
+    assert!(
+        err.contains("duplicate skill name 'dup_skill'"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn register_skills_duplicate_tool_name_skips_conflicting_skill() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Both skills declare `same_tool`; skill_x sorts before skill_y.
+    create_skill_with_tool(tmp.path(), "skill_x", "skill_x", "same_tool", true);
+    create_skill_with_tool(tmp.path(), "skill_y", "skill_y", "same_tool", true);
+
+    let (tx, mut rx) = mpsc::channel(16);
+    let mut registry = ToolRegistry::new();
+
+    let registration = skills::register_skills(&skills_cfg(tmp.path(), None), &mut registry, &tx)
+        .await
+        .unwrap();
+
+    // The first skill (in directory-path order) keeps the tool; the
+    // conflicting skill is skipped entirely.
+    assert!(registry.contains("same_tool"));
+    assert_eq!(registration.disclosed.len(), 1);
+    assert_eq!(registration.disclosed[0].name, "skill_x");
+
+    drop(tx);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    let reason = events.iter().find_map(|e| match e {
+        RuntimeEvent::SkillLoadWarning { reason, .. } => Some(reason.clone()),
+        _ => None,
+    });
+    let reason = reason.expect("expected SkillLoadWarning for duplicate tool name");
+    assert!(
+        reason.contains("duplicate tool name 'same_tool'"),
+        "unexpected warning reason: {reason}"
+    );
+}
+
+#[tokio::test]
+async fn register_skills_registers_telemetry_for_upper_and_lower_case_skill_md() {
+    use std::fs;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let upper_dir = tmp.path().join("upper_skill");
+    fs::create_dir_all(&upper_dir).unwrap();
+    fs::write(
+        upper_dir.join("SKILL.md"),
+        "---\nname: upper_skill\ndescription: uppercase manifest\n---\n# Upper\n",
+    )
+    .unwrap();
+    let lower_dir = tmp.path().join("lower_skill");
+    fs::create_dir_all(&lower_dir).unwrap();
+    fs::write(
+        lower_dir.join("skill.md"),
+        "---\nname: lower_skill\ndescription: lowercase manifest\n---\n# Lower\n",
+    )
+    .unwrap();
+
+    let (tx, _rx) = mpsc::channel(16);
+    let mut registry = ToolRegistry::new();
+    skills::register_skills(&skills_cfg(tmp.path(), None), &mut registry, &tx)
+        .await
+        .unwrap();
+
+    // Reading either manifest file through read_file must emit
+    // SkillContentRead — lowercase skill.md exactly like SKILL.md.
+    let read_file = registry.get("read_file").expect("read_file registered");
+    let (event_tx, mut events) = mpsc::channel(16);
+    let ctx = ToolContext {
+        run_id: RunId::new(),
+        run_depth: 0,
+        tool_call_id: "tc_1".into(),
+        event_tx: Some(event_tx),
+        webhook_base_url: None,
+        approval_bus: crate::run::handle::ApprovalBus::default(),
+        remaining_budget: crate::budget::BudgetConfig::default(),
+        parent_messages: vec![],
+    };
+    read_file
+        .execute(
+            json!({"path": upper_dir.join("SKILL.md").to_str().unwrap()}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    read_file
+        .execute(
+            json!({"path": lower_dir.join("skill.md").to_str().unwrap()}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    let mut seen = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let RuntimeEvent::SkillContentRead { skill_name, .. } = event {
+            seen.push(skill_name);
+        }
+    }
+    assert_eq!(
+        seen,
+        vec!["upper_skill".to_string(), "lower_skill".to_string()]
+    );
 }
 
 // ── Sub-agent approval routing tests ──────────────────────────

@@ -13,6 +13,12 @@ pub struct SkillManifest {
     pub name: String,
     pub description: String,
     pub path: PathBuf,
+    /// The skill manifest file the scanner actually parsed (`SKILL.md` or
+    /// lowercase `skill.md`), resolved against the canonicalized skill
+    /// directory. Telemetry registration uses this instead of assuming an
+    /// uppercase filename.
+    #[serde(default)]
+    pub skill_md_path: PathBuf,
     pub allowed_tools: Option<Vec<String>>,
     pub bundled_tools: Vec<BundledToolDef>,
     #[serde(default)]

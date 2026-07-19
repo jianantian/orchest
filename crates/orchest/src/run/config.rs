@@ -193,12 +193,28 @@ impl Default for ModelConfig {
     }
 }
 
+/// Skill registration for a run.
+///
+/// Registration is **fault-tolerant by default**: a skill that fails to
+/// register (bundled tool script cannot be resolved, tool name already
+/// taken, non-whitelisted executable) is skipped with a `SkillLoadWarning`
+/// event carrying the path and reason, and the run starts without it.
+/// Skipped skills never appear in the progressive-disclosure list. With
+/// `strict: true` any such failure fails the run at startup instead.
+///
+/// Duplicate skill names are resolved deterministically: scanned manifests
+/// are processed in ascending directory-path order, the first registration
+/// wins, and later same-name skills are skipped with a warning.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SkillsConfig {
     pub dir: Option<String>,
     pub allowed: Option<Vec<String>>,
     #[serde(default)]
     pub disclosure: SkillDisclosure,
+    /// Fail the run at startup when any skill fails to register, instead of
+    /// skipping it with a warning. Defaults to `false` (fault-tolerant).
+    #[serde(default)]
+    pub strict: bool,
 }
 
 /// Progressive skill disclosure level for a run. `Progressive` (default)
@@ -576,6 +592,14 @@ impl AgentConfigBuilder {
         self.skills.disclosure = disclosure;
         self
     }
+    /// Enable strict skill registration. Off by default: a skill that fails
+    /// to register is skipped with a `SkillLoadWarning` and the run starts
+    /// without it. When enabled, any skill registration failure fails the
+    /// run at startup (`RunFailed`) — useful in CI or debugging.
+    pub fn skills_strict(mut self, strict: bool) -> Self {
+        self.skills.strict = strict;
+        self
+    }
     pub fn max_steps(mut self, n: u32) -> Self {
         self.runtime.max_steps = n;
         self
@@ -783,6 +807,17 @@ mod tests {
             config.runtime.tool_execution_policy,
             ToolExecutionPolicy::ParallelSafe
         );
+    }
+
+    #[test]
+    fn builder_skills_strict_defaults_off_and_toggles() {
+        let config = AgentConfig::builder("m").build().unwrap();
+        assert!(!config.skills.strict);
+        let config = AgentConfig::builder("m")
+            .skills_strict(true)
+            .build()
+            .unwrap();
+        assert!(config.skills.strict);
     }
 
     #[test]
