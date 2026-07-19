@@ -192,6 +192,108 @@ async fn context_window_exceeded_fails_before_model_call() {
     ));
 }
 
+// ── context_window backfill from catalog capabilities (v0.13 #221) ──────────
+
+/// Model whose `capabilities()` reports the catalog's `context_window`,
+/// mirroring how registry-built adapters expose it.
+struct CatalogCapsModel {
+    context_window_size: Option<u64>,
+    call_count: AtomicU32,
+}
+
+impl CatalogCapsModel {
+    fn new(context_window_size: Option<u64>) -> Self {
+        Self {
+            context_window_size,
+            call_count: AtomicU32::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for CatalogCapsModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities {
+            context_window_size: self.context_window_size,
+            ..ModelCapabilities::default()
+        }
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        self.call_count.fetch_add(1, Ordering::SeqCst);
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("hello".into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[test]
+fn backfill_context_window_from_catalog_when_unset() {
+    let mut config = test_config();
+    let model = CatalogCapsModel::new(Some(200_000));
+    actor::backfill_context_window_size(&mut config, &model);
+    assert_eq!(config.model.spec.context_window_size, Some(200_000));
+}
+
+#[test]
+fn backfill_context_window_keeps_explicit_value() {
+    let mut config = test_config();
+    config.model.spec.context_window_size = Some(50_000);
+    let model = CatalogCapsModel::new(Some(200_000));
+    actor::backfill_context_window_size(&mut config, &model);
+    assert_eq!(config.model.spec.context_window_size, Some(50_000));
+}
+
+#[test]
+fn backfill_context_window_stays_none_without_catalog_value() {
+    let mut config = test_config();
+    let model = CatalogCapsModel::new(None);
+    actor::backfill_context_window_size(&mut config, &model);
+    assert_eq!(config.model.spec.context_window_size, None);
+}
+
+/// The behavior change that matters downstream (#221): with the backfill in
+/// place, the pre-call hard validation fires for registry-built models even
+/// though the caller never set `context_window_size`.
+#[tokio::test]
+async fn context_window_backfill_activates_precall_validation() {
+    let model = Arc::new(CatalogCapsModel::new(Some(1)));
+    let model_for_run: Arc<dyn ModelAdapter> = model.clone();
+    let registry = ToolRegistry::new();
+
+    let (handle, mut rx) = AgentRun::start(
+        test_config(),
+        "this input exceeds one token".into(),
+        model_for_run,
+        registry,
+    );
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert_eq!(model.call_count.load(Ordering::SeqCst), 0);
+    assert!(events.iter().any(
+        |event| matches!(event, RuntimeEvent::RunFailed { error } if error.contains("context window exceeded"))
+    ));
+}
+
 // ── Abnormal stop_reason terminates the run (hotfix 2026_07_18b #216) ────────
 
 /// Always answers with an abnormal stop_reason and no tool_use.

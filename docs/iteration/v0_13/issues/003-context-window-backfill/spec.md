@@ -10,11 +10,11 @@ provider registry 构建模型时,把 catalog 的 `context_window` 回填到 `Mo
 
 ## 验收标准
 
-- [ ] 经 registry 创建且 catalog 有 `context_window` 的模型,`ModelSpec.context_window_size` 等于 catalog 值
-- [ ] 使用方显式设置的 `context_window_size` 不被覆盖
-- [ ] catalog 无 `context_window` 的模型保持 None(行为与现状一致)
-- [ ] 测试:回填 / 不覆盖 / 无字段三分支
-- [ ] 四件套 + cargo doc 全绿
+- [x] 经 registry 创建且 catalog 有 `context_window` 的模型,`ModelSpec.context_window_size` 等于 catalog 值
+- [x] 使用方显式设置的 `context_window_size` 不被覆盖
+- [x] catalog 无 `context_window` 的模型保持 None(行为与现状一致)
+- [x] 测试:回填 / 不覆盖 / 无字段三分支
+- [x] 四件套 + cargo doc 全绿
 
 ## 备注
 
