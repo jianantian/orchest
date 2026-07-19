@@ -16,8 +16,9 @@ use serde_json::Value;
 use tokio::sync::Mutex as TokioMutex;
 
 use orchest::bindings::{
-    budget_config_from_binding, parse_binding_approval, parse_binding_approval_mode,
-    runtime_event_to_wire_value, BindingBudgetConfig, BindingNameStyle,
+    budget_config_from_binding, messages_from_wire_values, parse_binding_approval,
+    parse_binding_approval_mode, runtime_event_to_wire_value, BindingBudgetConfig,
+    BindingNameStyle,
 };
 use orchest::model::{
     CachePolicy, CompatibilityPolicy, ModelSpec, ProviderRuntimeConfig,
@@ -590,7 +591,11 @@ impl Agent {
     }
 
     #[napi]
-    pub async fn run_sync(&self, input: String) -> napi::Result<Vec<serde_json::Value>> {
+    pub async fn run_sync(
+        &self,
+        input: String,
+        messages: Option<Vec<Value>>,
+    ) -> napi::Result<Vec<serde_json::Value>> {
         let config = self.build_config()?;
 
         let mut registry = ToolRegistry::new();
@@ -605,10 +610,17 @@ impl Agent {
                 .map_err(|e| napi::Error::from_reason(format!("failed to create model: {e}")))?,
         );
 
+        let initial_messages = messages_from_wire_values(messages.unwrap_or_default())
+            .map_err(|e| napi::Error::from_reason(format!("invalid `messages` entry: {e}")))?;
         let run_handle_ref = Arc::clone(&self.run_handle);
 
-        let (handle, mut event_rx) =
-            AgentRun::start(config, RunInput::text(input), model, registry);
+        let (handle, mut event_rx) = AgentRun::start_with_messages(
+            config,
+            initial_messages,
+            RunInput::text(input),
+            model,
+            registry,
+        );
 
         {
             let mut guard = run_handle_ref.lock().await;
@@ -638,8 +650,15 @@ impl Agent {
         Ok(result)
     }
 
-    #[napi(ts_args_type = "input: string, onEvent: (event: Record<string, unknown>) => void")]
-    pub fn run_stream(&self, input: String, on_event: napi::JsFunction) -> napi::Result<()> {
+    #[napi(
+        ts_args_type = "input: string, onEvent: (event: Record<string, unknown>) => void, messages?: Array<Record<string, unknown>>"
+    )]
+    pub fn run_stream(
+        &self,
+        input: String,
+        on_event: napi::JsFunction,
+        messages: Option<Vec<Value>>,
+    ) -> napi::Result<()> {
         let config = self.build_config()?;
 
         let mut registry = ToolRegistry::new();
@@ -654,6 +673,9 @@ impl Agent {
                 .map_err(|e| napi::Error::from_reason(format!("failed to create model: {e}")))?,
         );
 
+        let initial_messages = messages_from_wire_values(messages.unwrap_or_default())
+            .map_err(|e| napi::Error::from_reason(format!("invalid `messages` entry: {e}")))?;
+
         let tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = on_event
             .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<Value>| {
                 let js_value = ctx.env.to_js_value(&ctx.value)?;
@@ -665,8 +687,13 @@ impl Agent {
         let rt = shared_runtime();
 
         rt.block_on(async {
-            let (handle, mut event_rx) =
-                AgentRun::start(config, RunInput::text(input), model, registry);
+            let (handle, mut event_rx) = AgentRun::start_with_messages(
+                config,
+                initial_messages,
+                RunInput::text(input),
+                model,
+                registry,
+            );
 
             {
                 let mut guard = run_handle_ref.lock().await;

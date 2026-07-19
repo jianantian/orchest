@@ -15,8 +15,9 @@ use serde_json::Value;
 use tokio::sync::Mutex as TokioMutex;
 
 use orchest::bindings::{
-    budget_config_from_binding, parse_binding_approval, parse_binding_approval_mode,
-    runtime_event_to_wire_value, BindingBudgetConfig, BindingNameStyle,
+    budget_config_from_binding, messages_from_wire_values, parse_binding_approval,
+    parse_binding_approval_mode, runtime_event_to_wire_value, BindingBudgetConfig,
+    BindingNameStyle,
 };
 use orchest::events::RuntimeEvent;
 use orchest::model::{
@@ -343,6 +344,32 @@ fn infer_schema_from_hints(py: Python<'_>, func: &Py<PyAny>) -> PyResult<Value> 
         "properties": properties,
         "required": required
     }))
+}
+
+/// Converts a Python list of message dicts (the serde JSON shape of the core
+/// `Message` type) into core messages for `AgentRun::start_with_messages`.
+/// Conversion goes through the stdlib `json` module, mirroring
+/// `runtime_event_to_dict` in the opposite direction.
+fn py_messages_to_core(
+    py: Python<'_>,
+    messages: Option<Vec<Py<PyAny>>>,
+) -> PyResult<Vec<orchest::model::Message>> {
+    let Some(messages) = messages else {
+        return Ok(vec![]);
+    };
+    let json_mod = py.import("json")?;
+    let mut values = Vec::with_capacity(messages.len());
+    for message in &messages {
+        let json_str: String = json_mod
+            .call_method1("dumps", (message.bind(py),))?
+            .extract()?;
+        values.push(
+            serde_json::from_str(&json_str)
+                .map_err(|e| PyRuntimeError::new_err(format!("failed to parse message: {e}")))?,
+        );
+    }
+    messages_from_wire_values(values)
+        .map_err(|e| PyRuntimeError::new_err(format!("invalid `messages` entry: {e}")))
 }
 
 fn runtime_event_to_dict(py: Python<'_>, event: &RuntimeEvent) -> PyResult<Py<PyDict>> {
@@ -723,14 +750,22 @@ impl Agent {
 
     /// Synchronous run: collects all events and returns as a list.
     /// Compatibility helper for simple use cases.
+    ///
+    /// `messages` (optional) is the prior conversation as a list of message
+    /// dicts in the core serde shape, e.g.
+    /// `{"role": "user", "content": [{"Text": "..."}]}`; when given, the run
+    /// starts via `AgentRun::start_with_messages` with that history.
+    #[pyo3(signature = (input, messages=None))]
     fn run_sync<'py>(
         &self,
         py: Python<'py>,
         input: String,
+        messages: Option<Vec<Py<PyAny>>>,
     ) -> PyResult<Bound<'py, pyo3::types::PyList>> {
         let config = self.build_config()?;
         let registry = self.build_registry()?;
         let model_adapter = self.build_model()?;
+        let initial_messages = py_messages_to_core(py, messages)?;
         let run_handle_ref = Arc::clone(&self.run_handle);
 
         let rt = tokio::runtime::Runtime::new()
@@ -738,8 +773,13 @@ impl Agent {
 
         let events = py.detach(|| {
             rt.block_on(async {
-                let (handle, mut event_rx) =
-                    AgentRun::start(config, RunInput::text(input), model_adapter, registry);
+                let (handle, mut event_rx) = AgentRun::start_with_messages(
+                    config,
+                    initial_messages,
+                    RunInput::text(input),
+                    model_adapter,
+                    registry,
+                );
 
                 // Store the handle for respond_approval
                 {
@@ -776,26 +816,40 @@ impl Agent {
     /// Async-compatible run: returns a list of events (async iteration
     /// over a channel requires a Python async generator, which is complex
     /// in pyo3. This method releases the GIL during execution.)
+    ///
+    /// `messages` (optional) is the prior conversation, as in `run_sync`.
+    #[pyo3(signature = (input, messages=None))]
     fn run<'py>(
         &self,
         py: Python<'py>,
         input: String,
+        messages: Option<Vec<Py<PyAny>>>,
     ) -> PyResult<Bound<'py, pyo3::types::PyList>> {
         // For now, run and run_sync have the same implementation.
         // True async iteration would require pyo3-asyncio integration
         // which adds significant complexity. The key improvement is that
         // we release the GIL during execution via py.detach().
-        self.run_sync(py, input)
+        self.run_sync(py, input, messages)
     }
 
     /// Streaming run: calls `on_event(dict)` for each event as it arrives.
     ///
+    /// `messages` (optional) is the prior conversation, as in `run_sync`.
+    ///
     /// Runs the agent in a background thread and processes events on the
     /// Python side with periodic signal checks so Ctrl+C works.
-    fn run_stream<'py>(&self, py: Python<'py>, input: String, on_event: Py<PyAny>) -> PyResult<()> {
+    #[pyo3(signature = (input, on_event, messages=None))]
+    fn run_stream<'py>(
+        &self,
+        py: Python<'py>,
+        input: String,
+        on_event: Py<PyAny>,
+        messages: Option<Vec<Py<PyAny>>>,
+    ) -> PyResult<()> {
         let config = self.build_config()?;
         let registry = self.build_registry()?;
         let model_adapter = self.build_model()?;
+        let initial_messages = py_messages_to_core(py, messages)?;
         let run_handle_ref = Arc::clone(&self.run_handle);
 
         let (tx, rx) = std::sync::mpsc::channel::<RuntimeEvent>();
@@ -803,8 +857,13 @@ impl Agent {
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             rt.block_on(async move {
-                let (handle, mut event_rx) =
-                    AgentRun::start(config, RunInput::text(input), model_adapter, registry);
+                let (handle, mut event_rx) = AgentRun::start_with_messages(
+                    config,
+                    initial_messages,
+                    RunInput::text(input),
+                    model_adapter,
+                    registry,
+                );
                 {
                     let mut guard = run_handle_ref.lock().await;
                     *guard = Some(handle);

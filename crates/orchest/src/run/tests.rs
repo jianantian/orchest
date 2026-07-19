@@ -6661,6 +6661,161 @@ async fn start_with_image_run_input_reaches_model() {
 }
 
 #[tokio::test]
+async fn start_with_messages_assembles_system_history_then_input() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(MessageCapturingModel {
+        captured: captured.clone(),
+    });
+    let registry = ToolRegistry::new();
+    let config = test_config();
+
+    let history = vec![
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text("first question".into())],
+        },
+        Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::Text("first answer".into())],
+        },
+    ];
+    let (handle, mut rx) = AgentRun::start_with_messages(
+        config,
+        history,
+        RunInput::text("second question"),
+        model,
+        registry,
+    );
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let calls = captured.lock().unwrap();
+    let first_call = calls.first().expect("model should have been called");
+    let roles: Vec<Role> = first_call.iter().map(|m| m.role).collect();
+    assert_eq!(
+        roles,
+        vec![Role::System, Role::User, Role::Assistant, Role::User],
+        "system prompt first, then the history in order, then the new user turn"
+    );
+    assert!(
+        matches!(&first_call[0].content[0], ContentBlock::Text(t) if t == "you are helpful"),
+        "first message carries the config system prompt (non-empty on the wire)"
+    );
+    assert!(matches!(&first_call[1].content[0], ContentBlock::Text(t) if t == "first question"));
+    assert!(matches!(&first_call[2].content[0], ContentBlock::Text(t) if t == "first answer"));
+    assert!(matches!(&first_call[3].content[0], ContentBlock::Text(t) if t == "second question"));
+}
+
+#[tokio::test]
+async fn start_with_messages_preserves_tool_use_result_pairing() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(MessageCapturingModel {
+        captured: captured.clone(),
+    });
+    let registry = ToolRegistry::new();
+    let config = test_config();
+
+    let history = vec![
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text("what time is it?".into())],
+        },
+        Message {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Text("let me check".into()),
+                ContentBlock::ToolUse {
+                    id: "call_1".into(),
+                    name: "clock".into(),
+                    input: json!({}),
+                },
+            ],
+        },
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: "call_1".into(),
+                content: json!("noon"),
+            }],
+        },
+    ];
+    let (handle, mut rx) =
+        AgentRun::start_with_messages(config, history, RunInput::text("and now?"), model, registry);
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let calls = captured.lock().unwrap();
+    let first_call = calls.first().expect("model should have been called");
+
+    let tool_use_pos = first_call.iter().position(|m| {
+        m.role == Role::Assistant
+            && m.content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolUse { id, .. } if id == "call_1"))
+    });
+    let tool_result_pos = first_call.iter().position(|m| {
+        m.content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "call_1"))
+    });
+    let tool_use_pos = tool_use_pos.expect("ToolUse block must survive assembly");
+    let tool_result_pos = tool_result_pos.expect("ToolResult block must survive assembly");
+    assert!(
+        tool_use_pos < tool_result_pos,
+        "ToolResult must stay after its ToolUse (pairing order preserved)"
+    );
+}
+
+#[tokio::test]
+async fn start_matches_start_with_messages_with_empty_history() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(MessageCapturingModel {
+        captured: captured.clone(),
+    });
+    let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, ToolRegistry::new());
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let captured_empty = Arc::new(Mutex::new(Vec::new()));
+    let model2: Arc<dyn ModelAdapter> = Arc::new(MessageCapturingModel {
+        captured: captured_empty.clone(),
+    });
+    let (handle2, mut rx2) = AgentRun::start_with_messages(
+        test_config(),
+        vec![],
+        RunInput::text("hi"),
+        model2,
+        ToolRegistry::new(),
+    );
+    while rx2.recv().await.is_some() {}
+    handle2.wait().await;
+
+    let start_first = captured
+        .lock()
+        .unwrap()
+        .first()
+        .expect("start() should call the model")
+        .clone();
+    let empty_history_first = captured_empty
+        .lock()
+        .unwrap()
+        .first()
+        .expect("start_with_messages([]) should call the model")
+        .clone();
+
+    let roles: Vec<Role> = start_first.iter().map(|m| m.role).collect();
+    assert_eq!(
+        roles,
+        vec![Role::System, Role::User],
+        "start() still sends exactly system prompt + single user turn"
+    );
+    assert_eq!(
+        start_first, empty_history_first,
+        "start() must be equivalent to start_with_messages with empty history"
+    );
+}
+
+#[tokio::test]
 async fn resume_with_input_appends_new_user_turn() {
     use crate::session::{InMemorySessionStore, SessionStore};
 

@@ -123,6 +123,18 @@ export type RuntimeEvent =
   | { type: "run_completed"; output: unknown; run_depth: number }
   | { type: "run_failed"; error: string; run_depth: number };
 
+export interface HistoryMessage {
+  /** "system" | "user" | "assistant" | "tool" (plus provider-specific roles). */
+  role: string;
+  /**
+   * Content blocks in the core serde JSON shape, e.g. `{ Text: "..." }`,
+   * `{ ToolUse: { id, name, input } }`, or `{ ToolResult: { tool_use_id, content } }`.
+   * ToolUse blocks belong in assistant messages, each matching ToolResult in
+   * the immediately following user message.
+   */
+  content: Array<Record<string, unknown>>;
+}
+
 export class Agent {
   constructor(options: AgentOptions);
   registerTool(options: ToolRegistration): void;
@@ -133,7 +145,11 @@ export class Agent {
     handler: (input: any) => any,
     options?: { sideEffect?: boolean; approval?: string },
   ): void;
-  runSync(input: string): RuntimeEvent[];
-  runStream(input: string, onEvent: (event: RuntimeEvent) => void): void;
+  runSync(input: string, messages?: HistoryMessage[]): RuntimeEvent[];
+  runStream(
+    input: string,
+    onEvent: (event: RuntimeEvent) => void,
+    messages?: HistoryMessage[],
+  ): void;
   respondApproval(runId: string, approved: boolean): void;
 }

@@ -20,14 +20,15 @@ Py/Node 绑定透传多轮启动(若绑定层改造成本明显超出,记录为�
 
 ## 验收标准
 
-- [ ] 使用方能以 `.system_prompt(...)` + `[User, Assistant, …]` 历史启动 run;Anthropic Messages 协议 wire 上 `system` 字段非空、历史消息角色边界保留
-- [ ] `start()` 现有行为不变(现有测试不回归)
-- [ ] 历史中含 ToolUse/ToolResult blocks 时 wire 合法(不破坏 tool_use 配对)
-- [ ] rustdoc 写明 initial_messages 的角色约定与 System 消息处理
-- [ ] Py/Node 绑定透传,或显式记录为绑定后续项
-- [ ] 四件套 + cargo doc 全绿
+- [x] 使用方能以 `.system_prompt(...)` + `[User, Assistant, …]` 历史启动 run;Anthropic Messages 协议 wire 上 `system` 字段非空、历史消息角色边界保留
+- [x] `start()` 现有行为不变(现有测试不回归)
+- [x] 历史中含 ToolUse/ToolResult blocks 时 wire 合法(不破坏 tool_use 配对)
+- [x] rustdoc 写明 initial_messages 的角色约定与 System 消息处理
+- [x] Py/Node 绑定透传,或显式记录为绑定后续项
+- [x] 四件套 + cargo doc 全绿
 
 ## 备注
 
 - 本 issue 是 demo 去拍平(optimization-plan D6)的前置;demo 侧改造不在本迭代。
 - `resume_with_input` 走的是 SessionStore 快照路径,与本入口互补、不动。
+- 绑定透传形态(2026-07):Py `Agent.run/run_sync/run_stream(input, messages=None)` 与 Node `runSync(input, messages?)`/`runStream(input, onEvent, messages?)`;`messages` 取核心 `Message` 的 serde JSON 形状(与 session 快照一致,如 `{"role": "user", "content": [{"Text": "..."}]}`),转换 helper 共享于 `orchest::bindings::messages_from_wire_values`。

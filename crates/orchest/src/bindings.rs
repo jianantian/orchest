@@ -61,6 +61,17 @@ pub fn budget_config_from_binding(input: Option<BindingBudgetConfig>) -> BudgetC
     })
 }
 
+/// Parses binding-supplied conversation history for
+/// [`crate::run::AgentRun::start_with_messages`]. Each value is the serde
+/// JSON shape of [`crate::model::Message`] (e.g.
+/// `{"role": "user", "content": [{"Text": "..."}]}`) — the same shape
+/// session snapshots serialize to.
+pub fn messages_from_wire_values(
+    values: Vec<Value>,
+) -> Result<Vec<crate::model::Message>, serde_json::Error> {
+    values.into_iter().map(serde_json::from_value).collect()
+}
+
 pub fn runtime_event_to_wire_value(event: &RuntimeEvent) -> Result<Value, serde_json::Error> {
     serde_json::to_value(event).map(runtime_event_value_to_wire_value)
 }
@@ -106,8 +117,9 @@ pub fn to_snake_case(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        budget_config_from_binding, parse_binding_approval, parse_binding_approval_mode,
-        runtime_event_value_to_wire_value, to_snake_case, BindingBudgetConfig, BindingNameStyle,
+        budget_config_from_binding, messages_from_wire_values, parse_binding_approval,
+        parse_binding_approval_mode, runtime_event_value_to_wire_value, to_snake_case,
+        BindingBudgetConfig, BindingNameStyle,
     };
     use crate::run::ApprovalMode;
     use crate::tool::Approval;
@@ -171,6 +183,20 @@ mod tests {
         assert_eq!(converted["run_id"], "r1");
         assert_eq!(converted["run_depth"], 0);
         assert_eq!(converted["child_run_id"], Value::Null);
+    }
+
+    #[test]
+    fn wire_messages_parse_in_snapshot_shape() {
+        let values = vec![
+            json!({"role": "user", "content": [{"Text": "hi"}]}),
+            json!({"role": "assistant", "content": [{"ToolUse": {"id": "t1", "name": "echo", "input": {}}}]}),
+        ];
+        let messages = messages_from_wire_values(values).expect("valid wire messages");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, crate::model::Role::User);
+        assert_eq!(messages[1].role, crate::model::Role::Assistant);
+
+        assert!(messages_from_wire_values(vec![json!({"role": "nope", "content": []})]).is_err());
     }
 
     #[test]

@@ -35,6 +35,18 @@ export interface BudgetOptions {
   maxCostUsd?: number;
 }
 
+export interface HistoryMessage {
+  /** "system" | "user" | "assistant" | "tool" (plus provider-specific roles). */
+  role: string;
+  /**
+   * Content blocks in the core serde JSON shape, e.g. `{ Text: "..." }`,
+   * `{ ToolUse: { id, name, input } }`, or `{ ToolResult: { tool_use_id, content } }`.
+   * ToolUse blocks belong in assistant messages, each matching ToolResult in
+   * the immediately following user message.
+   */
+  content: Array<Record<string, unknown>>;
+}
+
 export interface ToolRegistration {
   name: string;
   description: string;
