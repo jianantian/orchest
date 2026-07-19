@@ -178,5 +178,6 @@ mod tests {
         assert_eq!(to_snake_case("RunStarted"), "run_started");
         assert_eq!(to_snake_case("ApprovalDenied"), "approval_denied");
         assert_eq!(to_snake_case("AsyncToolProgress"), "async_tool_progress");
+        assert_eq!(to_snake_case("SkillLoadWarning"), "skill_load_warning");
     }
 }

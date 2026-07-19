@@ -143,6 +143,10 @@ pub enum RuntimeEvent {
     SkillMissingCapabilities {
         skill_name: String,
     },
+    SkillLoadWarning {
+        path: String,
+        reason: String,
+    },
     ContextCompacted {
         removed_messages: usize,
         summary_tokens: u32,
@@ -208,6 +212,26 @@ pub enum RuntimeEvent {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn skill_load_warning_round_trips_through_serde() {
+        let event = RuntimeEvent::SkillLoadWarning {
+            path: "skills/bad/SKILL.md".to_string(),
+            reason: "invalid frontmatter YAML: missing field `name`".to_string(),
+        };
+
+        let serialized = serde_json::to_string(&event).expect("serialize event");
+        let deserialized: RuntimeEvent =
+            serde_json::from_str(&serialized).expect("deserialize event");
+
+        match deserialized {
+            RuntimeEvent::SkillLoadWarning { path, reason } => {
+                assert_eq!(path, "skills/bad/SKILL.md");
+                assert!(reason.contains("invalid frontmatter YAML"));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
 
     #[test]
     fn sub_agent_event_round_trips_through_serde() {

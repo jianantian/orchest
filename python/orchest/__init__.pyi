@@ -241,6 +241,14 @@ class SkillMissingCapabilitiesEvent(TypedDict):
     child_run_id: str | None
 
 
+class SkillLoadWarningEvent(TypedDict):
+    type: Literal["skill_load_warning"]
+    path: str
+    reason: str
+    run_depth: int
+    child_run_id: str | None
+
+
 class ContextCompactedEvent(TypedDict):
     type: Literal["context_compacted"]
     removed_messages: int
@@ -335,6 +343,7 @@ RuntimeEvent: TypeAlias = (
     | RuntimeWarningEvent
     | SkillDependencyErrorEvent
     | SkillMissingCapabilitiesEvent
+    | SkillLoadWarningEvent
     | ContextCompactedEvent
     | ChildRunEvent
     | SubAgentStartedEvent

@@ -23,10 +23,31 @@ pub(crate) async fn register_skills(
     use std::path::Path;
 
     let dir = Path::new(skills_dir).to_path_buf();
-    let manifests = tokio::task::spawn_blocking(move || SkillScanner::scan(&dir))
+    let outcome = tokio::task::spawn_blocking(move || SkillScanner::scan(&dir))
         .await
         .map_err(|e| format!("skill scan join error: {e}"))?
         .map_err(|e| format!("skill scan failed: {e}"))?;
+
+    // Surface every failed skill before the happy path: a skill that vanished
+    // silently is undebuggable. The event stream is the product-facing channel;
+    // tracing is the diagnostic fallback.
+    for warning in &outcome.warnings {
+        tracing::warn!(
+            path = %warning.path.display(),
+            reason = %warning.reason,
+            "skill failed to load"
+        );
+        emit(
+            tx,
+            RuntimeEvent::SkillLoadWarning {
+                path: warning.path.display().to_string(),
+                reason: warning.reason.clone(),
+            },
+        )
+        .await;
+    }
+
+    let manifests = outcome.manifests;
     if manifests.is_empty() {
         return Ok(None);
     }

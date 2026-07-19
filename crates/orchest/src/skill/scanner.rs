@@ -6,7 +6,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::types::{
-    BundledToolDef, ScanError, SkillCapabilities, SkillDependencies, SkillManifest,
+    BundledToolDef, ScanError, ScanOutcome, ScanWarning, SkillCapabilities, SkillDependencies,
+    SkillManifest,
 };
 
 pub struct SkillScanner;
@@ -56,34 +57,51 @@ struct RawFilesystemCapabilities {
 }
 
 impl SkillScanner {
-    pub fn scan(dir: &Path) -> Result<Vec<SkillManifest>, ScanError> {
-        let mut manifests = Vec::new();
+    pub fn scan(dir: &Path) -> Result<ScanOutcome, ScanError> {
+        let mut outcome = ScanOutcome::default();
 
         if !dir.exists() {
-            return Ok(manifests);
+            return Ok(outcome);
         }
 
-        Self::scan_recursive(dir, &mut manifests);
-        Ok(manifests)
+        Self::scan_recursive(dir, &mut outcome);
+        Ok(outcome)
     }
 
-    fn scan_recursive(dir: &Path, manifests: &mut Vec<SkillManifest>) {
+    fn scan_recursive(dir: &Path, outcome: &mut ScanOutcome) {
         let entries = match std::fs::read_dir(dir) {
             // allow-blocking-io: called inside spawn_blocking
             Ok(e) => e,
-            Err(_) => return,
+            Err(e) => {
+                outcome.warnings.push(ScanWarning {
+                    path: dir.to_path_buf(),
+                    reason: format!("failed to read directory: {e}"),
+                });
+                return;
+            }
         };
 
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(e) => {
+                    outcome.warnings.push(ScanWarning {
+                        path: dir.to_path_buf(),
+                        reason: format!("failed to read directory entry: {e}"),
+                    });
+                    continue;
+                }
+            };
             let path = entry.path();
             if path.is_dir() {
                 let skill_md = Self::find_skill_md(&path);
                 if let Some(md_path) = skill_md {
-                    if let Some(manifest) = Self::parse_skill_md(&md_path, &path) {
-                        manifests.push(manifest);
+                    match Self::parse_skill_md(&md_path, &path) {
+                        Ok(manifest) => outcome.manifests.push(manifest),
+                        Err(warning) => outcome.warnings.push(warning),
                     }
                 } else {
-                    Self::scan_recursive(&path, manifests);
+                    Self::scan_recursive(&path, outcome);
                 }
             }
         }
@@ -99,12 +117,26 @@ impl SkillScanner {
         None
     }
 
-    fn parse_skill_md(md_path: &Path, skill_dir: &Path) -> Option<SkillManifest> {
-        let content = std::fs::read_to_string(md_path).ok()?; // allow-blocking-io: called inside spawn_blocking
+    fn parse_skill_md(md_path: &Path, skill_dir: &Path) -> Result<SkillManifest, ScanWarning> {
+        // allow-blocking-io: called inside spawn_blocking
+        let content = std::fs::read_to_string(md_path).map_err(|e| ScanWarning {
+            path: md_path.to_path_buf(),
+            reason: format!("failed to read file: {e}"),
+        })?;
 
-        let frontmatter = Self::extract_frontmatter(&content)?;
-        let raw: RawFrontmatter = serde_yaml::from_str(&frontmatter).ok()?;
-        let raw_value: Value = serde_yaml::from_str(&frontmatter).ok()?;
+        let frontmatter = Self::extract_frontmatter(&content).ok_or_else(|| ScanWarning {
+            path: md_path.to_path_buf(),
+            reason: "missing frontmatter: expected opening and closing '---' delimiter lines"
+                .to_string(),
+        })?;
+        let raw: RawFrontmatter = serde_yaml::from_str(&frontmatter).map_err(|e| ScanWarning {
+            path: md_path.to_path_buf(),
+            reason: format!("invalid frontmatter YAML: {e}"),
+        })?;
+        let raw_value: Value = serde_yaml::from_str(&frontmatter).map_err(|e| ScanWarning {
+            path: md_path.to_path_buf(),
+            reason: format!("invalid frontmatter YAML: {e}"),
+        })?;
 
         let abs_dir = std::fs::canonicalize(skill_dir).unwrap_or_else(|_| skill_dir.to_path_buf()); // allow-blocking-io: called inside spawn_blocking
 
@@ -127,7 +159,7 @@ impl SkillScanner {
             max_memory_mb: capabilities.max_memory_mb,
         });
 
-        Some(SkillManifest {
+        Ok(SkillManifest {
             name: raw.name,
             description: raw.description,
             path: abs_dir,
@@ -139,15 +171,27 @@ impl SkillScanner {
         })
     }
 
+    /// Extract the YAML frontmatter block using line-level parsing: the opening
+    /// `---` must occupy its own line (a newline must follow), and only a line
+    /// containing exactly `---` closes the block. A `---` inside a value (e.g.
+    /// in a description) therefore does not truncate the frontmatter.
     pub(crate) fn extract_frontmatter(content: &str) -> Option<String> {
         let trimmed = content.trim_start();
-        if !trimmed.starts_with("---") {
-            return None;
-        }
+        let after_open = trimmed.strip_prefix("---")?;
+        let body = after_open
+            .strip_prefix("\r\n")
+            .or_else(|| after_open.strip_prefix('\n'))?;
 
-        let after_first = &trimmed[3..];
-        let end = after_first.find("---")?;
-        Some(after_first[..end].to_string())
+        let mut offset = 0;
+        for line in body.split_inclusive('\n') {
+            let text = line.strip_suffix('\n').unwrap_or(line);
+            let text = text.strip_suffix('\r').unwrap_or(text);
+            if text == "---" {
+                return Some(body[..offset].to_string());
+            }
+            offset += line.len();
+        }
+        None
     }
 }
 
@@ -232,7 +276,9 @@ bundled_tools:
         let tmp = tempfile::tempdir().unwrap();
         create_test_skill(tmp.path());
 
-        let manifests = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        assert!(outcome.warnings.is_empty());
+        let manifests = &outcome.manifests;
         assert_eq!(manifests.len(), 1);
         assert_eq!(manifests[0].name, "test_skill");
         assert_eq!(manifests[0].description, "A test skill for unit testing");
@@ -247,8 +293,9 @@ bundled_tools:
         let tmp = tempfile::tempdir().unwrap();
         create_v03_skill(tmp.path());
 
-        let manifests = SkillScanner::scan(tmp.path()).unwrap();
-        let manifest = &manifests[0];
+        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        assert!(outcome.warnings.is_empty());
+        let manifest = &outcome.manifests[0];
 
         assert_eq!(
             manifest.dependencies.python,
@@ -270,14 +317,138 @@ bundled_tools:
     #[test]
     fn scan_empty_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let manifests = SkillScanner::scan(tmp.path()).unwrap();
-        assert!(manifests.is_empty());
+        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        assert!(outcome.manifests.is_empty());
+        assert!(outcome.warnings.is_empty());
     }
 
     #[test]
     fn scan_nonexistent_dir() {
-        let manifests = SkillScanner::scan(Path::new("/nonexistent/path")).unwrap();
-        assert!(manifests.is_empty());
+        let outcome = SkillScanner::scan(Path::new("/nonexistent/path")).unwrap();
+        assert!(outcome.manifests.is_empty());
+        assert!(outcome.warnings.is_empty());
+    }
+
+    #[test]
+    fn scan_warns_on_invalid_yaml_and_keeps_other_skills() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_skill(tmp.path());
+
+        let bad_dir = tmp.path().join("bad_skill");
+        fs::create_dir_all(&bad_dir).unwrap();
+        fs::write(
+            bad_dir.join("SKILL.md"),
+            "---\nname: [unclosed\n---\nbody\n",
+        )
+        .unwrap();
+
+        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        assert_eq!(outcome.manifests.len(), 1);
+        assert_eq!(outcome.manifests[0].name, "test_skill");
+
+        assert_eq!(outcome.warnings.len(), 1);
+        let warning = &outcome.warnings[0];
+        assert_eq!(warning.path, bad_dir.join("SKILL.md"));
+        assert!(
+            warning.reason.contains("invalid frontmatter YAML"),
+            "unexpected reason: {}",
+            warning.reason
+        );
+    }
+
+    #[test]
+    fn scan_warns_on_unreadable_skill_md() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_skill(tmp.path());
+
+        // A SKILL.md that is a directory makes read_to_string fail on every
+        // platform, exercising the IO-error warning path deterministically.
+        let bad_dir = tmp.path().join("unreadable_skill");
+        fs::create_dir_all(bad_dir.join("SKILL.md")).unwrap();
+
+        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        assert_eq!(outcome.manifests.len(), 1);
+        assert_eq!(outcome.manifests[0].name, "test_skill");
+
+        assert_eq!(outcome.warnings.len(), 1);
+        let warning = &outcome.warnings[0];
+        assert_eq!(warning.path, bad_dir.join("SKILL.md"));
+        assert!(
+            warning.reason.contains("failed to read file"),
+            "unexpected reason: {}",
+            warning.reason
+        );
+    }
+
+    #[test]
+    fn scan_warns_on_missing_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("plain_skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# No frontmatter here\n").unwrap();
+
+        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        assert!(outcome.manifests.is_empty());
+        assert_eq!(outcome.warnings.len(), 1);
+        assert!(
+            outcome.warnings[0].reason.contains("missing frontmatter"),
+            "unexpected reason: {}",
+            outcome.warnings[0].reason
+        );
+    }
+
+    #[test]
+    fn scan_warns_on_empty_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("empty_fm_skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "---\n---\n# Body\n").unwrap();
+
+        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        assert!(outcome.manifests.is_empty());
+        assert_eq!(outcome.warnings.len(), 1);
+        assert!(
+            outcome.warnings[0]
+                .reason
+                .contains("invalid frontmatter YAML"),
+            "unexpected reason: {}",
+            outcome.warnings[0].reason
+        );
+    }
+
+    #[test]
+    fn scan_parses_description_containing_triple_dash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("dash_skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: dash_skill\ndescription: alpha --- beta\n---\n# Body\n",
+        )
+        .unwrap();
+
+        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        assert!(outcome.warnings.is_empty());
+        assert_eq!(outcome.manifests.len(), 1);
+        assert_eq!(outcome.manifests[0].description, "alpha --- beta");
+    }
+
+    #[test]
+    fn scan_parses_crlf_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("crlf_skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\r\nname: crlf_skill\r\ndescription: windows line endings\r\n---\r\n# Body\r\n",
+        )
+        .unwrap();
+
+        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        assert!(outcome.warnings.is_empty());
+        assert_eq!(outcome.manifests.len(), 1);
+        assert_eq!(outcome.manifests[0].name, "crlf_skill");
+        assert_eq!(outcome.manifests[0].description, "windows line endings");
     }
 
     #[test]
@@ -292,5 +463,42 @@ bundled_tools:
     fn extract_frontmatter_none() {
         let content = "# No frontmatter";
         assert!(SkillScanner::extract_frontmatter(content).is_none());
+    }
+
+    #[test]
+    fn extract_frontmatter_keeps_inline_triple_dash() {
+        let content = "---\ndescription: alpha --- beta\n---\n# Body";
+        let fm = SkillScanner::extract_frontmatter(content).unwrap();
+        assert!(fm.contains("alpha --- beta"));
+    }
+
+    #[test]
+    fn extract_frontmatter_crlf() {
+        let content = "---\r\nname: test\r\n---\r\n# Body";
+        let fm = SkillScanner::extract_frontmatter(content).unwrap();
+        assert!(fm.contains("name: test"));
+    }
+
+    #[test]
+    fn extract_frontmatter_empty_block() {
+        let content = "---\n---\n# Body";
+        let fm = SkillScanner::extract_frontmatter(content).unwrap();
+        assert!(fm.is_empty());
+    }
+
+    #[test]
+    fn extract_frontmatter_opening_delimiter_needs_own_line() {
+        // `---` followed by content on the same line is not an opening delimiter.
+        assert!(SkillScanner::extract_frontmatter("---name: test\n---\n").is_none());
+        // Opening `---` without a trailing newline is not a delimiter either.
+        assert!(SkillScanner::extract_frontmatter("---").is_none());
+    }
+
+    #[test]
+    fn extract_frontmatter_requires_closing_line() {
+        // No standalone `---` line -> no frontmatter.
+        assert!(SkillScanner::extract_frontmatter("---\nname: test\n").is_none());
+        // An indented `---` line is not a closing delimiter.
+        assert!(SkillScanner::extract_frontmatter("---\nname: test\n  ---\n").is_none());
     }
 }

@@ -97,7 +97,7 @@ tool_call_completed    tool_call_failed        async_tool_started
 async_tool_progress    async_tool_completed    skill_content_read
 approval_requested     approval_granted        approval_denied
 budget_warning         runtime_warning         skill_dependency_error
-skill_missing_capabilities                     context_compacted
+skill_missing_capabilities  skill_load_warning  context_compacted
 child_run_event        sub_agent_started       sub_agent_completed
 sub_agent_failed       run_restarted           run_completed
 run_failed

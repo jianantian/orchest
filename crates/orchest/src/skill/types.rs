@@ -72,6 +72,21 @@ pub enum ScanError {
     Io(#[from] std::io::Error),
 }
 
+/// Result of a skill directory scan: successfully parsed manifests plus a
+/// structured warning for every skill that failed to load.
+#[derive(Debug, Default)]
+pub struct ScanOutcome {
+    pub manifests: Vec<SkillManifest>,
+    pub warnings: Vec<ScanWarning>,
+}
+
+/// A single skill load failure: which file failed and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScanWarning {
+    pub path: PathBuf,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
 #[error("{message}")]
 pub struct EnvError {

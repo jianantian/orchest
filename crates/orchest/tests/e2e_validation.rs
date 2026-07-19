@@ -313,6 +313,7 @@ async fn e2e_event_coverage() {
             RuntimeEvent::RuntimeWarning { .. } => "RuntimeWarning",
             RuntimeEvent::SkillDependencyError { .. } => "SkillDependencyError",
             RuntimeEvent::SkillMissingCapabilities { .. } => "SkillMissingCapabilities",
+            RuntimeEvent::SkillLoadWarning { .. } => "SkillLoadWarning",
             RuntimeEvent::ContextCompacted { .. } => "ContextCompacted",
             RuntimeEvent::SubAgentStarted { .. } => "SubAgentStarted",
             RuntimeEvent::SubAgentCompleted { .. } => "SubAgentCompleted",

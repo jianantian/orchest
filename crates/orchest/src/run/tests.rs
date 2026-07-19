@@ -3755,6 +3755,80 @@ bundled_tools:
 }
 
 #[tokio::test]
+async fn register_skills_emits_load_warning_and_keeps_good_skills() {
+    use std::fs;
+
+    let tmp = tempfile::tempdir().unwrap();
+    // A valid skill that must survive the broken sibling.
+    let good_dir = tmp.path().join("good_skill");
+    fs::create_dir_all(good_dir.join("scripts")).unwrap();
+    fs::write(
+        good_dir.join("SKILL.md"),
+        r#"---
+name: good_skill
+description: A valid skill
+capabilities:
+  network: false
+bundled_tools:
+  - name: good_tool
+    description: tool
+    executable: bash
+    script: scripts/run.sh
+---
+"#,
+    )
+    .unwrap();
+    fs::write(good_dir.join("scripts/run.sh"), "#!/bin/sh\necho '{}'").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            good_dir.join("scripts/run.sh"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+
+    // A skill whose frontmatter is invalid YAML.
+    let bad_dir = tmp.path().join("bad_skill");
+    fs::create_dir_all(&bad_dir).unwrap();
+    fs::write(
+        bad_dir.join("SKILL.md"),
+        "---\nname: [unclosed\n---\nbody\n",
+    )
+    .unwrap();
+
+    let (tx, mut rx) = mpsc::channel(16);
+    let mut registry = ToolRegistry::new();
+
+    skills::register_skills(tmp.path().to_str().unwrap(), &None, &mut registry, &tx)
+        .await
+        .unwrap();
+
+    // The valid skill still registers its bundled tool.
+    assert!(registry.contains("good_tool"));
+
+    drop(tx);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    let warning = events.iter().find_map(|e| match e {
+        RuntimeEvent::SkillLoadWarning { path, reason } => Some((path, reason)),
+        _ => None,
+    });
+    let (path, reason) = warning.expect("expected SkillLoadWarning event");
+    assert!(
+        path.ends_with("bad_skill/SKILL.md") || path.ends_with("bad_skill\\SKILL.md"),
+        "unexpected warning path: {path}"
+    );
+    assert!(
+        reason.contains("invalid frontmatter YAML"),
+        "unexpected warning reason: {reason}"
+    );
+}
+
+#[tokio::test]
 async fn skills_dir_config_runs_skill_scan() {
     use std::fs;
 

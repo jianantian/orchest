@@ -9,5 +9,6 @@ pub mod types;
 pub use env_manager::{CapabilityValidator, SkillEnvManager};
 pub use scanner::SkillScanner;
 pub use types::{
-    BundledToolDef, EnvError, ScanError, SkillCapabilities, SkillDependencies, SkillManifest,
+    BundledToolDef, EnvError, ScanError, ScanOutcome, ScanWarning, SkillCapabilities,
+    SkillDependencies, SkillManifest,
 };
