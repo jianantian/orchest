@@ -1,3 +1,15 @@
+export interface HistoryMessage {
+  /** "system" | "user" | "assistant" | "tool" (plus provider-specific roles). */
+  role: string;
+  /**
+   * Content blocks in the core serde JSON shape, e.g. `{ Text: "..." }`,
+   * `{ ToolUse: { id, name, input } }`, or `{ ToolResult: { tool_use_id, content } }`.
+   * ToolUse blocks belong in assistant messages, each matching ToolResult in
+   * the immediately following user message.
+   */
+  content: Array<Record<string, unknown>>;
+}
+
 export class Agent {
   constructor(options: {
     model: string;
@@ -25,6 +37,12 @@ export class Agent {
     };
     /** Run-level approval policy: "perTool" | "none" | "all". */
     approvalMode?: string;
+    /**
+     * One-line recommended model retry policy (429 / 5xx / timeout /
+     * stream-interrupt; 3 retries, exponential backoff with jitter).
+     * Defaults to no retries.
+     */
+    retry?: boolean;
   });
 
   /** Register a tool with schema only (no handler — tool calls will error). */
@@ -60,11 +78,22 @@ export class Agent {
     options?: { sideEffect?: boolean; approval?: string },
   ): void;
 
-  /** Run the agent and return all events as an array. */
-  runSync(input: string): Promise<unknown[]>;
+  /**
+   * Run the agent and return all events as an array.
+   * `messages` (optional) is the prior conversation for a multi-turn start;
+   * `input` is the new user turn.
+   */
+  runSync(input: string, messages?: HistoryMessage[]): Promise<unknown[]>;
 
-  /** Stream events as they arrive; calls `onEvent` for each one. */
-  runStream(input: string, onEvent: (event: unknown) => void): void;
+  /**
+   * Stream events as they arrive; calls `onEvent` for each one.
+   * `messages` (optional) is the prior conversation for a multi-turn start.
+   */
+  runStream(
+    input: string,
+    onEvent: (event: unknown) => void,
+    messages?: HistoryMessage[],
+  ): void;
 
   /** Respond to an approval request for an active run. */
   respondApproval(runId: string, approved: boolean): void;

@@ -161,7 +161,7 @@ async fn main() {
             } => {
                 println!("[event] AgentUpdated: '{previous_agent}' → '{new_agent}'");
             }
-            RuntimeEvent::RunCompleted { output } => println!("[event] RunCompleted: {output}"),
+            RuntimeEvent::RunCompleted { output, .. } => println!("[event] RunCompleted: {output}"),
             RuntimeEvent::RunFailed { error } => println!("[event] RunFailed: {error}"),
             _ => {}
         }

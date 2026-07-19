@@ -282,6 +282,10 @@ class SubAgentFailedEvent(TypedDict):
 class RunCompletedEvent(TypedDict):
     type: Literal["run_completed"]
     output: JsonValue
+    # Why the completing model call stopped: "EndTurn" means `output` is
+    # complete; "MaxTokens" means it is truncated — continue generation,
+    # retry with a larger token budget, or fail; do not persist as-is.
+    stop_reason: str
     run_depth: int
     child_run_id: str | None
 
@@ -370,6 +374,10 @@ class Agent:
         max_tokens: int | None = None,
         request_options: RequestOptions | None = None,
         approval_mode: str | None = None,
+        # True enables the recommended model retry policy (429 / 5xx /
+        # timeout / stream-interrupt, 3 retries, exponential backoff
+        # 1s→30s with jitter). Default: no retries.
+        retry: bool | None = None,
     ) -> None: ...
     def set_api_url(self, api_url: str | None) -> None: ...
     def tool(
@@ -392,9 +400,13 @@ class Agent:
         input_key: str | None = None,
     ) -> None: ...
     def register_write_file_tool(self, approval: str | None = None) -> None: ...
-    def run_sync(self, input: str) -> list[RuntimeEvent]: ...
-    def run(self, input: str) -> list[RuntimeEvent]: ...
-    def run_stream(self, input: str, on_event: Callable[[RuntimeEvent], None]) -> None: ...
+    # `messages` (optional): prior conversation as a list of core Message
+    # dicts (same serde shape as session snapshots, e.g.
+    # {"role": "user", "content": [{"Text": "..."}]}); forwarded to
+    # AgentRun.start_with_messages as the run's initial history.
+    def run_sync(self, input: str, messages: list[dict[str, Any]] | None = None) -> list[RuntimeEvent]: ...
+    def run(self, input: str, messages: list[dict[str, Any]] | None = None) -> list[RuntimeEvent]: ...
+    def run_stream(self, input: str, on_event: Callable[[RuntimeEvent], None], messages: list[dict[str, Any]] | None = None) -> None: ...
     def respond_approval(self, run_id_str: str, approved: bool) -> None: ...
 
 __all__: list[str]

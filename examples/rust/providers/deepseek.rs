@@ -110,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             RuntimeEvent::ToolCallCompleted { tool, output, .. } => {
                 println!("[tool] {tool} -> {output}")
             }
-            RuntimeEvent::RunCompleted { output } => println!("\n[done] {output}"),
+            RuntimeEvent::RunCompleted { output, .. } => println!("\n[done] {output}"),
             RuntimeEvent::RunFailed { error } => eprintln!("\n[failed] {error}"),
             _ => {}
         }

@@ -192,6 +192,108 @@ async fn context_window_exceeded_fails_before_model_call() {
     ));
 }
 
+// ── context_window backfill from catalog capabilities (v0.13 #221) ──────────
+
+/// Model whose `capabilities()` reports the catalog's `context_window`,
+/// mirroring how registry-built adapters expose it.
+struct CatalogCapsModel {
+    context_window_size: Option<u64>,
+    call_count: AtomicU32,
+}
+
+impl CatalogCapsModel {
+    fn new(context_window_size: Option<u64>) -> Self {
+        Self {
+            context_window_size,
+            call_count: AtomicU32::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for CatalogCapsModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities {
+            context_window_size: self.context_window_size,
+            ..ModelCapabilities::default()
+        }
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        self.call_count.fetch_add(1, Ordering::SeqCst);
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("hello".into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[test]
+fn backfill_context_window_from_catalog_when_unset() {
+    let mut config = test_config();
+    let model = CatalogCapsModel::new(Some(200_000));
+    actor::backfill_context_window_size(&mut config, &model);
+    assert_eq!(config.model.spec.context_window_size, Some(200_000));
+}
+
+#[test]
+fn backfill_context_window_keeps_explicit_value() {
+    let mut config = test_config();
+    config.model.spec.context_window_size = Some(50_000);
+    let model = CatalogCapsModel::new(Some(200_000));
+    actor::backfill_context_window_size(&mut config, &model);
+    assert_eq!(config.model.spec.context_window_size, Some(50_000));
+}
+
+#[test]
+fn backfill_context_window_stays_none_without_catalog_value() {
+    let mut config = test_config();
+    let model = CatalogCapsModel::new(None);
+    actor::backfill_context_window_size(&mut config, &model);
+    assert_eq!(config.model.spec.context_window_size, None);
+}
+
+/// The behavior change that matters downstream (#221): with the backfill in
+/// place, the pre-call hard validation fires for registry-built models even
+/// though the caller never set `context_window_size`.
+#[tokio::test]
+async fn context_window_backfill_activates_precall_validation() {
+    let model = Arc::new(CatalogCapsModel::new(Some(1)));
+    let model_for_run: Arc<dyn ModelAdapter> = model.clone();
+    let registry = ToolRegistry::new();
+
+    let (handle, mut rx) = AgentRun::start(
+        test_config(),
+        "this input exceeds one token".into(),
+        model_for_run,
+        registry,
+    );
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert_eq!(model.call_count.load(Ordering::SeqCst), 0);
+    assert!(events.iter().any(
+        |event| matches!(event, RuntimeEvent::RunFailed { error } if error.contains("context window exceeded"))
+    ));
+}
+
 // ── Abnormal stop_reason terminates the run (hotfix 2026_07_18b #216) ────────
 
 /// Always answers with an abnormal stop_reason and no tool_use.
@@ -362,6 +464,86 @@ async fn abnormal_stop_reason_with_tool_use_dispatches_tools() {
         "no failure when tool_use is present"
     );
     assert_eq!(model.call_count.load(Ordering::SeqCst), 2);
+}
+
+// ── RunCompleted carries the completing turn's stop_reason (v0_13 #220) ─────
+
+/// Always answers with a fixed stop_reason and no tool_use.
+struct FixedStopReasonModel {
+    stop_reason: StopReason,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for FixedStopReasonModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("partial".into())],
+            usage: TokenUsage::default(),
+            stop_reason: self.stop_reason.clone(),
+            option_adjustments: vec![],
+        })
+    }
+}
+
+async fn collect_run_events(model: Arc<FixedStopReasonModel>) -> Vec<RuntimeEvent> {
+    let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, ToolRegistry::new());
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+    events
+}
+
+#[tokio::test]
+async fn run_completed_marks_end_turn_stop_reason() {
+    let model = Arc::new(FixedStopReasonModel {
+        stop_reason: StopReason::EndTurn,
+    });
+
+    let events = collect_run_events(model).await;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::RunCompleted { output, stop_reason }
+                if output.as_str() == Some("partial") && *stop_reason == StopReason::EndTurn
+        )),
+        "EndTurn completion must carry stop_reason EndTurn"
+    );
+}
+
+#[tokio::test]
+async fn run_completed_marks_max_tokens_truncation() {
+    let model = Arc::new(FixedStopReasonModel {
+        stop_reason: StopReason::MaxTokens,
+    });
+
+    let events = collect_run_events(model).await;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::RunCompleted { output, stop_reason }
+                if output.as_str() == Some("partial") && *stop_reason == StopReason::MaxTokens
+        )),
+        "MaxTokens completion must be distinguishable via stop_reason MaxTokens"
+    );
 }
 
 struct ManyStreamChunksModel {
@@ -4916,6 +5098,160 @@ async fn retry_exhausted_results_in_run_failed() {
     );
 }
 
+/// Returns `stream_interrupted` (network-layer SSE cut, no HTTP status) for the
+/// first N calls, then a successful final answer.
+struct StreamInterruptModel {
+    fail_count: u32,
+    call_count: AtomicU32,
+}
+
+impl StreamInterruptModel {
+    fn new(fail_count: u32) -> Self {
+        Self {
+            fail_count,
+            call_count: AtomicU32::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for StreamInterruptModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[crate::tool::ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if n < self.fail_count {
+            return Err(ModelError {
+                message: "SSE stream ended without [DONE] signal".into(),
+                code: Some("stream_interrupted".into()),
+                provider: None,
+                status: None,
+                retry_after_secs: None,
+                upstream: None,
+            });
+        }
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("done".into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+/// Stream interrupt + retry policy: the call is retried and the run completes.
+#[tokio::test]
+async fn retry_on_stream_interrupt_succeeds_after_one_failure() {
+    let mut config = test_config();
+    config.retry_policy = Some(super::retry::RetryPolicy {
+        max_retries: 3,
+        backoff: super::retry::BackoffStrategy::Fixed(Duration::from_millis(0)),
+    });
+
+    let model = Arc::new(StreamInterruptModel::new(1));
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ModelRetry { attempt: 1, .. })),
+        "expected ModelRetry event for attempt 1"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        "run should complete after stream-interrupt retry succeeds"
+    );
+}
+
+/// Stream interrupt + no retry policy (default): behavior is unchanged — the
+/// run fails immediately with no retry attempt.
+#[tokio::test]
+async fn stream_interrupt_without_policy_still_fails() {
+    let config = test_config();
+    assert!(config.retry_policy.is_none());
+
+    let model = Arc::new(StreamInterruptModel::new(1));
+    let model_calls = Arc::clone(&model);
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ModelRetry { .. })),
+        "no ModelRetry expected without a retry policy"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunFailed { .. })),
+        "run should fail on stream interrupt without a retry policy"
+    );
+    assert_eq!(
+        model_calls.call_count.load(Ordering::SeqCst),
+        1,
+        "model should be called exactly once without a retry policy"
+    );
+}
+
+/// Stream interrupt retries are capped by `max_retries`: exhaustion fails the run.
+#[tokio::test]
+async fn stream_interrupt_retry_exhausted_results_in_run_failed() {
+    let mut config = test_config();
+    config.retry_policy = Some(super::retry::RetryPolicy {
+        max_retries: 2,
+        backoff: super::retry::BackoffStrategy::Fixed(Duration::from_millis(0)),
+    });
+
+    // always interrupted → will exhaust max_retries
+    let model = Arc::new(StreamInterruptModel::new(10));
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    let retry_events: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, RuntimeEvent::ModelRetry { .. }))
+        .collect();
+    assert_eq!(retry_events.len(), 2, "expected exactly 2 retry events");
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunFailed { .. })),
+        "run should fail after stream-interrupt retries exhausted"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Handoff tests
 // ---------------------------------------------------------------------------
@@ -5184,7 +5520,7 @@ async fn static_handoff_switches_agent_and_completes() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("hello from billing"))),
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output, .. } if output.as_str() == Some("hello from billing"))),
         "run should complete under billing agent"
     );
 }
@@ -5227,7 +5563,7 @@ async fn handoff_transition_exposes_target_config_and_history() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("handoff_config_and_history_ok"))),
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output, .. } if output.as_str() == Some("handoff_config_and_history_ok"))),
         "target model should see target config and carried history"
     );
 }
@@ -5279,7 +5615,7 @@ async fn handoff_filter_failure_keeps_original_agent_state_coherent() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("handoff_failed_under_triage"))),
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output, .. } if output.as_str() == Some("handoff_failed_under_triage"))),
         "original agent should continue with structured handoff error"
     );
 }
@@ -5390,7 +5726,7 @@ async fn multi_handoff_in_one_turn_only_first_executed() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output } if output.as_str() == Some("got_error"))),
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { output, .. } if output.as_str() == Some("got_error"))),
         "second handoff should produce an error result visible to the model"
     );
 }
@@ -5596,7 +5932,7 @@ async fn after_model_rewrites_response_into_history() {
     let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
     let mut output: Option<Value> = None;
     while let Some(e) = rx.recv().await {
-        if let RuntimeEvent::RunCompleted { output: o } = &e {
+        if let RuntimeEvent::RunCompleted { output: o, .. } = &e {
             output = Some(o.clone());
         }
     }
@@ -6657,6 +6993,161 @@ async fn start_with_image_run_input_reaches_model() {
             .iter()
             .any(|b| matches!(b, ContentBlock::Image { .. })),
         "user turn should carry the Image block from RunInput::with_image"
+    );
+}
+
+#[tokio::test]
+async fn start_with_messages_assembles_system_history_then_input() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(MessageCapturingModel {
+        captured: captured.clone(),
+    });
+    let registry = ToolRegistry::new();
+    let config = test_config();
+
+    let history = vec![
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text("first question".into())],
+        },
+        Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::Text("first answer".into())],
+        },
+    ];
+    let (handle, mut rx) = AgentRun::start_with_messages(
+        config,
+        history,
+        RunInput::text("second question"),
+        model,
+        registry,
+    );
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let calls = captured.lock().unwrap();
+    let first_call = calls.first().expect("model should have been called");
+    let roles: Vec<Role> = first_call.iter().map(|m| m.role).collect();
+    assert_eq!(
+        roles,
+        vec![Role::System, Role::User, Role::Assistant, Role::User],
+        "system prompt first, then the history in order, then the new user turn"
+    );
+    assert!(
+        matches!(&first_call[0].content[0], ContentBlock::Text(t) if t == "you are helpful"),
+        "first message carries the config system prompt (non-empty on the wire)"
+    );
+    assert!(matches!(&first_call[1].content[0], ContentBlock::Text(t) if t == "first question"));
+    assert!(matches!(&first_call[2].content[0], ContentBlock::Text(t) if t == "first answer"));
+    assert!(matches!(&first_call[3].content[0], ContentBlock::Text(t) if t == "second question"));
+}
+
+#[tokio::test]
+async fn start_with_messages_preserves_tool_use_result_pairing() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(MessageCapturingModel {
+        captured: captured.clone(),
+    });
+    let registry = ToolRegistry::new();
+    let config = test_config();
+
+    let history = vec![
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text("what time is it?".into())],
+        },
+        Message {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Text("let me check".into()),
+                ContentBlock::ToolUse {
+                    id: "call_1".into(),
+                    name: "clock".into(),
+                    input: json!({}),
+                },
+            ],
+        },
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: "call_1".into(),
+                content: json!("noon"),
+            }],
+        },
+    ];
+    let (handle, mut rx) =
+        AgentRun::start_with_messages(config, history, RunInput::text("and now?"), model, registry);
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let calls = captured.lock().unwrap();
+    let first_call = calls.first().expect("model should have been called");
+
+    let tool_use_pos = first_call.iter().position(|m| {
+        m.role == Role::Assistant
+            && m.content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolUse { id, .. } if id == "call_1"))
+    });
+    let tool_result_pos = first_call.iter().position(|m| {
+        m.content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "call_1"))
+    });
+    let tool_use_pos = tool_use_pos.expect("ToolUse block must survive assembly");
+    let tool_result_pos = tool_result_pos.expect("ToolResult block must survive assembly");
+    assert!(
+        tool_use_pos < tool_result_pos,
+        "ToolResult must stay after its ToolUse (pairing order preserved)"
+    );
+}
+
+#[tokio::test]
+async fn start_matches_start_with_messages_with_empty_history() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(MessageCapturingModel {
+        captured: captured.clone(),
+    });
+    let (handle, mut rx) = AgentRun::start(test_config(), "hi".into(), model, ToolRegistry::new());
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let captured_empty = Arc::new(Mutex::new(Vec::new()));
+    let model2: Arc<dyn ModelAdapter> = Arc::new(MessageCapturingModel {
+        captured: captured_empty.clone(),
+    });
+    let (handle2, mut rx2) = AgentRun::start_with_messages(
+        test_config(),
+        vec![],
+        RunInput::text("hi"),
+        model2,
+        ToolRegistry::new(),
+    );
+    while rx2.recv().await.is_some() {}
+    handle2.wait().await;
+
+    let start_first = captured
+        .lock()
+        .unwrap()
+        .first()
+        .expect("start() should call the model")
+        .clone();
+    let empty_history_first = captured_empty
+        .lock()
+        .unwrap()
+        .first()
+        .expect("start_with_messages([]) should call the model")
+        .clone();
+
+    let roles: Vec<Role> = start_first.iter().map(|m| m.role).collect();
+    assert_eq!(
+        roles,
+        vec![Role::System, Role::User],
+        "start() still sends exactly system prompt + single user turn"
+    );
+    assert_eq!(
+        start_first, empty_history_first,
+        "start() must be equivalent to start_with_messages with empty history"
     );
 }
 

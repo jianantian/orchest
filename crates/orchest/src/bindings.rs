@@ -61,6 +61,17 @@ pub fn budget_config_from_binding(input: Option<BindingBudgetConfig>) -> BudgetC
     })
 }
 
+/// Parses binding-supplied conversation history for
+/// [`crate::run::AgentRun::start_with_messages`]. Each value is the serde
+/// JSON shape of [`crate::model::Message`] (e.g.
+/// `{"role": "user", "content": [{"Text": "..."}]}`) — the same shape
+/// session snapshots serialize to.
+pub fn messages_from_wire_values(
+    values: Vec<Value>,
+) -> Result<Vec<crate::model::Message>, serde_json::Error> {
+    values.into_iter().map(serde_json::from_value).collect()
+}
+
 pub fn runtime_event_to_wire_value(event: &RuntimeEvent) -> Result<Value, serde_json::Error> {
     serde_json::to_value(event).map(runtime_event_value_to_wire_value)
 }
@@ -106,8 +117,9 @@ pub fn to_snake_case(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        budget_config_from_binding, parse_binding_approval, parse_binding_approval_mode,
-        runtime_event_value_to_wire_value, to_snake_case, BindingBudgetConfig, BindingNameStyle,
+        budget_config_from_binding, messages_from_wire_values, parse_binding_approval,
+        parse_binding_approval_mode, runtime_event_value_to_wire_value, to_snake_case,
+        BindingBudgetConfig, BindingNameStyle,
     };
     use crate::run::ApprovalMode;
     use crate::tool::Approval;
@@ -174,9 +186,39 @@ mod tests {
     }
 
     #[test]
+    fn wire_messages_parse_in_snapshot_shape() {
+        let values = vec![
+            json!({"role": "user", "content": [{"Text": "hi"}]}),
+            json!({"role": "assistant", "content": [{"ToolUse": {"id": "t1", "name": "echo", "input": {}}}]}),
+        ];
+        let messages = messages_from_wire_values(values).expect("valid wire messages");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, crate::model::Role::User);
+        assert_eq!(messages[1].role, crate::model::Role::Assistant);
+
+        assert!(messages_from_wire_values(vec![json!({"role": "nope", "content": []})]).is_err());
+    }
+
+    #[test]
     fn snake_case_conversion_handles_runtime_event_names() {
         assert_eq!(to_snake_case("RunStarted"), "run_started");
         assert_eq!(to_snake_case("ApprovalDenied"), "approval_denied");
         assert_eq!(to_snake_case("AsyncToolProgress"), "async_tool_progress");
+    }
+
+    #[test]
+    fn run_completed_wire_value_carries_stop_reason() {
+        // Py/Node bindings receive events through this wire shape; the
+        // truncation marker must survive the conversion.
+        let event = crate::events::RuntimeEvent::RunCompleted {
+            output: json!("cut off"),
+            stop_reason: crate::model::StopReason::MaxTokens,
+        };
+
+        let converted = super::runtime_event_to_wire_value(&event).expect("serialize event");
+
+        assert_eq!(converted["type"], "run_completed");
+        assert_eq!(converted["output"], json!("cut off"));
+        assert_eq!(converted["stop_reason"], json!("MaxTokens"));
     }
 }

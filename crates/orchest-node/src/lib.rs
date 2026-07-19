@@ -16,15 +16,17 @@ use serde_json::Value;
 use tokio::sync::Mutex as TokioMutex;
 
 use orchest::bindings::{
-    budget_config_from_binding, parse_binding_approval, parse_binding_approval_mode,
-    runtime_event_to_wire_value, BindingBudgetConfig, BindingNameStyle,
+    budget_config_from_binding, messages_from_wire_values, parse_binding_approval,
+    parse_binding_approval_mode, runtime_event_to_wire_value, BindingBudgetConfig,
+    BindingNameStyle,
 };
 use orchest::model::{
     CachePolicy, CompatibilityPolicy, ModelSpec, ProviderRuntimeConfig,
     RequestOptions as RustRequestOptions, ThinkingLevel,
 };
 use orchest::run::{
-    AgentConfig, AgentRun, ModelConfig, RunHandle, RunInput, RuntimeConfig, SkillsConfig,
+    AgentConfig, AgentRun, ModelConfig, RetryPolicy, RunHandle, RunInput, RuntimeConfig,
+    SkillsConfig,
 };
 use orchest::tool::async_job::{JobHandle, JobStatus, PollFn};
 use orchest::tool::registry::ToolRegistry;
@@ -94,6 +96,10 @@ pub struct AgentOptions {
     pub budget: Option<BudgetOptions>,
     /// Run-level approval policy: "perTool" | "none" | "all".
     pub approval_mode: Option<String>,
+    /// Set to `true` to enable the recommended model retry policy
+    /// (429 / 5xx / timeout / stream-interrupt, 3 retries, exponential
+    /// backoff 1s→30s with jitter). Default: no retries.
+    pub retry: Option<bool>,
 }
 
 #[napi(object)]
@@ -419,6 +425,7 @@ pub struct Agent {
     skills_dir: Option<String>,
     budget: Option<BudgetOptions>,
     approval_mode: Option<String>,
+    retry: Option<bool>,
     tools: Vec<Arc<dyn Tool>>,
     run_handle: Arc<TokioMutex<Option<RunHandle>>>,
 }
@@ -443,6 +450,7 @@ impl Agent {
             skills_dir: options.skills_dir,
             budget: options.budget,
             approval_mode: options.approval_mode,
+            retry: options.retry,
             tools: Vec::new(),
             run_handle: Arc::new(TokioMutex::new(None)),
         })
@@ -590,7 +598,11 @@ impl Agent {
     }
 
     #[napi]
-    pub async fn run_sync(&self, input: String) -> napi::Result<Vec<serde_json::Value>> {
+    pub async fn run_sync(
+        &self,
+        input: String,
+        messages: Option<Vec<Value>>,
+    ) -> napi::Result<Vec<serde_json::Value>> {
         let config = self.build_config()?;
 
         let mut registry = ToolRegistry::new();
@@ -605,10 +617,17 @@ impl Agent {
                 .map_err(|e| napi::Error::from_reason(format!("failed to create model: {e}")))?,
         );
 
+        let initial_messages = messages_from_wire_values(messages.unwrap_or_default())
+            .map_err(|e| napi::Error::from_reason(format!("invalid `messages` entry: {e}")))?;
         let run_handle_ref = Arc::clone(&self.run_handle);
 
-        let (handle, mut event_rx) =
-            AgentRun::start(config, RunInput::text(input), model, registry);
+        let (handle, mut event_rx) = AgentRun::start_with_messages(
+            config,
+            initial_messages,
+            RunInput::text(input),
+            model,
+            registry,
+        );
 
         {
             let mut guard = run_handle_ref.lock().await;
@@ -638,8 +657,15 @@ impl Agent {
         Ok(result)
     }
 
-    #[napi(ts_args_type = "input: string, onEvent: (event: Record<string, unknown>) => void")]
-    pub fn run_stream(&self, input: String, on_event: napi::JsFunction) -> napi::Result<()> {
+    #[napi(
+        ts_args_type = "input: string, onEvent: (event: Record<string, unknown>) => void, messages?: Array<Record<string, unknown>>"
+    )]
+    pub fn run_stream(
+        &self,
+        input: String,
+        on_event: napi::JsFunction,
+        messages: Option<Vec<Value>>,
+    ) -> napi::Result<()> {
         let config = self.build_config()?;
 
         let mut registry = ToolRegistry::new();
@@ -654,6 +680,9 @@ impl Agent {
                 .map_err(|e| napi::Error::from_reason(format!("failed to create model: {e}")))?,
         );
 
+        let initial_messages = messages_from_wire_values(messages.unwrap_or_default())
+            .map_err(|e| napi::Error::from_reason(format!("invalid `messages` entry: {e}")))?;
+
         let tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = on_event
             .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<Value>| {
                 let js_value = ctx.env.to_js_value(&ctx.value)?;
@@ -665,8 +694,13 @@ impl Agent {
         let rt = shared_runtime();
 
         rt.block_on(async {
-            let (handle, mut event_rx) =
-                AgentRun::start(config, RunInput::text(input), model, registry);
+            let (handle, mut event_rx) = AgentRun::start_with_messages(
+                config,
+                initial_messages,
+                RunInput::text(input),
+                model,
+                registry,
+            );
 
             {
                 let mut guard = run_handle_ref.lock().await;
@@ -773,7 +807,13 @@ impl Agent {
                 ..RuntimeConfig::default()
             },
             hooks: vec![],
-            retry_policy: None,
+            // `retry: true` opts into the recommended policy (429/5xx/timeout/
+            // stream-interrupt); default stays off (None) as before.
+            retry_policy: if self.retry.unwrap_or(false) {
+                Some(RetryPolicy::recommended())
+            } else {
+                None
+            },
             handoffs: vec![],
             session_store: None,
             session_id: None,
@@ -970,6 +1010,7 @@ mod tests {
             request_options: None,
             budget: None,
             approval_mode: None,
+            retry: None,
         })
         .expect("agent should construct");
         let config = agent.provider_config();
@@ -990,10 +1031,52 @@ mod tests {
             request_options: None,
             budget: None,
             approval_mode: None,
+            retry: None,
         })
         .expect("agent should construct");
         let config = agent.build_config().expect("config should build");
         assert_eq!(config.model.spec.provider, "anthropic");
         assert_eq!(config.model.spec.model, "claude-sonnet-4");
+    }
+
+    #[test]
+    fn node_agent_retry_true_maps_to_recommended_policy() {
+        let agent = Agent::new(AgentOptions {
+            model: "claude-sonnet-4".into(),
+            system_prompt: "test".into(),
+            skills_dir: None,
+            api_key: Some("key".into()),
+            api_key_env: None,
+            api_url: None,
+            max_tokens: None,
+            request_options: None,
+            budget: None,
+            approval_mode: None,
+            retry: Some(true),
+        })
+        .expect("agent should construct");
+        let config = agent.build_config().expect("config should build");
+        let policy = config.retry_policy.expect("retry policy should be set");
+        assert_eq!(policy.max_retries, 3);
+    }
+
+    #[test]
+    fn node_agent_retry_default_keeps_policy_off() {
+        let agent = Agent::new(AgentOptions {
+            model: "claude-sonnet-4".into(),
+            system_prompt: "test".into(),
+            skills_dir: None,
+            api_key: Some("key".into()),
+            api_key_env: None,
+            api_url: None,
+            max_tokens: None,
+            request_options: None,
+            budget: None,
+            approval_mode: None,
+            retry: None,
+        })
+        .expect("agent should construct");
+        let config = agent.build_config().expect("config should build");
+        assert!(config.retry_policy.is_none());
     }
 }

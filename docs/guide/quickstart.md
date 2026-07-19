@@ -139,7 +139,7 @@ while let Some(event) = rx.recv().await {
         RuntimeEvent::ModelStreamChunk { delta: StreamEvent::Text { delta } } => print!("{delta}"),
         RuntimeEvent::ToolCallStarted { tool, .. } => println!("\n[tool] calling {tool}"),
         RuntimeEvent::ToolCallCompleted { tool, output, .. } => println!("[tool] {tool} -> {output}"),
-        RuntimeEvent::RunCompleted { output } => println!("\n[done] {output}"),
+        RuntimeEvent::RunCompleted { output, stop_reason } => println!("\n[done] {output} ({stop_reason:?})"),
         RuntimeEvent::RunFailed { error } => eprintln!("\n[failed] {error}"),
         _ => {}
     }
@@ -156,7 +156,7 @@ while let Some(event) = rx.recv().await {
 | `ToolCallCompleted` | tool 返回结果 |
 | `ToolCallFailed` | tool 执行失败（携带结构化 `ToolError`） |
 | `ToolCallRetry` | runtime 准备重试 tool 调用（携带 attempt 和上一条错误） |
-| `RunCompleted` | run 正常结束，带最终 `output` |
+| `RunCompleted` | run 正常结束，带最终 `output` 与 `stop_reason`（`MaxTokens` 表示输出被截断，消费方应据此续写/重试/报错） |
 | `RunFailed` | run 失败 |
 
 完整变体见 [`RuntimeEvent` 的 rustdoc](../../crates/orchest/src/events.rs)。
