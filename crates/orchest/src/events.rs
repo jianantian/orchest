@@ -44,6 +44,10 @@ pub enum RuntimeEvent {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         option_adjustments: Vec<OptionAdjustment>,
     },
+    /// A model call failed with a retryable error and will be retried after
+    /// `next_delay`. Subscribers that accumulated partial `ModelStreamChunk`s
+    /// from the interrupted attempt must drop that buffer: the retry restarts
+    /// the stream from the beginning.
     ModelRetry {
         attempt: u32,
         error: String,

@@ -373,6 +373,16 @@ fn adaptive_path_leaves_max_tokens_alone() {
     assert!(adjustments.iter().all(|a| a.option != "max_tokens"));
 }
 
+#[test]
+fn capabilities_read_context_window_from_profile() {
+    // The profile's context_window flows into adapter capabilities — the
+    // source the runtime backfills ModelSpec.context_window_size from (#221).
+    let sonnet = adapter_with("claude-sonnet-4-20250514", 4096);
+    assert_eq!(sonnet.capabilities().context_window_size, Some(1_000_000));
+    let haiku = adapter_with("claude-haiku-4-5", 4096);
+    assert_eq!(haiku.capabilities().context_window_size, Some(200_000));
+}
+
 /// Recursive wire-level assertion helper: true when `cache_control` appears
 /// anywhere under `v`.
 fn contains_cache_control(v: &serde_json::Value) -> bool {

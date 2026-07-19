@@ -37,6 +37,12 @@ export class Agent {
     };
     /** Run-level approval policy: "perTool" | "none" | "all". */
     approvalMode?: string;
+    /**
+     * One-line recommended model retry policy (429 / 5xx / timeout /
+     * stream-interrupt; 3 retries, exponential backoff with jitter).
+     * Defaults to no retries.
+     */
+    retry?: boolean;
   });
 
   /** Register a tool with schema only (no handler — tool calls will error). */
