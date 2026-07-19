@@ -374,6 +374,10 @@ class Agent:
         max_tokens: int | None = None,
         request_options: RequestOptions | None = None,
         approval_mode: str | None = None,
+        # True enables the recommended model retry policy (429 / 5xx /
+        # timeout / stream-interrupt, 3 retries, exponential backoff
+        # 1s→30s with jitter). Default: no retries.
+        retry: bool | None = None,
     ) -> None: ...
     def set_api_url(self, api_url: str | None) -> None: ...
     def tool(

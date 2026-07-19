@@ -5098,6 +5098,160 @@ async fn retry_exhausted_results_in_run_failed() {
     );
 }
 
+/// Returns `stream_interrupted` (network-layer SSE cut, no HTTP status) for the
+/// first N calls, then a successful final answer.
+struct StreamInterruptModel {
+    fail_count: u32,
+    call_count: AtomicU32,
+}
+
+impl StreamInterruptModel {
+    fn new(fail_count: u32) -> Self {
+        Self {
+            fail_count,
+            call_count: AtomicU32::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for StreamInterruptModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[crate::tool::ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if n < self.fail_count {
+            return Err(ModelError {
+                message: "SSE stream ended without [DONE] signal".into(),
+                code: Some("stream_interrupted".into()),
+                provider: None,
+                status: None,
+                retry_after_secs: None,
+                upstream: None,
+            });
+        }
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("done".into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+/// Stream interrupt + retry policy: the call is retried and the run completes.
+#[tokio::test]
+async fn retry_on_stream_interrupt_succeeds_after_one_failure() {
+    let mut config = test_config();
+    config.retry_policy = Some(super::retry::RetryPolicy {
+        max_retries: 3,
+        backoff: super::retry::BackoffStrategy::Fixed(Duration::from_millis(0)),
+    });
+
+    let model = Arc::new(StreamInterruptModel::new(1));
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ModelRetry { attempt: 1, .. })),
+        "expected ModelRetry event for attempt 1"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        "run should complete after stream-interrupt retry succeeds"
+    );
+}
+
+/// Stream interrupt + no retry policy (default): behavior is unchanged — the
+/// run fails immediately with no retry attempt.
+#[tokio::test]
+async fn stream_interrupt_without_policy_still_fails() {
+    let config = test_config();
+    assert!(config.retry_policy.is_none());
+
+    let model = Arc::new(StreamInterruptModel::new(1));
+    let model_calls = Arc::clone(&model);
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ModelRetry { .. })),
+        "no ModelRetry expected without a retry policy"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunFailed { .. })),
+        "run should fail on stream interrupt without a retry policy"
+    );
+    assert_eq!(
+        model_calls.call_count.load(Ordering::SeqCst),
+        1,
+        "model should be called exactly once without a retry policy"
+    );
+}
+
+/// Stream interrupt retries are capped by `max_retries`: exhaustion fails the run.
+#[tokio::test]
+async fn stream_interrupt_retry_exhausted_results_in_run_failed() {
+    let mut config = test_config();
+    config.retry_policy = Some(super::retry::RetryPolicy {
+        max_retries: 2,
+        backoff: super::retry::BackoffStrategy::Fixed(Duration::from_millis(0)),
+    });
+
+    // always interrupted → will exhaust max_retries
+    let model = Arc::new(StreamInterruptModel::new(10));
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e);
+    }
+    handle.wait().await;
+
+    let retry_events: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, RuntimeEvent::ModelRetry { .. }))
+        .collect();
+    assert_eq!(retry_events.len(), 2, "expected exactly 2 retry events");
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunFailed { .. })),
+        "run should fail after stream-interrupt retries exhausted"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Handoff tests
 // ---------------------------------------------------------------------------

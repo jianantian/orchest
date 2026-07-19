@@ -15,6 +15,12 @@ export interface AgentOptions {
   maxTokens?: number;
   requestOptions?: RequestOptions;
   budget?: BudgetOptions;
+  /**
+   * Set to `true` to enable the recommended model retry policy
+   * (429 / 5xx / timeout / stream-interrupt, 3 retries, exponential
+   * backoff 1s→30s with jitter). Default: no retries.
+   */
+  retry?: boolean;
 }
 
 export interface RequestOptions {

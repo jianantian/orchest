@@ -25,8 +25,8 @@ use orchest::model::{
     ThinkingLevel,
 };
 use orchest::run::{
-    AgentConfig, AgentRun, ApprovalMode, ModelConfig, RunHandle, RunInput, RuntimeConfig,
-    SkillsConfig,
+    AgentConfig, AgentRun, ApprovalMode, ModelConfig, RetryPolicy, RunHandle, RunInput,
+    RuntimeConfig, SkillsConfig,
 };
 use orchest::tool::async_job::{JobHandle, JobStatus};
 use orchest::tool::builtin::WriteFileTool;
@@ -97,6 +97,7 @@ struct Agent {
     skills_dir: Option<String>,
     budget: Option<PyBudget>,
     approval_mode: Option<String>,
+    retry: Option<bool>,
     tools: Vec<PyToolDef>,
     native_tools: Vec<Arc<dyn Tool>>,
     run_handle: Arc<TokioMutex<Option<RunHandle>>>,
@@ -504,7 +505,13 @@ impl Agent {
                 ..RuntimeConfig::default()
             },
             hooks: vec![],
-            retry_policy: None,
+            // `retry=True` opts into the recommended policy (429/5xx/timeout/
+            // stream-interrupt); default stays off (None) as before.
+            retry_policy: if self.retry.unwrap_or(false) {
+                Some(RetryPolicy::recommended())
+            } else {
+                None
+            },
             handoffs: vec![],
             session_store: None,
             session_id: None,
@@ -547,7 +554,7 @@ impl Agent {
 #[pymethods]
 impl Agent {
     #[new]
-    #[pyo3(signature = (model, system_prompt, skills_dir=None, budget=None, api_url=None, api_key=None, api_key_env=None, max_tokens=None, request_options=None, approval_mode=None))]
+    #[pyo3(signature = (model, system_prompt, skills_dir=None, budget=None, api_url=None, api_key=None, api_key_env=None, max_tokens=None, request_options=None, approval_mode=None, retry=None))]
     #[allow(clippy::too_many_arguments)] // justified: pyo3 constructor maps Python kwargs 1:1
     fn new(
         model: String,
@@ -560,6 +567,7 @@ impl Agent {
         max_tokens: Option<u32>,
         request_options: Option<Bound<'_, PyDict>>,
         approval_mode: Option<String>,
+        retry: Option<bool>,
     ) -> PyResult<Self> {
         let py_budget = if let Some(b) = budget {
             Some(PyBudget {
@@ -596,6 +604,7 @@ impl Agent {
             skills_dir,
             budget: py_budget,
             approval_mode,
+            retry,
             tools: Vec::new(),
             native_tools: Vec::new(),
             run_handle: Arc::new(TokioMutex::new(None)),
