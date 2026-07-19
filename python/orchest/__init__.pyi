@@ -379,6 +379,7 @@ class Agent:
         max_tokens: int | None = None,
         request_options: RequestOptions | None = None,
         approval_mode: str | None = None,
+        skill_disclosure: bool | None = None,
     ) -> None: ...
     def set_api_url(self, api_url: str | None) -> None: ...
     def tool(

@@ -24,7 +24,8 @@ use orchest::model::{
     RequestOptions as RustRequestOptions, ThinkingLevel,
 };
 use orchest::run::{
-    AgentConfig, AgentRun, ModelConfig, RunHandle, RunInput, RuntimeConfig, SkillsConfig,
+    AgentConfig, AgentRun, ModelConfig, RunHandle, RunInput, RuntimeConfig, SkillDisclosure,
+    SkillsConfig,
 };
 use orchest::tool::async_job::{JobHandle, JobStatus, PollFn};
 use orchest::tool::registry::ToolRegistry;
@@ -86,6 +87,7 @@ pub struct AgentOptions {
     pub model: String,
     pub system_prompt: String,
     pub skills_dir: Option<String>,
+    pub skill_disclosure: Option<bool>,
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
     pub api_url: Option<String>,
@@ -417,6 +419,7 @@ pub struct Agent {
     max_tokens: Option<u32>,
     request_options: RustRequestOptions,
     skills_dir: Option<String>,
+    skill_disclosure: Option<bool>,
     budget: Option<BudgetOptions>,
     approval_mode: Option<String>,
     tools: Vec<Arc<dyn Tool>>,
@@ -441,6 +444,7 @@ impl Agent {
                 .map_err(napi::Error::from_reason)?
                 .unwrap_or_default(),
             skills_dir: options.skills_dir,
+            skill_disclosure: options.skill_disclosure,
             budget: options.budget,
             approval_mode: options.approval_mode,
             tools: Vec::new(),
@@ -762,6 +766,10 @@ impl Agent {
             budget: budget_config,
             skills: SkillsConfig {
                 dir: self.skills_dir.clone(),
+                disclosure: match self.skill_disclosure {
+                    Some(false) => SkillDisclosure::Off,
+                    _ => SkillDisclosure::Progressive,
+                },
                 ..SkillsConfig::default()
             },
             runtime: RuntimeConfig {
@@ -963,6 +971,7 @@ mod tests {
             model: "openrouter/anthropic/claude-sonnet-4".into(),
             system_prompt: "test".into(),
             skills_dir: None,
+            skill_disclosure: None,
             api_key: Some("key".into()),
             api_key_env: None,
             api_url: Some("http://localhost".into()),
@@ -983,6 +992,7 @@ mod tests {
             model: "claude-sonnet-4".into(),
             system_prompt: "test".into(),
             skills_dir: None,
+            skill_disclosure: None,
             api_key: Some("key".into()),
             api_key_env: None,
             api_url: None,

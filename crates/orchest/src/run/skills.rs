@@ -6,21 +6,37 @@ use tokio::sync::mpsc;
 
 use crate::events::RuntimeEvent;
 use crate::skill::bundled_tool::SkillBundledTool;
+use crate::skill::disclosure::{LoadSkillTool, SkillSummary};
 use crate::skill::executor::BareSubprocessExecutor;
 use crate::skill::{CapabilityValidator, SkillScanner};
 use crate::tool::builtin::ReadFileTool;
 use crate::tool::registry::ToolRegistry;
 use crate::tool::Tool;
 
+use super::config::{SkillDisclosure, SkillsConfig};
 use super::helpers::emit;
 
+/// Outcome of skill registration: the skills exposed to progressive
+/// disclosure (empty when nothing scanned clean, `skills.dir` is unset, or
+/// disclosure is `Off`).
+#[derive(Debug)]
+pub(crate) struct SkillRegistration {
+    pub disclosed: Vec<SkillSummary>,
+}
+
 pub(crate) async fn register_skills(
-    skills_dir: &str,
-    allowed_skills: &Option<Vec<String>>,
+    skills_config: &SkillsConfig,
     registry: &mut ToolRegistry,
     tx: &mpsc::Sender<RuntimeEvent>,
-) -> Result<Option<Arc<ReadFileTool>>, String> {
+) -> Result<SkillRegistration, String> {
     use std::path::Path;
+
+    let empty = SkillRegistration {
+        disclosed: Vec::new(),
+    };
+    let Some(ref skills_dir) = skills_config.dir else {
+        return Ok(empty);
+    };
 
     let dir = Path::new(skills_dir).to_path_buf();
     let outcome = tokio::task::spawn_blocking(move || SkillScanner::scan(&dir))
@@ -49,16 +65,17 @@ pub(crate) async fn register_skills(
 
     let manifests = outcome.manifests;
     if manifests.is_empty() {
-        return Ok(None);
+        return Ok(empty);
     }
 
     let read_file_tool = Arc::new(ReadFileTool::new());
     let executor: Arc<dyn crate::skill::executor::ScriptExecutor> =
         Arc::new(BareSubprocessExecutor::new());
+    let mut disclosed = Vec::new();
 
     for manifest in &manifests {
         // Filter by allowed_skills
-        if let Some(ref allowed) = allowed_skills {
+        if let Some(ref allowed) = skills_config.allowed {
             if !allowed.contains(&manifest.name) {
                 continue;
             }
@@ -81,6 +98,16 @@ pub(crate) async fn register_skills(
             read_file_tool
                 .register_skill(manifest.name.clone(), skill_md_path)
                 .await;
+        }
+
+        // With disclosure off, nothing is exposed to the disclosure chain:
+        // no prompt injection and no load_skill tool.
+        if skills_config.disclosure != SkillDisclosure::Off {
+            disclosed.push(SkillSummary {
+                name: manifest.name.clone(),
+                description: manifest.description.clone(),
+                dir: manifest.path.clone(),
+            });
         }
 
         // Register each bundled tool
@@ -114,5 +141,14 @@ pub(crate) async fn register_skills(
         .register(read_file_tool.clone() as Arc<dyn Tool>)
         .map_err(|e| format!("failed to register read_file tool: {e}"))?;
 
-    Ok(Some(read_file_tool))
+    // Progressive disclosure: the load_skill tool resolves skill content by
+    // name from the scanned manifest paths, so the model never needs a
+    // handwritten path. Disabled entirely by `skill_disclosure: Off`.
+    if skills_config.disclosure != SkillDisclosure::Off && !disclosed.is_empty() {
+        registry
+            .register(Arc::new(LoadSkillTool::new(disclosed.clone())))
+            .map_err(|e| format!("failed to register load_skill tool: {e}"))?;
+    }
+
+    Ok(SkillRegistration { disclosed })
 }

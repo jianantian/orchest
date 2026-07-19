@@ -15,6 +15,7 @@ use crate::events::{ApprovalContext, RuntimeEvent};
 use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelResponse, ModelStreamChunk, Role, StopReason,
 };
+use crate::skill::disclosure::with_disclosure_block;
 use crate::telemetry;
 use crate::tool::code_exec::CodeExecutionMcpServer;
 use crate::tool::registry::ToolRegistry;
@@ -25,7 +26,7 @@ use crate::tool::{
 };
 
 use super::compaction::maybe_compact_context;
-use super::config::{AgentConfig, RunId, ToolExecutionPolicy};
+use super::config::{AgentConfig, RunId, SkillDisclosure, ToolExecutionPolicy};
 use super::handle::ApprovalBus;
 use super::helpers::{append_searched_tool_defs, connect_mcp_servers, truncate_output};
 use super::skills::register_skills;
@@ -219,27 +220,24 @@ impl Actor for WorkerActor {
             }
         }
 
-        if let Some(ref skills_dir) = config.skills.dir.clone() {
-            if let Err(error) = register_skills(
-                skills_dir,
-                &config.skills.allowed,
-                &mut registry,
-                primary(&event_subs),
-            )
-            .await
-            {
-                return Ok(fail_pre_start(
-                    &myself,
-                    &event_subs,
-                    run_id,
-                    config,
-                    model,
-                    registry,
-                    approval_bus,
-                    run_hook_ctx,
-                    format!("skill loading failed: {error}"),
-                )
-                .await);
+        let mut disclosed_skills = Vec::new();
+        if config.skills.dir.is_some() {
+            match register_skills(&config.skills, &mut registry, primary(&event_subs)).await {
+                Ok(registration) => disclosed_skills = registration.disclosed,
+                Err(error) => {
+                    return Ok(fail_pre_start(
+                        &myself,
+                        &event_subs,
+                        run_id,
+                        config,
+                        model,
+                        registry,
+                        approval_bus,
+                        run_hook_ctx,
+                        format!("skill loading failed: {error}"),
+                    )
+                    .await);
+                }
             }
         }
 
@@ -277,9 +275,17 @@ impl Actor for WorkerActor {
         let (messages, initial_step, initial_budget_used) = if let Some(rs) = resume {
             (rs.messages, rs.step, Some(rs.budget_used))
         } else {
+            // Level-1 skill disclosure: scanned skill metadata rides at the
+            // tail of the system prompt (or forms the whole System message
+            // when no prompt was configured). `Off` injects nothing.
+            let system_prompt = if config.skills.disclosure == SkillDisclosure::Off {
+                config.system_prompt.clone()
+            } else {
+                with_disclosure_block(&config.system_prompt, &disclosed_skills)
+            };
             let mut msgs = vec![Message {
                 role: Role::System,
-                content: vec![ContentBlock::Text(config.system_prompt.clone())],
+                content: vec![ContentBlock::Text(system_prompt)],
             }];
             msgs.extend(initial_messages);
             msgs.push(Message {

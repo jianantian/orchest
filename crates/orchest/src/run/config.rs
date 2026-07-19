@@ -197,6 +197,19 @@ impl Default for ModelConfig {
 pub struct SkillsConfig {
     pub dir: Option<String>,
     pub allowed: Option<Vec<String>>,
+    #[serde(default)]
+    pub disclosure: SkillDisclosure,
+}
+
+/// Progressive skill disclosure level for a run. `Progressive` (default)
+/// injects scanned skill name/description metadata into the system prompt and
+/// registers the built-in `load_skill` tool; `Off` disables both, keeping the
+/// pre-disclosure behavior (bundled tools still register as before).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SkillDisclosure {
+    #[default]
+    Progressive,
+    Off,
 }
 
 /// Custom approval predicate: given a tool's metadata, decide whether the call
@@ -554,6 +567,13 @@ impl AgentConfigBuilder {
     }
     pub fn allowed_skills(mut self, skills: Vec<String>) -> Self {
         self.skills.allowed = Some(skills);
+        self
+    }
+    /// Set the progressive skill disclosure level. Defaults to
+    /// [`SkillDisclosure::Progressive`]; pass [`SkillDisclosure::Off`] to
+    /// disable system-prompt injection and the `load_skill` tool.
+    pub fn skill_disclosure(mut self, disclosure: SkillDisclosure) -> Self {
+        self.skills.disclosure = disclosure;
         self
     }
     pub fn max_steps(mut self, n: u32) -> Self {

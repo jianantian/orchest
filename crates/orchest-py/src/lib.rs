@@ -25,7 +25,7 @@ use orchest::model::{
 };
 use orchest::run::{
     AgentConfig, AgentRun, ApprovalMode, ModelConfig, RunHandle, RunInput, RuntimeConfig,
-    SkillsConfig,
+    SkillDisclosure, SkillsConfig,
 };
 use orchest::tool::async_job::{JobHandle, JobStatus};
 use orchest::tool::builtin::WriteFileTool;
@@ -94,6 +94,7 @@ struct Agent {
     max_tokens: Option<u32>,
     request_options: RequestOptions,
     skills_dir: Option<String>,
+    skill_disclosure: Option<bool>,
     budget: Option<PyBudget>,
     approval_mode: Option<String>,
     tools: Vec<PyToolDef>,
@@ -470,6 +471,10 @@ impl Agent {
             budget: budget_config,
             skills: SkillsConfig {
                 dir: self.skills_dir.clone(),
+                disclosure: match self.skill_disclosure {
+                    Some(false) => SkillDisclosure::Off,
+                    _ => SkillDisclosure::Progressive,
+                },
                 ..SkillsConfig::default()
             },
             runtime: RuntimeConfig {
@@ -520,7 +525,7 @@ impl Agent {
 #[pymethods]
 impl Agent {
     #[new]
-    #[pyo3(signature = (model, system_prompt, skills_dir=None, budget=None, api_url=None, api_key=None, api_key_env=None, max_tokens=None, request_options=None, approval_mode=None))]
+    #[pyo3(signature = (model, system_prompt, skills_dir=None, budget=None, api_url=None, api_key=None, api_key_env=None, max_tokens=None, request_options=None, approval_mode=None, skill_disclosure=None))]
     #[allow(clippy::too_many_arguments)] // justified: pyo3 constructor maps Python kwargs 1:1
     fn new(
         model: String,
@@ -533,6 +538,7 @@ impl Agent {
         max_tokens: Option<u32>,
         request_options: Option<Bound<'_, PyDict>>,
         approval_mode: Option<String>,
+        skill_disclosure: Option<bool>,
     ) -> PyResult<Self> {
         let py_budget = if let Some(b) = budget {
             Some(PyBudget {
@@ -567,6 +573,7 @@ impl Agent {
             max_tokens,
             request_options,
             skills_dir,
+            skill_disclosure,
             budget: py_budget,
             approval_mode,
             tools: Vec::new(),

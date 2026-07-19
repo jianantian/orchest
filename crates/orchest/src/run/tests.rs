@@ -3488,6 +3488,14 @@ async fn respond_approval_without_pending_returns_error() {
     handle.wait().await;
 }
 
+fn skills_cfg(dir: &std::path::Path, allowed: Option<Vec<String>>) -> config::SkillsConfig {
+    config::SkillsConfig {
+        dir: Some(dir.to_str().unwrap().to_string()),
+        allowed,
+        ..config::SkillsConfig::default()
+    }
+}
+
 #[tokio::test]
 async fn register_skills_scans_and_registers_bundled_tools() {
     use std::fs;
@@ -3531,11 +3539,10 @@ bundled_tools:
     let (tx, mut rx) = mpsc::channel(16);
     let mut registry = ToolRegistry::new();
 
-    let result =
-        skills::register_skills(tmp.path().to_str().unwrap(), &None, &mut registry, &tx).await;
+    let result = skills::register_skills(&skills_cfg(tmp.path(), None), &mut registry, &tx).await;
 
     assert!(result.is_ok());
-    assert!(result.unwrap().is_some()); // read_file tool returned
+    assert_eq!(result.unwrap().disclosed.len(), 1); // skill disclosed
     assert!(registry.contains("greet"));
     assert!(registry.contains("read_file"));
 
@@ -3592,7 +3599,7 @@ bundled_tools:
     let mut registry = ToolRegistry::new();
     let allowed = Some(vec!["skill_a".to_string()]);
 
-    skills::register_skills(tmp.path().to_str().unwrap(), &allowed, &mut registry, &tx)
+    skills::register_skills(&skills_cfg(tmp.path(), allowed), &mut registry, &tx)
         .await
         .unwrap();
 
@@ -3640,8 +3647,7 @@ bundled_tools:
     let (tx, _rx) = mpsc::channel(16);
     let mut registry = ToolRegistry::new();
 
-    let result =
-        skills::register_skills(tmp.path().to_str().unwrap(), &None, &mut registry, &tx).await;
+    let result = skills::register_skills(&skills_cfg(tmp.path(), None), &mut registry, &tx).await;
 
     assert!(result.is_err());
     let err = result.unwrap_err();
@@ -3685,7 +3691,7 @@ bundled_tools:
     let (tx, mut rx) = mpsc::channel(16);
     let mut registry = ToolRegistry::new();
 
-    skills::register_skills(tmp.path().to_str().unwrap(), &None, &mut registry, &tx)
+    skills::register_skills(&skills_cfg(tmp.path(), None), &mut registry, &tx)
         .await
         .unwrap();
 
@@ -3735,7 +3741,7 @@ bundled_tools:
     let (tx, mut rx) = mpsc::channel(16);
     let mut registry = ToolRegistry::new();
 
-    skills::register_skills(tmp.path().to_str().unwrap(), &None, &mut registry, &tx)
+    skills::register_skills(&skills_cfg(tmp.path(), None), &mut registry, &tx)
         .await
         .unwrap();
 
@@ -3801,7 +3807,7 @@ bundled_tools:
     let (tx, mut rx) = mpsc::channel(16);
     let mut registry = ToolRegistry::new();
 
-    skills::register_skills(tmp.path().to_str().unwrap(), &None, &mut registry, &tx)
+    skills::register_skills(&skills_cfg(tmp.path(), None), &mut registry, &tx)
         .await
         .unwrap();
 
@@ -3826,6 +3832,296 @@ bundled_tools:
         reason.contains("invalid frontmatter YAML"),
         "unexpected warning reason: {reason}"
     );
+}
+
+// ── Progressive skill disclosure (issue 002) ────────────────────────────────
+
+/// A pure knowledge skill: no bundled_tools, just SKILL.md plus one reference
+/// file — the zero-config disclosure case.
+fn create_knowledge_skill(root: &std::path::Path) {
+    use std::fs;
+    let dir = root.join("notes_skill");
+    fs::create_dir_all(dir.join("references")).unwrap();
+    fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: notes_skill\ndescription: A pure knowledge skill\n---\n\n# Notes Skill\n\nBody content here.\n",
+    )
+    .unwrap();
+    fs::write(dir.join("references/cheatsheet.md"), "cheat sheet\n").unwrap();
+}
+
+#[tokio::test]
+async fn register_skills_registers_load_skill_by_default() {
+    let tmp = tempfile::tempdir().unwrap();
+    create_knowledge_skill(tmp.path());
+
+    let (tx, _rx) = mpsc::channel(16);
+    let mut registry = ToolRegistry::new();
+
+    let registration = skills::register_skills(&skills_cfg(tmp.path(), None), &mut registry, &tx)
+        .await
+        .unwrap();
+
+    assert!(registry.contains("load_skill"));
+    assert!(registry.contains("read_file"));
+    assert_eq!(registration.disclosed.len(), 1);
+    assert_eq!(registration.disclosed[0].name, "notes_skill");
+    assert_eq!(
+        registration.disclosed[0].description,
+        "A pure knowledge skill"
+    );
+}
+
+#[tokio::test]
+async fn register_skills_disclosure_off_skips_load_skill() {
+    let tmp = tempfile::tempdir().unwrap();
+    create_knowledge_skill(tmp.path());
+
+    let (tx, _rx) = mpsc::channel(16);
+    let mut registry = ToolRegistry::new();
+    let mut cfg = skills_cfg(tmp.path(), None);
+    cfg.disclosure = config::SkillDisclosure::Off;
+
+    let registration = skills::register_skills(&cfg, &mut registry, &tx)
+        .await
+        .unwrap();
+
+    assert!(!registry.contains("load_skill"));
+    assert!(registration.disclosed.is_empty());
+    // read_file registration is independent of disclosure.
+    assert!(registry.contains("read_file"));
+}
+
+#[tokio::test]
+async fn register_skills_load_skill_name_collision_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    create_knowledge_skill(tmp.path());
+
+    let (tx, _rx) = mpsc::channel(16);
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(FakeTool::guarded("load_skill")))
+        .unwrap();
+
+    let err = skills::register_skills(&skills_cfg(tmp.path(), None), &mut registry, &tx)
+        .await
+        .unwrap_err();
+    assert!(
+        err.contains("load_skill"),
+        "unexpected error message: {err}"
+    );
+}
+
+/// Records the system prompt text and offered tool names of every model call.
+struct CaptureFirstCallModel {
+    seen: Mutex<Vec<(String, Vec<String>)>>,
+}
+
+impl CaptureFirstCallModel {
+    fn new() -> Self {
+        Self {
+            seen: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for CaptureFirstCallModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let system_text = messages
+            .iter()
+            .find(|m| m.role == Role::System)
+            .and_then(|m| m.content.first())
+            .and_then(|b| match b {
+                ContentBlock::Text(t) => Some(t.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let tool_names = tools.iter().map(|t| t.name.clone()).collect();
+        self.seen.lock().unwrap().push((system_text, tool_names));
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("done".into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[tokio::test]
+async fn skill_metadata_injected_into_system_prompt() {
+    let tmp = tempfile::tempdir().unwrap();
+    create_knowledge_skill(tmp.path());
+
+    let mut config = test_config();
+    config.skills.dir = Some(tmp.path().to_str().unwrap().to_string());
+
+    let model = Arc::new(CaptureFirstCallModel::new());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model.clone(), ToolRegistry::new());
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let seen = model.seen.lock().unwrap();
+    let (system, tool_names) = &seen[0];
+    assert!(
+        system.starts_with("you are helpful\n\n<available_skills>\n"),
+        "unexpected system prompt: {system}"
+    );
+    assert!(system.contains("<name>notes_skill</name>"));
+    assert!(system.contains("<description>A pure knowledge skill</description>"));
+    assert!(system.contains("</available_skills>"));
+    assert!(system.contains("load_skill"));
+    assert!(tool_names.iter().any(|n| n == "load_skill"));
+}
+
+#[tokio::test]
+async fn skill_disclosure_off_injects_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    create_knowledge_skill(tmp.path());
+
+    let mut config = test_config();
+    config.skills.dir = Some(tmp.path().to_str().unwrap().to_string());
+    config.skills.disclosure = config::SkillDisclosure::Off;
+
+    let model = Arc::new(CaptureFirstCallModel::new());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model.clone(), ToolRegistry::new());
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let seen = model.seen.lock().unwrap();
+    let (system, tool_names) = &seen[0];
+    assert_eq!(system, "you are helpful");
+    assert!(!tool_names.iter().any(|n| n == "load_skill"));
+}
+
+#[tokio::test]
+async fn skill_disclosure_without_system_prompt_forms_standalone_message() {
+    let tmp = tempfile::tempdir().unwrap();
+    create_knowledge_skill(tmp.path());
+
+    let mut config = test_config();
+    config.system_prompt = String::new();
+    config.skills.dir = Some(tmp.path().to_str().unwrap().to_string());
+
+    let model = Arc::new(CaptureFirstCallModel::new());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model.clone(), ToolRegistry::new());
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let seen = model.seen.lock().unwrap();
+    let (system, _) = &seen[0];
+    assert!(
+        system.starts_with("<available_skills>\n<skill>"),
+        "block should form the whole system message: {system}"
+    );
+}
+
+/// The zero-config hard metric: a fresh consumer drops in a SKILL.md directory
+/// and sets skills_dir; the model sees the skill list and loads the body via
+/// load_skill with nothing handwritten and no CWD dependency.
+#[tokio::test]
+async fn zero_config_load_skill_round_trip() {
+    let tmp = tempfile::tempdir().unwrap();
+    create_knowledge_skill(tmp.path());
+
+    struct LoadSkillModel {
+        call_count: AtomicU32,
+    }
+
+    #[async_trait::async_trait]
+    impl ModelAdapter for LoadSkillModel {
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDef],
+            _options: &RequestOptions,
+            _tx: Option<mpsc::Sender<StreamEvent>>,
+        ) -> Result<ModelResponse, ModelError> {
+            let count = self.call_count.fetch_add(1, Ordering::SeqCst);
+            let usage = TokenUsage::default();
+            if count == 0 {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "call_1".into(),
+                        name: "load_skill".into(),
+                        input: json!({"name": "notes_skill"}),
+                    }],
+                    usage,
+                    stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
+                })
+            } else {
+                Ok(ModelResponse {
+                    content: vec![ContentBlock::Text("done".into())],
+                    usage,
+                    stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
+                })
+            }
+        }
+    }
+
+    let mut config = test_config();
+    config.skills.dir = Some(tmp.path().to_str().unwrap().to_string());
+
+    let model = Arc::new(LoadSkillModel {
+        call_count: AtomicU32::new(0),
+    });
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    let output = events.iter().find_map(|e| match e {
+        RuntimeEvent::ToolCallCompleted { tool, output, .. } if tool == "load_skill" => {
+            Some(output.clone())
+        }
+        _ => None,
+    });
+    let output = output.expect("expected ToolCallCompleted for load_skill");
+    assert!(
+        output["skill_md"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("# Notes Skill"),
+        "unexpected load_skill output: {output}"
+    );
+    assert_eq!(output["bundled_files"], json!(["references/cheatsheet.md"]));
+
+    assert!(events.iter().any(|e| matches!(
+        e,
+        RuntimeEvent::SkillContentRead { skill_name, .. } if skill_name == "notes_skill"
+    )));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
 }
 
 #[tokio::test]

@@ -9,6 +9,8 @@ export interface AgentOptions {
   model: string;
   systemPrompt: string;
   skillsDir?: string;
+  /** Progressive skill disclosure; pass `false` to disable prompt injection and the load_skill tool. */
+  skillDisclosure?: boolean;
   apiKey?: string;
   apiKeyEnv?: string;
   apiUrl?: string;

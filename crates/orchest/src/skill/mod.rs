@@ -1,6 +1,7 @@
 //! Skill system: scanning, types, environment management, and bundled tools.
 
 pub mod bundled_tool;
+pub mod disclosure;
 pub mod env_manager;
 pub mod executor;
 pub mod scanner;
