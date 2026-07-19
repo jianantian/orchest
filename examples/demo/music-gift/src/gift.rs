@@ -124,6 +124,12 @@ const SELECT_COLS: &str = "\
 impl GiftStore {
     pub fn open(path: &str) -> AppResult<Self> {
         let conn = Connection::open(path)?;
+        // Gift and auth stores are separate connections to the same file, so a
+        // write on one briefly locks out the other. Wait up to 5s for the lock
+        // instead of failing requests with `database is locked`. (Chosen over
+        // journal_mode=WAL: one pragma, no persistent on-disk format change,
+        // and a demo workload never has more than one writer.)
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS gifts (
                 id              TEXT PRIMARY KEY,

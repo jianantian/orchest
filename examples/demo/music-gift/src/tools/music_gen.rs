@@ -104,6 +104,19 @@ pub async fn generate(
     gift_id: &str,
 ) -> AppResult<GenerateResponse> {
     let gift = store.get(gift_id)?;
+
+    // Idempotent submit: a gift already pending/running/done has a job in
+    // flight or finished — return its current state instead of burning
+    // provider quota on a duplicate submission. Only `failed` (or
+    // never-submitted) gifts continue to a real submit below.
+    if let Some(status @ ("pending" | "running" | "done")) = gift.gen_status.as_deref() {
+        return Ok(GenerateResponse {
+            id: gift_id.to_string(),
+            status: status.to_string(),
+            handle: gift.gen_handle.clone(),
+        });
+    }
+
     let meta = gift.meta();
     let lyrics = gift.lyrics.clone().unwrap_or_default();
     let style = meta.style_or_default();
@@ -262,11 +275,15 @@ pub async fn poll(
     })
 }
 
-/// Stream SSE generation status events until the job completes or times out.
+/// Stream SSE generation status events until the job completes or the SSE
+/// window (48 × 5s ≈ 4 minutes) elapses.
 ///
 /// Same logic as the original `generate_stream` handler (poll loop +
 /// SSE wrapping). Re-fetches the gift itself: it runs after the HTTP
-/// response, in its own spawned task.
+/// response, in its own spawned task. A timeout does not abandon the job —
+/// a background task keeps polling to a terminal state and finalizes the
+/// gift (`handle_done` / `mark_gen_failed`), since after the client is gone
+/// nobody else would.
 pub fn stream(
     gen_task: Arc<dyn GenTask>,
     store: GiftStore,
@@ -301,18 +318,25 @@ pub fn stream(
                 return;
             }
         };
-        let lyrics = gift.lyrics.as_deref();
+        let lyrics = gift.lyrics;
 
         let _ = tx
             .send(Ok(Event::default().data("{\"status\":\"pending\"}")))
             .await;
 
-        for _ in 0..48 {
-            // poll up to 4 minutes
-            sleep(Duration::from_secs(5)).await;
+        for _ in 0..POLL_ROUNDS {
+            sleep(POLL_INTERVAL).await;
             match gen_task.poll(&handle).await {
                 Ok(GenStatus::Done) => {
-                    match handle_done(gen_task.as_ref(), &store, &gift_id, lyrics, &handle).await {
+                    match handle_done(
+                        gen_task.as_ref(),
+                        &store,
+                        &gift_id,
+                        lyrics.as_deref(),
+                        &handle,
+                    )
+                    .await
+                    {
                         Ok(audio_url) => {
                             let _ = tx
                                 .send(Ok(Event::default().data(
@@ -347,9 +371,61 @@ pub fn stream(
         let _ = tx
             .send(Ok(Event::default().data("{\"status\":\"timeout\"}")))
             .await;
+
+        // The SSE window elapsed without a terminal status, but the provider
+        // job may still land — keep polling in the background so the gift is
+        // finalized rather than stuck on `pending` with the song lost.
+        tokio::spawn(finalize_in_background(
+            gen_task, store, gift_id, lyrics, handle,
+        ));
     });
 
     Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default())
+}
+
+/// Poll cadence shared by the SSE loop and the background finalizer.
+const POLL_ROUNDS: u32 = 48; // 48 × 5s ≈ 4 minutes
+const POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Keep polling a timed-out job in the background until it reaches a
+/// terminal state, then finalize the gift. Runs detached: failures are
+/// logged and the gift is marked failed, never propagated.
+async fn finalize_in_background(
+    gen_task: Arc<dyn GenTask>,
+    store: GiftStore,
+    gift_id: String,
+    lyrics: Option<String>,
+    handle: GenHandle,
+) {
+    for _ in 0..POLL_ROUNDS {
+        sleep(POLL_INTERVAL).await;
+        match gen_task.poll(&handle).await {
+            Ok(GenStatus::Done) => {
+                if let Err(e) = handle_done(
+                    gen_task.as_ref(),
+                    &store,
+                    &gift_id,
+                    lyrics.as_deref(),
+                    &handle,
+                )
+                .await
+                {
+                    eprintln!("[music-gift] background finalize failed [{gift_id}]: {e}");
+                    let _ = store.mark_gen_failed(&gift_id);
+                }
+                return;
+            }
+            Ok(GenStatus::Failed) => {
+                let _ = store.mark_gen_failed(&gift_id);
+                return;
+            }
+            _ => {} // pending/running or a transient poll error — keep waiting
+        }
+    }
+    // Still no terminal status after another ~4 minutes: give up rather than
+    // leave the gift pending forever.
+    eprintln!("[music-gift] background poll exhausted [{gift_id}]");
+    let _ = store.mark_gen_failed(&gift_id);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

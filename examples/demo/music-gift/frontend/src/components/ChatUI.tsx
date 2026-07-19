@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isImeComposing } from "../lib/ime";
 
 // ── PillsRow ────────────────────────────────────────────
 
@@ -72,7 +73,7 @@ export function InlineInput({
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") done();
+          if (e.key === "Enter" && !isImeComposing(e)) done();
         }}
         placeholder={placeholder}
         maxLength={30}

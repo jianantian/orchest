@@ -19,8 +19,9 @@ fn chat_model_configured() -> bool {
 }
 
 /// Start the server on a random port, wait for it to be ready, return the
-/// port and a handle to kill it when done.
-fn start_server() -> (u16, std::process::Child) {
+/// port, a handle to kill it when done, and the TempDir holding its data
+/// directory (must outlive the server or the db files vanish mid-test).
+fn start_server() -> (u16, std::process::Child, tempfile::TempDir) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let data_dir = tmp.path().join("data");
     let static_dir = tmp.path().join("static");
@@ -58,7 +59,7 @@ fn start_server() -> (u16, std::process::Child) {
     // Give the server a moment to bind
     std::thread::sleep(Duration::from_millis(200));
 
-    (port, child)
+    (port, child, tmp)
 }
 
 #[test]
@@ -72,7 +73,7 @@ fn server_starts_and_health_check() {
         return;
     }
 
-    let (port, mut child) = start_server();
+    let (port, mut child, _tmp) = start_server();
 
     // Try a simple HTTP request to verify the server is responding
     let url = format!("http://127.0.0.1:{port}/api/playlist");
@@ -92,7 +93,7 @@ fn gift_crud_without_providers() {
         return;
     }
 
-    let (port, mut child) = start_server();
+    let (port, mut child, _tmp) = start_server();
     let base = format!("http://127.0.0.1:{port}");
 
     // Create a gift
@@ -108,7 +109,7 @@ fn gift_crud_without_providers() {
     );
     let create_body: serde_json::Value = create_resp.unwrap().into_json().expect("json response");
     let gift_id = create_body["id"].as_str().expect("gift id");
-    let _creator_token = create_body["creator_token"]
+    let creator_token = create_body["creator_token"]
         .as_str()
         .expect("creator token");
     assert!(!gift_id.is_empty());
@@ -129,22 +130,38 @@ fn gift_crud_without_providers() {
     let like_body: serde_json::Value = like_resp.unwrap().into_json().expect("json");
     assert_eq!(like_body["likes"].as_u64().unwrap(), 1);
 
-    // Playlist should include the gift
+    // Playlist only lists published gifts that already have an audio_url —
+    // this fresh gift is neither, so it must not appear.
     let playlist_resp = ureq::get(&format!("{base}/api/playlist")).call();
     assert!(playlist_resp.is_ok());
     let playlist: serde_json::Value = playlist_resp.unwrap().into_json().expect("json");
-    let _items = playlist["items"].as_array().expect("items array");
-    // Gift has no audio_url yet, so it shouldn't appear in playlist
-    // (playlist filters to only gifts with audio_url)
+    let items = playlist["items"].as_array().expect("items array");
+    assert!(
+        items.iter().all(|it| it["id"].as_str() != Some(gift_id)),
+        "gift without audio_url must not appear in playlist"
+    );
 
-    // Music generation without key should fail gracefully
+    // Generate is a mutating route: it requires the creator token
+    // (x-creator-token header, see routes.rs verify_creator).
+    let anon_gen = ureq::post(&format!("{base}/api/generate/{gift_id}")).send_string("");
+    assert!(
+        matches!(anon_gen, Err(ureq::Error::Status(403, _))),
+        "generate without creator token should be 403, got: {:?}",
+        anon_gen.as_ref().map(|r| r.status())
+    );
+
+    // With the token the auth gate passes; the outcome then depends on the
+    // music provider config (missing key -> 5xx, configured -> 200).
     if std::env::var(MUSIC_KEY_ENV).is_err() {
-        let gen_resp = ureq::post(&format!("{base}/api/generate/{gift_id}")).send_string(""); // empty body
-                                                                                              // May fail with missing key or succeed if key is set — either is fine
-        eprintln!(
-            "generate response (no key expected): {:?}",
-            gen_resp.as_ref().map(|r| r.status())
-        );
+        let authed_gen = ureq::post(&format!("{base}/api/generate/{gift_id}"))
+            .set("x-creator-token", creator_token)
+            .send_string("");
+        let status = match &authed_gen {
+            Ok(r) => r.status(),
+            Err(ureq::Error::Status(code, _)) => *code,
+            Err(e) => panic!("generate request failed at transport level: {e}"),
+        };
+        assert_ne!(status, 403, "creator token should pass the auth gate");
     }
 
     child.kill().expect("kill server");

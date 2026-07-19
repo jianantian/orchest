@@ -1,8 +1,8 @@
 //! Prompt templates for the music-gift demo.
 //!
-//! Static prompts (`SYSTEM_PROMPT`, `COUNTDOWN_TEMPLATE`) are embedded at
-//! compile time via `include_str!`. Music prompt skills are loaded from disk
-//! at startup so providers can be added without recompilation.
+//! All prompts — `SYSTEM_PROMPT`, `COUNTDOWN_TEMPLATE`, and the per-provider
+//! music prompt skills — are embedded at compile time via `include_str!`, so
+//! the binary never depends on the runtime working directory.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -18,18 +18,24 @@ pub static SYSTEM_PROMPT: LazyLock<String> =
 /// `{target_date}`, `{lyric_snippet}`, `{previous_error}`.
 pub static COUNTDOWN_TEMPLATE: LazyLock<String> =
     LazyLock::new(|| include_str!("../prompts/countdown.md").to_string());
-/// Per-provider music prompt generation skills loaded at startup.
+
+/// Per-provider music prompt generation skills, embedded at compile time
+/// (like `prompts/review.md` in agent.rs). Reading them from disk at runtime
+/// made the set depend on the process CWD, silently dropped missing files,
+/// and then mis-reported the gap as "unknown music provider".
 pub static MUSIC_PROMPT_SKILLS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
-    let mut m = HashMap::new();
-    for provider in &["suno", "mureka", "minimax"] {
-        if let Ok(content) =
-            std::fs::read_to_string(format!("prompts/music_prompt/{}.md", provider))
-        {
-            eprintln!("[music-gift] loaded music prompt skill: {provider}");
-            m.insert(provider.to_string(), content);
-        } else {
-            eprintln!("[music-gift] music prompt skill not found: {provider}");
-        }
-    }
-    m
+    HashMap::from([
+        (
+            "suno".to_string(),
+            include_str!("../prompts/music_prompt/suno.md").to_string(),
+        ),
+        (
+            "mureka".to_string(),
+            include_str!("../prompts/music_prompt/mureka.md").to_string(),
+        ),
+        (
+            "minimax".to_string(),
+            include_str!("../prompts/music_prompt/minimax.md").to_string(),
+        ),
+    ])
 });

@@ -10,13 +10,16 @@ export default function PlaylistPage() {
   const { t } = useI18n();
   const [items, setItems] = useState<PlaylistItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  /** Fatal: the initial load failed — replaces the page. */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  /** Non-fatal: an action (unlist) failed — shown inline, page stays usable. */
+  const [actionError, setActionError] = useState<string | null>(null);
   const [unlisting, setUnlisting] = useState<string | null>(null);
 
   useEffect(() => {
     getPlaylist()
       .then((res) => setItems(res.items))
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load playlist'))
+      .catch((e) => setLoadError(e instanceof Error ? e.message : t('playlist_err_load')))
       .finally(() => setLoading(false));
   }, []);
 
@@ -26,12 +29,12 @@ export default function PlaylistPage() {
     const token = creatorToken(id);
     if (!token) return;
     setUnlisting(id);
-    setError(null);
+    setActionError(null);
     try {
       await setGiftPublished(id, token, false);
       setItems((prev) => prev.filter((i) => i.id !== id));
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not unlist');
+      setActionError(e instanceof Error ? e.message : t('playlist_err_unlist'));
     } finally {
       setUnlisting(null);
     }
@@ -40,24 +43,26 @@ export default function PlaylistPage() {
   if (loading) {
     return (
       <div className="playlist-page loading-page">
-        <span className="spinner" /> Loading playlist…
+        <span className="spinner" /> {t('playlist_loading')}
       </div>
     );
   }
 
-  if (error) {
-    return <div className="playlist-page"><div className="error-msg">{error}</div></div>;
+  if (loadError) {
+    return <div className="playlist-page"><div className="error-msg">{loadError}</div></div>;
   }
 
   return (
     <div className="playlist-page">
-      <h1 className="page-title">Playlist</h1>
-      <p className="page-sub">Songs crafted with love</p>
+      <h1 className="page-title">{t('nav_playlist')}</h1>
+      <p className="page-sub">{t('playlist_sub')}</p>
+
+      {actionError && <div className="error-msg">{actionError}</div>}
 
       {items.length === 0 ? (
         <div className="empty-state">
-          <p>No songs yet.</p>
-          <Link to="/" className="btn btn-primary">Create one</Link>
+          <p>{t('playlist_empty')}</p>
+          <Link to="/" className="btn btn-primary">{t('playlist_create')}</Link>
         </div>
       ) : (
         <div className="playlist-grid">

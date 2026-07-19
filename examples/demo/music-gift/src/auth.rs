@@ -583,13 +583,30 @@ pub async fn handle_google_callback(
 
     let user = match state.auth_store.find_by_provider("google", google_id) {
         Ok(Some(u)) => u,
-        _ => state
+        _ => match state
             .auth_store
             .create_user(email, None, name, "google", Some(google_id))
-            .unwrap(),
+        {
+            Ok(u) => u,
+            // Reachable: an email-registered user who later signs in with
+            // Google trips UNIQUE(email) here — map it, don't panic.
+            Err(_) => {
+                return (StatusCode::CONFLICT, Json(json!({"error":"EMAIL_EXISTS"})))
+                    .into_response()
+            }
+        },
     };
 
-    let session = state.auth_store.create_session(&user.id).unwrap();
+    let session = match state.auth_store.create_session(&user.id) {
+        Ok(s) => s,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error":"INTERNAL"})),
+            )
+                .into_response()
+        }
+    };
 
     let cookie = Cookie::build(("session_token", session.token))
         .path("/")
@@ -702,7 +719,16 @@ pub async fn handle_register(
         &body.display_name,
     ) {
         Ok(user) => {
-            let session = state.auth_store.create_session(&user.id).unwrap();
+            let session = match state.auth_store.create_session(&user.id) {
+                Ok(s) => s,
+                Err(_) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"error":"INTERNAL"})),
+                    )
+                        .into_response()
+                }
+            };
             let cookie = session_cookie(session.token.clone());
             (
                 jar.add(cookie),
@@ -727,7 +753,16 @@ pub async fn handle_login(
         .verify_password(&body.email, &body.password)
     {
         Ok(Some(user)) => {
-            let session = state.auth_store.create_session(&user.id).unwrap();
+            let session = match state.auth_store.create_session(&user.id) {
+                Ok(s) => s,
+                Err(_) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"error":"INTERNAL"})),
+                    )
+                        .into_response()
+                }
+            };
             let cookie = session_cookie(session.token.clone());
             (
                 jar.add(cookie),

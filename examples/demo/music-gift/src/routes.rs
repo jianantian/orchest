@@ -3,7 +3,7 @@ use std::convert::Infallible;
 
 use std::path::PathBuf;
 
-use axum::extract::{Path, State};
+use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json};
@@ -40,7 +40,10 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .route("/gift/{id}/like", post(like_gift))
         .route("/polish-music-prompt", post(polish_music_prompt))
         .route("/countdown-section/{id}", get(get_countdown_section))
-        .route("/photos", post(upload_photos))
+        .route(
+            "/photos",
+            post(upload_photos).layer(DefaultBodyLimit::max(PHOTOS_BODY_LIMIT)),
+        )
         // Auth (module wired via crate::auth)
         .route("/auth/me", get(crate::auth::handle_me))
         .route("/auth/logout", post(crate::auth::handle_logout))
@@ -427,13 +430,18 @@ pub async fn list_playlist(State(state): State<AppState>) -> AppResult<impl Into
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/generate/:id - submit music generation
+// POST /api/generate/:id - submit music generation (creator only)
 // ---------------------------------------------------------------------------
 
 pub async fn generate_music(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
 ) -> AppResult<impl IntoResponse> {
+    // Generate spends provider quota on the gift owner's behalf, so it is a
+    // creator-only mutation like delete/publish above.
+    let gift = state.gift_store.get(&id)?;
+    verify_creator(&gift, &headers)?;
     let resp = crate::tools::music_gen::generate(
         &state.gen_task,
         &state.gift_store,
@@ -536,6 +544,15 @@ pub async fn like_gift(
 // POST /api/photos - upload base64 photos
 // ---------------------------------------------------------------------------
 
+/// Max decoded bytes per photo.
+const MAX_PHOTO_BYTES: usize = 8 * 1024 * 1024;
+/// Max photos per upload request.
+const MAX_PHOTOS: usize = 5;
+/// Body limit for the upload route: up to 5 base64-encoded photos (4/3
+/// overhead) plus JSON framing. Without this, axum's 2MB `DefaultBodyLimit`
+/// would 413 the request before the per-photo check below could ever run.
+const PHOTOS_BODY_LIMIT: usize = MAX_PHOTOS * MAX_PHOTO_BYTES * 4 / 3 + 4096;
+
 #[derive(Debug, Deserialize)]
 pub struct PhotoUploadRequest {
     pub photos: Vec<String>,
@@ -553,7 +570,7 @@ pub async fn upload_photos(
     if req.photos.is_empty() {
         return Err(AppError::BadRequest("no photos".to_string()));
     }
-    if req.photos.len() > 5 {
+    if req.photos.len() > MAX_PHOTOS {
         return Err(AppError::BadRequest("max 5 photos".to_string()));
     }
 
@@ -563,7 +580,7 @@ pub async fn upload_photos(
     let mut urls = Vec::new();
     for data_url in &req.photos {
         let (media_type, data) = parse_data_url(data_url)?;
-        if data.len() > 8 * 1024 * 1024 {
+        if data.len() > MAX_PHOTO_BYTES {
             return Err(AppError::BadRequest("photo too large (>8MB)".to_string()));
         }
         let ext = match media_type.as_str() {
@@ -671,7 +688,6 @@ pub async fn get_gift_lrc(
     }
 }
 #[cfg(test)]
-
 mod tests {
     use super::*;
 

@@ -2,6 +2,7 @@ import { useRef, useState, type FormEvent } from "react";
 import { streamChat } from "../api";
 import { useI18n } from "../i18n";
 import { shuffleStyles } from "../lib/styles";
+import { isImeComposing } from "../lib/ime";
 import { useMusicGen } from "../hooks/useMusicGen";
 import { MusicCard } from "./MusicCard";
 import { MicIcon, MusicNoteIcon, PencilIcon, SparklesIcon, ExpandIcon, XIcon, FemaleIcon, MaleIcon } from "./Icons";
@@ -80,12 +81,18 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
 
   async function handleGenerate(e: FormEvent) {
     e.preventDefault(); setError(null);
+    // Vocal mode requires lyrics — never substitute a placeholder: Suno
+    // would sing the word "instrumental" as if it were the lyrics.
+    if (!instrumental && !lyrics.trim()) return;
     const style = selectedStyles.join(", ") || styleInput.trim() || "warm acoustic";
     // Branch on the returned result: `gen.error` here would be the stale
     // closure from this render, always the pre-start value.
-    const result = await gen.start({ lyrics: instrumental ? "" : lyrics.trim() || "instrumental", kind: instrumental ? "instrumental" : "song", style, title: title.trim() || undefined, vocal, lang, photos });
+    const result = await gen.start({ lyrics: instrumental ? "" : lyrics.trim(), kind: instrumental ? "instrumental" : "song", style, title: title.trim() || undefined, vocal, lang, photos });
     if (!result.ok) setError(result.error);
   }
+
+  /** Vocal mode with no lyrics yet: submission is blocked (see handleGenerate). */
+  const needsLyrics = !instrumental && !lyrics.trim();
 
   const musicState = gen.state === "idle" ? "generating" as const : gen.state === "ready" ? "ready" as const : gen.state === "error" ? "error" as const : "generating" as const;
 
@@ -95,11 +102,11 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
       <div className="mode-bar">
         <button className={`mode-btn ${!instrumental ? "active" : ""}`} onClick={() => setInstrumental(false)}>
           <span className="mode-icon"><MicIcon /></span>
-          <span className="mode-label">Vocal</span>
+          <span className="mode-label">{t("vocal")}</span>
         </button>
         <button className={`mode-btn ${instrumental ? "active" : ""}`} onClick={() => setInstrumental(true)}>
           <span className="mode-icon"><MusicNoteIcon /></span>
-          <span className="mode-label">Instrumental</span>
+          <span className="mode-label">{t("instrumental")}</span>
         </button>
       </div>
 
@@ -109,22 +116,22 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
           <h3 className="section-title">{t("free_lyrics")}</h3>
           <div className="section-actions">
             {!instrumental && <>
-              <button className={`btn-ghost btn-sm${writing ? " loading" : ""}`} onClick={() => setShowPromptBar(showPromptBar === "write" ? null : "write")} disabled={writing}>{writing ? <span className="spinner" /> : <PencilIcon />} Write</button>
-              {lyrics.trim() && <button className={`btn-ghost btn-sm${editing ? " loading" : ""}`} onClick={() => setShowPromptBar(showPromptBar === "edit" ? null : "edit")} disabled={editing}>{editing ? <span className="spinner" /> : <SparklesIcon />} Edit</button>}
-              <button className={`btn-ghost btn-sm${expanding ? " loading" : ""}`} onClick={handleExpand} disabled={expanding}>{expanding ? <span className="spinner" /> : <ExpandIcon />} Expand</button>
+              <button className={`btn-ghost btn-sm${writing ? " loading" : ""}`} onClick={() => setShowPromptBar(showPromptBar === "write" ? null : "write")} disabled={writing}>{writing ? <span className="spinner" /> : <PencilIcon />} {t("lyrics_write")}</button>
+              {lyrics.trim() && <button className={`btn-ghost btn-sm${editing ? " loading" : ""}`} onClick={() => setShowPromptBar(showPromptBar === "edit" ? null : "edit")} disabled={editing}>{editing ? <span className="spinner" /> : <SparklesIcon />} {t("lyrics_edit")}</button>}
+              <button className={`btn-ghost btn-sm${expanding ? " loading" : ""}`} onClick={handleExpand} disabled={expanding}>{expanding ? <span className="spinner" /> : <ExpandIcon />} {t("lyrics_expand")}</button>
             </>}
           </div>
         </div>
         {showPromptBar && (
           <div className="prompt-bar">
             <input type="text" className="prompt-bar-input" value={promptInput} onChange={e => setPromptInput(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter") handleAiAction(showPromptBar); else if (e.key === "Escape") { setShowPromptBar(null); setPromptInput(""); } }}
-              placeholder={showPromptBar === "write" ? "Describe the song you want…" : "How should I edit the lyrics?"}
+              onKeyDown={e => { if (e.key === "Enter" && !isImeComposing(e)) handleAiAction(showPromptBar); else if (e.key === "Escape") { setShowPromptBar(null); setPromptInput(""); } }}
+              placeholder={showPromptBar === "write" ? t("write_prompt_ph") : t("edit_prompt_ph")}
               autoFocus />
           </div>
         )}
         <textarea ref={lyricsRef} className="lyrics-manuscript" value={lyrics} onChange={e => setLyrics(e.target.value)}
-          placeholder={instrumental ? "Instrumental, no lyrics needed" : t("paste_lyrics_ph")}
+          placeholder={instrumental ? t("instrumental_ph") : t("paste_lyrics_ph")}
           disabled={instrumental} rows={instrumental ? 2 : 7} />
       </section>
 
@@ -132,20 +139,20 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
       <section className="editorial-section">
         <div className="section-header">
           <h3 className="section-title">{t("free_style")}</h3>
-          <button className="btn-ghost btn-sm" onClick={() => setShowPolishPrompt(!showPolishPrompt)}>{showPolishPrompt ? <XIcon /> : <SparklesIcon />} Personalize</button>
+          <button className="btn-ghost btn-sm" onClick={() => setShowPolishPrompt(!showPolishPrompt)}>{showPolishPrompt ? <XIcon /> : <SparklesIcon />} {t("personalize")}</button>
         </div>
         {showPolishPrompt && (
           <div className="prompt-bar">
             <input type="text" className="prompt-bar-input" value={polishPrompt} onChange={e => setPolishPrompt(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter") handlePolish(); else if (e.key === "Escape") { setShowPolishPrompt(false); setPolishPrompt(""); } }}
-              placeholder="Describe the vibe you want, e.g. 'warmer, more romantic, add strings'"
+              onKeyDown={e => { if (e.key === "Enter" && !isImeComposing(e)) handlePolish(); else if (e.key === "Escape") { setShowPolishPrompt(false); setPolishPrompt(""); } }}
+              placeholder={t("polish_ph")}
               autoFocus />
           </div>
         )}
-        {polishing && <p className="polish-status"><span className="spinner" /> Personalizing…</p>}
+        {polishing && <p className="polish-status"><span className="spinner" /> {t("personalizing")}</p>}
         <div className="style-composer">
           <input type="text" className="style-input" value={styleInput} onChange={e => setStyleInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); commitStyleInput(); } else if (e.key === "Backspace" && !styleInput && selectedStyles.length > 0) removeStyle(selectedStyles[selectedStyles.length - 1]); }}
+            onKeyDown={e => { if (e.key === "Enter" && !isImeComposing(e)) { e.preventDefault(); commitStyleInput(); } else if (e.key === "Backspace" && !styleInput && selectedStyles.length > 0) removeStyle(selectedStyles[selectedStyles.length - 1]); }}
             placeholder={t("free_style_ph")} />
           {selectedStyles.length > 0 && <div className="style-chips">{selectedStyles.map(s => <span key={s} className="style-chip" onClick={() => removeStyle(s)} role="button" tabIndex={0} onKeyDown={e => e.key === "Enter" && removeStyle(s)}>{s} <XIcon /></span>)}</div>}
           <div className="style-suggestions">
@@ -160,14 +167,14 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
                 <span className="t-acc-chevron">
                   <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 6.5L8 10.5L12 6.5"/></svg>
                 </span>
-                More Options
+                {t("more_options")}
               </button>
               <div className="t-acc-panel">
                 <div className="more-body t-acc-panel-inner">
-                  <p className="more-label">Vocal Gender</p>
+                  <p className="more-label">{t("vocal_gender")}</p>
                   <div className="gender-select">
-                    <button className={`gender-opt ${vocalGender === "female" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "female" ? null : "female")}><FemaleIcon /> Female</button>
-                    <button className={`gender-opt ${vocalGender === "male" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "male" ? null : "male")}><MaleIcon /> Male</button>
+                    <button className={`gender-opt ${vocalGender === "female" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "female" ? null : "female")}><FemaleIcon /> {t("gender_female")}</button>
+                    <button className={`gender-opt ${vocalGender === "male" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "male" ? null : "male")}><MaleIcon /> {t("gender_male")}</button>
                   </div>
                 </div>
               </div>
@@ -182,8 +189,9 @@ export function FreeCreatePanel({ photos, lang, onNavigate }: FreeCreatePanelPro
         <input type="text" className="title-input" value={title} onChange={e => setTitle(e.target.value)} placeholder={t("free_title_ph")} maxLength={50} />
       </section>
 
-      <button className="btn-create" onClick={handleGenerate} disabled={gen.state === "generating"}>
-        {gen.state === "generating" ? <><span className="spinner" /> Generating…</> : "Create Song"}
+      {needsLyrics && <p className="polish-status">{t("lyrics_required")}</p>}
+      <button className="btn-create" onClick={handleGenerate} disabled={gen.state === "generating" || needsLyrics}>
+        {gen.state === "generating" ? <><span className="spinner" /> {t("generating")}</> : t("create_song")}
       </button>
 
       {(error || gen.error) && <p className="error-msg" role="alert">{error || gen.error}</p>}

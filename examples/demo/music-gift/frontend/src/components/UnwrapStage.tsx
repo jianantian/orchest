@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useI18n } from "../i18n";
 
 interface UnwrapStageProps {
   title: string;
@@ -12,6 +13,7 @@ const MOTE_COUNT = 12;
 type Phase = "idle" | "opening" | "closing";
 
 export function UnwrapStage({ title, name, onClose }: UnwrapStageProps) {
+  const { t } = useI18n();
   // Drive the whole lifecycle through React state. The previous version called
   // stage.remove() to tear itself down imperatively — but this node is
   // React-owned, so when the parent then re-rendered and unmounted <UnwrapStage>
@@ -108,9 +110,9 @@ export function UnwrapStage({ title, name, onClose }: UnwrapStageProps) {
   return (
     <div ref={stageRef} id="unwrap-stage" className={stageClass} role="button" aria-label="Open your gift" tabIndex={0} onClick={handleOpen}>
       <div id="unwrap-titles">
-        <div id="unwrap-eyebrow">A Moment, for you</div>
+        <div id="unwrap-eyebrow">{t("unwrap_eyebrow")}</div>
         <div id="unwrap-headline">
-          {title || name || "Something special"}
+          {title || name || t("unwrap_fallback")}
         </div>
         <div className="ornament">
           <span className="line" />
@@ -149,7 +151,7 @@ export function UnwrapStage({ title, name, onClose }: UnwrapStageProps) {
       <div id="box-shadow" />
 
       <div id="tap-hint">
-        <span>tap to unwrap</span>
+        <span>{t("unwrap_hint")}</span>
         <span className="arrow" />
       </div>
     </div>

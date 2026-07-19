@@ -168,7 +168,7 @@
    | relationship | gift.meta.relationship |
    | lang | gift.meta.lang |
 
-   LLM 用 `prompts/music_prompt/{provider}.md` 模板（suno / mureka / minimax，启动期加载），输出结构化 `EnrichedPrompt`：
+   LLM 用 `prompts/music_prompt/{provider}.md` 模板（suno / mureka / minimax，编译期 `include_str!` 嵌入，不依赖运行时工作目录），输出结构化 `EnrichedPrompt`：
    ```
    prompt:        "female, breathy, legato, indie folk, warm nostalgia, acoustic guitar, cello, soft piano"
    genre:         ["indie folk", "chamber pop"]
@@ -212,6 +212,8 @@
 
 刷新页面可恢复。`clearGuided()` 清除状态重新开始。
 
+恢复规则:`review` 及之前的步骤都可恢复;`music` 不可恢复(giftId 不持久化,恢复后 MusicCard 无法渲染、chat bar 被禁用),加载时回退为 `review`,由已持久化的 draft 重新提交生成。
+
 ---
 
 ## 涉及文件
@@ -229,7 +231,7 @@
 | 后端 | `src/routes.rs` | `/api/chat` + `/api/gift` + `/api/generate/:id` + `/api/polish-music-prompt` |
 | 后端 | `src/agent.rs` | `run_chat_agent` + `run_review_pass` + `parse_lyrics` + `extract_review_summary`；编译期嵌入 `review.md` |
 | 后端 | `src/agent/message.rs` | `build_system_message` + `build_messages` |
-| 后端 | `src/prompts.rs` | 编译期嵌入 `system.md` / `countdown.md`，启动期加载 `music_prompt/*.md`（suno/mureka/minimax） |
+| 后端 | `src/prompts.rs` | 编译期 `include_str!` 嵌入 `system.md` / `countdown.md` / `music_prompt/*.md`（suno/mureka/minimax） |
 | 后端 | `src/tools/music_gen.rs` | `generate_music_prompt` + `generate` / `submit` / `poll` / `stream`（模块函数） |
 | Prompt | `prompts/system.md` | Chat agent 系统 prompt |
 | Skill | `skills/lyrics-writer/SKILL.md` | 写词方法论，agent 通过 `read_file` 按需加载 |

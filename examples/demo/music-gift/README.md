@@ -98,6 +98,34 @@ examples/demo/music-gift/
 | POST | `/api/photos` | Upload photos (base64) |
 | GET | `/audio/*` | Serve generated audio files |
 
+### Endpoint auth matrix
+
+Three access levels. The demo is deliberately reachable by anonymous
+visitors — read the assumptions at the bottom before exposing it beyond
+localhost.
+
+| Access | Endpoints |
+|--------|-----------|
+| Public (no auth) | `POST /api/chat`, `POST /api/polish-music-prompt`, `POST /api/gift`, `GET /api/gift/:id`, `GET /api/gift/:id/lrc`, `POST /api/gift/:id/like`, `GET /api/playlist`, `GET /api/generate/:id/status`, `GET /api/generate/:id/stream`, `POST /api/photos`, `GET /api/countdown-section/:id`, `GET /audio/*`, plus the auth routes (`register` / `login` / `send-link` / `verify` / OAuth) |
+| Creator token (`X-Creator-Token` header; minted at gift creation, kept in the creator's browser) | `POST /api/generate/:id`, `POST /api/gift/:id/publish`, `DELETE /api/gift/:id` |
+| Session cookie (`session_token`; set by register/login/verify/OAuth) | `GET /api/auth/me`, `POST /api/auth/logout`; a valid session also links newly created gifts to the user (`creator_id`) |
+
+Assumptions:
+
+- **Anonymous LLM endpoints are a product decision, not an oversight.**
+  `POST /api/chat` and `POST /api/polish-music-prompt` spend LLM quota
+  without any auth so visitors can write lyrics before signing up. Anyone
+  who can reach the server can burn model quota — put the demo behind a
+  network boundary or a rate limiter if that matters for a deployment.
+- `POST /api/generate/:id` is creator-only because it spends paid music
+  provider quota against an existing gift. It is also idempotent: posting
+  again while the gift is `pending` / `running` / `done` returns the current
+  state instead of submitting a duplicate job.
+- A gift is readable by anyone holding its id — that is how share links
+  work. The `creator_token` is returned exactly once (at gift creation) and
+  is never echoed by `GET /api/gift/:id`.
+- Likes are anonymous but idempotent per client-generated `viewer_id`.
+
 ### Agent loop
 
 The chat endpoint uses `AgentRun::start` with:

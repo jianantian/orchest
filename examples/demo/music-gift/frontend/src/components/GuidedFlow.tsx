@@ -7,10 +7,18 @@ import { ReviewCard, type ReviewData } from "./ReviewCard";
 import { MusicCard } from "./MusicCard";
 import { PillsRow, GoldPill, InlineInput, BirthdayPicker } from "./ChatUI";
 import { stripMarkers } from "../lib/styles";
+import { isImeComposing } from "../lib/ime";
 
 /** The backend parses birthday as "MM-DD"; omitted entirely when skipped. */
 function birthdayParam(b: StepMeta["birthday"]): string | undefined {
   return b ? `${b.month}-${b.day}` : undefined;
+}
+
+/** The scenario sent to the backend is the display label. For "__custom__"
+ * ("tell me…") there is no preset angle, so it is omitted entirely — the
+ * model must not read the pill label as an actual scenario. */
+function scenarioParam(m: StepMeta): string | undefined {
+  return m.scenario === "__custom__" ? undefined : m.scenarioLabel;
 }
 
 const RELATIONSHIPS = [
@@ -75,21 +83,23 @@ function derivedBubbles(step: FlowStep, meta: ReturnType<typeof useGuidedState>[
   push("bot", t("greet"));
   push("bot", t("relationship_q"));
   push("user", meta.relationshipLabel);
-  push("bot", t("name_q"));
 
-  if (step === "name") return b;
-
-  push("user", meta.name);
-
+  // Pets skip name/gender/birthday entirely — don't fabricate those Q&A
+  // pairs into the transcript (they never happened).
   if (meta.relationship !== "pet") {
+    push("bot", t("name_q"));
+    if (step === "name") return b;
+    push("user", meta.name);
+
     push("bot", t("gender_q"));
     if (step === "gender") return b;
     push("user", meta.gender);
+
+    push("bot", meta.relationship === "partner" ? t("bday_q_partner") : t("bday_q"));
+    if (step === "birthday") return b;
+    push("user", meta.birthday ? `${months[meta.birthday.month - 1]} ${meta.birthday.day}` : t("bday_skip"));
   }
 
-  push("bot", meta.relationship === "partner" ? t("bday_q_partner") : t("bday_q"));
-  if (step === "birthday") return b;
-  push("user", meta.birthday ? `${months[meta.birthday.month - 1]} ${meta.birthday.day}` : t("bday_skip"));
   push("bot", t("scenario_q"));
   if (step === "scenario") return b;
   push("user", meta.scenarioLabel);
@@ -146,9 +156,11 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
   }
 
   function handleScenario(value: string, label: string) {
-    if (value === "__custom__") return;
     act.setMeta({ ...metaRef.current, scenario: value, scenarioLabel: label });
     act.go("chat");
+    // "__custom__" has no preset angle — don't auto-start a turn; let the
+    // user describe the moment themselves in the now-enabled chat bar.
+    if (value === "__custom__") return;
     setTimeout(() => startChat(null), 400);
   }
 
@@ -212,7 +224,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
 
     try {
       const m = metaRef.current;
-      const gen = streamChat({ messages: msgs, meta: { lang, name: m.name, relationship: m.relationshipLabel, scenario: m.scenarioLabel, gender: m.gender, birthday: birthdayParam(m.birthday) }, photos: [] });
+      const gen = streamChat({ messages: msgs, meta: { lang, name: m.name, relationship: m.relationshipLabel, scenario: scenarioParam(m), gender: m.gender, birthday: birthdayParam(m.birthday) }, photos: [] });
       for await (const e of gen) {
         if (runIdRef.current !== runId) return;
         if (e.type === "Delta") {
@@ -275,7 +287,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
     setError(null);
     // Start generation first — sets state to "generating" synchronously,
     // so MusicCard never sees "idle"
-    const genPromise = gen.start({ lyrics: data.lyrics, style: data.style, title: data.title, vocal: data.vocal, meta: { name: m.name, relationship: m.relationshipLabel, scenario: m.scenarioLabel, gender: m.gender, birthday: birthdayParam(m.birthday) }, lang });
+    const genPromise = gen.start({ lyrics: data.lyrics, style: data.style, title: data.title, vocal: data.vocal, meta: { name: m.name, relationship: m.relationshipLabel, scenario: scenarioParam(m), gender: m.gender, birthday: birthdayParam(m.birthday) }, lang });
     act.go("music");
     await genPromise;
   }
@@ -358,7 +370,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
 
         {/* Pre-generation transition: gen.start() fired but no giftId yet */}
         {step === "music" && !gen.giftId && gen.state === "generating" && (
-          <div className="bubble bot" style={{ opacity: 0.7 }}>Creating your gift, one moment...</div>
+          <div className="bubble bot" style={{ opacity: 0.7 }}>{t("creating_gift")}</div>
         )}
 
         {step === "review" && draft && <ReviewCard key={draft.lyrics} lyrics={draft.lyrics} style={draft.style} title={draft.title} vocal={draft.vocal} styleTags={getStyleTags(lang)} onSubmit={handleReviewSubmit} creating={gen.state === "generating"} review={review ?? undefined} />}
@@ -368,7 +380,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
       </div>
       {(error || gen.error) && <div className="error-msg" style={{ margin: "0 16px 8px" }}>{error || gen.error}</div>}
       <div className="chat-bar">
-        <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); } }} rows={1} disabled={streaming || !(step === "chat" || step === "review")} />
+        <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !isImeComposing(e)) { e.preventDefault(); handleChatSend(); } }} rows={1} disabled={streaming || !(step === "chat" || step === "review")} />
         <button className="chat-send-btn" onClick={handleChatSend} disabled={streaming} aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z" /></svg></button>
       </div>
     </div>

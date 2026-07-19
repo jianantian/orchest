@@ -50,7 +50,13 @@ export function useGuidedState(lang: string) {
   // Read sessionStorage once per mount, not on every render.
   const [snapshot] = useState(() => {
     const r = load();
-    return r?.lang === lang ? r : null;
+    if (!r || r.lang !== lang) return null;
+    // "music" is not restorable: the giftId the MusicCard needs is never
+    // persisted, so reviving it strands the user with a disabled chat bar.
+    // Fall back to "review" — the draft is persisted, so generation can be
+    // re-submitted from there.
+    if (r.step === "music") r.step = "review";
+    return r;
   });
 
   const [step, setStep] = useState<FlowStep>(snapshot?.step ?? "greet");

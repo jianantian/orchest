@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useI18n } from "../i18n";
 
 export type MusicCardState = "generating" | "ready" | "error";
 
@@ -15,6 +16,7 @@ export function MusicCard({
   onOpen,
   onRetry,
 }: MusicCardProps) {
+  const { t } = useI18n();
   const [state, setState] = useState<MusicCardState>(initialState);
   const [progress, setProgress] = useState(0);
   const startRef = useRef(Date.now());
@@ -51,8 +53,8 @@ export function MusicCard({
         <div className="music-card-inner">
           <div className="vinyl spinning" />
           <div className="mc-info">
-            <div className="mc-title">Creating your song…</div>
-            <div className="mc-sub">Estimated {estimatedSec}s</div>
+            <div className="mc-title">{t("mc_creating")}</div>
+            <div className="mc-sub">{t("mc_estimated", { n: estimatedSec })}</div>
           </div>
           <div className="waveform">
             <span /><span /><span /><span /><span />
@@ -75,8 +77,8 @@ export function MusicCard({
             </svg>
           </div>
           <div className="mc-info">
-            <div className="mc-title">Generation failed</div>
-            <div className="mc-sub">Tap to retry</div>
+            <div className="mc-title">{t("mc_failed")}</div>
+            <div className="mc-sub">{t("mc_retry")}</div>
           </div>
         </div>
         <div className="mc-progress">
@@ -91,8 +93,8 @@ export function MusicCard({
       <div className="music-card-inner">
         <div className="vinyl done" />
         <div className="mc-info">
-          <div className="mc-title">Your song is ready!</div>
-          <div className="mc-sub">Tap to open</div>
+          <div className="mc-title">{t("mc_ready")}</div>
+          <div className="mc-sub">{t("mc_open")}</div>
         </div>
         <div className="mc-arrow">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">

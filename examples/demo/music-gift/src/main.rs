@@ -51,8 +51,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Auth shares gifts.db (AuthStore::open runs `ALTER TABLE gifts ADD COLUMN
     // creator_id`, so it must see the gifts table). Opened after gift_store so
     // that table already exists; a separate connection to the same file.
-    let auth_conn =
-        std::sync::Arc::new(std::sync::Mutex::new(rusqlite::Connection::open(&db_path)?));
+    // busy_timeout matches GiftStore::open — see the comment there.
+    let auth_raw = rusqlite::Connection::open(&db_path)?;
+    auth_raw.busy_timeout(std::time::Duration::from_secs(5))?;
+    let auth_conn = std::sync::Arc::new(std::sync::Mutex::new(auth_raw));
     let auth_store = auth::AuthStore::open(auth_conn)?;
 
     let port = cli.port.unwrap_or(config.port);
@@ -76,9 +78,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = build_router(state, static_dir);
 
     let addr = format!("0.0.0.0:{port}");
-    println!("music-gift listening on http://{addr}");
-
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    // Print only after binding: with MUSIC_GIFT_PORT=0 the OS picks the port,
+    // so the pre-bind `addr` would announce ":0" instead of the real one.
+    // tests/smoke.rs parses this line to find the server.
+    println!("music-gift listening on http://{}", listener.local_addr()?);
+
     axum::serve(listener, app).await?;
     Ok(())
 }

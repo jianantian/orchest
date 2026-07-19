@@ -1472,6 +1472,8 @@ body.locked { overflow: hidden; }
   color: var(--text3); opacity: 0.45;
   transition: color 0.3s ease, opacity 0.3s ease, font-size 0.3s ease, margin 0.3s ease;
   cursor: pointer; user-select: none;
+  /* Fixed 36px row height: never wrap — clip long lines instead of overlapping. */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .lrc-line.active {
   font-size: 18px; font-weight: 500;

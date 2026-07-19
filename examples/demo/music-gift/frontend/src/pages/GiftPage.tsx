@@ -110,10 +110,17 @@ export default function GiftPage() {
 
   async function handleGenerate() {
     if (!id) return;
+    // Generate is creator-only (the backend checks X-Creator-Token); a
+    // visitor opening a shared link has no token and cannot start a job.
+    const token = creatorToken(id);
+    if (!token) {
+      setError("Only the creator can generate this song");
+      return;
+    }
     setPipeline((p) => (p.kind === "ready" ? { ...p, gen: { kind: "generating", status: "pending" } } : p));
     setError(null);
     try {
-      await generateMusic(id);
+      await generateMusic(id, token);
       startWatch();
     } catch (e) {
       setPipeline((p) => (p.kind === "ready" ? { ...p, gen: { kind: "failed" } } : p));
@@ -203,7 +210,7 @@ export default function GiftPage() {
   if (pipeline.kind === "loading") {
     return (
       <div className="gift-page loading-page">
-        <span className="spinner" /> Loading gift…
+        <span className="spinner" /> {t("loading_gift")}
       </div>
     );
   }
@@ -240,7 +247,7 @@ export default function GiftPage() {
         {countdownPending && (
           <div className="countdown-placeholder">
             <span className="cd-spinner" />
-            <span>Creating a special scene for {name || "you"}…</span>
+            <span>{t("countdown_creating", { name: name || t("you") })}</span>
           </div>
         )}
         {countdownHtml && <CountdownFrame html={countdownHtml} />}
@@ -250,7 +257,7 @@ export default function GiftPage() {
         ) : gen.kind === "generating" ? (
           <div className="gift-generating">
             <div className="gen-label">
-              Creating your song
+              {t("gift_creating")}
               <span className="gen-dots">
                 <span /><span /><span />
               </span>
@@ -259,13 +266,13 @@ export default function GiftPage() {
               <div className="gen-bar-fill" />
             </div>
             <div className="gen-meta">
-              <span>{gen.status || "preparing…"}</span>
-              <span>This may take a minute</span>
+              <span>{gen.status || t("gen_preparing")}</span>
+              <span>{t("gen_wait")}</span>
             </div>
           </div>
         ) : (
           <button className="btn btn-primary btn-lg btn-full" onClick={() => void handleGenerate()}>
-            Generate Music
+            {t("generate_music")}
           </button>
         )}
 
@@ -285,12 +292,12 @@ export default function GiftPage() {
         ) : null}
 
         <div className="gift-actions">
-          <Link to="/" className="btn btn-secondary" onClick={clearGuided}>Create Another</Link>
+          <Link to="/" className="btn btn-secondary" onClick={clearGuided}>{t("create_another")}</Link>
           <button className="btn btn-secondary" onClick={() => void handleLike()}>
             {liked ? "♥" : "♡"} {likeCount}
           </button>
           <button className="btn btn-secondary" onClick={handleShare}>
-            {copied ? "Copied!" : "Share"}
+            {copied ? t("copied") : t("share")}
           </button>
         </div>
 

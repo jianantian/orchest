@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from "react";
 import type { CreateGiftRequest, GiftMeta } from "../types";
 import { createGift, generateMusic, watchGeneration, type GenerationWatch } from "../api";
-import { rememberCreatorToken } from "../lib/creator";
+import { rememberCreatorToken, creatorToken } from "../lib/creator";
 
 export type MusicGenState = "idle" | "generating" | "ready" | "error";
 
@@ -80,7 +80,7 @@ export function useMusicGen() {
         rememberCreatorToken(id, res.creator_token);
         setGiftId(id);
 
-        await generateMusic(id);
+        await generateMusic(id, res.creator_token);
 
         // Start SSE watch for live status — no polling
         watchStream(id);
@@ -100,7 +100,11 @@ export function useMusicGen() {
     setError(null);
     setGiftId(id);
     try {
-      await generateMusic(id);
+      // Generate is creator-only: the token from gift creation must still be
+      // in this browser, or the retry can never pass the backend check.
+      const token = creatorToken(id);
+      if (!token) throw new Error("Only the creator can regenerate this song");
+      await generateMusic(id, token);
       watchStream(id);
     } catch (e) {
       setState("error");

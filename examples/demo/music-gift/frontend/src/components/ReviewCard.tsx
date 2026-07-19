@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useI18n } from "../i18n";
 
 export interface ReviewData {
   lyrics: string;
@@ -29,6 +30,7 @@ export function ReviewCard({
   creating,
   review,
 }: ReviewCardProps) {
+  const { t } = useI18n();
   const [lyrics, setLyrics] = useState(initialLyrics);
   const [style, setStyle] = useState(initialStyle);
   const [title, setTitle] = useState(initialTitle);
@@ -58,8 +60,8 @@ export function ReviewCard({
 
   return (
     <div className="review-card" style={disabled ? { opacity: 0.55 } : undefined}>
-      <div className="review-header">Review your song</div>
-      <div className="review-sub">Edit anything before creating</div>
+      <div className="review-header">{t("review_title")}</div>
+      <div className="review-sub">{t("review_sub")}</div>
 
       {review && (
         <div className={`review-badge ${reviewExpanded ? "expanded" : ""}`}>
@@ -69,8 +71,8 @@ export function ReviewCard({
             aria-expanded={reviewExpanded}
           >
             <span className="review-badge-icon">&#10003;</span>
-            Quality checked
-            {reviewFixes > 0 && <span className="review-fixes"> · {reviewFixes} fix{reviewFixes !== 1 ? "es" : ""}</span>}
+            {t("review_quality")}
+            {reviewFixes > 0 && <span className="review-fixes">{t(reviewFixes === 1 ? "review_fixes_one" : "review_fixes_many", { n: reviewFixes })}</span>}
             <span className="review-chevron">{reviewExpanded ? "▲" : "▼"}</span>
           </button>
           {reviewExpanded && (
@@ -86,13 +88,13 @@ export function ReviewCard({
       />
 
       <div className="review-field">
-        <div className="review-label">Style</div>
+        <div className="review-label">{t("free_style")}</div>
         <input
           type="text"
           className="review-input"
           value={style}
           onChange={(e) => setStyle(e.target.value)}
-          placeholder="Style"
+          placeholder={t("free_style")}
           disabled={disabled}
         />
         <div className="style-tags">
@@ -111,33 +113,33 @@ export function ReviewCard({
       </div>
 
       <div className="review-field">
-        <div className="review-label">Vocal</div>
+        <div className="review-label">{t("vocal")}</div>
         <div className="toggle-row">
           <button
             className={`toggle-btn ${vocal === "female" ? "on" : ""}`}
             onClick={() => !disabled && setVocal("female")}
             disabled={disabled}
           >
-            Female
+            {t("gender_female")}
           </button>
           <button
             className={`toggle-btn ${vocal === "male" ? "on" : ""}`}
             onClick={() => !disabled && setVocal("male")}
             disabled={disabled}
           >
-            Male
+            {t("gender_male")}
           </button>
         </div>
       </div>
 
       <div className="review-field">
-        <div className="review-label">Title</div>
+        <div className="review-label">{t("free_title")}</div>
         <input
           type="text"
           className="review-input"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="Song title"
+          placeholder={t("free_title_ph")}
           maxLength={50}
           disabled={disabled}
         />
@@ -150,10 +152,10 @@ export function ReviewCard({
       >
         {creating ? (
           <>
-            <span className="spinner" /> Creating…
+            <span className="spinner" /> {t("creating")}
           </>
         ) : (
-          "Create Song"
+          t("create_song")
         )}
       </button>
     </div>

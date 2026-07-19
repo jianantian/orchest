@@ -87,9 +87,12 @@ export async function getPlaylist(): Promise<PlaylistResponse> {
   return res.json() as Promise<PlaylistResponse>;
 }
 
-/** POST /api/generate/:id — submit a music generation job. */
-export async function generateMusic(id: string): Promise<GenerateResponse> {
-  const res = await fetch(`/api/generate/${id}`, { method: 'POST' });
+/** POST /api/generate/:id — submit a music generation job. Creator only. */
+export async function generateMusic(id: string, creatorToken: string): Promise<GenerateResponse> {
+  const res = await fetch(`/api/generate/${id}`, {
+    method: 'POST',
+    headers: { 'X-Creator-Token': creatorToken },
+  });
   if (!res.ok) throw new Error(`Generate music failed: ${res.status}`);
   return res.json() as Promise<GenerateResponse>;
 }
