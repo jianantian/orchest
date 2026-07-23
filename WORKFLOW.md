@@ -57,6 +57,9 @@ Branch naming:
 - Iteration: `iteration/v0_10`
 - Hotfix: `hotfix/YYYY_MM_DD`
 
+Reserved branches:
+- `vintage` — previous major version backup; never deleted. Kept as a historical snapshot, not a development branch.
+
 ### 4. Develop Each Issue — One Commit Per Issue
 
 Work through issues in dependency order. Each issue is exactly one commit.
