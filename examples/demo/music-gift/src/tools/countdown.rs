@@ -94,14 +94,19 @@ async fn generate_once(
         input["previous_error"] = Value::String(err.to_string());
     }
 
-    let result = tool
-        .execute(input, &tool_context())
-        .await
-        .map_err(|e| e.to_string())?;
+    // A failed child run arrives as `Err(ToolError)` (v0.15, issue 003) whose
+    // message carries the child_run_id, the failure reason, and the consumed
+    // budget — no more `details["error"]` scraping. Propagating it lets
+    // `generate_html` retry once with this reason fed into the prompt.
+    let result = match tool.execute(input, &tool_context()).await {
+        Ok(output) => output,
+        Err(e) => return Err(e.to_string()),
+    };
 
-    // An agent-as-tool always answers with `Structured` (it carries the child
-    // run's budget usage); `model_output` is what our output_extractor built,
-    // i.e. `{ "html": ... }`. Matching only on `Immediate` made every single
+    // On success an agent-as-tool always answers with `Structured` (it carries
+    // the child run's budget usage); `model_output` is what our
+    // output_extractor built, i.e. `{ "html": ... }`. `Immediate` is accepted
+    // for test doubles. Matching only on `Immediate` made every single
     // countdown fail here.
     let html = match result {
         orchest::tool::ToolOutput::Immediate(value)

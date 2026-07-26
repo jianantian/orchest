@@ -18,11 +18,11 @@
 
 ## 验收标准
 
-- [ ] child 失败时消费方拿到 `Err(ToolError)`,kind 语义在 doc 注明
-- [ ] countdown 类消费方无需匹配 `details["error"]`(demo 同步改,链路测试绿)
-- [ ] `SubAgentFailed` 事件仍发射,含 `child_run_id` + error
-- [ ] 测试:child RunFailed → Err(kind 正确、含 child_run_id 与 budget 诊断);成功路径行为不变
-- [ ] 五项检查全绿
+- [x] child 失败时消费方拿到 `Err(ToolError)`,kind 语义在 doc 注明
+- [x] countdown 类消费方无需匹配 `details["error"]`(demo 同步改,链路测试绿)
+- [x] `SubAgentFailed` 事件仍发射,含 `child_run_id` + error
+- [x] 测试:child RunFailed → Err(kind 正确、含 child_run_id 与 budget 诊断);成功路径行为不变
+- [x] 五项检查全绿
 
 ## 备注
 

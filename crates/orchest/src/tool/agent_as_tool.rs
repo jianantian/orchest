@@ -64,6 +64,43 @@ fn cap_budget(configured: BudgetConfig, remaining: &BudgetConfig) -> BudgetConfi
     }
 }
 
+/// An [`AgentConfig`] wrapped as a standard [`Tool`]. The child run executes in
+/// its own tokio task; every child [`RuntimeEvent`] is forwarded upward as
+/// `SubAgentEvent`, and lifecycle events (`SubAgentStarted` /
+/// `SubAgentCompleted` / `SubAgentFailed`) bracket the call.
+///
+/// # Failure semantics (v0.15)
+///
+/// A failed child run (`RuntimeEvent::RunFailed`) makes [`Tool::execute`]
+/// return `Err(ToolError)` — never an `Ok` payload with an embedded `"error"`
+/// key — so consumers dispatch on the standard v0.9.4 `ErrorKind`/`RetryHint`
+/// contract instead of scraping `details["error"]`. `SubAgentFailed` still
+/// fires with the same `child_run_id` and error, and the `ToolError` message
+/// carries the `child_run_id` plus the budget the child consumed before
+/// failing. `ToolError` has no details/diagnostic payload field, so the budget
+/// rides in the message text. The failure path never constructs
+/// `ToolOutput::Structured` and never invokes `output_extractor`.
+///
+/// `RunFailed` carries only an opaque error string, so the kind/code
+/// adjudication keys off the runtime-generated failure messages
+/// (`run/actor.rs`):
+///
+/// | child failure                    | kind  | retry  | code                     |
+/// |----------------------------------|-------|--------|--------------------------|
+/// | `budget_exceeded: …`             | Fatal | Unsafe | `BUDGET_EXCEEDED`        |
+/// | `max_steps_reached`              | Fatal | Unsafe | `MAX_STEPS_REACHED`      |
+/// | depth guard (`run_depth >= 3`)   | Fatal | Unsafe | `MAX_RUN_DEPTH_EXCEEDED` |
+/// | anything else                    | Fatal | Unsafe | `SUB_AGENT_RUN_FAILED`   |
+///
+/// Every class is `Fatal`/`Unsafe` — the v0.9.4 retry dispatch never
+/// auto-retries the tool — because each identifiable cause is deterministic
+/// for the same input and config: a retry hits the same budget/step/depth
+/// ceiling (mirroring the run loop's own
+/// `ToolError::fatal(..).with_code("BUDGET_EXCEEDED")` budget convention), and
+/// model-side errors surface as `RunFailed` only after the child's own retry
+/// policy is exhausted, so a parent-side auto-retry would blindly re-run the
+/// whole child. The parent model still receives the structured error as the
+/// tool result and may deliberately re-invoke the tool with adjusted input.
 pub struct AgentAsTool {
     config: AgentConfig,
     tool_name: String,
@@ -118,11 +155,10 @@ impl Tool for AgentAsTool {
                     })
                     .await;
             }
-            return Ok(ToolOutput::Immediate(json!({
-                "child_run_id": child_run_id,
-                "error": "max_run_depth_exceeded",
-                "budget_used": BudgetUsage::default(),
-            })));
+            return Err(ToolError::fatal(format!(
+                "sub-agent run {child_run_id} failed: max_run_depth_exceeded"
+            ))
+            .with_code("MAX_RUN_DEPTH_EXCEEDED"));
         }
 
         let mut child_config = self.config.clone();
@@ -209,7 +245,7 @@ impl Tool for AgentAsTool {
         }
         handle.wait().await;
 
-        let details = if let Some(error) = failed {
+        if let Some(error) = failed {
             if let Some(ref tx) = ctx.event_tx {
                 let _ = tx
                     .send(RuntimeEvent::SubAgentFailed {
@@ -218,27 +254,23 @@ impl Tool for AgentAsTool {
                     })
                     .await;
             }
-            json!({
-                "child_run_id": child_run_id,
-                "error": error,
-                "budget_used": child_usage,
-            })
-        } else {
-            if let Some(ref tx) = ctx.event_tx {
-                let _ = tx
-                    .send(RuntimeEvent::SubAgentCompleted {
-                        child_run_id,
-                        output: output.clone(),
-                        budget_used: child_usage.clone(),
-                    })
-                    .await;
-            }
-            json!({
-                "child_run_id": child_run_id,
-                "output": output,
-                "budget_used": child_usage,
-            })
-        };
+            return Err(child_failure_error(child_run_id, &error, &child_usage));
+        }
+
+        if let Some(ref tx) = ctx.event_tx {
+            let _ = tx
+                .send(RuntimeEvent::SubAgentCompleted {
+                    child_run_id,
+                    output: output.clone(),
+                    budget_used: child_usage.clone(),
+                })
+                .await;
+        }
+        let details = json!({
+            "child_run_id": child_run_id,
+            "output": output,
+            "budget_used": child_usage,
+        });
 
         let model_output = (self.output_extractor)(details.clone());
         Ok(ToolOutput::Structured {
@@ -247,6 +279,30 @@ impl Tool for AgentAsTool {
             external_usage: Some(child_usage),
         })
     }
+}
+
+/// Builds the `ToolError` for a failed child run. `RunFailed` carries only an
+/// opaque error string, so the code adjudication keys off the
+/// runtime-generated failure messages (`run/actor.rs`); the kind is always
+/// `Fatal` with `RetryHint::Unsafe`. See the [`AgentAsTool`] docs for the full
+/// mapping rule and rationale.
+fn child_failure_error(
+    child_run_id: crate::run::RunId,
+    error: &str,
+    budget_used: &BudgetUsage,
+) -> ToolError {
+    let code = if error.starts_with("budget_exceeded") {
+        "BUDGET_EXCEEDED"
+    } else if error == "max_steps_reached" {
+        "MAX_STEPS_REACHED"
+    } else {
+        "SUB_AGENT_RUN_FAILED"
+    };
+    ToolError::fatal(format!(
+        "sub-agent run {child_run_id} failed: {error} (budget_used: {} tokens, {} tool calls, ${:.4})",
+        budget_used.tokens_used, budget_used.tool_calls_used, budget_used.cost_usd
+    ))
+    .with_code(code)
 }
 
 // ── SubAgentBuilder ──────────────────────────────────────────────────────────
@@ -353,7 +409,12 @@ impl SubAgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ModelCapabilities, ModelError, ModelResponse, RequestOptions};
+    use crate::model::{
+        ContentBlock, ModelCapabilities, ModelError, ModelResponse, RequestOptions, StopReason,
+        TokenUsage,
+    };
+    use crate::tool::{ErrorKind, RetryHint};
+    use std::sync::atomic::{AtomicU32, Ordering};
     use tokio::sync::mpsc as tokio_mpsc;
 
     struct NeverCalledModel;
@@ -423,5 +484,353 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(tool.name(), "t");
+    }
+
+    // ── execute: failure → Err(ToolError), success → Structured ─────────────
+
+    /// Child model that fails the run immediately: with no retry policy
+    /// configured the child emits `RunFailed { error: "provider exploded" }`.
+    struct FailingModel;
+
+    #[async_trait]
+    impl ModelAdapter for FailingModel {
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "failing"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
+            &self,
+            _messages: &[crate::model::Message],
+            _tools: &[crate::model::ToolDef],
+            _options: &RequestOptions,
+            _tx: Option<tokio_mpsc::Sender<crate::model::StreamEvent>>,
+        ) -> Result<ModelResponse, ModelError> {
+            Err(ModelError::internal("provider exploded", "TEST_BOOM"))
+        }
+    }
+
+    /// Child model that always requests an unregistered tool, so the run keeps
+    /// looping until a limit (max_steps or budget) fails it.
+    struct ToolUseLoopModel;
+
+    #[async_trait]
+    impl ModelAdapter for ToolUseLoopModel {
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "loop"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
+            &self,
+            _messages: &[crate::model::Message],
+            _tools: &[crate::model::ToolDef],
+            _options: &RequestOptions,
+            _tx: Option<tokio_mpsc::Sender<crate::model::StreamEvent>>,
+        ) -> Result<ModelResponse, ModelError> {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "loop-1".into(),
+                    name: "missing_tool".into(),
+                    input: json!({}),
+                }],
+                usage: TokenUsage {
+                    input_tokens: 2,
+                    output_tokens: 3,
+                    ..Default::default()
+                },
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        }
+    }
+
+    /// Child model that answers immediately with text.
+    struct SuccessModel;
+
+    #[async_trait]
+    impl ModelAdapter for SuccessModel {
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "success"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
+            &self,
+            _messages: &[crate::model::Message],
+            _tools: &[crate::model::ToolDef],
+            _options: &RequestOptions,
+            _tx: Option<tokio_mpsc::Sender<crate::model::StreamEvent>>,
+        ) -> Result<ModelResponse, ModelError> {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("child answer".into())],
+                usage: TokenUsage {
+                    input_tokens: 2,
+                    output_tokens: 3,
+                    ..Default::default()
+                },
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+
+    fn build_child_tool(
+        config: AgentConfig,
+        model: Arc<dyn ModelAdapter>,
+        output_extractor: impl Fn(Value) -> Value + Send + Sync + 'static,
+    ) -> Arc<dyn Tool> {
+        config
+            .as_tool("child", "child under test")
+            .model(model)
+            .registry(ToolRegistry::new())
+            .output_extractor(output_extractor)
+            .build()
+            .unwrap()
+    }
+
+    fn execute_ctx(run_depth: u32) -> (ToolContext, tokio_mpsc::Receiver<RuntimeEvent>) {
+        let (tx, rx) = tokio_mpsc::channel(64);
+        (
+            ToolContext {
+                run_id: crate::run::RunId::new(),
+                run_depth,
+                tool_call_id: "test-call".into(),
+                event_tx: Some(tx),
+                webhook_base_url: None,
+                approval_bus: crate::run::ApprovalBus::default(),
+                remaining_budget: crate::budget::BudgetConfig::default(),
+                parent_messages: vec![],
+            },
+            rx,
+        )
+    }
+
+    fn drain_events(mut rx: tokio_mpsc::Receiver<RuntimeEvent>) -> Vec<RuntimeEvent> {
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+        events
+    }
+
+    #[tokio::test]
+    async fn child_run_failed_returns_err_with_diagnostics() {
+        let extractor_calls = Arc::new(AtomicU32::new(0));
+        let calls = Arc::clone(&extractor_calls);
+        let tool = build_child_tool(
+            test_agent_config(),
+            Arc::new(FailingModel),
+            move |details| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                details
+            },
+        );
+        let (ctx, rx) = execute_ctx(0);
+
+        let err = tool
+            .execute(json!({"input": "boom"}), &ctx)
+            .await
+            .expect_err("child RunFailed must surface as Err(ToolError)");
+
+        assert_eq!(err.kind, ErrorKind::Fatal);
+        assert_eq!(err.retry, RetryHint::Unsafe);
+        assert_eq!(err.code.as_deref(), Some("SUB_AGENT_RUN_FAILED"));
+        assert!(
+            err.message.contains("provider exploded"),
+            "message carries the child error: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("budget_used"),
+            "message carries budget diagnostics: {}",
+            err.message
+        );
+
+        let events = drain_events(rx);
+        let (child_run_id, error) = events
+            .iter()
+            .find_map(|e| match e {
+                RuntimeEvent::SubAgentFailed {
+                    child_run_id,
+                    error,
+                } => Some((*child_run_id, error.clone())),
+                _ => None,
+            })
+            .expect("SubAgentFailed must still fire");
+        assert_eq!(error, "provider exploded");
+        assert!(
+            err.message.contains(&child_run_id.to_string()),
+            "message carries child_run_id: {}",
+            err.message
+        );
+        assert_eq!(
+            extractor_calls.load(Ordering::SeqCst),
+            0,
+            "output_extractor must not be invoked on failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn child_budget_exceeded_maps_to_budget_exceeded_code() {
+        let mut config = test_agent_config();
+        config.runtime.max_steps = 5;
+        config.budget.max_tokens = Some(1);
+        let tool = build_child_tool(config, Arc::new(ToolUseLoopModel), |details| details);
+        let (ctx, rx) = execute_ctx(0);
+
+        let err = tool
+            .execute(json!({"input": "loop"}), &ctx)
+            .await
+            .expect_err("child budget exhaustion must surface as Err(ToolError)");
+
+        assert_eq!(err.kind, ErrorKind::Fatal);
+        assert_eq!(err.retry, RetryHint::Unsafe);
+        assert_eq!(err.code.as_deref(), Some("BUDGET_EXCEEDED"));
+        assert!(
+            err.message.contains("budget_exceeded"),
+            "message carries the child error: {}",
+            err.message
+        );
+        // The child consumed 5 tokens before the guard fired; the diagnostic
+        // must report real usage, not a default.
+        assert!(
+            err.message.contains("5 tokens"),
+            "message carries consumed budget: {}",
+            err.message
+        );
+
+        let events = drain_events(rx);
+        assert!(events.iter().any(
+            |e| matches!(e, RuntimeEvent::SubAgentFailed { error, .. } if error.starts_with("budget_exceeded"))
+        ));
+    }
+
+    #[tokio::test]
+    async fn child_max_steps_maps_to_max_steps_reached_code() {
+        // test_agent_config caps at max_steps(1); a model that always requests
+        // another tool call hits the step ceiling instead of completing.
+        let tool = build_child_tool(test_agent_config(), Arc::new(ToolUseLoopModel), |details| {
+            details
+        });
+        let (ctx, rx) = execute_ctx(0);
+
+        let err = tool
+            .execute(json!({"input": "loop"}), &ctx)
+            .await
+            .expect_err("child max-steps exhaustion must surface as Err(ToolError)");
+
+        assert_eq!(err.kind, ErrorKind::Fatal);
+        assert_eq!(err.retry, RetryHint::Unsafe);
+        assert_eq!(err.code.as_deref(), Some("MAX_STEPS_REACHED"));
+        assert!(
+            err.message.contains("max_steps_reached"),
+            "message carries the child error: {}",
+            err.message
+        );
+
+        let events = drain_events(rx);
+        assert!(events.iter().any(
+            |e| matches!(e, RuntimeEvent::SubAgentFailed { error, .. } if error == "max_steps_reached")
+        ));
+    }
+
+    #[tokio::test]
+    async fn run_depth_guard_returns_err_without_starting_child() {
+        let extractor_calls = Arc::new(AtomicU32::new(0));
+        let calls = Arc::clone(&extractor_calls);
+        let tool = build_child_tool(
+            test_agent_config(),
+            Arc::new(NeverCalledModel),
+            move |details| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                details
+            },
+        );
+        let (ctx, rx) = execute_ctx(3);
+
+        let err = tool
+            .execute(json!({"input": "too deep"}), &ctx)
+            .await
+            .expect_err("depth guard must surface as Err(ToolError)");
+
+        assert_eq!(err.kind, ErrorKind::Fatal);
+        assert_eq!(err.retry, RetryHint::Unsafe);
+        assert_eq!(err.code.as_deref(), Some("MAX_RUN_DEPTH_EXCEEDED"));
+        assert!(
+            err.message.contains("max_run_depth_exceeded"),
+            "message: {}",
+            err.message
+        );
+
+        let events = drain_events(rx);
+        let child_run_id = events
+            .iter()
+            .find_map(|e| match e {
+                RuntimeEvent::SubAgentFailed {
+                    child_run_id,
+                    error,
+                } if error == "max_run_depth_exceeded" => Some(*child_run_id),
+                _ => None,
+            })
+            .expect("SubAgentFailed must still fire for the depth guard");
+        assert!(err.message.contains(&child_run_id.to_string()));
+        assert_eq!(extractor_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn child_success_returns_structured_with_details_and_external_usage() {
+        let extractor_calls = Arc::new(AtomicU32::new(0));
+        let calls = Arc::clone(&extractor_calls);
+        let tool = build_child_tool(
+            test_agent_config(),
+            Arc::new(SuccessModel),
+            move |details| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                json!({"extracted": details.get("output").cloned().unwrap_or(Value::Null)})
+            },
+        );
+        let (ctx, rx) = execute_ctx(0);
+
+        let output = tool
+            .execute(json!({"input": "hi"}), &ctx)
+            .await
+            .expect("successful child run returns Ok");
+
+        let (model_output, details, external_usage) = match output {
+            ToolOutput::Structured {
+                model_output,
+                details,
+                external_usage,
+            } => (model_output, details, external_usage),
+            other => panic!("expected Structured, got {other:?}"),
+        };
+        assert_eq!(model_output, json!({"extracted": "child answer"}));
+        assert_eq!(details["output"], json!("child answer"));
+        assert!(details.get("child_run_id").is_some());
+        assert_eq!(details["budget_used"]["tokens_used"], json!(5));
+        let usage = external_usage.expect("external_usage carries child budget");
+        assert_eq!(usage.tokens_used, 5);
+        assert_eq!(extractor_calls.load(Ordering::SeqCst), 1);
+
+        let events = drain_events(rx);
+        assert!(events.iter().any(
+            |e| matches!(e, RuntimeEvent::SubAgentCompleted { output, .. } if output == &json!("child answer"))
+        ));
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::SubAgentFailed { .. })));
     }
 }
