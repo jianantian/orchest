@@ -9,8 +9,8 @@
 
 use async_trait::async_trait;
 use orchest_protocol::{
-    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenHandle, GenRequest, GenResult,
-    GenStatus, GenTask, Modality, ProtocolError,
+    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenAssetRole, GenHandle, GenRequest,
+    GenResult, GenStatus, GenTask, Modality, ProtocolError,
 };
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::{shared_client, warn_unconsumed_params};
@@ -103,6 +103,7 @@ pub fn parse_assets(response: &Value) -> Vec<GenAsset> {
         .map(|url| GenAsset::Url {
             url: url.to_string(),
             media_type: Some("image/png".to_string()),
+            role: GenAssetRole::Primary,
         })
         .collect()
 }
@@ -192,6 +193,7 @@ impl GenTask for CrazyrouterGen {
             assets: parse_assets(&value),
             diagnostic_metadata: json!({ "provider": "crazyrouter" }),
             timed_text: None,
+            duration_secs: None,
         };
         Ok(self.cache.store("crazyrouter", result))
     }
@@ -248,6 +250,7 @@ mod tests {
             GenAsset::Url {
                 url: "https://c/a.png".to_string(),
                 media_type: Some("image/png".to_string()),
+                role: GenAssetRole::Primary,
             }
         );
         assert!(parse_assets(&json!({})).is_empty());

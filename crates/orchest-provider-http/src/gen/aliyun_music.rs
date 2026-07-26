@@ -11,8 +11,8 @@
 
 use async_trait::async_trait;
 use orchest_protocol::{
-    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenHandle, GenRequest, GenResult,
-    GenStatus, GenTask, Modality, ProtocolError, VocalGender,
+    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenAssetRole, GenHandle, GenRequest,
+    GenResult, GenStatus, GenTask, Modality, ProtocolError, VocalGender,
 };
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::{warn_unconsumed_params, SyncGenCache};
@@ -116,6 +116,7 @@ pub fn parse_result(response: &Value) -> Result<GenResult, ProtocolError> {
         vec![GenAsset::Url {
             url: url.to_string(),
             media_type: Some("audio/mpeg".to_string()),
+            role: GenAssetRole::Primary,
         }]
     };
     let diagnostic_metadata = json!({
@@ -128,6 +129,7 @@ pub fn parse_result(response: &Value) -> Result<GenResult, ProtocolError> {
         assets,
         diagnostic_metadata,
         timed_text: None,
+        duration_secs: None,
     })
 }
 
@@ -351,6 +353,7 @@ mod tests {
             vec![GenAsset::Url {
                 url: "https://dashscope/track.mp3".to_string(),
                 media_type: Some("audio/mpeg".to_string()),
+                role: GenAssetRole::Primary,
             }]
         );
     }

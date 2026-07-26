@@ -15,8 +15,8 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use orchest_protocol::{
-    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenHandle, GenRequest, GenResult,
-    GenStatus, GenTask, Modality, ProtocolError, TimedSegment, TimedText,
+    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenAssetRole, GenHandle, GenRequest,
+    GenResult, GenStatus, GenTask, Modality, ProtocolError, TimedSegment, TimedText,
 };
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::warn_unconsumed_params;
@@ -165,15 +165,22 @@ pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
 
 /// Project a completed `record-info` `data` payload onto the spine result.
 /// `data.response` is an array of track objects; each item's `audioUrl` becomes
-/// a [`GenAsset::Url`] (Suno serves `.mp3`). The track titles are surfaced in
-/// `diagnostic_metadata` for traceability.
+/// a [`GenAsset::Url`] with `role: Primary` (Suno serves `.mp3`). The first
+/// track's `imageUrl` rides alongside as a `role: Cover` asset and its
+/// `duration` lifts into the typed [`GenResult::duration_secs`] — both are
+/// first-class product outputs, so they no longer ride in
+/// `diagnostic_metadata`, which keeps only genuine diagnostics (the track
+/// titles, for traceability). The cover and duration attach to the first
+/// track, the same one `assets[0]` and [`TimedText`] point at; grouping
+/// per-variant assets across the multiple tracks Suno returns is a separate
+/// gap (Finding 1 note), not this change.
 fn build_result(data: &Value) -> GenResult {
     let tracks = data
         .get("response")
         .and_then(|r| r.get("sunoData"))
         .and_then(Value::as_array);
 
-    let assets = tracks
+    let mut assets = tracks
         .map(|tracks| {
             tracks
                 .iter()
@@ -185,6 +192,7 @@ fn build_result(data: &Value) -> GenResult {
                         .map(|url| GenAsset::Url {
                             url: url.to_string(),
                             media_type: Some("audio/mpeg".to_string()),
+                            role: GenAssetRole::Primary,
                         })
                 })
                 .collect::<Vec<_>>()
@@ -205,27 +213,34 @@ fn build_result(data: &Value) -> GenResult {
         })
         .unwrap_or_default();
 
-    let cover_url = tracks
+    if let Some(cover_url) = tracks
         .and_then(|t| t.first())
         .and_then(|t| t.get("imageUrl").or_else(|| t.get("image_url")))
         .and_then(Value::as_str)
-        .filter(|s| !s.is_empty());
+        .filter(|s| !s.is_empty())
+    {
+        assets.push(GenAsset::Url {
+            url: cover_url.to_string(),
+            // Suno serves cover art as .jpeg.
+            media_type: Some("image/jpeg".to_string()),
+            role: GenAssetRole::Cover,
+        });
+    }
 
-    let duration: Option<f64> = tracks
+    let duration_secs = tracks
         .and_then(|t| t.first())
         .and_then(|t| t.get("duration").and_then(Value::as_f64));
 
     let diagnostic_metadata = json!({
         "provider": "suno",
         "titles": titles,
-        "cover_url": cover_url,
-        "duration_secs": duration,
     });
 
     GenResult {
         assets,
         diagnostic_metadata,
         timed_text: None,
+        duration_secs,
     }
 }
 
@@ -978,16 +993,55 @@ mod tests {
                 GenAsset::Url {
                     url: "https://suno/track1.mp3".to_string(),
                     media_type: Some("audio/mpeg".to_string()),
+                    role: GenAssetRole::Primary,
                 },
                 GenAsset::Url {
                     url: "https://suno/track2.mp3".to_string(),
                     media_type: Some("audio/mpeg".to_string()),
+                    role: GenAssetRole::Primary,
                 },
             ]
         );
         assert_eq!(result.diagnostic_metadata["provider"], "suno");
         assert_eq!(result.diagnostic_metadata["titles"][0], "First");
         assert_eq!(result.diagnostic_metadata["titles"][1], "Second");
+        // No cover/duration in the payload: no extra asset, no typed field.
+        assert_eq!(result.duration_secs, None);
+    }
+
+    #[test]
+    fn build_result_lifts_cover_and_duration_to_the_typed_surface() {
+        // Finding 2: cover_url/duration_secs are first-class product outputs,
+        // not diagnostics. The cover becomes a role-tagged asset appended
+        // after the audio tracks, duration lands on the typed field, and
+        // neither key remains in diagnostic_metadata.
+        let data = json!({
+            "status": "SUCCESS",
+            "response": {
+                "sunoData": [
+                    {
+                        "audioUrl": "https://suno/track1.mp3",
+                        "title": "First",
+                        "imageUrl": "https://suno/cover1.jpeg",
+                        "duration": 31.84,
+                    },
+                    { "audioUrl": "https://suno/track2.mp3", "title": "Second" },
+                ]
+            }
+        });
+        let result = build_result(&data);
+        assert_eq!(result.assets.len(), 3);
+        assert_eq!(
+            result.assets[2],
+            GenAsset::Url {
+                url: "https://suno/cover1.jpeg".to_string(),
+                media_type: Some("image/jpeg".to_string()),
+                role: GenAssetRole::Cover,
+            }
+        );
+        assert_eq!(result.duration_secs, Some(31.84));
+        assert!(result.diagnostic_metadata.get("cover_url").is_none());
+        assert!(result.diagnostic_metadata.get("duration_secs").is_none());
     }
 
     #[test]
@@ -1008,6 +1062,7 @@ mod tests {
             GenAsset::Url {
                 url: "https://suno/track1.mp3".to_string(),
                 media_type: Some("audio/mpeg".to_string()),
+                role: GenAssetRole::Primary,
             }
         );
     }
@@ -1017,6 +1072,7 @@ mod tests {
         let data = json!({ "status": "SUCCESS", "response": {"sunoData": []} });
         let result = build_result(&data);
         assert!(result.assets.is_empty());
+        assert_eq!(result.duration_secs, None);
         assert_eq!(result.diagnostic_metadata["provider"], "suno");
         assert_eq!(result.diagnostic_metadata["titles"], json!([]));
     }
@@ -1050,7 +1106,7 @@ mod tests {
 
     async fn serve_suno(lyrics_status: u16, lyrics_body: &'static str) -> MockSunoServer {
         const SUBMIT_BODY: &str = r#"{"code":200,"msg":"success","data":{"taskId":"task-1"}}"#;
-        const RECORD_INFO_BODY: &str = r#"{"code":200,"msg":"success","data":{"taskId":"task-1","status":"SUCCESS","response":{"sunoData":[{"id":"aud-1","audioUrl":"https://suno/track1.mp3","title":"First"},{"id":"aud-2","audioUrl":"https://suno/track2.mp3","title":"Second"}]}}}"#;
+        const RECORD_INFO_BODY: &str = r#"{"code":200,"msg":"success","data":{"taskId":"task-1","status":"SUCCESS","response":{"sunoData":[{"id":"aud-1","audioUrl":"https://suno/track1.mp3","title":"First","imageUrl":"https://suno/cover1.jpeg","duration":31.84},{"id":"aud-2","audioUrl":"https://suno/track2.mp3","title":"Second"}]}}}"#;
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -1174,7 +1230,27 @@ mod tests {
         assert_eq!(timed_text.segments[0].end, Some(16.676));
         assert!(timed_text.segments[0].text.contains("晨光爬上窗台"));
         assert_eq!(result.diagnostic_metadata["alignment_hoot_cer"], json!(0.6));
-        assert_eq!(result.assets.len(), 2);
+        // Two primary audio tracks plus the cover as a role-tagged asset;
+        // duration rides the typed field, neither is in diagnostic_metadata.
+        assert_eq!(result.assets.len(), 3);
+        assert!(result.assets[..2].iter().all(|a| matches!(
+            a,
+            GenAsset::Url {
+                role: GenAssetRole::Primary,
+                ..
+            }
+        )));
+        assert_eq!(
+            result.assets.last(),
+            Some(&GenAsset::Url {
+                url: "https://suno/cover1.jpeg".to_string(),
+                media_type: Some("image/jpeg".to_string()),
+                role: GenAssetRole::Cover,
+            })
+        );
+        assert_eq!(result.duration_secs, Some(31.84));
+        assert!(result.diagnostic_metadata.get("cover_url").is_none());
+        assert!(result.diagnostic_metadata.get("duration_secs").is_none());
 
         let lyrics_calls = server
             .request_lines()
@@ -1204,6 +1280,7 @@ mod tests {
             .diagnostic_metadata
             .get("alignment_hoot_cer")
             .is_none());
-        assert_eq!(result.assets.len(), 2);
+        assert_eq!(result.assets.len(), 3);
+        assert_eq!(result.duration_secs, Some(31.84));
     }
 }

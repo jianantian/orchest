@@ -16,8 +16,8 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use orchest_protocol::{
-    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenHandle, GenRequest, GenResult,
-    GenStatus, GenTask, Modality, ProtocolError,
+    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenAssetRole, GenHandle, GenRequest,
+    GenResult, GenStatus, GenTask, Modality, ProtocolError,
 };
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::warn_unconsumed_params;
@@ -228,6 +228,7 @@ pub fn build_result(response: &Value, trace_id: &str) -> Result<GenResult, Proto
         .map(|url| GenAsset::Url {
             url: url.to_string(),
             media_type: Some("audio/mpeg".to_string()),
+            role: GenAssetRole::Primary,
         })
         .collect::<Vec<_>>();
     let song_ids = choices
@@ -245,6 +246,7 @@ pub fn build_result(response: &Value, trace_id: &str) -> Result<GenResult, Proto
         assets,
         diagnostic_metadata,
         timed_text: None,
+        duration_secs: None,
     })
 }
 /// Extract a [`ErrorCode::ProviderTaskFailed`] from a `status: "failed"`
@@ -541,10 +543,12 @@ mod tests {
                 GenAsset::Url {
                     url: "https://mureka/track1.mp3".to_string(),
                     media_type: Some("audio/mpeg".to_string()),
+                    role: GenAssetRole::Primary,
                 },
                 GenAsset::Url {
                     url: "https://mureka/track2.mp3".to_string(),
                     media_type: Some("audio/mpeg".to_string()),
+                    role: GenAssetRole::Primary,
                 },
             ]
         );

@@ -9,8 +9,8 @@
 
 use async_trait::async_trait;
 use orchest_protocol::{
-    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenHandle, GenRequest, GenResult,
-    GenStatus, GenTask, Modality, ProtocolError,
+    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenAssetRole, GenHandle, GenRequest,
+    GenResult, GenStatus, GenTask, Modality, ProtocolError,
 };
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::{shared_client, warn_unconsumed_params};
@@ -102,6 +102,7 @@ pub fn parse_assets(response: &Value) -> Vec<GenAsset> {
         assets.push(GenAsset::Url {
             url: url.to_string(),
             media_type: Some("video/mp4".to_string()),
+            role: GenAssetRole::Primary,
         });
     }
     if let Some(url) = response
@@ -111,6 +112,7 @@ pub fn parse_assets(response: &Value) -> Vec<GenAsset> {
         assets.push(GenAsset::Url {
             url: url.to_string(),
             media_type: Some("image/png".to_string()),
+            role: GenAssetRole::Primary,
         });
     }
     assets
@@ -238,6 +240,7 @@ impl GenTask for VolcengineVideoGen {
             assets: parse_assets(&response),
             diagnostic_metadata: json!({ "provider": "volcengine", "status": map_status(&response) }),
             timed_text: None,
+            duration_secs: None,
         })
     }
 }
@@ -310,6 +313,7 @@ mod tests {
             vec![GenAsset::Url {
                 url: "https://v/out.mp4".to_string(),
                 media_type: Some("video/mp4".to_string()),
+                role: GenAssetRole::Primary,
             }]
         );
     }

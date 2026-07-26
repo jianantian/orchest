@@ -10,8 +10,8 @@
 
 use async_trait::async_trait;
 use orchest_protocol::{
-    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenHandle, GenRequest, GenResult,
-    GenStatus, GenTask, Modality, ProtocolError,
+    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenAssetRole, GenHandle, GenRequest,
+    GenResult, GenStatus, GenTask, Modality, ProtocolError,
 };
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::{shared_client, warn_unconsumed_params};
@@ -116,6 +116,7 @@ pub fn parse_assets(response: &Value) -> Vec<GenAsset> {
         .map(|url| GenAsset::Url {
             url: url.to_string(),
             media_type: Some("image/png".to_string()),
+            role: GenAssetRole::Primary,
         })
         .collect()
 }
@@ -236,6 +237,7 @@ impl GenTask for AliyunGen {
             assets: parse_assets(&response),
             diagnostic_metadata: json!({ "provider": "aliyun", "status": map_status(&response) }),
             timed_text: None,
+            duration_secs: None,
         })
     }
 }
@@ -301,7 +303,8 @@ mod tests {
             assets[1],
             GenAsset::Url {
                 url: "https://a/2.png".to_string(),
-                media_type: Some("image/png".to_string())
+                media_type: Some("image/png".to_string()),
+                role: GenAssetRole::Primary,
             }
         );
     }

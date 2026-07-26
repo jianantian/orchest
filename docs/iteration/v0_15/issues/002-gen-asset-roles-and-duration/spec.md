@@ -20,12 +20,12 @@ seam-findings Finding 2: Suno 的 `duration_secs`/`cover_url` 是一等产品输
 
 ## 验收标准
 
-- [ ] `GenAsset` 带 `role`,serde 向后兼容(老 payload → Primary)
-- [ ] `GenResult.duration_secs` 类型化;image-only provider 行为不变(None)
-- [ ] suno 结果:cover 以 `role: Cover` asset 出现,duration 在 typed 字段,`diagnostic_metadata` 无此二 key
-- [ ] demo 消费 typed 路径,`diagnostic_metadata` 的产品数据读取点清除(真诊断保留)
-- [ ] 测试:老 payload serde 兼容、suno fetch 填充与角色标注、全 workspace 构造点编译通过
-- [ ] 五项检查全绿
+- [x] `GenAsset` 带 `role`,serde 向后兼容(老 payload → Primary)
+- [x] `GenResult.duration_secs` 类型化;image-only provider 行为不变(None)
+- [x] suno 结果:cover 以 `role: Cover` asset 出现,duration 在 typed 字段,`diagnostic_metadata` 无此二 key
+- [x] demo 消费 typed 路径,`diagnostic_metadata` 的产品数据读取点清除(真诊断保留)
+- [x] 测试:老 payload serde 兼容、suno fetch 填充与角色标注、全 workspace 构造点编译通过
+- [x] 五项检查全绿
 
 ## 备注
 

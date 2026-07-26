@@ -194,6 +194,7 @@ mod tests {
             assets: Vec::new(),
             diagnostic_metadata: json!({ "k": "v" }),
             timed_text: None,
+            duration_secs: None,
         };
         let handle = cache.store("crazyrouter", result.clone());
         assert_eq!(handle.provider.as_deref(), Some("crazyrouter"));

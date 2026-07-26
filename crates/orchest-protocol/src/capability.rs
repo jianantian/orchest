@@ -183,6 +183,22 @@ pub enum GenStatus {
     Failed,
 }
 
+/// Semantic role of a produced asset within a [`GenResult`] (v0.15, issue 002).
+///
+/// `Primary` is the main product (the image, video, or audio track); `Cover`
+/// is cover art / a thumbnail accompanying it; `Preview` is a lower-fidelity
+/// stand-in for the primary asset. Serde defaults to `Primary`, so payloads
+/// written before the field existed still deserialize — a missing `role` on
+/// the wire means the asset is the product itself.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GenAssetRole {
+    #[default]
+    Primary,
+    Cover,
+    Preview,
+}
+
 /// One produced asset (image/video), as a URL or inline bytes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -190,10 +206,18 @@ pub enum GenAsset {
     Url {
         url: String,
         media_type: Option<String>,
+        /// What this asset is within the result; see [`GenAssetRole`].
+        /// `#[serde(default)]` keeps pre-role payloads deserializable (they
+        /// all carried only the primary product).
+        #[serde(default)]
+        role: GenAssetRole,
     },
     Bytes {
         media_type: String,
         data: Bytes,
+        /// What this asset is within the result; see [`GenAssetRole`].
+        #[serde(default)]
+        role: GenAssetRole,
     },
 }
 
@@ -236,6 +260,13 @@ pub struct GenResult {
     /// shared across image/video/music.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timed_text: Option<TimedText>,
+    /// Duration of the primary time-based media (music/video), in seconds
+    /// (v0.15, issue 002). Time-based-media neutral: music and video
+    /// providers fill it when the dialect reports one, image providers leave
+    /// it `None`. Lifted out of `diagnostic_metadata`, where it rode as an
+    /// untyped key because the typed surface had no home for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<f64>,
 }
 
 /// Signed/polled generation capability (image/video), abstracted from
@@ -405,10 +436,18 @@ mod tests {
     #[test]
     fn gen_result_serde_round_trip() {
         let result = GenResult {
-            assets: vec![GenAsset::Url {
-                url: "https://example.com/a.mp3".to_string(),
-                media_type: Some("audio/mpeg".to_string()),
-            }],
+            assets: vec![
+                GenAsset::Url {
+                    url: "https://example.com/a.mp3".to_string(),
+                    media_type: Some("audio/mpeg".to_string()),
+                    role: GenAssetRole::Primary,
+                },
+                GenAsset::Url {
+                    url: "https://example.com/cover.jpeg".to_string(),
+                    media_type: Some("image/jpeg".to_string()),
+                    role: GenAssetRole::Cover,
+                },
+            ],
             diagnostic_metadata: json!({ "provider": "suno" }),
             timed_text: Some(TimedText {
                 segments: vec![TimedSegment {
@@ -417,6 +456,7 @@ mod tests {
                     end: Some(2.0),
                 }],
             }),
+            duration_secs: Some(31.84),
         };
         let wire = serde_json::to_string(&result).unwrap();
         let restored: GenResult = serde_json::from_str(&wire).unwrap();
@@ -426,21 +466,67 @@ mod tests {
     #[test]
     fn gen_result_omits_absent_fields_from_wire() {
         // skip_serializing_if keeps the wire shape of a producer that never
-        // sets timed_text / diagnostic_metadata identical to before the field
-        // existed — and serde(default) lets old payloads still deserialize.
+        // sets timed_text / duration_secs / diagnostic_metadata identical to
+        // before the fields existed — and serde(default) lets old payloads
+        // still deserialize.
         let result = GenResult {
             assets: vec![],
             diagnostic_metadata: Value::Null,
             timed_text: None,
+            duration_secs: None,
         };
         let wire = serde_json::to_string(&result).unwrap();
         let v: Value = serde_json::from_str(&wire).unwrap();
         assert!(v.get("timed_text").is_none());
+        assert!(v.get("duration_secs").is_none());
         assert!(v.get("diagnostic_metadata").is_none());
 
         let minimal: GenResult = serde_json::from_value(json!({ "assets": [] })).unwrap();
         assert_eq!(minimal.timed_text, None);
+        assert_eq!(minimal.duration_secs, None);
         assert_eq!(minimal.diagnostic_metadata, Value::Null);
+    }
+
+    #[test]
+    fn gen_asset_role_defaults_to_primary_for_pre_role_payloads() {
+        // Backward compatibility (v0.15, issue 002): payloads written before
+        // the `role` field existed carry only `kind`/`url`/`media_type` and
+        // must still deserialize, with the asset read as the primary product.
+        let old: GenAsset = serde_json::from_value(json!({
+            "kind": "url",
+            "url": "https://example.com/a.mp3",
+            "media_type": "audio/mpeg"
+        }))
+        .unwrap();
+        assert_eq!(
+            old,
+            GenAsset::Url {
+                url: "https://example.com/a.mp3".to_string(),
+                media_type: Some("audio/mpeg".to_string()),
+                role: GenAssetRole::Primary,
+            }
+        );
+
+        // The Bytes variant likewise, and the wire names are snake_case.
+        let old_bytes: GenAsset = serde_json::from_value(json!({
+            "kind": "bytes",
+            "media_type": "image/png",
+            "data": [1, 2, 3]
+        }))
+        .unwrap();
+        assert_eq!(
+            old_bytes,
+            GenAsset::Bytes {
+                media_type: "image/png".to_string(),
+                data: Bytes::from_static(&[1, 2, 3]),
+                role: GenAssetRole::Primary,
+            }
+        );
+        assert_eq!(serde_json::to_value(GenAssetRole::Cover).unwrap(), "cover");
+        assert_eq!(
+            serde_json::to_value(GenAssetRole::Preview).unwrap(),
+            "preview"
+        );
     }
 
     #[test]

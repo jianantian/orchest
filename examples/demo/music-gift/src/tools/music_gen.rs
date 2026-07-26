@@ -15,8 +15,8 @@ use tokio::time::{sleep, Duration};
 use tokio_stream::wrappers::ReceiverStream;
 
 use orchest_protocol::{
-    ChatModel, ContentBlock, GenAsset, GenHandle, GenRequest, GenStatus, GenTask, Message,
-    MusicParams, RequestOptions, Role, VocalGender,
+    ChatModel, ContentBlock, GenAsset, GenAssetRole, GenHandle, GenRequest, GenStatus, GenTask,
+    Message, MusicParams, RequestOptions, Role, VocalGender,
 };
 
 use crate::error::{AppError, AppResult};
@@ -551,8 +551,9 @@ async fn finalize_in_background(
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-/// Fetch completed generation assets, extract the first audio URL, generate
-/// synced lyrics (LRC), and update the store.
+/// Fetch completed generation assets, extract the primary audio URL, persist
+/// the provider's cover art, generate synced lyrics (LRC), and update the
+/// store.
 async fn handle_done(
     gen_task: &dyn GenTask,
     store: &GiftStore,
@@ -565,8 +566,14 @@ async fn handle_done(
         .await
         .map_err(|e| AppError::Gen(e.to_string()))?;
 
-    let url = result.assets.first().and_then(|a| match a {
-        GenAsset::Url { url, .. } => Some(url.clone()),
+    // The audio track is the Primary-role asset: cover art rides alongside in
+    // the same asset list now, so pick by role, never by position.
+    let url = result.assets.iter().find_map(|a| match a {
+        GenAsset::Url {
+            url,
+            role: GenAssetRole::Primary,
+            ..
+        } => Some(url.clone()),
         _ => None,
     });
 
@@ -574,14 +581,27 @@ async fn handle_done(
         store.update_audio(gift_id, u)?;
     }
 
+    // Cover art the provider surfaced as a Cover-role asset (Suno). Decorative
+    // — a store failure must not fail the generation.
+    let cover_url = result.assets.iter().find_map(|a| match a {
+        GenAsset::Url {
+            url,
+            role: GenAssetRole::Cover,
+            ..
+        } => Some(url.clone()),
+        _ => None,
+    });
+    if let Some(ref c) = cover_url {
+        if let Err(e) = store.update_cover(gift_id, c) {
+            eprintln!("[music-gift] cover store failed [{gift_id}]: {e}");
+        }
+    }
+
     // Synced lyrics for the scrolling viewer. Prefer the provider's forced
     // alignment (structured TimedText → rendered to LRC); fall back to our own
-    // text estimate from lyrics + reported duration only when the provider gave
-    // no timed text. Best-effort — never fail generation over it.
-    let duration = result
-        .diagnostic_metadata
-        .get("duration_secs")
-        .and_then(serde_json::Value::as_f64);
+    // text estimate from lyrics + the typed duration only when the provider
+    // gave no timed text. Best-effort — never fail generation over it.
+    let duration = result.duration_secs;
     let lrc = result
         .timed_text
         .as_ref()
@@ -781,6 +801,10 @@ fn extract_json_block(text: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    use orchest_protocol::{Capability, CapabilityDescriptor, GenResult, Modality, ProtocolError};
+
+    use crate::gift::{Gift, GiftStore};
+
     fn submission_for(provider: &str) -> GenSubmission {
         GenSubmission {
             lyrics: "[verse]\nla la".to_string(),
@@ -896,5 +920,156 @@ mod tests {
             assert_eq!(music.instrumental, Some(true), "{provider}");
             assert_eq!(music.lyrics, None, "{provider}");
         }
+    }
+
+    /// Minimal [`GenTask`] fake for `handle_done`: submit/poll are never
+    /// reached; `fetch` returns the canned result.
+    struct FakeGenTask {
+        result: GenResult,
+    }
+
+    #[async_trait::async_trait]
+    impl GenTask for FakeGenTask {
+        fn provider_name(&self) -> &str {
+            "fake"
+        }
+
+        fn model_name(&self) -> &str {
+            "fake-model"
+        }
+
+        fn descriptor(&self) -> CapabilityDescriptor {
+            CapabilityDescriptor::new("fake", "fake-model", Capability::GenTask)
+                .with_input_modalities([Modality::Text])
+                .with_output_modalities([Modality::Audio])
+        }
+
+        async fn submit(&self, _req: GenRequest) -> Result<GenHandle, ProtocolError> {
+            unimplemented!("handle_done only calls fetch")
+        }
+
+        async fn poll(&self, _handle: &GenHandle) -> Result<GenStatus, ProtocolError> {
+            unimplemented!("handle_done only calls fetch")
+        }
+
+        async fn fetch(&self, _handle: &GenHandle) -> Result<GenResult, ProtocolError> {
+            Ok(self.result.clone())
+        }
+    }
+
+    /// A store backed by a tempdir SQLite file with one gift inserted. The
+    /// TempDir is returned so the caller keeps it alive for the store's
+    /// lifetime (SQLite needs the directory for its journal files).
+    fn store_with_gift(gift_id: &str, lyrics: Option<String>) -> (GiftStore, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("gifts.db").to_string_lossy().into_owned();
+        let store = GiftStore::open(&db).expect("open store");
+        store
+            .create(&Gift {
+                id: gift_id.to_string(),
+                kind: "song".to_string(),
+                lyrics,
+                meta: json!({}),
+                audio_url: None,
+                cover_url: None,
+                photos: vec![],
+                gen_handle: None,
+                gen_status: None,
+                countdown_status: None,
+                lrc: None,
+                duration_secs: None,
+                creator_token: "tok".to_string(),
+                published: false,
+                likes: vec![],
+                created_at: "0".to_string(),
+                published_at: None,
+            })
+            .expect("create gift");
+        (store, dir)
+    }
+
+    /// `handle_done` consumes the typed surface only: the audio URL comes from
+    /// the Primary-role asset even when the cover sorts first, the Cover-role
+    /// asset is persisted on the gift, and the LRC fallback runs off the typed
+    /// `duration_secs` — nothing reads diagnostic_metadata anymore.
+    #[tokio::test]
+    async fn handle_done_consumes_roles_and_typed_duration() {
+        let (store, _dir) = store_with_gift("g1", Some("[Verse]\nline one\nline two".to_string()));
+        let task = FakeGenTask {
+            result: GenResult {
+                assets: vec![
+                    // Cover listed first: the pick must be by role, not position.
+                    GenAsset::Url {
+                        url: "https://cdn/cover.jpeg".to_string(),
+                        media_type: Some("image/jpeg".to_string()),
+                        role: GenAssetRole::Cover,
+                    },
+                    GenAsset::Url {
+                        url: "https://cdn/track.mp3".to_string(),
+                        media_type: Some("audio/mpeg".to_string()),
+                        role: GenAssetRole::Primary,
+                    },
+                ],
+                diagnostic_metadata: json!({ "provider": "suno" }),
+                timed_text: None,
+                duration_secs: Some(31.84),
+            },
+        };
+        let handle = GenHandle {
+            id: "task-1".to_string(),
+            provider: Some("fake".to_string()),
+        };
+
+        let url = handle_done(
+            &task,
+            &store,
+            "g1",
+            Some("[Verse]\nline one\nline two"),
+            &handle,
+        )
+        .await
+        .expect("handle_done");
+        assert_eq!(url.as_deref(), Some("https://cdn/track.mp3"));
+
+        let got = store.get("g1").expect("get gift");
+        assert_eq!(got.audio_url.as_deref(), Some("https://cdn/track.mp3"));
+        assert_eq!(got.cover_url.as_deref(), Some("https://cdn/cover.jpeg"));
+        assert_eq!(got.duration_secs, Some(31.84));
+        // The estimate fallback produced LRC from lyrics + typed duration.
+        let lrc = got.lrc.expect("lrc stored");
+        assert!(lrc.contains("line one"), "lrc: {lrc}");
+    }
+
+    /// Without a typed duration (and no timed text) there is no LRC fallback,
+    /// and a result without a Cover asset leaves the gift's cover unset.
+    #[tokio::test]
+    async fn handle_done_without_duration_or_cover_stores_neither() {
+        let (store, _dir) = store_with_gift("g2", Some("[Verse]\nline one".to_string()));
+        let task = FakeGenTask {
+            result: GenResult {
+                assets: vec![GenAsset::Url {
+                    url: "https://cdn/track.mp3".to_string(),
+                    media_type: Some("audio/mpeg".to_string()),
+                    role: GenAssetRole::Primary,
+                }],
+                diagnostic_metadata: json!({ "provider": "minimax" }),
+                timed_text: None,
+                duration_secs: None,
+            },
+        };
+        let handle = GenHandle {
+            id: "task-2".to_string(),
+            provider: Some("fake".to_string()),
+        };
+
+        handle_done(&task, &store, "g2", Some("[Verse]\nline one"), &handle)
+            .await
+            .expect("handle_done");
+
+        let got = store.get("g2").expect("get gift");
+        assert_eq!(got.audio_url.as_deref(), Some("https://cdn/track.mp3"));
+        assert_eq!(got.cover_url, None);
+        assert_eq!(got.duration_secs, None);
+        assert_eq!(got.lrc, None);
     }
 }
