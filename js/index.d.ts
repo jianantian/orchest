@@ -112,7 +112,6 @@ export type RuntimeEvent =
   | { type: "approval_denied"; tool_call: unknown; run_depth: number }
   | { type: "budget_warning"; used: unknown; limit: unknown; run_depth: number }
   | { type: "runtime_warning"; message: string; run_depth: number }
-  | { type: "skill_dependency_error"; skill_name: string; error: string; run_depth: number }
   | { type: "skill_missing_capabilities"; skill_name: string; run_depth: number }
   | { type: "skill_load_warning"; path: string; reason: string; run_depth: number }
   | { type: "context_compacted"; removed_messages: number; summary_tokens: number; run_depth: number }

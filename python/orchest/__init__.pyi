@@ -226,14 +226,6 @@ class RuntimeWarningEvent(TypedDict):
     child_run_id: str | None
 
 
-class SkillDependencyErrorEvent(TypedDict):
-    type: Literal["skill_dependency_error"]
-    skill_name: str
-    error: str
-    run_depth: int
-    child_run_id: str | None
-
-
 class SkillMissingCapabilitiesEvent(TypedDict):
     type: Literal["skill_missing_capabilities"]
     skill_name: str
@@ -341,7 +333,6 @@ RuntimeEvent: TypeAlias = (
     | ApprovalDeniedEvent
     | BudgetWarningEvent
     | RuntimeWarningEvent
-    | SkillDependencyErrorEvent
     | SkillMissingCapabilitiesEvent
     | SkillLoadWarningEvent
     | ContextCompactedEvent

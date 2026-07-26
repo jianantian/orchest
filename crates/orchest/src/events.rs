@@ -136,10 +136,6 @@ pub enum RuntimeEvent {
     RuntimeWarning {
         message: String,
     },
-    SkillDependencyError {
-        skill_name: String,
-        error: String,
-    },
     SkillMissingCapabilities {
         skill_name: String,
     },

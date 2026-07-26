@@ -311,7 +311,6 @@ async fn e2e_event_coverage() {
             RuntimeEvent::ApprovalDenied { .. } => "ApprovalDenied",
             RuntimeEvent::BudgetWarning { .. } => "BudgetWarning",
             RuntimeEvent::RuntimeWarning { .. } => "RuntimeWarning",
-            RuntimeEvent::SkillDependencyError { .. } => "SkillDependencyError",
             RuntimeEvent::SkillMissingCapabilities { .. } => "SkillMissingCapabilities",
             RuntimeEvent::SkillLoadWarning { .. } => "SkillLoadWarning",
             RuntimeEvent::ContextCompacted { .. } => "ContextCompacted",

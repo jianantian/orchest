@@ -19,10 +19,19 @@ pub struct SkillManifest {
     /// uppercase filename.
     #[serde(default)]
     pub skill_md_path: PathBuf,
+    /// Tools the skill declares it may use (official `allowed-tools` /
+    /// `allowed_tools`, both spellings accepted). **Declared-reserved: parsed
+    /// but not enforced** — the runtime does not restrict the session's tool
+    /// set based on this field. Whether to enforce it is a post-1.0 decision.
     pub allowed_tools: Option<Vec<String>>,
     pub bundled_tools: Vec<BundledToolDef>,
     #[serde(default)]
     pub dependencies: SkillDependencies,
+    /// Resource declarations. Only `env` is enforced (the script executor
+    /// clears the process environment and injects only declared variables).
+    /// `network` / `filesystem_read` / `filesystem_write` / `max_memory_mb`
+    /// are **declared-reserved: parsed but not enforced** — there is no
+    /// sandbox yet, so they must not be relied on for containment.
     #[serde(default)]
     pub capabilities: Option<SkillCapabilities>,
     pub raw_frontmatter: Value,
