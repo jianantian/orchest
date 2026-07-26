@@ -300,7 +300,7 @@ fn skill_env_manager_uses_hashed_python_cache_dir() {
         raw_frontmatter: json!({}),
     };
 
-    let path = manager.python_env_path(&manifest);
+    let path = manager.python_env_path(&manifest).unwrap();
 
     assert!(path.starts_with(tmp.path().join("skill-envs")));
     assert!(path

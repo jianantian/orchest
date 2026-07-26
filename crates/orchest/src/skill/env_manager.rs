@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use tokio::process::Command;
 
-use super::types::{EnvError, SkillCapabilities, SkillManifest};
+use super::types::{skill_name_violations, EnvError, SkillCapabilities, SkillManifest};
 
 pub struct CapabilityValidator;
 
@@ -47,24 +47,109 @@ impl SkillEnvManager {
         Self { cache_dir }
     }
 
-    pub fn python_env_path(&self, manifest: &SkillManifest) -> PathBuf {
-        self.cache_dir.join("skill-envs").join(format!(
-            "{}-{}",
-            manifest.name,
-            python_deps_hash(&manifest.dependencies.python)
-        ))
+    /// Cache directory for the skill's Python env. Returns
+    /// `INVALID_SKILL_NAME` instead of a path when `manifest.name` violates
+    /// the Agent Skills naming rules — a hostile SKILL.md could otherwise
+    /// shape the cache path (`../`, embedded separators).
+    pub fn python_env_path(&self, manifest: &SkillManifest) -> Result<PathBuf, EnvError> {
+        self.env_dir(
+            &manifest.name,
+            &python_deps_hash(&manifest.dependencies.python),
+        )
     }
 
-    pub fn node_env_path(&self, manifest: &SkillManifest) -> PathBuf {
-        self.cache_dir.join("skill-envs").join(format!(
-            "{}-node-{}",
-            manifest.name,
-            node_deps_hash(&manifest.dependencies.node)
-        ))
+    /// Cache directory for the skill's Node env. Same name gate as
+    /// [`SkillEnvManager::python_env_path`].
+    pub fn node_env_path(&self, manifest: &SkillManifest) -> Result<PathBuf, EnvError> {
+        self.env_dir(
+            &manifest.name,
+            &format!("node-{}", node_deps_hash(&manifest.dependencies.node)),
+        )
     }
 
+    /// Joins `skill-envs/{name}-{suffix}` after gating on the Agent Skills
+    /// name rules. The rules already exclude every path separator, so a
+    /// valid name cannot escape the cache directory; the post-join
+    /// containment check is defense in depth against that invariant ever
+    /// breaking.
+    fn env_dir(&self, name: &str, suffix: &str) -> Result<PathBuf, EnvError> {
+        let violations = skill_name_violations(name);
+        if !violations.is_empty() {
+            tracing::warn!(
+                skill_name = %name,
+                reason = %violations.join("; "),
+                "refusing to build skill env for invalid skill name"
+            );
+            return Err(EnvError {
+                message: format!(
+                    "refusing to build skill env for invalid name '{name}': {}",
+                    violations.join("; ")
+                ),
+                code: Some("INVALID_SKILL_NAME".into()),
+            });
+        }
+        let base = self.cache_dir.join("skill-envs");
+        let candidate = base.join(format!("{name}-{suffix}"));
+        if candidate.parent() != Some(base.as_path()) {
+            tracing::warn!(
+                path = %candidate.display(),
+                "skill env path escapes the skill-envs cache directory; skipping env build"
+            );
+            return Err(EnvError {
+                message: format!(
+                    "skill env path '{}' escapes the skill-envs cache directory",
+                    candidate.display()
+                ),
+                code: Some("SKILL_ENV_PATH_ESCAPE".into()),
+            });
+        }
+        Ok(candidate)
+    }
+
+    /// Re-anchors `env_dir` under the canonicalized `skill-envs` base
+    /// (creating it when missing) and verifies the result stays inside it.
+    /// The name gate in `env_dir` makes escape impossible; the canonicalize
+    /// and prefix check here are the second line of defense, resolving any
+    /// symlinks in the configured cache path before the env is built there.
+    async fn contained_env_dir(&self, env_dir: &Path) -> Result<PathBuf, EnvError> {
+        let base = self.cache_dir.join("skill-envs");
+        tokio::fs::create_dir_all(&base)
+            .await
+            .map_err(env_io_error)?;
+        let base_canonical = tokio::fs::canonicalize(&base).await.map_err(env_io_error)?;
+        // `env_dir` came from `env_dir`, so its last component is a single
+        // validated directory name; `file_name` also rejects a trailing `..`.
+        let leaf = env_dir.file_name().ok_or_else(|| EnvError {
+            message: format!(
+                "skill env path '{}' escapes the skill-envs cache directory",
+                env_dir.display()
+            ),
+            code: Some("SKILL_ENV_PATH_ESCAPE".into()),
+        })?;
+        let anchored = base_canonical.join(leaf);
+        if !anchored.starts_with(&base_canonical) {
+            tracing::warn!(
+                path = %env_dir.display(),
+                "skill env path escapes the skill-envs cache directory; skipping env build"
+            );
+            return Err(EnvError {
+                message: format!(
+                    "skill env path '{}' escapes the skill-envs cache directory",
+                    env_dir.display()
+                ),
+                code: Some("SKILL_ENV_PATH_ESCAPE".into()),
+            });
+        }
+        Ok(anchored)
+    }
+
+    /// Ensures the skill's Python env exists, returning its directory.
+    /// Skills with spec-invalid names get no env: the error surfaces as
+    /// `INVALID_SKILL_NAME` and nothing is created on disk.
     pub async fn ensure_python_env(&self, manifest: &SkillManifest) -> Result<PathBuf, EnvError> {
-        let env_dir = self.python_env_path(manifest);
+        let env_dir = self
+            .contained_env_dir(&self.python_env_path(manifest)?)
+            .await?;
         if env_dir.exists() {
             return Ok(env_dir);
         }
@@ -102,8 +187,13 @@ impl SkillEnvManager {
         Ok(env_dir)
     }
 
+    /// Ensures the skill's Node env exists, returning its directory. Skills
+    /// with spec-invalid names get no env: the error surfaces as
+    /// `INVALID_SKILL_NAME` and nothing is created on disk.
     pub async fn ensure_node_env(&self, manifest: &SkillManifest) -> Result<PathBuf, EnvError> {
-        let env_dir = self.node_env_path(manifest);
+        let env_dir = self
+            .contained_env_dir(&self.node_env_path(manifest)?)
+            .await?;
         if env_dir.join("node_modules").exists() {
             return Ok(env_dir);
         }
@@ -225,6 +315,20 @@ module.exports = { create_sub_agent };
 mod tests {
     use super::*;
 
+    fn manifest_named(name: &str) -> SkillManifest {
+        SkillManifest {
+            name: name.to_string(),
+            description: "d".into(),
+            path: PathBuf::from("/nonexistent").join(name),
+            skill_md_path: PathBuf::new(),
+            allowed_tools: None,
+            bundled_tools: vec![],
+            dependencies: Default::default(),
+            capabilities: None,
+            raw_frontmatter: serde_json::Value::Null,
+        }
+    }
+
     #[test]
     fn capability_validator_builds_declared_env_only() {
         std::env::set_var("ORCHEST_TEST_SECRET", "visible");
@@ -244,5 +348,68 @@ mod tests {
             Some("visible")
         );
         assert!(!env.contains_key("ORCHEST_UNDECLARED_SECRET"));
+    }
+
+    #[test]
+    fn env_path_refuses_spec_invalid_names() {
+        let manager = SkillEnvManager::new(PathBuf::from("/nonexistent-cache"));
+        // `../x` and `a/b` are the path-injection shapes; the others violate
+        // the same name rules that keep separators out of the cache path.
+        for name in ["../x", "a/b", "Bad-Name", "under_scored"] {
+            let manifest = manifest_named(name);
+            let err = manager
+                .python_env_path(&manifest)
+                .expect_err(&format!("python path accepted '{name}'"));
+            assert_eq!(err.code.as_deref(), Some("INVALID_SKILL_NAME"));
+            assert!(err.message.contains(name), "unexpected message: {err}");
+            let err = manager
+                .node_env_path(&manifest)
+                .expect_err(&format!("node path accepted '{name}'"));
+            assert_eq!(err.code.as_deref(), Some("INVALID_SKILL_NAME"));
+        }
+    }
+
+    #[test]
+    fn env_path_for_valid_name_stays_inside_skill_envs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SkillEnvManager::new(tmp.path().to_path_buf());
+        let manifest = manifest_named("good-skill");
+
+        let python = manager.python_env_path(&manifest).unwrap();
+        assert!(python.starts_with(tmp.path().join("skill-envs")));
+        assert_eq!(
+            python.parent(),
+            Some(tmp.path().join("skill-envs").as_path())
+        );
+
+        let node = manager.node_env_path(&manifest).unwrap();
+        assert!(node
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("good-skill-node-"));
+    }
+
+    #[tokio::test]
+    async fn ensure_env_creates_nothing_for_spec_invalid_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SkillEnvManager::new(tmp.path().to_path_buf());
+
+        for name in ["../x", "a/b"] {
+            let manifest = manifest_named(name);
+            let err = manager.ensure_python_env(&manifest).await.unwrap_err();
+            assert_eq!(err.code.as_deref(), Some("INVALID_SKILL_NAME"));
+            let err = manager.ensure_node_env(&manifest).await.unwrap_err();
+            assert_eq!(err.code.as_deref(), Some("INVALID_SKILL_NAME"));
+        }
+
+        // No env build means no directories anywhere: nothing escaped into
+        // the cache root, and `skill-envs` was never created either.
+        let mut entries = std::fs::read_dir(tmp.path()).unwrap();
+        assert!(
+            entries.next().is_none(),
+            "cache root must stay empty, found: {:?}",
+            entries.next()
+        );
     }
 }

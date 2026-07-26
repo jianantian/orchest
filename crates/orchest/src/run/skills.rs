@@ -44,14 +44,15 @@ pub(crate) async fn register_skills(
         .map_err(|e| format!("skill scan join error: {e}"))?
         .map_err(|e| format!("skill scan failed: {e}"))?;
 
-    // Surface every failed skill before the happy path: a skill that vanished
-    // silently is undebuggable. The event stream is the product-facing channel;
-    // tracing is the diagnostic fallback.
+    // Surface every scan problem before the happy path — skills that failed
+    // to load and loaded skills with spec violations alike: a problem that
+    // vanished silently is undebuggable. The event stream is the
+    // product-facing channel; tracing is the diagnostic fallback.
     for warning in &outcome.warnings {
         tracing::warn!(
             path = %warning.path.display(),
             reason = %warning.reason,
-            "skill failed to load"
+            "skill scan warning"
         );
         emit(
             tx,

@@ -205,6 +205,11 @@ impl Default for ModelConfig {
 /// Duplicate skill names are resolved deterministically: scanned manifests
 /// are processed in ascending directory-path order, the first registration
 /// wins, and later same-name skills are skipped with a warning.
+///
+/// Scanned skills are also checked against the Agent Skills spec
+/// (name/description rules). Violations surface through the same
+/// `SkillLoadWarning` channel but never block loading and never trip
+/// `strict` mode — the skill keeps its declared frontmatter name.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SkillsConfig {
     pub dir: Option<String>,

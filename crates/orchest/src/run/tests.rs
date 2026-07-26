@@ -3501,12 +3501,12 @@ async fn register_skills_scans_and_registers_bundled_tools() {
     use std::fs;
 
     let tmp = tempfile::tempdir().unwrap();
-    let skill_dir = tmp.path().join("greet_skill");
+    let skill_dir = tmp.path().join("greet-skill");
     fs::create_dir_all(skill_dir.join("scripts")).unwrap();
     fs::write(
         skill_dir.join("SKILL.md"),
         r#"---
-name: greet_skill
+name: greet-skill
 description: A greeting skill
 bundled_tools:
   - name: greet
@@ -3564,7 +3564,7 @@ async fn register_skills_filters_by_allowed_skills() {
 
     let tmp = tempfile::tempdir().unwrap();
     // Create two skills
-    for name in &["skill_a", "skill_b"] {
+    for name in &["skill-a", "skill_b"] {
         let skill_dir = tmp.path().join(name);
         fs::create_dir_all(skill_dir.join("scripts")).unwrap();
         fs::write(
@@ -3597,13 +3597,13 @@ bundled_tools:
 
     let (tx, _rx) = mpsc::channel(16);
     let mut registry = ToolRegistry::new();
-    let allowed = Some(vec!["skill_a".to_string()]);
+    let allowed = Some(vec!["skill-a".to_string()]);
 
     skills::register_skills(&skills_cfg(tmp.path(), allowed), &mut registry, &tx)
         .await
         .unwrap();
 
-    assert!(registry.contains("tool_skill_a"));
+    assert!(registry.contains("tool_skill-a"));
     assert!(!registry.contains("tool_skill_b"));
 }
 
@@ -3661,12 +3661,12 @@ async fn register_skills_no_warning_when_capabilities_declared() {
     use std::fs;
 
     let tmp = tempfile::tempdir().unwrap();
-    let skill_dir = tmp.path().join("cap_skill");
+    let skill_dir = tmp.path().join("cap-skill");
     fs::create_dir_all(skill_dir.join("scripts")).unwrap();
     fs::write(
         skill_dir.join("SKILL.md"),
         r#"---
-name: cap_skill
+name: cap-skill
 description: A skill with capabilities
 capabilities:
   network: true
@@ -3713,12 +3713,12 @@ async fn register_skills_emits_missing_capabilities_warning() {
     use std::fs;
 
     let tmp = tempfile::tempdir().unwrap();
-    let skill_dir = tmp.path().join("no_cap_skill");
+    let skill_dir = tmp.path().join("no-cap-skill");
     fs::create_dir_all(skill_dir.join("scripts")).unwrap();
     fs::write(
         skill_dir.join("SKILL.md"),
         r#"---
-name: no_cap_skill
+name: no-cap-skill
 description: A skill WITHOUT capabilities declared
 bundled_tools:
   - name: no_cap_tool
@@ -3756,9 +3756,9 @@ bundled_tools:
     // section is declared in the manifest.
     assert!(
             events.iter().any(
-                |e| matches!(e, RuntimeEvent::SkillMissingCapabilities { skill_name, .. } if skill_name == "no_cap_skill")
+                |e| matches!(e, RuntimeEvent::SkillMissingCapabilities { skill_name, .. } if skill_name == "no-cap-skill")
             ),
-            "expected SkillMissingCapabilities for no_cap_skill"
+            "expected SkillMissingCapabilities for no-cap-skill"
         );
 }
 
@@ -4294,9 +4294,9 @@ bundled_tools:
 #[tokio::test]
 async fn register_skills_tolerates_bad_skill_and_keeps_good_ones() {
     let tmp = tempfile::tempdir().unwrap();
-    create_skill_with_tool(tmp.path(), "good_skill", "good_skill", "good_tool", true);
+    create_skill_with_tool(tmp.path(), "good-skill", "good-skill", "good_tool", true);
     // Bad: the bundled tool script does not exist, so canonicalize fails.
-    create_skill_with_tool(tmp.path(), "bad_skill", "bad_skill", "bad_tool", false);
+    create_skill_with_tool(tmp.path(), "bad-skill", "bad-skill", "bad_tool", false);
 
     let (tx, mut rx) = mpsc::channel(16);
     let mut registry = ToolRegistry::new();
@@ -4311,7 +4311,7 @@ async fn register_skills_tolerates_bad_skill_and_keeps_good_ones() {
     // The skipped skill is not disclosed either (no prompt injection, and
     // load_skill cannot resolve it).
     assert_eq!(registration.disclosed.len(), 1);
-    assert_eq!(registration.disclosed[0].name, "good_skill");
+    assert_eq!(registration.disclosed[0].name, "good-skill");
 
     drop(tx);
     let mut events = Vec::new();
@@ -4324,7 +4324,7 @@ async fn register_skills_tolerates_bad_skill_and_keeps_good_ones() {
     });
     let (path, reason) = warning.expect("expected SkillLoadWarning for the bad skill");
     assert!(
-        path.ends_with("bad_skill/SKILL.md") || path.ends_with("bad_skill\\SKILL.md"),
+        path.ends_with("bad-skill/SKILL.md") || path.ends_with("bad-skill\\SKILL.md"),
         "unexpected warning path: {path}"
     );
     assert!(
@@ -4332,15 +4332,15 @@ async fn register_skills_tolerates_bad_skill_and_keeps_good_ones() {
         "unexpected warning reason: {reason}"
     );
     // Only registered skills can run, so only they warn about missing
-    // capabilities: good_skill warns (scripts/ without capabilities),
-    // bad_skill does not.
+    // capabilities: good-skill warns (scripts/ without capabilities),
+    // bad-skill does not.
     assert!(events.iter().any(|e| matches!(
         e,
-        RuntimeEvent::SkillMissingCapabilities { skill_name } if skill_name == "good_skill"
+        RuntimeEvent::SkillMissingCapabilities { skill_name } if skill_name == "good-skill"
     )));
     assert!(!events.iter().any(|e| matches!(
         e,
-        RuntimeEvent::SkillMissingCapabilities { skill_name } if skill_name == "bad_skill"
+        RuntimeEvent::SkillMissingCapabilities { skill_name } if skill_name == "bad-skill"
     )));
 }
 
@@ -4428,8 +4428,8 @@ async fn register_skills_duplicate_skill_name_first_wins() {
     let tmp = tempfile::tempdir().unwrap();
     // Directory paths sort aaa_dup before zzz_dup, so aaa_dup registers and
     // zzz_dup is skipped deterministically.
-    create_skill_with_tool(tmp.path(), "aaa_dup", "dup_skill", "tool_aaa", true);
-    create_skill_with_tool(tmp.path(), "zzz_dup", "dup_skill", "tool_zzz", true);
+    create_skill_with_tool(tmp.path(), "aaa_dup", "dup-skill", "tool_aaa", true);
+    create_skill_with_tool(tmp.path(), "zzz_dup", "dup-skill", "tool_zzz", true);
 
     let (tx, mut rx) = mpsc::channel(16);
     let mut registry = ToolRegistry::new();
@@ -4448,15 +4448,15 @@ async fn register_skills_duplicate_skill_name_first_wins() {
     while let Some(event) = rx.recv().await {
         events.push(event);
     }
-    let reason = events.iter().find_map(|e| match e {
-        RuntimeEvent::SkillLoadWarning { reason, .. } => Some(reason.clone()),
-        _ => None,
+    // The directory/name mismatch (aaa_dup ≠ dup-skill) also warns, so look
+    // for the duplicate warning among all events, not just the first.
+    let found = events.iter().any(|e| match e {
+        RuntimeEvent::SkillLoadWarning { reason, .. } => {
+            reason.contains("duplicate skill name 'dup-skill'")
+        }
+        _ => false,
     });
-    let reason = reason.expect("expected duplicate-name SkillLoadWarning");
-    assert!(
-        reason.contains("duplicate skill name 'dup_skill'"),
-        "unexpected warning reason: {reason}"
-    );
+    assert!(found, "expected duplicate-name SkillLoadWarning");
 }
 
 #[tokio::test]
@@ -4482,9 +4482,9 @@ async fn register_skills_strict_mode_fails_on_duplicate_skill_name() {
 #[tokio::test]
 async fn register_skills_duplicate_tool_name_skips_conflicting_skill() {
     let tmp = tempfile::tempdir().unwrap();
-    // Both skills declare `same_tool`; skill_x sorts before skill_y.
-    create_skill_with_tool(tmp.path(), "skill_x", "skill_x", "same_tool", true);
-    create_skill_with_tool(tmp.path(), "skill_y", "skill_y", "same_tool", true);
+    // Both skills declare `same_tool`; skill-x sorts before skill-y.
+    create_skill_with_tool(tmp.path(), "skill-x", "skill-x", "same_tool", true);
+    create_skill_with_tool(tmp.path(), "skill-y", "skill-y", "same_tool", true);
 
     let (tx, mut rx) = mpsc::channel(16);
     let mut registry = ToolRegistry::new();
@@ -4497,7 +4497,7 @@ async fn register_skills_duplicate_tool_name_skips_conflicting_skill() {
     // conflicting skill is skipped entirely.
     assert!(registry.contains("same_tool"));
     assert_eq!(registration.disclosed.len(), 1);
-    assert_eq!(registration.disclosed[0].name, "skill_x");
+    assert_eq!(registration.disclosed[0].name, "skill-x");
 
     drop(tx);
     let mut events = Vec::new();
