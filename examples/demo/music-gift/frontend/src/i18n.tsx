@@ -86,6 +86,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     review_quality: "已通过质检",
     review_fixes_one: " · {n} 处修复",
     review_fixes_many: " · {n} 处修复",
+    review_skipped: "本次生成跳过了歌词审核",
+    gen_degraded: "本次生成跳过了部分增强环节,已按原始风格生成",
     creating: "生成中…",
     create_song: "生成这首歌",
     vocal: "人声",
@@ -98,6 +100,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     creating_gift: "正在准备你的礼物,请稍候…",
     loading_gift: "加载礼物中…",
     countdown_creating: "正在为 {name} 准备一个特别场景…",
+    countdown_failed: "特别场景这次没能生成，不影响你的歌",
     you: "你",
     gift_creating: "正在生成你的歌",
     gen_preparing: "准备中…",
@@ -223,6 +226,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     review_quality: "Quality checked",
     review_fixes_one: " · {n} fix",
     review_fixes_many: " · {n} fixes",
+    review_skipped: "Lyric review was skipped this time",
+    gen_degraded: "Some enhancement steps were skipped; the original style was used",
     creating: "Creating…",
     create_song: "Create Song",
     vocal: "Vocal",
@@ -235,6 +240,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     creating_gift: "Creating your gift, one moment…",
     loading_gift: "Loading gift…",
     countdown_creating: "Creating a special scene for {name}…",
+    countdown_failed: "The special scene couldn't be created — your song is unaffected",
     you: "you",
     gift_creating: "Creating your song",
     gen_preparing: "preparing…",
@@ -360,6 +366,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     review_quality: "Qualité vérifiée",
     review_fixes_one: " · {n} correction",
     review_fixes_many: " · {n} corrections",
+    review_skipped: "La révision des paroles a été ignorée cette fois",
+    gen_degraded: "Certaines étapes d'amélioration ont été ignorées ; le style d'origine a été utilisé",
     creating: "Création…",
     create_song: "Créer la chanson",
     vocal: "Voix",
@@ -372,6 +380,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     creating_gift: "Création de ton cadeau, un instant…",
     loading_gift: "Chargement du cadeau…",
     countdown_creating: "Création d'une scène spéciale pour {name}…",
+    countdown_failed: "La scène spéciale n'a pas pu être créée — ta chanson n'est pas affectée",
     you: "toi",
     gift_creating: "Création de ta chanson",
     gen_preparing: "préparation…",
@@ -497,6 +506,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     review_quality: "Calidad verificada",
     review_fixes_one: " · {n} corrección",
     review_fixes_many: " · {n} correcciones",
+    review_skipped: "La revisión de la letra se omitió esta vez",
+    gen_degraded: "Algunos pasos de mejora se omitieron; se usó el estilo original",
     creating: "Creando…",
     create_song: "Crear canción",
     vocal: "Voz",
@@ -509,6 +520,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     creating_gift: "Creando tu regalo, un momento…",
     loading_gift: "Cargando regalo…",
     countdown_creating: "Creando una escena especial para {name}…",
+    countdown_failed: "No se pudo crear la escena especial; tu canción no se ve afectada",
     you: "ti",
     gift_creating: "Creando tu canción",
     gen_preparing: "preparando…",
@@ -634,6 +646,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     review_quality: "Качество проверено",
     review_fixes_one: " · {n} исправление",
     review_fixes_many: " · {n} исправлений",
+    review_skipped: "Проверка текста была пропущена в этот раз",
+    gen_degraded: "Некоторые этапы улучшения были пропущены; использован исходный стиль",
     creating: "Создание…",
     create_song: "Создать песню",
     vocal: "Вокал",
@@ -646,6 +660,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     creating_gift: "Создаём твой подарок, момент…",
     loading_gift: "Загрузка подарка…",
     countdown_creating: "Создаём особенную сцену для {name}…",
+    countdown_failed: "Особую сцену создать не удалось — на песню это не влияет",
     you: "тебя",
     gift_creating: "Создаём твою песню",
     gen_preparing: "подготовка…",
@@ -725,8 +740,42 @@ const STYLE_TAGS: Record<Lang, string[]> = {
   ru: ["тёплый акустический", "живой поп", "нежная баллада", "ритмичный фолк", "душевный R&B", "мечтательный инди", "энергичный рок", "нежная колыбельная"],
 };
 
-export function getStyleTags(lang: Lang): string[] {
-  return STYLE_TAGS[lang] ?? STYLE_TAGS.en;
+/** A style tag pill: localized label for the user, English tag for the provider. */
+export interface StyleTag {
+  /** Display label in the UI language. */
+  label: string;
+  /** English tag submitted to the music provider (style fields are English-only). */
+  tag: string;
+}
+
+// Canonical English tags, index-aligned with every language's label list.
+// The label is what the user sees; only the English tag reaches the provider —
+// a Chinese label like "治愈温暖" sent as Suno's `style` produced garbage output.
+const STYLE_TAG_VALUES: string[] = STYLE_TAGS.en;
+
+// Index alignment is load-bearing: a label list that outgrows STYLE_TAG_VALUES
+// would fall back to sending the *label* to the provider — the exact bug this
+// mapping exists to prevent. Fail loudly at module load instead.
+for (const lang of Object.keys(STYLE_TAGS) as Lang[]) {
+  if (STYLE_TAGS[lang].length !== STYLE_TAG_VALUES.length) {
+    throw new Error(
+      `STYLE_TAGS.${lang} has ${STYLE_TAGS[lang].length} entries, expected ${STYLE_TAG_VALUES.length} (index-aligned with en)`,
+    );
+  }
+}
+
+export function getStyleTags(lang: Lang): StyleTag[] {
+  const labels = STYLE_TAGS[lang] ?? STYLE_TAGS.en;
+  return labels.map((label, i) => {
+    let tag = STYLE_TAG_VALUES[i];
+    if (tag === undefined) {
+      // Unreachable while the module-load assertion holds — and never the
+      // label, which is not a valid provider style.
+      console.warn(`style tag index ${i} out of range for ${lang}, using "${STYLE_TAG_VALUES[0]}"`);
+      tag = STYLE_TAG_VALUES[0];
+    }
+    return { label, tag };
+  });
 }
 
 interface I18nContextValue {

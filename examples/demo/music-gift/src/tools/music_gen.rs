@@ -86,12 +86,19 @@ pub struct GenSubmission {
     pub lyrics: String,
     pub style: String,
     pub title: String,
+    /// Vocal gender from the gift meta ("male"/"female").
+    pub vocal: String,
+    /// Gift kind — "instrumental" submits without lyrics or vocal gender.
+    pub kind: String,
+    /// Startup-resolved provider identity — selects the params dialect.
+    pub provider: String,
 }
 
 /// The full generate pipeline: read the gift, validate lyrics, refuse to
 /// generate a lyric-less song, enrich the style prompt via the prompt model
-/// (falling back to the raw style on any enrichment failure), check the
-/// enriched prompt for artist names, and submit the job.
+/// (falling back to the raw style on any enrichment failure — logged and
+/// recorded as degraded), check the submitted style for artist names, and
+/// submit the job.
 ///
 /// All generation policy lives here; the route handler only maps the result
 /// to HTTP. `provider` is the startup-resolved provider identity, not a
@@ -124,7 +131,7 @@ pub async fn generate(
     // Validate lyrics — warnings logged for Suno quality tuning.
     let validation = crate::tools::lyrics_validator::validate_lyrics(&lyrics);
     for w in &validation.warnings {
-        eprintln!("[music-gift] lyrics warn [{gift_id}]: {w}");
+        tracing::warn!(gift_id, stage = "validate", warning = %w, "lyrics validation warning");
     }
 
     // A song gift with no lyrics is never what the user asked for: the provider
@@ -136,7 +143,8 @@ pub async fn generate(
         ));
     }
 
-    let enriched = generate_music_prompt(
+    let mut degraded: Vec<String> = Vec::new();
+    let enriched = match generate_music_prompt(
         prompt_model.clone(),
         &MusicPromptInput {
             provider,
@@ -151,19 +159,121 @@ pub async fn generate(
         },
     )
     .await
-    .unwrap_or_else(|_| EnrichedPrompt::fallback(style));
-
-    // Check generated style prompt for artist names
-    for w in &crate::tools::lyrics_validator::check_style_prompt(&enriched.prompt) {
-        eprintln!("[music-gift] style warn [{gift_id}]: {w}");
-    }
+    {
+        Ok(outcome) => {
+            if outcome.degraded {
+                degraded.push("music_prompt".to_string());
+            }
+            outcome.enriched
+        }
+        Err(e) => {
+            tracing::warn!(
+                gift_id,
+                stage = "music_prompt",
+                error = %e,
+                "music prompt enrichment failed; using raw style fallback"
+            );
+            degraded.push("music_prompt".to_string());
+            EnrichedPrompt::fallback(style)
+        }
+    };
 
     let submission = GenSubmission {
         lyrics,
         style: style.to_string(),
         title: meta.title_or_default().to_string(),
+        vocal: meta.vocal_or_default().to_string(),
+        kind: gift.kind.clone(),
+        provider: provider.to_string(),
     };
-    submit(gen_task, store, gift_id, &submission, &enriched).await
+
+    // Check the style that will actually be submitted for artist names —
+    // this used to check `enriched.prompt`, which the Suno custom-mode path
+    // never sends. For instrumental gifts the enriched prompt IS the
+    // submitted prompt, so check it as well.
+    for w in &crate::tools::lyrics_validator::check_style_prompt(&submission.style) {
+        tracing::warn!(gift_id, stage = "style_check", warning = %w, "style check warning");
+    }
+    if submission.kind == "instrumental" {
+        for w in &crate::tools::lyrics_validator::check_style_prompt(&enriched.prompt) {
+            tracing::warn!(gift_id, stage = "style_check", warning = %w, "instrumental prompt check warning");
+        }
+    }
+
+    let resp = submit(gen_task, store, gift_id, &submission, &enriched).await?;
+
+    // Record degraded stages on the gift so the gift page can show that
+    // quality steps were skipped this run. Best-effort: the job is already
+    // submitted, a bookkeeping failure must not fail the request.
+    if let Err(e) = store.set_meta_degraded(gift_id, &degraded) {
+        tracing::warn!(gift_id, stage = "degraded", error = %e, "recording degraded stages failed");
+    }
+    Ok(resp)
+}
+
+/// Build [`GenRequest::params`] for the given provider, checking every key
+/// against what that provider's dialect actually forwards (previously seven
+/// enrichment keys — genre/tempo/mood/vocal_style/instrumentation/production/
+/// exclude — went out for every provider and were silently dropped):
+///
+/// - **suno**: `lyrics`/`instrumental` are handled explicitly by the dialect;
+///   the passthrough whitelist is `style`/`title`/`negativeTags`/`vocalGender`/
+///   `styleWeight`/`weirdnessConstraint`/`audioWeight`/`personaId`/
+///   `personaModel` (crates/orchest-provider-http/src/gen/suno.rs
+///   `PASSTHROUGH_PARAMS`).
+/// - **mureka**: passthrough is `lyrics`/`n`/`reference_id`/`vocal_id`/
+///   `melody_id`/`gender`; `is_instrumental` only selects the endpoint.
+/// - **minimax**: forwards every params key verbatim onto its API body, so
+///   only keys its API actually understands are sent.
+fn build_gen_params(submission: &GenSubmission, enriched: &EnrichedPrompt) -> Value {
+    let instrumental = submission.kind == "instrumental";
+    let mut params = serde_json::Map::new();
+    match submission.provider.as_str() {
+        "suno" => {
+            params.insert("lyrics".into(), json!(submission.lyrics));
+            params.insert("style".into(), json!(submission.style));
+            params.insert("title".into(), json!(submission.title));
+            if instrumental {
+                params.insert("instrumental".into(), json!(true));
+            } else {
+                // sunoapi.org vocalGender enum is "m"/"f" — the meta value is
+                // "male"/"female". No vocalGender for instrumentals: there
+                // are no vocals to gender.
+                let vocal_gender = match submission.vocal.as_str() {
+                    "male" => Some("m"),
+                    "female" => Some("f"),
+                    other => {
+                        tracing::warn!(
+                            vocal = %other,
+                            "unexpected vocal value, vocalGender omitted from Suno params"
+                        );
+                        None
+                    }
+                };
+                if let Some(g) = vocal_gender {
+                    params.insert("vocalGender".into(), json!(g));
+                }
+            }
+            let exclude = enriched.exclude.trim();
+            if !exclude.is_empty() {
+                params.insert("negativeTags".into(), json!(exclude));
+            }
+        }
+        "mureka" | "minimax" => {
+            params.insert("lyrics".into(), json!(submission.lyrics));
+            if instrumental {
+                params.insert("is_instrumental".into(), json!(true));
+            }
+        }
+        _ => {
+            // Unknown provider: the conservative common denominator —
+            // lyrics/style/title are meaningful on every dialect above.
+            params.insert("lyrics".into(), json!(submission.lyrics));
+            params.insert("style".into(), json!(submission.style));
+            params.insert("title".into(), json!(submission.title));
+        }
+    }
+    Value::Object(params)
 }
 
 /// Submit a music generation job for the gift and persist the handle.
@@ -174,18 +284,7 @@ pub async fn submit(
     submission: &GenSubmission,
     enriched: &EnrichedPrompt,
 ) -> AppResult<GenerateResponse> {
-    let params = json!({
-        "lyrics": submission.lyrics,
-        "style": submission.style,
-        "title": submission.title,
-        "genre": enriched.genre,
-        "tempo": enriched.tempo,
-        "mood": enriched.mood,
-        "vocal_style": enriched.vocal_style,
-        "instrumentation": enriched.instrumentation,
-        "production": enriched.production,
-        "exclude": enriched.exclude,
-    });
+    let params = build_gen_params(submission, enriched);
 
     let gen_req = GenRequest {
         prompt: enriched.prompt.clone(),
@@ -479,6 +578,15 @@ async fn handle_done(
 }
 // ── Music Prompt Generation ──────────────────────────────────────────────────
 
+/// Outcome of the enrichment LLM call: the prompt plus a degradation flag.
+/// `degraded` is true when the model's answer could not be parsed and the
+/// raw-style fallback is returned instead of real enrichment — callers
+/// surface this to the user instead of failing silently.
+pub struct Enrichment {
+    pub enriched: EnrichedPrompt,
+    pub degraded: bool,
+}
+
 /// Generate a structured, enriched music-generation prompt using the provider skill.
 ///
 /// Returns an `EnrichedPrompt` with all six style dimensions plus exclude tags,
@@ -512,7 +620,7 @@ pub struct MusicPromptInput<'a> {
 pub async fn generate_music_prompt(
     chat_model: Arc<dyn ChatModel>,
     input: &MusicPromptInput<'_>,
-) -> AppResult<EnrichedPrompt> {
+) -> AppResult<Enrichment> {
     let skill_template = MUSIC_PROMPT_SKILLS.get(input.provider).ok_or_else(|| {
         AppError::BadRequest(format!("unknown music provider: {}", input.provider))
     })?;
@@ -594,21 +702,36 @@ pub async fn generate_music_prompt(
                 .and_then(json_array)
                 .unwrap_or_default();
 
-            return Ok(EnrichedPrompt {
-                prompt,
-                genre,
-                tempo,
-                mood,
-                vocal_style,
-                instrumentation,
-                production,
-                exclude,
-                style_tags,
+            return Ok(Enrichment {
+                enriched: EnrichedPrompt {
+                    prompt,
+                    genre,
+                    tempo,
+                    mood,
+                    vocal_style,
+                    instrumentation,
+                    production,
+                    exclude,
+                    style_tags,
+                },
+                degraded: false,
             });
         }
     }
 
-    Ok(EnrichedPrompt::fallback(input.style))
+    // The model answered with prose instead of the JSON the template asks
+    // for. This used to fall back silently; log it and mark the outcome
+    // degraded so the caller can surface it.
+    tracing::warn!(
+        stage = "music_prompt",
+        provider = input.provider,
+        raw_len = text.len(),
+        "music prompt enrichment output was not parseable JSON; using raw style fallback"
+    );
+    Ok(Enrichment {
+        enriched: EnrichedPrompt::fallback(input.style),
+        degraded: true,
+    })
 }
 
 fn json_array(v: &Value) -> Option<Vec<String>> {
@@ -630,4 +753,127 @@ fn extract_json_block(text: &str) -> Option<String> {
     let rest = &text[start..];
     let end = rest.find("\n```")?;
     Some(rest[..end].to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn submission_for(provider: &str) -> GenSubmission {
+        GenSubmission {
+            lyrics: "[verse]\nla la".to_string(),
+            style: "warm acoustic".to_string(),
+            title: "Wheels".to_string(),
+            vocal: "male".to_string(),
+            kind: "song".to_string(),
+            provider: provider.to_string(),
+        }
+    }
+
+    fn enriched() -> EnrichedPrompt {
+        EnrichedPrompt {
+            prompt: "male, breathy, indie folk, warm nostalgia".to_string(),
+            genre: vec!["indie folk".to_string()],
+            tempo: "ballad-slow".to_string(),
+            mood: vec!["warm".to_string()],
+            vocal_style: "male, breathy".to_string(),
+            instrumentation: "acoustic guitar".to_string(),
+            production: "spacious reverb".to_string(),
+            exclude: "no backing vocals".to_string(),
+            style_tags: vec!["indie folk".to_string()],
+        }
+    }
+
+    /// Every key sent for Suno must be one the dialect actually forwards:
+    /// `lyrics`/`instrumental` are handled explicitly, the rest must be on
+    /// the passthrough whitelist (crates/orchest-provider-http/src/gen/
+    /// suno.rs `PASSTHROUGH_PARAMS`). The old seven enrichment keys
+    /// (genre/tempo/mood/vocal_style/instrumentation/production/exclude)
+    /// were silently dropped and must not come back.
+    #[test]
+    fn suno_params_carry_whitelisted_keys_only() {
+        let params = build_gen_params(&submission_for("suno"), &enriched());
+        let mut keys: Vec<&str> = params
+            .as_object()
+            .expect("params object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            ["lyrics", "negativeTags", "style", "title", "vocalGender"]
+        );
+
+        assert_eq!(params["style"], "warm acoustic");
+        assert_eq!(params["vocalGender"], "m"); // meta "male" -> sunoapi enum "m"
+        assert_eq!(params["negativeTags"], "no backing vocals");
+        assert!(params.get("instrumental").is_none());
+        for key in [
+            "genre",
+            "tempo",
+            "mood",
+            "vocal_style",
+            "instrumentation",
+            "production",
+            "exclude",
+        ] {
+            assert!(params.get(key).is_none(), "{key} leaked into suno params");
+        }
+    }
+
+    #[test]
+    fn suno_params_map_female_vocal() {
+        let mut sub = submission_for("suno");
+        sub.vocal = "female".to_string();
+        let params = build_gen_params(&sub, &enriched());
+        assert_eq!(params["vocalGender"], "f");
+    }
+
+    #[test]
+    fn suno_params_instrumental_skips_vocal_gender() {
+        let mut sub = submission_for("suno");
+        sub.kind = "instrumental".to_string();
+        sub.lyrics = String::new();
+        let params = build_gen_params(&sub, &enriched());
+        assert_eq!(params["instrumental"], true);
+        assert!(params.get("vocalGender").is_none());
+        // negativeTags still apply to an instrumental generation.
+        assert_eq!(params["negativeTags"], "no backing vocals");
+    }
+
+    #[test]
+    fn suno_params_omit_empty_negative_tags() {
+        let mut e = enriched();
+        e.exclude = "  ".to_string();
+        let params = build_gen_params(&submission_for("suno"), &e);
+        assert!(params.get("negativeTags").is_none());
+    }
+
+    /// Mureka (whitelist passthrough) and minimax (verbatim passthrough)
+    /// must not see the Suno keys — only `lyrics`, plus the instrumental
+    /// selector for instrumental gifts. This keeps the song-path wire
+    /// identical to before the D1 alignment.
+    #[test]
+    fn mureka_and_minimax_params_are_lyrics_only() {
+        for provider in ["mureka", "minimax"] {
+            let params = build_gen_params(&submission_for(provider), &enriched());
+            let keys: Vec<&str> = params
+                .as_object()
+                .expect("params object")
+                .keys()
+                .map(String::as_str)
+                .collect();
+            assert_eq!(keys, ["lyrics"], "{provider} params: {keys:?}");
+
+            let mut sub = submission_for(provider);
+            sub.kind = "instrumental".to_string();
+            let params = build_gen_params(&sub, &enriched());
+            assert_eq!(params["is_instrumental"], true, "{provider}");
+            assert!(
+                params.get("vocalGender").is_none() && params.get("negativeTags").is_none(),
+                "{provider} must not see suno-only keys"
+            );
+        }
+    }
 }

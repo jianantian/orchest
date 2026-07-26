@@ -178,6 +178,10 @@ pub enum SseEvent {
         vocal: String,
         /// Review report from the second-pass review agent (may be empty if review skipped).
         review: Option<String>,
+        /// Pipeline stages that fell back during this turn (e.g. ["review"]
+        /// when the review pass failed and the lyrics are unreviewed). Empty
+        /// when everything ran. The frontend shows a hint for non-empty.
+        degraded: Vec<String>,
     },
     Error {
         error: String,
@@ -269,6 +273,15 @@ pub async fn run_chat_agent(
 /// Review system prompt compiled into the binary.
 static REVIEW_PROMPT: &str = include_str!("../prompts/review.md");
 
+/// Outcome of the review pass: the (possibly unreviewed) text plus a
+/// degradation flag the caller surfaces to the client.
+pub struct ReviewOutcome {
+    pub text: String,
+    /// True when the review did not run to completion and `text` is the
+    /// original chat output.
+    pub degraded: bool,
+}
+
 /// Run a second-pass review agent on the raw chat output.
 ///
 /// The reviewer checks pronunciation, performance cues, structure,
@@ -276,16 +289,20 @@ static REVIEW_PROMPT: &str = include_str!("../prompts/review.md");
 /// bitwize-music's lyric-reviewer skill (CC0).
 ///
 /// Returns corrected output in the same tag format. Falls back to
-/// the original on error.
-pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> String {
+/// the original on error — every fallback is logged and flagged degraded
+/// (previously the failures were silent or eprintln-only).
+pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> ReviewOutcome {
     let config = match AgentConfig::builder("music-gift/review")
         .max_steps(1)
         .build()
     {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[music-gift] review: building config: {e}");
-            return raw_output.to_string();
+            tracing::warn!(stage = "review", error = %e, "review: building config failed; using unreviewed output");
+            return ReviewOutcome {
+                text: raw_output.to_string(),
+                degraded: true,
+            };
         }
     };
     let messages = vec![
@@ -303,8 +320,11 @@ pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> Str
     let input = match RunInput::from_blocks(blocks) {
         Ok(i) => i,
         Err(e) => {
-            eprintln!("[music-gift] review: building input: {e}");
-            return raw_output.to_string();
+            tracing::warn!(stage = "review", error = %e, "review: building input failed; using unreviewed output");
+            return ReviewOutcome {
+                text: raw_output.to_string(),
+                degraded: true,
+            };
         }
     };
 
@@ -312,6 +332,7 @@ pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> Str
     let (handle, mut rx) = AgentRun::start(config, input, model, tool_registry);
 
     let mut reviewed = String::new();
+    let mut run_failed = false;
     while let Some(event) = rx.recv().await {
         match event {
             RuntimeEvent::ModelStreamChunk {
@@ -327,7 +348,8 @@ pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> Str
                 }
             }
             RuntimeEvent::RunFailed { error } => {
-                eprintln!("[music-gift] review: agent failed: {error}");
+                tracing::warn!(stage = "review", error = %error, "review: agent run failed; using unreviewed output");
+                run_failed = true;
             }
             _ => {}
         }
@@ -335,17 +357,22 @@ pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> Str
     handle.wait().await;
 
     if reviewed.is_empty() {
-        eprintln!("[music-gift] review: empty output, falling back to original");
-        raw_output.to_string()
+        if !run_failed {
+            tracing::warn!(
+                stage = "review",
+                "review: empty output; using unreviewed output"
+            );
+        }
+        ReviewOutcome {
+            text: raw_output.to_string(),
+            degraded: true,
+        }
     } else {
-        // Log first 200 chars of reviewed output for debugging
-        let preview: String = reviewed.chars().take(500).collect();
-        eprintln!(
-            "[music-gift] review: done ({} chars). Preview: {}",
-            reviewed.len(),
-            preview
-        );
-        reviewed
+        tracing::debug!(chars = reviewed.len(), "review: done");
+        ReviewOutcome {
+            text: reviewed,
+            degraded: false,
+        }
     }
 }
 

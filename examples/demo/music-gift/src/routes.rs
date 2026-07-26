@@ -125,14 +125,15 @@ pub async fn chat_handler(
                 // Only run review pass when the agent actually generated lyrics.
                 // Skip it for follow-up questions — the reviewer gets confused
                 // by conversational text.
-                let reviewed = if has_lyrics {
+                let (reviewed, review_degraded) = if has_lyrics {
                     // The review pass is a second full LLM call (tens of
                     // seconds). Tell the client before going quiet, or the UI
                     // sits frozen with a disabled input and no explanation.
                     let _ = tx.send(SseEvent::Reviewing).await;
-                    crate::agent::run_review_pass(review_model, &full_text).await
+                    let outcome = crate::agent::run_review_pass(review_model, &full_text).await;
+                    (outcome.text, outcome.degraded)
                 } else {
-                    full_text.clone()
+                    (full_text.clone(), false)
                 };
                 let parsed = parse_lyrics(&reviewed);
                 let review = if has_lyrics {
@@ -147,6 +148,11 @@ pub async fn chat_handler(
                     title: parsed.title,
                     vocal: parsed.vocal,
                     review,
+                    degraded: if review_degraded {
+                        vec!["review".to_string()]
+                    } else {
+                        Vec::new()
+                    },
                 };
                 let _ = tx.send(done).await;
             }
@@ -274,6 +280,7 @@ pub async fn create_gift(
             birthday: bday,
             scenario: gift_scenario.clone(),
             lyric_snippet: gift_lyrics.clone(),
+            previous_error: None,
         };
         let sink = crate::tools::countdown::CountdownSink {
             store: state.gift_store.clone(),
@@ -486,10 +493,11 @@ pub async fn polish_music_prompt(
     State(state): State<AppState>,
     Json(req): Json<PolishPromptRequest>,
 ) -> AppResult<impl IntoResponse> {
+    let provider = req.provider.as_deref().unwrap_or(&state.music_provider);
     let enriched = crate::tools::music_gen::generate_music_prompt(
         state.music_prompt_model.clone(),
         &crate::tools::music_gen::MusicPromptInput {
-            provider: req.provider.as_deref().unwrap_or(&state.music_provider),
+            provider,
             lyrics: &req.lyrics,
             style: &req.style,
             title: req.title.as_deref().unwrap_or(""),
@@ -501,7 +509,13 @@ pub async fn polish_music_prompt(
         },
     )
     .await
-    .unwrap_or_else(|_| EnrichedPrompt::fallback(&req.style));
+    .map(|outcome| outcome.enriched)
+    .unwrap_or_else(|e| {
+        // Unparseable output is already warned inside generate_music_prompt;
+        // this is the LLM call itself failing (previously swallowed silently).
+        tracing::warn!(stage = "polish", provider, error = %e, "polish music prompt failed; using raw style fallback");
+        EnrichedPrompt::fallback(&req.style)
+    });
     Ok(Json(PolishPromptResponse {
         prompt: enriched.prompt,
     }))
@@ -650,12 +664,7 @@ pub async fn get_countdown_section(
                     }
                     _ => AppError::Io(e),
                 })?;
-            Ok((
-                StatusCode::OK,
-                [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
-                html,
-            )
-                .into_response())
+            Ok(countdown_response(html))
         }
         Some("pending") => {
             Ok((StatusCode::ACCEPTED, Json(json!({"status": "pending"}))).into_response())
@@ -666,6 +675,30 @@ pub async fn get_countdown_section(
         )
             .into_response()),
     }
+}
+
+/// Build the response for a ready countdown document.
+///
+/// The HTML is untrusted model output (gift name/scenario/lyrics go straight
+/// into the generating prompt, so prompt injection is in scope). The gift
+/// page embeds it in a `sandbox="allow-scripts"` iframe (CountdownFrame.tsx),
+/// which is safe — but this URL can also be opened directly as a top-level
+/// document on this origin, where its inline scripts would run with the
+/// session cookie in reach. `Content-Security-Policy: sandbox` (no allow-*
+/// tokens) gives the document an opaque origin with script execution
+/// disabled: a direct open renders the static markup but runs nothing. The
+/// frontend's fetch-then-srcDoc path is unaffected — a response-header CSP
+/// does not apply to srcDoc content.
+fn countdown_response(html: String) -> axum::response::Response {
+    (
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (axum::http::header::CONTENT_SECURITY_POLICY, "sandbox"),
+        ],
+        html,
+    )
+        .into_response()
 }
 
 // ── GET /api/gift/:id/lrc — return LRC text ────────────────────────────────
@@ -728,5 +761,25 @@ mod tests {
         let now = unix_now();
         assert!(!now.is_empty());
         assert!(now.parse::<u64>().unwrap() > 1700000000); // after 2023
+    }
+
+    #[test]
+    fn countdown_response_sends_sandbox_csp() {
+        let resp = countdown_response("<div></div>".to_string());
+        assert_eq!(resp.status(), StatusCode::OK);
+        let csp = resp
+            .headers()
+            .get(axum::http::header::CONTENT_SECURITY_POLICY)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        // No allow-* tokens: inline scripts must not execute when the URL is
+        // opened directly as a top-level document on this origin.
+        assert_eq!(csp, "sandbox");
+        let content_type = resp
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(content_type.contains("text/html"));
     }
 }
