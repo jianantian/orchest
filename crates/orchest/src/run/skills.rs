@@ -41,8 +41,7 @@ pub(crate) async fn register_skills(
     let dir = Path::new(skills_dir).to_path_buf();
     let outcome = tokio::task::spawn_blocking(move || SkillScanner::scan(&dir))
         .await
-        .map_err(|e| format!("skill scan join error: {e}"))?
-        .map_err(|e| format!("skill scan failed: {e}"))?;
+        .map_err(|e| format!("skill scan join error: {e}"))?;
 
     // Surface every scan problem before the happy path — skills that failed
     // to load and loaded skills with spec violations alike: a problem that
@@ -133,6 +132,7 @@ pub(crate) async fn register_skills(
                 name: manifest.name.clone(),
                 description: manifest.description.clone(),
                 dir: manifest.path.clone(),
+                skill_md_path: manifest.skill_md_path.clone(),
             });
         }
 
@@ -165,6 +165,11 @@ pub(crate) async fn register_skills(
 
     Ok(SkillRegistration { disclosed })
 }
+
+/// Tool names reserved for the built-ins that `register_skills` registers
+/// after the per-skill loop (`read_file`, and `load_skill` when disclosure
+/// is on). See the check in `prepare_bundled_tools`.
+const RESERVED_TOOL_NAMES: [&str; 2] = ["read_file", "load_skill"];
 
 /// Validates a skill's bundled tools without mutating the registry: creates
 /// every tool (executable whitelist, script resolution, path-traversal
@@ -201,6 +206,18 @@ fn prepare_bundled_tools(
         if !names.insert(tool.name()) {
             return Err(format!(
                 "duplicate tool name '{}' from skill '{}'",
+                tool.name(),
+                manifest.name
+            ));
+        }
+        // These names are registered by `register_skills` itself after the
+        // per-skill loop, so they are not yet in the registry during this
+        // pre-check: without the reserved list a colliding bundled tool
+        // would register, then the built-in registration would fail and
+        // abort the whole run — bypassing the skip-and-warn contract.
+        if RESERVED_TOOL_NAMES.contains(&tool.name()) {
+            return Err(format!(
+                "tool name '{}' from skill '{}' is reserved for a built-in tool",
                 tool.name(),
                 manifest.name
             ));

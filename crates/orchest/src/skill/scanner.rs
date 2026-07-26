@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::types::{
-    skill_name_violations, BundledToolDef, ScanError, ScanOutcome, ScanWarning, SkillCapabilities,
+    skill_name_violations, BundledToolDef, ScanOutcome, ScanWarning, SkillCapabilities,
     SkillDependencies, SkillManifest,
 };
 
@@ -96,15 +96,15 @@ impl SkillScanner {
     /// Skills spec (name/description rules) still loads under its declared
     /// name, with one warning per violation. Missing directories and
     /// empty scans are not errors.
-    pub fn scan(dir: &Path) -> Result<ScanOutcome, ScanError> {
+    pub fn scan(dir: &Path) -> ScanOutcome {
         let mut outcome = ScanOutcome::default();
 
         if !dir.exists() {
-            return Ok(outcome);
+            return outcome;
         }
 
         Self::scan_recursive(dir, &mut outcome);
-        Ok(outcome)
+        outcome
     }
 
     fn scan_recursive(dir: &Path, outcome: &mut ScanOutcome) {
@@ -383,7 +383,7 @@ bundled_tools:
         let tmp = tempfile::tempdir().unwrap();
         create_test_skill(tmp.path());
 
-        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path());
         assert!(outcome.warnings.is_empty());
         let manifests = &outcome.manifests;
         assert_eq!(manifests.len(), 1);
@@ -406,7 +406,7 @@ bundled_tools:
         )
         .unwrap();
 
-        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path());
         assert!(outcome.warnings.is_empty());
         assert_eq!(outcome.manifests.len(), 1);
         let manifest = &outcome.manifests[0];
@@ -418,7 +418,7 @@ bundled_tools:
         let tmp = tempfile::tempdir().unwrap();
         create_v03_skill(tmp.path());
 
-        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path());
         assert!(outcome.warnings.is_empty());
         let manifest = &outcome.manifests[0];
 
@@ -442,14 +442,14 @@ bundled_tools:
     #[test]
     fn scan_empty_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path());
         assert!(outcome.manifests.is_empty());
         assert!(outcome.warnings.is_empty());
     }
 
     #[test]
     fn scan_nonexistent_dir() {
-        let outcome = SkillScanner::scan(Path::new("/nonexistent/path")).unwrap();
+        let outcome = SkillScanner::scan(Path::new("/nonexistent/path"));
         assert!(outcome.manifests.is_empty());
         assert!(outcome.warnings.is_empty());
     }
@@ -467,7 +467,7 @@ bundled_tools:
         )
         .unwrap();
 
-        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path());
         assert_eq!(outcome.manifests.len(), 1);
         assert_eq!(outcome.manifests[0].name, "test-skill");
 
@@ -491,7 +491,7 @@ bundled_tools:
         let bad_dir = tmp.path().join("unreadable_skill");
         fs::create_dir_all(bad_dir.join("SKILL.md")).unwrap();
 
-        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path());
         assert_eq!(outcome.manifests.len(), 1);
         assert_eq!(outcome.manifests[0].name, "test-skill");
 
@@ -512,7 +512,7 @@ bundled_tools:
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(skill_dir.join("SKILL.md"), "# No frontmatter here\n").unwrap();
 
-        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path());
         assert!(outcome.manifests.is_empty());
         assert_eq!(outcome.warnings.len(), 1);
         assert!(
@@ -529,7 +529,7 @@ bundled_tools:
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(skill_dir.join("SKILL.md"), "---\n---\n# Body\n").unwrap();
 
-        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path());
         assert!(outcome.manifests.is_empty());
         assert_eq!(outcome.warnings.len(), 1);
         assert!(
@@ -552,7 +552,7 @@ bundled_tools:
         )
         .unwrap();
 
-        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path());
         assert!(outcome.warnings.is_empty());
         assert_eq!(outcome.manifests.len(), 1);
         assert_eq!(outcome.manifests[0].description, "alpha --- beta");
@@ -569,7 +569,7 @@ bundled_tools:
         )
         .unwrap();
 
-        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path());
         assert!(outcome.warnings.is_empty());
         assert_eq!(outcome.manifests.len(), 1);
         assert_eq!(outcome.manifests[0].name, "crlf-skill");
@@ -604,7 +604,7 @@ bundled_tools:
         )
         .unwrap();
 
-        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path());
         assert!(outcome.warnings.is_empty());
         assert_eq!(outcome.manifests.len(), 3);
         let by_name = |name: &str| {
@@ -648,7 +648,7 @@ bundled_tools:
             .unwrap();
         }
 
-        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path());
         // Every invalid-named skill still loads under its declared name.
         assert_eq!(outcome.manifests.len(), cases.len());
         for (dir_name, skill_name, fragment) in &cases {
@@ -679,7 +679,7 @@ bundled_tools:
         )
         .unwrap();
 
-        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path());
         // Deterministic rule: the declared frontmatter name wins.
         assert_eq!(outcome.manifests.len(), 1);
         assert_eq!(outcome.manifests[0].name, "other-skill");
@@ -720,7 +720,7 @@ bundled_tools:
         )
         .unwrap();
 
-        let outcome = SkillScanner::scan(tmp.path()).unwrap();
+        let outcome = SkillScanner::scan(tmp.path());
         assert_eq!(outcome.manifests.len(), 2);
         assert_eq!(outcome.warnings.len(), 1);
         let warning = &outcome.warnings[0];

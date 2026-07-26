@@ -22,6 +22,10 @@ pub(crate) struct SkillSummary {
     pub name: String,
     pub description: String,
     pub dir: PathBuf,
+    /// The manifest file the scanner actually parsed (`SKILL.md` or
+    /// `skill.md`) — used directly instead of re-deriving the filename,
+    /// which misbehaves on case-insensitive filesystems.
+    pub skill_md_path: PathBuf,
 }
 
 /// Renders the level-1 metadata block injected into the system prompt. The
@@ -213,22 +217,10 @@ impl LoadSkillTool {
         skill: &SkillSummary,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let mut skill_md = None;
-        for name in &["SKILL.md", "skill.md"] {
-            let candidate = skill.dir.join(name);
-            if matches!(tokio::fs::try_exists(&candidate).await, Ok(true)) {
-                skill_md = Some(candidate);
-                break;
-            }
-        }
-        let skill_md = skill_md.ok_or_else(|| {
-            ToolError::fatal(format!(
-                "skill '{}' has no SKILL.md under '{}'",
-                skill.name,
-                skill.dir.display()
-            ))
-            .with_code("READ_ERROR")
-        })?;
+        // The scanner already resolved the actual manifest filename
+        // (SKILL.md or skill.md); re-deriving it here would misfire on
+        // case-insensitive filesystems.
+        let skill_md = skill.skill_md_path.clone();
         let content = tokio::fs::read_to_string(&skill_md).await.map_err(|e| {
             ToolError::fatal(format!("failed to read '{}': {}", skill_md.display(), e))
                 .with_code("READ_ERROR")
@@ -304,6 +296,7 @@ mod tests {
             name: name.to_string(),
             description: description.to_string(),
             dir: dir.to_path_buf(),
+            skill_md_path: dir.join("SKILL.md"),
         }
     }
 

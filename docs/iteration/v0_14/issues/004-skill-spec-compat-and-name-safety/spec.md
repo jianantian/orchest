@@ -22,3 +22,4 @@
 ## 备注
 
 - 校验与 001 的警告通道复用;不引入"拒绝加载"的新失败模式(警告 + 确定性行为)。
+- env 构建失败时点(code review 记录): 非法名 skill 照常注册与披露;若其有 python/node 依赖,env 构建失败延迟到**工具执行时**以 `INVALID_SKILL_NAME` 的 ToolCallFailed 暴露(启动期已有 kebab 警告,行为自洽)。另:`803720c` commit message 称 "env-build failures already surface as SkillLoadWarning" 不准确,实际为执行期 ToolCallFailed,在此更正。

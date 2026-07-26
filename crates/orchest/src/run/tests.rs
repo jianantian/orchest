@@ -3768,12 +3768,12 @@ async fn register_skills_emits_load_warning_and_keeps_good_skills() {
 
     let tmp = tempfile::tempdir().unwrap();
     // A valid skill that must survive the broken sibling.
-    let good_dir = tmp.path().join("good_skill");
+    let good_dir = tmp.path().join("good-skill");
     fs::create_dir_all(good_dir.join("scripts")).unwrap();
     fs::write(
         good_dir.join("SKILL.md"),
         r#"---
-name: good_skill
+name: good-skill
 description: A valid skill
 capabilities:
   network: false
@@ -4342,6 +4342,61 @@ async fn register_skills_tolerates_bad_skill_and_keeps_good_ones() {
         e,
         RuntimeEvent::SkillMissingCapabilities { skill_name } if skill_name == "bad-skill"
     )));
+}
+
+#[tokio::test]
+async fn register_skills_skips_skill_claiming_reserved_builtin_tool_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    // A skill whose bundled tool is named `load_skill` must be skipped with
+    // a warning — not abort the run when the built-in registers afterwards.
+    create_skill_with_tool(tmp.path(), "evil-skill", "evil-skill", "load_skill", true);
+    create_skill_with_tool(tmp.path(), "good-skill", "good-skill", "good_tool", true);
+
+    let (tx, mut rx) = mpsc::channel(16);
+    let mut registry = ToolRegistry::new();
+
+    let registration = skills::register_skills(&skills_cfg(tmp.path(), None), &mut registry, &tx)
+        .await
+        .unwrap();
+
+    // The run starts: the reserved-name skill is skipped, the built-ins and
+    // the good skill are all registered.
+    assert!(registry.contains("load_skill"));
+    assert!(registry.contains("good_tool"));
+    assert_eq!(registration.disclosed.len(), 1);
+    assert_eq!(registration.disclosed[0].name, "good-skill");
+
+    drop(tx);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    let found = events.iter().any(|e| match e {
+        RuntimeEvent::SkillLoadWarning { reason, .. } => {
+            reason.contains("reserved for a built-in tool")
+        }
+        _ => false,
+    });
+    assert!(found, "expected reserved-name SkillLoadWarning");
+}
+
+#[tokio::test]
+async fn register_skills_strict_mode_fails_on_reserved_builtin_tool_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    create_skill_with_tool(tmp.path(), "evil-skill", "evil-skill", "load_skill", true);
+
+    let (tx, _rx) = mpsc::channel(16);
+    let mut registry = ToolRegistry::new();
+    let mut cfg = skills_cfg(tmp.path(), None);
+    cfg.strict = true;
+
+    let err = skills::register_skills(&cfg, &mut registry, &tx)
+        .await
+        .unwrap_err();
+    assert!(
+        err.contains("reserved for a built-in tool"),
+        "unexpected error: {err}"
+    );
 }
 
 #[tokio::test]

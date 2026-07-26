@@ -210,6 +210,10 @@ impl Default for ModelConfig {
 /// (name/description rules). Violations surface through the same
 /// `SkillLoadWarning` channel but never block loading and never trip
 /// `strict` mode — the skill keeps its declared frontmatter name.
+///
+/// SKILL.md files that fail to parse at all are likewise warn-only in every
+/// mode: `strict` aborts startup on *registration* failures (duplicate names,
+/// invalid bundled tools), not on scan-time problems.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SkillsConfig {
     pub dir: Option<String>,

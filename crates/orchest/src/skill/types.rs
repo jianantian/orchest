@@ -81,12 +81,6 @@ pub struct BundledToolDef {
     pub input_schema: JsonSchema,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ScanError {
-    #[error("failed to read directory: {0}")]
-    Io(#[from] std::io::Error),
-}
-
 /// Result of a skill directory scan: successfully parsed manifests plus a
 /// structured warning for every problem found. Warnings cover both skills
 /// that failed to load (unreadable or invalid SKILL.md) and loaded skills
