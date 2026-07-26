@@ -39,7 +39,9 @@ Output only the three blocks above, no explanatory text.
    - Stroke only, no fill; stroke-linecap:round; stroke-linejoin:round; stroke-width 2-3px
    - Must relate to the person's specific story — no generic cakes or balloons
 4. Live countdown to the second via setInterval, showing days/hours/minutes/seconds in large type
-   【CRITICAL】Countdown target must use the date string "{target_date}" exactly: new Date('{target_date}'). Do not calculate the year yourself.
+   【CRITICAL】The countdown must hit zero at LOCAL midnight of {target_date}. Build the target from its date parts:
+   const [y, m, d] = '{target_date}'.split('-').map(Number); const target = new Date(y, m - 1, d);
+   NEVER use new Date('{target_date}') — a bare date string parses as UTC midnight, so the countdown ends hours early for users east of UTC. Do not calculate the year yourself.
 5. 1-2 delightful interactions (must use addEventListener), themed to the story:
    - walking scene → click ground to leave footprints; music scene → click note to make it bounce; etc.
 6. The person's name + one personal line drawn from the lyrics/scene (max 30 chars, avoid clichés like "wishing you...")

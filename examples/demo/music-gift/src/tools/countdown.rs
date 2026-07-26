@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use chrono::Local;
+use chrono::{Datelike, Local, NaiveDate};
 use serde_json::Value;
 
 use crate::gift::GiftStore;
@@ -158,20 +158,42 @@ fn parse_birthday_info(birthday: &str) -> Option<(String, String, i64, String)> 
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
     let month_name = months.get(month_num as usize - 1)?;
-    let now = Local::now().date_naive();
-    let current_year = now.format("%Y").to_string();
-    let target_str = format!("{current_year}-{month_num:02}-{day_num:02}");
-    let target = chrono::NaiveDate::parse_from_str(&target_str, "%Y-%m-%d").ok()?;
-    let mut days_until = (target - now).num_days();
-    if days_until < 0 {
-        days_until += 365;
-    }
+    let today = Local::now().date_naive();
+    let target = next_birthday(today, month_num, day_num)?;
+    let days_until = (target - today).num_days();
     Some((
         month_name.to_string(),
         day_str.to_string(),
         days_until,
-        target_str,
+        target.format("%Y-%m-%d").to_string(),
     ))
+}
+
+/// The next local calendar occurrence of a birthday month/day (today counts —
+/// a birthday today is 0 days away). Calendar addition, not `+365`: a
+/// birthday already past this year rolls to next year, so the target date is
+/// always in the future and leap years are correct (the old code added 365
+/// days to the day count while leaving the target in the past).
+///
+/// Feb 29 birthdays are observed on Feb 28 in non-leap years (documented
+/// choice — the countdown must point at a real date every year), and get the
+/// real Feb 29 whenever the upcoming occurrence falls in a leap year.
+fn next_birthday(today: NaiveDate, month: u32, day: u32) -> Option<NaiveDate> {
+    let in_year = |year: i32| {
+        NaiveDate::from_ymd_opt(year, month, day).or_else(|| {
+            if month == 2 && day == 29 {
+                NaiveDate::from_ymd_opt(year, 2, 28)
+            } else {
+                None
+            }
+        })
+    };
+    let this_year = in_year(today.year())?;
+    if this_year >= today {
+        Some(this_year)
+    } else {
+        in_year(today.year() + 1)
+    }
 }
 
 pub(crate) fn strip_code_fences(html: &str) -> String {
@@ -194,5 +216,94 @@ pub(crate) fn tool_context() -> orchest::tool::ToolContext {
         approval_bus: orchest::run::ApprovalBus::default(),
         remaining_budget: Default::default(),
         parent_messages: vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn d(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").expect("valid test date")
+    }
+
+    #[test]
+    fn next_birthday_later_this_year_stays_this_year() {
+        let target = next_birthday(d("2026-07-26"), 12, 31).expect("target");
+        assert_eq!(target, d("2026-12-31"));
+    }
+
+    /// The old `+365` bug: a passed birthday kept this year's target date
+    /// while reporting a positive day count. Now the target rolls forward.
+    #[test]
+    fn next_birthday_rolls_to_next_year() {
+        let target = next_birthday(d("2026-12-30"), 1, 5).expect("target");
+        assert_eq!(target, d("2027-01-05"));
+    }
+
+    /// Rolling across a leap day must count it: 2028 is a leap year, so a
+    /// Mar 1 birthday from Dec 2027 is 366/365-aware by construction.
+    #[test]
+    fn next_birthday_across_leap_day() {
+        let target = next_birthday(d("2027-12-31"), 3, 1).expect("target");
+        assert_eq!(target, d("2028-03-01"));
+        assert_eq!((target - d("2027-12-31")).num_days(), 61);
+    }
+
+    #[test]
+    fn next_birthday_today_is_zero_days() {
+        let today = d("2026-07-26");
+        let target = next_birthday(today, 7, 26).expect("target");
+        assert_eq!(target, today);
+        assert_eq!((target - today).num_days(), 0);
+    }
+
+    /// Documented 2/29 behavior: observed on Feb 28 in non-leap years.
+    #[test]
+    fn feb29_observed_on_feb28_in_non_leap_year() {
+        let target = next_birthday(d("2026-07-01"), 2, 29).expect("target");
+        assert_eq!(target, d("2027-02-28"));
+    }
+
+    /// When the next occurrence is in a leap year, the real Feb 29 is used.
+    #[test]
+    fn feb29_gets_real_leap_day_when_leap_year_is_next() {
+        let target = next_birthday(d("2027-03-01"), 2, 29).expect("target");
+        assert_eq!(target, d("2028-02-29"));
+    }
+
+    #[test]
+    fn feb29_in_leap_year_itself() {
+        let target = next_birthday(d("2028-01-01"), 2, 29).expect("target");
+        assert_eq!(target, d("2028-02-29"));
+    }
+
+    #[test]
+    fn invalid_month_day_rejected() {
+        assert!(next_birthday(d("2026-01-01"), 2, 30).is_none());
+        assert!(next_birthday(d("2026-01-01"), 4, 31).is_none());
+    }
+
+    #[test]
+    fn parse_birthday_info_accepts_md_and_ymd() {
+        let (month, day, days, target) = parse_birthday_info("12-31").expect("parsed");
+        assert_eq!(month, "Dec");
+        assert_eq!(day, "31");
+        assert!(days >= 0, "days_until must never be negative");
+        // Target date must agree with the day count (the +365 bug had the
+        // target in the past while days pointed ahead).
+        let target_date = NaiveDate::parse_from_str(&target, "%Y-%m-%d").expect("target date");
+        assert_eq!((target_date - Local::now().date_naive()).num_days(), days);
+
+        let (_, day3, _, _) = parse_birthday_info("1990-04-20").expect("parsed");
+        assert_eq!(day3, "20");
+    }
+
+    #[test]
+    fn parse_birthday_info_rejects_garbage() {
+        assert!(parse_birthday_info("not-a-date").is_none());
+        assert!(parse_birthday_info("13-01").is_none());
+        assert!(parse_birthday_info("02-30").is_none());
+        assert!(parse_birthday_info("").is_none());
     }
 }
