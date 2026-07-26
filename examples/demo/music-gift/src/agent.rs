@@ -289,6 +289,8 @@ fn split_messages(messages: Vec<Message>) -> AppResult<(String, Vec<Message>, Ru
             content,
         }) => content
             .into_iter()
+            // build_system_message only ever produces Text blocks today; a
+            // future non-Text block here would be dropped — speak up then.
             .filter_map(|block| match block {
                 ContentBlock::Text(text) => Some(text),
                 _ => None,
@@ -306,6 +308,15 @@ fn split_messages(messages: Vec<Message>) -> AppResult<(String, Vec<Message>, Ru
     let last = history
         .pop()
         .ok_or_else(|| AppError::Llm("chat messages need at least one user turn".to_string()))?;
+    // The new turn must be a user message: an assistant-ending array would
+    // otherwise be silently re-roled into a user turn, inverting the
+    // conversation (the same class of silent corruption D6 exists to kill).
+    if last.role != Role::User {
+        return Err(AppError::Llm(format!(
+            "last message must be a user turn, got: {:?}",
+            last.role
+        )));
+    }
     let input = RunInput::from_blocks(last.content).map_err(|e| AppError::Llm(e.to_string()))?;
     Ok((system_prompt, history, input))
 }
@@ -475,6 +486,19 @@ mod tests {
         assert!(split_messages(messages).is_err());
     }
 
+    #[test]
+    fn split_messages_rejects_assistant_ending() {
+        // An assistant-ending array must not be silently re-roled into a
+        // user turn.
+        let messages = vec![
+            msg(Role::System, "SYS"),
+            msg(Role::User, "hi"),
+            msg(Role::Assistant, "hello"),
+        ];
+        let err = split_messages(messages).expect_err("assistant ending must error");
+        assert!(err.to_string().contains("user turn"), "got: {err}");
+    }
+
     #[tokio::test]
     async fn chat_agent_sends_system_prompt_and_role_structured_history() {
         let model = Arc::new(CaptureModel::default());
@@ -504,6 +528,47 @@ mod tests {
             panic!("system message must be text");
         };
         assert_eq!(system_text, "SYS PROMPT");
+        let text_of = |m: &Message| match &m.content[0] {
+            ContentBlock::Text(t) => t.clone(),
+            _ => String::new(),
+        };
+        assert_eq!(text_of(&first[1]), "hi");
+        assert_eq!(text_of(&first[2]), "hello");
+        assert_eq!(text_of(&first[3]), "write it");
+    }
+
+    #[tokio::test]
+    async fn chat_agent_passes_photo_blocks_through_to_the_model() {
+        let model = Arc::new(CaptureModel::default());
+        let photo = ContentBlock::Image {
+            source: MediaSource::Base64 {
+                media_type: "image/png".into(),
+                data: "AAAA".into(),
+            },
+            detail: None,
+        };
+        let messages = vec![
+            msg(Role::System, "SYS"),
+            Message {
+                role: Role::User,
+                content: vec![photo, ContentBlock::Text("look".into())],
+            },
+        ];
+        let (tx, _rx) = mpsc::channel(16);
+        run_chat_agent(model.clone(), messages, tx, None)
+            .await
+            .expect("chat run");
+        let calls = model
+            .calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let last = calls[0].last().expect("at least one message");
+        assert!(
+            last.content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Image { .. })),
+            "photo blocks must reach the model in the new user turn"
+        );
     }
 
     #[tokio::test]

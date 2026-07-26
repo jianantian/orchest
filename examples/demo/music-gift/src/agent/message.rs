@@ -96,6 +96,9 @@ pub fn build_messages(
             // Clients (free-create mode) may send their own system
             // instruction: merge it into the system prompt instead of
             // silently dropping it (previously this arm discarded it).
+            // Assumes the leading system message is a single Text block, and
+            // that incoming system messages are prompt-level instructions
+            // (merging them to the top), not mid-conversation asides.
             if let Some(ContentBlock::Text(system)) = messages[0].content.first_mut() {
                 system.push_str("\n\n");
                 system.push_str(&msg.content);
