@@ -1,6 +1,6 @@
 # SDK 优化计划(music-gift demo 暴露的缺口 + 全 SDK 生成质量梳理)
 
-> 状态: **hotfix 档执行中**(hotfix/2026_07_18b,GitHub issues #214-216);其余未排期 | 记录于 2026-07-18,同日随 demo 重构更新
+> 状态: hotfix 2026_07_18b / v0.13(质量地基)/ v0.14(skill 机制)已落地(见 roadmap 已完成表);**下一个迭代 = Gen 协议(B1 + E + C5-C7),demo 优化完成后开工** | 记录于 2026-07-18,2026-07-19 更新
 > 来源: music-gift demo(`examples/demo/music-gift`,定位即"暴露 SDK 缺口")实测梳理,
 > 所有问题均经代码核实并附文件:行号;主题 G 来自 demo 架构评审新增的
 > [`seam-findings.md`](../../examples/demo/music-gift/docs/seam-findings.md) Findings 3-5(commit `2f4f880`)。
@@ -243,11 +243,11 @@ music-gift 的 guided pipeline(引导收集 → chat 写词 → review 审核 �
 
 ## 依赖与建议落地顺序
 
-1. **Hotfix(执行中,hotfix/2026_07_18b)**: C1(cache_control,#214)、C2(thinking/max_tokens,#215)、B3(空消息死循环,#216)。SDK-0(破测试)为 feat/music-gift-demo 分支本地问题,在该分支单独修复。
-2. **质量地基迭代**: A1(输入契约)→ B2(截断标记)→ C3(上下文回填)→ C4(重试)。A1 是 demo 去拍平的前置,优先级最高。
-3. **Skill 机制迭代**: D2(scanner)→ D1(披露)→ D3/D4/D6 → D5/D7。demo 的 prompt skill 化(review/music_prompt/countdown)排在此迭代之后。
-4. **Gen 协议迭代**: B1(先 warning 后类型化,与 seam-findings Finding 2 合并设计)→ E1/E2 → C5-C7。
-5. **Tool 易用性(小步,可并入 4)**: G1/G2(oneshot helper,demo 测试即刻受益)→ G3(双名收敛,涉及公开 API 改名,v1.0 前完成)。
+1. ~~Hotfix~~ ✅ hotfix/2026_07_18b(PR #217)。
+2. ~~质量地基迭代~~ ✅ v0.13(PR #223): A1 输入契约、B2 截断标记、C3 上下文回填、C4 重试。
+3. ~~Skill 机制迭代~~ ✅ v0.14(PR #230): D2 scanner、D1 零配置披露、D3/D4/D6、D5/D7。
+4. **Gen 协议迭代(下一个,demo 优化完成后开工)**: B1(先 warning 后类型化,与 seam-findings Finding 2 合并设计)→ E1/E2(子代理失败语义/输出契约)→ C5-C7(Chat 协议多模态丢弃、compaction 拆 tool 对、role 一致化)。
+5. **Tool 易用性(小步,可并入 4)**: G1/G2(oneshot helper)→ G3(双名收敛,v1.0 前完成)。
 6. **F 决策** 可在任意时间点做,不阻塞其他项。
 
 demo 侧对应依赖见 [`examples/demo/music-gift/docs/optimization-plan.md`](../../examples/demo/music-gift/docs/optimization-plan.md)。
