@@ -31,6 +31,18 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Structured logging for the generation pipeline (failures used to be
+    // eprintln-only or fully silent). Logs go to stderr; stdout stays
+    // reserved for the "music-gift listening on ..." line tests/smoke.rs
+    // parses. Defaults to this crate's info+; RUST_LOG overrides.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("music_gift=info")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+
     let _ = dotenv_optional();
     let cli = Cli::parse();
     let config = config::load_config()?;

@@ -225,6 +225,7 @@ export default function GiftPage() {
   const style = gift.meta.style ?? "";
   const name = gift.meta.name ?? "";
   const relationship = gift.meta.relationship ?? "";
+  const degraded = gift.meta.degraded ?? [];
   const showUnwrap = id ? shouldShowUnwrap(id) : false;
   const owned = id ? creatorToken(id) !== null : false;
 
@@ -277,6 +278,10 @@ export default function GiftPage() {
         )}
 
         {error && <div className="error-msg">{error}</div>}
+
+        {/* Generation fell back past quality steps (e.g. prompt enrichment) —
+            tell the recipient instead of hiding it. */}
+        {degraded.length > 0 && <div className="degraded-note">{t("gen_degraded")}</div>}
 
         {lrcLines && lrcLines.length > 0 ? (
           <div className="gift-lyrics-card">

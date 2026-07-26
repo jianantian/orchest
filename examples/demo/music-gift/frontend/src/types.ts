@@ -16,6 +16,8 @@ export interface GiftMeta {
   title?: string;
   vocal?: string;
   model?: string;
+  /** Server-recorded stages that were skipped during generation (e.g. ["music_prompt"]). */
+  degraded?: string[];
   [key: string]: unknown;
 }
 
@@ -39,6 +41,8 @@ export type SseEvent =
       title: string;
       vocal: string;
       review?: string;
+      /** Pipeline stages the server fell back on this turn (e.g. ["review"]). */
+      degraded?: string[];
     }
   | { type: 'Error'; error: string };
 

@@ -86,6 +86,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     review_quality: "已通过质检",
     review_fixes_one: " · {n} 处修复",
     review_fixes_many: " · {n} 处修复",
+    review_skipped: "本次生成跳过了歌词审核",
+    gen_degraded: "本次生成跳过了部分增强环节,已按原始风格生成",
     creating: "生成中…",
     create_song: "生成这首歌",
     vocal: "人声",
@@ -223,6 +225,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     review_quality: "Quality checked",
     review_fixes_one: " · {n} fix",
     review_fixes_many: " · {n} fixes",
+    review_skipped: "Lyric review was skipped this time",
+    gen_degraded: "Some enhancement steps were skipped; the original style was used",
     creating: "Creating…",
     create_song: "Create Song",
     vocal: "Vocal",
@@ -360,6 +364,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     review_quality: "Qualité vérifiée",
     review_fixes_one: " · {n} correction",
     review_fixes_many: " · {n} corrections",
+    review_skipped: "La révision des paroles a été ignorée cette fois",
+    gen_degraded: "Certaines étapes d'amélioration ont été ignorées ; le style d'origine a été utilisé",
     creating: "Création…",
     create_song: "Créer la chanson",
     vocal: "Voix",
@@ -497,6 +503,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     review_quality: "Calidad verificada",
     review_fixes_one: " · {n} corrección",
     review_fixes_many: " · {n} correcciones",
+    review_skipped: "La revisión de la letra se omitió esta vez",
+    gen_degraded: "Algunos pasos de mejora se omitieron; se usó el estilo original",
     creating: "Creando…",
     create_song: "Crear canción",
     vocal: "Voz",
@@ -634,6 +642,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     review_quality: "Качество проверено",
     review_fixes_one: " · {n} исправление",
     review_fixes_many: " · {n} исправлений",
+    review_skipped: "Проверка текста была пропущена в этот раз",
+    gen_degraded: "Некоторые этапы улучшения были пропущены; использован исходный стиль",
     creating: "Создание…",
     create_song: "Создать песню",
     vocal: "Вокал",
@@ -725,8 +735,22 @@ const STYLE_TAGS: Record<Lang, string[]> = {
   ru: ["тёплый акустический", "живой поп", "нежная баллада", "ритмичный фолк", "душевный R&B", "мечтательный инди", "энергичный рок", "нежная колыбельная"],
 };
 
-export function getStyleTags(lang: Lang): string[] {
-  return STYLE_TAGS[lang] ?? STYLE_TAGS.en;
+/** A style tag pill: localized label for the user, English tag for the provider. */
+export interface StyleTag {
+  /** Display label in the UI language. */
+  label: string;
+  /** English tag submitted to the music provider (style fields are English-only). */
+  tag: string;
+}
+
+// Canonical English tags, index-aligned with every language's label list.
+// The label is what the user sees; only the English tag reaches the provider —
+// a Chinese label like "治愈温暖" sent as Suno's `style` produced garbage output.
+const STYLE_TAG_VALUES: string[] = STYLE_TAGS.en;
+
+export function getStyleTags(lang: Lang): StyleTag[] {
+  const labels = STYLE_TAGS[lang] ?? STYLE_TAGS.en;
+  return labels.map((label, i) => ({ label, tag: STYLE_TAG_VALUES[i] ?? label }));
 }
 
 interface I18nContextValue {

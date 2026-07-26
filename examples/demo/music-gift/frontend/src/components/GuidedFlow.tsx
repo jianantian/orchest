@@ -169,6 +169,8 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
 
   const [review, setReview] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
+  // True when the server fell back past the review pass for the current draft.
+  const [reviewDegraded, setReviewDegraded] = useState(false);
 
   /** Scroll the bubble list to the end. The instant (`auto`) variant is used
    * by the per-frame reveal and only fires when already near the bottom, so
@@ -243,6 +245,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
         } else if (e.type === "Done") {
           stopReveal();
           if (arrived) act.setMsg([...msgs, { role: "assistant", content: arrived }]);
+          setReviewDegraded(e.degraded?.includes("review") ?? false);
           if (e.has_lyrics) {
             gotLyrics = true;
             act.setDraft({ lyrics: e.lyrics, style: e.style, title: e.title, vocal: e.vocal || "female" });
@@ -271,7 +274,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
   function handleRestart() {
     runIdRef.current++;
     setConfirmRestart(false);
-    setInput(""); setError(null); setReview(null); setStreaming(false); setReviewing(false);
+    setInput(""); setError(null); setReview(null); setStreaming(false); setReviewing(false); setReviewDegraded(false);
     gen.reset();
     act.reset();
     setTimeout(() => act.go("relationship"), 400);
@@ -373,7 +376,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
           <div className="bubble bot" style={{ opacity: 0.7 }}>{t("creating_gift")}</div>
         )}
 
-        {step === "review" && draft && <ReviewCard key={draft.lyrics} lyrics={draft.lyrics} style={draft.style} title={draft.title} vocal={draft.vocal} styleTags={getStyleTags(lang)} onSubmit={handleReviewSubmit} creating={gen.state === "generating"} review={review ?? undefined} />}
+        {step === "review" && draft && <ReviewCard key={draft.lyrics} lyrics={draft.lyrics} style={draft.style} title={draft.title} vocal={draft.vocal} styleTags={getStyleTags(lang)} onSubmit={handleReviewSubmit} creating={gen.state === "generating"} review={review ?? undefined} degraded={reviewDegraded} />}
         {step === "music" && gen.giftId && <MusicCard initialState={gen.state === "ready" ? "ready" : gen.state === "error" ? "error" : "generating"} onOpen={handleMusicOpen} onRetry={handleMusicRetry} />}
 
         <div ref={bottomRef} />

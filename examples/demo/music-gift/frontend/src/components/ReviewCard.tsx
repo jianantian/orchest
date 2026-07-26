@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useI18n } from "../i18n";
+import { useI18n, type StyleTag } from "../i18n";
 
 export interface ReviewData {
   lyrics: string;
@@ -13,11 +13,13 @@ export interface ReviewCardProps {
   style: string;
   title: string;
   vocal: string;
-  styleTags: string[];
+  styleTags: StyleTag[];
   onSubmit: (data: ReviewData) => void;
   creating: boolean;
   /** Review summary from the second-pass quality reviewer (Markdown table). */
   review?: string;
+  /** True when the server skipped the review pass for this draft (fallback). */
+  degraded?: boolean;
 }
 
 export function ReviewCard({
@@ -29,12 +31,15 @@ export function ReviewCard({
   onSubmit,
   creating,
   review,
+  degraded,
 }: ReviewCardProps) {
   const { t } = useI18n();
   const [lyrics, setLyrics] = useState(initialLyrics);
   const [style, setStyle] = useState(initialStyle);
   const [title, setTitle] = useState(initialTitle);
   const [vocal, setVocal] = useState(initialVocal);
+  // Selection is tracked by the English tag (stable across language
+  // switches); the label is display-only.
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [reviewExpanded, setReviewExpanded] = useState(false);
 
@@ -47,7 +52,8 @@ export function ReviewCard({
   }
 
   function handleSubmit() {
-    const tagStyle = selectedTags.join("、");
+    // Providers take English style descriptors — never the localized label.
+    const tagStyle = selectedTags.join(", ");
     onSubmit({
       lyrics: lyrics.trim(),
       style: tagStyle || style.trim() || "healing and warm",
@@ -80,6 +86,9 @@ export function ReviewCard({
           )}
         </div>
       )}
+      {degraded && !review && (
+        <div className="degraded-note">{t("review_skipped")}</div>
+      )}
       <textarea
         className="review-textarea"
         value={lyrics}
@@ -98,7 +107,7 @@ export function ReviewCard({
           disabled={disabled}
         />
         <div className="style-tags">
-          {styleTags.filter(Boolean).map((tag) => (
+          {styleTags.filter((s) => s.label).map(({ label, tag }) => (
             <span
               key={tag}
               className={`style-tag ${selectedTags.includes(tag) ? "on" : ""}`}
@@ -106,7 +115,7 @@ export function ReviewCard({
               role="button"
               tabIndex={0}
             >
-              {tag}
+              {label}
             </span>
           ))}
         </div>

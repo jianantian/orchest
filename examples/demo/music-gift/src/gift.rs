@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::error::{AppError, AppResult};
 
@@ -326,6 +326,34 @@ impl GiftStore {
         Ok(())
     }
 
+    /// Record degraded generation stages (e.g. "music_prompt") into the
+    /// gift's meta under the `degraded` key, so the frontend can tell the
+    /// user that quality steps were skipped for this run. Written on every
+    /// (re)generation — an empty list clears any stale marker from a
+    /// previous degraded attempt.
+    pub fn set_meta_degraded(&self, id: &str, stages: &[String]) -> AppResult<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let gift = Self::get_inner(&conn, id)?;
+        let mut meta = gift.meta;
+        if !meta.is_object() {
+            meta = json!({});
+        }
+        if let Some(obj) = meta.as_object_mut() {
+            obj.insert("degraded".to_string(), json!(stages));
+        }
+        if conn.execute(
+            "UPDATE gifts SET meta=?2 WHERE id=?1",
+            params![id, serde_json::to_string(&meta)?],
+        )? == 0
+        {
+            return Err(AppError::NotFound(format!("gift {id} not found")));
+        }
+        Ok(())
+    }
+
     /// Link a gift to an authenticated user. Purely additive metadata: the
     /// `creator_token` remains the only mutation check, and gifts created
     /// without a session keep `creator_id` NULL.
@@ -447,5 +475,45 @@ mod tests {
     fn meta_from_non_object_yields_defaults() {
         let m = GiftMeta::from_value(&json!("not an object"));
         assert_eq!(m.style_or_default(), GiftMeta::DEFAULT_STYLE);
+    }
+
+    /// Degraded stages are stored in the gift's meta so the frontend can
+    /// show them; an empty list clears a stale marker from a previous run.
+    #[test]
+    fn set_meta_degraded_round_trips() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("gifts.db");
+        let store = GiftStore::open(&db.to_string_lossy()).expect("open store");
+        let gift = Gift {
+            id: "g1".to_string(),
+            kind: "song".to_string(),
+            lyrics: Some("la".to_string()),
+            meta: json!({"name": "Alice"}),
+            audio_url: None,
+            cover_url: None,
+            photos: vec![],
+            gen_handle: None,
+            gen_status: None,
+            countdown_status: None,
+            lrc: None,
+            duration_secs: None,
+            creator_token: "tok".to_string(),
+            published: false,
+            likes: vec![],
+            created_at: "0".to_string(),
+            published_at: None,
+        };
+        store.create(&gift).expect("create");
+
+        store
+            .set_meta_degraded("g1", &["music_prompt".to_string()])
+            .expect("set degraded");
+        let got = store.get("g1").expect("get");
+        assert_eq!(got.meta["degraded"], json!(["music_prompt"]));
+        // Existing keys survive the meta rewrite.
+        assert_eq!(got.meta["name"], json!("Alice"));
+
+        store.set_meta_degraded("g1", &[]).expect("clear degraded");
+        assert_eq!(store.get("g1").expect("get").meta["degraded"], json!([]));
     }
 }
