@@ -104,7 +104,7 @@ sub_agent_completed    sub_agent_failed        run_completed
 run_failed
 ```
 
-> Python SDK 比 TS 多导出几个事件（`runtime_warning` / `skill_dependency_error` / `context_compacted` / `run_restarted` 等）；TS 侧以 `js/index.d.ts` 的实际导出为准。
+> Python SDK 比 TS 多导出几个事件（`runtime_warning` / `context_compacted` / `run_restarted` 等）；TS 侧以 `js/index.d.ts` 的实际导出为准。
 
 ## 6. 类型定义
 

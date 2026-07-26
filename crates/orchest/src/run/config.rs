@@ -193,10 +193,48 @@ impl Default for ModelConfig {
     }
 }
 
+/// Skill registration for a run.
+///
+/// Registration is **fault-tolerant by default**: a skill that fails to
+/// register (bundled tool script cannot be resolved, tool name already
+/// taken, non-whitelisted executable) is skipped with a `SkillLoadWarning`
+/// event carrying the path and reason, and the run starts without it.
+/// Skipped skills never appear in the progressive-disclosure list. With
+/// `strict: true` any such failure fails the run at startup instead.
+///
+/// Duplicate skill names are resolved deterministically: scanned manifests
+/// are processed in ascending directory-path order, the first registration
+/// wins, and later same-name skills are skipped with a warning.
+///
+/// Scanned skills are also checked against the Agent Skills spec
+/// (name/description rules). Violations surface through the same
+/// `SkillLoadWarning` channel but never block loading and never trip
+/// `strict` mode — the skill keeps its declared frontmatter name.
+///
+/// SKILL.md files that fail to parse at all are likewise warn-only in every
+/// mode: `strict` aborts startup on *registration* failures (duplicate names,
+/// invalid bundled tools), not on scan-time problems.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SkillsConfig {
     pub dir: Option<String>,
     pub allowed: Option<Vec<String>>,
+    #[serde(default)]
+    pub disclosure: SkillDisclosure,
+    /// Fail the run at startup when any skill fails to register, instead of
+    /// skipping it with a warning. Defaults to `false` (fault-tolerant).
+    #[serde(default)]
+    pub strict: bool,
+}
+
+/// Progressive skill disclosure level for a run. `Progressive` (default)
+/// injects scanned skill name/description metadata into the system prompt and
+/// registers the built-in `load_skill` tool; `Off` disables both, keeping the
+/// pre-disclosure behavior (bundled tools still register as before).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SkillDisclosure {
+    #[default]
+    Progressive,
+    Off,
 }
 
 /// Custom approval predicate: given a tool's metadata, decide whether the call
@@ -556,6 +594,21 @@ impl AgentConfigBuilder {
         self.skills.allowed = Some(skills);
         self
     }
+    /// Set the progressive skill disclosure level. Defaults to
+    /// [`SkillDisclosure::Progressive`]; pass [`SkillDisclosure::Off`] to
+    /// disable system-prompt injection and the `load_skill` tool.
+    pub fn skill_disclosure(mut self, disclosure: SkillDisclosure) -> Self {
+        self.skills.disclosure = disclosure;
+        self
+    }
+    /// Enable strict skill registration. Off by default: a skill that fails
+    /// to register is skipped with a `SkillLoadWarning` and the run starts
+    /// without it. When enabled, any skill registration failure fails the
+    /// run at startup (`RunFailed`) — useful in CI or debugging.
+    pub fn skills_strict(mut self, strict: bool) -> Self {
+        self.skills.strict = strict;
+        self
+    }
     pub fn max_steps(mut self, n: u32) -> Self {
         self.runtime.max_steps = n;
         self
@@ -763,6 +816,17 @@ mod tests {
             config.runtime.tool_execution_policy,
             ToolExecutionPolicy::ParallelSafe
         );
+    }
+
+    #[test]
+    fn builder_skills_strict_defaults_off_and_toggles() {
+        let config = AgentConfig::builder("m").build().unwrap();
+        assert!(!config.skills.strict);
+        let config = AgentConfig::builder("m")
+            .skills_strict(true)
+            .build()
+            .unwrap();
+        assert!(config.skills.strict);
     }
 
     #[test]

@@ -127,6 +127,16 @@ impl SkillBundledTool {
         })
     }
 
+    /// Owning skill's name for log/event context; falls back to the tool
+    /// name for non-skill sources (defensive — bundled tools are always
+    /// skill-sourced).
+    fn skill_name(&self) -> &str {
+        match &self.metadata.source {
+            ToolSource::Skill { skill_name } => skill_name,
+            _ => &self.name,
+        }
+    }
+
     #[allow(clippy::too_many_arguments)] // justified: script execution needs IO + context params; internal method
     async fn spawn_script(
         &self,
@@ -147,12 +157,12 @@ impl SkillBundledTool {
         env.insert("ORCHEST_RUN_DEPTH".into(), run_depth.to_string());
         let mut executable = self.executable.clone();
         let manifest_for_env = crate::skill::SkillManifest {
-            name: match &self.metadata.source {
-                ToolSource::Skill { skill_name } => skill_name.clone(),
-                _ => self.name.clone(),
-            },
+            name: self.skill_name().to_string(),
             description: self.description.clone(),
             path: self.skill_dir.clone(),
+            // Synthetic manifest for env management only; the scanner's
+            // manifest filename is not tracked on this path.
+            skill_md_path: PathBuf::new(),
             allowed_tools: None,
             bundled_tools: vec![],
             dependencies: self.dependencies.clone(),
@@ -285,7 +295,12 @@ impl Tool for SkillBundledTool {
             .await?;
 
         if !stderr.is_empty() {
-            eprintln!("[skill:{}] stderr: {}", self.name, stderr.trim());
+            tracing::warn!(
+                skill = %self.skill_name(),
+                tool = %self.name,
+                stderr = %stderr.trim(),
+                "skill script wrote to stderr"
+            );
         }
 
         if exit_code != 0 {
@@ -338,7 +353,13 @@ impl Tool for SkillBundledTool {
                         .await?;
 
                     if !stderr.is_empty() {
-                        eprintln!("[skill:{}:poll] stderr: {}", tool_name, stderr.trim());
+                        tracing::warn!(
+                            skill = %tool.skill_name(),
+                            tool = %tool_name,
+                            poll = true,
+                            stderr = %stderr.trim(),
+                            "skill script wrote to stderr"
+                        );
                     }
 
                     if exit_code != 0 {
@@ -619,6 +640,78 @@ fi
             }
             _ => panic!("expected AsyncJob output"),
         }
+    }
+
+    #[tokio::test]
+    async fn execute_routes_script_stderr_to_tracing() {
+        use std::io::Write;
+        use std::sync::Mutex;
+
+        // In-memory MakeWriter capturing everything the subscriber writes.
+        #[derive(Clone, Default)]
+        struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+        impl Write for SharedBuf {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buf = SharedBuf::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer({
+                let buf = buf.clone();
+                move || buf.clone()
+            })
+            .with_ansi(false)
+            .finish();
+        // Thread-local default subscriber; #[tokio::test] runs on the
+        // current thread, so the guard covers the awaits below.
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let script = "#!/bin/sh\necho 'some warning output' >&2\necho '{\"ok\": true}'\n";
+        let skill_dir = create_skill_dir(tmp.path(), "noisy.sh", script);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                skill_dir.join("scripts/noisy.sh"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+
+        let def = make_def("bash", "scripts/noisy.sh");
+        let tool = SkillBundledTool::new(&def, skill_dir, "noisy_skill".into()).unwrap();
+
+        let ctx = ToolContext {
+            run_id: crate::run::RunId::new(),
+            run_depth: 0,
+            tool_call_id: "tc_1".into(),
+            event_tx: None,
+            webhook_base_url: None,
+            approval_bus: crate::run::handle::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
+        };
+        let result = tool.execute(serde_json::json!({}), &ctx).await;
+        assert!(result.is_ok());
+
+        let logs = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            logs.contains("some warning output"),
+            "tracing should capture the script stderr, got: {logs}"
+        );
+        assert!(logs.contains("WARN"), "expected WARN level, got: {logs}");
+        assert!(
+            logs.contains("noisy_skill") && logs.contains("test_tool"),
+            "expected skill/tool context fields, got: {logs}"
+        );
     }
 
     #[tokio::test]

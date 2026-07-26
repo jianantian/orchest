@@ -9,6 +9,8 @@ export interface AgentOptions {
   model: string;
   systemPrompt: string;
   skillsDir?: string;
+  /** Progressive skill disclosure; pass `false` to disable prompt injection and the load_skill tool. */
+  skillDisclosure?: boolean;
   apiKey?: string;
   apiKeyEnv?: string;
   apiUrl?: string;
@@ -134,8 +136,8 @@ export type RuntimeEvent =
   | { type: "approval_denied"; tool_call: unknown; run_depth: number; child_run_id: string | null }
   | { type: "budget_warning"; used: unknown; limit: unknown; run_depth: number; child_run_id: string | null }
   | { type: "runtime_warning"; message: string; run_depth: number; child_run_id: string | null }
-  | { type: "skill_dependency_error"; skill_name: string; error: string; run_depth: number; child_run_id: string | null }
   | { type: "skill_missing_capabilities"; skill_name: string; run_depth: number; child_run_id: string | null }
+  | { type: "skill_load_warning"; path: string; reason: string; run_depth: number; child_run_id: string | null }
   | { type: "context_compacted"; removed_messages: number; summary_tokens: number; run_depth: number; child_run_id: string | null }
   | { type: "child_run_event"; child_run_id: string; run_depth: number; event: RuntimeEvent }
   | { type: "sub_agent_started"; parent_run_id: string; child_run_id: string; config_summary: unknown; run_depth: number }

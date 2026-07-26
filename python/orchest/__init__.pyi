@@ -226,17 +226,17 @@ class RuntimeWarningEvent(TypedDict):
     child_run_id: str | None
 
 
-class SkillDependencyErrorEvent(TypedDict):
-    type: Literal["skill_dependency_error"]
+class SkillMissingCapabilitiesEvent(TypedDict):
+    type: Literal["skill_missing_capabilities"]
     skill_name: str
-    error: str
     run_depth: int
     child_run_id: str | None
 
 
-class SkillMissingCapabilitiesEvent(TypedDict):
-    type: Literal["skill_missing_capabilities"]
-    skill_name: str
+class SkillLoadWarningEvent(TypedDict):
+    type: Literal["skill_load_warning"]
+    path: str
+    reason: str
     run_depth: int
     child_run_id: str | None
 
@@ -337,8 +337,8 @@ RuntimeEvent: TypeAlias = (
     | ApprovalDeniedEvent
     | BudgetWarningEvent
     | RuntimeWarningEvent
-    | SkillDependencyErrorEvent
     | SkillMissingCapabilitiesEvent
+    | SkillLoadWarningEvent
     | ContextCompactedEvent
     | ChildRunEvent
     | SubAgentStartedEvent
@@ -374,6 +374,7 @@ class Agent:
         max_tokens: int | None = None,
         request_options: RequestOptions | None = None,
         approval_mode: str | None = None,
+        skill_disclosure: bool | None = None,
         # True enables the recommended model retry policy (429 / 5xx /
         # timeout / stream-interrupt, 3 retries, exponential backoff
         # 1s→30s with jitter). Default: no retries.

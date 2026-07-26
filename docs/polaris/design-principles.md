@@ -53,6 +53,8 @@ SKILL.md 格式与 Anthropic Agent Skills 开放标准（agentskills.io）兼容
 - Anthropic 某些 skill 假设有 code execution 环境（Python REPL），本 runtime 通过 spawn 子进程模拟
 - bundled scripts 的 schema 声明需要扩展到 SKILL.md frontmatter（Anthropic 的脚本是约定式的，没有 schema 声明）
 
+frontmatter 字段的 enforce 边界（v1.0 前冻结的语义）：`bundled_tools` 的 executable 白名单与 `capabilities.env` 已 enforce；`allowed_tools` 与 `capabilities` 的 `network` / `filesystem_read` / `filesystem_write` / `max_memory_mb` 为**声明预留**——解析但从不 enforce，不构成任何 containment，依赖它们做安全假设是错误的。是否兑现 enforce 是 v1.0 后的独立决策。
+
 ## 决策时的参考问题
 
 遇到设计分叉时，用以下问题校验方向是否跑偏：

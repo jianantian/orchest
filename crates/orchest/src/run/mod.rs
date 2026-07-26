@@ -16,7 +16,7 @@ pub(crate) mod webhook;
 pub use config::{
     AgentConfig, AgentConfigBuilder, AgentRun, ApprovalMode, CompactionConfig, ConfigError,
     ModelConfig, RepeatedFailureConfig, RunId, RunInput, RunInputError, RunState, RunStatus,
-    RuntimeConfig, SkillsConfig, SubAgentRuntime, SupervisionStrategy,
+    RuntimeConfig, SkillDisclosure, SkillsConfig, SubAgentRuntime, SupervisionStrategy,
 };
 pub use handle::{ApprovalBus, EventReceiver, RunHandle};
 pub use retry::{BackoffStrategy, RetryPolicy};
