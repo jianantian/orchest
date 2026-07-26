@@ -7,7 +7,7 @@ use orchest::events::RuntimeEvent;
 use orchest::run::{AgentConfig, AgentRun, RunInput};
 use orchest::tool::builtin::ReadFileTool;
 use orchest::tool::registry::ToolRegistry;
-use orchest_protocol::{ChatModel, ContentBlock, Message, StreamEvent};
+use orchest_protocol::{ChatModel, ContentBlock, Message, Role, StreamEvent};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -195,7 +195,15 @@ pub async fn run_chat_agent(
     tx: mpsc::Sender<SseEvent>,
     skills_dir: Option<&str>,
 ) -> AppResult<String> {
-    let mut builder = AgentConfig::builder("music-gift/chat").max_steps(5);
+    // Split the assembled messages back into proper roles instead of
+    // flattening everything into one user message (SDK-A1 / plan D6): the
+    // leading System message becomes the run's system prompt, the trailing
+    // message is the new user turn, and the middle is multi-turn history.
+    let (system_prompt, history, input) = split_messages(messages)?;
+
+    let mut builder = AgentConfig::builder("music-gift/chat")
+        .max_steps(5)
+        .system_prompt(system_prompt);
     if let Some(dir) = skills_dir {
         builder = builder.skills_dir(dir);
     }
@@ -222,10 +230,9 @@ pub async fn run_chat_agent(
         .register(read_file)
         .map_err(|e| AppError::Llm(format!("registering read_file: {e}")))?;
 
-    let blocks: Vec<ContentBlock> = messages.iter().flat_map(|m| m.content.clone()).collect();
-    let input = RunInput::from_blocks(blocks).map_err(|e| AppError::Llm(e.to_string()))?;
-    let (handle, mut rx) = AgentRun::start(
+    let (handle, mut rx) = AgentRun::start_with_messages(
         config,
+        history,
         input,
         model as Arc<dyn orchest::model::ModelAdapter>,
         tool_registry,
@@ -270,6 +277,50 @@ pub async fn run_chat_agent(
     Ok(full_text)
 }
 
+/// Split `[System, …history…, new-turn]` assembled by `build_messages` back
+/// into (system_prompt, history, new-turn input). The first message must be
+/// the System message from `build_system_message`; the last one is the new
+/// user turn (guided and free-create clients always end on a user message).
+fn split_messages(messages: Vec<Message>) -> AppResult<(String, Vec<Message>, RunInput)> {
+    let mut iter = messages.into_iter();
+    let system_prompt = match iter.next() {
+        Some(Message {
+            role: Role::System,
+            content,
+        }) => content
+            .into_iter()
+            // build_system_message only ever produces Text blocks today; a
+            // future non-Text block here would be dropped — speak up then.
+            .filter_map(|block| match block {
+                ContentBlock::Text(text) => Some(text),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        other => {
+            return Err(AppError::Llm(format!(
+                "chat messages must start with a system message, got: {:?}",
+                other.map(|m| m.role)
+            )))
+        }
+    };
+    let mut history: Vec<Message> = iter.collect();
+    let last = history
+        .pop()
+        .ok_or_else(|| AppError::Llm("chat messages need at least one user turn".to_string()))?;
+    // The new turn must be a user message: an assistant-ending array would
+    // otherwise be silently re-roled into a user turn, inverting the
+    // conversation (the same class of silent corruption D6 exists to kill).
+    if last.role != Role::User {
+        return Err(AppError::Llm(format!(
+            "last message must be a user turn, got: {:?}",
+            last.role
+        )));
+    }
+    let input = RunInput::from_blocks(last.content).map_err(|e| AppError::Llm(e.to_string()))?;
+    Ok((system_prompt, history, input))
+}
+
 /// Review system prompt compiled into the binary.
 static REVIEW_PROMPT: &str = include_str!("../prompts/review.md");
 
@@ -294,6 +345,7 @@ pub struct ReviewOutcome {
 pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> ReviewOutcome {
     let config = match AgentConfig::builder("music-gift/review")
         .max_steps(1)
+        .system_prompt(REVIEW_PROMPT)
         .build()
     {
         Ok(c) => c,
@@ -305,28 +357,11 @@ pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> Rev
             };
         }
     };
-    let messages = vec![
-        Message {
-            role: orchest_protocol::Role::System,
-            content: vec![ContentBlock::Text(REVIEW_PROMPT.to_string())],
-        },
-        Message {
-            role: orchest_protocol::Role::User,
-            content: vec![ContentBlock::Text(raw_output.to_string())],
-        },
-    ];
 
-    let blocks: Vec<ContentBlock> = messages.into_iter().flat_map(|m| m.content).collect();
-    let input = match RunInput::from_blocks(blocks) {
-        Ok(i) => i,
-        Err(e) => {
-            tracing::warn!(stage = "review", error = %e, "review: building input failed; using unreviewed output");
-            return ReviewOutcome {
-                text: raw_output.to_string(),
-                degraded: true,
-            };
-        }
-    };
+    // review.md rides as the system prompt and the raw chat output is the
+    // single user turn — no flattening (previously both were packed into
+    // one user message, so the reviewer lost its role).
+    let input = RunInput::text(raw_output);
 
     let tool_registry = ToolRegistry::new(); // Review agent uses no tools.
     let (handle, mut rx) = AgentRun::start(config, input, model, tool_registry);
@@ -379,7 +414,186 @@ pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> Rev
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orchest_protocol::{MediaSource, Role};
+    use async_trait::async_trait;
+    use orchest_protocol::{
+        MediaSource, ModelCapabilities, ModelError, ModelResponse, RequestOptions, Role,
+        StopReason, TokenUsage, ToolDef,
+    };
+    use std::sync::Mutex;
+
+    /// A ChatModel that captures every message list it receives and replies
+    /// with a fixed EndTurn text.
+    #[derive(Default)]
+    struct CaptureModel {
+        calls: Mutex<Vec<Vec<Message>>>,
+    }
+
+    #[async_trait]
+    impl ChatModel for CaptureModel {
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "capture"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDef],
+            _options: &RequestOptions,
+            _tx: Option<mpsc::Sender<StreamEvent>>,
+        ) -> Result<ModelResponse, ModelError> {
+            self.calls
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(messages.to_vec());
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("done".into())],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+
+    fn msg(role: Role, text: &str) -> Message {
+        Message {
+            role,
+            content: vec![ContentBlock::Text(text.to_string())],
+        }
+    }
+
+    #[test]
+    fn split_messages_extracts_system_history_and_new_turn() {
+        let messages = vec![
+            msg(Role::System, "SYS"),
+            msg(Role::User, "hi"),
+            msg(Role::Assistant, "hello"),
+            msg(Role::User, "go"),
+        ];
+        let (system, history, _input) = split_messages(messages).expect("split");
+        assert_eq!(system, "SYS");
+        let roles: Vec<Role> = history.iter().map(|m| m.role).collect();
+        assert_eq!(roles, vec![Role::User, Role::Assistant]);
+    }
+
+    #[test]
+    fn split_messages_rejects_missing_system_first() {
+        let messages = vec![msg(Role::User, "hi")];
+        assert!(split_messages(messages).is_err());
+    }
+
+    #[test]
+    fn split_messages_rejects_assistant_ending() {
+        // An assistant-ending array must not be silently re-roled into a
+        // user turn.
+        let messages = vec![
+            msg(Role::System, "SYS"),
+            msg(Role::User, "hi"),
+            msg(Role::Assistant, "hello"),
+        ];
+        let err = split_messages(messages).expect_err("assistant ending must error");
+        assert!(err.to_string().contains("user turn"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn chat_agent_sends_system_prompt_and_role_structured_history() {
+        let model = Arc::new(CaptureModel::default());
+        let messages = vec![
+            msg(Role::System, "SYS PROMPT"),
+            msg(Role::User, "hi"),
+            msg(Role::Assistant, "hello"),
+            msg(Role::User, "write it"),
+        ];
+        let (tx, _rx) = mpsc::channel(16);
+        let out = run_chat_agent(model.clone(), messages, tx, None)
+            .await
+            .expect("chat run");
+        assert_eq!(out, "done");
+        let calls = model
+            .calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let first = &calls[0];
+        let roles: Vec<Role> = first.iter().map(|m| m.role).collect();
+        assert_eq!(
+            roles,
+            vec![Role::System, Role::User, Role::Assistant, Role::User],
+            "wire must keep the system message first and role boundaries"
+        );
+        let Some(ContentBlock::Text(system_text)) = first[0].content.first() else {
+            panic!("system message must be text");
+        };
+        assert_eq!(system_text, "SYS PROMPT");
+        let text_of = |m: &Message| match &m.content[0] {
+            ContentBlock::Text(t) => t.clone(),
+            _ => String::new(),
+        };
+        assert_eq!(text_of(&first[1]), "hi");
+        assert_eq!(text_of(&first[2]), "hello");
+        assert_eq!(text_of(&first[3]), "write it");
+    }
+
+    #[tokio::test]
+    async fn chat_agent_passes_photo_blocks_through_to_the_model() {
+        let model = Arc::new(CaptureModel::default());
+        let photo = ContentBlock::Image {
+            source: MediaSource::Base64 {
+                media_type: "image/png".into(),
+                data: "AAAA".into(),
+            },
+            detail: None,
+        };
+        let messages = vec![
+            msg(Role::System, "SYS"),
+            Message {
+                role: Role::User,
+                content: vec![photo, ContentBlock::Text("look".into())],
+            },
+        ];
+        let (tx, _rx) = mpsc::channel(16);
+        run_chat_agent(model.clone(), messages, tx, None)
+            .await
+            .expect("chat run");
+        let calls = model
+            .calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let last = calls[0].last().expect("at least one message");
+        assert!(
+            last.content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Image { .. })),
+            "photo blocks must reach the model in the new user turn"
+        );
+    }
+
+    #[tokio::test]
+    async fn review_pass_sends_review_md_as_system_prompt() {
+        let model = Arc::new(CaptureModel::default());
+        let outcome = run_review_pass(model.clone(), "RAW OUTPUT").await;
+        assert!(!outcome.degraded);
+        assert_eq!(outcome.text, "done");
+        let calls = model
+            .calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let first = &calls[0];
+        assert_eq!(first.len(), 2);
+        assert!(matches!(first[0].role, Role::System));
+        let Some(ContentBlock::Text(system_text)) = first[0].content.first() else {
+            panic!("system message must be text");
+        };
+        assert_eq!(system_text, REVIEW_PROMPT);
+        assert!(matches!(first[1].role, Role::User));
+        let Some(ContentBlock::Text(user_text)) = first[1].content.first() else {
+            panic!("user message must be text");
+        };
+        assert_eq!(user_text, "RAW OUTPUT");
+    }
 
     #[test]
     fn parse_lyrics_extracts_all_tags() {

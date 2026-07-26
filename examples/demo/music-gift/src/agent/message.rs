@@ -92,12 +92,23 @@ pub fn build_messages(
             "system" => Role::System,
             _ => Role::User,
         };
-        if role == Role::User && !photo_injected && !photo_blocks.is_empty() {
+        if role == Role::System {
+            // Clients (free-create mode) may send their own system
+            // instruction: merge it into the system prompt instead of
+            // silently dropping it (previously this arm discarded it).
+            // Assumes the leading system message is a single Text block, and
+            // that incoming system messages are prompt-level instructions
+            // (merging them to the top), not mid-conversation asides.
+            if let Some(ContentBlock::Text(system)) = messages[0].content.first_mut() {
+                system.push_str("\n\n");
+                system.push_str(&msg.content);
+            }
+        } else if role == Role::User && !photo_injected && !photo_blocks.is_empty() {
             let mut content = photo_blocks.to_vec();
             content.push(ContentBlock::Text(msg.content.clone()));
             messages.push(Message { role, content });
             photo_injected = true;
-        } else if role != Role::System {
+        } else {
             messages.push(Message {
                 role,
                 content: vec![ContentBlock::Text(msg.content.clone())],
@@ -105,4 +116,34 @@ pub fn build_messages(
         }
     }
     messages
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_messages_merges_incoming_system_into_system_prompt() {
+        let system = build_system_message(&serde_json::json!({"name": "x"}), 0);
+        let incoming = vec![
+            IncomingMessage {
+                role: "system".into(),
+                content: "You are a professional songwriter.".into(),
+            },
+            IncomingMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            },
+        ];
+        let messages = build_messages(system, &incoming, &[]);
+        assert_eq!(messages.len(), 2);
+        let Some(ContentBlock::Text(system_text)) = messages[0].content.first() else {
+            panic!("system message must be a text block");
+        };
+        assert!(
+            system_text.contains("You are a professional songwriter."),
+            "incoming system instruction must be merged, got: {system_text}"
+        );
+        assert!(matches!(messages[1].role, Role::User));
+    }
 }
