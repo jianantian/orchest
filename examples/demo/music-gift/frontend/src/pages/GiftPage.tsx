@@ -24,6 +24,11 @@ type GenPhase =
   /** Terminal failure — the message lives in the shared `error` state. */
   | { kind: "failed" };
 
+/** Countdown poll cadence and total cap: the server retries a failed
+ *  generation once, so allow roughly two model calls before giving up. */
+const CD_POLL_INTERVAL_MS = 5000;
+const CD_POLL_TIMEOUT_MS = 5 * 60 * 1000;
+
 /**
  * Load/generation pipeline for the gift page: loading → ready(gen) | failed.
  * Like/share/delete interaction state deliberately stays out of this union.
@@ -49,6 +54,7 @@ export default function GiftPage() {
   const [copied, setCopied] = useState(false);
   const [countdownHtml, setCountdownHtml] = useState<string | null>(null);
   const [countdownPending, setCountdownPending] = useState(false);
+  const [countdownFailed, setCountdownFailed] = useState(false);
   const watchRef = useRef<GenerationWatch | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [lrcLines, setLrcLines] = useState<LRCLine[] | null>(null);
@@ -87,6 +93,10 @@ export default function GiftPage() {
   useEffect(() => {
     if (!id) return;
     setPipeline({ kind: "loading" });
+    // Reset countdown state left over from a previously viewed gift.
+    setCountdownHtml(null);
+    setCountdownPending(false);
+    setCountdownFailed(false);
     getGift(id)
       .then((g) => {
         setPublished(g.published);
@@ -105,7 +115,13 @@ export default function GiftPage() {
       .catch((e) =>
         setPipeline({ kind: "failed", message: e instanceof Error ? e.message : "Failed to load gift" }),
       );
-    return () => { watchRef.current?.close(); };
+    return () => {
+      watchRef.current?.close();
+      // Stop the countdown poll too — otherwise it keeps firing after
+      // unmount, or leaks into the next gift when the id changes.
+      clearInterval(cdPollRef.current);
+      cdPollRef.current = undefined;
+    };
   }, [id, startWatch]);
 
   async function handleGenerate() {
@@ -182,7 +198,17 @@ export default function GiftPage() {
     });
   }
 
+  /**
+   * Load the LLM-generated countdown block by status: "ready" fetches once;
+   * "pending" polls until it turns ready, hits a terminal response, or
+   * exceeds the total cap; "failed" shows the placeholder instead of polling
+   * a file that will never appear.
+   */
   async function loadCountdown(giftId: string, cdStatus?: string | null) {
+    if (cdStatus === "failed") {
+      setCountdownFailed(true);
+      return;
+    }
     if (cdStatus === "ready") {
       try {
         const res = await fetch(`/api/countdown-section/${giftId}`);
@@ -190,21 +216,38 @@ export default function GiftPage() {
       } catch {
         // Countdown is optional
       }
-    } else if (cdStatus === "pending") {
-      setCountdownPending(true);
-      cdPollRef.current = setInterval(async () => {
-        try {
-          const res = await fetch(`/api/countdown-section/${giftId}`);
-          if (res.ok) {
-            clearInterval(cdPollRef.current);
-            setCountdownPending(false);
-            setCountdownHtml(await res.text());
-          }
-        } catch {
-          // Keep polling
-        }
-      }, 5000);
+      return;
     }
+    if (cdStatus !== "pending") return;
+
+    setCountdownPending(true);
+    const deadline = Date.now() + CD_POLL_TIMEOUT_MS;
+    const stopPolling = (failed: boolean) => {
+      clearInterval(cdPollRef.current);
+      cdPollRef.current = undefined;
+      setCountdownPending(false);
+      if (failed) setCountdownFailed(true);
+    };
+    cdPollRef.current = setInterval(async () => {
+      if (Date.now() > deadline) {
+        stopPolling(true);
+        return;
+      }
+      try {
+        const res = await fetch(`/api/countdown-section/${giftId}`);
+        if (res.ok) {
+          stopPolling(false);
+          setCountdownHtml(await res.text());
+        } else if (res.status === 404) {
+          // 404 is terminal (server marked the countdown failed). Pending
+          // answers 202, and transient 5xx / network errors keep polling
+          // until the cap.
+          stopPolling(true);
+        }
+      } catch {
+        // Network hiccup — keep polling until the deadline.
+      }
+    }, CD_POLL_INTERVAL_MS);
   }
 
   if (pipeline.kind === "loading") {
@@ -249,6 +292,11 @@ export default function GiftPage() {
           <div className="countdown-placeholder">
             <span className="cd-spinner" />
             <span>{t("countdown_creating", { name: name || t("you") })}</span>
+          </div>
+        )}
+        {countdownFailed && (
+          <div className="countdown-placeholder">
+            <span>{t("countdown_failed")}</span>
           </div>
         )}
         {countdownHtml && <CountdownFrame html={countdownHtml} />}

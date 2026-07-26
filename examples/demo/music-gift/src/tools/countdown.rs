@@ -22,6 +22,9 @@ pub struct CountdownParams {
     pub birthday: String,
     pub scenario: String,
     pub lyric_snippet: String,
+    /// Why the previous attempt was rejected; set only on the retry. Rides
+    /// through the tool input JSON into the prompt's `{previous_error}` slot.
+    pub previous_error: Option<String>,
 }
 
 impl CountdownParams {
@@ -43,12 +46,53 @@ pub async fn run_countdown(
     params: &CountdownParams,
     sink: &CountdownSink,
 ) -> Result<(), String> {
-    let input = serde_json::json!({
+    let html = generate_html(&tool, params).await?;
+
+    let dir = sink.data_dir.join("countdown");
+    write_html_atomic(&dir, &sink.gift_id, &html)?;
+
+    sink.store
+        .update_countdown_status(&sink.gift_id, "ready")
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Generate the countdown HTML, retrying once with the failure reason fed
+/// back into the prompt's `{previous_error}` slot (the template reserves it
+/// for exactly this). Both validation failures (empty / truncated output) and
+/// tool execution errors get the one retry; a second failure is returned so
+/// the caller can mark the countdown `failed`.
+async fn generate_html(
+    tool: &Arc<dyn orchest::tool::Tool>,
+    params: &CountdownParams,
+) -> Result<String, String> {
+    match generate_once(tool, params, None).await {
+        Ok(html) => Ok(html),
+        Err(first_err) => {
+            eprintln!("[music-gift] countdown attempt failed, retrying once: {first_err}");
+            generate_once(tool, params, Some(&first_err)).await
+        }
+    }
+}
+
+/// One generation attempt: run the subagent, extract the HTML, validate its
+/// completeness. `previous_error` rides through the input JSON to the tool's
+/// input_mapper, which rebuilds the prompt with the retry note filled in.
+async fn generate_once(
+    tool: &Arc<dyn orchest::tool::Tool>,
+    params: &CountdownParams,
+    previous_error: Option<&str>,
+) -> Result<String, String> {
+    let mut input = serde_json::json!({
         "name": params.name,
         "birthday": params.birthday,
         "scenario": params.scenario,
         "lyric_snippet": params.lyric_snippet,
     });
+    if let Some(err) = previous_error {
+        input["previous_error"] = Value::String(err.to_string());
+    }
 
     let result = tool
         .execute(input, &tool_context())
@@ -72,20 +116,35 @@ pub async fn run_countdown(
         other => return Err(format!("unexpected countdown tool output: {other:?}")),
     };
 
-    if html.is_empty() {
+    validate_html(&html)?;
+    Ok(html)
+}
+
+/// The output contract is `<style>…</style>` + `<div>…</div>` +
+/// `<script>…</script>` in that order, so a block not ending in `</script>`
+/// was cut off by the model's output-token cap — and an unclosed script tag
+/// kills every timer in the scene. Rejecting it here keeps truncated HTML
+/// from landing on disk as `ready`.
+fn validate_html(html: &str) -> Result<(), String> {
+    let trimmed = html.trim();
+    if trimmed.is_empty() {
         return Err("countdown subagent produced empty HTML".into());
     }
+    if !trimmed.ends_with("</script>") {
+        return Err("truncated countdown HTML: does not end with </script>".into());
+    }
+    Ok(())
+}
 
-    let dir = sink.data_dir.join("countdown");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create countdown dir: {e}"))?;
-
-    let path = dir.join(format!("{}.html", sink.gift_id));
-    std::fs::write(&path, &html).map_err(|e| format!("write countdown HTML: {e}"))?;
-
-    sink.store
-        .update_countdown_status(&sink.gift_id, "ready")
-        .map_err(|e| e.to_string())?;
-
+/// Write the block as `<dir>/<gift_id>.html` atomically: temp file in the
+/// same directory, then rename. A crash mid-write leaves a stray `.tmp` file
+/// instead of a half-written page the route would happily serve.
+fn write_html_atomic(dir: &std::path::Path, gift_id: &str, html: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("create countdown dir: {e}"))?;
+    let path = dir.join(format!("{gift_id}.html"));
+    let tmp = dir.join(format!("{gift_id}.html.tmp"));
+    std::fs::write(&tmp, html).map_err(|e| format!("write countdown HTML: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("move countdown HTML into place: {e}"))?;
     Ok(())
 }
 
@@ -113,6 +172,11 @@ pub(crate) fn countdown_params_from_json(input: &Value) -> CountdownParams {
             .and_then(Value::as_str)
             .unwrap_or("")
             .into(),
+        previous_error: input
+            .get("previous_error")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
     }
 }
 
@@ -129,6 +193,16 @@ pub(crate) fn build_prompt(p: &CountdownParams) -> String {
         );
     }
 
+    let previous_error = p
+        .previous_error
+        .as_deref()
+        .map(|err| {
+            format!(
+                "\n【RETRY — the previous attempt failed】\nReason: {err}\nRegenerate the complete block: non-empty, ending with </script>."
+            )
+        })
+        .unwrap_or_default();
+
     template
         .replace("{name}", &p.name)
         .replace("{scenario}", &p.scenario)
@@ -137,7 +211,7 @@ pub(crate) fn build_prompt(p: &CountdownParams) -> String {
         .replace("{days_until}", &days_until.to_string())
         .replace("{target_date}", &target_date)
         .replace("{lyric_snippet}", &p.lyric_snippet)
-        .replace("{previous_error}", "")
+        .replace("{previous_error}", &previous_error)
 }
 
 fn parse_birthday_info(birthday: &str) -> Option<(String, String, i64, String)> {
@@ -222,9 +296,197 @@ pub(crate) fn tool_context() -> orchest::tool::ToolContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     fn d(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").expect("valid test date")
+    }
+
+    fn sample_params() -> CountdownParams {
+        CountdownParams {
+            name: "Momo".into(),
+            birthday: "12-31".into(),
+            scenario: "walking the dog in the first snow".into(),
+            lyric_snippet: "snow falls quietly on the rooftops".into(),
+            previous_error: None,
+        }
+    }
+
+    const GOOD_HTML: &str = "<style>#birthday-section{}</style><div id=\"birthday-section\"></div><script>(function(){})();</script>";
+    /// The classic output-token-cap cut: the script never closes.
+    const TRUNCATED_HTML: &str =
+        "<style>#birthday-section{}</style><div id=\"birthday-section\"></div><script>(function(){";
+
+    #[test]
+    fn validate_html_accepts_complete_block() {
+        assert!(validate_html(GOOD_HTML).is_ok());
+        // Trailing whitespace after </script> is fine.
+        assert!(validate_html(&format!("{GOOD_HTML}\n  ")).is_ok());
+    }
+
+    #[test]
+    fn validate_html_rejects_empty_and_truncated() {
+        assert!(validate_html("").unwrap_err().contains("empty"));
+        assert!(validate_html("  \n ").unwrap_err().contains("empty"));
+        let err = validate_html(TRUNCATED_HTML).unwrap_err();
+        assert!(err.contains("</script>"), "truncation reason: {err}");
+    }
+
+    #[test]
+    fn build_prompt_leaves_no_retry_note_without_error() {
+        let prompt = build_prompt(&sample_params());
+        assert!(!prompt.contains("{previous_error}"));
+        assert!(!prompt.contains("RETRY"));
+    }
+
+    #[test]
+    fn build_prompt_fills_retry_note_with_previous_error() {
+        let mut p = sample_params();
+        p.previous_error = Some("truncated countdown HTML: does not end with </script>".into());
+        let prompt = build_prompt(&p);
+        assert!(prompt.contains("RETRY"));
+        assert!(prompt.contains("does not end with </script>"));
+    }
+
+    /// The retry path depends on the template keeping this slot.
+    #[test]
+    fn template_keeps_previous_error_slot() {
+        assert!(crate::prompts::COUNTDOWN_TEMPLATE.contains("{previous_error}"));
+    }
+
+    /// A scripted stand-in for the countdown subagent: answers with the
+    /// queued outputs in call order and records every input it saw.
+    struct ScriptedTool {
+        outputs: Vec<Result<String, String>>,
+        calls: Mutex<Vec<Value>>,
+        metadata: orchest::tool::ToolMetadata,
+    }
+
+    impl ScriptedTool {
+        fn new(outputs: Vec<Result<String, String>>) -> Arc<Self> {
+            Arc::new(Self {
+                outputs,
+                calls: Mutex::new(Vec::new()),
+                metadata: orchest::tool::ToolMetadata::default(),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl orchest::tool::Tool for ScriptedTool {
+        fn name(&self) -> &str {
+            "scripted"
+        }
+        fn description(&self) -> &str {
+            "scripted countdown tool"
+        }
+        fn input_schema(&self) -> &orchest::tool::JsonSchema {
+            &Value::Null
+        }
+        fn output_schema(&self) -> Option<&orchest::tool::JsonSchema> {
+            None
+        }
+        fn metadata(&self) -> &orchest::tool::ToolMetadata {
+            &self.metadata
+        }
+        async fn execute(
+            &self,
+            input: Value,
+            _ctx: &orchest::tool::ToolContext,
+        ) -> Result<orchest::tool::ToolOutput, orchest::tool::ToolError> {
+            let mut calls = self.calls.lock().expect("calls lock");
+            calls.push(input);
+            match self.outputs.get(calls.len() - 1) {
+                Some(Ok(html)) => Ok(orchest::tool::ToolOutput::Immediate(
+                    serde_json::json!({ "html": html }),
+                )),
+                Some(Err(e)) => Err(orchest::tool::ToolError::fatal(e.clone())),
+                None => Err(orchest::tool::ToolError::fatal("scripted tool exhausted")),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn valid_first_attempt_skips_retry() {
+        let scripted = ScriptedTool::new(vec![Ok(GOOD_HTML.into())]);
+        let tool: Arc<dyn orchest::tool::Tool> = scripted.clone();
+        let html = generate_html(&tool, &sample_params())
+            .await
+            .expect("valid html");
+        assert_eq!(html, GOOD_HTML);
+        assert_eq!(scripted.calls.lock().expect("calls").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn retry_recovers_from_truncated_first_attempt() {
+        let scripted = ScriptedTool::new(vec![Ok(TRUNCATED_HTML.into()), Ok(GOOD_HTML.into())]);
+        let tool: Arc<dyn orchest::tool::Tool> = scripted.clone();
+        let html = generate_html(&tool, &sample_params())
+            .await
+            .expect("retry succeeds");
+        assert_eq!(html, GOOD_HTML);
+        let calls = scripted.calls.lock().expect("calls");
+        assert_eq!(calls.len(), 2);
+        // The first attempt carries no error; the retry must name the failure
+        // so the model knows what to fix.
+        assert!(calls[0].get("previous_error").is_none());
+        let err = calls[1]["previous_error"].as_str().unwrap_or("");
+        assert!(
+            err.contains("</script>"),
+            "retry input should explain the truncation: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_error_is_retried_too() {
+        let scripted = ScriptedTool::new(vec![
+            Err("provider overloaded".into()),
+            Ok(GOOD_HTML.into()),
+        ]);
+        let tool: Arc<dyn orchest::tool::Tool> = scripted.clone();
+        let html = generate_html(&tool, &sample_params())
+            .await
+            .expect("retry succeeds");
+        assert_eq!(html, GOOD_HTML);
+        let calls = scripted.calls.lock().expect("calls");
+        assert_eq!(calls.len(), 2);
+        let err = calls[1]["previous_error"].as_str().unwrap_or("");
+        assert!(err.contains("provider overloaded"), "retry reason: {err}");
+    }
+
+    #[tokio::test]
+    async fn second_failure_surfaces_error() {
+        let scripted = ScriptedTool::new(vec![Ok(TRUNCATED_HTML.into()), Ok(String::new())]);
+        let tool: Arc<dyn orchest::tool::Tool> = scripted.clone();
+        let err = generate_html(&tool, &sample_params()).await.unwrap_err();
+        assert!(
+            err.contains("empty"),
+            "expected the second failure reason, got: {err}"
+        );
+        assert_eq!(scripted.calls.lock().expect("calls").len(), 2);
+    }
+
+    #[test]
+    fn write_html_atomic_leaves_full_file_and_no_tmp() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("countdown");
+        write_html_atomic(&dir, "gift-1", GOOD_HTML).expect("write");
+        let written = std::fs::read_to_string(dir.join("gift-1.html")).expect("read back");
+        assert_eq!(written, GOOD_HTML);
+        assert!(
+            !dir.join("gift-1.html.tmp").exists(),
+            "temp file must be renamed away"
+        );
+    }
+
+    #[test]
+    fn write_html_atomic_overwrites_existing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("countdown");
+        write_html_atomic(&dir, "gift-1", "old").expect("first write");
+        write_html_atomic(&dir, "gift-1", GOOD_HTML).expect("second write");
+        let written = std::fs::read_to_string(dir.join("gift-1.html")).expect("read back");
+        assert_eq!(written, GOOD_HTML);
     }
 
     #[test]

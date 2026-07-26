@@ -32,6 +32,10 @@ Output must be a self-contained HTML block with this structure:
 Forbidden: <!DOCTYPE>, <html>, <head>, <body> tags.
 Output only the three blocks above, no explanatory text.
 
+【Hard limits】
+- The output MUST end with the closing </script> tag, with nothing after it. A truncated block (unclosed <script>) is a hard failure — it kills the countdown timer and every interaction.
+- Length budget: keep the whole block compact (roughly ≤ 350 lines). At most 3 small SVGs, a few short keyframes, no long keyframe libraries. If space runs short, cut decoration — never cut structure.
+
 【Design requirements】
 1. Background: match the outer page #f7f3ec or pick a warm coordinating tone; padding 24-32px
 2. 1-2 accent colors drawn from the person's story; warm hand-drawn illustration style
@@ -45,4 +49,9 @@ Output only the three blocks above, no explanatory text.
 5. 1-2 delightful interactions (must use addEventListener), themed to the story:
    - walking scene → click ground to leave footprints; music scene → click note to make it bounce; etc.
 6. The person's name + one personal line drawn from the lyrics/scene (max 30 chars, avoid clichés like "wishing you...")
-7. Bottom padding = 0 — music player card sits directly below, seamless join{previous_error}
+7. Bottom padding = 0 — music player card sits directly below, seamless join
+8. CJK-safe fonts: Latin display fonts (e.g. Baloo 2) have no Chinese glyphs — always append a CJK fallback stack so a Chinese name never drops to the raw system default:
+   font-family: <display-font>, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+9. No emoji anywhere — every visual is inline SVG line art (emoji clash with the hand-drawn style)
+10. Responsive floor: font sizes via clamp(), content rows via flex-wrap; nothing overflows horizontally at 360px width
+{previous_error}
