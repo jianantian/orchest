@@ -368,13 +368,7 @@ pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> Rev
             degraded: true,
         }
     } else {
-        // Log first 200 chars of reviewed output for debugging
-        let preview: String = reviewed.chars().take(500).collect();
-        eprintln!(
-            "[music-gift] review: done ({} chars). Preview: {}",
-            reviewed.len(),
-            preview
-        );
+        tracing::debug!(chars = reviewed.len(), "review: done");
         ReviewOutcome {
             text: reviewed,
             degraded: false,

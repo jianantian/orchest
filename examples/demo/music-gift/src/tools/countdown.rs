@@ -144,7 +144,10 @@ fn write_html_atomic(dir: &std::path::Path, gift_id: &str, html: &str) -> Result
     let path = dir.join(format!("{gift_id}.html"));
     let tmp = dir.join(format!("{gift_id}.html.tmp"));
     std::fs::write(&tmp, html).map_err(|e| format!("write countdown HTML: {e}"))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("move countdown HTML into place: {e}"))?;
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("move countdown HTML into place: {e}"));
+    }
     Ok(())
 }
 

@@ -237,7 +237,11 @@ export default function GiftPage() {
         const res = await fetch(`/api/countdown-section/${giftId}`);
         if (res.ok) {
           stopPolling(false);
-          setCountdownHtml(await res.text());
+          try {
+            setCountdownHtml(await res.text());
+          } catch {
+            setCountdownFailed(true);
+          }
         } else if (res.status === 404) {
           // 404 is terminal (server marked the countdown failed). Pending
           // answers 202, and transient 5xx / network errors keep polling

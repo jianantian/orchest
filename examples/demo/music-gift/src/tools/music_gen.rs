@@ -242,7 +242,13 @@ fn build_gen_params(submission: &GenSubmission, enriched: &EnrichedPrompt) -> Va
                 let vocal_gender = match submission.vocal.as_str() {
                     "male" => Some("m"),
                     "female" => Some("f"),
-                    _ => None,
+                    other => {
+                        tracing::warn!(
+                            vocal = %other,
+                            "unexpected vocal value, vocalGender omitted from Suno params"
+                        );
+                        None
+                    }
                 };
                 if let Some(g) = vocal_gender {
                     params.insert("vocalGender".into(), json!(g));

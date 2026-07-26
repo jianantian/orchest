@@ -753,9 +753,29 @@ export interface StyleTag {
 // a Chinese label like "治愈温暖" sent as Suno's `style` produced garbage output.
 const STYLE_TAG_VALUES: string[] = STYLE_TAGS.en;
 
+// Index alignment is load-bearing: a label list that outgrows STYLE_TAG_VALUES
+// would fall back to sending the *label* to the provider — the exact bug this
+// mapping exists to prevent. Fail loudly at module load instead.
+for (const lang of Object.keys(STYLE_TAGS) as Lang[]) {
+  if (STYLE_TAGS[lang].length !== STYLE_TAG_VALUES.length) {
+    throw new Error(
+      `STYLE_TAGS.${lang} has ${STYLE_TAGS[lang].length} entries, expected ${STYLE_TAG_VALUES.length} (index-aligned with en)`,
+    );
+  }
+}
+
 export function getStyleTags(lang: Lang): StyleTag[] {
   const labels = STYLE_TAGS[lang] ?? STYLE_TAGS.en;
-  return labels.map((label, i) => ({ label, tag: STYLE_TAG_VALUES[i] ?? label }));
+  return labels.map((label, i) => {
+    let tag = STYLE_TAG_VALUES[i];
+    if (tag === undefined) {
+      // Unreachable while the module-load assertion holds — and never the
+      // label, which is not a valid provider style.
+      console.warn(`style tag index ${i} out of range for ${lang}, using "${STYLE_TAG_VALUES[0]}"`);
+      tag = STYLE_TAG_VALUES[0];
+    }
+    return { label, tag };
+  });
 }
 
 interface I18nContextValue {

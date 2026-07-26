@@ -245,8 +245,10 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
         } else if (e.type === "Done") {
           stopReveal();
           if (arrived) act.setMsg([...msgs, { role: "assistant", content: arrived }]);
-          setReviewDegraded(e.degraded?.includes("review") ?? false);
           if (e.has_lyrics) {
+            // Only a lyrics-producing Done updates the degradation state —
+            // a chat-turn Done (no lyrics) must not clear a pending note.
+            setReviewDegraded(e.degraded?.includes("review") ?? false);
             gotLyrics = true;
             act.setDraft({ lyrics: e.lyrics, style: e.style, title: e.title, vocal: e.vocal || "female" });
             setReview(e.review ?? null);
