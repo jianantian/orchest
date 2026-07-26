@@ -97,7 +97,7 @@
 
 - `routes.rs` — `chat_handler`：
   1. `build_system_message(meta)` 组装 system prompt = `system.md` + "Known info:\n{meta JSON}"（有照片时追加照片提示）
-  2. 启动 `run_chat_agent()` → Orchest AgentRun，max 5 steps，注册 `collect_info` tool + `ReadFileTool`（预注册 `lyrics-writer` skill）
+  2. 启动 `run_chat_agent()` → Orchest AgentRun，max 5 steps，注册 `collect_info` tool；`skills_dir` 由 SDK 自动注入 `<available_skills>` 清单并注册内置 `load_skill` / `read_file`（v0.14 零配置披露）
   3. 流式输出 Delta 事件
   4. Agent 跑完后如果有 `<<<LYRICS>>>`，启动 **review pass**（第二个 LLM 调用）
   5. 先发 `Reviewing` 事件告知前端等待
@@ -109,13 +109,13 @@
 
 **写词方法论的加载（渐进式披露）：**
 
-写词方法论不在 system prompt 里，而是一个独立的 Agent Skill：`skills/lyrics-writer/SKILL.md`。`system.md` 指示 agent 在写词前先调用 `read_file` 工具加载该 SKILL.md，然后严格按方法论输出。
+写词方法论不在 system prompt 里，而是一个独立的 Agent Skill：`skills/lyrics-writer/SKILL.md`。设 `skills_dir` 后 SDK 自动把 skill 清单注入 system prompt（零配置渐进式披露）；`system.md` 指示 agent 写词前先加载 `lyrics-writer` skill，模型通过内置 `load_skill` 工具按需加载正文，然后严格按方法论输出。
 
 **LLM 调用的 prompt：**
 
 | 阶段 | Prompt 文件 | 作用 |
 |------|------------|------|
-| System | `prompts/system.md` | 对话风格、追问策略、何时生成；指示 agent 写词前先 `read_file` 加载 lyrics-writer skill |
+| System | `prompts/system.md` | 对话风格、追问策略、何时生成；指示 agent 写词前先加载 lyrics-writer skill（SDK 披露清单指引 `load_skill` 调用） |
 | Lyrics | `skills/lyrics-writer/SKILL.md` | 写词方法论（agent 按需加载）：结构、押韵方案、音节、Show Don't Tell、13 点质量检查、发音修正、performance cues |
 | Review | `prompts/review.md` | 10 点审核清单：自动修复发音、performance cues、artist names；标记结构/押韵等问题 |
 
@@ -190,7 +190,7 @@
 
 | 调用 | 触发时机 | Prompt | 模型 | 耗时 |
 |------|---------|--------|------|------|
-| Chat agent | 用户进入 chat 阶段 | `system.md`（写词时按需 `read_file` 加载 `skills/lyrics-writer/SKILL.md`） | `chat_model` | ~10-30s |
+| Chat agent | 用户进入 chat 阶段 | `system.md`（写词时按需经 `load_skill` 加载 `skills/lyrics-writer/SKILL.md`） | `chat_model` | ~10-30s |
 | Review pass | Chat agent 生成完歌词后 | `review.md` | `chat_model`（复用） | ~10-30s |
 | Music prompt | 用户点"生成这首歌"后 | `music_prompt/{provider}.md` | `music_prompt_model` | ~3-5s |
 
@@ -234,6 +234,6 @@
 | 后端 | `src/prompts.rs` | 编译期 `include_str!` 嵌入 `system.md` / `countdown.md` / `music_prompt/*.md`（suno/mureka/minimax） |
 | 后端 | `src/tools/music_gen.rs` | `generate_music_prompt` + `generate` / `submit` / `poll` / `stream`（模块函数） |
 | Prompt | `prompts/system.md` | Chat agent 系统 prompt |
-| Skill | `skills/lyrics-writer/SKILL.md` | 写词方法论，agent 通过 `read_file` 按需加载 |
+| Skill | `skills/lyrics-writer/SKILL.md` | 写词方法论，agent 通过内置 `load_skill` 按需加载 |
 | Prompt | `prompts/review.md` | 歌词审核清单（编译期嵌入 `agent.rs`） |
 | Prompt | `prompts/music_prompt/{suno,mureka,minimax}.md` | Music prompt 改写模板，按 provider 选择 |

@@ -1,11 +1,9 @@
 //! System prompt, lyrics parsing, and chat agent loop.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use orchest::events::RuntimeEvent;
 use orchest::run::{AgentConfig, AgentRun, RunInput};
-use orchest::tool::builtin::ReadFileTool;
 use orchest::tool::registry::ToolRegistry;
 use orchest_protocol::{ChatModel, ContentBlock, Message, Role, StreamEvent};
 use serde::{Deserialize, Serialize};
@@ -216,19 +214,11 @@ pub async fn run_chat_agent(
         .register(collect_info::create_tool())
         .map_err(|e| AppError::Llm(format!("registering collect_info: {e}")))?;
 
-    // Register ReadFileTool so agent can load skill content on demand.
-    let read_file = Arc::new(ReadFileTool::new());
-    if let Some(dir) = skills_dir {
-        let skill_path = Path::new(dir).join("lyrics-writer").join("SKILL.md");
-        if skill_path.exists() {
-            read_file
-                .register_skill("lyrics-writer".to_string(), skill_path)
-                .await;
-        }
-    }
-    tool_registry
-        .register(read_file)
-        .map_err(|e| AppError::Llm(format!("registering read_file: {e}")))?;
+    // Skill content is loaded by the SDK itself: with skills_dir set,
+    // register_skills injects the <available_skills> block and registers
+    // load_skill + read_file (v0.14 zero-config disclosure). A manual
+    // ReadFileTool here would collide with the built-in read_file and fail
+    // the run at pre_start (the v0.14 collision D7 removes).
 
     let (handle, mut rx) = AgentRun::start_with_messages(
         config,
@@ -421,11 +411,12 @@ mod tests {
     };
     use std::sync::Mutex;
 
-    /// A ChatModel that captures every message list it receives and replies
-    /// with a fixed EndTurn text.
+    /// A ChatModel that captures every message list and tool list it receives
+    /// and replies with a fixed EndTurn text.
     #[derive(Default)]
     struct CaptureModel {
         calls: Mutex<Vec<Vec<Message>>>,
+        tools: Mutex<Vec<Vec<String>>>,
     }
 
     #[async_trait]
@@ -442,7 +433,7 @@ mod tests {
         async fn complete(
             &self,
             messages: &[Message],
-            _tools: &[ToolDef],
+            tools: &[ToolDef],
             _options: &RequestOptions,
             _tx: Option<mpsc::Sender<StreamEvent>>,
         ) -> Result<ModelResponse, ModelError> {
@@ -450,6 +441,10 @@ mod tests {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(messages.to_vec());
+            self.tools
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(tools.iter().map(|t| t.name.clone()).collect());
             Ok(ModelResponse {
                 content: vec![ContentBlock::Text("done".into())],
                 usage: TokenUsage::default(),
@@ -535,6 +530,60 @@ mod tests {
         assert_eq!(text_of(&first[1]), "hi");
         assert_eq!(text_of(&first[2]), "hello");
         assert_eq!(text_of(&first[3]), "write it");
+    }
+
+    /// D7 / SDK-D1 易用性实证: with only skills_dir set, the run starts (no
+    /// built-in read_file collision after the manual registration was
+    /// removed), the system prompt lists the skill via disclosure, and
+    /// load_skill is registered — no handwritten path, no manual wiring.
+    #[tokio::test]
+    async fn chat_agent_with_skills_dir_gets_zero_config_disclosure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("lyrics-writer");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: lyrics-writer\ndescription: Lyrics writing methodology\n---\n# Method\n",
+        )
+        .unwrap();
+
+        let model = Arc::new(CaptureModel::default());
+        let messages = vec![msg(Role::System, "SYS"), msg(Role::User, "hi")];
+        let (tx, _rx) = mpsc::channel(16);
+        run_chat_agent(
+            model.clone(),
+            messages,
+            tx,
+            Some(tmp.path().to_str().unwrap()),
+        )
+        .await
+        .expect("run must start — no read_file collision");
+
+        let calls = model
+            .calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(ContentBlock::Text(system_text)) =
+            calls[0].first().and_then(|m| m.content.first())
+        else {
+            panic!("system message must be text");
+        };
+        assert!(
+            system_text.contains("<available_skills>") && system_text.contains("lyrics-writer"),
+            "system prompt must list the skill via disclosure, got: {system_text}"
+        );
+
+        let tools = model
+            .tools
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let first_tools = &tools[0];
+        for expected in ["load_skill", "read_file", "collect_info"] {
+            assert!(
+                first_tools.iter().any(|t| t == expected),
+                "tool list must contain {expected}, got: {first_tools:?}"
+            );
+        }
     }
 
     #[tokio::test]
