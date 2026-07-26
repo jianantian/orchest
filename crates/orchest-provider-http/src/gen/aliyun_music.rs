@@ -12,10 +12,10 @@
 use async_trait::async_trait;
 use orchest_protocol::{
     Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenHandle, GenRequest, GenResult,
-    GenStatus, GenTask, Modality, ProtocolError,
+    GenStatus, GenTask, Modality, ProtocolError, VocalGender,
 };
 use orchest_provider_core::registry::ProviderConfig;
-use orchest_provider_core::SyncGenCache;
+use orchest_provider_core::{warn_unconsumed_params, SyncGenCache};
 use serde_json::{json, Value};
 
 use crate::defaults::aliyun_music;
@@ -47,13 +47,29 @@ fn status_err(code: u16, body: String) -> ProtocolError {
     .with_status(code)
 }
 
+/// [`GenRequest::params`] keys the DashScope fun-music API understands
+/// (docs/external/aliyun/music-generation.md). `model`/`prompt` are set
+/// explicitly and skipped in the passthrough; anything outside this set warns
+/// via [`warn_unconsumed_params`] — it would be forwarded verbatim but have no
+/// effect on the API.
+const CONSUMED_PARAMS: &[&str] = &[
+    "lyrics",
+    "gender",
+    "is_instrumental",
+    "format",
+    "enable_aigc_watermark",
+];
+
 /// Build the DashScope music generation body: the envelope `{ model, input: {
 /// prompt, format, is_instrumental, gender } }`, then any
 /// [`GenRequest::params`] passthrough (`lyrics`, `gender`, `is_instrumental`,
 /// `format`, `enable_aigc_watermark`, …) overrides the defaults. The `model`
 /// and `prompt` keys are skipped when iterating params (they are set
-/// explicitly).
+/// explicitly). Typed [`MusicParams`](orchest_protocol::MusicParams)
+/// `lyrics`/`instrumental`/`vocal_gender` take precedence over the raw keys;
+/// `vocal_gender` is translated onto the API's `"male"`/`"female"` spelling.
 pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
+    warn_unconsumed_params("aliyun", CONSUMED_PARAMS, &request.params);
     let mut input = json!({
         "prompt": request.prompt,
         "format": "mp3",
@@ -65,6 +81,20 @@ pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
             if key != "model" && key != "prompt" {
                 input[key] = value.clone();
             }
+        }
+    }
+    if let Some(music) = request.music.as_ref() {
+        if let Some(lyrics) = music.lyrics.as_ref() {
+            input["lyrics"] = json!(lyrics);
+        }
+        if let Some(instrumental) = music.instrumental {
+            input["is_instrumental"] = json!(instrumental);
+        }
+        if let Some(gender) = music.vocal_gender {
+            input["gender"] = json!(match gender {
+                VocalGender::Male => "male",
+                VocalGender::Female => "female",
+            });
         }
     }
     json!({ "model": model, "input": input })
@@ -224,7 +254,41 @@ mod tests {
         GenRequest {
             prompt: prompt.to_string(),
             params,
+            music: None,
         }
+    }
+
+    fn request_with_music(
+        prompt: &str,
+        params: Value,
+        music: orchest_protocol::MusicParams,
+    ) -> GenRequest {
+        GenRequest {
+            prompt: prompt.to_string(),
+            params,
+            music: Some(music),
+        }
+    }
+
+    #[test]
+    fn submit_body_typed_fields_win_over_raw() {
+        let body = build_submit_body(
+            "fun-music-v1",
+            &request_with_music(
+                "upbeat synthwave",
+                json!({"lyrics": "raw lyrics", "gender": "female", "is_instrumental": false}),
+                orchest_protocol::MusicParams {
+                    lyrics: Some("typed lyrics".to_string()),
+                    instrumental: Some(true),
+                    vocal_gender: Some(VocalGender::Male),
+                    ..orchest_protocol::MusicParams::default()
+                },
+            ),
+        );
+        assert_eq!(body["input"]["lyrics"], "typed lyrics");
+        assert_eq!(body["input"]["is_instrumental"], true);
+        // Typed VocalGender translates onto the API's "male"/"female" spelling.
+        assert_eq!(body["input"]["gender"], "male");
     }
 
     #[test]

@@ -12,7 +12,7 @@ use orchest_protocol::{
     GenStatus, GenTask, Modality, ProtocolError,
 };
 use orchest_provider_core::registry::ProviderConfig;
-use orchest_provider_core::shared_client;
+use orchest_provider_core::{shared_client, warn_unconsumed_params};
 use serde_json::{json, Value};
 
 const DEFAULT_API_URL: &str = "https://api.renderful.ai/api/v1";
@@ -57,31 +57,42 @@ fn normalize_base_url(url: &str) -> String {
         .to_string()
 }
 
+/// [`GenRequest::params`] keys forwarded verbatim onto the `/generations`
+/// body. `type` is handled explicitly (it defaults to `text-to-image`) and so
+/// is excluded here; both lists together form the consumed set for the
+/// unconsumed-key warning.
+const PASSTHROUGH_KEYS: &[&str] = &[
+    "negative_prompt",
+    "num_outputs",
+    "seed",
+    "aspect_ratio",
+    "resolution",
+    "width",
+    "height",
+    "image_url",
+    "images",
+    "webhook",
+];
+
 /// Build the `/generations` submit body: `prompt` + `model` + the dialect knobs
 /// (`type`, `negative_prompt`, `num_outputs`, `seed`, `aspect_ratio`/`resolution`/
 /// `width`/`height`, `image_url`/`images`, `webhook`) passed through from
-/// [`GenRequest::params`].
+/// [`GenRequest::params`]. Any other key warns via [`warn_unconsumed_params`].
 pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
+    warn_unconsumed_params(
+        "renderful",
+        &[PASSTHROUGH_KEYS, &["type"]].concat(),
+        &request.params,
+    );
     let mut body = json!({
         "type": request.params.get("type").and_then(Value::as_str).unwrap_or("text-to-image"),
         "model": model,
         "prompt": request.prompt,
     });
     if let Some(params) = request.params.as_object() {
-        for key in [
-            "negative_prompt",
-            "num_outputs",
-            "seed",
-            "aspect_ratio",
-            "resolution",
-            "width",
-            "height",
-            "image_url",
-            "images",
-            "webhook",
-        ] {
-            if let Some(value) = params.get(key) {
-                body[key] = value.clone();
+        for key in PASSTHROUGH_KEYS {
+            if let Some(value) = params.get(*key) {
+                body[*key] = value.clone();
             }
         }
     }
@@ -241,6 +252,7 @@ mod tests {
         GenRequest {
             prompt: prompt.to_string(),
             params,
+            music: None,
         }
     }
 

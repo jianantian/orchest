@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use orchest_protocol::{ErrorCode, GenHandle, GenResult, GenStatus, ProtocolError};
+use serde_json::Value;
 
 /// A per-provider cache that presents a synchronous gen result as a
 /// submit → poll → fetch job: [`store`](Self::store) the completed [`GenResult`]
@@ -64,10 +65,127 @@ impl SyncGenCache {
     }
 }
 
+/// Warn once per [`GenRequest::params`](orchest_protocol::GenRequest) key that
+/// a gen provider's submit path does **not** consume (v0.15, issue 001).
+///
+/// `params` is the dialect escape hatch: a misspelled or unsupported key used
+/// to be dropped silently, so every gen provider that cherry-picks keys calls
+/// this at the top of its submit-body builder with its full consumed set
+/// (explicitly handled keys + passthrough whitelist + the wire names of the
+/// typed [`MusicParams`](orchest_protocol::MusicParams) fields it maps).
+///
+/// Cardinality discipline: the key name travels as the event's `param_key`
+/// field — never in a metric label — so arbitrary user key spellings cannot
+/// explode label cardinality. Non-object `params` (e.g. `Value::Null`) warns
+/// on nothing.
+///
+/// Wired into every gen submit path that cherry-picks `params` keys (keep in
+/// sync when adding a provider): **orchest-provider-http** — `gen/suno.rs`,
+/// `gen/mureka.rs`, `gen/minimax_music.rs`, `gen/aliyun_music.rs`;
+/// **orchest-provider-visual** — `gen/aliyun.rs`, `gen/volcengine.rs`,
+/// `gen/volcengine_video.rs`, `gen/crazyrouter.rs`, `gen/renderful.rs`.
+pub fn warn_unconsumed_params(provider: &str, consumed: &[&str], params: &Value) {
+    let Some(object) = params.as_object() else {
+        return;
+    };
+    for key in object.keys() {
+        if !consumed.contains(&key.as_str()) {
+            tracing::warn!(
+                provider,
+                param_key = key.as_str(),
+                "gen params key not consumed by provider (possible typo); the knob has no effect"
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::{Arc, Mutex as StdMutex};
+
+    /// A `MakeWriter` over a shared buffer so tests can assert on the tracing
+    /// output the warning helper emits.
+    #[derive(Clone, Default)]
+    struct SharedBuffer(Arc<StdMutex<Vec<u8>>>);
+
+    impl std::io::Write for SharedBuffer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl tracing_subscriber::fmt::MakeWriter<'_> for SharedBuffer {
+        type Writer = SharedBuffer;
+
+        fn make_writer(&self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// Run `f` with a fmt subscriber writing into a buffer; return the logs.
+    fn captured_logs(f: impl FnOnce()) -> String {
+        let buffer = SharedBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(buffer.clone())
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        let bytes = buffer
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        String::from_utf8(bytes).expect("tracing output is utf8")
+    }
+
+    #[test]
+    fn warn_unconsumed_params_names_unknown_keys_only() {
+        let logs = captured_logs(|| {
+            warn_unconsumed_params(
+                "suno",
+                &["style", "title"],
+                &json!({"style": "lofi", "genre": "indie folk", "tempo": "slow"}),
+            );
+        });
+        assert!(logs.contains("WARN"), "expected a WARN event: {logs}");
+        assert!(
+            logs.contains("suno"),
+            "provider name in span fields: {logs}"
+        );
+        assert!(logs.contains("genre"), "unknown key named: {logs}");
+        assert!(logs.contains("tempo"), "unknown key named: {logs}");
+        assert!(
+            !logs.contains("style"),
+            "consumed key must not warn: {logs}"
+        );
+    }
+
+    #[test]
+    fn warn_unconsumed_params_ignores_non_object_params() {
+        for params in [Value::Null, json!([]), json!("lofi")] {
+            let logs = captured_logs(|| warn_unconsumed_params("suno", &[], &params));
+            assert!(logs.is_empty(), "no warning for {params}: {logs}");
+        }
+    }
+
+    #[test]
+    fn warn_unconsumed_params_empty_consumed_list_warns_on_everything() {
+        let logs = captured_logs(|| {
+            warn_unconsumed_params("mureka", &[], &json!({"lyrics": "la"}));
+        });
+        assert!(logs.contains("lyrics"), "{logs}");
+    }
 
     #[test]
     fn sync_cache_round_trips_submit_poll_fetch() {

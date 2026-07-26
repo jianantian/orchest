@@ -30,12 +30,12 @@ SDK 优化计划 B1 两步走(先 warning 后类型化)在本 issue 一次做完
 
 ## 验收标准
 
-- [ ] `MusicParams` 在 orchest-protocol 定义,serde 兼容(Py/Node wire 透传不受影响)
-- [ ] demo 提交路径全部走 typed;`vocalGender`/`instrumental`/`negativeTags` 有类型化入口
-- [ ] 构造含未知 key 的 params 提交 gen provider,tracing warn 可见 key 名
-- [ ] 未知 key 警告覆盖所有按 key 挑拣的 gen provider(spec/plan 或代码注释中列出清单)
-- [ ] 测试:typed 字段优先于 raw params;`build_submit_body` typed/raw 组合;警告 helper 单测
-- [ ] 五项检查全绿
+- [x] `MusicParams` 在 orchest-protocol 定义,serde 兼容(Py/Node wire 透传不受影响)
+- [x] demo 提交路径全部走 typed;`vocalGender`/`instrumental`/`negativeTags` 有类型化入口
+- [x] 构造含未知 key 的 params 提交 gen provider,tracing warn 可见 key 名
+- [x] 未知 key 警告覆盖所有按 key 挑拣的 gen provider(spec/plan 或代码注释中列出清单)
+- [x] 测试:typed 字段优先于 raw params;`build_submit_body` typed/raw 组合;警告 helper 单测
+- [x] 五项检查全绿
 
 ## 备注
 

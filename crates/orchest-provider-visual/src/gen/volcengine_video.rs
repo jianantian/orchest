@@ -13,7 +13,7 @@ use orchest_protocol::{
     GenStatus, GenTask, Modality, ProtocolError,
 };
 use orchest_provider_core::registry::ProviderConfig;
-use orchest_provider_core::shared_client;
+use orchest_provider_core::{shared_client, warn_unconsumed_params};
 use serde_json::{json, Value};
 
 const DEFAULT_API_URL: &str = "https://ark.cn-beijing.volces.com/api/v3";
@@ -52,11 +52,19 @@ fn parse_err(what: &str, e: serde_json::Error) -> ProtocolError {
     )
 }
 
+/// [`GenRequest::params`] keys the Ark video create-task API understands (a
+/// `content` override for image/last-frame roles, plus the config knobs).
+/// `model` is set explicitly and skipped in the passthrough; anything outside
+/// this set warns via [`warn_unconsumed_params`] — it would be forwarded
+/// verbatim but have no effect on the API.
+const CONSUMED_PARAMS: &[&str] = &["content", "resolution", "ratio", "duration", "seed"];
+
 /// Build the create-task body. `content` defaults to a single text item from the
 /// prompt; any [`GenRequest::params`] (a `content` override for image/last-frame
 /// roles, plus `resolution` / `ratio` / `duration` / `seed` / … config) pass
 /// through.
 pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
+    warn_unconsumed_params("volcengine", CONSUMED_PARAMS, &request.params);
     let mut body = json!({
         "model": model,
         "content": [{ "type": "text", "text": request.prompt }],
@@ -242,6 +250,7 @@ mod tests {
         GenRequest {
             prompt: prompt.to_string(),
             params,
+            music: None,
         }
     }
 

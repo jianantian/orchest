@@ -14,7 +14,7 @@ use orchest_protocol::{
     GenStatus, GenTask, Modality, ProtocolError,
 };
 use orchest_provider_core::registry::ProviderConfig;
-use orchest_provider_core::shared_client;
+use orchest_provider_core::{shared_client, warn_unconsumed_params};
 use serde_json::{json, Value};
 
 use super::SyncGenCache;
@@ -55,11 +55,16 @@ fn parse_err(e: serde_json::Error) -> ProtocolError {
     )
 }
 
+/// [`GenRequest::params`] keys the Ark images API consumes here. Anything else
+/// warns via [`warn_unconsumed_params`] — it is dropped from the body.
+const CONSUMED_PARAMS: &[&str] = &["n", "watermark", "size", "image"];
+
 /// Build the Ark `/images/generations` body. Carries `model`, `prompt`, `n`
 /// (default 1) and `response_format: url`, plus `watermark` (default false), an
 /// optional `size` (omitted when `auto`), and an optional `image` (a URL/data-url
 /// for img2img) — the latter three drawn from [`GenRequest::params`].
 pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
+    warn_unconsumed_params("volcengine", CONSUMED_PARAMS, &request.params);
     let params = |key: &str| request.params.get(key);
     let mut body = json!({
         "model": model,
@@ -195,6 +200,7 @@ mod tests {
         GenRequest {
             prompt: prompt.to_string(),
             params,
+            music: None,
         }
     }
 

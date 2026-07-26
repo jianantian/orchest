@@ -16,7 +16,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use orchest_protocol::{
     ChatModel, ContentBlock, GenAsset, GenHandle, GenRequest, GenStatus, GenTask, Message,
-    RequestOptions, Role,
+    MusicParams, RequestOptions, Role, VocalGender,
 };
 
 use crate::error::{AppError, AppResult};
@@ -80,7 +80,7 @@ impl std::fmt::Display for EnrichedPrompt {
 // ── Generate pipeline ───────────────────────────────────────────────────────
 
 /// Typed generation inputs derived from the gift — exactly the fields
-/// `GenRequest.params` is built from. `submit` takes these instead of
+/// [`GenRequest::music`] is built from. `submit` takes these instead of
 /// re-fetching the gift and re-deriving them from raw meta.
 pub struct GenSubmission {
     pub lyrics: String,
@@ -211,69 +211,90 @@ pub async fn generate(
     Ok(resp)
 }
 
-/// Build [`GenRequest::params`] for the given provider, checking every key
-/// against what that provider's dialect actually forwards (previously seven
-/// enrichment keys — genre/tempo/mood/vocal_style/instrumentation/production/
-/// exclude — went out for every provider and were silently dropped):
+/// Build the typed [`MusicParams`] for the given provider, mapping the gift
+/// and enrichment fields onto the music knobs each dialect actually consumes
+/// (the submit path is fully typed — raw `GenRequest.params` stays empty, so
+/// a misspelled key is a compile error, not a silent drop):
 ///
-/// - **suno**: `lyrics`/`instrumental` are handled explicitly by the dialect;
-///   the passthrough whitelist is `style`/`title`/`negativeTags`/`vocalGender`/
-///   `styleWeight`/`weirdnessConstraint`/`audioWeight`/`personaId`/
-///   `personaModel` (crates/orchest-provider-http/src/gen/suno.rs
-///   `PASSTHROUGH_PARAMS`).
-/// - **mureka**: passthrough is `lyrics`/`n`/`reference_id`/`vocal_id`/
-///   `melody_id`/`gender`; `is_instrumental` only selects the endpoint.
-/// - **minimax**: forwards every params key verbatim onto its API body, so
-///   only keys its API actually understands are sent.
-fn build_gen_params(submission: &GenSubmission, enriched: &EnrichedPrompt) -> Value {
+/// - **suno**: all knobs typed. `style` folds the raw style together with the
+///   enrichment's genre/tempo/mood/instrumentation/production — in Suno's
+///   custom mode the prompt slot carries the lyrics, so the style string is
+///   the only place the LLM rewrite reaches the wire (the prompt template
+///   already builds these dimensions as the compact descriptor line).
+///   `exclude` → `negative_tags`. `vocal_gender` keeps coming from the gift
+///   meta ("male"/"female" → [`VocalGender`]), not from `vocal_style`: the
+///   enrichment's vocal_style is free text ("male, breathy"), not a valid
+///   gender value.
+/// - **mureka / minimax**: `lyrics` + `instrumental` only — those dialects
+///   map them onto `lyrics`/`is_instrumental`; style and the other knobs
+///   ride in the prompt string, as before.
+/// - **unknown provider**: the conservative typed denominator —
+///   lyrics/style/title are meaningful on every dialect above.
+fn build_music_params(submission: &GenSubmission, enriched: &EnrichedPrompt) -> MusicParams {
     let instrumental = submission.kind == "instrumental";
-    let mut params = serde_json::Map::new();
+    // Empty lyrics are "unset", not an empty string on the wire.
+    let lyrics = (!submission.lyrics.is_empty()).then(|| submission.lyrics.clone());
     match submission.provider.as_str() {
         "suno" => {
-            params.insert("lyrics".into(), json!(submission.lyrics));
-            params.insert("style".into(), json!(submission.style));
-            params.insert("title".into(), json!(submission.title));
-            if instrumental {
-                params.insert("instrumental".into(), json!(true));
+            let style = composed_style(submission, enriched);
+            let exclude = enriched.exclude.trim();
+            let vocal_gender = if instrumental {
+                // No vocal gender for instrumentals: there are no vocals to
+                // gender.
+                None
             } else {
-                // sunoapi.org vocalGender enum is "m"/"f" — the meta value is
-                // "male"/"female". No vocalGender for instrumentals: there
-                // are no vocals to gender.
-                let vocal_gender = match submission.vocal.as_str() {
-                    "male" => Some("m"),
-                    "female" => Some("f"),
+                // sunoapi.org's vocalGender enum is "m"/"f" — the meta value
+                // is "male"/"female".
+                match submission.vocal.as_str() {
+                    "male" => Some(VocalGender::Male),
+                    "female" => Some(VocalGender::Female),
                     other => {
                         tracing::warn!(
                             vocal = %other,
-                            "unexpected vocal value, vocalGender omitted from Suno params"
+                            "unexpected vocal value, vocal_gender omitted from Suno music params"
                         );
                         None
                     }
-                };
-                if let Some(g) = vocal_gender {
-                    params.insert("vocalGender".into(), json!(g));
                 }
-            }
-            let exclude = enriched.exclude.trim();
-            if !exclude.is_empty() {
-                params.insert("negativeTags".into(), json!(exclude));
+            };
+            MusicParams {
+                lyrics,
+                instrumental: instrumental.then_some(true),
+                style: Some(style),
+                title: Some(submission.title.clone()),
+                negative_tags: (!exclude.is_empty()).then(|| exclude.to_string()),
+                vocal_gender,
+                ..MusicParams::default()
             }
         }
-        "mureka" | "minimax" => {
-            params.insert("lyrics".into(), json!(submission.lyrics));
-            if instrumental {
-                params.insert("is_instrumental".into(), json!(true));
-            }
-        }
-        _ => {
-            // Unknown provider: the conservative common denominator —
-            // lyrics/style/title are meaningful on every dialect above.
-            params.insert("lyrics".into(), json!(submission.lyrics));
-            params.insert("style".into(), json!(submission.style));
-            params.insert("title".into(), json!(submission.title));
-        }
+        "mureka" | "minimax" => MusicParams {
+            lyrics,
+            instrumental: instrumental.then_some(true),
+            ..MusicParams::default()
+        },
+        _ => MusicParams {
+            lyrics,
+            style: Some(submission.style.clone()),
+            title: Some(submission.title.clone()),
+            ..MusicParams::default()
+        },
     }
-    Value::Object(params)
+}
+
+/// Fold the raw style and the enrichment's structured dimensions
+/// (genre/tempo/mood/instrumentation/production) into the single style string
+/// the Suno `style` knob expects. Empty parts drop out; the raw style leads.
+fn composed_style(submission: &GenSubmission, enriched: &EnrichedPrompt) -> String {
+    std::iter::once(submission.style.as_str())
+        .chain(enriched.genre.iter().map(String::as_str))
+        .chain(std::iter::once(enriched.tempo.as_str()))
+        .chain(enriched.mood.iter().map(String::as_str))
+        .chain(std::iter::once(enriched.instrumentation.as_str()))
+        .chain(std::iter::once(enriched.production.as_str()))
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Submit a music generation job for the gift and persist the handle.
@@ -284,11 +305,12 @@ pub async fn submit(
     submission: &GenSubmission,
     enriched: &EnrichedPrompt,
 ) -> AppResult<GenerateResponse> {
-    let params = build_gen_params(submission, enriched);
-
     let gen_req = GenRequest {
         prompt: enriched.prompt.clone(),
-        params,
+        // Fully typed submit path: no raw dialect extras, so `params` stays
+        // empty and every knob travels in `music`.
+        params: Value::Null,
+        music: Some(build_music_params(submission, enriched)),
     };
     let handle = gen_task.submit(gen_req).await?;
     let handle_json = serde_json::to_string(&handle)?;
@@ -784,50 +806,47 @@ mod tests {
         }
     }
 
-    /// Every key sent for Suno must be one the dialect actually forwards:
-    /// `lyrics`/`instrumental` are handled explicitly, the rest must be on
-    /// the passthrough whitelist (crates/orchest-provider-http/src/gen/
-    /// suno.rs `PASSTHROUGH_PARAMS`). The old seven enrichment keys
-    /// (genre/tempo/mood/vocal_style/instrumentation/production/exclude)
-    /// were silently dropped and must not come back.
+    /// Every knob sent for Suno must be one the dialect actually consumes —
+    /// now a compile-time property: `MusicParams` only has the typed fields
+    /// (crates/orchest-protocol `MusicParams`) the suno dialect maps
+    /// (crates/orchest-provider-http/src/gen/suno.rs). The old seven raw
+    /// enrichment keys (genre/tempo/mood/vocal_style/instrumentation/
+    /// production/exclude) were silently dropped and must not come back —
+    /// they now fold into `style`/`negative_tags` instead.
     #[test]
-    fn suno_params_carry_whitelisted_keys_only() {
-        let params = build_gen_params(&submission_for("suno"), &enriched());
-        let mut keys: Vec<&str> = params
-            .as_object()
-            .expect("params object")
-            .keys()
-            .map(String::as_str)
-            .collect();
-        keys.sort_unstable();
+    fn suno_music_params_map_onto_typed_knobs() {
+        let music = build_music_params(&submission_for("suno"), &enriched());
+        assert_eq!(music.lyrics.as_deref(), Some("[verse]\nla la"));
+        assert_eq!(music.title.as_deref(), Some("Wheels"));
+        assert_eq!(music.vocal_gender, Some(VocalGender::Male)); // meta "male" -> sunoapi "m"
+        assert_eq!(music.negative_tags.as_deref(), Some("no backing vocals"));
+        assert_eq!(music.instrumental, None);
+        // The raw style leads, then the enrichment's genre/tempo/mood/
+        // instrumentation/production — the style string is the only place
+        // those dimensions reach the Suno custom-mode wire.
         assert_eq!(
-            keys,
-            ["lyrics", "negativeTags", "style", "title", "vocalGender"]
+            music.style.as_deref(),
+            Some("warm acoustic, indie folk, ballad-slow, warm, acoustic guitar, spacious reverb")
         );
+    }
 
-        assert_eq!(params["style"], "warm acoustic");
-        assert_eq!(params["vocalGender"], "m"); // meta "male" -> sunoapi enum "m"
-        assert_eq!(params["negativeTags"], "no backing vocals");
-        assert!(params.get("instrumental").is_none());
-        for key in [
-            "genre",
-            "tempo",
-            "mood",
-            "vocal_style",
-            "instrumentation",
-            "production",
-            "exclude",
-        ] {
-            assert!(params.get(key).is_none(), "{key} leaked into suno params");
-        }
+    #[test]
+    fn suno_style_string_is_raw_style_when_enrichment_is_empty() {
+        // The degraded/fallback path contributes no dimensions, so the style
+        // is exactly the gift's raw style (no dangling separators).
+        let music = build_music_params(
+            &submission_for("suno"),
+            &EnrichedPrompt::fallback("warm acoustic"),
+        );
+        assert_eq!(music.style.as_deref(), Some("warm acoustic"));
     }
 
     #[test]
     fn suno_params_map_female_vocal() {
         let mut sub = submission_for("suno");
         sub.vocal = "female".to_string();
-        let params = build_gen_params(&sub, &enriched());
-        assert_eq!(params["vocalGender"], "f");
+        let music = build_music_params(&sub, &enriched());
+        assert_eq!(music.vocal_gender, Some(VocalGender::Female));
     }
 
     #[test]
@@ -835,45 +854,47 @@ mod tests {
         let mut sub = submission_for("suno");
         sub.kind = "instrumental".to_string();
         sub.lyrics = String::new();
-        let params = build_gen_params(&sub, &enriched());
-        assert_eq!(params["instrumental"], true);
-        assert!(params.get("vocalGender").is_none());
-        // negativeTags still apply to an instrumental generation.
-        assert_eq!(params["negativeTags"], "no backing vocals");
+        let music = build_music_params(&sub, &enriched());
+        assert_eq!(music.instrumental, Some(true));
+        assert_eq!(music.vocal_gender, None);
+        // Empty lyrics are unset, not an empty string on the wire.
+        assert_eq!(music.lyrics, None);
+        // negative_tags still apply to an instrumental generation.
+        assert_eq!(music.negative_tags.as_deref(), Some("no backing vocals"));
     }
 
     #[test]
     fn suno_params_omit_empty_negative_tags() {
         let mut e = enriched();
         e.exclude = "  ".to_string();
-        let params = build_gen_params(&submission_for("suno"), &e);
-        assert!(params.get("negativeTags").is_none());
+        let music = build_music_params(&submission_for("suno"), &e);
+        assert_eq!(music.negative_tags, None);
     }
 
-    /// Mureka (whitelist passthrough) and minimax (verbatim passthrough)
-    /// must not see the Suno keys — only `lyrics`, plus the instrumental
-    /// selector for instrumental gifts. This keeps the song-path wire
-    /// identical to before the D1 alignment.
+    /// Mureka and minimax consume only `lyrics`/`instrumental` — style,
+    /// title, and the Suno-only knobs must stay unset for them. This keeps
+    /// the song-path wire identical to before the typing.
     #[test]
     fn mureka_and_minimax_params_are_lyrics_only() {
         for provider in ["mureka", "minimax"] {
-            let params = build_gen_params(&submission_for(provider), &enriched());
-            let keys: Vec<&str> = params
-                .as_object()
-                .expect("params object")
-                .keys()
-                .map(String::as_str)
-                .collect();
-            assert_eq!(keys, ["lyrics"], "{provider} params: {keys:?}");
+            let music = build_music_params(&submission_for(provider), &enriched());
+            assert_eq!(
+                music.lyrics.as_deref(),
+                Some("[verse]\nla la"),
+                "{provider}"
+            );
+            assert_eq!(music.instrumental, None, "{provider}");
+            assert_eq!(music.style, None, "{provider}");
+            assert_eq!(music.title, None, "{provider}");
+            assert_eq!(music.vocal_gender, None, "{provider}");
+            assert_eq!(music.negative_tags, None, "{provider}");
 
             let mut sub = submission_for(provider);
             sub.kind = "instrumental".to_string();
-            let params = build_gen_params(&sub, &enriched());
-            assert_eq!(params["is_instrumental"], true, "{provider}");
-            assert!(
-                params.get("vocalGender").is_none() && params.get("negativeTags").is_none(),
-                "{provider} must not see suno-only keys"
-            );
+            sub.lyrics = String::new();
+            let music = build_music_params(&sub, &enriched());
+            assert_eq!(music.instrumental, Some(true), "{provider}");
+            assert_eq!(music.lyrics, None, "{provider}");
         }
     }
 }

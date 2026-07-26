@@ -20,6 +20,7 @@ use orchest_protocol::{
     GenStatus, GenTask, Modality, ProtocolError,
 };
 use orchest_provider_core::registry::ProviderConfig;
+use orchest_provider_core::warn_unconsumed_params;
 use serde_json::{json, Value};
 
 use crate::defaults::mureka;
@@ -60,7 +61,9 @@ fn parse_err(e: serde_json::Error) -> ProtocolError {
 /// Keys forwarded from [`GenRequest::params`] into the submit body. `model`,
 /// `prompt`, and `is_instrumental` are excluded: `model`/`prompt` are set
 /// explicitly, and `is_instrumental` only selects the endpoint (and suppresses
-/// `lyrics`).
+/// `lyrics`). The typed [`MusicParams`](orchest_protocol::MusicParams)
+/// counterparts (`lyrics`, `instrumental`) take precedence over the raw
+/// `lyrics`/`is_instrumental` keys; the remaining keys have no typed form.
 const PASSTHROUGH_KEYS: &[&str] = &[
     "lyrics",
     "n",
@@ -70,17 +73,39 @@ const PASSTHROUGH_KEYS: &[&str] = &[
     "gender",
 ];
 
+/// Whether this request asks for instrumental generation: typed
+/// `music.instrumental` first, raw `params.is_instrumental` as the
+/// backward-compat fallback. Shared by [`build_submit_body`] (lyrics
+/// suppression) and `submit` (endpoint selection) so the two never disagree.
+fn is_instrumental(request: &GenRequest) -> bool {
+    request
+        .music
+        .as_ref()
+        .and_then(|m| m.instrumental)
+        .or_else(|| {
+            request
+                .params
+                .get("is_instrumental")
+                .and_then(Value::as_bool)
+        })
+        .unwrap_or(false)
+}
+
 /// Build the `/v1/song/generate` (or `/v1/instrumental/generate`) body: `model`
 /// and `prompt`, plus passthrough params (`lyrics`, `n`, `reference_id`,
-/// `vocal_id`, `melody_id`, `gender`) drawn from [`GenRequest::params`]. When
-/// `params.is_instrumental` is truthy, `lyrics` is omitted (instrumental
-/// generation takes no lyrics).
+/// `vocal_id`, `melody_id`, `gender`) drawn from [`GenRequest::params`], with
+/// typed [`MusicParams`](orchest_protocol::MusicParams) `lyrics` taking
+/// precedence over the raw key. When the request is instrumental (typed
+/// `music.instrumental` or raw `params.is_instrumental`), `lyrics` is omitted
+/// (instrumental generation takes no lyrics). Any params key outside the
+/// consumed set warns via [`warn_unconsumed_params`].
 pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
-    let is_instrumental = request
-        .params
-        .get("is_instrumental")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    warn_unconsumed_params(
+        "mureka",
+        &[PASSTHROUGH_KEYS, &["is_instrumental"]].concat(),
+        &request.params,
+    );
+    let is_instrumental = is_instrumental(request);
     let mut body = json!({ "model": model, "prompt": request.prompt });
     if let Some(params) = request.params.as_object() {
         for &key in PASSTHROUGH_KEYS {
@@ -90,6 +115,11 @@ pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
             if let Some(value) = params.get(key) {
                 body[key] = value.clone();
             }
+        }
+    }
+    if !is_instrumental {
+        if let Some(lyrics) = request.music.as_ref().and_then(|m| m.lyrics.as_ref()) {
+            body["lyrics"] = json!(lyrics);
         }
     }
     body
@@ -248,11 +278,7 @@ impl GenTask for MurekaMusicGen {
     }
 
     async fn submit(&self, req: GenRequest) -> Result<GenHandle, ProtocolError> {
-        let is_instrumental = req
-            .params
-            .get("is_instrumental")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        let is_instrumental = is_instrumental(&req);
         let endpoint = if is_instrumental {
             "/v1/instrumental/generate"
         } else {
@@ -378,12 +404,74 @@ impl GenTask for MurekaMusicGen {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orchest_protocol::MusicParams;
 
     fn request(prompt: &str, params: Value) -> GenRequest {
         GenRequest {
             prompt: prompt.to_string(),
             params,
+            music: None,
         }
+    }
+
+    fn request_with_music(prompt: &str, params: Value, music: MusicParams) -> GenRequest {
+        GenRequest {
+            prompt: prompt.to_string(),
+            params,
+            music: Some(music),
+        }
+    }
+
+    #[test]
+    fn submit_body_typed_lyrics_wins_over_raw() {
+        let body = build_submit_body(
+            "auto",
+            &request_with_music(
+                "r&b, slow, male vocal",
+                json!({"lyrics": "raw lyrics"}),
+                MusicParams {
+                    lyrics: Some("typed lyrics".to_string()),
+                    ..MusicParams::default()
+                },
+            ),
+        );
+        assert_eq!(body["lyrics"], "typed lyrics");
+    }
+
+    #[test]
+    fn submit_body_typed_instrumental_omits_lyrics() {
+        let body = build_submit_body(
+            "auto",
+            &request_with_music(
+                "orchestral",
+                json!({"lyrics": "should be dropped"}),
+                MusicParams {
+                    lyrics: Some("typed lyrics".to_string()),
+                    instrumental: Some(true),
+                    ..MusicParams::default()
+                },
+            ),
+        );
+        assert!(body.get("lyrics").is_none());
+    }
+
+    #[test]
+    fn is_instrumental_reads_typed_first() {
+        let req = request_with_music(
+            "p",
+            json!({"is_instrumental": false}),
+            MusicParams {
+                instrumental: Some(true),
+                ..MusicParams::default()
+            },
+        );
+        assert!(is_instrumental(&req));
+
+        // Raw key remains the fallback when the typed field is unset.
+        let req = request("p", json!({"is_instrumental": true}));
+        assert!(is_instrumental(&req));
+        let req = request("p", json!({}));
+        assert!(!is_instrumental(&req));
     }
 
     #[test]

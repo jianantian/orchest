@@ -32,7 +32,7 @@ pub mod ws;
 pub mod oss;
 
 pub use auth::{BearerAuth, HeaderAuth, OpenSpeechHeaders};
-pub use gen::SyncGenCache;
+pub use gen::{warn_unconsumed_params, SyncGenCache};
 pub use http::{build_client, shared_client, HttpClientConfig};
 pub use pricing::{Cost, Meter, Pricing};
 pub use retry::RetryPolicy;

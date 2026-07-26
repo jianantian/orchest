@@ -19,6 +19,7 @@ use orchest_protocol::{
     GenStatus, GenTask, Modality, ProtocolError, TimedSegment, TimedText,
 };
 use orchest_provider_core::registry::ProviderConfig;
+use orchest_provider_core::warn_unconsumed_params;
 use serde_json::{json, Value};
 
 /// Suno music gen-task configuration.
@@ -49,7 +50,9 @@ fn status_err(code: u16, body: String) -> ProtocolError {
 /// Keys from [`GenRequest::params`] forwarded verbatim onto the Suno submit
 /// body. `model`/`prompt`/`lyrics`/`instrumental` are handled explicitly (they
 /// map onto Suno's `customMode`/`prompt`/`instrumental` fields) and so are
-/// excluded from passthrough.
+/// excluded from passthrough. `personaId`/`personaModel` have no typed
+/// [`MusicParams`](orchest_protocol::MusicParams) counterpart — raw `params`
+/// remains their only entry point.
 const PASSTHROUGH_PARAMS: &[&str] = &[
     "style",
     "title",
@@ -62,19 +65,39 @@ const PASSTHROUGH_PARAMS: &[&str] = &[
     "personaModel",
 ];
 
+/// Raw-params keys the dialect consumes explicitly: `lyrics` switches to
+/// custom mode, `instrumental` toggles vocal-less generation, `callBackUrl`
+/// overrides the dummy polling callback. Together with [`PASSTHROUGH_PARAMS`]
+/// this is the full consumed set for the unconsumed-key warning — every
+/// typed-consumed key (`style`/`title`/`negativeTags`/…) already appears in
+/// the passthrough whitelist under its wire name.
+const EXPLICIT_PARAMS: &[&str] = &["lyrics", "instrumental", "callBackUrl"];
+
 /// Per-request cap on the best-effort `get-timestamped-lyrics` call during
 /// `fetch` — much tighter than the shared client's 300s default.
 const TIMED_TEXT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Build the `/api/v1/generate` body. Defaults to non-custom mode
 /// (`customMode: false`, `instrumental: false`) with `prompt` as the creative
-/// description. When `params.lyrics` is present the dialect switches to custom
-/// mode: `customMode` becomes `true` and `prompt` is replaced by the lyrics
-/// (Suno's custom-mode prompt field carries the lyrics). `params.instrumental`
-/// toggles instrumental-only generation. The remaining Suno knobs (`style`,
-/// `title`, `negativeTags`, `vocalGender`, `styleWeight`, `weirdnessConstraint`,
-/// `audioWeight`, `personaId`, `personaModel`) pass through when present.
+/// description. When lyrics are present the dialect switches to custom mode:
+/// `customMode` becomes `true` and `prompt` is replaced by the lyrics (Suno's
+/// custom-mode prompt field carries the lyrics). `instrumental` toggles
+/// instrumental-only generation.
+///
+/// Typed [`MusicParams`](orchest_protocol::MusicParams) fields take
+/// precedence; raw `params` is the backward-compatible fallback for
+/// `lyrics`/`instrumental` and the passthrough knobs (`style`, `title`,
+/// `negativeTags`, `vocalGender`, `styleWeight`, `weirdnessConstraint`,
+/// `audioWeight`), and remains the only entry for the dialect-specific extras
+/// (`personaId`, `personaModel`, `callBackUrl`). Any other raw key warns via
+/// [`warn_unconsumed_params`].
 pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
+    warn_unconsumed_params(
+        "suno",
+        &[PASSTHROUGH_PARAMS, EXPLICIT_PARAMS].concat(),
+        &request.params,
+    );
+
     let mut body = json!({
         "model": model,
         "customMode": false,
@@ -83,22 +106,32 @@ pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
         "prompt": request.prompt,
     });
 
-    if let Some(params) = request.params.as_object() {
-        // Custom mode: lyrics present -> customMode=true, prompt becomes the
-        // lyrics (Suno's custom-mode prompt field carries the lyrics).
-        if let Some(lyrics) = params.get("lyrics").and_then(Value::as_str) {
-            if !lyrics.is_empty() {
-                body["customMode"] = json!(true);
-                body["prompt"] = json!(lyrics);
-            }
-        }
+    let typed = request.music.as_ref();
+    let params = request.params.as_object();
 
-        if let Some(instrumental) = params.get("instrumental") {
-            if instrumental.as_bool().unwrap_or(false) {
-                body["instrumental"] = json!(true);
-            }
-        }
+    // Custom mode: lyrics present -> customMode=true, prompt becomes the
+    // lyrics. Typed `music.lyrics` wins; raw `params.lyrics` is the
+    // backward-compat fallback. Empty/non-string lyrics never trigger
+    // custom mode.
+    let lyrics = typed
+        .and_then(|m| m.lyrics.as_deref())
+        .or_else(|| params.and_then(|p| p.get("lyrics")).and_then(Value::as_str));
+    if let Some(lyrics) = lyrics.filter(|l| !l.is_empty()) {
+        body["customMode"] = json!(true);
+        body["prompt"] = json!(lyrics);
+    }
 
+    // Instrumental toggle: typed first, raw fallback.
+    let instrumental = typed.and_then(|m| m.instrumental).or_else(|| {
+        params
+            .and_then(|p| p.get("instrumental"))
+            .and_then(Value::as_bool)
+    });
+    if instrumental == Some(true) {
+        body["instrumental"] = json!(true);
+    }
+
+    if let Some(params) = params {
         // Override callBackUrl from params if provided, so callers can set a
         // real webhook endpoint. Keep the default dummy URL for polling mode.
         if let Some(cb) = params.get("callBackUrl").and_then(Value::as_str) {
@@ -110,6 +143,19 @@ pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
         for key in PASSTHROUGH_PARAMS {
             if let Some(value) = params.get(*key) {
                 body[*key] = value.clone();
+            }
+        }
+    }
+
+    // Typed knobs override the raw passthrough. Serializing MusicParams
+    // yields only the set fields, already in Suno's camelCase wire spelling;
+    // `lyrics`/`instrumental` went through the explicit handling above.
+    if let Some(typed) = typed {
+        if let Ok(Value::Object(knobs)) = serde_json::to_value(typed) {
+            for (key, value) in knobs {
+                if key != "lyrics" && key != "instrumental" {
+                    body[key] = value;
+                }
             }
         }
     }
@@ -544,11 +590,21 @@ impl GenTask for SunoMusicGen {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orchest_protocol::{MusicParams, VocalGender};
 
     fn request(prompt: &str, params: Value) -> GenRequest {
         GenRequest {
             prompt: prompt.to_string(),
             params,
+            music: None,
+        }
+    }
+
+    fn request_with_music(prompt: &str, params: Value, music: MusicParams) -> GenRequest {
+        GenRequest {
+            prompt: prompt.to_string(),
+            params,
+            music: Some(music),
         }
     }
 
@@ -704,6 +760,204 @@ mod tests {
             &request("a calm piano track", json!({ "instrumental": false })),
         );
         assert_eq!(body["instrumental"], false);
+    }
+
+    #[test]
+    fn submit_body_typed_music_fields_produce_full_knob_set() {
+        // Every typed knob lands on the wire under Suno's camelCase spelling,
+        // with no raw params involved at all.
+        let body = build_submit_body(
+            "V5_5",
+            &request_with_music(
+                "ignored description",
+                json!({}),
+                MusicParams {
+                    lyrics: Some("typed lyrics".to_string()),
+                    instrumental: Some(true),
+                    style: Some("lofi".to_string()),
+                    title: Some("typed title".to_string()),
+                    negative_tags: Some("no choir".to_string()),
+                    vocal_gender: Some(VocalGender::Female),
+                    style_weight: Some(0.5),
+                    weirdness_constraint: Some(0.2),
+                    audio_weight: Some(0.8),
+                },
+            ),
+        );
+        assert_eq!(body["customMode"], true);
+        assert_eq!(body["prompt"], "typed lyrics");
+        assert_eq!(body["instrumental"], true);
+        assert_eq!(body["style"], "lofi");
+        assert_eq!(body["title"], "typed title");
+        assert_eq!(body["negativeTags"], "no choir");
+        assert_eq!(body["vocalGender"], "f");
+        assert_eq!(body["styleWeight"], 0.5);
+        assert_eq!(body["weirdnessConstraint"], 0.2);
+        assert_eq!(body["audioWeight"], 0.8);
+    }
+
+    #[test]
+    fn submit_body_typed_fields_win_over_raw_params() {
+        let body = build_submit_body(
+            "V5_5",
+            &request_with_music(
+                "a calm piano track",
+                json!({
+                    "lyrics": "raw lyrics",
+                    "style": "raw style",
+                    "negativeTags": "raw tags",
+                    "vocalGender": "m",
+                }),
+                MusicParams {
+                    lyrics: Some("typed lyrics".to_string()),
+                    style: Some("typed style".to_string()),
+                    negative_tags: Some("typed tags".to_string()),
+                    vocal_gender: Some(VocalGender::Female),
+                    ..MusicParams::default()
+                },
+            ),
+        );
+        assert_eq!(body["prompt"], "typed lyrics");
+        assert_eq!(body["style"], "typed style");
+        assert_eq!(body["negativeTags"], "typed tags");
+        assert_eq!(body["vocalGender"], "f");
+    }
+
+    #[test]
+    fn submit_body_typed_instrumental_wins_over_raw_params() {
+        // Typed `instrumental: false` is an explicit choice, not "unset": it
+        // beats a raw `instrumental: true`.
+        let body = build_submit_body(
+            "V5_5",
+            &request_with_music(
+                "a calm piano track",
+                json!({ "instrumental": true }),
+                MusicParams {
+                    instrumental: Some(false),
+                    ..MusicParams::default()
+                },
+            ),
+        );
+        assert_eq!(body["instrumental"], false);
+
+        let body = build_submit_body(
+            "V5_5",
+            &request_with_music(
+                "a calm piano track",
+                json!({}),
+                MusicParams {
+                    instrumental: Some(true),
+                    ..MusicParams::default()
+                },
+            ),
+        );
+        assert_eq!(body["instrumental"], true);
+    }
+
+    #[test]
+    fn submit_body_typed_and_raw_params_combine() {
+        // Raw params keeps the dialect-specific extras (personaId /
+        // personaModel / callBackUrl) and the backward-compat knobs the typed
+        // request leaves unset; typed fields fill in the rest.
+        let body = build_submit_body(
+            "V5_5",
+            &request_with_music(
+                "a calm piano track",
+                json!({
+                    "personaId": "p-1",
+                    "personaModel": "style_persona",
+                    "callBackUrl": "https://real.example/hook",
+                    "styleWeight": 0.9,
+                }),
+                MusicParams {
+                    style: Some("typed style".to_string()),
+                    ..MusicParams::default()
+                },
+            ),
+        );
+        assert_eq!(body["personaId"], "p-1");
+        assert_eq!(body["personaModel"], "style_persona");
+        assert_eq!(body["callBackUrl"], "https://real.example/hook");
+        assert_eq!(body["style"], "typed style");
+        assert_eq!(body["styleWeight"], 0.9);
+    }
+
+    #[test]
+    fn submit_body_raw_params_still_work_when_typed_absent() {
+        // Backward compatibility: a caller that sets only raw params gets the
+        // exact pre-typing body.
+        let body = build_submit_body(
+            "V5_5",
+            &request(
+                "a calm piano track",
+                json!({ "lyrics": "raw lyrics", "vocalGender": "m" }),
+            ),
+        );
+        assert_eq!(body["customMode"], true);
+        assert_eq!(body["prompt"], "raw lyrics");
+        assert_eq!(body["vocalGender"], "m");
+    }
+
+    // -------------------------------------------------------------------
+    // unconsumed-key warning wiring
+    // -------------------------------------------------------------------
+
+    #[derive(Clone, Default)]
+    struct SharedBuffer(Arc<StdMutex<Vec<u8>>>);
+
+    impl std::io::Write for SharedBuffer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl tracing_subscriber::fmt::MakeWriter<'_> for SharedBuffer {
+        type Writer = SharedBuffer;
+
+        fn make_writer(&self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    #[test]
+    fn submit_body_warns_on_unconsumed_params_key() {
+        let buffer = SharedBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(buffer.clone())
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            build_submit_body(
+                "V5_5",
+                &request("a song", json!({ "genre": "indie folk", "style": "lofi" })),
+            );
+        });
+        let logs = String::from_utf8(
+            buffer
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone(),
+        )
+        .expect("tracing output is utf8");
+        assert!(logs.contains("WARN"), "expected a WARN event: {logs}");
+        assert!(
+            logs.contains("genre"),
+            "unknown key named in warning: {logs}"
+        );
+        assert!(
+            !logs.contains("style"),
+            "consumed key must not warn: {logs}"
+        );
     }
 
     #[test]

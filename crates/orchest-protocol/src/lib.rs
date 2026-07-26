@@ -26,9 +26,10 @@ pub use adapter::ChatModel as ModelAdapter;
 
 // --- other capability traits + their IO shapes ---
 pub use capability::{
-    Asr, GenAsset, GenHandle, GenRequest, GenResult, GenStatus, GenTask, Language, RealtimeHandle,
-    RealtimeSession, SessionInput, StreamingTranscribeRequest, SynthesizeRequest, SynthesizeResult,
-    TimedSegment, TimedText, TranscribeRequest, TranscribeResult, Tts, VoiceManager,
+    Asr, GenAsset, GenHandle, GenRequest, GenResult, GenStatus, GenTask, Language, MusicParams,
+    RealtimeHandle, RealtimeSession, SessionInput, StreamingTranscribeRequest, SynthesizeRequest,
+    SynthesizeResult, TimedSegment, TimedText, TranscribeRequest, TranscribeResult, Tts,
+    VocalGender, VoiceManager,
 };
 
 // --- descriptor ---
