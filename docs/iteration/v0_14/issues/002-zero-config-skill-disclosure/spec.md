@@ -16,12 +16,12 @@ bundled_tools 现有注册流程不变;披露与其互补。
 
 ## 验收标准
 
-- [ ] **易用性硬指标**: 全新使用方只放 SKILL.md 目录 + 设 `skills_dir`——模型首次调用即看到可用 skill 列表(name+description),调用 `load_skill` 得正文;全程无需手写路径、无需注册工具、无 CWD 依赖
-- [ ] 注入格式稳定(便于快照/测试断言);`skill_disclosure` 关闭时行为与现状一致(无任何注入)
-- [ ] `load_skill` 的路径逃逸防护(相对路径 `..`、绝对路径)有测试;未知名称返回结构化错误
-- [ ] `SkillContentRead` 遥测覆盖 load_skill 路径(原 read_file 路径不回归)
-- [ ] 测试:注入块内容、load_skill 正文/清单/资源加载、逃逸、未知名、关闭开关
-- [ ] 五项检查全绿
+- [x] **易用性硬指标**: 全新使用方只放 SKILL.md 目录 + 设 `skills_dir`——模型首次调用即看到可用 skill 列表(name+description),调用 `load_skill` 得正文;全程无需手写路径、无需注册工具、无 CWD 依赖
+- [x] 注入格式稳定(便于快照/测试断言);`skill_disclosure` 关闭时行为与现状一致(无任何注入)
+- [x] `load_skill` 的路径逃逸防护(相对路径 `..`、绝对路径)有测试;未知名称返回结构化错误
+- [x] `SkillContentRead` 遥测覆盖 load_skill 路径(原 read_file 路径不回归)
+- [x] 测试:注入块内容、load_skill 正文/清单/资源加载、逃逸、未知名、关闭开关
+- [x] 五项检查全绿
 
 ## 备注
 

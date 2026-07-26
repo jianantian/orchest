@@ -14,12 +14,12 @@
 
 ## 验收标准
 
-- [ ] 一个坏 skill + 一个正常 skill 并存:run 正常启动,正常 skill 可用,坏 skill 有含路径与原因的警告
-- [ ] 严格模式开启时:任一失败即 RunFailed(原行为)
-- [ ] 小写 skill.md 的 SkillContentRead 遥测与大写一致(测试)
-- [ ] 两个同名 skill:产生重名警告,行为确定(文档写明)
-- [ ] 脚本 stderr 进 tracing(不进宿主 stderr)
-- [ ] 五项检查全绿
+- [x] 一个坏 skill + 一个正常 skill 并存:run 正常启动,正常 skill 可用,坏 skill 有含路径与原因的警告
+- [x] 严格模式开启时:任一失败即 RunFailed(原行为)
+- [x] 小写 skill.md 的 SkillContentRead 遥测与大写一致(测试)
+- [x] 两个同名 skill:产生重名警告,行为确定(文档写明)
+- [x] 脚本 stderr 进 tracing(不进宿主 stderr)
+- [x] 五项检查全绿
 
 ## 备注
 

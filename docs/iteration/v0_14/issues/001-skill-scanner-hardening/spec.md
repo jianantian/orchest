@@ -13,12 +13,12 @@
 
 ## 验收标准
 
-- [ ] 坏 frontmatter / 坏 YAML / 不可读文件:产生含路径与原因的结构化警告,其余 skill 正常加载
-- [ ] description 含 `---` 的合法 skill 解析正确(不再截断)
-- [ ] 开头无 `---` 的文件按无 frontmatter 处理(警告)
-- [ ] 事件变体(若新增)进 Py/Node wire 透传(serde 兼容)
-- [ ] 测试:警告内容、frontmatter 边界(含 `---` 的 description、CRLF、空 frontmatter)
-- [ ] 五项检查全绿
+- [x] 坏 frontmatter / 坏 YAML / 不可读文件:产生含路径与原因的结构化警告,其余 skill 正常加载
+- [x] description 含 `---` 的合法 skill 解析正确(不再截断)
+- [x] 开头无 `---` 的文件按无 frontmatter 处理(警告)
+- [x] 事件变体(若新增)进 Py/Node wire 透传(serde 兼容)
+- [x] 测试:警告内容、frontmatter 边界(含 `---` 的 description、CRLF、空 frontmatter)
+- [x] 五项检查全绿
 
 ## 备注
 

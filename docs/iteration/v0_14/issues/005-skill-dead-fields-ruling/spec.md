@@ -16,10 +16,10 @@ SDK-D5:`SkillManifest.allowed_tools` 除测试外无消费方;`capabilities` 只
 
 ## 验收标准
 
-- [ ] 每个字段/变体:要么有行为+测试,要么 rustdoc + design-principles.md 显式标注"声明预留,不 enforce"(语义边界写清)
-- [ ] `SkillDependencyError`:发射(env 构建失败路径+测试)或移除(含 serde 兼容说明)
-- [ ] `docs/polaris/design-principles.md` 的 capabilities 表述与裁定一致
-- [ ] 五项检查全绿
+- [x] 每个字段/变体:要么有行为+测试,要么 rustdoc + design-principles.md 显式标注"声明预留,不 enforce"(语义边界写清)
+- [x] `SkillDependencyError`:发射(env 构建失败路径+测试)或移除(含 serde 兼容说明)
+- [x] `docs/polaris/design-principles.md` 的 capabilities 表述与裁定一致
+- [x] 五项检查全绿
 
 ## 备注
 
