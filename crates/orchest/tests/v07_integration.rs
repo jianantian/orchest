@@ -578,7 +578,7 @@ async fn agent_as_tool_emits_sub_agent_events() {
     );
     assert!(
         events.iter().any(|e| match e {
-            RuntimeEvent::RunCompleted { output } => output.to_string().contains("summary"),
+            RuntimeEvent::RunCompleted { output, .. } => output.to_string().contains("summary"),
             _ => false,
         }),
         "parent output must include the child agent's summary result"

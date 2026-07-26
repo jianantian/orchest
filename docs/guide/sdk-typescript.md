@@ -27,9 +27,9 @@ const agent = new Agent({
 const events = agent.runSync("What's the weather in Tokyo?");
 ```
 
-构造参数：`model`（`provider/model`）、`systemPrompt`、`apiKeyEnv`（或显式 `apiKey`、自建端点 `apiUrl`）、`maxTokens`、`budget`、`requestOptions`。
+构造参数：`model`（`provider/model`）、`systemPrompt`、`apiKeyEnv`（或显式 `apiKey`、自建端点 `apiUrl`）、`maxTokens`、`budget`、`requestOptions`、`retry`（`true` 开启推荐模型重试：429/5xx/timeout/流中断，3 次指数退避；默认不重试）。
 
-`runSync(input)` 返回 `RuntimeEvent[]`。
+`runSync(input, messages?)` 返回 `RuntimeEvent[]`；`messages` 是多轮历史（session 快照同款 serde 形状），经 `AgentRun::start_with_messages` 带入；`runStream(input, onEvent, messages?)` 同理。事件 `run_completed.stop_reason` 标记完成原因：`"MaxTokens"` 表示输出被截断，消费方应续写/重试/报错，而非直接使用。
 
 ## 3. 注册 tool
 

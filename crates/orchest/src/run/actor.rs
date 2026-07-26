@@ -154,6 +154,7 @@ impl Actor for WorkerActor {
             resume,
             initial_messages,
         } = args;
+        backfill_context_window_size(&mut config, model.as_ref());
         let event_subs = vec![event_tx];
 
         emit(&event_subs, RuntimeEvent::RunStarted { run_id }).await;
@@ -712,6 +713,26 @@ async fn call_model_phase(
     }
 }
 
+/// Backfills `ModelSpec.context_window_size` from the model's catalog-reported
+/// capabilities (v0.13 Issue 003, SDK-C3).
+///
+/// Adapters built through the provider registry carry the catalog's
+/// `context_window` in `capabilities().context_window_size`, but the runtime
+/// `ModelSpec` used to default it to `None` — which silently disabled both the
+/// pre-call context-window validation ([`validate_context_window`]) and the
+/// compaction threshold. Applied once at run start, the resolution rule is:
+///
+/// - an explicit `context_window_size` in the config always wins — a
+///   caller-set value is never overwritten;
+/// - otherwise the catalog value reported by the model is copied in;
+/// - when the model reports no context window, the field stays `None` and
+///   validation/compaction keep their previous disabled behavior.
+pub(crate) fn backfill_context_window_size(config: &mut AgentConfig, model: &dyn ModelAdapter) {
+    if config.model.spec.context_window_size.is_none() {
+        config.model.spec.context_window_size = model.capabilities().context_window_size;
+    }
+}
+
 async fn validate_context_window(
     state: &mut AgentRunState,
     subs: &[mpsc::Sender<RuntimeEvent>],
@@ -966,7 +987,14 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 primary(&subs),
             )
             .await;
-            emit(&subs, RuntimeEvent::RunCompleted { output }).await;
+            emit(
+                &subs,
+                RuntimeEvent::RunCompleted {
+                    output,
+                    stop_reason: StopReason::EndTurn,
+                },
+            )
+            .await;
             return false;
         }
         StopReason::MaxTokens if tool_uses.is_empty() => {
@@ -978,7 +1006,14 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 primary(&subs),
             )
             .await;
-            emit(&subs, RuntimeEvent::RunCompleted { output }).await;
+            emit(
+                &subs,
+                RuntimeEvent::RunCompleted {
+                    output,
+                    stop_reason: StopReason::MaxTokens,
+                },
+            )
+            .await;
             return false;
         }
         // Abnormal stop (e.g. ContextWindowExceeded) with no tool calls:

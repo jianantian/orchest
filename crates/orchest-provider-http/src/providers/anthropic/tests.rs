@@ -373,6 +373,16 @@ fn adaptive_path_leaves_max_tokens_alone() {
     assert!(adjustments.iter().all(|a| a.option != "max_tokens"));
 }
 
+#[test]
+fn capabilities_read_context_window_from_profile() {
+    // The profile's context_window flows into adapter capabilities — the
+    // source the runtime backfills ModelSpec.context_window_size from (#221).
+    let sonnet = adapter_with("claude-sonnet-4-20250514", 4096);
+    assert_eq!(sonnet.capabilities().context_window_size, Some(1_000_000));
+    let haiku = adapter_with("claude-haiku-4-5", 4096);
+    assert_eq!(haiku.capabilities().context_window_size, Some(200_000));
+}
+
 /// Recursive wire-level assertion helper: true when `cache_control` appears
 /// anywhere under `v`.
 fn contains_cache_control(v: &serde_json::Value) -> bool {
@@ -396,6 +406,83 @@ fn system_and_user_messages() -> Vec<Message> {
             content: vec![ContentBlock::Text("hi".into())],
         },
     ]
+}
+
+/// The message sequence a multi-turn `AgentRun::start_with_messages` run
+/// assembles — [System(prompt)] + history (incl. a ToolUse/ToolResult pair)
+/// + [User(new input)] — must lower to a legal Anthropic Messages request:
+/// non-empty top-level `system`, role boundaries preserved, tool pairing
+/// intact.
+#[test]
+fn multi_turn_history_with_tool_blocks_is_wire_legal() {
+    let adapter = adapter_with("claude-test", 128);
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Off,
+        cache_policy: CachePolicy::None,
+        ..Default::default()
+    };
+    let messages = vec![
+        Message {
+            role: Role::System,
+            content: vec![ContentBlock::Text("you are a lyricist".into())],
+        },
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text("draft a chorus".into())],
+        },
+        Message {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Text("checking the theme".into()),
+                ContentBlock::ToolUse {
+                    id: "toolu_1".into(),
+                    name: "theme_lookup".into(),
+                    input: serde_json::json!({"song": "rainy night"}),
+                },
+            ],
+        },
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: "toolu_1".into(),
+                content: serde_json::json!("rain"),
+            }],
+        },
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text("now the verse".into())],
+        },
+    ];
+
+    let (body, _) = adapter.request_body_for_test(&messages, &[], &opts);
+
+    assert_eq!(
+        body["system"],
+        serde_json::json!("you are a lyricist"),
+        "system prompt reaches a non-empty top-level system field"
+    );
+    let wire_messages = body["messages"].as_array().expect("messages array");
+    let roles: Vec<&str> = wire_messages
+        .iter()
+        .map(|m| m["role"].as_str().expect("role is a string"))
+        .collect();
+    assert_eq!(
+        roles,
+        vec!["user", "assistant", "user", "user"],
+        "history role boundaries preserved; no inline system entries"
+    );
+    let assistant_blocks = wire_messages[1]["content"]
+        .as_array()
+        .expect("assistant content blocks");
+    assert!(assistant_blocks
+        .iter()
+        .any(|b| b["type"] == "tool_use" && b["id"] == "toolu_1"));
+    let result_blocks = wire_messages[2]["content"]
+        .as_array()
+        .expect("tool result content blocks");
+    assert!(result_blocks
+        .iter()
+        .any(|b| b["type"] == "tool_result" && b["tool_use_id"] == "toolu_1"));
 }
 
 #[test]

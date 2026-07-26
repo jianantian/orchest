@@ -193,7 +193,7 @@ async fn main() {
                 }
                 handle.respond_approval(handle.run_id, true).await.unwrap();
             }
-            RuntimeEvent::RunCompleted { output } => println!("[run] completed: {output}"),
+            RuntimeEvent::RunCompleted { output, .. } => println!("[run] completed: {output}"),
             RuntimeEvent::RunFailed { error } => println!("[run] failed: {error}"),
             _ => {}
         }

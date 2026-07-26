@@ -128,6 +128,12 @@ music-gift 的 guided pipeline(引导收集 → chat 写词 → review 审核 �
 **建议**: 两个测试改用 `ENV_LOCK` 串行化(与 tests.rs 其他 env 测试一致)。
 **验收**: 高频复跑不再出现 env 相关 flake。
 
+### C9. `js/index.d.ts` `runSync` 返回类型失真(P2,存量)
+
+**现状**(v0.13 评审附带发现,base 上即存在): `js/index.d.ts` 声明 `runSync(...)` 返回 `RuntimeEvent[]`,但 napi 侧是 async fn、`js/index.js` 直接透传 addon,运行时返回的是 Promise。
+**建议**: 核对 napi 真实行为,声明改为 `Promise<RuntimeEvent[]>`(或改实现真同步);顺带检查相邻声明是否同类失真。
+**验收**: 类型声明与运行时行为一致;sdk-typescript 指南不误导。
+
 ---
 
 ## D · Skill 机制(skill 化推广的前提)

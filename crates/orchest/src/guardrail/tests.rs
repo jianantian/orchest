@@ -294,7 +294,7 @@ async fn output_guardrail_replace_changes_response() {
     handle.wait().await;
     assert!(events.iter().any(|e| matches!(
         e,
-        RuntimeEvent::RunCompleted { output } if output.as_str() == Some("[redacted]")
+        RuntimeEvent::RunCompleted { output, .. } if output.as_str() == Some("[redacted]")
     )));
 }
 

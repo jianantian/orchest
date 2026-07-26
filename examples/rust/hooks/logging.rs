@@ -118,7 +118,7 @@ async fn main() {
 
     while let Some(event) = rx.recv().await {
         match event {
-            RuntimeEvent::RunCompleted { output } => {
+            RuntimeEvent::RunCompleted { output, .. } => {
                 println!("[run] completed: {output}");
             }
             RuntimeEvent::RunFailed { error } => {

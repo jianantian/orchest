@@ -21,8 +21,33 @@ pub enum BackoffStrategy {
     },
 }
 
-impl Default for RetryPolicy {
-    fn default() -> Self {
+impl RetryPolicy {
+    /// Recommended one-line retry policy for interactive agents.
+    ///
+    /// Covers the transient error classes recognized by the runtime:
+    ///
+    /// - **429 rate limits** (honours the provider's `Retry-After` when present)
+    /// - **5xx server errors**
+    /// - **timeouts** (`ModelError::code == "timeout"`)
+    /// - **network-layer stream interrupts** (`code == "stream_error"` or
+    ///   `"stream_interrupted"` — an SSE stream that dies mid-response or ends
+    ///   without its completion signal). Retrying these is safe: the retry
+    ///   re-issues a single `ModelAdapter::complete()` call, and partial stream
+    ///   events forwarded before the failure are never committed to run state.
+    ///
+    /// Protocol-level errors — malformed SSE payloads (`invalid_json`),
+    /// undecodable tool arguments (`invalid_tool_arguments`) — indicate a
+    /// provider bug and are never retried, under this or any other policy.
+    ///
+    /// Defaults: 3 retries (4 attempts total), exponential backoff starting at
+    /// 1 s, capped at 30 s, with ±25 % jitter.
+    ///
+    /// ```
+    /// use orchest::run::RetryPolicy;
+    /// let policy = RetryPolicy::recommended();
+    /// assert_eq!(policy.max_retries, 3);
+    /// ```
+    pub fn recommended() -> Self {
         Self {
             max_retries: 3,
             backoff: BackoffStrategy::Exponential {
@@ -34,11 +59,21 @@ impl Default for RetryPolicy {
     }
 }
 
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self::recommended()
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub(crate) enum RetryClass {
     RateLimit,
     ServerError,
     Timeout,
+    /// Network-layer stream interrupt: SSE chunk read failure or a stream that
+    /// ended without its completion signal. Distinct from protocol-level parse
+    /// errors, which stay `NoRetry`.
+    StreamInterrupted,
     NoRetry,
 }
 
@@ -46,13 +81,11 @@ pub(crate) fn classify(error: &ModelError) -> RetryClass {
     match error.status {
         Some(429) => RetryClass::RateLimit,
         Some(s) if s >= 500 => RetryClass::ServerError,
-        _ => {
-            if error.code.as_deref() == Some("timeout") {
-                RetryClass::Timeout
-            } else {
-                RetryClass::NoRetry
-            }
-        }
+        _ => match error.code.as_deref() {
+            Some("timeout") => RetryClass::Timeout,
+            Some("stream_error" | "stream_interrupted") => RetryClass::StreamInterrupted,
+            _ => RetryClass::NoRetry,
+        },
     }
 }
 
@@ -107,7 +140,10 @@ pub(crate) fn should_retry(class: &RetryClass, attempt: u32, policy: &Option<Ret
     }
     matches!(
         class,
-        RetryClass::RateLimit | RetryClass::ServerError | RetryClass::Timeout
+        RetryClass::RateLimit
+            | RetryClass::ServerError
+            | RetryClass::Timeout
+            | RetryClass::StreamInterrupted
     )
 }
 
@@ -130,6 +166,17 @@ mod tests {
         ModelError {
             message: "err".into(),
             code: None,
+            provider: None,
+            status: None,
+            retry_after_secs: None,
+            upstream: None,
+        }
+    }
+
+    fn err_with_code(code: &str) -> ModelError {
+        ModelError {
+            message: "err".into(),
+            code: Some(code.into()),
             provider: None,
             status: None,
             retry_after_secs: None,
@@ -165,6 +212,72 @@ mod tests {
     #[test]
     fn classify_unknown_no_retry() {
         assert_eq!(classify(&err_no_status()), RetryClass::NoRetry);
+    }
+
+    #[test]
+    fn classify_timeout_code_is_timeout() {
+        assert_eq!(classify(&err_with_code("timeout")), RetryClass::Timeout);
+    }
+
+    #[test]
+    fn classify_stream_error_is_stream_interrupted() {
+        assert_eq!(
+            classify(&err_with_code("stream_error")),
+            RetryClass::StreamInterrupted
+        );
+    }
+
+    #[test]
+    fn classify_stream_interrupted_is_stream_interrupted() {
+        assert_eq!(
+            classify(&err_with_code("stream_interrupted")),
+            RetryClass::StreamInterrupted
+        );
+    }
+
+    #[test]
+    fn classify_protocol_errors_no_retry() {
+        // Malformed SSE payloads / tool arguments are provider bugs, not
+        // transient network failures — retrying would replay the same bug.
+        assert_eq!(
+            classify(&err_with_code("invalid_json")),
+            RetryClass::NoRetry
+        );
+        assert_eq!(
+            classify(&err_with_code("invalid_tool_arguments")),
+            RetryClass::NoRetry
+        );
+    }
+
+    #[test]
+    fn should_retry_returns_true_for_stream_interrupted_under_limit() {
+        let policy = RetryPolicy {
+            max_retries: 3,
+            backoff: BackoffStrategy::Fixed(Duration::from_millis(0)),
+        };
+        assert!(should_retry(
+            &RetryClass::StreamInterrupted,
+            0,
+            &Some(policy)
+        ));
+    }
+
+    #[test]
+    fn recommended_covers_all_transient_classes() {
+        let policy = Some(RetryPolicy::recommended());
+        for class in [
+            RetryClass::RateLimit,
+            RetryClass::ServerError,
+            RetryClass::Timeout,
+            RetryClass::StreamInterrupted,
+        ] {
+            assert!(
+                should_retry(&class, 0, &policy),
+                "recommended policy should retry {class:?}"
+            );
+        }
+        assert!(!should_retry(&RetryClass::NoRetry, 0, &policy));
+        assert_eq!(RetryPolicy::default().max_retries, 3);
     }
 
     #[test]

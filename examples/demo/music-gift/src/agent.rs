@@ -237,7 +237,7 @@ pub async fn run_chat_agent(
                     let _ = tx.send(SseEvent::Delta { text: text.clone() }).await;
                 }
             }
-            RuntimeEvent::RunCompleted { output } => {
+            RuntimeEvent::RunCompleted { output, .. } => {
                 if full_text.is_empty() {
                     if let Some(text) = output.as_str() {
                         full_text = text.to_string();
@@ -319,7 +319,7 @@ pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> Str
             } => {
                 reviewed.push_str(&text);
             }
-            RuntimeEvent::RunCompleted { output } => {
+            RuntimeEvent::RunCompleted { output, .. } => {
                 if reviewed.is_empty() {
                     if let Some(text) = output.as_str() {
                         reviewed = text.to_string();

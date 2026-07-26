@@ -12,6 +12,12 @@ export interface AgentOptions {
   budget?: BudgetOptions;
   /** Run-level approval policy: "perTool" | "none" | "all". */
   approvalMode?: string;
+  /**
+   * Set to `true` to enable the recommended model retry policy
+   * (429 / 5xx / timeout / stream-interrupt, 3 retries, exponential
+   * backoff 1s→30s with jitter). Default: no retries.
+   */
+  retry?: boolean;
 }
 
 export interface RequestOptions {
@@ -94,6 +100,24 @@ export type StreamEvent =
   | { Done: { usage: TokenUsage } }
   | unknown;
 
+/**
+ * Model stop reason for the completing turn, in the core serde JSON shape.
+ * "EndTurn" means the output is complete; "MaxTokens" means it is truncated —
+ * continue generation, retry with a larger token budget, or fail; do not
+ * persist truncated output as-is.
+ */
+export type StopReason =
+  | "EndTurn"
+  | "ToolUse"
+  | "MaxTokens"
+  | "StopSequence"
+  | "ContentFilter"
+  | "Refusal"
+  | "ContextWindowExceeded"
+  | "Pause"
+  | "Interrupted"
+  | { Other: string };
+
 export type RuntimeEvent =
   | { type: "run_started"; run_id: string; run_depth: number }
   | { type: "model_call_started"; step: number; run_depth: number }
@@ -122,8 +146,20 @@ export type RuntimeEvent =
   | { type: "run_restarted"; attempt: number; run_depth: number }
   | { type: "run_aborted"; reason: string | null; run_depth: number; child_run_id: string | null }
   | { type: "events_dropped"; subscriber_id: number; count: number; run_depth: number; child_run_id: string | null }
-  | { type: "run_completed"; output: unknown; run_depth: number }
+  | { type: "run_completed"; output: unknown; stop_reason: StopReason; run_depth: number }
   | { type: "run_failed"; error: string; run_depth: number };
+
+export interface HistoryMessage {
+  /** "system" | "user" | "assistant" | "tool" (plus provider-specific roles). */
+  role: string;
+  /**
+   * Content blocks in the core serde JSON shape, e.g. `{ Text: "..." }`,
+   * `{ ToolUse: { id, name, input } }`, or `{ ToolResult: { tool_use_id, content } }`.
+   * ToolUse blocks belong in assistant messages, each matching ToolResult in
+   * the immediately following user message.
+   */
+  content: Array<Record<string, unknown>>;
+}
 
 export class Agent {
   constructor(options: AgentOptions);
@@ -135,7 +171,11 @@ export class Agent {
     handler: (input: any) => any,
     options?: { sideEffect?: boolean; approval?: string },
   ): void;
-  runSync(input: string): RuntimeEvent[];
-  runStream(input: string, onEvent: (event: RuntimeEvent) => void): void;
+  runSync(input: string, messages?: HistoryMessage[]): RuntimeEvent[];
+  runStream(
+    input: string,
+    onEvent: (event: RuntimeEvent) => void,
+    messages?: HistoryMessage[],
+  ): void;
   respondApproval(runId: string, approved: boolean): void;
 }

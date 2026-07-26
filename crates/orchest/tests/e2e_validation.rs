@@ -1078,7 +1078,7 @@ async fn e2e_approval_denied_flow_completes_without_executing_tool() {
         events.iter().any(|e| {
             matches!(
                 e,
-                RuntimeEvent::RunCompleted { output } if output == &json!("Denied.")
+                RuntimeEvent::RunCompleted { output, .. } if output == &json!("Denied.")
             )
         }),
         "denial should feed a tool result back to the model and allow RunCompleted"
