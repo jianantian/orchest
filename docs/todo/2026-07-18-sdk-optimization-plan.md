@@ -255,7 +255,7 @@ music-gift 的 guided pipeline(引导收集 → chat 写词 → review 审核 �
 2. ~~质量地基迭代~~ ✅ v0.13(PR #223): A1 输入契约、B2 截断标记、C3 上下文回填、C4 重试。
 3. ~~Skill 机制迭代~~ ✅ v0.14(PR #230): D2 scanner、D1 零配置披露、D3/D4/D6、D5/D7。
 4. ~~Gen 协议迭代~~ ✅ v0.15: B1(类型化 MusicParams + 未知 key 警告,与 Finding 2 合并设计;GenAsset 角色 + duration 类型化)→ E1(child 失败 Err)/E2(输出契约)→ C5-C7;G1/G2(oneshot helper)并入本迭代。
-5. **Tool 易用性**: ~~G1/G2~~ ✅ 并入 v0.15;G3(双名收敛)留 v1.0 前。
+5. **Tool 易用性**: ~~G1/G2~~ ✅ 并入 v0.15;G3(双名收敛)留 v1.0 前。**绑定跟进(v1.0 冻结前)**: v0.15 的 `expect_output` 契约尚未暴露到 Py/Node 绑定(`register_agent_tool` 只透传 input/output mapper)——绑定用户拿到 E1 的 Err 语义但用不了 E2 的提取,与 G3 一并裁定。
 6. **F 决策** 可在任意时间点做,不阻塞其他项。
 
 demo 侧对应依赖见 [`examples/demo/music-gift/docs/optimization-plan.md`](../../examples/demo/music-gift/docs/optimization-plan.md)。

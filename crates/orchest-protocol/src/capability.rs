@@ -111,6 +111,11 @@ pub enum VocalGender {
 /// Typed fields take precedence over raw `params` keys at the provider
 /// submit boundary; a provider only maps the fields its dialect actually
 /// supports and leaves the rest unset.
+///
+/// Deserialization intentionally does **not** deny unknown fields (forward
+/// compatibility for FFI callers): a misspelled key inside the `music`
+/// object is ignored, not caught — the compile-time safety is for Rust
+/// callers.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct MusicParams {
     /// Custom-mode lyrics. When set (and non-empty), dialects like Suno
@@ -560,7 +565,7 @@ mod tests {
 
     #[test]
     fn music_params_omits_unset_fields_from_wire() {
-        let v = serde_json::to_value(&MusicParams::default()).unwrap();
+        let v = serde_json::to_value(MusicParams::default()).unwrap();
         assert_eq!(v, json!({}));
         let sparse: MusicParams = serde_json::from_value(json!({ "style": "lofi" })).unwrap();
         assert_eq!(sparse.style.as_deref(), Some("lofi"));

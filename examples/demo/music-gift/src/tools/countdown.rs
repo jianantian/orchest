@@ -63,6 +63,13 @@ pub async fn run_countdown(
 /// for exactly this). Both validation failures (empty / truncated output) and
 /// tool execution errors get the one retry; a second failure is returned so
 /// the caller can mark the countdown `failed`.
+///
+/// Two retry layers compose here, on purpose: the SDK output contract
+/// (`expect_output(Fenced)` in `config::build_countdown_tool`) retries the
+/// child once for *format* violations, and this layer retries once for
+/// *content* failures (truncation/empty) and tool errors — up to 4 child runs
+/// worst case. Do not "simplify" one away; they cover disjoint failure
+/// classes.
 async fn generate_html(
     tool: &Arc<dyn orchest::tool::Tool>,
     params: &CountdownParams,

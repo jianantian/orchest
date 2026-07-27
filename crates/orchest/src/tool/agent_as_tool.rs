@@ -141,6 +141,14 @@ fn cap_budget(configured: BudgetConfig, remaining: &BudgetConfig) -> BudgetConfi
 /// whole child. The parent model still receives the structured error as the
 /// tool result and may deliberately re-invoke the tool with adjusted input.
 ///
+/// **Budget accounting consequence**: because the failure path returns no
+/// `ToolOutput`, the budget the child consumed before failing is **not**
+/// folded into the parent's `BudgetGuard` (that only happens via
+/// `Structured.external_usage` on the success path). A parent model that
+/// repeatedly invokes a failing sub-agent is therefore bounded only by its
+/// own `max_steps`; each child is still individually capped by `cap_budget`.
+/// Tracked as follow-up issue #241.
+///
 /// # Output format contract (v0.15)
 ///
 /// [`SubAgentBuilder::expect_output`] declares a format contract for the
@@ -432,9 +440,12 @@ impl AgentAsTool {
                         Some(second.output),
                     )),
                     Err(second_reason) => Err(ToolError::fatal(format!(
-                        "sub-agent run {} output still violates the declared contract ({}) after one correction attempt: {second_reason}; raw output head: {}",
+                        "sub-agent run {} output still violates the declared contract ({}) after one correction attempt: {second_reason} (budget_used: {} tokens, {} tool calls, ${:.4}); raw output head: {}",
                         second.run_id,
                         expect.describe(),
+                        usage.tokens_used,
+                        usage.tool_calls_used,
+                        usage.cost_usd,
                         output_head(&second.output),
                     ))
                     .with_code("SUB_AGENT_OUTPUT_CONTRACT_VIOLATION")),
@@ -496,44 +507,46 @@ fn extract_expected(expect: &SubAgentOutputExpect, output: &Value) -> Result<Val
 /// Extract the content of the first closed fenced code block in `text`. A
 /// fence is a line whose trimmed form starts with ```` ``` ````; the closing
 /// fence is a later line that is exactly ```` ``` ````. When `lang` is set,
-/// fences tagged with that language are preferred, but an untagged/other-tag
-/// closed fence still wins over none (lang is a preference, not a filter —
-/// see [`SubAgentOutputExpect`]).
+/// the first non-empty block tagged with that language wins; with no match,
+/// the first non-empty block of any language is used — lang is a preference,
+/// not a filter (see [`SubAgentOutputExpect`]). Empty blocks are skipped,
+/// not fatal: models occasionally emit an empty fence followed by the real
+/// one.
 fn extract_fenced_block(text: &str, lang: Option<&str>) -> Result<String, String> {
     let lines: Vec<&str> = text.lines().collect();
-    let openings: Vec<(usize, &str)> = lines
-        .iter()
-        .enumerate()
-        .filter_map(|(i, line)| {
-            line.trim_start()
-                .strip_prefix("```")
-                .map(|tag| (i, tag.trim()))
-        })
-        .collect();
-    if openings.is_empty() {
-        return Err("no fenced code block found".into());
-    }
-    let mut candidates: Vec<&(usize, &str)> = openings.iter().collect();
-    if let Some(want) = lang {
-        candidates.sort_by_key(|(_, tag)| !tag.eq_ignore_ascii_case(want));
-    }
+    // Pair opening/closing fences in one linear walk; an unclosed fence
+    // swallows the rest of the text, so the walk stops there.
+    let mut blocks: Vec<(String, String)> = Vec::new();
     let mut saw_unclosed = false;
-    for (open_i, _tag) in &candidates {
-        let close = lines[*open_i + 1..]
-            .iter()
-            .position(|line| line.trim() == "```")
-            .map(|pos| open_i + 1 + pos);
-        match close {
-            Some(close_i) => {
-                let body = lines[*open_i + 1..close_i].join("\n");
-                let body = body.trim();
-                if body.is_empty() {
-                    return Err("fenced code block is empty".into());
-                }
-                return Ok(body.to_string());
-            }
-            None => saw_unclosed = true,
-        }
+    let mut i = 0;
+    while i < lines.len() {
+        let Some(tag) = lines[i].trim_start().strip_prefix("```").map(str::trim) else {
+            i += 1;
+            continue;
+        };
+        let Some(pos) = lines[i + 1..].iter().position(|line| line.trim() == "```") else {
+            saw_unclosed = true;
+            break;
+        };
+        let close = i + 1 + pos;
+        let body = lines[i + 1..close].join("\n").trim().to_string();
+        blocks.push((tag.to_string(), body));
+        i = close + 1;
+    }
+    let non_empty = |block: &&(String, String)| !block.1.is_empty();
+    let picked = lang
+        .and_then(|want| {
+            blocks
+                .iter()
+                .filter(non_empty)
+                .find(|(tag, _)| tag.eq_ignore_ascii_case(want))
+        })
+        .or_else(|| blocks.iter().find(non_empty));
+    if let Some((_, body)) = picked {
+        return Ok(body.clone());
+    }
+    if !blocks.is_empty() {
+        return Err("fenced code block is empty".into());
     }
     if saw_unclosed {
         return Err("fenced code block is not closed".into());
@@ -1204,6 +1217,15 @@ mod tests {
         assert!(extract_fenced_block("plain text", None)
             .unwrap_err()
             .contains("no fenced"));
+    }
+
+    #[test]
+    fn fenced_block_skips_empty_block_and_takes_next() {
+        // A model emitting an empty fence before the real one must not
+        // trigger a spurious correction round.
+        let text = "```html\n```\nOops, here is the real one:\n```html\n<div>ok</div>\n```";
+        let got = extract_fenced_block(text, Some("html")).expect("second block");
+        assert_eq!(got, "<div>ok</div>");
     }
 
     #[test]

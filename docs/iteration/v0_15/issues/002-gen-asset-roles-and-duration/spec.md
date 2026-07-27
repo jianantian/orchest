@@ -31,3 +31,6 @@ seam-findings Finding 2: Suno 的 `duration_secs`/`cover_url` 是一等产品输
 
 - timed-text 不入 role 枚举:`timed_text` 已是 `GenResult` 一等字段(Finding 1 已落地)。
 - 多 track variant 的 asset 分组(Finding 1 提到的另一缺口)不在本 issue。
+- **实现记录(评审 Minor #2)**: volcengine_video 的 `last_frame_url`(PNG 静帧)初落地时随
+  "机械更新"标了 `Primary`;评审确认其非主产品(MP4 才是),已改标 `Preview` 并加回归测试,
+  消费者按 Primary 收集资产不会捞到 stray 图片。

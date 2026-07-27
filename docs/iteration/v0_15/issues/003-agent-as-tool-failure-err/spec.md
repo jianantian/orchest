@@ -27,3 +27,8 @@
 ## 备注
 
 - 004(输出契约)的"纠正后仍失败 → Err"复用本 issue 的 Err 语义,按编号顺序先做本 issue。
+- **实现记录(budget 核算后果,评审 Important #1)**: 失败路径不产出 `ToolOutput`,child 已耗
+  budget 不再经 `Structured.external_usage` 折算进父 `BudgetGuard`——父模型反复调用持续失败的
+  子代理时仅剩 `max_steps` 兜底(每个 child 仍被 `cap_budget` 单独限制)。 rustdoc 已记录,
+  机制修复(如 `SubAgentFailed` 带 `budget_used`)跟进于 issue #241;失败分类的字符串匹配
+  脆弱性跟进于 issue #242(结构化 `RunFailed` kind)。

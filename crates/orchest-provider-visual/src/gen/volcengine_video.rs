@@ -109,10 +109,13 @@ pub fn parse_assets(response: &Value) -> Vec<GenAsset> {
         .pointer("/content/last_frame_url")
         .and_then(Value::as_str)
     {
+        // The last-frame image is a still derived from the video, not the
+        // primary product (the MP4 above is) — tagged Preview so consumers
+        // collecting Primary assets never pick up a stray image.
         assets.push(GenAsset::Url {
             url: url.to_string(),
             media_type: Some("image/png".to_string()),
-            role: GenAssetRole::Primary,
+            role: GenAssetRole::Preview,
         });
     }
     assets
@@ -316,5 +319,30 @@ mod tests {
                 role: GenAssetRole::Primary,
             }]
         );
+    }
+
+    #[test]
+    fn last_frame_is_tagged_preview_not_primary() {
+        let response = json!({
+            "id": "task-10",
+            "status": "succeeded",
+            "content": {"video_url": "https://v/out.mp4", "last_frame_url": "https://v/last.png"}
+        });
+        let assets = parse_assets(&response);
+        assert_eq!(assets.len(), 2);
+        assert!(matches!(
+            &assets[0],
+            GenAsset::Url {
+                role: GenAssetRole::Primary,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &assets[1],
+            GenAsset::Url {
+                role: GenAssetRole::Preview,
+                ..
+            }
+        ));
     }
 }

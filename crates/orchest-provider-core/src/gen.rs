@@ -73,6 +73,9 @@ impl SyncGenCache {
 /// this at the top of its submit-body builder with its full consumed set
 /// (explicitly handled keys + passthrough whitelist + the wire names of the
 /// typed [`MusicParams`](orchest_protocol::MusicParams) fields it maps).
+/// Providers that forward `params` verbatim still pass an unknown key on to
+/// the API — the warning names it as *not known to the SDK*, not as certainly
+/// inert.
 ///
 /// Cardinality discipline: the key name travels as the event's `param_key`
 /// field — never in a metric label — so arbitrary user key spellings cannot
@@ -93,7 +96,7 @@ pub fn warn_unconsumed_params(provider: &str, consumed: &[&str], params: &Value)
             tracing::warn!(
                 provider,
                 param_key = key.as_str(),
-                "gen params key not consumed by provider (possible typo); the knob has no effect"
+                "gen params key is not a known knob for this provider (possible typo); providers that pass params through verbatim still forward it"
             );
         }
     }
