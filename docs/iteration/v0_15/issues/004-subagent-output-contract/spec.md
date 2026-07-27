@@ -21,14 +21,21 @@
 
 ## 验收标准
 
-- [ ] 格式不符的输出在 SDK 层被提取/纠正,不原样交给消费方
-- [ ] 纠正轮次限 1 次;纠正后仍失败 → `Err(ToolError)`;纠正提示可观测
-- [ ] 未声明契约时行为与现状完全一致(回归)
-- [ ] countdown 改契约声明,`strip_code_fences` 删除,widget 链路测试绿
-- [ ] 测试:fence 前后带解释文字可提取;无 fence 触发纠正;纠正后成功;纠正后仍失败 → Err
-- [ ] 五项检查全绿
+- [x] 格式不符的输出在 SDK 层被提取/纠正,不原样交给消费方
+- [x] 纠正轮次限 1 次;纠正后仍失败 → `Err(ToolError)`;纠正提示可观测
+- [x] 未声明契约时行为与现状完全一致(回归)
+- [x] countdown 改契约声明,`strip_code_fences` 删除,widget 链路测试绿
+- [x] 测试:fence 前后带解释文字可提取;无 fence 触发纠正;纠正后成功;纠正后仍失败 → Err
+- [x] 五项检查全绿
 
 ## 备注
 
 - JSON schema 深度校验留后续(本期 parse 即过)。
 - 依赖 003 先落地(Err 语义);依赖 v0.13 `resume_with_input`。
+- **实现记录(机制偏差)**: 纠正轮次未用 `resume_with_input`——它面向跨进程 session
+  恢复(需 `SessionSnapshot` + `session_store`),tool 内部拿不到 child 快照。改为
+  **自包含纠正提示的第二次 fresh child run**(提示含原始请求 + 违规输出头部 500 字符),
+  限 1 次,usage 跨两次累加;契约配置为 `SubAgentBuilder::expect_output(SubAgentOutputExpect)`,
+  违反经纠正确认后 `Err(ToolError, code=SUB_AGENT_OUTPUT_CONTRACT_VIOLATION)`;纠正触发发
+  `RuntimeWarning` 事件(未新增事件变体,Py/Node wire 无影响)。demo countdown.md 模板同步
+  要求单 ```html 围栏块(否则契约与模板指令冲突,每次都要走纠正轮)。

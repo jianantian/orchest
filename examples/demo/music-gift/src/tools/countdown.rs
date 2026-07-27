@@ -278,16 +278,6 @@ fn next_birthday(today: NaiveDate, month: u32, day: u32) -> Option<NaiveDate> {
     }
 }
 
-pub(crate) fn strip_code_fences(html: &str) -> String {
-    let trimmed = html.trim();
-    let without_open = trimmed
-        .strip_prefix("```html")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .unwrap_or(trimmed);
-    let without_close = without_open.strip_suffix("```").unwrap_or(without_open);
-    without_close.trim().to_string()
-}
-
 pub(crate) fn tool_context() -> orchest::tool::ToolContext {
     orchest::tool::ToolContext {
         run_id: orchest::run::RunId::new(),

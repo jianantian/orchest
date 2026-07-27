@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 
 use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::events::RuntimeEvent;
-use crate::model::ModelAdapter;
+use crate::model::{Message, ModelAdapter};
 use crate::run::{AgentConfig, AgentRun, ConfigError, RunInput};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
@@ -27,6 +27,45 @@ pub enum ContextMode {
     Fork {
         depth: NonZeroUsize,
     },
+}
+
+/// Output format contract for a sub-agent's raw text output (v0.15).
+///
+/// Without a contract the child run's output reaches the `output_extractor`
+/// untouched and consumers scrape it with their own fragile parsing (the
+/// music-gift countdown's `strip_code_fences` was the motivating example:
+/// the model wraps the payload in prose or a full `<!DOCTYPE>` document and
+/// the consumer's strict prefix/suffix check silently lets garbage through).
+/// A declared contract moves extraction into the SDK: [`AgentAsTool::execute`]
+/// extracts the conforming payload, retries the child once with a correction
+/// prompt when extraction fails, and returns `Err(ToolError)` when it still
+/// does not conform — non-conforming output never reaches the consumer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubAgentOutputExpect {
+    /// The output text must contain a fenced code block; the block's content
+    /// (fence lines stripped) becomes the output. When `lang` is set, the
+    /// first fence tagged with that language wins; with no match, the first
+    /// closed fence of any language is used — lang is a preference, not a
+    /// filter, because models routinely emit untagged fences.
+    Fenced { lang: Option<String> },
+    /// The output must parse as JSON (a single wrapping fence is tolerated
+    /// and stripped first); the parsed value becomes the output. "Parses" is
+    /// the whole contract this round — schema validation is intentionally
+    /// left to a later iteration.
+    Json,
+}
+
+impl SubAgentOutputExpect {
+    /// Human-readable contract description for correction prompts and errors.
+    fn describe(&self) -> String {
+        match self {
+            Self::Fenced { lang: Some(lang) } => {
+                format!("a single fenced code block ```{lang} … ```")
+            }
+            Self::Fenced { lang: None } => "a single fenced code block".to_string(),
+            Self::Json => "valid JSON".to_string(),
+        }
+    }
 }
 
 /// Returns a `BudgetConfig` whose each limit is the tightest of `configured` and `remaining`.
@@ -101,6 +140,16 @@ fn cap_budget(configured: BudgetConfig, remaining: &BudgetConfig) -> BudgetConfi
 /// policy is exhausted, so a parent-side auto-retry would blindly re-run the
 /// whole child. The parent model still receives the structured error as the
 /// tool result and may deliberately re-invoke the tool with adjusted input.
+///
+/// # Output format contract (v0.15)
+///
+/// [`SubAgentBuilder::expect_output`] declares a format contract for the
+/// child's raw output. With a contract, a successful run's output is
+/// extracted/validated by the SDK (one correction retry on violation, then
+/// `Err(ToolError)` with code `SUB_AGENT_OUTPUT_CONTRACT_VIOLATION`);
+/// `details["output"]` carries the extracted payload and
+/// `details["raw_output"]` the verbatim text. Without a contract, behavior
+/// is exactly the failure-semantics contract above.
 pub struct AgentAsTool {
     config: AgentConfig,
     tool_name: String,
@@ -112,6 +161,7 @@ pub struct AgentAsTool {
     input_mapper: Arc<InputMapperFn>,
     output_extractor: Arc<OutputExtractorFn>,
     context_mode: ContextMode,
+    output_expect: Option<SubAgentOutputExpect>,
 }
 
 #[async_trait]
@@ -142,8 +192,6 @@ impl Tool for AgentAsTool {
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let child_input = (self.input_mapper)(input)?;
-
-        let parent_run_id = ctx.run_id;
 
         if ctx.run_depth >= 3 {
             let child_run_id = crate::run::RunId::new();
@@ -184,8 +232,54 @@ impl Tool for AgentAsTool {
             }
         };
 
+        let first = self
+            .run_child_attempt(&child_config, initial_messages, child_input.clone(), ctx)
+            .await?;
+
+        let (attempt, raw_output) = self
+            .enforce_output_contract(&child_config, &child_input, first, ctx)
+            .await?;
+
+        let mut details = json!({
+            "child_run_id": attempt.run_id,
+            "output": attempt.output,
+            "budget_used": attempt.usage.clone(),
+        });
+        if let Some(raw) = raw_output {
+            details["raw_output"] = raw;
+        }
+
+        let model_output = (self.output_extractor)(details.clone());
+        Ok(ToolOutput::Structured {
+            model_output,
+            details,
+            external_usage: Some(attempt.usage),
+        })
+    }
+}
+
+/// One completed child attempt: terminal run id, final output, and the
+/// budget that attempt consumed.
+struct ChildAttempt {
+    run_id: crate::run::RunId,
+    output: Value,
+    usage: BudgetUsage,
+}
+
+impl AgentAsTool {
+    /// Run one child attempt to completion: emits `SubAgentStarted` /
+    /// `SubAgentCompleted` (or `SubAgentFailed` + `Err`) and folds the child's
+    /// token/tool-call/cost usage into the returned [`ChildAttempt`].
+    async fn run_child_attempt(
+        &self,
+        child_config: &AgentConfig,
+        initial_messages: Vec<Message>,
+        child_input: String,
+        ctx: &ToolContext,
+    ) -> Result<ChildAttempt, ToolError> {
+        let parent_run_id = ctx.run_id;
         let (handle, mut child_rx) = AgentRun::start_with_bus(
-            child_config,
+            child_config.clone(),
             RunInput::text(child_input.clone()).into_blocks(),
             initial_messages,
             Arc::clone(&self.model),
@@ -266,18 +360,87 @@ impl Tool for AgentAsTool {
                 })
                 .await;
         }
-        let details = json!({
-            "child_run_id": child_run_id,
-            "output": output,
-            "budget_used": child_usage,
-        });
-
-        let model_output = (self.output_extractor)(details.clone());
-        Ok(ToolOutput::Structured {
-            model_output,
-            details,
-            external_usage: Some(child_usage),
+        Ok(ChildAttempt {
+            run_id: child_run_id,
+            output,
+            usage: child_usage,
         })
+    }
+
+    /// Apply the declared output contract to a successful child run: extract
+    /// the conforming payload, or retry the child once with a self-contained
+    /// correction prompt (fresh history — the prompt carries the original
+    /// request plus the offending output's head) and extract again. Returns
+    /// the final attempt plus `raw_output`, which is `Some` whenever
+    /// extraction rewrote the output, so `details` keeps the verbatim text
+    /// next to the extracted payload. Usage is summed across both attempts.
+    /// Without a declared contract this is the identity: `(first, None)`.
+    async fn enforce_output_contract(
+        &self,
+        child_config: &AgentConfig,
+        child_input: &str,
+        first: ChildAttempt,
+        ctx: &ToolContext,
+    ) -> Result<(ChildAttempt, Option<Value>), ToolError> {
+        let Some(expect) = &self.output_expect else {
+            return Ok((first, None));
+        };
+        match extract_expected(expect, &first.output) {
+            Ok(extracted) => Ok((
+                ChildAttempt {
+                    run_id: first.run_id,
+                    output: extracted,
+                    usage: first.usage,
+                },
+                Some(first.output),
+            )),
+            Err(first_reason) => {
+                if let Some(ref tx) = ctx.event_tx {
+                    let _ = tx
+                        .send(RuntimeEvent::RuntimeWarning {
+                            message: format!(
+                                "sub-agent run {} output violates the declared contract ({}): {first_reason}; retrying once with a correction prompt",
+                                first.run_id,
+                                expect.describe()
+                            ),
+                        })
+                        .await;
+                }
+                let correction = format!(
+                    "Your previous reply did not satisfy the required output format ({}): {first_reason}\n\
+                     Reply to the original request again, responding with ONLY the requested content \
+                     in the required format — no explanations, no surrounding prose.\n\
+                     Original request:\n{child_input}\n\
+                     Your previous reply (first 500 chars):\n{}",
+                    expect.describe(),
+                    output_head(&first.output),
+                );
+                let second = self
+                    .run_child_attempt(child_config, Vec::new(), correction, ctx)
+                    .await?;
+                let mut usage = first.usage;
+                usage.tokens_used += second.usage.tokens_used;
+                usage.tool_calls_used += second.usage.tool_calls_used;
+                usage.cost_usd += second.usage.cost_usd;
+                match extract_expected(expect, &second.output) {
+                    Ok(extracted) => Ok((
+                        ChildAttempt {
+                            run_id: second.run_id,
+                            output: extracted,
+                            usage,
+                        },
+                        Some(second.output),
+                    )),
+                    Err(second_reason) => Err(ToolError::fatal(format!(
+                        "sub-agent run {} output still violates the declared contract ({}) after one correction attempt: {second_reason}; raw output head: {}",
+                        second.run_id,
+                        expect.describe(),
+                        output_head(&second.output),
+                    ))
+                    .with_code("SUB_AGENT_OUTPUT_CONTRACT_VIOLATION")),
+                }
+            }
+        }
     }
 }
 
@@ -305,6 +468,89 @@ fn child_failure_error(
     .with_code(code)
 }
 
+/// Extract the contract-conforming payload from a child run's raw output.
+/// `Err(reason)` describes the violation in model-addressable prose (it
+/// rides into the correction prompt).
+fn extract_expected(expect: &SubAgentOutputExpect, output: &Value) -> Result<Value, String> {
+    match expect {
+        SubAgentOutputExpect::Fenced { lang } => {
+            let text = output
+                .as_str()
+                .ok_or_else(|| "output is not a text string".to_string())?;
+            extract_fenced_block(text, lang.as_deref()).map(Value::String)
+        }
+        SubAgentOutputExpect::Json => {
+            let Some(text) = output.as_str() else {
+                // Already structured — nothing to parse.
+                return Ok(output.clone());
+            };
+            if let Ok(parsed) = serde_json::from_str(text.trim()) {
+                return Ok(parsed);
+            }
+            let inner = extract_fenced_block(text, None)?;
+            serde_json::from_str(inner.trim()).map_err(|e| format!("output is not valid JSON: {e}"))
+        }
+    }
+}
+
+/// Extract the content of the first closed fenced code block in `text`. A
+/// fence is a line whose trimmed form starts with ```` ``` ````; the closing
+/// fence is a later line that is exactly ```` ``` ````. When `lang` is set,
+/// fences tagged with that language are preferred, but an untagged/other-tag
+/// closed fence still wins over none (lang is a preference, not a filter —
+/// see [`SubAgentOutputExpect`]).
+fn extract_fenced_block(text: &str, lang: Option<&str>) -> Result<String, String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let openings: Vec<(usize, &str)> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, line)| {
+            line.trim_start()
+                .strip_prefix("```")
+                .map(|tag| (i, tag.trim()))
+        })
+        .collect();
+    if openings.is_empty() {
+        return Err("no fenced code block found".into());
+    }
+    let mut candidates: Vec<&(usize, &str)> = openings.iter().collect();
+    if let Some(want) = lang {
+        candidates.sort_by_key(|(_, tag)| !tag.eq_ignore_ascii_case(want));
+    }
+    let mut saw_unclosed = false;
+    for (open_i, _tag) in &candidates {
+        let close = lines[*open_i + 1..]
+            .iter()
+            .position(|line| line.trim() == "```")
+            .map(|pos| open_i + 1 + pos);
+        match close {
+            Some(close_i) => {
+                let body = lines[*open_i + 1..close_i].join("\n");
+                let body = body.trim();
+                if body.is_empty() {
+                    return Err("fenced code block is empty".into());
+                }
+                return Ok(body.to_string());
+            }
+            None => saw_unclosed = true,
+        }
+    }
+    if saw_unclosed {
+        return Err("fenced code block is not closed".into());
+    }
+    Err("no fenced code block found".into())
+}
+
+/// First 500 chars of a run output for diagnostics — string outputs
+/// verbatim, structured outputs via their JSON rendering.
+fn output_head(output: &Value) -> String {
+    let text = match output {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    text.chars().take(500).collect()
+}
+
 // ── SubAgentBuilder ──────────────────────────────────────────────────────────
 
 pub struct SubAgentBuilder {
@@ -317,6 +563,7 @@ pub struct SubAgentBuilder {
     input_mapper: Option<Arc<InputMapperFn>>,
     output_extractor: Option<Arc<OutputExtractorFn>>,
     context_mode: ContextMode,
+    output_expect: Option<SubAgentOutputExpect>,
 }
 
 impl SubAgentBuilder {
@@ -331,6 +578,7 @@ impl SubAgentBuilder {
             input_mapper: None,
             output_extractor: None,
             context_mode: ContextMode::Fresh,
+            output_expect: None,
         }
     }
 
@@ -364,6 +612,14 @@ impl SubAgentBuilder {
 
     pub fn context_mode(mut self, mode: ContextMode) -> Self {
         self.context_mode = mode;
+        self
+    }
+
+    /// Declare the output format contract for the child run (see
+    /// [`SubAgentOutputExpect`]). Without one, the child's output reaches the
+    /// `output_extractor` untouched.
+    pub fn expect_output(mut self, expect: SubAgentOutputExpect) -> Self {
+        self.output_expect = Some(expect);
         self
     }
 
@@ -402,6 +658,7 @@ impl SubAgentBuilder {
             input_mapper,
             output_extractor,
             context_mode: self.context_mode,
+            output_expect: self.output_expect,
         }))
     }
 }
@@ -832,5 +1089,270 @@ mod tests {
         assert!(!events
             .iter()
             .any(|e| matches!(e, RuntimeEvent::SubAgentFailed { .. })));
+    }
+
+    // ── output contract: extraction, one correction round, Err ─────────────
+
+    /// Child model answering with queued text responses in call order and
+    /// recording the last user message of every call (for correction-prompt
+    /// assertions).
+    struct ScriptedModel {
+        responses: std::sync::Mutex<std::collections::VecDeque<String>>,
+        seen: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl ScriptedModel {
+        fn new(responses: &[&str]) -> Self {
+            Self {
+                responses: std::sync::Mutex::new(responses.iter().map(|s| s.to_string()).collect()),
+                seen: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ModelAdapter for ScriptedModel {
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "scripted"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
+            &self,
+            messages: &[crate::model::Message],
+            _tools: &[crate::model::ToolDef],
+            _options: &RequestOptions,
+            _tx: Option<tokio_mpsc::Sender<crate::model::StreamEvent>>,
+        ) -> Result<ModelResponse, ModelError> {
+            let last_user = messages
+                .iter()
+                .rev()
+                .filter(|m| matches!(m.role, crate::model::Role::User))
+                .find_map(|m| {
+                    m.content.iter().find_map(|b| match b {
+                        ContentBlock::Text(t) => Some(t.clone()),
+                        _ => None,
+                    })
+                })
+                .unwrap_or_default();
+            self.seen.lock().expect("seen lock").push(last_user);
+            let next = self
+                .responses
+                .lock()
+                .expect("responses lock")
+                .pop_front()
+                .unwrap_or_else(|| "scripted model exhausted".to_string());
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text(next)],
+                usage: TokenUsage {
+                    input_tokens: 2,
+                    output_tokens: 3,
+                    ..Default::default()
+                },
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+
+    fn build_contract_tool(
+        model: Arc<dyn ModelAdapter>,
+        expect: SubAgentOutputExpect,
+    ) -> Arc<dyn Tool> {
+        test_agent_config()
+            .as_tool("child", "child under test")
+            .model(model)
+            .registry(ToolRegistry::new())
+            .expect_output(expect)
+            .output_extractor(|details| {
+                json!({"extracted": details.get("output").cloned().unwrap_or(Value::Null)})
+            })
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn fenced_block_prefers_matching_lang() {
+        let text = "intro\n```json\n{\"a\":1}\n```\nmiddle\n```html\n<div>ok</div>\n```\noutro";
+        let got = extract_fenced_block(text, Some("html")).expect("html fence");
+        assert_eq!(got, "<div>ok</div>");
+    }
+
+    #[test]
+    fn fenced_block_falls_back_to_any_lang() {
+        let text = "prose\n```\n<div>ok</div>\n```";
+        let got = extract_fenced_block(text, Some("html")).expect("untagged fence fallback");
+        assert_eq!(got, "<div>ok</div>");
+        let got = extract_fenced_block(text, None).expect("first fence");
+        assert_eq!(got, "<div>ok</div>");
+    }
+
+    #[test]
+    fn fenced_block_tolerates_doctype_and_prose_around() {
+        let text = "Here you go:\n```html\n<!DOCTYPE html>\n<html></html>\n```\nHope it helps.";
+        let got = extract_fenced_block(text, Some("html")).expect("block");
+        assert!(got.starts_with("<!DOCTYPE html>"));
+    }
+
+    #[test]
+    fn fenced_block_rejects_unclosed_empty_and_missing() {
+        assert!(extract_fenced_block("```html\n<div>", None)
+            .unwrap_err()
+            .contains("not closed"));
+        assert!(extract_fenced_block("```html\n```", None)
+            .unwrap_err()
+            .contains("empty"));
+        assert!(extract_fenced_block("plain text", None)
+            .unwrap_err()
+            .contains("no fenced"));
+    }
+
+    #[test]
+    fn json_contract_parses_raw_fenced_and_structured() {
+        let raw = Value::String("{\"a\": 1}".into());
+        assert_eq!(
+            extract_expected(&SubAgentOutputExpect::Json, &raw).expect("raw json"),
+            json!({"a": 1})
+        );
+        let fenced = Value::String("result:\n```json\n{\"a\": 1}\n```".into());
+        assert_eq!(
+            extract_expected(&SubAgentOutputExpect::Json, &fenced).expect("fenced json"),
+            json!({"a": 1})
+        );
+        let structured = json!({"b": 2});
+        assert_eq!(
+            extract_expected(&SubAgentOutputExpect::Json, &structured).expect("structured"),
+            structured
+        );
+        let bad = Value::String("not json".into());
+        assert!(extract_expected(&SubAgentOutputExpect::Json, &bad).is_err());
+    }
+
+    #[tokio::test]
+    async fn fenced_contract_extracts_payload_and_keeps_raw() {
+        let model = Arc::new(ScriptedModel::new(&[
+            "Here is your widget!\n```html\n<div>ok</div>\n```\nHope it helps.",
+        ]));
+        let tool = build_contract_tool(
+            model.clone(),
+            SubAgentOutputExpect::Fenced {
+                lang: Some("html".into()),
+            },
+        );
+        let (ctx, _rx) = execute_ctx(0);
+
+        let output = tool
+            .execute(json!({"input": "make widget"}), &ctx)
+            .await
+            .expect("conforming output");
+        let (model_output, details) = match output {
+            ToolOutput::Structured {
+                model_output,
+                details,
+                ..
+            } => (model_output, details),
+            other => panic!("expected Structured, got {other:?}"),
+        };
+        assert_eq!(model_output, json!({"extracted": "<div>ok</div>"}));
+        assert_eq!(details["output"], json!("<div>ok</div>"));
+        assert!(details["raw_output"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Here is your widget!"));
+        assert_eq!(
+            model.seen.lock().expect("seen").len(),
+            1,
+            "no correction round needed"
+        );
+    }
+
+    #[tokio::test]
+    async fn fenced_contract_retries_once_with_correction_prompt() {
+        let model = Arc::new(ScriptedModel::new(&[
+            "sure, here it is: <div>ok</div>",
+            "```html\n<div>ok</div>\n```",
+        ]));
+        let tool = build_contract_tool(
+            model.clone(),
+            SubAgentOutputExpect::Fenced {
+                lang: Some("html".into()),
+            },
+        );
+        let (ctx, rx) = execute_ctx(0);
+
+        let output = tool
+            .execute(json!({"input": "make widget"}), &ctx)
+            .await
+            .expect("correction succeeds");
+        let (details, external_usage) = match output {
+            ToolOutput::Structured {
+                details,
+                external_usage,
+                ..
+            } => (details, external_usage),
+            other => panic!("expected Structured, got {other:?}"),
+        };
+        assert_eq!(details["output"], json!("<div>ok</div>"));
+
+        // The correction round saw the format description, the violation
+        // reason, and the original request.
+        let seen = model.seen.lock().expect("seen");
+        assert_eq!(seen.len(), 2);
+        assert!(
+            seen[1].contains("did not satisfy the required output format"),
+            "correction prompt: {}",
+            seen[1]
+        );
+        assert!(
+            seen[1].contains("```html"),
+            "format description: {}",
+            seen[1]
+        );
+        assert!(seen[1].contains("Original request"), "prompt: {}", seen[1]);
+        drop(seen);
+
+        // Usage is summed across both attempts (5 tokens each).
+        assert_eq!(details["budget_used"]["tokens_used"], json!(10));
+        assert_eq!(external_usage.expect("usage").tokens_used, 10);
+
+        let events = drain_events(rx);
+        assert!(events.iter().any(
+            |e| matches!(e, RuntimeEvent::RuntimeWarning { message } if message.contains("correction"))
+        ));
+    }
+
+    #[tokio::test]
+    async fn fenced_contract_violation_after_correction_returns_err() {
+        let model = Arc::new(ScriptedModel::new(&["no fence here", "still no fence"]));
+        let tool = build_contract_tool(model.clone(), SubAgentOutputExpect::Fenced { lang: None });
+        let (ctx, rx) = execute_ctx(0);
+
+        let err = tool
+            .execute(json!({"input": "make widget"}), &ctx)
+            .await
+            .expect_err("non-conforming output must not reach the consumer");
+        assert_eq!(err.kind, ErrorKind::Fatal);
+        assert_eq!(
+            err.code.as_deref(),
+            Some("SUB_AGENT_OUTPUT_CONTRACT_VIOLATION")
+        );
+        assert!(
+            err.message.contains("still no fence"),
+            "raw output head in diagnostics: {}",
+            err.message
+        );
+        assert_eq!(
+            model.seen.lock().expect("seen").len(),
+            2,
+            "exactly one correction round"
+        );
+        let events = drain_events(rx);
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RuntimeWarning { .. })));
     }
 }
