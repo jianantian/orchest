@@ -98,7 +98,7 @@ async fn generate_once(
     // message carries the child_run_id, the failure reason, and the consumed
     // budget — no more `details["error"]` scraping. Propagating it lets
     // `generate_html` retry once with this reason fed into the prompt.
-    let result = match tool.execute(input, &tool_context()).await {
+    let result = match tool.call_oneshot(input).await {
         Ok(output) => output,
         Err(e) => return Err(e.to_string()),
     };
@@ -275,19 +275,6 @@ fn next_birthday(today: NaiveDate, month: u32, day: u32) -> Option<NaiveDate> {
         Some(this_year)
     } else {
         in_year(today.year() + 1)
-    }
-}
-
-pub(crate) fn tool_context() -> orchest::tool::ToolContext {
-    orchest::tool::ToolContext {
-        run_id: orchest::run::RunId::new(),
-        run_depth: 0,
-        tool_call_id: "countdown".into(),
-        event_tx: None,
-        webhook_base_url: None,
-        approval_bus: orchest::run::ApprovalBus::default(),
-        remaining_budget: Default::default(),
-        parent_messages: vec![],
     }
 }
 

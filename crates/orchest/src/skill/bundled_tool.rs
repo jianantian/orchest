@@ -529,16 +529,7 @@ echo '{"greeting": "hello"}'
         let def = make_def("bash", "scripts/greet.sh");
         let tool = SkillBundledTool::new(&def, skill_dir, "test".into()).unwrap();
 
-        let ctx = ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "tc_1".into(),
-            event_tx: None,
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
-        };
+        let ctx = ToolContext::oneshot();
         let result = tool
             .execute(serde_json::json!({"name": "world"}), &ctx)
             .await;
@@ -570,16 +561,7 @@ echo '{"greeting": "hello"}'
         let def = make_def("bash", "scripts/fail.sh");
         let tool = SkillBundledTool::new(&def, skill_dir, "test".into()).unwrap();
 
-        let ctx = ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "tc_1".into(),
-            event_tx: None,
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
-        };
+        let ctx = ToolContext::oneshot();
         let result = tool.execute(serde_json::json!({}), &ctx).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("exited with code 1"));
@@ -611,16 +593,7 @@ fi
         let def = make_def("bash", "scripts/async.sh");
         let tool = SkillBundledTool::new(&def, skill_dir, "test".into()).unwrap();
 
-        let ctx = ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "tc_1".into(),
-            event_tx: None,
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
-        };
+        let ctx = ToolContext::oneshot();
         let result = tool.execute(serde_json::json!({}), &ctx).await;
         assert!(result.is_ok());
         match result.unwrap() {
@@ -689,16 +662,7 @@ fi
         let def = make_def("bash", "scripts/noisy.sh");
         let tool = SkillBundledTool::new(&def, skill_dir, "noisy_skill".into()).unwrap();
 
-        let ctx = ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "tc_1".into(),
-            event_tx: None,
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
-        };
+        let ctx = ToolContext::oneshot();
         let result = tool.execute(serde_json::json!({}), &ctx).await;
         assert!(result.is_ok());
 
@@ -752,16 +716,7 @@ echo "{\"visible\":\"$ORCHEST_VISIBLE_ENV\",\"hidden\":\"$ORCHEST_HIDDEN_ENV\",\
         )
         .unwrap();
 
-        let ctx = ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "tc_1".into(),
-            event_tx: None,
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
-        };
+        let ctx = ToolContext::oneshot();
         let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
         let ToolOutput::Immediate(value) = result else {
             panic!("expected immediate output");

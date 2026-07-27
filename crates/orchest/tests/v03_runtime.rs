@@ -8,9 +8,7 @@ use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
     RequestOptions, Role, StopReason, StreamEvent, TokenUsage,
 };
-use orchest::run::{
-    AgentConfig, AgentRun, ApprovalBus, ModelConfig, RunId, RuntimeConfig, SkillsConfig,
-};
+use orchest::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
 use orchest::skill::executor::BareSubprocessExecutor;
 use orchest::skill::{SkillDependencies, SkillEnvManager, SkillManifest};
 use orchest::tool::agent_as_tool::ContextMode;
@@ -252,14 +250,8 @@ fn text_message(text: &str) -> Message {
 
 fn sub_agent_tool_context(parent_messages: Vec<Message>) -> ToolContext {
     ToolContext {
-        run_id: RunId::new(),
-        run_depth: 0,
-        tool_call_id: "test-call".into(),
-        event_tx: None,
-        webhook_base_url: None,
-        approval_bus: ApprovalBus::default(),
-        remaining_budget: BudgetConfig::default(),
         parent_messages,
+        ..ToolContext::oneshot()
     }
 }
 

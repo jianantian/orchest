@@ -4894,14 +4894,8 @@ async fn register_skills_registers_telemetry_for_upper_and_lower_case_skill_md()
     let read_file = registry.get("read_file").expect("read_file registered");
     let (event_tx, mut events) = mpsc::channel(16);
     let ctx = ToolContext {
-        run_id: RunId::new(),
-        run_depth: 0,
-        tool_call_id: "tc_1".into(),
         event_tx: Some(event_tx),
-        webhook_base_url: None,
-        approval_bus: crate::run::handle::ApprovalBus::default(),
-        remaining_budget: crate::budget::BudgetConfig::default(),
-        parent_messages: vec![],
+        ..ToolContext::oneshot()
     };
     read_file
         .execute(

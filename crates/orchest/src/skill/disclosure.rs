@@ -302,14 +302,8 @@ mod tests {
 
     fn test_ctx(event_tx: Option<tokio::sync::mpsc::Sender<RuntimeEvent>>) -> ToolContext {
         ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "tc_1".into(),
             event_tx,
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
+            ..ToolContext::oneshot()
         }
     }
 
@@ -488,7 +482,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         let ctx = ToolContext {
             event_tx: Some(tx),
-            ..test_ctx(None)
+            ..ToolContext::oneshot()
         };
 
         tool.execute(json!({"name": "lyrics-writer"}), &ctx)

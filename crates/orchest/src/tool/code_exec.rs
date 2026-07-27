@@ -330,14 +330,8 @@ mod tests {
 
     fn tool_context(event_tx: Option<mpsc::Sender<RuntimeEvent>>) -> ToolContext {
         ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "call-1".into(),
             event_tx,
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
+            ..ToolContext::oneshot()
         }
     }
 

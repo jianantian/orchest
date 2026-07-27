@@ -862,14 +862,9 @@ mod tests {
         let (tx, rx) = tokio_mpsc::channel(64);
         (
             ToolContext {
-                run_id: crate::run::RunId::new(),
                 run_depth,
-                tool_call_id: "test-call".into(),
                 event_tx: Some(tx),
-                webhook_base_url: None,
-                approval_bus: crate::run::ApprovalBus::default(),
-                remaining_budget: crate::budget::BudgetConfig::default(),
-                parent_messages: vec![],
+                ..ToolContext::oneshot()
             },
             rx,
         )

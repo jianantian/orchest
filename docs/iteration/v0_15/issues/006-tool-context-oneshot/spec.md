@@ -19,11 +19,11 @@ seam-findings Finding 3/4: run 之外"调一次工具"必须手造 8 字段 `Too
 
 ## 验收标准
 
-- [ ] 一次性工具调用零样板;调用方无需知道哪些字段可安全伪造
-- [ ] collect_info 测试走真实代码路径,复制的校验逻辑删除
-- [ ] countdown 改 helper,链路测试绿
-- [ ] 测试:oneshot context 可驱动一个真实 tool `execute`
-- [ ] 五项检查全绿
+- [x] 一次性工具调用零样板;调用方无需知道哪些字段可安全伪造
+- [x] collect_info 测试走真实代码路径,复制的校验逻辑删除
+- [x] countdown 改 helper,链路测试绿
+- [x] 测试:oneshot context 可驱动一个真实 tool `execute`
+- [x] 五项检查全绿
 
 ## 备注
 

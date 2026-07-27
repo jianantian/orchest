@@ -236,16 +236,7 @@ mod tests {
         fs::write(&file_path, "hello world").unwrap();
 
         let tool = ReadFileTool::new();
-        let ctx = ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "tc_1".into(),
-            event_tx: None,
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
-        };
+        let ctx = ToolContext::oneshot();
 
         let result = tool
             .execute(json!({"path": file_path.to_str().unwrap()}), &ctx)
@@ -262,16 +253,7 @@ mod tests {
     #[tokio::test]
     async fn read_nonexistent_file() {
         let tool = ReadFileTool::new();
-        let ctx = ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "tc_1".into(),
-            event_tx: None,
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
-        };
+        let ctx = ToolContext::oneshot();
 
         let result = tool
             .execute(json!({"path": "/nonexistent/path/file.txt"}), &ctx)
@@ -283,16 +265,7 @@ mod tests {
     #[tokio::test]
     async fn missing_path_param() {
         let tool = ReadFileTool::new();
-        let ctx = ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "tc_1".into(),
-            event_tx: None,
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
-        };
+        let ctx = ToolContext::oneshot();
 
         let result = tool.execute(json!({}), &ctx).await;
         assert!(result.is_err());
@@ -313,14 +286,8 @@ mod tests {
 
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(16);
         let ctx = ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "tc_1".into(),
             event_tx: Some(event_tx),
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
+            ..ToolContext::oneshot()
         };
 
         let result = tool
@@ -354,14 +321,8 @@ mod tests {
 
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(16);
         let ctx = ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "tc_1".into(),
             event_tx: Some(event_tx),
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
+            ..ToolContext::oneshot()
         };
 
         let result = tool
@@ -379,16 +340,7 @@ mod tests {
         let file_path = tmp.path().join("reports").join("final.md");
 
         let tool = WriteFileTool::new();
-        let ctx = ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "tc_1".into(),
-            event_tx: None,
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
-        };
+        let ctx = ToolContext::oneshot();
 
         let result = tool
             .execute(
@@ -417,16 +369,7 @@ mod tests {
     #[tokio::test]
     async fn write_file_rejects_missing_content() {
         let tool = WriteFileTool::new();
-        let ctx = ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "tc_1".into(),
-            event_tx: None,
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
-        };
+        let ctx = ToolContext::oneshot();
 
         let result = tool.execute(json!({"path": "report.md"}), &ctx).await;
 
