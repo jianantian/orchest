@@ -4,8 +4,8 @@ use super::*;
 use crate::chat::ChatAdapter;
 use crate::providers::anthropic::test_util::*;
 use crate::{
-    CachePolicy, CompatibilityPolicy, ContentBlock, Message, RequestOptions, Role, StopReason,
-    StreamEvent, ThinkingLevel,
+    CachePolicy, CompatibilityPolicy, ContentBlock, MediaSource, Message, RequestOptions, Role,
+    StopReason, StreamEvent, ThinkingLevel,
 };
 use serde_json::json;
 
@@ -364,6 +364,106 @@ fn openai_downgrades_minimax_only_roles_with_adjustment() {
             "{role:?} should record role adjustment"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// C5: dropped content blocks must be visible (OptionAdjustment, never silent).
+// ---------------------------------------------------------------------------
+
+fn image_block() -> ContentBlock {
+    ContentBlock::Image {
+        source: MediaSource::Url {
+            url: "https://example.com/x.png".into(),
+        },
+        detail: None,
+    }
+}
+
+fn assert_content_block_drop(adjustments: &[crate::OptionAdjustment], kind: &str) {
+    assert!(
+        adjustments.iter().any(|a| a.option == "content_block"
+            && a.requested == json!(kind)
+            && a.applied == json!(null)
+            && a.reason == "chat_unsupported_content_block"),
+        "expected a content_block drop adjustment for {kind}: {adjustments:?}"
+    );
+}
+
+#[test]
+fn user_multimodal_block_drop_records_adjustment() {
+    let adapter = make_adapter("http://localhost");
+    let messages = vec![Message {
+        role: Role::User,
+        content: vec![ContentBlock::Text("look".into()), image_block()],
+    }];
+
+    let (body, adjustments) = adapter
+        .request_body_for_test(&messages, &[], &default_options())
+        .expect("body");
+
+    let api_msgs = body["messages"].as_array().unwrap();
+    assert_eq!(api_msgs[0]["role"], "user");
+    assert_eq!(api_msgs[0]["content"], "look", "image is not on the wire");
+    assert_content_block_drop(&adjustments, "image");
+}
+
+#[test]
+fn system_non_text_block_drop_records_adjustment() {
+    let adapter = make_adapter("http://localhost");
+    let messages = vec![Message {
+        role: Role::System,
+        content: vec![ContentBlock::Text("be helpful".into()), image_block()],
+    }];
+
+    let (body, adjustments) = adapter
+        .request_body_for_test(&messages, &[], &default_options())
+        .expect("body");
+
+    assert_eq!(body["messages"][0]["role"], "system");
+    assert_eq!(body["messages"][0]["content"], "be helpful");
+    assert_content_block_drop(&adjustments, "image");
+}
+
+#[test]
+fn assistant_multimodal_block_drop_records_adjustment() {
+    let adapter = make_adapter("http://localhost");
+    let messages = vec![Message {
+        role: Role::Assistant,
+        content: vec![ContentBlock::Text("here".into()), image_block()],
+    }];
+
+    let (body, adjustments) = adapter
+        .request_body_for_test(&messages, &[], &default_options())
+        .expect("body");
+
+    assert_eq!(body["messages"][0]["role"], "assistant");
+    assert_eq!(body["messages"][0]["content"], "here");
+    assert_content_block_drop(&adjustments, "image");
+}
+
+#[test]
+fn user_text_alongside_tool_result_drop_records_adjustment() {
+    let adapter = make_adapter("http://localhost");
+    let messages = vec![Message {
+        role: Role::User,
+        content: vec![
+            ContentBlock::ToolResult {
+                tool_use_id: "call_1".into(),
+                content: json!({"temp": 72}),
+            },
+            ContentBlock::Text("extra note".into()),
+        ],
+    }];
+
+    let (body, adjustments) = adapter
+        .request_body_for_test(&messages, &[], &default_options())
+        .expect("body");
+
+    let api_msgs = body["messages"].as_array().unwrap();
+    assert_eq!(api_msgs.len(), 1, "only the wire tool message survives");
+    assert_eq!(api_msgs[0]["role"], "tool");
+    assert_eq!(api_msgs[0]["tool_call_id"], "call_1");
+    assert_content_block_drop(&adjustments, "text");
 }
 
 // ---------------------------------------------------------------------------

@@ -1060,8 +1060,11 @@ async fn run_tool_and_handoff_phase(
     if let Some(parallel_results) =
         run_parallel_tool_batch_if_allowed(state, subs, run_id, tool_uses).await
     {
+        // Canonical tool-result message: `Role::User` + ToolResult blocks, same
+        // as the serial/handoff paths (Anthropic convention; the OpenAI-dialect
+        // chat adapter converts ToolResult blocks to wire `role:"tool"`).
         state.messages.push(Message {
-            role: Role::Tool,
+            role: Role::User,
             content: parallel_results,
         });
         return true;
