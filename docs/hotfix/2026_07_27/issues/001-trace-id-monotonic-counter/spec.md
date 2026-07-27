@@ -14,10 +14,10 @@ trace id 碰撞意味着事件关联断裂。既是测试 flake,也是生产缺�
 
 ## 验收标准
 
-- [ ] 连续 N 次(如 10_000)调用 `new_trace_id()` 全不重复(新增测试,含相同栈地址场景)
-- [ ] 输出仍为 32 位 hex(现有断言不回归)
-- [ ] 原 flake 测试在高频复跑下稳定(如 `-- --exact trace_ids_are_distinct_hex` × 50)
-- [ ] 五项检查全绿
+- [x] 连续 N 次(如 10_000)调用 `new_trace_id()` 全不重复(新增测试,含相同栈地址场景)
+- [x] 输出仍为 32 位 hex(现有断言不回归)
+- [x] 原 flake 测试在高频复跑下稳定(如 `-- --exact trace_ids_are_distinct_hex` × 50)
+- [x] 五项检查全绿
 
 ## 实施要点(hotfix 内嵌 plan)
 
