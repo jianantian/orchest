@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::budget::{BudgetConfig, BudgetUsage};
-use crate::events::RuntimeEvent;
+use crate::events::{RunFailureKind, RuntimeEvent};
 use crate::model::{Message, ModelAdapter};
 use crate::run::{AgentConfig, AgentRun, ConfigError, RunInput};
 use crate::tool::registry::ToolRegistry;
@@ -120,16 +120,16 @@ fn cap_budget(configured: BudgetConfig, remaining: &BudgetConfig) -> BudgetConfi
 /// rides in the message text. The failure path never constructs
 /// `ToolOutput::Structured` and never invokes `output_extractor`.
 ///
-/// `RunFailed` carries only an opaque error string, so the kind/code
-/// adjudication keys off the runtime-generated failure messages
-/// (`run/actor.rs`):
+/// `RunFailed` carries a structured [`RunFailureKind`] alongside the error
+/// text (hotfix 2026_07_27 #242), so the kind/code adjudication dispatches on
+/// it directly — no string matching on runtime-generated failure messages:
 ///
-/// | child failure                    | kind  | retry  | code                     |
-/// |----------------------------------|-------|--------|--------------------------|
-/// | `budget_exceeded: …`             | Fatal | Unsafe | `BUDGET_EXCEEDED`        |
-/// | `max_steps_reached`              | Fatal | Unsafe | `MAX_STEPS_REACHED`      |
-/// | depth guard (`run_depth >= 3`)   | Fatal | Unsafe | `MAX_RUN_DEPTH_EXCEEDED` |
-/// | anything else                    | Fatal | Unsafe | `SUB_AGENT_RUN_FAILED`   |
+/// | child failure                      | kind  | retry  | code                     |
+/// |------------------------------------|-------|--------|--------------------------|
+/// | [`RunFailureKind::BudgetExceeded`] | Fatal | Unsafe | `BUDGET_EXCEEDED`        |
+/// | [`RunFailureKind::MaxStepsReached`]| Fatal | Unsafe | `MAX_STEPS_REACHED`      |
+/// | depth guard (`run_depth >= 3`)     | Fatal | Unsafe | `MAX_RUN_DEPTH_EXCEEDED` |
+/// | [`RunFailureKind::Other`]          | Fatal | Unsafe | `SUB_AGENT_RUN_FAILED`   |
 ///
 /// Every class is `Fatal`/`Unsafe` — the v0.9.4 retry dispatch never
 /// auto-retries the tool — because each identifiable cause is deterministic
@@ -311,7 +311,7 @@ impl AgentAsTool {
 
         let mut child_usage = BudgetUsage::default();
         let mut output = Value::Null;
-        let mut failed: Option<String> = None;
+        let mut failed: Option<(String, RunFailureKind)> = None;
 
         while let Some(event) = child_rx.recv().await {
             match &event {
@@ -330,8 +330,8 @@ impl AgentAsTool {
                 } => {
                     output = child_output.clone();
                 }
-                RuntimeEvent::RunFailed { error } => {
-                    failed = Some(error.clone());
+                RuntimeEvent::RunFailed { error, kind } => {
+                    failed = Some((error.clone(), *kind));
                 }
                 _ => {}
             }
@@ -347,7 +347,7 @@ impl AgentAsTool {
         }
         handle.wait().await;
 
-        if let Some(error) = failed {
+        if let Some((error, kind)) = failed {
             if let Some(ref tx) = ctx.event_tx {
                 let _ = tx
                     .send(RuntimeEvent::SubAgentFailed {
@@ -356,7 +356,12 @@ impl AgentAsTool {
                     })
                     .await;
             }
-            return Err(child_failure_error(child_run_id, &error, &child_usage));
+            return Err(child_failure_error(
+                child_run_id,
+                &error,
+                kind,
+                &child_usage,
+            ));
         }
 
         if let Some(ref tx) = ctx.event_tx {
@@ -455,22 +460,21 @@ impl AgentAsTool {
     }
 }
 
-/// Builds the `ToolError` for a failed child run. `RunFailed` carries only an
-/// opaque error string, so the code adjudication keys off the
-/// runtime-generated failure messages (`run/actor.rs`); the kind is always
+/// Builds the `ToolError` for a failed child run. The code adjudication
+/// dispatches on the structured [`RunFailureKind`] the runtime attached to
+/// `RunFailed` — no string matching on the error text; the kind is always
 /// `Fatal` with `RetryHint::Unsafe`. See the [`AgentAsTool`] docs for the full
 /// mapping rule and rationale.
 fn child_failure_error(
     child_run_id: crate::run::RunId,
     error: &str,
+    kind: RunFailureKind,
     budget_used: &BudgetUsage,
 ) -> ToolError {
-    let code = if error.starts_with("budget_exceeded") {
-        "BUDGET_EXCEEDED"
-    } else if error == "max_steps_reached" {
-        "MAX_STEPS_REACHED"
-    } else {
-        "SUB_AGENT_RUN_FAILED"
+    let code = match kind {
+        RunFailureKind::BudgetExceeded => "BUDGET_EXCEEDED",
+        RunFailureKind::MaxStepsReached => "MAX_STEPS_REACHED",
+        RunFailureKind::Other => "SUB_AGENT_RUN_FAILED",
     };
     ToolError::fatal(format!(
         "sub-agent run {child_run_id} failed: {error} (budget_used: {} tokens, {} tool calls, ${:.4})",

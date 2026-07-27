@@ -203,7 +203,7 @@ async fn main() {
                 println!("[event] SubAgentCompleted child={child_run_id} output={output}");
             }
             RuntimeEvent::RunCompleted { output, .. } => println!("[event] RunCompleted: {output}"),
-            RuntimeEvent::RunFailed { error } => println!("[event] RunFailed: {error}"),
+            RuntimeEvent::RunFailed { error, .. } => println!("[event] RunFailed: {error}"),
             _ => {}
         }
     }

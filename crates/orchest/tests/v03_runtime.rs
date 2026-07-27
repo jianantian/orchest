@@ -351,7 +351,7 @@ async fn code_execution_enabled_without_executor_fails_before_tool_execution() {
 
     let mut failed = None;
     while let Some(event) = rx.recv().await {
-        if let RuntimeEvent::RunFailed { error } = event {
+        if let RuntimeEvent::RunFailed { error, .. } = event {
             failed = Some(error);
         }
     }

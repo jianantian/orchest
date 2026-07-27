@@ -1,6 +1,6 @@
 use super::*;
 use crate::budget::BudgetConfig;
-use crate::events::{ApprovalContext, RuntimeEvent};
+use crate::events::{ApprovalContext, RunFailureKind, RuntimeEvent};
 use crate::model::{
     ContentBlock, MediaSource, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     ModelSpec, ModelStreamChunk, RequestOptions, Role, StopReason, StreamEvent, TokenUsage,
@@ -161,7 +161,8 @@ async fn run_loop_max_steps() {
 
     assert!(events.iter().any(|e| matches!(
         e,
-        RuntimeEvent::RunFailed { error } if error == "max_steps_reached"
+        RuntimeEvent::RunFailed { error, kind }
+            if error == "max_steps_reached" && *kind == RunFailureKind::MaxStepsReached
     )));
 }
 
@@ -188,7 +189,7 @@ async fn context_window_exceeded_fails_before_model_call() {
 
     assert_eq!(model.call_count.load(Ordering::SeqCst), 0);
     assert!(events.iter().any(
-        |event| matches!(event, RuntimeEvent::RunFailed { error } if error.contains("context window exceeded"))
+        |event| matches!(event, RuntimeEvent::RunFailed { error, .. } if error.contains("context window exceeded"))
     ));
 }
 
@@ -290,7 +291,7 @@ async fn context_window_backfill_activates_precall_validation() {
 
     assert_eq!(model.call_count.load(Ordering::SeqCst), 0);
     assert!(events.iter().any(
-        |event| matches!(event, RuntimeEvent::RunFailed { error } if error.contains("context window exceeded"))
+        |event| matches!(event, RuntimeEvent::RunFailed { error, .. } if error.contains("context window exceeded"))
     ));
 }
 
@@ -358,7 +359,7 @@ async fn abnormal_stop_reason_without_tool_use_fails_run_immediately() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            RuntimeEvent::RunFailed { error }
+            RuntimeEvent::RunFailed { error, .. }
                 if error.contains("abnormal_stop_reason") && error.contains("ContextWindowExceeded")
         )),
         "run must fail with the stop_reason carried in the error"
@@ -925,7 +926,7 @@ async fn invalid_tool_metadata_links_fail_run_before_model_call() {
     let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
     let mut failed = None;
     while let Some(e) = rx.recv().await {
-        if let RuntimeEvent::RunFailed { error } = e {
+        if let RuntimeEvent::RunFailed { error, .. } = e {
             failed = Some(error);
         }
     }
@@ -4761,7 +4762,7 @@ async fn strict_mode_fails_run_on_bad_skill() {
     handle.wait().await;
 
     let error = events.iter().find_map(|e| match e {
-        RuntimeEvent::RunFailed { error } => Some(error.clone()),
+        RuntimeEvent::RunFailed { error, .. } => Some(error.clone()),
         _ => None,
     });
     let error = error.expect("expected RunFailed in strict mode");
@@ -5509,7 +5510,7 @@ async fn repeated_failure_hook_triggers_at_default_threshold() {
     assert!(events.iter().any(|event| {
         matches!(
             event,
-            RuntimeEvent::RunFailed { error } if error.contains("repeated unstable_tool Fatal")
+            RuntimeEvent::RunFailed { error, .. } if error.contains("repeated unstable_tool Fatal")
         )
     }));
 }
@@ -5638,7 +5639,7 @@ async fn hook_abort_before_model_stops_run_and_skips_subsequent_hooks() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, RuntimeEvent::RunFailed { error } if error == "abort-reason")),
+            .any(|e| matches!(e, RuntimeEvent::RunFailed { error, .. } if error == "abort-reason")),
         "expected RunFailed with abort-reason"
     );
     assert!(

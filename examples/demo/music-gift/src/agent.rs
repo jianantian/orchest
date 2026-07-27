@@ -245,7 +245,7 @@ pub async fn run_chat_agent(
                     }
                 }
             }
-            RuntimeEvent::RunFailed { error } => {
+            RuntimeEvent::RunFailed { error, .. } => {
                 let _ = tx.send(SseEvent::Error { error }).await;
                 return Err(AppError::Llm("agent run failed".to_string()));
             }
@@ -372,7 +372,7 @@ pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> Rev
                     }
                 }
             }
-            RuntimeEvent::RunFailed { error } => {
+            RuntimeEvent::RunFailed { error, .. } => {
                 tracing::warn!(stage = "review", error = %error, "review: agent run failed; using unreviewed output");
                 run_failed = true;
             }

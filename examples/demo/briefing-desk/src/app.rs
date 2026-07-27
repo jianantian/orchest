@@ -400,7 +400,7 @@ async fn drain_events(handle: RunHandle, mut rx: EventReceiver) -> Result<String
             RuntimeEvent::RunCompleted { output, .. } => {
                 answer = Some(output.as_str().unwrap_or_default().to_string());
             }
-            RuntimeEvent::RunFailed { error } => {
+            RuntimeEvent::RunFailed { error, .. } => {
                 return Err(format!("agent run failed: {error}").into());
             }
             other => println!("[event] {other:?}"),

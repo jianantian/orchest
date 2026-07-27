@@ -150,7 +150,7 @@ async fn main() {
         ToolRegistry::new(),
     );
     while let Some(event) = rx_b.recv().await {
-        if let RuntimeEvent::RunFailed { error } = &event {
+        if let RuntimeEvent::RunFailed { error, .. } = &event {
             println!("[event] RunFailed: {error}");
         }
     }

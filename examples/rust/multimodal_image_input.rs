@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 delta: StreamEvent::Text { delta },
             } => print!("{delta}"),
             RuntimeEvent::RunCompleted { output, .. } => println!("\n[done] {output}"),
-            RuntimeEvent::RunFailed { error } => eprintln!("\n[failed] {error}"),
+            RuntimeEvent::RunFailed { error, .. } => eprintln!("\n[failed] {error}"),
             _ => {}
         }
     }

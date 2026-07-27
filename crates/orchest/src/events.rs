@@ -24,6 +24,23 @@ pub enum ApprovalContext {
     },
 }
 
+/// Machine-dispatchable classification of a run failure, carried by
+/// [`RuntimeEvent::RunFailed`]. The `error` text remains the human- and
+/// model-facing diagnostic; `kind` is what consumers dispatch on. Only
+/// categories with a real consumer get their own variant — everything else
+/// is [`RunFailureKind::Other`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RunFailureKind {
+    /// The budget guard fired; `error` starts with `"budget_exceeded"`.
+    BudgetExceeded,
+    /// The run hit `runtime.max_steps`; `error` is `"max_steps_reached"`.
+    MaxStepsReached,
+    /// Any other failure. Also the serde default for events serialized
+    /// before `kind` existed — those carried only the opaque error string.
+    #[default]
+    Other,
+}
+
 /// An event emitted on the run's event stream: run lifecycle, model calls,
 /// tool calls, approvals, budget, sub-agents, and steering. Consumers receive
 /// these from the `EventReceiver` returned by `AgentRun::start`.
@@ -217,6 +234,11 @@ pub enum RuntimeEvent {
     },
     RunFailed {
         error: String,
+        /// Structured failure category for machine dispatch. Defaults to
+        /// [`RunFailureKind::Other`] when deserializing events emitted before
+        /// this field existed (they carried only the opaque error string).
+        #[serde(default)]
+        kind: RunFailureKind,
     },
     RunAborted {
         reason: Option<String>,
@@ -325,6 +347,44 @@ mod tests {
             } => {
                 assert_eq!(output, json!("done"));
                 assert_eq!(stop_reason, StopReason::EndTurn);
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_failed_kind_round_trips_through_serde() {
+        let event = RuntimeEvent::RunFailed {
+            error: "budget_exceeded: TokenLimit".to_string(),
+            kind: RunFailureKind::BudgetExceeded,
+        };
+
+        let value = serde_json::to_value(&event).expect("serialize event");
+        assert_eq!(
+            value,
+            json!({"RunFailed": {"error": "budget_exceeded: TokenLimit", "kind": "BudgetExceeded"}})
+        );
+        let deserialized: RuntimeEvent = serde_json::from_value(value).expect("deserialize event");
+        assert!(matches!(
+            deserialized,
+            RuntimeEvent::RunFailed {
+                kind: RunFailureKind::BudgetExceeded,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn run_failed_without_kind_deserializes_as_other() {
+        // Events serialized before the kind field existed carry only `error`;
+        // they must still deserialize (serde default).
+        let legacy = json!({"RunFailed": {"error": "provider exploded"}});
+        let event: RuntimeEvent = serde_json::from_value(legacy).expect("deserialize legacy event");
+
+        match event {
+            RuntimeEvent::RunFailed { error, kind } => {
+                assert_eq!(error, "provider exploded");
+                assert_eq!(kind, RunFailureKind::Other);
             }
             other => panic!("unexpected event: {other:?}"),
         }

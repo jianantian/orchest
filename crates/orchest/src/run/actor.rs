@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use tracing::Instrument;
 
 use crate::budget::{BudgetConfig, BudgetGuard};
-use crate::events::{ApprovalContext, RuntimeEvent};
+use crate::events::{ApprovalContext, RunFailureKind, RuntimeEvent};
 use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelResponse, ModelStreamChunk, Role, StopReason,
 };
@@ -309,6 +309,7 @@ impl Actor for WorkerActor {
                     &event_subs,
                     RuntimeEvent::RunFailed {
                         error: error.to_string(),
+                        kind: RunFailureKind::Other,
                     },
                 )
                 .await;
@@ -611,6 +612,7 @@ async fn check_step_limits(state: &mut AgentRunState, subs: &[mpsc::Sender<Runti
             subs,
             RuntimeEvent::RunFailed {
                 error: "max_steps_reached".into(),
+                kind: RunFailureKind::MaxStepsReached,
             },
         )
         .await;
@@ -636,7 +638,14 @@ async fn check_step_limits(state: &mut AgentRunState, subs: &[mpsc::Sender<Runti
             primary(subs),
         )
         .await;
-        emit(subs, RuntimeEvent::RunFailed { error }).await;
+        emit(
+            subs,
+            RuntimeEvent::RunFailed {
+                error,
+                kind: RunFailureKind::BudgetExceeded,
+            },
+        )
+        .await;
         return false;
     }
 
@@ -685,7 +694,14 @@ async fn call_model_phase(
                         primary(subs),
                     )
                     .await;
-                    emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    emit(
+                        subs,
+                        RuntimeEvent::RunFailed {
+                            error: reason,
+                            kind: RunFailureKind::Other,
+                        },
+                    )
+                    .await;
                     return None;
                 }
                 crate::hook::ModelHookAction::Continue => {}
@@ -757,7 +773,14 @@ async fn validate_context_window(
         primary(subs),
     )
     .await;
-    emit(subs, RuntimeEvent::RunFailed { error }).await;
+    emit(
+        subs,
+        RuntimeEvent::RunFailed {
+            error,
+            kind: RunFailureKind::Other,
+        },
+    )
+    .await;
     false
 }
 
@@ -836,7 +859,14 @@ async fn apply_after_model_hooks(
             primary(subs),
         )
         .await;
-        emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
+        emit(
+            subs,
+            RuntimeEvent::RunFailed {
+                error: reason,
+                kind: RunFailureKind::Other,
+            },
+        )
+        .await;
         return None;
     }
     // Read back any rewrite the hook applied to the response.
@@ -882,7 +912,14 @@ async fn handle_model_error_or_retry(
         primary(subs),
     )
     .await;
-    emit(subs, RuntimeEvent::RunFailed { error }).await;
+    emit(
+        subs,
+        RuntimeEvent::RunFailed {
+            error,
+            kind: RunFailureKind::Other,
+        },
+    )
+    .await;
     false
 }
 
@@ -1031,7 +1068,14 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 primary(&subs),
             )
             .await;
-            emit(&subs, RuntimeEvent::RunFailed { error }).await;
+            emit(
+                &subs,
+                RuntimeEvent::RunFailed {
+                    error,
+                    kind: RunFailureKind::Other,
+                },
+            )
+            .await;
             return false;
         }
         _ => {}
@@ -1154,7 +1198,14 @@ async fn run_tool_and_handoff_phase(
                 continue;
             }
             crate::hook::HookAction::Abort(reason) => {
-                emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
+                emit(
+                    subs,
+                    RuntimeEvent::RunFailed {
+                        error: reason,
+                        kind: RunFailureKind::Other,
+                    },
+                )
+                .await;
                 return false;
             }
             crate::hook::HookAction::Continue => {}
@@ -1189,6 +1240,7 @@ async fn run_tool_and_handoff_phase(
                         subs,
                         RuntimeEvent::RunFailed {
                             error: "approval_timeout".into(),
+                            kind: RunFailureKind::Other,
                         },
                     )
                     .await;
@@ -1425,7 +1477,14 @@ async fn run_tool_and_handoff_phase(
                 )
                 .await
                 {
-                    emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    emit(
+                        subs,
+                        RuntimeEvent::RunFailed {
+                            error: reason,
+                            kind: RunFailureKind::Other,
+                        },
+                    )
+                    .await;
                     return false;
                 }
             }
@@ -1472,7 +1531,14 @@ async fn run_tool_and_handoff_phase(
                 )
                 .await
                 {
-                    emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    emit(
+                        subs,
+                        RuntimeEvent::RunFailed {
+                            error: reason,
+                            kind: RunFailureKind::Other,
+                        },
+                    )
+                    .await;
                     return false;
                 }
             }
@@ -1507,7 +1573,14 @@ async fn run_tool_and_handoff_phase(
                 )
                 .await
                 {
-                    emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    emit(
+                        subs,
+                        RuntimeEvent::RunFailed {
+                            error: reason,
+                            kind: RunFailureKind::Other,
+                        },
+                    )
+                    .await;
                     return false;
                 }
                 continue;
@@ -1552,14 +1625,28 @@ async fn run_tool_and_handoff_phase(
                 )
                 .await
                 {
-                    emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    emit(
+                        subs,
+                        RuntimeEvent::RunFailed {
+                            error: reason,
+                            kind: RunFailureKind::Other,
+                        },
+                    )
+                    .await;
                     return false;
                 }
             }
             Err(e) => {
                 if let Err(reason) = record_repeated_failure(state, subs, &tool_call.name, &e).await
                 {
-                    emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    emit(
+                        subs,
+                        RuntimeEvent::RunFailed {
+                            error: reason,
+                            kind: RunFailureKind::Other,
+                        },
+                    )
+                    .await;
                     return false;
                 }
                 tool_results.push(ContentBlock::ToolResult {
@@ -1577,7 +1664,14 @@ async fn run_tool_and_handoff_phase(
                 )
                 .await
                 {
-                    emit(subs, RuntimeEvent::RunFailed { error: reason }).await;
+                    emit(
+                        subs,
+                        RuntimeEvent::RunFailed {
+                            error: reason,
+                            kind: RunFailureKind::Other,
+                        },
+                    )
+                    .await;
                     return false;
                 }
             }
@@ -2149,7 +2243,14 @@ async fn fail_pre_start(
     run_hook_ctx: crate::hook::RunHookContext,
     error: String,
 ) -> AgentRunState {
-    emit(event_subs, RuntimeEvent::RunFailed { error }).await;
+    emit(
+        event_subs,
+        RuntimeEvent::RunFailed {
+            error,
+            kind: RunFailureKind::Other,
+        },
+    )
+    .await;
     myself.cast(AgentMsg::RunStep).ok();
     failed_state(
         run_id,

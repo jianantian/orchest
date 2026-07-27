@@ -23,10 +23,10 @@
 
 ## 验收标准
 
-- [ ] `RunFailed` 带 `kind`,老 payload(无 kind 字段)反序列化为 `Other`;Py/Node wire 透传不受影响
-- [ ] budget/max_steps 失败路径发出对应 kind(单测断言事件 kind,不只断言 error 文本)
-- [ ] `child_failure_error` 零字符串匹配;v0.15 既有的三个分类测试(budget/max_steps/generic)保持绿
-- [ ] 五项检查全绿
+- [x] `RunFailed` 带 `kind`,老 payload(无 kind 字段)反序列化为 `Other`;Py/Node wire 透传不受影响
+- [x] budget/max_steps 失败路径发出对应 kind(单测断言事件 kind,不只断言 error 文本)
+- [x] `child_failure_error` 零字符串匹配;v0.15 既有的三个分类测试(budget/max_steps/generic)保持绿
+- [x] 五项检查全绿
 
 ## 实施要点(hotfix 内嵌 plan)
 

@@ -183,7 +183,7 @@ async fn main() {
         match event {
             RuntimeEvent::ToolCallStarted { tool, .. } => println!("[run] started {tool}"),
             RuntimeEvent::RunCompleted { output, .. } => println!("[run] completed: {output}"),
-            RuntimeEvent::RunFailed { error } => println!("[run] failed: {error}"),
+            RuntimeEvent::RunFailed { error, .. } => println!("[run] failed: {error}"),
             _ => {}
         }
     }

@@ -193,7 +193,7 @@ async fn main() {
     while let Some(event) = rx.recv().await {
         match event {
             RuntimeEvent::RunCompleted { output, .. } => println!("[run] completed: {output}"),
-            RuntimeEvent::RunFailed { error } => println!("[run] failed: {error}"),
+            RuntimeEvent::RunFailed { error, .. } => println!("[run] failed: {error}"),
             _ => {}
         }
     }
