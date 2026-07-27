@@ -263,16 +263,7 @@ mod tests {
     use orchest::tool::{ErrorKind, RetryHint};
 
     fn test_ctx() -> ToolContext {
-        ToolContext {
-            run_id: orchest::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "test-call".into(),
-            event_tx: None,
-            webhook_base_url: None,
-            approval_bus: orchest::run::ApprovalBus::default(),
-            remaining_budget: Default::default(),
-            parent_messages: vec![],
-        }
+        ToolContext::oneshot()
     }
 
     #[tokio::test]

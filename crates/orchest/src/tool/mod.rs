@@ -35,6 +35,14 @@ pub trait Tool: Send + Sync {
     fn output_schema(&self) -> Option<&JsonSchema>;
     fn metadata(&self) -> &ToolMetadata;
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError>;
+    /// Execute this tool once with a throwaway [`ToolContext::oneshot()`]
+    /// context. This is the zero-boilerplate entry point for calling a tool
+    /// outside any run — and for tests — when the caller has no run state to
+    /// thread through. Inside a run the runtime builds the real context and
+    /// calls [`Tool::execute`] directly; do not use this there.
+    async fn call_oneshot(&self, input: Value) -> Result<ToolOutput, ToolError> {
+        self.execute(input, &ToolContext::oneshot()).await
+    }
     fn needs_parent_context(&self) -> bool {
         false
     }
@@ -83,9 +91,43 @@ pub struct ToolContext {
     pub parent_messages: Vec<Message>,
 }
 
+impl ToolContext {
+    /// Build a throwaway context with trivial values for a one-shot tool call
+    /// outside any run: a fresh [`RunId`](crate::run::RunId), `run_depth` 0, a
+    /// synthesized unique `tool_call_id`, no event channel, no webhook base
+    /// URL, a default [`ApprovalBus`](crate::run::ApprovalBus), the default
+    /// budget, and no parent messages.
+    ///
+    /// Intended for driving a tool's `execute` directly from code that is not
+    /// inside a run (e.g. an application calling a subagent tool once) and for
+    /// tests — callers no longer need to know which fields are safe to fake.
+    /// Inside a run the runtime constructs the real context; do not use this
+    /// there. When a call site needs one real field (typically an event
+    /// channel), override it with struct-update syntax:
+    /// `ToolContext { event_tx: Some(tx), ..ToolContext::oneshot() }`.
+    ///
+    /// [`Tool::call_oneshot`] wraps this for the common case of no overrides.
+    pub fn oneshot() -> Self {
+        let run_id = crate::run::RunId::new();
+        Self {
+            run_id,
+            run_depth: 0,
+            tool_call_id: format!("oneshot-{run_id}"),
+            event_tx: None,
+            webhook_base_url: None,
+            approval_bus: crate::run::ApprovalBus::default(),
+            remaining_budget: crate::budget::BudgetConfig::default(),
+            parent_messages: vec![],
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub input: Value,
 }
+
+#[cfg(test)]
+mod tests;

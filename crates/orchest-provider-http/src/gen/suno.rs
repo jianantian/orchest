@@ -15,10 +15,11 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use orchest_protocol::{
-    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenHandle, GenRequest, GenResult,
-    GenStatus, GenTask, Modality, ProtocolError, TimedSegment, TimedText,
+    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenAssetRole, GenHandle, GenRequest,
+    GenResult, GenStatus, GenTask, Modality, ProtocolError, TimedSegment, TimedText,
 };
 use orchest_provider_core::registry::ProviderConfig;
+use orchest_provider_core::warn_unconsumed_params;
 use serde_json::{json, Value};
 
 /// Suno music gen-task configuration.
@@ -49,7 +50,9 @@ fn status_err(code: u16, body: String) -> ProtocolError {
 /// Keys from [`GenRequest::params`] forwarded verbatim onto the Suno submit
 /// body. `model`/`prompt`/`lyrics`/`instrumental` are handled explicitly (they
 /// map onto Suno's `customMode`/`prompt`/`instrumental` fields) and so are
-/// excluded from passthrough.
+/// excluded from passthrough. `personaId`/`personaModel` have no typed
+/// [`MusicParams`](orchest_protocol::MusicParams) counterpart — raw `params`
+/// remains their only entry point.
 const PASSTHROUGH_PARAMS: &[&str] = &[
     "style",
     "title",
@@ -62,19 +65,39 @@ const PASSTHROUGH_PARAMS: &[&str] = &[
     "personaModel",
 ];
 
+/// Raw-params keys the dialect consumes explicitly: `lyrics` switches to
+/// custom mode, `instrumental` toggles vocal-less generation, `callBackUrl`
+/// overrides the dummy polling callback. Together with [`PASSTHROUGH_PARAMS`]
+/// this is the full consumed set for the unconsumed-key warning — every
+/// typed-consumed key (`style`/`title`/`negativeTags`/…) already appears in
+/// the passthrough whitelist under its wire name.
+const EXPLICIT_PARAMS: &[&str] = &["lyrics", "instrumental", "callBackUrl"];
+
 /// Per-request cap on the best-effort `get-timestamped-lyrics` call during
 /// `fetch` — much tighter than the shared client's 300s default.
 const TIMED_TEXT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Build the `/api/v1/generate` body. Defaults to non-custom mode
 /// (`customMode: false`, `instrumental: false`) with `prompt` as the creative
-/// description. When `params.lyrics` is present the dialect switches to custom
-/// mode: `customMode` becomes `true` and `prompt` is replaced by the lyrics
-/// (Suno's custom-mode prompt field carries the lyrics). `params.instrumental`
-/// toggles instrumental-only generation. The remaining Suno knobs (`style`,
-/// `title`, `negativeTags`, `vocalGender`, `styleWeight`, `weirdnessConstraint`,
-/// `audioWeight`, `personaId`, `personaModel`) pass through when present.
+/// description. When lyrics are present the dialect switches to custom mode:
+/// `customMode` becomes `true` and `prompt` is replaced by the lyrics (Suno's
+/// custom-mode prompt field carries the lyrics). `instrumental` toggles
+/// instrumental-only generation.
+///
+/// Typed [`MusicParams`](orchest_protocol::MusicParams) fields take
+/// precedence; raw `params` is the backward-compatible fallback for
+/// `lyrics`/`instrumental` and the passthrough knobs (`style`, `title`,
+/// `negativeTags`, `vocalGender`, `styleWeight`, `weirdnessConstraint`,
+/// `audioWeight`), and remains the only entry for the dialect-specific extras
+/// (`personaId`, `personaModel`, `callBackUrl`). Any other raw key warns via
+/// [`warn_unconsumed_params`].
 pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
+    warn_unconsumed_params(
+        "suno",
+        &[PASSTHROUGH_PARAMS, EXPLICIT_PARAMS].concat(),
+        &request.params,
+    );
+
     let mut body = json!({
         "model": model,
         "customMode": false,
@@ -83,22 +106,32 @@ pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
         "prompt": request.prompt,
     });
 
-    if let Some(params) = request.params.as_object() {
-        // Custom mode: lyrics present -> customMode=true, prompt becomes the
-        // lyrics (Suno's custom-mode prompt field carries the lyrics).
-        if let Some(lyrics) = params.get("lyrics").and_then(Value::as_str) {
-            if !lyrics.is_empty() {
-                body["customMode"] = json!(true);
-                body["prompt"] = json!(lyrics);
-            }
-        }
+    let typed = request.music.as_ref();
+    let params = request.params.as_object();
 
-        if let Some(instrumental) = params.get("instrumental") {
-            if instrumental.as_bool().unwrap_or(false) {
-                body["instrumental"] = json!(true);
-            }
-        }
+    // Custom mode: lyrics present -> customMode=true, prompt becomes the
+    // lyrics. Typed `music.lyrics` wins; raw `params.lyrics` is the
+    // backward-compat fallback. Empty/non-string lyrics never trigger
+    // custom mode.
+    let lyrics = typed
+        .and_then(|m| m.lyrics.as_deref())
+        .or_else(|| params.and_then(|p| p.get("lyrics")).and_then(Value::as_str));
+    if let Some(lyrics) = lyrics.filter(|l| !l.is_empty()) {
+        body["customMode"] = json!(true);
+        body["prompt"] = json!(lyrics);
+    }
 
+    // Instrumental toggle: typed first, raw fallback.
+    let instrumental = typed.and_then(|m| m.instrumental).or_else(|| {
+        params
+            .and_then(|p| p.get("instrumental"))
+            .and_then(Value::as_bool)
+    });
+    if instrumental == Some(true) {
+        body["instrumental"] = json!(true);
+    }
+
+    if let Some(params) = params {
         // Override callBackUrl from params if provided, so callers can set a
         // real webhook endpoint. Keep the default dummy URL for polling mode.
         if let Some(cb) = params.get("callBackUrl").and_then(Value::as_str) {
@@ -114,20 +147,40 @@ pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
         }
     }
 
+    // Typed knobs override the raw passthrough. Serializing MusicParams
+    // yields only the set fields, already in Suno's camelCase wire spelling;
+    // `lyrics`/`instrumental` went through the explicit handling above.
+    if let Some(typed) = typed {
+        if let Ok(Value::Object(knobs)) = serde_json::to_value(typed) {
+            for (key, value) in knobs {
+                if key != "lyrics" && key != "instrumental" {
+                    body[key] = value;
+                }
+            }
+        }
+    }
+
     body
 }
 
 /// Project a completed `record-info` `data` payload onto the spine result.
 /// `data.response` is an array of track objects; each item's `audioUrl` becomes
-/// a [`GenAsset::Url`] (Suno serves `.mp3`). The track titles are surfaced in
-/// `diagnostic_metadata` for traceability.
+/// a [`GenAsset::Url`] with `role: Primary` (Suno serves `.mp3`). The first
+/// track's `imageUrl` rides alongside as a `role: Cover` asset and its
+/// `duration` lifts into the typed [`GenResult::duration_secs`] — both are
+/// first-class product outputs, so they no longer ride in
+/// `diagnostic_metadata`, which keeps only genuine diagnostics (the track
+/// titles, for traceability). The cover and duration attach to the first
+/// track, the same one `assets[0]` and [`TimedText`] point at; grouping
+/// per-variant assets across the multiple tracks Suno returns is a separate
+/// gap (Finding 1 note), not this change.
 fn build_result(data: &Value) -> GenResult {
     let tracks = data
         .get("response")
         .and_then(|r| r.get("sunoData"))
         .and_then(Value::as_array);
 
-    let assets = tracks
+    let mut assets = tracks
         .map(|tracks| {
             tracks
                 .iter()
@@ -139,6 +192,7 @@ fn build_result(data: &Value) -> GenResult {
                         .map(|url| GenAsset::Url {
                             url: url.to_string(),
                             media_type: Some("audio/mpeg".to_string()),
+                            role: GenAssetRole::Primary,
                         })
                 })
                 .collect::<Vec<_>>()
@@ -159,27 +213,34 @@ fn build_result(data: &Value) -> GenResult {
         })
         .unwrap_or_default();
 
-    let cover_url = tracks
+    if let Some(cover_url) = tracks
         .and_then(|t| t.first())
         .and_then(|t| t.get("imageUrl").or_else(|| t.get("image_url")))
         .and_then(Value::as_str)
-        .filter(|s| !s.is_empty());
+        .filter(|s| !s.is_empty())
+    {
+        assets.push(GenAsset::Url {
+            url: cover_url.to_string(),
+            // Suno serves cover art as .jpeg.
+            media_type: Some("image/jpeg".to_string()),
+            role: GenAssetRole::Cover,
+        });
+    }
 
-    let duration: Option<f64> = tracks
+    let duration_secs = tracks
         .and_then(|t| t.first())
         .and_then(|t| t.get("duration").and_then(Value::as_f64));
 
     let diagnostic_metadata = json!({
         "provider": "suno",
         "titles": titles,
-        "cover_url": cover_url,
-        "duration_secs": duration,
     });
 
     GenResult {
         assets,
         diagnostic_metadata,
         timed_text: None,
+        duration_secs,
     }
 }
 
@@ -544,11 +605,21 @@ impl GenTask for SunoMusicGen {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orchest_protocol::{MusicParams, VocalGender};
 
     fn request(prompt: &str, params: Value) -> GenRequest {
         GenRequest {
             prompt: prompt.to_string(),
             params,
+            music: None,
+        }
+    }
+
+    fn request_with_music(prompt: &str, params: Value, music: MusicParams) -> GenRequest {
+        GenRequest {
+            prompt: prompt.to_string(),
+            params,
+            music: Some(music),
         }
     }
 
@@ -707,6 +778,204 @@ mod tests {
     }
 
     #[test]
+    fn submit_body_typed_music_fields_produce_full_knob_set() {
+        // Every typed knob lands on the wire under Suno's camelCase spelling,
+        // with no raw params involved at all.
+        let body = build_submit_body(
+            "V5_5",
+            &request_with_music(
+                "ignored description",
+                json!({}),
+                MusicParams {
+                    lyrics: Some("typed lyrics".to_string()),
+                    instrumental: Some(true),
+                    style: Some("lofi".to_string()),
+                    title: Some("typed title".to_string()),
+                    negative_tags: Some("no choir".to_string()),
+                    vocal_gender: Some(VocalGender::Female),
+                    style_weight: Some(0.5),
+                    weirdness_constraint: Some(0.2),
+                    audio_weight: Some(0.8),
+                },
+            ),
+        );
+        assert_eq!(body["customMode"], true);
+        assert_eq!(body["prompt"], "typed lyrics");
+        assert_eq!(body["instrumental"], true);
+        assert_eq!(body["style"], "lofi");
+        assert_eq!(body["title"], "typed title");
+        assert_eq!(body["negativeTags"], "no choir");
+        assert_eq!(body["vocalGender"], "f");
+        assert_eq!(body["styleWeight"], 0.5);
+        assert_eq!(body["weirdnessConstraint"], 0.2);
+        assert_eq!(body["audioWeight"], 0.8);
+    }
+
+    #[test]
+    fn submit_body_typed_fields_win_over_raw_params() {
+        let body = build_submit_body(
+            "V5_5",
+            &request_with_music(
+                "a calm piano track",
+                json!({
+                    "lyrics": "raw lyrics",
+                    "style": "raw style",
+                    "negativeTags": "raw tags",
+                    "vocalGender": "m",
+                }),
+                MusicParams {
+                    lyrics: Some("typed lyrics".to_string()),
+                    style: Some("typed style".to_string()),
+                    negative_tags: Some("typed tags".to_string()),
+                    vocal_gender: Some(VocalGender::Female),
+                    ..MusicParams::default()
+                },
+            ),
+        );
+        assert_eq!(body["prompt"], "typed lyrics");
+        assert_eq!(body["style"], "typed style");
+        assert_eq!(body["negativeTags"], "typed tags");
+        assert_eq!(body["vocalGender"], "f");
+    }
+
+    #[test]
+    fn submit_body_typed_instrumental_wins_over_raw_params() {
+        // Typed `instrumental: false` is an explicit choice, not "unset": it
+        // beats a raw `instrumental: true`.
+        let body = build_submit_body(
+            "V5_5",
+            &request_with_music(
+                "a calm piano track",
+                json!({ "instrumental": true }),
+                MusicParams {
+                    instrumental: Some(false),
+                    ..MusicParams::default()
+                },
+            ),
+        );
+        assert_eq!(body["instrumental"], false);
+
+        let body = build_submit_body(
+            "V5_5",
+            &request_with_music(
+                "a calm piano track",
+                json!({}),
+                MusicParams {
+                    instrumental: Some(true),
+                    ..MusicParams::default()
+                },
+            ),
+        );
+        assert_eq!(body["instrumental"], true);
+    }
+
+    #[test]
+    fn submit_body_typed_and_raw_params_combine() {
+        // Raw params keeps the dialect-specific extras (personaId /
+        // personaModel / callBackUrl) and the backward-compat knobs the typed
+        // request leaves unset; typed fields fill in the rest.
+        let body = build_submit_body(
+            "V5_5",
+            &request_with_music(
+                "a calm piano track",
+                json!({
+                    "personaId": "p-1",
+                    "personaModel": "style_persona",
+                    "callBackUrl": "https://real.example/hook",
+                    "styleWeight": 0.9,
+                }),
+                MusicParams {
+                    style: Some("typed style".to_string()),
+                    ..MusicParams::default()
+                },
+            ),
+        );
+        assert_eq!(body["personaId"], "p-1");
+        assert_eq!(body["personaModel"], "style_persona");
+        assert_eq!(body["callBackUrl"], "https://real.example/hook");
+        assert_eq!(body["style"], "typed style");
+        assert_eq!(body["styleWeight"], 0.9);
+    }
+
+    #[test]
+    fn submit_body_raw_params_still_work_when_typed_absent() {
+        // Backward compatibility: a caller that sets only raw params gets the
+        // exact pre-typing body.
+        let body = build_submit_body(
+            "V5_5",
+            &request(
+                "a calm piano track",
+                json!({ "lyrics": "raw lyrics", "vocalGender": "m" }),
+            ),
+        );
+        assert_eq!(body["customMode"], true);
+        assert_eq!(body["prompt"], "raw lyrics");
+        assert_eq!(body["vocalGender"], "m");
+    }
+
+    // -------------------------------------------------------------------
+    // unconsumed-key warning wiring
+    // -------------------------------------------------------------------
+
+    #[derive(Clone, Default)]
+    struct SharedBuffer(Arc<StdMutex<Vec<u8>>>);
+
+    impl std::io::Write for SharedBuffer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl tracing_subscriber::fmt::MakeWriter<'_> for SharedBuffer {
+        type Writer = SharedBuffer;
+
+        fn make_writer(&self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    #[test]
+    fn submit_body_warns_on_unconsumed_params_key() {
+        let buffer = SharedBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(buffer.clone())
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            build_submit_body(
+                "V5_5",
+                &request("a song", json!({ "genre": "indie folk", "style": "lofi" })),
+            );
+        });
+        let logs = String::from_utf8(
+            buffer
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone(),
+        )
+        .expect("tracing output is utf8");
+        assert!(logs.contains("WARN"), "expected a WARN event: {logs}");
+        assert!(
+            logs.contains("genre"),
+            "unknown key named in warning: {logs}"
+        );
+        assert!(
+            !logs.contains("style"),
+            "consumed key must not warn: {logs}"
+        );
+    }
+
+    #[test]
     fn build_result_extracts_two_assets_and_titles() {
         let data = json!({
             "status": "SUCCESS",
@@ -724,16 +993,55 @@ mod tests {
                 GenAsset::Url {
                     url: "https://suno/track1.mp3".to_string(),
                     media_type: Some("audio/mpeg".to_string()),
+                    role: GenAssetRole::Primary,
                 },
                 GenAsset::Url {
                     url: "https://suno/track2.mp3".to_string(),
                     media_type: Some("audio/mpeg".to_string()),
+                    role: GenAssetRole::Primary,
                 },
             ]
         );
         assert_eq!(result.diagnostic_metadata["provider"], "suno");
         assert_eq!(result.diagnostic_metadata["titles"][0], "First");
         assert_eq!(result.diagnostic_metadata["titles"][1], "Second");
+        // No cover/duration in the payload: no extra asset, no typed field.
+        assert_eq!(result.duration_secs, None);
+    }
+
+    #[test]
+    fn build_result_lifts_cover_and_duration_to_the_typed_surface() {
+        // Finding 2: cover_url/duration_secs are first-class product outputs,
+        // not diagnostics. The cover becomes a role-tagged asset appended
+        // after the audio tracks, duration lands on the typed field, and
+        // neither key remains in diagnostic_metadata.
+        let data = json!({
+            "status": "SUCCESS",
+            "response": {
+                "sunoData": [
+                    {
+                        "audioUrl": "https://suno/track1.mp3",
+                        "title": "First",
+                        "imageUrl": "https://suno/cover1.jpeg",
+                        "duration": 31.84,
+                    },
+                    { "audioUrl": "https://suno/track2.mp3", "title": "Second" },
+                ]
+            }
+        });
+        let result = build_result(&data);
+        assert_eq!(result.assets.len(), 3);
+        assert_eq!(
+            result.assets[2],
+            GenAsset::Url {
+                url: "https://suno/cover1.jpeg".to_string(),
+                media_type: Some("image/jpeg".to_string()),
+                role: GenAssetRole::Cover,
+            }
+        );
+        assert_eq!(result.duration_secs, Some(31.84));
+        assert!(result.diagnostic_metadata.get("cover_url").is_none());
+        assert!(result.diagnostic_metadata.get("duration_secs").is_none());
     }
 
     #[test]
@@ -754,6 +1062,7 @@ mod tests {
             GenAsset::Url {
                 url: "https://suno/track1.mp3".to_string(),
                 media_type: Some("audio/mpeg".to_string()),
+                role: GenAssetRole::Primary,
             }
         );
     }
@@ -763,6 +1072,7 @@ mod tests {
         let data = json!({ "status": "SUCCESS", "response": {"sunoData": []} });
         let result = build_result(&data);
         assert!(result.assets.is_empty());
+        assert_eq!(result.duration_secs, None);
         assert_eq!(result.diagnostic_metadata["provider"], "suno");
         assert_eq!(result.diagnostic_metadata["titles"], json!([]));
     }
@@ -796,7 +1106,7 @@ mod tests {
 
     async fn serve_suno(lyrics_status: u16, lyrics_body: &'static str) -> MockSunoServer {
         const SUBMIT_BODY: &str = r#"{"code":200,"msg":"success","data":{"taskId":"task-1"}}"#;
-        const RECORD_INFO_BODY: &str = r#"{"code":200,"msg":"success","data":{"taskId":"task-1","status":"SUCCESS","response":{"sunoData":[{"id":"aud-1","audioUrl":"https://suno/track1.mp3","title":"First"},{"id":"aud-2","audioUrl":"https://suno/track2.mp3","title":"Second"}]}}}"#;
+        const RECORD_INFO_BODY: &str = r#"{"code":200,"msg":"success","data":{"taskId":"task-1","status":"SUCCESS","response":{"sunoData":[{"id":"aud-1","audioUrl":"https://suno/track1.mp3","title":"First","imageUrl":"https://suno/cover1.jpeg","duration":31.84},{"id":"aud-2","audioUrl":"https://suno/track2.mp3","title":"Second"}]}}}"#;
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -920,7 +1230,27 @@ mod tests {
         assert_eq!(timed_text.segments[0].end, Some(16.676));
         assert!(timed_text.segments[0].text.contains("晨光爬上窗台"));
         assert_eq!(result.diagnostic_metadata["alignment_hoot_cer"], json!(0.6));
-        assert_eq!(result.assets.len(), 2);
+        // Two primary audio tracks plus the cover as a role-tagged asset;
+        // duration rides the typed field, neither is in diagnostic_metadata.
+        assert_eq!(result.assets.len(), 3);
+        assert!(result.assets[..2].iter().all(|a| matches!(
+            a,
+            GenAsset::Url {
+                role: GenAssetRole::Primary,
+                ..
+            }
+        )));
+        assert_eq!(
+            result.assets.last(),
+            Some(&GenAsset::Url {
+                url: "https://suno/cover1.jpeg".to_string(),
+                media_type: Some("image/jpeg".to_string()),
+                role: GenAssetRole::Cover,
+            })
+        );
+        assert_eq!(result.duration_secs, Some(31.84));
+        assert!(result.diagnostic_metadata.get("cover_url").is_none());
+        assert!(result.diagnostic_metadata.get("duration_secs").is_none());
 
         let lyrics_calls = server
             .request_lines()
@@ -950,6 +1280,7 @@ mod tests {
             .diagnostic_metadata
             .get("alignment_hoot_cer")
             .is_none());
-        assert_eq!(result.assets.len(), 2);
+        assert_eq!(result.assets.len(), 3);
+        assert_eq!(result.duration_secs, Some(31.84));
     }
 }

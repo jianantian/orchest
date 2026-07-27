@@ -145,16 +145,7 @@ mod tests {
                 input_schema: json!({"type": "object"}),
             },
         ]);
-        let ctx = ToolContext {
-            run_id: crate::run::RunId::new(),
-            run_depth: 0,
-            tool_call_id: "search".into(),
-            event_tx: None,
-            webhook_base_url: None,
-            approval_bus: crate::run::handle::ApprovalBus::default(),
-            remaining_budget: crate::budget::BudgetConfig::default(),
-            parent_messages: vec![],
-        };
+        let ctx = ToolContext::oneshot();
         let output = tool
             .execute(json!({"query": "read disk file", "top_k": 1}), &ctx)
             .await

@@ -9,11 +9,11 @@
 
 use async_trait::async_trait;
 use orchest_protocol::{
-    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenHandle, GenRequest, GenResult,
-    GenStatus, GenTask, Modality, ProtocolError,
+    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenAssetRole, GenHandle, GenRequest,
+    GenResult, GenStatus, GenTask, Modality, ProtocolError,
 };
 use orchest_provider_core::registry::ProviderConfig;
-use orchest_provider_core::shared_client;
+use orchest_provider_core::{shared_client, warn_unconsumed_params};
 use serde_json::{json, Value};
 
 const DEFAULT_API_URL: &str = "https://ark.cn-beijing.volces.com/api/v3";
@@ -52,11 +52,19 @@ fn parse_err(what: &str, e: serde_json::Error) -> ProtocolError {
     )
 }
 
+/// [`GenRequest::params`] keys the Ark video create-task API understands (a
+/// `content` override for image/last-frame roles, plus the config knobs).
+/// `model` is set explicitly and skipped in the passthrough; anything outside
+/// this set warns via [`warn_unconsumed_params`] — it would be forwarded
+/// verbatim but have no effect on the API.
+const CONSUMED_PARAMS: &[&str] = &["content", "resolution", "ratio", "duration", "seed"];
+
 /// Build the create-task body. `content` defaults to a single text item from the
 /// prompt; any [`GenRequest::params`] (a `content` override for image/last-frame
 /// roles, plus `resolution` / `ratio` / `duration` / `seed` / … config) pass
 /// through.
 pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
+    warn_unconsumed_params("volcengine", CONSUMED_PARAMS, &request.params);
     let mut body = json!({
         "model": model,
         "content": [{ "type": "text", "text": request.prompt }],
@@ -94,15 +102,20 @@ pub fn parse_assets(response: &Value) -> Vec<GenAsset> {
         assets.push(GenAsset::Url {
             url: url.to_string(),
             media_type: Some("video/mp4".to_string()),
+            role: GenAssetRole::Primary,
         });
     }
     if let Some(url) = response
         .pointer("/content/last_frame_url")
         .and_then(Value::as_str)
     {
+        // The last-frame image is a still derived from the video, not the
+        // primary product (the MP4 above is) — tagged Preview so consumers
+        // collecting Primary assets never pick up a stray image.
         assets.push(GenAsset::Url {
             url: url.to_string(),
             media_type: Some("image/png".to_string()),
+            role: GenAssetRole::Preview,
         });
     }
     assets
@@ -230,6 +243,7 @@ impl GenTask for VolcengineVideoGen {
             assets: parse_assets(&response),
             diagnostic_metadata: json!({ "provider": "volcengine", "status": map_status(&response) }),
             timed_text: None,
+            duration_secs: None,
         })
     }
 }
@@ -242,6 +256,7 @@ mod tests {
         GenRequest {
             prompt: prompt.to_string(),
             params,
+            music: None,
         }
     }
 
@@ -301,7 +316,33 @@ mod tests {
             vec![GenAsset::Url {
                 url: "https://v/out.mp4".to_string(),
                 media_type: Some("video/mp4".to_string()),
+                role: GenAssetRole::Primary,
             }]
         );
+    }
+
+    #[test]
+    fn last_frame_is_tagged_preview_not_primary() {
+        let response = json!({
+            "id": "task-10",
+            "status": "succeeded",
+            "content": {"video_url": "https://v/out.mp4", "last_frame_url": "https://v/last.png"}
+        });
+        let assets = parse_assets(&response);
+        assert_eq!(assets.len(), 2);
+        assert!(matches!(
+            &assets[0],
+            GenAsset::Url {
+                role: GenAssetRole::Primary,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &assets[1],
+            GenAsset::Url {
+                role: GenAssetRole::Preview,
+                ..
+            }
+        ));
     }
 }

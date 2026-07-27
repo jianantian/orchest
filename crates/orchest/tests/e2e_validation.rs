@@ -626,14 +626,9 @@ async fn e2e_skill_content_read_event() {
 
     let (event_tx, mut event_rx) = mpsc::channel(16);
     let ctx = ToolContext {
-        run_id: orchest::run::RunId::new(),
-        run_depth: 0,
         tool_call_id: "read_skill".into(),
         event_tx: Some(event_tx),
-        webhook_base_url: None,
-        approval_bus: orchest::run::ApprovalBus::default(),
-        remaining_budget: orchest::budget::BudgetConfig::default(),
-        parent_messages: vec![],
+        ..ToolContext::oneshot()
     };
 
     tool.execute(json!({"path": skill_md.to_str().unwrap()}), &ctx)
@@ -663,14 +658,9 @@ async fn e2e_read_file_known_risk_boundary_is_visible() {
     let tool = ReadFileTool::new();
     let (event_tx, mut event_rx) = mpsc::channel(16);
     let ctx = ToolContext {
-        run_id: orchest::run::RunId::new(),
-        run_depth: 0,
         tool_call_id: "read_non_skill".into(),
         event_tx: Some(event_tx),
-        webhook_base_url: None,
-        approval_bus: orchest::run::ApprovalBus::default(),
-        remaining_budget: orchest::budget::BudgetConfig::default(),
-        parent_messages: vec![],
+        ..ToolContext::oneshot()
     };
 
     let output = tool

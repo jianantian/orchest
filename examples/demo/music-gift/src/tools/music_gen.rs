@@ -15,8 +15,8 @@ use tokio::time::{sleep, Duration};
 use tokio_stream::wrappers::ReceiverStream;
 
 use orchest_protocol::{
-    ChatModel, ContentBlock, GenAsset, GenHandle, GenRequest, GenStatus, GenTask, Message,
-    RequestOptions, Role,
+    ChatModel, ContentBlock, GenAsset, GenAssetRole, GenHandle, GenRequest, GenStatus, GenTask,
+    Message, MusicParams, RequestOptions, Role, VocalGender,
 };
 
 use crate::error::{AppError, AppResult};
@@ -80,7 +80,7 @@ impl std::fmt::Display for EnrichedPrompt {
 // ── Generate pipeline ───────────────────────────────────────────────────────
 
 /// Typed generation inputs derived from the gift — exactly the fields
-/// `GenRequest.params` is built from. `submit` takes these instead of
+/// [`GenRequest::music`] is built from. `submit` takes these instead of
 /// re-fetching the gift and re-deriving them from raw meta.
 pub struct GenSubmission {
     pub lyrics: String,
@@ -211,69 +211,90 @@ pub async fn generate(
     Ok(resp)
 }
 
-/// Build [`GenRequest::params`] for the given provider, checking every key
-/// against what that provider's dialect actually forwards (previously seven
-/// enrichment keys — genre/tempo/mood/vocal_style/instrumentation/production/
-/// exclude — went out for every provider and were silently dropped):
+/// Build the typed [`MusicParams`] for the given provider, mapping the gift
+/// and enrichment fields onto the music knobs each dialect actually consumes
+/// (the submit path is fully typed — raw `GenRequest.params` stays empty, so
+/// a misspelled key is a compile error, not a silent drop):
 ///
-/// - **suno**: `lyrics`/`instrumental` are handled explicitly by the dialect;
-///   the passthrough whitelist is `style`/`title`/`negativeTags`/`vocalGender`/
-///   `styleWeight`/`weirdnessConstraint`/`audioWeight`/`personaId`/
-///   `personaModel` (crates/orchest-provider-http/src/gen/suno.rs
-///   `PASSTHROUGH_PARAMS`).
-/// - **mureka**: passthrough is `lyrics`/`n`/`reference_id`/`vocal_id`/
-///   `melody_id`/`gender`; `is_instrumental` only selects the endpoint.
-/// - **minimax**: forwards every params key verbatim onto its API body, so
-///   only keys its API actually understands are sent.
-fn build_gen_params(submission: &GenSubmission, enriched: &EnrichedPrompt) -> Value {
+/// - **suno**: all knobs typed. `style` folds the raw style together with the
+///   enrichment's genre/tempo/mood/instrumentation/production — in Suno's
+///   custom mode the prompt slot carries the lyrics, so the style string is
+///   the only place the LLM rewrite reaches the wire (the prompt template
+///   already builds these dimensions as the compact descriptor line).
+///   `exclude` → `negative_tags`. `vocal_gender` keeps coming from the gift
+///   meta ("male"/"female" → [`VocalGender`]), not from `vocal_style`: the
+///   enrichment's vocal_style is free text ("male, breathy"), not a valid
+///   gender value.
+/// - **mureka / minimax**: `lyrics` + `instrumental` only — those dialects
+///   map them onto `lyrics`/`is_instrumental`; style and the other knobs
+///   ride in the prompt string, as before.
+/// - **unknown provider**: the conservative typed denominator —
+///   lyrics/style/title are meaningful on every dialect above.
+fn build_music_params(submission: &GenSubmission, enriched: &EnrichedPrompt) -> MusicParams {
     let instrumental = submission.kind == "instrumental";
-    let mut params = serde_json::Map::new();
+    // Empty lyrics are "unset", not an empty string on the wire.
+    let lyrics = (!submission.lyrics.is_empty()).then(|| submission.lyrics.clone());
     match submission.provider.as_str() {
         "suno" => {
-            params.insert("lyrics".into(), json!(submission.lyrics));
-            params.insert("style".into(), json!(submission.style));
-            params.insert("title".into(), json!(submission.title));
-            if instrumental {
-                params.insert("instrumental".into(), json!(true));
+            let style = composed_style(submission, enriched);
+            let exclude = enriched.exclude.trim();
+            let vocal_gender = if instrumental {
+                // No vocal gender for instrumentals: there are no vocals to
+                // gender.
+                None
             } else {
-                // sunoapi.org vocalGender enum is "m"/"f" — the meta value is
-                // "male"/"female". No vocalGender for instrumentals: there
-                // are no vocals to gender.
-                let vocal_gender = match submission.vocal.as_str() {
-                    "male" => Some("m"),
-                    "female" => Some("f"),
+                // sunoapi.org's vocalGender enum is "m"/"f" — the meta value
+                // is "male"/"female".
+                match submission.vocal.as_str() {
+                    "male" => Some(VocalGender::Male),
+                    "female" => Some(VocalGender::Female),
                     other => {
                         tracing::warn!(
                             vocal = %other,
-                            "unexpected vocal value, vocalGender omitted from Suno params"
+                            "unexpected vocal value, vocal_gender omitted from Suno music params"
                         );
                         None
                     }
-                };
-                if let Some(g) = vocal_gender {
-                    params.insert("vocalGender".into(), json!(g));
                 }
-            }
-            let exclude = enriched.exclude.trim();
-            if !exclude.is_empty() {
-                params.insert("negativeTags".into(), json!(exclude));
+            };
+            MusicParams {
+                lyrics,
+                instrumental: instrumental.then_some(true),
+                style: Some(style),
+                title: Some(submission.title.clone()),
+                negative_tags: (!exclude.is_empty()).then(|| exclude.to_string()),
+                vocal_gender,
+                ..MusicParams::default()
             }
         }
-        "mureka" | "minimax" => {
-            params.insert("lyrics".into(), json!(submission.lyrics));
-            if instrumental {
-                params.insert("is_instrumental".into(), json!(true));
-            }
-        }
-        _ => {
-            // Unknown provider: the conservative common denominator —
-            // lyrics/style/title are meaningful on every dialect above.
-            params.insert("lyrics".into(), json!(submission.lyrics));
-            params.insert("style".into(), json!(submission.style));
-            params.insert("title".into(), json!(submission.title));
-        }
+        "mureka" | "minimax" => MusicParams {
+            lyrics,
+            instrumental: instrumental.then_some(true),
+            ..MusicParams::default()
+        },
+        _ => MusicParams {
+            lyrics,
+            style: Some(submission.style.clone()),
+            title: Some(submission.title.clone()),
+            ..MusicParams::default()
+        },
     }
-    Value::Object(params)
+}
+
+/// Fold the raw style and the enrichment's structured dimensions
+/// (genre/tempo/mood/instrumentation/production) into the single style string
+/// the Suno `style` knob expects. Empty parts drop out; the raw style leads.
+fn composed_style(submission: &GenSubmission, enriched: &EnrichedPrompt) -> String {
+    std::iter::once(submission.style.as_str())
+        .chain(enriched.genre.iter().map(String::as_str))
+        .chain(std::iter::once(enriched.tempo.as_str()))
+        .chain(enriched.mood.iter().map(String::as_str))
+        .chain(std::iter::once(enriched.instrumentation.as_str()))
+        .chain(std::iter::once(enriched.production.as_str()))
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Submit a music generation job for the gift and persist the handle.
@@ -284,11 +305,12 @@ pub async fn submit(
     submission: &GenSubmission,
     enriched: &EnrichedPrompt,
 ) -> AppResult<GenerateResponse> {
-    let params = build_gen_params(submission, enriched);
-
     let gen_req = GenRequest {
         prompt: enriched.prompt.clone(),
-        params,
+        // Fully typed submit path: no raw dialect extras, so `params` stays
+        // empty and every knob travels in `music`.
+        params: Value::Null,
+        music: Some(build_music_params(submission, enriched)),
     };
     let handle = gen_task.submit(gen_req).await?;
     let handle_json = serde_json::to_string(&handle)?;
@@ -529,8 +551,9 @@ async fn finalize_in_background(
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-/// Fetch completed generation assets, extract the first audio URL, generate
-/// synced lyrics (LRC), and update the store.
+/// Fetch completed generation assets, extract the primary audio URL, persist
+/// the provider's cover art, generate synced lyrics (LRC), and update the
+/// store.
 async fn handle_done(
     gen_task: &dyn GenTask,
     store: &GiftStore,
@@ -543,8 +566,14 @@ async fn handle_done(
         .await
         .map_err(|e| AppError::Gen(e.to_string()))?;
 
-    let url = result.assets.first().and_then(|a| match a {
-        GenAsset::Url { url, .. } => Some(url.clone()),
+    // The audio track is the Primary-role asset: cover art rides alongside in
+    // the same asset list now, so pick by role, never by position.
+    let url = result.assets.iter().find_map(|a| match a {
+        GenAsset::Url {
+            url,
+            role: GenAssetRole::Primary,
+            ..
+        } => Some(url.clone()),
         _ => None,
     });
 
@@ -552,14 +581,27 @@ async fn handle_done(
         store.update_audio(gift_id, u)?;
     }
 
+    // Cover art the provider surfaced as a Cover-role asset (Suno). Decorative
+    // — a store failure must not fail the generation.
+    let cover_url = result.assets.iter().find_map(|a| match a {
+        GenAsset::Url {
+            url,
+            role: GenAssetRole::Cover,
+            ..
+        } => Some(url.clone()),
+        _ => None,
+    });
+    if let Some(ref c) = cover_url {
+        if let Err(e) = store.update_cover(gift_id, c) {
+            eprintln!("[music-gift] cover store failed [{gift_id}]: {e}");
+        }
+    }
+
     // Synced lyrics for the scrolling viewer. Prefer the provider's forced
     // alignment (structured TimedText → rendered to LRC); fall back to our own
-    // text estimate from lyrics + reported duration only when the provider gave
-    // no timed text. Best-effort — never fail generation over it.
-    let duration = result
-        .diagnostic_metadata
-        .get("duration_secs")
-        .and_then(serde_json::Value::as_f64);
+    // text estimate from lyrics + the typed duration only when the provider
+    // gave no timed text. Best-effort — never fail generation over it.
+    let duration = result.duration_secs;
     let lrc = result
         .timed_text
         .as_ref()
@@ -759,6 +801,10 @@ fn extract_json_block(text: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    use orchest_protocol::{Capability, CapabilityDescriptor, GenResult, Modality, ProtocolError};
+
+    use crate::gift::{Gift, GiftStore};
+
     fn submission_for(provider: &str) -> GenSubmission {
         GenSubmission {
             lyrics: "[verse]\nla la".to_string(),
@@ -784,50 +830,47 @@ mod tests {
         }
     }
 
-    /// Every key sent for Suno must be one the dialect actually forwards:
-    /// `lyrics`/`instrumental` are handled explicitly, the rest must be on
-    /// the passthrough whitelist (crates/orchest-provider-http/src/gen/
-    /// suno.rs `PASSTHROUGH_PARAMS`). The old seven enrichment keys
-    /// (genre/tempo/mood/vocal_style/instrumentation/production/exclude)
-    /// were silently dropped and must not come back.
+    /// Every knob sent for Suno must be one the dialect actually consumes —
+    /// now a compile-time property: `MusicParams` only has the typed fields
+    /// (crates/orchest-protocol `MusicParams`) the suno dialect maps
+    /// (crates/orchest-provider-http/src/gen/suno.rs). The old seven raw
+    /// enrichment keys (genre/tempo/mood/vocal_style/instrumentation/
+    /// production/exclude) were silently dropped and must not come back —
+    /// they now fold into `style`/`negative_tags` instead.
     #[test]
-    fn suno_params_carry_whitelisted_keys_only() {
-        let params = build_gen_params(&submission_for("suno"), &enriched());
-        let mut keys: Vec<&str> = params
-            .as_object()
-            .expect("params object")
-            .keys()
-            .map(String::as_str)
-            .collect();
-        keys.sort_unstable();
+    fn suno_music_params_map_onto_typed_knobs() {
+        let music = build_music_params(&submission_for("suno"), &enriched());
+        assert_eq!(music.lyrics.as_deref(), Some("[verse]\nla la"));
+        assert_eq!(music.title.as_deref(), Some("Wheels"));
+        assert_eq!(music.vocal_gender, Some(VocalGender::Male)); // meta "male" -> sunoapi "m"
+        assert_eq!(music.negative_tags.as_deref(), Some("no backing vocals"));
+        assert_eq!(music.instrumental, None);
+        // The raw style leads, then the enrichment's genre/tempo/mood/
+        // instrumentation/production — the style string is the only place
+        // those dimensions reach the Suno custom-mode wire.
         assert_eq!(
-            keys,
-            ["lyrics", "negativeTags", "style", "title", "vocalGender"]
+            music.style.as_deref(),
+            Some("warm acoustic, indie folk, ballad-slow, warm, acoustic guitar, spacious reverb")
         );
+    }
 
-        assert_eq!(params["style"], "warm acoustic");
-        assert_eq!(params["vocalGender"], "m"); // meta "male" -> sunoapi enum "m"
-        assert_eq!(params["negativeTags"], "no backing vocals");
-        assert!(params.get("instrumental").is_none());
-        for key in [
-            "genre",
-            "tempo",
-            "mood",
-            "vocal_style",
-            "instrumentation",
-            "production",
-            "exclude",
-        ] {
-            assert!(params.get(key).is_none(), "{key} leaked into suno params");
-        }
+    #[test]
+    fn suno_style_string_is_raw_style_when_enrichment_is_empty() {
+        // The degraded/fallback path contributes no dimensions, so the style
+        // is exactly the gift's raw style (no dangling separators).
+        let music = build_music_params(
+            &submission_for("suno"),
+            &EnrichedPrompt::fallback("warm acoustic"),
+        );
+        assert_eq!(music.style.as_deref(), Some("warm acoustic"));
     }
 
     #[test]
     fn suno_params_map_female_vocal() {
         let mut sub = submission_for("suno");
         sub.vocal = "female".to_string();
-        let params = build_gen_params(&sub, &enriched());
-        assert_eq!(params["vocalGender"], "f");
+        let music = build_music_params(&sub, &enriched());
+        assert_eq!(music.vocal_gender, Some(VocalGender::Female));
     }
 
     #[test]
@@ -835,45 +878,198 @@ mod tests {
         let mut sub = submission_for("suno");
         sub.kind = "instrumental".to_string();
         sub.lyrics = String::new();
-        let params = build_gen_params(&sub, &enriched());
-        assert_eq!(params["instrumental"], true);
-        assert!(params.get("vocalGender").is_none());
-        // negativeTags still apply to an instrumental generation.
-        assert_eq!(params["negativeTags"], "no backing vocals");
+        let music = build_music_params(&sub, &enriched());
+        assert_eq!(music.instrumental, Some(true));
+        assert_eq!(music.vocal_gender, None);
+        // Empty lyrics are unset, not an empty string on the wire.
+        assert_eq!(music.lyrics, None);
+        // negative_tags still apply to an instrumental generation.
+        assert_eq!(music.negative_tags.as_deref(), Some("no backing vocals"));
     }
 
     #[test]
     fn suno_params_omit_empty_negative_tags() {
         let mut e = enriched();
         e.exclude = "  ".to_string();
-        let params = build_gen_params(&submission_for("suno"), &e);
-        assert!(params.get("negativeTags").is_none());
+        let music = build_music_params(&submission_for("suno"), &e);
+        assert_eq!(music.negative_tags, None);
     }
 
-    /// Mureka (whitelist passthrough) and minimax (verbatim passthrough)
-    /// must not see the Suno keys — only `lyrics`, plus the instrumental
-    /// selector for instrumental gifts. This keeps the song-path wire
-    /// identical to before the D1 alignment.
+    /// Mureka and minimax consume only `lyrics`/`instrumental` — style,
+    /// title, and the Suno-only knobs must stay unset for them. This keeps
+    /// the song-path wire identical to before the typing.
     #[test]
     fn mureka_and_minimax_params_are_lyrics_only() {
         for provider in ["mureka", "minimax"] {
-            let params = build_gen_params(&submission_for(provider), &enriched());
-            let keys: Vec<&str> = params
-                .as_object()
-                .expect("params object")
-                .keys()
-                .map(String::as_str)
-                .collect();
-            assert_eq!(keys, ["lyrics"], "{provider} params: {keys:?}");
+            let music = build_music_params(&submission_for(provider), &enriched());
+            assert_eq!(
+                music.lyrics.as_deref(),
+                Some("[verse]\nla la"),
+                "{provider}"
+            );
+            assert_eq!(music.instrumental, None, "{provider}");
+            assert_eq!(music.style, None, "{provider}");
+            assert_eq!(music.title, None, "{provider}");
+            assert_eq!(music.vocal_gender, None, "{provider}");
+            assert_eq!(music.negative_tags, None, "{provider}");
 
             let mut sub = submission_for(provider);
             sub.kind = "instrumental".to_string();
-            let params = build_gen_params(&sub, &enriched());
-            assert_eq!(params["is_instrumental"], true, "{provider}");
-            assert!(
-                params.get("vocalGender").is_none() && params.get("negativeTags").is_none(),
-                "{provider} must not see suno-only keys"
-            );
+            sub.lyrics = String::new();
+            let music = build_music_params(&sub, &enriched());
+            assert_eq!(music.instrumental, Some(true), "{provider}");
+            assert_eq!(music.lyrics, None, "{provider}");
         }
+    }
+
+    /// Minimal [`GenTask`] fake for `handle_done`: submit/poll are never
+    /// reached; `fetch` returns the canned result.
+    struct FakeGenTask {
+        result: GenResult,
+    }
+
+    #[async_trait::async_trait]
+    impl GenTask for FakeGenTask {
+        fn provider_name(&self) -> &str {
+            "fake"
+        }
+
+        fn model_name(&self) -> &str {
+            "fake-model"
+        }
+
+        fn descriptor(&self) -> CapabilityDescriptor {
+            CapabilityDescriptor::new("fake", "fake-model", Capability::GenTask)
+                .with_input_modalities([Modality::Text])
+                .with_output_modalities([Modality::Audio])
+        }
+
+        async fn submit(&self, _req: GenRequest) -> Result<GenHandle, ProtocolError> {
+            unimplemented!("handle_done only calls fetch")
+        }
+
+        async fn poll(&self, _handle: &GenHandle) -> Result<GenStatus, ProtocolError> {
+            unimplemented!("handle_done only calls fetch")
+        }
+
+        async fn fetch(&self, _handle: &GenHandle) -> Result<GenResult, ProtocolError> {
+            Ok(self.result.clone())
+        }
+    }
+
+    /// A store backed by a tempdir SQLite file with one gift inserted. The
+    /// TempDir is returned so the caller keeps it alive for the store's
+    /// lifetime (SQLite needs the directory for its journal files).
+    fn store_with_gift(gift_id: &str, lyrics: Option<String>) -> (GiftStore, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("gifts.db").to_string_lossy().into_owned();
+        let store = GiftStore::open(&db).expect("open store");
+        store
+            .create(&Gift {
+                id: gift_id.to_string(),
+                kind: "song".to_string(),
+                lyrics,
+                meta: json!({}),
+                audio_url: None,
+                cover_url: None,
+                photos: vec![],
+                gen_handle: None,
+                gen_status: None,
+                countdown_status: None,
+                lrc: None,
+                duration_secs: None,
+                creator_token: "tok".to_string(),
+                published: false,
+                likes: vec![],
+                created_at: "0".to_string(),
+                published_at: None,
+            })
+            .expect("create gift");
+        (store, dir)
+    }
+
+    /// `handle_done` consumes the typed surface only: the audio URL comes from
+    /// the Primary-role asset even when the cover sorts first, the Cover-role
+    /// asset is persisted on the gift, and the LRC fallback runs off the typed
+    /// `duration_secs` — nothing reads diagnostic_metadata anymore.
+    #[tokio::test]
+    async fn handle_done_consumes_roles_and_typed_duration() {
+        let (store, _dir) = store_with_gift("g1", Some("[Verse]\nline one\nline two".to_string()));
+        let task = FakeGenTask {
+            result: GenResult {
+                assets: vec![
+                    // Cover listed first: the pick must be by role, not position.
+                    GenAsset::Url {
+                        url: "https://cdn/cover.jpeg".to_string(),
+                        media_type: Some("image/jpeg".to_string()),
+                        role: GenAssetRole::Cover,
+                    },
+                    GenAsset::Url {
+                        url: "https://cdn/track.mp3".to_string(),
+                        media_type: Some("audio/mpeg".to_string()),
+                        role: GenAssetRole::Primary,
+                    },
+                ],
+                diagnostic_metadata: json!({ "provider": "suno" }),
+                timed_text: None,
+                duration_secs: Some(31.84),
+            },
+        };
+        let handle = GenHandle {
+            id: "task-1".to_string(),
+            provider: Some("fake".to_string()),
+        };
+
+        let url = handle_done(
+            &task,
+            &store,
+            "g1",
+            Some("[Verse]\nline one\nline two"),
+            &handle,
+        )
+        .await
+        .expect("handle_done");
+        assert_eq!(url.as_deref(), Some("https://cdn/track.mp3"));
+
+        let got = store.get("g1").expect("get gift");
+        assert_eq!(got.audio_url.as_deref(), Some("https://cdn/track.mp3"));
+        assert_eq!(got.cover_url.as_deref(), Some("https://cdn/cover.jpeg"));
+        assert_eq!(got.duration_secs, Some(31.84));
+        // The estimate fallback produced LRC from lyrics + typed duration.
+        let lrc = got.lrc.expect("lrc stored");
+        assert!(lrc.contains("line one"), "lrc: {lrc}");
+    }
+
+    /// Without a typed duration (and no timed text) there is no LRC fallback,
+    /// and a result without a Cover asset leaves the gift's cover unset.
+    #[tokio::test]
+    async fn handle_done_without_duration_or_cover_stores_neither() {
+        let (store, _dir) = store_with_gift("g2", Some("[Verse]\nline one".to_string()));
+        let task = FakeGenTask {
+            result: GenResult {
+                assets: vec![GenAsset::Url {
+                    url: "https://cdn/track.mp3".to_string(),
+                    media_type: Some("audio/mpeg".to_string()),
+                    role: GenAssetRole::Primary,
+                }],
+                diagnostic_metadata: json!({ "provider": "minimax" }),
+                timed_text: None,
+                duration_secs: None,
+            },
+        };
+        let handle = GenHandle {
+            id: "task-2".to_string(),
+            provider: Some("fake".to_string()),
+        };
+
+        handle_done(&task, &store, "g2", Some("[Verse]\nline one"), &handle)
+            .await
+            .expect("handle_done");
+
+        let got = store.get("g2").expect("get gift");
+        assert_eq!(got.audio_url.as_deref(), Some("https://cdn/track.mp3"));
+        assert_eq!(got.cover_url, None);
+        assert_eq!(got.duration_secs, None);
+        assert_eq!(got.lrc, None);
     }
 }

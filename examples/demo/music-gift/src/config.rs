@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use orchest::model::ModelAdapter;
 use orchest::run::AgentConfig;
-use orchest::tool::agent_as_tool::ContextMode;
+use orchest::tool::agent_as_tool::{ContextMode, SubAgentOutputExpect};
 use orchest::tool::registry::ToolRegistry;
 use orchest::tool::Tool;
 use orchest_protocol::{ChatModel, GenTask};
@@ -168,12 +168,18 @@ pub fn build_countdown_tool(model: Arc<dyn ModelAdapter>) -> Option<Arc<dyn Tool
             let prompt = countdown::build_prompt(&params);
             Ok(prompt)
         })
+        // The SDK output contract (`.expect_output` below) extracts the
+        // fenced HTML payload into `details["output"]` and retries the child
+        // once on violation — no more fragile fence scraping here.
         .output_extractor(|output: serde_json::Value| {
             let html = output
                 .get("output")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
-            serde_json::json!({ "html": countdown::strip_code_fences(html) })
+            serde_json::json!({ "html": html })
+        })
+        .expect_output(SubAgentOutputExpect::Fenced {
+            lang: Some("html".into()),
         })
         .build()
         .inspect_err(|e| eprintln!("[music-gift] countdown disabled: building tool: {e}"))

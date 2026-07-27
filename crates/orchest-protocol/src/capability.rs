@@ -58,14 +58,116 @@ pub trait RealtimeSession: Send + Sync {
 // Gen-task — submit / poll / fetch (image / video). NOT an event stream.
 // ===========================================================================
 
-/// A generation request (image/video). The concrete request shape per dialect
-/// (volc-visual, aliyun, …) folds in during Issue 007; this is the spine handle.
+/// A generation request (image/video/music). The concrete request shape per
+/// dialect (volc-visual, aliyun, …) folds in during Issue 007; this is the
+/// spine handle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenRequest {
     pub prompt: String,
-    /// Free-form, dialect-specific parameters (size, steps, seed, source assets).
+    /// Free-form, dialect-specific parameters (size, steps, seed, source
+    /// assets). Remains the escape hatch for dialect-specific extras (e.g.
+    /// Suno's `personaId`); music-modality knobs should go through
+    /// [`GenRequest::music`] instead — providers warn on `params` keys they
+    /// do not consume.
     #[serde(default)]
     pub params: Value,
+    /// Typed music-generation knobs (v0.15, issue 001). Wire-compatible:
+    /// `serde(default)` lets pre-existing payloads deserialize, and the field
+    /// is omitted from the wire when unset, so Py/Node wire passthrough is
+    /// unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub music: Option<MusicParams>,
+}
+
+/// Vocal gender for music generation.
+///
+/// A typed enum rather than a free-form `String` because the accepted value
+/// set is closed and binary across the music dialects: Suno's `vocalGender`
+/// takes exactly `"m"`/`"f"` (the sunoapi.org proxy this SDK targets — Suno
+/// has no official public API; see
+/// `crates/orchest-provider-http/src/gen/suno.rs`), and Aliyun fun-music's
+/// `gender` takes `"male"`/`"female"` (docs/external/aliyun/
+/// music-generation.md). Variants serialize to the Suno spelling (`"m"` /
+/// `"f"`); providers with a different spelling translate at their submit
+/// boundary. An unknown wire value fails deserialization loudly instead of
+/// being silently dropped.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum VocalGender {
+    #[serde(rename = "m")]
+    Male,
+    #[serde(rename = "f")]
+    Female,
+}
+
+/// Typed music-modality knobs for [`GenRequest`] (v0.15, issue 001) — the
+/// structured alternative to cherry-picking keys out of the free-form
+/// [`GenRequest::params`], where a misspelled or unsupported key used to be
+/// dropped silently.
+///
+/// All fields are optional; `None` means "not set" and is omitted from the
+/// wire. Field names serialize in camelCase to match provider wire
+/// conventions (Suno's naming is the canonical set: `negativeTags`,
+/// `vocalGender`, `styleWeight`, `weirdnessConstraint`, `audioWeight`).
+/// Typed fields take precedence over raw `params` keys at the provider
+/// submit boundary; a provider only maps the fields its dialect actually
+/// supports and leaves the rest unset.
+///
+/// Deserialization intentionally does **not** deny unknown fields (forward
+/// compatibility for FFI callers): a misspelled key inside the `music`
+/// object is ignored, not caught — the compile-time safety is for Rust
+/// callers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct MusicParams {
+    /// Custom-mode lyrics. When set (and non-empty), dialects like Suno
+    /// switch to custom mode where the lyrics replace the prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lyrics: Option<String>,
+    /// Instrumental-only generation (no vocals).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instrumental: Option<bool>,
+    /// Style description string (genre / tempo / mood / instrumentation …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    /// Track title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Styles/elements to avoid (Suno `negativeTags`).
+    #[serde(
+        default,
+        rename = "negativeTags",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub negative_tags: Option<String>,
+    /// Vocal gender (Suno `vocalGender`). See [`VocalGender`] for the
+    /// enum-over-String decision.
+    #[serde(
+        default,
+        rename = "vocalGender",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub vocal_gender: Option<VocalGender>,
+    /// Strength of the style guidance, 0–1 (Suno `styleWeight`).
+    #[serde(
+        default,
+        rename = "styleWeight",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub style_weight: Option<f64>,
+    /// How unusual/experimental the output may be, 0–1 (Suno
+    /// `weirdnessConstraint`).
+    #[serde(
+        default,
+        rename = "weirdnessConstraint",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub weirdness_constraint: Option<f64>,
+    /// Weight of the audio influence vs. the style, 0–1 (Suno `audioWeight`).
+    #[serde(
+        default,
+        rename = "audioWeight",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub audio_weight: Option<f64>,
 }
 
 /// Opaque handle to a submitted generation job; poll/fetch with it.
@@ -86,6 +188,22 @@ pub enum GenStatus {
     Failed,
 }
 
+/// Semantic role of a produced asset within a [`GenResult`] (v0.15, issue 002).
+///
+/// `Primary` is the main product (the image, video, or audio track); `Cover`
+/// is cover art / a thumbnail accompanying it; `Preview` is a lower-fidelity
+/// stand-in for the primary asset. Serde defaults to `Primary`, so payloads
+/// written before the field existed still deserialize — a missing `role` on
+/// the wire means the asset is the product itself.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GenAssetRole {
+    #[default]
+    Primary,
+    Cover,
+    Preview,
+}
+
 /// One produced asset (image/video), as a URL or inline bytes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -93,10 +211,18 @@ pub enum GenAsset {
     Url {
         url: String,
         media_type: Option<String>,
+        /// What this asset is within the result; see [`GenAssetRole`].
+        /// `#[serde(default)]` keeps pre-role payloads deserializable (they
+        /// all carried only the primary product).
+        #[serde(default)]
+        role: GenAssetRole,
     },
     Bytes {
         media_type: String,
         data: Bytes,
+        /// What this asset is within the result; see [`GenAssetRole`].
+        #[serde(default)]
+        role: GenAssetRole,
     },
 }
 
@@ -139,6 +265,13 @@ pub struct GenResult {
     /// shared across image/video/music.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timed_text: Option<TimedText>,
+    /// Duration of the primary time-based media (music/video), in seconds
+    /// (v0.15, issue 002). Time-based-media neutral: music and video
+    /// providers fill it when the dialect reports one, image providers leave
+    /// it `None`. Lifted out of `diagnostic_metadata`, where it rode as an
+    /// untyped key because the typed surface had no home for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<f64>,
 }
 
 /// Signed/polled generation capability (image/video), abstracted from
@@ -308,10 +441,18 @@ mod tests {
     #[test]
     fn gen_result_serde_round_trip() {
         let result = GenResult {
-            assets: vec![GenAsset::Url {
-                url: "https://example.com/a.mp3".to_string(),
-                media_type: Some("audio/mpeg".to_string()),
-            }],
+            assets: vec![
+                GenAsset::Url {
+                    url: "https://example.com/a.mp3".to_string(),
+                    media_type: Some("audio/mpeg".to_string()),
+                    role: GenAssetRole::Primary,
+                },
+                GenAsset::Url {
+                    url: "https://example.com/cover.jpeg".to_string(),
+                    media_type: Some("image/jpeg".to_string()),
+                    role: GenAssetRole::Cover,
+                },
+            ],
             diagnostic_metadata: json!({ "provider": "suno" }),
             timed_text: Some(TimedText {
                 segments: vec![TimedSegment {
@@ -320,6 +461,7 @@ mod tests {
                     end: Some(2.0),
                 }],
             }),
+            duration_secs: Some(31.84),
         };
         let wire = serde_json::to_string(&result).unwrap();
         let restored: GenResult = serde_json::from_str(&wire).unwrap();
@@ -329,20 +471,146 @@ mod tests {
     #[test]
     fn gen_result_omits_absent_fields_from_wire() {
         // skip_serializing_if keeps the wire shape of a producer that never
-        // sets timed_text / diagnostic_metadata identical to before the field
-        // existed — and serde(default) lets old payloads still deserialize.
+        // sets timed_text / duration_secs / diagnostic_metadata identical to
+        // before the fields existed — and serde(default) lets old payloads
+        // still deserialize.
         let result = GenResult {
             assets: vec![],
             diagnostic_metadata: Value::Null,
             timed_text: None,
+            duration_secs: None,
         };
         let wire = serde_json::to_string(&result).unwrap();
         let v: Value = serde_json::from_str(&wire).unwrap();
         assert!(v.get("timed_text").is_none());
+        assert!(v.get("duration_secs").is_none());
         assert!(v.get("diagnostic_metadata").is_none());
 
         let minimal: GenResult = serde_json::from_value(json!({ "assets": [] })).unwrap();
         assert_eq!(minimal.timed_text, None);
+        assert_eq!(minimal.duration_secs, None);
         assert_eq!(minimal.diagnostic_metadata, Value::Null);
+    }
+
+    #[test]
+    fn gen_asset_role_defaults_to_primary_for_pre_role_payloads() {
+        // Backward compatibility (v0.15, issue 002): payloads written before
+        // the `role` field existed carry only `kind`/`url`/`media_type` and
+        // must still deserialize, with the asset read as the primary product.
+        let old: GenAsset = serde_json::from_value(json!({
+            "kind": "url",
+            "url": "https://example.com/a.mp3",
+            "media_type": "audio/mpeg"
+        }))
+        .unwrap();
+        assert_eq!(
+            old,
+            GenAsset::Url {
+                url: "https://example.com/a.mp3".to_string(),
+                media_type: Some("audio/mpeg".to_string()),
+                role: GenAssetRole::Primary,
+            }
+        );
+
+        // The Bytes variant likewise, and the wire names are snake_case.
+        let old_bytes: GenAsset = serde_json::from_value(json!({
+            "kind": "bytes",
+            "media_type": "image/png",
+            "data": [1, 2, 3]
+        }))
+        .unwrap();
+        assert_eq!(
+            old_bytes,
+            GenAsset::Bytes {
+                media_type: "image/png".to_string(),
+                data: Bytes::from_static(&[1, 2, 3]),
+                role: GenAssetRole::Primary,
+            }
+        );
+        assert_eq!(serde_json::to_value(GenAssetRole::Cover).unwrap(), "cover");
+        assert_eq!(
+            serde_json::to_value(GenAssetRole::Preview).unwrap(),
+            "preview"
+        );
+    }
+
+    #[test]
+    fn music_params_serde_uses_provider_camel_case_names() {
+        let music = MusicParams {
+            lyrics: Some("la la".to_string()),
+            instrumental: Some(true),
+            style: Some("lofi".to_string()),
+            title: Some("my song".to_string()),
+            negative_tags: Some("no choir".to_string()),
+            vocal_gender: Some(VocalGender::Female),
+            style_weight: Some(0.5),
+            weirdness_constraint: Some(0.2),
+            audio_weight: Some(0.8),
+        };
+        let v = serde_json::to_value(&music).unwrap();
+        // Wire names match the provider (Suno) conventions.
+        assert_eq!(v["negativeTags"], "no choir");
+        assert_eq!(v["vocalGender"], "f");
+        assert_eq!(v["styleWeight"], 0.5);
+        assert_eq!(v["weirdnessConstraint"], 0.2);
+        assert_eq!(v["audioWeight"], 0.8);
+        assert_eq!(v["lyrics"], "la la");
+        assert_eq!(v["instrumental"], true);
+        assert!(v.get("negative_tags").is_none());
+        assert!(v.get("vocal_gender").is_none());
+        // Round trip preserves everything.
+        let restored: MusicParams = serde_json::from_value(v).unwrap();
+        assert_eq!(restored, music);
+    }
+
+    #[test]
+    fn music_params_omits_unset_fields_from_wire() {
+        let v = serde_json::to_value(MusicParams::default()).unwrap();
+        assert_eq!(v, json!({}));
+        let sparse: MusicParams = serde_json::from_value(json!({ "style": "lofi" })).unwrap();
+        assert_eq!(sparse.style.as_deref(), Some("lofi"));
+        assert_eq!(sparse.vocal_gender, None);
+    }
+
+    #[test]
+    fn vocal_gender_serializes_to_suno_spelling() {
+        assert_eq!(serde_json::to_value(VocalGender::Male).unwrap(), "m");
+        assert_eq!(serde_json::to_value(VocalGender::Female).unwrap(), "f");
+        // An unknown wire value is a loud deserialization error, not a
+        // silently dropped knob.
+        assert!(serde_json::from_value::<VocalGender>(json!("x")).is_err());
+    }
+
+    #[test]
+    fn gen_request_music_field_is_wire_compatible() {
+        // Pre-existing payloads (no `music` key) still deserialize.
+        let old: GenRequest = serde_json::from_value(json!({
+            "prompt": "a fox",
+            "params": { "size": "1024*1024" }
+        }))
+        .unwrap();
+        assert_eq!(old.music, None);
+
+        // A request with music unset serializes identically to before the
+        // field existed — no `music` key on the wire.
+        let req = GenRequest {
+            prompt: "a fox".to_string(),
+            params: json!({}),
+            music: None,
+        };
+        let v = serde_json::to_value(&req).unwrap();
+        assert!(v.get("music").is_none());
+
+        // And with music set it round-trips.
+        let req = GenRequest {
+            music: Some(MusicParams {
+                style: Some("lofi".to_string()),
+                ..MusicParams::default()
+            }),
+            ..req
+        };
+        let restored: GenRequest =
+            serde_json::from_value(serde_json::to_value(&req).unwrap()).unwrap();
+        assert_eq!(restored.music, req.music);
     }
 }

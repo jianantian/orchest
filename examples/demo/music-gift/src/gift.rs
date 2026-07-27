@@ -281,6 +281,24 @@ impl GiftStore {
         Ok(())
     }
 
+    /// Persist provider-supplied cover art (surfaced as a `role: Cover` gen
+    /// asset). Separate from `update_audio`: the cover is decorative and its
+    /// write is best-effort at the call site.
+    pub fn update_cover(&self, id: &str, cover_url: &str) -> AppResult<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute(
+            "UPDATE gifts SET cover_url=?2 WHERE id=?1",
+            params![id, cover_url],
+        )? == 0
+        {
+            return Err(AppError::NotFound(format!("gift {id} not found")));
+        }
+        Ok(())
+    }
+
     pub fn mark_gen_failed(&self, id: &str) -> AppResult<()> {
         let conn = self
             .conn

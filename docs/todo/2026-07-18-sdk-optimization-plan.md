@@ -1,6 +1,6 @@
 # SDK 优化计划(music-gift demo 暴露的缺口 + 全 SDK 生成质量梳理)
 
-> 状态: hotfix 2026_07_18b / v0.13(质量地基)/ v0.14(skill 机制)已落地(见 roadmap 已完成表);**下一个迭代 = Gen 协议(B1 + E + C5-C7),demo 优化完成后开工** | 记录于 2026-07-18,2026-07-19 更新
+> 状态: hotfix 2026_07_18b / v0.13(质量地基)/ v0.14(skill 机制)/ v0.15(Gen 协议与子代理语义:B1 + E1/E2 + C5-C7 + G1/G2)已落地(见 roadmap 已完成表) | 记录于 2026-07-18,2026-07-19 更新,2026-07-26 更新
 > 来源: music-gift demo(`examples/demo/music-gift`,定位即"暴露 SDK 缺口")实测梳理,
 > 所有问题均经代码核实并附文件:行号;主题 G 来自 demo 架构评审新增的
 > [`seam-findings.md`](../../examples/demo/music-gift/docs/seam-findings.md) Findings 3-5(commit `2f4f880`)。
@@ -55,6 +55,7 @@ music-gift 的 guided pipeline(引导收集 → chat 写词 → review 审核 �
 ## B · Gen 协议与 run 终止语义
 
 ### B1. `GenRequest.params` 未知 key 不再静默丢弃(P0)
+**状态(2026-07-26)**: 已在 v0.15 落地。
 
 **现状**: `GenRequest.params: Value` 无 schema(`crates/orchest-protocol/src/capability.rs:64-68`);Suno `PASSTHROUGH_PARAMS` 白名单(`orchest-provider-http/src/gen/suno.rs:53-63`)之外的 key 静默丢弃。demo 传的 `genre/tempo/mood/vocal_style/instrumentation/production/exclude` 六个 key 全丢,`vocalGender`/`negativeTags`/`instrumental` 没人填,零报错——第三次 LLM 调用产出 100% 空转。
 **建议**(两步走):
@@ -105,18 +106,21 @@ music-gift 的 guided pipeline(引导收集 → chat 写词 → review 审核 �
 **验收**: 流中断的 stub 测试能重试成功;默认配置文档更新。
 
 ### C5. Chat 协议静默丢多模态 block(P1)
+**状态(2026-07-26)**: 已在 v0.15 落地。
 
 **现状**: `orchest-provider-http/src/chat.rs:137-149` 对 Image/Video/Audio block `_ => {}` 静默丢弃,无 adjustment、无警告。
 **建议**: 丢弃时记录 `option_adjustments` 或发 warning 事件(遵循 observability.md "错误不得静默"原则)。
 **验收**: 含图片的消息走 Chat 协议时,丢弃行为在 adjustments/日志中可见。
 
 ### C6. compaction 不得拆散 ToolUse/ToolResult 对(P1)
+**状态(2026-07-26)**: 已在 v0.15 落地。
 
 **现状**: `run/compaction.rs:77-79` 按条数硬切,切点落在 assistant ToolUse 与其 ToolResult 之间时,recent 窗口以孤儿 `tool_result` 开头 → Anthropic 400("unexpected tool_use_id")。
 **建议**: 切分点对齐到 tool_use 块边界(必要时多保留/多裁一条)。
 **验收**: 构造 tool_use 跨切点的用例,compaction 后消息序列无孤儿 tool_result。
 
 ### C7. 工具结果回插 role 一致化(P2)
+**状态(2026-07-26)**: 已在 v0.15 落地。
 
 **现状**: 串行路径以 `Role::User` 包 ToolResult(`actor.rs:1538-1544`),并行路径以 `Role::Tool`(`actor.rs:1004-1007`);快照/钩子语义不统一。
 **建议**: 统一为协议层规范 role(以 Anthropic tool_result 惯例为准),迁移说明写入 changelog。
@@ -194,12 +198,14 @@ music-gift 的 guided pipeline(引导收集 → chat 写词 → review 审核 �
 ## E · agent-as-tool 子代理语义
 
 ### E1. child run 失败应返回 Err 而非 Ok(Structured)(P1)
+**状态(2026-07-26)**: 已在 v0.15 落地。
 
 **现状**: `tool/agent_as_tool.rs:211-224` 把 child run 失败包成 `details{"error": …}` 照常返回 `Ok(Structured)`;消费方必须自己扒 details——demo `countdown.rs:56-58` 的注释("Matching only on Immediate made every single countdown fail here")就是踩坑记录。
 **建议**: child run `RunFailed` → tool 返回 `Err(ToolError)`(kind 可区分 Transient/Fatal,复用重试语义);保留 details 里的诊断。
 **验收**: child 失败时消费方拿到 Err;countdown 类消费方无需匹配 details["error"]。
 
 ### E2. 子代理输出契约(提取加固)(P2)
+**状态(2026-07-26)**: 已在 v0.15 落地。
 
 **现状**: 子代理只有纯文本 output,消费方靠 `strip_code_fences` 这类脆弱逻辑提取(countdown `strip_code_fences` 只认严格首尾 fence;模型前后加解释文字或输出完整 `<!DOCTYPE>` 都会原样落盘)。
 **建议**: 评估为 agent-as-tool 增加输出格式契约(如 `expect: { fenced: "html" }` 或 JSON schema 模式),由 SDK 侧做提取/校验/重试提示。
@@ -222,12 +228,14 @@ music-gift 的 guided pipeline(引导收集 → chat 写词 → review 审核 �
 > [`examples/demo/music-gift/docs/seam-findings.md`](../../examples/demo/music-gift/docs/seam-findings.md)。
 
 ### G1. `ToolContext` 一次性调用 helper(P1)
+**状态(2026-07-26)**: 已在 v0.15 落地。
 
 **现状**: 在 run 之外"调一次工具"必须手工伪造整个 `ToolContext`(`RunId::new()`、`ApprovalBus::default()`、`run_depth: 0`、编的 `tool_call_id`、`event_tx: None`、默认预算、空 `parent_messages`)——demo countdown 子代理调用就是这么做的(`countdown.rs:153-163`)。这些字段对一次性调用全部无意义,但全部被迫构造。
 **建议**: 提供 `ToolContext::oneshot()`(或 `Tool::call(input)` 便捷方法,内部构造平凡 context)。
 **验收**: 一次性工具调用零样板;调用方无需知道哪些字段可以安全伪造。
 
 ### G2. 测试中的 `ToolContext` 构造(P1,与 G1 同解)
+**状态(2026-07-26)**: 已在 v0.15 落地。
 
 **现状**: 因为没有便捷的 `ToolContext` 构造方式,demo 的 `collect_info` 测试(`collect_info.rs:108`)放弃执行工具本身,改为**把校验逻辑复制进测试模块测副本**——两份实现可静默漂移,工具真实逻辑变了测试照样绿。
 **建议**: G1 的 helper 同时解决测试场景;任何"在 run 外执行工具"的支持路径都应让测试直接走真实代码路径。
@@ -246,8 +254,8 @@ music-gift 的 guided pipeline(引导收集 → chat 写词 → review 审核 �
 1. ~~Hotfix~~ ✅ hotfix/2026_07_18b(PR #217)。
 2. ~~质量地基迭代~~ ✅ v0.13(PR #223): A1 输入契约、B2 截断标记、C3 上下文回填、C4 重试。
 3. ~~Skill 机制迭代~~ ✅ v0.14(PR #230): D2 scanner、D1 零配置披露、D3/D4/D6、D5/D7。
-4. **Gen 协议迭代(下一个,demo 优化完成后开工)**: B1(先 warning 后类型化,与 seam-findings Finding 2 合并设计)→ E1/E2(子代理失败语义/输出契约)→ C5-C7(Chat 协议多模态丢弃、compaction 拆 tool 对、role 一致化)。
-5. **Tool 易用性(小步,可并入 4)**: G1/G2(oneshot helper)→ G3(双名收敛,v1.0 前完成)。
+4. ~~Gen 协议迭代~~ ✅ v0.15: B1(类型化 MusicParams + 未知 key 警告,与 Finding 2 合并设计;GenAsset 角色 + duration 类型化)→ E1(child 失败 Err)/E2(输出契约)→ C5-C7;G1/G2(oneshot helper)并入本迭代。
+5. **Tool 易用性**: ~~G1/G2~~ ✅ 并入 v0.15;G3(双名收敛)留 v1.0 前。**绑定跟进(v1.0 冻结前)**: v0.15 的 `expect_output` 契约尚未暴露到 Py/Node 绑定(`register_agent_tool` 只透传 input/output mapper)——绑定用户拿到 E1 的 Err 语义但用不了 E2 的提取,与 G3 一并裁定。
 6. **F 决策** 可在任意时间点做,不阻塞其他项。
 
 demo 侧对应依赖见 [`examples/demo/music-gift/docs/optimization-plan.md`](../../examples/demo/music-gift/docs/optimization-plan.md)。

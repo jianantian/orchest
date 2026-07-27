@@ -105,53 +105,29 @@ pub fn create_tool() -> Arc<dyn Tool> {
 mod tests {
     use super::*;
 
-    /// Test the core validation logic (extracted from the InProcessTool callback)
-    /// to avoid needing private orchest types for ToolContext construction.
-    fn validate(input: &Value) -> Value {
-        let name = input
-            .get("name")
-            .and_then(|v| v.as_str())
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
-        let scene = input
-            .get("scene")
-            .and_then(|v| v.as_str())
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
-        let emotion = input
-            .get("emotion_direction")
-            .and_then(|v| v.as_str())
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
-
-        let mut missing_fields: Vec<String> = Vec::new();
-        if !name {
-            missing_fields.push("name".to_string());
+    /// Execute the real tool callback through `Tool::call_oneshot` — the test
+    /// exercises the same code path the chat agent hits, so the validation
+    /// logic lives in exactly one place.
+    async fn run_collect_info(input: Value) -> Value {
+        let tool = create_tool();
+        match tool
+            .call_oneshot(input)
+            .await
+            .expect("collect_info execute")
+        {
+            ToolOutput::Immediate(value) => value,
+            other => panic!("expected Immediate output, got {other:?}"),
         }
-        if !scene {
-            missing_fields.push("scene".to_string());
-        }
-        if !emotion {
-            missing_fields.push("emotion_direction".to_string());
-        }
-
-        json!({
-            "complete": missing_fields.is_empty(),
-            "name": name,
-            "scene": scene,
-            "emotion": emotion,
-            "missing_fields": missing_fields,
-        })
     }
 
-    #[test]
-    fn collect_info_all_complete() {
-        let input = json!({
+    #[tokio::test]
+    async fn collect_info_all_complete() {
+        let result = run_collect_info(json!({
             "name": "Alice",
             "scene": "walking through the park at sunset",
             "emotion_direction": "gratitude"
-        });
-        let result = validate(&input);
+        }))
+        .await;
         assert!(result["complete"].as_bool().unwrap());
         assert!(result["name"].as_bool().unwrap());
         assert!(result["scene"].as_bool().unwrap());
@@ -159,14 +135,14 @@ mod tests {
         assert!(result["missing_fields"].as_array().unwrap().is_empty());
     }
 
-    #[test]
-    fn collect_info_missing_fields() {
-        let input = json!({
+    #[tokio::test]
+    async fn collect_info_missing_fields() {
+        let result = run_collect_info(json!({
             "name": "Bob",
             "scene": "",
             "emotion_direction": "nostalgia"
-        });
-        let result = validate(&input);
+        }))
+        .await;
         assert!(!result["complete"].as_bool().unwrap());
         assert_eq!(result["missing_fields"].as_array().unwrap().len(), 1);
         assert_eq!(

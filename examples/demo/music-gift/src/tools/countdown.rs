@@ -63,6 +63,13 @@ pub async fn run_countdown(
 /// for exactly this). Both validation failures (empty / truncated output) and
 /// tool execution errors get the one retry; a second failure is returned so
 /// the caller can mark the countdown `failed`.
+///
+/// Two retry layers compose here, on purpose: the SDK output contract
+/// (`expect_output(Fenced)` in `config::build_countdown_tool`) retries the
+/// child once for *format* violations, and this layer retries once for
+/// *content* failures (truncation/empty) and tool errors — up to 4 child runs
+/// worst case. Do not "simplify" one away; they cover disjoint failure
+/// classes.
 async fn generate_html(
     tool: &Arc<dyn orchest::tool::Tool>,
     params: &CountdownParams,
@@ -94,14 +101,19 @@ async fn generate_once(
         input["previous_error"] = Value::String(err.to_string());
     }
 
-    let result = tool
-        .execute(input, &tool_context())
-        .await
-        .map_err(|e| e.to_string())?;
+    // A failed child run arrives as `Err(ToolError)` (v0.15, issue 003) whose
+    // message carries the child_run_id, the failure reason, and the consumed
+    // budget — no more `details["error"]` scraping. Propagating it lets
+    // `generate_html` retry once with this reason fed into the prompt.
+    let result = match tool.call_oneshot(input).await {
+        Ok(output) => output,
+        Err(e) => return Err(e.to_string()),
+    };
 
-    // An agent-as-tool always answers with `Structured` (it carries the child
-    // run's budget usage); `model_output` is what our output_extractor built,
-    // i.e. `{ "html": ... }`. Matching only on `Immediate` made every single
+    // On success an agent-as-tool always answers with `Structured` (it carries
+    // the child run's budget usage); `model_output` is what our
+    // output_extractor built, i.e. `{ "html": ... }`. `Immediate` is accepted
+    // for test doubles. Matching only on `Immediate` made every single
     // countdown fail here.
     let html = match result {
         orchest::tool::ToolOutput::Immediate(value)
@@ -270,29 +282,6 @@ fn next_birthday(today: NaiveDate, month: u32, day: u32) -> Option<NaiveDate> {
         Some(this_year)
     } else {
         in_year(today.year() + 1)
-    }
-}
-
-pub(crate) fn strip_code_fences(html: &str) -> String {
-    let trimmed = html.trim();
-    let without_open = trimmed
-        .strip_prefix("```html")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .unwrap_or(trimmed);
-    let without_close = without_open.strip_suffix("```").unwrap_or(without_open);
-    without_close.trim().to_string()
-}
-
-pub(crate) fn tool_context() -> orchest::tool::ToolContext {
-    orchest::tool::ToolContext {
-        run_id: orchest::run::RunId::new(),
-        run_depth: 0,
-        tool_call_id: "countdown".into(),
-        event_tx: None,
-        webhook_base_url: None,
-        approval_bus: orchest::run::ApprovalBus::default(),
-        remaining_budget: Default::default(),
-        parent_messages: vec![],
     }
 }
 

@@ -9,11 +9,11 @@
 
 use async_trait::async_trait;
 use orchest_protocol::{
-    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenHandle, GenRequest, GenResult,
-    GenStatus, GenTask, Modality, ProtocolError,
+    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenAssetRole, GenHandle, GenRequest,
+    GenResult, GenStatus, GenTask, Modality, ProtocolError,
 };
 use orchest_provider_core::registry::ProviderConfig;
-use orchest_provider_core::SyncGenCache;
+use orchest_provider_core::{warn_unconsumed_params, SyncGenCache};
 use serde_json::{json, Value};
 
 const DEFAULT_API_URL: &str = "https://api.minimax.io";
@@ -44,18 +44,45 @@ fn status_err(code: u16, body: String) -> ProtocolError {
     .with_status(code)
 }
 
+/// [`GenRequest::params`] keys the Minimax music API understands
+/// (docs/external/minimax/music/generation.md). `model`/`prompt` are set
+/// explicitly and skipped in the passthrough; anything outside this set warns
+/// via [`warn_unconsumed_params`] — it would be forwarded verbatim but have no
+/// effect on the API.
+const CONSUMED_PARAMS: &[&str] = &[
+    "lyrics",
+    "audio_setting",
+    "aigc_watermark",
+    "is_instrumental",
+    "lyrics_optimizer",
+    "audio_url",
+    "audio_base64",
+    "cover_feature_id",
+];
+
 /// Build the `/v1/music_generation` body: `model` + `prompt`, `output_format:
 /// url`, and any [`GenRequest::params`] passthrough (`lyrics`, `audio_setting`,
 /// `aigc_watermark`, `is_instrumental`, `lyrics_optimizer`, `audio_url`,
 /// `audio_base64`, `cover_feature_id` for `music-cover`, …). `output_format`
-/// is forced to `url`.
+/// is forced to `url`. Typed [`MusicParams`](orchest_protocol::MusicParams)
+/// `lyrics`/`instrumental` (mapped onto the API's `is_instrumental` spelling)
+/// take precedence over the raw keys.
 pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
+    warn_unconsumed_params("minimax", CONSUMED_PARAMS, &request.params);
     let mut body = json!({ "model": model, "prompt": request.prompt });
     if let Some(params) = request.params.as_object() {
         for (key, value) in params {
             if key != "model" && key != "prompt" {
                 body[key] = value.clone();
             }
+        }
+    }
+    if let Some(music) = request.music.as_ref() {
+        if let Some(lyrics) = music.lyrics.as_ref() {
+            body["lyrics"] = json!(lyrics);
+        }
+        if let Some(instrumental) = music.instrumental {
+            body["is_instrumental"] = json!(instrumental);
         }
     }
     body["output_format"] = json!("url");
@@ -88,6 +115,7 @@ pub fn build_result(response: &Value) -> Result<GenResult, ProtocolError> {
             vec![GenAsset::Url {
                 url: url.to_string(),
                 media_type: Some("audio/mpeg".to_string()),
+                role: GenAssetRole::Primary,
             }]
         })
         .unwrap_or_default();
@@ -100,6 +128,7 @@ pub fn build_result(response: &Value) -> Result<GenResult, ProtocolError> {
         assets,
         diagnostic_metadata,
         timed_text: None,
+        duration_secs: None,
     })
 }
 
@@ -201,12 +230,41 @@ impl GenTask for MinimaxMusicGen {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orchest_protocol::MusicParams;
 
     fn request(prompt: &str, params: Value) -> GenRequest {
         GenRequest {
             prompt: prompt.to_string(),
             params,
+            music: None,
         }
+    }
+
+    fn request_with_music(prompt: &str, params: Value, music: MusicParams) -> GenRequest {
+        GenRequest {
+            prompt: prompt.to_string(),
+            params,
+            music: Some(music),
+        }
+    }
+
+    #[test]
+    fn submit_body_typed_fields_win_over_raw() {
+        let body = build_submit_body(
+            "music-2.6",
+            &request_with_music(
+                "lofi beat",
+                json!({"lyrics": "raw lyrics", "is_instrumental": false}),
+                MusicParams {
+                    lyrics: Some("typed lyrics".to_string()),
+                    instrumental: Some(true),
+                    ..MusicParams::default()
+                },
+            ),
+        );
+        assert_eq!(body["lyrics"], "typed lyrics");
+        assert_eq!(body["is_instrumental"], true);
+        assert_eq!(body["output_format"], "url");
     }
 
     #[test]
@@ -269,6 +327,7 @@ mod tests {
             vec![GenAsset::Url {
                 url: "https://m/track.mp3".to_string(),
                 media_type: Some("audio/mpeg".to_string()),
+                role: GenAssetRole::Primary,
             }]
         );
     }

@@ -3271,6 +3271,117 @@ async fn parallel_safe_tools_execute_concurrently_when_enabled() {
     }));
 }
 
+/// Captures the message list of the post-tool-phase model call so tests can
+/// assert the canonical shape of the tool-result message (C7).
+struct ToolResultShapeCaptureModel {
+    call_count: AtomicU32,
+    tool_names: Vec<&'static str>,
+    captured: Arc<Mutex<Vec<Message>>>,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for ToolResultShapeCaptureModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let count = self.call_count.fetch_add(1, Ordering::SeqCst);
+        let usage = TokenUsage {
+            input_tokens: 5,
+            output_tokens: 5,
+            ..Default::default()
+        };
+        if count == 0 {
+            Ok(ModelResponse {
+                content: self
+                    .tool_names
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, name)| ContentBlock::ToolUse {
+                        id: format!("call_{idx}"),
+                        name: (*name).into(),
+                        input: json!({"idx": idx}),
+                    })
+                    .collect(),
+                usage,
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        } else {
+            *self.captured.lock().expect("capture lock") = messages.to_vec();
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("done".into())],
+                usage,
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+#[tokio::test]
+async fn parallel_tool_results_are_pushed_as_user_role() {
+    let current = Arc::new(AtomicU32::new(0));
+    let max_seen = Arc::new(AtomicU32::new(0));
+    let mut registry = ToolRegistry::new();
+    for name in ["parallel_a", "parallel_b"] {
+        register_concurrency_tool(
+            &mut registry,
+            name,
+            concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never),
+            current.clone(),
+            max_seen.clone(),
+            20,
+            false,
+        );
+    }
+    let mut config = test_config();
+    config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let model = Arc::new(ToolResultShapeCaptureModel {
+        call_count: AtomicU32::new(0),
+        tool_names: vec!["parallel_a", "parallel_b"],
+        captured: captured.clone(),
+    });
+
+    let (handle, mut rx) = AgentRun::start(config, "run tools".into(), model, registry);
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let messages = captured.lock().expect("capture lock");
+    let tool_result_messages: Vec<&Message> = messages
+        .iter()
+        .filter(|message| {
+            message
+                .content
+                .iter()
+                .any(|block| matches!(block, ContentBlock::ToolResult { .. }))
+        })
+        .collect();
+    assert_eq!(
+        tool_result_messages.len(),
+        1,
+        "parallel batch pushes exactly one tool-result message"
+    );
+    assert!(
+        matches!(tool_result_messages[0].role, Role::User),
+        "parallel tool results must use Role::User like the serial path: {:?}",
+        tool_result_messages[0].role
+    );
+}
+
 #[tokio::test]
 async fn parallel_batch_records_failures_deterministically() {
     let current = Arc::new(AtomicU32::new(0));
@@ -4783,14 +4894,8 @@ async fn register_skills_registers_telemetry_for_upper_and_lower_case_skill_md()
     let read_file = registry.get("read_file").expect("read_file registered");
     let (event_tx, mut events) = mpsc::channel(16);
     let ctx = ToolContext {
-        run_id: RunId::new(),
-        run_depth: 0,
-        tool_call_id: "tc_1".into(),
         event_tx: Some(event_tx),
-        webhook_base_url: None,
-        approval_bus: crate::run::handle::ApprovalBus::default(),
-        remaining_budget: crate::budget::BudgetConfig::default(),
-        parent_messages: vec![],
+        ..ToolContext::oneshot()
     };
     read_file
         .execute(

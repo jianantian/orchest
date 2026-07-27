@@ -74,7 +74,12 @@ pub(crate) async fn maybe_compact_context(
     if non_system.len() <= recent_count {
         return;
     }
-    let split_at = non_system.len() - recent_count;
+    let split_at = align_split_to_tool_boundary(&non_system, non_system.len() - recent_count);
+    if split_at == 0 {
+        // Every candidate cut straddles a tool_use/tool_result pair — there is
+        // nothing safe to summarize this turn.
+        return;
+    }
     let old_messages = &non_system[..split_at];
     let recent_messages = non_system[split_at..].to_vec();
     let history = old_messages
@@ -142,6 +147,41 @@ pub(crate) async fn maybe_compact_context(
         },
     )
     .await;
+}
+
+/// Pull `split_at` backwards until the recent window no longer begins with an
+/// orphaned `tool_result`: a message whose `ToolResult` blocks reference
+/// `ToolUse`s that fall outside the window. Anthropic rejects such histories
+/// with a 400 ("unexpected tool_use_id"). Walking back keeps an assistant
+/// `ToolUse` message together with its `ToolResult` message(s) — the window
+/// simply grows past `recent_messages` when a pair straddles the count-based
+/// cut.
+fn align_split_to_tool_boundary(non_system: &[Message], mut split_at: usize) -> usize {
+    while split_at > 0 && window_starts_with_orphaned_tool_result(&non_system[split_at..]) {
+        split_at -= 1;
+    }
+    split_at
+}
+
+/// Does the window's first message carry a `ToolResult` whose `ToolUse` is
+/// not inside the window?
+fn window_starts_with_orphaned_tool_result(window: &[Message]) -> bool {
+    let Some(first) = window.first() else {
+        return false;
+    };
+    first
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult { tool_use_id, .. } => Some(tool_use_id),
+            _ => None,
+        })
+        .any(|tool_use_id| {
+            !window
+                .iter()
+                .flat_map(|message| &message.content)
+                .any(|block| matches!(block, ContentBlock::ToolUse { id, .. } if id == tool_use_id))
+        })
 }
 
 #[cfg(test)]
@@ -248,6 +288,49 @@ mod tests {
         Message {
             role: Role::Assistant,
             content: vec![ContentBlock::Text(text.into())],
+        }
+    }
+
+    fn assistant_tool_use_msg(id: &str) -> Message {
+        Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::ToolUse {
+                id: id.into(),
+                name: "fake_tool".into(),
+                input: serde_json::json!({}),
+            }],
+        }
+    }
+
+    fn user_tool_result_msg(id: &str) -> Message {
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: id.into(),
+                content: serde_json::json!({"ok": true}),
+            }],
+        }
+    }
+
+    /// Every ToolResult in `messages` must have its ToolUse earlier in the
+    /// sequence (the Anthropic wire constraint the boundary alignment guards).
+    fn assert_no_orphan_tool_result(messages: &[Message]) {
+        let mut seen_tool_uses = std::collections::HashSet::new();
+        for message in messages {
+            for block in &message.content {
+                match block {
+                    ContentBlock::ToolUse { id, .. } => {
+                        seen_tool_uses.insert(id.clone());
+                    }
+                    ContentBlock::ToolResult { tool_use_id, .. } => {
+                        assert!(
+                            seen_tool_uses.contains(tool_use_id),
+                            "orphan tool_result for {tool_use_id} in {messages:?}"
+                        );
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -503,6 +586,89 @@ mod tests {
         .await;
 
         assert!(messages.is_empty());
+        assert_eq!(call_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn compaction_keeps_tool_use_with_tool_result_at_boundary() {
+        // recent=3 puts the count-based cut between the assistant ToolUse and
+        // its ToolResult; the split must be pulled back so the pair survives.
+        let config = make_config(0.5, 3, Some(1000));
+        let call_count = Arc::new(AtomicU32::new(0));
+        let model: Arc<dyn ModelAdapter> = Arc::new(SummaryMock {
+            call_count: call_count.clone(),
+        });
+        let (tx, _rx) = mpsc::channel(16);
+        let mut messages = vec![
+            user_msg("a"),
+            assistant_tool_use_msg("call_1"),
+            user_tool_result_msg("call_1"),
+            assistant_msg("b"),
+            user_msg("c"),
+        ];
+        let mut last = None;
+        let usage = TokenUsage {
+            input_tokens: 800,
+            output_tokens: 100,
+            ..Default::default()
+        };
+
+        maybe_compact_context(
+            &config,
+            &model,
+            &mut messages,
+            &tx,
+            &mut last,
+            10,
+            &usage,
+            crate::run::RunId::new(),
+        )
+        .await;
+
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+        // 1 summary + the tool pair kept whole + the 3 most recent messages.
+        assert_eq!(messages.len(), 5);
+        assert!(
+            matches!(&messages[1].content[0], ContentBlock::ToolUse { id, .. } if id == "call_1"),
+            "recent window must start at the ToolUse, not its ToolResult: {messages:?}"
+        );
+        assert_no_orphan_tool_result(&messages);
+    }
+
+    #[tokio::test]
+    async fn compaction_skipped_when_no_safe_cut_exists() {
+        // The whole history is one tool pair: any cut would orphan the
+        // ToolResult, so compaction must bail instead of summarizing nothing.
+        let config = make_config(0.5, 1, Some(1000));
+        let call_count = Arc::new(AtomicU32::new(0));
+        let model: Arc<dyn ModelAdapter> = Arc::new(SummaryMock {
+            call_count: call_count.clone(),
+        });
+        let (tx, _rx) = mpsc::channel(16);
+        let mut messages = vec![
+            assistant_tool_use_msg("call_1"),
+            user_tool_result_msg("call_1"),
+        ];
+        let mut last = None;
+        let usage = TokenUsage {
+            input_tokens: 800,
+            output_tokens: 100,
+            ..Default::default()
+        };
+
+        maybe_compact_context(
+            &config,
+            &model,
+            &mut messages,
+            &tx,
+            &mut last,
+            10,
+            &usage,
+            crate::run::RunId::new(),
+        )
+        .await;
+
+        assert_eq!(messages.len(), 2, "messages should be unchanged");
         assert_eq!(call_count.load(Ordering::SeqCst), 0);
     }
 }

@@ -27,6 +27,42 @@ use crate::{
     OptionAdjustment, RequestOptions, StreamEvent, ToolDef, UpstreamErrorDetail,
 };
 
+/// Stable kind label for a [`ContentBlock`], used in drop diagnostics.
+fn content_block_kind(block: &ContentBlock) -> &'static str {
+    match block {
+        ContentBlock::Text(_) => "text",
+        ContentBlock::Thinking { .. } => "thinking",
+        ContentBlock::ToolUse { .. } => "tool_use",
+        ContentBlock::ToolResult { .. } => "tool_result",
+        ContentBlock::Image { .. } => "image",
+        ContentBlock::Video { .. } => "video",
+        ContentBlock::Audio { .. } => "audio",
+        ContentBlock::MidConvSystem(_) => "mid_conv_system",
+    }
+}
+
+/// Record a content block the Chat wire envelope cannot represent as an
+/// `OptionAdjustment` + `tracing::warn!` — a drop must never be silent
+/// (polaris/observability: 错误不得静默). Follows the `content_block`
+/// adjustment convention of `AnthropicProfile::encode_multimodal_block`.
+fn record_dropped_block(
+    adjustments: &mut Vec<OptionAdjustment>,
+    role: &'static str,
+    kind: &'static str,
+) {
+    tracing::warn!(
+        role,
+        block_kind = kind,
+        "chat request build: dropping content block the Chat wire envelope cannot represent"
+    );
+    adjustments.push(OptionAdjustment {
+        option: "content_block".into(),
+        requested: json!(kind),
+        applied: json!(null),
+        reason: "chat_unsupported_content_block".into(),
+    });
+}
+
 /// The shared Chat adapter. Constructed by each provider's `build_chat_adapter`
 /// with a fully resolved endpoint/headers and the provider's profile.
 pub struct ChatAdapter {
@@ -123,16 +159,20 @@ impl ChatAdapter {
             let effective_role = downgrade_minimax_role(message.role, &mut adjustments);
             match effective_role {
                 CompatibleRole::System => {
-                    let text = message
-                        .content
-                        .iter()
-                        .filter_map(|b| match b {
-                            ContentBlock::Text(t) => Some(t.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    api_messages.push(json!({"role": "system", "content": text}));
+                    // The Chat system envelope is a plain string — every
+                    // non-Text block is dropped, visibly.
+                    let mut text_parts = Vec::new();
+                    for block in &message.content {
+                        match block {
+                            ContentBlock::Text(t) => text_parts.push(t.clone()),
+                            other => record_dropped_block(
+                                &mut adjustments,
+                                "system",
+                                content_block_kind(other),
+                            ),
+                        }
+                    }
+                    api_messages.push(json!({"role": "system", "content": text_parts.join("\n")}));
                 }
                 CompatibleRole::User => {
                     let mut text_parts = Vec::new();
@@ -144,10 +184,20 @@ impl ChatAdapter {
                                 tool_use_id,
                                 content,
                             } => tool_results.push((tool_use_id.clone(), content.clone())),
-                            _ => {}
+                            other => record_dropped_block(
+                                &mut adjustments,
+                                "user",
+                                content_block_kind(other),
+                            ),
                         }
                     }
                     if !tool_results.is_empty() {
+                        // A mixed Text + ToolResult user message is split into
+                        // wire `role:"tool"` messages; the text has nowhere to
+                        // go — record the drop instead of discarding silently.
+                        if !text_parts.is_empty() {
+                            record_dropped_block(&mut adjustments, "user", "text");
+                        }
                         for (tool_call_id, content) in tool_results {
                             let content_str = match &content {
                                 Value::String(s) => s.clone(),
@@ -177,7 +227,14 @@ impl ChatAdapter {
                                     "function": {"name": name, "arguments": input.to_string()}
                                 }));
                             }
-                            _ => {}
+                            // Thinking replay is the profile's job
+                            // (`replay_reasoning` below) — not a drop.
+                            ContentBlock::Thinking { .. } => {}
+                            other => record_dropped_block(
+                                &mut adjustments,
+                                "assistant",
+                                content_block_kind(other),
+                            ),
                         }
                     }
                     let mut msg = json!({"role": "assistant"});
@@ -195,21 +252,29 @@ impl ChatAdapter {
                     api_messages.push(msg);
                 }
                 CompatibleRole::Tool => {
+                    // Legacy role: only reachable from pre-C7 snapshots — new
+                    // runs push tool results as `Role::User` (actor.rs).
                     for block in &message.content {
-                        if let ContentBlock::ToolResult {
-                            tool_use_id,
-                            content,
-                        } = block
-                        {
-                            let content_str = match content {
-                                Value::String(s) => s.clone(),
-                                other => other.to_string(),
-                            };
-                            api_messages.push(json!({
-                                "role": "tool",
-                                "tool_call_id": tool_use_id,
-                                "content": content_str
-                            }));
+                        match block {
+                            ContentBlock::ToolResult {
+                                tool_use_id,
+                                content,
+                            } => {
+                                let content_str = match content {
+                                    Value::String(s) => s.clone(),
+                                    other => other.to_string(),
+                                };
+                                api_messages.push(json!({
+                                    "role": "tool",
+                                    "tool_call_id": tool_use_id,
+                                    "content": content_str
+                                }));
+                            }
+                            other => record_dropped_block(
+                                &mut adjustments,
+                                "tool",
+                                content_block_kind(other),
+                            ),
                         }
                     }
                 }

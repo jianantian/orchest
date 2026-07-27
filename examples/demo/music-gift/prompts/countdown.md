@@ -30,10 +30,10 @@ Output must be a self-contained HTML block with this structure:
 </script>
 
 Forbidden: <!DOCTYPE>, <html>, <head>, <body> tags.
-Output only the three blocks above, no explanatory text.
+Wrap the three blocks in ONE ```html fenced code block — no explanatory text before or after the fence.
 
 【Hard limits】
-- The output MUST end with the closing </script> tag, with nothing after it. A truncated block (unclosed <script>) is a hard failure — it kills the countdown timer and every interaction.
+- The block MUST end with the closing </script> tag (the closing fence follows immediately after). A truncated block (unclosed <script>) is a hard failure — it kills the countdown timer and every interaction.
 - Length budget: keep the whole block compact (roughly ≤ 350 lines). At most 3 small SVGs, a few short keyframes, no long keyframe libraries. If space runs short, cut decoration — never cut structure.
 
 【Design requirements】

@@ -9,11 +9,11 @@
 
 use async_trait::async_trait;
 use orchest_protocol::{
-    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenHandle, GenRequest, GenResult,
-    GenStatus, GenTask, Modality, ProtocolError,
+    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenAssetRole, GenHandle, GenRequest,
+    GenResult, GenStatus, GenTask, Modality, ProtocolError,
 };
 use orchest_provider_core::registry::ProviderConfig;
-use orchest_provider_core::shared_client;
+use orchest_provider_core::{shared_client, warn_unconsumed_params};
 use serde_json::{json, Value};
 
 use super::SyncGenCache;
@@ -53,10 +53,28 @@ fn parse_err(e: serde_json::Error) -> ProtocolError {
     )
 }
 
+/// [`GenRequest::params`] keys forwarded verbatim onto the images-generations
+/// body. `n`/`size` are handled explicitly (with defaults) and so are excluded
+/// here; both lists together form the consumed set for the unconsumed-key
+/// warning.
+const PASSTHROUGH_KEYS: &[&str] = &[
+    "quality",
+    "background",
+    "output_format",
+    "user",
+    "response_format",
+];
+
 /// Build the OpenAI-images `/v1/images/generations` body: `model` + `prompt` +
 /// `n` (default 1) + `size` (default `1024x1024`), plus passthrough knobs
 /// (`quality` / `background` / `output_format` / `user` / `response_format`).
+/// Any other params key warns via [`warn_unconsumed_params`].
 pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
+    warn_unconsumed_params(
+        "crazyrouter",
+        &[PASSTHROUGH_KEYS, &["n", "size"]].concat(),
+        &request.params,
+    );
     let params = |key: &str| request.params.get(key);
     let mut body = json!({
         "model": model,
@@ -65,15 +83,9 @@ pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
         "size": params("size").and_then(Value::as_str).unwrap_or("1024x1024"),
     });
     if let Some(obj) = request.params.as_object() {
-        for key in [
-            "quality",
-            "background",
-            "output_format",
-            "user",
-            "response_format",
-        ] {
-            if let Some(value) = obj.get(key) {
-                body[key] = value.clone();
+        for key in PASSTHROUGH_KEYS {
+            if let Some(value) = obj.get(*key) {
+                body[*key] = value.clone();
             }
         }
     }
@@ -91,6 +103,7 @@ pub fn parse_assets(response: &Value) -> Vec<GenAsset> {
         .map(|url| GenAsset::Url {
             url: url.to_string(),
             media_type: Some("image/png".to_string()),
+            role: GenAssetRole::Primary,
         })
         .collect()
 }
@@ -180,6 +193,7 @@ impl GenTask for CrazyrouterGen {
             assets: parse_assets(&value),
             diagnostic_metadata: json!({ "provider": "crazyrouter" }),
             timed_text: None,
+            duration_secs: None,
         };
         Ok(self.cache.store("crazyrouter", result))
     }
@@ -200,6 +214,7 @@ mod tests {
         GenRequest {
             prompt: prompt.to_string(),
             params,
+            music: None,
         }
     }
 
@@ -235,6 +250,7 @@ mod tests {
             GenAsset::Url {
                 url: "https://c/a.png".to_string(),
                 media_type: Some("image/png".to_string()),
+                role: GenAssetRole::Primary,
             }
         );
         assert!(parse_assets(&json!({})).is_empty());

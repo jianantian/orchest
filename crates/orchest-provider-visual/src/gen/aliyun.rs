@@ -10,11 +10,11 @@
 
 use async_trait::async_trait;
 use orchest_protocol::{
-    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenHandle, GenRequest, GenResult,
-    GenStatus, GenTask, Modality, ProtocolError,
+    Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenAssetRole, GenHandle, GenRequest,
+    GenResult, GenStatus, GenTask, Modality, ProtocolError,
 };
 use orchest_provider_core::registry::ProviderConfig;
-use orchest_provider_core::shared_client;
+use orchest_provider_core::{shared_client, warn_unconsumed_params};
 use serde_json::{json, Value};
 
 const DEFAULT_API_URL: &str = "https://dashscope.aliyuncs.com/api/v1";
@@ -60,10 +60,17 @@ fn normalize_base_url(url: &str) -> String {
         .to_string()
 }
 
+/// [`GenRequest::params`] keys the wanx `parameters` object understands
+/// (docs/external/aliyun/image-generation.md). Params pass through verbatim;
+/// anything outside this set warns via [`warn_unconsumed_params`] — it would
+/// be forwarded but have no effect on the API.
+const CONSUMED_PARAMS: &[&str] = &["size", "n", "seed", "negative_prompt", "prompt_extend"];
+
 /// Build the `image-synthesis` body: `{ model, input: { prompt }, parameters }`.
 /// Spine [`GenRequest::params`] passes through as `parameters` (size / n / seed /
 /// negative_prompt / prompt_extend / …), defaulting `size` to `1024*1024`.
 pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
+    warn_unconsumed_params("aliyun", CONSUMED_PARAMS, &request.params);
     let mut parameters = json!({});
     if let Some(params) = request.params.as_object() {
         for (key, value) in params {
@@ -109,6 +116,7 @@ pub fn parse_assets(response: &Value) -> Vec<GenAsset> {
         .map(|url| GenAsset::Url {
             url: url.to_string(),
             media_type: Some("image/png".to_string()),
+            role: GenAssetRole::Primary,
         })
         .collect()
 }
@@ -229,6 +237,7 @@ impl GenTask for AliyunGen {
             assets: parse_assets(&response),
             diagnostic_metadata: json!({ "provider": "aliyun", "status": map_status(&response) }),
             timed_text: None,
+            duration_secs: None,
         })
     }
 }
@@ -241,6 +250,7 @@ mod tests {
         GenRequest {
             prompt: prompt.to_string(),
             params,
+            music: None,
         }
     }
 
@@ -293,7 +303,8 @@ mod tests {
             assets[1],
             GenAsset::Url {
                 url: "https://a/2.png".to_string(),
-                media_type: Some("image/png".to_string())
+                media_type: Some("image/png".to_string()),
+                role: GenAssetRole::Primary,
             }
         );
     }
