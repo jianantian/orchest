@@ -70,6 +70,19 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
 
 **依赖**：v0.10 完成（[验证报告](../review/v0_10_demo_validation.md)中的 SD 摩擦点）、v0.9.5 Control-Flow Hardening、v0.9.4 Failure Semantics
 
+### v0.16 — Briefing Desk Eval Lab（规划，非阻塞）
+
+在 v0.10 Briefing Desk 上建立一个应用层、人工驱动的 harness evaluation 垂直闭环：
+18 个按行为标签组织的 eval cases、optimization/validation/sealed scorecard 分层、
+opt-in 敏感 trajectory 与 run manifest、确定性 graders、baseline/candidate 对比和人工
+acceptance report。候选只允许修改 Briefing Desk 的 system prompt 与 Tool descriptions；
+不做 outer agent、不创建通用 eval crate、不修改 Orchest runtime/provider/bindings。
+
+本迭代的成功标准是证明「运行 → 记录 → 评分 → 比较 → 人工决定」可复现、可审计；不强制找到
+分数更高的 prompt，也不宣称跨领域泛化。详见 [`v0_16/prd.md`](./v0_16/prd.md)。
+
+**依赖**：v0.10 Briefing Desk、v0.15 runtime/tool 语义。与 v0.11 无依赖关系，**不阻塞 v1.0**。
+
 ### v1.0 — 首次公开发布（规划）
 
 第一个公开发布到 crates.io 的版本。包含发布准备的全部内容：Cargo publish 元数据、license 定稿、release workflow、CHANGELOG、版本号策略文档。
@@ -118,6 +131,12 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
             ▼
    v1.0: 首次公开发布（crates.io + release workflow + license 定稿）
 
+✅ v0.10: Briefing Desk
+            │
+            ▼
+   v0.16: Briefing Desk Eval Lab
+   （应用层、人工驱动、非阻塞；不进入 v1.0 依赖链）
+
 ✅ v0.9.1: ASR Provider Gateway（卫星，已完成）
 ✅ v0.9.3: TTS Provider Gateway（卫星，已完成）
 ✅ v0.9.10: Minimax 多模态 Provider 接入（卫星，已完成）
@@ -159,3 +178,4 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
 | ASR Provider Gateway | ~~无~~ → **v0.9.1 已完成** | ✅ |
 | TTS Provider Gateway | ~~无统一 TTS provider crate~~ → **v0.9.3 已完成** | ✅ |
 | 多模态图片输入（`ContentBlock::Image` 经 agent loop） | ~~v0.10 demo 验证发现无公开 API 可走~~ → **hotfix 2026-07-02 已完成**：新增 `RunInput` 类型，`AgentRun::start(config, RunInput, ..)`；`RunInput::text(..)`/`.with_image(..)`/`.from_blocks(..)` 覆盖纯文本与多模态；demo `describe_image` 工具驱动真实 `ContentBlock::Image` → `ModelAdapter::complete()` 调用（[#195](https://github.com/jianantian/orchest/issues/195)） | ✅ |
+| Harness eval / trajectory 闭环 | `RuntimeEvent` 已提供语义事件，但无应用层案例分层、敏感 trajectory 落盘、grader、候选对比和人工决策记录 | v0.16（Briefing Desk 应用层试点，非 core 能力） |
