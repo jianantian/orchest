@@ -2,19 +2,16 @@
 
 ## Status and Scope
 
-This design refines the existing Orchest v0.11 Research Pipeline validation
-flow. It does not add a new iteration or change the Demo B product goal.
-
-Before implementation begins, the v0.11 PRD, design decisions, implementation
-plan, and issues 001–005 must be updated to use this contract consistently.
-This document records the approved design direction; those existing iteration
-documents remain the implementation checklist once reconciled.
+This design defines the Orchest v0.11 Research Pipeline evidence contract.
+It does not add a new iteration or change the Demo B product goal. The PRD,
+design decisions, implementation overview, and issue-local specs and plans
+use this contract.
 
 ## Problem
 
-The current v0.11 plan accumulates seam gaps in a free-form `FINDINGS.md`, then
-asks issue 005 to de-duplicate, classify, and rewrite them into
-`docs/iteration/v0_11/seam-gap-analysis.md`.
+The superseded v0.11 plan accumulated seam gaps in free-form Markdown, then
+asked issue 005 to de-duplicate, classify, and rewrite them into the final
+report.
 
 That route does not provide a stable identity, evidence, lifecycle, or
 cross-reference contract. It makes these mistakes easy:
@@ -355,8 +352,8 @@ Issue 001 creates:
 - contract fixtures and invalid cases;
 - README instructions for updating findings.
 
-The existing `FINDINGS.md` design is removed from the PRD, design decisions,
-implementation plan, and issue text before implementation begins.
+No free-form findings file is created. All iteration documents name the
+canonical JSON workflow before implementation begins.
 
 ### Issues 002–004
 
@@ -396,13 +393,13 @@ Issue 005:
 The Research Pipeline demo owns a narrow binary:
 
 ```text
-cargo run -p research-pipeline --bin seam-report -- <command>
+cargo run -p research-pipeline-demo --bin seam-report -- <command>
 ```
 
 ### Validate
 
 ```bash
-cargo run -p research-pipeline --bin seam-report -- \
+cargo run -p research-pipeline-demo --bin seam-report -- \
   validate \
   --findings examples/demo/research-pipeline/findings.json
 ```
@@ -420,7 +417,7 @@ Validation is read-only. It checks:
 ### Render
 
 ```bash
-cargo run -p research-pipeline --bin seam-report -- \
+cargo run -p research-pipeline-demo --bin seam-report -- \
   render \
   --findings examples/demo/research-pipeline/findings.json \
   --out docs/iteration/v0_11/seam-gap-analysis.md
@@ -446,7 +443,7 @@ unverified rows.
 ### Check
 
 ```bash
-cargo run -p research-pipeline --bin seam-report -- \
+cargo run -p research-pipeline-demo --bin seam-report -- \
   check \
   --findings examples/demo/research-pipeline/findings.json \
   --report docs/iteration/v0_11/seam-gap-analysis.md
@@ -464,8 +461,8 @@ create issues.
 ### 001 · Demo Spec, Scaffold, and Finding Contract
 
 Add the canonical JSON, serde contract, validator, CLI skeleton, seam
-checklist, fixtures, and pre-seeded findings. Replace every `FINDINGS.md`
-instruction with the canonical JSON workflow.
+checklist, fixtures, and pre-seeded findings. Establish the canonical JSON
+workflow before later issues collect evidence.
 
 ### 002 · Worker Agent and Tool Set
 
@@ -575,5 +572,11 @@ v0.11 is complete only when:
 - the checked-in Markdown passes the staleness check;
 - blocker status and verification are internally consistent;
 - required unavailable live evidence remains explicit;
+- unavailable required live evidence forces readiness to `unverified`;
+- issue 005 records, separately, whether unverified live evidence blocks v1.0
+  or is accepted by a named decision owner with rationale;
 - v1.0 scope and Multivac M2 readiness are updated from the reviewed report.
 
+Closing the iteration after deterministic evidence collection does not imply
+that v1.0 is ready. The iteration completion record and release-gate decision
+are separate outputs.

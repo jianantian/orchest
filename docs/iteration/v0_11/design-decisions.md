@@ -1,6 +1,7 @@
 # v0.11 Design Decisions: Supervised Delegation Demo (Demo B)
 
-> **Status**: Locked through grilling session 2026-07-08.
+> **Status**: Locked through grilling session 2026-07-08; evidence-contract
+> amendments locked 2026-07-31.
 > This document records every design decision and pre-identified seam gap
 > finding before implementation begins. Issues 001-005 implement against
 > these decisions; issue 005 synthesizes the findings into the final seam
@@ -90,10 +91,11 @@ first call, `tests.rs:5755`).
 
 ### Decision
 
-Use `repeated_failure_threshold(1)` + a `RepeatedFailureHook` that returns
-`Abort` on Fatal tool errors. This produces `RunFailed` (clean run
-termination). The supervisor detects the failure through `SubAgentEvent`
-wrapping `RunFailed`. The supervisor then escalates (writes error summary).
+Use `repeated_failure_threshold(1)` plus a `Hook::on_repeated_failure`
+implementation that returns `HookAction::Abort` on fatal tool errors. This
+produces `RunFailed` (clean run termination). The supervisor detects the
+failure through `SubAgentEvent` wrapping `RunFailed`. The supervisor then
+escalates (writes error summary).
 
 `SupervisionStrategy::Restart { max_retries: 1 }` is set on the worker
 config. The demo observes that `RunRestarted` is NOT emitted and documents
@@ -204,10 +206,10 @@ the model adapter itself.
 
 ### Rationale
 
-Live LLM only. `RESEARCH_PIPELINE_CHAT_MODEL` configures the chat model
-via `create_adapter_from_config`. No custom model types. Each role is
-distinguished by its system prompt and tool set, not by a custom model
-implementation. Follows the v0.10 Briefing Desk live-only pattern.
+On the live path, `RESEARCH_PIPELINE_CHAT_MODEL` configures the chat model
+via `create_adapter_from_config`. No demo-specific model type is introduced.
+Each role is distinguished by its system prompt and tool set. Deterministic
+contract tests remain separate from the credential-gated provider evidence.
 
 ---
 
@@ -217,8 +219,10 @@ implementation. Follows the v0.10 Briefing Desk live-only pattern.
 
 Two distinct demo runs:
 
-1. **Normal run:** Supervisor delegates -> worker does search/read/write_draft
-   -> steering injection -> worker continues -> supervisor synthesizes.
+1. **Normal run:** Supervisor delegates -> worker does search/read/write_draft;
+   the supervisor-attached watcher injects into the supervisor, the worker
+   continues independently, and the target mismatch is recorded before the
+   supervisor synthesizes.
 2. **Fault run:** Supervisor delegates -> worker does search -> fault_trigger
    -> `RunFailed` -> supervisor detects failure -> escalation.
 
@@ -276,21 +280,23 @@ the `testing` feature. The Research Pipeline demo does not use ASR/TTS
 
 ---
 
-## Decision 12: Live Provider Run - Primary Path
+## Decision 12: Live Provider Run - Distinct Evidence Path
 
 ### Decision
 
-Live-only demo. The `RESEARCH_PIPELINE_CHAT_MODEL` env var configures the
-chat model adapter via `orchest_provider::create_adapter_from_config`.
-Smoke tests skip automatically when the env var is unset (no LLM
-credentials available). Live-only; no custom model types.
+The `RESEARCH_PIPELINE_CHAT_MODEL` env var configures the live chat model
+adapter via `orchest_provider::create_adapter_from_config`. Live execution
+is a required evidence row, but credentials are not a prerequisite for
+closing deterministic evidence collection. When credentials are absent, the
+live run remains `not-run` and readiness is `unverified`.
 
 ### Rationale
 
-Follows the v0.10 Briefing Desk live-only pattern. The live run is the
-primary evidence path - the demo exercises the full Orchest API surface
-against a real LLM. Smoke tests gate on `RESEARCH_PIPELINE_CHAT_MODEL` and
-skip when unset, so CI without credentials doesn't fail.
+Fixture, deterministic test, smoke, and live evidence prove different
+things. A missing live run must remain visible and cannot be converted into
+a pass, but it also should not erase valid static and deterministic seam
+evidence. Whether `unverified` readiness blocks v1.0 is a separate release
+decision recorded by issue 005.
 
 ---
 
@@ -330,31 +336,31 @@ repeated four times.
 
 ---
 
-## Decision 15: Test Structure - Multiple Focused Tests
+## Decision 15: Test Structure - Focused Test Targets
 
 ### Decision
 
-Multiple focused test functions in `tests/smoke.rs`, one per scenario:
+Use focused integration-test targets. Provider-independent contracts run
+without credentials; the end-to-end smoke path is credential-gated:
 
-| Test | Scenario |
-|------|----------|
-| `supervisor_delegates_to_worker` | Basic delegation + watcher attach |
-| `steering_via_watcher_inject` | `WatcherAction::Inject` |
-| `steering_via_watcher_steer` | `WatcherAction::Steer` |
-| `steering_via_handle_inject_message` | `RunHandle::inject_message` |
-| `steering_via_handle_steer` | `RunHandle::steer` |
-| `context_mode_fresh` | Fresh path |
-| `context_mode_fork` | Fork path with depth |
-| `fault_injection_and_escalation` | fault_trigger -> RunFailed -> escalation |
-| `multi_watcher_fifo` | Two watchers, event ordering |
+| Target | Scenario |
+|---|---|
+| `findings_contract` | schema, reference, lifecycle, and readiness rules |
+| `worker` | tools, Fresh/Fork, fault threshold and abort hook |
+| `supervisor_watcher` | delegation, supervisor attachment, nested observation, steering targets |
+| `failure_escalation` | fault trigger → `RunFailed` → supervisor escalation |
+| `watcher_order` | two supervisor watchers and event ordering |
+| `report_render` | deterministic render and stale-report detection |
+| `smoke` | credential-gated provider path |
 
-The Fork empty-parent-messages error case is a unit test in `src/`.
-Shared setup in a `tests/helpers/` module.
+The Fork empty-parent-messages error case may be a worker integration test or
+a unit test beside the context helper.
 
 ### Rationale
 
-Each acceptance criterion maps to one test function - traceable. Failures
-are isolated and diagnostic.
+Each acceptance criterion maps to a narrow test target. Failures remain
+isolated, while unavailable provider credentials do not skip the evidence
+contract or deterministic runtime checks.
 
 ---
 
@@ -362,9 +368,13 @@ are isolated and diagnostic.
 
 ### Decision
 
-Single `run` command with flags: `--question`, `--fault`, `--materials`.
-No subcommands. No resume. Stdout = event trace + final output. The seam
-gap analysis document is written by the developer, not by the binary.
+The `research-pipeline` binary has one `run` command with `--question`,
+`--fault`, and `--materials`. It has no resume path. Stdout is the event
+trace plus final output.
+
+The separate `seam-report` binary validates `findings.json`, explicitly
+renders the Markdown report, and checks it for staleness. It never runs the
+demo or invents finding facts.
 
 ### Rationale
 
@@ -470,8 +480,10 @@ called (`llm_watcher.rs:57`). This violates the AGENTS.md ban on
 
 Record as **release blocker**. `build()` should return
 `Result<LlmWatcher, ConfigError>` before v1.0 freezes the API. The demo
-calls `build()` correctly (with `.model(...)`), so it won't panic in
-practice.
+calls the current signature correctly as `.build()` (with `.model(...)`),
+not `.build()?`, so it won't panic in practice. If the runtime signature is
+changed first, that change is an explicit blocker and the demo is updated in
+the same change.
 
 ### Rationale
 
@@ -490,23 +502,53 @@ for the supervisor agent, one for the worker agent, one for the
 
 ### Rationale
 
-Follows the Briefing Desk live-only pattern. Each role is distinguished by
-its system prompt and tool set, not by a custom model implementation.
+The live provider path follows the Briefing Desk adapter pattern. Each role
+is distinguished by its system prompt and tool set, not by a custom model
+implementation. Credential-free contract tests do not change the live model
+topology.
 
 ---
 
-## Decision 24: Findings Tracking - FINDINGS.md in Demo -> Report in Docs
+## Decision 24: Findings Tracking - Canonical JSON -> Generated Report
 
 ### Decision
 
-`FINDINGS.md` in `examples/demo/research-pipeline/` during issues 002-004
-(raw evidence, easy to find while coding). Issue 005 synthesizes into
-`docs/iteration/v0_11/seam-gap-analysis.md` (authoritative report). The
-`FINDINGS.md` stays in the demo directory as raw evidence.
+`examples/demo/research-pipeline/findings.json` is the only editable fact
+source. Issue 001 creates it; issues 002–004 add evidence and update their
+owned findings; issue 005 validates it and deterministically renders
+`docs/iteration/v0_11/seam-gap-analysis.md`.
+
+The generated Markdown is a review artifact, not a second source of finding
+status, classification, evidence, readiness, or action ownership.
 
 ### Rationale
 
-Matches how the issues are structured. Simplest approach.
+Stable ids, typed evidence references, and deterministic rendering prevent
+the implementation notes, final report, and release triage from drifting.
+The full contract is defined in
+[finding-evidence-contract-design.md](finding-evidence-contract-design.md).
+
+---
+
+## Decision 25: Iteration Completion Is Not Release Readiness
+
+### Decision
+
+v0.11 may close after deterministic evidence collection when unavailable
+live evidence is explicitly recorded as `not-run` and the readiness verdict
+is `unverified`.
+
+Issue 005 separately records whether that unresolved live verification:
+
+1. blocks v1.0 until executed; or
+2. is accepted by a named decision owner with rationale.
+
+Closing v0.11 never implies the second decision.
+
+### Rationale
+
+This preserves honest evidence without making credential availability a
+hidden iteration state machine or an implicit release waiver.
 
 ---
 

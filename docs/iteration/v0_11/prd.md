@@ -1,204 +1,294 @@
-# v0.11 PRD: Supervised Delegation Demo (Demo B)
+# v0.11 PRD: Supervised Delegation Evidence Run (Demo B)
 
 ## Background
 
-v0.10 (Demo A) validates Orchest breadth: runtime capabilities composing correctly in one coherent product. v0.11 (Demo B) validates depth in the one subsystem that matters most before v1.0—the supervised delegation API surface that Multivac M2's avatar will drive.
+v0.10 validates Orchest breadth. v0.11 validates the supervised-delegation seams that
+Multivac M2 is expected to depend on: delegated execution, event observation, steering,
+context transfer, failure escalation, multi-watcher ordering, and completion.
 
-Multivac M2 is the automated phase of the Multivac product: an avatar agent that delegates research and writing tasks to worker agents, monitors their progress through event streams, injects steering corrections mid-run, and recovers from worker failures. The Orchest APIs that enable this—`LlmWatcher`, `WatcherAction` steering, `ContextMode`, supervisor recovery, multi-watcher FIFO, and completion gate—have been implemented but have never been exercised by a product-shaped application. Any usability problem, naming confusion, missing primitive, or correctness gap in those APIs must be found before v1.0 freezes them.
-
-Demo B is the evidence collection run. It produces a seam gap analysis that decides which API or documentation issues are release blockers for v1.0.
+The current public API does not expose a delegated worker's `RunHandle` from
+`AgentAsTool`. Consequently, an application can attach a watcher to the supervisor,
+observe forwarded `SubAgentEvent`s, and inject or steer the supervisor, but it cannot
+attach directly to or steer the nested worker. v0.11 must preserve that fact. The demo is
+an evidence run: it makes the product-shaped attempt, records what works, and represents
+missing seams as stable findings rather than pretending the desired flow succeeded.
 
 ## Product
 
-Build **Research Pipeline**, a two-level supervised delegation demo. A supervisor Orchest agent receives a research question and delegates the research task to a worker Orchest agent. An `LlmWatcher` monitors the worker's event stream in real time, injects one correction mid-run, and triggers supervisor recovery when the worker fails a controlled fault injection. The supervisor synthesizes the worker's output and writes a final brief.
+Build **Research Pipeline**, a two-level supervised delegation demo. A supervisor agent
+delegates a research task to a worker through `AgentAsTool`. Application code attaches
+watchers to the only public handle it owns—the supervisor `RunHandle`—and observes both
+supervisor events and forwarded nested-worker events.
 
-The demo is intentionally technical rather than product-polished. It must feel like a complete runnable program with a clear output, not a code snippet. Product polish is secondary to API surface coverage.
+The demo authentically attempts the product requirements that the public API cannot yet
+satisfy:
 
-The demo reuses the research-brief domain and fixture corpus from Briefing Desk where practical, keeping the two demos visually connected in the validation narrative.
+- direct watcher attachment to the delegated worker;
+- steering that specifically changes the delegated worker;
+- restart of the delegated worker after a terminal failure.
+
+Each attempt produces evidence in `findings.json`. A separate renderer validates that
+file and generates the human-readable seam-gap report.
+
+The demo is technical rather than product-polished. It must be a complete runnable
+program, but its primary output is evidence about the public API contract.
 
 ## Goals
 
-1. Exercise the full supervised delegation API surface from application code using public Orchest APIs only.
-2. Discover naming confusion, missing primitives, unsafe edge cases and documentation gaps in LlmWatcher, Steering, ContextMode, supervisor recovery and completion gate.
-3. Produce a seam gap analysis that classifies each finding as a release blocker, post-1.0 backlog or already resolved.
-4. Confirm that the Orchest APIs Multivac M2 depends on are stable enough to freeze in v1.0.
+1. Exercise supervised delegation using public Orchest APIs only.
+2. Separate demonstrated behavior from desired-but-unavailable behavior.
+3. Record every seam result through the stable finding/evidence contract.
+4. Classify each finding as a seam blocker, release blocker, or post-1.0 backlog item.
+5. Produce an explicit v1.0 readiness decision without conflating it with iteration
+   completion.
 
 ## Non-Goals
 
-- Do not build a product-polished CLI; correctness and API coverage matter, UX polish does not.
-- Do not use Claude Code as the worker agent; the worker is a plain Orchest agent. Claude-Code-as-tool supervised delegation is a future Multivac M2 validation scenario, not a v0.11 requirement.
-- Do not validate the full Multivac RuntimeBackend or v0 daemon stack; those are Multivac product concerns.
-- Do not introduce new public runtime concepts for the demo.
-- Do not block on v1.0 publishing mechanics; those remain in v1.0 scope.
+- Do not add a runtime seam merely to make the demo's happy path pass.
+- Do not reach into `pub(crate)` modules or retain a nested worker handle through test
+  hooks.
+- Do not use Claude Code as the worker agent.
+- Do not validate the Multivac daemon or `RuntimeBackend`.
+- Do not build a product-polished CLI.
+- Do not make provider credentials a prerequisite for collecting all static and
+  deterministic evidence.
 
 ## Scope
 
 ### Demo App
 
-Create a self-contained demo app under:
+Create a self-contained demo under:
 
 ```text
 examples/demo/research-pipeline/
 ├── Cargo.toml
 ├── README.md
+├── findings.json          # canonical finding/evidence source
 ├── fixtures/
-│   └── research/          (symlink or copy from briefing-desk/fixtures/research/)
+│   └── research/
 ├── src/
 │   ├── main.rs
-│   ├── supervisor.rs      (supervisor agent + delegation orchestration)
-│   ├── worker.rs          (worker agent + tool set)
-│   ├── watcher.rs         (LlmWatcher impl + WatcherAction steering scenarios)
-│   ├── fault.rs           (controlled fault injection for recovery test)
-│   └── events.rs          (event rendering shared with both agents)
+│   ├── supervisor.rs
+│   ├── worker.rs
+│   ├── watcher.rs
+│   ├── fault.rs
+│   ├── events.rs
+│   ├── findings.rs        # typed loading and validation
+│   └── bin/
+│       └── seam-report.rs # deterministic Markdown renderer
 └── tests/
-    └── smoke.rs
+    ├── smoke.rs
+    └── findings_contract.rs
 ```
 
-The app may use workspace path dependencies and may import tool definitions from the Briefing Desk crate if they are exported through a public interface. It must not reach into private modules or test-only helpers.
+`findings.json` is the only editable fact source for finding status, classification,
+evidence, readiness impact, and follow-up action. Generated Markdown is disposable and
+must not contain independently maintained finding facts.
 
-### Required User Flow
+### Required Evidence Flow
 
-1. User runs the demo with a research question.
-2. Supervisor agent delegates the task to the worker Orchest agent.
-3. `LlmWatcher` attaches to the worker's event stream; both worker and watcher events render to stdout.
-4. Watcher returns `WatcherAction::Inject(message)` from `on_event()` to inject one steering command mid-run (a correction, clarification or redirect).
-5. Worker processes the injection and continues; supervisor receives the result.
-6. Fault injection forces a controlled worker failure; supervisor detects failure and recovers (restart or escalate).
-7. Supervisor synthesizes the worker result into a final output.
-8. Demo exits with a seam gap analysis report printed to stdout.
+1. Start the supervisor and retain its public `RunHandle`.
+2. Attach two watchers to the supervisor before delegation.
+3. Delegate to a worker through `AgentAsTool`.
+4. Observe forwarded nested-worker events through the supervisor event stream.
+5. Attempt watcher-originated injection and external steering; record that their public
+   target is the supervisor, not the nested worker.
+6. Exercise `ContextMode::Fresh` and `ContextMode::Fork { depth }`.
+7. Trigger a worker tool failure and drive it to terminal failure with
+   `repeated_failure_threshold(1)` and an `on_repeated_failure` hook that
+   returns `HookAction::Abort`.
+8. Observe the worker `RunFailed` result and the supervisor's escalation behavior.
+9. Record whether `RunRestarted` occurs. Its absence in the nested-worker path is a seam
+   finding, not a successful recovery.
+10. Write or update evidence in `findings.json`.
+11. Validate `findings.json` and render the seam-gap report.
 
-The demo requires a real LLM provider configured via `RESEARCH_PIPELINE_CHAT_MODEL` env var (e.g. `anthropic/claude-sonnet-4-6`). Smoke tests skip automatically when no provider is configured.
+The live provider path uses `RESEARCH_PIPELINE_CHAT_MODEL`. Without credentials, the
+iteration may complete deterministic evidence collection, but live evidence remains
+`not-run` and overall readiness remains `unverified`.
 
 ### Runtime Capabilities Under Test
 
-| Capability | Demo expectation |
-|------------|------------------|
-| `LlmWatcher` attach/detach | `RunHandle::attach_watcher()` wires the watcher before delegation; detach is implicit on run completion |
-| Worker event visibility | Tool calls, model turns, approval events and status transitions arrive at the watcher via `Watcher::on_event()` |
-| Steering via `WatcherAction` | Watcher returns `WatcherAction::Inject(msg)` from `on_event()`; worker processes the injection without panicking or losing state |
-| `RunHandle` steering | `RunHandle::inject_message()` / `RunHandle::steer()` cover the external-caller steering path |
-| `ContextMode::Fresh` | Worker `SubAgentBuilder::context_mode(ContextMode::Fresh)`: no parent message history in worker context |
-| `ContextMode::Fork` | `SubAgentBuilder::context_mode(ContextMode::Fork { depth })`: inherits at most `depth` parent messages; no-messages case errors rather than silently falling back |
-| Supervisor recovery | `SupervisionStrategy::Restart { max_retries }` on `AgentConfigBuilder`; observable via `RuntimeEvent::RunRestarted` / `RunAborted` |
-| Multi-watcher FIFO | Two `RunHandle::attach_watcher()` calls; event delivery order is deterministic across both watchers |
-| Completion gate | Supervisor polls `EventReceiver` for `RuntimeEvent::RunCompleted` / `RunFailed` / `RunAborted`—no fixed timeout |
-| Import-path ergonomics | `LlmWatcher` (`run::llm_watcher`) and `ContextMode` (`tool::agent_as_tool`) are not re-exported from lib.rs; ergonomics classified during demo |
-| Documentation coverage | README and inline rustdoc are enough to reconstruct the full delegation flow from first principles |
+| Capability | Evidence expectation |
+|---|---|
+| Watcher attachment | `RunHandle::attach_watcher()` attaches to the supervisor handle exposed to application code |
+| Nested event visibility | Forwarded `SubAgentEvent`s show what the supervisor can observe about the worker |
+| Direct worker observation | Make a real application-level attempt; record the missing worker handle as a finding |
+| Watcher steering | `WatcherAction::Inject` / `Steer` targets the watched supervisor actor |
+| Direct worker steering | Make a real application-level attempt; record that no public target exists |
+| External steering | `RunHandle::inject_message()` / `steer()` target the supervisor handle |
+| `ContextMode::Fresh` | Worker starts without inherited parent message history |
+| `ContextMode::Fork` | Worker inherits at most `depth` parent messages; missing history returns an error |
+| Failure termination | Threshold `1` plus `Hook::on_repeated_failure` returning `HookAction::Abort` produces worker `RunFailed` |
+| Supervisor escalation | Supervisor observes the failed tool/delegation result and executes its escalation path |
+| Restart | Configure `SupervisionStrategy::Restart`; record the absence of nested-worker restart as a finding unless evidence proves otherwise |
+| Multi-watcher FIFO | Two watchers on the supervisor receive events in deterministic registration order |
+| Completion gate | `EventReceiver` observes a terminal runtime event; no fixed timeout is used as correctness logic |
 
-### Fault Injection Scenario
+### Fault and Recovery Contract
 
-The worker tool set includes a `fault_trigger` tool that returns a structured `ToolError` with `RetryHint::Unsafe` when called. The supervisor or watcher scenario calls this tool once, causing the worker's run to terminate with a failure. The supervisor then demonstrates the recovery path.
+`fault_trigger` returns a structured fatal tool error with `RetryHint::Unsafe`. That
+error alone does **not** terminate a run and does **not** activate
+`SupervisionStrategy::Restart`.
 
-This is the only fault injection scenario required. Additional fault shapes (transient, ambiguous) are optional and may be added if they expose API gaps.
+The demo must configure:
+
+```rust
+repeated_failure_threshold(1)
+Hook::on_repeated_failure(...) -> HookAction::Abort(...)
+```
+
+The expected chain is:
+
+```text
+fault_trigger returns ToolError(Fatal, Unsafe)
+→ repeated failure threshold is reached
+→ on_repeated_failure returns HookAction::Abort
+→ worker emits RunFailed
+→ AgentAsTool returns failure to the supervisor
+→ supervisor executes escalation
+```
+
+`SupervisionStrategy::Restart` reacts to actor failure in the runtime it supervises. The
+delegated worker is started internally by `AgentAsTool`, so a missing
+`RuntimeEvent::RunRestarted` in this scenario is expected seam evidence, not proof of a
+successful recovery path.
 
 ### ContextMode Coverage
 
-The demo must exercise both `ContextMode::Fresh` and `ContextMode::Fork { depth }` in two separate code paths (or two separate test cases). Each must:
+The demo exercises both modes in separate deterministic paths:
 
-- Produce the expected behavior (fresh = no inherited messages; fork = at most `depth` messages inherited).
-- Fail with a clear error if fork is requested but no messages are available to inherit, rather than silently falling back to fresh.
+- `Fresh`: no inherited parent messages.
+- `Fork { depth }`: no more than `depth` parent messages; requesting a fork with no
+  messages returns a clear error instead of falling back to fresh.
 
-### Seam API Surface
+### Public Seam API
 
-The v0.11 demo must use the following Orchest public API entry points directly. Any entry point that is missing, misnamed, undocumented, or requires workarounds to use correctly is a seam gap finding.
+Only public paths may be used:
 
-Accurate public paths (confirmed against codebase before demo is written):
+| Seam API | Public path |
+|---|---|
+| Watcher construction | `orchest::run::llm_watcher::LlmWatcher` |
+| Watcher attachment and external steering | `orchest::run::RunHandle` |
+| Event receiver | `orchest::run::EventReceiver` |
+| Watcher action | `orchest::run::WatcherAction` |
+| Context mode | `orchest::tool::agent_as_tool::ContextMode` |
+| Supervisor strategy | `orchest::run::SupervisionStrategy` |
+| Repeated-failure hook | `orchest::hook::{Hook, HookAction, RepeatedFailureHookContext}` |
+| Runtime events | `orchest::events::RuntimeEvent` |
 
-| Seam API | Public type / method | Full path |
-|----------|---------------------|-----------|
-| Watcher construction | `LlmWatcher::builder()` | `orchest::run::llm_watcher::LlmWatcher` |
-| Watcher attachment | `RunHandle::attach_watcher(watcher, capacity)` | `orchest::run::handle::RunHandle` |
-| Steering from watcher | `WatcherAction::Inject(String)` / `WatcherAction::Steer(String)` returned from `on_event()` | `orchest::run::watcher::WatcherAction` |
-| Steering from external caller | `RunHandle::inject_message(msg)` / `RunHandle::steer(msg)` | `orchest::run::handle::RunHandle` |
-| Context mode | `SubAgentBuilder::context_mode(ContextMode::Fresh \| Fork { depth })` | `orchest::tool::agent_as_tool::ContextMode` |
-| Supervisor strategy | `AgentConfigBuilder::supervision_strategy(SupervisionStrategy::Restart { max_retries })` | `orchest::run::config::SupervisionStrategy` |
-| Failure observation | `RuntimeEvent::RunRestarted { attempt }` / `RunAborted { reason }` | `orchest::events::RuntimeEvent` |
-| Completion gate | `RuntimeEvent::RunCompleted { output }` / `RunFailed { error }` via `EventReceiver` | `orchest::run::handle::EventReceiver` |
+`orchest::run::handle::*` and `orchest::run::config::*` are private implementation
+paths. Plans and examples must not import them.
 
-**Note**: `InjectCmd` and `SteerCmd` are `pub(crate)` internal types. Do not use them directly; use `WatcherAction` and `RunHandle` methods above.
+`LlmWatcherBuilder::build()` currently returns `LlmWatcher`, so demo code uses
+`.build()`, not `.build()?`. Changing the builder to return `Result` is a separate
+runtime change and must be tracked as a blocker before any example adopts the fallible
+signature.
 
-### Pre-Seeded Findings
+## Finding and Evidence Contract
 
-These friction points are already known before the demo is written. The demo confirms their impact and produces a final classification. They are not fixed in advance; the demo may reveal they are harmless, or it may confirm they are seam blockers.
+The locked schema and renderer behavior are defined in
+[finding-evidence-contract-design.md](finding-evidence-contract-design.md).
 
-| ID | Finding | Preliminary classification |
-|----|---------|---------------------------|
-| PSF-1 | `LlmWatcher` is not re-exported from `lib.rs`; import path is `orchest::run::llm_watcher::LlmWatcher` | Likely post-1.0 (path friction, not a correctness issue) unless Multivac M2 onboarding proves it is confusing |
-| PSF-2 | `ContextMode` is not re-exported from `lib.rs`; import path is `orchest::tool::agent_as_tool::ContextMode` | Same as PSF-1 |
-| PSF-3 | Fake ASR/TTS providers live in `tests/fake_provider.rs` inside each provider crate; they are not accessible as normal dev-dependencies from an external crate. The demo must either vendor the struct or the crates must expose fakes through a `#[cfg(feature = "test-utils")]` feature gate | Likely seam blocker if the demo cannot easily construct fake providers for offline smoke; record workaround used |
+Ownership by issue:
 
-## Validation Triage Rule
+- Issue 001 creates `findings.json`, the validator skeleton, and pre-seeded entries.
+- Issues 002–004 update their owned findings and evidence records.
+- Issue 005 validates the canonical file, renders the report, and records the v1.0
+  decision.
 
-Findings from Demo B enter one of three buckets. The classification criteria differ from Demo A to reflect the Multivac M2 use case:
+No issue creates a parallel free-form finding fact source.
 
-1. **Seam blocker**: prevents Multivac M2 from reliably using this API. Fix before v1.0, because v1.0 freezes the public API.
-2. **Release blocker**: correctness or safety issue discovered independently of Multivac M2 use. Fix before v1.0.
-3. **Post-1.0 backlog**: ergonomic improvement, naming preference, or optional extension. Does not block v1.0 or Multivac M2.
+## Validation Triage
 
-Examples:
+Every finding is classified as one of:
 
-- `WatcherAction::Inject` delivery order is non-deterministic when two watchers inject concurrently → seam blocker (Multivac M2 supervisor and avatar may both inject).
-- `ContextMode::Fork` silently falls back to `Fresh` instead of failing → seam blocker (`ContextMode` semantics must be explicit before 1.0 freezes them).
-- Supervisor recovery requires reading private source to understand which `SupervisionStrategy` variant to set → seam blocker (documentation gap).
-- Completion gate works but the event variant name is confusing → post-1.0 if the Multivac M2 team can work with it; release blocker only if renaming before 1.0 is the lesser cost.
-- `LlmWatcher` event payload contains more fields than documented → post-1.0.
+1. **Seam blocker**: prevents Multivac M2 from reliably using the API.
+2. **Release blocker**: correctness or safety issue independent of Multivac M2.
+3. **Post-1.0 backlog**: ergonomic or optional improvement that does not block use.
+
+The classification must be supported by evidence. A desired behavior that cannot be
+attempted because the necessary public handle does not exist is still a valid observed
+gap when the blocked attempt and inspected public surface are recorded.
 
 ## Issue Breakdown
 
-| Issue | Title | Scope |
-|-------|-------|-------|
-| 001 | Demo spec and scaffold | Lock the delegation flow, fixture re-use plan and seam API checklist |
-| 002 | Worker agent and tool set | Implement worker agent with research tools and fault_trigger; smoke test |
-| 003 | Supervisor + LlmWatcher + ContextMode | Implement supervisor delegation, watcher attach/detach, ContextMode::Fresh and Fork paths |
-| 004 | Steering injection and supervisor recovery | Implement WatcherAction::Inject scenario, multi-watcher FIFO test, fault injection, supervisor recovery |
-| 005 | Seam gap analysis and release-blocker triage | Run full demo, document all seam gaps, classify as seam blocker / release blocker / post-1.0, update v1.0 scope |
+| Issue | Title | Contract |
+|---|---|---|
+| 001 | Demo contract and scaffold | Create the crate, `findings.json`, validator skeleton, and pre-seeded findings |
+| 002 | Worker, context, and fault primitives | Implement worker paths; update owned deterministic evidence |
+| 003 | Supervisor observation and steering attempts | Attach watchers to the supervisor; record nested-worker target gaps |
+| 004 | Terminal failure, escalation, and ordering | Prove the exact failure chain and record missing restart behavior |
+| 005 | Evidence validation, report, and release triage | Render exclusively from `findings.json`; record live status and v1.0 decision |
+
+Each issue lives under `issues/<issue-slug>/` and contains both `spec.md` and `plan.md`.
+The global implementation plan is an ordering overview only.
 
 ## Acceptance Criteria
 
-- [ ] `examples/demo/research-pipeline` exists and builds with workspace path dependencies.
-- [ ] Smoke tests cover supervisor delegation, watcher attach, `WatcherAction::Inject` steering, `ContextMode` both variants, fault injection and recovery (skipped when `RESEARCH_PIPELINE_CHAT_MODEL` is not set).
-- [ ] Live run works when provider environment variables are configured.
-- [ ] `LlmWatcher` attach (`RunHandle::attach_watcher`) produces a visible event stream from the worker on stdout.
-- [ ] Steering injection via `WatcherAction::Inject` is processed by the worker and visible in events.
-- [ ] `ContextMode::Fresh` and `ContextMode::Fork` both exercise their respective paths; Fork failure produces a clear error.
-- [ ] Fault injection causes a controlled worker failure; supervisor recovery path runs without panicking.
-- [ ] Two watchers attached concurrently produce deterministic event ordering.
-- [ ] Supervisor knows worker is done without relying on timeout.
-- [ ] Demo uses only public Orchest APIs.
-- [ ] Seam gap analysis report is written and all findings are classified.
-- [ ] v1.0 scope is updated from the seam gap analysis.
+- [ ] `examples/demo/research-pipeline` builds using workspace path dependencies.
+- [ ] `findings.json` validates against the locked finding/evidence contract.
+- [ ] Watchers attach to the supervisor and receive forwarded nested-worker evidence.
+- [ ] Direct delegated-worker watcher attachment is authentically attempted and either
+  demonstrated or recorded as a gap.
+- [ ] Watcher and external steering target behavior is demonstrated; inability to target
+  the delegated worker is recorded as a gap.
+- [ ] `Fresh` and `Fork { depth }` behavior is covered deterministically.
+- [ ] The fault path uses threshold `1` and an `on_repeated_failure` hook
+  returning `HookAction::Abort`, ending in worker `RunFailed` and supervisor
+  escalation.
+- [ ] Restart is not claimed unless `RunRestarted` evidence exists; otherwise its absence
+  is classified as a finding.
+- [ ] Two supervisor watchers demonstrate deterministic delivery order.
+- [ ] Completion uses terminal events rather than a fixed timeout.
+- [ ] All sample imports are public, and `LlmWatcherBuilder::build()` is called with its
+  current infallible signature.
+- [ ] Issue 005 renders the report from `findings.json`; generated prose adds no facts.
+- [ ] If live validation is not run, its evidence is `not-run` and readiness is
+  `unverified`.
+- [ ] The report separately states whether unverified live evidence blocks v1.0.
 
-## Dependencies
+## Iteration Completion and v1.0 Readiness
 
-- v0.10 complete (validation report may contain supervised delegation friction items that v0.11 inherits; Briefing Desk tool crate may be reused).
-- v0.9.5 Control-Flow Hardening (`ContextMode`, handoff snapshot-then-swap, `run_one_step` decomposition).
-- v0.9.4 Failure Semantics (`RetryHint`, structured tool failure, `ErrorKind` taxonomy).
-- v0.9 Supervised Delegation runtime APIs (LlmWatcher, Steering, supervisor recovery, multi-watcher FIFO).
+Iteration completion and release readiness are separate decisions:
+
+- v0.11 may complete when all deterministic evidence is collected, all unavailable live
+  evidence is explicitly `not-run`, and the canonical findings file validates.
+- A `not-run` live scenario forces readiness to `unverified`; it may never be represented
+  as ready or passing.
+- Issue 005 must make an explicit v1.0 gate decision: either live verification is a
+  pre-release action that blocks v1.0, or the remaining uncertainty is accepted by a
+  named decision owner with rationale. Closing the iteration does not make that choice
+  implicitly.
 
 ## Environment Variables
 
-The demo uses a real LLM provider configured via environment variables:
-
 | Variable | Purpose | Required |
-|----------|---------|----------|
-| `RESEARCH_PIPELINE_CHAT_MODEL` | Chat model spec (e.g. `anthropic/claude-sonnet-4-6`) used for supervisor, worker and watcher adapters | Yes (for live run and smoke tests) |
-| `RESEARCH_PIPELINE_API_KEY` | API key for the configured provider | Yes (for live run and smoke tests) |
-| `RESEARCH_PIPELINE_API_URL` | Override API endpoint URL | No |
-| `RESEARCH_PIPELINE_MAX_TOKENS` | Override max response tokens | No |
-
-When `RESEARCH_PIPELINE_CHAT_MODEL` is not set, smoke tests skip automatically rather than failing.
+|---|---|---|
+| `RESEARCH_PIPELINE_CHAT_MODEL` | Provider/model used by supervisor, worker, and watcher | Live only |
+| `RESEARCH_PIPELINE_API_KEY` | Provider credential | Live only |
+| `RESEARCH_PIPELINE_API_URL` | Optional endpoint override | No |
+| `RESEARCH_PIPELINE_MAX_TOKENS` | Optional response-token override | No |
 
 ## Verification
 
-Required local checks:
+Required deterministic checks:
 
 ```bash
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 cargo fmt --check
 cargo test -p research-pipeline-demo
+cargo run -p research-pipeline-demo --bin seam-report -- validate \
+  --findings examples/demo/research-pipeline/findings.json
+cargo run -p research-pipeline-demo --bin seam-report -- render \
+  --findings examples/demo/research-pipeline/findings.json \
+  --out docs/iteration/v0_11/seam-gap-analysis.md
+cargo run -p research-pipeline-demo --bin seam-report -- check \
+  --findings examples/demo/research-pipeline/findings.json \
+  --report docs/iteration/v0_11/seam-gap-analysis.md
 ```
 
-The live provider run is manual and env-var gated. It must be documented in the seam gap analysis with exact command, provider, model, date and outcome.
-
-The multi-watcher FIFO test must be deterministic across repeated runs on the same machine.
+The live run is manual and credential-gated. Its evidence records the command, provider,
+model, date, and outcome. When credentials are absent, the explicit `not-run` record and
+`unverified` readiness are the correct iteration result.
