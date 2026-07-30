@@ -7,6 +7,6 @@
   "readinessVerdict": { "status": "unverified", "reason": "The deterministic run has not executed.", "refs": ["run-test"] },
   "apiChecklist": [{ "id": "check-run", "apiSurface": "surface", "publicPath": "orchest::run::RunHandle", "requirement": "Run a test.", "status": "exercised", "evidenceRefs": ["ev-test"], "findingRefs": [] }],
   "runs": [{ "id": "run-test", "kind": "test", "status": "not-run", "required": true, "summary": "The test has not run.", "evidenceRefs": [] }],
-  "evidence": [{ "id": "ev-test", "kind": "test", "summary": "A declared test result.", "path": "examples/demo/research-pipeline/tests/findings_contract.rs", "symbol": "rejects_unknown_schema", "runRef": "run-test" }],
+  "evidence": [{ "id": "ev-test", "kind": "documentation", "summary": "A declared test plan is not execution evidence.", "path": "examples/demo/research-pipeline/tests/findings_contract.rs", "symbol": "rejects_unknown_schema" }],
   "findings": []
 }

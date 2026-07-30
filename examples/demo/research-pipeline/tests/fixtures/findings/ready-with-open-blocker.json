@@ -7,6 +7,6 @@
   "readinessVerdict": { "status": "ready" },
   "apiChecklist": [],
   "runs": [],
-  "evidence": [],
-  "findings": [{ "id": "SB-1", "title": "Blocker", "apiSurface": "surface", "description": "gap", "observedConsequence": "consequence", "workaround": "none", "classification": "seam-blocker", "status": "open", "evidenceRefs": [], "verification": { "status": "not-run", "commands": [], "evidenceRefs": [], "summary": "Not verified." } }]
+  "evidence": [{ "id": "ev-contract", "kind": "documentation", "summary": "The contract records the open blocker.", "path": "docs/iteration/v0_11/finding-evidence-contract-design.md", "symbol": "Readiness Verdict" }],
+  "findings": [{ "id": "SB-1", "title": "Blocker", "apiSurface": "surface", "description": "gap", "observedConsequence": "consequence", "workaround": "none", "classification": "seam-blocker", "status": "open", "evidenceRefs": ["ev-contract"], "verification": { "status": "not-run", "commands": [], "evidenceRefs": [], "summary": "Not verified." } }]
 }

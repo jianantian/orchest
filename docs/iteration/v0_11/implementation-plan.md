@@ -48,7 +48,8 @@ examples/demo/research-pipeline/
     ├── supervisor_watcher.rs
     ├── failure_escalation.rs
     ├── watcher_order.rs
-    └── report_render.rs
+    ├── report_render.rs
+    └── smoke.rs
 ```
 
 Package name: `research-pipeline-demo`.

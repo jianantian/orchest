@@ -46,6 +46,7 @@ triggers it.
 ```bash
 cargo check -p research-pipeline-demo
 cargo test -p research-pipeline-demo --test findings_contract
+cargo test -p research-pipeline-demo
 cargo run -p research-pipeline-demo --bin seam-report -- validate \
   --findings examples/demo/research-pipeline/findings.json
 
@@ -72,6 +73,18 @@ credentials (with optional `RESEARCH_PIPELINE_API_KEY`,
 CI prerequisite. Until a real command is executed and recorded, the required
 live-provider run remains `not-run`, and the contract requires the readiness
 verdict to remain `unverified`.
+
+The distinct provider smoke is an ignored integration test, so ordinary
+`cargo test -p research-pipeline-demo` runs never call a live provider:
+
+```bash
+cargo test -p research-pipeline-demo --test smoke \
+  credential_gated_provider_path -- --ignored --exact
+```
+
+Run that command only after configuring the model and provider credentials.
+The test exercises the compiled `research-pipeline run` binary and resolves
+the shared fixture symlink before passing the materials path.
 
 ## Updating evidence
 

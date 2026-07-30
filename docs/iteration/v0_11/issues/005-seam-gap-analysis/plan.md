@@ -3,6 +3,7 @@
 ## Files to read
 
 - `docs/iteration/v0_11/finding-evidence-contract-design.md`
+- `docs/iteration/v0_11/issues/005-seam-gap-analysis/spec.md`
 - `docs/iteration/v0_11/prd.md`
 - `docs/iteration/v0_11/design-decisions.md`
 - `docs/iteration/roadmap.md`
@@ -11,17 +12,20 @@
 
 - `examples/demo/research-pipeline/src/findings.rs`
 - `examples/demo/research-pipeline/src/bin/seam-report.rs`
+- `examples/demo/research-pipeline/README.md`
 - `examples/demo/research-pipeline/findings.json`
 - `examples/demo/research-pipeline/tests/findings_contract.rs`
 - `examples/demo/research-pipeline/tests/report_render.rs`
+- `examples/demo/research-pipeline/tests/smoke.rs`
 - `docs/iteration/v0_11/seam-gap-analysis.md`
 - `docs/iteration/v1_0/` issue documents as required
 - `docs/iteration/roadmap.md`
 
 ## Steps
 
-1. Finish strict validation of schema, enums, ids, refs, paths, bounded
-   excerpts, lifecycle rules, and readiness consistency.
+1. Finish strict validation of schema, enums, ids, refs, calendar dates,
+   Git revisions, stable source symbols, paths, all renderable strings,
+   lifecycle rules, and readiness consistency.
 2. Review duplicate symptoms and add evidence to existing finding ids rather
    than minting replacements.
 3. Assign final classifications and bind every open blocker to owner, action,
@@ -32,9 +36,14 @@
    required run as `not-run` with reason and set readiness to `unverified`.
 6. Record a separate v1.0 gate decision. Do not infer it from iteration
    closure.
-7. Render the report, then run the exact staleness check.
+7. Resolve the one report against the verified repository root, reject
+   symlink escapes, cover rendering resolution in an isolated repository,
+   render explicitly, then run the exact no-write staleness check without
+   letting ordinary tests rewrite the tracked report.
 8. Update downstream roadmap, v1.0, and Multivac references from the reviewed
    canonical result.
+9. Amend the issue commit, then rerun every command claimed by `git:self`
+   against the final containing commit without changing tracked files.
 
 ## Verification
 

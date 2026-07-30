@@ -6,7 +6,7 @@
   "executiveSummary": "Verified status needs behavioral evidence.",
   "readinessVerdict": { "status": "unverified", "reason": "The test run is the remaining readiness evidence.", "refs": ["run-test"] },
   "apiChecklist": [],
-  "runs": [{ "id": "run-test", "kind": "test", "status": "passed", "required": true, "command": "cargo test -p research-pipeline-demo", "summary": "The test passed.", "evidenceRefs": [] }],
+  "runs": [{ "id": "run-test", "kind": "test", "status": "passed", "required": true, "command": "cargo test -p research-pipeline-demo", "date": "2026-07-31", "revision": "abcdef0", "summary": "The test passed.", "evidenceRefs": [] }],
   "evidence": [{ "id": "ev-doc", "kind": "documentation", "summary": "Documentation exists but does not prove runtime behavior.", "path": "docs/iteration/v0_11/finding-evidence-contract-design.md", "symbol": "Verification" }],
-  "findings": [{ "id": "SB-1", "title": "Source-only verification", "apiSurface": "surface", "description": "gap", "observedConsequence": "consequence", "workaround": "none", "classification": "untriaged", "status": "verified", "evidenceRefs": [], "verification": { "status": "passed", "commands": ["cargo test -p research-pipeline-demo"], "evidenceRefs": ["ev-doc"], "summary": "Claimed verification." } }]
+  "findings": [{ "id": "SB-1", "title": "Source-only verification", "apiSurface": "surface", "description": "gap", "observedConsequence": "consequence", "workaround": "none", "classification": "untriaged", "status": "verified", "evidenceRefs": ["ev-doc"], "verification": { "status": "passed", "commands": ["cargo test -p research-pipeline-demo"], "evidenceRefs": ["ev-doc"], "summary": "Claimed verification." } }]
 }
