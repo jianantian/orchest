@@ -13,11 +13,13 @@ runtime 修改。本 issue 先锁定唯一可编辑面，再建立可在 model c
 2. 明确 candidate 只允许修改该模块中的 prompt/description 内容；Tool schema、执行逻辑、
    runtime 配置和 fixtures 不是 candidate surface。
 3. 定义版本化 eval case schema，覆盖 case ID、scenario family、行为标签、split、运行模式、
-   must-pass、权重、Tool 约束、事实/冲突、报告结构和 fixture 引用。
+   follow-up session seed、must-pass、权重、Tool 约束、事实/冲突、报告结构和 fixture 引用。
 4. 编写 18 个案例：10 optimization、4 validation、4 scorecard；同一 scenario family 不跨
    split。
 5. 提供 corpus validator，在任何 model call 前检查 schema、ID 唯一性、split 数量、
-   scenario-family 隔离和 fixture 引用存在性。
+   scenario-family 隔离、validation tag 覆盖、fixture 与 session seed 引用存在性。
+6. 为 follow-up case 提供版本化的合成 session seed；seed 只含 messages、step 和 budget，
+   不含 session/run ID、store path 或 harness config。
 
 ## 验收标准
 
@@ -31,6 +33,10 @@ runtime 修改。本 issue 先锁定唯一可编辑面，再建立可在 model c
 - [ ] case 覆盖 `tool_selection`、`tool_chaining`、`modality_coverage`、
       `conflict_reconciliation`、`report_structure`、`citation_quality`、
       `followup_grounding` 七类行为。
+- [ ] 七个行为标签都至少出现在一个 validation case；缺少覆盖时 validator 在 model call 前
+      失败，不能把 absent tag 当作未下降。
+- [ ] follow-up case 引用的 session seed 可独立校验和 hash；缺失、hash 不符、包含 mutable
+      session/run ID 或 harness config 时拒绝 corpus。
 - [ ] 测试直接解析提交到仓库的完整 corpus，并验证全部约束；另有每类非法配置的负例测试。
 - [ ] `cargo test -p briefing-desk-demo`、workspace test/clippy/fmt/lint-check 全绿。
 
@@ -38,4 +44,3 @@ runtime 修改。本 issue 先锁定唯一可编辑面，再建立可在 model c
 
 - 案例全部基于现有 Loom corpus；不得在报告中宣称跨领域泛化。
 - 本 issue 只建立 surface 与数据合同，不运行真实模型，不记录 trajectory。
-

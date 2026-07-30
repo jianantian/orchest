@@ -32,8 +32,8 @@ v0.11 Demo B。
 
 1. 为 Briefing Desk 建立 18 个高信号 eval cases，覆盖工具选择、工具组合、多模态证据、
    冲突处理、报告结构、引用质量和 follow-up grounding。
-2. 通过 `RuntimeEvent` 在应用层记录 opt-in、敏感的 trajectory，并为每次运行保存可复现的
-   manifest。
+2. 通过 `RuntimeEvent` 在应用层生成 opt-in、敏感但经过明确净化的 trajectory，并为每次运行
+   保存可恢复候选文本的 harness snapshot 与 manifest。
 3. 用确定性 graders 自动评价可观察行为，不在第一版引入 LLM judge。
 4. 自动比较 baseline 与 candidate，执行 must-pass、分类回归、分数、token 和 latency gate，
    但把最终接受权留给人。
@@ -94,8 +94,15 @@ Briefing Desk 当前散落在 `app.rs`、`tools.rs` 和 `media.rs` 的 system pr
 descriptions 集中到应用内 `harness` 模块。业务逻辑、Tool schema、Tool execute 实现和 runtime
 配置不属于可编辑 surface。
 
-Harness snapshot 必须能被 manifest 完整描述或 hash；baseline/candidate 对比不得依赖“当前
-工作区大概是什么状态”。
+每次 run 必须保存 `harness/snapshot.json`。snapshot 是按稳定 `surface_id` 排序的数组，包含
+每个 prompt/description 的准确文本；文本先把 CRLF 规范化为 LF，但不 trim，随后用固定字段顺序
+序列化为 UTF-8 JSON。`harness/snapshot.sha256` 和 manifest 中的 `harness_snapshot.sha256`
+必须对同一组规范化字节计算。仅有 hash 不算可复现：给定 manifest 的 git commit 和 snapshot，
+必须能恢复该次运行使用的全部可编辑 surface。
+
+eval run 允许工作区在声明的 harness 文件内 dirty，但必须记录 dirty paths；若存在 harness
+之外的 dirty path，必须在 model call 前拒绝运行。这样 baseline/candidate 的应用逻辑来自同一
+commit，候选差异则由本地 snapshot 完整保存。
 
 ### Eval cases
 
@@ -106,6 +113,7 @@ Harness snapshot 必须能被 manifest 完整描述或 hash；baseline/candidate
 - 一个或多个行为标签
 - `split`: `optimization`、`validation` 或 `scorecard`
 - 输入问题及运行模式：初始 run 或 session follow-up
+- follow-up 使用的只读 session seed ID 与 hash
 - must-pass 标记与 grader 权重
 - 所需/禁止 Tool、必要的顺序约束
 - 预期事实、冲突、报告 section 与 fixture 引用
@@ -120,15 +128,38 @@ Harness snapshot 必须能被 manifest 完整描述或 hash；baseline/candidate
 
 同一问题的改写或同一 `scenario_family` 不得跨 split，避免明显的数据泄漏。
 
+所有注册的行为标签都属于 validation gate：4 个 validation case 可以携带多个标签，但 corpus
+validator 必须证明每个注册标签至少被一个 validation case 覆盖。缺少 validation 覆盖的标签会
+使 corpus 无效，不能把该标签默认为“未下降”。
+
+### Follow-up session 生命周期
+
+follow-up case 不通过 live model 临时生成前置对话，而是引用仓库内版本化、合成的
+`session seed`。seed 只包含此前消息、step 与 budget usage，不包含可变的 session ID、run ID、
+store path 或 harness config。其生命周期固定为：
+
+1. runner 在任何 model call 前校验 seed，并计算规范化内容 hash；
+2. 每个 attempt 从同一只读 seed 独立 materialize 一个 `SessionSnapshot`，注入本次 harness
+   config，并分配唯一 session ID/run ID；
+3. 每个 attempt 使用独立的临时 SQLite store；同一 case 的三次重复不得复用 mutable store；
+4. baseline 与 candidate 必须引用同一个 seed ID/hash，messages、step 与初始 budget 完全相同；
+   唯一允许不同的是被测 harness config 和新生成的运行标识；
+5. `resume_with_input` 的计时从 seed materialize 完成后开始；
+6. terminal/failure artifact flush 后删除临时 store；清理失败写入 `attempt.json`，不得静默忽略。
+
+因此重复运行都从相同的逻辑只读 snapshot 出发，同时不会共享可能被前一次 attempt 污染的
+session/store。
+
 ### Run manifest
 
 每次 eval run 保存 `manifest.json`，至少包含：
 
 - run label 与时间
-- Orchest git commit 和 dirty 状态
+- Orchest git commit、dirty 状态和 dirty paths
 - Briefing Desk fixture revision
 - provider、model 和非秘密 request options
-- system prompt 与 Tool description 的内容 hash
+- `harness/snapshot.json` 的相对路径、SHA-256 和各 surface hash
+- 所有 follow-up session seed 的 ID 与内容 hash
 - runtime/package schema version
 - split、case IDs 与 repetition policy
 
@@ -136,8 +167,26 @@ manifest 不得包含 API key、authorization、cookie 或 reasoning 正文。
 
 ### Sensitive trajectory
 
-`trajectory.jsonl` 是按顺序序列化的应用级事件记录，来源是 public `RuntimeEvent`。它可能包含
-Tool input/output、模型生成文本和最终报告，因此属于敏感产物：
+`trajectory.jsonl` 不是 `RuntimeEvent` 的直接 serde 输出，而是 schema-versioned 的应用级
+`TrajectoryEvent`。每行只包含 `schema_version`、严格递增的 `sequence`、attempt 起点后的
+`elapsed_ms`、run/child 关系、`kind` 与净化后的 `data`。净化策略是 allowlist：
+
+| `RuntimeEvent` 来源 | 处理 | 规则 |
+|---------------------|------|------|
+| `ModelStreamChunk` 全部变体 | 丢弃 | 包括 `Thinking`、`ThinkingEnd.signature/provider_details`、文本/tool args delta、音频与 extension；最终文本和 Tool 调用由 canonical runtime events 记录 |
+| model call start/completed/retry | 保留/脱敏 | 保留 step、usage、option adjustments、attempt、delay；错误文本做 secret-pattern 脱敏 |
+| Tool start/update/completed/failed/retry、async Tool、batch | 保留/脱敏 | 保留 Tool 名、顺序、状态、时长；input/output/partial 递归删除 `thinking`、`reasoning`、`signature`、`provider_details`，并遮盖 secret-key 字段 |
+| approval | 保留/脱敏 | 保留 Tool 名、call ID、context 与净化后的参数，不保存未净化 `ToolCall` |
+| skill、budget、warning、compaction、agent update、restart | 保留/脱敏 | 只保留 grader/诊断所需字段；自由文本做 secret-pattern 脱敏 |
+| sub-agent/child wrappers | 递归处理 | 保留 parent/child ID 与 depth；嵌套事件重新走同一 allowlist，嵌套 thinking 仍必须丢弃 |
+| `SubAgentStarted.config_summary` | 丢弃 payload | 只保留 parent/child ID，避免 config 携带 prompt |
+| terminal events | 保留/脱敏 | 保留 stop reason/status 与净化后的 final output/error |
+| `EventsDropped` | 保留并升级状态 | artifact 保留 count，但 attempt 必须是 `inconclusive` |
+
+字段名匹配先转小写并去除 `_`、`-` 等分隔符。secret-key 字段至少包括命名变体的 `api_key`、
+`authorization`、`cookie`、`set_cookie`、`x_api_key` 和 `access_token`。recorder 不读取进程
+环境；净化后的 Tool payload、用户输入和最终报告仍可能敏感，因此 trajectory 仍按敏感产物
+管理：
 
 - 只有显式 `--record-sensitive` 才能运行 eval；
 - `evals/runs/` 默认加入 `.gitignore`；
@@ -151,13 +200,22 @@ Tool input/output、模型生成文本和最终报告，因此属于敏感产物
 ```text
 evals/runs/<label>/
 ├── manifest.json
+├── harness/
+│   ├── snapshot.json
+│   └── snapshot.sha256
 ├── results.json
 ├── summary.md
 └── cases/<case-id>/<attempt>/
     ├── trajectory.jsonl
     ├── output.md
+    ├── attempt.json
     └── scores.json
 ```
+
+四个 attempt 文件始终存在。`attempt.json` 固定记录 status、起止时间、wall latency、terminal
+kind、stop reason、各 token 字段、resource coverage、session seed/hash、临时 store 清理结果
+和结构化 error；失败或 inconclusive 时 `output.md` 可为空，`scores.json` 明确写
+`grader_status: not_run` 和 null aggregates，不能省略文件造成歧义。
 
 ### Deterministic graders
 
@@ -171,23 +229,55 @@ evals/runs/<label>/
 - 引用的 fixture 是否真实存在；
 - follow-up 是否利用已有 session，而非重新执行完整材料流程。
 
+每个 grader 输出 `passed`、0–100 `score` 与正权重。一个 completed attempt 的 case score 为
+grader 分数的加权算术平均；只有全部 required graders 都 `passed=true` 时 attempt 才 pass。
+grader error 使 attempt grading 状态为 `inconclusive`，不产生可用于比较的 case score。
+
+三次重复时，非 must-pass case 以至少 2/3 attempt pass 为 case pass，case score 取三次
+attempt score 的算术平均；must-pass case 要求 3/3 attempt 均绝对 pass。split overall score
+按 case weight 对 case score 加权；per-tag score 对携带该 tag 的 validation cases 使用同一
+case weight 加权。若任一必需 attempt 未 completed/grading completed，该 case/split aggregate
+为 null，compare 直接失败，不缩小分母。
+
 不使用 LLM judge。无法可靠规则化的文风、洞察质量和表达优劣留给人工 review。
 
 ### Candidate comparison
 
-baseline 与 candidate 只有在 provider、model、request options、fixture revision、case set 和
-repetition policy 一致时才可比较。模型变更属于新实验，不能伪装成 harness candidate。
+baseline 与 candidate 只有在 source git commit、provider、model、request options、fixture
+revision、session seed hashes、case set、split 和 repetition policy 一致时才可比较。两次
+run 都不得有 harness 外 dirty path；harness snapshot 是预期差异，不要求 hash 相同。模型或
+应用逻辑变更属于新实验，不能伪装成 harness candidate。
 
-candidate 进入人工审核必须同时满足：
+baseline 首先必须有效：参与比较的全部 must-pass cases 在每次 repetition 中都绝对通过。只要
+baseline 有一个 must-pass attempt 失败，比较结果为 `invalid_baseline`，必须记录失败 case，
+且不能计算 candidate eligibility。不能用“candidate 没比 baseline 更差”掩盖 baseline 已失败。
+
+有效 baseline 下，candidate 进入人工审核必须同时满足：
 
 1. Briefing Desk 与相关 workspace 测试通过；
-2. must-pass cases 零回归；
+2. candidate 的全部 must-pass cases 在每次 repetition 中绝对通过，不只做相对 baseline 判断；
 3. validation 加权总分相对 baseline 至少提高 5 分（100 分制）；
 4. 任一行为标签的 validation 分数不得下降；
-5. validation 每个 case 运行 3 次，以多数结果决定 pass/fail，连续值使用三次均值；
-6. 平均 token 不超过 baseline 的 115%；
-7. 中位 latency 不超过 baseline 的 130%；
+5. validation 每个 case 运行 3 次，并使用上一节固定的 grader/case/split 聚合公式；
+6. validation attempt 的平均 gate total tokens 不超过 baseline 的 115%；
+7. validation attempt 的中位 wall latency 不超过 baseline 的 130%；
 8. 所有参与比较的 case 均为 completed，不能用 inconclusive 抵消失败。
+
+资源口径固定如下：
+
+- 每个 attempt 分别求和所有可观察 model call 的 `input_tokens`、`output_tokens`、
+  `reasoning_tokens`、`audio_input_tokens`、`image_input_tokens` 与 `video_input_tokens`；
+- `gate_total_tokens` 是上述六项之和；`cache_read_tokens`、`cache_write_tokens` 和
+  `details` 单独报告但不再次加入，避免重复计数；
+- normal model calls、递归 child events 和 Briefing Desk 内部 vision call 都必须上报 usage；
+  任一已知内部 model call 缺 usage 时 `resource_coverage=incomplete`，compare 失败；
+- run 的 validation mean tokens 是所有 validation attempts 的 `gate_total_tokens` 等权平均，
+  不是先按 case 求均值，也不使用 case weight；完整性 gate 保证分母固定；
+- wall latency 使用 monotonic clock，从紧邻 `AgentRun::start` 或 `resume_with_input` 前开始，
+  到 terminal event 已接收且 `RunHandle::wait` 已返回两者都满足时结束；corpus 校验、seed
+  materialize、grader 与 artifact I/O 不计入，run 内的自动 approval 处理计入；
+- 失败/inconclusive attempt 仍记录 latency，但不进入 median；由于完整性 gate 失败，不能靠
+  排除慢失败来取得 eligibility。偶数样本的 median 是排序后中间两项的算术平均。
 
 比较器只输出 `eligible_for_review` 或不满足条件的具体原因，不自动写入或接受候选。
 
@@ -203,6 +293,10 @@ scorecard 只有候选被人工选中后才能通过 `--confirm-sealed` 运行�
 - live chat model 未配置：eval run 响亮失败，不像普通 smoke test 一样跳过。
 - provider/network 失败：保存失败 attempt，case 标为 execution failure，不计行为分。
 - trajectory 丢事件或缺 terminal event：case 标为 inconclusive。
+- follow-up seed hash 不匹配、attempt store 无法隔离或清理失败：保存 attempt，并使 run
+  `inconclusive`。
+- baseline must-pass 失败：compare 返回 `invalid_baseline`，不评价 candidate eligibility。
+- grader error、缺 token usage 或 validation tag 无覆盖：compare/corpus 校验失败，不缩小分母。
 - provider 未提供 pricing：cost 标为 unknown，token gate 仍执行。
 - baseline/candidate manifest 不可比：compare 命令失败并列出不一致字段。
 - 单个 candidate 失败不得覆盖已有 baseline 或其他 candidate 目录；label 冲突默认拒绝。
@@ -224,6 +318,9 @@ scorecard 只有候选被人工选中后才能通过 `--confirm-sealed` 运行�
 - [ ] 五个 issue 的 acceptance criteria 全部通过。
 - [ ] 18 个 cases 可在 model call 前完成 schema、split、scenario-family 和 fixture 校验。
 - [ ] CI 使用 scripted/fake model 覆盖 recorder、graders、runner、compare 和失败路径。
+- [ ] recorder 测试证明顶层及嵌套 `Thinking`/`ThinkingEnd.provider_details` 不会进入 artifact。
+- [ ] follow-up 三次重复与 baseline/candidate 都从同一个只读 seed hash 开始，且 attempt
+      store 互不污染。
 - [ ] 至少一次使用同一个 live chat model 的 baseline/candidate 对比被完整记录。
 - [ ] 人工最多提出并运行三个候选；每个候选只修改 harness surfaces。
 - [ ] 有 eligible candidate 时才运行 sealed scorecard；没有 eligible candidate 也可完成 iteration，
@@ -240,4 +337,3 @@ scorecard 只有候选被人工选中后才能通过 `--confirm-sealed` 运行�
 - 不依赖 v0.11 Demo B。
 - 不阻塞 v1.0；试点发现的 runtime gap 只能记录为独立 finding，不能在本 iteration 顺手修改
   core。
-

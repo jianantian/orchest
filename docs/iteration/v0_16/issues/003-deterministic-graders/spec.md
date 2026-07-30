@@ -16,7 +16,8 @@
 5. 实现 report/citation grader：要求 section、关键事实和 fixture 引用存在且引用目标真实。
 6. 实现 follow-up grounding grader：follow-up 使用持久化 session，且没有重新执行被 case
    禁止的完整材料工具链。
-7. 聚合 per-case、per-tag 与 overall weighted score；must-pass 结果单独呈现，不被平均分隐藏。
+7. 固定 grader → attempt → case → tag/split 的聚合公式；must-pass 结果单独呈现，不被平均分
+   隐藏。
 
 ## 验收标准
 
@@ -27,7 +28,13 @@
 - [ ] modality/conflict grader 能证明音频和图片 Tool 被调用，并验证 42%/35% 与正确来源同时出现。
 - [ ] citation grader 拒绝不存在、越出 fixture root 或只在正文提名但未形成来源记录的引用。
 - [ ] follow-up grader 能识别 session resume 成功、禁止的重新搜索/读取，以及缺失历史 grounding。
-- [ ] must-pass 失败在聚合报告中保持独立失败，不能被其他高分抵消。
+- [ ] completed attempt score 为 `Σ(grader score × grader weight) / Σ(weight)`，且只有全部
+      required graders pass 时 attempt 才 pass；grader error 产生 null aggregate。
+- [ ] 普通 case 三次重复以 2/3 pass，score 取三次算术平均；must-pass case 要求每次 attempt
+      都 pass，不能被平均分或多数决掩盖。
+- [ ] overall 与 per-tag 使用 case weight 加权；任一必需 attempt 缺失或未完成时 aggregate 为
+      null，不缩小分母。
+- [ ] validation tag 没有 case 时 aggregator 明确拒绝无效 corpus，而不是输出“无下降”。
 - [ ] 每个 grader 使用提交到仓库的固定 trajectory/output fixtures 覆盖 pass、fail 与边界用例。
 - [ ] 无 LLM judge、embedding 或远程服务依赖；workspace checks 全绿。
 
@@ -35,4 +42,3 @@
 
 - 文风、洞察深度和表达优劣留给 issue 005 的人工 review。
 - grader 评价外部行为，不依赖 recorder 内部函数调用或实现细节。
-

@@ -9,12 +9,13 @@ baseline/candidate 可比性检查。比较器必须执行预注册 gate，但�
 
 1. 在 Briefing Desk CLI 增加 eval run/compare 能力，支持 label 与
    optimization/validation/scorecard split。
-2. optimization 默认每 case 运行一次；validation 与 scorecard 每 case 运行三次。布尔结果以
-   多数决定，连续分数取三次均值。
-3. compare 前检查 provider、model、request options、fixture revision、case set、split 与重复
-   策略一致；不一致时拒绝比较并列出字段。
-4. 实现 acceptance gates：must-pass 零回归、validation 总分至少 +5、per-tag 不下降、平均
-   token ≤115%、中位 latency ≤130%、无 inconclusive。
+2. optimization 默认每 case 运行一次；validation 与 scorecard 每 case 运行三次，并执行 003
+   固定的普通/must-pass 聚合公式。
+3. compare 前检查 source git commit、provider、model、request options、fixture revision、
+   session seed hashes、case set、split 与重复策略一致；不一致时拒绝比较并列出字段。
+4. 先校验 baseline must-pass 绝对通过，再实现 candidate acceptance gates：candidate
+   must-pass 绝对通过、validation 总分至少 +5、per-tag 不下降、平均 gate total tokens
+   ≤115%、中位 wall latency ≤130%、无非 completed/resource incomplete。
 5. compare 输出机器可读 JSON 和人可读 Markdown，状态为 `eligible_for_review` 或逐项失败原因；
    不自动编辑 harness、不自动接受 candidate。
 6. scorecard run 要求额外显式确认，并在 manifest 标记 sealed execution；流程约束和失封语义
@@ -27,8 +28,20 @@ baseline/candidate 可比性检查。比较器必须执行预注册 gate，但�
 - [ ] 单个 attempt execution failure/inconclusive 不终止其他 case，但最终 compare 不得把它当
       行为 pass。
 - [ ] baseline/candidate manifest 不可比时，compare 失败并列出全部不一致字段。
-- [ ] must-pass 回归、overall 提升不足、tag 下降、token 超限、latency 超限、inconclusive
-      分别有独立 gate 测试。
+- [ ] baseline 任一 must-pass attempt 失败时返回 `invalid_baseline` 并列出 case/attempt，
+      不计算 candidate eligibility。
+- [ ] candidate 每个 must-pass attempt 都必须绝对 pass；baseline/candidate 同时失败不能通过。
+- [ ] grader score/pass、case repetition、overall 与 per-tag 聚合完全使用 003 合同。
+- [ ] `gate_total_tokens` 精确等于 input、output、reasoning、audio/image/video input 六项之和；
+      cache/details 只报告不重复相加。
+- [ ] validation mean tokens 以全部 validation attempts 等权计算；latency 从 start/resume 前到
+      terminal + handle wait 完成，用 monotonic clock，偶数 median 取中间两项平均。
+- [ ] 失败 attempt 记录但不进入 latency median，同时完整性 gate 必须失败；不能通过排除慢失败
+      获利。
+- [ ] normal、child 与应用内部 vision model usage 全覆盖；缺 usage 标为
+      `resource_coverage=incomplete` 并拒绝 eligibility。
+- [ ] invalid baseline、candidate must-pass、overall 提升不足、tag 下降、token 超限、latency
+      超限、inconclusive 和 resource incomplete 分别有独立 gate 测试。
 - [ ] 全部 gate 通过时只输出 `eligible_for_review`，不会自动写回 harness 或删除失败 candidate。
 - [ ] scorecard 未传额外确认时在 model call 前失败；确认运行后 manifest 明确记录。
 - [ ] provider 无 pricing 时 cost 显示 unknown，但 token gate 正常执行。
@@ -39,4 +52,3 @@ baseline/candidate 可比性检查。比较器必须执行预注册 gate，但�
 
 - 模型变更是独立实验，不提供 `--allow-model-change` 绕过可比性检查。
 - scorecard 的 sealed 属性是流程合同，不声称提供安全隔离。
-
