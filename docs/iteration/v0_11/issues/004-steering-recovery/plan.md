@@ -27,10 +27,17 @@
 5. Inspect the event stream for `RunRestarted`. Record absence as evidence
    for the pre-seeded restart-gap finding; do not turn absence into a passing
    recovery assertion.
-6. Attach two recording watchers to the supervisor and compare indexed event
-   sequences. Avoid wall-clock ordering assertions.
-7. Drive completion from `EventReceiver` until a terminal event.
-8. Update run records, checklist states, evidence refs, and finding refs in
+6. Attach two recording watchers to the supervisor. Map events to stable keys
+   and assert the expected deterministic milestone subsequence within each
+   watcher; with no observed drop, compare the complete keyed sequences for
+   equality.
+7. Do not treat sequence equality as action-order evidence. Record that
+   `run::supervisor::reattach_watcher()` runs each watcher in an independent
+   task, so actions are applied when each `on_event` future completes rather
+   than by registration order. An adversarial gated-watcher reproduction is
+   optional source-backed evidence, not a prerequisite for the finding.
+8. Drive completion from `EventReceiver` until a terminal event.
+9. Update run records, checklist states, evidence refs, and finding refs in
    `findings.json`.
 
 ## Verification

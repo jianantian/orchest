@@ -11,8 +11,9 @@ whatever happens to work.
 
 Create the demo scaffold and the canonical `findings.json` contract. Pre-seed
 the known seams, including the missing delegated-worker handle, steering
-target mismatch, run-level restart gap, nested event formatting, and watcher
-backpressure.
+target mismatch, run-level restart gap, nested event formatting, watcher
+backpressure, the start/attach race, and missing cross-watcher action-order
+guarantee.
 
 ## Acceptance Criteria
 
@@ -29,6 +30,12 @@ backpressure.
   `orchest::run::RunHandle`, `orchest::run::EventReceiver`, and
   `orchest::run::SupervisionStrategy`.
 - [ ] Pre-seeded findings have stable ids and are `open/untriaged`.
+- [ ] Source evidence uses repository path plus stable symbol; mutable line
+  numbers are not canonical locators.
+- [ ] The pre-seeded set includes:
+  - `SB-6`: no public start-with-watchers or pre-run pause seam;
+  - `SB-7`: no global registration-order guarantee for actions returned by
+    independently running watchers.
 - [ ] A required live run may be initialized as `not-run`; this forces
   readiness to `unverified`.
 - [ ] No supervisor or worker runtime behavior is implemented in this issue.

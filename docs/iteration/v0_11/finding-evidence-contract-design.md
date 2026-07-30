@@ -327,6 +327,8 @@ required: repository-relative `path`, `symbol`, or `runRef`.
 Rules:
 
 - repository paths are relative and traversal-free;
+- source evidence identifies a stable symbol together with its repository
+  path; line numbers may be reviewer hints but are never canonical locators;
 - commands are evidence only after execution;
 - source and documentation prove existence or contract, not runtime behavior;
 - smoke and live behavior remain distinct;
@@ -471,15 +473,17 @@ file with source and executed-test evidence.
 
 ### 003 · Supervisor, Watcher, and ContextMode
 
-Record public import depth, attach/detach, Fresh/Fork, event visibility, and
+Record public import depth, the start/attach race, gated deterministic
+attachment, best-effort live attachment, Fresh/Fork, event visibility, and
 private-source workarounds. Repeated symptoms sharing one API gap reuse the
 same finding id.
 
 ### 004 · Steering, Recovery, and Completion Gate
 
-Record injection targeting, FIFO delivery, fault injection, recovery,
-completion, and dropped-event boundaries. Preserve the ordered evidence chain
-from failure through recovery and completion.
+Record injection targeting, per-watcher event FIFO, no-drop cross-watcher
+sequence equivalence, the missing cross-watcher action-order guarantee, fault
+injection, recovery, completion, and dropped-event boundaries. Preserve the
+ordered evidence chain from failure through recovery and completion.
 
 ### 005 · Seam Gap Analysis and Release Triage
 
@@ -541,8 +545,9 @@ No issues are added or renumbered.
 ### Demo Evidence
 
 - worker source and tests add attributable evidence;
-- watcher, ContextMode, steering, FIFO, failure, recovery, and completion runs
-  bind to checklist and finding refs;
+- watcher startup, ContextMode, steering, per-watcher FIFO, no-drop delivery
+  equivalence, action-order gaps, failure, recovery, and completion runs bind
+  to checklist and finding refs;
 - fixture, smoke, and live-provider states remain separate;
 - the final run records exact command, revision, date, provider, model, result,
   and redacted diagnostic excerpt when applicable.

@@ -107,6 +107,29 @@ provide nested evidence. Direct child attachment and child-target steering
 are attempted and recorded as gaps unless a public runtime seam is added in a
 separate prerequisite change.
 
+### Watcher startup boundary
+
+`AgentRun::start()` schedules execution before application code can attach a
+watcher. Deterministic tests gate the first model call, await both watcher
+registration calls, and then release the model. This proves attributable
+post-registration observation, not capture of every startup event. The live
+path attaches immediately after start and records the race. It cannot claim
+pre-delegation or first-event observation.
+
+The missing start-with-watchers / pre-run pause seam is a pre-seeded finding,
+not an application timing requirement.
+
+### Multiple watcher properties
+
+Keep these contracts separate:
+
+- each watcher preserves FIFO for events accepted into its channel;
+- with enough capacity and no drop, both watchers receive the same sequence;
+- actions returned by independently running watchers are not globally ordered
+  by registration.
+
+Issue 004 proves the first two and records the third as a pre-seeded seam gap.
+
 ### Fault and recovery semantics
 
 The controlled chain is:
@@ -147,12 +170,14 @@ policy. Record only executed evidence.
 
 Delegate through `AgentAsTool`, attach watchers to the supervisor, observe
 forwarded nested events, and demonstrate the actual target of all four
-steering paths. Preserve the child-handle gap.
+steering paths. Use a gated deterministic model for attach-before-model-call
+evidence, preserve the live startup race, and preserve the child-handle gap.
 
 ### 004 — Failure escalation and ordering
 
 Run the controlled terminal failure, supervisor escalation, restart
-observation, multi-watcher ordering, and terminal-event completion gate.
+observation, per-watcher FIFO, no-drop sequence equivalence, action-order gap,
+and terminal-event completion gate.
 
 ### 005 — Projection and decisions
 

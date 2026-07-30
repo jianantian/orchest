@@ -24,13 +24,13 @@ The PRD requires both `SubAgentBuilder::context_mode()` (delegation through
 `AgentAsTool`) and `RunHandle::attach_watcher()` on the worker. These are
 architecturally incompatible in a single flow:
 
-- `AgentAsTool::execute()` creates the child run internally
-  (`agent_as_tool.rs:151`) and never exposes the child `RunHandle`. The
-  handle is consumed by `handle.wait()` at line 209.
-- `RunHandle::attach_watcher()` (`handle.rs:126`) routes through the
-  supervisor actor to subscribe to the worker's event stream. Calling it on
-  the supervisor's `RunHandle` attaches to the supervisor's own worker
-  actor, not the delegated child.
+- `AgentAsTool::run_child_attempt()` calls `AgentRun::start_with_bus()`,
+  retains the child `RunHandle` internally, and consumes it through
+  `RunHandle::wait()` before returning.
+- `RunHandle::attach_watcher()` routes registration through
+  `SupervisorMsg::RegisterWatcher`. Calling it on the supervisor's
+  `RunHandle` subscribes to the supervisor run's worker actor, not the
+  delegated `AgentAsTool` child.
 
 ### Decision
 
@@ -52,9 +52,9 @@ them. Demo B's purpose is to discover gaps, not avoid them.
 
 When the supervisor delegates via `AgentAsTool`, `WatcherAction::Inject`
 returned from `on_event()` injects into the **supervisor's** conversation,
-not the worker's. The `reattach_watcher` function
-(`supervisor.rs:205-211`) sends `AgentMsg::Inject` to the supervisor's
-worker actor. The child run's conversation is inaccessible.
+not the worker's. `run::supervisor::reattach_watcher()` maps the returned
+action to `AgentMsg::Inject` on the supervisor run's shared worker actor.
+The child run's conversation is inaccessible.
 
 ### Decision
 
@@ -75,19 +75,18 @@ exists to discover.
 
 ### Problem
 
-`SupervisionStrategy::Restart` only triggers on `SupervisionEvent::ActorFailed`
-(`supervisor.rs:136`), which is a ractor-level actor crash. A tool returning
-`ToolError(Fatal, Unsafe)` does NOT crash the actor:
+`SupervisionStrategy::Restart` only triggers in
+`SupervisorActor::handle()` on `SupervisionEvent::ActorFailed`, which is a
+ractor-level actor crash. A tool returning `ToolError(Fatal, Unsafe)` does
+NOT crash the actor:
 
-1. The run loop (`actor.rs:1497`) feeds the error back to the model as a
-   `ToolResult`.
-2. `record_repeated_failure` returns `Ok(())` on first call (threshold
-   default = 3).
+1. The run loop feeds the error back to the model as a `ToolResult`.
+2. `run::actor::record_repeated_failure()` returns `Ok(())` on the first
+   call when the threshold remains at its default of 3.
 3. The model continues. No `RunFailed`, no `ActorFailed`, no restart.
 
-The only way to trigger restart is to **panic inside the model adapter**
-(the pattern used by existing tests: `RestartInputRecordingModel` panics on
-first call, `tests.rs:5755`).
+The existing actor-restart tests trigger this by panicking inside the model
+adapter; see the `RestartInputRecordingModel` test fixture.
 
 ### Decision
 
@@ -139,11 +138,11 @@ finding P1-4.
 
 ### Problem
 
-The `ContextMode::Fork` empty-parent-messages error
-(`agent_as_tool.rs:135-139`) checks `ctx.parent_messages.is_empty()`. But
-`parent_messages = state.messages.clone()`, and `state.messages` always
-starts with at least `[system_prompt, user_input]`. The error is unreachable
-through normal agent flow.
+The `ContextMode::Fork` branch in `AgentAsTool::execute()` checks
+`ctx.parent_messages.is_empty()`. But `parent_messages =
+state.messages.clone()`, and `state.messages` always starts with at least
+`[system_prompt, user_input]`. The error is unreachable through normal agent
+flow.
 
 ### Decision
 
@@ -160,29 +159,45 @@ through normal agent flow.
 The unit test proves the error exists. The demo flow proves the normal
 paths work. The unreachability is documented as post-1.0 finding P1-3.
 
-## Decision 6: Multi-Watcher FIFO - Large Capacity + Counter + Document try_send
+## Decision 6: Separate Event FIFO, Delivery Equivalence, and Action Ordering
 
 ### Problem
 
-The `emit()` function (`actor.rs:1704-1742`) has asymmetric delivery:
+`run::actor::emit()` has asymmetric delivery:
 
 - **Primary subscriber (index 0):** blocking `send()` with timeout.
 - **Secondary subscribers (index 1+):** `try_send()` - non-blocking. Events
   are dropped if the channel is full.
 
+Within one watcher channel, accepted events retain enqueue order. With enough
+capacity and no drops, two watchers can observe the same event sequence.
+
+However, `run::supervisor::reattach_watcher()` starts one independent Tokio
+task per watcher. Each action is applied when that watcher's `on_event()`
+future completes. Registration order therefore does not establish a global
+order for `Inject`, `Steer`, or `Abort` actions.
+
 ### Decision
 
-**Both test and document:**
+**Test and document three distinct properties:**
 
-1. **Test:** Two watchers attached concurrently, capacity 1024. Both
-   watchers count events and record event types in order. Assert: same
-   event count, same sequence, no `EventsDropped` events observed.
-2. **Document:** Record `try_send` dropping behavior as seam blocker SB-5.
+1. **Per-watcher FIFO:** each watcher records stable event keys for a
+   deterministic scenario and asserts the expected milestone subsequence
+   (for example model call → tool call → tool result → terminal event).
+2. **No-drop delivery equivalence:** with capacity 1024 and no observed
+   `EventsDropped`, both watchers receive the same sequence.
+3. **Cross-watcher action order:** do not infer this from event equality.
+   Record the missing registration-order guarantee as seam blocker SB-7.
+
+Continue to record secondary-subscriber `try_send` loss as seam blocker
+SB-5.
 
 ### Rationale
 
-The test proves ordering holds when no drops occur. The finding documents
-what happens when drops are possible under backpressure.
+The deterministic test proves only the first two properties. The source
+topology disproves a public registration-order guarantee for the third;
+an adversarial gated-watcher reproduction may add evidence but is not needed
+to pretend the stronger contract exists.
 
 ---
 
@@ -207,9 +222,11 @@ the model adapter itself.
 ### Rationale
 
 On the live path, `RESEARCH_PIPELINE_CHAT_MODEL` configures the chat model
-via `create_adapter_from_config`. No demo-specific model type is introduced.
-Each role is distinguished by its system prompt and tool set. Deterministic
-contract tests remain separate from the credential-gated provider evidence.
+via `create_adapter_from_config`. No custom model type is used by the live
+binary. Each role is distinguished by its system prompt and tool set.
+Deterministic tests may use a test-only gated model to establish observable
+post-registration behavior; that evidence remains separate from the
+credential-gated provider run.
 
 ---
 
@@ -349,7 +366,7 @@ without credentials; the end-to-end smoke path is credential-gated:
 | `worker` | tools, Fresh/Fork, fault threshold and abort hook |
 | `supervisor_watcher` | delegation, supervisor attachment, nested observation, steering targets |
 | `failure_escalation` | fault trigger → `RunFailed` → supervisor escalation |
-| `watcher_order` | two supervisor watchers and event ordering |
+| `watcher_order` | per-watcher FIFO, no-drop sequence equivalence, action-order gap |
 | `report_render` | deterministic render and stale-report detection |
 | `smoke` | credential-gated provider path |
 
@@ -406,13 +423,14 @@ from this choice - that's the point of Demo B.
 1. **`LlmWatcher`** for steering tests. Backed by the same chat model
    adapter as the supervisor and worker. Set `eval_interval(1)`. Returns
    `Inject("correction")` when event buffer contains a tool-call event.
-2. **Custom `CountingWatcher`** for the multi-watcher FIFO test.
-   Deterministic, no model dependency.
+2. **Custom `CountingWatcher`** for per-watcher FIFO and no-drop
+   cross-watcher sequence equivalence. Deterministic, no model dependency.
 
 ### Rationale
 
 `LlmWatcher` is the PRD-required watcher type and discovers the
-`format_event` gap (SB-4). `CountingWatcher` is simpler for FIFO.
+`format_event` gap (SB-4). `CountingWatcher` isolates event-delivery
+properties without making a claim about cross-watcher action ordering.
 
 ---
 
@@ -472,9 +490,9 @@ crash.
 ### Problem
 
 `LlmWatcherBuilder::build()` panics via `expect()` when `.model()` was not
-called (`llm_watcher.rs:57`). This violates the AGENTS.md ban on
-`expect()` in library code. `SubAgentBuilder::build()` correctly returns
-`Result` for the same pattern (fixed in hotfix 2026-07-02, #199).
+called. This violates the AGENTS.md ban on `expect()` in library code.
+`SubAgentBuilder::build()` correctly returns `Result` for the same pattern
+(fixed in hotfix 2026-07-02, #199).
 
 ### Decision
 
@@ -552,6 +570,46 @@ hidden iteration state machine or an implicit release waiver.
 
 ---
 
+## Decision 26: Watcher Attachment Has a Startup Race
+
+### Problem
+
+`AgentRun::start()` immediately calls the supervised spawn path and returns a
+`RunHandle` only after execution has been scheduled. `RunHandle::attach_watcher()`
+must then wait for the supervisor reference and register the watcher. The
+public API has no constructor that accepts watchers and no pause-before-first-
+model-call seam.
+
+The runtime test `attach_watcher_does_not_duplicate_supervisor_subscription`
+uses `GatedMultiStepModel` to prevent the first model call from progressing
+until watcher attachment completes. That test technique is not available
+against an ordinary live provider.
+
+### Decision
+
+Use two evidence contracts:
+
+1. **Deterministic test:** gate the first model call, start the run, attach
+   both watchers, await both `attach_watcher()` calls, then release the model.
+   This proves observable post-registration behavior; it still does not prove
+   that every startup event was captured.
+2. **Live run:** attach immediately after `AgentRun::start()` and describe the
+   result as best-effort. Do not claim that the watcher observed the first
+   event or was attached before delegation.
+
+Record the missing start-with-watchers / public pre-run pause primitive as
+seam blocker SB-6 when monitoring from the first event is a Multivac M2
+requirement.
+
+### Rationale
+
+The gate makes the deterministic test meaningful without laundering a test
+fixture into a live API guarantee. A product that requires complete
+observation from event zero needs a runtime seam, not tighter application
+timing.
+
+---
+
 ## Pre-Identified Seam Gap Findings Summary
 
 Findings discovered through the grilling session. These are preliminary -
@@ -567,6 +625,8 @@ classification in issue 005's seam gap analysis report.
 | SB-3 | `SupervisionStrategy::Restart` only triggers on actor-level crash (panic), not on run-level failure (`RunFailed` from tool errors, budget, max_steps) | D3 |
 | SB-4 | `LlmWatcher::format_event()` has no handler for `SubAgentEvent`/`SubAgentStarted`/`SubAgentCompleted`/`SubAgentFailed`/`ChildRunEvent` - LLM-powered watcher can't understand nested delegation events | D19 |
 | SB-5 | Secondary event subscribers (watchers) use `try_send` - events can be dropped under backpressure with no watcher-side recovery | D6 |
+| SB-6 | `AgentRun::start()` begins execution before application code can call `RunHandle::attach_watcher()`; no public start-with-watchers or pre-run pause seam guarantees observation from the first event | D26 |
+| SB-7 | Watchers run in independent tasks, so actions returned by multiple watchers have no global registration-order execution guarantee | D6 |
 
 ### Release Blockers (correctness/safety issues, independent of M2)
 

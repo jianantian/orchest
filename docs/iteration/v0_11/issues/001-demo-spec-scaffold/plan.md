@@ -30,8 +30,9 @@
 5. Add `validate`, `render`, and `check` CLI shapes. `render` may initially
    produce a minimal deterministic document; later behavior belongs to issue
    005.
-6. Seed the seam checklist and known findings. Mark planned execution as
-   planned or `not-run`, never passed.
+6. Seed the seam checklist and known findings, including the start/attach
+   race and cross-watcher action-order gap. Mark planned execution as planned
+   or `not-run`, never passed.
 7. Document how issues 002–004 add evidence without changing finding ids.
 
 ## Verification

@@ -7,6 +7,7 @@
 - `crates/orchest/src/run/supervisor.rs`
 - `crates/orchest/src/run/llm_watcher.rs`
 - `crates/orchest/src/run/watcher.rs`
+- `crates/orchest/src/run/tests.rs`
 
 ## Files to change
 
@@ -19,9 +20,9 @@
 ## Steps
 
 1. Build the worker as an `AgentAsTool` and register it with the supervisor.
-2. Start the supervisor, retain its `RunHandle` and `EventReceiver`, and
-   attach the `LlmWatcher` plus a deterministic recording watcher.
-3. Configure the LLM watcher as:
+2. For deterministic tests, construct a gated model whose first call waits
+   for an explicit release signal. Construct the recording watcher and
+   configure the LLM watcher as:
 
    ```rust
    let watcher = LlmWatcher::builder()
@@ -29,16 +30,22 @@
        .build();
    ```
 
-4. Delegate once with `Fresh` and once with `Fork { depth }`, reusing issue
+3. Start the supervisor and retain its `RunHandle` and `EventReceiver`.
+4. Await both `attach_watcher()` calls, then release the deterministic model
+   gate. Assert at least one attributable post-registration event without
+   claiming that startup events were captured.
+5. For the live path, attach both watchers immediately after start and record
+   the unclosed race; do not reuse the deterministic ordering claim.
+6. Delegate once with `Fresh` and once with `Fork { depth }`, reusing issue
    002's deterministic context assertions.
-5. Capture forwarded nested events and prove they are visible through the
+7. Capture forwarded nested events and prove they are visible through the
    supervisor stream without claiming a child subscription.
-6. Trigger watcher injection/steering and external-handle
+8. Trigger watcher injection/steering and external-handle
    injection/steering. Assert which actor's conversation changes.
-7. Record the missing child handle and child steering target in their stable
-   finding entries, including the authentic attempt and public-source
+9. Update the stable start/attach-race, missing-child-handle, and
+   child-steering-target findings with the authentic attempt and public-source
    evidence.
-8. Validate the canonical file after evidence updates.
+10. Validate the canonical file after evidence updates.
 
 ## Verification
 
@@ -50,3 +57,5 @@ cargo run -p research-pipeline-demo --bin seam-report -- validate \
 
 No assertion may say “worker attached” or “worker steered” unless the event
 and conversation evidence identify the nested worker as the target.
+No live assertion may say “attached before delegation” unless a future public
+runtime seam makes that ordering explicit.

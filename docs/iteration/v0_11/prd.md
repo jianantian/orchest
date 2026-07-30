@@ -4,7 +4,8 @@
 
 v0.10 validates Orchest breadth. v0.11 validates the supervised-delegation seams that
 Multivac M2 is expected to depend on: delegated execution, event observation, steering,
-context transfer, failure escalation, multi-watcher ordering, and completion.
+context transfer, failure escalation, multi-watcher delivery/action ordering,
+and completion.
 
 The current public API does not expose a delegated worker's `RunHandle` from
 `AgentAsTool`. Consequently, an application can attach a watcher to the supervisor,
@@ -88,8 +89,15 @@ must not contain independently maintained finding facts.
 ### Required Evidence Flow
 
 1. Start the supervisor and retain its public `RunHandle`.
-2. Attach two watchers to the supervisor before delegation.
-3. Delegate to a worker through `AgentAsTool`.
+2. Register two watchers as soon as the handle permits.
+   - In deterministic tests, hold the first model call behind a gate, await
+     both `attach_watcher()` calls, then release the model. This proves
+     post-registration behavior, not capture of every startup event.
+   - In the live run, attach immediately after `AgentRun::start`; record that
+     public API timing cannot guarantee attachment before the first model
+     call or delegation.
+3. Delegate to a worker through `AgentAsTool` after the deterministic gate;
+   do not claim the same ordering guarantee for the live path.
 4. Observe forwarded nested-worker events through the supervisor event stream.
 5. Attempt watcher-originated injection and external steering; record that their public
    target is the supervisor, not the nested worker.
@@ -111,7 +119,7 @@ iteration may complete deterministic evidence collection, but live evidence rema
 
 | Capability | Evidence expectation |
 |---|---|
-| Watcher attachment | `RunHandle::attach_watcher()` attaches to the supervisor handle exposed to application code |
+| Watcher attachment | `RunHandle::attach_watcher()` attaches to the exposed supervisor handle after `AgentRun::start`; deterministic tests gate the first model call, while live evidence records the startup race |
 | Nested event visibility | Forwarded `SubAgentEvent`s show what the supervisor can observe about the worker |
 | Direct worker observation | Make a real application-level attempt; record the missing worker handle as a finding |
 | Watcher steering | `WatcherAction::Inject` / `Steer` targets the watched supervisor actor |
@@ -122,7 +130,9 @@ iteration may complete deterministic evidence collection, but live evidence rema
 | Failure termination | Threshold `1` plus `Hook::on_repeated_failure` returning `HookAction::Abort` produces worker `RunFailed` |
 | Supervisor escalation | Supervisor observes the failed tool/delegation result and executes its escalation path |
 | Restart | Configure `SupervisionStrategy::Restart`; record the absence of nested-worker restart as a finding unless evidence proves otherwise |
-| Multi-watcher FIFO | Two watchers on the supervisor receive events in deterministic registration order |
+| Per-watcher event FIFO | Each watcher observes its own event stream in enqueue order |
+| Cross-watcher delivery equivalence | With sufficient capacity and no drop, two watchers observe the same event sequence |
+| Cross-watcher action ordering | Independent watcher tasks do not guarantee that `Inject` / `Steer` / `Abort` actions take effect in registration order; record this as a seam gap |
 | Completion gate | `EventReceiver` observes a terminal runtime event; no fixed timeout is used as correctness logic |
 
 ### Fault and Recovery Contract
@@ -217,8 +227,8 @@ gap when the blocked attempt and inspected public surface are recorded.
 |---|---|---|
 | 001 | Demo contract and scaffold | Create the crate, `findings.json`, validator skeleton, and pre-seeded findings |
 | 002 | Worker, context, and fault primitives | Implement worker paths; update owned deterministic evidence |
-| 003 | Supervisor observation and steering attempts | Attach watchers to the supervisor; record nested-worker target gaps |
-| 004 | Terminal failure, escalation, and ordering | Prove the exact failure chain and record missing restart behavior |
+| 003 | Supervisor observation and steering attempts | Use gated deterministic attachment; record the live startup race and nested-worker target gaps |
+| 004 | Terminal failure, escalation, and ordering | Prove the failure chain and supported event-order properties; record restart and cross-watcher action-order gaps |
 | 005 | Evidence validation, report, and release triage | Render exclusively from `findings.json`; record live status and v1.0 decision |
 
 Each issue lives under `issues/<issue-slug>/` and contains both `spec.md` and `plan.md`.
@@ -228,7 +238,14 @@ The global implementation plan is an ordering overview only.
 
 - [ ] `examples/demo/research-pipeline` builds using workspace path dependencies.
 - [ ] `findings.json` validates against the locked finding/evidence contract.
-- [ ] Watchers attach to the supervisor and receive forwarded nested-worker evidence.
+- [ ] A gated deterministic test starts the supervisor, calls
+  `attach_watcher()` for both watchers to completion, releases the first model
+  call, and proves attributable post-registration observation without
+  claiming complete startup capture.
+- [ ] Live evidence describes attachment as best-effort immediately after
+  start; it does not claim race-free observation from the first event.
+- [ ] The absence of a public start-with-watchers or pre-run pause seam is a
+  pre-seeded finding when first-event monitoring is required.
 - [ ] Direct delegated-worker watcher attachment is authentically attempted and either
   demonstrated or recorded as a gap.
 - [ ] Watcher and external steering target behavior is demonstrated; inability to target
@@ -239,7 +256,11 @@ The global implementation plan is an ordering overview only.
   escalation.
 - [ ] Restart is not claimed unless `RunRestarted` evidence exists; otherwise its absence
   is classified as a finding.
-- [ ] Two supervisor watchers demonstrate deterministic delivery order.
+- [ ] Each supervisor watcher observes the expected stable milestone
+  subsequence for the deterministic scenario.
+- [ ] With no observed drop, both watchers receive the same event sequence.
+- [ ] Cross-watcher action registration order is not claimed; the lack of a
+  serialized action-order contract is recorded as a pre-seeded finding.
 - [ ] Completion uses terminal events rather than a fixed timeout.
 - [ ] All sample imports are public, and `LlmWatcherBuilder::build()` is called with its
   current infallible signature.

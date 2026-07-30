@@ -19,7 +19,16 @@ separately.
   `SubAgentBuilder` APIs.
 - [ ] `LlmWatcher` is built with `.model(...).build()` using its current
   infallible signature.
-- [ ] Watchers attach to `orchest::run::RunHandle` before delegation.
+- [ ] A deterministic test gates the supervisor's first model call, attaches
+  both watchers through `orchest::run::RunHandle`, awaits both
+  `attach_watcher()` calls, and only then releases the model to delegate.
+- [ ] The deterministic assertion proves observable post-registration
+  behavior, not capture of every startup event.
+- [ ] The live path attaches immediately after `AgentRun::start` and records
+  that this is best-effort; it does not claim attachment before delegation or
+  observation of the first event.
+- [ ] The missing public start-with-watchers / pre-run pause seam updates its
+  pre-seeded finding with source and test evidence.
 - [ ] The watcher receives supervisor events and forwarded `SubAgentEvent`
   evidence.
 - [ ] The implementation attempts to obtain a public delegated-worker target

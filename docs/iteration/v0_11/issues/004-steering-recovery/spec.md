@@ -3,20 +3,27 @@
 ## Background
 
 The runtime restarts on actor failure, while the controlled tool-failure path
-ends in run-level failure. Multi-watcher ordering also applies to the
-supervisor handle exposed to the application.
+ends in run-level failure. Multiple supervisor watchers preserve their own
+event order, but their independently running tasks do not establish a global
+registration-order contract for returned actions.
 
 ## Goal
 
 Prove the terminal failure and escalation chain, observe whether restart
-occurs, verify supervisor-watcher delivery ordering, and record the results in
-the canonical evidence source.
+occurs, verify the two event-delivery properties the public runtime supports,
+and record missing cross-watcher action ordering as a separate seam.
 
 ## Acceptance Criteria
 
 - [ ] Two watchers attach to the same supervisor `RunHandle`.
-- [ ] A deterministic assertion proves their delivery order for the same
-  emitted event sequence.
+- [ ] For a deterministic scenario, each watcher records stable event keys
+  and observes the expected milestone subsequence in order.
+- [ ] With sufficient capacity and no observed drop, both watchers receive
+  the same indexed event sequence.
+- [ ] The test does not infer action order from event-sequence equality.
+- [ ] The lack of a global registration-order guarantee for
+  `Inject` / `Steer` / `Abort` actions is updated as a pre-seeded seam
+  finding, with independent watcher-task source evidence.
 - [ ] The controlled scenario records:
   `ToolError(Fatal, Unsafe)` → threshold `1` →
   `Hook::on_repeated_failure` returning `HookAction::Abort` → worker
