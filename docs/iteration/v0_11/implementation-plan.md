@@ -102,19 +102,25 @@ if it is chosen before demo implementation.
 ### Delegated-worker boundary
 
 `AgentAsTool` starts and consumes its child run internally. Application code
-attaches watchers to the supervisor `RunHandle`; forwarded `SubAgentEvent`s
-provide nested evidence. Direct child attachment and child-target steering
-are attempted and recorded as gaps unless a public runtime seam is added in a
-separate prerequisite change.
+attaches watchers to the supervisor `RunHandle`; those subscriptions receive
+supervisor actor-emitted events. Forwarded `SubAgentEvent`s provide nested
+evidence only through the primary supervisor `EventReceiver`: the runtime
+passes `primary(subs).clone()` into `ToolContext.event_tx`, and
+`AgentAsTool::run_child_attempt` sends directly to that sender. Direct child
+attachment, attached-watcher nested delivery, and child-target steering are
+attempted and recorded as gaps unless public runtime seams are added in
+separate prerequisite changes.
 
 ### Watcher startup boundary
 
 `AgentRun::start()` schedules execution before application code can attach a
 watcher. Deterministic tests gate the first model call, await both watcher
-registration calls, and then release the model. This proves attributable
-post-registration observation, not capture of every startup event. The live
-path attaches immediately after start and records the race. It cannot claim
-pre-delegation or first-event observation.
+registration calls, release a harmless probe step so queued subscriptions
+activate, and then gate delegation on both watcher processors recording the
+second model step. This proves attributable post-registration observation,
+not capture of every startup event. The live path attaches immediately after
+start and records the race. It cannot claim pre-delegation or first-event
+observation.
 
 The missing start-with-watchers / pre-run pause seam is a pre-seeded finding,
 not an application timing requirement.
@@ -169,9 +175,11 @@ policy. Record only executed evidence.
 ### 003 — Public observation and steering
 
 Delegate through `AgentAsTool`, attach watchers to the supervisor, observe
-forwarded nested events, and demonstrate the actual target of all four
+supervisor events on the watcher subscriptions and forwarded nested events on
+the primary `EventReceiver`, and demonstrate the actual target of all four
 steering paths. Use a gated deterministic model for attach-before-model-call
-evidence, preserve the live startup race, and preserve the child-handle gap.
+evidence, preserve the live startup race, and preserve the child-handle and
+nested-watcher-routing gaps.
 
 ### 004 — Failure escalation and ordering
 

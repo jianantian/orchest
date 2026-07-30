@@ -9,17 +9,21 @@ and completion.
 
 The current public API does not expose a delegated worker's `RunHandle` from
 `AgentAsTool`. Consequently, an application can attach a watcher to the supervisor,
-observe forwarded `SubAgentEvent`s, and inject or steer the supervisor, but it cannot
-attach directly to or steer the nested worker. v0.11 must preserve that fact. The demo is
-an evidence run: it makes the product-shaped attempt, records what works, and represents
-missing seams as stable findings rather than pretending the desired flow succeeded.
+observe forwarded `SubAgentEvent`s on the primary supervisor `EventReceiver`, and inject
+or steer the supervisor, but it cannot attach directly to or steer the nested worker.
+Forwarded child events bypass attached watcher subscription channels because
+`ToolContext.event_tx` is the primary subscriber sender. v0.11 must preserve those
+facts. The demo is an evidence run: it makes the product-shaped attempt, records what
+works, and represents missing seams as stable findings rather than pretending the
+desired flow succeeded.
 
 ## Product
 
 Build **Research Pipeline**, a two-level supervised delegation demo. A supervisor agent
 delegates a research task to a worker through `AgentAsTool`. Application code attaches
-watchers to the only public handle it owns—the supervisor `RunHandle`—and observes both
-supervisor events and forwarded nested-worker events.
+watchers to the only public handle it owns—the supervisor `RunHandle`. Those watchers
+observe supervisor actor-emitted events; the primary supervisor `EventReceiver`
+separately observes forwarded nested-worker events.
 
 The demo authentically attempts the product requirements that the public API cannot yet
 satisfy:
@@ -91,16 +95,24 @@ must not contain independently maintained finding facts.
 1. Start the supervisor and retain its public `RunHandle`.
 2. Register two watchers as soon as the handle permits.
    - In deterministic tests, hold the first model call behind a gate, await
-     both `attach_watcher()` calls, then release the model. This proves
-     post-registration behavior, not capture of every startup event.
+     both `attach_watcher()` calls, release a harmless probe step so queued
+     subscriptions activate, then require both watcher processors to record
+     the second model step before releasing delegation. This proves
+     post-registration processing, not capture of every startup event.
    - In the live run, attach immediately after `AgentRun::start`; record that
      public API timing cannot guarantee attachment before the first model
      call or delegation.
-3. Delegate to a worker through `AgentAsTool` after the deterministic gate;
-   do not claim the same ordering guarantee for the live path.
-4. Observe forwarded nested-worker events through the supervisor event stream.
-5. Attempt watcher-originated injection and external steering; record that their public
-   target is the supervisor, not the nested worker.
+3. Delegate to a worker through `AgentAsTool` after both deterministic
+   watcher-activation witnesses; do not claim the same ordering guarantee for
+   the live path.
+4. Observe supervisor actor-emitted events through attached watchers and forwarded
+   nested-worker events through the primary supervisor `EventReceiver`. Prove that the
+   current attached watcher channels do not receive those forwarded events.
+5. Trigger watcher-originated injection specifically from the
+   supervisor-level delegation
+   `ToolCallStarted { tool: "research_worker", .. }`, never from a child or
+   nested event. Attempt external steering and record that both public targets
+   are the supervisor, not the nested worker.
 6. Exercise `ContextMode::Fresh` and `ContextMode::Fork { depth }`.
 7. Trigger a worker tool failure and drive it to terminal failure with
    `repeated_failure_threshold(1)` and an `on_repeated_failure` hook that
@@ -120,7 +132,7 @@ iteration may complete deterministic evidence collection, but live evidence rema
 | Capability | Evidence expectation |
 |---|---|
 | Watcher attachment | `RunHandle::attach_watcher()` attaches to the exposed supervisor handle after `AgentRun::start`; deterministic tests gate the first model call, while live evidence records the startup race |
-| Nested event visibility | Forwarded `SubAgentEvent`s show what the supervisor can observe about the worker |
+| Nested event visibility | Forwarded `SubAgentEvent`s reach the primary supervisor `EventReceiver`, while attached watcher channels do not receive them |
 | Direct worker observation | Make a real application-level attempt; record the missing worker handle as a finding |
 | Watcher steering | `WatcherAction::Inject` / `Steer` targets the watched supervisor actor |
 | Direct worker steering | Make a real application-level attempt; record that no public target exists |
@@ -227,7 +239,7 @@ gap when the blocked attempt and inspected public surface are recorded.
 |---|---|---|
 | 001 | Demo contract and scaffold | Create the crate, `findings.json`, validator skeleton, and pre-seeded findings |
 | 002 | Worker, context, and fault primitives | Implement worker paths; update owned deterministic evidence |
-| 003 | Supervisor observation and steering attempts | Use gated deterministic attachment; record the live startup race and nested-worker target gaps |
+| 003 | Supervisor observation and steering attempts | Use gated deterministic attachment; record the live startup race, primary-receiver/attached-watcher routing gap, and nested-worker target gaps |
 | 004 | Terminal failure, escalation, and ordering | Prove the failure chain and supported event-order properties; record restart and cross-watcher action-order gaps |
 | 005 | Evidence validation, report, and release triage | Render exclusively from `findings.json`; record live status and v1.0 decision |
 
@@ -239,15 +251,19 @@ The global implementation plan is an ordering overview only.
 - [ ] `examples/demo/research-pipeline` builds using workspace path dependencies.
 - [ ] `findings.json` validates against the locked finding/evidence contract.
 - [ ] A gated deterministic test starts the supervisor, calls
-  `attach_watcher()` for both watchers to completion, releases the first model
-  call, and proves attributable post-registration observation without
-  claiming complete startup capture.
+  `attach_watcher()` for both watchers to completion, releases a harmless
+  first-step probe, and proves both watcher processors handle the next model
+  step before delegation without claiming complete startup capture.
 - [ ] Live evidence describes attachment as best-effort immediately after
   start; it does not claim race-free observation from the first event.
 - [ ] The absence of a public start-with-watchers or pre-run pause seam is a
   pre-seeded finding when first-event monitoring is required.
 - [ ] Direct delegated-worker watcher attachment is authentically attempted and either
   demonstrated or recorded as a gap.
+- [ ] Attached watchers observe supervisor actor-emitted events, the primary supervisor
+  `EventReceiver` observes forwarded `SubAgentEvent`s, and terminal-complete
+  event vectors for both watcher implementations record that forwarded child
+  events bypass attached watcher channels.
 - [ ] Watcher and external steering target behavior is demonstrated; inability to target
   the delegated worker is recorded as a gap.
 - [ ] `Fresh` and `Fork { depth }` behavior is covered deterministically.
@@ -256,8 +272,8 @@ The global implementation plan is an ordering overview only.
   escalation.
 - [ ] Restart is not claimed unless `RunRestarted` evidence exists; otherwise its absence
   is classified as a finding.
-- [ ] Each supervisor watcher observes the expected stable milestone
-  subsequence for the deterministic scenario.
+- [ ] Each supervisor watcher observes the expected stable supervisor-event milestone
+  subsequence for the deterministic scenario without claiming nested-event delivery.
 - [ ] With no observed drop, both watchers receive the same event sequence.
 - [ ] Cross-watcher action registration order is not claimed; the lack of a
   serialized action-order contract is recorded as a pre-seeded finding.

@@ -33,9 +33,13 @@ Later issues use these public imports only:
 - `orchest::events::RuntimeEvent`
 
 Private `orchest::run::handle::*` and `orchest::run::config::*` paths are out
-of bounds. This scaffold intentionally implements no supervisor or worker
-runtime behavior; issues 002–004 add that behavior and attach executed evidence
-to the existing stable finding ids.
+of bounds. The supervisor owns the only public `RunHandle`. Attached watchers
+receive supervisor actor-emitted events, while forwarded `SubAgentEvent`s
+reach the primary supervisor `EventReceiver` and bypass those watcher
+subscription channels (SB-8). The deterministic watcher action is triggered
+only by the supervisor-level delegation
+`ToolCallStarted { tool: "research_worker", .. }`; no child or nested event
+triggers it.
 
 ## Commands
 
@@ -54,9 +58,11 @@ cargo run -p research-pipeline-demo --bin seam-report -- check \
   --report docs/iteration/v0_11/seam-gap-analysis.md
 ```
 
-The `research-pipeline run --question ... --materials fixtures/research` shape
-is intentionally a scaffold in issue 001. Runtime behavior arrives in issues
-002–004.
+`research-pipeline run --question ... --materials fixtures/research` starts
+the live provider path. It builds the worker through `SubAgentBuilder`, starts
+the supervisor, then immediately attaches both watchers. This is explicitly
+best-effort: the public API cannot guarantee attachment before delegation or
+the first event.
 
 ## Credential-gated live path
 
