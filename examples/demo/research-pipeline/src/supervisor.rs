@@ -90,7 +90,9 @@ pub fn build_supervisor(
         context_mode,
     )?;
     let scenario = if fault {
-        "Delegate the request and explicitly ask the worker to trigger the controlled fault."
+        "Delegate the request and explicitly ask the worker to call search_corpus before \
+         fault_trigger. If delegation fails, return an escalation summary without retrying \
+         the worker."
     } else {
         "Delegate the request, then synthesize the worker result."
     };

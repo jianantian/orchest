@@ -8,7 +8,7 @@ use std::{
 use async_trait::async_trait;
 use orchest::{
     model::ModelAdapter,
-    run::{AgentConfig, ConfigError},
+    run::{AgentConfig, ConfigError, SupervisionStrategy},
     tool::{
         agent_as_tool::ContextMode,
         registry::{RegistryError, ToolRegistry},
@@ -53,6 +53,7 @@ impl Worker {
             )
             .max_steps(8)
             .repeated_failure_threshold(1)
+            .supervision_strategy(SupervisionStrategy::Restart { max_retries: 1 })
             .build()?
             .with_hook(Arc::new(ControlledFaultAbortHook));
 
