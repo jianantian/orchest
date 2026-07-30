@@ -2249,13 +2249,16 @@ name = "research-pipeline-demo"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "clap",
  "orchest",
  "orchest-protocol",
  "orchest-provider",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
