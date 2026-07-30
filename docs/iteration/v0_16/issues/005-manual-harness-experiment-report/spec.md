@@ -22,7 +22,7 @@ baseline/candidate，验证这些部件能否支持一次可审计的 harness en
 
 - [ ] baseline 与所有 candidates 使用相同 provider、model、request options、fixtures、
       cases、session seed hashes 和 repetition policy；报告记录 provider、model、日期、commit
-      与 harness snapshot hashes。
+      与 harness/effective-config snapshot hashes，且 effective-config hashes 相同。
 - [ ] 至少一个人工 candidate 被完整运行；最多三个，且每个在运行前有书面因果假设。
 - [ ] 每个 candidate 只修改 `harness` 模块；若实验发现必须改 runtime，记录独立 finding，
       不在 v0.16 实现。
@@ -36,9 +36,9 @@ baseline/candidate，验证这些部件能否支持一次可审计的 harness en
 - [ ] 若 scorecard 被查看后继续修改，报告明确标记失封，并说明是否补充/轮换案例。
 - [ ] 验证报告不包含 API key、authorization、完整 Tool payload、完整生成文本或 hidden
       reasoning；本地敏感 artifacts 不提交。
-- [ ] 报告从 `harness/snapshot.json` 实际恢复一次 surface 并核对 hash，明确回答：闭环是否可
-      运行、grader 是否可信、manifest + snapshot 是否足以复现、是否找到有效 harness 改进、
-      下一步应保持 demo-local 还是值得抽取。
+- [ ] 报告从 `harness/snapshot.json` 实际恢复一次 surface，并核对 harness/effective-config
+      两组 snapshot/hash；明确回答闭环是否可运行、grader 是否可信、manifest + snapshots 是否
+      足以复现、是否找到有效 harness 改进、下一步应保持 demo-local 还是值得抽取。
 - [ ] 最终 workspace checks 全绿。
 
 ## 备注

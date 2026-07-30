@@ -11,8 +11,9 @@ baseline/candidate 可比性检查。比较器必须执行预注册 gate，但�
    optimization/validation/scorecard split。
 2. optimization 默认每 case 运行一次；validation 与 scorecard 每 case 运行三次，并执行 003
    固定的普通/must-pass 聚合公式。
-3. compare 前检查 source git commit、provider、model、request options、fixture revision、
-   session seed hashes、case set、split 与重复策略一致；不一致时拒绝比较并列出字段。
+3. compare 前检查 source git commit、effective-config hash、fixture revision、session seed
+   hashes、case set、split 与重复策略一致；不一致时拒绝比较并列出字段。harness snapshot 是
+   唯一允许不同的执行输入。
 4. 先校验 baseline must-pass 绝对通过，再实现 candidate acceptance gates：candidate
    must-pass 绝对通过、validation 总分至少 +5、per-tag 不下降、平均 gate total tokens
    ≤115%、中位 wall latency ≤130%、无非 completed/resource incomplete。
@@ -32,8 +33,12 @@ baseline/candidate 可比性检查。比较器必须执行预注册 gate，但�
       不计算 candidate eligibility。
 - [ ] candidate 每个 must-pass attempt 都必须绝对 pass；baseline/candidate 同时失败不能通过。
 - [ ] grader score/pass、case repetition、overall 与 per-tag 聚合完全使用 003 合同。
-- [ ] `gate_total_tokens` 精确等于 input、output、reasoning、audio/image/video input 六项之和；
-      cache/details 只报告不重复相加。
+- [ ] `gate_total_tokens` 精确等于 input、output、audio/image/video input 五项之和；
+      reasoning/cache/details 只报告不重复相加。
+- [ ] compare 要求 effective-config hash 相同；runtime、retry、approval、Tool schema、
+      ASR/TTS/vision route 或 session mode 不同都列为不可比，不能伪装成 harness candidate。
+- [ ] compare 从磁盘重算两边 effective-config hash；hash/文件不一致时拒绝，配置不同时报告
+      字段级 diff，而不是只显示两个 hash。
 - [ ] validation mean tokens 以全部 validation attempts 等权计算；latency 从 start/resume 前到
       terminal + handle wait 完成，用 monotonic clock，偶数 median 取中间两项平均。
 - [ ] 失败 attempt 记录但不进入 latency median，同时完整性 gate 必须失败；不能通过排除慢失败

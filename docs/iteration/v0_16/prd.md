@@ -33,7 +33,8 @@ v0.11 Demo B。
 1. 为 Briefing Desk 建立 18 个高信号 eval cases，覆盖工具选择、工具组合、多模态证据、
    冲突处理、报告结构、引用质量和 follow-up grounding。
 2. 通过 `RuntimeEvent` 在应用层生成 opt-in、敏感但经过明确净化的 trajectory，并为每次运行
-   保存可恢复候选文本的 harness snapshot 与 manifest。
+   保存可恢复候选文本的 harness snapshot、effective runtime configuration snapshot 与
+   manifest。
 3. 用确定性 graders 自动评价可观察行为，不在第一版引入 LLM judge。
 4. 自动比较 baseline 与 candidate，执行 must-pass、分类回归、分数、token 和 latency gate，
    但把最终接受权留给人。
@@ -159,11 +160,42 @@ session/store。
 - Briefing Desk fixture revision
 - provider、model 和非秘密 request options
 - `harness/snapshot.json` 的相对路径、SHA-256 和各 surface hash
+- `effective-config/snapshot.json` 的相对路径、SHA-256 和 schema version
 - 所有 follow-up session seed 的 ID 与内容 hash
 - runtime/package schema version
 - split、case IDs 与 repetition policy
 
 manifest 不得包含 API key、authorization、cookie 或 reasoning 正文。
+
+### Effective runtime configuration
+
+只保存 harness 文本仍不足以复现运行。每次 run 必须在环境变量解析完成、`AgentConfig` 和
+`ToolRegistry` 构造完成、第一次 model call 之前，保存规范化、脱敏的
+`effective-config/snapshot.json`。它是应用层显式定义的 `EffectiveConfigSnapshot`，不能直接
+序列化 `AgentConfig`：`retry_policy`、hooks、session store、custom approval 等字段带有
+`serde(skip)`，直接序列化会产生不完整配置。
+
+snapshot 使用稳定字段顺序和 UTF-8 JSON，至少覆盖：
+
+- main/reviewer agent 的 model identity、非秘密 request options、runtime max steps、
+  allowed tools、tool search、compaction、run depth、repeated-failure threshold 与 supervision；
+- budget limits、retry 次数/backoff/jitter、approval mode、是否存在 custom approval、Tool
+  execution policy；
+- 每个 case profile 的 Tool registry：稳定排序的 Tool 名、input/output schema SHA-256、
+  side-effect/approval/execution-mode/parallelism/timeout/max-output/source metadata；Tool
+  description 只记录 `surface_id`，正文和 hash 留在 harness snapshot，避免把合法候选差异写进
+  effective config；
+- ASR、TTS、vision 的 `fake` / `live` / `disabled` 选择，以及 live 时的 provider、model 和
+  非秘密 endpoint；fresh/follow-up 的 session persistence mode；
+- 所有影响行为的非秘密环境驱动选项解析后的值，而不是仅记录环境变量名。
+
+trait object、closure 或 store 实例不能写地址/`Debug` 文本；应用必须把它们映射为稳定的配置
+标签。无法完整表示的已启用配置使 preflight 失败。API key、authorization、cookie、带凭据的
+URL userinfo/query 和临时 session/run/store 标识不得进入 snapshot。
+
+`effective-config/snapshot.sha256` 与 manifest hash 对规范化 snapshot 字节计算。baseline 与
+candidate 必须有相同 effective-config hash；compare 必须先从磁盘重新计算两边的 hash，再比较
+snapshot，并对不一致给出字段级 diff。harness snapshot 是两者唯一允许不同的执行输入。
 
 ### Sensitive trajectory
 
@@ -201,6 +233,9 @@ manifest 不得包含 API key、authorization、cookie 或 reasoning 正文。
 evals/runs/<label>/
 ├── manifest.json
 ├── harness/
+│   ├── snapshot.json
+│   └── snapshot.sha256
+├── effective-config/
 │   ├── snapshot.json
 │   └── snapshot.sha256
 ├── results.json
@@ -243,10 +278,10 @@ case weight 加权。若任一必需 attempt 未 completed/grading completed，�
 
 ### Candidate comparison
 
-baseline 与 candidate 只有在 source git commit、provider、model、request options、fixture
-revision、session seed hashes、case set、split 和 repetition policy 一致时才可比较。两次
-run 都不得有 harness 外 dirty path；harness snapshot 是预期差异，不要求 hash 相同。模型或
-应用逻辑变更属于新实验，不能伪装成 harness candidate。
+baseline 与 candidate 只有在 source git commit、effective-config hash、fixture revision、
+session seed hashes、case set、split 和 repetition policy 一致时才可比较。两次 run 都不得
+有 harness 外 dirty path；harness snapshot 是预期差异，不要求 hash 相同。模型、应用逻辑或
+effective runtime configuration 变更属于新实验，不能伪装成 harness candidate。
 
 baseline 首先必须有效：参与比较的全部 must-pass cases 在每次 repetition 中都绝对通过。只要
 baseline 有一个 must-pass attempt 失败，比较结果为 `invalid_baseline`，必须记录失败 case，
@@ -267,8 +302,11 @@ baseline 有一个 must-pass attempt 失败，比较结果为 `invalid_baseline`
 
 - 每个 attempt 分别求和所有可观察 model call 的 `input_tokens`、`output_tokens`、
   `reasoning_tokens`、`audio_input_tokens`、`image_input_tokens` 与 `video_input_tokens`；
-- `gate_total_tokens` 是上述六项之和；`cache_read_tokens`、`cache_write_tokens` 和
-  `details` 单独报告但不再次加入，避免重复计数；
+- `gate_total_tokens = input_tokens + output_tokens + audio_input_tokens +
+  image_input_tokens + video_input_tokens`；`reasoning_tokens` 是 output usage 的诊断性细分，
+  协议未保证它与 `output_tokens` 互斥，因此单独报告且不再次加入；
+- `cache_read_tokens`、`cache_write_tokens` 和 `details` 同样单独报告但不加入 gate total，
+  避免重复计数；
 - normal model calls、递归 child events 和 Briefing Desk 内部 vision call 都必须上报 usage；
   任一已知内部 model call 缺 usage 时 `resource_coverage=incomplete`，compare 失败；
 - run 的 validation mean tokens 是所有 validation attempts 的 `gate_total_tokens` 等权平均，
@@ -299,6 +337,8 @@ scorecard 只有候选被人工选中后才能通过 `--confirm-sealed` 运行�
 - grader error、缺 token usage 或 validation tag 无覆盖：compare/corpus 校验失败，不缩小分母。
 - provider 未提供 pricing：cost 标为 unknown，token gate 仍执行。
 - baseline/candidate manifest 不可比：compare 命令失败并列出不一致字段。
+- effective config 有无法稳定表示的启用项、秘密字段或 snapshot/hash 不一致：任何 model call
+  前失败。
 - 单个 candidate 失败不得覆盖已有 baseline 或其他 candidate 目录；label 冲突默认拒绝。
 
 ## Issue 分解
@@ -306,7 +346,7 @@ scorecard 只有候选被人工选中后才能通过 `--confirm-sealed` 运行�
 | Issue | 标题 | 交付物 |
 |-------|------|--------|
 | 001 | Harness surfaces 与 Eval Corpus | 集中可编辑面、case schema、18 个 cases、split 校验 |
-| 002 | Run Manifest 与 Sensitive Trajectory Recorder | opt-in recorder、本地 artifact layout、manifest、失败状态 |
+| 002 | Run Manifest 与 Sensitive Trajectory Recorder | opt-in recorder、harness/effective-config snapshots、manifest、失败状态 |
 | 003 | Deterministic Graders | Tool/order/modality/conflict/report/citation/follow-up graders |
 | 004 | Eval Runner 与 Candidate Comparison | CLI、重复运行、gate、compare report、scorecard 确认 |
 | 005 | 人工 Harness 实验与验证报告 | live baseline/candidates/scorecard、脱敏验证报告与结论 |
@@ -319,6 +359,8 @@ scorecard 只有候选被人工选中后才能通过 `--confirm-sealed` 运行�
 - [ ] 18 个 cases 可在 model call 前完成 schema、split、scenario-family 和 fixture 校验。
 - [ ] CI 使用 scripted/fake model 覆盖 recorder、graders、runner、compare 和失败路径。
 - [ ] recorder 测试证明顶层及嵌套 `Thinking`/`ThinkingEnd.provider_details` 不会进入 artifact。
+- [ ] effective config snapshot 覆盖 runtime、Tool registry、capability routing 与 session
+      mode；baseline/candidate compare 要求 hash 相同。
 - [ ] follow-up 三次重复与 baseline/candidate 都从同一个只读 seed hash 开始，且 attempt
       store 互不污染。
 - [ ] 至少一次使用同一个 live chat model 的 baseline/candidate 对比被完整记录。

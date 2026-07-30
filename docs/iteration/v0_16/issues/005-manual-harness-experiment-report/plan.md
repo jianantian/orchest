@@ -6,8 +6,8 @@
 - `examples/demo/briefing-desk/README.md`（最终 eval 命令和敏感数据规则）
 - `examples/demo/briefing-desk/src/harness.rs`（唯一允许修改的 candidate surface）
 - `examples/demo/briefing-desk/evals/cases.json` 与 `evals/session-seeds/`
-- baseline/candidate 的本地 `manifest.json`、`harness/snapshot.json`、compare reports 和代表性
-  trajectories
+- baseline/candidate 的本地 `manifest.json`、`harness/snapshot.json`、
+  `effective-config/snapshot.json`、compare reports 和代表性 trajectories
 - `docs/review/` 现有报告（格式、脱敏和 finding 写法参照）
 
 ## 要改的文件
@@ -22,8 +22,8 @@
 ## 步骤
 
 1. 在运行 live model 前完成 workspace checks；固定 provider、model、非秘密 request options、
-   commit、fixture/case/session-seed revisions，并在实验日志写明。清理或拒绝 harness 外 dirty
-   changes。
+   effective config、commit、fixture/case/session-seed revisions，并在实验日志写明。清理或
+   拒绝 harness 外 dirty changes。
 2. 运行 optimization + validation baseline，先检查 artifact 完整性和 resource coverage，再
    检查全部 baseline must-pass attempts 绝对通过；若返回 `invalid_baseline`，停止 candidate
    eligibility，修复 corpus/grader 或重跑合法 baseline，不能把共同失败视为零回归。
@@ -34,7 +34,8 @@
 5. 对每个 eligible candidate 人工查看完整 harness diff、至少一个改善 case 和一个未变/退步
    case；记录接受或拒绝理由。只有接受的候选才允许成为最终 surface。
 6. 从任一 run 的 `harness/snapshot.json` 在临时副本中恢复全部 surface，重新计算并核对 manifest
-   SHA-256；在报告中记录恢复结果，证明不是只验证 hash 变化。
+   SHA-256；同时核对 baseline/candidate 的 effective-config snapshot/hash 完全相同。在报告中
+   记录恢复结果，证明不是只验证 hash 变化。
 7. 只有人工接受 eligible candidate 后才运行 `--split scorecard --confirm-sealed`。若查看逐
    case 结果后再改 harness，立即在报告标记失封并说明补充/轮换策略；没有 eligible candidate
    时不运行 scorecard。

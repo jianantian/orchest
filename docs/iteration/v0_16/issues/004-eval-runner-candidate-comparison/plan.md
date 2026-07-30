@@ -9,6 +9,8 @@
 - `examples/demo/briefing-desk/src/eval/grader/`（评分与聚合 API）
 - `examples/demo/briefing-desk/tests/smoke.rs`（CLI integration test 惯例）
 - `crates/orchest/src/run/{mod,handle}.rs`（start/resume、terminal、wait/approval API）
+- `crates/orchest/src/budget.rs`、`crates/orchest-protocol/src/{response,options}.rs`
+  （budget、reasoning usage 与 pricing 的非重复计数口径）
 
 ## 要改的文件
 
@@ -41,13 +43,16 @@
 5. 单个 attempt 总是 finalize 四文件；execution failure/inconclusive 不停止后续 case。
    `EventsDropped`、缺 terminal、stream 提前关闭、cleanup 失败或 grader error 都保持独立状态。
 6. 实现 resource collector：递归收集 normal/child `ModelCallCompleted` 和 vision Tool 的
-   event-only usage，分别求和 token 字段；`gate_total_tokens` 只加 input/output/reasoning/
-   audio/image/video input，cache/details 单列。已知内部 call 缺 usage 时标记 coverage incomplete。
+   event-only usage，分别求和 token 字段；`gate_total_tokens` 只加 input/output/
+   audio/image/video input，reasoning/cache/details 单列。测试 output 已包含 reasoning 细分时
+   不重复计数。已知内部 call 缺 usage 时标记 coverage incomplete。
 7. 运行 003 graders 并生成 attempt、case、tag、split 结果；若必需 attempt 未 completed，不
    生成缩小分母的 aggregate。
-8. 先写 compare table tests，再实现 manifest comparability：provider/model/options、commit、
+8. 先写 compare table tests，再实现 manifest comparability：effective-config hash、commit、
    fixture、case/split/repetitions、session seed hashes 与非-harness source 必须一致，并一次
-   列出全部 mismatch。
+   列出全部 mismatch。单独测试 runtime/retry/approval/Tool schema/capability route/session mode
+   变化被拒绝，而 harness snapshot hash 变化被允许。compare 从磁盘重算 snapshot hashes；
+   篡改文件/hash 时拒绝，配置不同时输出字段级 diff。
 9. 实现 baseline validity：任一 baseline must-pass attempt 失败返回 `invalid_baseline`，保存
    case/attempt evidence，不再计算 candidate eligibility。
 10. 实现 candidate 独立 gates：全部 must-pass attempts 绝对通过、validation weighted score
