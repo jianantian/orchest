@@ -1,0 +1,45 @@
+{
+  "kind": "orchest.research-pipeline.findings",
+  "schemaVersion": 1,
+  "iteration": "v0.11",
+  "subject": "Research Pipeline",
+  "executiveSummary": "Deterministic evidence is pending and live validation is unavailable.",
+  "readinessVerdict": {
+    "status": "unverified",
+    "reason": "The required live-provider run has not been executed because credentials are unavailable.",
+    "refs": ["run-live"]
+  },
+  "apiChecklist": [
+    {
+      "id": "check-run-handle",
+      "apiSurface": "Watcher attachment",
+      "publicPath": "orchest::run::RunHandle",
+      "requirement": "Attach watchers only through the public supervisor handle.",
+      "status": "planned",
+      "evidenceRefs": ["ev-contract"],
+      "findingRefs": []
+    }
+  ],
+  "runs": [
+    {
+      "id": "run-live",
+      "kind": "live-provider",
+      "status": "not-run",
+      "required": true,
+      "provider": "configured-by-env",
+      "model": "configured-by-env",
+      "summary": "Credentials are unavailable in the deterministic test environment.",
+      "evidenceRefs": []
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-contract",
+      "kind": "documentation",
+      "summary": "The v0.11 evidence contract defines this public seam.",
+      "path": "docs/iteration/v0_11/finding-evidence-contract-design.md",
+      "symbol": "Seam API Checklist"
+    }
+  ],
+  "findings": []
+}

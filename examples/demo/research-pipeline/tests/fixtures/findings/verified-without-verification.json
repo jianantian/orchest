@@ -1,0 +1,12 @@
+{
+  "kind": "orchest.research-pipeline.findings",
+  "schemaVersion": 1,
+  "iteration": "v0.11",
+  "subject": "Research Pipeline",
+  "executiveSummary": "Verification claims require passed evidence.",
+  "readinessVerdict": { "status": "unverified", "reason": "Live evidence is unavailable.", "refs": ["run-live"] },
+  "apiChecklist": [],
+  "runs": [{ "id": "run-live", "kind": "live-provider", "status": "not-run", "required": true, "provider": "configured-by-env", "model": "configured-by-env", "summary": "Credentials are unavailable.", "evidenceRefs": [] }],
+  "evidence": [],
+  "findings": [{ "id": "SB-1", "title": "Unverified", "apiSurface": "surface", "description": "gap", "observedConsequence": "consequence", "workaround": "none", "classification": "untriaged", "status": "verified", "evidenceRefs": [], "verification": { "status": "not-run", "commands": [], "evidenceRefs": [], "summary": "Not verified." } }]
+}
