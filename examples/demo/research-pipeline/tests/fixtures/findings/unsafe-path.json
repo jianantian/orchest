@@ -1,0 +1,12 @@
+{
+  "kind": "orchest.research-pipeline.findings",
+  "schemaVersion": 1,
+  "iteration": "v0.11",
+  "subject": "Research Pipeline",
+  "executiveSummary": "Unsafe paths must be rejected.",
+  "readinessVerdict": { "status": "unverified", "reason": "Live evidence is unavailable.", "refs": ["run-live"] },
+  "apiChecklist": [],
+  "runs": [{ "id": "run-live", "kind": "live-provider", "status": "not-run", "required": true, "provider": "configured-by-env", "model": "configured-by-env", "summary": "Credentials are unavailable.", "evidenceRefs": [] }],
+  "evidence": [{ "id": "ev-source", "kind": "source", "summary": "Unsafe locator.", "path": "../outside.rs", "symbol": "outside" }],
+  "findings": []
+}

@@ -1,0 +1,12 @@
+{
+  "kind": "orchest.research-pipeline.findings",
+  "schemaVersion": 2,
+  "iteration": "v0.11",
+  "subject": "Research Pipeline",
+  "executiveSummary": "Unknown schema versions must fail closed.",
+  "readinessVerdict": { "status": "unverified", "reason": "Live evidence is unavailable.", "refs": ["run-live"] },
+  "apiChecklist": [],
+  "runs": [{ "id": "run-live", "kind": "live-provider", "status": "not-run", "required": true, "provider": "configured-by-env", "model": "configured-by-env", "summary": "Credentials are unavailable.", "evidenceRefs": [] }],
+  "evidence": [],
+  "findings": []
+}

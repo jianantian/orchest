@@ -58,9 +58,11 @@ The child run's conversation is inaccessible.
 
 ### Decision
 
-**Document the gap.** The demo attempts `WatcherAction::Inject` targeting a
-`SubAgentEvent` wrapping a worker tool-call event. It observes and documents
-that the injection lands in the supervisor's conversation, not the worker's.
+**Document the gap.** The demo attempts `WatcherAction::Inject` from an
+attributable supervisor tool-call event for the `AgentAsTool`. It observes
+and documents that the injection lands in the supervisor's conversation, not
+the worker's. The primary supervisor `EventReceiver` separately observes the
+forwarded `SubAgentEvent`; attached watchers do not receive it (Decision 27).
 No workarounds (no vendoring private types, no reaching into `AgentAsTool`
 internals).
 
@@ -122,9 +124,9 @@ separate `EventReceiver` for the child run.
 
 1. **Application-level:** `main()` polls the supervisor's `EventReceiver`
    with `while let Some(event) = rx.recv().await` until `None`. No timeout.
-2. **Watcher-level:** `LlmWatcher::on_event()` checks for
-   `SubAgentEvent { event: RunCompleted | RunFailed | RunAborted }` and
-   logs worker completion. Observation, not gating.
+2. **Watcher-level:** attached watchers observe supervisor actor-emitted
+   events, including the supervisor terminal event. They do not receive
+   forwarded `SubAgentEvent`s in the current public flow (Decision 27).
 
 ### Rationale
 
@@ -440,12 +442,16 @@ properties without making a claim about cross-watcher action ordering.
 
 `LlmWatcher::format_event()` has no handler for `SubAgentEvent`,
 `SubAgentStarted`, `SubAgentCompleted`, `SubAgentFailed`, or
-`ChildRunEvent`. These fall into the catch-all `Debug` formatter.
+`ChildRunEvent`. If passed directly, these fall into the catch-all `Debug`
+formatter. In the unified public flow, forwarded child events bypass attached
+watchers entirely (Decision 27), so this is source evidence rather than a
+claim that the demo's `LlmWatcher` received nested events.
 
 ### Decision
 
-Use `LlmWatcher` as-is. The watcher's LLM model receives the formatted
-event and must interpret it. The fragility IS the finding.
+Use `LlmWatcher` as-is for supervisor actor-emitted events. Preserve the
+formatting limitation as source evidence, but do not claim the watcher model
+received forwarded nested events.
 
 ### Rationale
 
@@ -458,9 +464,10 @@ Working around it would hide the gap.
 ### Decision
 
 `events.rs` provides `render_event(event: &RuntimeEvent) -> String` for
-stdout - unwraps `SubAgentEvent` to show `[worker] Tool completed:
-search_corpus, 5ms`. The `LlmWatcher` uses its own `format_event` (with
-the gap). The difference between them IS the finding.
+stdout - unwraps primary-receiver `SubAgentEvent` values to show `[worker]
+Tool completed: search_corpus, 5ms`. The attached `LlmWatcher` receives only
+supervisor actor-emitted events in this flow. Its latent nested formatting
+gap remains separate source evidence.
 
 ### Rationale
 
@@ -590,9 +597,11 @@ against an ordinary live provider.
 Use two evidence contracts:
 
 1. **Deterministic test:** gate the first model call, start the run, attach
-   both watchers, await both `attach_watcher()` calls, then release the model.
-   This proves observable post-registration behavior; it still does not prove
-   that every startup event was captured.
+   both watchers, await both `attach_watcher()` calls, then release a harmless
+   probe tool step. Once that `RunStep` ends, gate the second model call and
+   require both watcher processors to record its `ModelCallStarted` event
+   before releasing delegation. This proves active post-registration
+   processing; it still does not prove that every startup event was captured.
 2. **Live run:** attach immediately after `AgentRun::start()` and describe the
    result as best-effort. Do not claim that the watcher observed the first
    event or was attached before delegation.
@@ -610,11 +619,53 @@ timing.
 
 ---
 
+## Decision 27: Forwarded Child Events Bypass Attached Watchers
+
+### Problem
+
+The run actor constructs `ToolContext.event_tx` from `primary(subs).clone()`.
+`AgentAsTool::run_child_attempt()` forwards `SubAgentEvent` and child
+lifecycle events by sending directly to that sender.
+`RunHandle::attach_watcher()` registers a different subscriber channel
+through `AgentMsg::Subscribe`. Consequently, forwarded child events reach the
+primary supervisor `EventReceiver` but are not broadcast to attached watcher
+channels.
+
+### Decision
+
+Prove three separate properties in the gated deterministic scenario:
+
+1. after a harmless probe step activates queued subscriptions, both attached
+   watcher processors complete an attributable supervisor
+   `ModelCallStarted` before delegation;
+2. the primary supervisor `EventReceiver` receives forwarded
+   `SubAgentEvent`s; and
+3. after both the custom watcher and the `LlmWatcher` wrapper complete
+   processing a terminal supervisor event, neither completed event vector
+   contains a forwarded child event.
+
+Record the missing broadcast/observation seam as SB-8. Do not change runtime
+behavior in the evidence demo and do not use a timeout as negative proof.
+The custom watcher's action is attributable specifically to the
+supervisor-level delegation
+`ToolCallStarted { tool: "research_worker", .. }`; it is never triggered by a
+child or nested event.
+
+### Rationale
+
+The product goal requires nested observation by supervisor-attached watchers.
+Primary-receiver visibility is useful but is not equivalent to watcher
+delivery. Keeping the two channels explicit prevents the demo from claiming a
+capability the public runtime does not provide.
+
+---
+
 ## Pre-Identified Seam Gap Findings Summary
 
-Findings discovered through the grilling session. These are preliminary -
-the demo confirms their impact during implementation and produces final
-classification in issue 005's seam gap analysis report.
+Findings locked through the grilling session plus SB-8, which the gated
+implementation test discovered. These are preliminary classifications - the
+demo confirms their impact during implementation and issue 005 produces final
+classification in the seam gap analysis report.
 
 ### Seam Blockers (prevent Multivac M2 from reliably using the API)
 
@@ -627,6 +678,7 @@ classification in issue 005's seam gap analysis report.
 | SB-5 | Secondary event subscribers (watchers) use `try_send` - events can be dropped under backpressure with no watcher-side recovery | D6 |
 | SB-6 | `AgentRun::start()` begins execution before application code can call `RunHandle::attach_watcher()`; no public start-with-watchers or pre-run pause seam guarantees observation from the first event | D26 |
 | SB-7 | Watchers run in independent tasks, so actions returned by multiple watchers have no global registration-order execution guarantee | D6 |
+| SB-8 | Forwarded `AgentAsTool` child events are sent only through the primary supervisor `EventReceiver` and bypass attached watcher subscription channels | D27 |
 
 ### Release Blockers (correctness/safety issues, independent of M2)
 

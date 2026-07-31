@@ -1,0 +1,12 @@
+{
+  "kind": "orchest.research-pipeline.findings",
+  "schemaVersion": 1,
+  "iteration": "v0.11",
+  "subject": "Research Pipeline",
+  "executiveSummary": "An executed run command must contain text.",
+  "readinessVerdict": { "status": "unverified", "reason": "The live path remains unavailable.", "refs": ["run-test"] },
+  "apiChecklist": [],
+  "runs": [{ "id": "run-test", "kind": "test", "status": "passed", "required": true, "command": " \t ", "summary": "The test allegedly passed.", "evidenceRefs": [] }],
+  "evidence": [],
+  "findings": []
+}

@@ -1,0 +1,12 @@
+{
+  "kind": "orchest.research-pipeline.findings",
+  "schemaVersion": 1,
+  "iteration": "v0.11",
+  "subject": "Research Pipeline",
+  "executiveSummary": "A planned command is not executed evidence.",
+  "readinessVerdict": { "status": "unverified", "reason": "Live evidence is unavailable.", "refs": ["run-live"] },
+  "apiChecklist": [],
+  "runs": [{ "id": "run-live", "kind": "live-provider", "status": "not-run", "required": true, "command": "cargo run -p research-pipeline-demo -- run", "provider": "configured-by-env", "model": "configured-by-env", "summary": "Credentials are unavailable.", "evidenceRefs": [] }],
+  "evidence": [],
+  "findings": []
+}

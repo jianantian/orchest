@@ -62,11 +62,13 @@
 
 两轮 demo 验证策略的第二轮，**深度优先**：专门验证 Supervised Delegation API 面——即 Multivac M2 avatar 所依赖的 Orchest seam。
 
-产品形态为 **Research Pipeline**：两层委派 demo。Supervisor Orchest agent 委派任务给 Worker Orchest agent，`LlmWatcher` 挂载并实时监控 worker 事件流，通过 `InjectCmd` 注入一次 steering 修正，触发受控 fault injection 验证 supervisor recovery 路径。详见 [`v0_11/prd.md`](./v0_11/prd.md)。
+产品形态为 **Research Pipeline**：两层委派 evidence demo。Supervisor Orchest agent 通过 `AgentAsTool` 委派 Worker；应用只持有 supervisor `RunHandle`，attached watcher 观察 supervisor actor 事件，primary `EventReceiver` 观察 forwarded child 事件。受控 fault 路径验证 `RunFailed` → supervisor escalation，同时如实保留 child handle、steering target、restart、watcher delivery/ordering 等缺口。详见 [`v0_11/prd.md`](./v0_11/prd.md)。
 
 需验证的 seam API：`LlmWatcher` attach/detach、`InjectCmd` / Steering、`ContextMode::Fresh | Fork`、supervisor 故障检测、worker 重启或升级、multi-watcher FIFO、completion gate。产出物是 **Seam Gap Analysis 报告**，决定哪些 API 在 v1.0 冻结前必须修改。
 
 Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格的长运行 Supervised Delegation 是 Multivac M2 产品层的验证场景，不进 v0.11。
+
+**当前证据（分支待评审）**：provider-independent package 69 项测试（另有 1 项 credential-gated live smoke 保持 ignored）、42 项严格 contract fixture、5 项 provider fake verifier 与 isolated report resolution / read-only deterministic check 均通过；[Seam Gap Analysis](./v0_11/seam-gap-analysis.md) 记录 8 项 open seam blocker（[#249](https://github.com/jianantian/orchest/issues/249)–[#254](https://github.com/jianantian/orchest/issues/254)）和 1 项 open release blocker（[#255](https://github.com/jianantian/orchest/issues/255)）。live provider 因环境缺少 `RESEARCH_PIPELINE_CHAT_MODEL` / `RESEARCH_PIPELINE_API_KEY` 保持 `not-run`，readiness 为 `unverified`；无 waiver，[#258](https://github.com/jianantian/orchest/issues/258) 明确阻塞 v1.0。此处不将 v0.11 移入「已完成」；合并后的 closeout 另行处理。
 
 **依赖**：v0.10 完成（[验证报告](../review/v0_10_demo_validation.md)中的 SD 摩擦点）、v0.9.5 Control-Flow Hardening、v0.9.4 Failure Semantics
 
@@ -85,9 +87,9 @@ acceptance report。候选只允许修改 Briefing Desk 的 system prompt 与 To
 
 ### v1.0 — 首次公开发布（规划）
 
-第一个公开发布到 crates.io 的版本。包含发布准备的全部内容：Cargo publish 元数据、license 定稿、release workflow、CHANGELOG、版本号策略文档。
+第一个公开发布到 crates.io 的版本。包含发布准备的全部内容：Cargo publish 元数据、license 定稿、release workflow、CHANGELOG、版本号策略文档。权威范围与 gate 清单见 [`v1_0/prd.md`](./v1_0/prd.md)。
 
-**依赖**：v0.11 Demo B 完成（Supervised Delegation API 经产品验证后才冻结公开 API）、v0.12 完成（ADR-0002 Phase 3 的 legacy adapter/factory 移除必须在冻结前落地）。发布前必须清偿两份验证报告各自的 release blocker 清单：[v0.10 Demo A 验证报告](../review/v0_10_demo_validation.md)的 5 项 release blocker **已全部由 hotfix 2026-07-02 清偿**（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199) 全部关闭，详见验证报告 Triage 表与本文档「已完成」表的 hotfix 2026-07-02 行），与 v0.11 Demo B 的 Seam Gap Analysis 报告（届时补链接）。**v0.10 报告的 live provider 验证仍未完成**（hotfix 2026-07-02 所在环境无 LLM/ASR/TTS 凭证）——未完成前，不得仅凭该报告推进 v1.0。
+**依赖**：v0.11 Demo B 完成（Supervised Delegation API 经产品验证后才冻结公开 API）、v0.12 完成（ADR-0002 Phase 3 的 legacy adapter/factory 移除必须在冻结前落地）。发布前必须清偿两份验证报告各自的 release blocker 清单：[v0.10 Demo A 验证报告](../review/v0_10_demo_validation.md)的 5 项 release blocker **已全部由 hotfix 2026-07-02 清偿**（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199) 全部关闭，详见验证报告 Triage 表与本文档「已完成」表的 hotfix 2026-07-02 行），以及 v0.11 Demo B [Seam Gap Analysis](./v0_11/seam-gap-analysis.md) 的 pre-freeze/release gates [#249](https://github.com/jianantian/orchest/issues/249)–[#255](https://github.com/jianantian/orchest/issues/255)。**v0.10 与 v0.11 live provider 验证仍未完成**；[#258](https://github.com/jianantian/orchest/issues/258) 关闭且 canonical evidence 不再因 required live run 缺失而 `unverified` 前，不得推进 v1.0。[#256](https://github.com/jianantian/orchest/issues/256)–[#257](https://github.com/jianantian/orchest/issues/257) 是明确的 post-1.0 backlog，不阻塞发布。
 
 ### 依赖图
 
@@ -174,6 +176,7 @@ acceptance report。候选只允许修改 Briefing Desk 的 system prompt 与 To
 | Supervised Delegation 基础 | ~~无~~ → Watcher trait + InjectCmd 双向通信 | ✅ v0.8 |
 | Mid-run Steering | ~~只有 approval~~ → Steering API | ✅ v0.9 |
 | Supervised Delegation 完整 | ~~无~~ → LlmWatcher + supervisor 恢复 + 多 watcher FIFO | ✅ v0.9 |
+| Multivac M2 Supervised Delegation seam readiness | v0.11 deterministic evidence 已通过，但 [Seam Gap Analysis](./v0_11/seam-gap-analysis.md) 仍有 SB-1–SB-8；live provider `not-run`，readiness `unverified`，无 waiver | v1.0 前清偿 #249–#254，并完成 #258 |
 | Image AIGC Gateway | ~~无~~ → **v0.6.1 已完成** | ✅ |
 | ASR Provider Gateway | ~~无~~ → **v0.9.1 已完成** | ✅ |
 | TTS Provider Gateway | ~~无统一 TTS provider crate~~ → **v0.9.3 已完成** | ✅ |

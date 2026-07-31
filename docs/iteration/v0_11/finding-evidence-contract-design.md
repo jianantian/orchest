@@ -90,7 +90,9 @@ versions fail closed. The validator rejects unknown enum values and broken
 references.
 
 All repository paths are repository-relative POSIX paths in canonical output.
-The file never contains machine-local absolute paths or credentials.
+Every string that can reach rendered Markdown is checked for deterministic
+secret-shaped and machine-local values. Environment variable names such as
+`RESEARCH_PIPELINE_API_KEY` remain valid when no value is present.
 
 ## Report Metadata
 
@@ -184,7 +186,14 @@ Rules:
 
 - `command` is an argument-preserving human-readable command that was actually
   executed; a planned command is not evidence.
-- `revision` binds the result to a Git revision when available.
+- `date` is a calendar-valid `YYYY-MM-DD`, including Gregorian leap-year
+  rules.
+- `revision` is either a lowercase 7–40 character hexadecimal Git object id
+  or the exact semantic value `git:self`.
+- `git:self` means “the commit containing this canonical findings file.” It
+  is reserved for passed verification evidence whose declared command is
+  rerun after that containing commit exists. Historical runs retain their
+  factual Git object ids; action revisions cannot use `git:self`.
 - provider and model are required for `live-provider`, and omitted when they
   do not apply.
 - a required run that could not execute remains `not-run` with a reason in
@@ -328,7 +337,9 @@ Rules:
 
 - repository paths are relative and traversal-free;
 - source evidence identifies a stable symbol together with its repository
-  path; line numbers may be reviewer hints but are never canonical locators;
+  path; numeric line or range forms such as `source.rs:42-45` and
+  `source.rs#L42-L45` are never canonical locators, while Rust item paths
+  remain valid;
 - commands are evidence only after execution;
 - source and documentation prove existence or contract, not runtime behavior;
 - smoke and live behavior remain distinct;
@@ -413,8 +424,10 @@ Validation is read-only. It checks:
 - unique finding, evidence, checklist, and run ids;
 - checklist, run, evidence, and finding reference integrity;
 - path safety and canonical path shape;
+- calendar-valid execution dates, strict Git revision grammar, and stable
+  non-line-range source symbols;
 - classification, status, verification, and readiness consistency;
-- privacy-shaped exclusions that can be checked deterministically.
+- privacy-shaped exclusions across every string that can reach Markdown.
 
 ### Render
 
@@ -425,8 +438,11 @@ cargo run -p research-pipeline-demo --bin seam-report -- \
   --out docs/iteration/v0_11/seam-gap-analysis.md
 ```
 
-Render is the explicit write path. It produces deterministic Markdown and
-does not change `findings.json`.
+Render is the explicit write path. It resolves the one declared report path
+against the verified repository root derived from the demo manifest, not the
+process working directory. Existing parents are canonicalized and symlink
+escapes are rejected. Render produces deterministic Markdown and does not
+change `findings.json`.
 
 The report contains:
 
@@ -440,7 +456,9 @@ The report contains:
 8. v1.0 and Multivac M2 implications.
 
 All canonical findings appear. The renderer cannot filter out negative or
-unverified rows.
+unverified rows. Aggregate blocker sections use unresolved wording and include
+the finding's actual lifecycle status, so `implemented` is never relabelled
+`open`. The run section explains the `git:self` containing-commit semantic.
 
 ### Check
 
@@ -451,8 +469,9 @@ cargo run -p research-pipeline-demo --bin seam-report -- \
   --report docs/iteration/v0_11/seam-gap-analysis.md
 ```
 
-Check renders in memory, compares exact normalized output, writes nothing, and
-fails when the committed report is stale.
+Check resolves the same repository-bound report safely, renders in memory,
+compares exact bytes including line endings, writes nothing, and fails when
+the committed report is stale.
 
 All commands use stable non-zero exits for invalid input, unsafe output paths,
 or stale reports. They do not run the demo, access the network, apply fixes, or
@@ -504,8 +523,9 @@ No issues are added or renumbered.
 - Malformed diagnostic excerpts fail bounded/privacy checks when
   deterministically detectable; human review remains required for semantic
   secrets.
-- Render refuses an output path outside the repository or the declared v0.11
-  report owner.
+- Render and check refuse an output path outside the repository or the
+  declared v0.11 report owner, resolve independently of the current working
+  directory, and reject symlink-parent escapes.
 - Check never rewrites a stale report.
 
 ## Test Strategy
@@ -529,7 +549,13 @@ No issues are added or renumbered.
 - Windows absolute and drive-relative path rejection;
 - Unix absolute path and traversal rejection;
 - bounded diagnostic excerpts;
-- representative secret-shaped value rejection;
+- representative secret-shaped and machine-local value rejection across all
+  rendered field categories, while allowing bare environment variable names;
+- Gregorian calendar validation, strict 7–40 lowercase hexadecimal or
+  `git:self` revision grammar, and normalized line/range source locator
+  rejection, including case-insensitive `line`/`lines`/`L` prefixes,
+  `:`/`#` suffixes, and structural numeric ranges joined by arbitrary
+  non-digit separator text, independent of Unicode punctuation;
 - stable behavior on Windows, macOS, and Linux.
 
 ### Rendering
@@ -538,6 +564,10 @@ No issues are added or renumbered.
 - stable finding ordering;
 - every finding appears in the report;
 - implemented and verified wording remains distinct;
+- unresolved seam and release blockers render their actual status;
+- isolated render-path resolution and wrong-working-directory read-only
+  checking without tracked-report mutation, plus symlink-parent escape
+  rejection;
 - absent live evidence remains visible;
 - stale report detection;
 - render followed by check passes byte-for-byte.

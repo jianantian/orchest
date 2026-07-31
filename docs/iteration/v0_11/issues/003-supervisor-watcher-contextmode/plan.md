@@ -20,9 +20,10 @@
 ## Steps
 
 1. Build the worker as an `AgentAsTool` and register it with the supervisor.
-2. For deterministic tests, construct a gated model whose first call waits
-   for an explicit release signal. Construct the recording watcher and
-   configure the LLM watcher as:
+2. For deterministic tests, construct a two-stage gated model whose first
+   call returns a harmless supervisor probe and whose second call delegates
+   only after both watcher processors prove activation. Construct the
+   recording watcher and configure the LLM watcher as:
 
    ```rust
    let watcher = LlmWatcher::builder()
@@ -31,20 +32,28 @@
    ```
 
 3. Start the supervisor and retain its `RunHandle` and `EventReceiver`.
-4. Await both `attach_watcher()` calls, then release the deterministic model
-   gate. Assert at least one attributable post-registration event without
-   claiming that startup events were captured.
+4. Await both `attach_watcher()` calls, release the first gate, let the probe
+   `RunStep` end so queued subscriptions activate, and gate the second model
+   call. Release delegation only after both watcher wrappers record that
+   second-step `ModelCallStarted`, without claiming startup-event capture.
 5. For the live path, attach both watchers immediately after start and record
    the unclosed race; do not reuse the deterministic ordering claim.
 6. Delegate once with `Fresh` and once with `Fork { depth }`, reusing issue
    002's deterministic context assertions.
-7. Capture forwarded nested events and prove they are visible through the
-   supervisor stream without claiming a child subscription.
+7. Capture supervisor actor-emitted events through attached watchers and
+   forwarded nested events through the primary supervisor `EventReceiver`.
+   Record events only after each watcher's `on_event()` completes, gate both
+   processors through a terminal supervisor event, and prove those completed
+   event vectors did not receive the forwarded events. Record this routing
+   gap as SB-8 without claiming a child subscription.
 8. Trigger watcher injection/steering and external-handle
-   injection/steering. Assert which actor's conversation changes.
-9. Update the stable start/attach-race, missing-child-handle, and
-   child-steering-target findings with the authentic attempt and public-source
-   evidence.
+   injection/steering. Trigger the custom watcher only from the
+   supervisor-level delegation
+   `ToolCallStarted { tool: "research_worker", .. }`, never a child or nested
+   event. Assert which actor's conversation changes.
+9. Update the stable start/attach-race, missing-child-handle,
+   child-steering-target, and forwarded-event-routing findings with the
+   authentic attempt and public-source evidence.
 10. Validate the canonical file after evidence updates.
 
 ## Verification
