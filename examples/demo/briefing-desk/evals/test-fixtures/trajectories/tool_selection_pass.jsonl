@@ -1,0 +1,6 @@
+{"schema_version":"1","sequence":0,"elapsed_ms":0,"run_relation":{},"kind":"tool_call_started","data":{"tool":"search_fixtures","input":{}}}
+{"schema_version":"1","sequence":1,"elapsed_ms":10,"run_relation":{},"kind":"tool_call_completed","data":{"tool":"search_fixtures","output":{"ok":true},"duration_ms":1}}
+{"schema_version":"1","sequence":2,"elapsed_ms":20,"run_relation":{},"kind":"tool_call_started","data":{"tool":"read_fixture","input":{}}}
+{"schema_version":"1","sequence":3,"elapsed_ms":30,"run_relation":{},"kind":"tool_call_completed","data":{"tool":"read_fixture","output":{"ok":true},"duration_ms":1}}
+{"schema_version":"1","sequence":4,"elapsed_ms":40,"run_relation":{},"kind":"tool_call_started","data":{"tool":"write_report","input":{}}}
+{"schema_version":"1","sequence":5,"elapsed_ms":50,"run_relation":{},"kind":"tool_call_completed","data":{"tool":"write_report","output":{"ok":true},"duration_ms":1}}

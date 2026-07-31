@@ -4,10 +4,12 @@
 //! Issue 001: harness-facing case/seed contract.
 //! Issue 002: sensitive trajectory recorder, run manifest, effective config,
 //! and per-attempt session isolation foundations.
+//! Issue 003: deterministic graders and aggregation formulas.
 
 pub mod artifact;
 pub mod case;
 pub mod effective_config;
+pub mod grader;
 pub mod session;
 pub mod trajectory;
 
@@ -27,6 +29,12 @@ pub use effective_config::{
     fingerprint_registry, surface_id_for_tool, AgentRoleSnapshot, CapabilityRoute,
     EffectiveConfigInput, EffectiveConfigSnapshot, SessionPersistenceMode, ToolFingerprint,
     EFFECTIVE_CONFIG_SCHEMA_VERSION,
+};
+pub use grader::{
+    aggregate_attempt, aggregate_case, aggregate_split, aggregate_tag, grade_attempt,
+    list_fixture_inventory, run_grader, validate_validation_tag_coverage, AttemptAggregate,
+    AttemptGrade, AttemptGraderStatus, AttemptScoreInput, CaseAggregate, GraderError, GraderInput,
+    GraderResult, SplitAggregate, TagAggregate, KNOWN_GRADER_IDS,
 };
 pub use session::AttemptSession;
 pub use trajectory::{
