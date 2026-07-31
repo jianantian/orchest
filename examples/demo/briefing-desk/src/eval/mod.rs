@@ -5,11 +5,17 @@
 //! Issue 002: sensitive trajectory recorder, run manifest, effective config,
 //! and per-attempt session isolation foundations.
 //! Issue 003: deterministic graders and aggregation formulas.
+//! Issue 004: eval runner, CLI, and candidate comparison.
 
 pub mod artifact;
 pub mod case;
+pub mod cli;
+pub mod compare;
 pub mod effective_config;
 pub mod grader;
+pub mod resource;
+pub mod runner;
+pub mod scripted_model;
 pub mod session;
 pub mod trajectory;
 
@@ -41,3 +47,8 @@ pub use trajectory::{
     sanitize_runtime_event, sanitize_value, TrajectoryError, TrajectoryEvent, TrajectoryRecorder,
     RunRelation, SanitizeOutcome, SECRET_REDACTION, TRAJECTORY_SCHEMA_VERSION,
 };
+
+/// True when the deterministic grader module is linked and usable.
+pub(crate) fn grader_available() -> bool {
+    true
+}
