@@ -2,7 +2,7 @@
 
 ## Files to read
 
-- `docs/iteration/v0_11/seam-gap-analysis.md`
+- `docs/archive/iteration/v0_11/seam-gap-analysis.md`
 - `crates/orchest/src/run/supervisor.rs`
 - `crates/orchest/src/run/watcher.rs`
 

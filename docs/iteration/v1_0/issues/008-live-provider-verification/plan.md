@@ -3,7 +3,7 @@
 ## Files to read
 
 - `docs/review/v0_10_demo_validation.md`
-- `docs/iteration/v0_11/seam-gap-analysis.md`
+- `docs/archive/iteration/v0_11/seam-gap-analysis.md`
 - `examples/demo/research-pipeline/README.md`
 - `examples/demo/research-pipeline/findings.json`
 
