@@ -13,6 +13,7 @@ use orchest::tool::agent_as_tool::ContextMode;
 use orchest::tool::registry::ToolRegistry;
 use orchest::tool::ToolError;
 
+use crate::harness;
 use crate::media::{self, DescribeImageTool, SynthesizeBriefTool, TranscribeAudioTool};
 use crate::tools::{ReadFixtureTool, SearchFixturesTool, WriteReportTool};
 
@@ -179,12 +180,8 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
         registry.register(Arc::new(SynthesizeBriefTool::new(audio_path, tts)))?;
     }
 
-    let mut builder = AgentConfig::builder("briefing-desk/run").system_prompt(
-        "You are Briefing Desk, a research-brief assistant. Search the materials, read the \
-         most relevant one, transcribe any audio source and describe any image source if \
-         those tools are available, have review_report check your draft, then call \
-         write_report. If synthesize_brief is available, call it last.",
-    );
+    let mut builder =
+        AgentConfig::builder("briefing-desk/run").system_prompt(harness::MAIN_SYSTEM_PROMPT);
 
     if let Some(id) = &args.session {
         let store: Arc<dyn SessionStore> = Arc::new(open_session_store(id)?);
@@ -310,9 +307,7 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
 /// parent model calls before `write_report`.
 fn reviewer_tool(model: &Arc<dyn ModelAdapter>) -> Result<Arc<dyn orchest::tool::Tool>, DemoError> {
     let reviewer_config = AgentConfig::builder("briefing-desk/reviewer")
-        .system_prompt(
-            "You are a report reviewer. Check the draft for accuracy against the corpus.",
-        )
+        .system_prompt(harness::REVIEWER_SYSTEM_PROMPT)
         .max_steps(2)
         .build()
         .map_err(|e| format!("building reviewer config: {e}"))?;
@@ -320,7 +315,7 @@ fn reviewer_tool(model: &Arc<dyn ModelAdapter>) -> Result<Arc<dyn orchest::tool:
     let tool = reviewer_config
         .as_tool(
             "review_report",
-            "Reviews a draft report before it is finalized. Call this before write_report.",
+            harness::REVIEW_REPORT_TOOL_DESCRIPTION,
         )
         .model(Arc::clone(model))
         .registry(ToolRegistry::new())

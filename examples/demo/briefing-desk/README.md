@@ -220,3 +220,27 @@ cargo test -p briefing-desk-demo
 ASR/TTS fakes (`orchest_provider::fakes::{FakeAsr, FakeTts}`) are used when
 no live ASR/TTS env vars are set - see
 [#196](https://github.com/jianantian/orchest/issues/196).
+
+## Eval Lab (v0.16)
+
+Briefing Desk hosts an application-local evaluation lab. Candidate experiments may
+only edit harness surfaces in `src/harness.rs` (system prompts and Tool
+descriptions). Tool schemas, execute bodies, runtime configuration, and fixtures
+are not candidate surfaces.
+
+The versioned corpus lives under `evals/`:
+
+| Path | Role |
+|------|------|
+| `evals/cases.json` | 18 Loom-based cases (10 optimization / 4 validation / 4 scorecard) |
+| `evals/session-seeds/*.json` | Synthetic read-only follow-up session seeds (messages/step/budget only) |
+
+Corpus validation runs before any model call and enforces: unique case IDs, split
+counts, scenario-family isolation across splits, validation coverage of all seven
+behavior tags, fixture inventory membership, and session-seed content hashes.
+
+All 18 cases are drawn from the existing Loom fixture corpus. Scorecards only
+prove held-out performance within this pilot; they do not claim cross-domain
+generalization.
+
+Sensitive run artifacts under `evals/runs/` land in later issues and are gitignored.

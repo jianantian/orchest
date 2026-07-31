@@ -168,7 +168,7 @@ impl Tool for TranscribeAudioTool {
     }
 
     fn description(&self) -> &str {
-        "Transcribe a recorded audio source from the materials corpus via ASR."
+        crate::harness::TRANSCRIBE_AUDIO_TOOL_DESCRIPTION
     }
 
     fn input_schema(&self) -> &Value {
@@ -284,7 +284,7 @@ impl Tool for DescribeImageTool {
     }
 
     fn description(&self) -> &str {
-        "Describe an image source from the materials corpus using a real vision model call."
+        crate::harness::DESCRIBE_IMAGE_TOOL_DESCRIPTION
     }
 
     fn input_schema(&self) -> &Value {
@@ -393,7 +393,7 @@ impl Tool for SynthesizeBriefTool {
     }
 
     fn description(&self) -> &str {
-        "Synthesize an audio version of the final brief via TTS. Requires approval."
+        crate::harness::SYNTHESIZE_BRIEF_TOOL_DESCRIPTION
     }
 
     fn input_schema(&self) -> &Value {

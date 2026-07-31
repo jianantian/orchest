@@ -3,6 +3,8 @@
 //! `docs/archive/iteration/v0_10/issues/` for what each issue adds.
 
 mod app;
+mod eval;
+mod harness;
 mod media;
 mod tools;
 
