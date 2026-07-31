@@ -84,7 +84,7 @@ fn resolve_report_path_from_root(repository_root: &Path, path: &Path) -> Result<
     let display = path.to_string_lossy();
     if !is_report_path(&display) {
         bail!(
-            "report output must be docs/iteration/v0_11/seam-gap-analysis.md, got {}",
+            "report output must be docs/review/v0_11_seam_gap_analysis.md, got {}",
             path.display()
         );
     }
@@ -129,12 +129,12 @@ mod tests {
             .expect("write repository Cargo.toml");
         fs::write(repository.path().join(".git"), "gitdir: elsewhere\n")
             .expect("write repository marker");
-        fs::create_dir_all(repository.path().join("docs/iteration/v0_11"))
+        fs::create_dir_all(repository.path().join("docs/review"))
             .expect("create canonical report parent");
 
         let resolved = resolve_report_path_from_root(
             repository.path(),
-            Path::new("docs/iteration/v0_11/seam-gap-analysis.md"),
+            Path::new("docs/review/v0_11_seam_gap_analysis.md"),
         )
         .expect("canonical report path should resolve");
 
@@ -142,7 +142,7 @@ mod tests {
             resolved,
             fs::canonicalize(repository.path())
                 .expect("canonical temporary repository")
-                .join("docs/iteration/v0_11/seam-gap-analysis.md")
+                .join("docs/review/v0_11_seam_gap_analysis.md")
         );
     }
 
@@ -157,17 +157,13 @@ mod tests {
             .expect("write repository Cargo.toml");
         fs::write(repository.path().join(".git"), "gitdir: elsewhere\n")
             .expect("write repository marker");
-        fs::create_dir_all(repository.path().join("docs/iteration"))
-            .expect("create repository docs parent");
-        symlink(
-            outside.path(),
-            repository.path().join("docs/iteration/v0_11"),
-        )
-        .expect("create escaping report parent symlink");
+        fs::create_dir_all(repository.path().join("docs")).expect("create repository docs parent");
+        symlink(outside.path(), repository.path().join("docs/review"))
+            .expect("create escaping report parent symlink");
 
         let error = resolve_report_path_from_root(
             repository.path(),
-            Path::new("docs/iteration/v0_11/seam-gap-analysis.md"),
+            Path::new("docs/review/v0_11_seam_gap_analysis.md"),
         )
         .expect_err("symlinked report parent must be rejected");
 

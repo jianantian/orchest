@@ -1,6 +1,6 @@
 use super::*;
 
-const REPORT_PATH: &str = "docs/iteration/v0_11/seam-gap-analysis.md";
+const REPORT_PATH: &str = "docs/review/v0_11_seam_gap_analysis.md";
 
 pub fn render_markdown(document: &FindingsDocument) -> Result<String, FindingsError> {
     validate_document(document)?;

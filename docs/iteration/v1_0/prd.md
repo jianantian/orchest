@@ -7,7 +7,7 @@ public Rust API only after the v0.10 and v0.11 product-validation evidence has
 been reviewed and all pre-freeze/release gates have passed.
 
 The canonical v0.11
-[Seam Gap Analysis](../../archive/iteration/v0_11/seam-gap-analysis.md) records eight open
+[Seam Gap Analysis](../../review/v0_11_seam_gap_analysis.md) records eight open
 supervised-delegation seam blockers, one open release blocker, and an
 unexecuted required live-provider run. Deterministic v0.11 evidence may be
 complete without making v1.0 ready.

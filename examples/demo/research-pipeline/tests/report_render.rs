@@ -135,7 +135,7 @@ fn check_is_byte_for_byte_including_line_endings() {
 fn check_resolves_the_repository_report_without_writing_it() {
     let temp = tempfile::tempdir().expect("temporary working directory");
     let root = repository_root();
-    let canonical_report = root.join("docs/iteration/v0_11/seam-gap-analysis.md");
+    let canonical_report = root.join("docs/review/v0_11_seam_gap_analysis.md");
     let bytes_before = fs::read(&canonical_report).expect("read canonical report before test");
     let modified_before = fs::metadata(&canonical_report)
         .and_then(|metadata| metadata.modified())
@@ -146,7 +146,7 @@ fn check_resolves_the_repository_report_without_writing_it() {
         .arg("--findings")
         .arg(root.join("examples/demo/research-pipeline/findings.json"))
         .arg("--report")
-        .arg("docs/iteration/v0_11/seam-gap-analysis.md")
+        .arg("docs/review/v0_11_seam_gap_analysis.md")
         .output()
         .expect("run seam-report check from a different working directory");
 

@@ -53,10 +53,10 @@ cargo run -p research-pipeline-demo --bin seam-report -- validate \
 # Available now as deterministic CLI shapes; issue 005 owns the final report.
 cargo run -p research-pipeline-demo --bin seam-report -- render \
   --findings examples/demo/research-pipeline/findings.json \
-  --out docs/iteration/v0_11/seam-gap-analysis.md
+  --out docs/review/v0_11_seam_gap_analysis.md
 cargo run -p research-pipeline-demo --bin seam-report -- check \
   --findings examples/demo/research-pipeline/findings.json \
-  --report docs/iteration/v0_11/seam-gap-analysis.md
+  --report docs/review/v0_11_seam_gap_analysis.md
 ```
 
 `research-pipeline run --question ... --materials fixtures/research` starts
