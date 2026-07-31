@@ -266,14 +266,36 @@ fn value_attributed_to_source(output: &str, value: &str, source: &str) -> bool {
     let mut search_from = 0;
     while let Some(rel) = lower[search_from..].find(&v) {
         let idx = search_from + rel;
-        let start = idx.saturating_sub(160);
-        let end = (idx + v.len() + 160).min(lower.len());
+        let start = floor_char_boundary(&lower, idx.saturating_sub(160));
+        let end = ceil_char_boundary(&lower, (idx + v.len() + 160).min(lower.len()));
         if lower[start..end].contains(&s) {
             return true;
         }
-        search_from = idx + v.len();
+        search_from = idx + v.len().max(1);
     }
     false
+}
+
+fn floor_char_boundary(s: &str, i: usize) -> usize {
+    if i >= s.len() {
+        return s.len();
+    }
+    let mut i = i;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+fn ceil_char_boundary(s: &str, i: usize) -> usize {
+    if i >= s.len() {
+        return s.len();
+    }
+    let mut i = i;
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
 }
 
 pub fn grade_report_structure(
