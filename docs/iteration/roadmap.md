@@ -64,7 +64,7 @@
 
 产品形态为 **Research Pipeline**：两层委派 evidence demo。Supervisor Orchest agent 通过 `AgentAsTool` 委派 Worker；应用只持有 supervisor `RunHandle`，attached watcher 观察 supervisor actor 事件，primary `EventReceiver` 观察 forwarded child 事件。受控 fault 路径验证 `RunFailed` → supervisor escalation，同时如实保留 child handle、steering target、restart、watcher delivery/ordering 等缺口。详见 [`v0_11/prd.md`](./v0_11/prd.md)。
 
-需验证的 seam API：`LlmWatcher` attach/detach、`InjectCmd` / Steering、`ContextMode::Fresh | Fork`、supervisor 故障检测、worker 重启或升级、multi-watcher FIFO、completion gate。产出物是 **Seam Gap Analysis 报告**，决定哪些 API 在 v1.0 冻结前必须修改。
+需验证的 seam API：`RunHandle::attach_watcher` 挂载与外部 steering、`WatcherAction::Inject` / `Steer`、`ContextMode::Fresh | Fork`、`repeated_failure_threshold(1)` + `HookAction::Abort` 终止路径、`SupervisionStrategy::Restart` 配置及其 run-level 缺失观察、multi-watcher FIFO / 无 drop 序列等价、terminal-event completion gate。产出物是 **Seam Gap Analysis 报告**，决定哪些 API 在 v1.0 冻结前必须修改。
 
 Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格的长运行 Supervised Delegation 是 Multivac M2 产品层的验证场景，不进 v0.11。
 
