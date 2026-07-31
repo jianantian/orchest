@@ -1,0 +1,12 @@
+{
+  "kind": "orchest.research-pipeline.findings",
+  "schemaVersion": 1,
+  "iteration": "v0.11",
+  "subject": "Research Pipeline",
+  "executiveSummary": "Open blockers forbid ready.",
+  "readinessVerdict": { "status": "ready" },
+  "apiChecklist": [],
+  "runs": [],
+  "evidence": [{ "id": "ev-contract", "kind": "documentation", "summary": "The contract records the open blocker.", "path": "docs/iteration/v0_11/finding-evidence-contract-design.md", "symbol": "Readiness Verdict" }],
+  "findings": [{ "id": "SB-1", "title": "Blocker", "apiSurface": "surface", "description": "gap", "observedConsequence": "consequence", "workaround": "none", "classification": "seam-blocker", "status": "open", "evidenceRefs": ["ev-contract"], "verification": { "status": "not-run", "commands": [], "evidenceRefs": [], "summary": "Not verified." } }]
+}

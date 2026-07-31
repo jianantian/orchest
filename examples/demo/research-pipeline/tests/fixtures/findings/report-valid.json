@@ -1,0 +1,120 @@
+{
+  "kind": "orchest.research-pipeline.findings",
+  "schemaVersion": 1,
+  "iteration": "v0.11",
+  "subject": "Renderer Contract",
+  "executiveSummary": "Deterministic evidence passed; the required live run remains unavailable.",
+  "readinessVerdict": {
+    "status": "unverified",
+    "reason": "Live verification blocks v1.0 until it is executed.",
+    "refs": ["run-live", "SB-2"]
+  },
+  "apiChecklist": [
+    {
+      "id": "API-2",
+      "apiSurface": "Nested observation",
+      "publicPath": "orchest::run::EventReceiver",
+      "requirement": "Observe delegated events.",
+      "status": "blocked",
+      "evidenceRefs": ["ev-contract"],
+      "findingRefs": ["SB-2"]
+    },
+    {
+      "id": "API-1",
+      "apiSurface": "Watcher attachment",
+      "publicPath": "orchest::run::RunHandle",
+      "requirement": "Attach a watcher.",
+      "status": "exercised",
+      "evidenceRefs": ["ev-test"],
+      "findingRefs": []
+    }
+  ],
+  "runs": [
+    {
+      "id": "run-live",
+      "kind": "live-provider",
+      "status": "not-run",
+      "required": true,
+      "provider": "configured-by-env",
+      "model": "configured-by-env",
+      "summary": "Credentials are unavailable.",
+      "evidenceRefs": []
+    },
+    {
+      "id": "run-test",
+      "kind": "test",
+      "status": "passed",
+      "required": true,
+      "command": "cargo test -p research-pipeline-demo",
+      "date": "2026-07-31",
+      "revision": "abcdef0",
+      "summary": "The deterministic suite passed.",
+      "evidenceRefs": ["ev-test"]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-test",
+      "kind": "test",
+      "summary": "The focused suite passed.",
+      "path": "examples/demo/research-pipeline/tests/report_render.rs",
+      "symbol": "renders_every_required_report_section",
+      "command": "cargo test -p research-pipeline-demo",
+      "runRef": "run-test",
+      "result": "passed"
+    },
+    {
+      "id": "ev-contract",
+      "kind": "documentation",
+      "summary": "The contract defines nested observation.",
+      "path": "docs/iteration/v0_11/finding-evidence-contract-design.md",
+      "symbol": "Validator and Renderer"
+    }
+  ],
+  "findings": [
+    {
+      "id": "P1-1",
+      "title": "Import path polish",
+      "apiSurface": "orchest::run",
+      "description": "A public type has a deep import path.",
+      "observedConsequence": "Discovery is less convenient.",
+      "workaround": "Use the documented module path.",
+      "classification": "post-1.0-backlog",
+      "status": "deferred",
+      "evidenceRefs": ["ev-contract"],
+      "action": {
+        "owner": "Orchest API",
+        "summary": "Add a convenience re-export after v1.0.",
+        "issueRef": "#900"
+      },
+      "verification": {
+        "status": "not-applicable",
+        "commands": [],
+        "evidenceRefs": ["ev-contract"],
+        "summary": "The release decision explicitly defers this polish."
+      }
+    },
+    {
+      "id": "SB-2",
+      "title": "Nested events bypass watchers",
+      "apiSurface": "orchest::run::RunHandle",
+      "description": "Forwarded child events bypass attached watchers.",
+      "observedConsequence": "A watcher cannot observe delegated work.",
+      "workaround": "Consume the primary receiver.",
+      "classification": "seam-blocker",
+      "status": "open",
+      "evidenceRefs": ["ev-contract"],
+      "action": {
+        "owner": "Orchest runtime",
+        "summary": "Broadcast delegated events to attached watchers.",
+        "issueRef": "#901"
+      },
+      "verification": {
+        "status": "not-run",
+        "commands": [],
+        "evidenceRefs": ["ev-contract"],
+        "summary": "The repair has not run."
+      }
+    }
+  ]
+}
