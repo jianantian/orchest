@@ -348,10 +348,30 @@ impl Tool for DescribeImageTool {
             })
             .ok_or_else(|| ToolError::fatal("vision model returned no text content"))?;
 
-        Ok(ToolOutput::Immediate(json!({
+        let usage = response.usage;
+        let model_output = json!({
             "path": path_str,
             "description": description,
-        })))
+        });
+        // Full TokenUsage is event-only details; parent budget accounts for
+        // vision input+output via external_usage.
+        let external_usage = orchest::budget::BudgetUsage {
+            tokens_used: usage.input_tokens.saturating_add(usage.output_tokens),
+            tool_calls_used: 0,
+            cost_usd: usage.cost_usd.unwrap_or(0.0),
+        };
+        let details = serde_json::to_value(&usage).unwrap_or_else(|_| {
+            json!({
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+            })
+        });
+
+        Ok(ToolOutput::Structured {
+            model_output,
+            details,
+            external_usage: Some(external_usage),
+        })
     }
 }
 
@@ -484,7 +504,11 @@ mod tests {
         ) -> Result<ModelResponse, ModelError> {
             Ok(ModelResponse {
                 content: vec![ContentBlock::Text("fake image description".into())],
-                usage: TokenUsage::default(),
+                usage: TokenUsage {
+                    input_tokens: 12,
+                    output_tokens: 34,
+                    ..TokenUsage::default()
+                },
                 stop_reason: StopReason::EndTurn,
                 option_adjustments: vec![],
             })
@@ -564,10 +588,22 @@ mod tests {
             .execute(json!({"path": path.to_str().unwrap()}), &test_ctx())
             .await
             .expect("describe should succeed");
-        let ToolOutput::Immediate(value) = output else {
-            panic!("expected immediate output");
+        let ToolOutput::Structured {
+            model_output,
+            details,
+            external_usage,
+        } = output
+        else {
+            panic!("expected structured output");
         };
-        assert!(value["description"].as_str().is_some_and(|d| !d.is_empty()));
+        assert!(model_output["description"]
+            .as_str()
+            .is_some_and(|d| !d.is_empty()));
+        assert_eq!(model_output["path"], path.to_str().unwrap());
+        assert_eq!(details["input_tokens"], 12);
+        assert_eq!(details["output_tokens"], 34);
+        let usage = external_usage.expect("vision external_usage");
+        assert_eq!(usage.tokens_used, 46);
     }
 
     #[tokio::test]

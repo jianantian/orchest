@@ -202,7 +202,7 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
         model,
         registry,
     );
-    let brief = drain_events(handle, rx).await?;
+    let brief = drain_events(handle, rx, |_| {}).await?;
     println!("[done] final message: {brief}");
 
     if args.output.exists() {
@@ -258,7 +258,7 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
         model,
         ToolRegistry::new(),
     )?;
-    let answer = drain_events(handle, rx).await?;
+    let answer = drain_events(handle, rx, |_| {}).await?;
     println!("[done] follow-up answer: {answer}");
 
     std::fs::write(&args.output, &answer)
@@ -338,10 +338,22 @@ fn reviewer_tool(model: &Arc<dyn ModelAdapter>) -> Result<Arc<dyn orchest::tool:
 /// Drives an already-started run's event stream to completion: renders
 /// model/tool/approval/sub-agent/run-completion events to stdout, auto-approves
 /// any `ApprovalRequested`, and returns the run's final text.
-async fn drain_events(handle: RunHandle, mut rx: EventReceiver) -> Result<String, DemoError> {
+///
+/// `observer` is invoked for every event **before** stdout rendering so eval
+/// recorders can capture a sanitized trajectory without changing CLI output.
+/// Ordinary `run` / `resume` pass a no-op observer.
+pub async fn drain_events<F>(
+    handle: RunHandle,
+    mut rx: EventReceiver,
+    mut observer: F,
+) -> Result<String, DemoError>
+where
+    F: FnMut(&RuntimeEvent),
+{
     let mut answer = None;
     while let Some(event) = rx.recv().await {
-        match event {
+        observer(&event);
+        match &event {
             RuntimeEvent::ModelCallStarted { step } => println!("[model] step {step} started"),
             RuntimeEvent::ModelCallCompleted { tokens, .. } => println!(
                 "[model] step completed ({} in / {} out tokens)",

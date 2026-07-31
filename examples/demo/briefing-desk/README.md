@@ -243,4 +243,18 @@ All 18 cases are drawn from the existing Loom fixture corpus. Scorecards only
 prove held-out performance within this pilot; they do not claim cross-domain
 generalization.
 
-Sensitive run artifacts under `evals/runs/` land in later issues and are gitignored.
+### Sensitive run artifacts
+
+Eval runs write under `evals/runs/<label>/` (manifest, harness + effective-config
+snapshots, and per-attempt `trajectory.jsonl` / `output.md` / `attempt.json` /
+`scores.json`). These artifacts are **sensitive by default**:
+
+- Trajectories are allowlist-sanitized (stream chunks and nested thinking are
+  dropped; secret-key fields are masked), but sanitized is **not** non-sensitive.
+  Tool inputs/outputs, user questions, and generated report text still appear.
+- Recording requires an explicit `--record-sensitive` confirmation. Without it,
+  the eval runner refuses to start model calls.
+- `evals/runs/` is gitignored. Do not commit, share, or publish run directories.
+- Keep artifacts locally only as long as needed for compare/debug, then delete
+  the label directory (`rm -rf evals/runs/<label>`). Prefer rotating labels over
+  overwriting: an existing label is refused so baselines stay intact.
