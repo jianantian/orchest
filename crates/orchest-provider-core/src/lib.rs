@@ -18,6 +18,7 @@ pub mod auth;
 pub mod gen;
 pub mod http;
 pub mod pricing;
+pub mod catalog;
 pub mod registry;
 pub mod retry;
 pub mod telemetry;
@@ -37,3 +38,7 @@ pub use http::{build_client, shared_client, HttpClientConfig};
 pub use pricing::{Cost, Meter, Pricing};
 pub use retry::RetryPolicy;
 pub use telemetry::{new_trace_id, LatencyTimer};
+pub use catalog::{
+    AsrCatalogExt, CatalogExt, ChatCatalogExt, GenCatalogExt, ModelFilter, ModelRecord,
+    ModelStatus, RealtimeCatalogExt, TtsCatalogExt,
+};

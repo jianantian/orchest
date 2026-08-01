@@ -69,6 +69,9 @@ pub struct CapabilityDescriptor {
     pub duplex: bool,
     /// Mid-stream barge-in (realtime).
     pub interruptible: bool,
+    /// Whether this model is the default selection for its (capability, provider).
+    #[serde(default)]
+    pub default_for_provider: bool,
     pub source: CapabilitySource,
     /// Typed per-capability detail. Not flattened into the core.
     #[serde(default)]
@@ -93,6 +96,7 @@ impl CapabilityDescriptor {
             thinking: false,
             duplex: false,
             interruptible: false,
+            default_for_provider: false,
             source: CapabilitySource::Static,
             ext: CapabilityExt::None,
         }
@@ -150,6 +154,12 @@ impl CapabilityDescriptor {
     #[must_use]
     pub fn interruptible(mut self, yes: bool) -> Self {
         self.interruptible = yes;
+        self
+    }
+
+    #[must_use]
+    pub fn default_for_provider(mut self, v: bool) -> Self {
+        self.default_for_provider = v;
         self
     }
 
