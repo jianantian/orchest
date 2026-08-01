@@ -1,4 +1,4 @@
-//! Authentication: users, sessions, magic link tokens.
+//! Authentication: users, sessions, password-reset tokens.
 #![allow(dead_code, clippy::too_many_arguments)]
 
 use std::sync::{Arc, Mutex};
@@ -30,10 +30,9 @@ pub struct Session {
 }
 
 #[derive(Debug, Clone)]
-pub struct MagicToken {
+pub struct ResetToken {
     pub id: String,
-    pub email: Option<String>,
-    pub phone: Option<String>,
+    pub user_id: String,
     pub token: String,
     pub created_at: String,
     pub expires_at: String,
@@ -68,10 +67,9 @@ impl AuthStore {
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL
                 );
-                CREATE TABLE IF NOT EXISTS magic_tokens (
+                CREATE TABLE IF NOT EXISTS reset_tokens (
                     id         TEXT PRIMARY KEY,
-                    email      TEXT,
-                    phone      TEXT,
+                    user_id    TEXT NOT NULL REFERENCES users(id),
                     token      TEXT NOT NULL UNIQUE,
                     used       INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
@@ -84,6 +82,9 @@ impl AuthStore {
                 "ALTER TABLE gifts ADD COLUMN creator_id TEXT REFERENCES users(id)",
                 [],
             );
+            // Superseded by reset_tokens (the old magic-link login flow was
+            // removed); drop the stale table so its rows never linger.
+            let _ = c.execute("DROP TABLE IF EXISTS magic_tokens", []);
         }
         Ok(Self { conn })
     }
@@ -207,12 +208,38 @@ impl AuthStore {
         }
     }
 
-    pub fn find_or_create_by_email(&self, email: &str, provider: &str) -> AppResult<User> {
-        if let Some(user) = self.find_by_email(email)? {
-            return Ok(user);
+    /// Set or replace the account's password (signed-in user, session
+    /// checked by the handler). Also used by the password-reset flow:
+    /// `handle_reset` redeems the reset token and calls this.
+    pub fn set_password(&self, user_id: &str, password: &str) -> AppResult<()> {
+        let hash = hash_password(password);
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute(
+            "UPDATE users SET password_hash=?2 WHERE id=?1",
+            params![user_id, hash],
+        )? == 0
+        {
+            return Err(AppError::NotFound(format!("user {user_id} not found")));
         }
-        let name = email.split('@').next().unwrap_or(email);
-        self.create_user(Some(email), None, name, provider, None)
+        Ok(())
+    }
+
+    /// Attach an OAuth provider identity to an existing account (email
+    /// match). Lets a Google sign-in land on the same account as the
+    /// password/magic one instead of dead-ending in EMAIL_EXISTS.
+    pub fn link_provider(&self, user_id: &str, provider: &str, provider_id: &str) -> AppResult<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "UPDATE users SET provider=?2, provider_id=?3 WHERE id=?1",
+            params![user_id, provider, provider_id],
+        )?;
+        Ok(())
     }
 
     // ── Sessions ────────────────────────────────────
@@ -262,13 +289,20 @@ impl AuthStore {
         Ok(())
     }
 
-    // ── Magic tokens ────────────────────────────────
+    /// Drop every session for a user. Called after a password reset: a
+    /// password change invalidates any session minted under the old one.
+    pub fn revoke_user_sessions(&self, user_id: &str) -> AppResult<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute("DELETE FROM sessions WHERE user_id = ?1", params![user_id])?;
+        Ok(())
+    }
 
-    pub fn create_magic_token(
-        &self,
-        email: Option<&str>,
-        phone: Option<&str>,
-    ) -> AppResult<MagicToken> {
+    // ── Password-reset tokens ───────────────────────
+
+    pub fn create_reset_token(&self, user_id: &str) -> AppResult<ResetToken> {
         let conn = self
             .conn
             .lock()
@@ -276,50 +310,75 @@ impl AuthStore {
         let id = Uuid::new_v4().to_string();
         let token = Uuid::new_v4().simple().to_string();
         let now = unix_now();
-        let expires = unix_after(600);
+        let expires = unix_after(30 * 60);
         conn.execute(
-            "INSERT INTO magic_tokens (id, email, phone, token, used, created_at, expires_at) VALUES (?1,?2,?3,?4,0,?5,?6)",
-            params![id, email, phone, token, now, expires],
+            "INSERT INTO reset_tokens (id, user_id, token, used, created_at, expires_at) \
+             VALUES (?1,?2,?3,0,?4,?5)",
+            params![id, user_id, token, now, expires],
         )?;
-        Ok(MagicToken {
+        Ok(ResetToken {
             id,
-            email: email.map(String::from),
-            phone: phone.map(String::from),
+            user_id: user_id.to_string(),
             token,
             created_at: now,
             expires_at: expires,
         })
     }
 
-    pub fn redeem_magic_token(&self, token: &str) -> AppResult<Option<MagicToken>> {
+    /// Redeem a reset token: single-use, 30-minute lifetime. Returns the
+    /// owning user id on success and marks the token used.
+    pub fn redeem_reset_token(&self, token: &str) -> AppResult<Option<String>> {
         let conn = self
             .conn
             .lock()
             .map_err(|e| AppError::Database(e.to_string()))?;
         let mut stmt = conn.prepare(
-            "SELECT id, email, phone, token, used, created_at, expires_at FROM magic_tokens \
+            "SELECT user_id FROM reset_tokens \
              WHERE token = ?1 AND used = 0 AND expires_at > ?2",
         )?;
         let now = unix_now();
-        let mt = stmt
-            .query_row(params![token, now], |row| {
-                Ok(MagicToken {
-                    id: row.get(0)?,
-                    email: row.get(1)?,
-                    phone: row.get(2)?,
-                    token: row.get(3)?,
-                    created_at: row.get(5)?,
-                    expires_at: row.get(6)?,
-                })
-            })
+        let user_id = stmt
+            .query_row(params![token, now], |row| row.get::<_, String>(0))
             .ok();
-        if mt.is_some() {
+        if user_id.is_some() {
             conn.execute(
-                "UPDATE magic_tokens SET used = 1 WHERE token = ?1",
+                "UPDATE reset_tokens SET used = 1 WHERE token = ?1",
                 params![token],
             )?;
         }
-        Ok(mt)
+        Ok(user_id)
+    }
+}
+
+// ── Rate limiting ──────────────────────────────────────────
+
+/// Demo-grade in-memory fixed-window limiter. Keys are email addresses
+/// (login/register/forgot) — IP-based limiting would need ConnectInfo
+/// plumbing and buys little on localhost. A determined attacker can rotate
+/// emails; this stops casual spam and brute force.
+#[derive(Default)]
+pub struct RateLimiter {
+    hits: Mutex<std::collections::HashMap<String, std::collections::VecDeque<i64>>>,
+}
+
+impl RateLimiter {
+    /// Record a hit and report whether it is within `max` hits per
+    /// `window_secs`.
+    pub fn allow(&self, key: &str, max: usize, window_secs: i64) -> bool {
+        let now = chrono::Utc::now().timestamp();
+        let mut hits = match self.hits.lock() {
+            Ok(h) => h,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let q = hits.entry(key.to_string()).or_default();
+        while q.front().is_some_and(|t| now - *t > window_secs) {
+            q.pop_front();
+        }
+        if q.len() >= max {
+            return false;
+        }
+        q.push_back(now);
+        true
     }
 }
 
@@ -329,13 +388,15 @@ use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
-pub async fn send_magic_link_email(to: &str, token: &str, base_url: &str) -> Result<(), String> {
+pub async fn send_reset_email(to: &str, token: &str, base_url: &str) -> Result<(), String> {
     let smtp_host = std::env::var("SMTP_HOST").unwrap_or_else(|_| "smtp.resend.com".into());
     let smtp_user = std::env::var("SMTP_USER").unwrap_or_else(|_| "resend".into());
     let smtp_pass = std::env::var("SMTP_PASS").unwrap_or_default();
     let from = std::env::var("SMTP_FROM").unwrap_or_else(|_| "Moment <noreply@moment.app>".into());
 
-    let link = format!("{base_url}/api/auth/verify?token={token}");
+    // The reset link opens the SPA's /reset-password page (token in query),
+    // not a backend endpoint — the page posts to POST /api/auth/reset.
+    let link = format!("{base_url}/reset-password?token={token}");
 
     let email = Message::builder()
         .from(
@@ -345,12 +406,13 @@ pub async fn send_magic_link_email(to: &str, token: &str, base_url: &str) -> Res
         .to(to
             .parse()
             .map_err(|e: lettre::address::AddressError| e.to_string())?)
-        .subject("Your Moment login link")
+        .subject("Reset your Moment password")
         .header(ContentType::TEXT_HTML)
         .body(format!(
-            r#"<p>Tap the link below to sign in to Moment:</p>
+            r#"<p>Tap the link below to reset your Moment password:</p>
             <p><a href="{link}">{link}</a></p>
-            <p>This link expires in 10 minutes.</p>"#,
+            <p>This link expires in 30 minutes. If you didn't ask for a
+            password reset, you can ignore this email.</p>"#,
         ))
         .map_err(|e| e.to_string())?;
 
@@ -374,96 +436,116 @@ use axum::{
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 
-#[derive(Deserialize)]
-pub struct SendLinkRequest {
-    pub email: Option<String>,
-    pub phone: Option<String>,
-}
-
 #[derive(Serialize)]
 pub struct AuthResponse {
     pub user: User,
     pub token: String,
 }
 
-pub async fn handle_send_link(
-    State(state): State<crate::state::AppState>,
-    Json(req): Json<SendLinkRequest>,
-) -> impl IntoResponse {
-    if let Some(email) = &req.email {
-        if email.is_empty() || !email.contains('@') {
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(serde_json::json!({"error":"INVALID_EMAIL"})),
-            );
-        }
-        let mt = match state.auth_store.create_magic_token(Some(email), None) {
-            Ok(t) => t,
-            Err(_) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error":"INTERNAL"})),
-                )
-            }
-        };
-
-        let base_url = std::env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into());
-        if let Err(e) = send_magic_link_email(email, &mt.token, &base_url).await {
-            eprintln!("[auth] failed to send email: {e}");
-        }
-
-        return (StatusCode::OK, Json(serde_json::json!({"ok":true})));
-    }
-
-    (
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({"error":"EMAIL_OR_PHONE_REQUIRED"})),
-    )
+#[derive(Deserialize)]
+pub struct ForgotRequest {
+    pub email: String,
 }
 
 #[derive(Deserialize)]
-pub struct VerifyQuery {
+pub struct ResetRequest {
     pub token: String,
+    pub password: String,
 }
 
-pub async fn handle_verify(
+/// POST /api/auth/forgot — email a password-reset link.
+///
+/// Answers identically whether or not the email exists (no account
+/// enumeration); unknown emails simply skip token creation. Rate-limited
+/// per email so a bored client cannot spam the mail relay (or the dev log).
+pub async fn handle_forgot(
     State(state): State<crate::state::AppState>,
-    Query(q): Query<VerifyQuery>,
-    jar: CookieJar,
+    Json(req): Json<ForgotRequest>,
 ) -> impl IntoResponse {
-    let mt = match state.auth_store.redeem_magic_token(&q.token) {
-        Ok(Some(t)) => t,
-        _ => return (StatusCode::NOT_FOUND, "Invalid or expired link").into_response(),
-    };
-
-    let provider = if mt.email.is_some() { "email" } else { "phone" };
-    let user = match state
-        .auth_store
-        .find_or_create_by_email(mt.email.as_deref().unwrap_or(""), provider)
+    if req.email.is_empty() || !req.email.contains('@') {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error":"INVALID_EMAIL"})),
+        )
+            .into_response();
+    }
+    if !state
+        .rate_limiter
+        .allow(&format!("forgot:{}", req.email.to_lowercase()), 5, 3600)
     {
-        Ok(u) => u,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response(),
-    };
-
-    let session = match state.auth_store.create_session(&user.id) {
-        Ok(s) => s,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response(),
-    };
-
-    let cookie = Cookie::build(("session_token", session.token))
-        .path("/")
-        .http_only(true)
-        .secure(false) // TODO: true in production
-        .same_site(axum_extra::extract::cookie::SameSite::Lax)
-        .max_age(time::Duration::days(7))
-        .build();
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({"error":"RATE_LIMITED"})),
+        )
+            .into_response();
+    }
 
     let base_url = std::env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into());
-    (
-        jar.add(cookie),
-        Redirect::to(&format!("{base_url}/?auth_done=1")),
-    )
-        .into_response()
+    if let Ok(Some(user)) = state.auth_store.find_by_email(&req.email) {
+        if let Ok(rt) = state.auth_store.create_reset_token(&user.id) {
+            let smtp_pass = std::env::var("SMTP_PASS").unwrap_or_default();
+            let link = format!("{base_url}/reset-password?token={}", rt.token);
+            if smtp_pass.is_empty() {
+                // No SMTP configured (local dev): surface the link in the
+                // server log so the flow stays testable before SMTP exists.
+                eprintln!("[auth] dev mode, reset link for {}: {link}", req.email);
+            } else if let Err(e) = send_reset_email(&req.email, &rt.token, &base_url).await {
+                eprintln!("[auth] failed to send reset email: {e}");
+            }
+        }
+    }
+
+    (StatusCode::OK, Json(serde_json::json!({"ok":true}))).into_response()
+}
+
+/// POST /api/auth/reset — redeem a reset token and set a new password.
+///
+/// Single-use, 30-minute tokens. A successful reset invalidates every
+/// session minted under the old password and signs the user in fresh.
+pub async fn handle_reset(
+    State(state): State<crate::state::AppState>,
+    jar: CookieJar,
+    Json(req): Json<ResetRequest>,
+) -> impl IntoResponse {
+    let user_id = match state.auth_store.redeem_reset_token(&req.token) {
+        Ok(Some(id)) => id,
+        _ => {
+            return (
+                StatusCode::GONE,
+                Json(serde_json::json!({"error":"INVALID_TOKEN"})),
+            )
+                .into_response()
+        }
+    };
+    if req.password.len() < 8 {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error":"WEAK_PASSWORD"})),
+        )
+            .into_response();
+    }
+    if let Err(e) = state.auth_store.set_password(&user_id, &req.password) {
+        eprintln!("[auth] reset set_password failed: {e}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error":"INTERNAL"})),
+        )
+            .into_response();
+    }
+    // The password change invalidates every session minted under the old one.
+    let _ = state.auth_store.revoke_user_sessions(&user_id);
+    let session = match state.auth_store.create_session(&user_id) {
+        Ok(s) => s,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error":"INTERNAL"})),
+            )
+                .into_response()
+        }
+    };
+    let cookie = session_cookie(session.token.clone());
+    (jar.add(cookie), Json(serde_json::json!({"ok":true}))).into_response()
 }
 
 pub async fn handle_me(
@@ -514,16 +596,47 @@ pub struct GoogleCallback {
 
 pub async fn handle_google_login(
     State(_state): State<crate::state::AppState>,
+    jar: CookieJar,
 ) -> impl IntoResponse {
     let client_id = std::env::var("GOOGLE_CLIENT_ID").unwrap_or_default();
+    let client_secret = std::env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default();
+    // Fail loudly instead of redirecting to Google with an empty client_id
+    // (which surfaces as the cryptic "Access blocked: Authorization Error"
+    // page users have no way to act on).
+    if client_id.is_empty() || client_secret.is_empty() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "<h1>Google sign-in is not configured</h1>\
+             <p>The server is missing <code>GOOGLE_CLIENT_ID</code> / <code>GOOGLE_CLIENT_SECRET</code>.</p>\
+             <p>Create an OAuth client in <a href=\"https://console.cloud.google.com/apis/credentials\">Google Cloud Console</a>,\n\
+             add <code>http://localhost:3000/api/auth/oauth/google/cb</code> to its\n\
+             <em>Authorized redirect URIs</em>, then set the two variables in\n\
+             <code>examples/demo/music-gift/.env</code> (see .env.example).</p>",
+        )
+            .into_response();
+    }
+
     let redirect_uri = std::env::var("GOOGLE_REDIRECT_URI")
         .unwrap_or_else(|_| "http://localhost:3000/api/auth/oauth/google/cb".into());
 
+    // Random state bound to this browser (login CSRF): the callback must
+    // see a state this server issued, or an attacker could log a victim
+    // into the attacker's account.
+    let state = Uuid::new_v4().simple().to_string();
+    let state_cookie = Cookie::build(("oauth_state", state.clone()))
+        .path("/api/auth/oauth/google/cb")
+        .http_only(true)
+        .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .max_age(time::Duration::minutes(10))
+        .build();
+
+    // Query-escape the redirect URI so Google parses it as one parameter.
+    let encoded_uri = redirect_uri.replace(':', "%3A").replace('/', "%2F");
     let url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid%20email%20profile&state=google",
-        client_id, redirect_uri
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid%20email%20profile&state={}",
+        client_id, encoded_uri, state
     );
-    Redirect::to(&url)
+    (jar.add(state_cookie), Redirect::to(&url)).into_response()
 }
 
 pub async fn handle_google_callback(
@@ -531,8 +644,24 @@ pub async fn handle_google_callback(
     Query(q): Query<GoogleCallback>,
     jar: CookieJar,
 ) -> impl IntoResponse {
+    // Reject callbacks whose state this server never issued (login CSRF).
+    let issued = jar
+        .get("oauth_state")
+        .map(|c| c.value())
+        .unwrap_or_default();
+    if issued.is_empty() || issued != q.state {
+        return (StatusCode::FORBIDDEN, "OAuth state mismatch").into_response();
+    }
+
     let client_id = std::env::var("GOOGLE_CLIENT_ID").unwrap_or_default();
     let client_secret = std::env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default();
+    if client_id.is_empty() || client_secret.is_empty() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Google OAuth is not configured",
+        )
+            .into_response();
+    }
     let redirect_uri = std::env::var("GOOGLE_REDIRECT_URI")
         .unwrap_or_else(|_| "http://localhost:3000/api/auth/oauth/google/cb".into());
 
@@ -583,18 +712,37 @@ pub async fn handle_google_callback(
 
     let user = match state.auth_store.find_by_provider("google", google_id) {
         Ok(Some(u)) => u,
-        _ => match state
-            .auth_store
-            .create_user(email, None, name, "google", Some(google_id))
-        {
-            Ok(u) => u,
-            // Reachable: an email-registered user who later signs in with
-            // Google trips UNIQUE(email) here — map it, don't panic.
-            Err(_) => {
-                return (StatusCode::CONFLICT, Json(json!({"error":"EMAIL_EXISTS"})))
-                    .into_response()
+        _ => {
+            // No Google-linked account. If this email already has a
+            // password/magic account, link Google to it instead of
+            // dead-ending in EMAIL_EXISTS — one person, one account.
+            let existing = email.and_then(|e| state.auth_store.find_by_email(e).ok().flatten());
+            match existing {
+                Some(u) => {
+                    if let Err(e) = state.auth_store.link_provider(&u.id, "google", google_id) {
+                        eprintln!("[auth] google link failed: {e}");
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({"error":"INTERNAL"})),
+                        )
+                            .into_response();
+                    }
+                    u
+                }
+                None => {
+                    match state
+                        .auth_store
+                        .create_user(email, None, name, "google", Some(google_id))
+                    {
+                        Ok(u) => u,
+                        Err(_) => {
+                            return (StatusCode::CONFLICT, Json(json!({"error":"EMAIL_EXISTS"})))
+                                .into_response()
+                        }
+                    }
+                }
             }
-        },
+        }
     };
 
     let session = match state.auth_store.create_session(&user.id) {
@@ -699,6 +847,16 @@ pub async fn handle_register(
     jar: CookieJar,
     Json(body): Json<RegisterRequest>,
 ) -> impl IntoResponse {
+    if !state
+        .rate_limiter
+        .allow(&format!("register:{}", body.email.to_lowercase()), 10, 900)
+    {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error":"RATE_LIMITED"})),
+        )
+            .into_response();
+    }
     if body.email.is_empty() || !body.email.contains('@') {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -748,6 +906,16 @@ pub async fn handle_login(
     jar: CookieJar,
     Json(body): Json<LoginRequest>,
 ) -> impl IntoResponse {
+    if !state
+        .rate_limiter
+        .allow(&format!("login:{}", body.email.to_lowercase()), 10, 900)
+    {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error":"RATE_LIMITED"})),
+        )
+            .into_response();
+    }
     match state
         .auth_store
         .verify_password(&body.email, &body.password)
@@ -776,6 +944,48 @@ pub async fn handle_login(
         _ => (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"INVALID_CREDENTIALS"})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SetPasswordRequest {
+    pub password: String,
+}
+
+/// Set a new password for the signed-in user (session required). The
+/// recovery flow is: forgot password → magic link login → this endpoint.
+/// An 8-char minimum keeps it consistent with registration.
+pub async fn handle_set_password(
+    State(state): State<crate::state::AppState>,
+    jar: CookieJar,
+    Json(body): Json<SetPasswordRequest>,
+) -> impl IntoResponse {
+    let token = jar.get("session_token").map(|c| c.value().to_string());
+    let user = match token {
+        Some(t) => state.auth_store.validate_session(&t),
+        None => Ok(None),
+    };
+    let Ok(Some(user)) = user else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error":"NOT_AUTHENTICATED"})),
+        )
+            .into_response();
+    };
+    if body.password.len() < 8 {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error":"WEAK_PASSWORD"})),
+        )
+            .into_response();
+    }
+    match state.auth_store.set_password(&user.id, &body.password) {
+        Ok(_) => (StatusCode::OK, Json(json!({"ok":true}))).into_response(),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error":"INTERNAL"})),
         )
             .into_response(),
     }

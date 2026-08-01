@@ -84,6 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         music_provider: config.music_provider,
         gift_store,
         auth_store,
+        rate_limiter: std::sync::Arc::new(auth::RateLimiter::default()),
         data_dir: cli.data_dir,
         countdown_tool: config.countdown_tool,
     };

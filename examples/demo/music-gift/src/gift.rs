@@ -29,6 +29,11 @@ pub struct Gift {
     /// viewer the ability to delete it. Returned once, at creation only.
     #[serde(skip_serializing, default)]
     pub creator_token: String,
+    /// Account the gift belongs to (set at creation when logged in, or later
+    /// via `POST /api/gift/claim`). A session matching `creator_id` is an
+    /// alternative ownership proof to `creator_token` — that is what makes
+    /// gifts manageable from any device after login.
+    pub creator_id: Option<String>,
     pub published: bool,
     pub likes: Vec<String>,
     pub created_at: String,
@@ -119,7 +124,7 @@ pub struct GiftStore {
 const SELECT_COLS: &str = "\
     SELECT id, kind, lyrics, meta, audio_url, cover_url, photos, gen_handle, \
            gen_status, countdown_status, lrc, duration_secs, creator_token, \
-           published, likes, created_at, published_at FROM gifts";
+           published, likes, created_at, published_at, creator_id FROM gifts";
 
 impl GiftStore {
     pub fn open(path: &str) -> AppResult<Self> {
@@ -142,6 +147,7 @@ impl GiftStore {
                 gen_handle      TEXT,
                 gen_status      TEXT,
                 creator_token   TEXT NOT NULL,
+                creator_id      TEXT,
                 published       INTEGER NOT NULL DEFAULT 1,
                 likes           TEXT NOT NULL DEFAULT '[]',
                 created_at      TEXT NOT NULL,
@@ -167,8 +173,8 @@ impl GiftStore {
         conn.execute(
             "INSERT INTO gifts (id, kind, lyrics, meta, audio_url, cover_url, photos, gen_handle, \
              gen_status, countdown_status, lrc, duration_secs, creator_token, published, \
-             likes, created_at, published_at) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+             likes, created_at, published_at, creator_id) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
             params![
                 gift.id,
                 gift.kind,
@@ -187,6 +193,7 @@ impl GiftStore {
                 serde_json::to_string(&gift.likes)?,
                 gift.created_at,
                 gift.published_at,
+                gift.creator_id,
             ],
         )?;
         Ok(())
@@ -372,9 +379,45 @@ impl GiftStore {
         Ok(())
     }
 
-    /// Link a gift to an authenticated user. Purely additive metadata: the
-    /// `creator_token` remains the only mutation check, and gifts created
-    /// without a session keep `creator_id` NULL.
+    /// All gifts owned by an account, newest first — the cross-device view
+    /// behind `GET /api/my-gifts`. Includes unpublished and unfinished ones.
+    pub fn list_by_creator(&self, creator_id: &str) -> AppResult<Vec<Gift>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let sql = format!("{SELECT_COLS} WHERE creator_id = ?1 ORDER BY created_at DESC");
+        let mut stmt = conn.prepare(&sql)?;
+        let gifts: Vec<Gift> = stmt
+            .query_map(params![creator_id], row_to_gift)?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(gifts)
+    }
+
+    /// Attach a gift to an account, proving ownership with its creator
+    /// token. Idempotent; returns false when the token does not match.
+    pub fn claim_to_creator(
+        &self,
+        id: &str,
+        creator_token: &str,
+        creator_id: &str,
+    ) -> AppResult<bool> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let changed = conn.execute(
+            "UPDATE gifts SET creator_id=?3 \
+             WHERE id=?1 AND creator_token=?2 AND (creator_id IS NULL OR creator_id<>?3)",
+            params![id, creator_token, creator_id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Link a gift to an authenticated user. Set at creation when a session
+    /// is present; the token remains a valid ownership proof too, and a
+    /// matching session grants the same rights (see `verify_creator`).
     pub fn update_creator_id(&self, id: &str, creator_id: &str) -> AppResult<()> {
         let conn = self
             .conn
@@ -445,6 +488,7 @@ fn row_to_gift(row: &rusqlite::Row<'_>) -> rusqlite::Result<Gift> {
         likes,
         created_at: row.get(15)?,
         published_at: row.get(16)?,
+        creator_id: row.get(17)?,
     })
 }
 
@@ -497,6 +541,54 @@ mod tests {
 
     /// Degraded stages are stored in the gift's meta so the frontend can
     /// show them; an empty list clears a stale marker from a previous run.
+    /// Claiming is token-proof and idempotent; the account list then sees
+    /// the gift (this is what makes Mine cross-device after login).
+    #[test]
+    fn claim_attaches_gift_to_account_and_list_by_creator_returns_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("gifts.db");
+        let store = GiftStore::open(&db.to_string_lossy()).expect("open store");
+        let gift = Gift {
+            id: "g1".to_string(),
+            kind: "song".to_string(),
+            lyrics: Some("la".to_string()),
+            meta: json!({}),
+            audio_url: None,
+            cover_url: None,
+            photos: vec![],
+            gen_handle: None,
+            gen_status: None,
+            countdown_status: None,
+            lrc: None,
+            duration_secs: None,
+            creator_token: "tok".to_string(),
+            creator_id: None,
+            published: false,
+            likes: vec![],
+            created_at: "10".to_string(),
+            published_at: None,
+        };
+        store.create(&gift).expect("create");
+
+        // Wrong token: no attach.
+        assert!(!store
+            .claim_to_creator("g1", "wrong", "user-1")
+            .expect("claim"));
+        assert!(store.list_by_creator("user-1").expect("list").is_empty());
+
+        // Right token: attached; idempotent on repeat.
+        assert!(store
+            .claim_to_creator("g1", "tok", "user-1")
+            .expect("claim"));
+        assert!(!store
+            .claim_to_creator("g1", "tok", "user-1")
+            .expect("claim again"));
+        let mine = store.list_by_creator("user-1").expect("list");
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].id, "g1");
+        assert_eq!(mine[0].creator_id.as_deref(), Some("user-1"));
+    }
+
     #[test]
     fn set_meta_degraded_round_trips() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -516,6 +608,7 @@ mod tests {
             lrc: None,
             duration_secs: None,
             creator_token: "tok".to_string(),
+            creator_id: None,
             published: false,
             likes: vec![],
             created_at: "0".to_string(),

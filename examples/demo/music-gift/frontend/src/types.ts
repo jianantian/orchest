@@ -57,6 +57,8 @@ export interface Gift {
   photos: string[];
   gen_handle: string | null;
   gen_status: string | null;
+  /** Account the gift belongs to (null until claimed / created logged in). */
+  creator_id: string | null;
   published: boolean;
   likes: string[];
   created_at: string;
