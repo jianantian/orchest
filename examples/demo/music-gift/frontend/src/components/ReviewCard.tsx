@@ -86,7 +86,7 @@ export function ReviewCard({
           )}
         </div>
       )}
-      {degraded && !review && (
+      {degraded && (
         <div className="degraded-note">{t("quality_degraded")}</div>
       )}
       <textarea
