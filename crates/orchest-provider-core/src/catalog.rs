@@ -65,8 +65,8 @@ pub struct ModelRecord {
     pub display_name: &'static str,
     /// REQUIRED free-text description (non-empty after trim).
     pub description: &'static str,
-    pub input_modalities: &'static [Modality],
-    pub output_modalities: &'static [Modality],
+    pub input_modalities: Vec<Modality>,
+    pub output_modalities: Vec<Modality>,
     pub streaming: bool,
     pub duplex: bool,
     pub interruptible: bool,
@@ -88,8 +88,8 @@ impl ModelRecord {
     /// Project this row onto the registry's queryable descriptor.
     pub fn to_descriptor(&self) -> CapabilityDescriptor {
         let mut desc = CapabilityDescriptor::new(self.provider, self.model, self.capability)
-            .with_input_modalities(self.input_modalities.to_vec())
-            .with_output_modalities(self.output_modalities.to_vec())
+            .with_input_modalities(self.input_modalities.clone())
+            .with_output_modalities(self.output_modalities.clone())
             .streaming(self.streaming)
             .tools(self.tools)
             .thinking(self.thinking)
@@ -134,6 +134,70 @@ pub struct ModelFilter {
     pub include_deprecated: bool,
 }
 
+impl ModelFilter {
+    /// Whether `r` satisfies this filter.
+    pub fn matches(&self, r: &ModelRecord) -> bool {
+        if let Some(capability) = self.capability {
+            if r.capability != capability {
+                return false;
+            }
+        }
+        if let Some(provider) = self.provider {
+            if r.provider != provider {
+                return false;
+            }
+        }
+        if let Some(streaming) = self.streaming {
+            if r.streaming != streaming {
+                return false;
+            }
+        }
+        if let Some(duplex) = self.duplex {
+            if r.duplex != duplex {
+                return false;
+            }
+        }
+        if let Some(interruptible) = self.interruptible {
+            if r.interruptible != interruptible {
+                return false;
+            }
+        }
+        if let Some(tools) = self.tools {
+            if r.tools != tools {
+                return false;
+            }
+        }
+        if let Some(thinking) = self.thinking {
+            if r.thinking != thinking {
+                return false;
+            }
+        }
+        if let Some(status) = self.status {
+            if r.status != status {
+                return false;
+            }
+        }
+        if !self.include_deprecated && r.status == ModelStatus::Deprecated {
+            return false;
+        }
+        if let Some(accepts) = &self.accepts {
+            for modality in accepts {
+                if !r.input_modalities.contains(modality) {
+                    return false;
+                }
+            }
+        }
+        if let Some(emits) = &self.emits {
+            for modality in emits {
+                if !r.output_modalities.contains(modality) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,8 +211,8 @@ mod tests {
             capability: Capability::Asr,
             display_name: "Fun-ASR Realtime",
             description,
-            input_modalities: &[Modality::Audio],
-            output_modalities: &[Modality::Text],
+            input_modalities: vec![Modality::Audio],
+            output_modalities: vec![Modality::Text],
             streaming: true,
             duplex: true,
             interruptible: false,
@@ -187,8 +251,8 @@ mod tests {
             capability: Capability::Chat,
             display_name: "GPT-4o",
             description: "chat model",
-            input_modalities: &[Modality::Text],
-            output_modalities: &[Modality::Text],
+            input_modalities: vec![Modality::Text],
+            output_modalities: vec![Modality::Text],
             streaming: true,
             duplex: false,
             interruptible: false,

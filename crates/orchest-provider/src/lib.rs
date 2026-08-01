@@ -31,8 +31,14 @@ pub mod facade;
 #[cfg(feature = "testing")]
 pub mod fakes;
 pub mod registry;
+pub mod catalog;
+
 
 pub use registry::{Query, Registry};
+
+// Credential-free multi-capability catalog discovery (Batch 0).
+pub use catalog::{find_model, find_model_for, list_models, ModelFilter};
+pub use orchest_provider_core::catalog::{CatalogExt, ModelRecord, ModelStatus};
 
 // Re-export the registry building blocks so impl crates and consumers share one
 // set of entry/config types.
