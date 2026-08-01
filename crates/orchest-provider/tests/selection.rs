@@ -239,7 +239,7 @@ fn with_builtin_registers_aliyun_asr_dialect() {
         .provider("aliyun")
         .select()
         .expect("aliyun streaming ASR is registered under the stream feature");
-    assert_eq!(picked.descriptor.model.as_ref(), "paraformer-realtime-v2");
+    assert_eq!(picked.descriptor.model.as_ref(), "fun-asr-realtime");
 }
 
 #[cfg(feature = "stream")]

@@ -1,4 +1,4 @@
-//! Aliyun DashScope streaming-ASR (FunASR / Qwen-ASR) on the spine (Issue 006).
+//! Aliyun DashScope streaming-ASR (Fun-ASR / Qwen-Audio) on the spine (Issue 006).
 //! Ported from `agent-runtime-asr-providers`'s `providers/aliyun`, over the spine
 //! [`ProtocolError`] / [`StreamEvent`].
 //!
@@ -23,6 +23,7 @@ use tokio::sync::mpsc;
 use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 
 const DEFAULT_WS_URL: &str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/";
+const DEFAULT_MODEL: &str = "fun-asr-realtime";
 
 #[derive(Serialize)]
 struct ClientMessage {
@@ -296,7 +297,7 @@ fn host_of(url: &str) -> &str {
 
 /// The static descriptor the registry filters on for the aliyun dialect.
 pub fn entry_descriptor() -> CapabilityDescriptor {
-    CapabilityDescriptor::new("aliyun", "paraformer-realtime-v2", Capability::Asr)
+    CapabilityDescriptor::new("aliyun", DEFAULT_MODEL, Capability::Asr)
         .streaming(true)
         .duplex(true)
         .with_input_modalities([Modality::Audio])
@@ -311,7 +312,7 @@ pub fn from_provider_config(cfg: &ProviderConfig) -> Result<AliyunAsr, ProtocolE
         .clone()
         .ok_or_else(|| ProtocolError::new(ErrorCode::MissingApiKey, "aliyun requires api_key"))?;
     let model = if cfg.model.is_empty() {
-        "paraformer-realtime-v2".to_string()
+        DEFAULT_MODEL.to_string()
     } else {
         cfg.model.clone()
     };
@@ -433,8 +434,8 @@ mod tests {
 
     #[test]
     fn run_task_and_finish_task_shapes() {
-        let run = build_run_task("t1", "paraformer-realtime-v2", &json!({"vad": true})).unwrap();
-        assert!(run.contains("run-task") && run.contains("paraformer-realtime-v2"));
+        let run = build_run_task("t1", DEFAULT_MODEL, &json!({"vad": true})).unwrap();
+        assert!(run.contains("run-task") && run.contains(DEFAULT_MODEL));
         assert!(build_finish_task("t1").unwrap().contains("finish-task"));
     }
 
