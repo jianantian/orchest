@@ -2,6 +2,8 @@
 
 **Date:** 2026-08-01  
 **Status:** Approved for planning  
+**Implementation plan:** `docs/superpowers/plans/2026-08-01-multi-capability-model-catalog-batch-0-1.md` (Batch 0+1)
+
 **Related:** ADR-0001 (provider unification), ADR-0002 (catalog as capability source), `orchest-protocol::CapabilityDescriptor`, `orchest-provider-http::catalog`
 
 ## Problem
