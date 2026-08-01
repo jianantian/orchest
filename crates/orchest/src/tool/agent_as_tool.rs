@@ -429,9 +429,24 @@ impl AgentAsTool {
                     expect.describe(),
                     output_head(&first.output),
                 );
-                let second = self
+                let second = match self
                     .run_child_attempt(child_config, Vec::new(), correction, ctx)
-                    .await?;
+                    .await
+                {
+                    Ok(second) => second,
+                    Err(mut e) => {
+                        // The correction attempt's RunFailed bills only its own
+                        // spend — add the first attempt's usage so it is not
+                        // lost from the parent's accounting.
+                        let own = e.external_usage.take().unwrap_or_default();
+                        e.external_usage = Some(BudgetUsage {
+                            tokens_used: own.tokens_used + first.usage.tokens_used,
+                            tool_calls_used: own.tool_calls_used + first.usage.tool_calls_used,
+                            cost_usd: own.cost_usd + first.usage.cost_usd,
+                        });
+                        return Err(e);
+                    }
+                };
                 let mut usage = first.usage;
                 usage.tokens_used += second.usage.tokens_used;
                 usage.tool_calls_used += second.usage.tool_calls_used;

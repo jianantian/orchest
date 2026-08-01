@@ -3636,7 +3636,9 @@ async fn max_tool_calls_boundary_enforced() {
 
 /// A tool that fails while reporting out-of-band budget consumption — the
 /// agent-as-tool child-failure shape (hotfix 2026_07_27 / issue #241).
-struct UsageBombTool;
+struct UsageBombTool {
+    parallelism: ToolParallelism,
+}
 
 #[async_trait::async_trait]
 impl Tool for UsageBombTool {
@@ -3653,7 +3655,7 @@ impl Tool for UsageBombTool {
         None
     }
     fn metadata(&self) -> &ToolMetadata {
-        &ToolMetadata {
+        static SERIAL: ToolMetadata = ToolMetadata {
             side_effect: false,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
@@ -3662,6 +3664,21 @@ impl Tool for UsageBombTool {
             timeout: None,
             max_output_tokens: None,
             source: ToolSource::InProcess,
+        };
+        static PARALLEL: ToolMetadata = ToolMetadata {
+            side_effect: false,
+            approval: Approval::Never,
+            execution_mode: ToolExecutionMode::Normal,
+            parallelism: ToolParallelism::ParallelSafe,
+            cost_hint: None,
+            timeout: None,
+            max_output_tokens: None,
+            source: ToolSource::InProcess,
+        };
+        if matches!(self.parallelism, ToolParallelism::ParallelSafe) {
+            &PARALLEL
+        } else {
+            &SERIAL
         }
     }
     async fn execute(
@@ -3739,7 +3756,11 @@ async fn tool_error_external_usage_folds_into_parent_budget() {
         calls: AtomicU32::new(0),
     });
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(UsageBombTool)).unwrap();
+    registry
+        .register(Arc::new(UsageBombTool {
+            parallelism: ToolParallelism::Serial,
+        }))
+        .unwrap();
 
     let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
     let mut events = Vec::new();
@@ -3750,6 +3771,99 @@ async fn tool_error_external_usage_folds_into_parent_budget() {
 
     // The tool's 100 external tokens exceed the 50-token budget; without the
     // error-path fold (issue #241) the run would have completed normally.
+    let (error, kind) = events
+        .iter()
+        .find_map(|e| match e {
+            RuntimeEvent::RunFailed { error, kind } => Some((error.clone(), *kind)),
+            _ => None,
+        })
+        .expect("run must fail on the folded external usage");
+    assert!(error.contains("budget_exceeded"), "error: {error}");
+    assert_eq!(kind, crate::events::RunFailureKind::BudgetExceeded);
+}
+
+/// Two `usage_bomb` calls in one turn — drives the parallel batch path.
+struct TwoBombsOneStepModel;
+
+#[async_trait::async_trait]
+impl ModelAdapter for TwoBombsOneStepModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "two-bombs-one-step"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let has_tool_result = messages.iter().any(|message| {
+            message
+                .content
+                .iter()
+                .any(|block| matches!(block, ContentBlock::ToolResult { .. }))
+        });
+        if has_tool_result {
+            return Ok(ModelResponse {
+                content: vec![ContentBlock::Text("done".into())],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            });
+        }
+        Ok(ModelResponse {
+            content: vec![
+                ContentBlock::ToolUse {
+                    id: "call_1".into(),
+                    name: "usage_bomb".into(),
+                    input: json!({}),
+                },
+                ContentBlock::ToolUse {
+                    id: "call_2".into(),
+                    name: "usage_bomb".into(),
+                    input: json!({}),
+                },
+            ],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::ToolUse,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[tokio::test]
+async fn parallel_tool_error_external_usage_folds_into_parent_budget() {
+    let mut config = test_config();
+    config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;
+    config.budget.max_tokens = Some(150);
+
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(UsageBombTool {
+            parallelism: ToolParallelism::ParallelSafe,
+        }))
+        .unwrap();
+
+    let (handle, mut rx) = AgentRun::start(
+        config,
+        "hi".into(),
+        Arc::new(TwoBombsOneStepModel),
+        registry,
+    );
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    // Two bombs × 100 external tokens exceed the 150-token budget; without
+    // the parallel error-path fold the run would have completed normally.
     let (error, kind) = events
         .iter()
         .find_map(|e| match e {

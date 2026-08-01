@@ -37,7 +37,10 @@ pub struct ToolError {
     /// `ToolOutput::Structured.external_usage` — see `run/actor.rs`. `None`
     /// means "nothing out-of-band to account" (the default; ordinary tools
     /// never set this — and it stays off the wire, so tool-result payloads
-    /// are byte-identical to before).
+    /// are byte-identical to before). Only the *terminal* error of a tool
+    /// call is folded; a hypothetical retryable tool reporting usage on every
+    /// attempt would lose the intermediate attempts' spend (no such producer
+    /// exists today — agent-as-tool errors are always `Fatal`/`Unsafe`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_usage: Option<BudgetUsage>,
 }
