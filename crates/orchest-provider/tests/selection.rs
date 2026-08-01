@@ -559,10 +559,42 @@ fn gen_volcengine_provider_select_defaults_to_seedream_image() {
     assert!(picked.descriptor.default_for_provider);
 }
 
-#[cfg(all(feature = "http", feature = "visual"))]
+#[cfg(all(feature = "http", feature = "stream", feature = "visual"))]
 #[test]
-fn gen_defaults_unique_per_provider() {
+fn defaults_unique_per_capability_provider() {
+    // Global invariant under all weight features: each (capability, provider)
+    // group may have 0 or 1 `default_for_provider` entry — never more — or
+    // provider-only `Query::select` becomes ambiguous.
     let reg = Registry::with_builtin();
+
+    fn assert_at_most_one_default(capability: &str, entries: Vec<&orchest_provider::Entry<impl Sized>>) {
+        use std::collections::HashMap;
+
+        let mut defaults_by_provider: HashMap<&str, Vec<&str>> = HashMap::new();
+        for e in entries {
+            if e.descriptor.default_for_provider {
+                defaults_by_provider
+                    .entry(e.descriptor.provider.as_ref())
+                    .or_default()
+                    .push(e.descriptor.model.as_ref());
+            }
+        }
+        for (provider, models) in defaults_by_provider {
+            assert!(
+                models.len() <= 1,
+                "{capability}/{provider} must have at most one default_for_provider; got {}: {models:?}",
+                models.len()
+            );
+        }
+    }
+
+    assert_at_most_one_default("chat", reg.chat().list());
+    assert_at_most_one_default("asr", reg.asr().list());
+    assert_at_most_one_default("tts", reg.tts().list());
+    assert_at_most_one_default("realtime", reg.realtime().list());
+    assert_at_most_one_default("gen", reg.gen().list());
+
+    // Required Gen defaults remain exactly one each.
     for provider in ["aliyun", "volcengine"] {
         let defaults: Vec<_> = reg
             .gen()
@@ -578,4 +610,5 @@ fn gen_defaults_unique_per_provider() {
         );
     }
 }
+
 
