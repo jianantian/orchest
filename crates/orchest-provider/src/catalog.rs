@@ -5,7 +5,10 @@
 
 use std::sync::LazyLock;
 
-use orchest_protocol::{Capability, Modality};
+use orchest_protocol::Capability;
+#[cfg(feature = "http")]
+use orchest_protocol::Modality;
+#[cfg(feature = "http")]
 use orchest_provider_core::catalog::ChatCatalogExt;
 
 // Re-export discovery types used by consumers via `orchest_provider::catalog`.
@@ -14,15 +17,20 @@ pub use orchest_provider_core::catalog::{CatalogExt, ModelFilter, ModelRecord, M
 static CATALOG: LazyLock<Vec<ModelRecord>> = LazyLock::new(build_catalog);
 
 fn build_catalog() -> Vec<ModelRecord> {
-    let mut out = Vec::new();
     #[cfg(feature = "http")]
     {
+        let mut out = Vec::new();
         for m in orchest_provider_http::catalog::list_models() {
             out.push(project_llm(m));
         }
+        // Batch 1 appends Asr tables here under stream/http features.
+        out
     }
-    // Batch 1 appends Asr tables here under stream/http features.
-    out
+    #[cfg(not(feature = "http"))]
+    {
+        // Batch 1 appends Asr tables here under stream/http features.
+        Vec::new()
+    }
 }
 
 #[cfg(feature = "http")]
