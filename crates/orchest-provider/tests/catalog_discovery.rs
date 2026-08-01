@@ -52,3 +52,19 @@ fn find_model_for_disambiguates_capability() {
     let hit = find_model_for("openai/gpt-5.4", Capability::Chat).expect("chat row");
     assert_eq!(hit.capability, Capability::Chat);
 }
+
+#[cfg(all(feature = "http", feature = "stream"))]
+#[test]
+fn discovery_lists_aliyun_streaming_asr_with_descriptions() {
+    let rows: Vec<_> = list_models(ModelFilter {
+        capability: Some(Capability::Asr),
+        provider: Some("aliyun"),
+        streaming: Some(true),
+        ..Default::default()
+    })
+    .collect();
+    assert!(rows.len() >= 2);
+    for r in &rows {
+        assert!(!r.description.trim().is_empty());
+    }
+}

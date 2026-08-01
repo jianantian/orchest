@@ -176,15 +176,14 @@ fn select_errors_when_multiple_match_without_default() {
         |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime")) as Box<dyn Asr>),
     ));
     reg.register_asr(Entry::new(
-        CapabilityDescriptor::new("aliyun", "qwen-audio-3.0-asr-flash-streaming", Capability::Asr)
-            .streaming(true)
-            .duplex(true),
-        |_| {
-            Ok(Box::new(FakeAsr(
-                "aliyun",
-                "qwen-audio-3.0-asr-flash-streaming",
-            )) as Box<dyn Asr>)
-        },
+        CapabilityDescriptor::new(
+            "aliyun",
+            "qwen-audio-3.0-asr-flash-streaming",
+            Capability::Asr,
+        )
+        .streaming(true)
+        .duplex(true),
+        |_| Ok(Box::new(FakeAsr("aliyun", "qwen-audio-3.0-asr-flash-streaming")) as Box<dyn Asr>),
     ));
     let err = reg
         .asr()
@@ -211,15 +210,14 @@ fn select_prefers_unique_default_for_provider() {
         |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime")) as Box<dyn Asr>),
     ));
     reg.register_asr(Entry::new(
-        CapabilityDescriptor::new("aliyun", "qwen-audio-3.0-asr-flash-streaming", Capability::Asr)
-            .streaming(true)
-            .duplex(true),
-        |_| {
-            Ok(Box::new(FakeAsr(
-                "aliyun",
-                "qwen-audio-3.0-asr-flash-streaming",
-            )) as Box<dyn Asr>)
-        },
+        CapabilityDescriptor::new(
+            "aliyun",
+            "qwen-audio-3.0-asr-flash-streaming",
+            Capability::Asr,
+        )
+        .streaming(true)
+        .duplex(true),
+        |_| Ok(Box::new(FakeAsr("aliyun", "qwen-audio-3.0-asr-flash-streaming")) as Box<dyn Asr>),
     ));
     let picked = reg.asr().provider("aliyun").select().unwrap();
     assert_eq!(picked.descriptor.model.as_ref(), "fun-asr-realtime");
@@ -234,13 +232,12 @@ fn list_still_sorts_by_provider_model_without_default_bias() {
         |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime")) as Box<dyn Asr>),
     ));
     reg.register_asr(Entry::new(
-        CapabilityDescriptor::new("aliyun", "qwen-audio-3.0-asr-flash-streaming", Capability::Asr),
-        |_| {
-            Ok(Box::new(FakeAsr(
-                "aliyun",
-                "qwen-audio-3.0-asr-flash-streaming",
-            )) as Box<dyn Asr>)
-        },
+        CapabilityDescriptor::new(
+            "aliyun",
+            "qwen-audio-3.0-asr-flash-streaming",
+            Capability::Asr,
+        ),
+        |_| Ok(Box::new(FakeAsr("aliyun", "qwen-audio-3.0-asr-flash-streaming")) as Box<dyn Asr>),
     ));
     let list = reg.asr().provider("aliyun").list();
     assert_eq!(list[0].descriptor.model.as_ref(), "fun-asr-realtime");
@@ -507,4 +504,39 @@ fn with_builtin_registers_omni_realtime_dialect() {
         .expect("volcengine omni realtime is registered under the stream feature");
     assert_eq!(picked.descriptor.model.as_ref(), "1.2.1.1");
     assert!(picked.descriptor.duplex && picked.descriptor.interruptible);
+}
+
+#[cfg(feature = "stream")]
+#[test]
+fn aliyun_asr_lists_multiple_catalog_models() {
+    let reg = Registry::with_builtin();
+    let list = reg.asr().provider("aliyun").list();
+    let models: Vec<_> = list.iter().map(|e| e.descriptor.model.as_ref()).collect();
+    assert!(models.contains(&"fun-asr-realtime"));
+    assert!(models.contains(&"qwen-audio-3.0-asr-flash-streaming"));
+    assert!(list.len() >= 2);
+}
+
+#[cfg(feature = "stream")]
+#[test]
+fn aliyun_asr_provider_select_returns_fun_asr_default() {
+    let reg = Registry::with_builtin();
+    let picked = reg.asr().provider("aliyun").select().unwrap();
+    assert_eq!(picked.descriptor.model.as_ref(), "fun-asr-realtime");
+    assert!(picked.descriptor.default_for_provider);
+}
+
+#[cfg(feature = "stream")]
+#[test]
+fn aliyun_asr_id_pins_qwen_streaming_model() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .asr()
+        .id("aliyun/qwen-audio-3.0-asr-flash-streaming")
+        .select()
+        .unwrap();
+    assert_eq!(
+        picked.descriptor.model.as_ref(),
+        "qwen-audio-3.0-asr-flash-streaming"
+    );
 }

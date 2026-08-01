@@ -6,6 +6,8 @@
 //! OpenRouter and similar gateway providers cannot enumerate their full model
 //! list statically; they appear as `LlmModelList::Dynamic` entries.
 
+pub mod asr;
+pub use asr::{http_asr_models, HTTP_ASR_MODELS};
 use std::sync::LazyLock;
 
 use orchest_protocol::{

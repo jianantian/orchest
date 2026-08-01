@@ -9,36 +9,46 @@
 //! sync-factory / async-connect gap.
 
 pub mod asr;
+pub mod catalog;
 pub mod omni;
 pub mod openspeech;
 pub mod transport;
 pub mod tts;
 
-use orchest_protocol::{Asr, RealtimeSession, Tts};
+use orchest_protocol::{Asr, ErrorCode, ProtocolError, RealtimeSession, Tts};
 use orchest_provider_core::registry::Entry;
 
-/// Streaming + WS-backed one-shot ASR dialects. The Volcengine openspeech
-/// streaming dialect is registered here; construction is synchronous (the WS
-/// handshake is deferred to `Asr::start_stream`), so it fits the sync factory.
+/// Streaming + WS-backed one-shot ASR dialects. Entries are expanded 1:1 from
+/// the stream ASR catalog; each factory pins `provider`/`model` onto the
+/// runtime config while dialect free functions still accept uncataloged models.
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn asr_entries() -> Vec<Entry<Box<dyn Asr>>> {
-    vec![
-        Entry::new(asr::volcengine::entry_descriptor(), |cfg| {
-            Ok(Box::new(asr::volcengine::from_provider_config(cfg)?) as Box<dyn Asr>)
-        }),
-        Entry::new(asr::deepgram::entry_descriptor(), |cfg| {
-            Ok(Box::new(asr::deepgram::from_provider_config(cfg)?) as Box<dyn Asr>)
-        }),
-        Entry::new(asr::soniox::entry_descriptor(), |cfg| {
-            Ok(Box::new(asr::soniox::from_provider_config(cfg)?) as Box<dyn Asr>)
-        }),
-        Entry::new(asr::aliyun::entry_descriptor(), |cfg| {
-            Ok(Box::new(asr::aliyun::from_provider_config(cfg)?) as Box<dyn Asr>)
-        }),
-        Entry::new(asr::elevenlabs::entry_descriptor(), |cfg| {
-            Ok(Box::new(asr::elevenlabs::from_provider_config(cfg)?) as Box<dyn Asr>)
-        }),
-    ]
+    catalog::asr::stream_asr_models()
+        .iter()
+        .map(|rec| {
+            let model = rec.model;
+            let provider = rec.provider;
+            Entry::new(rec.to_descriptor(), move |cfg| {
+                let mut pinned = cfg.clone();
+                pinned.provider = provider.to_string();
+                pinned.model = model.to_string();
+                let handle: Box<dyn Asr> = match provider {
+                    "aliyun" => Box::new(asr::aliyun::from_provider_config(&pinned)?),
+                    "volcengine" => Box::new(asr::volcengine::from_provider_config(&pinned)?),
+                    "deepgram" => Box::new(asr::deepgram::from_provider_config(&pinned)?),
+                    "soniox" => Box::new(asr::soniox::from_provider_config(&pinned)?),
+                    "elevenlabs" => Box::new(asr::elevenlabs::from_provider_config(&pinned)?),
+                    other => {
+                        return Err(ProtocolError::new(
+                            ErrorCode::UnknownProvider,
+                            format!("no stream ASR dialect for {other}"),
+                        ))
+                    }
+                };
+                Ok(handle)
+            })
+        })
+        .collect()
 }
 
 /// Streaming + WS-backed TTS dialects (openspeech, minimax-ws). The Volcengine

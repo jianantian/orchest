@@ -46,7 +46,9 @@ use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-use orchest_protocol::{Asr, CatalogEntry, ChatModel, EventStream, GenTask, ProtocolError, Tts};
+use orchest_protocol::{
+    Asr, CatalogEntry, ChatModel, ErrorCode, EventStream, GenTask, ProtocolError, Tts,
+};
 use orchest_provider_core::registry::{Entry, ProviderConfig};
 
 // ---------------------------------------------------------------------------
@@ -78,18 +80,34 @@ pub fn chat_entries() -> Vec<Entry<Box<dyn ChatModel>>> {
         .collect()
 }
 
-/// REST/batch one-shot ASR dialects (AssemblyAI; Speechmatics next). Streaming
-/// ASR lives in `orchest-provider-stream`.
+/// REST/batch one-shot ASR dialects (AssemblyAI; Speechmatics). Streaming
+/// ASR lives in `orchest-provider-stream`. Entries expand 1:1 from the HTTP
+/// ASR catalog with model-pinned factories.
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn asr_entries() -> Vec<Entry<Box<dyn Asr>>> {
-    vec![
-        Entry::new(asr::assemblyai::entry_descriptor(), |cfg| {
-            Ok(Box::new(asr::assemblyai::from_provider_config(cfg)?) as Box<dyn Asr>)
-        }),
-        Entry::new(asr::speechmatics::entry_descriptor(), |cfg| {
-            Ok(Box::new(asr::speechmatics::from_provider_config(cfg)?) as Box<dyn Asr>)
-        }),
-    ]
+    catalog::http_asr_models()
+        .iter()
+        .map(|rec| {
+            let model = rec.model;
+            let provider = rec.provider;
+            Entry::new(rec.to_descriptor(), move |cfg| {
+                let mut pinned = cfg.clone();
+                pinned.provider = provider.to_string();
+                pinned.model = model.to_string();
+                let handle: Box<dyn Asr> = match provider {
+                    "assemblyai" => Box::new(asr::assemblyai::from_provider_config(&pinned)?),
+                    "speechmatics" => Box::new(asr::speechmatics::from_provider_config(&pinned)?),
+                    other => {
+                        return Err(ProtocolError::new(
+                            ErrorCode::UnknownProvider,
+                            format!("no http ASR dialect for {other}"),
+                        ))
+                    }
+                };
+                Ok(handle)
+            })
+        })
+        .collect()
 }
 
 /// REST TTS dialects. Filled in Issue 006.
