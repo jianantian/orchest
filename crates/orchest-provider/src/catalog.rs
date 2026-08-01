@@ -17,30 +17,37 @@ pub use orchest_provider_core::catalog::{CatalogExt, ModelFilter, ModelRecord, M
 static CATALOG: LazyLock<Vec<ModelRecord>> = LazyLock::new(build_catalog);
 
 fn build_catalog() -> Vec<ModelRecord> {
-    let mut out = Vec::new();
-
-    #[cfg(feature = "http")]
+    #[cfg(any(feature = "http", feature = "stream"))]
     {
-        for m in orchest_provider_http::catalog::list_models() {
-            out.push(project_llm(m));
+        let mut out = Vec::new();
+
+        #[cfg(feature = "http")]
+        {
+            for m in orchest_provider_http::catalog::list_models() {
+                out.push(project_llm(m));
+            }
+            out.extend(
+                orchest_provider_http::catalog::http_asr_models()
+                    .iter()
+                    .cloned(),
+            );
         }
-        out.extend(
-            orchest_provider_http::catalog::http_asr_models()
-                .iter()
-                .cloned(),
-        );
-    }
 
-    #[cfg(feature = "stream")]
+        #[cfg(feature = "stream")]
+        {
+            out.extend(
+                orchest_provider_stream::catalog::stream_asr_models()
+                    .iter()
+                    .cloned(),
+            );
+        }
+
+        out
+    }
+    #[cfg(not(any(feature = "http", feature = "stream")))]
     {
-        out.extend(
-            orchest_provider_stream::catalog::stream_asr_models()
-                .iter()
-                .cloned(),
-        );
+        Vec::new()
     }
-
-    out
 }
 
 #[cfg(feature = "http")]
