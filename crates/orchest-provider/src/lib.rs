@@ -27,12 +27,11 @@
 //! `orchest_protocol`. It pulls no impl crate and no network deps, and is
 //! never enabled by default or by any other feature.
 
+pub mod catalog;
 pub mod facade;
 #[cfg(feature = "testing")]
 pub mod fakes;
 pub mod registry;
-pub mod catalog;
-
 
 pub use registry::{Query, Registry};
 

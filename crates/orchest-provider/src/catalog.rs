@@ -9,9 +9,7 @@ use orchest_protocol::{Capability, Modality};
 use orchest_provider_core::catalog::ChatCatalogExt;
 
 // Re-export discovery types used by consumers via `orchest_provider::catalog`.
-pub use orchest_provider_core::catalog::{
-    CatalogExt, ModelFilter, ModelRecord, ModelStatus,
-};
+pub use orchest_provider_core::catalog::{CatalogExt, ModelFilter, ModelRecord, ModelStatus};
 
 static CATALOG: LazyLock<Vec<ModelRecord>> = LazyLock::new(build_catalog);
 
