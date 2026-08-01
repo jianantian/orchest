@@ -5,7 +5,8 @@
 //! materialization / discovery live in the wall (`orchest-provider`).
 
 use orchest_protocol::{
-    Capability, CapabilityDescriptor, CapabilitySource, CatalogEntry, Modality, ModelPricing,
+    Capability, CapabilityDescriptor, CapabilityExt, CapabilitySource, CatalogEntry,
+    ChatCapabilityExt, Modality, ModelPricing,
 };
 
 /// Lifecycle / stability of a cataloged model.
@@ -86,7 +87,7 @@ impl ModelRecord {
 
     /// Project this row onto the registry's queryable descriptor.
     pub fn to_descriptor(&self) -> CapabilityDescriptor {
-        CapabilityDescriptor::new(self.provider, self.model, self.capability)
+        let mut desc = CapabilityDescriptor::new(self.provider, self.model, self.capability)
             .with_input_modalities(self.input_modalities.to_vec())
             .with_output_modalities(self.output_modalities.to_vec())
             .streaming(self.streaming)
@@ -95,8 +96,18 @@ impl ModelRecord {
             .duplex(self.duplex)
             .interruptible(self.interruptible)
             .default_for_provider(self.default_for_provider)
-            .with_source(CapabilitySource::Static)
-        // Chat ext projection can be filled when capability is Chat; else leave None for Batch 0 non-Chat
+            .with_source(CapabilitySource::Static);
+
+        if let CatalogExt::Chat(c) = &self.ext {
+            desc = desc.with_ext(CapabilityExt::Chat(ChatCapabilityExt {
+                max_output_tokens: c.max_output_tokens,
+                context_window_size: Some(c.context_window),
+                pricing: self.pricing.clone(),
+                ..Default::default()
+            }));
+        }
+
+        desc
     }
 }
 
@@ -164,5 +175,55 @@ mod tests {
         assert_eq!(d.source, orchest_protocol::CapabilitySource::Static);
         assert_eq!(d.model.as_ref(), "fun-asr-realtime");
         assert!(d.streaming && d.duplex);
+    }
+
+    #[test]
+    fn to_descriptor_projects_chat_ext_and_pricing() {
+        let pricing = ModelPricing::flat_text("USD", 1.0, 2.0);
+        let record = ModelRecord {
+            id: "openai/gpt-4o",
+            provider: "openai",
+            model: "gpt-4o",
+            capability: Capability::Chat,
+            display_name: "GPT-4o",
+            description: "chat model",
+            input_modalities: &[Modality::Text],
+            output_modalities: &[Modality::Text],
+            streaming: true,
+            duplex: false,
+            interruptible: false,
+            tools: true,
+            thinking: false,
+            status: ModelStatus::Stable,
+            default_for_provider: true,
+            pricing: Some(pricing.clone()),
+            ext: CatalogExt::Chat(ChatCatalogExt {
+                context_window: 128_000,
+                max_output_tokens: Some(16_384),
+                max_input_tokens: None,
+                thinking_max_tokens: None,
+            }),
+        };
+
+        let d = record.to_descriptor();
+        assert_eq!(d.source, CapabilitySource::Static);
+        match &d.ext {
+            CapabilityExt::Chat(chat) => {
+                assert_eq!(chat.context_window_size, Some(128_000));
+                assert_eq!(chat.max_output_tokens, Some(16_384));
+                let projected = chat.pricing.as_ref().expect("pricing projected");
+                assert_eq!(projected.currency, pricing.currency);
+                assert_eq!(projected.tiers.len(), 1);
+                assert_eq!(
+                    projected.tiers[0].rates.text_input_per_million,
+                    pricing.tiers[0].rates.text_input_per_million
+                );
+                assert_eq!(
+                    projected.tiers[0].rates.text_output_per_million,
+                    pricing.tiers[0].rates.text_output_per_million
+                );
+            }
+            other => panic!("expected CapabilityExt::Chat, got {other:?}"),
+        }
     }
 }
