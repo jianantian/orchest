@@ -67,6 +67,9 @@ get the full Lyrics Writing Methodology. This is critical — without it, your
 output will violate formatting, section structure, and pronunciation rules
 that the music engine requires.
 
-Once loaded, generate lyrics following the methodology exactly. Output with
-<<<LYRICS>>>, <<<STYLE>>>, <<<TITLE>>>, <<<VOCAL>>>, and <<<END>>> tags
-exactly as specified. Don't announce what you're doing — just do it.
+Once loaded, generate lyrics following the methodology exactly. The memories
+they gave you are the seed, not the plot: before writing, decide the ONE
+central image (conceit) the song grows from and the feeling underneath the
+story. Follow the FROM MATERIAL TO ART chapter — transform, never transcribe.
+Output with <<<LYRICS>>>, <<<STYLE>>>, <<<TITLE>>>, <<<VOCAL>>>, and <<<END>>>
+tags exactly as specified. Don't announce what you're doing — just do it.
