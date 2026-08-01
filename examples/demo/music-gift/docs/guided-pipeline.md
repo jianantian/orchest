@@ -88,7 +88,7 @@
 
 - `GuidedFlow.tsx` — `startChat()`：
   1. 把 `meta` 打包为 `{ lang, name, relationship, scenario, gender, birthday }` 发给 `/api/chat`（relationship / scenario 发的是显示 label；birthday 为 `"M-D"` 字符串，跳过则不传）
-  2. SSE 流式接收：`Delta`（逐字展示）、`Reviewing`（进入审核阶段，显示等待提示）、`Done`（解析歌词/风格/歌名/人声到 `draft`，审核报告到 `review`）
+  2. SSE 流式接收：`Delta`（逐字展示）、`Elevating`（进入改稿阶段，显示等待提示）、`Reviewing`（进入审核阶段，显示等待提示）、`Done`（解析歌词/风格/歌名/人声到 `draft`，审核报告到 `review`）
   3. 有歌词 → `act.go("review")`
 
 - `api.ts` — `streamChat()`：`fetch` + `ReadableStream` 逐行解析 SSE
@@ -120,7 +120,7 @@
 | Review | `prompts/review.md` | 10 点审核清单：自动修复发音、performance cues、artist names；标记结构/押韵等问题 |
 | Elevate | `prompts/elevate.md` | 创造性改稿:种子规则、单一 conceit、锚点≤2、陌生人测试、禁宣告;幂等(达标原样返回);输出仅标签块 |
 
-**数据落点：** `draft = { lyrics: "...", style: "温柔轻快", title: "挥手的魔法", vocal: "female" }`，`review = "## Review Pass ..."`（审核报告 Markdown，可空）
+**数据落点：** `draft = { lyrics: "...", style: "温柔轻快", title: "挥手的魔法", vocal: "female" }`，`review = "## Review Pass ..."`（审核报告 Markdown，可空）；`Done.degraded` 标记回落阶段（`"elevate"` / `"review"`，空数组=全部正常），任一阶段降级时审核卡片显示通用提示
 
 ---
 
