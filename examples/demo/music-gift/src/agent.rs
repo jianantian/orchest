@@ -433,6 +433,28 @@ pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> Pas
     .await
 }
 
+/// Post-process a completed chat turn: when the raw output carries a lyric
+/// block, run the second-pass stages over it and collect the stages that
+/// fell back. Stage boundaries are announced on `tx` so the client can label
+/// the wait. Pure orchestration — parsing happens at the call site.
+pub async fn finalize_chat_output(
+    model: Arc<dyn ChatModel>,
+    full_text: &str,
+    tx: &mpsc::Sender<SseEvent>,
+) -> (String, Vec<String>) {
+    if !full_text.contains("<<<LYRICS>>>") {
+        return (full_text.to_string(), Vec::new());
+    }
+    let _ = tx.send(SseEvent::Reviewing).await;
+    let reviewed = run_review_pass(model, full_text).await;
+    let degraded = if reviewed.degraded {
+        vec!["review".to_string()]
+    } else {
+        Vec::new()
+    };
+    (reviewed.text, degraded)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -877,5 +899,39 @@ mod tests {
         };
         assert!(content.contains("Alice"));
         assert!(content.contains("Known info"));
+    }
+
+    #[tokio::test]
+    async fn finalize_skips_passes_for_conversational_output() {
+        let model = Arc::new(CaptureModel::default());
+        let (tx, mut rx) = mpsc::channel::<SseEvent>(16);
+        let (text, degraded) = finalize_chat_output(model.clone(), "just chatting", &tx).await;
+        assert_eq!(text, "just chatting");
+        assert!(degraded.is_empty());
+        assert!(model
+            .calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn finalize_runs_review_when_lyrics_present() {
+        let model = Arc::new(CaptureModel::default());
+        let (tx, mut rx) = mpsc::channel::<SseEvent>(16);
+        let (text, degraded) =
+            finalize_chat_output(model.clone(), "<<<LYRICS>>>\nla la\n<<<END>>>", &tx).await;
+        assert_eq!(text, "done");
+        assert!(degraded.is_empty());
+        assert_eq!(
+            model
+                .calls
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len(),
+            1
+        );
+        assert!(matches!(rx.recv().await, Some(SseEvent::Reviewing)));
     }
 }
