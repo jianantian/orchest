@@ -51,6 +51,7 @@
 | v0.13 | 重构 | 生成质量地基（music-gift 质量梳理）：`AgentRun::start_with_messages` 公开多轮启动入口（Py/Node 透传 `messages`）；`RuntimeEvent::RunCompleted` 新增 `stop_reason` 区分截断完成；catalog `context_window` 经 adapter capabilities 在 `pre_start` 回填 `ModelSpec`（调用前硬校验自此生效）；`RetryClass::StreamInterrupted` + `RetryPolicy::recommended()` + 绑定 `retry=True` 一行开启重试；[#219](https://github.com/jianantian/orchest/issues/219)–[#222](https://github.com/jianantian/orchest/issues/222) 关闭（[#223](https://github.com/jianantian/orchest/pull/223)） |
 | v0.14 | 重构 | Skill 机制（polaris「渐进式披露作为一等抽象」落地）：scanner 错误上报 `ScanOutcome` + `SkillLoadWarning`、frontmatter 行级解析；**零配置渐进式披露**（`<available_skills>` 元数据注入 + 内置 `load_skill` 三级加载、零 CWD 依赖）；注册容错（单 skill 失败跳过+警告、strict 开关、重名先注册者胜）；标准兼容（allowed-tools 双拼写、name/description 校验）+ env 路径注入防护；死字段裁定（声明预留不 enforce、`SkillDependencyError` 移除）；[#225](https://github.com/jianantian/orchest/issues/225)–[#229](https://github.com/jianantian/orchest/issues/229) 关闭（[#230](https://github.com/jianantian/orchest/pull/230)） |
 | v0.15 | 重构 | Gen 协议与子代理语义（music-gift 质量梳理 + seam-findings Finding 2）：`MusicParams` 类型化 + provider-core `warn_unconsumed_params`（9 个 gen provider 挑拣点全接）；`GenAssetRole`（Primary/Cover/Preview）+ 类型化 `GenResult.duration_secs`（`diagnostic_metadata` 回归真诊断）；agent-as-tool 子代理失败 `Err(ToolError)`（kind/code 映射）+ 输出格式契约（`expect_output`，Fenced/Json，一次自包含纠正轮）；正确性批 C5-C7（Chat 协议多模态丢弃可见、compaction tool_use 边界对齐、工具结果回插 role 统一 `Role::User`）；`ToolContext::oneshot` + `Tool::call_oneshot`（11 处手造点清偿）；[#234](https://github.com/jianantian/orchest/issues/234)–[#239](https://github.com/jianantian/orchest/issues/239) 关闭（[#243](https://github.com/jianantian/orchest/pull/243)） |
+| v0.16 | 功能 | Briefing Desk Eval Lab（应用层人工 harness 闭环：18 Loom cases、opt-in trajectory/manifest、确定性 graders、baseline/candidate compare、人工验证报告；不改 runtime/provider/bindings；[验证报告](../review/v0_16_eval_lab.md)） |
 
 ## 迭代编号约定
 
@@ -58,19 +59,6 @@
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
 
 ## 规划中
-
-### v0.16 — Briefing Desk Eval Lab（规划，非阻塞）
-
-在 v0.10 Briefing Desk 上建立一个应用层、人工驱动的 harness evaluation 垂直闭环：
-18 个按行为标签组织的 eval cases、optimization/validation/sealed scorecard 分层、
-opt-in 敏感 trajectory 与 run manifest、确定性 graders、baseline/candidate 对比和人工
-acceptance report。候选只允许修改 Briefing Desk 的 system prompt 与 Tool descriptions；
-不做 outer agent、不创建通用 eval crate、不修改 Orchest runtime/provider/bindings。
-
-本迭代的成功标准是证明「运行 → 记录 → 评分 → 比较 → 人工决定」可复现、可审计；不强制找到
-分数更高的 prompt，也不宣称跨领域泛化。详见 [`v0_16/prd.md`](./v0_16/prd.md)。
-
-**依赖**：v0.10 Briefing Desk、v0.15 runtime/tool 语义。与 v0.11 无依赖关系，**不阻塞 v1.0**。
 
 ### v1.0 — 首次公开发布（规划）
 
@@ -168,4 +156,4 @@ acceptance report。候选只允许修改 Briefing Desk 的 system prompt 与 To
 | ASR Provider Gateway | ~~无~~ → **v0.9.1 已完成** | ✅ |
 | TTS Provider Gateway | ~~无统一 TTS provider crate~~ → **v0.9.3 已完成** | ✅ |
 | 多模态图片输入（`ContentBlock::Image` 经 agent loop） | ~~v0.10 demo 验证发现无公开 API 可走~~ → **hotfix 2026-07-02 已完成**：新增 `RunInput` 类型，`AgentRun::start(config, RunInput, ..)`；`RunInput::text(..)`/`.with_image(..)`/`.from_blocks(..)` 覆盖纯文本与多模态；demo `describe_image` 工具驱动真实 `ContentBlock::Image` → `ModelAdapter::complete()` 调用（[#195](https://github.com/jianantian/orchest/issues/195)） | ✅ |
-| Harness eval / trajectory 闭环 | `RuntimeEvent` 已提供语义事件，但无应用层案例分层、敏感 trajectory 落盘、grader、候选对比和人工决策记录 | v0.16（Briefing Desk 应用层试点，非 core 能力） |
+| Harness eval / trajectory 闭环 | ~~无应用层闭环~~ → **v0.16 已完成**（Briefing Desk Eval Lab：corpus/recorder/graders/runner/compare + [验证报告](../review/v0_16_eval_lab.md)；仍为 demo-local，非 core） | ✅ |
