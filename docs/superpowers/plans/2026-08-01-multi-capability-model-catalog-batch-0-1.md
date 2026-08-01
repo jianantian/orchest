@@ -422,13 +422,13 @@ fn select_errors_when_multiple_match_without_default() {
         |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime")) as Box<dyn Asr>),
     ));
     reg.register_asr(Entry::new(
-        CapabilityDescriptor::new("aliyun", "fun-asr-realtime-2026-02-28", Capability::Asr)
+        CapabilityDescriptor::new("aliyun", "qwen-audio-3.0-asr-flash-streaming", Capability::Asr)
             .streaming(true)
             .duplex(true),
         |_| {
             Ok(Box::new(FakeAsr(
                 "aliyun",
-                "fun-asr-realtime-2026-02-28",
+                "qwen-audio-3.0-asr-flash-streaming",
             )) as Box<dyn Asr>)
         },
     ));
@@ -457,13 +457,13 @@ fn select_prefers_unique_default_for_provider() {
         |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime")) as Box<dyn Asr>),
     ));
     reg.register_asr(Entry::new(
-        CapabilityDescriptor::new("aliyun", "fun-asr-realtime-2026-02-28", Capability::Asr)
+        CapabilityDescriptor::new("aliyun", "qwen-audio-3.0-asr-flash-streaming", Capability::Asr)
             .streaming(true)
             .duplex(true),
         |_| {
             Ok(Box::new(FakeAsr(
                 "aliyun",
-                "fun-asr-realtime-2026-02-28",
+                "qwen-audio-3.0-asr-flash-streaming",
             )) as Box<dyn Asr>)
         },
     ));
@@ -480,11 +480,11 @@ fn list_still_sorts_by_provider_model_without_default_bias() {
         |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime")) as Box<dyn Asr>),
     ));
     reg.register_asr(Entry::new(
-        CapabilityDescriptor::new("aliyun", "fun-asr-realtime-2026-02-28", Capability::Asr),
+        CapabilityDescriptor::new("aliyun", "qwen-audio-3.0-asr-flash-streaming", Capability::Asr),
         |_| {
             Ok(Box::new(FakeAsr(
                 "aliyun",
-                "fun-asr-realtime-2026-02-28",
+                "qwen-audio-3.0-asr-flash-streaming",
             )) as Box<dyn Asr>)
         },
     ));
@@ -492,7 +492,7 @@ fn list_still_sorts_by_provider_model_without_default_bias() {
     assert_eq!(list[0].descriptor.model.as_ref(), "fun-asr-realtime");
     assert_eq!(
         list[1].descriptor.model.as_ref(),
-        "fun-asr-realtime-2026-02-28"
+        "qwen-audio-3.0-asr-flash-streaming"
     );
 }
 ```
@@ -597,7 +597,7 @@ git commit -m "feat: make Query::select default-aware (C2)"
   | id | default |
   |---|---|
   | `aliyun/fun-asr-realtime` | **true** |
-  | `aliyun/fun-asr-realtime-2026-02-28` | false |
+  | `aliyun/qwen-audio-3.0-asr-flash-streaming` | false |
 - Other dialects ≥1 row each (default true, since single-row):
   - stream: volcengine/`bigmodel`, deepgram/`nova-3`, soniox/`stt-rt-v5`, elevenlabs/`scribe-v2-realtime`
   - http: assemblyai/`universal`, speechmatics/`enhanced`
@@ -619,7 +619,7 @@ fn aliyun_asr_lists_multiple_catalog_models() {
     let list = reg.asr().provider("aliyun").list();
     let models: Vec<_> = list.iter().map(|e| e.descriptor.model.as_ref()).collect();
     assert!(models.contains(&"fun-asr-realtime"));
-    assert!(models.contains(&"fun-asr-realtime-2026-02-28"));
+    assert!(models.contains(&"qwen-audio-3.0-asr-flash-streaming"));
     assert!(list.len() >= 2);
 }
 
@@ -634,16 +634,16 @@ fn aliyun_asr_provider_select_returns_fun_asr_default() {
 
 #[cfg(feature = "stream")]
 #[test]
-fn aliyun_asr_id_pins_fun_asr_snapshot() {
+fn aliyun_asr_id_pins_qwen_audio_streaming() {
     let reg = Registry::with_builtin();
     let picked = reg
         .asr()
-        .id("aliyun/fun-asr-realtime-2026-02-28")
+        .id("aliyun/qwen-audio-3.0-asr-flash-streaming")
         .select()
         .unwrap();
     assert_eq!(
         picked.descriptor.model.as_ref(),
-        "fun-asr-realtime-2026-02-28"
+        "qwen-audio-3.0-asr-flash-streaming"
     );
 }
 ```

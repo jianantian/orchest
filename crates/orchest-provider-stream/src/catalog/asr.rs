@@ -32,15 +32,17 @@ pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             pricing: None,
             ext: CatalogExt::Asr(AsrCatalogExt {}),
         },
-        // Source: docs/external/aliyun/asr-guideline.md
+        // Source: https://help.aliyun.com/zh/model-studio/fun-asr-client-events
+        // Same inference-WS dialect as Fun-ASR (run-task/finish-task). Not
+        // Qwen-ASR Realtime (`qwen3-asr-flash-realtime` on /api-ws/v1/realtime).
         ModelRecord {
-            id: "aliyun/fun-asr-realtime-2026-02-28",
+            id: "aliyun/qwen-audio-3.0-asr-flash-streaming",
             provider: "aliyun",
-            model: "fun-asr-realtime-2026-02-28",
+            model: "qwen-audio-3.0-asr-flash-streaming",
             capability: Capability::Asr,
-            display_name: "Fun-ASR Realtime 2026-02-28",
+            display_name: "Qwen-Audio 3.0 ASR Flash Streaming",
             description:
-                "阿里云 DashScope Fun-ASR 实时语音识别快照版（2026-02-28），与 fun-asr-realtime 共用 inference WebSocket 方言",
+                "阿里云 DashScope Qwen-Audio 3.0 流式语音识别，与 Fun-ASR Realtime 共用 inference WebSocket（run-task）方言",
             input_modalities: vec![Modality::Audio],
             output_modalities: vec![Modality::Text],
             streaming: true,

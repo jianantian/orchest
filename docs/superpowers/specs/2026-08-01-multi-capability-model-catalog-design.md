@@ -45,7 +45,7 @@ The user-facing symptom: “which streaming ASR models does provider `aliyun` su
 | Capability | Meaning | Examples |
 |---|---|---|
 | **Chat** | Turn-based conversation (optionally multimodal input) | `anthropic/claude-opus-4-8`, `deepseek/deepseek-v4-flash` |
-| **Asr** | Audio → text | `aliyun/fun-asr-realtime`, `aliyun/fun-asr-realtime-2026-02-28` |
+| **Asr** | Audio → text | `aliyun/fun-asr-realtime`, `aliyun/qwen-audio-3.0-asr-flash-streaming` |
 | **Tts** | Text → audio | `aliyun/cosyvoice-v2` |
 | **Realtime** | Duplex session / speech-to-speech / omni | Volcengine omni, Qwen omni realtime |
 | **GenTask** | Async generation job | image / video / music gen |
@@ -487,7 +487,7 @@ Minimum Aliyun streaming rows:
 | id | notes |
 |---|---|
 | `aliyun/fun-asr-realtime` | default (`default_for_provider = true`) |
-| `aliyun/fun-asr-realtime-2026-02-28` | Fun-ASR realtime snapshot on same inference-WS dialect (Batch 1 multi-model proof; Qwen realtime needs a separate dialect later) |
+| `aliyun/qwen-audio-3.0-asr-flash-streaming` | Qwen-Audio 3.0 flash streaming on same Fun-ASR inference-WS dialect (not Qwen-ASR Realtime / qwen3-asr-flash-realtime) |
 
 Also register at least the current default row for other already-wired ASR dialects (volcengine, deepgram, soniox, elevenlabs, assemblyai, speechmatics) so every **Asr** dialect has ≥1 catalog row with description.
 
@@ -499,7 +499,7 @@ Registry Asr bucket expands from catalog with **model-pinned** factories (C1).
 - Selection tests:
   - Asr `list` returns multiple Aliyun models;
   - `.provider("aliyun").asr().select()` returns `fun-asr-realtime`;
-  - `.id("aliyun/fun-asr-realtime-2026-02-28")` pins the non-default;
+  - `.id("aliyun/qwen-audio-3.0-asr-flash-streaming")` pins the non-default;
   - multi-match without default errors (fixture);
   - Gen provider-only select still works for declared defaults under `--all-features`.
 

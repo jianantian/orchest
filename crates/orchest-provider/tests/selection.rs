@@ -178,12 +178,12 @@ fn select_errors_when_multiple_match_without_default() {
     reg.register_asr(Entry::new(
         CapabilityDescriptor::new(
             "aliyun",
-            "fun-asr-realtime-2026-02-28",
+            "qwen-audio-3.0-asr-flash-streaming",
             Capability::Asr,
         )
         .streaming(true)
         .duplex(true),
-        |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime-2026-02-28")) as Box<dyn Asr>),
+        |_| Ok(Box::new(FakeAsr("aliyun", "qwen-audio-3.0-asr-flash-streaming")) as Box<dyn Asr>),
     ));
     let err = reg
         .asr()
@@ -212,12 +212,12 @@ fn select_prefers_unique_default_for_provider() {
     reg.register_asr(Entry::new(
         CapabilityDescriptor::new(
             "aliyun",
-            "fun-asr-realtime-2026-02-28",
+            "qwen-audio-3.0-asr-flash-streaming",
             Capability::Asr,
         )
         .streaming(true)
         .duplex(true),
-        |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime-2026-02-28")) as Box<dyn Asr>),
+        |_| Ok(Box::new(FakeAsr("aliyun", "qwen-audio-3.0-asr-flash-streaming")) as Box<dyn Asr>),
     ));
     let picked = reg.asr().provider("aliyun").select().unwrap();
     assert_eq!(picked.descriptor.model.as_ref(), "fun-asr-realtime");
@@ -234,16 +234,16 @@ fn list_still_sorts_by_provider_model_without_default_bias() {
     reg.register_asr(Entry::new(
         CapabilityDescriptor::new(
             "aliyun",
-            "fun-asr-realtime-2026-02-28",
+            "qwen-audio-3.0-asr-flash-streaming",
             Capability::Asr,
         ),
-        |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime-2026-02-28")) as Box<dyn Asr>),
+        |_| Ok(Box::new(FakeAsr("aliyun", "qwen-audio-3.0-asr-flash-streaming")) as Box<dyn Asr>),
     ));
     let list = reg.asr().provider("aliyun").list();
     assert_eq!(list[0].descriptor.model.as_ref(), "fun-asr-realtime");
     assert_eq!(
         list[1].descriptor.model.as_ref(),
-        "fun-asr-realtime-2026-02-28"
+        "qwen-audio-3.0-asr-flash-streaming"
     );
 }
 
@@ -513,7 +513,7 @@ fn aliyun_asr_lists_multiple_catalog_models() {
     let list = reg.asr().provider("aliyun").list();
     let models: Vec<_> = list.iter().map(|e| e.descriptor.model.as_ref()).collect();
     assert!(models.contains(&"fun-asr-realtime"));
-    assert!(models.contains(&"fun-asr-realtime-2026-02-28"));
+    assert!(models.contains(&"qwen-audio-3.0-asr-flash-streaming"));
     assert!(list.len() >= 2);
 }
 
@@ -528,16 +528,16 @@ fn aliyun_asr_provider_select_returns_fun_asr_default() {
 
 #[cfg(feature = "stream")]
 #[test]
-fn aliyun_asr_id_pins_fun_asr_snapshot() {
+fn aliyun_asr_id_pins_qwen_audio_streaming() {
     let reg = Registry::with_builtin();
     let picked = reg
         .asr()
-        .id("aliyun/fun-asr-realtime-2026-02-28")
+        .id("aliyun/qwen-audio-3.0-asr-flash-streaming")
         .select()
         .unwrap();
     assert_eq!(
         picked.descriptor.model.as_ref(),
-        "fun-asr-realtime-2026-02-28"
+        "qwen-audio-3.0-asr-flash-streaming"
     );
 }
 
