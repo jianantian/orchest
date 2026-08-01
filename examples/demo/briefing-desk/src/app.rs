@@ -1,6 +1,9 @@
 //! Command orchestration for `run` and `resume`. Keeps the pipeline sequence
 //! separate from tool implementations (`tools.rs`, issue 003) and media
 //! implementations (`media.rs`, issue 005 for the real gateways).
+//!
+//! Eval runner uses [`run_with_model`] / [`resume_with_model`] so tests can
+//! inject a scripted `ModelAdapter` without duplicating the product pipeline.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -8,11 +11,12 @@ use std::sync::Arc;
 use orchest::events::RuntimeEvent;
 use orchest::model::ModelAdapter;
 use orchest::run::{AgentConfig, AgentRun, EventReceiver, RunHandle, RunInput};
-use orchest::session::{SessionStore, SqliteSessionStore};
+use orchest::session::{SessionSnapshot, SessionStore, SqliteSessionStore};
 use orchest::tool::agent_as_tool::ContextMode;
 use orchest::tool::registry::ToolRegistry;
 use orchest::tool::ToolError;
 
+use crate::harness;
 use crate::media::{self, DescribeImageTool, SynthesizeBriefTool, TranscribeAudioTool};
 use crate::tools::{ReadFixtureTool, SearchFixturesTool, WriteReportTool};
 
@@ -120,7 +124,39 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
         "[model] {}",
         std::env::var(LIVE_CHAT_MODEL_ENV).unwrap_or_default()
     );
+    let outcome = run_with_model(args, model, |_| {}).await?;
+    println!("[done] final message: {}", outcome.final_text);
+    if outcome.output_path.exists() {
+        println!("[report] written to {}", outcome.output_path.display());
+    } else {
+        println!("[report] not written (the agent chose not to write)");
+    }
+    let audio_path = outcome.output_path.with_extension("wav");
+    if outcome.no_tts {
+        println!("[synthesize] skipped (--no-tts)");
+    } else if audio_path.exists() {
+        println!(
+            "[synthesize] audio brief written to {}",
+            audio_path.display()
+        );
+    } else {
+        println!("[synthesize] skipped (no report was written)");
+    }
+    Ok(())
+}
 
+/// Product pipeline with an injected model and optional event observer.
+///
+/// Used by the eval runner (scripted or live model). Ordinary CLI `run`
+/// constructs the model from env and passes a no-op observer.
+pub async fn run_with_model<F>(
+    args: RunArgs,
+    model: Arc<dyn ModelAdapter>,
+    observer: F,
+) -> Result<CapturedRunOutcome, DemoError>
+where
+    F: FnMut(&RuntimeEvent),
+{
     let corpus = media::discover(&args.materials)?;
     println!(
         "[materials] {} text, {} image, {} audio source(s) in {}",
@@ -147,9 +183,9 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
 
     if !corpus.audio.is_empty() {
         let asr = match live_asr_env() {
-            Some((provider, model, key)) => {
-                println!("[asr] live provider={provider} model={model}");
-                media::live_asr(&provider, &model, &key)?
+            Some((provider, model_name, key)) => {
+                println!("[asr] live provider={provider} model={model_name}");
+                media::live_asr(&provider, &model_name, &key)?
             }
             None => Box::new(media::fake_asr()),
         };
@@ -169,9 +205,9 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
 
     if !args.no_tts {
         let tts = match live_tts_env() {
-            Some((provider, model, key)) => {
-                println!("[tts] live provider={provider} model={model}");
-                media::live_tts(&provider, &model, &key)?
+            Some((provider, model_name, key)) => {
+                println!("[tts] live provider={provider} model={model_name}");
+                media::live_tts(&provider, &model_name, &key)?
             }
             None => Box::new(media::fake_tts()),
         };
@@ -179,12 +215,8 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
         registry.register(Arc::new(SynthesizeBriefTool::new(audio_path, tts)))?;
     }
 
-    let mut builder = AgentConfig::builder("briefing-desk/run").system_prompt(
-        "You are Briefing Desk, a research-brief assistant. Search the materials, read the \
-         most relevant one, transcribe any audio source and describe any image source if \
-         those tools are available, have review_report check your draft, then call \
-         write_report. If synthesize_brief is available, call it last.",
-    );
+    let mut builder =
+        AgentConfig::builder("briefing-desk/run").system_prompt(harness::MAIN_SYSTEM_PROMPT);
 
     if let Some(id) = &args.session {
         let store: Arc<dyn SessionStore> = Arc::new(open_session_store(id)?);
@@ -205,28 +237,12 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
         model,
         registry,
     );
-    let brief = drain_events(handle, rx).await?;
-    println!("[done] final message: {brief}");
-
-    if args.output.exists() {
-        println!("[report] written to {}", args.output.display());
-    } else {
-        println!("[report] not written (the agent chose not to write)");
-    }
-
-    let audio_path = args.output.with_extension("wav");
-    if args.no_tts {
-        println!("[synthesize] skipped (--no-tts)");
-    } else if audio_path.exists() {
-        println!(
-            "[synthesize] audio brief written to {}",
-            audio_path.display()
-        );
-    } else {
-        println!("[synthesize] skipped (no report was written)");
-    }
-
-    Ok(())
+    let final_text = drain_events(handle, rx, observer).await?;
+    Ok(CapturedRunOutcome {
+        final_text,
+        output_path: args.output,
+        no_tts: args.no_tts,
+    })
 }
 
 pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
@@ -255,14 +271,28 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
         .active_config
         .with_session_store(Arc::clone(&store), args.session.clone());
 
+    let outcome = resume_with_model(snapshot, args, model, |_| {}).await?;
+    println!("[done] follow-up answer: {}", outcome.final_text);
+    Ok(())
+}
+
+/// Resume path with injected model + observer (eval follow-up attempts).
+pub async fn resume_with_model<F>(
+    snapshot: SessionSnapshot,
+    args: ResumeArgs,
+    model: Arc<dyn ModelAdapter>,
+    observer: F,
+) -> Result<CapturedRunOutcome, DemoError>
+where
+    F: FnMut(&RuntimeEvent),
+{
     let (handle, rx) = AgentRun::resume_with_input(
         snapshot,
         RunInput::text(args.question.clone()),
         model,
         ToolRegistry::new(),
     )?;
-    let answer = drain_events(handle, rx).await?;
-    println!("[done] follow-up answer: {answer}");
+    let answer = drain_events(handle, rx, observer).await?;
 
     std::fs::write(&args.output, &answer)
         .map_err(|e| format!("writing {}: {e}", args.output.display()))?;
@@ -271,16 +301,13 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
         args.output.display()
     );
 
-    // Resume has no registered tools (it answers directly from persisted
-    // history), so TTS runs as a direct capability call here rather than
-    // through synthesize_brief.
     if args.no_tts {
         println!("[synthesize] skipped (--no-tts)");
     } else {
         let tts: Box<dyn orchest_protocol::Tts> = match live_tts_env() {
-            Some((provider, model, key)) => {
-                println!("[tts] live provider={provider} model={model}");
-                media::live_tts(&provider, &model, &key)?
+            Some((provider, model_name, key)) => {
+                println!("[tts] live provider={provider} model={model_name}");
+                media::live_tts(&provider, &model_name, &key)?
             }
             None => Box::new(media::fake_tts()),
         };
@@ -302,17 +329,44 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
         );
     }
 
-    Ok(())
+    Ok(CapturedRunOutcome {
+        final_text: answer,
+        output_path: args.output,
+        no_tts: args.no_tts,
+    })
 }
+
+/// Outcome of a captured product pipeline execution.
+#[derive(Debug, Clone)]
+pub struct CapturedRunOutcome {
+    pub final_text: String,
+    pub output_path: PathBuf,
+    pub no_tts: bool,
+}
+
+/// Build the same main-agent config the product run uses (for seed materialize).
+pub fn main_agent_config() -> Result<AgentConfig, DemoError> {
+    AgentConfig::builder("briefing-desk/run")
+        .system_prompt(harness::MAIN_SYSTEM_PROMPT)
+        .max_steps(10)
+        .build()
+        .map_err(|e| format!("building agent config: {e}").into())
+}
+
+/// Expose chat model construction for the eval runner's live path.
+pub fn live_chat_model() -> Result<Arc<dyn ModelAdapter>, DemoError> {
+    chat_model()
+}
+
+/// Env var name for the required live chat model (eval refuses if unset).
+pub const CHAT_MODEL_ENV: &str = LIVE_CHAT_MODEL_ENV;
 
 /// Wraps a lightweight reviewer sub-agent (Agent-as-Tool, `ContextMode::Fresh`
 /// so it never sees the parent's conversation) as a `review_report` tool the
 /// parent model calls before `write_report`.
 fn reviewer_tool(model: &Arc<dyn ModelAdapter>) -> Result<Arc<dyn orchest::tool::Tool>, DemoError> {
     let reviewer_config = AgentConfig::builder("briefing-desk/reviewer")
-        .system_prompt(
-            "You are a report reviewer. Check the draft for accuracy against the corpus.",
-        )
+        .system_prompt(harness::REVIEWER_SYSTEM_PROMPT)
         .max_steps(2)
         .build()
         .map_err(|e| format!("building reviewer config: {e}"))?;
@@ -320,7 +374,7 @@ fn reviewer_tool(model: &Arc<dyn ModelAdapter>) -> Result<Arc<dyn orchest::tool:
     let tool = reviewer_config
         .as_tool(
             "review_report",
-            "Reviews a draft report before it is finalized. Call this before write_report.",
+            harness::REVIEW_REPORT_TOOL_DESCRIPTION,
         )
         .model(Arc::clone(model))
         .registry(ToolRegistry::new())
@@ -343,10 +397,22 @@ fn reviewer_tool(model: &Arc<dyn ModelAdapter>) -> Result<Arc<dyn orchest::tool:
 /// Drives an already-started run's event stream to completion: renders
 /// model/tool/approval/sub-agent/run-completion events to stdout, auto-approves
 /// any `ApprovalRequested`, and returns the run's final text.
-async fn drain_events(handle: RunHandle, mut rx: EventReceiver) -> Result<String, DemoError> {
+///
+/// `observer` is invoked for every event **before** stdout rendering so eval
+/// recorders can capture a sanitized trajectory without changing CLI output.
+/// Ordinary `run` / `resume` pass a no-op observer.
+pub async fn drain_events<F>(
+    handle: RunHandle,
+    mut rx: EventReceiver,
+    mut observer: F,
+) -> Result<String, DemoError>
+where
+    F: FnMut(&RuntimeEvent),
+{
     let mut answer = None;
     while let Some(event) = rx.recv().await {
-        match event {
+        observer(&event);
+        match &event {
             RuntimeEvent::ModelCallStarted { step } => println!("[model] step {step} started"),
             RuntimeEvent::ModelCallCompleted { tokens, .. } => println!(
                 "[model] step completed ({} in / {} out tokens)",

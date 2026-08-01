@@ -43,7 +43,7 @@ impl Tool for SearchFixturesTool {
     }
 
     fn description(&self) -> &str {
-        "Search local research materials for a query; returns ranked paths and snippets."
+        crate::harness::SEARCH_FIXTURES_TOOL_DESCRIPTION
     }
 
     fn input_schema(&self) -> &Value {
@@ -145,7 +145,7 @@ impl Tool for ReadFixtureTool {
     }
 
     fn description(&self) -> &str {
-        "Read the full contents of a fixture file discovered by search_fixtures."
+        crate::harness::READ_FIXTURE_TOOL_DESCRIPTION
     }
 
     fn input_schema(&self) -> &Value {
@@ -218,7 +218,7 @@ impl Tool for WriteReportTool {
     }
 
     fn description(&self) -> &str {
-        "Write the final Markdown research brief to the configured output path. Requires approval."
+        crate::harness::WRITE_REPORT_TOOL_DESCRIPTION
     }
 
     fn input_schema(&self) -> &Value {

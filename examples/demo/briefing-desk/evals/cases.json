@@ -1,0 +1,1168 @@
+{
+  "schema_version": "1",
+  "cases": [
+    {
+      "case_id": "opt-tool-search-first",
+      "scenario_family": "opt-tool-selection-basic",
+      "tags": [
+        "tool_selection"
+      ],
+      "split": "optimization",
+      "run": {
+        "mode": "fresh",
+        "question": "How is Loom's retention and competitive position looking this quarter — is it worth continuing to invest in for Q4?"
+      },
+      "must_pass": true,
+      "weight": 1.0,
+      "tools": {
+        "required": [
+          "search_fixtures",
+          "read_fixture",
+          "write_report"
+        ],
+        "forbidden": [],
+        "optional": []
+      },
+      "order": [
+        {
+          "before": "search_fixtures",
+          "after": "read_fixture"
+        },
+        {
+          "before": "read_fixture",
+          "after": "write_report"
+        }
+      ],
+      "expected_facts": [
+        {
+          "id": "referral_up",
+          "must_contain": [
+            "42%"
+          ],
+          "source_fixture": "001-retention-dashboard-notes.md"
+        }
+      ],
+      "report": {
+        "required_sections": [
+          "executive summary",
+          "recommendation",
+          "sources"
+        ]
+      },
+      "fixture_refs": [
+        "001-retention-dashboard-notes.md"
+      ],
+      "graders": [
+        {
+          "grader_id": "tool_selection",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "tool_chaining",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "report_structure",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "opt-tool-no-write-skip",
+      "scenario_family": "opt-tool-forbidden-skip",
+      "tags": [
+        "tool_selection"
+      ],
+      "split": "optimization",
+      "run": {
+        "mode": "fresh",
+        "question": "List the top support themes for Loom without writing a full brief."
+      },
+      "must_pass": false,
+      "weight": 1.0,
+      "tools": {
+        "required": [
+          "search_fixtures",
+          "read_fixture"
+        ],
+        "forbidden": [
+          "synthesize_brief"
+        ],
+        "optional": []
+      },
+      "expected_facts": [
+        {
+          "id": "onboarding",
+          "must_contain": [
+            "41%"
+          ],
+          "source_fixture": "002-support-ticket-summary.md"
+        }
+      ],
+      "report": {
+        "required_sections": []
+      },
+      "fixture_refs": [
+        "002-support-ticket-summary.md"
+      ],
+      "graders": [
+        {
+          "grader_id": "tool_selection",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "opt-chain-review-before-write",
+      "scenario_family": "opt-tool-chain-review",
+      "tags": [
+        "tool_chaining"
+      ],
+      "split": "optimization",
+      "run": {
+        "mode": "fresh",
+        "question": "How is Loom's retention and competitive position looking this quarter — is it worth continuing to invest in for Q4?"
+      },
+      "must_pass": true,
+      "weight": 1.0,
+      "tools": {
+        "required": [
+          "search_fixtures",
+          "read_fixture",
+          "review_report",
+          "write_report"
+        ],
+        "forbidden": [],
+        "optional": []
+      },
+      "order": [
+        {
+          "before": "search_fixtures",
+          "after": "read_fixture"
+        },
+        {
+          "before": "review_report",
+          "after": "write_report"
+        }
+      ],
+      "expected_facts": [
+        {
+          "id": "paid_down",
+          "must_contain": [
+            "Paid",
+            "27%"
+          ],
+          "source_fixture": "001-retention-dashboard-notes.md"
+        }
+      ],
+      "report": {
+        "required_sections": [
+          "key findings",
+          "recommendation"
+        ]
+      },
+      "fixture_refs": [
+        "001-retention-dashboard-notes.md"
+      ],
+      "graders": [
+        {
+          "grader_id": "tool_chaining",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "tool_selection",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "opt-modality-audio-quote",
+      "scenario_family": "opt-modality-audio",
+      "tags": [
+        "modality_coverage"
+      ],
+      "split": "optimization",
+      "run": {
+        "mode": "fresh",
+        "question": "Quote the customer on what happens if Loom disappeared, using the recording."
+      },
+      "must_pass": true,
+      "weight": 1.0,
+      "tools": {
+        "required": [
+          "transcribe_audio",
+          "write_report"
+        ],
+        "forbidden": [],
+        "optional": []
+      },
+      "expected_facts": [
+        {
+          "id": "spreadsheet_quote",
+          "must_contain": [
+            "spreadsheets",
+            "two hours"
+          ],
+          "source_fixture": "interview.wav"
+        }
+      ],
+      "report": {
+        "required_sections": [
+          "key findings",
+          "sources"
+        ]
+      },
+      "fixture_refs": [
+        "interview.wav",
+        "005-interview-followup-notes.md"
+      ],
+      "graders": [
+        {
+          "grader_id": "modality_coverage",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "citation_quality",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "opt-modality-chart-trend",
+      "scenario_family": "opt-modality-image",
+      "tags": [
+        "modality_coverage"
+      ],
+      "split": "optimization",
+      "run": {
+        "mode": "fresh",
+        "question": "What does the retention chart show for referral Q1–Q3?"
+      },
+      "must_pass": true,
+      "weight": 1.0,
+      "tools": {
+        "required": [
+          "describe_image",
+          "write_report"
+        ],
+        "forbidden": [],
+        "optional": []
+      },
+      "expected_facts": [
+        {
+          "id": "chart_trend",
+          "must_contain": [
+            "38%",
+            "40%",
+            "42%"
+          ],
+          "source_fixture": "chart.png"
+        }
+      ],
+      "report": {
+        "required_sections": [
+          "key findings",
+          "sources"
+        ]
+      },
+      "fixture_refs": [
+        "chart.png",
+        "001-retention-dashboard-notes.md"
+      ],
+      "graders": [
+        {
+          "grader_id": "modality_coverage",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "citation_quality",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "opt-conflict-42-vs-35",
+      "scenario_family": "opt-conflict-retention",
+      "tags": [
+        "conflict_reconciliation"
+      ],
+      "split": "optimization",
+      "run": {
+        "mode": "fresh",
+        "question": "Resolve the referral retention numbers for Q3."
+      },
+      "must_pass": true,
+      "weight": 1.5,
+      "tools": {
+        "required": [
+          "search_fixtures",
+          "read_fixture",
+          "write_report"
+        ],
+        "forbidden": [],
+        "optional": []
+      },
+      "expected_facts": [
+        {
+          "id": "finance_cut",
+          "must_contain": [
+            "42%"
+          ],
+          "source_fixture": "001-retention-dashboard-notes.md"
+        },
+        {
+          "id": "support_cut",
+          "must_contain": [
+            "35%"
+          ],
+          "source_fixture": "002-support-ticket-summary.md"
+        }
+      ],
+      "expected_conflict": {
+        "left_value": "42%",
+        "left_source": "001-retention-dashboard-notes.md",
+        "right_value": "35%",
+        "right_source": "002-support-ticket-summary.md"
+      },
+      "report": {
+        "required_sections": [
+          "conflicts",
+          "sources"
+        ]
+      },
+      "fixture_refs": [
+        "001-retention-dashboard-notes.md",
+        "002-support-ticket-summary.md"
+      ],
+      "graders": [
+        {
+          "grader_id": "conflict_reconciliation",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "report_structure",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "opt-report-required-sections",
+      "scenario_family": "opt-report-shape",
+      "tags": [
+        "report_structure"
+      ],
+      "split": "optimization",
+      "run": {
+        "mode": "fresh",
+        "question": "How is Loom's retention and competitive position looking this quarter — is it worth continuing to invest in for Q4?"
+      },
+      "must_pass": true,
+      "weight": 1.0,
+      "tools": {
+        "required": [
+          "write_report"
+        ],
+        "forbidden": [],
+        "optional": []
+      },
+      "expected_facts": [
+        {
+          "id": "tempo_tbd",
+          "must_contain": [
+            "TBD"
+          ],
+          "source_fixture": "003-competitor-scan.md"
+        }
+      ],
+      "report": {
+        "required_sections": [
+          "executive summary",
+          "key findings",
+          "conflicts",
+          "recommendation",
+          "sources"
+        ]
+      },
+      "fixture_refs": [
+        "003-competitor-scan.md"
+      ],
+      "graders": [
+        {
+          "grader_id": "report_structure",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "opt-citation-real-fixtures",
+      "scenario_family": "opt-citation-basic",
+      "tags": [
+        "citation_quality"
+      ],
+      "split": "optimization",
+      "run": {
+        "mode": "fresh",
+        "question": "How is Loom's retention and competitive position looking this quarter — is it worth continuing to invest in for Q4?"
+      },
+      "must_pass": true,
+      "weight": 1.0,
+      "tools": {
+        "required": [
+          "search_fixtures",
+          "read_fixture",
+          "write_report"
+        ],
+        "forbidden": [],
+        "optional": []
+      },
+      "expected_facts": [
+        {
+          "id": "flowbase",
+          "must_contain": [
+            "Flowbase",
+            "$28"
+          ],
+          "source_fixture": "003-competitor-scan.md"
+        }
+      ],
+      "report": {
+        "required_sections": [
+          "sources"
+        ]
+      },
+      "fixture_refs": [
+        "001-retention-dashboard-notes.md",
+        "003-competitor-scan.md"
+      ],
+      "graders": [
+        {
+          "grader_id": "citation_quality",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "opt-followup-no-research",
+      "scenario_family": "opt-followup-retention",
+      "tags": [
+        "followup_grounding"
+      ],
+      "split": "optimization",
+      "run": {
+        "mode": "follow_up",
+        "question": "Which referral retention number should we trust for the finance deck?",
+        "session_seed_id": "seed-followup-retention",
+        "session_seed_hash": "e4755ffcd08cd199e55ea4ea949cb318ca7c2df596a67fb3f45360546727b497"
+      },
+      "must_pass": true,
+      "weight": 1.0,
+      "tools": {
+        "required": [],
+        "forbidden": [
+          "search_fixtures",
+          "read_fixture",
+          "transcribe_audio",
+          "describe_image"
+        ],
+        "optional": []
+      },
+      "expected_facts": [
+        {
+          "id": "both_numbers",
+          "must_contain": [
+            "42%",
+            "35%"
+          ]
+        }
+      ],
+      "report": {
+        "required_sections": []
+      },
+      "fixture_refs": [],
+      "graders": [
+        {
+          "grader_id": "followup_grounding",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "opt-multimodal-full-chain",
+      "scenario_family": "opt-full-pipeline",
+      "tags": [
+        "tool_chaining",
+        "modality_coverage"
+      ],
+      "split": "optimization",
+      "run": {
+        "mode": "fresh",
+        "question": "How is Loom's retention and competitive position looking this quarter — is it worth continuing to invest in for Q4?"
+      },
+      "must_pass": false,
+      "weight": 1.2,
+      "tools": {
+        "required": [
+          "search_fixtures",
+          "read_fixture",
+          "transcribe_audio",
+          "describe_image",
+          "review_report",
+          "write_report"
+        ],
+        "forbidden": [],
+        "optional": []
+      },
+      "order": [
+        {
+          "before": "search_fixtures",
+          "after": "read_fixture"
+        },
+        {
+          "before": "transcribe_audio",
+          "after": "write_report"
+        },
+        {
+          "before": "describe_image",
+          "after": "write_report"
+        },
+        {
+          "before": "review_report",
+          "after": "write_report"
+        }
+      ],
+      "expected_facts": [
+        {
+          "id": "quote",
+          "must_contain": [
+            "spreadsheets"
+          ],
+          "source_fixture": "interview.wav"
+        },
+        {
+          "id": "chart",
+          "must_contain": [
+            "42%"
+          ],
+          "source_fixture": "chart.png"
+        }
+      ],
+      "report": {
+        "required_sections": [
+          "key findings",
+          "sources"
+        ]
+      },
+      "fixture_refs": [
+        "001-retention-dashboard-notes.md",
+        "interview.wav",
+        "chart.png"
+      ],
+      "graders": [
+        {
+          "grader_id": "tool_chaining",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "modality_coverage",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "val-full-brief-core",
+      "scenario_family": "val-core-brief",
+      "tags": [
+        "tool_selection",
+        "tool_chaining",
+        "report_structure",
+        "citation_quality"
+      ],
+      "split": "validation",
+      "run": {
+        "mode": "fresh",
+        "question": "How is Loom's retention and competitive position looking this quarter — is it worth continuing to invest in for Q4?"
+      },
+      "must_pass": true,
+      "weight": 1.5,
+      "tools": {
+        "required": [
+          "search_fixtures",
+          "read_fixture",
+          "review_report",
+          "write_report"
+        ],
+        "forbidden": [],
+        "optional": []
+      },
+      "order": [
+        {
+          "before": "search_fixtures",
+          "after": "read_fixture"
+        },
+        {
+          "before": "review_report",
+          "after": "write_report"
+        }
+      ],
+      "expected_facts": [
+        {
+          "id": "referral",
+          "must_contain": [
+            "42%"
+          ],
+          "source_fixture": "001-retention-dashboard-notes.md"
+        },
+        {
+          "id": "onboarding",
+          "must_contain": [
+            "41%"
+          ],
+          "source_fixture": "002-support-ticket-summary.md"
+        },
+        {
+          "id": "tempo",
+          "must_contain": [
+            "TBD"
+          ],
+          "source_fixture": "003-competitor-scan.md"
+        }
+      ],
+      "report": {
+        "required_sections": [
+          "executive summary",
+          "key findings",
+          "conflicts",
+          "recommendation",
+          "sources"
+        ]
+      },
+      "fixture_refs": [
+        "001-retention-dashboard-notes.md",
+        "002-support-ticket-summary.md",
+        "003-competitor-scan.md"
+      ],
+      "graders": [
+        {
+          "grader_id": "tool_selection",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "tool_chaining",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "report_structure",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "citation_quality",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "val-modality-both",
+      "scenario_family": "val-modality-evidence",
+      "tags": [
+        "modality_coverage",
+        "citation_quality"
+      ],
+      "split": "validation",
+      "run": {
+        "mode": "fresh",
+        "question": "How is Loom's retention and competitive position looking this quarter — is it worth continuing to invest in for Q4?"
+      },
+      "must_pass": true,
+      "weight": 1.2,
+      "tools": {
+        "required": [
+          "transcribe_audio",
+          "describe_image",
+          "write_report"
+        ],
+        "forbidden": [],
+        "optional": []
+      },
+      "expected_facts": [
+        {
+          "id": "audio_quote",
+          "must_contain": [
+            "two hours",
+            "spreadsheets"
+          ],
+          "source_fixture": "interview.wav"
+        },
+        {
+          "id": "chart_vals",
+          "must_contain": [
+            "38%",
+            "42%"
+          ],
+          "source_fixture": "chart.png"
+        }
+      ],
+      "report": {
+        "required_sections": [
+          "key findings",
+          "sources"
+        ]
+      },
+      "fixture_refs": [
+        "interview.wav",
+        "chart.png",
+        "005-interview-followup-notes.md"
+      ],
+      "graders": [
+        {
+          "grader_id": "modality_coverage",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "citation_quality",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "val-conflict-attribution",
+      "scenario_family": "val-conflict-core",
+      "tags": [
+        "conflict_reconciliation",
+        "report_structure"
+      ],
+      "split": "validation",
+      "run": {
+        "mode": "fresh",
+        "question": "Explain the Q3 referral retention conflict with sources."
+      },
+      "must_pass": true,
+      "weight": 1.5,
+      "tools": {
+        "required": [
+          "search_fixtures",
+          "read_fixture",
+          "write_report"
+        ],
+        "forbidden": [],
+        "optional": []
+      },
+      "expected_facts": [
+        {
+          "id": "left",
+          "must_contain": [
+            "42%",
+            "finance"
+          ],
+          "source_fixture": "001-retention-dashboard-notes.md"
+        },
+        {
+          "id": "right",
+          "must_contain": [
+            "35%",
+            "unreconciled"
+          ],
+          "source_fixture": "002-support-ticket-summary.md"
+        }
+      ],
+      "expected_conflict": {
+        "left_value": "42%",
+        "left_source": "001-retention-dashboard-notes.md",
+        "right_value": "35%",
+        "right_source": "002-support-ticket-summary.md"
+      },
+      "report": {
+        "required_sections": [
+          "conflicts",
+          "sources",
+          "recommendation"
+        ]
+      },
+      "fixture_refs": [
+        "001-retention-dashboard-notes.md",
+        "002-support-ticket-summary.md",
+        "chart.png"
+      ],
+      "graders": [
+        {
+          "grader_id": "conflict_reconciliation",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "report_structure",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "val-followup-grounded",
+      "scenario_family": "val-followup-core",
+      "tags": [
+        "followup_grounding"
+      ],
+      "split": "validation",
+      "run": {
+        "mode": "follow_up",
+        "question": "Without re-reading materials, which competitor pricing is still unknown?",
+        "session_seed_id": "seed-followup-sources",
+        "session_seed_hash": "6293886496a44dfdb587673d8c7f6a3978d4570faa595933cf93233c2adcd180"
+      },
+      "must_pass": true,
+      "weight": 1.0,
+      "tools": {
+        "required": [],
+        "forbidden": [
+          "search_fixtures",
+          "read_fixture",
+          "transcribe_audio",
+          "describe_image",
+          "write_report"
+        ],
+        "optional": []
+      },
+      "expected_facts": [
+        {
+          "id": "tempo_unknown",
+          "must_contain": [
+            "Tempo",
+            "TBD"
+          ]
+        }
+      ],
+      "report": {
+        "required_sections": []
+      },
+      "fixture_refs": [],
+      "graders": [
+        {
+          "grader_id": "followup_grounding",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "sc-full-investment-brief",
+      "scenario_family": "sc-investment-brief",
+      "tags": [
+        "tool_selection",
+        "tool_chaining",
+        "report_structure",
+        "citation_quality",
+        "conflict_reconciliation"
+      ],
+      "split": "scorecard",
+      "run": {
+        "mode": "fresh",
+        "question": "How is Loom's retention and competitive position looking this quarter — is it worth continuing to invest in for Q4?"
+      },
+      "must_pass": true,
+      "weight": 2.0,
+      "tools": {
+        "required": [
+          "search_fixtures",
+          "read_fixture",
+          "review_report",
+          "write_report"
+        ],
+        "forbidden": [],
+        "optional": []
+      },
+      "order": [
+        {
+          "before": "search_fixtures",
+          "after": "read_fixture"
+        },
+        {
+          "before": "review_report",
+          "after": "write_report"
+        }
+      ],
+      "expected_facts": [
+        {
+          "id": "referral",
+          "must_contain": [
+            "42%"
+          ],
+          "source_fixture": "001-retention-dashboard-notes.md"
+        },
+        {
+          "id": "paid",
+          "must_contain": [
+            "Paid",
+            "27%"
+          ],
+          "source_fixture": "001-retention-dashboard-notes.md"
+        },
+        {
+          "id": "onboarding",
+          "must_contain": [
+            "41%"
+          ],
+          "source_fixture": "002-support-ticket-summary.md"
+        },
+        {
+          "id": "tempo",
+          "must_contain": [
+            "TBD"
+          ],
+          "source_fixture": "003-competitor-scan.md"
+        }
+      ],
+      "expected_conflict": {
+        "left_value": "42%",
+        "left_source": "001-retention-dashboard-notes.md",
+        "right_value": "35%",
+        "right_source": "002-support-ticket-summary.md"
+      },
+      "report": {
+        "required_sections": [
+          "executive summary",
+          "key findings",
+          "conflicts",
+          "recommendation",
+          "sources"
+        ]
+      },
+      "fixture_refs": [
+        "001-retention-dashboard-notes.md",
+        "002-support-ticket-summary.md",
+        "003-competitor-scan.md"
+      ],
+      "graders": [
+        {
+          "grader_id": "tool_selection",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "tool_chaining",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "report_structure",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "citation_quality",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "conflict_reconciliation",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "sc-modality-evidence",
+      "scenario_family": "sc-modality-sealed",
+      "tags": [
+        "modality_coverage",
+        "citation_quality"
+      ],
+      "split": "scorecard",
+      "run": {
+        "mode": "fresh",
+        "question": "How is Loom's retention and competitive position looking this quarter — is it worth continuing to invest in for Q4?"
+      },
+      "must_pass": true,
+      "weight": 1.5,
+      "tools": {
+        "required": [
+          "transcribe_audio",
+          "describe_image",
+          "write_report"
+        ],
+        "forbidden": [],
+        "optional": []
+      },
+      "expected_facts": [
+        {
+          "id": "audio",
+          "must_contain": [
+            "spreadsheets",
+            "two hours"
+          ],
+          "source_fixture": "interview.wav"
+        },
+        {
+          "id": "chart",
+          "must_contain": [
+            "38%",
+            "40%",
+            "42%"
+          ],
+          "source_fixture": "chart.png"
+        }
+      ],
+      "report": {
+        "required_sections": [
+          "key findings",
+          "sources"
+        ]
+      },
+      "fixture_refs": [
+        "interview.wav",
+        "chart.png"
+      ],
+      "graders": [
+        {
+          "grader_id": "modality_coverage",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "citation_quality",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "sc-followup-decision",
+      "scenario_family": "sc-followup-sealed",
+      "tags": [
+        "followup_grounding"
+      ],
+      "split": "scorecard",
+      "run": {
+        "mode": "follow_up",
+        "question": "Given the earlier conflict, what should we tell finance vs growth?",
+        "session_seed_id": "seed-followup-retention",
+        "session_seed_hash": "e4755ffcd08cd199e55ea4ea949cb318ca7c2df596a67fb3f45360546727b497"
+      },
+      "must_pass": true,
+      "weight": 1.2,
+      "tools": {
+        "required": [],
+        "forbidden": [
+          "search_fixtures",
+          "read_fixture",
+          "transcribe_audio",
+          "describe_image"
+        ],
+        "optional": []
+      },
+      "expected_facts": [
+        {
+          "id": "both",
+          "must_contain": [
+            "42%",
+            "35%"
+          ]
+        }
+      ],
+      "report": {
+        "required_sections": []
+      },
+      "fixture_refs": [],
+      "graders": [
+        {
+          "grader_id": "followup_grounding",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    },
+    {
+      "case_id": "sc-competitor-gap",
+      "scenario_family": "sc-competitor-gap",
+      "tags": [
+        "report_structure",
+        "citation_quality"
+      ],
+      "split": "scorecard",
+      "run": {
+        "mode": "fresh",
+        "question": "Compare Loom to Flowbase, Tempo, and Nudge for Q4 competitive notes."
+      },
+      "must_pass": false,
+      "weight": 1.0,
+      "tools": {
+        "required": [
+          "search_fixtures",
+          "read_fixture",
+          "write_report"
+        ],
+        "forbidden": [],
+        "optional": []
+      },
+      "expected_facts": [
+        {
+          "id": "flowbase",
+          "must_contain": [
+            "Flowbase",
+            "28"
+          ],
+          "source_fixture": "003-competitor-scan.md"
+        },
+        {
+          "id": "tempo",
+          "must_contain": [
+            "Tempo",
+            "TBD"
+          ],
+          "source_fixture": "003-competitor-scan.md"
+        },
+        {
+          "id": "nudge",
+          "must_contain": [
+            "Nudge",
+            "12"
+          ],
+          "source_fixture": "003-competitor-scan.md"
+        }
+      ],
+      "report": {
+        "required_sections": [
+          "key findings",
+          "recommendation",
+          "sources"
+        ]
+      },
+      "fixture_refs": [
+        "003-competitor-scan.md"
+      ],
+      "graders": [
+        {
+          "grader_id": "report_structure",
+          "weight": 1.0,
+          "required": true
+        },
+        {
+          "grader_id": "citation_quality",
+          "weight": 1.0,
+          "required": true
+        }
+      ]
+    }
+  ]
+}

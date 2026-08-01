@@ -1,0 +1,4 @@
+{"schema_version":"1","sequence":0,"elapsed_ms":0,"run_relation":{},"kind":"tool_call_started","data":{"tool":"search_fixtures","input":{}}}
+{"schema_version":"1","sequence":1,"elapsed_ms":10,"run_relation":{},"kind":"tool_call_completed","data":{"tool":"search_fixtures","output":{"ok":true},"duration_ms":1}}
+{"schema_version":"1","sequence":2,"elapsed_ms":20,"run_relation":{},"kind":"tool_call_started","data":{"tool":"synthesize_brief","input":{}}}
+{"schema_version":"1","sequence":3,"elapsed_ms":30,"run_relation":{},"kind":"tool_call_completed","data":{"tool":"synthesize_brief","output":{"ok":true},"duration_ms":1}}

@@ -1,0 +1,28 @@
+{
+  "schema_version": "1",
+  "seed_id": "seed-followup-sources",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "Text": "Summarize Loom competitive position for Q4 planning."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "Text": "Flowbase is the closest competitor at $28/seat. Tempo pricing is TBD pending relaunch. Nudge is not a real substitute. Referral retention conflict: 42% vs 35%."
+        }
+      ]
+    }
+  ],
+  "step": 5,
+  "budget_used": {
+    "tokens_used": 3100,
+    "tool_calls_used": 5,
+    "cost_usd": 0.0
+  }
+}

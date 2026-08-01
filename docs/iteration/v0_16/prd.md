@@ -355,22 +355,22 @@ scorecard 只有候选被人工选中后才能通过 `--confirm-sealed` 运行�
 
 ## 整体验收
 
-- [ ] 五个 issue 的 acceptance criteria 全部通过。
-- [ ] 18 个 cases 可在 model call 前完成 schema、split、scenario-family 和 fixture 校验。
-- [ ] CI 使用 scripted/fake model 覆盖 recorder、graders、runner、compare 和失败路径。
-- [ ] recorder 测试证明顶层及嵌套 `Thinking`/`ThinkingEnd.provider_details` 不会进入 artifact。
-- [ ] effective config snapshot 覆盖 runtime、Tool registry、capability routing 与 session
+- [x] 五个 issue 的 acceptance criteria 全部通过。
+- [x] 18 个 cases 可在 model call 前完成 schema、split、scenario-family 和 fixture 校验。
+- [x] CI 使用 scripted/fake model 覆盖 recorder、graders、runner、compare 和失败路径。
+- [x] recorder 测试证明顶层及嵌套 `Thinking`/`ThinkingEnd.provider_details` 不会进入 artifact。
+- [x] effective config snapshot 覆盖 runtime、Tool registry、capability routing 与 session
       mode；baseline/candidate compare 要求 hash 相同。
-- [ ] follow-up 三次重复与 baseline/candidate 都从同一个只读 seed hash 开始，且 attempt
+- [x] follow-up 三次重复与 baseline/candidate 都从同一个只读 seed hash 开始，且 attempt
       store 互不污染。
-- [ ] 至少一次使用同一个 live chat model 的 baseline/candidate 对比被完整记录。
-- [ ] 人工最多提出并运行三个候选；每个候选只修改 harness surfaces。
-- [ ] 有 eligible candidate 时才运行 sealed scorecard；没有 eligible candidate 也可完成 iteration，
+- [x] 至少一次使用同一个 live chat model 的 baseline/candidate 对比被完整记录。
+- [x] 人工最多提出并运行三个候选；每个候选只修改 harness surfaces。
+- [x] 有 eligible candidate 时才运行 sealed scorecard；没有 eligible candidate 也可完成 iteration，
       但报告必须如实记录。
-- [ ] `docs/review/v0_16_eval_lab.md` 记录模型、日期、假设、修改、分数、成本、回归和最终决定，
+- [x] `docs/review/v0_16_eval_lab.md` 记录模型、日期、假设、修改、分数、成本、回归和最终决定，
       且不包含秘密或完整敏感 trajectory。
-- [ ] `orchest`、`orchest-protocol`、provider crates 与 bindings 无改动。
-- [ ] `cargo test --workspace`、`cargo clippy --workspace -- -D warnings`、
+- [x] `orchest`、`orchest-protocol`、provider crates 与 bindings 无改动。
+- [x] `cargo test --workspace`、`cargo clippy --workspace -- -D warnings`、
       `cargo fmt --check`、`bash scripts/lint-check.sh` 全绿。
 
 ## 依赖与发布关系

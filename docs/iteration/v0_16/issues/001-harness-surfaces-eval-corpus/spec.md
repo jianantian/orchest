@@ -23,22 +23,22 @@ runtime 修改。本 issue 先锁定唯一可编辑面，再建立可在 model c
 
 ## 验收标准
 
-- [ ] system prompt、reviewer prompt 与 Tool descriptions 只在 `harness` 模块定义一次，现有
+- [x] system prompt、reviewer prompt 与 Tool descriptions 只在 `harness` 模块定义一次，现有
       `run`/`resume` 行为不变。
-- [ ] 18 个 case 全部有稳定 ID、scenario family、至少一个行为标签和明确 split。
-- [ ] split 数量严格为 optimization 10、validation 4、scorecard 4。
-- [ ] 同一 scenario family 不跨 split；validator 对违规配置在 model call 前报错。
-- [ ] case 引用不存在的 fixture、重复 ID、未知标签、非法权重或空预期时，validator 给出包含
+- [x] 18 个 case 全部有稳定 ID、scenario family、至少一个行为标签和明确 split。
+- [x] split 数量严格为 optimization 10、validation 4、scorecard 4。
+- [x] 同一 scenario family 不跨 split；validator 对违规配置在 model call 前报错。
+- [x] case 引用不存在的 fixture、重复 ID、未知标签、非法权重或空预期时，validator 给出包含
       case ID 和字段名的错误。
-- [ ] case 覆盖 `tool_selection`、`tool_chaining`、`modality_coverage`、
+- [x] case 覆盖 `tool_selection`、`tool_chaining`、`modality_coverage`、
       `conflict_reconciliation`、`report_structure`、`citation_quality`、
       `followup_grounding` 七类行为。
-- [ ] 七个行为标签都至少出现在一个 validation case；缺少覆盖时 validator 在 model call 前
+- [x] 七个行为标签都至少出现在一个 validation case；缺少覆盖时 validator 在 model call 前
       失败，不能把 absent tag 当作未下降。
-- [ ] follow-up case 引用的 session seed 可独立校验和 hash；缺失、hash 不符、包含 mutable
+- [x] follow-up case 引用的 session seed 可独立校验和 hash；缺失、hash 不符、包含 mutable
       session/run ID 或 harness config 时拒绝 corpus。
-- [ ] 测试直接解析提交到仓库的完整 corpus，并验证全部约束；另有每类非法配置的负例测试。
-- [ ] `cargo test -p briefing-desk-demo`、workspace test/clippy/fmt/lint-check 全绿。
+- [x] 测试直接解析提交到仓库的完整 corpus，并验证全部约束；另有每类非法配置的负例测试。
+- [x] `cargo test -p briefing-desk-demo`、workspace test/clippy/fmt/lint-check 全绿。
 
 ## 备注
 
