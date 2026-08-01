@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::budget::{BudgetConfig, BudgetUsage};
-use crate::events::RuntimeEvent;
+use crate::events::{RunFailureKind, RuntimeEvent};
 use crate::model::{Message, ModelAdapter};
 use crate::run::{AgentConfig, AgentRun, ConfigError, RunInput};
 use crate::tool::registry::ToolRegistry;
@@ -120,16 +120,16 @@ fn cap_budget(configured: BudgetConfig, remaining: &BudgetConfig) -> BudgetConfi
 /// rides in the message text. The failure path never constructs
 /// `ToolOutput::Structured` and never invokes `output_extractor`.
 ///
-/// `RunFailed` carries only an opaque error string, so the kind/code
-/// adjudication keys off the runtime-generated failure messages
-/// (`run/actor.rs`):
+/// `RunFailed` carries a structured [`RunFailureKind`] alongside the error
+/// text (hotfix 2026_07_27 #242), so the kind/code adjudication dispatches on
+/// it directly — no string matching on runtime-generated failure messages:
 ///
-/// | child failure                    | kind  | retry  | code                     |
-/// |----------------------------------|-------|--------|--------------------------|
-/// | `budget_exceeded: …`             | Fatal | Unsafe | `BUDGET_EXCEEDED`        |
-/// | `max_steps_reached`              | Fatal | Unsafe | `MAX_STEPS_REACHED`      |
-/// | depth guard (`run_depth >= 3`)   | Fatal | Unsafe | `MAX_RUN_DEPTH_EXCEEDED` |
-/// | anything else                    | Fatal | Unsafe | `SUB_AGENT_RUN_FAILED`   |
+/// | child failure                      | kind  | retry  | code                     |
+/// |------------------------------------|-------|--------|--------------------------|
+/// | [`RunFailureKind::BudgetExceeded`] | Fatal | Unsafe | `BUDGET_EXCEEDED`        |
+/// | [`RunFailureKind::MaxStepsReached`]| Fatal | Unsafe | `MAX_STEPS_REACHED`      |
+/// | depth guard (`run_depth >= 3`)     | Fatal | Unsafe | `MAX_RUN_DEPTH_EXCEEDED` |
+/// | [`RunFailureKind::Other`]          | Fatal | Unsafe | `SUB_AGENT_RUN_FAILED`   |
 ///
 /// Every class is `Fatal`/`Unsafe` — the v0.9.4 retry dispatch never
 /// auto-retries the tool — because each identifiable cause is deterministic
@@ -141,13 +141,14 @@ fn cap_budget(configured: BudgetConfig, remaining: &BudgetConfig) -> BudgetConfi
 /// whole child. The parent model still receives the structured error as the
 /// tool result and may deliberately re-invoke the tool with adjusted input.
 ///
-/// **Budget accounting consequence**: because the failure path returns no
-/// `ToolOutput`, the budget the child consumed before failing is **not**
-/// folded into the parent's `BudgetGuard` (that only happens via
-/// `Structured.external_usage` on the success path). A parent model that
-/// repeatedly invokes a failing sub-agent is therefore bounded only by its
-/// own `max_steps`; each child is still individually capped by `cap_budget`.
-/// Tracked as follow-up issue #241.
+/// **Budget accounting**: the failure path returns no `ToolOutput`, so the
+/// child's consumed budget rides on the `ToolError` itself
+/// ([`ToolError::external_usage`], hotfix 2026_07_27 / issue #241); the
+/// runtime folds it into the parent's `BudgetGuard` on the tool-error path
+/// with the same semantics as the success path's
+/// `Structured.external_usage`. A parent model that repeatedly invokes a
+/// failing sub-agent is therefore still bounded by its own budget (and each
+/// child is individually capped by `cap_budget`).
 ///
 /// # Output format contract (v0.15)
 ///
@@ -311,7 +312,7 @@ impl AgentAsTool {
 
         let mut child_usage = BudgetUsage::default();
         let mut output = Value::Null;
-        let mut failed: Option<String> = None;
+        let mut failed: Option<(String, RunFailureKind)> = None;
 
         while let Some(event) = child_rx.recv().await {
             match &event {
@@ -330,8 +331,8 @@ impl AgentAsTool {
                 } => {
                     output = child_output.clone();
                 }
-                RuntimeEvent::RunFailed { error } => {
-                    failed = Some(error.clone());
+                RuntimeEvent::RunFailed { error, kind } => {
+                    failed = Some((error.clone(), *kind));
                 }
                 _ => {}
             }
@@ -347,7 +348,7 @@ impl AgentAsTool {
         }
         handle.wait().await;
 
-        if let Some(error) = failed {
+        if let Some((error, kind)) = failed {
             if let Some(ref tx) = ctx.event_tx {
                 let _ = tx
                     .send(RuntimeEvent::SubAgentFailed {
@@ -356,7 +357,12 @@ impl AgentAsTool {
                     })
                     .await;
             }
-            return Err(child_failure_error(child_run_id, &error, &child_usage));
+            return Err(child_failure_error(
+                child_run_id,
+                &error,
+                kind,
+                &child_usage,
+            ));
         }
 
         if let Some(ref tx) = ctx.event_tx {
@@ -423,9 +429,24 @@ impl AgentAsTool {
                     expect.describe(),
                     output_head(&first.output),
                 );
-                let second = self
+                let second = match self
                     .run_child_attempt(child_config, Vec::new(), correction, ctx)
-                    .await?;
+                    .await
+                {
+                    Ok(second) => second,
+                    Err(mut e) => {
+                        // The correction attempt's RunFailed bills only its own
+                        // spend — add the first attempt's usage so it is not
+                        // lost from the parent's accounting.
+                        let own = e.external_usage.take().unwrap_or_default();
+                        e.external_usage = Some(BudgetUsage {
+                            tokens_used: own.tokens_used + first.usage.tokens_used,
+                            tool_calls_used: own.tool_calls_used + first.usage.tool_calls_used,
+                            cost_usd: own.cost_usd + first.usage.cost_usd,
+                        });
+                        return Err(e);
+                    }
+                };
                 let mut usage = first.usage;
                 usage.tokens_used += second.usage.tokens_used;
                 usage.tool_calls_used += second.usage.tool_calls_used;
@@ -448,35 +469,36 @@ impl AgentAsTool {
                         usage.cost_usd,
                         output_head(&second.output),
                     ))
-                    .with_code("SUB_AGENT_OUTPUT_CONTRACT_VIOLATION")),
+                    .with_code("SUB_AGENT_OUTPUT_CONTRACT_VIOLATION")
+                    .with_external_usage(usage)),
                 }
             }
         }
     }
 }
 
-/// Builds the `ToolError` for a failed child run. `RunFailed` carries only an
-/// opaque error string, so the code adjudication keys off the
-/// runtime-generated failure messages (`run/actor.rs`); the kind is always
+/// Builds the `ToolError` for a failed child run. The code adjudication
+/// dispatches on the structured [`RunFailureKind`] the runtime attached to
+/// `RunFailed` — no string matching on the error text; the kind is always
 /// `Fatal` with `RetryHint::Unsafe`. See the [`AgentAsTool`] docs for the full
 /// mapping rule and rationale.
 fn child_failure_error(
     child_run_id: crate::run::RunId,
     error: &str,
+    kind: RunFailureKind,
     budget_used: &BudgetUsage,
 ) -> ToolError {
-    let code = if error.starts_with("budget_exceeded") {
-        "BUDGET_EXCEEDED"
-    } else if error == "max_steps_reached" {
-        "MAX_STEPS_REACHED"
-    } else {
-        "SUB_AGENT_RUN_FAILED"
+    let code = match kind {
+        RunFailureKind::BudgetExceeded => "BUDGET_EXCEEDED",
+        RunFailureKind::MaxStepsReached => "MAX_STEPS_REACHED",
+        RunFailureKind::Other => "SUB_AGENT_RUN_FAILED",
     };
     ToolError::fatal(format!(
         "sub-agent run {child_run_id} failed: {error} (budget_used: {} tokens, {} tool calls, ${:.4})",
         budget_used.tokens_used, budget_used.tool_calls_used, budget_used.cost_usd
     ))
     .with_code(code)
+    .with_external_usage(budget_used.clone())
 }
 
 /// Extract the contract-conforming payload from a child run's raw output.
@@ -976,6 +998,12 @@ mod tests {
             "message carries consumed budget: {}",
             err.message
         );
+        // And the structured channel must bill the parent run (issue #241).
+        let usage = err
+            .external_usage
+            .as_ref()
+            .expect("failed child bills the parent via external_usage");
+        assert_eq!(usage.tokens_used, 5);
 
         let events = drain_events(rx);
         assert!(events.iter().any(
@@ -1362,6 +1390,12 @@ mod tests {
             "raw output head in diagnostics: {}",
             err.message
         );
+        // Both attempts' spend bills the parent (5 tokens each, issue #241).
+        let usage = err
+            .external_usage
+            .as_ref()
+            .expect("contract violation bills the parent via external_usage");
+        assert_eq!(usage.tokens_used, 10);
         assert_eq!(
             model.seen.lock().expect("seen").len(),
             2,

@@ -83,7 +83,7 @@ async fn main() {
             } => {
                 println!("[event] ModelRetry attempt={attempt} error={error} delay={next_delay:?}");
             }
-            RuntimeEvent::RunFailed { error } => {
+            RuntimeEvent::RunFailed { error, .. } => {
                 println!("[event] RunFailed: {error}");
             }
             _ => {}

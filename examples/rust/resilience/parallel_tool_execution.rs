@@ -183,7 +183,7 @@ async fn main() {
                 "[batch] {tool} requested #{requested_order}, completed #{completion_order}"
             ),
             RuntimeEvent::RunCompleted { output, .. } => println!("[run] completed: {output}"),
-            RuntimeEvent::RunFailed { error } => println!("[run] failed: {error}"),
+            RuntimeEvent::RunFailed { error, .. } => println!("[run] failed: {error}"),
             _ => {}
         }
     }

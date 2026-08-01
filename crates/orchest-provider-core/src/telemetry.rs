@@ -52,10 +52,16 @@ impl LatencyTimer {
     }
 }
 
-/// Generate a fresh trace id (UUID-v4-shaped, no external uuid dep: 32 hex chars
-/// from two 64-bit values). Stable enough for correlation, not cryptographic.
+/// Generate a fresh trace id (UUID-v4-shaped, no external uuid dep: 32 hex
+/// chars). Entropy = wall clock + stack-address salt + a process-global
+/// monotonic sequence. The sequence is what makes back-to-back calls on a
+/// coarse clock (e.g. macOS's µs granularity) collide-free: even when the
+/// nanos and the salt are identical, the sequence always differs. Stable
+/// enough for correlation, not cryptographic.
 pub fn new_trace_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -63,7 +69,8 @@ pub fn new_trace_id() -> String {
     // mix in the address of a stack local for a little intra-process entropy
     let local = 0u8;
     let salt = (&local as *const u8) as usize as u128;
-    format!("{:032x}", nanos ^ salt)
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed) as u128;
+    format!("{:032x}", (nanos ^ salt).wrapping_add(seq))
 }
 
 #[cfg(test)]
@@ -86,5 +93,14 @@ mod tests {
         assert_eq!(a.len(), 32);
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, b);
+    }
+
+    /// The old nanos^salt generator could collide on back-to-back calls
+    /// (coarse clock + identical stack address). The monotonic sequence must
+    /// keep even a tight same-thread loop collision-free.
+    #[test]
+    fn trace_ids_are_unique_under_tight_loop() {
+        let ids: std::collections::HashSet<String> = (0..10_000).map(|_| new_trace_id()).collect();
+        assert_eq!(ids.len(), 10_000);
     }
 }

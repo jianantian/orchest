@@ -318,7 +318,7 @@ async fn input_guardrail_abort_terminates_run() {
     handle.wait().await;
     assert!(events
         .iter()
-        .any(|e| matches!(e, RuntimeEvent::RunFailed { error } if error == "blocked input")));
+        .any(|e| matches!(e, RuntimeEvent::RunFailed { error, .. } if error == "blocked input")));
 }
 
 #[tokio::test]

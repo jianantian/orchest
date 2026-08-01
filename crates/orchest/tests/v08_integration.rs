@@ -255,7 +255,7 @@ async fn guardrail_and_approval_coexist() {
                 saw_approval = true;
                 handle.respond_approval(handle.run_id, true).await.unwrap();
             }
-            RuntimeEvent::RunFailed { error } => panic!("run failed: {error}"),
+            RuntimeEvent::RunFailed { error, .. } => panic!("run failed: {error}"),
             _ => {}
         }
     }
@@ -740,7 +740,7 @@ async fn all_v08_features_combined() {
                 saw_approval = true;
                 handle.respond_approval(handle.run_id, true).await.unwrap();
             }
-            RuntimeEvent::RunFailed { error } => panic!("run failed: {error}"),
+            RuntimeEvent::RunFailed { error, .. } => panic!("run failed: {error}"),
             RuntimeEvent::RunAborted { reason } => {
                 panic!("run aborted: {:?}", reason)
             }

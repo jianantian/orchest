@@ -121,7 +121,7 @@ async fn main() {
             RuntimeEvent::RunCompleted { output, .. } => {
                 println!("[run] completed: {output}");
             }
-            RuntimeEvent::RunFailed { error } => {
+            RuntimeEvent::RunFailed { error, .. } => {
                 println!("[run] failed: {error}");
             }
             _ => {}

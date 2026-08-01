@@ -118,6 +118,14 @@ export type StopReason =
   | "Interrupted"
   | { Other: string };
 
+/**
+ * Structured run-failure classification, in the core serde JSON shape.
+ * "BudgetExceeded" — the run's budget guard fired; "MaxStepsReached" — the
+ * run hit its step ceiling; "Other" — any other failure, including events
+ * emitted before this field existed. Dispatch on this, not on `error` text.
+ */
+export type RunFailureKind = "BudgetExceeded" | "MaxStepsReached" | "Other";
+
 export type RuntimeEvent =
   | { type: "run_started"; run_id: string; run_depth: number; child_run_id: string | null }
   | { type: "model_call_started"; step: number; run_depth: number; child_run_id: string | null }
@@ -147,6 +155,6 @@ export type RuntimeEvent =
   | { type: "run_aborted"; reason: string | null; run_depth: number; child_run_id: string | null }
   | { type: "events_dropped"; subscriber_id: number; count: number; run_depth: number; child_run_id: string | null }
   | { type: "run_completed"; output: unknown; stop_reason: StopReason; run_depth: number; child_run_id: string | null }
-  | { type: "run_failed"; error: string; run_depth: number; child_run_id: string | null };
+  | { type: "run_failed"; error: string; kind: RunFailureKind; run_depth: number; child_run_id: string | null };
 
 export { Agent } from "./native";

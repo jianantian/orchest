@@ -293,6 +293,11 @@ class RunCompletedEvent(TypedDict):
 class RunFailedEvent(TypedDict):
     type: Literal["run_failed"]
     error: str
+    # Structured failure classification: "BudgetExceeded" (budget guard
+    # fired), "MaxStepsReached" (step ceiling hit), or "Other" (anything
+    # else, including events emitted before this field existed). Dispatch
+    # on this, not on `error` text.
+    kind: str
     run_depth: int
     child_run_id: str | None
 

@@ -227,7 +227,7 @@ async fn loop_detection_aborts_on_repeated_tool_calls() {
 
     assert!(
         events.iter().any(|e| match e {
-            RuntimeEvent::RunFailed { error } => error.contains("loop"),
+            RuntimeEvent::RunFailed { error, .. } => error.contains("loop"),
             _ => false,
         }),
         "loop detection must emit RunFailed with loop message"
@@ -289,7 +289,7 @@ async fn hook_abort_before_model_emits_run_failed() {
 
     assert!(
         events.iter().any(|e| match e {
-            RuntimeEvent::RunFailed { error } => error.contains("hook aborted"),
+            RuntimeEvent::RunFailed { error, .. } => error.contains("hook aborted"),
             _ => false,
         }),
         "expected RunFailed with hook abort message"

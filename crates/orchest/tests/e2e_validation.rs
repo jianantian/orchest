@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use orchest::budget::BudgetConfig;
-use orchest::events::RuntimeEvent;
+use orchest::events::{RunFailureKind, RuntimeEvent};
 use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
     OptionAdjustment, RequestOptions, StopReason, StreamEvent, ThinkingLevel, TokenUsage,
@@ -602,7 +602,8 @@ async fn e2e_budget_warning_event() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            RuntimeEvent::RunFailed { error } if error.starts_with("budget_exceeded")
+            RuntimeEvent::RunFailed { error, kind }
+                if error.starts_with("budget_exceeded") && *kind == RunFailureKind::BudgetExceeded
         )),
         "missing budget_exceeded RunFailed"
     );

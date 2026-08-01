@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::budget::BudgetUsage;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
 pub enum ErrorKind {
     InvalidInput,
@@ -29,6 +31,18 @@ pub struct ToolError {
     pub retry: RetryHint,
     pub code: Option<String>,
     pub next_step: Option<String>,
+    /// Budget an agent-as-tool child run (or any out-of-band worker) consumed
+    /// before this error was produced. The runtime folds it into the parent's
+    /// `BudgetGuard` on the tool-error path exactly like the success path's
+    /// `ToolOutput::Structured.external_usage` — see `run/actor.rs`. `None`
+    /// means "nothing out-of-band to account" (the default; ordinary tools
+    /// never set this — and it stays off the wire, so tool-result payloads
+    /// are byte-identical to before). Only the *terminal* error of a tool
+    /// call is folded; a hypothetical retryable tool reporting usage on every
+    /// attempt would lose the intermediate attempts' spend (no such producer
+    /// exists today — agent-as-tool errors are always `Fatal`/`Unsafe`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_usage: Option<BudgetUsage>,
 }
 
 impl ToolError {
@@ -39,6 +53,7 @@ impl ToolError {
             retry: RetryHint::Unsafe,
             code: None,
             next_step: None,
+            external_usage: None,
         }
     }
 
@@ -49,6 +64,7 @@ impl ToolError {
             retry: RetryHint::Safe,
             code: None,
             next_step: None,
+            external_usage: None,
         }
     }
 
@@ -59,6 +75,7 @@ impl ToolError {
             retry: RetryHint::Safe,
             code: None,
             next_step: None,
+            external_usage: None,
         }
     }
 
@@ -71,6 +88,7 @@ impl ToolError {
             retry: RetryHint::Unsafe,
             code: None,
             next_step: Some("clarify".to_string()),
+            external_usage: None,
         }
     }
 
@@ -83,6 +101,7 @@ impl ToolError {
             retry: RetryHint::Unsafe,
             code: None,
             next_step: Some("escalate".to_string()),
+            external_usage: None,
         }
     }
 
@@ -93,6 +112,14 @@ impl ToolError {
 
     pub fn with_next_step(mut self, hint: impl Into<String>) -> Self {
         self.next_step = Some(hint.into());
+        self
+    }
+
+    /// Attach the out-of-band budget consumption that led to this error (see
+    /// the [`external_usage`](Self::external_usage) field docs). Used by
+    /// agent-as-tool so a failed child run still bills the parent run.
+    pub fn with_external_usage(mut self, usage: BudgetUsage) -> Self {
+        self.external_usage = Some(usage);
         self
     }
 }
@@ -132,5 +159,20 @@ mod tests {
 
         let round_trip: ToolError = serde_json::from_value(value).expect("ToolError deserializes");
         assert_eq!(round_trip.kind, ErrorKind::Ambiguity);
+    }
+
+    /// Payloads emitted before the `external_usage` field existed must still
+    /// deserialize (the field defaults to `None`).
+    #[test]
+    fn tool_error_deserializes_pre_external_usage_payloads() {
+        let legacy = serde_json::json!({
+            "message": "boom",
+            "kind": "Fatal",
+            "retry": "Unsafe",
+            "code": null,
+            "next_step": null,
+        });
+        let error: ToolError = serde_json::from_value(legacy).expect("legacy payload");
+        assert!(error.external_usage.is_none());
     }
 }

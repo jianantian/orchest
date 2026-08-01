@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(event) = rx.recv().await {
         match event {
             RuntimeEvent::RunCompleted { output, .. } => println!("[run1] completed: {output}"),
-            RuntimeEvent::RunFailed { error } => println!("[run1] failed: {error}"),
+            RuntimeEvent::RunFailed { error, .. } => println!("[run1] failed: {error}"),
             _ => {}
         }
     }
@@ -141,7 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(event) = rx2.recv().await {
         match event {
             RuntimeEvent::RunCompleted { output, .. } => println!("[run2] completed: {output}"),
-            RuntimeEvent::RunFailed { error } => println!("[run2] failed: {error}"),
+            RuntimeEvent::RunFailed { error, .. } => println!("[run2] failed: {error}"),
             _ => {}
         }
     }

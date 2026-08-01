@@ -680,6 +680,7 @@ mod tests {
         let mut traj = TrajectoryRecorder::new();
         traj.observe(&RuntimeEvent::RunFailed {
             error: "provider down".into(),
+            kind: orchest::events::RunFailureKind::Other,
         });
         let mut record = attempt_record_template("case-x", 1, AttemptStatus::ExecutionFailure);
         record.terminal_kind = Some("run_failed".into());

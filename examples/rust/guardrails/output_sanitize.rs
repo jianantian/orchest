@@ -118,7 +118,7 @@ async fn main() {
                     "SSN should be redacted"
                 );
             }
-            RuntimeEvent::RunFailed { error } => println!("[run] failed: {error}"),
+            RuntimeEvent::RunFailed { error, .. } => println!("[run] failed: {error}"),
             _ => {}
         }
     }
