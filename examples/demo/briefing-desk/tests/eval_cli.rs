@@ -11,13 +11,6 @@ fn package_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn repo_root() -> PathBuf {
-    package_root()
-        .join("../../..")
-        .canonicalize()
-        .expect("repo root")
-}
-
 /// Clean git worktree root for preflight: use a temp git repo that only has
 /// optional harness dirty, by pointing --repo-root at a fresh repo.
 fn clean_repo_root() -> tempfile::TempDir {
@@ -215,13 +208,14 @@ fn scripted_optimization_run_writes_artifacts() {
 }
 
 #[test]
-fn sealed_scorecard_manifest_marks_sealed() {
+fn scripted_scorecard_is_rejected_even_with_confirm_sealed() {
     let repo = clean_repo_root();
     let runs = tempfile::tempdir().unwrap();
     let materials = package_root().join("fixtures/research");
+
     let out = eval_run(&[
         "--label",
-        "sealed-sc",
+        "sealed-scripted",
         "--split",
         "scorecard",
         "--record-sensitive",
@@ -234,18 +228,20 @@ fn sealed_scorecard_manifest_marks_sealed() {
         materials.to_str().unwrap(),
         "--scripted",
     ]);
-    assert!(
-        out.status.success(),
-        "stderr={}",
+    assert!(!out.status.success(), "scripted scorecard must fail");
+    let err = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(runs.path().join("sealed-sc/manifest.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(manifest["request_options"]["sealed_scorecard"], true);
-    assert_eq!(manifest["request_options"]["confirm_sealed"], true);
-    assert_eq!(manifest["repetition"], 3);
+    assert!(
+        err.contains("scripted") || err.contains("injected") || err.contains("scorecard"),
+        "stderr/stdout={err}"
+    );
+    assert!(
+        !runs.path().join("sealed-scripted").exists(),
+        "must not create sealed scripted run dir"
+    );
 }
 
 #[test]

@@ -188,9 +188,9 @@ pub fn grade_conflict_reconciliation(
     let left_attributed = value_attributed_to_source(output, &conflict.left_value, &left_src_base);
     let right_attributed =
         value_attributed_to_source(output, &conflict.right_value, &right_src_base);
-
-    let both_present_with_sources = left_val_ok && right_val_ok && left_src_ok && right_src_ok;
-    let attributed = (left_attributed && right_attributed) || both_present_with_sources;
+    // Presence alone is not attribution: both numbers and both sources must be
+    // nearby (windowed), not merely somewhere else in the document.
+    let attributed = left_attributed && right_attributed;
 
     let checks = [
         left_val_ok,

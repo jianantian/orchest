@@ -843,6 +843,21 @@ Support pull shows 35% from `002-support-ticket-summary.md`.
         )
         .unwrap();
         assert!(!conf_fail.passed);
+
+        // Numbers and sources all present, but separated by >160 chars → fail.
+        let distant = format!(
+            "# Findings\nReferral retention is 42% in one cut and 35% in another.\n{}\n# Appendix\nSee also 001-retention-dashboard-notes.md and 002-support-ticket-summary.md.\n",
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        );
+        let conf_distant = run_grader(
+            &case.graders[1],
+            &input_for(&case, &traj, &distant, &inv, &fixtures),
+        )
+        .unwrap();
+        assert!(
+            !conf_distant.passed,
+            "presence without nearby attribution must fail: {conf_distant:?}"
+        );
     }
 
     #[test]

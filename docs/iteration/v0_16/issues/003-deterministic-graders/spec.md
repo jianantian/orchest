@@ -21,22 +21,22 @@
 
 ## 验收标准
 
-- [ ] 七类行为标签均至少有一个确定性 grader 消费。
-- [ ] grader 只读取 case contract、trajectory、output 与 fixture inventory，不发起 model call。
-- [ ] Tool selection 能区分 required、forbidden、optional，并在失败时列出实际调用序列。
-- [ ] Tool chaining 支持部分顺序约束，不要求无关 Tool 的全序一致。
-- [ ] modality/conflict grader 能证明音频和图片 Tool 被调用，并验证 42%/35% 与正确来源同时出现。
-- [ ] citation grader 拒绝不存在、越出 fixture root 或只在正文提名但未形成来源记录的引用。
-- [ ] follow-up grader 能识别 session resume 成功、禁止的重新搜索/读取，以及缺失历史 grounding。
-- [ ] completed attempt score 为 `Σ(grader score × grader weight) / Σ(weight)`，且只有全部
+- [x] 七类行为标签均至少有一个确定性 grader 消费。
+- [x] grader 只读取 case contract、trajectory、output 与 fixture inventory，不发起 model call。
+- [x] Tool selection 能区分 required、forbidden、optional，并在失败时列出实际调用序列。
+- [x] Tool chaining 支持部分顺序约束，不要求无关 Tool 的全序一致。
+- [x] modality/conflict grader 能证明音频和图片 Tool 被调用，并验证 42%/35% 与正确来源同时出现。
+- [x] citation grader 拒绝不存在、越出 fixture root 或只在正文提名但未形成来源记录的引用。
+- [x] follow-up grader 能识别 session resume 成功、禁止的重新搜索/读取，以及缺失历史 grounding。
+- [x] completed attempt score 为 `Σ(grader score × grader weight) / Σ(weight)`，且只有全部
       required graders pass 时 attempt 才 pass；grader error 产生 null aggregate。
-- [ ] 普通 case 三次重复以 2/3 pass，score 取三次算术平均；must-pass case 要求每次 attempt
+- [x] 普通 case 三次重复以 2/3 pass，score 取三次算术平均；must-pass case 要求每次 attempt
       都 pass，不能被平均分或多数决掩盖。
-- [ ] overall 与 per-tag 使用 case weight 加权；任一必需 attempt 缺失或未完成时 aggregate 为
+- [x] overall 与 per-tag 使用 case weight 加权；任一必需 attempt 缺失或未完成时 aggregate 为
       null，不缩小分母。
-- [ ] validation tag 没有 case 时 aggregator 明确拒绝无效 corpus，而不是输出“无下降”。
-- [ ] 每个 grader 使用提交到仓库的固定 trajectory/output fixtures 覆盖 pass、fail 与边界用例。
-- [ ] 无 LLM judge、embedding 或远程服务依赖；workspace checks 全绿。
+- [x] validation tag 没有 case 时 aggregator 明确拒绝无效 corpus，而不是输出“无下降”。
+- [x] 每个 grader 使用提交到仓库的固定 trajectory/output fixtures 覆盖 pass、fail 与边界用例。
+- [x] 无 LLM judge、embedding 或远程服务依赖；workspace checks 全绿。
 
 ## 备注
 

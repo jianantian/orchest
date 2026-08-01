@@ -1,3 +1,5 @@
+//! Shared eval-lab helpers are re-exported for tests and future CLI seams;
+//! keep them free of per-item dead_code noise under a single allow.
 #![allow(dead_code, unused_imports)]
 //! Briefing Desk Eval Lab: corpus, recording, grading, and comparison.
 //!
@@ -47,8 +49,3 @@ pub use trajectory::{
     sanitize_runtime_event, sanitize_value, RunRelation, SanitizeOutcome, TrajectoryError,
     TrajectoryEvent, TrajectoryRecorder, SECRET_REDACTION, TRAJECTORY_SCHEMA_VERSION,
 };
-
-/// True when the deterministic grader module is linked and usable.
-pub(crate) fn grader_available() -> bool {
-    true
-}

@@ -21,8 +21,9 @@ use super::artifact::{
 };
 use super::case::{
     default_cases_path, default_fixtures_dir, default_seeds_dir, load_corpus, load_session_seed,
-    CaseCorpus, EvalCase, EvalSplit, RunMode, SessionSeed, GATING_TAGS,
+    BehaviorTag, CaseCorpus, EvalCase, EvalSplit, RunMode, SessionSeed, GATING_TAGS,
 };
+
 use super::compare::{AttemptResultRow, CaseResultRow, RunResults, RESULTS_SCHEMA_VERSION};
 use super::effective_config::{
     fingerprint_registry, runtime_with_max_steps, CapabilityRoute, EffectiveConfigInput,
@@ -155,6 +156,14 @@ pub fn preflight(req: &EvalRunRequest) -> Result<CaseCorpus, EvalRunError> {
     if req.splits.contains(&EvalSplit::Scorecard) && !req.confirm_sealed {
         return Err(EvalRunError::Preflight(
             "scorecard split requires explicit --confirm-sealed (sealed execution process contract)"
+                .into(),
+        ));
+    }
+    if req.splits.contains(&EvalSplit::Scorecard) && req.model.is_some() {
+        // Injected/scripted models must not produce sealed scorecard artifacts.
+        // Live scorecard requires env-constructed model (req.model is None here).
+        return Err(EvalRunError::Preflight(
+            "scorecard split rejects injected/scripted models; sealed runs require a live model"
                 .into(),
         ));
     }
@@ -613,18 +622,14 @@ fn grade_attempt_for_case(
     fixtures_dir: &Path,
     fixture_inventory: &BTreeSet<String>,
 ) -> (ScoresPlaceholder, Option<f64>, Option<bool>, String) {
-    // Call graders when module is wired; otherwise not_run.
-    if super::grader_available() {
-        return grade_with_grader(
-            case,
-            events,
-            output_md,
-            record,
-            fixtures_dir,
-            fixture_inventory,
-        );
-    }
-    (ScoresPlaceholder::not_run(), None, None, "not_run".into())
+    grade_with_grader(
+        case,
+        events,
+        output_md,
+        record,
+        fixtures_dir,
+        fixture_inventory,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -678,97 +683,152 @@ fn grade_with_grader(
 }
 
 /// Case aggregation per PRD: must-pass requires all attempts pass; normal 2/3.
+///
+/// Thin adapter over [`crate::eval::grader::aggregate_case`] so the formula has
+/// a single source of truth.
 pub fn aggregate_case_repetitions(
     must_pass: bool,
     passes: &[Option<bool>],
     scores: &[Option<f64>],
     expected_reps: u32,
 ) -> (Option<bool>, Option<f64>) {
+    use super::grader::{aggregate_case, AttemptAggregate, AttemptScoreInput};
+    use crate::eval::case::{BehaviorTag, EvalCase, EvalSplit, RunMode, ToolConstraints};
+
     if passes.len() != expected_reps as usize || scores.len() != expected_reps as usize {
         return (None, None);
     }
-    if passes.iter().any(|p| p.is_none()) || scores.iter().any(|s| s.is_none()) {
-        return (None, None);
-    }
-    let pass_vals: Vec<bool> = passes.iter().map(|p| p.unwrap()).collect();
-    let score_vals: Vec<f64> = scores.iter().map(|s| s.unwrap()).collect();
-    let pass_count = pass_vals.iter().filter(|p| **p).count();
-    let case_pass = if must_pass {
-        pass_count == expected_reps as usize
-    } else if expected_reps == 1 {
-        pass_count == 1
-    } else {
-        pass_count * 3 >= 2 * expected_reps as usize
+
+    let attempts: Vec<AttemptScoreInput> = passes
+        .iter()
+        .zip(scores.iter())
+        .map(|(p, s)| match (p, s) {
+            (Some(passed), Some(score)) => AttemptScoreInput {
+                grading_completed: true,
+                attempt_completed: true,
+                aggregate: Some(AttemptAggregate {
+                    case_id: String::new(),
+                    passed: *passed,
+                    score: *score,
+                    total_weight: 1.0,
+                    required_passed: *passed,
+                    grader_count: 1,
+                }),
+            },
+            _ => AttemptScoreInput {
+                grading_completed: false,
+                attempt_completed: false,
+                aggregate: None,
+            },
+        })
+        .collect();
+
+    // Only fields read by aggregate_case: must_pass, weight, tags, split, case_id.
+    let case = EvalCase {
+        case_id: String::new(),
+        scenario_family: String::new(),
+        tags: vec![BehaviorTag::ToolSelection],
+        split: EvalSplit::Validation,
+        run: RunMode::Fresh {
+            question: "n/a".into(),
+        },
+        must_pass,
+        weight: 1.0,
+        tools: ToolConstraints::default(),
+        order: vec![],
+        expected_facts: vec![],
+        expected_conflict: None,
+        report: Default::default(),
+        fixture_refs: vec![],
+        graders: vec![],
+        notes: None,
     };
-    let mean = score_vals.iter().sum::<f64>() / score_vals.len() as f64;
-    (Some(case_pass), Some(mean))
+
+    match aggregate_case(&case, &attempts, expected_reps as usize) {
+        Ok(Some(agg)) => (Some(agg.passed), Some(agg.score)),
+        Ok(None) | Err(_) => (None, None),
+    }
 }
 
 fn aggregate_split_scores(
     cases: &[CaseResultRow],
     splits: &[EvalSplit],
 ) -> (Option<f64>, BTreeMap<String, f64>) {
+    use super::grader::{aggregate_split, aggregate_tag, CaseAggregate};
+
     let focus = if splits.contains(&EvalSplit::Validation) {
         Some(EvalSplit::Validation)
     } else {
         splits.first().copied()
     };
-    let focus_str = focus.map(|s| s.as_str());
 
-    let mut overall = None;
-    if let Some(fs) = focus_str {
-        let mut wsum = 0.0;
-        let mut ssum = 0.0;
-        let mut any_null = false;
-        let mut any = false;
-        for c in cases {
-            if c.split != fs {
-                continue;
-            }
-            any = true;
-            match c.score {
-                Some(s) => {
-                    wsum += c.weight;
-                    ssum += s * c.weight;
-                }
-                None => any_null = true,
-            }
-        }
-        if any && !any_null && wsum > 0.0 {
-            overall = Some(ssum / wsum);
-        } else if any_null {
-            overall = None;
-        }
+    let mut case_aggs = Vec::new();
+    let mut any_null = false;
+    for c in cases {
+        let Some(split) = parse_split_label(&c.split) else {
+            continue;
+        };
+        let (Some(score), Some(passed)) = (c.score, c.passed) else {
+            any_null = true;
+            continue;
+        };
+        let tags: Vec<BehaviorTag> = c
+            .tags
+            .iter()
+            .filter_map(|t| BehaviorTag::parse(t))
+            .collect();
+        case_aggs.push(CaseAggregate {
+            case_id: c.case_id.clone(),
+            must_pass: c.must_pass,
+            case_weight: c.weight,
+            tags,
+            split,
+            passed,
+            score,
+            attempts_total: c.attempts.len(),
+            attempts_passed: c.attempts.iter().filter(|a| a.passed == Some(true)).count(),
+            attempts_present: c.attempts.len(),
+        });
     }
 
+    let overall = if any_null {
+        None
+    } else if let Some(split) = focus {
+        aggregate_split(split, &case_aggs)
+            .ok()
+            .flatten()
+            .map(|s| s.score)
+    } else {
+        None
+    };
+
     let mut per_tag = BTreeMap::new();
-    for tag in GATING_TAGS {
-        let key = tag.as_str();
-        let mut wsum = 0.0;
-        let mut ssum = 0.0;
-        let mut any_null = false;
-        let mut any = false;
-        for c in cases {
-            if c.split != EvalSplit::Validation.as_str() {
-                continue;
+    let val_null = cases
+        .iter()
+        .filter(|c| c.split == EvalSplit::Validation.as_str())
+        .any(|c| c.score.is_none() || c.passed.is_none());
+    if !val_null {
+        let val_aggs: Vec<_> = case_aggs
+            .iter()
+            .filter(|c| c.split == EvalSplit::Validation)
+            .cloned()
+            .collect();
+        for tag in GATING_TAGS {
+            if let Ok(Some(tag_agg)) = aggregate_tag(tag, &val_aggs) {
+                per_tag.insert(tag.as_str().to_string(), tag_agg.score);
             }
-            if !c.tags.iter().any(|t| t == key) {
-                continue;
-            }
-            any = true;
-            match c.score {
-                Some(s) => {
-                    wsum += c.weight;
-                    ssum += s * c.weight;
-                }
-                None => any_null = true,
-            }
-        }
-        if any && !any_null && wsum > 0.0 {
-            per_tag.insert(key.to_string(), ssum / wsum);
         }
     }
     (overall, per_tag)
+}
+
+fn parse_split_label(s: &str) -> Option<EvalSplit> {
+    match s {
+        "optimization" => Some(EvalSplit::Optimization),
+        "validation" => Some(EvalSplit::Validation),
+        "scorecard" => Some(EvalSplit::Scorecard),
+        _ => None,
+    }
 }
 
 fn build_effective_config(

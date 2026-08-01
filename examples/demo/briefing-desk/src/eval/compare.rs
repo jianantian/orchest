@@ -58,6 +58,7 @@ pub struct CompareReport {
 }
 
 impl CompareReport {
+    #[allow(dead_code)]
     pub fn to_json_value(&self) -> Value {
         serde_json::to_value(self).unwrap_or(Value::Null)
     }
@@ -728,6 +729,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write_run(
         root: &Path,
         label: &str,

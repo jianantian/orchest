@@ -194,6 +194,7 @@ impl AttemptSession {
         }
     }
 
+    #[allow(dead_code)]
     pub fn store_path(&self) -> &Path {
         &self.store_path
     }
@@ -246,12 +247,14 @@ fn save_snapshot_blocking(
 }
 
 /// Verify seed bytes normalize stably (hash helper for manifest).
+#[allow(dead_code)]
 pub fn seed_content_hash(seed: &SessionSeed) -> Result<String, ArtifactError> {
     seed.content_hash()
         .map_err(|e| ArtifactError::new(e.to_string()))
 }
 
 /// Expose normalized seed bytes for tests.
+#[allow(dead_code)]
 pub fn seed_normalized_bytes(seed: &SessionSeed) -> Result<Vec<u8>, ArtifactError> {
     normalize_seed_bytes(seed).map_err(|e| ArtifactError::new(e.to_string()))
 }

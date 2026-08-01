@@ -218,21 +218,10 @@ impl EffectiveConfigSnapshot {
             env_options: input.env_options,
         };
 
-        // Fail if any secret-looking key slipped into the snapshot JSON.
+        // Secret-looking values are rejected in preflight_* before assembly.
+        // Still hard-fail on common raw key material markers if any slipped through.
         let bytes = snap.normalize_bytes()?;
         let text = String::from_utf8_lossy(&bytes);
-        for forbidden in ["sk-", "api_key", "authorization", "Bearer ", "password="] {
-            // schema field names like "approval" are fine; look for secret *values* patterns
-            // already stripped — still reject raw key material markers in the blob.
-            if forbidden == "api_key" {
-                continue;
-            }
-            if text.contains(forbidden) && forbidden != "authorization" {
-                // "authorization" may appear as a tool schema property name; only hard-fail
-                // on credential material markers.
-            }
-        }
-        // Explicit secret value markers.
         if text.contains("sk-live") || text.contains("sk-ant-") {
             return Err(ArtifactError::preflight(
                 "effective config snapshot would contain secret material",

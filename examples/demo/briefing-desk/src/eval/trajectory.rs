@@ -102,6 +102,7 @@ impl TrajectoryRecorder {
         self.inconclusive
     }
 
+    #[allow(dead_code)]
     pub fn mark_inconclusive(&mut self) {
         self.inconclusive = true;
     }
@@ -761,6 +762,7 @@ pub fn sanitize_free_text(text: &str) -> String {
 
 /// Helper for tests constructing nested child wrappers.
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn wrap_child(child_run_id: RunId, run_depth: u32, event: RuntimeEvent) -> RuntimeEvent {
     RuntimeEvent::ChildRunEvent {
         child_run_id,

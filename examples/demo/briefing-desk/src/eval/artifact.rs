@@ -465,7 +465,7 @@ pub fn preflight_dirty_paths(
     }
 }
 
-/// Fixture revision: sha256 of sorted fixture basenames + sizes (stable, non-secret).
+/// Fixture revision: sha256 of sorted fixture basenames + file contents.
 pub fn fixture_revision(fixtures_dir: &Path) -> Result<String, ArtifactError> {
     let mut entries = Vec::new();
     let rd = fs::read_dir(fixtures_dir).map_err(|e| {
@@ -478,7 +478,11 @@ pub fn fixture_revision(fixtures_dir: &Path) -> Result<String, ArtifactError> {
             .map_err(|e| ArtifactError::io(format!("fixtures metadata: {e}")))?;
         if meta.is_file() {
             let name = ent.file_name().to_string_lossy().into_owned();
-            entries.push((name, meta.len()));
+            let bytes = fs::read(ent.path()).map_err(|e| {
+                ArtifactError::io(format!("reading fixture {}: {e}", ent.path().display()))
+            })?;
+            let content_sha = hex_sha256(&bytes);
+            entries.push((name, content_sha));
         }
     }
     entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -652,11 +656,10 @@ mod tests {
         assert_eq!(hex_sha256(&disk), href.sha256);
         // surface text recoverable
         let parsed: HarnessSnapshot = serde_json::from_slice(&disk).unwrap();
+        let expected = harness::MAIN_SYSTEM_PROMPT.replace("\r\n", "\n");
         assert_eq!(
             parsed.text_for("main.system_prompt"),
-            Some(harness::MAIN_SYSTEM_PROMPT.replace("\r\n", "\n").as_str())
-                .filter(|_| true)
-                .or(Some(harness::MAIN_SYSTEM_PROMPT))
+            Some(expected.as_str())
         );
         assert!(!parsed.surfaces.is_empty());
         // sorted by surface_id

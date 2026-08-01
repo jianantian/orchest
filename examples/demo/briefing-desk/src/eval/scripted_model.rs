@@ -91,12 +91,14 @@ impl ScriptedModel {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_identity(mut self, provider: impl Into<String>, model: impl Into<String>) -> Self {
         self.provider = provider.into();
         self.model = model.into();
         self
     }
 
+    #[allow(dead_code)]
     pub fn without_fallback(mut self) -> Self {
         self.fallback_text = None;
         self
