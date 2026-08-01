@@ -314,13 +314,103 @@ fn split_messages(messages: Vec<Message>) -> AppResult<(String, Vec<Message>, Ru
 /// Review system prompt compiled into the binary.
 static REVIEW_PROMPT: &str = include_str!("../prompts/review.md");
 
-/// Outcome of the review pass: the (possibly unreviewed) text plus a
-/// degradation flag the caller surfaces to the client.
-pub struct ReviewOutcome {
+/// Outcome of a second-pass text stage (elevate / review): the (possibly
+/// untouched) text plus a degradation flag the caller surfaces to the client.
+pub struct PassOutcome {
     pub text: String,
-    /// True when the review did not run to completion and `text` is the
-    /// original chat output.
+    /// True when the pass did not run to completion (or its output was
+    /// rejected by the call-site validator) and `text` is the input unchanged.
     pub degraded: bool,
+}
+
+/// Run a single-step second-pass agent over `input` and return its text.
+///
+/// Generic mechanism shared by every post-generation stage (elevate, review):
+/// the stage's identity (`agent_name`, `stage` for logs/degraded markers) and
+/// its prompt come from the caller, so no stage-specific logic lives here.
+/// On any failure — config error, run failure, empty output, or `validate`
+/// rejecting the output — the input text is returned unchanged with
+/// `degraded: true`; a fallen-back stage must never be worse than its input.
+// Six parameters trip the workspace's too-many-arguments-threshold = 5; the
+// parameter list is the cross-task interface contract, so allow it here.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_text_pass(
+    model: Arc<dyn ChatModel>,
+    agent_name: &str,
+    stage: &'static str,
+    system_prompt: &str,
+    input: &str,
+    validate: Option<&(dyn Fn(&str) -> bool + Send + Sync)>,
+) -> PassOutcome {
+    let config = match AgentConfig::builder(agent_name)
+        .max_steps(1)
+        .system_prompt(system_prompt)
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(stage, error = %e, "text pass: building config failed; keeping input");
+            return PassOutcome {
+                text: input.to_string(),
+                degraded: true,
+            };
+        }
+    };
+
+    // The stage prompt rides as the system prompt and the input text is the
+    // single user turn — no flattening, so the agent keeps its role.
+    let run_input = RunInput::text(input);
+    let tool_registry = ToolRegistry::new(); // Second-pass stages use no tools.
+    let (handle, mut rx) = AgentRun::start(config, run_input, model, tool_registry);
+
+    let mut out = String::new();
+    let mut run_failed = false;
+    while let Some(event) = rx.recv().await {
+        match event {
+            RuntimeEvent::ModelStreamChunk {
+                delta: StreamEvent::Text { delta: text },
+            } => {
+                out.push_str(&text);
+            }
+            RuntimeEvent::RunCompleted { output, .. } => {
+                if out.is_empty() {
+                    if let Some(text) = output.as_str() {
+                        out = text.to_string();
+                    }
+                }
+            }
+            RuntimeEvent::RunFailed { error, .. } => {
+                tracing::warn!(stage, error = %error, "text pass: agent run failed; keeping input");
+                run_failed = true;
+            }
+            _ => {}
+        }
+    }
+    handle.wait().await;
+
+    let rejected = out.is_empty() || validate.is_some_and(|v| !v(&out));
+    if rejected {
+        if out.is_empty() {
+            if !run_failed {
+                tracing::warn!(stage, "text pass: empty output; keeping input");
+            }
+        } else {
+            tracing::warn!(
+                stage,
+                "text pass: output rejected by validator; keeping input"
+            );
+        }
+        PassOutcome {
+            text: input.to_string(),
+            degraded: true,
+        }
+    } else {
+        tracing::debug!(stage, chars = out.len(), "text pass: done");
+        PassOutcome {
+            text: out,
+            degraded: false,
+        }
+    }
 }
 
 /// Run a second-pass review agent on the raw chat output.
@@ -330,75 +420,17 @@ pub struct ReviewOutcome {
 /// bitwize-music's lyric-reviewer skill (CC0).
 ///
 /// Returns corrected output in the same tag format. Falls back to
-/// the original on error — every fallback is logged and flagged degraded
-/// (previously the failures were silent or eprintln-only).
-pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> ReviewOutcome {
-    let config = match AgentConfig::builder("music-gift/review")
-        .max_steps(1)
-        .system_prompt(REVIEW_PROMPT)
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(stage = "review", error = %e, "review: building config failed; using unreviewed output");
-            return ReviewOutcome {
-                text: raw_output.to_string(),
-                degraded: true,
-            };
-        }
-    };
-
-    // review.md rides as the system prompt and the raw chat output is the
-    // single user turn — no flattening (previously both were packed into
-    // one user message, so the reviewer lost its role).
-    let input = RunInput::text(raw_output);
-
-    let tool_registry = ToolRegistry::new(); // Review agent uses no tools.
-    let (handle, mut rx) = AgentRun::start(config, input, model, tool_registry);
-
-    let mut reviewed = String::new();
-    let mut run_failed = false;
-    while let Some(event) = rx.recv().await {
-        match event {
-            RuntimeEvent::ModelStreamChunk {
-                delta: StreamEvent::Text { delta: text },
-            } => {
-                reviewed.push_str(&text);
-            }
-            RuntimeEvent::RunCompleted { output, .. } => {
-                if reviewed.is_empty() {
-                    if let Some(text) = output.as_str() {
-                        reviewed = text.to_string();
-                    }
-                }
-            }
-            RuntimeEvent::RunFailed { error, .. } => {
-                tracing::warn!(stage = "review", error = %error, "review: agent run failed; using unreviewed output");
-                run_failed = true;
-            }
-            _ => {}
-        }
-    }
-    handle.wait().await;
-
-    if reviewed.is_empty() {
-        if !run_failed {
-            tracing::warn!(
-                stage = "review",
-                "review: empty output; using unreviewed output"
-            );
-        }
-        ReviewOutcome {
-            text: raw_output.to_string(),
-            degraded: true,
-        }
-    } else {
-        tracing::debug!(chars = reviewed.len(), "review: done");
-        ReviewOutcome {
-            text: reviewed,
-            degraded: false,
-        }
-    }
+/// the original on error — every fallback is logged and flagged degraded.
+pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> PassOutcome {
+    run_text_pass(
+        model,
+        "music-gift/review",
+        "review",
+        REVIEW_PROMPT,
+        raw_output,
+        None,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -642,6 +674,38 @@ mod tests {
             panic!("user message must be text");
         };
         assert_eq!(user_text, "RAW OUTPUT");
+    }
+
+    #[tokio::test]
+    async fn text_pass_validator_rejection_falls_back_to_input() {
+        let model = Arc::new(CaptureModel::default());
+        let outcome = run_text_pass(
+            model,
+            "music-gift/test",
+            "test",
+            "SYS",
+            "RAW INPUT",
+            Some(&|s: &str| s.contains("<<<LYRICS>>>")),
+        )
+        .await;
+        assert!(outcome.degraded);
+        assert_eq!(outcome.text, "RAW INPUT");
+    }
+
+    #[tokio::test]
+    async fn text_pass_validator_acceptance_passes_output_through() {
+        let model = Arc::new(CaptureModel::default());
+        let outcome = run_text_pass(
+            model,
+            "music-gift/test",
+            "test",
+            "SYS",
+            "RAW INPUT",
+            Some(&|_s: &str| true),
+        )
+        .await;
+        assert!(!outcome.degraded);
+        assert_eq!(outcome.text, "done");
     }
 
     #[test]
