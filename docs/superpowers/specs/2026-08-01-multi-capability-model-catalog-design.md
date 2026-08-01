@@ -197,6 +197,13 @@ Catalog **row ids** store the canonical `provider/<resolved-model>` form (no
 embedded protocol segment). Callers may pass protocol-explicit Chat ids into
 `find_model*`; resolution peels the protocol before lookup.
 
+**Protocol peeling is Chat-lookup-only (capability-aware).** The
+`messages` / `chat` / `responses` (and provider-alias) vocabulary comes from
+ADR-0002 and applies when resolving Chat model strings. Non-Chat catalog
+lookup does not invent a protocol segment: it matches resolved
+`provider/model` for that capability. Plan authors should not re-litigate a
+second parser for Asr/Tts/Realtime/Gen.
+
 Cross-capability collisions on the same resolved `provider/model` are handled
 only by `find_model_for`. Bare ids (no `/`) remain ambiguous when multiple
 capabilities share a bare name — Batch 0 may Chat-prefer for legacy
@@ -338,26 +345,48 @@ Deprecated status:
 
 Implementations may encode default preference by sorting key or by post-filter; observable behavior must match the rules above.
 
-#### C2a. Existing multi-Entry providers (breakage surface — must plan)
+#### C2a. Existing multi-match select surfaces (breakage — must plan)
 
-C2 is a **registry-wide** behavior change as soon as default-aware `select` ships
-(Batch 1 touches `Query`, not only Asr data). Today several providers already
-register **multiple GenTask entries** and rely on silent dict-order wins:
+C2 is a **registry-wide** behavior change as soon as default-aware `select`
+ships (Batch 1 touches `Query`, not only Asr data). Blast radius is larger than
+“multi-Entry Gen providers”:
+
+**A. Multi-entry same provider (silent sort today)**
 
 | Capability | Provider | Entries today | Silent `.provider(p).select()` winner (sort) |
 |---|---|---|---|
 | GenTask | `volcengine` | image (`doubao-seedream-…`) + video (`doubao-seedance-…`) | first by model string sort |
 | GenTask | `aliyun` | music (`fun-music-v1`, http) + image (`wanx2.1-t2i-turbo`, visual) | first by model string sort |
 
-**Known callsites that use provider-only select/build today:**
+**B. Capability-only / cross-provider select (no provider, no id)**
+
+Any query that matches rows from **multiple providers** with **zero**
+`default_for_provider` hits C2 rule 3 and **errors**. That is **intentional**:
+there is no unique product default across vendors. Examples already in-tree:
+
+| Location | Query | Today | After C2 |
+|---|---|---|---|
+| `crates/orchest-provider/tests/selection.rs` (~L112) | `.chat().accepts([Image]).thinking().select()` | sort → `openai` | **Err** (anthropic/openai/doubao multi-hit, no defaults) |
+| `crates/orchest-provider/src/lib.rs` doctest | `.chat().accepts([Text, Image]).thinking().select()` | `let _ =` hides Result; runtime would be Ok via sort | runtime **Err**; docs become misleading if left as “happy path” |
+
+**C. Chat per-provider multi-row, no defaults yet**
+
+Anthropic / OpenAI / DeepSeek / Volcengine each register many Chat rows and
+**no** `default_for_provider` until Batch 4 (or an explicit earlier decision).
+Therefore `.provider("anthropic").chat().select()` also becomes an error under
+C2 unless a Chat default is declared. No in-repo production callsite is known
+today; this is still a **public API contract** change and must be documented,
+not “fixed” by reintroducing silent sort.
+
+**Known production-ish callsites (provider-only select/build):**
 
 - `examples/demo/music-gift/src/config.rs` — `.gen().provider(provider).build(...)` (provider from user config; music path expects music, not wanx)
 - `examples/demo/briefing-desk/src/media.rs` — `.asr()` / `.tts().provider(provider).build(...)` (safe today while Asr/Tts are 1:1; becomes load-bearing once multi-model)
 
 **Required before/with C2 landing (plan checklist, not optional):**
 
-1. **Callsite audit** of `.provider(...).select()` / `.build()` across workspace (examples, demos, tests, bindings).
-2. **Declare product defaults** for every multi-entry `(capability, provider)` that must keep provider-only select working, **or** change callsites to `.id("provider/model")`.
+1. **Callsite audit** of `.select()` / `.build()` across workspace (examples, demos, tests, bindings, doctests) — include **capability-only** queries, not only `.provider(...)`.
+2. **Declare product defaults** for every multi-entry `(capability, provider)` that must keep provider-only select working, **or** change callsites to `.id("provider/model")` / `.list()` then choose.
 3. **Minimum default declarations for current Gen multi-entry providers** (unless audit rewrites all callsites first):
 
    | (capability, provider) | `default_for_provider` | Rationale |
@@ -367,7 +396,14 @@ register **multiple GenTask entries** and rely on silent dict-order wins:
 
    If product disagrees, flip the default table in the plan — but **some** explicit choice is mandatory; silent sort is not.
 
-4. Tests under **`--all-features`** proving the declared defaults win and that dual-default across crates fails CI (invariant 4).
+4. **Do not declare Chat per-provider defaults before Batch 4** unless a separate product decision lands earlier. Until then, Chat multi-row provider-only or capability-only `select` is expected to error; callers use `.id` / `.list()`.
+5. **Update in-tree tests/docs as contract adoption, not regressions:**
+   - `selection.rs` capability-only multimodal+thinking test: either assert `Err`, or add `.provider(...)` / `.id(...)` if the test still wants a concrete pick.
+   - `lib.rs` doctest: stop presenting capability-only `select()` as a success path; show `.list()` then choose, or provider/id narrowing.
+6. Tests under **`--all-features`** proving declared Gen defaults win and that dual-default across crates fails CI (invariant 4). Plan must add this step explicitly; default `cargo test --workspace` alone is not enough (see Invariants).
+
+**Do not weaken C2** to keep the old silent cross-provider winner. The honest
+contract is: multi-match without a unique default → error.
 
 ### C3. Batch 0 Chat integration = projection + one-time materialization, not dual-write
 
@@ -496,11 +532,11 @@ Registry Asr bucket expands from catalog with **model-pinned** factories (C1).
 1. `description.trim().is_empty() == false` for every catalog record (including Chat projection). **Global from Batch 0** for whatever rows exist.
 2. `(capability, provider, model)` unique across the aggregated catalog. **Global from Batch 0**; run under default features **and** `--all-features` (cross-crate collisions only show up with all tiers linked — e.g. aliyun Gen music+wanx).
 3. Every registered dialect has ≥1 catalog row. **Phased:** enforced per capability as that capability’s data batch lands (Asr: Batch 1; Realtime: Batch 2; Tts/Gen: Batch 3). Do not fail CI for Tts/Gen empty catalogs before Batch 3.
-4. At most one `default_for_provider` per `(capability, provider)` **across all features**. **Global uniqueness check under `--all-features` from Batch 1** (when C2 ships); feature-gated unit tests alone are insufficient.
+4. At most one `default_for_provider` per `(capability, provider)` **across all features**. **Global uniqueness check under `--all-features` from Batch 1** (when C2 ships); feature-gated unit tests alone are insufficient. **CI must add an explicit all-features job/step** for this check — it is outside the default `CONVENTIONS.md` trio (`cargo test --workspace`, clippy, fmt) which does not enable all provider features.
 5. `CatalogEntry::descriptor()` flags match record core flags; cataloged source = `Static`.
 6. Chat migration / projection: every prior Chat description remains non-empty and mapped.
 7. Cataloged entry factories pin their model (C1); uncataloged builds do not create Entries.
-8. `select()` multi-match behavior matches C2 (default preference, no silent dict-order win) from Batch 1 onward.
+8. `select()` multi-match behavior matches C2 (default preference, no silent dict-order win) from Batch 1 onward — including intentional errors for capability-only multi-provider matches and Chat multi-row providers without defaults (C2a).
 
 ## Success Criteria
 
@@ -508,7 +544,7 @@ Registry Asr bucket expands from catalog with **model-pinned** factories (C1).
 - **Catalog** API can answer: “which Realtime/S2S models exist?” without conflating them with Chat.
 - Every cataloged model, including all Chat models, exposes a free-text `description` (Chinese + source anchor convention).
 - Registry Asr (then other capabilities) lists catalog-expanded models, not only dialect defaults.
-- `.provider(p).select()` returns the catalog default when multiple models exist for `p`; multi-entry Gen providers keep working via declared defaults or updated `.id` callsites (C2a).
+- `.provider(p).select()` returns the catalog default when multiple models exist for `p`; multi-entry Gen providers keep working via declared defaults or updated `.id` callsites (C2a). Capability-only multi-provider `select` errors by design; `selection.rs` / `lib.rs` doctest updated accordingly.
 - `find_model("openai/responses/gpt-5.4")` resolves via ADR-0002 and hits the Chat row for `gpt-5.4`.
 - Uncataloged model IDs still build via dialect free functions / facade; they do not appear in discovery and do not create registry entries.
 - No pure-LLM consumer is forced to take websocket/OSS deps (weight isolation preserved by crate placement).
@@ -522,11 +558,11 @@ Registry Asr bucket expands from catalog with **model-pinned** factories (C1).
 | Architecture | Unified `ModelRecord` + `CatalogExt` | Aligns with ADR-0001/0002; Chat migrates into same shape |
 | Description | Required free-text on every atomic model; catalog-only; zh + `// Source:` | Explicit product requirement; keep descriptor query-thin; match Chat hotfix |
 | Omni classification | `Capability::Realtime` | Duplex S2S is not turn-based Chat |
-| ID parsing | ADR-0002 resolver (protocol peel), not naive first-slash | Protocol-explicit Chat ids must find rows |
+| ID parsing | ADR-0002 resolver (protocol peel), Chat-lookup-only | Protocol-explicit Chat ids must find rows; non-Chat has no protocol vocab |
 | Uncataloged models | Free-function / facade passthrough; no Entry; `Assumed` | Compatibility without false completeness |
 | Factory policy | Model-pinned Entries + shared dialect constructor (C1) | Matches Chat `chat_entries`; avoids select/build skew |
-| Select policy | Default-for-provider, else require id (C2) | Dict-order is not a product default |
-| Multi-entry Gen defaults | Declare volcengine→image, aliyun→music unless audit chooses `.id` (C2a) | Protect music-gift / avoid silent sort |
+| Select policy | Default unique → pick; else error (C2) | Dict-order is not a product default |
+| Multi-match blast radius | Gen defaults + capability-only intentional Err; Chat no defaults until Batch 4; update selection/doctest (C2a) | Cross-provider silent wins are not unique solutions |
 | Batch 0 Chat | Projection + LazyLock materialization, no dual-write (C3) | `'static` discovery without table fork |
 | CatalogExt types | All in provider-core; impl crates hold tables only (C6) | Closed enum must be reachable from every tier crate |
 | First data | Asr (Aliyun fun-asr + qwen-audio streaming), then Realtime | Matches current product questions |
@@ -544,4 +580,4 @@ Registry Asr bucket expands from catalog with **model-pinned** factories (C1).
 
 ## Implementation Next Step
 
-After user review of this spec, create an implementation plan (writing-plans) starting at **Batch 0 + Batch 1**, implementing **Implementation Contracts C1–C6 and C2a (callsite audit + Gen defaults)**, with Chat kept on projection/shims until Batch 4.
+After user review of this spec, create an implementation plan (writing-plans) starting at **Batch 0 + Batch 1**, implementing **Implementation Contracts C1–C6 and C2a (callsite audit + Gen defaults + capability-only test/doctest updates)**, with Chat kept on projection/shims until Batch 4.
