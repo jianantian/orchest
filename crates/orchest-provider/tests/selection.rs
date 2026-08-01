@@ -555,7 +555,10 @@ fn gen_aliyun_provider_select_defaults_to_fun_music() {
 fn gen_volcengine_provider_select_defaults_to_seedream_image() {
     let reg = Registry::with_builtin();
     let picked = reg.gen().provider("volcengine").select().unwrap();
-    assert_eq!(picked.descriptor.model.as_ref(), "doubao-seedream-5-0-260128");
+    assert_eq!(
+        picked.descriptor.model.as_ref(),
+        "doubao-seedream-5-0-260128"
+    );
     assert!(picked.descriptor.default_for_provider);
 }
 
@@ -567,7 +570,10 @@ fn defaults_unique_per_capability_provider() {
     // provider-only `Query::select` becomes ambiguous.
     let reg = Registry::with_builtin();
 
-    fn assert_at_most_one_default(capability: &str, entries: Vec<&orchest_provider::Entry<impl Sized>>) {
+    fn assert_at_most_one_default(
+        capability: &str,
+        entries: Vec<&orchest_provider::Entry<impl Sized>>,
+    ) {
         use std::collections::HashMap;
 
         let mut defaults_by_provider: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -610,5 +616,3 @@ fn defaults_unique_per_capability_provider() {
         );
     }
 }
-
-
