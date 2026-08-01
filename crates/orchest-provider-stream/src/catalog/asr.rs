@@ -32,15 +32,15 @@ pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             pricing: None,
             ext: CatalogExt::Asr(AsrCatalogExt {}),
         },
-        // Source: docs/external/aliyun/asr-api-doc.md
+        // Source: docs/external/aliyun/asr-guideline.md
         ModelRecord {
-            id: "aliyun/qwen-audio-3.0-asr-flash-streaming",
+            id: "aliyun/fun-asr-realtime-2026-02-28",
             provider: "aliyun",
-            model: "qwen-audio-3.0-asr-flash-streaming",
+            model: "fun-asr-realtime-2026-02-28",
             capability: Capability::Asr,
-            display_name: "Qwen-Audio 3.0 ASR Flash Streaming",
+            display_name: "Fun-ASR Realtime 2026-02-28",
             description:
-                "阿里云 DashScope Qwen-Audio 流式语音识别，与 Fun-ASR 共用 inference WebSocket 方言",
+                "阿里云 DashScope Fun-ASR 实时语音识别快照版（2026-02-28），与 fun-asr-realtime 共用 inference WebSocket 方言",
             input_modalities: vec![Modality::Audio],
             output_modalities: vec![Modality::Text],
             streaming: true,

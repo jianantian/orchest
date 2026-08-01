@@ -45,7 +45,7 @@ The user-facing symptom: “which streaming ASR models does provider `aliyun` su
 | Capability | Meaning | Examples |
 |---|---|---|
 | **Chat** | Turn-based conversation (optionally multimodal input) | `anthropic/claude-opus-4-8`, `deepseek/deepseek-v4-flash` |
-| **Asr** | Audio → text | `aliyun/fun-asr-realtime`, `aliyun/qwen-audio-3.0-asr-flash-streaming` |
+| **Asr** | Audio → text | `aliyun/fun-asr-realtime`, `aliyun/fun-asr-realtime-2026-02-28` |
 | **Tts** | Text → audio | `aliyun/cosyvoice-v2` |
 | **Realtime** | Duplex session / speech-to-speech / omni | Volcengine omni, Qwen omni realtime |
 | **GenTask** | Async generation job | image / video / music gen |
@@ -487,7 +487,7 @@ Minimum Aliyun streaming rows:
 | id | notes |
 |---|---|
 | `aliyun/fun-asr-realtime` | default (`default_for_provider = true`) |
-| `aliyun/qwen-audio-3.0-asr-flash-streaming` | latest Qwen3-Audio streaming ASR (same inference-WS dialect) |
+| `aliyun/fun-asr-realtime-2026-02-28` | Fun-ASR realtime snapshot on same inference-WS dialect (Batch 1 multi-model proof; Qwen realtime needs a separate dialect later) |
 
 Also register at least the current default row for other already-wired ASR dialects (volcengine, deepgram, soniox, elevenlabs, assemblyai, speechmatics) so every **Asr** dialect has ≥1 catalog row with description.
 
@@ -499,7 +499,7 @@ Registry Asr bucket expands from catalog with **model-pinned** factories (C1).
 - Selection tests:
   - Asr `list` returns multiple Aliyun models;
   - `.provider("aliyun").asr().select()` returns `fun-asr-realtime`;
-  - `.id("aliyun/qwen-audio-3.0-asr-flash-streaming")` pins the non-default;
+  - `.id("aliyun/fun-asr-realtime-2026-02-28")` pins the non-default;
   - multi-match without default errors (fixture);
   - Gen provider-only select still works for declared defaults under `--all-features`.
 
@@ -567,7 +567,7 @@ Registry Asr bucket expands from catalog with **model-pinned** factories (C1).
 | Multi-match blast radius | Gen defaults + capability-only intentional Err; Chat no defaults until Batch 4; update selection/doctest (C2a) | Cross-provider silent wins are not unique solutions |
 | Batch 0 Chat | Projection + LazyLock materialization, no dual-write (C3) | `'static` discovery without table fork |
 | CatalogExt types | All in provider-core; impl crates hold tables only (C6) | Closed enum must be reachable from every tier crate |
-| First data | Asr (Aliyun fun-asr + qwen-audio streaming), then Realtime | Matches current product questions |
+| First data | Asr (Aliyun fun-asr multi-snapshot on inference WS), then Realtime | Matches current product questions; Qwen ASR realtime is a later dialect |
 
 ## Open Follow-ups (not blocking this design)
 
