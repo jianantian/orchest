@@ -241,19 +241,41 @@ impl<'r, H> Query<'r, H> {
         out
     }
 
-    /// Pick one matching entry (the first after deterministic sort), or a
-    /// `NoMatchingProvider` error. Mirrors `AsrRouter.select_for_*`.
+    /// Pick one matching entry per C2: unique match, or unique
+    /// `default_for_provider` among multi-matches. Multi-match with zero or
+    /// multiple defaults is `NoMatchingProvider` (message notes ambiguity).
+    /// `list()` sort is unchanged and never a silent multi-match winner.
     #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
     pub fn select(&self) -> Result<&'r Entry<H>, ProtocolError> {
-        self.list().into_iter().next().ok_or_else(|| {
-            ProtocolError::new(
+        let matches = self.list();
+        match matches.as_slice() {
+            [] => Err(ProtocolError::new(
                 ErrorCode::NoMatchingProvider,
                 format!(
                     "no registered {:?} provider matches the selection",
                     self.capability
                 ),
-            )
-        })
+            )),
+            [one] => Ok(*one),
+            many => {
+                let defaults: Vec<_> = many
+                    .iter()
+                    .copied()
+                    .filter(|e| e.descriptor.default_for_provider)
+                    .collect();
+                match defaults.as_slice() {
+                    [one] => Ok(*one),
+                    [] | [_, _, ..] => Err(ProtocolError::new(
+                        ErrorCode::NoMatchingProvider,
+                        format!(
+                            "ambiguous {:?} selection: {} matches without a unique default_for_provider; narrow with .id(\"provider/model\") or .provider(..)",
+                            self.capability,
+                            many.len()
+                        ),
+                    )),
+                }
+            }
+        }
     }
 
     /// Convenience: select one entry and instantiate it with `config`.

@@ -10,8 +10,9 @@
 //! use orchest_protocol::Modality;
 //!
 //! let reg = Registry::with_builtin();         // whatever features enable
-//! // capability query:
-//! let _ = reg.chat().accepts([Modality::Text, Modality::Image]).thinking().select();
+//! // list-then-choose (capability-only select is ambiguous across providers):
+//! let candidates = reg.chat().accepts([Modality::Text, Modality::Image]).thinking().list();
+//! let _ = candidates.first();
 //! // capability + identity mixed:
 //! let _ = reg.asr().provider("volcengine").bidirectional().select();
 //! // identity pick:

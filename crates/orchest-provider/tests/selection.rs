@@ -167,6 +167,90 @@ fn no_match_is_an_error_not_a_panic() {
 }
 
 #[test]
+fn select_errors_when_multiple_match_without_default() {
+    let mut reg = Registry::new();
+    reg.register_asr(Entry::new(
+        CapabilityDescriptor::new("aliyun", "fun-asr-realtime", Capability::Asr)
+            .streaming(true)
+            .duplex(true),
+        |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime")) as Box<dyn Asr>),
+    ));
+    reg.register_asr(Entry::new(
+        CapabilityDescriptor::new("aliyun", "qwen-audio-3.0-asr-flash-streaming", Capability::Asr)
+            .streaming(true)
+            .duplex(true),
+        |_| {
+            Ok(Box::new(FakeAsr(
+                "aliyun",
+                "qwen-audio-3.0-asr-flash-streaming",
+            )) as Box<dyn Asr>)
+        },
+    ));
+    let err = reg
+        .asr()
+        .provider("aliyun")
+        .select()
+        .expect_err("multi-match without default must error under C2");
+    assert_eq!(err.code, orchest_protocol::ErrorCode::NoMatchingProvider);
+    assert!(
+        err.message.to_lowercase().contains("ambiguous")
+            || err.message.to_lowercase().contains("multiple"),
+        "message should explain ambiguity: {}",
+        err.message
+    );
+}
+
+#[test]
+fn select_prefers_unique_default_for_provider() {
+    let mut reg = Registry::new();
+    reg.register_asr(Entry::new(
+        CapabilityDescriptor::new("aliyun", "fun-asr-realtime", Capability::Asr)
+            .streaming(true)
+            .duplex(true)
+            .default_for_provider(true),
+        |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime")) as Box<dyn Asr>),
+    ));
+    reg.register_asr(Entry::new(
+        CapabilityDescriptor::new("aliyun", "qwen-audio-3.0-asr-flash-streaming", Capability::Asr)
+            .streaming(true)
+            .duplex(true),
+        |_| {
+            Ok(Box::new(FakeAsr(
+                "aliyun",
+                "qwen-audio-3.0-asr-flash-streaming",
+            )) as Box<dyn Asr>)
+        },
+    ));
+    let picked = reg.asr().provider("aliyun").select().unwrap();
+    assert_eq!(picked.descriptor.model.as_ref(), "fun-asr-realtime");
+}
+
+#[test]
+fn list_still_sorts_by_provider_model_without_default_bias() {
+    let mut reg = Registry::new();
+    reg.register_asr(Entry::new(
+        CapabilityDescriptor::new("aliyun", "fun-asr-realtime", Capability::Asr)
+            .default_for_provider(true),
+        |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime")) as Box<dyn Asr>),
+    ));
+    reg.register_asr(Entry::new(
+        CapabilityDescriptor::new("aliyun", "qwen-audio-3.0-asr-flash-streaming", Capability::Asr),
+        |_| {
+            Ok(Box::new(FakeAsr(
+                "aliyun",
+                "qwen-audio-3.0-asr-flash-streaming",
+            )) as Box<dyn Asr>)
+        },
+    ));
+    let list = reg.asr().provider("aliyun").list();
+    assert_eq!(list[0].descriptor.model.as_ref(), "fun-asr-realtime");
+    assert_eq!(
+        list[1].descriptor.model.as_ref(),
+        "qwen-audio-3.0-asr-flash-streaming"
+    );
+}
+
+#[test]
 fn build_instantiates_the_selected_entry() {
     let reg = fixture_registry();
     let model = reg
