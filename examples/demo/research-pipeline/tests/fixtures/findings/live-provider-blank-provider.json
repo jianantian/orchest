@@ -1,0 +1,12 @@
+{
+  "kind": "orchest.research-pipeline.findings",
+  "schemaVersion": 1,
+  "iteration": "v0.11",
+  "subject": "Research Pipeline",
+  "executiveSummary": "A live provider name must contain text.",
+  "readinessVerdict": { "status": "unverified", "reason": "Live evidence is unavailable.", "refs": ["run-live"] },
+  "apiChecklist": [],
+  "runs": [{ "id": "run-live", "kind": "live-provider", "status": "not-run", "required": true, "provider": "  ", "model": "configured-by-env", "summary": "Credentials are unavailable.", "evidenceRefs": [] }],
+  "evidence": [],
+  "findings": []
+}

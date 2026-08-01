@@ -3,10 +3,13 @@
 //! `docs/archive/iteration/v0_10/issues/` for what each issue adds.
 
 mod app;
+mod eval;
+mod harness;
 mod media;
 mod tools;
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
@@ -52,10 +55,68 @@ enum Commands {
         #[arg(long)]
         no_tts: bool,
     },
+    /// Eval Lab: run corpus cases or compare baseline/candidate.
+    Eval {
+        #[command(subcommand)]
+        command: EvalCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum EvalCommands {
+    /// Run eval cases for one or more splits and record sensitive artifacts.
+    Run {
+        /// Unique run label (directory under evals/runs/; never overwritten).
+        #[arg(long)]
+        label: String,
+        /// Comma-separated splits: optimization, validation, scorecard.
+        #[arg(long)]
+        split: String,
+        /// Required confirmation that sensitive trajectories will be recorded.
+        #[arg(long)]
+        record_sensitive: bool,
+        /// Extra confirmation required for scorecard (sealed process contract).
+        #[arg(long, default_value_t = false)]
+        confirm_sealed: bool,
+        /// Override runs root (default: package evals/runs).
+        #[arg(long)]
+        runs_dir: Option<PathBuf>,
+        /// Override cases.json path.
+        #[arg(long)]
+        cases: Option<PathBuf>,
+        /// Override fixtures directory.
+        #[arg(long)]
+        fixtures: Option<PathBuf>,
+        /// Override session seeds directory.
+        #[arg(long)]
+        seeds: Option<PathBuf>,
+        /// Materials directory for tool discovery (default: fixtures/research).
+        #[arg(long)]
+        materials: Option<PathBuf>,
+        /// Git repo root for dirty-path preflight (default: workspace root).
+        #[arg(long)]
+        repo_root: Option<PathBuf>,
+        /// Use built-in scripted model (offline / CI). Hidden from normal use.
+        #[arg(long, hide = true)]
+        scripted: bool,
+    },
+    /// Compare baseline and candidate run directories.
+    Compare {
+        /// Baseline run label.
+        baseline: String,
+        /// Candidate run label.
+        candidate: String,
+        /// Override runs root.
+        #[arg(long)]
+        runs_dir: Option<PathBuf>,
+        /// Directory for compare JSON/Markdown reports.
+        #[arg(long)]
+        out_dir: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
@@ -65,29 +126,80 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             output,
             session,
             no_tts,
-        } => {
-            app::run(app::RunArgs {
-                materials,
-                question,
-                output,
-                session,
-                no_tts,
-            })
-            .await
-        }
+        } => match app::run(app::RunArgs {
+            materials,
+            question,
+            output,
+            session,
+            no_tts,
+        })
+        .await
+        {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
         Commands::Resume {
             session,
             question,
             output,
             no_tts,
-        } => {
-            app::resume(app::ResumeArgs {
-                session,
-                question,
-                output,
-                no_tts,
-            })
-            .await
-        }
+        } => match app::resume(app::ResumeArgs {
+            session,
+            question,
+            output,
+            no_tts,
+        })
+        .await
+        {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
+        Commands::Eval { command } => match command {
+            EvalCommands::Run {
+                label,
+                split,
+                record_sensitive,
+                confirm_sealed,
+                runs_dir,
+                cases,
+                fixtures,
+                seeds,
+                materials,
+                repo_root,
+                scripted,
+            } => {
+                eval::cli::cmd_eval_run(eval::cli::EvalRunCli {
+                    label,
+                    split,
+                    record_sensitive,
+                    confirm_sealed,
+                    runs_dir,
+                    cases,
+                    fixtures,
+                    seeds,
+                    materials,
+                    repo_root,
+                    scripted,
+                })
+                .await
+            }
+            EvalCommands::Compare {
+                baseline,
+                candidate,
+                runs_dir,
+                out_dir,
+            } => eval::cli::cmd_eval_compare(eval::cli::EvalCompareCli {
+                baseline,
+                candidate,
+                runs_dir,
+                out_dir,
+            }),
+        },
     }
 }

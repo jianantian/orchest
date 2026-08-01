@@ -1,0 +1,12 @@
+{
+  "kind": "orchest.research-pipeline.findings",
+  "schemaVersion": 1,
+  "iteration": "v0.11",
+  "subject": "Research Pipeline",
+  "executiveSummary": "A failed verifier cannot prove a finding verified.",
+  "readinessVerdict": { "status": "unverified", "reason": "The verifier failed.", "refs": ["run-test"] },
+  "apiChecklist": [],
+  "runs": [{ "id": "run-test", "kind": "test", "status": "failed", "required": true, "command": "cargo test -p research-pipeline-demo", "date": "2026-07-31", "revision": "abcdef0", "summary": "The verifier failed.", "evidenceRefs": ["ev-test"] }],
+  "evidence": [{ "id": "ev-test", "kind": "test", "summary": "Failed test evidence.", "path": "examples/demo/research-pipeline/tests/findings_contract.rs", "symbol": "rejects_a_verified_finding_backed_by_a_failed_verifier_run", "command": "cargo test -p research-pipeline-demo", "runRef": "run-test", "result": "failed" }],
+  "findings": [{ "id": "SB-1", "title": "Failed verifier", "apiSurface": "surface", "description": "gap", "observedConsequence": "consequence", "workaround": "none", "classification": "untriaged", "status": "verified", "evidenceRefs": ["ev-test"], "verification": { "status": "passed", "commands": ["cargo test -p research-pipeline-demo"], "evidenceRefs": ["ev-test"], "summary": "Incorrectly claimed passed." } }]
+}

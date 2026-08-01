@@ -1,0 +1,12 @@
+{
+  "kind": "orchest.research-pipeline.findings",
+  "schemaVersion": 1,
+  "iteration": "v0.11",
+  "subject": "Research Pipeline",
+  "executiveSummary": "A partial verifier cannot prove a finding verified.",
+  "readinessVerdict": { "status": "unverified", "reason": "The verifier was partial.", "refs": ["run-test"] },
+  "apiChecklist": [],
+  "runs": [{ "id": "run-test", "kind": "test", "status": "partial", "required": true, "command": "cargo test -p research-pipeline-demo", "date": "2026-07-31", "revision": "abcdef0", "summary": "The verifier was partial.", "evidenceRefs": ["ev-test"] }],
+  "evidence": [{ "id": "ev-test", "kind": "test", "summary": "Partial test evidence.", "path": "examples/demo/research-pipeline/tests/findings_contract.rs", "symbol": "rejects_a_verified_finding_backed_by_a_partial_verifier_run", "command": "cargo test -p research-pipeline-demo", "runRef": "run-test", "result": "partial" }],
+  "findings": [{ "id": "SB-1", "title": "Partial verifier", "apiSurface": "surface", "description": "gap", "observedConsequence": "consequence", "workaround": "none", "classification": "untriaged", "status": "verified", "evidenceRefs": ["ev-test"], "verification": { "status": "passed", "commands": ["cargo test -p research-pipeline-demo"], "evidenceRefs": ["ev-test"], "summary": "Incorrectly claimed passed." } }]
+}

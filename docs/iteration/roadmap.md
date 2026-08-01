@@ -44,12 +44,14 @@
 | v0.10 | 功能 | Demo A: Briefing Desk 能力组合广度验证（本地多媒体研究简报 agent；search/read/write 工具 + approval、real ASR/TTS gateway（`FakeAsr`/`FakeTts` 从零补全）、Agent-as-Tool reviewer sub-agent、跨进程 session persist + resume；6 个 issue 全部落地；[验证报告](../review/v0_10_demo_validation.md)产出 5 项 release blocker，均已建独立追踪 issue（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199)），最大发现：多模态图片输入当前无公开 API 可走） |
 | hotfix 2026-07-02 | 重构 | v0.10 验证报告 release blocker 清偿（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199) 全部关闭）：新增 `RunInput` 打通多模态图片输入公开入口、`AgentRun::resume_with_input` 支持带新问题续会话、resume 对「曾持久化但 session_store 缺失」响亮报错（`ConfigError::SessionStoreMissing`）、`SubAgentBuilder::build()` 改 `Result`、`orchest-provider` 新增可复用 `fakes::{FakeAsr, FakeTts}`（`testing` feature）；Briefing Desk demo 全量重跑（`cargo test -p briefing-desk-demo` 20/20 + 手动 `--fake` run/resume 全流程），[验证报告](../review/v0_10_demo_validation.md)与本表同步更新；live provider 验证仍未做（无凭证环境），v1.0 前必须补 |
 | hotfix 2026-07-12 | 重构 | ADR-0002 Phase 1–2（非破坏）：六个 provider 全走 protocol factory + `ProviderProfile` 抽取、catalog 作为能力事实来源、`provider/[protocol/]model` 语法、Elss 溶解为纯 `ProviderEntry`；10 个 slice 全部落地（[#204](https://github.com/jianantian/orchest/pull/204)） |
+| v0.11 | 功能 | Demo B: Research Pipeline Supervised Delegation seam evidence run（两层委派 evidence demo：supervisor 经 `AgentAsTool` 委派 worker，应用只持有 supervisor `RunHandle`，attached watcher 观察 supervisor actor 事件、primary `EventReceiver` 观察 forwarded child 事件；`ContextMode::Fresh`/`Fork`、`repeated_failure_threshold(1)` + `HookAction::Abort`、`SupervisionStrategy::Restart` 配置观察、multi-watcher FIFO / 无 drop 序列等价、terminal-event completion gate 全覆盖；69 项 provider-independent 测试 + 42 项 contract fixture + 5 项 provider fakes verifier 全绿，smoke 保持 credential-gated ignored；[Seam Gap Analysis](../review/v0_11_seam_gap_analysis.md) 产出 8 项 open seam blocker（[#249](https://github.com/jianantian/orchest/issues/249)–[#254](https://github.com/jianantian/orchest/issues/254)）与 1 项 open release blocker（[#255](https://github.com/jianantian/orchest/issues/255)），均已建独立追踪 issue；live provider 因无凭证保持 `not-run`，readiness `unverified`，无 waiver，[#258](https://github.com/jianantian/orchest/issues/258) 阻塞 v1.0） |
 | v0.12 | 重构 | ADR-0002 Phase 3（破坏性收尾）：删除 legacy `ProviderFactory` trait 与 per-provider `*Factory`/`*Adapter` 结构，四个 Chat adapter 收敛为共享 `ChatAdapter`、两个 Messages adapter 收敛为共享 `MessagesAdapter`，provider 差异降为 `ProviderProfile` 数据（`option_support` 数据化 Strict/degrade、`capabilities`、`chat_sse_reasoning`、fallible `replay_reasoning`、canonical stop-reason 映射 + Messages 四个 hook：`messages_wire_role`/`encode_multimodal_block`/`messages_supports_adaptive`/`messages_auth_headers`）；registry 只存 `ProviderEntry`；每 provider 请求/响应逐字节保持，完整 per-provider 测试套件迁移到共享核；公开面收窄 + v1.0 迁移说明（[migration-notes](../archive/iteration/v0_12/migration-notes.md)）；3 个 slice 全部落地（[#205](https://github.com/jianantian/orchest/pull/205) → hotfix，[#206](https://github.com/jianantian/orchest/pull/206) → main） |
 | hotfix 2026-07-18 | 重构 | ASR 流式方言 SegmentRef 填充：五个 WS ASR 方言的 `Transcript`/`EndOfSpeech` 事件从原生协议填充段标识（volcengine 状态 diff + utterance `start_time`、deepgram `start`、aliyun `begin_time`/计数器兜底、soniox `final`/`tail` 合成段、elevenlabs 计数器），volcengine 顺带消除 `result_type:"single"` 全量重发噪音；跨方言 Snapshot/Committed 同 id 契约写入 `orchest-protocol` 文档；[#210](https://github.com/jianantian/orchest/issues/210)–[#212](https://github.com/jianantian/orchest/issues/212) 关闭（[#213](https://github.com/jianantian/orchest/pull/213)） |
 | hotfix 2026-07-18b | 重构 | Provider 请求正确性 + run 终止语义（music-gift 质量梳理发现）：`cache_control` 从请求顶层移到 content block 级（system 转 block 数组挂末 block，无 system 挂最后一条消息的末可缓存 block、跳过 thinking 块）；非 adaptive 模型 thinking budget ≥ max_tokens 时抬升至 budget+4096 并记 `OptionAdjustment`（修复默认配置 400）；异常 stop_reason 无 tool_use 直接 `RunFailed`（不再 push 空 User 消息循环至 max_steps）；[#214](https://github.com/jianantian/orchest/issues/214)–[#216](https://github.com/jianantian/orchest/issues/216) 关闭（[#217](https://github.com/jianantian/orchest/pull/217)） |
 | v0.13 | 重构 | 生成质量地基（music-gift 质量梳理）：`AgentRun::start_with_messages` 公开多轮启动入口（Py/Node 透传 `messages`）；`RuntimeEvent::RunCompleted` 新增 `stop_reason` 区分截断完成；catalog `context_window` 经 adapter capabilities 在 `pre_start` 回填 `ModelSpec`（调用前硬校验自此生效）；`RetryClass::StreamInterrupted` + `RetryPolicy::recommended()` + 绑定 `retry=True` 一行开启重试；[#219](https://github.com/jianantian/orchest/issues/219)–[#222](https://github.com/jianantian/orchest/issues/222) 关闭（[#223](https://github.com/jianantian/orchest/pull/223)） |
 | v0.14 | 重构 | Skill 机制（polaris「渐进式披露作为一等抽象」落地）：scanner 错误上报 `ScanOutcome` + `SkillLoadWarning`、frontmatter 行级解析；**零配置渐进式披露**（`<available_skills>` 元数据注入 + 内置 `load_skill` 三级加载、零 CWD 依赖）；注册容错（单 skill 失败跳过+警告、strict 开关、重名先注册者胜）；标准兼容（allowed-tools 双拼写、name/description 校验）+ env 路径注入防护；死字段裁定（声明预留不 enforce、`SkillDependencyError` 移除）；[#225](https://github.com/jianantian/orchest/issues/225)–[#229](https://github.com/jianantian/orchest/issues/229) 关闭（[#230](https://github.com/jianantian/orchest/pull/230)） |
 | v0.15 | 重构 | Gen 协议与子代理语义（music-gift 质量梳理 + seam-findings Finding 2）：`MusicParams` 类型化 + provider-core `warn_unconsumed_params`（9 个 gen provider 挑拣点全接）；`GenAssetRole`（Primary/Cover/Preview）+ 类型化 `GenResult.duration_secs`（`diagnostic_metadata` 回归真诊断）；agent-as-tool 子代理失败 `Err(ToolError)`（kind/code 映射）+ 输出格式契约（`expect_output`，Fenced/Json，一次自包含纠正轮）；正确性批 C5-C7（Chat 协议多模态丢弃可见、compaction tool_use 边界对齐、工具结果回插 role 统一 `Role::User`）；`ToolContext::oneshot` + `Tool::call_oneshot`（11 处手造点清偿）；[#234](https://github.com/jianantian/orchest/issues/234)–[#239](https://github.com/jianantian/orchest/issues/239) 关闭（[#243](https://github.com/jianantian/orchest/pull/243)） |
+| v0.16 | 功能 | Briefing Desk Eval Lab（应用层人工 harness 闭环：18 Loom cases、opt-in trajectory/manifest、确定性 graders、baseline/candidate compare、人工验证报告；不改 runtime/provider/bindings；[验证报告](../review/v0_16_eval_lab.md)） |
 
 ## 迭代编号约定
 
@@ -58,23 +60,11 @@
 
 ## 规划中
 
-### v0.11 — Demo B: Supervised Delegation 深度验证（规划）
-
-两轮 demo 验证策略的第二轮，**深度优先**：专门验证 Supervised Delegation API 面——即 Multivac M2 avatar 所依赖的 Orchest seam。
-
-产品形态为 **Research Pipeline**：两层委派 demo。Supervisor Orchest agent 委派任务给 Worker Orchest agent，`LlmWatcher` 挂载并实时监控 worker 事件流，通过 `InjectCmd` 注入一次 steering 修正，触发受控 fault injection 验证 supervisor recovery 路径。详见 [`v0_11/prd.md`](./v0_11/prd.md)。
-
-需验证的 seam API：`LlmWatcher` attach/detach、`InjectCmd` / Steering、`ContextMode::Fresh | Fork`、supervisor 故障检测、worker 重启或升级、multi-watcher FIFO、completion gate。产出物是 **Seam Gap Analysis 报告**，决定哪些 API 在 v1.0 冻结前必须修改。
-
-Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格的长运行 Supervised Delegation 是 Multivac M2 产品层的验证场景，不进 v0.11。
-
-**依赖**：v0.10 完成（[验证报告](../review/v0_10_demo_validation.md)中的 SD 摩擦点）、v0.9.5 Control-Flow Hardening、v0.9.4 Failure Semantics
-
 ### v1.0 — 首次公开发布（规划）
 
-第一个公开发布到 crates.io 的版本。包含发布准备的全部内容：Cargo publish 元数据、license 定稿、release workflow、CHANGELOG、版本号策略文档。
+第一个公开发布到 crates.io 的版本。包含发布准备的全部内容：Cargo publish 元数据、license 定稿、release workflow、CHANGELOG、版本号策略文档。权威范围与 gate 清单见 [`v1_0/prd.md`](./v1_0/prd.md)。
 
-**依赖**：v0.11 Demo B 完成（Supervised Delegation API 经产品验证后才冻结公开 API）、v0.12 完成（ADR-0002 Phase 3 的 legacy adapter/factory 移除必须在冻结前落地）。发布前必须清偿两份验证报告各自的 release blocker 清单：[v0.10 Demo A 验证报告](../review/v0_10_demo_validation.md)的 5 项 release blocker **已全部由 hotfix 2026-07-02 清偿**（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199) 全部关闭，详见验证报告 Triage 表与本文档「已完成」表的 hotfix 2026-07-02 行），与 v0.11 Demo B 的 Seam Gap Analysis 报告（届时补链接）。**v0.10 报告的 live provider 验证仍未完成**（hotfix 2026-07-02 所在环境无 LLM/ASR/TTS 凭证）——未完成前，不得仅凭该报告推进 v1.0。
+**依赖**：v0.11 Demo B 完成（Supervised Delegation API 经产品验证后才冻结公开 API）、v0.12 完成（ADR-0002 Phase 3 的 legacy adapter/factory 移除必须在冻结前落地）。发布前必须清偿两份验证报告各自的 release blocker 清单：[v0.10 Demo A 验证报告](../review/v0_10_demo_validation.md)的 5 项 release blocker **已全部由 hotfix 2026-07-02 清偿**（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199) 全部关闭，详见验证报告 Triage 表与本文档「已完成」表的 hotfix 2026-07-02 行），以及 v0.11 Demo B [Seam Gap Analysis](../review/v0_11_seam_gap_analysis.md) 的 pre-freeze/release gates [#249](https://github.com/jianantian/orchest/issues/249)–[#255](https://github.com/jianantian/orchest/issues/255)。**v0.10 与 v0.11 live provider 验证仍未完成**；[#258](https://github.com/jianantian/orchest/issues/258) 关闭且 canonical evidence 不再因 required live run 缺失而 `unverified` 前，不得推进 v1.0。[#256](https://github.com/jianantian/orchest/issues/256)–[#257](https://github.com/jianantian/orchest/issues/257) 是明确的 post-1.0 backlog，不阻塞发布。
 
 ### 依赖图
 
@@ -118,6 +108,12 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
             ▼
    v1.0: 首次公开发布（crates.io + release workflow + license 定稿）
 
+✅ v0.10: Briefing Desk
+            │
+            ▼
+   v0.16: Briefing Desk Eval Lab
+   （应用层、人工驱动、非阻塞；不进入 v1.0 依赖链）
+
 ✅ v0.9.1: ASR Provider Gateway（卫星，已完成）
 ✅ v0.9.3: TTS Provider Gateway（卫星，已完成）
 ✅ v0.9.10: Minimax 多模态 Provider 接入（卫星，已完成）
@@ -155,7 +151,9 @@ Worker 是普通 Orchest agent，不是 Claude Code。Claude-Code-as-tool 风格
 | Supervised Delegation 基础 | ~~无~~ → Watcher trait + InjectCmd 双向通信 | ✅ v0.8 |
 | Mid-run Steering | ~~只有 approval~~ → Steering API | ✅ v0.9 |
 | Supervised Delegation 完整 | ~~无~~ → LlmWatcher + supervisor 恢复 + 多 watcher FIFO | ✅ v0.9 |
+| Multivac M2 Supervised Delegation seam readiness | v0.11 deterministic evidence 已通过，但 [Seam Gap Analysis](../review/v0_11_seam_gap_analysis.md) 仍有 SB-1–SB-8；live provider `not-run`，readiness `unverified`，无 waiver | v1.0 前清偿 #249–#254，并完成 #258 |
 | Image AIGC Gateway | ~~无~~ → **v0.6.1 已完成** | ✅ |
 | ASR Provider Gateway | ~~无~~ → **v0.9.1 已完成** | ✅ |
 | TTS Provider Gateway | ~~无统一 TTS provider crate~~ → **v0.9.3 已完成** | ✅ |
 | 多模态图片输入（`ContentBlock::Image` 经 agent loop） | ~~v0.10 demo 验证发现无公开 API 可走~~ → **hotfix 2026-07-02 已完成**：新增 `RunInput` 类型，`AgentRun::start(config, RunInput, ..)`；`RunInput::text(..)`/`.with_image(..)`/`.from_blocks(..)` 覆盖纯文本与多模态；demo `describe_image` 工具驱动真实 `ContentBlock::Image` → `ModelAdapter::complete()` 调用（[#195](https://github.com/jianantian/orchest/issues/195)） | ✅ |
+| Harness eval / trajectory 闭环 | ~~无应用层闭环~~ → **v0.16 已完成**（Briefing Desk Eval Lab：corpus/recorder/graders/runner/compare + [验证报告](../review/v0_16_eval_lab.md)；仍为 demo-local，非 core） | ✅ |

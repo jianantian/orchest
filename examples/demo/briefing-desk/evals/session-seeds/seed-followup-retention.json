@@ -1,0 +1,28 @@
+{
+  "schema_version": "1",
+  "seed_id": "seed-followup-retention",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "Text": "Is Loom worth continued investment in Q4?"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "Text": "Referral retention is 42% in the finance-reconciled cut (001-retention-dashboard-notes.md / chart.png) versus 35% in the unreconciled support pull (002-support-ticket-summary.md). Onboarding friction is 41% of Q3 tickets. Tempo pricing is TBD."
+        }
+      ]
+    }
+  ],
+  "step": 6,
+  "budget_used": {
+    "tokens_used": 4200,
+    "tool_calls_used": 8,
+    "cost_usd": 0.0
+  }
+}

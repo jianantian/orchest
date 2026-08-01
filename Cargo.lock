@@ -295,7 +295,9 @@ dependencies = [
  "orchest",
  "orchest-protocol",
  "orchest-provider",
+ "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
 ]
@@ -2242,6 +2244,23 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
+]
+
+[[package]]
+name = "research-pipeline-demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "orchest",
+ "orchest-protocol",
+ "orchest-provider",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

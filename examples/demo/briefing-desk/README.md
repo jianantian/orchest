@@ -220,3 +220,107 @@ cargo test -p briefing-desk-demo
 ASR/TTS fakes (`orchest_provider::fakes::{FakeAsr, FakeTts}`) are used when
 no live ASR/TTS env vars are set - see
 [#196](https://github.com/jianantian/orchest/issues/196).
+
+## Eval Lab (v0.16)
+
+Briefing Desk hosts an application-local evaluation lab. Candidate experiments may
+only edit harness surfaces in `src/harness.rs` (system prompts and Tool
+descriptions). Tool schemas, execute bodies, runtime configuration, and fixtures
+are not candidate surfaces.
+
+The versioned corpus lives under `evals/`:
+
+| Path | Role |
+|------|------|
+| `evals/cases.json` | 18 Loom-based cases (10 optimization / 4 validation / 4 scorecard) |
+| `evals/session-seeds/*.json` | Synthetic read-only follow-up session seeds (messages/step/budget only) |
+
+Corpus validation runs before any model call and enforces: unique case IDs, split
+counts, scenario-family isolation across splits, validation coverage of all seven
+behavior tags, fixture inventory membership, and session-seed content hashes.
+
+All 18 cases are drawn from the existing Loom fixture corpus. Scorecards only
+prove held-out performance within this pilot; they do not claim cross-domain
+generalization.
+
+### Sensitive run artifacts
+
+Eval runs write under `evals/runs/<label>/` (manifest, harness + effective-config
+snapshots, and per-attempt `trajectory.jsonl` / `output.md` / `attempt.json` /
+`scores.json`). These artifacts are **sensitive by default**:
+
+- Trajectories are allowlist-sanitized (stream chunks and nested thinking are
+  dropped; secret-key fields are masked), but sanitized is **not** non-sensitive.
+  Tool inputs/outputs, user questions, and generated report text still appear.
+- Recording requires an explicit `--record-sensitive` confirmation. Without it,
+  the eval runner refuses to start model calls.
+- `evals/runs/` is gitignored. Do not commit, share, or publish run directories.
+- Keep artifacts locally only as long as needed for compare/debug, then delete
+  the label directory (`rm -rf evals/runs/<label>`). Prefer rotating labels over
+  overwriting: an existing label is refused so baselines stay intact.
+
+### Commands
+
+```bash
+# Baseline (live model required via BRIEFING_DESK_CHAT_MODEL)
+export BRIEFING_DESK_CHAT_MODEL=anthropic/claude-sonnet-4-6
+
+cargo run -p briefing-desk-demo -- eval run \
+  --label baseline \
+  --split optimization,validation \
+  --record-sensitive
+
+# Manually edit only src/harness.rs (system prompts / tool descriptions)
+
+cargo run -p briefing-desk-demo -- eval run \
+  --label candidate-1 \
+  --split optimization,validation \
+  --record-sensitive
+
+cargo run -p briefing-desk-demo -- eval compare baseline candidate-1
+
+# Sealed scorecard: only after a human selects an eligible candidate
+cargo run -p briefing-desk-demo -- eval run \
+  --label final \
+  --split scorecard \
+  --record-sensitive \
+  --confirm-sealed
+```
+
+Repetition policy is fixed: optimization = 1 attempt/case; validation and
+scorecard = 3 attempts/case. Graders are deterministic (no LLM judge).
+
+Compare requires matching git commit, effective-config hash (recomputed from
+disk), fixture revision, session seed hashes, case set, splits, and repetition
+policy. Harness snapshot is the only intended difference. Gates include:
+baseline must-pass absolute validity, candidate must-pass absolute, validation
+overall ≥ +5, no per-tag drop, mean gate tokens ≤ 115%, median wall latency ≤
+130%, and no inconclusive / resource-incomplete attempts.
+`gate_total_tokens = input + output + audio_input + image_input + video_input`
+(reasoning/cache/details are reported only).
+
+Compare emits JSON + Markdown reports and **never** auto-edits harness or
+deletes run directories. Final acceptance is always human.
+
+### Sealed scorecard semantics
+
+Scorecard is a **process contract**, not a security boundary:
+
+- Running scorecard requires `--confirm-sealed` in addition to
+  `--record-sensitive`.
+- The manifest records `request_options.sealed_scorecard = true`.
+- If a human inspects scorecard per-case failures and uses them to further edit
+  harness, that scorecard is **unsealed**. The validation report must record
+  the unsealing, and the next round should add or rotate scorecard cases.
+- v0.16 does not enforce hard isolation; sealed is an explicit experimental
+  discipline.
+
+### Offline tests
+
+```bash
+cargo test -p briefing-desk-demo
+```
+
+Eval CLI tests use a hidden `--scripted` model path so CI needs no API key.
+Live `eval run` without a model env var fails loudly (it does not skip).
+

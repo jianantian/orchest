@@ -1,0 +1,12 @@
+{
+  "kind": "orchest.research-pipeline.findings",
+  "schemaVersion": 1,
+  "iteration": "v0.11",
+  "subject": "Research Pipeline",
+  "executiveSummary": "Readiness reasons must contain text.",
+  "readinessVerdict": { "status": "unverified", "reason": " \t ", "refs": ["run-live"] },
+  "apiChecklist": [],
+  "runs": [{ "id": "run-live", "kind": "live-provider", "status": "not-run", "required": true, "provider": "configured-by-env", "model": "configured-by-env", "summary": "Credentials are unavailable.", "evidenceRefs": [] }],
+  "evidence": [],
+  "findings": []
+}

@@ -1,0 +1,4 @@
+# Sensitive eval run artifacts (trajectories, outputs, manifests).
+# Sanitized does NOT mean non-sensitive: tool payloads, user inputs, and
+# generated report text still live under evals/runs/. Never commit these.
+evals/runs/
