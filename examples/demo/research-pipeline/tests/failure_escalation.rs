@@ -293,7 +293,7 @@ async fn controlled_worker_failure_reaches_supervisor_escalation_without_restart
     let RuntimeEvent::SubAgentEvent { event, .. } = &events[worker_run_failed] else {
         unreachable!("worker failure index has the asserted wrapper");
     };
-    let RuntimeEvent::RunFailed { error } = event.as_ref() else {
+    let RuntimeEvent::RunFailed { error, .. } = event.as_ref() else {
         unreachable!("worker failure index has the asserted event");
     };
     assert_eq!(error, CONTROLLED_FAULT_ABORT_REASON);

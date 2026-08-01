@@ -227,7 +227,7 @@ async fn worker_threshold_and_abort_hook_produce_terminal_run_failed() {
     )));
     assert!(events.iter().any(|event| matches!(
         event,
-        RuntimeEvent::RunFailed { error } if error == CONTROLLED_FAULT_ABORT_REASON
+        RuntimeEvent::RunFailed { error, .. } if error == CONTROLLED_FAULT_ABORT_REASON
     )));
     assert!(!events
         .iter()
@@ -445,6 +445,7 @@ fn event_renderer_identifies_model_tools_results_and_terminal_status() {
         }),
         render_event(&RuntimeEvent::RunFailed {
             error: "controlled worker fault".to_string(),
+            kind: orchest::events::RunFailureKind::Other,
         }),
     ];
 

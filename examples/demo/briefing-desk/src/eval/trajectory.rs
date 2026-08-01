@@ -516,7 +516,7 @@ pub fn sanitize_runtime_event(
                         "stop_reason": stop_reason_label(stop_reason),
                     }),
                 ),
-                RuntimeEvent::RunFailed { error } => {
+                RuntimeEvent::RunFailed { error, .. } => {
                     ("run_failed", json!({ "error": sanitize_free_text(error) }))
                 }
                 RuntimeEvent::RunAborted { reason } => (
