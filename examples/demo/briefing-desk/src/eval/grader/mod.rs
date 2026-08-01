@@ -141,6 +141,7 @@ impl AttemptGraderStatus {
 }
 
 /// Run every grader listed on the case and aggregate.
+#[allow(clippy::too_many_arguments)]
 pub fn grade_attempt(input: &GraderInput<'_>) -> AttemptGrade {
     let case_id = input.case.case_id.clone();
     if input.case.graders.is_empty() {
@@ -225,25 +226,24 @@ fn validate_spec(spec: &GraderSpec, case_id: &str) -> Result<(), GraderError> {
 
 fn validate_result(result: &GraderResult) -> Result<(), GraderError> {
     if !(result.score.is_finite() && (0.0..=100.0).contains(&result.score)) {
-        return Err(GraderError::new(format!(
-            "grader score out of range: {}",
-            result.score
-        ))
-        .with_grader(result.grader_id.clone())
-        .with_case(result.case_id.clone()));
+        return Err(
+            GraderError::new(format!("grader score out of range: {}", result.score))
+                .with_grader(result.grader_id.clone())
+                .with_case(result.case_id.clone()),
+        );
     }
     if !(result.weight.is_finite() && result.weight > 0.0) {
-        return Err(GraderError::new(format!(
-            "grader weight must be positive: {}",
-            result.weight
-        ))
-        .with_grader(result.grader_id.clone())
-        .with_case(result.case_id.clone()));
+        return Err(
+            GraderError::new(format!("grader weight must be positive: {}", result.weight))
+                .with_grader(result.grader_id.clone())
+                .with_case(result.case_id.clone()),
+        );
     }
     Ok(())
 }
 
 /// Helper used by graders to emit a result.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn make_result(
     grader_id: &str,
     case_id: &str,
@@ -435,7 +435,10 @@ pub(crate) fn extract_bare_fixture_mentions(output: &str) -> Vec<String> {
     let mut found = BTreeSet::new();
     for word in output.split_whitespace() {
         let cleaned = word.trim_matches(|c: char| {
-            matches!(c, '(' | ')' | '"' | '\'' | ',' | '.' | ';' | ':' | '!' | '?')
+            matches!(
+                c,
+                '(' | ')' | '"' | '\'' | ',' | '.' | ';' | ':' | '!' | '?'
+            )
         });
         if looks_like_fixture_ref(cleaned) {
             if let Some(base) = basename_of(cleaned) {
@@ -675,7 +678,11 @@ mod tests {
             tool_started(2, "read_fixture"),
             tool_completed(3, "read_fixture"),
         ];
-        let pass = run_grader(&case.graders[0], &input_for(&case, &pass_traj, "", &inv, &fixtures)).unwrap();
+        let pass = run_grader(
+            &case.graders[0],
+            &input_for(&case, &pass_traj, "", &inv, &fixtures),
+        )
+        .unwrap();
         assert!(pass.passed, "{pass:?}");
         assert_eq!(pass.score, 100.0);
 
@@ -685,7 +692,11 @@ mod tests {
             tool_started(2, "synthesize_brief"),
             tool_completed(3, "synthesize_brief"),
         ];
-        let fail = run_grader(&case.graders[0], &input_for(&case, &fail_traj, "", &inv, &fixtures)).unwrap();
+        let fail = run_grader(
+            &case.graders[0],
+            &input_for(&case, &fail_traj, "", &inv, &fixtures),
+        )
+        .unwrap();
         assert!(!fail.passed);
         assert!(fail
             .failure_reason
@@ -726,7 +737,11 @@ mod tests {
             tool_started(6, "write_report"),
             tool_completed(7, "write_report"),
         ];
-        let pass = run_grader(&case.graders[0], &input_for(&case, &pass_traj, "", &inv, &fixtures)).unwrap();
+        let pass = run_grader(
+            &case.graders[0],
+            &input_for(&case, &pass_traj, "", &inv, &fixtures),
+        )
+        .unwrap();
         assert!(pass.passed);
 
         let early_write = vec![
@@ -755,8 +770,11 @@ mod tests {
             tool_started(7, "write_report"),
             tool_completed(8, "write_report"),
         ];
-        let retry_ok =
-            run_grader(&case.graders[0], &input_for(&case, &retry_traj, "", &inv, &fixtures)).unwrap();
+        let retry_ok = run_grader(
+            &case.graders[0],
+            &input_for(&case, &retry_traj, "", &inv, &fixtures),
+        )
+        .unwrap();
         assert!(retry_ok.passed, "{retry_ok:?}");
     }
 
@@ -805,14 +823,25 @@ Support pull shows 35% from `002-support-ticket-summary.md`.
 - 001-retention-dashboard-notes.md
 - 002-support-ticket-summary.md
 "#;
-        let mod_r = run_grader(&case.graders[0], &input_for(&case, &traj, out, &inv, &fixtures)).unwrap();
+        let mod_r = run_grader(
+            &case.graders[0],
+            &input_for(&case, &traj, out, &inv, &fixtures),
+        )
+        .unwrap();
         assert!(mod_r.passed, "{mod_r:?}");
-        let conf_r = run_grader(&case.graders[1], &input_for(&case, &traj, out, &inv, &fixtures)).unwrap();
+        let conf_r = run_grader(
+            &case.graders[1],
+            &input_for(&case, &traj, out, &inv, &fixtures),
+        )
+        .unwrap();
         assert!(conf_r.passed, "{conf_r:?}");
 
         let bare = "Numbers are 42% and 35% but no sources.";
-        let conf_fail =
-            run_grader(&case.graders[1], &input_for(&case, &traj, bare, &inv, &fixtures)).unwrap();
+        let conf_fail = run_grader(
+            &case.graders[1],
+            &input_for(&case, &traj, bare, &inv, &fixtures),
+        )
+        .unwrap();
         assert!(!conf_fail.passed);
     }
 
@@ -853,9 +882,17 @@ Invest carefully.
 # Sources
 - `001-retention-dashboard-notes.md` supports the 42% claim.
 "#;
-        let rep = run_grader(&case.graders[0], &input_for(&case, &[], good, &inv, &fixtures)).unwrap();
+        let rep = run_grader(
+            &case.graders[0],
+            &input_for(&case, &[], good, &inv, &fixtures),
+        )
+        .unwrap();
         assert!(rep.passed, "{rep:?}");
-        let cit = run_grader(&case.graders[1], &input_for(&case, &[], good, &inv, &fixtures)).unwrap();
+        let cit = run_grader(
+            &case.graders[1],
+            &input_for(&case, &[], good, &inv, &fixtures),
+        )
+        .unwrap();
         assert!(cit.passed, "{cit:?}");
 
         let missing_section = "# Sources\n- 001-retention-dashboard-notes.md\n42%\n";
@@ -871,8 +908,11 @@ Invest carefully.
 - `does-not-exist.md`
 - `../secrets.env`
 "#;
-        let cit_fail =
-            run_grader(&case.graders[1], &input_for(&case, &[], bad_cite, &inv, &fixtures)).unwrap();
+        let cit_fail = run_grader(
+            &case.graders[1],
+            &input_for(&case, &[], bad_cite, &inv, &fixtures),
+        )
+        .unwrap();
         assert!(!cit_fail.passed);
         let reason = cit_fail.failure_reason.unwrap_or_default();
         assert!(
@@ -893,8 +933,11 @@ details
 "#;
         let mut case2 = case.clone();
         case2.report.required_sections = vec![];
-        let body_fail =
-            run_grader(&case2.graders[1], &input_for(&case2, &[], body_only, &inv, &fixtures)).unwrap();
+        let body_fail = run_grader(
+            &case2.graders[1],
+            &input_for(&case2, &[], body_only, &inv, &fixtures),
+        )
+        .unwrap();
         assert!(!body_fail.passed, "{body_fail:?}");
     }
 
@@ -950,7 +993,11 @@ details
         case.run = RunMode::Fresh {
             question: "q".into(),
         };
-        let fail_fresh = run_grader(&case.graders[0], &input_for(&case, &[], out, &inv, &fixtures)).unwrap();
+        let fail_fresh = run_grader(
+            &case.graders[0],
+            &input_for(&case, &[], out, &inv, &fixtures),
+        )
+        .unwrap();
         assert!(!fail_fresh.passed);
     }
 

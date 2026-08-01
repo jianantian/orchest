@@ -260,7 +260,9 @@ impl EffectiveConfigSnapshot {
 }
 
 /// Fingerprint tools from a live registry. Descriptions become surface ids when known.
-pub fn fingerprint_registry(registry: &ToolRegistry) -> Result<Vec<ToolFingerprint>, ArtifactError> {
+pub fn fingerprint_registry(
+    registry: &ToolRegistry,
+) -> Result<Vec<ToolFingerprint>, ArtifactError> {
     let mut out = Vec::new();
     for def in registry.list() {
         let tool = registry
@@ -559,9 +561,10 @@ fn hex_sha256(bytes: &[u8]) -> String {
 
 /// Convenience: default empty RuntimeConfig with max_steps override.
 pub fn runtime_with_max_steps(max_steps: u32) -> RuntimeConfig {
-    let mut rt = RuntimeConfig::default();
-    rt.max_steps = max_steps;
-    rt
+    RuntimeConfig {
+        max_steps,
+        ..RuntimeConfig::default()
+    }
 }
 
 /// Build a test-friendly baseline input.
@@ -585,7 +588,10 @@ pub fn sample_input() -> EffectiveConfigInput {
         reviewer_supervision: SupervisionStrategy::Stop,
         tools: vec![
             tool_fingerprint_for_test("search_fixtures", &json!({"type":"object"})),
-            tool_fingerprint_for_test("write_report", &json!({"type":"object","properties":{"path":{"type":"string"}}})),
+            tool_fingerprint_for_test(
+                "write_report",
+                &json!({"type":"object","properties":{"path":{"type":"string"}}}),
+            ),
         ],
         asr: CapabilityRoute::Fake,
         tts: CapabilityRoute::Disabled,
@@ -609,10 +615,8 @@ mod tests {
         let mut a = sample_input();
         let mut b = sample_input();
         // API key must never enter snapshot; env_options only holds non-secret flags.
-        a.env_options
-            .insert("api_key_present".into(), json!(true));
-        b.env_options
-            .insert("api_key_present".into(), json!(true));
+        a.env_options.insert("api_key_present".into(), json!(true));
+        b.env_options.insert("api_key_present".into(), json!(true));
         // Simulated different secret values are not in the snapshot at all.
         let sa = EffectiveConfigSnapshot::from_input(a).unwrap();
         let sb = EffectiveConfigSnapshot::from_input(b).unwrap();

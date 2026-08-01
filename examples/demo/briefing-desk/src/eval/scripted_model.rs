@@ -199,9 +199,7 @@ impl ModelAdapter for ScriptedModel {
                         .any(|c| matches!(c, ContentBlock::ToolResult { .. }))
                 });
                 let text = if has_tool_result {
-                    self.fallback_text
-                        .clone()
-                        .unwrap_or_else(|| "done".into())
+                    self.fallback_text.clone().unwrap_or_else(|| "done".into())
                 } else if let Some(t) = &self.fallback_text {
                     t.clone()
                 } else {
@@ -229,11 +227,7 @@ impl ModelAdapter for ScriptedModel {
 
         if let Some(tx) = tx {
             if let ContentBlock::Text(t) = &response.content[0] {
-                let _ = tx
-                    .send(StreamEvent::Text {
-                        delta: t.clone(),
-                    })
-                    .await;
+                let _ = tx.send(StreamEvent::Text { delta: t.clone() }).await;
             }
             let _ = tx
                 .send(StreamEvent::Done {

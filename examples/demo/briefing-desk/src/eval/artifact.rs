@@ -56,7 +56,9 @@ impl HarnessSnapshot {
             .map(|id| HarnessSurface {
                 surface_id: id.as_str().to_string(),
                 // CRLF -> LF, no trim — preserve exact candidate text otherwise.
-                text: harness::text_for(id).replace("\r\n", "\n").replace('\r', "\n"),
+                text: harness::text_for(id)
+                    .replace("\r\n", "\n")
+                    .replace('\r', "\n"),
             })
             .collect();
         surfaces.sort_by(|a, b| a.surface_id.cmp(&b.surface_id));
@@ -344,6 +346,7 @@ pub fn write_effective_config_snapshot(
 
 /// Write the four attempt files atomically enough for offline use:
 /// trajectory.jsonl, output.md, attempt.json, scores.json.
+#[allow(clippy::too_many_arguments)]
 pub fn write_attempt_artifacts(
     run_dir: &Path,
     case_id: &str,
@@ -369,7 +372,12 @@ pub fn write_attempt_artifacts(
     write_json_pretty(&attempt_dir.join("scores.json"), scores)?;
 
     // All four files must exist.
-    for name in ["trajectory.jsonl", "output.md", "attempt.json", "scores.json"] {
+    for name in [
+        "trajectory.jsonl",
+        "output.md",
+        "attempt.json",
+        "scores.json",
+    ] {
         let p = attempt_dir.join(name);
         if !p.is_file() {
             return Err(ArtifactError::io(format!(
@@ -528,7 +536,11 @@ pub fn build_manifest_skeleton(
 }
 
 /// Helper: empty attempt record template.
-pub fn attempt_record_template(case_id: &str, attempt: u32, status: AttemptStatus) -> AttemptRecord {
+pub fn attempt_record_template(
+    case_id: &str,
+    attempt: u32,
+    status: AttemptStatus,
+) -> AttemptRecord {
     let now = now_unix_ms();
     AttemptRecord {
         schema_version: ATTEMPT_SCHEMA_VERSION.to_string(),
@@ -648,7 +660,11 @@ mod tests {
         );
         assert!(!parsed.surfaces.is_empty());
         // sorted by surface_id
-        let ids: Vec<_> = parsed.surfaces.iter().map(|s| s.surface_id.as_str()).collect();
+        let ids: Vec<_> = parsed
+            .surfaces
+            .iter()
+            .map(|s| s.surface_id.as_str())
+            .collect();
         let mut sorted = ids.clone();
         sorted.sort_unstable();
         assert_eq!(ids, sorted);
@@ -666,22 +682,21 @@ mod tests {
         record.terminal_kind = Some("run_failed".into());
         record.error = Some(json!({"message": "provider down"}));
         let scores = ScoresPlaceholder::not_run();
-        let dir = write_attempt_artifacts(
-            &run_dir,
-            "case-x",
-            1,
-            &traj,
-            "",
-            &record,
-            &scores,
-        )
-        .unwrap();
-        for name in ["trajectory.jsonl", "output.md", "attempt.json", "scores.json"] {
+        let dir =
+            write_attempt_artifacts(&run_dir, "case-x", 1, &traj, "", &record, &scores).unwrap();
+        for name in [
+            "trajectory.jsonl",
+            "output.md",
+            "attempt.json",
+            "scores.json",
+        ] {
             assert!(dir.join(name).is_file(), "missing {name}");
         }
         let scores_raw = fs::read_to_string(dir.join("scores.json")).unwrap();
         assert!(scores_raw.contains("not_run"));
-        assert!(scores_raw.contains("\"aggregate\": null") || scores_raw.contains("\"aggregate\":null"));
+        assert!(
+            scores_raw.contains("\"aggregate\": null") || scores_raw.contains("\"aggregate\":null")
+        );
     }
 
     #[test]

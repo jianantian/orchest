@@ -114,9 +114,7 @@ impl CompareReport {
             out.push('\n');
         }
 
-        out.push_str(
-            "\nThis report never auto-accepts a candidate or edits harness surfaces.\n",
-        );
+        out.push_str("\nThis report never auto-accepts a candidate or edits harness surfaces.\n");
         out
     }
 }
@@ -191,7 +189,10 @@ pub const RESULTS_SCHEMA_VERSION: &str = "1";
 pub fn load_run(runs_root: &Path, label: &str) -> Result<LoadedRun, String> {
     let dir = runs_root.join(label);
     if !dir.is_dir() {
-        return Err(format!("run label '{label}' not found at {}", dir.display()));
+        return Err(format!(
+            "run label '{label}' not found at {}",
+            dir.display()
+        ));
     }
     let manifest: RunManifest = read_json(&dir.join("manifest.json"))?;
     let results: RunResults = read_json(&dir.join("results.json"))?;
@@ -242,22 +243,19 @@ pub fn load_run(runs_root: &Path, label: &str) -> Result<LoadedRun, String> {
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("reading {}: {e}", path.display()))?;
+    let raw = fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
     serde_json::from_str(&raw).map_err(|e| format!("parsing {}: {e}", path.display()))
 }
 
 /// Compare baseline and candidate runs. Does not mutate either directory.
+#[allow(clippy::too_many_lines)]
 pub fn compare_runs(baseline: &LoadedRun, candidate: &LoadedRun) -> CompareReport {
     let mut mismatches = comparability_mismatches(baseline, candidate);
     let mut notes = Vec::new();
     let mut effective_config_diff = None;
 
     if baseline.effective_config_hash != candidate.effective_config_hash {
-        if !mismatches
-            .iter()
-            .any(|m| m.contains("effective_config"))
-        {
+        if !mismatches.iter().any(|m| m.contains("effective_config")) {
             mismatches.push(format!(
                 "effective_config.sha256: baseline={} candidate={}",
                 baseline.effective_config_hash, candidate.effective_config_hash
@@ -304,8 +302,9 @@ pub fn compare_runs(baseline: &LoadedRun, candidate: &LoadedRun) -> CompareRepor
                 passed: false,
                 actual: json!(baseline_mp_failures),
                 threshold: json!("all must-pass attempts pass"),
-                detail: "baseline has failing must-pass attempts; candidate eligibility not computed"
-                    .into(),
+                detail:
+                    "baseline has failing must-pass attempts; candidate eligibility not computed"
+                        .into(),
             }],
             mismatches: vec![],
             baseline_must_pass_failures: baseline_mp_failures,
@@ -385,12 +384,14 @@ pub fn compare_runs(baseline: &LoadedRun, candidate: &LoadedRun) -> CompareRepor
     });
 
     // Tokens ≤ 115%.
-    let base_tokens = baseline.results.validation_mean_gate_tokens.or_else(|| {
-        mean_gate_tokens(&baseline.results.validation_attempt_gate_tokens)
-    });
-    let cand_tokens = candidate.results.validation_mean_gate_tokens.or_else(|| {
-        mean_gate_tokens(&candidate.results.validation_attempt_gate_tokens)
-    });
+    let base_tokens = baseline
+        .results
+        .validation_mean_gate_tokens
+        .or_else(|| mean_gate_tokens(&baseline.results.validation_attempt_gate_tokens));
+    let cand_tokens = candidate
+        .results
+        .validation_mean_gate_tokens
+        .or_else(|| mean_gate_tokens(&candidate.results.validation_attempt_gate_tokens));
     let token_ratio = match (base_tokens, cand_tokens) {
         (Some(b), Some(c)) if b > 0.0 => Some(c / b),
         (Some(0.0), Some(0.0)) => Some(1.0),
@@ -524,10 +525,7 @@ fn must_pass_failures(results: &RunResults) -> Vec<String> {
         if case.passed != Some(true) {
             // Avoid duplicate if already listed via attempts.
             if out.iter().all(|s| !s.starts_with(&case.case_id)) {
-                out.push(format!(
-                    "{} case_passed={:?}",
-                    case.case_id, case.passed
-                ));
+                out.push(format!("{} case_passed={:?}", case.case_id, case.passed));
             }
         }
     }
@@ -730,7 +728,14 @@ mod tests {
         }
     }
 
-    fn write_run(root: &Path, label: &str, overall: f64, tokens: u64, latency: u64, pass: bool) -> LoadedRun {
+    fn write_run(
+        root: &Path,
+        label: &str,
+        overall: f64,
+        tokens: u64,
+        latency: u64,
+        pass: bool,
+    ) -> LoadedRun {
         let run_dir = create_run_dir(root, label).unwrap();
         let harness = HarnessSnapshot::capture_current();
         let href = write_harness_snapshot(&run_dir, &harness).unwrap();
@@ -773,7 +778,11 @@ mod tests {
         let cand = write_run(root.path(), "candidate", 74.0, 1000, 100, true);
         let report = compare_runs(&base, &cand);
         assert_eq!(report.status, CompareStatus::NotEligible);
-        let g = report.gates.iter().find(|g| g.gate_id == "overall_plus_5").unwrap();
+        let g = report
+            .gates
+            .iter()
+            .find(|g| g.gate_id == "overall_plus_5")
+            .unwrap();
         assert!(!g.passed);
     }
 
@@ -783,7 +792,11 @@ mod tests {
         let base = write_run(root.path(), "baseline", 70.0, 1000, 100, true);
         let cand = write_run(root.path(), "candidate", 80.0, 1200, 100, true);
         let report = compare_runs(&base, &cand);
-        let g = report.gates.iter().find(|g| g.gate_id == "tokens_le_115pct").unwrap();
+        let g = report
+            .gates
+            .iter()
+            .find(|g| g.gate_id == "tokens_le_115pct")
+            .unwrap();
         assert!(!g.passed);
     }
 
@@ -793,7 +806,11 @@ mod tests {
         let base = write_run(root.path(), "baseline", 70.0, 1000, 100, true);
         let cand = write_run(root.path(), "candidate", 80.0, 1000, 140, true);
         let report = compare_runs(&base, &cand);
-        let g = report.gates.iter().find(|g| g.gate_id == "latency_le_130pct").unwrap();
+        let g = report
+            .gates
+            .iter()
+            .find(|g| g.gate_id == "latency_le_130pct")
+            .unwrap();
         assert!(!g.passed);
     }
 
@@ -803,11 +820,13 @@ mod tests {
         let base = write_run(root.path(), "baseline", 80.0, 1000, 100, true);
         let mut cand = write_run(root.path(), "candidate", 90.0, 1000, 100, true);
         // Drop one tag score after load.
-        cand.results
-            .per_tag
-            .insert("tool_selection".into(), 10.0);
+        cand.results.per_tag.insert("tool_selection".into(), 10.0);
         let report = compare_runs(&base, &cand);
-        let g = report.gates.iter().find(|g| g.gate_id == "per_tag_no_drop").unwrap();
+        let g = report
+            .gates
+            .iter()
+            .find(|g| g.gate_id == "per_tag_no_drop")
+            .unwrap();
         assert!(!g.passed);
     }
 
@@ -835,7 +854,10 @@ mod tests {
         let cand = load_run(root.path(), "candidate").unwrap();
         let report = compare_runs(&base, &cand);
         assert_eq!(report.status, CompareStatus::Incomparable);
-        assert!(report.mismatches.iter().any(|m| m.contains("effective_config")));
+        assert!(report
+            .mismatches
+            .iter()
+            .any(|m| m.contains("effective_config")));
         assert!(report.effective_config_diff.is_some());
     }
 
@@ -861,7 +883,10 @@ mod tests {
         let cand = load_run(root.path(), "candidate").unwrap();
         let report = compare_runs(&base, &cand);
         assert_ne!(report.status, CompareStatus::Incomparable);
-        assert!(report.notes.iter().any(|n| n.contains("harness snapshot differs")));
+        assert!(report
+            .notes
+            .iter()
+            .any(|n| n.contains("harness snapshot differs")));
     }
 
     #[test]

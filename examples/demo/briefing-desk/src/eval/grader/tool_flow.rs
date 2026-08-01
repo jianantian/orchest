@@ -109,9 +109,8 @@ pub fn grade_tool_chaining(
 
         match (before_done, after_started) {
             (None, None) => {
-                vacuous.push(
-                    json!({"before": before, "after": after, "status": "vacuous_neither"}),
-                );
+                vacuous
+                    .push(json!({"before": before, "after": after, "status": "vacuous_neither"}));
             }
             (Some(_), None) => {
                 vacuous.push(
@@ -149,9 +148,7 @@ pub fn grade_tool_chaining(
 
     let active = satisfied.len() + violated.len();
     let passed = violated.is_empty();
-    let score = if edges.is_empty() {
-        100.0
-    } else if active == 0 {
+    let score = if edges.is_empty() || active == 0 {
         100.0
     } else {
         (satisfied.len() as f64 / active as f64) * 100.0

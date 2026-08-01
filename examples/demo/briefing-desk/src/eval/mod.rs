@@ -44,8 +44,8 @@ pub use grader::{
 };
 pub use session::AttemptSession;
 pub use trajectory::{
-    sanitize_runtime_event, sanitize_value, TrajectoryError, TrajectoryEvent, TrajectoryRecorder,
-    RunRelation, SanitizeOutcome, SECRET_REDACTION, TRAJECTORY_SCHEMA_VERSION,
+    sanitize_runtime_event, sanitize_value, RunRelation, SanitizeOutcome, TrajectoryError,
+    TrajectoryEvent, TrajectoryRecorder, SECRET_REDACTION, TRAJECTORY_SCHEMA_VERSION,
 };
 
 /// True when the deterministic grader module is linked and usable.

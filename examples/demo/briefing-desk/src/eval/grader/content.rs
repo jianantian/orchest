@@ -105,9 +105,7 @@ pub fn grade_modality_coverage(
     }
 
     let passed = audio_ok && image_ok && text_ok && facts_ok;
-    let score = if !checks_needed && input.case.expected_facts.is_empty() {
-        100.0
-    } else if parts_total == 0 {
+    let score = if (!checks_needed && input.case.expected_facts.is_empty()) || parts_total == 0 {
         100.0
     } else {
         (parts_ok.len() as f64 / parts_total as f64) * 100.0
@@ -453,7 +451,8 @@ pub fn grade_citation_quality(
             .output_md
             .to_lowercase()
             .contains(&base.to_lowercase());
-        let bare_only = bare_mentions.iter().any(|b| b == &base) && !in_candidates && !in_sources_section;
+        let bare_only =
+            bare_mentions.iter().any(|b| b == &base) && !in_candidates && !in_sources_section;
 
         if !inventory.contains(&base) {
             missing_required.push(format!("{base} (not in fixture inventory)"));

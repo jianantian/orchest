@@ -60,7 +60,10 @@ fn preflight_requires_record_sensitive() {
         repo.path().to_str().unwrap(),
         "--scripted",
     ]);
-    assert!(!out.status.success(), "must fail without --record-sensitive");
+    assert!(
+        !out.status.success(),
+        "must fail without --record-sensitive"
+    );
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
         err.contains("record-sensitive") || err.contains("record_sensitive"),
@@ -110,7 +113,10 @@ fn preflight_unknown_split() {
     ]);
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("unknown split") || err.contains("train"), "stderr={err}");
+    assert!(
+        err.contains("unknown split") || err.contains("train"),
+        "stderr={err}"
+    );
 }
 
 #[test]
@@ -132,7 +138,10 @@ fn preflight_label_conflict() {
     ]);
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("already exists") || err.contains("overwrite"), "stderr={err}");
+    assert!(
+        err.contains("already exists") || err.contains("overwrite"),
+        "stderr={err}"
+    );
 }
 
 #[test]
@@ -178,8 +187,18 @@ fn scripted_optimization_run_writes_artifacts() {
         let case = case.unwrap().path();
         for att in std::fs::read_dir(&case).unwrap() {
             let att = att.unwrap().path();
-            for name in ["trajectory.jsonl", "output.md", "attempt.json", "scores.json"] {
-                assert!(att.join(name).is_file(), "missing {} in {}", name, att.display());
+            for name in [
+                "trajectory.jsonl",
+                "output.md",
+                "attempt.json",
+                "scores.json",
+            ] {
+                assert!(
+                    att.join(name).is_file(),
+                    "missing {} in {}",
+                    name,
+                    att.display()
+                );
             }
             found_attempt = true;
         }

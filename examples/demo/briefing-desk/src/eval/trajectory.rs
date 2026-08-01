@@ -9,12 +9,12 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use orchest::budget::{BudgetConfig, BudgetUsage};
 use orchest::events::{ApprovalContext, RuntimeEvent};
 use orchest::model::{OptionAdjustment, StopReason, TokenUsage};
 use orchest::run::RunId;
 use orchest::tool::async_job::JobStatus;
 use orchest::tool::{ToolCall, ToolError, ToolMetadata};
-use orchest::budget::{BudgetConfig, BudgetUsage};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -83,7 +83,8 @@ impl TrajectoryRecorder {
     /// Observe a runtime event: convert via allowlist and append if retained.
     pub fn observe(&mut self, event: &RuntimeEvent) {
         let elapsed_ms = self.start.elapsed().as_millis() as u64;
-        let outcome = sanitize_runtime_event(event, self.sequence, elapsed_ms, RunRelation::default());
+        let outcome =
+            sanitize_runtime_event(event, self.sequence, elapsed_ms, RunRelation::default());
         if outcome.mark_inconclusive {
             self.inconclusive = true;
         }
@@ -108,9 +109,8 @@ impl TrajectoryRecorder {
     /// Write every event as one JSON object per line.
     pub fn write_jsonl(&self, path: &Path) -> Result<(), TrajectoryError> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                TrajectoryError::io(format!("creating {}: {e}", parent.display()))
-            })?;
+            fs::create_dir_all(parent)
+                .map_err(|e| TrajectoryError::io(format!("creating {}: {e}", parent.display())))?;
         }
         let file = File::create(path)
             .map_err(|e| TrajectoryError::io(format!("creating {}: {e}", path.display())))?;
@@ -159,6 +159,7 @@ impl std::fmt::Display for TrajectoryError {
 impl std::error::Error for TrajectoryError {}
 
 /// Convert one runtime event into zero or one trajectory events.
+#[allow(clippy::too_many_lines)]
 pub fn sanitize_runtime_event(
     event: &RuntimeEvent,
     sequence: u64,
@@ -177,21 +178,24 @@ pub fn sanitize_runtime_event(
             event: nested,
         } => {
             let nested_relation = RunRelation {
-                parent_run_id: relation.child_run_id.clone().or(relation.parent_run_id.clone()),
+                parent_run_id: relation
+                    .child_run_id
+                    .clone()
+                    .or(relation.parent_run_id.clone()),
                 child_run_id: Some(child_run_id.to_string()),
                 run_depth: Some(*run_depth),
             };
             // Preserve outer parent if present for nested wrappers.
-            let nested_relation = if relation.parent_run_id.is_some() && nested_relation.parent_run_id.is_none()
-            {
-                RunRelation {
-                    parent_run_id: relation.parent_run_id.clone(),
-                    child_run_id: Some(child_run_id.to_string()),
-                    run_depth: Some(*run_depth),
-                }
-            } else {
-                nested_relation
-            };
+            let nested_relation =
+                if relation.parent_run_id.is_some() && nested_relation.parent_run_id.is_none() {
+                    RunRelation {
+                        parent_run_id: relation.parent_run_id.clone(),
+                        child_run_id: Some(child_run_id.to_string()),
+                        run_depth: Some(*run_depth),
+                    }
+                } else {
+                    nested_relation
+                };
             sanitize_runtime_event(nested, sequence, elapsed_ms, nested_relation)
         }
 
@@ -228,14 +232,12 @@ pub fn sanitize_runtime_event(
 
         other => {
             let (kind, data) = match other {
-                RuntimeEvent::RunStarted { run_id } => (
-                    "run_started",
-                    json!({ "run_id": run_id.to_string() }),
-                ),
-                RuntimeEvent::ModelCallStarted { step } => (
-                    "model_call_started",
-                    json!({ "step": step }),
-                ),
+                RuntimeEvent::RunStarted { run_id } => {
+                    ("run_started", json!({ "run_id": run_id.to_string() }))
+                }
+                RuntimeEvent::ModelCallStarted { step } => {
+                    ("model_call_started", json!({ "step": step }))
+                }
                 RuntimeEvent::ModelCallCompleted {
                     tokens,
                     option_adjustments,
@@ -483,10 +485,7 @@ pub fn sanitize_runtime_event(
                         "error": sanitize_free_text(error),
                     }),
                 ),
-                RuntimeEvent::HookPanicked {
-                    hook_name,
-                    message,
-                } => (
+                RuntimeEvent::HookPanicked { hook_name, message } => (
                     "hook_panicked",
                     json!({
                         "hook_name": hook_name,
@@ -503,10 +502,9 @@ pub fn sanitize_runtime_event(
                         "new_agent": new_agent,
                     }),
                 ),
-                RuntimeEvent::RunRestarted { attempt } => (
-                    "run_restarted",
-                    json!({ "attempt": attempt }),
-                ),
+                RuntimeEvent::RunRestarted { attempt } => {
+                    ("run_restarted", json!({ "attempt": attempt }))
+                }
                 RuntimeEvent::RunCompleted {
                     output,
                     stop_reason,
@@ -517,10 +515,9 @@ pub fn sanitize_runtime_event(
                         "stop_reason": stop_reason_label(stop_reason),
                     }),
                 ),
-                RuntimeEvent::RunFailed { error } => (
-                    "run_failed",
-                    json!({ "error": sanitize_free_text(error) }),
-                ),
+                RuntimeEvent::RunFailed { error } => {
+                    ("run_failed", json!({ "error": sanitize_free_text(error) }))
+                }
                 RuntimeEvent::RunAborted { reason } => (
                     "run_aborted",
                     json!({
@@ -1013,9 +1010,15 @@ mod tests {
         let te = outcome.event.expect("retained");
         assert_eq!(te.kind, "tool_call_completed");
         let parent_s = parent.to_string();
-        assert_eq!(te.run_relation.parent_run_id.as_deref(), Some(parent_s.as_str()));
+        assert_eq!(
+            te.run_relation.parent_run_id.as_deref(),
+            Some(parent_s.as_str())
+        );
         let child_s = child.to_string();
-        assert_eq!(te.run_relation.child_run_id.as_deref(), Some(child_s.as_str()));
+        assert_eq!(
+            te.run_relation.child_run_id.as_deref(),
+            Some(child_s.as_str())
+        );
         assert_eq!(te.data["output"]["api_key"], SECRET_REDACTION);
         assert!(te.data["output"].get("thinking").is_none());
     }
@@ -1050,6 +1053,9 @@ mod tests {
             count: 2,
         });
         assert!(rec.is_inconclusive());
-        assert_eq!(take_kind(&RuntimeEvent::RunStarted { run_id: run_id() }).as_deref(), Some("run_started"));
+        assert_eq!(
+            take_kind(&RuntimeEvent::RunStarted { run_id: run_id() }).as_deref(),
+            Some("run_started")
+        );
     }
 }

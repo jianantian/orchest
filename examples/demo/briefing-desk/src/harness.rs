@@ -115,7 +115,8 @@ pub const DESCRIBE_IMAGE_TOOL_DESCRIPTION: &str = "Describe an image source from
 corpus using a real vision model call. Use for chart.png retention values and cite chart.png.";
 
 /// `synthesize_brief` tool description.
-pub const SYNTHESIZE_BRIEF_TOOL_DESCRIPTION: &str = "Synthesize an audio version of the final brief \
+pub const SYNTHESIZE_BRIEF_TOOL_DESCRIPTION: &str =
+    "Synthesize an audio version of the final brief \
 via TTS. Requires approval. Call only after write_report succeeds.";
 
 /// Return every editable surface as `(surface_id, text)` sorted by id string.

@@ -14,10 +14,10 @@ use serde_json::{json, Value};
 
 use super::artifact::{
     attempt_record_template, build_manifest_skeleton, collect_git_info, create_run_dir,
-    default_runs_dir, fixture_revision, now_unix_ms, preflight_dirty_paths, require_record_sensitive,
-    write_attempt_artifacts, write_effective_config_snapshot, write_harness_snapshot, write_manifest,
-    ArtifactError, AttemptRecord, AttemptStatus, HarnessSnapshot, ScoresPlaceholder,
-    StoreCleanupRecord,
+    default_runs_dir, fixture_revision, now_unix_ms, preflight_dirty_paths,
+    require_record_sensitive, write_attempt_artifacts, write_effective_config_snapshot,
+    write_harness_snapshot, write_manifest, ArtifactError, AttemptRecord, AttemptStatus,
+    HarnessSnapshot, ScoresPlaceholder, StoreCleanupRecord,
 };
 use super::case::{
     default_cases_path, default_fixtures_dir, default_seeds_dir, load_corpus, load_session_seed,
@@ -403,6 +403,7 @@ struct AttemptOutcome {
     resource: super::resource::ResourceReport,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_attempt(
     req: &EvalRunRequest,
     case: &EvalCase,
@@ -563,6 +564,7 @@ async fn execute_attempt(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn materialize_and_resume(
     seed: &SessionSeed,
     question: &str,
@@ -602,6 +604,7 @@ async fn materialize_and_resume(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn grade_attempt_for_case(
     case: &EvalCase,
     events: &[super::trajectory::TrajectoryEvent],
@@ -621,14 +624,10 @@ fn grade_attempt_for_case(
             fixture_inventory,
         );
     }
-    (
-        ScoresPlaceholder::not_run(),
-        None,
-        None,
-        "not_run".into(),
-    )
+    (ScoresPlaceholder::not_run(), None, None, "not_run".into())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn grade_with_grader(
     case: &EvalCase,
     events: &[super::trajectory::TrajectoryEvent],
@@ -675,12 +674,7 @@ fn grade_with_grader(
         (AttemptGraderStatus::Completed, Some(agg)) => (Some(agg.score), Some(agg.passed)),
         _ => (None, None),
     };
-    (
-        scores,
-        score,
-        passed,
-        grade.grader_status.as_str().into(),
-    )
+    (scores, score, passed, grade.grader_status.as_str().into())
 }
 
 /// Case aggregation per PRD: must-pass requires all attempts pass; normal 2/3.
@@ -839,11 +833,7 @@ fn build_effective_config(
         env_options: BTreeMap::from([
             (
                 "chat_model".into(),
-                json!(format!(
-                    "{}/{}",
-                    model.provider_name(),
-                    model.model_name()
-                )),
+                json!(format!("{}/{}", model.provider_name(), model.model_name())),
             ),
             ("chat_api_url_set".into(), json!(false)),
             ("eval_no_tts".into(), json!(true)),

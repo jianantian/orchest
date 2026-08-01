@@ -36,7 +36,9 @@ impl TokenTotals {
     }
 
     pub fn add_usage_value(&mut self, usage: &Value) {
-        self.input_tokens = self.input_tokens.saturating_add(u64_field(usage, "input_tokens"));
+        self.input_tokens = self
+            .input_tokens
+            .saturating_add(u64_field(usage, "input_tokens"));
         self.output_tokens = self
             .output_tokens
             .saturating_add(u64_field(usage, "output_tokens"));
