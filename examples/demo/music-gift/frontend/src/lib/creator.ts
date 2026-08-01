@@ -37,6 +37,17 @@ export function creatorToken(giftId: string): string | null {
   return load()[giftId] ?? null;
 }
 
+/** All gift ids this browser holds a creator token for, newest-stored last. */
+export function creatorGiftIds(): string[] {
+  return Object.keys(load());
+}
+
+/** All (gift id, creator token) pairs this browser holds — the payload for
+ *  the account claim endpoint. */
+export function allCreatorTokens(): Array<{ id: string; creator_token: string }> {
+  return Object.entries(load()).map(([id, creator_token]) => ({ id, creator_token }));
+}
+
 export function forgetCreatorToken(giftId: string) {
   const m = load();
   delete m[giftId];

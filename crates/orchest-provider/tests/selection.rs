@@ -167,6 +167,87 @@ fn no_match_is_an_error_not_a_panic() {
 }
 
 #[test]
+fn select_errors_when_multiple_match_without_default() {
+    let mut reg = Registry::new();
+    reg.register_asr(Entry::new(
+        CapabilityDescriptor::new("aliyun", "fun-asr-realtime", Capability::Asr)
+            .streaming(true)
+            .duplex(true),
+        |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime")) as Box<dyn Asr>),
+    ));
+    reg.register_asr(Entry::new(
+        CapabilityDescriptor::new(
+            "aliyun",
+            "qwen-audio-3.0-asr-flash-streaming",
+            Capability::Asr,
+        )
+        .streaming(true)
+        .duplex(true),
+        |_| Ok(Box::new(FakeAsr("aliyun", "qwen-audio-3.0-asr-flash-streaming")) as Box<dyn Asr>),
+    ));
+    let err = reg
+        .asr()
+        .provider("aliyun")
+        .select()
+        .expect_err("multi-match without default must error under C2");
+    assert_eq!(err.code, orchest_protocol::ErrorCode::NoMatchingProvider);
+    assert!(
+        err.message.to_lowercase().contains("ambiguous")
+            || err.message.to_lowercase().contains("multiple"),
+        "message should explain ambiguity: {}",
+        err.message
+    );
+}
+
+#[test]
+fn select_prefers_unique_default_for_provider() {
+    let mut reg = Registry::new();
+    reg.register_asr(Entry::new(
+        CapabilityDescriptor::new("aliyun", "fun-asr-realtime", Capability::Asr)
+            .streaming(true)
+            .duplex(true)
+            .default_for_provider(true),
+        |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime")) as Box<dyn Asr>),
+    ));
+    reg.register_asr(Entry::new(
+        CapabilityDescriptor::new(
+            "aliyun",
+            "qwen-audio-3.0-asr-flash-streaming",
+            Capability::Asr,
+        )
+        .streaming(true)
+        .duplex(true),
+        |_| Ok(Box::new(FakeAsr("aliyun", "qwen-audio-3.0-asr-flash-streaming")) as Box<dyn Asr>),
+    ));
+    let picked = reg.asr().provider("aliyun").select().unwrap();
+    assert_eq!(picked.descriptor.model.as_ref(), "fun-asr-realtime");
+}
+
+#[test]
+fn list_still_sorts_by_provider_model_without_default_bias() {
+    let mut reg = Registry::new();
+    reg.register_asr(Entry::new(
+        CapabilityDescriptor::new("aliyun", "fun-asr-realtime", Capability::Asr)
+            .default_for_provider(true),
+        |_| Ok(Box::new(FakeAsr("aliyun", "fun-asr-realtime")) as Box<dyn Asr>),
+    ));
+    reg.register_asr(Entry::new(
+        CapabilityDescriptor::new(
+            "aliyun",
+            "qwen-audio-3.0-asr-flash-streaming",
+            Capability::Asr,
+        ),
+        |_| Ok(Box::new(FakeAsr("aliyun", "qwen-audio-3.0-asr-flash-streaming")) as Box<dyn Asr>),
+    ));
+    let list = reg.asr().provider("aliyun").list();
+    assert_eq!(list[0].descriptor.model.as_ref(), "fun-asr-realtime");
+    assert_eq!(
+        list[1].descriptor.model.as_ref(),
+        "qwen-audio-3.0-asr-flash-streaming"
+    );
+}
+
+#[test]
 fn build_instantiates_the_selected_entry() {
     let reg = fixture_registry();
     let model = reg
@@ -423,4 +504,115 @@ fn with_builtin_registers_omni_realtime_dialect() {
         .expect("volcengine omni realtime is registered under the stream feature");
     assert_eq!(picked.descriptor.model.as_ref(), "1.2.1.1");
     assert!(picked.descriptor.duplex && picked.descriptor.interruptible);
+}
+
+#[cfg(feature = "stream")]
+#[test]
+fn aliyun_asr_lists_multiple_catalog_models() {
+    let reg = Registry::with_builtin();
+    let list = reg.asr().provider("aliyun").list();
+    let models: Vec<_> = list.iter().map(|e| e.descriptor.model.as_ref()).collect();
+    assert!(models.contains(&"fun-asr-realtime"));
+    assert!(models.contains(&"qwen-audio-3.0-asr-flash-streaming"));
+    assert!(list.len() >= 2);
+}
+
+#[cfg(feature = "stream")]
+#[test]
+fn aliyun_asr_provider_select_returns_fun_asr_default() {
+    let reg = Registry::with_builtin();
+    let picked = reg.asr().provider("aliyun").select().unwrap();
+    assert_eq!(picked.descriptor.model.as_ref(), "fun-asr-realtime");
+    assert!(picked.descriptor.default_for_provider);
+}
+
+#[cfg(feature = "stream")]
+#[test]
+fn aliyun_asr_id_pins_qwen_audio_streaming() {
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .asr()
+        .id("aliyun/qwen-audio-3.0-asr-flash-streaming")
+        .select()
+        .unwrap();
+    assert_eq!(
+        picked.descriptor.model.as_ref(),
+        "qwen-audio-3.0-asr-flash-streaming"
+    );
+}
+
+#[cfg(all(feature = "http", feature = "visual"))]
+#[test]
+fn gen_aliyun_provider_select_defaults_to_fun_music() {
+    let reg = Registry::with_builtin();
+    let picked = reg.gen().provider("aliyun").select().unwrap();
+    assert_eq!(picked.descriptor.model.as_ref(), "fun-music-v1");
+    assert!(picked.descriptor.default_for_provider);
+}
+
+#[cfg(all(feature = "http", feature = "visual"))]
+#[test]
+fn gen_volcengine_provider_select_defaults_to_seedream_image() {
+    let reg = Registry::with_builtin();
+    let picked = reg.gen().provider("volcengine").select().unwrap();
+    assert_eq!(
+        picked.descriptor.model.as_ref(),
+        "doubao-seedream-5-0-260128"
+    );
+    assert!(picked.descriptor.default_for_provider);
+}
+
+#[cfg(all(feature = "http", feature = "stream", feature = "visual"))]
+#[test]
+fn defaults_unique_per_capability_provider() {
+    // Global invariant under all weight features: each (capability, provider)
+    // group may have 0 or 1 `default_for_provider` entry — never more — or
+    // provider-only `Query::select` becomes ambiguous.
+    let reg = Registry::with_builtin();
+
+    fn assert_at_most_one_default(
+        capability: &str,
+        entries: Vec<&orchest_provider::Entry<impl Sized>>,
+    ) {
+        use std::collections::HashMap;
+
+        let mut defaults_by_provider: HashMap<&str, Vec<&str>> = HashMap::new();
+        for e in entries {
+            if e.descriptor.default_for_provider {
+                defaults_by_provider
+                    .entry(e.descriptor.provider.as_ref())
+                    .or_default()
+                    .push(e.descriptor.model.as_ref());
+            }
+        }
+        for (provider, models) in defaults_by_provider {
+            assert!(
+                models.len() <= 1,
+                "{capability}/{provider} must have at most one default_for_provider; got {}: {models:?}",
+                models.len()
+            );
+        }
+    }
+
+    assert_at_most_one_default("chat", reg.chat().list());
+    assert_at_most_one_default("asr", reg.asr().list());
+    assert_at_most_one_default("tts", reg.tts().list());
+    assert_at_most_one_default("realtime", reg.realtime().list());
+    assert_at_most_one_default("gen", reg.gen().list());
+
+    // Required Gen defaults remain exactly one each.
+    for provider in ["aliyun", "volcengine"] {
+        let defaults: Vec<_> = reg
+            .gen()
+            .provider(provider)
+            .list()
+            .into_iter()
+            .filter(|e| e.descriptor.default_for_provider)
+            .collect();
+        assert_eq!(
+            defaults.len(),
+            1,
+            "{provider} must have exactly one gen default"
+        );
+    }
 }

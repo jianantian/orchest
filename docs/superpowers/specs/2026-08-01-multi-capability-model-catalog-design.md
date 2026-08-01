@@ -2,6 +2,8 @@
 
 **Date:** 2026-08-01  
 **Status:** Approved for planning  
+**Implementation plan:** `docs/superpowers/plans/2026-08-01-multi-capability-model-catalog-batch-0-1.md` (Batch 0+1)
+
 **Related:** ADR-0001 (provider unification), ADR-0002 (catalog as capability source), `orchest-protocol::CapabilityDescriptor`, `orchest-provider-http::catalog`
 
 ## Problem
@@ -485,7 +487,7 @@ Minimum Aliyun streaming rows:
 | id | notes |
 |---|---|
 | `aliyun/fun-asr-realtime` | default (`default_for_provider = true`) |
-| `aliyun/qwen-audio-3.0-asr-flash-streaming` | latest Qwen3-Audio streaming ASR (same inference-WS dialect) |
+| `aliyun/qwen-audio-3.0-asr-flash-streaming` | Qwen-Audio 3.0 flash streaming on same Fun-ASR inference-WS dialect (not Qwen-ASR Realtime / qwen3-asr-flash-realtime) |
 
 Also register at least the current default row for other already-wired ASR dialects (volcengine, deepgram, soniox, elevenlabs, assemblyai, speechmatics) so every **Asr** dialect has ≥1 catalog row with description.
 
@@ -565,7 +567,7 @@ Registry Asr bucket expands from catalog with **model-pinned** factories (C1).
 | Multi-match blast radius | Gen defaults + capability-only intentional Err; Chat no defaults until Batch 4; update selection/doctest (C2a) | Cross-provider silent wins are not unique solutions |
 | Batch 0 Chat | Projection + LazyLock materialization, no dual-write (C3) | `'static` discovery without table fork |
 | CatalogExt types | All in provider-core; impl crates hold tables only (C6) | Closed enum must be reachable from every tier crate |
-| First data | Asr (Aliyun fun-asr + qwen-audio streaming), then Realtime | Matches current product questions |
+| First data | Asr (Aliyun fun-asr multi-snapshot on inference WS), then Realtime | Matches current product questions; Qwen ASR realtime is a later dialect |
 
 ## Open Follow-ups (not blocking this design)
 

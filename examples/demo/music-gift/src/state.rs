@@ -7,7 +7,7 @@ use std::sync::Arc;
 use orchest::tool::Tool;
 use orchest_protocol::{ChatModel, GenTask};
 
-use crate::auth::AuthStore;
+use crate::auth::{AuthStore, RateLimiter};
 use crate::gift::GiftStore;
 
 #[derive(Clone)]
@@ -19,6 +19,8 @@ pub struct AppState {
     pub music_provider: String,
     pub gift_store: GiftStore,
     pub auth_store: AuthStore,
+    /// In-memory limiter for auth endpoints (see `auth::RateLimiter`).
+    pub rate_limiter: std::sync::Arc<RateLimiter>,
     pub data_dir: PathBuf,
     pub skills_dir: PathBuf,
     pub countdown_tool: Option<Arc<dyn Tool>>,

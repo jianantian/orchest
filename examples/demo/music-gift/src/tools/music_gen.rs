@@ -979,6 +979,7 @@ mod tests {
                 lrc: None,
                 duration_secs: None,
                 creator_token: "tok".to_string(),
+                creator_id: None,
                 published: false,
                 likes: vec![],
                 created_at: "0".to_string(),

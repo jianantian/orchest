@@ -166,6 +166,37 @@ body::after {
 }
 .user-btn:hover { filter: brightness(1.08); }
 
+/* Account menu (avatar dropdown) */
+.user-menu { position: relative; }
+.user-menu-drop {
+  position: absolute; top: calc(100% + 10px); right: 0; z-index: 60;
+  min-width: 220px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+  box-shadow: var(--shadow-lg);
+  animation: modalIn 0.18s ease;
+}
+.user-menu-head {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 10px 10px; margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.user-menu-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.user-menu-email {
+  font-size: 12px; color: var(--text3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.user-menu-item {
+  padding: 9px 10px; border: none; border-radius: 8px; background: none;
+  font-family: inherit; font-size: 13px; color: var(--text2);
+  text-align: left; text-decoration: none; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.user-menu-item:hover { background: var(--gold-bg); color: var(--text); }
+.user-menu-logout { color: #c0554a; }
+.user-menu-logout:hover { background: rgba(192, 85, 74, 0.08); color: #c0554a; }
+
 /* Login modal */
 .login-overlay {
   position: fixed; inset: 0; z-index: 8000;
@@ -723,6 +754,39 @@ body::after {
 .playlist-card-footer {
   display: flex; justify-content: space-between; align-items: center;
   font-size: 12px; color: var(--text3); padding-top: 2px;
+}
+
+/* ── My Gifts page ─────────────────────────── */
+.mine-status {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text3);
+}
+.mine-status .spinner { width: 12px; height: 12px; }
+.mine-status.creating { color: var(--text2); }
+.mine-status .mine-private { color: var(--text3); opacity: 0.8; }
+.mine-actions {
+  display: inline-flex; align-items: center; gap: 12px;
+}
+.mine-btn {
+  padding: 0; border: none; background: none;
+  font-family: inherit; font-size: 12px; color: var(--text3);
+  cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+}
+.mine-btn:hover:not(:disabled) { color: var(--gold); }
+.mine-btn.danger:hover:not(:disabled) { color: #c0554a; }
+.mine-btn:disabled { opacity: 0.5; cursor: default; }
+.mine-actions .owner-confirm { justify-content: flex-end; }
+.mine-account {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  margin-top: 4px; font-size: 12px; color: var(--text3);
+}
+.mine-claiming { justify-content: flex-start; color: var(--text2); }
+.login-forgot {
+  display: block; margin: 10px auto 0; font-size: 12px;
+}
+.setpw-form {
+  max-width: 320px; margin-top: 24px;
+  display: flex; flex-direction: column; gap: 12px;
 }
 
 /* =============================================

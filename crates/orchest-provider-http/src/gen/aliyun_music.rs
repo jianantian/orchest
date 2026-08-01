@@ -153,6 +153,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
     CapabilityDescriptor::new("aliyun", aliyun_music::DEFAULT_MODEL, Capability::GenTask)
         .with_input_modalities([Modality::Text])
         .with_output_modalities([Modality::Audio])
+        .default_for_provider(true)
 }
 
 /// Build an [`AliyunMusicGen`] from a registry [`ProviderConfig`]. The API key

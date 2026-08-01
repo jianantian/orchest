@@ -9,6 +9,7 @@ import { parseLyrics, stripMarkers } from "../lib/styles";
 import { UnwrapStage, shouldShowUnwrap } from "../components/UnwrapStage";
 import { CountdownFrame } from "../components/CountdownFrame";
 import { clearGuided } from "../hooks/useGuidedState";
+import { useAuth } from "../hooks/useAuth";
 import { useI18n } from "../i18n";
 import { creatorToken, forgetCreatorToken } from "../lib/creator";
 import { deleteGift, setGiftPublished } from "../api";
@@ -41,6 +42,7 @@ type GiftPipeline =
 export default function GiftPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { t } = useI18n();
   const [pipeline, setPipeline] = useState<GiftPipeline>({ kind: "loading" });
   /** Errors shown inline on a loaded gift: generation + like/publish/delete. */
@@ -126,10 +128,12 @@ export default function GiftPage() {
 
   async function handleGenerate() {
     if (!id) return;
-    // Generate is creator-only (the backend checks X-Creator-Token); a
-    // visitor opening a shared link has no token and cannot start a job.
-    const token = creatorToken(id);
-    if (!token) {
+    // Generate is creator-only; the backend accepts the device token or a
+    // session matching creator_id. A visitor with neither cannot start a job.
+    const gift = pipeline.kind === "ready" ? pipeline.gift : null;
+    const token = creatorToken(id) ?? undefined;
+    const sessionOwns = user !== null && gift !== null && gift.creator_id === user.id;
+    if (!token && !sessionOwns) {
       setError("Only the creator can generate this song");
       return;
     }
@@ -158,8 +162,10 @@ export default function GiftPage() {
   }
 
   async function handlePublishToggle(next: boolean) {
-    const token = id ? creatorToken(id) : null;
-    if (!id || !token) return;
+    const gift = pipeline.kind === "ready" ? pipeline.gift : null;
+    const token = id ? (creatorToken(id) ?? undefined) : undefined;
+    const sessionOwns = user !== null && gift !== null && gift.creator_id === user.id;
+    if (!id || (!token && !sessionOwns)) return;
     setPublishBusy(true);
     setError(null);
     const prev = published;
@@ -175,8 +181,10 @@ export default function GiftPage() {
   }
 
   async function handleDelete() {
-    const token = id ? creatorToken(id) : null;
-    if (!id || !token) return;
+    const gift = pipeline.kind === "ready" ? pipeline.gift : null;
+    const token = id ? (creatorToken(id) ?? undefined) : undefined;
+    const sessionOwns = user !== null && gift !== null && gift.creator_id === user.id;
+    if (!id || (!token && !sessionOwns)) return;
     setDeleting(true);
     setError(null);
     try {
@@ -274,7 +282,9 @@ export default function GiftPage() {
   const relationship = gift.meta.relationship ?? "";
   const degraded = gift.meta.degraded ?? [];
   const showUnwrap = id ? shouldShowUnwrap(id) : false;
-  const owned = id ? creatorToken(id) !== null : false;
+  const owned =
+    (id ? creatorToken(id) !== null : false) ||
+    (user !== null && pipeline.kind === "ready" && pipeline.gift.creator_id === user.id);
 
   return (
     <>

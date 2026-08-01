@@ -2,9 +2,13 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import { useI18n, LANGS, LANG_LABELS, type Lang } from "./i18n";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { LoginModal } from "./components/LoginModal";
+import { UserMenu } from "./components/UserMenu";
 import CreatePage from "./pages/CreatePage";
 import GiftPage from "./pages/GiftPage";
+import MyGiftsPage from "./pages/MyGiftsPage";
 import PlaylistPage from "./pages/PlaylistPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
+import SetPasswordPage from "./pages/SetPasswordPage";
 
 export default function App() {
   return (
@@ -32,6 +36,9 @@ function AppContent() {
           <NavLink to="/playlist" className={({ isActive }) => (isActive ? "active" : "")}>
             {t("nav_playlist")}
           </NavLink>
+          <NavLink to="/mine" className={({ isActive }) => (isActive ? "active" : "")}>
+            {t("nav_mine")}
+          </NavLink>
         </nav>
         <div className="header-right">
           <select
@@ -45,9 +52,7 @@ function AppContent() {
           </select>
           {!loading && (
             user ? (
-              <button className="user-btn" onClick={logout} title={user.display_name}>
-                {user.display_name[0].toUpperCase()}
-              </button>
+              <UserMenu user={user} onLogout={logout} />
             ) : (
               <button className="login-link" onClick={login}>{t("sign_in")}</button>
             )
@@ -59,6 +64,9 @@ function AppContent() {
           <Route path="/" element={<CreatePage />} />
           <Route path="/gift/:id" element={<GiftPage />} />
           <Route path="/playlist" element={<PlaylistPage />} />
+          <Route path="/mine" element={<MyGiftsPage />} />
+          <Route path="/set-password" element={<SetPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
         </Routes>
       </main>
     </>

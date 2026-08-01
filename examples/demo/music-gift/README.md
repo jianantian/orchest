@@ -60,6 +60,7 @@ examples/demo/music-gift/
 │   │   ├── pages/
 │   │   │   ├── CreatePage.tsx   # chat flow + lyrics review
 │   │   │   ├── GiftPage.tsx     # gift view + audio player + share
+│   │   │   ├── MyGiftsPage.tsx  # every gift created on this device
 │   │   │   └── PlaylistPage.tsx # public gift list
 │   │   └── components/
 │   │       ├── ChatStream.tsx   # SSE-driven chat display
@@ -91,6 +92,8 @@ examples/demo/music-gift/
 | POST | `/api/chat` | SSE stream: send messages, receive LLM tokens + structured lyrics |
 | POST | `/api/gift` | Create gift (lyrics, meta, style, title, vocal) |
 | GET | `/api/gift/:id` | Get gift data |
+| POST | `/api/gift/claim` | Attach device-local gifts to the signed-in account (creator-token proof) |
+| GET | `/api/my-gifts` | The signed-in creator's gifts (any device, incl. unpublished) |
 | GET | `/api/playlist` | List published gifts |
 | POST | `/api/generate/:id` | Submit music generation job |
 | GET | `/api/generate/:id/status` | Poll music generation status |
@@ -106,9 +109,9 @@ localhost.
 
 | Access | Endpoints |
 |--------|-----------|
-| Public (no auth) | `POST /api/chat`, `POST /api/polish-music-prompt`, `POST /api/gift`, `GET /api/gift/:id`, `GET /api/gift/:id/lrc`, `POST /api/gift/:id/like`, `GET /api/playlist`, `GET /api/generate/:id/status`, `GET /api/generate/:id/stream`, `POST /api/photos`, `GET /api/countdown-section/:id`, `GET /audio/*`, plus the auth routes (`register` / `login` / `send-link` / `verify` / OAuth) |
-| Creator token (`X-Creator-Token` header; minted at gift creation, kept in the creator's browser) | `POST /api/generate/:id`, `POST /api/gift/:id/publish`, `DELETE /api/gift/:id` |
-| Session cookie (`session_token`; set by register/login/verify/OAuth) | `GET /api/auth/me`, `POST /api/auth/logout`; a valid session also links newly created gifts to the user (`creator_id`) |
+| Public (no auth) | `POST /api/chat`, `POST /api/polish-music-prompt`, `POST /api/gift`, `GET /api/gift/:id`, `GET /api/gift/:id/lrc`, `POST /api/gift/:id/like`, `GET /api/playlist`, `GET /api/generate/:id/status`, `GET /api/generate/:id/stream`, `POST /api/photos`, `GET /api/countdown-section/:id`, `GET /audio/*`, plus the auth routes (`register` / `login` / `forgot` / `reset` / OAuth) |
+| Creator (either the `X-Creator-Token` header minted at creation, **or** a session whose user matches the gift's `creator_id`) | `POST /api/generate/:id`, `POST /api/gift/:id/publish`, `DELETE /api/gift/:id` |
+| Session cookie (`session_token`; set by register/login/reset/OAuth) | `GET /api/auth/me`, `POST /api/auth/logout`, `POST /api/auth/me/password`, `GET /api/my-gifts`, `POST /api/gift/claim`; a valid session also links newly created gifts to the user (`creator_id`) |
 
 Assumptions:
 
@@ -124,6 +127,26 @@ Assumptions:
 - A gift is readable by anyone holding its id — that is how share links
   work. The `creator_token` is returned exactly once (at gift creation) and
   is never echoed by `GET /api/gift/:id`.
+- **Account ownership is the cross-device story.** Mutations accept either
+  the device-local `creator_token` or a session matching `creator_id`, so a
+  signed-in creator can manage their gifts from any device. Gifts created
+  while anonymous are claimed to the account by `POST /api/gift/claim`,
+  using the stored tokens as proof; the frontend runs the claim
+  automatically after login, and the My Gifts page merges account gifts
+  with device-token gifts. Login endpoints are rate-limited per email
+  (10 attempts / 15 min; reset links 5 / hour) — a demo-grade stop against
+  brute force and mail spam.
+- **Password reset is the standard email flow.** `POST /api/auth/forgot`
+  emails a reset link (single-use, 30-minute token; answer is
+  enumeration-proof — identical whether or not the email exists) and
+  `POST /api/auth/reset` redeems it with a new password, invalidating every
+  session minted under the old one. In local dev without `SMTP_PASS` the
+  link is printed to the server log (`[auth] dev mode, reset link for ...`)
+  so the flow stays testable before SMTP exists.
+- Google OAuth uses a per-request random `state` bound to a cookie
+  (login-CSRF protection), and a Google sign-in whose email already has a
+  password account links the provider to that account instead of failing
+  with `EMAIL_EXISTS`.
 - Likes are anonymous but idempotent per client-generated `viewer_id`.
 
 ### Agent loop
@@ -190,7 +213,20 @@ CREATE TABLE gifts (
    scenario, lang), photo upload, lyrics review card with edit, generate
    button
 2. **GiftPage**: Audio player, lyrics display, share button, like button
-3. **PlaylistPage**: Grid of published gifts with play buttons
+3. **MyGiftsPage** (`/mine`): Every gift of the current creator, from two
+   merged sources — the creator tokens kept in localStorage (this device)
+   and `GET /api/my-gifts` (the signed-in account, any device). When signed
+   in, the device tokens are claimed to the account automatically, so gifts
+   created before login follow the account across devices; unpublished ones
+   show here even though the playlist never lists them. Status badge
+   (generating/ready/failed), publish toggle, and delete live on the card,
+   and work from a new device through the session ownership path.
+4. **SetPasswordPage** (`/set-password`): set a password for the signed-in
+   account — how a passwordless (Google) user adds password sign-in.
+5. **ResetPasswordPage** (`/reset-password`): the landing page of the
+   password-reset email — redeems the one-time token with a new password,
+   signs the user in, and invalidates their old sessions.
+6. **PlaylistPage**: Grid of published gifts with play buttons
 
 ## Dependencies (Rust)
 

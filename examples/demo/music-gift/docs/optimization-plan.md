@@ -126,6 +126,7 @@
 
 **问题**: countdown 子代理由 `build_model_or_default(COUNTDOWN_MODEL_ENV)` 构建(`config.rs:179` → `build_countdown_tool` `.model(model)` `config.rs:160`),模型取 `MUSIC_GIFT_COUNTDOWN_MODEL` 否则回落 chat model;max_tokens 仍只读 `MUSIC_GIFT_CHAT_MAX_TOKENS`(`config.rs:89-91`),无专用变量;temperature 等无法配置(SDK-A2 缺口)。注:重构删除的只是从未被读的 `AppConfig/AppState.countdown_model` 结构字段,不影响本项前提。
 **修法**: 加 `MUSIC_GIFT_COUNTDOWN_MAX_TOKENS`(默认调大,如 8192);SDK-A2 后 countdown 子代理显式设低 temperature。
+**状态**: max_tokens 部分已落地(2026-08-01):优先级 `MUSIC_GIFT_COUNTDOWN_MAX_TOKENS` > `MUSIC_GIFT_CHAT_MAX_TOKENS` > 内置默认 8192(`config.rs` `pick_max_tokens`);temperature 覆盖仍待 SDK-A2。
 **验收**: 环境变量可独立控制 countdown 输出预算;temperature 覆盖生效。
 
 ---

@@ -21,6 +21,7 @@ use crate::agent::{
     build_messages, build_photo_blocks, build_system_message, parse_lyrics, run_chat_agent,
     ChatRequest, SseEvent,
 };
+use crate::auth::AuthStore;
 use crate::error::{AppError, AppResult};
 use crate::gift::{Gift, GiftMeta};
 use crate::state::AppState;
@@ -30,6 +31,8 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
     let api = Router::new()
         .route("/chat", post(chat_handler))
         .route("/gift", post(create_gift))
+        .route("/gift/claim", post(claim_gifts))
+        .route("/my-gifts", get(my_gifts))
         .route("/gift/{id}", get(get_gift).delete(delete_gift))
         .route("/gift/{id}/publish", post(set_gift_published))
         .route("/playlist", get(list_playlist))
@@ -49,8 +52,9 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .route("/auth/logout", post(crate::auth::handle_logout))
         .route("/auth/register", post(crate::auth::handle_register))
         .route("/auth/login", post(crate::auth::handle_login))
-        .route("/auth/send-link", post(crate::auth::handle_send_link))
-        .route("/auth/verify", get(crate::auth::handle_verify))
+        .route("/auth/me/password", post(crate::auth::handle_set_password))
+        .route("/auth/forgot", post(crate::auth::handle_forgot))
+        .route("/auth/reset", post(crate::auth::handle_reset))
         .route("/auth/oauth/google", get(crate::auth::handle_google_login))
         .route(
             "/auth/oauth/google/cb",
@@ -75,6 +79,9 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         let h1 = html.clone();
         let h2 = html.clone();
         let h3 = html.clone();
+        let h4 = html.clone();
+        let h5 = html.clone();
+        let h6 = html.clone();
 
         async fn spa_fallback(
             State(html): State<std::sync::Arc<String>>,
@@ -85,7 +92,10 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         router = router
             .route("/gift/{id}", get(spa_fallback).with_state(h1))
             .route("/playlist", get(spa_fallback).with_state(h2))
-            .route("/", get(spa_fallback).with_state(h3))
+            .route("/mine", get(spa_fallback).with_state(h3))
+            .route("/set-password", get(spa_fallback).with_state(h4))
+            .route("/reset-password", get(spa_fallback).with_state(h5))
+            .route("/", get(spa_fallback).with_state(h6))
             .fallback_service(tower_http::services::ServeDir::new(dir));
     }
     router
@@ -248,6 +258,7 @@ pub async fn create_gift(
         lrc: None,
         duration_secs: None,
         creator_token: creator_token.clone(),
+        creator_id: None,
         // Private by default: a gift is personal until its creator chooses to
         // list it. It stays reachable by id, so sharing the link still works.
         published: false,
@@ -326,17 +337,48 @@ pub async fn get_gift(
 
 const CREATOR_TOKEN_HEADER: &str = "x-creator-token";
 
-fn verify_creator(gift: &Gift, headers: &HeaderMap) -> AppResult<()> {
+/// Ownership proof for mutations: either the device-local creator token
+/// (minted at creation, held by the original browser) or a session whose
+/// user matches the gift's `creator_id` (set at creation when logged in, or
+/// claimed later via `POST /api/gift/claim`). The session path is what makes
+/// gifts manageable from any device after login.
+fn verify_creator(
+    auth_store: &AuthStore,
+    gift: &Gift,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+) -> AppResult<()> {
     let presented = headers
         .get(CREATOR_TOKEN_HEADER)
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default();
-    if presented.is_empty() || presented != gift.creator_token {
-        return Err(AppError::Forbidden(
-            "only the creator can modify this gift".to_string(),
-        ));
+    if !presented.is_empty() && presented == gift.creator_token {
+        return Ok(());
     }
-    Ok(())
+    let session_owns = jar
+        .get("session_token")
+        .and_then(|c| auth_store.validate_session(c.value()).ok().flatten())
+        .is_some_and(|user| Some(user.id.as_str()) == gift.creator_id.as_deref());
+    if session_owns {
+        return Ok(());
+    }
+    Err(AppError::Forbidden(
+        "only the creator can modify this gift".to_string(),
+    ))
+}
+
+/// Resolve the session cookie to a user, or fail with 401. Shared by the
+/// account-scoped endpoints (`/api/my-gifts`, `/api/gift/claim`,
+/// `/api/auth/me/password`).
+fn require_session(state: &AppState, jar: &CookieJar) -> AppResult<crate::auth::User> {
+    let token = jar
+        .get("session_token")
+        .map(|c| c.value().to_string())
+        .ok_or_else(|| AppError::Unauthorized("NOT_AUTHENTICATED".to_string()))?;
+    state
+        .auth_store
+        .validate_session(&token)?
+        .ok_or_else(|| AppError::Unauthorized("NOT_AUTHENTICATED".to_string()))
 }
 
 // DELETE /api/gift/:id - permanently remove a gift and its audio file
@@ -344,9 +386,10 @@ pub async fn delete_gift(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
+    jar: CookieJar,
 ) -> AppResult<impl IntoResponse> {
     let gift = state.gift_store.get(&id)?;
-    verify_creator(&gift, &headers)?;
+    verify_creator(&state.auth_store, &gift, &headers, &jar)?;
 
     // Best-effort file cleanup: the row is the source of truth, so a stray
     // file must not fail the delete.
@@ -379,10 +422,11 @@ pub async fn set_gift_published(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
+    jar: CookieJar,
     Json(req): Json<SetPublishedRequest>,
 ) -> AppResult<impl IntoResponse> {
     let gift = state.gift_store.get(&id)?;
-    verify_creator(&gift, &headers)?;
+    verify_creator(&state.auth_store, &gift, &headers, &jar)?;
     // Must match create_gift's format: published_at is string-sorted by
     // `ORDER BY published_at DESC`, so a mixed format corrupts the ordering.
     let now = unix_now();
@@ -437,6 +481,66 @@ pub async fn list_playlist(State(state): State<AppState>) -> AppResult<impl Into
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/my-gifts - the signed-in creator's gifts (any device)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct MyGiftsResponse {
+    pub items: Vec<Gift>,
+}
+
+pub async fn my_gifts(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> AppResult<impl IntoResponse> {
+    let user = require_session(&state, &jar)?;
+    let gifts = state.gift_store.list_by_creator(&user.id)?;
+    Ok(Json(MyGiftsResponse { items: gifts }))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/gift/claim - attach device-local gifts to the signed-in account
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct ClaimGiftItem {
+    pub id: String,
+    pub creator_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClaimGiftsRequest {
+    pub gifts: Vec<ClaimGiftItem>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClaimGiftsResponse {
+    pub claimed: usize,
+}
+
+/// The device's creator tokens are the only proof of ownership an anonymous
+/// creator has, so claiming uses them: each token that matches its gift
+/// attaches the gift to the session's account (idempotent). The claimed gift
+/// then shows up in `/api/my-gifts` on every device the user signs in on.
+pub async fn claim_gifts(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(req): Json<ClaimGiftsRequest>,
+) -> AppResult<impl IntoResponse> {
+    let user = require_session(&state, &jar)?;
+    let mut claimed = 0;
+    for g in &req.gifts {
+        if state
+            .gift_store
+            .claim_to_creator(&g.id, &g.creator_token, &user.id)?
+        {
+            claimed += 1;
+        }
+    }
+    Ok(Json(ClaimGiftsResponse { claimed }))
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/generate/:id - submit music generation (creator only)
 // ---------------------------------------------------------------------------
 
@@ -444,11 +548,12 @@ pub async fn generate_music(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
+    jar: CookieJar,
 ) -> AppResult<impl IntoResponse> {
     // Generate spends provider quota on the gift owner's behalf, so it is a
     // creator-only mutation like delete/publish above.
     let gift = state.gift_store.get(&id)?;
-    verify_creator(&gift, &headers)?;
+    verify_creator(&state.auth_store, &gift, &headers, &jar)?;
     let resp = crate::tools::music_gen::generate(
         &state.gen_task,
         &state.gift_store,

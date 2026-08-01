@@ -25,6 +25,14 @@ const CHAT_MAX_TOKENS_ENV: &str = "MUSIC_GIFT_CHAT_MAX_TOKENS";
 const COUNTDOWN_MODEL_ENV: &str = "MUSIC_GIFT_COUNTDOWN_MODEL";
 const MUSIC_PROMPT_MODEL_ENV: &str = "MUSIC_GIFT_MUSIC_PROMPT_MODEL";
 
+/// Optional output-budget override for the countdown subagent.
+const COUNTDOWN_MAX_TOKENS_ENV: &str = "MUSIC_GIFT_COUNTDOWN_MAX_TOKENS";
+/// Countdown output is a full HTML+CSS+JS document — far longer than a chat
+/// reply. When no env var sets a budget, default high enough to not truncate
+/// the document mid-tag (previously it inherited the chat budget or the
+/// provider default, both often too small).
+const COUNTDOWN_DEFAULT_MAX_TOKENS: u32 = 8192;
+
 const MUSIC_PROVIDER_ENV: &str = "MUSIC_GIFT_MUSIC_PROVIDER";
 const MUSIC_MODEL_ENV: &str = "MUSIC_GIFT_MUSIC_MODEL";
 const MUSIC_API_KEY_ENV: &str = "MUSIC_GIFT_MUSIC_API_KEY";
@@ -76,7 +84,15 @@ fn build_chat_model() -> AppResult<Arc<dyn ChatModel>> {
 /// Build a model adapter from a specific env var prefix, falling back to the
 /// main chat model env vars. For optional per-component model configuration:
 /// set `{prefix}_MODEL` to override, or leave unset to share the chat model.
-fn build_model_or_default(model_env: &str) -> AppResult<Arc<dyn ChatModel>> {
+///
+/// `max_tokens_env` names an optional per-component output-budget override;
+/// precedence is component var → chat budget → `fallback_max_tokens`
+/// (`None` = provider default).
+fn build_model_or_default(
+    model_env: &str,
+    max_tokens_env: Option<&str>,
+    fallback_max_tokens: Option<u32>,
+) -> AppResult<Arc<dyn ChatModel>> {
     let model = std::env::var(model_env)
         .or_else(|_| std::env::var(CHAT_MODEL_ENV))
         .map_err(|_| {
@@ -89,13 +105,29 @@ fn build_model_or_default(model_env: &str) -> AppResult<Arc<dyn ChatModel>> {
         api_key: std::env::var(CHAT_API_KEY_ENV).ok(),
         api_key_env: None,
         api_url: std::env::var(CHAT_API_URL_ENV).ok(),
-        max_tokens: std::env::var(CHAT_MAX_TOKENS_ENV)
-            .ok()
-            .and_then(|s| s.trim().parse::<u32>().ok()),
+        max_tokens: pick_max_tokens(
+            max_tokens_env.and_then(|env| std::env::var(env).ok()),
+            std::env::var(CHAT_MAX_TOKENS_ENV).ok(),
+            fallback_max_tokens,
+        ),
     };
     let adapter = create_adapter_from_config(config)
         .map_err(|e| AppError::Config(format!("constructing model ({model_env}): {e}")))?;
     Ok(Arc::from(adapter))
+}
+
+/// Max-tokens precedence: per-component env var beats the shared chat budget,
+/// which beats the component's built-in default. Unparseable values are
+/// ignored (same leniency as the chat budget parsing).
+fn pick_max_tokens(
+    component: Option<String>,
+    chat: Option<String>,
+    default: Option<u32>,
+) -> Option<u32> {
+    component
+        .or(chat)
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .or(default)
 }
 
 /// Resolve the music provider identity from `MUSIC_GIFT_MUSIC_PROVIDER`.
@@ -188,8 +220,12 @@ pub fn build_countdown_tool(model: Arc<dyn ModelAdapter>) -> Option<Arc<dyn Tool
 /// Load all configuration from environment variables.
 pub fn load_config() -> AppResult<AppConfig> {
     let chat_model = build_chat_model()?;
-    let countdown_model = build_model_or_default(COUNTDOWN_MODEL_ENV)?;
-    let music_prompt_model = build_model_or_default(MUSIC_PROMPT_MODEL_ENV)?;
+    let countdown_model = build_model_or_default(
+        COUNTDOWN_MODEL_ENV,
+        Some(COUNTDOWN_MAX_TOKENS_ENV),
+        Some(COUNTDOWN_DEFAULT_MAX_TOKENS),
+    )?;
+    let music_prompt_model = build_model_or_default(MUSIC_PROMPT_MODEL_ENV, None, None)?;
     let music_provider = music_provider();
     let gen_task = build_gen_task(&music_provider)?;
     let countdown_tool = build_countdown_tool(countdown_model.clone());
@@ -205,4 +241,39 @@ pub fn load_config() -> AppResult<AppConfig> {
         port,
         countdown_tool,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pick_max_tokens;
+
+    #[test]
+    fn component_var_wins_over_chat_and_default() {
+        assert_eq!(
+            pick_max_tokens(Some("4096".into()), Some("2048".into()), Some(8192)),
+            Some(4096)
+        );
+    }
+
+    #[test]
+    fn chat_budget_wins_over_default_when_component_unset() {
+        assert_eq!(
+            pick_max_tokens(None, Some("2048".into()), Some(8192)),
+            Some(2048)
+        );
+    }
+
+    #[test]
+    fn default_applies_when_no_env_set() {
+        assert_eq!(pick_max_tokens(None, None, Some(8192)), Some(8192));
+        assert_eq!(pick_max_tokens(None, None, None), None);
+    }
+
+    #[test]
+    fn unparseable_value_falls_through_to_default() {
+        assert_eq!(
+            pick_max_tokens(Some("not-a-number".into()), None, Some(8192)),
+            Some(8192)
+        );
+    }
 }

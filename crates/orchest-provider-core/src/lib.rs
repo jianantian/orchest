@@ -15,6 +15,7 @@
 //! so a pure-REST (LLM) consumer stays light.
 
 pub mod auth;
+pub mod catalog;
 pub mod gen;
 pub mod http;
 pub mod pricing;
@@ -32,6 +33,10 @@ pub mod ws;
 pub mod oss;
 
 pub use auth::{BearerAuth, HeaderAuth, OpenSpeechHeaders};
+pub use catalog::{
+    AsrCatalogExt, CatalogExt, ChatCatalogExt, GenCatalogExt, ModelFilter, ModelRecord,
+    ModelStatus, RealtimeCatalogExt, TtsCatalogExt,
+};
 pub use gen::{warn_unconsumed_params, SyncGenCache};
 pub use http::{build_client, shared_client, HttpClientConfig};
 pub use pricing::{Cost, Meter, Pricing};

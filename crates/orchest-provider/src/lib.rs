@@ -10,8 +10,9 @@
 //! use orchest_protocol::Modality;
 //!
 //! let reg = Registry::with_builtin();         // whatever features enable
-//! // capability query:
-//! let _ = reg.chat().accepts([Modality::Text, Modality::Image]).thinking().select();
+//! // list-then-choose (capability-only select is ambiguous across providers):
+//! let candidates = reg.chat().accepts([Modality::Text, Modality::Image]).thinking().list();
+//! let _ = candidates.first();
 //! // capability + identity mixed:
 //! let _ = reg.asr().provider("volcengine").bidirectional().select();
 //! // identity pick:
@@ -27,12 +28,17 @@
 //! `orchest_protocol`. It pulls no impl crate and no network deps, and is
 //! never enabled by default or by any other feature.
 
+pub mod catalog;
 pub mod facade;
 #[cfg(feature = "testing")]
 pub mod fakes;
 pub mod registry;
 
 pub use registry::{Query, Registry};
+
+// Credential-free multi-capability catalog discovery (Batch 0).
+pub use catalog::{find_model, find_model_for, list_models, ModelFilter};
+pub use orchest_provider_core::catalog::{CatalogExt, ModelRecord, ModelStatus};
 
 // Re-export the registry building blocks so impl crates and consumers share one
 // set of entry/config types.

@@ -87,34 +87,92 @@ export async function getPlaylist(): Promise<PlaylistResponse> {
   return res.json() as Promise<PlaylistResponse>;
 }
 
-/** POST /api/generate/:id — submit a music generation job. Creator only. */
-export async function generateMusic(id: string, creatorToken: string): Promise<GenerateResponse> {
+/** GET /api/my-gifts — the signed-in creator's gifts, any device. */
+export async function getMyGifts(): Promise<Gift[]> {
+  const res = await fetch('/api/my-gifts');
+  if (!res.ok) throw new Error(`Get my gifts failed: ${res.status}`);
+  const body = (await res.json()) as { items: Gift[] };
+  return body.items;
+}
+
+/** POST /api/gift/claim — attach device-local gifts to the signed-in account. */
+export async function claimGifts(
+  gifts: Array<{ id: string; creator_token: string }>,
+): Promise<number> {
+  const res = await fetch('/api/gift/claim', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gifts }),
+  });
+  if (!res.ok) throw new Error(`Claim gifts failed: ${res.status}`);
+  const body = (await res.json()) as { claimed: number };
+  return body.claimed;
+}
+
+/** POST /api/auth/me/password — set a new password for the signed-in user. */
+export async function setPassword(password: string): Promise<void> {
+  const res = await fetch('/api/auth/me/password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (!res.ok) throw new Error(`Set password failed: ${res.status}`);
+}
+
+/** POST /api/auth/forgot — request a password-reset email. */
+export async function forgotPassword(email: string): Promise<void> {
+  const res = await fetch('/api/auth/forgot', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) throw new Error(`Forgot password failed: ${res.status}`);
+}
+
+/** POST /api/auth/reset — redeem a reset token with a new password. */
+export async function resetPassword(token: string, password: string): Promise<void> {
+  const res = await fetch('/api/auth/reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, password }),
+  });
+  if (!res.ok) throw new Error(`Reset password failed: ${res.status}`);
+}
+
+/** POST /api/generate/:id — submit a music generation job. Creator only. The
+ *  token may be absent when the caller acts via a session (creator_id). */
+export async function generateMusic(id: string, creatorToken?: string): Promise<GenerateResponse> {
   const res = await fetch(`/api/generate/${id}`, {
     method: 'POST',
-    headers: { 'X-Creator-Token': creatorToken },
+    headers: creatorToken ? { 'X-Creator-Token': creatorToken } : undefined,
   });
   if (!res.ok) throw new Error(`Generate music failed: ${res.status}`);
   return res.json() as Promise<GenerateResponse>;
 }
 
-/** DELETE /api/gift/:id — permanently remove a gift. Creator only. */
-export async function deleteGift(id: string, creatorToken: string): Promise<void> {
+/** DELETE /api/gift/:id — permanently remove a gift. Creator only. Token may
+ *  be absent when the caller acts via a session (creator_id). */
+export async function deleteGift(id: string, creatorToken?: string): Promise<void> {
   const res = await fetch(`/api/gift/${id}`, {
     method: 'DELETE',
-    headers: { 'X-Creator-Token': creatorToken },
+    headers: creatorToken ? { 'X-Creator-Token': creatorToken } : undefined,
   });
   if (!res.ok) throw new Error(`Delete gift failed: ${res.status}`);
 }
 
-/** POST /api/gift/:id/publish — list/unlist on the public playlist. Creator only. */
+/** POST /api/gift/:id/publish — list/unlist on the public playlist. Creator
+ *  only. Token may be absent when the caller acts via a session. */
 export async function setGiftPublished(
   id: string,
-  creatorToken: string,
+  creatorToken: string | undefined,
   published: boolean,
 ): Promise<void> {
   const res = await fetch(`/api/gift/${id}/publish`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Creator-Token': creatorToken },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(creatorToken ? { 'X-Creator-Token': creatorToken } : {}),
+    },
     body: JSON.stringify({ published }),
   });
   if (!res.ok) throw new Error(`Publish toggle failed: ${res.status}`);

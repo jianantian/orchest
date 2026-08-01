@@ -55,6 +55,9 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
+      - name: cargo test provider selection (all weight features)
+        run: cargo test -p orchest-provider --features "http,stream,visual" --test selection --test catalog_discovery
+
       - name: Python binding package tests
         run: |
           python -m venv .venv
