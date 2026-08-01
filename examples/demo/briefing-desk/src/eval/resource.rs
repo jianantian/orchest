@@ -164,19 +164,17 @@ pub fn collect_resources(events: &[TrajectoryEvent]) -> ResourceReport {
                     .unwrap_or_default();
                 if tool == "describe_image" {
                     vision_calls += 1;
-                    // Vision usage is event-only in tool details / output.
+                    // Structured tool completion emits `details` (TokenUsage) as
+                    // the event `output` field — not nested under `details`.
                     let usage = ev
                         .data
-                        .get("details")
+                        .get("output")
                         .cloned()
+                        .or_else(|| ev.data.get("details").cloned())
                         .or_else(|| {
                             ev.data
                                 .get("output")
                                 .and_then(|o| o.get("details").cloned())
-                        })
-                        .or_else(|| {
-                            // Structured tool output may put usage at top-level details.
-                            None
                         });
                     if let Some(usage) = usage {
                         if usage_looks_like_tokens(&usage) {
@@ -369,6 +367,32 @@ mod tests {
         assert_eq!(report.totals.output_tokens, 13);
         assert_eq!(report.totals.image_input_tokens, 100);
         assert_eq!(report.totals.gate_total_tokens(), 30 + 13 + 100);
+    }
+
+    #[test]
+    fn collect_vision_usage_from_structured_output_field() {
+        // Runtime emits ToolOutput::Structured.details as ToolCallCompleted.output.
+        let events = vec![ev(
+            "tool_call_completed",
+            0,
+            json!({
+                "tool": "describe_image",
+                "output": {
+                    "input_tokens": 96,
+                    "output_tokens": 181,
+                    "reasoning_tokens": 145,
+                    "cache_read_tokens": 0,
+                    "details": {"prompt_cache_miss_tokens": 96}
+                }
+            }),
+        )];
+        let report = collect_resources(&events);
+        assert_eq!(report.coverage, ResourceCoverage::Complete);
+        assert_eq!(report.vision_calls, 1);
+        assert_eq!(report.missing_usage_calls, 0);
+        assert_eq!(report.totals.input_tokens, 96);
+        assert_eq!(report.totals.output_tokens, 181);
+        assert_eq!(report.totals.gate_total_tokens(), 96 + 181);
     }
 
     #[test]
