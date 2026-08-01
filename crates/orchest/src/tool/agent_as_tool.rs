@@ -141,13 +141,14 @@ fn cap_budget(configured: BudgetConfig, remaining: &BudgetConfig) -> BudgetConfi
 /// whole child. The parent model still receives the structured error as the
 /// tool result and may deliberately re-invoke the tool with adjusted input.
 ///
-/// **Budget accounting consequence**: because the failure path returns no
-/// `ToolOutput`, the budget the child consumed before failing is **not**
-/// folded into the parent's `BudgetGuard` (that only happens via
-/// `Structured.external_usage` on the success path). A parent model that
-/// repeatedly invokes a failing sub-agent is therefore bounded only by its
-/// own `max_steps`; each child is still individually capped by `cap_budget`.
-/// Tracked as follow-up issue #241.
+/// **Budget accounting**: the failure path returns no `ToolOutput`, so the
+/// child's consumed budget rides on the `ToolError` itself
+/// ([`ToolError::external_usage`], hotfix 2026_07_27 / issue #241); the
+/// runtime folds it into the parent's `BudgetGuard` on the tool-error path
+/// with the same semantics as the success path's
+/// `Structured.external_usage`. A parent model that repeatedly invokes a
+/// failing sub-agent is therefore still bounded by its own budget (and each
+/// child is individually capped by `cap_budget`).
 ///
 /// # Output format contract (v0.15)
 ///
@@ -453,7 +454,8 @@ impl AgentAsTool {
                         usage.cost_usd,
                         output_head(&second.output),
                     ))
-                    .with_code("SUB_AGENT_OUTPUT_CONTRACT_VIOLATION")),
+                    .with_code("SUB_AGENT_OUTPUT_CONTRACT_VIOLATION")
+                    .with_external_usage(usage)),
                 }
             }
         }
@@ -481,6 +483,7 @@ fn child_failure_error(
         budget_used.tokens_used, budget_used.tool_calls_used, budget_used.cost_usd
     ))
     .with_code(code)
+    .with_external_usage(budget_used.clone())
 }
 
 /// Extract the contract-conforming payload from a child run's raw output.
@@ -980,6 +983,12 @@ mod tests {
             "message carries consumed budget: {}",
             err.message
         );
+        // And the structured channel must bill the parent run (issue #241).
+        let usage = err
+            .external_usage
+            .as_ref()
+            .expect("failed child bills the parent via external_usage");
+        assert_eq!(usage.tokens_used, 5);
 
         let events = drain_events(rx);
         assert!(events.iter().any(
@@ -1366,6 +1375,12 @@ mod tests {
             "raw output head in diagnostics: {}",
             err.message
         );
+        // Both attempts' spend bills the parent (5 tokens each, issue #241).
+        let usage = err
+            .external_usage
+            .as_ref()
+            .expect("contract violation bills the parent via external_usage");
+        assert_eq!(usage.tokens_used, 10);
         assert_eq!(
             model.seen.lock().expect("seen").len(),
             2,

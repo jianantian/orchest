@@ -1798,6 +1798,7 @@ fn retry_hint_error(kind: ErrorKind, retry: RetryHint) -> ToolError {
         retry,
         code: Some("RETRY_TEST".into()),
         next_step: Some("retry if allowed".into()),
+        external_usage: None,
     }
 }
 
@@ -3633,6 +3634,133 @@ async fn max_tool_calls_boundary_enforced() {
     );
 }
 
+/// A tool that fails while reporting out-of-band budget consumption — the
+/// agent-as-tool child-failure shape (hotfix 2026_07_27 / issue #241).
+struct UsageBombTool;
+
+#[async_trait::async_trait]
+impl Tool for UsageBombTool {
+    fn name(&self) -> &str {
+        "usage_bomb"
+    }
+    fn description(&self) -> &str {
+        "fails while reporting out-of-band budget consumption"
+    }
+    fn input_schema(&self) -> &JsonSchema {
+        &serde_json::Value::Null
+    }
+    fn output_schema(&self) -> Option<&JsonSchema> {
+        None
+    }
+    fn metadata(&self) -> &ToolMetadata {
+        &ToolMetadata {
+            side_effect: false,
+            approval: Approval::Never,
+            execution_mode: ToolExecutionMode::Normal,
+            parallelism: ToolParallelism::Serial,
+            cost_hint: None,
+            timeout: None,
+            max_output_tokens: None,
+            source: ToolSource::InProcess,
+        }
+    }
+    async fn execute(
+        &self,
+        _input: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        Err(
+            ToolError::fatal("child run died").with_external_usage(crate::budget::BudgetUsage {
+                tokens_used: 100,
+                tool_calls_used: 1,
+                cost_usd: 0.0,
+            }),
+        )
+    }
+}
+
+struct OneToolThenTextModel {
+    tool_name: &'static str,
+    calls: AtomicU32,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for OneToolThenTextModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "one-tool-then-text"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<tokio::sync::mpsc::Sender<crate::model::StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let usage = TokenUsage {
+            input_tokens: 1,
+            output_tokens: 1,
+            ..Default::default()
+        };
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "call_1".into(),
+                    name: self.tool_name.into(),
+                    input: json!({}),
+                }],
+                usage,
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        } else {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("done".into())],
+                usage,
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+#[tokio::test]
+async fn tool_error_external_usage_folds_into_parent_budget() {
+    let mut config = test_config();
+    config.budget.max_tokens = Some(50);
+
+    let model = Arc::new(OneToolThenTextModel {
+        tool_name: "usage_bomb",
+        calls: AtomicU32::new(0),
+    });
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(UsageBombTool)).unwrap();
+
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    // The tool's 100 external tokens exceed the 50-token budget; without the
+    // error-path fold (issue #241) the run would have completed normally.
+    let (error, kind) = events
+        .iter()
+        .find_map(|e| match e {
+            RuntimeEvent::RunFailed { error, kind } => Some((error.clone(), *kind)),
+            _ => None,
+        })
+        .expect("run must fail on the folded external usage");
+    assert!(error.contains("budget_exceeded"), "error: {error}");
+    assert_eq!(kind, crate::events::RunFailureKind::BudgetExceeded);
+}
+
 struct TwoToolCallsOneStepModel;
 
 #[async_trait::async_trait]
@@ -5426,6 +5554,7 @@ impl Tool for RepeatedFailureTool {
             retry: RetryHint::Unsafe,
             code: Some("REPEATED_FAILURE_TEST".into()),
             next_step: None,
+            external_usage: None,
         })
     }
 }

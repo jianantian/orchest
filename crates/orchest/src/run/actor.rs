@@ -1637,6 +1637,11 @@ async fn run_tool_and_handoff_phase(
                 }
             }
             Err(e) => {
+                // Tools can report out-of-band spend on the error path too
+                // (agent-as-tool child runs); fold it like the success path.
+                if let Some(usage) = &e.external_usage {
+                    state.budget.record_external_usage(usage);
+                }
                 if let Err(reason) = record_repeated_failure(state, subs, &tool_call.name, &e).await
                 {
                     emit(
@@ -2194,6 +2199,11 @@ async fn finalize_parallel_tool_result(
             }
         }
         Err(error) => {
+            // Tools can report out-of-band spend on the error path too
+            // (agent-as-tool child runs); fold it like the success path.
+            if let Some(usage) = &error.external_usage {
+                state.budget.record_external_usage(usage);
+            }
             emit(
                 subs,
                 RuntimeEvent::ToolCallFailed {

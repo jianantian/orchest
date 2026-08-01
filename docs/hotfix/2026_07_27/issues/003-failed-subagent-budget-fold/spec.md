@@ -23,12 +23,12 @@ v0.15 #236 把 agent-as-tool child 失败从 `Ok(Structured{details.error})` 改
 
 ## 验收标准
 
-- [ ] child 失败时父 BudgetGuard 计入 child 已耗 budget(单测:stub child 失败 × N 次,父预算按
+- [x] child 失败时父 BudgetGuard 计入 child 已耗 budget(单测:stub child 失败 × N 次,父预算按
   合计递减;budget 耗尽时父 run 按既有 budget_exceeded 语义失败)
-- [ ] 输出契约违规(两次 attempt)折算合计 usage
-- [ ] `external_usage` 未设置的工具 Err 路径行为不变
-- [ ] ToolError serde 向后兼容(老 payload 无该字段可反序列化)
-- [ ] 五项检查全绿
+- [x] 输出契约违规(两次 attempt)折算合计 usage
+- [x] `external_usage` 未设置的工具 Err 路径行为不变
+- [x] ToolError serde 向后兼容(老 payload 无该字段可反序列化)
+- [x] 五项检查全绿
 
 ## 实施要点(hotfix 内嵌 plan)
 
