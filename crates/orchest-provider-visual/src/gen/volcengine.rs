@@ -120,6 +120,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
     CapabilityDescriptor::new("volcengine", DEFAULT_MODEL, Capability::GenTask)
         .with_input_modalities([Modality::Text])
         .with_output_modalities([Modality::Image])
+        .default_for_provider(true)
 }
 
 /// Build a [`VolcengineGen`] from a registry [`ProviderConfig`].

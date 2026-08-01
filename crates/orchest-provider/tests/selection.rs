@@ -540,3 +540,42 @@ fn aliyun_asr_id_pins_qwen_streaming_model() {
         "qwen-audio-3.0-asr-flash-streaming"
     );
 }
+
+#[cfg(all(feature = "http", feature = "visual"))]
+#[test]
+fn gen_aliyun_provider_select_defaults_to_fun_music() {
+    let reg = Registry::with_builtin();
+    let picked = reg.gen().provider("aliyun").select().unwrap();
+    assert_eq!(picked.descriptor.model.as_ref(), "fun-music-v1");
+    assert!(picked.descriptor.default_for_provider);
+}
+
+#[cfg(all(feature = "http", feature = "visual"))]
+#[test]
+fn gen_volcengine_provider_select_defaults_to_seedream_image() {
+    let reg = Registry::with_builtin();
+    let picked = reg.gen().provider("volcengine").select().unwrap();
+    assert_eq!(picked.descriptor.model.as_ref(), "doubao-seedream-5-0-260128");
+    assert!(picked.descriptor.default_for_provider);
+}
+
+#[cfg(all(feature = "http", feature = "visual"))]
+#[test]
+fn gen_defaults_unique_per_provider() {
+    let reg = Registry::with_builtin();
+    for provider in ["aliyun", "volcengine"] {
+        let defaults: Vec<_> = reg
+            .gen()
+            .provider(provider)
+            .list()
+            .into_iter()
+            .filter(|e| e.descriptor.default_for_provider)
+            .collect();
+        assert_eq!(
+            defaults.len(),
+            1,
+            "{provider} must have exactly one gen default"
+        );
+    }
+}
+
