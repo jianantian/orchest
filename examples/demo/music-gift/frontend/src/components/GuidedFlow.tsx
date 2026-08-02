@@ -315,6 +315,16 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
   // Nothing worth discarding before the first answer.
   const canRestart = step !== "greet" && step !== "relationship";
 
+  // Progress indicators for the current assistant turn. The chat bubble only
+  // shows the text before <<<LYRICS>>>; everything past the marker streams
+  // invisibly, so the two phases need their own labels.
+  const lastMsg = messages[messages.length - 1];
+  const lastAssistant = lastMsg && lastMsg.role === "assistant" ? lastMsg : null;
+  const lastTurnText = lastAssistant
+    ? stripMarkers(lastAssistant.content.split("<<<LYRICS>>>")[0]).trim()
+    : "";
+  const lyricsStreaming = streaming && !!lastAssistant && lastAssistant.content.includes("<<<LYRICS>>>");
+
   return (
     <div className="chat-panel">
       <div className="chat-panel-top">
@@ -354,12 +364,28 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
           return <div key={`m-${i}`} className={`bubble ${msg.role === "assistant" ? "bot" : msg.role}`}>{display}</div>;
         })}
 
-        {/* Typing indicator: shown while waiting for the first assistant response */}
-        {streaming && step === "chat" && messages.filter(m => m.role === "assistant").length === 0 && (
+        {/* Typing indicator: waiting for the first visible text of the
+            current assistant turn. Applies to every turn, not just the
+            first — later turns used to show nothing until the first token
+            landed. Hidden once the lyrics marker arrives (that phase gets
+            its own label below) and while a quality stage is labeled. */}
+        {streaming && !stage && !lyricsStreaming && !lastTurnText && (
           <div className="bubble bot typing-indicator" aria-label="Assistant is typing">
             <span className="typing-dot" />
             <span className="typing-dot" />
             <span className="typing-dot" />
+          </div>
+        )}
+
+        {/* Lyrics payload streaming: the chat text is done and the hidden
+            <<<LYRICS>>> block (the bulk of the tokens on the final turn) is
+            arriving. Previously this whole phase was dead air. */}
+        {streaming && !stage && lyricsStreaming && (
+          <div className="bubble bot reviewing-indicator" role="status">
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+            <span className="reviewing-label">{t("writing_lyrics")}</span>
           </div>
         )}
 
@@ -377,9 +403,15 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
           </div>
         )}
 
-        {/* Pre-generation transition: gen.start() fired but no giftId yet */}
+        {/* Pre-generation transition: gen.start() fired but no giftId yet —
+            animate it like the other waiting phases, not a static bubble. */}
         {step === "music" && !gen.giftId && gen.state === "generating" && (
-          <div className="bubble bot" style={{ opacity: 0.7 }}>{t("creating_gift")}</div>
+          <div className="bubble bot reviewing-indicator" role="status">
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+            <span className="reviewing-label">{t("creating_gift")}</span>
+          </div>
         )}
 
         {step === "review" && draft && <ReviewCard key={draft.lyrics} lyrics={draft.lyrics} style={draft.style} title={draft.title} vocal={draft.vocal} styleTags={getStyleTags(lang)} onSubmit={handleReviewSubmit} creating={gen.state === "generating"} review={review ?? undefined} degraded={draftDegraded} />}
