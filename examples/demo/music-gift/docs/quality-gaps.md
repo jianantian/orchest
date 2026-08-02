@@ -14,7 +14,7 @@ is a deliberate skip — not an oversight.
 | Performance Cues | Required per-section delivery tags | Enforced by both `suno.md` (writer) and `review.md` (reviewer) |
 | Exclude Styles | Dedicated field in suno-engineer | Integrated into `EnrichedPrompt.exclude` + suno.md guidance |
 | Artist names | `artist-blocklist.md` scanned by pre-generation-check | `lyrics_validator.rs` — 14-name blocklist checked before Suno submit |
-| Independent review | `lyric-reviewer` (separate Claude agent, 14-point, auto-fix pronunciation) | `run_review_pass()` — second `AgentRun`, 10-point checklist, auto-fix cues + pronunciation |
+| Independent review | `lyric-reviewer` (separate Claude agent, 14-point, auto-fix pronunciation) | `run_review_pass()` — separate `AgentRun` after the elevate pass, 10-point checklist, auto-fix cues + pronunciation |
 | Material transformation (anti-literal) | — (no equivalent; human rewrite passes) | `prompts/elevate.md` creative elevation pass + FROM MATERIAL TO ART chapter in `skills/lyrics-writer/SKILL.md` |
 
 ## Open — Architecture-Level
