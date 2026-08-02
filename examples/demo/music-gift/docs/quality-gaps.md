@@ -14,7 +14,8 @@ is a deliberate skip — not an oversight.
 | Performance Cues | Required per-section delivery tags | Enforced by both `suno.md` (writer) and `review.md` (reviewer) |
 | Exclude Styles | Dedicated field in suno-engineer | Integrated into `EnrichedPrompt.exclude` + suno.md guidance |
 | Artist names | `artist-blocklist.md` scanned by pre-generation-check | `lyrics_validator.rs` — 14-name blocklist checked before Suno submit |
-| Independent review | `lyric-reviewer` (separate Claude agent, 14-point, auto-fix pronunciation) | `run_review_pass()` — second `AgentRun`, 10-point checklist, auto-fix cues + pronunciation |
+| Independent review | `lyric-reviewer` (separate Claude agent, 14-point, auto-fix pronunciation) | `run_review_pass()` — separate `AgentRun` after the elevate pass, 10-point checklist, auto-fix cues + pronunciation |
+| Material transformation (anti-literal) | — (no equivalent; human rewrite passes) | `prompts/elevate.md` creative elevation pass + FROM MATERIAL TO ART chapter in `skills/lyrics-writer/SKILL.md` |
 
 ## Open — Architecture-Level
 
@@ -77,6 +78,8 @@ review pass already handles the most impactful fixes (pronunciation, cues).
 **Future:** Add a single-pass Tighten agent if free-mode users consistently
 report verbose/draft-quality lyrics. The album-level passes belong in a
 separate album builder product.
+
+**Status (2026-08-01):** A creative elevation pass now runs before review (`prompts/elevate.md`): it rewrites literal, on-the-nose drafts (the "transcription" failure mode) rather than tightening them. The Tighten pass described here remains a future item.
 
 ### 4. Genre-Specific Defaults
 

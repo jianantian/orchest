@@ -131,23 +131,13 @@ pub async fn chat_handler(
         .await;
         match result {
             Ok(full_text) => {
-                let has_lyrics = full_text.contains("<<<LYRICS>>>");
-                // Only run review pass when the agent actually generated lyrics.
-                // Skip it for follow-up questions — the reviewer gets confused
-                // by conversational text.
-                let (reviewed, review_degraded) = if has_lyrics {
-                    // The review pass is a second full LLM call (tens of
-                    // seconds). Tell the client before going quiet, or the UI
-                    // sits frozen with a disabled input and no explanation.
-                    let _ = tx.send(SseEvent::Reviewing).await;
-                    let outcome = crate::agent::run_review_pass(review_model, &full_text).await;
-                    (outcome.text, outcome.degraded)
-                } else {
-                    (full_text.clone(), false)
-                };
-                let parsed = parse_lyrics(&reviewed);
-                let review = if has_lyrics {
-                    crate::agent::extract_review_summary(&reviewed)
+                let had_lyrics = full_text.contains("<<<LYRICS>>>");
+                let (final_text, degraded) =
+                    crate::agent::finalize_chat_output(review_model, &full_text, &tx).await;
+                let parsed = parse_lyrics(&final_text);
+                // The review summary only exists when a review pass ran.
+                let review = if had_lyrics {
+                    crate::agent::extract_review_summary(&final_text)
                 } else {
                     None
                 };
@@ -158,11 +148,7 @@ pub async fn chat_handler(
                     title: parsed.title,
                     vocal: parsed.vocal,
                     review,
-                    degraded: if review_degraded {
-                        vec!["review".to_string()]
-                    } else {
-                        Vec::new()
-                    },
+                    degraded,
                 };
                 let _ = tx.send(done).await;
             }

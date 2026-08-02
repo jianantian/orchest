@@ -88,7 +88,7 @@
 
 - `GuidedFlow.tsx` — `startChat()`：
   1. 把 `meta` 打包为 `{ lang, name, relationship, scenario, gender, birthday }` 发给 `/api/chat`（relationship / scenario 发的是显示 label；birthday 为 `"M-D"` 字符串，跳过则不传）
-  2. SSE 流式接收：`Delta`（逐字展示）、`Reviewing`（进入审核阶段，显示等待提示）、`Done`（解析歌词/风格/歌名/人声到 `draft`，审核报告到 `review`）
+  2. SSE 流式接收：`Delta`（逐字展示）、`Elevating`（进入改稿阶段，显示等待提示）、`Reviewing`（进入审核阶段，显示等待提示）、`Done`（解析歌词/风格/歌名/人声到 `draft`，审核报告到 `review`）
   3. 有歌词 → `act.go("review")`
 
 - `api.ts` — `streamChat()`：`fetch` + `ReadableStream` 逐行解析 SSE
@@ -99,13 +99,13 @@
   1. `build_system_message(meta)` 组装 system prompt = `system.md` + "Known info:\n{meta JSON}"（有照片时追加照片提示）
   2. 启动 `run_chat_agent()` → Orchest AgentRun，max 5 steps，注册 `collect_info` tool；`skills_dir` 由 SDK 自动注入 `<available_skills>` 清单并注册内置 `load_skill` / `read_file`（v0.14 零配置披露）
   3. 流式输出 Delta 事件
-  4. Agent 跑完后如果有 `<<<LYRICS>>>`，启动 **review pass**（第二个 LLM 调用）
-  5. 先发 `Reviewing` 事件告知前端等待
-  6. `run_review_pass()` 用 `review.md` 做 10 点审核：自动修复发音/performance cues/artist names，标记结构/押韵/双胞胎 verse 等问题
-  7. 审核完成后解析 `ParsedLyrics`，并用 `extract_review_summary()` 提取审核报告，随 `Done` 事件一并发给前端
+  4. Agent 跑完后如果输出含 `<<<LYRICS>>>`,由 `finalize_chat_output()` 依次跑两个二轮 pass(各一次完整 LLM 调用):
+     1. 先发 `Elevating` 事件 → `run_text_pass(stage="elevate", prompts/elevate.md)` 创造性改稿:素材→意象转化(种子规则/单一 conceit/锚点≤2/陌生人测试/禁宣告),防"应酬诗";输出无 `<<<LYRICS>>>` 时调用点 validator 拦截并回落原稿
+     2. 再发 `Reviewing` 事件 → `run_review_pass()` 用 `review.md` 做 10 点审核:自动修复发音/performance cues/artist names,标记结构/押韵/双胞胎 verse 等问题(作用于升华后的最终文本)
+  5. 解析 `ParsedLyrics`,并用 `extract_review_summary()` 提取审核报告,随 `Done` 事件一并发给前端;`degraded` 数组标记回落阶段(`"elevate"` / `"review"`)
 
-- `agent.rs` — `run_chat_agent()`：Orchest AgentRun，max 5 steps
-- `agent.rs` — `run_review_pass()`：独立的单步 AgentRun，用 `review.md`（编译期 `include_str!` 嵌入）做系统 prompt，输入为原始输出，无 tool
+- `agent.rs` — `run_chat_agent()`:Orchest AgentRun,max 5 steps
+- `agent.rs` — `run_text_pass()`(通用单步二轮 AgentRun,elevate/review 共用) + `run_review_pass()` + `finalize_chat_output()`(编排:门控 → Elevating → elevate → Reviewing → review);`elevate.md` / `review.md` 编译期 `include_str!` 嵌入,无 tool
 
 **写词方法论的加载（渐进式披露）：**
 
@@ -116,10 +116,11 @@
 | 阶段 | Prompt 文件 | 作用 |
 |------|------------|------|
 | System | `prompts/system.md` | 对话风格、追问策略、何时生成；指示 agent 写词前先加载 lyrics-writer skill（SDK 披露清单指引 `load_skill` 调用） |
-| Lyrics | `skills/lyrics-writer/SKILL.md` | 写词方法论（agent 按需加载）：结构、押韵方案、音节、Show Don't Tell、13 点质量检查、发音修正、performance cues |
+| Lyrics | `skills/lyrics-writer/SKILL.md` | 写词方法论(agent 按需加载):素材转化(FROM MATERIAL TO ART)、结构、押韵方案、音节、Show Don't Tell、14 点质量检查、发音修正、performance cues |
 | Review | `prompts/review.md` | 10 点审核清单：自动修复发音、performance cues、artist names；标记结构/押韵等问题 |
+| Elevate | `prompts/elevate.md` | 创造性改稿:种子规则、单一 conceit、锚点≤2、陌生人测试、禁宣告;幂等(达标原样返回);输出仅标签块 |
 
-**数据落点：** `draft = { lyrics: "...", style: "温柔轻快", title: "挥手的魔法", vocal: "female" }`，`review = "## Review Pass ..."`（审核报告 Markdown，可空）
+**数据落点：** `draft = { lyrics: "...", style: "温柔轻快", title: "挥手的魔法", vocal: "female" }`，`review = "## Review Pass ..."`（审核报告 Markdown，可空）；`Done.degraded` 标记回落阶段（`"elevate"` / `"review"`，空数组=全部正常），任一阶段降级时审核卡片显示通用提示
 
 ---
 
@@ -192,6 +193,7 @@
 |------|---------|--------|------|------|
 | Chat agent | 用户进入 chat 阶段 | `system.md`（写词时按需经 `load_skill` 加载 `skills/lyrics-writer/SKILL.md`） | `chat_model` | ~10-30s |
 | Review pass | Chat agent 生成完歌词后 | `review.md` | `chat_model`（复用） | ~10-30s |
+| Elevate pass | Chat agent 生成完歌词后(review 之前) | `elevate.md` | `chat_model`(复用) | ~10-30s |
 | Music prompt | 用户点"生成这首歌"后 | `music_prompt/{provider}.md` | `music_prompt_model` | ~3-5s |
 
 ---
@@ -229,11 +231,12 @@
 | 前端 | `frontend/src/api.ts` | API 客户端：`streamChat` / `createGift` / `generateMusic` |
 | 前端 | `frontend/src/i18n.tsx` | 5 语言字典 + `useI18n` context + `getMonths` / `getStyleTags` |
 | 后端 | `src/routes.rs` | `/api/chat` + `/api/gift` + `/api/generate/:id` + `/api/polish-music-prompt` |
-| 后端 | `src/agent.rs` | `run_chat_agent` + `run_review_pass` + `parse_lyrics` + `extract_review_summary`；编译期嵌入 `review.md` |
+| 后端 | `src/agent.rs` | `run_chat_agent` + `run_text_pass`(通用二轮 pass,elevate/review 共用) + `run_review_pass` + `finalize_chat_output` + `parse_lyrics` + `extract_review_summary`;编译期嵌入 `review.md` / `elevate.md` |
 | 后端 | `src/agent/message.rs` | `build_system_message` + `build_messages` |
 | 后端 | `src/prompts.rs` | 编译期 `include_str!` 嵌入 `system.md` / `countdown.md` / `music_prompt/*.md`（suno/mureka/minimax） |
 | 后端 | `src/tools/music_gen.rs` | `generate_music_prompt` + `generate` / `submit` / `poll` / `stream`（模块函数） |
 | Prompt | `prompts/system.md` | Chat agent 系统 prompt |
 | Skill | `skills/lyrics-writer/SKILL.md` | 写词方法论，agent 通过内置 `load_skill` 按需加载 |
 | Prompt | `prompts/review.md` | 歌词审核清单（编译期嵌入 `agent.rs`） |
+| Prompt | `prompts/elevate.md` | 创造性改稿 prompt(编译期嵌入 `agent.rs`) |
 | Prompt | `prompts/music_prompt/{suno,mureka,minimax}.md` | Music prompt 改写模板，按 provider 选择 |

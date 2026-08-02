@@ -31,6 +31,8 @@ export interface ChatRequest {
 
 export type SseEvent =
   | { type: 'Delta'; text: string }
+  /** Emitted when the creative elevation pass starts (after Deltas end, before Reviewing). */
+  | { type: 'Elevating' }
   /** Emitted when the lyric review pass starts (after Deltas end, before Done). */
   | { type: 'Reviewing' }
   | {

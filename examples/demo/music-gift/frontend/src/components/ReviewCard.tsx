@@ -18,7 +18,7 @@ export interface ReviewCardProps {
   creating: boolean;
   /** Review summary from the second-pass quality reviewer (Markdown table). */
   review?: string;
-  /** True when the server skipped the review pass for this draft (fallback). */
+  /** True when any lyric quality stage fell back to the raw draft. */
   degraded?: boolean;
 }
 
@@ -86,8 +86,8 @@ export function ReviewCard({
           )}
         </div>
       )}
-      {degraded && !review && (
-        <div className="degraded-note">{t("review_skipped")}</div>
+      {degraded && (
+        <div className="degraded-note">{t("quality_degraded")}</div>
       )}
       <textarea
         className="review-textarea"

@@ -168,9 +168,10 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
   // ── Chat ────────────────────────────────────────
 
   const [review, setReview] = useState<string | null>(null);
-  const [reviewing, setReviewing] = useState(false);
-  // True when the server fell back past the review pass for the current draft.
-  const [reviewDegraded, setReviewDegraded] = useState(false);
+  // Which post-stream quality stage is running (elevate → review), or null.
+  const [stage, setStage] = useState<"elevate" | "review" | null>(null);
+  // True when any quality stage fell back to the raw draft for this turn.
+  const [draftDegraded, setDraftDegraded] = useState(false);
 
   /** Scroll the bubble list to the end. The instant (`auto`) variant is used
    * by the per-frame reveal and only fires when already near the bottom, so
@@ -198,7 +199,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
       ? [...base, { role: "user", content: userText }]
       : base;
     act.setMsg(msgs);
-    setStreaming(true); setError(null); setReviewing(false);
+    setStreaming(true); setError(null); setStage(null);
     let gotLyrics = false;
 
     // ── Typewriter reveal ────────────────────────────────────────────
@@ -231,14 +232,15 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
         if (runIdRef.current !== runId) return;
         if (e.type === "Delta") {
           arrived += e.text;
-        } else if (e.type === "Reviewing") {
-          // Second full LLM call (tens of seconds) starts here — label the wait.
-          // The generation stream is over: stop the reveal loop (its per-frame
-          // bottom-scroll would yank the viewport past the indicator) and flush
-          // the full text now; Done repeats the same flush, harmlessly.
+        } else if (e.type === "Elevating" || e.type === "Reviewing") {
+          // A post-stream quality stage (full LLM call, tens of seconds)
+          // starts here — label the wait. The generation stream is over:
+          // stop the reveal loop (its per-frame bottom-scroll would yank the
+          // viewport past the indicator) and flush the full text now; Done
+          // repeats the same flush, harmlessly.
           stopReveal();
           if (arrived) act.setMsg([...msgs, { role: "assistant", content: arrived }]);
-          setReviewing(true);
+          setStage(e.type === "Elevating" ? "elevate" : "review");
           // The indicator renders above the ReviewCard, which fills the
           // viewport — scroll to the indicator itself or the label is invisible.
           setTimeout(() => reviewingRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
@@ -248,7 +250,8 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
           if (e.has_lyrics) {
             // Only a lyrics-producing Done updates the degradation state —
             // a chat-turn Done (no lyrics) must not clear a pending note.
-            setReviewDegraded(e.degraded?.includes("review") ?? false);
+            // Any fallen-back stage shows the same generic note.
+            setDraftDegraded((e.degraded?.length ?? 0) > 0);
             gotLyrics = true;
             act.setDraft({ lyrics: e.lyrics, style: e.style, title: e.title, vocal: e.vocal || "female" });
             setReview(e.review ?? null);
@@ -266,7 +269,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
       stopReveal();
       if (runIdRef.current === runId) {
         setStreaming(false);
-        setReviewing(false);
+        setStage(null);
         if (gotLyrics) act.go("review");
       }
     }
@@ -276,7 +279,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
   function handleRestart() {
     runIdRef.current++;
     setConfirmRestart(false);
-    setInput(""); setError(null); setReview(null); setStreaming(false); setReviewing(false); setReviewDegraded(false);
+    setInput(""); setError(null); setReview(null); setStreaming(false); setStage(null); setDraftDegraded(false);
     gen.reset();
     act.reset();
     setTimeout(() => act.go("relationship"), 400);
@@ -360,16 +363,17 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
           </div>
         )}
 
-        {/* Review pass: a second full LLM call runs after the stream ends.
-            Label the wait — previously this was silent dead air with the
-            input greyed out. Shown on any step: follow-up edits from the
-            review screen regenerate lyrics and hit the same wait. */}
-        {reviewing && (
+        {/* Post-stream quality stages (elevate → review): full LLM calls run
+            after the stream ends. Label the wait — previously this was silent
+            dead air with the input greyed out. Shown on any step: follow-up
+            edits from the review screen regenerate lyrics and hit the same
+            wait. */}
+        {stage && (
           <div ref={reviewingRef} className="bubble bot reviewing-indicator" role="status">
             <span className="typing-dot" />
             <span className="typing-dot" />
             <span className="typing-dot" />
-            <span className="reviewing-label">{t("reviewing")}</span>
+            <span className="reviewing-label">{t(stage === "elevate" ? "elevating" : "reviewing")}</span>
           </div>
         )}
 
@@ -378,7 +382,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
           <div className="bubble bot" style={{ opacity: 0.7 }}>{t("creating_gift")}</div>
         )}
 
-        {step === "review" && draft && <ReviewCard key={draft.lyrics} lyrics={draft.lyrics} style={draft.style} title={draft.title} vocal={draft.vocal} styleTags={getStyleTags(lang)} onSubmit={handleReviewSubmit} creating={gen.state === "generating"} review={review ?? undefined} degraded={reviewDegraded} />}
+        {step === "review" && draft && <ReviewCard key={draft.lyrics} lyrics={draft.lyrics} style={draft.style} title={draft.title} vocal={draft.vocal} styleTags={getStyleTags(lang)} onSubmit={handleReviewSubmit} creating={gen.state === "generating"} review={review ?? undefined} degraded={draftDegraded} />}
         {step === "music" && gen.giftId && <MusicCard initialState={gen.state === "ready" ? "ready" : gen.state === "error" ? "error" : "generating"} onOpen={handleMusicOpen} onRetry={handleMusicRetry} />}
 
         <div ref={bottomRef} />

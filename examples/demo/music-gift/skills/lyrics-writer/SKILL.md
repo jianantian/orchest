@@ -11,6 +11,97 @@ every decision affects what the listener hears.
 
 Adapted from bitwize-music's lyric-writer skill (CC0). Key reference tables below.
 
+═══ FROM MATERIAL TO ART (READ FIRST) ═══
+
+The brief gives you raw material: a name, a relationship, a memory. Do not
+transcribe it — transform it. A lyric that retells the brief is a greeting
+card, not a song.
+
+THE SEED RULE
+The memory is the seed, not the plot. "She put her foot in her mouth and I
+couldn't stop laughing" is material. The song is not about foot-in-mouth; it
+is about what the moment means. Grow the song from the meaning; let the
+memory surface as at most one image.
+
+ONE CONCEIT
+Choose ONE central image and let the whole song grow from it. Verses develop
+it, the chorus distills it, the bridge turns it. If a line doesn't feed the
+conceit, cut it. Scattered nice images are not a substitute — one image,
+deepened, beats five images, listed.
+
+THE ANCHOR RULE (≤2)
+Keep at most two concrete details from the brief (name, place, object,
+gesture) — and demote them to anchors: hidden inside imagery, never the
+subject of a line, NEVER in a chorus. A personal name appears at most once
+in the entire song, and its default count is zero. The song must belong to
+the feeling, not to the proper nouns.
+
+THE STRANGER TEST
+Read the lyric as a stranger who knows nothing about the brief. They must
+hear a complete song that stands on its own. The person it's for should
+RECOGNIZE themselves in it — not be TOLD about themselves.
+
+SHOW, NEVER ANNOUNCE
+Delete emotional declarations. "You are so lovely" / "I want to keep this
+moment" / "I miss you" are conclusions, not lyrics. Find the image that
+makes the listener reach the conclusion themselves. (This extends the SHOW
+DON'T TELL section below from the line level to the whole song.)
+
+═══ WORKED EXAMPLE 1 (Chinese) ═══
+
+Brief: 孩子谷粒, 日常 — the parent watched the baby put a foot in her mouth
+and wanted to keep the moment forever.
+
+BEFORE (transcription — everything wrong):
+  [chorus]
+  谷粒呀谷粒               ← name chanted as the hook (Anchor Rule violated)
+  你不知道自己多可爱        ← feeling announced (Show, Never Announce violated)
+  这一刻我想留住
+  你吃脚的样子             ← the memory IS the plot (Seed Rule violated)
+  是我心里最柔软的画面      ← conclusion stated, no image
+
+AFTER (transformation — conceit: feet too small to have touched mud):
+  [chorus]
+  小脚丫 还没沾过泥         ← the conceit, established; the memory hidden
+  先踩进了我心里           ←   inside it (one anchor, transformed)
+  不急着长大 不急着走       ← the feeling embodied as a wish about time,
+  这双手还抱得住你            never announced
+
+What changed and why: the name is gone from the chorus (0 occurrences); the
+foot-eating scene survives only as "还没沾过泥" — those who know, know;
+"可爱 / 想留住" became "不急着长大" — the same feeling, reached through
+the image.
+
+═══ WORKED EXAMPLE 2 (English) ═══
+
+Brief: for Dad's 60th — he taught me to ride a bike; I want to thank him.
+
+BEFORE:
+  [verse 1]
+  You held the saddle tight
+  And ran beside the bike
+  I was scared but you were there
+  On Maple Street that summer night    ← beat-by-beat replay of the memory
+
+  [chorus]
+  Thank you Dad, thank you Dad         ← role chanted as the hook
+  For everything you do
+  You're the best dad in the world     ← announced, generic, greeting-card
+
+AFTER (conceit: the hand that let go):
+  [verse 1]
+  You were running still beside me
+  Long after I could ride
+  Both my hands were on the handlebar
+  Your laughter trailing just behind   ← the memory compressed into one image
+                                          that already contains the theme
+
+  [chorus]
+  Every road I've ever taken
+  Started with a hand that let me go   ← gratitude embodied in the conceit;
+  I never heard you running behind       "dad" appears nowhere
+  You made it look like I rode alone
+
 ═══ STRUCTURE ═══
 
 Write 2-3 verses + chorus (×2) + optional bridge. Use Suno section tags:
@@ -158,7 +249,7 @@ These patterns sound lazy. Avoid ALL of them:
 - AI self-narration: NEVER write "This song is about..." or "Here's a song for..."
 - Marketing superlatives: "the greatest", "the best", "forever" — too vague to land
 
-═══ QUALITY CHECK (13-Point) ═══
+═══ QUALITY CHECK (14-Point) ═══
 
 Run after writing, report violations:
 1. ☐ Rhyme: no self-rhymes, no lazy repeats, no forced rhymes
@@ -174,6 +265,9 @@ Run after writing, report violations:
 11. ☐ Verse-chorus echo: no phrase/image/rhyme bleed from verse into chorus
 12. ☐ Pitfalls: run through checklist above
 13. ☐ Twin verses: V2 must advance story, not rephrase V1
+14. ☐ Transcription: no beat-by-beat retelling of the brief, no name in
+    chorus (≤1 name total), no announced feelings, one conceit holds the
+    whole song together
 
 ═══ OUTPUT FORMAT (strict) ═══
 
@@ -197,4 +291,5 @@ TITLE rule: pick most visual image from lyrics (light catching a coat hem, steam
 REMEMBER:
 - Every section tag MUST carry a performance cue (1-3 words after the dash)
 - Every homograph MUST have phonetic spelling directly in the lyrics
-- Run the 13-point quality check before presenting
+- Run the 14-point quality check before presenting — including #14 (no
+  transcription of the brief)

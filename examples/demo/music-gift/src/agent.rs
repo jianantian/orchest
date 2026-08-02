@@ -164,6 +164,10 @@ pub enum SseEvent {
     Delta {
         text: String,
     },
+    /// Emitted when the creative elevation pass starts (after the chat stream
+    /// ends, before `Reviewing`). Also a full LLM call — the client must not
+    /// sit silent with a disabled input.
+    Elevating,
     /// Emitted when the review pass starts (after the chat stream ends, before
     /// `Done`). The review is a second full LLM call taking tens of seconds;
     /// without an event the client sits silent with a disabled input.
@@ -314,13 +318,106 @@ fn split_messages(messages: Vec<Message>) -> AppResult<(String, Vec<Message>, Ru
 /// Review system prompt compiled into the binary.
 static REVIEW_PROMPT: &str = include_str!("../prompts/review.md");
 
-/// Outcome of the review pass: the (possibly unreviewed) text plus a
-/// degradation flag the caller surfaces to the client.
-pub struct ReviewOutcome {
+/// Creative elevation prompt compiled into the binary.
+static ELEVATE_PROMPT: &str = include_str!("../prompts/elevate.md");
+
+/// Outcome of a second-pass text stage (elevate / review): the (possibly
+/// untouched) text plus a degradation flag the caller surfaces to the client.
+pub struct PassOutcome {
     pub text: String,
-    /// True when the review did not run to completion and `text` is the
-    /// original chat output.
+    /// True when the pass did not run to completion (or its output was
+    /// rejected by the call-site validator) and `text` is the input unchanged.
     pub degraded: bool,
+}
+
+/// Run a single-step second-pass agent over `input` and return its text.
+///
+/// Generic mechanism shared by every post-generation stage (elevate, review):
+/// the stage's identity (`agent_name`, `stage` for logs/degraded markers) and
+/// its prompt come from the caller, so no stage-specific logic lives here.
+/// On any failure — config error, run failure, empty output, or `validate`
+/// rejecting the output — the input text is returned unchanged with
+/// `degraded: true`; a fallen-back stage must never be worse than its input.
+// Six parameters trip the workspace's too-many-arguments-threshold = 5; the
+// parameter list is the cross-task interface contract, so allow it here.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_text_pass(
+    model: Arc<dyn ChatModel>,
+    agent_name: &str,
+    stage: &'static str,
+    system_prompt: &str,
+    input: &str,
+    validate: Option<&(dyn Fn(&str) -> bool + Send + Sync)>,
+) -> PassOutcome {
+    let config = match AgentConfig::builder(agent_name)
+        .max_steps(1)
+        .system_prompt(system_prompt)
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(stage, error = %e, "text pass: building config failed; keeping input");
+            return PassOutcome {
+                text: input.to_string(),
+                degraded: true,
+            };
+        }
+    };
+
+    // The stage prompt rides as the system prompt and the input text is the
+    // single user turn — no flattening, so the agent keeps its role.
+    let run_input = RunInput::text(input);
+    let tool_registry = ToolRegistry::new(); // Second-pass stages use no tools.
+    let (handle, mut rx) = AgentRun::start(config, run_input, model, tool_registry);
+
+    let mut out = String::new();
+    let mut run_failed = false;
+    while let Some(event) = rx.recv().await {
+        match event {
+            RuntimeEvent::ModelStreamChunk {
+                delta: StreamEvent::Text { delta: text },
+            } => {
+                out.push_str(&text);
+            }
+            RuntimeEvent::RunCompleted { output, .. } => {
+                if out.is_empty() {
+                    if let Some(text) = output.as_str() {
+                        out = text.to_string();
+                    }
+                }
+            }
+            RuntimeEvent::RunFailed { error, .. } => {
+                tracing::warn!(stage, error = %error, "text pass: agent run failed; keeping input");
+                run_failed = true;
+            }
+            _ => {}
+        }
+    }
+    handle.wait().await;
+
+    let rejected = out.is_empty() || validate.is_some_and(|v| !v(&out));
+    if rejected {
+        if out.is_empty() {
+            if !run_failed {
+                tracing::warn!(stage, "text pass: empty output; keeping input");
+            }
+        } else {
+            tracing::warn!(
+                stage,
+                "text pass: output rejected by validator; keeping input"
+            );
+        }
+        PassOutcome {
+            text: input.to_string(),
+            degraded: true,
+        }
+    } else {
+        tracing::debug!(stage, chars = out.len(), "text pass: done");
+        PassOutcome {
+            text: out,
+            degraded: false,
+        }
+    }
 }
 
 /// Run a second-pass review agent on the raw chat output.
@@ -330,75 +427,60 @@ pub struct ReviewOutcome {
 /// bitwize-music's lyric-reviewer skill (CC0).
 ///
 /// Returns corrected output in the same tag format. Falls back to
-/// the original on error — every fallback is logged and flagged degraded
-/// (previously the failures were silent or eprintln-only).
-pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> ReviewOutcome {
-    let config = match AgentConfig::builder("music-gift/review")
-        .max_steps(1)
-        .system_prompt(REVIEW_PROMPT)
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(stage = "review", error = %e, "review: building config failed; using unreviewed output");
-            return ReviewOutcome {
-                text: raw_output.to_string(),
-                degraded: true,
-            };
-        }
-    };
+/// the original on error — every fallback is logged and flagged degraded.
+pub async fn run_review_pass(model: Arc<dyn ChatModel>, raw_output: &str) -> PassOutcome {
+    run_text_pass(
+        model,
+        "music-gift/review",
+        "review",
+        REVIEW_PROMPT,
+        raw_output,
+        None,
+    )
+    .await
+}
 
-    // review.md rides as the system prompt and the raw chat output is the
-    // single user turn — no flattening (previously both were packed into
-    // one user message, so the reviewer lost its role).
-    let input = RunInput::text(raw_output);
-
-    let tool_registry = ToolRegistry::new(); // Review agent uses no tools.
-    let (handle, mut rx) = AgentRun::start(config, input, model, tool_registry);
-
-    let mut reviewed = String::new();
-    let mut run_failed = false;
-    while let Some(event) = rx.recv().await {
-        match event {
-            RuntimeEvent::ModelStreamChunk {
-                delta: StreamEvent::Text { delta: text },
-            } => {
-                reviewed.push_str(&text);
-            }
-            RuntimeEvent::RunCompleted { output, .. } => {
-                if reviewed.is_empty() {
-                    if let Some(text) = output.as_str() {
-                        reviewed = text.to_string();
-                    }
-                }
-            }
-            RuntimeEvent::RunFailed { error, .. } => {
-                tracing::warn!(stage = "review", error = %error, "review: agent run failed; using unreviewed output");
-                run_failed = true;
-            }
-            _ => {}
-        }
+/// Post-process a completed chat turn: when the raw output carries a lyric
+/// block, run the second-pass stages over it and collect the stages that
+/// fell back. Stage boundaries are announced on `tx` so the client can label
+/// the wait. Pure orchestration — parsing happens at the call site.
+///
+/// Stage order matters: the creative elevation runs first, and the
+/// mechanical review (pronunciation, cues) runs on the final text so its
+/// fixes survive to the music provider.
+pub async fn finalize_chat_output(
+    model: Arc<dyn ChatModel>,
+    full_text: &str,
+    tx: &mpsc::Sender<SseEvent>,
+) -> (String, Vec<String>) {
+    if !full_text.contains("<<<LYRICS>>>") {
+        return (full_text.to_string(), Vec::new());
     }
-    handle.wait().await;
+    let mut degraded: Vec<String> = Vec::new();
 
-    if reviewed.is_empty() {
-        if !run_failed {
-            tracing::warn!(
-                stage = "review",
-                "review: empty output; using unreviewed output"
-            );
-        }
-        ReviewOutcome {
-            text: raw_output.to_string(),
-            degraded: true,
-        }
-    } else {
-        tracing::debug!(chars = reviewed.len(), "review: done");
-        ReviewOutcome {
-            text: reviewed,
-            degraded: false,
-        }
+    let _ = tx.send(SseEvent::Elevating).await;
+    let elevated = run_text_pass(
+        model.clone(),
+        "music-gift/elevate",
+        "elevate",
+        ELEVATE_PROMPT,
+        full_text,
+        // A creative rewrite can drop the lyric tags, which would discard
+        // the user's song at parse time. Reject and keep the original draft.
+        Some(&|s: &str| parse_lyrics(s).has_lyrics),
+    )
+    .await;
+    if elevated.degraded {
+        degraded.push("elevate".to_string());
     }
+
+    let _ = tx.send(SseEvent::Reviewing).await;
+    let reviewed = run_review_pass(model, &elevated.text).await;
+    if reviewed.degraded {
+        degraded.push("review".to_string());
+    }
+
+    (reviewed.text, degraded)
 }
 
 #[cfg(test)]
@@ -451,6 +533,62 @@ mod tests {
                 stop_reason: StopReason::EndTurn,
                 option_adjustments: vec![],
             })
+        }
+    }
+
+    /// A ChatModel that plays back a scripted sequence of replies (or
+    /// failures), one per `complete` call, and captures the message lists.
+    struct ScriptedModel {
+        steps: Mutex<std::collections::VecDeque<Result<String, String>>>,
+        calls: Mutex<Vec<Vec<Message>>>,
+    }
+
+    impl ScriptedModel {
+        fn new(steps: Vec<Result<String, String>>) -> Self {
+            Self {
+                steps: Mutex::new(steps.into()),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ChatModel for ScriptedModel {
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "scripted"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDef],
+            _options: &RequestOptions,
+            _tx: Option<mpsc::Sender<StreamEvent>>,
+        ) -> Result<ModelResponse, ModelError> {
+            self.calls
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(messages.to_vec());
+            let step = self
+                .steps
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .pop_front()
+                .unwrap_or(Ok("done".to_string()));
+            match step {
+                Ok(text) => Ok(ModelResponse {
+                    content: vec![ContentBlock::Text(text)],
+                    usage: TokenUsage::default(),
+                    stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
+                }),
+                Err(msg) => Err(ModelError::internal(msg, "mock_failure")),
+            }
         }
     }
 
@@ -644,6 +782,38 @@ mod tests {
         assert_eq!(user_text, "RAW OUTPUT");
     }
 
+    #[tokio::test]
+    async fn text_pass_validator_rejection_falls_back_to_input() {
+        let model = Arc::new(CaptureModel::default());
+        let outcome = run_text_pass(
+            model,
+            "music-gift/test",
+            "test",
+            "SYS",
+            "RAW INPUT",
+            Some(&|s: &str| s.contains("<<<LYRICS>>>")),
+        )
+        .await;
+        assert!(outcome.degraded);
+        assert_eq!(outcome.text, "RAW INPUT");
+    }
+
+    #[tokio::test]
+    async fn text_pass_validator_acceptance_passes_output_through() {
+        let model = Arc::new(CaptureModel::default());
+        let outcome = run_text_pass(
+            model,
+            "music-gift/test",
+            "test",
+            "SYS",
+            "RAW INPUT",
+            Some(&|_s: &str| true),
+        )
+        .await;
+        assert!(!outcome.degraded);
+        assert_eq!(outcome.text, "done");
+    }
+
     #[test]
     fn parse_lyrics_extracts_all_tags() {
         let text = "<<<LYRICS>>>\n[verse 1]\nHello world\n[chorus]\nSing loud\n<<<END>>>
@@ -813,5 +983,157 @@ mod tests {
         };
         assert!(content.contains("Alice"));
         assert!(content.contains("Known info"));
+    }
+
+    #[tokio::test]
+    async fn finalize_skips_passes_for_conversational_output() {
+        let model = Arc::new(CaptureModel::default());
+        let (tx, mut rx) = mpsc::channel::<SseEvent>(16);
+        let (text, degraded) = finalize_chat_output(model.clone(), "just chatting", &tx).await;
+        assert_eq!(text, "just chatting");
+        assert!(degraded.is_empty());
+        assert!(model
+            .calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn finalize_runs_review_when_lyrics_present() {
+        let model = Arc::new(CaptureModel::default());
+        let (tx, mut rx) = mpsc::channel::<SseEvent>(16);
+        let (text, degraded) =
+            finalize_chat_output(model.clone(), "<<<LYRICS>>>\nla la\n<<<END>>>", &tx).await;
+        assert_eq!(text, "done");
+        // CaptureModel replies "done" to every call: the elevate validator
+        // rejects that tag-less reply (degraded), the review pass accepts it.
+        assert_eq!(degraded, vec!["elevate".to_string()]);
+        assert_eq!(
+            model
+                .calls
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len(),
+            2
+        );
+        assert!(matches!(rx.recv().await, Some(SseEvent::Elevating)));
+        assert!(matches!(rx.recv().await, Some(SseEvent::Reviewing)));
+    }
+
+    /// Elevate returns tag-less prose → the validator rejects it, the review
+    /// pass still runs on the ORIGINAL draft, and "elevate" is marked degraded.
+    #[tokio::test]
+    async fn elevate_output_without_lyric_tags_falls_back_but_review_still_runs() {
+        let model = Arc::new(ScriptedModel::new(vec![
+            Ok("sorry, here is some prose without tags".to_string()),
+            Ok("<<<LYRICS>>>\nreviewed\n<<<END>>>".to_string()),
+        ]));
+        let (tx, mut rx) = mpsc::channel::<SseEvent>(16);
+        let draft = "<<<LYRICS>>>\noriginal\n<<<END>>>";
+        let (text, degraded) = finalize_chat_output(model.clone(), draft, &tx).await;
+
+        assert_eq!(text, "<<<LYRICS>>>\nreviewed\n<<<END>>>");
+        assert_eq!(degraded, vec!["elevate".to_string()]);
+        {
+            let calls = model
+                .calls
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            assert_eq!(calls.len(), 2);
+            // The review pass must receive the original draft, not the prose.
+            let Some(ContentBlock::Text(review_user)) = calls[1][1].content.first() else {
+                panic!("user turn must be text");
+            };
+            assert_eq!(review_user, draft);
+        }
+        assert!(matches!(rx.recv().await, Some(SseEvent::Elevating)));
+        assert!(matches!(rx.recv().await, Some(SseEvent::Reviewing)));
+    }
+
+    /// Both stages succeed: the review pass runs on the ELEVATED text, the
+    /// stage events fire in order, nothing is degraded.
+    #[tokio::test]
+    async fn elevate_then_review_pipeline_order() {
+        let model = Arc::new(ScriptedModel::new(vec![
+            Ok("<<<LYRICS>>>\nelevated\n<<<END>>>".to_string()),
+            Ok("<<<LYRICS>>>\nreviewed\n<<<END>>>".to_string()),
+        ]));
+        let (tx, mut rx) = mpsc::channel::<SseEvent>(16);
+        let (text, degraded) =
+            finalize_chat_output(model.clone(), "<<<LYRICS>>>\noriginal\n<<<END>>>", &tx).await;
+
+        assert_eq!(text, "<<<LYRICS>>>\nreviewed\n<<<END>>>");
+        assert!(degraded.is_empty());
+        {
+            let calls = model
+                .calls
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let Some(ContentBlock::Text(review_user)) = calls[1][1].content.first() else {
+                panic!("user turn must be text");
+            };
+            assert_eq!(review_user, "<<<LYRICS>>>\nelevated\n<<<END>>>");
+        }
+        assert!(matches!(rx.recv().await, Some(SseEvent::Elevating)));
+        assert!(matches!(rx.recv().await, Some(SseEvent::Reviewing)));
+    }
+
+    /// Both stages fail: the original draft survives and both are reported.
+    #[tokio::test]
+    async fn elevate_and_review_failures_are_both_reported() {
+        let model = Arc::new(ScriptedModel::new(vec![
+            Err("elevate boom".to_string()),
+            Err("review boom".to_string()),
+        ]));
+        let (tx, _rx) = mpsc::channel::<SseEvent>(16);
+        let draft = "<<<LYRICS>>>\noriginal\n<<<END>>>";
+        let (text, degraded) = finalize_chat_output(model, draft, &tx).await;
+        assert_eq!(text, draft);
+        assert_eq!(degraded, vec!["elevate".to_string(), "review".to_string()]);
+    }
+
+    /// Elevate succeeds but review fails: the ELEVATED text survives (the
+    /// review fallback must not discard the elevation) and only "review" is
+    /// marked degraded.
+    #[tokio::test]
+    async fn review_failure_keeps_elevated_text() {
+        let model = Arc::new(ScriptedModel::new(vec![
+            Ok("<<<LYRICS>>>\nelevated\n<<<END>>>".to_string()),
+            Err("review boom".to_string()),
+        ]));
+        let (tx, _rx) = mpsc::channel::<SseEvent>(16);
+        let (text, degraded) =
+            finalize_chat_output(model, "<<<LYRICS>>>\noriginal\n<<<END>>>", &tx).await;
+        assert_eq!(text, "<<<LYRICS>>>\nelevated\n<<<END>>>");
+        assert_eq!(degraded, vec!["review".to_string()]);
+    }
+
+    /// The elevate stage's system prompt is ELEVATE_PROMPT and the review
+    /// stage's is REVIEW_PROMPT — pins the wiring so swapping the two prompt
+    /// constants breaks a test.
+    #[tokio::test]
+    async fn elevate_and_review_use_their_own_prompts() {
+        let model = Arc::new(ScriptedModel::new(vec![
+            Ok("<<<LYRICS>>>\nelevated\n<<<END>>>".to_string()),
+            Ok("<<<LYRICS>>>\nreviewed\n<<<END>>>".to_string()),
+        ]));
+        let (tx, _rx) = mpsc::channel::<SseEvent>(16);
+        let _ = finalize_chat_output(model.clone(), "<<<LYRICS>>>\noriginal\n<<<END>>>", &tx).await;
+        let calls = model
+            .calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(calls.len(), 2);
+        let Some(ContentBlock::Text(elevate_system)) = calls[0][0].content.first() else {
+            panic!("elevate system message must be text");
+        };
+        assert!(matches!(calls[0][0].role, Role::System));
+        assert_eq!(elevate_system, ELEVATE_PROMPT);
+        let Some(ContentBlock::Text(review_system)) = calls[1][0].content.first() else {
+            panic!("review system message must be text");
+        };
+        assert_eq!(review_system, REVIEW_PROMPT);
     }
 }
