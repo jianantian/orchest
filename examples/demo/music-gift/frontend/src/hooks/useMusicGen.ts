@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import type { CreateGiftRequest, GiftMeta } from "../types";
-import { createGift, generateMusic, watchGeneration, type GenerationWatch } from "../api";
+import { createGift, generateMusic, getGift, watchGeneration, type GenerationWatch } from "../api";
 import { rememberCreatorToken, creatorToken } from "../lib/creator";
 
 export type MusicGenState = "idle" | "generating" | "ready" | "error";
@@ -112,6 +112,40 @@ export function useMusicGen() {
     }
   }, []);
 
+  /**
+   * Reattach to a persisted gift after a remount (e.g. back from the gift
+   * page). Final states need no watch. For "generating" the store is
+   * consulted first — a background poller keeps cooking after the client
+   * leaves, so the job is often already terminal, and blindly re-opening
+   * the SSE watch would re-poll the provider for a finished job.
+   */
+  const resume = useCallback(async (id: string, state: "generating" | "ready" | "error") => {
+    watchRef.current?.close();
+    watchRef.current = null;
+    setGiftId(id);
+    setError(null);
+    if (state !== "generating") {
+      setState(state);
+      return;
+    }
+    try {
+      const gift = await getGift(id);
+      if (gift.gen_status === "done") {
+        setState("ready");
+        return;
+      }
+      if (gift.gen_status === "failed" || gift.gen_status === "timeout") {
+        setState("error");
+        setError("Generation failed");
+        return;
+      }
+    } catch {
+      // Gift unreadable — fall through to the live watch.
+    }
+    setState("generating");
+    watchStream(id);
+  }, []);
+
   const reset = useCallback(() => {
     watchRef.current?.close();
     watchRef.current = null;
@@ -120,5 +154,5 @@ export function useMusicGen() {
     setError(null);
   }, []);
 
-  return { state, giftId, error, start, retry, reset };
+  return { state, giftId, error, start, retry, resume, reset };
 }

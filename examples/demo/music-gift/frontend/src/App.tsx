@@ -3,6 +3,7 @@ import { useI18n, LANGS, LANG_LABELS, type Lang } from "./i18n";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { LoginModal } from "./components/LoginModal";
 import { UserMenu } from "./components/UserMenu";
+import { ThemeToggle } from "./components/ThemeToggle";
 import CreatePage from "./pages/CreatePage";
 import GiftPage from "./pages/GiftPage";
 import MyGiftsPage from "./pages/MyGiftsPage";
@@ -41,6 +42,7 @@ function AppContent() {
           </NavLink>
         </nav>
         <div className="header-right">
+          <ThemeToggle />
           <select
             className="lang-switch"
             value={lang}

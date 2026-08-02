@@ -4,6 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Moment · Music Gift</title>
+  <script>
+    // Set data-theme before first paint so a pinned light/dark choice (or the
+    // OS preference under "auto") never flashes the wrong theme. Mirrors
+    // resolveTheme() in src/lib/theme.ts — keep in sync.
+    (function () {
+      var choice = "auto";
+      try {
+        var v = localStorage.getItem("moment_theme");
+        if (v === "auto" || v === "light" || v === "dark") choice = v;
+      } catch (e) {}
+      var dark =
+        choice === "dark" ||
+        (choice === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
