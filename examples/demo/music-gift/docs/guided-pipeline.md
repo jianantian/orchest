@@ -116,9 +116,9 @@
 | 阶段 | Prompt 文件 | 作用 |
 |------|------------|------|
 | System | `prompts/system.md` | 对话风格、追问策略、何时生成；指示 agent 写词前先加载 lyrics-writer skill（SDK 披露清单指引 `load_skill` 调用） |
-| Lyrics | `skills/lyrics-writer/SKILL.md` | 写词方法论(agent 按需加载):素材转化(FROM MATERIAL TO ART)、结构、押韵方案、音节、Show Don't Tell、14 点质量检查、发音修正、performance cues |
-| Review | `prompts/review.md` | 10 点审核清单：自动修复发音、performance cues、artist names；标记结构/押韵等问题 |
-| Elevate | `prompts/elevate.md` | 创造性改稿:种子规则、单一 conceit、锚点≤2、陌生人测试、禁宣告;幂等(达标原样返回);输出仅标签块 |
+| Lyrics | `skills/lyrics-writer/SKILL.md` | 写词方法论(agent 按需加载):素材转化(FROM MATERIAL TO ART)、弧线设计(DESIGN THE ARC,原则非模板)、cue 双轨(sung 段=≤3 词演绎 cue;intro/outro/break 等结构段 tag=整句编曲方向)与行内 accent、押韵/音节/段长表、14 点质量检查(含复述检查)、发音修正 |
+| Review | `prompts/review.md` | 10 点审核清单:自动修复发音、sung 段补 delivery cue(结构段的编曲方向不裁剪)、黑名单艺人名转描述(其余艺人引用保留);标记结构/押韵等问题 |
+| Elevate | `prompts/elevate.md` | 创造性改稿:种子规则、单一 conceit、锚点调味、陌生人测试、宣告需赢得;保留弧线与编曲方向;幂等(达标原样返回);输出仅标签块 |
 
 **数据落点：** `draft = { lyrics: "...", style: "温柔轻快", title: "挥手的魔法", vocal: "female" }`，`review = "## Review Pass ..."`（审核报告 Markdown，可空）；`Done.degraded` 标记回落阶段（`"elevate"` / `"review"`，空数组=全部正常），任一阶段降级时审核卡片显示通用提示
 
@@ -178,12 +178,13 @@
    vocal_style:   "female, breathy, legato"
    instrumentation: "acoustic guitar, cello, soft piano, brushed drums"
    production:    "spacious reverb, lo-fi warmth"
+   arrangement:   ["sparse piano intro", "instrumental crescendo outro"]
    exclude:       "no backing vocals, no heavy drums"
    style_tags:    ["indie folk", "acoustic", "ballad"]
    ```
 
 4. **Style prompt 校验** — `check_style_prompt()` 检查是否有 artist names 泄漏
-5. `music_gen::generate()` → `submit()` — 提交到由 orchest-provider registry 构建的对应 provider `GenTask`，返回后后台轮询
+5. `music_gen::generate()` → `submit()` — 提交到由 orchest-provider registry 构建的对应 provider `GenTask`，返回后后台轮询。**提交时把确切的 `GenRequest` 原样存入 `gifts.gen_request`**（不进 API——gift 按 id 公开可看）:歌出问题时,这是唯一能看 provider 实际收到什么的依据。检查抓手:`./scripts/show-gen.sh [gift_id]`(无参数 = 最新一条;`| jq -r .music.style` 看实际上线的 style 串)
 
 另外：`POST /api/gift` 创建 gift 时若 meta 带生日，后台会并行触发 countdown 页面生成子流程（`tools/countdown.rs`），失败会把 `countdown_status` 置为 `failed`。
 

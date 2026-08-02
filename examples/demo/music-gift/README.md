@@ -168,7 +168,14 @@ and wrapped as a Rust function (not an agent tool -- music gen is a direct
 API call, not something the LLM decides to invoke). The flow:
 
 1. `POST /api/generate/:id` -> `gen_task.submit(GenRequest { prompt, params })`
-   -> returns job id, stores `GenHandle` in gift record
+   -> returns job id, stores `GenHandle` in gift record. The exact
+   `GenRequest` wire payload is stored too (`gifts.gen_request`, never
+   exposed over the API) — the debugging handle when a song comes out wrong:
+
+   ```bash
+   ./scripts/show-gen.sh [gift_id]      # no arg = most recent gift
+   ./scripts/show-gen.sh | jq -r .music.style   # the composed style string
+   ```
 2. `GET /api/generate/:id/status` -> `gen_task.poll(&handle)` -> returns
    `GenStatus` (Pending / Running / Done / Failed)
 3. When Done -> `gen_task.fetch(&handle)` -> stores audio URL in gift
@@ -183,12 +190,18 @@ CREATE TABLE gifts (
   id TEXT PRIMARY KEY,
   kind TEXT,           -- 'song' | 'instrumental'
   lyrics TEXT,
-  meta TEXT,           -- JSON: { name, relationship, style, title, vocal, lang, ... }
+  meta TEXT,           -- JSON: { name, relationship, style, title, vocal, lang, degraded, ... }
   audio_url TEXT,
+  cover_url TEXT,      -- provider cover art (role: Cover asset)
   photos TEXT,         -- JSON array of paths
   gen_handle TEXT,     -- JSON: serialized GenHandle for polling
   gen_status TEXT,     -- 'pending' | 'running' | 'done' | 'failed'
+  gen_request TEXT,    -- JSON: exact GenRequest sent to the provider (debug only, never served)
+  countdown_status TEXT,
+  lrc TEXT,
+  duration_secs REAL,
   creator_token TEXT,
+  creator_id TEXT,
   published INTEGER,
   likes TEXT,          -- JSON array of viewer IDs
   created_at TEXT,
