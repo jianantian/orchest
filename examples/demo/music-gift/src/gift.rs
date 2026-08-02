@@ -21,6 +21,12 @@ pub struct Gift {
     pub photos: Vec<String>,
     pub gen_handle: Option<String>,
     pub gen_status: Option<String>,
+    /// The exact GenRequest JSON sent to the provider at submit time —
+    /// the only way to see what the provider actually received when a song
+    /// comes out wrong (inspect with sqlite3). Never serialized: gifts are
+    /// publicly viewable by id, so this must not reach the API response.
+    #[serde(skip_serializing, default)]
+    pub gen_request: Option<String>,
     pub countdown_status: Option<String>,
     pub lrc: Option<String>,
     pub duration_secs: Option<f64>,
@@ -123,7 +129,7 @@ pub struct GiftStore {
 
 const SELECT_COLS: &str = "\
     SELECT id, kind, lyrics, meta, audio_url, cover_url, photos, gen_handle, \
-           gen_status, countdown_status, lrc, duration_secs, creator_token, \
+           gen_status, gen_request, countdown_status, lrc, duration_secs, creator_token, \
            published, likes, created_at, published_at, creator_id FROM gifts";
 
 impl GiftStore {
@@ -146,6 +152,7 @@ impl GiftStore {
                 photos          TEXT NOT NULL DEFAULT '[]',
                 gen_handle      TEXT,
                 gen_status      TEXT,
+                gen_request     TEXT,
                 creator_token   TEXT NOT NULL,
                 creator_id      TEXT,
                 published       INTEGER NOT NULL DEFAULT 1,
@@ -157,7 +164,13 @@ impl GiftStore {
                 duration_secs   REAL
             );",
         )?;
-        for col in ["countdown_status", "lrc", "duration_secs", "cover_url"] {
+        for col in [
+            "countdown_status",
+            "lrc",
+            "duration_secs",
+            "cover_url",
+            "gen_request",
+        ] {
             let _ = conn.execute(&format!("ALTER TABLE gifts ADD COLUMN {col} TEXT"), []);
         }
         Ok(Self {
@@ -172,9 +185,9 @@ impl GiftStore {
             .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute(
             "INSERT INTO gifts (id, kind, lyrics, meta, audio_url, cover_url, photos, gen_handle, \
-             gen_status, countdown_status, lrc, duration_secs, creator_token, published, \
+             gen_status, gen_request, countdown_status, lrc, duration_secs, creator_token, published, \
              likes, created_at, published_at, creator_id) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
             params![
                 gift.id,
                 gift.kind,
@@ -185,6 +198,7 @@ impl GiftStore {
                 serde_json::to_string(&gift.photos)?,
                 gift.gen_handle,
                 gift.gen_status,
+                gift.gen_request,
                 gift.countdown_status,
                 gift.lrc,
                 gift.duration_secs,
@@ -266,6 +280,23 @@ impl GiftStore {
         if conn.execute(
             "UPDATE gifts SET gen_handle=?2, gen_status=?3 WHERE id=?1",
             params![id, handle_json, status],
+        )? == 0
+        {
+            return Err(AppError::NotFound(format!("gift {id} not found")));
+        }
+        Ok(())
+    }
+
+    /// Persist the exact wire request sent to the provider. Debug-only
+    /// observability: inspect with sqlite3; never served over the API.
+    pub fn set_gen_request(&self, id: &str, request_json: &str) -> AppResult<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if conn.execute(
+            "UPDATE gifts SET gen_request=?2 WHERE id=?1",
+            params![id, request_json],
         )? == 0
         {
             return Err(AppError::NotFound(format!("gift {id} not found")));
@@ -465,7 +496,7 @@ impl GiftStore {
 fn row_to_gift(row: &rusqlite::Row<'_>) -> rusqlite::Result<Gift> {
     let meta_str: String = row.get(3)?;
     let photos_str: String = row.get(6)?;
-    let likes_str: String = row.get(14)?;
+    let likes_str: String = row.get(15)?;
     let meta: Value = serde_json::from_str(&meta_str).unwrap_or(Value::Null);
     let photos: Vec<String> = serde_json::from_str(&photos_str).unwrap_or_default();
     let likes: Vec<String> = serde_json::from_str(&likes_str).unwrap_or_default();
@@ -480,15 +511,16 @@ fn row_to_gift(row: &rusqlite::Row<'_>) -> rusqlite::Result<Gift> {
         photos,
         gen_handle: row.get(7)?,
         gen_status: row.get(8)?,
-        countdown_status: row.get(9)?,
-        lrc: row.get(10)?,
-        duration_secs: row.get(11)?,
-        creator_token: row.get(12)?,
-        published: row.get::<_, i32>(13)? != 0,
+        gen_request: row.get(9)?,
+        countdown_status: row.get(10)?,
+        lrc: row.get(11)?,
+        duration_secs: row.get(12)?,
+        creator_token: row.get(13)?,
+        published: row.get::<_, i32>(14)? != 0,
         likes,
-        created_at: row.get(15)?,
-        published_at: row.get(16)?,
-        creator_id: row.get(17)?,
+        created_at: row.get(16)?,
+        published_at: row.get(17)?,
+        creator_id: row.get(18)?,
     })
 }
 
@@ -558,6 +590,7 @@ mod tests {
             photos: vec![],
             gen_handle: None,
             gen_status: None,
+            gen_request: None,
             countdown_status: None,
             lrc: None,
             duration_secs: None,
@@ -604,6 +637,7 @@ mod tests {
             photos: vec![],
             gen_handle: None,
             gen_status: None,
+            gen_request: None,
             countdown_status: None,
             lrc: None,
             duration_secs: None,
@@ -626,5 +660,47 @@ mod tests {
 
         store.set_meta_degraded("g1", &[]).expect("clear degraded");
         assert_eq!(store.get("g1").expect("get").meta["degraded"], json!([]));
+    }
+
+    /// The exact wire payload is stored for debugging but must never leak
+    /// into the API response (gifts are publicly viewable by id).
+    #[test]
+    fn gen_request_round_trips_and_stays_out_of_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("gifts.db");
+        let store = GiftStore::open(&db.to_string_lossy()).expect("open store");
+        let gift = Gift {
+            id: "g1".to_string(),
+            kind: "song".to_string(),
+            lyrics: None,
+            meta: json!({}),
+            audio_url: None,
+            cover_url: None,
+            photos: vec![],
+            gen_handle: None,
+            gen_status: None,
+            gen_request: None,
+            countdown_status: None,
+            lrc: None,
+            duration_secs: None,
+            creator_token: "tok".to_string(),
+            creator_id: None,
+            published: false,
+            likes: vec![],
+            created_at: "0".to_string(),
+            published_at: None,
+        };
+        store.create(&gift).expect("create");
+        assert!(store.get("g1").expect("get").gen_request.is_none());
+
+        let wire = json!({"prompt": "p", "music": {"style": "warm acoustic, indie folk"}});
+        store
+            .set_gen_request("g1", &wire.to_string())
+            .expect("set gen_request");
+        let got = store.get("g1").expect("get");
+        assert_eq!(got.gen_request.as_deref(), Some(wire.to_string().as_str()));
+
+        let json = serde_json::to_value(&got).expect("serialize");
+        assert!(json.get("gen_request").is_none());
     }
 }

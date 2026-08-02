@@ -240,6 +240,7 @@ pub async fn create_gift(
         photos: req.photos.into_iter().take(5).collect(),
         gen_handle: None,
         gen_status: None,
+        gen_request: None,
         countdown_status,
         lrc: None,
         duration_secs: None,

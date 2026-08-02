@@ -319,10 +319,14 @@ pub async fn submit(
         params: Value::Null,
         music: Some(build_music_params(submission, enriched)),
     };
+    // Persist the exact wire payload before submitting: when a song comes out
+    // wrong, this is the only record of what the provider actually received.
+    let request_json = serde_json::to_string(&gen_req)?;
     let handle = gen_task.submit(gen_req).await?;
     let handle_json = serde_json::to_string(&handle)?;
 
     store.update_gen(gift_id, &handle_json, "pending")?;
+    store.set_gen_request(gift_id, &request_json)?;
 
     Ok(GenerateResponse {
         id: gift_id.to_string(),
@@ -991,6 +995,7 @@ mod tests {
                 photos: vec![],
                 gen_handle: None,
                 gen_status: None,
+                gen_request: None,
                 countdown_status: None,
                 lrc: None,
                 duration_secs: None,
