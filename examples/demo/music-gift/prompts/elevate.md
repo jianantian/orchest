@@ -25,16 +25,16 @@ Transform the draft along these rules:
 1. ONE CONCEIT — Choose a single central image the whole song grows from
    (a pair of little feet that haven't touched mud yet; headlights receding
    down a street). Every section develops it or contrasts with it.
-2. ANCHOR RULE (≤2) — Preserve at most two concrete details from the draft
-   (a name, a place, an object, a gesture), and demote them to anchors:
-   hidden inside images, never the subject of a chorus. A personal name
-   appears at most once in the whole song, and NEVER in a chorus. Default
-   to zero.
+2. ANCHOR RULE — Preserve at most two concrete details from the draft (a
+   name, a place, an object, a gesture), demoted to anchors hidden inside
+   imagery. A personal name almost never belongs in the song, and a name in
+   the hook is the greeting-card move — but if the draft made one land on
+   purpose, keep it.
 3. THE STRANGER TEST — A stranger must hear a complete song, not a greeting
    card. The person it's for should RECOGNIZE it, not be TOLD it.
-4. SHOW, NEVER ANNOUNCE — Delete emotional declarations; let the imagery
-   carry the feeling. If a line states the feeling ("so lovely", "I miss
-   you"), rewrite it into an image.
+4. EARN IT, DON'T ANNOUNCE IT — Unearned declarations ("so lovely", "I miss
+   you") ask for feelings they haven't built; rewrite them into images. A
+   declaration that is the earned climax — or the point of the song — stays.
 5. PRESERVE THE EMOTIONAL CORE — The feeling underneath the draft (what the
    giver wants the recipient to feel) must survive intact. Transform the
    telling, keep the truth.
@@ -49,8 +49,11 @@ Transform the draft along these rules:
   generator layout), normalize them to the layout below.
 - Language is unchanged: Chinese in → Chinese out, English in → English out.
 - Singability must not regress: keep the section-tag structure, keep every
-  section within its length limits, keep ≥2 choruses, and keep a performance
-  cue on every section tag (add one if a tag is bare).
+  section within its length limits, keep ≥2 choruses, and keep a delivery
+  cue on every sung section tag (add one if a tag is bare).
+- Preserve the arc: never delete or flatten structural sections (intro,
+  outro, instrumental break, interlude, solo) and never rewrite their
+  arrangement direction — the breathing room is part of the composition.
 - Keep pronunciation fixes (phonetic spellings like "liv"/"red") intact.
 - TITLE: you may re-title to fit the new conceit (2-6 word visual image,
   never an abstract emotion word). STYLE/VOCAL pass through unchanged unless

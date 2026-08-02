@@ -12,9 +12,11 @@ annotations (the format below). Your task is to review and fix.
 Run every check. AUTO-FIX: pronunciation, performance cues, artist names.
 FLAG only: everything else.
 
-**CRITICAL: Every section tag MUST have a performance cue. This is the #1
-quality factor for Suno V5. Bare tags produce flat, generic output. Even if
-the original author didn't provide cues, you MUST add them.**
+**CRITICAL: Every SUNG section tag MUST have a delivery cue — bare sung
+tags produce flat, generic output. STRUCTURAL tags (intro / outro /
+instrumental break / interlude / solo) carry ARRANGEMENT DIRECTION instead
+(what plays, what enters, how the texture moves) — never trim or rewrite
+those; a long direction clause is correct, not a violation.**
 
 1. ☐ PRONUNCIATION (AUTO-FIX) — Apply phonetic spelling directly in lyrics:
    live(verb)→liv  live(adj)→lyve  read(past)→red  read(pres)→reed
@@ -23,13 +25,18 @@ the original author didn't provide cues, you MUST add them.**
    close(shut)→cloze  close(near)→close
    Acronyms: spell out → "NASA"→"N-A-S-A"  "SQL"→"S-Q-L"
 
-2. ☐ PERFORMANCE CUES (AUTO-FIX — NON-NEGOTIABLE) — Suno V5 REQUIRES cues
-   on every section tag. Infer the emotional tone from surrounding lyrics:
+2. ☐ SECTION TAGS (AUTO-FIX — NON-NEGOTIABLE) — two dialects by section
+   type:
+   SUNG sections (verse/chorus/bridge/pre-chorus): every tag needs a 1-3
+   word delivery cue. Infer the emotional tone from surrounding lyrics:
    ❌ [verse 1]     ✅ [verse 1 — tender, intimate]
    ❌ [verse 2]     ✅ [verse 2 — bright, hopeful]
    ❌ [chorus]      ✅ [chorus — soaring, anthemic]
    ❌ [bridge]      ✅ [bridge — raw, breaking]
-   ≤3 cues per section. Every single tag. No exceptions.
+   STRUCTURAL sections (intro/outro/instrumental break/interlude/solo):
+   their tags carry ARRANGEMENT DIRECTION — NEVER trim, shorten, or
+   rewrite them. Only act on a bare structural tag (a lone [intro] with
+   no direction): add a short one inferred from the style.
 
 3. ☐ STRUCTURE TAGS (FLAG) — Has [verse]/[chorus] tags? ≥2 choruses?
 
@@ -49,8 +56,15 @@ the original author didn't provide cues, you MUST add them.**
 9. ☐ PITFALLS (FLAG) — Filler phrases, inverted word order for rhyme,
    clichés ("cold as ice", "heart of gold"), generic abstractions.
 
-10. ☐ ARTIST NAMES (AUTO-FIX) — Replace with genre/style descriptions.
-   "like Adele" → "soulful ballad style"
+10. ☐ ARTIST NAMES (AUTO-FIX — blocklisted names only) — these names get
+    a generation REJECTED by the provider; translate each into the sonic
+    description it anchors:
+    adele, taylor swift, ed sheeran, beyoncé, billie eilish, the weeknd,
+    drake, bad bunny, nirvana, the beatles, queen, metallica, coldplay,
+    maroon 5, bruno mars, ariana grande, sarah brightman, enya
+    "like Adele" → "soulful ballad style, powerful belted vocals"
+    Any OTHER artist reference is allowed — do not touch it.
+    Applies to the lyrics AND the STYLE block.
 
 ═══ YOUR OUTPUT ═══
 
@@ -75,7 +89,7 @@ Append this review summary:
 | # | Check | Status | Detail |
 |---|-------|--------|--------|
 | 1 | Pronunciation | ✅ / 🔧 | N homographs fixed |
-| 2 | Performance Cues | ✅ / 🔧 | N tags given cues |
+| 2 | Section Tags | ✅ / 🔧 | N sung tags given cues |
 | 3 | Structure Tags | ✅ / ⚠️ | |
 | 4 | Word Count | N | |
 | 5 | Section Length | ✅ / ⚠️ | |
@@ -93,4 +107,5 @@ Verdict: READY / NEEDS FIXES (N issues, M auto-fixed)
 - NEVER change the emotional tone or narrative.
 - ALWAYS preserve the original formatting tags.
 - If pronunciation is ambiguous, flag it — don't guess.
-- Performance cues are MANDATORY on every single section tag.
+- Delivery cues are MANDATORY on every sung section tag; arrangement
+  direction on structural tags is never trimmed.

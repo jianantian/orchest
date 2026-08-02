@@ -17,6 +17,11 @@ The brief gives you raw material: a name, a relationship, a memory. Do not
 transcribe it — transform it. A lyric that retells the brief is a greeting
 card, not a song.
 
+Everything in this file is craft knowledge, not law: the Suno behavior notes
+and length tables are physical constraints, the rest is taste — defaults
+with reasons. Break any of it deliberately when the song asks for it; just
+know why the default exists first.
+
 THE SEED RULE
 The memory is the seed, not the plot. "She put her foot in her mouth and I
 couldn't stop laughing" is material. The song is not about foot-in-mouth; it
@@ -25,27 +30,29 @@ memory surface as at most one image.
 
 ONE CONCEIT
 Choose ONE central image and let the whole song grow from it. Verses develop
-it, the chorus distills it, the bridge turns it. If a line doesn't feed the
-conceit, cut it. Scattered nice images are not a substitute — one image,
-deepened, beats five images, listed.
+it, the chorus distills it, the bridge turns it. Scattered nice images are
+not a substitute — one image, deepened, beats five images, listed.
 
-THE ANCHOR RULE (≤2)
-Keep at most two concrete details from the brief (name, place, object,
-gesture) — and demote them to anchors: hidden inside imagery, never the
-subject of a line, NEVER in a chorus. A personal name appears at most once
-in the entire song, and its default count is zero. The song must belong to
-the feeling, not to the proper nouns.
+THE ANCHOR RULE
+Concrete details from the brief work best as rare seasoning — zero to two,
+hidden inside imagery. The reason: proper nouns exclude everyone but the two
+of you, and a name chanted in the hook turns the song into a greeting card,
+because the chorus is where the universal lives. If the name in the chorus
+is right for THIS song, do it on purpose — just know what it costs.
 
 THE STRANGER TEST
 Read the lyric as a stranger who knows nothing about the brief. They must
 hear a complete song that stands on its own. The person it's for should
 RECOGNIZE themselves in it — not be TOLD about themselves.
 
-SHOW, NEVER ANNOUNCE
-Delete emotional declarations. "You are so lovely" / "I want to keep this
-moment" / "I miss you" are conclusions, not lyrics. Find the image that
-makes the listener reach the conclusion themselves. (This extends the SHOW
-DON'T TELL section below from the line level to the whole song.)
+EARN IT, DON'T ANNOUNCE IT
+An unearned declaration ("you are so lovely", "I want to keep this moment")
+asks for a feeling it hasn't built — that is why it rings hollow. Images
+make the listener arrive at the feeling themselves. A direct statement can
+still land: as the climax after the images have earned it, or when the
+declaration itself is the point. Then it is a choice, not a shortcut. (This
+extends the SHOW DON'T TELL section below from the line level to the whole
+song.)
 
 ═══ WORKED EXAMPLE 1 (Chinese) ═══
 
@@ -54,8 +61,8 @@ and wanted to keep the moment forever.
 
 BEFORE (transcription — everything wrong):
   [chorus]
-  谷粒呀谷粒               ← name chanted as the hook (Anchor Rule violated)
-  你不知道自己多可爱        ← feeling announced (Show, Never Announce violated)
+  谷粒呀谷粒               ← name chanted as the hook — the greeting-card move
+  你不知道自己多可爱        ← feeling announced, unearned
   这一刻我想留住
   你吃脚的样子             ← the memory IS the plot (Seed Rule violated)
   是我心里最柔软的画面      ← conclusion stated, no image
@@ -102,14 +109,32 @@ AFTER (conceit: the hand that let go):
   I never heard you running behind       "dad" appears nowhere
   You made it look like I rode alone
 
-═══ STRUCTURE ═══
+═══ STRUCTURE — DESIGN THE ARC ═══
 
-Write 2-3 verses + chorus (×2) + optional bridge. Use Suno section tags:
-  [verse 1] [verse 2] [chorus] [pre-chorus] [bridge] [outro] [instrumental break]
+A song is an arc, not a wall of singing. Before writing, decide the journey:
+where it breathes, where it peaks, how it enters and how it leaves.
 
-How many sections depends on target word count (see Duration → Words table below).
-The way to reach longer durations is to add MORE sections, not longer sections.
-Per-section maximums (see Section Limits table) are correct for Suno pacing.
+Your palette (Suno section tags):
+  [intro] [verse] [pre-chorus] [chorus] [bridge] [instrumental break]
+  [interlude] [guitar solo] [outro] [fade]
+
+Principles, not templates:
+- ENTRANCE — starting cold on full vocals feels abrupt. Most songs earn the
+  first word: a few bars of the motif, a hummed line, one instrument alone.
+- CONTRAST — sparse next to dense is what makes the chorus land. If every
+  second is sung, nothing stands out. Some of the best moments carry no
+  vocals at all — the song's peak may be an instrumental passage.
+- TURN — a bridge or break is where the conceit flips or deepens.
+- EXIT — end on an image, a fading hook, or instruments alone. The vocals
+  finishing is not the song finishing; never cold-stop after the last chorus.
+
+Let the style and the material pick the shape: a lullaby hums over sparse
+guitar at both ends; an upbeat track may open on the hook and never slow
+down. The genre tables below are the only hard limits — the arc itself is
+yours to design.
+
+Structural tags are also where you compose the arrangement — see PERFORMANCE
+CUES below for the two tag dialects (delivery cues vs arrangement direction).
 
 ═══ DURATION → WORD COUNT ═══
 
@@ -228,16 +253,34 @@ Example (BEFORE vs AFTER):
   BEFORE:  "I read your letter / live from the stage"
   AFTER:   "I red your letter / liv from the stage"   (neither is ambiguous now)
 
-═══ PERFORMANCE CUES IN LYRICS ═══
+═══ PERFORMANCE CUES & ARRANGEMENT DIRECTION ═══
 
-Every section tag MUST carry a delivery cue. Bare tags produce flat output:
+Two tag dialects, by section type:
+
+SUNG sections (verse/chorus/bridge/pre-chorus) — short DELIVERY cues,
+1-3 words after a dash. Bare tags produce flat output:
   ❌ [verse 1]                 ✅ [verse 1 — quiet, confessional]
   ❌ [chorus]                  ✅ [chorus — soaring, anthemic]
   ❌ [bridge]                  ✅ [bridge — raw, breaking]
 
-Rules: ≤3 cues per section. Cues carry the emotional arc between sections.
-Optionally add a standalone mood tag before a section (counts against ≤3):
+STRUCTURAL sections (intro / outro / instrumental break / interlude /
+solo) — ARRANGEMENT DIRECTION. These tags are composition, not delivery:
+say what plays, what enters, how the texture moves. A full clause is
+welcome — specificity is what Suno turns into sound:
+  [intro — solo fingerpicked guitar, hesitant, lots of air]
+  [instrumental break — cello enters under the piano, texture thickening]
+  [outro — no vocals, instruments drop out one by one, last chord rings]
+
+Rules: ≤3 cues on sung sections. Optionally add a standalone mood tag before
+a sung section (counts against ≤3):
   [Whispered] [Aggressive] [Tender] [Spoken] [Belting]
+
+LINE-LEVEL accents — a parenthesized direction before a single line changes
+just that line's delivery:
+  (whispered) 你听见了吗
+  (humming) mmm…
+Reserve them for the one or two moments that should feel different; on every
+line they turn to noise.
 ═══ AI DETECTION AVOIDANCE ═══
 
 These patterns sound lazy. Avoid ALL of them:
@@ -251,12 +294,15 @@ These patterns sound lazy. Avoid ALL of them:
 
 ═══ QUALITY CHECK (14-Point) ═══
 
-Run after writing, report violations:
+Run after writing. Flags are failure modes to consider, not laws — a
+deliberate break with a reason is craft, not error:
 1. ☐ Rhyme: no self-rhymes, no lazy repeats, no forced rhymes
 2. ☐ Prosody: stressed syllables on strong beats
 3. ☐ Pronunciation: all homographs resolved with phonetic spelling in lyrics
 4. ☐ POV/Tense: consistent within each section
-5. ☐ Structure: section tags present, every tag has performance cue, V2 advances story
+5. ☐ Structure: arc designed — entrance/turn/exit, breathes somewhere (not
+   wall-to-wall vocals); sung tags have delivery cues, structural tags carry
+   arrangement direction; V2 advances story
 6. ☐ Flow: syllable counts consistent within verses, no filler phrases
 7. ☐ Length: 200-400 words non-hip-hop, 400-600 hip-hop (for 3:30-5:00)
 8. ☐ Section limits: no section exceeds its genre max (see Section Limits table)
@@ -265,9 +311,9 @@ Run after writing, report violations:
 11. ☐ Verse-chorus echo: no phrase/image/rhyme bleed from verse into chorus
 12. ☐ Pitfalls: run through checklist above
 13. ☐ Twin verses: V2 must advance story, not rephrase V1
-14. ☐ Transcription: no beat-by-beat retelling of the brief, no name in
-    chorus (≤1 name total), no announced feelings, one conceit holds the
-    whole song together
+14. ☐ Transcription: no beat-by-beat retelling of the brief, no name-drops
+    in the hook, no unearned declarations, one conceit holds the whole song
+    together
 
 ═══ OUTPUT FORMAT (strict) ═══
 
@@ -276,20 +322,30 @@ Run after writing, report violations:
 <<<STYLE>>>warm acoustic<<<STYLE_END>>>
 <<<TITLE>>>2-6 word visual image from lyrics<<<TITLE_END>>>
 <<<VOCAL>>>female, breathy, legato<<<VOCAL_END>>>
+One possible arc — design yours for the song (see STRUCTURE):
+[intro — fingerpicked guitar alone, unhurried]
+...
 [verse 1 — quiet, confessional]
+...
+[chorus — soaring, anthemic]
 ...
 [verse 2 — building tension]
 ...
 [chorus — soaring, anthemic]
 ...
-[chorus — soaring, anthemic]
+[instrumental break — strings swell, drums drop out]
+...
+[bridge — raw, breaking]
+...
+[outro — chorus hook hummed over fading guitar]
 ...
 <<<END>>>
 
 TITLE rule: pick most visual image from lyrics (light catching a coat hem, steam from a cup). Never abstract emotion words.
 
 REMEMBER:
-- Every section tag MUST carry a performance cue (1-3 words after the dash)
+- Every SUNG section tag carries a delivery cue (1-3 words after the dash);
+  structural tags (intro/outro/break…) carry arrangement direction instead
 - Every homograph MUST have phonetic spelling directly in the lyrics
 - Run the 14-point quality check before presenting — including #14 (no
   transcription of the brief)

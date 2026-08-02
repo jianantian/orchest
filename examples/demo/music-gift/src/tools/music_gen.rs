@@ -51,6 +51,9 @@ pub struct EnrichedPrompt {
     pub vocal_style: String,
     pub instrumentation: String,
     pub production: String,
+    /// Arc/dynamics descriptors read from the lyrics' structural tags
+    /// (e.g. "sparse solo piano opening", "instrumental crescendo outro").
+    pub arrangement: Vec<String>,
     pub exclude: String,
     pub style_tags: Vec<String>,
 }
@@ -65,6 +68,7 @@ impl EnrichedPrompt {
             vocal_style: String::new(),
             instrumentation: String::new(),
             production: String::new(),
+            arrangement: vec![],
             exclude: String::new(),
             style_tags: vec![],
         }
@@ -217,7 +221,8 @@ pub async fn generate(
 /// a misspelled key is a compile error, not a silent drop):
 ///
 /// - **suno**: all knobs typed. `style` folds the raw style together with the
-///   enrichment's genre/tempo/mood/instrumentation/production — in Suno's
+///   enrichment's genre/tempo/mood/instrumentation/production/arrangement — in
+///   Suno's
 ///   custom mode the prompt slot carries the lyrics, so the style string is
 ///   the only place the LLM rewrite reaches the wire (the prompt template
 ///   already builds these dimensions as the compact descriptor line).
@@ -282,8 +287,9 @@ fn build_music_params(submission: &GenSubmission, enriched: &EnrichedPrompt) -> 
 }
 
 /// Fold the raw style and the enrichment's structured dimensions
-/// (genre/tempo/mood/instrumentation/production) into the single style string
-/// the Suno `style` knob expects. Empty parts drop out; the raw style leads.
+/// (genre/tempo/mood/instrumentation/production/arrangement) into the single
+/// style string the Suno `style` knob expects. Empty parts drop out; the raw
+/// style leads.
 fn composed_style(submission: &GenSubmission, enriched: &EnrichedPrompt) -> String {
     std::iter::once(submission.style.as_str())
         .chain(enriched.genre.iter().map(String::as_str))
@@ -291,6 +297,7 @@ fn composed_style(submission: &GenSubmission, enriched: &EnrichedPrompt) -> Stri
         .chain(enriched.mood.iter().map(String::as_str))
         .chain(std::iter::once(enriched.instrumentation.as_str()))
         .chain(std::iter::once(enriched.production.as_str()))
+        .chain(enriched.arrangement.iter().map(String::as_str))
         .map(str::trim)
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
@@ -735,6 +742,10 @@ pub async fn generate_music_prompt(
                 .get("production")
                 .and_then(str_or_empty)
                 .unwrap_or_default();
+            let arrangement = parsed
+                .get("arrangement")
+                .and_then(json_array)
+                .unwrap_or_default();
             let exclude = parsed
                 .get("exclude")
                 .and_then(str_or_empty)
@@ -753,6 +764,7 @@ pub async fn generate_music_prompt(
                     vocal_style,
                     instrumentation,
                     production,
+                    arrangement,
                     exclude,
                     style_tags,
                 },
@@ -825,6 +837,10 @@ mod tests {
             vocal_style: "male, breathy".to_string(),
             instrumentation: "acoustic guitar".to_string(),
             production: "spacious reverb".to_string(),
+            arrangement: vec![
+                "sparse piano intro".to_string(),
+                "instrumental crescendo outro".to_string(),
+            ],
             exclude: "no backing vocals".to_string(),
             style_tags: vec!["indie folk".to_string()],
         }
@@ -846,11 +862,11 @@ mod tests {
         assert_eq!(music.negative_tags.as_deref(), Some("no backing vocals"));
         assert_eq!(music.instrumental, None);
         // The raw style leads, then the enrichment's genre/tempo/mood/
-        // instrumentation/production — the style string is the only place
-        // those dimensions reach the Suno custom-mode wire.
+        // instrumentation/production/arrangement — the style string is the
+        // only place those dimensions reach the Suno custom-mode wire.
         assert_eq!(
             music.style.as_deref(),
-            Some("warm acoustic, indie folk, ballad-slow, warm, acoustic guitar, spacious reverb")
+            Some("warm acoustic, indie folk, ballad-slow, warm, acoustic guitar, spacious reverb, sparse piano intro, instrumental crescendo outro")
         );
     }
 

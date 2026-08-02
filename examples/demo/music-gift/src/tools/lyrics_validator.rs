@@ -4,7 +4,10 @@
 //! Returns warnings that are logged before Suno submission.
 
 /// Suno V5 rejects content containing artist/band names. This compact blocklist
-/// covers the most common false positives from LLM-generated text.
+/// covers the most common false positives from LLM-generated text. The same
+/// list is embedded in `prompts/review.md` and `prompts/music_prompt/*.md`,
+/// which translate these names into sonic descriptions upstream — keep them
+/// in sync. Other artist references are deliberately allowed as sonic anchors.
 const ARTIST_BLOCKLIST: &[&str] = &[
     "sarah brightman",
     "enya",
