@@ -112,7 +112,7 @@ function derivedBubbles(step: FlowStep, meta: ReturnType<typeof useGuidedState>[
 export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId: string) => void; onSwitchToFree?: () => void }) {
   const { t, lang } = useI18n();
   const months = getMonths(lang);
-  const { step, meta, messages, draft, metaRef, actions: act, wasRestored } = useGuidedState(lang);
+  const { step, meta, messages, draft, metaRef, giftId: savedGiftId, musicState: savedMusicState, actions: act, wasRestored } = useGuidedState(lang);
 
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -122,6 +122,20 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
   const bottomRef = useRef<HTMLDivElement>(null);
   const reviewingRef = useRef<HTMLDivElement>(null);
   const runIdRef = useRef(0);
+
+  // Reattach to a persisted generation after a remount (e.g. back from the
+  // gift page): without this the finished MusicCard reverted to the
+  // ReviewCard's generate button and the completed song looked lost.
+  useEffect(() => {
+    if (savedGiftId && savedMusicState) void gen.resume(savedGiftId, savedMusicState);
+    // Mount-only: resume replays the snapshot taken at load time.
+  }, []);
+
+  // Persist terminal generation statuses so the restore above can bring the
+  // card back as ready/error instead of a stale "generating".
+  useEffect(() => {
+    if (gen.state === "ready" || gen.state === "error") act.setMusicState(gen.state);
+  }, [gen.state]);
 
   const bubbles = derivedBubbles(step, meta, t, months);
 
@@ -297,7 +311,10 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
     // so MusicCard never sees "idle"
     const genPromise = gen.start({ lyrics: data.lyrics, style: data.style, title: data.title, vocal: data.vocal, meta: { name: m.name, relationship: m.relationshipLabel, scenario: scenarioParam(m), gender: m.gender, birthday: birthdayParam(m.birthday) }, lang });
     act.go("music");
-    await genPromise;
+    const res = await genPromise;
+    // Persist the giftId so a remount can restore this card instead of
+    // bouncing the user back to the review screen.
+    if (res.ok) act.setGift(res.giftId);
   }
 
   function handleMusicOpen() { if (gen.giftId) { onNavigate(gen.giftId); } }

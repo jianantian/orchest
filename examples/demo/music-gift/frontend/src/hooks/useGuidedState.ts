@@ -27,6 +27,11 @@ export interface LyricsDraft {
 interface Saved {
   lang: string; step: FlowStep; meta: StepMeta; messages: GuidedMessage[];
   draft: LyricsDraft | null;
+  /** Gift created by the music step — persisted so a remount (back from the
+   * gift page) can restore the MusicCard instead of reverting to review. */
+  giftId: string | null;
+  /** Last known generation status for giftId. */
+  musicState: "generating" | "ready" | "error" | null;
 }
 
 const KEY = "moment_guided";
@@ -51,11 +56,13 @@ export function useGuidedState(lang: string) {
   const [snapshot] = useState(() => {
     const r = load();
     if (!r || r.lang !== lang) return null;
-    // "music" is not restorable: the giftId the MusicCard needs is never
-    // persisted, so reviving it strands the user with a disabled chat bar.
-    // Fall back to "review" — the draft is persisted, so generation can be
-    // re-submitted from there.
-    if (r.step === "music") r.step = "review";
+    // Snapshots written before gift persistence existed lack these fields.
+    r.giftId ??= null;
+    r.musicState ??= null;
+    // "music" is only restorable with a persisted giftId — without it the
+    // MusicCard can't render and the chat bar would be dead. Fall back to
+    // "review" — the draft is persisted, so generation can be re-submitted.
+    if (r.step === "music" && !r.giftId) r.step = "review";
     return r;
   });
 
@@ -63,6 +70,8 @@ export function useGuidedState(lang: string) {
   const [meta, rawSetMeta] = useState<StepMeta>(snapshot?.meta ?? EMPTY_META);
   const [messages, setMessages] = useState<GuidedMessage[]>(snapshot?.messages ?? []);
   const [draft, rawSetDraft] = useState<LyricsDraft | null>(snapshot?.draft ?? null);
+  const [giftId, rawSetGiftId] = useState<string | null>(snapshot?.giftId ?? null);
+  const [musicState, rawSetMusicState] = useState<Saved["musicState"]>(snapshot?.musicState ?? null);
 
   // persist() must never read the state variables directly: the async chat
   // loop holds a closure from the render it started in, so a go() at the end
@@ -72,12 +81,15 @@ export function useGuidedState(lang: string) {
   const msgRef = useRef(messages); msgRef.current = messages;
   const draftRef = useRef(draft); draftRef.current = draft;
   const stepRef = useRef(step); stepRef.current = step;
+  const giftIdRef = useRef(giftId); giftIdRef.current = giftId;
+  const musicStateRef = useRef(musicState); musicStateRef.current = musicState;
 
   const lastSave = useRef(0);
   function persist(s: FlowStep = stepRef.current) {
     save({
       lang, step: s, meta: metaRef.current,
       messages: msgRef.current.slice(-20), draft: draftRef.current,
+      giftId: giftIdRef.current, musicState: musicStateRef.current,
     });
     lastSave.current = Date.now();
   }
@@ -97,6 +109,16 @@ export function useGuidedState(lang: string) {
     if (Date.now() - lastSave.current >= 500) persist();
   }
   function setDraft(d: LyricsDraft | null) { rawSetDraft(d); draftRef.current = d; persist(); }
+  /** Record that generation started for a gift: id known, still cooking. */
+  function setGift(id: string) {
+    rawSetGiftId(id); giftIdRef.current = id;
+    rawSetMusicState("generating"); musicStateRef.current = "generating";
+    persist();
+  }
+  /** Record a terminal generation status ("ready" / "error"). */
+  function setMusicState(s: "ready" | "error") {
+    rawSetMusicState(s); musicStateRef.current = s; persist();
+  }
 
   /** Discard the whole session and return to the first question. */
   function reset() {
@@ -105,11 +127,13 @@ export function useGuidedState(lang: string) {
     rawSetMeta(EMPTY_META); metaRef.current = EMPTY_META;
     setMessages([]); msgRef.current = [];
     rawSetDraft(null); draftRef.current = null;
+    rawSetGiftId(null); giftIdRef.current = null;
+    rawSetMusicState(null); musicStateRef.current = null;
   }
 
   return {
-    step, meta, messages, draft, metaRef,
-    actions: { go, setMeta, setMsg, setMsgStreaming, setDraft, reset },
+    step, meta, messages, draft, metaRef, giftId, musicState,
+    actions: { go, setMeta, setMsg, setMsgStreaming, setDraft, setGift, setMusicState, reset },
     wasRestored: !!snapshot,
   };
 }
