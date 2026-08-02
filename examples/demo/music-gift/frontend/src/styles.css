@@ -20,6 +20,8 @@
   --gold-light:  rgba(200, 149, 108, 0.16);
   --gold-border: rgba(200, 149, 108, 0.25);
   --border:      #e4dbd0;
+  --scrollbar-thumb:       rgba(42, 31, 20, 0.22);
+  --scrollbar-thumb-hover: rgba(42, 31, 20, 0.34);
   --shadow:      0 1px 8px rgba(42, 31, 20, 0.07);
   --shadow-lg:   0 12px 48px rgba(42, 31, 20, 0.10);
   --radius:      8px;
@@ -388,8 +390,18 @@ body::after {
 .error-msg.shaking { animation: shake 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
 
 /* ── Scrollbar ─────────────────────────────── */
+/* The thumb must stay clearly darker than the cream track: the old
+   --border-on---bg pairing was nearly invisible in light mode, so the
+   reserved gutter read as a stray empty strip that made the right edge look
+   misaligned. scrollbar-color covers Firefox (no ::-webkit-scrollbar there). */
+.app-main {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
 .app-main::-webkit-scrollbar { width: 4px; }
-.app-main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.app-main::-webkit-scrollbar-track { background: transparent; }
+.app-main::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
+.app-main::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
 
 /* =============================================
    PAGES
@@ -1670,6 +1682,8 @@ html[data-theme="dark"] {
   --gold-light:  rgba(212, 165, 116, 0.16);
   --gold-border: rgba(212, 165, 116, 0.22);
   --border:      #3a2a1c;
+  --scrollbar-thumb:       rgba(232, 221, 208, 0.25);
+  --scrollbar-thumb-hover: rgba(232, 221, 208, 0.38);
   --shadow:      0 1px 8px rgba(0, 0, 0, 0.25);
   --shadow-lg:   0 12px 48px rgba(0, 0, 0, 0.35);
   background: #130f0c;
