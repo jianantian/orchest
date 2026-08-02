@@ -1093,4 +1093,47 @@ mod tests {
         assert_eq!(text, draft);
         assert_eq!(degraded, vec!["elevate".to_string(), "review".to_string()]);
     }
+
+    /// Elevate succeeds but review fails: the ELEVATED text survives (the
+    /// review fallback must not discard the elevation) and only "review" is
+    /// marked degraded.
+    #[tokio::test]
+    async fn review_failure_keeps_elevated_text() {
+        let model = Arc::new(ScriptedModel::new(vec![
+            Ok("<<<LYRICS>>>\nelevated\n<<<END>>>".to_string()),
+            Err("review boom".to_string()),
+        ]));
+        let (tx, _rx) = mpsc::channel::<SseEvent>(16);
+        let (text, degraded) =
+            finalize_chat_output(model, "<<<LYRICS>>>\noriginal\n<<<END>>>", &tx).await;
+        assert_eq!(text, "<<<LYRICS>>>\nelevated\n<<<END>>>");
+        assert_eq!(degraded, vec!["review".to_string()]);
+    }
+
+    /// The elevate stage's system prompt is ELEVATE_PROMPT and the review
+    /// stage's is REVIEW_PROMPT — pins the wiring so swapping the two prompt
+    /// constants breaks a test.
+    #[tokio::test]
+    async fn elevate_and_review_use_their_own_prompts() {
+        let model = Arc::new(ScriptedModel::new(vec![
+            Ok("<<<LYRICS>>>\nelevated\n<<<END>>>".to_string()),
+            Ok("<<<LYRICS>>>\nreviewed\n<<<END>>>".to_string()),
+        ]));
+        let (tx, _rx) = mpsc::channel::<SseEvent>(16);
+        let _ = finalize_chat_output(model.clone(), "<<<LYRICS>>>\noriginal\n<<<END>>>", &tx).await;
+        let calls = model
+            .calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(calls.len(), 2);
+        let Some(ContentBlock::Text(elevate_system)) = calls[0][0].content.first() else {
+            panic!("elevate system message must be text");
+        };
+        assert!(matches!(calls[0][0].role, Role::System));
+        assert_eq!(elevate_system, ELEVATE_PROMPT);
+        let Some(ContentBlock::Text(review_system)) = calls[1][0].content.first() else {
+            panic!("review system message must be text");
+        };
+        assert_eq!(review_system, REVIEW_PROMPT);
+    }
 }

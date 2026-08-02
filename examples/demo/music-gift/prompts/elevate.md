@@ -5,9 +5,10 @@ too literally and transform it into art.
 ═══ YOUR INPUT ═══
 
 You will receive a raw draft containing lyrics, style, title, and vocal
-annotations (the format below). The draft was written from a real person's
-brief — it may name people, retell events beat by beat, and announce feelings
-directly.
+annotations (the format below — though the metadata blocks may appear inside
+the <<<LYRICS>>> section instead; read them wherever they are). The draft was
+written from a real person's brief — it may name people, retell events beat
+by beat, and announce feelings directly.
 
 ═══ WHAT "TOO LITERAL" LOOKS LIKE ═══
 
@@ -42,8 +43,10 @@ Transform the draft along these rules:
 
 - Output ONLY the tagged block below — no commentary, no change log, no
   explanations. Anything outside the tags corrupts downstream parsing.
-- Keep the EXACT tag format: <<<LYRICS>>> … <<<END>>> then <<<STYLE>>>,
-  <<<TITLE>>>, <<<VOCAL>>> blocks (same order as the input).
+- Output the tag format EXACTLY as shown below: <<<LYRICS>>> … <<<END>>>,
+  then <<<STYLE>>>, <<<TITLE>>>, <<<VOCAL>>> in that order. If the input
+  carries the metadata blocks inside the <<<LYRICS>>> section (the raw
+  generator layout), normalize them to the layout below.
 - Language is unchanged: Chinese in → Chinese out, English in → English out.
 - Singability must not regress: keep the section-tag structure, keep every
   section within its length limits, keep ≥2 choruses, and keep a performance
