@@ -6,6 +6,7 @@
    ============================================ */
 
 :root {
+  color-scheme: light;
   --bg:          #f7f3ec;
   --bg2:         #ede9e0;
   --surface:     #fffefb;
@@ -242,6 +243,19 @@ body::after {
 .login-link-text { border: none; background: none; color: var(--gold); cursor: pointer; font-size: 12px; font-family: inherit; padding: 0; }
 .login-link-text:hover { text-decoration: underline; }
 .lang-switch:hover { border-color: var(--gold); color: var(--gold); }
+
+/* Theme toggle (auto → light → dark), mirrors .lang-switch sizing */
+.theme-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  color: var(--text3);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.theme-toggle:hover { border-color: var(--gold); color: var(--gold); }
 
 /* ── Main scroll area ──────────────────────── */
 .app-main {
@@ -1631,133 +1645,138 @@ body.locked { overflow: hidden; }
 
 
 /* ============================================
-   Dark mode — deep warm editorial
+   Dark theme — deep warm editorial
+
+   Applied via [data-theme="dark"] on <html>, never the media query:
+   src/lib/theme.ts (and the boot script in index.html) resolves the
+   "auto" choice to the OS preference and stamps the attribute, so a
+   manual light/dark pick always wins.
 
    MUST stay last: these rules override base rules at equal
    specificity, so anything appended below them wins instead.
    ============================================ */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg:          #1a1410;
-    --bg2:         #211a14;
-    --surface:     #241c16;
-    --surface2:    #2a2018;
-    --text:        #e8ddd0;
-    --text2:       #b0a090;
-    --text3:       #7a6a5a;
-    --gold:        #d4a574;
-    --gold-action: #e0b07a;
-    --gold-bg:     rgba(212, 165, 116, 0.10);
-    --gold-light:  rgba(212, 165, 116, 0.16);
-    --gold-border: rgba(212, 165, 116, 0.22);
-    --border:      #3a2a1c;
-    --shadow:      0 1px 8px rgba(0, 0, 0, 0.25);
-    --shadow-lg:   0 12px 48px rgba(0, 0, 0, 0.35);
-  }
-  html, body { background: #130f0c; }
-  #root { box-shadow: 0 0 0 1px var(--border), 0 8px 40px rgba(0, 0, 0, 0.4); }
-  .app-header { background: rgba(26, 20, 16, 0.82); }
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg:          #1a1410;
+  --bg2:         #211a14;
+  --surface:     #241c16;
+  --surface2:    #2a2018;
+  --text:        #e8ddd0;
+  --text2:       #b0a090;
+  --text3:       #7a6a5a;
+  --gold:        #d4a574;
+  --gold-action: #e0b07a;
+  --gold-bg:     rgba(212, 165, 116, 0.10);
+  --gold-light:  rgba(212, 165, 116, 0.16);
+  --gold-border: rgba(212, 165, 116, 0.22);
+  --border:      #3a2a1c;
+  --shadow:      0 1px 8px rgba(0, 0, 0, 0.25);
+  --shadow-lg:   0 12px 48px rgba(0, 0, 0, 0.35);
+  background: #130f0c;
+}
+html[data-theme="dark"] body { background: #130f0c; }
+html[data-theme="dark"] #root { box-shadow: 0 0 0 1px var(--border), 0 8px 40px rgba(0, 0, 0, 0.4); }
+html[data-theme="dark"] .app-header { background: rgba(26, 20, 16, 0.82); }
 
-  /* Manuscript — dark paper rules */
-  .lyrics-manuscript {
-    background-image:
-      repeating-linear-gradient(transparent, transparent 33px, rgba(180,160,140,0.08) 34px);
-    box-shadow: inset 0 1px 6px rgba(0,0,0,0.2), inset 0 -2px 4px rgba(0,0,0,0.15);
-  }
+/* Manuscript — dark paper rules */
+html[data-theme="dark"] .lyrics-manuscript {
+  background-image:
+    repeating-linear-gradient(transparent, transparent 33px, rgba(180,160,140,0.08) 34px);
+  box-shadow: inset 0 1px 6px rgba(0,0,0,0.2), inset 0 -2px 4px rgba(0,0,0,0.15);
+}
 
-  /* Unwrap stage — stays dark, sync golds */
-  #unwrap-headline { color: #e8d5b8; }
-  #unwrap-eyebrow { color: #c4a074; }
-  .ornament .line, .ornament .dia { background: #d4a574; }
-  .ornament .dia { box-shadow: 0 0 8px rgba(212,165,116,0.4); }
-  #unwrap-stage::before {
-    background:
-      radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.35) 100%),
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
-  }
-  #tap-hint { color: #c4a074; }
-  #tap-hint .arrow { background: linear-gradient(180deg, transparent, #d4a574, transparent); }
-  .wordmark { color: #c4a074; }
-  .mono-letter { color: #d4a574; }
-  .face.cream { background: linear-gradient(135deg, #3a2a1c, #2a1a10); }
-  .face.shadowed { background: linear-gradient(135deg, #2a1a10, #1a1008); }
-  .face.velvet { background: #1a0e06; }
-  .face.lit-top { background: linear-gradient(180deg, #4a3828, #3a2a1c); }
-  #box-shadow { background: radial-gradient(ellipse at center, rgba(0,0,0,0.4), transparent 70%); }
+/* Unwrap stage — stays dark, sync golds */
+html[data-theme="dark"] #unwrap-headline { color: #e8d5b8; }
+html[data-theme="dark"] #unwrap-eyebrow { color: #c4a074; }
+html[data-theme="dark"] .ornament .line, html[data-theme="dark"] .ornament .dia { background: #d4a574; }
+html[data-theme="dark"] .ornament .dia { box-shadow: 0 0 8px rgba(212,165,116,0.4); }
+html[data-theme="dark"] #unwrap-stage::before {
+  background:
+    radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.35) 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+}
+html[data-theme="dark"] #tap-hint { color: #c4a074; }
+html[data-theme="dark"] #tap-hint .arrow { background: linear-gradient(180deg, transparent, #d4a574, transparent); }
+html[data-theme="dark"] .wordmark { color: #c4a074; }
+html[data-theme="dark"] .mono-letter { color: #d4a574; }
+html[data-theme="dark"] .face.cream { background: linear-gradient(135deg, #3a2a1c, #2a1a10); }
+html[data-theme="dark"] .face.shadowed { background: linear-gradient(135deg, #2a1a10, #1a1008); }
+html[data-theme="dark"] .face.velvet { background: #1a0e06; }
+html[data-theme="dark"] .face.lit-top { background: linear-gradient(180deg, #4a3828, #3a2a1c); }
+html[data-theme="dark"] #box-shadow { background: radial-gradient(ellipse at center, rgba(0,0,0,0.4), transparent 70%); }
 
-  /* ── Free Create panel dark-mode refinements ── */
+/* ── Free Create panel dark-theme refinements ── */
 
-  /* Mode bar: lift from the dark background with a soft border */
-  .mode-bar { background: var(--surface); border: 1px solid var(--border); }
-  .mode-btn.active {
-    background: var(--surface2);
-    box-shadow: 0 1px 6px rgba(212, 165, 116, 0.12), inset 0 1px 0 rgba(255,255,255,0.03);
-  }
+/* Mode bar: lift from the dark background with a soft border */
+html[data-theme="dark"] .mode-bar { background: var(--surface); border: 1px solid var(--border); }
+html[data-theme="dark"] .mode-btn.active {
+  background: var(--surface2);
+  box-shadow: 0 1px 6px rgba(212, 165, 116, 0.12), inset 0 1px 0 rgba(255,255,255,0.03);
+}
 
-  /* Suggest chips: subtle surface tone so they feel interactive */
-  .suggest-chip {
-    background: var(--surface);
-    color: var(--text2);
-  }
-  .suggest-chip:hover {
-    border-color: var(--gold);
-    color: var(--gold);
-    background: var(--gold-bg);
-  }
-  .suggest-refresh:hover {
-    border-color: var(--gold);
-    color: var(--gold);
-  }
+/* Suggest chips: subtle surface tone so they feel interactive */
+html[data-theme="dark"] .suggest-chip {
+  background: var(--surface);
+  color: var(--text2);
+}
+html[data-theme="dark"] .suggest-chip:hover {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: var(--gold-bg);
+}
+html[data-theme="dark"] .suggest-refresh:hover {
+  border-color: var(--gold);
+  color: var(--gold);
+}
 
-  /* Create button hover: brighter gold, not darker */
-  .btn-create:hover { background: #d49960; }
+/* Create button hover: brighter gold, not darker */
+html[data-theme="dark"] .btn-create:hover { background: #d49960; }
 
-  /* Accent prompt bar: gold border on dark surface reads clearly */
-  .prompt-bar-input {
-    background: var(--surface);
-    border-color: var(--gold-action);
-  }
+/* Accent prompt bar: gold border on dark surface reads clearly */
+html[data-theme="dark"] .prompt-bar-input {
+  background: var(--surface);
+  border-color: var(--gold-action);
+}
 
-  /* More Options accordion body: tighten padding for dark */
-  .more-body { background: var(--bg); }
+/* More Options accordion body: tighten padding for dark */
+html[data-theme="dark"] .more-body { background: var(--bg); }
 
-  /* Gender options: the toggle needs a background tone */
-  .gender-opt { border-color: var(--border); }
-  .gender-opt.on {
-    border-color: var(--gold-border);
-    background: var(--gold-bg);
-    color: var(--gold);
-  }
+/* Gender options: the toggle needs a background tone */
+html[data-theme="dark"] .gender-opt { border-color: var(--border); }
+html[data-theme="dark"] .gender-opt.on {
+  border-color: var(--gold-border);
+  background: var(--gold-bg);
+  color: var(--gold);
+}
 
-  /* Spinner: brighter track for dark visibility */
-  .spinner { border-color: var(--border); }
+/* Spinner: brighter track for dark visibility */
+html[data-theme="dark"] .spinner { border-color: var(--border); }
 
-  /* Review badge: match dark-mode gold tone */
-  .review-badge-btn { background: rgba(212, 165, 116, 0.12); }
-  .review-badge-btn:hover { background: rgba(212, 165, 116, 0.22); }
+/* Review badge: match dark-theme gold tone */
+html[data-theme="dark"] .review-badge-btn { background: rgba(212, 165, 116, 0.12); }
+html[data-theme="dark"] .review-badge-btn:hover { background: rgba(212, 165, 116, 0.22); }
 
-  /* Style tags in review: subtle surface instead of bg */
-  .style-tag { background: var(--surface); }
+/* Style tags in review: subtle surface instead of bg */
+html[data-theme="dark"] .style-tag { background: var(--surface); }
 
-  /* Toggle buttons: active state more visible */
-  .toggle-btn.on { background: var(--gold-bg); }
+/* Toggle buttons: active state more visible */
+html[data-theme="dark"] .toggle-btn.on { background: var(--gold-bg); }
 
-  /* Unwrap stage: invert the cream gradient to dark warm tones */
-  #unwrap-stage {
-    background: radial-gradient(ellipse at 50% 35%, #2a1a10 0%, #1f1410 35%, #1a100c 75%, #130c08 100%);
-  }
+/* Unwrap stage: invert the cream gradient to dark warm tones */
+html[data-theme="dark"] #unwrap-stage {
+  background: radial-gradient(ellipse at 50% 35%, #2a1a10 0%, #1f1410 35%, #1a100c 75%, #130c08 100%);
+}
 
-  /* Primary button: use dark-mode gold gradient */
-  .btn-primary {
-    background: linear-gradient(135deg, #e0b07a, #d4a574);
-    box-shadow: 0 2px 12px rgba(212, 165, 116, 0.25);
-  }
-  .btn-primary:hover:not(:disabled) {
-    box-shadow: 0 4px 18px rgba(212, 165, 116, 0.35);
-  }
+/* Primary button: use dark-theme gold gradient */
+html[data-theme="dark"] .btn-primary {
+  background: linear-gradient(135deg, #e0b07a, #d4a574);
+  box-shadow: 0 2px 12px rgba(212, 165, 116, 0.25);
+}
+html[data-theme="dark"] .btn-primary:hover:not(:disabled) {
+  box-shadow: 0 4px 18px rgba(212, 165, 116, 0.35);
+}
 
-  /* Audio play button: dark-mode gold glow */
-  .audio-play-btn {
-    box-shadow: 0 4px 20px rgba(212, 165, 116, 0.25);
-  }
+/* Audio play button: dark-theme gold glow */
+html[data-theme="dark"] .audio-play-btn {
+  box-shadow: 0 4px 20px rgba(212, 165, 116, 0.25);
 }
