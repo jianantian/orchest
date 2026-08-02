@@ -42,6 +42,18 @@ start() {
 
     mkdir -p data
 
+    # Rebuild the frontend when dist is missing or older than any source
+    # file. The backend serves frontend/dist and caches index.html in memory
+    # at startup, so a restart alone never picks up frontend/src changes.
+    if [ ! -f frontend/dist/index.html ] || [ -n "$(find frontend/src frontend/index.html -newer frontend/dist/index.html -print -quit 2>/dev/null)" ]; then
+        if [ ! -d frontend/node_modules ]; then
+            echo "[serve] frontend/node_modules missing — run: (cd frontend && npm ci)" >&2
+            exit 1
+        fi
+        echo "[serve] building frontend..."
+        (cd frontend && npm run build)
+    fi
+
     # Build if binary is missing or stale
     if [ ! -f "$BINARY" ] || [ "$BINARY" -ot "$WORKSPACE_ROOT/crates/orchest-provider-http/src/gen/suno.rs" ]; then
         echo "[serve] building..."
