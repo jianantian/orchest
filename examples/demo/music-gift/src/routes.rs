@@ -18,8 +18,8 @@ use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 use crate::agent::{
-    build_messages, build_photo_blocks, build_system_message, parse_lyrics, run_chat_agent,
-    ChatRequest, SseEvent,
+    build_done_event, build_messages, build_photo_blocks, build_studio_system_message,
+    build_system_message, run_chat_agent, ChatRequest, SseEvent,
 };
 use crate::auth::AuthStore;
 use crate::error::{AppError, AppResult};
@@ -118,8 +118,17 @@ pub async fn chat_handler(
         return Err(AppError::BadRequest("messages is required".to_string()));
     }
 
+    // Studio mode is a co-editing conversation: its own system prompt (with
+    // the current draft injected), and the elevate/review quality pipeline
+    // is skipped so the model's targeted edits come back unrewritten.
+    let studio = req.mode.as_deref() == Some("studio");
+
     let photo_blocks = build_photo_blocks(&req.photos, &state.data_dir.to_string_lossy());
-    let system_msg = build_system_message(&req.meta, photo_blocks.len());
+    let system_msg = if studio {
+        build_studio_system_message(req.draft.as_ref(), photo_blocks.len())
+    } else {
+        build_system_message(&req.meta, photo_blocks.len())
+    };
     let messages = build_messages(system_msg, &req.messages, &photo_blocks);
 
     let (tx, rx) = mpsc::channel::<SseEvent>(64);
@@ -136,25 +145,7 @@ pub async fn chat_handler(
         .await;
         match result {
             Ok(full_text) => {
-                let had_lyrics = full_text.contains("<<<LYRICS>>>");
-                let (final_text, degraded) =
-                    crate::agent::finalize_chat_output(review_model, &full_text, &tx).await;
-                let parsed = parse_lyrics(&final_text);
-                // The review summary only exists when a review pass ran.
-                let review = if had_lyrics {
-                    crate::agent::extract_review_summary(&final_text)
-                } else {
-                    None
-                };
-                let done = SseEvent::Done {
-                    has_lyrics: parsed.has_lyrics,
-                    lyrics: parsed.lyrics,
-                    style: parsed.style,
-                    title: parsed.title,
-                    vocal: parsed.vocal,
-                    review,
-                    degraded,
-                };
+                let done = build_done_event(review_model, &full_text, &tx, studio).await;
                 let _ = tx.send(done).await;
             }
             Err(e) => {

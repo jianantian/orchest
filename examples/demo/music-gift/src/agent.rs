@@ -40,23 +40,8 @@ pub fn parse_lyrics(full_text: &str) -> ParsedLyrics {
     let title = extract_between(full_text, "<<<TITLE>>>", "<<<TITLE_END>>>")
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
-    // The model rarely emits a bare "male"/"female": it writes descriptive
-    // vocals like "male, warm" or "男声, 温柔". A strict equality check dropped
-    // all of those and silently defaulted every song to a female vocal. Detect
-    // the gender by substring, testing "female"/"女" first since "female"
-    // contains "male".
     let vocal = extract_between(full_text, "<<<VOCAL>>>", "<<<VOCAL_END>>>")
-        .map(|s| {
-            let low = s.to_lowercase();
-            if low.contains("female") || s.contains('女') {
-                "female"
-            } else if low.contains("male") || s.contains('男') {
-                "male"
-            } else {
-                GiftMeta::DEFAULT_VOCAL
-            }
-            .to_string()
-        })
+        .map(|s| normalize_vocal(&s))
         .unwrap_or_else(|| GiftMeta::DEFAULT_VOCAL.to_string());
     ParsedLyrics {
         has_lyrics,
@@ -65,6 +50,61 @@ pub fn parse_lyrics(full_text: &str) -> ParsedLyrics {
         title,
         vocal,
     }
+}
+
+/// Field-level changes parsed from a studio-mode reply. Unlike
+/// `ParsedLyrics` (which fills defaults for the guided pipeline), every
+/// field the model did not re-emit stays `None`, so the client applies
+/// only what actually changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StudioChanges {
+    pub has_lyrics: bool,
+    pub lyrics: Option<String>,
+    pub style: Option<String>,
+    pub title: Option<String>,
+    pub vocal: Option<String>,
+}
+
+/// Parse a studio-mode reply: marker blocks appear only for fields the
+/// model changed, so absent tags map to `None`, never to defaults.
+pub fn parse_studio_output(full_text: &str) -> StudioChanges {
+    let lyrics = extract_lyrics(full_text)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let style = extract_between(full_text, "<<<STYLE>>>", "<<<STYLE_END>>>")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let title =
+        extract_between(full_text, "<<<TITLE>>>", "<<<TITLE_END>>>").map(|s| s.trim().to_string());
+    let vocal =
+        extract_between(full_text, "<<<VOCAL>>>", "<<<VOCAL_END>>>").map(|s| normalize_vocal(&s));
+    StudioChanges {
+        has_lyrics: lyrics.is_some(),
+        lyrics,
+        style,
+        title,
+        vocal,
+    }
+}
+
+/// Map a free-form vocal annotation ("male, warm", "女声, 空灵") to the
+/// canonical gender the music provider accepts.
+///
+/// The model rarely emits a bare "male"/"female": it writes descriptive
+/// vocals like "male, warm" or "男声, 温柔". A strict equality check dropped
+/// all of those and silently defaulted every song to a female vocal. Detect
+/// the gender by substring, testing "female"/"女" first since "female"
+/// contains "male".
+fn normalize_vocal(raw: &str) -> String {
+    let low = raw.to_lowercase();
+    if low.contains("female") || raw.contains('女') {
+        "female"
+    } else if low.contains("male") || raw.contains('男') {
+        "male"
+    } else {
+        GiftMeta::DEFAULT_VOCAL
+    }
+    .to_string()
 }
 
 /// Extract the pure lyric text, independent of tag ordering.
@@ -174,10 +214,12 @@ pub enum SseEvent {
     Reviewing,
     Done {
         has_lyrics: bool,
-        lyrics: String,
-        style: String,
-        title: String,
-        vocal: String,
+        /// `None` = the turn did not (re-)emit this field. Studio clients
+        /// apply only the `Some` fields; guided turns always send `Some`.
+        lyrics: Option<String>,
+        style: Option<String>,
+        title: Option<String>,
+        vocal: Option<String>,
         /// Review report from the second-pass review agent (may be empty if review skipped).
         review: Option<String>,
         /// Pipeline stages that fell back during this turn (e.g. ["review"]
@@ -481,6 +523,51 @@ pub async fn finalize_chat_output(
     }
 
     (reviewed.text, degraded)
+}
+
+/// Build the terminal `Done` event for a completed chat turn.
+///
+/// Guided mode runs the elevate/review quality pipeline (rewriting the raw
+/// output, announcing stage events on `tx`) and reports every field.
+/// Studio mode skips the pipeline entirely — a co-editing turn must come
+/// back unrewritten, with `None` for every field the model did not change.
+pub async fn build_done_event(
+    model: Arc<dyn ChatModel>,
+    full_text: &str,
+    tx: &mpsc::Sender<SseEvent>,
+    studio: bool,
+) -> SseEvent {
+    if studio {
+        let changes = parse_studio_output(full_text);
+        return SseEvent::Done {
+            has_lyrics: changes.has_lyrics,
+            lyrics: changes.lyrics,
+            style: changes.style,
+            title: changes.title,
+            vocal: changes.vocal,
+            review: None,
+            degraded: Vec::new(),
+        };
+    }
+
+    let had_lyrics = full_text.contains("<<<LYRICS>>>");
+    let (final_text, degraded) = finalize_chat_output(model, full_text, tx).await;
+    let parsed = parse_lyrics(&final_text);
+    // The review summary only exists when a review pass ran.
+    let review = if had_lyrics {
+        extract_review_summary(&final_text)
+    } else {
+        None
+    };
+    SseEvent::Done {
+        has_lyrics: parsed.has_lyrics,
+        lyrics: Some(parsed.lyrics),
+        style: Some(parsed.style),
+        title: Some(parsed.title),
+        vocal: Some(parsed.vocal),
+        review,
+        degraded,
+    }
 }
 
 #[cfg(test)]
@@ -1135,5 +1222,123 @@ mod tests {
             panic!("review system message must be text");
         };
         assert_eq!(review_system, REVIEW_PROMPT);
+    }
+
+    #[test]
+    fn parse_studio_output_reports_only_changed_fields() {
+        // A style-only edit: lyrics stays None so the client does not touch
+        // its current draft, and has_lyrics stays false.
+        let text = "Sure — switched it to City Pop, keeps the groove lighter.\n\
+                    <<<STYLE>>>City Pop, upbeat, clean guitars<<<STYLE_END>>>";
+        let changes = parse_studio_output(text);
+        assert_eq!(
+            changes,
+            StudioChanges {
+                has_lyrics: false,
+                lyrics: None,
+                style: Some("City Pop, upbeat, clean guitars".to_string()),
+                title: None,
+                vocal: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_studio_output_extracts_all_markers() {
+        let text = "Shortened the chorus as asked.\n\
+                    <<<LYRICS>>>\n[chorus]\n骑吧 阿杰\n<<<END>>>\n\
+                    <<<TITLE>>>Wheels<<<TITLE_END>>>\n\
+                    <<<VOCAL>>>male, warm<<<VOCAL_END>>>";
+        let changes = parse_studio_output(text);
+        assert!(changes.has_lyrics);
+        assert_eq!(changes.lyrics.as_deref(), Some("[chorus]\n骑吧 阿杰"));
+        assert_eq!(changes.title.as_deref(), Some("Wheels"));
+        assert_eq!(changes.vocal.as_deref(), Some("male"));
+        assert!(changes.style.is_none());
+    }
+
+    #[test]
+    fn parse_studio_output_conversational_is_all_none() {
+        let changes = parse_studio_output("I think the bridge already earns it.");
+        assert_eq!(
+            changes,
+            StudioChanges {
+                has_lyrics: false,
+                lyrics: None,
+                style: None,
+                title: None,
+                vocal: None,
+            }
+        );
+    }
+
+    /// Studio mode must skip the elevate/review pipeline entirely: no model
+    /// calls, no stage events, and the Done carries the raw parse with None
+    /// for unemitted fields.
+    #[tokio::test]
+    async fn studio_done_event_skips_pipeline() {
+        let model = Arc::new(CaptureModel::default());
+        let (tx, mut rx) = mpsc::channel::<SseEvent>(16);
+        let text = "Done — restyled it.\n<<<STYLE>>>City Pop<<<STYLE_END>>>";
+        let event = build_done_event(model.clone(), text, &tx, true).await;
+        let SseEvent::Done {
+            has_lyrics,
+            lyrics,
+            style,
+            title,
+            vocal,
+            review,
+            degraded,
+        } = event
+        else {
+            panic!("expected Done");
+        };
+        assert!(!has_lyrics);
+        assert_eq!(lyrics, None);
+        assert_eq!(style, Some("City Pop".to_string()));
+        assert_eq!(title, None);
+        assert_eq!(vocal, None);
+        assert_eq!(review, None);
+        assert!(degraded.is_empty());
+        assert!(model
+            .calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty());
+        assert!(rx.try_recv().is_err());
+    }
+
+    /// The guided path through build_done_event is the old handler logic
+    /// verbatim: pipeline runs, stage events fire, fields are always Some.
+    #[tokio::test]
+    async fn guided_done_event_runs_pipeline() {
+        let model = Arc::new(CaptureModel::default());
+        let (tx, mut rx) = mpsc::channel::<SseEvent>(16);
+        let event =
+            build_done_event(model.clone(), "<<<LYRICS>>>\nla la\n<<<END>>>", &tx, false).await;
+        // CaptureModel's tag-less "done" reply fails the elevate validator,
+        // so elevate is degraded; review accepts it as the final text.
+        let SseEvent::Done {
+            has_lyrics,
+            lyrics,
+            degraded,
+            ..
+        } = event
+        else {
+            panic!("expected Done");
+        };
+        assert!(!has_lyrics);
+        assert_eq!(lyrics, Some(String::new()));
+        assert_eq!(degraded, vec!["elevate".to_string()]);
+        assert_eq!(
+            model
+                .calls
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len(),
+            2
+        );
+        assert!(matches!(rx.recv().await, Some(SseEvent::Elevating)));
+        assert!(matches!(rx.recv().await, Some(SseEvent::Reviewing)));
     }
 }
