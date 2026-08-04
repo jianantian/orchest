@@ -97,6 +97,13 @@ html, body {
   overflow: hidden;
 }
 
+/* Desktop: one wide frame for every page. Content columns below cap and
+   center themselves; the frame and header never change width between
+   pages or tabs (replaces the old `#root:has(.studio)` width jump). */
+@media (min-width: 900px) {
+  #root { max-width: 1080px; }
+}
+
 /* ── Noise texture overlay ─────────────────── */
 body::after {
   content: '';
@@ -414,6 +421,16 @@ body::after {
 .playlist-page {
   padding: 20px;
   display: flex; flex-direction: column; gap: 18px;
+}
+
+/* Desktop (≥900px): inside the 1080px frame, content columns keep their
+   single-column widths and center instead of stretching edge to edge. */
+@media (min-width: 900px) {
+  /* Guided chat: 520px column (direct child only — the studio's AI column
+     uses .chat-panel too and must keep its half of the frame). */
+  .create-page > .chat-panel { max-width: 520px; width: 100%; margin: 0 auto; }
+  /* Playlist / mine / set-password / reset-password pages. */
+  .playlist-page { max-width: 600px; width: 100%; margin: 0 auto; }
 }
 
 /* ── Gift page reveal stagger (after Unwrap) ── */
@@ -1659,38 +1676,41 @@ body.locked { overflow: hidden; }
    STUDIO (draft editor + AI collaboration panel)
    ============================================= */
 
-/* The app frame is capped at 520px for the single-column flows; the studio
-   needs a real desktop width for its two columns. */
-@media (min-width: 900px) {
-  #root:has(.studio) { max-width: 1080px; }
-}
-
-.studio { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* Single-scroll model: the studio grows with natural height inside
+   .app-main (the one page scroller) — neither column scrolls internally.
+   The frame's fixed height chain (.create-page keeps flex: 1) lets taller
+   content overflow visibly into the .app-main scroll area. */
+.studio { display: flex; flex-direction: column; }
 
 /* Mobile-only tab switcher; hidden on desktop where both columns show. */
 .studio-mobile-tabs { display: none; }
 
-.studio-cols { display: flex; flex: 1; min-height: 0; }
-.studio-draft-col {
-  flex: 1; min-width: 0; min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) transparent;
-}
+.studio-cols { display: flex; }
+.studio-draft-col { flex: 1; min-width: 0; }
 .studio-ai-col {
-  flex: 1; min-width: 0; min-height: 0;
+  flex: 1; min-width: 0;
   display: flex; flex-direction: column;
   border-left: 1px solid var(--border);
 }
+
+/* The studio chat panel is page content, not a fixed-height frame: natural
+   growth, no internal scroll. overflow: visible also matters for sticky —
+   the base .chat-panel's overflow: hidden would make the panel itself the
+   sticky positioning context and the chat-bar would scroll away. */
+.studio-ai-col .chat-panel { flex: none; overflow: visible; }
+.studio-ai-col .chat-messages.guided { flex: none; overflow: visible; }
+
+/* Input bar stays visible at the viewport bottom while .app-main scrolls
+   (same "pinned input" mental model as the guided flow). Background and
+   border-top come from the base .chat-bar rule. */
+.studio-ai-col .chat-bar { position: sticky; bottom: 0; z-index: 5; }
 
 @media (max-width: 899px) {
   .studio-mobile-tabs { display: flex; padding: 6px 20px 0; gap: 6px; flex-shrink: 0; }
   .studio-cols { flex-direction: column; }
   .studio-draft-col, .studio-ai-col { display: none; }
-  .studio-draft-col.m-active, .studio-ai-col.m-active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .studio-draft-col.m-active, .studio-ai-col.m-active { display: flex; flex-direction: column; }
   .studio-ai-col { border-left: none; }
-  /* The chat panel scrolls its own message list; the draft column scrolls. */
-  .studio-ai-col.m-active { overflow: hidden; }
 }
 
 /* AI panel toolbar: title left, undo right. */
