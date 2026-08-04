@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { streamChat } from "../api";
+import { streamChat, getGift, updateGift, regenerateGift, getGiftVersions, watchGeneration, type GenerationWatch } from "../api";
 import { useI18n } from "../i18n";
 import { shuffleStyles, stripMarkers } from "../lib/styles";
 import { isImeComposing } from "../lib/ime";
+import { creatorToken } from "../lib/creator";
+import { useAuth } from "../hooks/useAuth";
 import { useMusicGen } from "../hooks/useMusicGen";
 import { MusicCard } from "./MusicCard";
+import AudioPlayer from "./AudioPlayer";
+import { LRCViewer } from "./LRCViewer";
+import { parseLRC } from "../lib/lrc";
 import { MicIcon, MusicNoteIcon, XIcon, FemaleIcon, MaleIcon } from "./Icons";
-import type { ChatMessage, SseEvent } from "../types";
+import type { ChatMessage, Gift, GiftVersion, SseEvent } from "../types";
 
-export interface StudioProps { photos: string[]; lang: string; onNavigate: (giftId: string) => void; }
+export interface StudioProps { photos: string[]; lang: string; onNavigate: (giftId: string) => void; editGiftId?: string }
 
 /** Draft fields the AI can change in a studio turn. */
 type StudioField = "lyrics" | "style" | "title" | "vocal";
@@ -52,12 +57,34 @@ function loadDraft(lang: string): DraftSnapshot | null {
   } catch { return null; }
 }
 
-export function Studio({ photos, lang, onNavigate }: StudioProps) {
+/**
+ * Hand a guided-flow draft to the studio through the same sessionStorage
+ * channel the studio restores from on mount (the shape above is the wire
+ * format — keep them in sync). Called right before switching to the studio
+ * tab, so the next mount picks it up.
+ */
+export function stageStudioDraft(lang: string, fields: { lyrics: string; style: string; title: string; vocal: string }) {
+  const d: SavedDraft = {
+    lang,
+    lyrics: fields.lyrics,
+    selectedStyles: [],
+    styleInput: fields.style,
+    vocalGender: fields.vocal === "male" ? "male" : fields.vocal === "female" ? "female" : null,
+    instrumental: false,
+    title: fields.title,
+  };
+  try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch { /* quota */ }
+}
+
+export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   const { t } = useI18n();
+  const { user } = useAuth();
   const gen = useMusicGen();
 
-  // Read sessionStorage once per mount, not on every render.
-  const [saved] = useState(() => loadDraft(lang));
+  // Read sessionStorage once per mount, not on every render. Edit mode fills
+  // the draft from the gift instead — the new-create draft channel is left
+  // untouched so an in-progress new song survives an edit detour.
+  const [saved] = useState(() => (editGiftId ? null : loadDraft(lang)));
 
   // ── Draft state: the single source of truth for both the manual editor
   // and the AI collaboration panel. ──────────────────────────────────────
@@ -70,6 +97,24 @@ export function Studio({ photos, lang, onNavigate }: StudioProps) {
   const [title, setTitle] = useState(saved?.title ?? "");
   const [suggestions, setSuggestions] = useState<string[]>(() => shuffleStyles(saved?.selectedStyles ?? [], 14));
   const [error, setError] = useState<string | null>(null);
+
+  // ── Edit-mode state (only used when editGiftId is set). ──────────────
+  /** Load phase of the gift being edited; "readonly" = loaded but not owned. */
+  const [editPhase, setEditPhase] = useState<"loading" | "ready" | "failed" | "readonly">(editGiftId ? "loading" : "ready");
+  const [editError, setEditError] = useState<string | null>(null);
+  const [gift, setGift] = useState<Gift | null>(null);
+  const [versions, setVersions] = useState<GiftVersion[]>([]);
+  /** Index into `versions` (newest first); the displayed audio/lyrics. */
+  const [versionIdx, setVersionIdx] = useState(0);
+  /** Regeneration progress for the edit loop, watched over SSE. */
+  const [regen, setRegen] = useState<"idle" | "generating" | "error">("idle");
+  /** True briefly after a title-only save lands. */
+  const [savedFlash, setSavedFlash] = useState(false);
+  /** True after a 409 — a job is already in flight server-side. */
+  const [conflict, setConflict] = useState(false);
+  const [playTime, setPlayTime] = useState(0);
+  const editWatchRef = useRef<GenerationWatch | null>(null);
+  const savedTimerRef = useRef<number | null>(null);
 
   // ── AI collaboration state (chat history intentionally not persisted). ──
   const [messages, setMessages] = useState<StudioMessage[]>([]);
@@ -96,11 +141,145 @@ export function Studio({ photos, lang, onNavigate }: StudioProps) {
   draftRef.current = { lyrics, selectedStyles, styleInput, vocalGender, instrumental, title };
 
   // Persist the draft (new-create mode) on every change; chat history is
-  // deliberately excluded per spec.
+  // deliberately excluded per spec. Edit mode skips this so the new-create
+  // draft survives an edit detour.
   useEffect(() => {
+    if (editGiftId) return;
     const d = draftRef.current;
     try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ lang, ...d })); } catch { /* quota */ }
-  }, [lang, lyrics, selectedStyles, styleInput, vocalGender, instrumental, title]);
+  }, [editGiftId, lang, lyrics, selectedStyles, styleInput, vocalGender, instrumental, title]);
+
+  // ── Edit mode: load the gift + its versions, fill the draft. ──────────
+  useEffect(() => {
+    if (!editGiftId) return;
+    let cancelled = false;
+    const token = creatorToken(editGiftId) ?? undefined;
+    (async () => {
+      try {
+        const g = await getGift(editGiftId);
+        if (cancelled) return;
+        // Same ownership rule as GiftPage: device token or a session whose
+        // creator_id matches. A non-owner gets a read-only notice instead of
+        // edit controls (the API would 403 the submit anyway).
+        const owned = token !== undefined || (user !== null && g.creator_id === user.id);
+        if (!owned) {
+          setGift(g);
+          setEditPhase("readonly");
+          return;
+        }
+        setGift(g);
+        applyGiftToDraft(g);
+        setEditPhase("ready");
+        try {
+          const v = await getGiftVersions(editGiftId, token);
+          if (!cancelled) { setVersions(v); setVersionIdx(0); }
+        } catch {
+          // Versions are optional — the player falls back to the gift row.
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setEditError(e instanceof Error ? e.message : "Failed to load gift");
+          setEditPhase("failed");
+        }
+      }
+    })();
+    return () => { cancelled = true; editWatchRef.current?.close(); };
+  }, [editGiftId, user]);
+
+  /** Fill the draft editor from a gift's current work fields. */
+  function applyGiftToDraft(g: Gift) {
+    setLyrics(g.lyrics ?? "");
+    setSelectedStyles([]);
+    setStyleInput(g.meta.style ?? "");
+    setInstrumental(g.meta.vocal === "instrumental");
+    setVocalGender(g.meta.vocal === "male" ? "male" : g.meta.vocal === "female" ? "female" : null);
+    setTitle(g.meta.title ?? "");
+  }
+
+  function flashSaved() {
+    setSavedFlash(true);
+    if (savedTimerRef.current) window.clearTimeout(savedTimerRef.current);
+    savedTimerRef.current = window.setTimeout(() => setSavedFlash(false), FLASH_MS);
+  }
+
+  /** Light edit: title only — PATCH, show a saved confirmation, never
+   *  trigger a generation. */
+  async function handleSaveTitle() {
+    if (!editGiftId || regen === "generating") return;
+    setEditError(null); setConflict(false);
+    try {
+      const g = await updateGift(editGiftId, { title: title.trim() }, creatorToken(editGiftId) ?? undefined);
+      setGift(g);
+      flashSaved();
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : "Save failed");
+    }
+  }
+
+  /** Heavy edit: lyrics/style/vocal changed — PATCH the work fields, then
+   *  regenerate in place and watch the job to its terminal state. */
+  async function handleSaveRegenerate() {
+    if (!editGiftId || regen === "generating") return;
+    if (!instrumental && !lyrics.trim()) return;
+    setEditError(null); setConflict(false);
+    const token = creatorToken(editGiftId) ?? undefined;
+    const style = selectedStyles.join(", ") || styleInput.trim();
+    try {
+      const g = await updateGift(editGiftId, {
+        lyrics: instrumental ? "" : lyrics.trim(),
+        // Empty style stays untouched server-side: PATCH stores strings
+        // verbatim, and "" would clobber meta.style past the provider's
+        // fallback instead of meaning "cleared".
+        style: style || undefined,
+        title: title.trim(),
+        vocal: instrumental ? "instrumental" : vocalGender ?? undefined,
+      }, token);
+      setGift(g);
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : "Save failed");
+      return;
+    }
+    try {
+      await regenerateGift(editGiftId, token);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Regenerate failed";
+      // 409: a job is already in flight — friendly hint instead of a failure.
+      if (/: 409$/.test(msg)) setConflict(true); else setEditError(msg);
+      return;
+    }
+    setRegen("generating");
+    editWatchRef.current?.close();
+    editWatchRef.current = watchGeneration(editGiftId, {
+      onDone: () => {
+        setRegen("idle");
+        // New version landed — refresh the gift mirror and the version list
+        // (default selection jumps back to the newest).
+        void getGift(editGiftId).then(setGift).catch(() => undefined);
+        void getGiftVersions(editGiftId, token).then(v => { setVersions(v); setVersionIdx(0); }).catch(() => undefined);
+      },
+      onFailed: (reason) => {
+        setRegen("error");
+        setEditError(
+          reason === "timeout"
+            ? "Generation timed out. Try again."
+            : reason === "connection-lost"
+              ? "Connection lost during generation"
+              : "Music generation failed",
+        );
+      },
+    });
+  }
+
+  /** "载入到草稿": copy a past version's work fields into the editor so the
+   *  next save-and-regenerate branches off it. */
+  function loadVersionToDraft(v: GiftVersion) {
+    setLyrics(v.lyrics ?? "");
+    setSelectedStyles([]);
+    setStyleInput(v.meta.style ?? "");
+    setInstrumental(v.meta.vocal === "instrumental");
+    setVocalGender(v.meta.vocal === "male" ? "male" : v.meta.vocal === "female" ? "female" : null);
+    setTitle(v.meta.title ?? "");
+  }
 
   const vocal = !instrumental ? vocalGender || undefined : undefined;
 
@@ -257,6 +436,35 @@ export function Studio({ photos, lang, onNavigate }: StudioProps) {
 
   const flash = (f: StudioField) => (flashed.has(f) ? " ai-flash" : "");
 
+  // ── Edit-mode display derivations: the selected version mirrors the
+  // gift row for the latest, so both paths read the same shape. ──────────
+  const shownVersion = editGiftId && versions.length > 0
+    ? versions[Math.min(versionIdx, versions.length - 1)]
+    : null;
+  const shownAudio = shownVersion ? shownVersion.audio_url : gift?.audio_url ?? null;
+  const shownLyrics = shownVersion ? shownVersion.lyrics : gift?.lyrics ?? null;
+  const shownCover = shownVersion ? shownVersion.cover_url : gift?.cover_url ?? null;
+  const shownTitle = (shownVersion ? shownVersion.meta.title : gift?.meta.title) ?? undefined;
+  const shownLrc = shownVersion ? shownVersion.lrc : gift?.lrc ?? null;
+  const shownLrcLines = shownLrc ? parseLRC(shownLrc) : null;
+
+  if (editGiftId && editPhase === "loading") {
+    return <div className="studio loading-page"><span className="spinner" /> {t("loading_gift")}</div>;
+  }
+  if (editGiftId && editPhase === "failed") {
+    return <div className="studio"><div className="error-msg">{editError}</div></div>;
+  }
+  if (editGiftId && editPhase === "readonly") {
+    return (
+      <div className="studio">
+        <div className="free-panel editorial">
+          <p className="degraded-note">{t("edit_readonly")}</p>
+          {gift?.audio_url && <AudioPlayer src={gift.audio_url} title={gift.meta.title ?? undefined} />}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="studio">
       {/* Mobile-only tab switcher (hidden ≥900px by CSS) */}
@@ -269,6 +477,48 @@ export function Studio({ photos, lang, onNavigate }: StudioProps) {
         {/* ═══ Left: draft editor ═══ */}
         <div className={`studio-draft-col${mobileTab === "draft" ? " m-active" : ""}`}>
           <div className="free-panel editorial">
+            {/* Edit mode: current version player + version switcher. While a
+                regeneration is in flight the old audio is gone server-side —
+                show the generating state instead of a broken player. */}
+            {editGiftId && (
+              <div className="edit-head">
+                {regen === "generating" ? (
+                  <div className="polish-status"><span className="spinner" /> {t("generating")}</div>
+                ) : shownAudio ? (
+                  <>
+                    {shownCover && <img className="edit-cover" src={shownCover} alt="" />}
+                    <AudioPlayer key={shownAudio} src={shownAudio} title={shownTitle} onTimeUpdate={setPlayTime} />
+                  </>
+                ) : null}
+                {versions.length > 1 && (
+                  <div className="version-bar">
+                    <span className="version-label">{t("versions")}</span>
+                    {versions.map((v, i) => (
+                      <button
+                        key={v.version}
+                        className={`version-pill${i === versionIdx ? " active" : ""}`}
+                        onClick={() => { setVersionIdx(i); setPlayTime(0); }}
+                      >
+                        V{v.version}{i === 0 ? ` · ${t("version_latest")}` : ""}
+                      </button>
+                    ))}
+                    <button className="version-load" onClick={() => loadVersionToDraft(versions[versionIdx])}>
+                      {t("load_to_draft")}
+                    </button>
+                  </div>
+                )}
+                {regen !== "generating" && (shownLrcLines?.length ? (
+                  <div className="edit-lyrics">
+                    <LRCViewer lines={shownLrcLines} currentTime={playTime} onSeek={(time) => {
+                      const audio = document.querySelector("audio");
+                      if (audio) audio.currentTime = time;
+                    }} />
+                  </div>
+                ) : shownLyrics ? (
+                  <div className="edit-lyrics">{shownLyrics}</div>
+                ) : null)}
+              </div>
+            )}
             {/* Vocal / Instrumental */}
             <div className={`mode-bar${flash("vocal")}`}>
               <button className={`mode-btn ${!instrumental ? "active" : ""}`} onClick={() => setInstrumental(false)}>
@@ -332,12 +582,31 @@ export function Studio({ photos, lang, onNavigate }: StudioProps) {
             </section>
 
             {needsLyrics && <p className="polish-status">{t("lyrics_required")}</p>}
-            <button className="btn-create" onClick={handleGenerate} disabled={gen.state === "generating" || needsLyrics}>
-              {gen.state === "generating" ? <><span className="spinner" /> {t("generating")}</> : t("create_song")}
-            </button>
+            {editGiftId ? (
+              <>
+                {/* Two explicit save paths: light (title only, no generation)
+                    and heavy (work fields + regenerate in place). */}
+                <div className="edit-actions">
+                  <button className="btn btn-secondary" onClick={() => void handleSaveTitle()} disabled={regen === "generating"}>
+                    {savedFlash ? t("saved") : t("save")}
+                  </button>
+                  <button className="btn-create" onClick={() => void handleSaveRegenerate()} disabled={regen === "generating" || needsLyrics}>
+                    {regen === "generating" ? <><span className="spinner" /> {t("generating")}</> : t("save_and_regenerate")}
+                  </button>
+                </div>
+                {conflict && <p className="polish-status">{t("regen_conflict")}</p>}
+                {editError && <p className="error-msg" role="alert">{editError}</p>}
+              </>
+            ) : (
+              <>
+                <button className="btn-create" onClick={handleGenerate} disabled={gen.state === "generating" || needsLyrics}>
+                  {gen.state === "generating" ? <><span className="spinner" /> {t("generating")}</> : t("create_song")}
+                </button>
 
-            {(error || gen.error) && <p className="error-msg" role="alert">{error || gen.error}</p>}
-            {gen.giftId && <MusicCard initialState={musicState} onOpen={() => onNavigate(gen.giftId!)} onRetry={() => gen.retry(gen.giftId!)} />}
+                {(error || gen.error) && <p className="error-msg" role="alert">{error || gen.error}</p>}
+                {gen.giftId && <MusicCard initialState={musicState} onOpen={() => onNavigate(gen.giftId!)} onRetry={() => gen.retry(gen.giftId!)} />}
+              </>
+            )}
           </div>
         </div>
 

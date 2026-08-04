@@ -83,6 +83,29 @@ export interface Gift {
   duration_secs?: number | null;
 }
 
+/** One generation snapshot of a gift (GET /api/gift/:id/versions, newest
+ *  first). `gen_request` never leaves the backend. */
+export interface GiftVersion {
+  gift_id: string;
+  version: number;
+  lyrics: string | null;
+  meta: GiftMeta;
+  audio_url: string | null;
+  cover_url: string | null;
+  lrc: string | null;
+  duration_secs: number | null;
+  created_at: string;
+}
+
+/** Request body for PATCH /api/gift/:id — absent fields stay untouched and
+ *  no generation is triggered. */
+export interface GiftFieldUpdates {
+  lyrics?: string;
+  title?: string;
+  style?: string;
+  vocal?: string;
+}
+
 /** Response from POST /api/gift. */
 export interface CreateGiftResponse {
   id: string;

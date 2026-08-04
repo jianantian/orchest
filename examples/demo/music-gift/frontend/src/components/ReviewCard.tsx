@@ -20,6 +20,9 @@ export interface ReviewCardProps {
   review?: string;
   /** True when any lyric quality stage fell back to the raw draft. */
   degraded?: boolean;
+  /** Carry the current draft into the studio (free tab) instead of
+   *  generating here. */
+  onOpenInStudio?: (data: ReviewData) => void;
 }
 
 export function ReviewCard({
@@ -32,6 +35,7 @@ export function ReviewCard({
   creating,
   review,
   degraded,
+  onOpenInStudio,
 }: ReviewCardProps) {
   const { t } = useI18n();
   const [lyrics, setLyrics] = useState(initialLyrics);
@@ -60,6 +64,13 @@ export function ReviewCard({
       title: title.trim(),
       vocal,
     });
+  }
+
+  /** The card's current field values as a draft handoff (no style fallback —
+   *  unlike submit, an empty style stays empty). */
+  function currentData(): ReviewData {
+    const tagStyle = selectedTags.join(", ");
+    return { lyrics: lyrics.trim(), style: tagStyle || style.trim(), title: title.trim(), vocal };
   }
 
   const disabled = creating;
@@ -167,6 +178,15 @@ export function ReviewCard({
           t("create_song")
         )}
       </button>
+      {onOpenInStudio && (
+        <button
+          className="btn btn-secondary btn-full open-studio-btn"
+          onClick={() => onOpenInStudio(currentData())}
+          disabled={disabled}
+        >
+          {t("open_in_studio")}
+        </button>
+      )}
     </div>
   );
 }

@@ -9,9 +9,9 @@
 在 `examples/demo/music-gift/frontend/src/` 内:
 
 1. **编辑入口**:
-   - GiftPage owner 操作区(沿用现有 owner 判定 `GiftPage.tsx:286`:creator_token 或 session 匹配)加"编辑"按钮 → `navigate("/create?edit={id}")`;
+   - GiftPage owner 操作区(沿用现有 owner 判定 `GiftPage.tsx:286`:creator_token 或 session 匹配)加"编辑"按钮 → `navigate(`/?edit=${id}`)`;
    - MyGifts 列表每张卡片加编辑入口 → 同上。
-2. **Studio edit 模式**:`/create?edit={id}` 时 CreatePage 强制 studio tab;Studio 以 `editGiftId` 形态(003 组件 + 轻封装,取简)工作:
+2. **Studio edit 模式**:`/?edit={id}` 时 CreatePage 强制 studio tab;Studio 以 `editGiftId` 形态(003 组件 + 轻封装,取简)工作:
    - 载入 gift:`getGift(id)` 把 `lyrics / meta.style / meta.vocal / meta.title` 填入草稿;
    - 显示当前版本音频播放器(复用 `AudioPlayer`);
    - **保存**:只改标题 → 仅 `PATCH /api/gift/{id}`(meta.title),提示已保存;
@@ -23,7 +23,7 @@
 
 ## 验收标准
 
-- [ ] GiftPage owner 看到"编辑"按钮并进入 `/create?edit={id}`;非 owner 看不到;MyGifts 卡片有编辑入口
+- [ ] GiftPage owner 看到"编辑"按钮并进入 `/?edit={id}`;非 owner 看不到;MyGifts 卡片有编辑入口
 - [ ] edit 模式载入后草稿与 gift 现状一致,当前音频可播放
 - [ ] 只改标题 → 保存后 gift meta.title 更新,不触发生成(无新 gen 任务)
 - [ ] 改歌词 → 保存并重新生成 → 生成完成后作品页是新音频,版本列表出现新版本且默认选中最新的

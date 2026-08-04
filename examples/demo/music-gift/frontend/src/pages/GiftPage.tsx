@@ -383,6 +383,9 @@ export default function GiftPage() {
                 onChange={(e) => void handlePublishToggle(e.target.checked)}
               />
             </label>
+            <button className="owner-edit" onClick={() => id && navigate(`/?edit=${id}`)}>
+              {t("edit")}
+            </button>
             {confirmDelete ? (
               <div className="owner-confirm">
                 <span className="owner-confirm-q">{t("delete_q")}</span>

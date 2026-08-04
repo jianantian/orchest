@@ -7,6 +7,8 @@ import type {
   CreateGiftResponse,
   GenerateResponse,
   Gift,
+  GiftFieldUpdates,
+  GiftVersion,
   LikeResponse,
   PlaylistResponse,
   SseEvent,
@@ -148,6 +150,49 @@ export async function generateMusic(id: string, creatorToken?: string): Promise<
   });
   if (!res.ok) throw new Error(`Generate music failed: ${res.status}`);
   return res.json() as Promise<GenerateResponse>;
+}
+
+/** PATCH /api/gift/:id — partial edit of lyrics/title/style/vocal. Creator
+ *  only; token may be absent when the caller acts via a session. Triggers no
+ *  generation. Returns the updated gift. */
+export async function updateGift(
+  id: string,
+  fields: GiftFieldUpdates,
+  creatorToken?: string,
+): Promise<Gift> {
+  const res = await fetch(`/api/gift/${id}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(creatorToken ? { 'X-Creator-Token': creatorToken } : {}),
+    },
+    body: JSON.stringify(fields),
+  });
+  if (!res.ok) throw new Error(`Update gift failed: ${res.status}`);
+  return res.json() as Promise<Gift>;
+}
+
+/** POST /api/gift/:id/regenerate — reset gen state and resubmit. Creator
+ *  only; 409 while a job is pending/running. Afterwards GET
+ *  /api/generate/:id/stream (watchGeneration) reports progress. */
+export async function regenerateGift(id: string, creatorToken?: string): Promise<GenerateResponse> {
+  const res = await fetch(`/api/gift/${id}/regenerate`, {
+    method: 'POST',
+    headers: creatorToken ? { 'X-Creator-Token': creatorToken } : undefined,
+  });
+  if (!res.ok) throw new Error(`Regenerate gift failed: ${res.status}`);
+  return res.json() as Promise<GenerateResponse>;
+}
+
+/** GET /api/gift/:id/versions — version history, newest first. Creator only.
+ *  Legacy gifts synthesize v1 when audio exists. */
+export async function getGiftVersions(id: string, creatorToken?: string): Promise<GiftVersion[]> {
+  const res = await fetch(`/api/gift/${id}/versions`, {
+    headers: creatorToken ? { 'X-Creator-Token': creatorToken } : undefined,
+  });
+  if (!res.ok) throw new Error(`Get gift versions failed: ${res.status}`);
+  const body = (await res.json()) as { items: GiftVersion[] };
+  return body.items;
 }
 
 /** DELETE /api/gift/:id — permanently remove a gift. Creator only. Token may
