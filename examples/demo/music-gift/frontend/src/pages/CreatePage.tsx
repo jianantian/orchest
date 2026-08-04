@@ -1,15 +1,18 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useI18n } from "../i18n";
 import { GuidedFlow } from "../components/GuidedFlow";
-import { FreeCreatePanel } from "../components/FreeCreatePanel";
+import { Studio } from "../components/Studio";
 
 type CreateTab = "guided" | "free";
 
 export default function CreatePage() {
   const navigate = useNavigate();
   const { t, lang } = useI18n();
-  const [tab, setTab] = useState<CreateTab>("guided");
+  const [searchParams] = useSearchParams();
+  /** /?edit={id} opens the studio in edit mode for an existing gift. */
+  const editGiftId = searchParams.get("edit");
+  const [tab, setTab] = useState<CreateTab>(editGiftId ? "free" : "guided");
 
   function handleNavigate(giftId: string) {
     navigate(`/gift/${giftId}`);
@@ -17,6 +20,16 @@ export default function CreatePage() {
 
   function handleSwitchToFree() {
     setTab("free");
+  }
+
+  // Edit mode forces the studio tab — switching back to guided would drop
+  // the editing context, so the tab bar is hidden.
+  if (editGiftId) {
+    return (
+      <div className="create-page">
+        <Studio lang={lang} photos={[]} onNavigate={handleNavigate} editGiftId={editGiftId} />
+      </div>
+    );
   }
 
   return (
@@ -39,7 +52,7 @@ export default function CreatePage() {
       {tab === "guided" ? (
         <GuidedFlow onNavigate={handleNavigate} onSwitchToFree={handleSwitchToFree} />
       ) : (
-        <FreeCreatePanel lang={lang} photos={[]} onNavigate={handleNavigate} />
+        <Studio lang={lang} photos={[]} onNavigate={handleNavigate} />
       )}
     </div>
   );

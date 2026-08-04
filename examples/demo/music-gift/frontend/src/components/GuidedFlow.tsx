@@ -4,6 +4,7 @@ import { useI18n, getMonths, getStyleTags } from "../i18n";
 import { useMusicGen } from "../hooks/useMusicGen";
 import { useGuidedState, clearGuided, type FlowStep, type GuidedMessage, type StepMeta } from "../hooks/useGuidedState";
 import { ReviewCard, type ReviewData } from "./ReviewCard";
+import { stageStudioDraft } from "./Studio";
 import { MusicCard } from "./MusicCard";
 import { PillsRow, GoldPill, InlineInput, BirthdayPicker } from "./ChatUI";
 import { stripMarkers } from "../lib/styles";
@@ -267,7 +268,10 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
             // Any fallen-back stage shows the same generic note.
             setDraftDegraded((e.degraded?.length ?? 0) > 0);
             gotLyrics = true;
-            act.setDraft({ lyrics: e.lyrics, style: e.style, title: e.title, vocal: e.vocal || "female" });
+            // Guided turns always send non-null fields (only studio mode
+            // emits per-field nulls); the `?? ""` fallbacks are unreachable
+            // in practice and exist to satisfy the widened Done type.
+            act.setDraft({ lyrics: e.lyrics ?? "", style: e.style ?? "", title: e.title ?? "", vocal: e.vocal || "female" });
             setReview(e.review ?? null);
           }
         } else if (e.type === "Error") {
@@ -319,6 +323,13 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
 
   function handleMusicOpen() { if (gen.giftId) { onNavigate(gen.giftId); } }
   function handleMusicRetry() { if (gen.giftId) gen.retry(gen.giftId); }
+
+  /** "在创作室中打开": stage the review draft through the studio's
+   *  sessionStorage draft channel (restored on its mount), then switch tabs. */
+  function handleOpenInStudio(data: ReviewData) {
+    stageStudioDraft(lang, data);
+    onSwitchToFree?.();
+  }
 
   // ── Pills configuration per step ─────────────────
 
@@ -431,7 +442,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
           </div>
         )}
 
-        {step === "review" && draft && <ReviewCard key={draft.lyrics} lyrics={draft.lyrics} style={draft.style} title={draft.title} vocal={draft.vocal} styleTags={getStyleTags(lang)} onSubmit={handleReviewSubmit} creating={gen.state === "generating"} review={review ?? undefined} degraded={draftDegraded} />}
+        {step === "review" && draft && <ReviewCard key={draft.lyrics} lyrics={draft.lyrics} style={draft.style} title={draft.title} vocal={draft.vocal} styleTags={getStyleTags(lang)} onSubmit={handleReviewSubmit} onOpenInStudio={handleOpenInStudio} creating={gen.state === "generating"} review={review ?? undefined} degraded={draftDegraded} />}
         {step === "music" && gen.giftId && <MusicCard initialState={gen.state === "ready" ? "ready" : gen.state === "error" ? "error" : "generating"} onOpen={handleMusicOpen} onRetry={handleMusicRetry} />}
 
         <div ref={bottomRef} />

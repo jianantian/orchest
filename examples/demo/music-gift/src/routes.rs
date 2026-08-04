@@ -18,8 +18,8 @@ use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 use crate::agent::{
-    build_messages, build_photo_blocks, build_system_message, parse_lyrics, run_chat_agent,
-    ChatRequest, SseEvent,
+    build_done_event, build_messages, build_photo_blocks, build_studio_system_message,
+    build_system_message, run_chat_agent, ChatRequest, SseEvent,
 };
 use crate::auth::AuthStore;
 use crate::error::{AppError, AppResult};
@@ -33,8 +33,13 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .route("/gift", post(create_gift))
         .route("/gift/claim", post(claim_gifts))
         .route("/my-gifts", get(my_gifts))
-        .route("/gift/{id}", get(get_gift).delete(delete_gift))
+        .route(
+            "/gift/{id}",
+            get(get_gift).delete(delete_gift).patch(update_gift),
+        )
         .route("/gift/{id}/publish", post(set_gift_published))
+        .route("/gift/{id}/regenerate", post(regenerate_music))
+        .route("/gift/{id}/versions", get(gift_versions))
         .route("/playlist", get(list_playlist))
         .route("/generate/{id}", post(generate_music))
         .route("/generate/{id}/status", get(generate_status))
@@ -113,8 +118,17 @@ pub async fn chat_handler(
         return Err(AppError::BadRequest("messages is required".to_string()));
     }
 
+    // Studio mode is a co-editing conversation: its own system prompt (with
+    // the current draft injected), and the elevate/review quality pipeline
+    // is skipped so the model's targeted edits come back unrewritten.
+    let studio = req.mode.as_deref() == Some("studio");
+
     let photo_blocks = build_photo_blocks(&req.photos, &state.data_dir.to_string_lossy());
-    let system_msg = build_system_message(&req.meta, photo_blocks.len());
+    let system_msg = if studio {
+        build_studio_system_message(req.draft.as_ref(), photo_blocks.len())
+    } else {
+        build_system_message(&req.meta, photo_blocks.len())
+    };
     let messages = build_messages(system_msg, &req.messages, &photo_blocks);
 
     let (tx, rx) = mpsc::channel::<SseEvent>(64);
@@ -131,25 +145,7 @@ pub async fn chat_handler(
         .await;
         match result {
             Ok(full_text) => {
-                let had_lyrics = full_text.contains("<<<LYRICS>>>");
-                let (final_text, degraded) =
-                    crate::agent::finalize_chat_output(review_model, &full_text, &tx).await;
-                let parsed = parse_lyrics(&final_text);
-                // The review summary only exists when a review pass ran.
-                let review = if had_lyrics {
-                    crate::agent::extract_review_summary(&final_text)
-                } else {
-                    None
-                };
-                let done = SseEvent::Done {
-                    has_lyrics: parsed.has_lyrics,
-                    lyrics: parsed.lyrics,
-                    style: parsed.style,
-                    title: parsed.title,
-                    vocal: parsed.vocal,
-                    review,
-                    degraded,
-                };
+                let done = build_done_event(review_model, &full_text, &tx, studio).await;
                 let _ = tx.send(done).await;
             }
             Err(e) => {
@@ -392,6 +388,21 @@ pub async fn delete_gift(
             }
         }
     }
+    // Version rows keep old audio files reachable; delete them too (the
+    // current audio file above is usually one of them — already gone is fine).
+    match state.gift_store.version_audio_files(&id) {
+        Ok(files) => {
+            for file in files {
+                let path = state.data_dir.join("audio").join(&file);
+                if let Err(e) = std::fs::remove_file(&path) {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        eprintln!("[music-gift] delete [{id}]: version audio cleanup: {e}");
+                    }
+                }
+            }
+        }
+        Err(e) => eprintln!("[music-gift] delete [{id}]: version audio lookup: {e}"),
+    }
     let cd = state.data_dir.join("countdown").join(format!("{id}.html"));
     let _ = std::fs::remove_file(cd);
 
@@ -550,6 +561,78 @@ pub async fn generate_music(
     )
     .await?;
     Ok((StatusCode::OK, Json(resp)))
+}
+
+// ---------------------------------------------------------------------------
+// PATCH /api/gift/:id - edit lyrics/title/style/vocal (creator only)
+// ---------------------------------------------------------------------------
+
+/// Pure edit of the work fields — absent fields stay untouched and no
+/// generation is triggered.
+pub async fn update_gift(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(req): Json<crate::gift::GiftFieldUpdates>,
+) -> AppResult<impl IntoResponse> {
+    let gift = state.gift_store.get(&id)?;
+    verify_creator(&state.auth_store, &gift, &headers, &jar)?;
+    state.gift_store.update_fields(&id, &req)?;
+    Ok(Json(state.gift_store.get(&id)?))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/gift/:id/regenerate - force a fresh generation (creator only)
+// ---------------------------------------------------------------------------
+
+/// Refuses while a job is in flight (409); otherwise clears the generation
+/// state and re-submits through the normal generate pipeline. The old audio
+/// file is kept — earlier version rows still reference it.
+pub async fn regenerate_music(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> AppResult<impl IntoResponse> {
+    let gift = state.gift_store.get(&id)?;
+    verify_creator(&state.auth_store, &gift, &headers, &jar)?;
+    if let Some("pending" | "running") = gift.gen_status.as_deref() {
+        return Err(AppError::Conflict(
+            "a generation job is already in flight for this gift".to_string(),
+        ));
+    }
+    state.gift_store.reset_for_regeneration(&id)?;
+    let resp = crate::tools::music_gen::generate(
+        &state.gen_task,
+        &state.gift_store,
+        &state.music_prompt_model,
+        &state.music_provider,
+        &id,
+    )
+    .await?;
+    Ok((StatusCode::OK, Json(resp)))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/gift/:id/versions - version history, newest first (creator only)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct GiftVersionsResponse {
+    pub items: Vec<crate::gift::GiftVersion>,
+}
+
+pub async fn gift_versions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> AppResult<impl IntoResponse> {
+    let gift = state.gift_store.get(&id)?;
+    verify_creator(&state.auth_store, &gift, &headers, &jar)?;
+    let items = state.gift_store.list_versions(&id)?;
+    Ok(Json(GiftVersionsResponse { items }))
 }
 pub async fn generate_stream(
     State(state): State<AppState>,

@@ -1,8 +1,8 @@
 //! Prompt templates for the music-gift demo.
 //!
-//! All prompts — `SYSTEM_PROMPT`, `COUNTDOWN_TEMPLATE`, and the per-provider
-//! music prompt skills — are embedded at compile time via `include_str!`, so
-//! the binary never depends on the runtime working directory.
+//! All prompts — `SYSTEM_PROMPT`, `STUDIO_SYSTEM_PROMPT`, `COUNTDOWN_TEMPLATE`,
+//! and the per-provider music prompt skills — are embedded at compile time via
+//! `include_str!`, so the binary never depends on the runtime working directory.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -10,6 +10,13 @@ use std::sync::LazyLock;
 /// System prompt for the chat assistant.
 pub static SYSTEM_PROMPT: LazyLock<String> =
     LazyLock::new(|| include_str!("../prompts/system.md").to_string());
+
+/// System prompt for studio mode: collaborative co-editing of an existing
+/// draft. The model replies conversationally and emits marker blocks only
+/// for the fields it changed — no elevate/review pipeline, no guided
+/// protocol markers.
+pub static STUDIO_SYSTEM_PROMPT: LazyLock<String> =
+    LazyLock::new(|| include_str!("../prompts/studio.md").to_string());
 
 /// Template for the birthday countdown HTML generator.
 ///

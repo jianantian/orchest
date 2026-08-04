@@ -27,6 +27,17 @@ export interface ChatRequest {
   meta: GiftMeta;
   lang?: string;
   photos: string[];
+  /** Collaboration mode: "studio" switches to the co-editing prompt and
+   *  skips the elevate/review pipeline. Absent = guided mode. */
+  mode?: string;
+  /** The current working draft; only meaningful in studio mode. An absent
+   *  field means "no value yet", not "cleared". */
+  draft?: {
+    lyrics?: string;
+    style?: string;
+    title?: string;
+    vocal?: string;
+  };
 }
 
 export type SseEvent =
@@ -38,10 +49,12 @@ export type SseEvent =
   | {
       type: 'Done';
       has_lyrics: boolean;
-      lyrics: string;
-      style: string;
-      title: string;
-      vocal: string;
+      /** `null` = the turn did not (re-)emit this field. Studio clients apply
+       *  only the non-null fields; guided turns always send non-null values. */
+      lyrics: string | null;
+      style: string | null;
+      title: string | null;
+      vocal: string | null;
       review?: string;
       /** Pipeline stages the server fell back on this turn (e.g. ["review"]). */
       degraded?: string[];
@@ -68,6 +81,29 @@ export interface Gift {
   countdown_status?: string | null;
   lrc?: string | null;
   duration_secs?: number | null;
+}
+
+/** One generation snapshot of a gift (GET /api/gift/:id/versions, newest
+ *  first). `gen_request` never leaves the backend. */
+export interface GiftVersion {
+  gift_id: string;
+  version: number;
+  lyrics: string | null;
+  meta: GiftMeta;
+  audio_url: string | null;
+  cover_url: string | null;
+  lrc: string | null;
+  duration_secs: number | null;
+  created_at: string;
+}
+
+/** Request body for PATCH /api/gift/:id — absent fields stay untouched and
+ *  no generation is triggered. */
+export interface GiftFieldUpdates {
+  lyrics?: string;
+  title?: string;
+  style?: string;
+  vocal?: string;
 }
 
 /** Response from POST /api/gift. */

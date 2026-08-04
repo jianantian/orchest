@@ -226,6 +226,9 @@ export default function MyGiftsPage() {
                   </span>
                   {owned && (
                     <span className="mine-actions">
+                      <Link to={`/?edit=${gift.id}`} className="mine-btn">
+                        {t('edit')}
+                      </Link>
                       <button
                         className="mine-btn"
                         disabled={cardBusy}

@@ -1655,6 +1655,84 @@ body.locked { overflow: hidden; }
   .playlist-unlist { opacity: 1; }
 }
 
+/* =============================================
+   STUDIO (draft editor + AI collaboration panel)
+   ============================================= */
+
+/* The app frame is capped at 520px for the single-column flows; the studio
+   needs a real desktop width for its two columns. */
+@media (min-width: 900px) {
+  #root:has(.studio) { max-width: 1080px; }
+}
+
+.studio { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+/* Mobile-only tab switcher; hidden on desktop where both columns show. */
+.studio-mobile-tabs { display: none; }
+
+.studio-cols { display: flex; flex: 1; min-height: 0; }
+.studio-draft-col {
+  flex: 1; min-width: 0; min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.studio-ai-col {
+  flex: 1; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  border-left: 1px solid var(--border);
+}
+
+@media (max-width: 899px) {
+  .studio-mobile-tabs { display: flex; padding: 6px 20px 0; gap: 6px; flex-shrink: 0; }
+  .studio-cols { flex-direction: column; }
+  .studio-draft-col, .studio-ai-col { display: none; }
+  .studio-draft-col.m-active, .studio-ai-col.m-active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .studio-ai-col { border-left: none; }
+  /* The chat panel scrolls its own message list; the draft column scrolls. */
+  .studio-ai-col.m-active { overflow: hidden; }
+}
+
+/* AI panel toolbar: title left, undo right. */
+.studio-ai-toolbar {
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px 0;
+}
+.studio-ai-title {
+  font-family: var(--font-display); font-size: 15px; font-weight: 500;
+  color: var(--text2); letter-spacing: 0.04em;
+}
+.undo-btn {
+  width: 24px; height: 24px; padding: 0;
+  border: 1px solid var(--border); border-radius: 50%;
+  background: var(--surface); color: var(--text3);
+  font-family: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.18s, border-color 0.18s, color 0.18s, transform 0.18s, opacity 0.18s;
+}
+.undo-btn:hover:not(:disabled) { color: var(--gold); border-color: var(--gold); }
+.undo-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+.undo-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* "Updated: …" confirmation attached to the assistant bubble. */
+.applied-note {
+  display: block; margin-top: 6px;
+  font-family: var(--font-body); font-size: 12px; color: var(--gold);
+  letter-spacing: 0.01em;
+}
+
+/* Flash highlight on draft fields the AI just changed. */
+@keyframes studioFieldFlash {
+  0% { background-color: var(--gold-bg); box-shadow: 0 0 0 2px var(--gold-border); }
+  100% { background-color: transparent; box-shadow: 0 0 0 2px transparent; }
+}
+.ai-flash { animation: studioFieldFlash 1.6s ease-out; border-radius: 10px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-flash { animation: none; }
+}
+
 
 /* ============================================
    Dark theme — deep warm editorial
@@ -1794,3 +1872,39 @@ html[data-theme="dark"] .btn-primary:hover:not(:disabled) {
 html[data-theme="dark"] .audio-play-btn {
   box-shadow: 0 4px 20px rgba(212, 165, 116, 0.25);
 }
+
+/* ── Edit mode (studio): version switcher, save actions, edit entries ── */
+.edit-head { margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px; }
+.edit-cover { width: 96px; height: 96px; object-fit: cover; border-radius: 12px; border: 1px solid var(--border); }
+.edit-lyrics { max-height: 240px; overflow-y: auto; font-size: 13px; line-height: 1.8; color: var(--text2); white-space: pre-wrap; }
+
+.version-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.version-label { font-size: 12px; color: var(--text3); }
+.version-pill {
+  padding: 4px 12px; border: 1px solid var(--border); border-radius: 100px;
+  background: transparent; font-size: 12px; font-family: inherit; color: var(--text2);
+  cursor: pointer; white-space: nowrap; transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.version-pill:hover { border-color: var(--gold); color: var(--gold); }
+.version-pill.active { background: var(--gold-bg); border-color: var(--gold-border); color: var(--gold); }
+.version-pill:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+.version-load {
+  padding: 0; border: none; background: none; font-family: inherit; font-size: 12px;
+  color: var(--text3); cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+  transition: color 0.15s;
+}
+.version-load:hover { color: var(--gold); }
+
+.edit-actions { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
+.edit-actions .btn-create { flex: 1; margin-top: 0; }
+.edit-actions .btn { white-space: nowrap; }
+
+.owner-edit {
+  align-self: flex-start; padding: 0; border: none; background: none;
+  font-family: inherit; font-size: 12px; color: var(--text3);
+  cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+  transition: color 0.15s;
+}
+.owner-edit:hover { color: var(--gold); }
+
+.open-studio-btn { margin-top: 8px; }
