@@ -627,6 +627,12 @@ async fn handle_done(
         }
     }
 
+    // Snapshot the completed generation as a new version row. Best-effort —
+    // a snapshot failure must never fail the generation flow.
+    if let Err(e) = store.add_version(gift_id) {
+        eprintln!("[music-gift] version snapshot failed [{gift_id}]: {e}");
+    }
+
     Ok(url)
 }
 // ── Music Prompt Generation ──────────────────────────────────────────────────
