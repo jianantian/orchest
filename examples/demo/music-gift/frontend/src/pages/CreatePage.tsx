@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useI18n } from "../i18n";
 import { GuidedFlow } from "../components/GuidedFlow";
-import { FreeCreatePanel } from "../components/FreeCreatePanel";
+import { Studio } from "../components/Studio";
 
 type CreateTab = "guided" | "free";
 
@@ -39,7 +39,7 @@ export default function CreatePage() {
       {tab === "guided" ? (
         <GuidedFlow onNavigate={handleNavigate} onSwitchToFree={handleSwitchToFree} />
       ) : (
-        <FreeCreatePanel lang={lang} photos={[]} onNavigate={handleNavigate} />
+        <Studio lang={lang} photos={[]} onNavigate={handleNavigate} />
       )}
     </div>
   );

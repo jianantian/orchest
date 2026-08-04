@@ -267,7 +267,10 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
             // Any fallen-back stage shows the same generic note.
             setDraftDegraded((e.degraded?.length ?? 0) > 0);
             gotLyrics = true;
-            act.setDraft({ lyrics: e.lyrics, style: e.style, title: e.title, vocal: e.vocal || "female" });
+            // Guided turns always send non-null fields (only studio mode
+            // emits per-field nulls); the `?? ""` fallbacks are unreachable
+            // in practice and exist to satisfy the widened Done type.
+            act.setDraft({ lyrics: e.lyrics ?? "", style: e.style ?? "", title: e.title ?? "", vocal: e.vocal || "female" });
             setReview(e.review ?? null);
           }
         } else if (e.type === "Error") {
