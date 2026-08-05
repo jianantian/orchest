@@ -58,8 +58,9 @@ Murmur 的场景是**录完再转**，实时双工对它是过度设计（还引
 
 1. Rust 侧补一个 HTTP（非 WS）ASR 方言：DashScope 非实时模型，默认一个——
    **`qwen-audio-3.0-asr-flash`**（同步，≤5 分钟短音频，multimodal-generation 端点，
-   支持 base64 直传）。选型说明：`fun-asr`（0.00022 元/秒）单价更低，但为异步任务
-   且仅收公网文件 URL，不满足"字节直传、同步返回"的接入形态，仅作备选。
+   支持 base64 直传，0.00022 元/秒）。选型说明：`fun-asr-flash` 为同端点、同价、
+   同能力（官方文档两者正文一致，同为百聆 2026-06 ASR 版本，支持 context 增强），
+   实为等价别名，留作备选。`fun-asr`（异步任务、仅收公网 URL）接入形态不符，不采用。
 2. Python 暴露：
 
 ```python
