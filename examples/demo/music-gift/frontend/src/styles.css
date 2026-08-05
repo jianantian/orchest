@@ -136,6 +136,9 @@ body::after {
 .app-nav a {
   text-decoration: none; font-size: 13px; color: var(--text2);
   padding: 6px 12px; border-radius: 100px;
+  /* Two-character CJK labels wrap anywhere by default; never let a nav
+     link break vertically (mobile header must stay one row). */
+  white-space: nowrap;
   transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s; font-weight: 500;
 }
 .app-nav a:hover { background: var(--surface2); color: var(--text); }
@@ -168,6 +171,7 @@ body::after {
   padding: 5px 14px; border: 1px solid var(--border);
   border-radius: 100px; background: transparent;
   font-size: 12px; font-family: inherit; color: var(--text2);
+  white-space: nowrap;
   cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
 }
 .login-link:hover { border-color: var(--gold); color: var(--gold); }
@@ -265,6 +269,24 @@ body::after {
   transition: border-color 0.15s, color 0.15s;
 }
 .theme-toggle:hover { border-color: var(--gold); color: var(--gold); }
+
+/* Mobile header: keep logo + nav + theme/lang/avatar on ONE row.
+   Compaction only — same controls, tighter horizontal rhythm. */
+@media (max-width: 899px) {
+  .app-header { padding: 0 12px; height: 48px; }
+  .app-logo { font-size: 17px; letter-spacing: 0.02em; }
+  .app-nav { gap: 2px; }
+  .app-nav a { padding: 5px 7px; font-size: 12px; }
+  .header-right { gap: 5px; }
+  .lang-switch { padding: 4px 16px 4px 7px; background-position: right 4px center; }
+  .login-link { padding: 4px 10px; }
+}
+
+/* Very narrow phones (~320px): shave a few more px so nothing clips. */
+@media (max-width: 360px) {
+  .app-header { padding: 0 10px; }
+  .app-nav a { padding: 5px 5px; }
+}
 
 /* ── Main scroll area ──────────────────────── */
 .app-main {
@@ -869,39 +891,8 @@ body::after {
 
 .free-panel.editorial { display: flex; flex-direction: column; gap: 28px; padding: 20px 20px 36px; }
 
-/* Vocal / Instrumental — two canonical option pills (replaces the old
-   .mode-bar segmented control). */
-.mode-select { display: flex; gap: 8px; margin-bottom: 4px; }
-.mode-select > .opt-pill { flex: 1; }
-
-/* More Options — accordion transition */
-.more-options { margin-top: 6px; }
-.btn-more { padding: 2px 0; border: none; background: transparent; font-size: 12px; font-family: inherit; color: var(--text3); cursor: pointer; letter-spacing: 0.02em; display: inline-flex; align-items: center; gap: 4px; }
-.btn-more:hover { color: var(--gold); }
-
-.more-options .t-acc-panel { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--acc-collapse) var(--acc-ease); }
-.more-options[data-open="true"] .t-acc-panel { grid-template-rows: 1fr; transition: grid-template-rows var(--acc-expand) var(--acc-ease); }
-.more-options .t-acc-panel-inner { overflow: hidden; opacity: 0; filter: blur(2px); transition: opacity var(--acc-collapse) var(--acc-ease), filter var(--acc-collapse) var(--acc-ease); }
-.more-options[data-open="true"] .t-acc-panel-inner { opacity: 1; filter: blur(0); transition: opacity var(--acc-expand) var(--acc-ease), filter var(--acc-expand) var(--acc-ease); }
-.more-options .t-acc-chevron { display: inline-flex; transform: scaleY(1); transform-origin: center; transition: transform var(--acc-chevron) var(--acc-ease); vertical-align: middle; }
-.more-options .t-acc-chevron path { vector-effect: non-scaling-stroke; }
-.more-options[data-open="true"] .t-acc-chevron { transform: scaleY(-1); }
-
-.more-body { margin-top: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); display: flex; flex-direction: column; gap: 8px; }
-
-@media (prefers-reduced-motion: reduce) {
-  .more-options .t-acc-panel,
-  .more-options .t-acc-panel-inner,
-  .more-options .t-acc-chevron { transition: none !important; }
-}
-.more-label { font-size: 11px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.05em; margin: 0; }
-.gender-select { display: flex; gap: 6px; }
-.gender-select > .opt-pill { flex: 1; }
-
 /* Sections */
-.editorial-section { display: flex; flex-direction: column; gap: 10px; }
 .section-header { display: flex; align-items: center; justify-content: space-between; }
-.section-title { font-family: var(--font-display); font-size: 18px; font-weight: 500; color: var(--text); letter-spacing: 0.02em; margin: 0; }
 
 /* Section actions row */
 .section-actions { display: flex; gap: 4px; }
@@ -931,9 +922,15 @@ body::after {
 .lyrics-manuscript::placeholder { color: var(--text3); font-style: italic; font-size: 16px; opacity: 0.65; }
 .lyrics-manuscript:focus-visible { border-color: var(--gold); box-shadow: inset 0 1px 6px rgba(42,31,20,0.04), 0 0 0 3px rgba(200,149,108,0.18); }
 .lyrics-manuscript:disabled { opacity: 0.4; }
-/* Style composer */
-.style-composer { display: flex; flex-direction: column; gap: 10px; }
-.style-input { width: 100%; padding: 10px 0; border: none; border-bottom: 1px solid var(--border); background: transparent; font-size: 15px; font-family: inherit; color: var(--text); }
+/* Attribute bar — one wrapping row: selected style chips, an inline style
+   input, and the vocal tri-state pill group. */
+.attr-block { display: flex; flex-direction: column; gap: 8px; }
+.attr-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.vocal-tristate { display: flex; gap: 6px; margin-left: auto; }
+
+/* Inline style input — compact, sits inside the attribute bar between the
+   chips and the vocal pills; Enter commits to a chip. */
+.style-input { flex: 1 1 110px; width: auto; min-width: 90px; padding: 6px 2px; border: none; border-bottom: 1px solid var(--border); background: transparent; font-size: 13px; font-family: inherit; color: var(--text); }
 .style-input::placeholder { color: var(--text3); }
 .style-input:focus-visible { outline: none; border-color: var(--gold); }
 
@@ -946,8 +943,8 @@ body::after {
 .style-chips .style-chip svg { width: 12px; height: 12px; opacity: 0.6; }
 
 .style-suggestions { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
-/* Round icon buttons — one style everywhere (refresh / undo / restart). */
-.suggest-refresh, .undo-btn, .restart-btn {
+/* Round icon buttons — one style everywhere (undo / restart). */
+.undo-btn, .restart-btn {
   width: 28px; height: 28px; padding: 0; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
   border: 1px solid var(--border); border-radius: 50%;
@@ -955,12 +952,12 @@ body::after {
   font-family: inherit; font-size: 14px; line-height: 1; cursor: pointer;
   transition: background 0.18s, border-color 0.18s, color 0.18s, transform 0.18s, opacity 0.18s;
 }
-.suggest-refresh:hover, .undo-btn:hover:not(:disabled), .restart-btn:hover { border-color: var(--gold); color: var(--gold); }
-.suggest-refresh:focus-visible, .undo-btn:focus-visible, .restart-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+.undo-btn:hover:not(:disabled), .restart-btn:hover { border-color: var(--gold); color: var(--gold); }
+.undo-btn:focus-visible, .restart-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
 .undo-btn:disabled { opacity: 0.4; cursor: default; }
 .restart-btn:hover { transform: rotate(-45deg); }
-/* Title */
-.title-input { width: 100%; padding: 12px 0; border: none; border-bottom: 1px solid var(--border); background: transparent; font-family: var(--font-display); font-size: 28px; font-weight: 500; color: var(--text); letter-spacing: 0.01em; }
+/* Title — borderless serif page title; gold underline only on focus. */
+.title-input { width: 100%; padding: 12px 0; border: none; border-bottom: 1px solid transparent; background: transparent; font-family: var(--font-display); font-size: 28px; font-weight: 500; color: var(--text); letter-spacing: 0.01em; }
 .title-input::placeholder { color: var(--text3); font-style: italic; }
 .title-input:focus-visible { outline: none; border-color: var(--gold); }
 /* Ghost text buttons — one style for all tertiary actions. .mine-btn
@@ -994,7 +991,7 @@ body::after {
 }
 .dot-row { display: flex; align-items: center; gap: 5px; }
 /* .restart-btn shares the canonical round-icon-button rule with
-   .suggest-refresh/.undo-btn (see Style composer section). */
+   .undo-btn (see Style composer section). */
 
 .restart-confirm {
   position: absolute; top: 42px; right: 16px; z-index: 6;
@@ -1682,8 +1679,9 @@ body.locked { overflow: hidden; }
 
 .studio-cols { display: flex; }
 .studio-draft-col { flex: 1; min-width: 0; }
+/* AI panel is a fixed narrow column (~380px); the draft takes the rest. */
 .studio-ai-col {
-  flex: 1; min-width: 0;
+  flex: 0 0 380px; min-width: 0;
   display: flex; flex-direction: column;
   border-left: 1px solid var(--border);
 }
@@ -1705,7 +1703,8 @@ body.locked { overflow: hidden; }
   .studio-cols { flex-direction: column; }
   .studio-draft-col, .studio-ai-col { display: none; }
   .studio-draft-col.m-active, .studio-ai-col.m-active { display: flex; flex-direction: column; }
-  .studio-ai-col { border-left: none; }
+  /* Stacked full-width tabs — drop the desktop 380px basis. */
+  .studio-ai-col { flex: none; border-left: none; }
 }
 
 /* AI panel toolbar: title left, undo right. */
@@ -1810,9 +1809,6 @@ html[data-theme="dark"] .prompt-bar-input {
   background: var(--surface);
   border-color: var(--gold-action);
 }
-
-/* More Options accordion body: tighten padding for dark */
-html[data-theme="dark"] .more-body { background: var(--bg); }
 
 /* Spinner: brighter track for dark visibility */
 html[data-theme="dark"] .spinner { border-color: var(--border); }

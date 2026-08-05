@@ -10,7 +10,7 @@ import { MusicCard } from "./MusicCard";
 import AudioPlayer from "./AudioPlayer";
 import { LRCViewer } from "./LRCViewer";
 import { parseLRC } from "../lib/lrc";
-import { MicIcon, MusicNoteIcon, XIcon, FemaleIcon, MaleIcon } from "./Icons";
+import { MusicNoteIcon, XIcon, FemaleIcon, MaleIcon } from "./Icons";
 import type { ChatMessage, Gift, GiftVersion, SseEvent } from "../types";
 
 export interface StudioProps { photos: string[]; lang: string; onNavigate: (giftId: string) => void; editGiftId?: string }
@@ -90,12 +90,13 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   // and the AI collaboration panel. ──────────────────────────────────────
   const [instrumental, setInstrumental] = useState(saved?.instrumental ?? false);
   const [vocalGender, setVocalGender] = useState<"female" | "male" | null>(saved?.vocalGender ?? null);
-  const [showMoreOptions, setShowMoreOptions] = useState(false);
   const [lyrics, setLyrics] = useState(saved?.lyrics ?? "");
   const [selectedStyles, setSelectedStyles] = useState<string[]>(saved?.selectedStyles ?? []);
   const [styleInput, setStyleInput] = useState(saved?.styleInput ?? "");
   const [title, setTitle] = useState(saved?.title ?? "");
-  const [suggestions, setSuggestions] = useState<string[]>(() => shuffleStyles(saved?.selectedStyles ?? [], 14));
+  // Empty-state style hints: one draw of 4 per mount, shown only while the
+  // style is empty — no refresh, more inspiration lives in the AI panel.
+  const [styleHints] = useState<string[]>(() => shuffleStyles([], 4));
   const [error, setError] = useState<string | null>(null);
 
   // ── Edit-mode state (only used when editGiftId is set). ──────────────
@@ -285,7 +286,6 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
 
   function addStyle(s: string) { if (s && !selectedStyles.includes(s)) setSelectedStyles(p => [...p, s]); }
   function removeStyle(s: string) { setSelectedStyles(p => p.filter(x => x !== s)); }
-  function refreshSuggestions() { setSuggestions(shuffleStyles(selectedStyles, 14)); }
   function commitStyleInput() { const t = styleInput.trim(); if (t) addStyle(t); setStyleInput(""); }
 
   // ── AI collaboration ──────────────────────────────────────────────────
@@ -346,7 +346,12 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
     // returned style goes into styleInput and the chips clear.
     if (e.style != null) { setStyleInput(e.style); setSelectedStyles([]); }
     if (e.title != null) setTitle(e.title);
-    if (e.vocal != null) { setVocalGender(e.vocal === "male" ? "male" : "female"); setInstrumental(false); }
+    // AI vocal maps onto the tri-state: male/female select that pill (and
+    // clear instrumental); "instrumental" selects 器乐.
+    if (e.vocal != null) {
+      if (e.vocal === "instrumental") { setInstrumental(true); setVocalGender(null); }
+      else { setVocalGender(e.vocal === "male" ? "male" : "female"); setInstrumental(false); }
+    }
     flashFields(fields);
     return fields;
   }
@@ -519,66 +524,49 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
                 ) : null)}
               </div>
             )}
-            {/* Vocal / Instrumental — canonical option pills */}
-            <div className={`mode-select${flash("vocal")}`}>
-              <button className={`opt-pill${!instrumental ? " on" : ""}`} onClick={() => setInstrumental(false)}>
-                <MicIcon /> {t("vocal")}
-              </button>
-              <button className={`opt-pill${instrumental ? " on" : ""}`} onClick={() => setInstrumental(true)}>
-                <MusicNoteIcon /> {t("instrumental")}
-              </button>
-            </div>
+            {/* 1. Title — borderless serif page title, no form section */}
+            <input type="text" className={`title-input${flash("title")}`} value={title} onChange={e => setTitle(e.target.value)} placeholder={t("free_title_ph")} maxLength={50} />
 
-            {/* Lyrics */}
-            <section className={`editorial-section${flash("lyrics")}`}>
-              <h3 className="section-title">{t("free_lyrics")}</h3>
-              <textarea className="lyrics-manuscript" value={lyrics} onChange={e => setLyrics(e.target.value)}
-                placeholder={instrumental ? t("instrumental_ph") : t("paste_lyrics_ph")}
-                disabled={instrumental} rows={instrumental ? 2 : 7} />
-            </section>
+            {/* 2. Lyrics — the manuscript body; disabled under 器乐 */}
+            <textarea className={`lyrics-manuscript${flash("lyrics")}`} value={lyrics} onChange={e => setLyrics(e.target.value)}
+              placeholder={instrumental ? t("instrumental_ph") : t("paste_lyrics_ph")}
+              disabled={instrumental} rows={instrumental ? 2 : 7} />
 
-            {/* Style */}
-            <section className={`editorial-section${flash("style")}`}>
-              <h3 className="section-title">{t("free_style")}</h3>
-              <div className="style-composer">
+            {/* 3. Attribute bar — one wrapping row: selected style chips, an
+                inline style input (Enter commits to a chip), and the vocal
+                tri-state [女声|男声|器乐] where nothing selected = unset. */}
+            <div className={`attr-block${flash("style")}${flash("vocal")}`}>
+              <div className="attr-bar">
+                {selectedStyles.length > 0 && (
+                  <div className="style-chips">{selectedStyles.map(s => <span key={s} className="style-chip" onClick={() => removeStyle(s)} role="button" tabIndex={0} onKeyDown={e => e.key === "Enter" && removeStyle(s)}>{s} <XIcon /></span>)}</div>
+                )}
                 <input type="text" className="style-input" value={styleInput} onChange={e => setStyleInput(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter" && !isImeComposing(e)) { e.preventDefault(); commitStyleInput(); } else if (e.key === "Backspace" && !styleInput && selectedStyles.length > 0) removeStyle(selectedStyles[selectedStyles.length - 1]); }}
-                  placeholder={t("free_style_ph")} />
-                {selectedStyles.length > 0 && <div className="style-chips">{selectedStyles.map(s => <span key={s} className="style-chip" onClick={() => removeStyle(s)} role="button" tabIndex={0} onKeyDown={e => e.key === "Enter" && removeStyle(s)}>{s} <XIcon /></span>)}</div>}
-                <div className="style-suggestions">
-                  <button className="suggest-refresh" onClick={refreshSuggestions} title="More styles" aria-label="Refresh style suggestions">↻</button>
-                  {suggestions.map(s => <button key={s} className="opt-pill opt-pill-sm" onClick={() => addStyle(s)}>{s}</button>)}
+                  placeholder={t("add_style_ph")} />
+                <div className="vocal-tristate">
+                  <button className={`opt-pill opt-pill-sm${!instrumental && vocalGender === "female" ? " on" : ""}`}
+                    onClick={() => { const deselect = !instrumental && vocalGender === "female"; setInstrumental(false); setVocalGender(deselect ? null : "female"); }}>
+                    <FemaleIcon /> {t("gender_female")}
+                  </button>
+                  <button className={`opt-pill opt-pill-sm${!instrumental && vocalGender === "male" ? " on" : ""}`}
+                    onClick={() => { const deselect = !instrumental && vocalGender === "male"; setInstrumental(false); setVocalGender(deselect ? null : "male"); }}>
+                    <MaleIcon /> {t("gender_male")}
+                  </button>
+                  <button className={`opt-pill opt-pill-sm${instrumental ? " on" : ""}`} onClick={() => setInstrumental(!instrumental)}>
+                    <MusicNoteIcon /> {t("instrumental")}
+                  </button>
                 </div>
-
-                {/* Vocal Gender — in More Options */}
-                {!instrumental && (
-                  <div className="more-options" data-open={showMoreOptions ? "true" : "false"}>
-                    <button className="btn-more" type="button" onClick={() => setShowMoreOptions(!showMoreOptions)}>
-                      <span className="t-acc-chevron">
-                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 6.5L8 10.5L12 6.5"/></svg>
-                      </span>
-                      {t("more_options")}
-                    </button>
-                    <div className="t-acc-panel">
-                      <div className="more-body t-acc-panel-inner">
-                        <p className="more-label">{t("vocal_gender")}</p>
-                        <div className="gender-select">
-                          <button className={`opt-pill opt-pill-sm${vocalGender === "female" ? " on" : ""}`} onClick={() => setVocalGender(vocalGender === "female" ? null : "female")}><FemaleIcon /> {t("gender_female")}</button>
-                          <button className={`opt-pill opt-pill-sm${vocalGender === "male" ? " on" : ""}`} onClick={() => setVocalGender(vocalGender === "male" ? null : "male")}><MaleIcon /> {t("gender_male")}</button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
-            </section>
+              {/* Empty-state hints: one fixed draw of 4, gone as soon as the
+                  style has any value, back when it's cleared. */}
+              {selectedStyles.length === 0 && !styleInput.trim() && (
+                <div className="style-suggestions">
+                  {styleHints.map(s => <button key={s} className="opt-pill opt-pill-sm" onClick={() => addStyle(s)}>{s}</button>)}
+                </div>
+              )}
+            </div>
 
-            {/* Title */}
-            <section className={`editorial-section${flash("title")}`}>
-              <h3 className="section-title">{t("free_title")}</h3>
-              <input type="text" className="title-input" value={title} onChange={e => setTitle(e.target.value)} placeholder={t("free_title_ph")} maxLength={50} />
-            </section>
-
+            {/* 4. Action area */}
             {needsLyrics && <p className="polish-status">{t("lyrics_required")}</p>}
             {editGiftId ? (
               <>
