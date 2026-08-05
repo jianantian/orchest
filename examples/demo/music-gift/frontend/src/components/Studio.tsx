@@ -123,7 +123,6 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   const [streaming, setStreaming] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [flashed, setFlashed] = useState<Set<StudioField>>(new Set());
-  const [mobileTab, setMobileTab] = useState<"draft" | "ai">("draft");
 
   // The undo stack lives in a ref (push happens inside the async chat loop);
   // undoCount is the render-facing mirror that drives the button's disabled
@@ -472,183 +471,171 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
 
   return (
     <div className="studio">
-      {/* Mobile-only tab switcher (hidden ≥900px by CSS) */}
-      <div className="studio-mobile-tabs">
-        <button className={`tab-btn ${mobileTab === "draft" ? "active" : ""}`} onClick={() => setMobileTab("draft")}>{t("studio_draft_tab")}</button>
-        <button className={`tab-btn ${mobileTab === "ai" ? "active" : ""}`} onClick={() => setMobileTab("ai")}>{t("studio_ai_tab")}</button>
-      </div>
-
-      <div className="studio-cols">
-        {/* ═══ Left: draft editor ═══ */}
-        <div className={`studio-draft-col${mobileTab === "draft" ? " m-active" : ""}`}>
-          <div className="free-panel editorial">
-            {/* Edit mode: current version player + version switcher. While a
-                regeneration is in flight the old audio is gone server-side —
-                show the generating state instead of a broken player. */}
-            {editGiftId && (
-              <div className="edit-head">
-                {regen === "generating" ? (
-                  <div className="polish-status"><span className="spinner" /> {t("generating")}</div>
-                ) : shownAudio ? (
-                  <>
-                    {shownCover && <img className="edit-cover" src={shownCover} alt="" />}
-                    <AudioPlayer key={shownAudio} src={shownAudio} title={shownTitle} onTimeUpdate={setPlayTime} />
-                  </>
-                ) : null}
-                {versions.length > 1 && (
-                  <div className="version-bar">
-                    <span className="version-label">{t("versions")}</span>
-                    {versions.map((v, i) => (
-                      <button
-                        key={v.version}
-                        className={`opt-pill opt-pill-sm${i === versionIdx ? " on" : ""}`}
-                        onClick={() => { setVersionIdx(i); setPlayTime(0); }}
-                      >
-                        V{v.version}{i === 0 ? ` · ${t("version_latest")}` : ""}
-                      </button>
-                    ))}
-                    <button className="btn btn-secondary" onClick={() => loadVersionToDraft(versions[versionIdx])}>
-                      {t("load_to_draft")}
-                    </button>
-                  </div>
-                )}
-                {regen !== "generating" && (shownLrcLines?.length ? (
-                  <div className="edit-lyrics">
-                    <LRCViewer lines={shownLrcLines} currentTime={playTime} onSeek={(time) => {
-                      const audio = document.querySelector("audio");
-                      if (audio) audio.currentTime = time;
-                    }} />
-                  </div>
-                ) : shownLyrics ? (
-                  <div className="edit-lyrics">{shownLyrics}</div>
-                ) : null)}
-              </div>
-            )}
-            {/* 1. Title — borderless serif page title, no form section */}
-            <input type="text" className={`title-input${flash("title")}`} value={title} onChange={e => setTitle(e.target.value)} placeholder={t("free_title_ph")} maxLength={50} />
-
-            {/* 2. Lyrics — the manuscript body; disabled under 器乐 */}
-            <textarea className={`lyrics-manuscript${flash("lyrics")}`} value={lyrics} onChange={e => setLyrics(e.target.value)}
-              placeholder={instrumental ? t("instrumental_ph") : t("paste_lyrics_ph")}
-              disabled={instrumental} rows={instrumental ? 2 : 7} />
-
-            {/* 3. Attribute bar — one wrapping row: selected style chips, an
-                inline style input (Enter commits to a chip), and the vocal
-                tri-state [女声|男声|器乐] where nothing selected = unset. */}
-            <div className={`attr-block${flash("style")}${flash("vocal")}`}>
-              <div className="attr-bar">
-                {selectedStyles.length > 0 && (
-                  <div className="style-chips">{selectedStyles.map(s => <span key={s} className="style-chip" onClick={() => removeStyle(s)} role="button" tabIndex={0} onKeyDown={e => e.key === "Enter" && removeStyle(s)}>{s} <XIcon /></span>)}</div>
-                )}
-                <input type="text" className="style-input" value={styleInput} onChange={e => setStyleInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter" && !isImeComposing(e)) { e.preventDefault(); commitStyleInput(); } else if (e.key === "Backspace" && !styleInput && selectedStyles.length > 0) removeStyle(selectedStyles[selectedStyles.length - 1]); }}
-                  placeholder={t("add_style_ph")} />
-                <div className="vocal-tristate">
-                  <button className={`opt-pill opt-pill-sm${!instrumental && vocalGender === "female" ? " on" : ""}`}
-                    onClick={() => { const deselect = !instrumental && vocalGender === "female"; setInstrumental(false); setVocalGender(deselect ? null : "female"); }}>
-                    <FemaleIcon /> {t("gender_female")}
-                  </button>
-                  <button className={`opt-pill opt-pill-sm${!instrumental && vocalGender === "male" ? " on" : ""}`}
-                    onClick={() => { const deselect = !instrumental && vocalGender === "male"; setInstrumental(false); setVocalGender(deselect ? null : "male"); }}>
-                    <MaleIcon /> {t("gender_male")}
-                  </button>
-                  <button className={`opt-pill opt-pill-sm${instrumental ? " on" : ""}`} onClick={() => setInstrumental(!instrumental)}>
-                    <MusicNoteIcon /> {t("instrumental")}
-                  </button>
-                </div>
-              </div>
-              {/* Empty-state hints: one fixed draw of 4, gone as soon as the
-                  style has any value, back when it's cleared. */}
-              {selectedStyles.length === 0 && !styleInput.trim() && (
-                <div className="style-suggestions">
-                  {styleHints.map(s => <button key={s} className="opt-pill opt-pill-sm" onClick={() => addStyle(s)}>{s}</button>)}
-                </div>
-              )}
-            </div>
-
-            {/* 4. Action area */}
-            {needsLyrics && <p className="polish-status">{t("lyrics_required")}</p>}
-            {editGiftId ? (
+      {/* ═══ Draft editor: the top of the single column ═══ */}
+      <div className="free-panel editorial">
+        {/* Edit mode: current version player + version switcher. While a
+            regeneration is in flight the old audio is gone server-side —
+            show the generating state instead of a broken player. */}
+        {editGiftId && (
+          <div className="edit-head">
+            {regen === "generating" ? (
+              <div className="polish-status"><span className="spinner" /> {t("generating")}</div>
+            ) : shownAudio ? (
               <>
-                {/* Two explicit save paths: light (title only, no generation)
-                    and heavy (work fields + regenerate in place). */}
-                <div className="edit-actions">
-                  <button className="btn btn-secondary" onClick={() => void handleSaveTitle()} disabled={regen === "generating"}>
-                    {savedFlash ? t("saved") : t("save")}
-                  </button>
-                  <button className="btn btn-primary" onClick={() => void handleSaveRegenerate()} disabled={regen === "generating" || needsLyrics}>
-                    {regen === "generating" ? <><span className="spinner" /> {t("generating")}</> : t("save_and_regenerate")}
-                  </button>
-                </div>
-                {conflict && <p className="polish-status">{t("regen_conflict")}</p>}
-                {editError && <p className="error-msg" role="alert">{editError}</p>}
+                {shownCover && <img className="edit-cover" src={shownCover} alt="" />}
+                <AudioPlayer key={shownAudio} src={shownAudio} title={shownTitle} onTimeUpdate={setPlayTime} />
               </>
-            ) : (
-              <>
-                <button className="btn btn-primary btn-lg btn-full" onClick={handleGenerate} disabled={gen.state === "generating" || needsLyrics}>
-                  {gen.state === "generating" ? <><span className="spinner" /> {t("generating")}</> : t("create_song")}
+            ) : null}
+            {versions.length > 1 && (
+              <div className="version-bar">
+                <span className="version-label">{t("versions")}</span>
+                {versions.map((v, i) => (
+                  <button
+                    key={v.version}
+                    className={`opt-pill opt-pill-sm${i === versionIdx ? " on" : ""}`}
+                    onClick={() => { setVersionIdx(i); setPlayTime(0); }}
+                  >
+                    V{v.version}{i === 0 ? ` · ${t("version_latest")}` : ""}
+                  </button>
+                ))}
+                <button className="btn btn-secondary" onClick={() => loadVersionToDraft(versions[versionIdx])}>
+                  {t("load_to_draft")}
                 </button>
-
-                {(error || gen.error) && <p className="error-msg" role="alert">{error || gen.error}</p>}
-                {gen.giftId && <MusicCard initialState={musicState} onOpen={() => onNavigate(gen.giftId!)} onRetry={() => gen.retry(gen.giftId!)} />}
-              </>
+              </div>
             )}
+            {regen !== "generating" && (shownLrcLines?.length ? (
+              <div className="edit-lyrics">
+                <LRCViewer lines={shownLrcLines} currentTime={playTime} onSeek={(time) => {
+                  const audio = document.querySelector("audio");
+                  if (audio) audio.currentTime = time;
+                }} />
+              </div>
+            ) : shownLyrics ? (
+              <div className="edit-lyrics">{shownLyrics}</div>
+            ) : null)}
           </div>
+        )}
+        {/* 1. Title — borderless serif page title, no form section */}
+        <input type="text" className={`title-input${flash("title")}`} value={title} onChange={e => setTitle(e.target.value)} placeholder={t("free_title_ph")} maxLength={50} />
+
+        {/* 2. Lyrics — the manuscript body; disabled under 器乐 */}
+        <textarea className={`lyrics-manuscript${flash("lyrics")}`} value={lyrics} onChange={e => setLyrics(e.target.value)}
+          placeholder={instrumental ? t("instrumental_ph") : t("paste_lyrics_ph")}
+          disabled={instrumental} rows={instrumental ? 2 : 7} />
+
+        {/* 3. Attribute bar — one wrapping row: selected style chips, an
+            inline style input (Enter commits to a chip), and the vocal
+            tri-state [女声|男声|器乐] where nothing selected = unset. */}
+        <div className={`attr-block${flash("style")}${flash("vocal")}`}>
+          <div className="attr-bar">
+            {selectedStyles.length > 0 && (
+              <div className="style-chips">{selectedStyles.map(s => <span key={s} className="style-chip" onClick={() => removeStyle(s)} role="button" tabIndex={0} onKeyDown={e => e.key === "Enter" && removeStyle(s)}>{s} <XIcon /></span>)}</div>
+            )}
+            <input type="text" className="style-input" value={styleInput} onChange={e => setStyleInput(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && !isImeComposing(e)) { e.preventDefault(); commitStyleInput(); } else if (e.key === "Backspace" && !styleInput && selectedStyles.length > 0) removeStyle(selectedStyles[selectedStyles.length - 1]); }}
+              placeholder={t("add_style_ph")} />
+            <div className="vocal-tristate">
+              <button className={`opt-pill opt-pill-sm${!instrumental && vocalGender === "female" ? " on" : ""}`}
+                onClick={() => { const deselect = !instrumental && vocalGender === "female"; setInstrumental(false); setVocalGender(deselect ? null : "female"); }}>
+                <FemaleIcon /> {t("gender_female")}
+              </button>
+              <button className={`opt-pill opt-pill-sm${!instrumental && vocalGender === "male" ? " on" : ""}`}
+                onClick={() => { const deselect = !instrumental && vocalGender === "male"; setInstrumental(false); setVocalGender(deselect ? null : "male"); }}>
+                <MaleIcon /> {t("gender_male")}
+              </button>
+              <button className={`opt-pill opt-pill-sm${instrumental ? " on" : ""}`} onClick={() => setInstrumental(!instrumental)}>
+                <MusicNoteIcon /> {t("instrumental")}
+              </button>
+            </div>
+          </div>
+          {/* Empty-state hints: one fixed draw of 4, gone as soon as the
+              style has any value, back when it's cleared. */}
+          {selectedStyles.length === 0 && !styleInput.trim() && (
+            <div className="style-suggestions">
+              {styleHints.map(s => <button key={s} className="opt-pill opt-pill-sm" onClick={() => addStyle(s)}>{s}</button>)}
+            </div>
+          )}
         </div>
 
-        {/* ═══ Right: AI collaboration panel ═══ */}
-        <div className={`studio-ai-col${mobileTab === "ai" ? " m-active" : ""}`}>
-          <div className="chat-panel">
-            <div className="studio-ai-toolbar">
-              <span className="studio-ai-title">{t("studio_ai_tab")}</span>
-              <button className="undo-btn" onClick={handleUndo} disabled={undoCount === 0} title={t("undo")} aria-label={t("undo")}>↩</button>
+        {/* 4. Action area */}
+        {needsLyrics && <p className="polish-status">{t("lyrics_required")}</p>}
+        {editGiftId ? (
+          <>
+            {/* Two explicit save paths: light (title only, no generation)
+                and heavy (work fields + regenerate in place). */}
+            <div className="edit-actions">
+              <button className="btn btn-secondary" onClick={() => void handleSaveTitle()} disabled={regen === "generating"}>
+                {savedFlash ? t("saved") : t("save")}
+              </button>
+              <button className="btn btn-primary" onClick={() => void handleSaveRegenerate()} disabled={regen === "generating" || needsLyrics}>
+                {regen === "generating" ? <><span className="spinner" /> {t("generating")}</> : t("save_and_regenerate")}
+              </button>
             </div>
-            <div className="chat-messages guided">
-              {messages.length === 0 && <div className="bubble bot">{t("studio_ai_intro")}</div>}
+            {conflict && <p className="polish-status">{t("regen_conflict")}</p>}
+            {editError && <p className="error-msg" role="alert">{editError}</p>}
+          </>
+        ) : (
+          <>
+            <button className="btn btn-primary btn-lg btn-full" onClick={handleGenerate} disabled={gen.state === "generating" || needsLyrics}>
+              {gen.state === "generating" ? <><span className="spinner" /> {t("generating")}</> : t("create_song")}
+            </button>
 
-              {messages.map((msg, i) => {
-                // Stop at <<<LYRICS>>> — marker blocks belong to the draft,
-                // not the chat bubble (same truncation as the guided flow).
-                const display = msg.role === "assistant"
-                  ? stripMarkers(msg.content.split("<<<LYRICS>>>")[0])
-                  : stripMarkers(msg.content);
-                if (!display.trim() && !msg.note) return null;
-                return (
-                  <div key={`m-${i}`} className={`bubble ${msg.role === "assistant" ? "bot" : msg.role}`}>
-                    {display}
-                    {msg.note && <span className="applied-note">{msg.note}</span>}
-                  </div>
-                );
-              })}
+            {(error || gen.error) && <p className="error-msg" role="alert">{error || gen.error}</p>}
+            {gen.giftId && <MusicCard initialState={musicState} onOpen={() => onNavigate(gen.giftId!)} onRetry={() => gen.retry(gen.giftId!)} />}
+          </>
+        )}
+      </div>
 
-              {/* Typing indicator: waiting for the first visible text of the
-                  current assistant turn. */}
-              {streaming && !lyricsStreaming && !lastTurnText && (
-                <div className="bubble bot typing-indicator" aria-label="Assistant is typing">
-                  <span className="typing-dot" />
-                  <span className="typing-dot" />
-                  <span className="typing-dot" />
-                </div>
-              )}
+      {/* ═══ AI collaboration region: below the draft, input pinned ═══ */}
+      <div className="chat-panel">
+        <div className="studio-ai-toolbar">
+          <span className="studio-ai-title">{t("studio_ai_tab")}</span>
+          <button className="undo-btn" onClick={handleUndo} disabled={undoCount === 0} title={t("undo")} aria-label={t("undo")}>↩</button>
+        </div>
+        <div className="chat-messages guided">
+          {messages.length === 0 && <div className="bubble bot">{t("studio_ai_intro")}</div>}
 
-              {/* The hidden <<<LYRICS>>> block is streaming into the draft. */}
-              {streaming && lyricsStreaming && (
-                <div className="bubble bot reviewing-indicator" role="status">
-                  <span className="typing-dot" />
-                  <span className="typing-dot" />
-                  <span className="typing-dot" />
-                  <span className="reviewing-label">{t("writing_lyrics")}</span>
-                </div>
-              )}
+          {messages.map((msg, i) => {
+            // Stop at <<<LYRICS>>> — marker blocks belong to the draft,
+            // not the chat bubble (same truncation as the guided flow).
+            const display = msg.role === "assistant"
+              ? stripMarkers(msg.content.split("<<<LYRICS>>>")[0])
+              : stripMarkers(msg.content);
+            if (!display.trim() && !msg.note) return null;
+            return (
+              <div key={`m-${i}`} className={`bubble ${msg.role === "assistant" ? "bot" : msg.role}`}>
+                {display}
+                {msg.note && <span className="applied-note">{msg.note}</span>}
+              </div>
+            );
+          })}
 
-              <div ref={bottomRef} />
+          {/* Typing indicator: waiting for the first visible text of the
+              current assistant turn. */}
+          {streaming && !lyricsStreaming && !lastTurnText && (
+            <div className="bubble bot typing-indicator" aria-label="Assistant is typing">
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+              <span className="typing-dot" />
             </div>
-            {chatError && <div className="error-msg" style={{ margin: "0 16px 8px" }}>{chatError}</div>}
-            <div className="chat-bar">
-              <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !isImeComposing(e)) { e.preventDefault(); handleChatSend(); } }} rows={1} disabled={streaming} placeholder={t("ai_placeholder")} />
-              <button className="chat-send-btn" onClick={handleChatSend} disabled={streaming} aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z" /></svg></button>
+          )}
+
+          {/* The hidden <<<LYRICS>>> block is streaming into the draft. */}
+          {streaming && lyricsStreaming && (
+            <div className="bubble bot reviewing-indicator" role="status">
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+              <span className="reviewing-label">{t("writing_lyrics")}</span>
             </div>
-          </div>
+          )}
+
+          <div ref={bottomRef} />
+        </div>
+        {chatError && <div className="error-msg" style={{ margin: "0 16px 8px" }}>{chatError}</div>}
+        <div className="chat-bar">
+          <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !isImeComposing(e)) { e.preventDefault(); handleChatSend(); } }} rows={1} disabled={streaming} placeholder={t("ai_placeholder")} />
+          <button className="chat-send-btn" onClick={handleChatSend} disabled={streaming} aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z" /></svg></button>
         </div>
       </div>
     </div>
