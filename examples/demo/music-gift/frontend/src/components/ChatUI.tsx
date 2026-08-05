@@ -17,7 +17,7 @@ export function PillsRow({
       {options.map((o) => (
         <span
           key={o.value}
-          className={`pill ${selected === o.value ? "on" : ""}`}
+          className={`opt-pill ${selected === o.value ? "on" : ""}`}
           onClick={() => {
             setSelected(o.value);
             onSelect(o.value, o.label);
@@ -38,7 +38,7 @@ export function GoldPill({ label, onClick }: { label: string; onClick: () => voi
   return (
     <div className="pills-wrap">
       <span
-        className="pill"
+        className="opt-pill"
         style={{ color: "var(--gold)", borderColor: "var(--gold)" }}
         onClick={onClick}
         role="button"
