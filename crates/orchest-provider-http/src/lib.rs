@@ -95,6 +95,7 @@ pub fn asr_entries() -> Vec<Entry<Box<dyn Asr>>> {
                 pinned.provider = provider.to_string();
                 pinned.model = model.to_string();
                 let handle: Box<dyn Asr> = match provider {
+                    "aliyun" => Box::new(asr::aliyun::from_provider_config(&pinned)?),
                     "assemblyai" => Box::new(asr::assemblyai::from_provider_config(&pinned)?),
                     "speechmatics" => Box::new(asr::speechmatics::from_provider_config(&pinned)?),
                     other => {

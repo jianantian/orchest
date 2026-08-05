@@ -3,5 +3,6 @@
 //! ASR lives in `orchest-provider-stream`. Registered through the wall via
 //! [`crate::asr_entries`].
 
+pub mod aliyun;
 pub mod assemblyai;
 pub mod speechmatics;

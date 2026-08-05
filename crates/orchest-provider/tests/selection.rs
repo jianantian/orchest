@@ -386,6 +386,26 @@ fn with_builtin_registers_assemblyai_batch_asr_dialect() {
 
 #[cfg(feature = "http")]
 #[test]
+fn with_builtin_registers_aliyun_one_shot_asr_without_replacing_stream_default() {
+    let reg = Registry::with_builtin();
+    let one_shot = reg
+        .asr()
+        .id("aliyun/qwen-audio-3.0-asr-flash")
+        .select()
+        .expect("Aliyun one-shot ASR is registered under the http feature");
+    assert!(!one_shot.descriptor.streaming);
+    assert!(!one_shot.descriptor.default_for_provider);
+
+    #[cfg(feature = "stream")]
+    {
+        let default = reg.asr().provider("aliyun").select().unwrap();
+        assert_eq!(default.descriptor.model.as_ref(), "fun-asr-realtime");
+        assert!(default.descriptor.default_for_provider);
+    }
+}
+
+#[cfg(feature = "http")]
+#[test]
 fn with_builtin_registers_speechmatics_batch_asr_dialect() {
     let reg = Registry::with_builtin();
     let picked = reg

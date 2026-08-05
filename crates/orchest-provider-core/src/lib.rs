@@ -14,6 +14,7 @@
 //! The default feature set pulls **no** `tokio-tungstenite` / OSS-signing deps,
 //! so a pure-REST (LLM) consumer stays light.
 
+pub mod aliyun_asr;
 pub mod auth;
 pub mod catalog;
 pub mod gen;
