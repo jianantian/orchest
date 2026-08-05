@@ -24,7 +24,7 @@ use crate::protocol::{
 use crate::role_compat::{downgrade_minimax_role, CompatibleRole};
 use crate::{
     telemetry, ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
-    OptionAdjustment, RequestOptions, StreamEvent, ToolDef, UpstreamErrorDetail,
+    OptionAdjustment, RequestOptions, ResponseFormat, StreamEvent, ToolDef, UpstreamErrorDetail,
 };
 
 /// Stable kind label for a [`ContentBlock`], used in drop diagnostics.
@@ -289,6 +289,10 @@ impl ChatAdapter {
             "stream": true,
             "stream_options": {"include_usage": true}
         });
+
+        if effective_options.response_format == ResponseFormat::JsonObject {
+            body["response_format"] = json!({"type": "json_object"});
+        }
 
         if !tools.is_empty() {
             body["tools"] = Value::Array(

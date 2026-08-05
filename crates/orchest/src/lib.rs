@@ -1,5 +1,6 @@
 //! Agent runtime core: orchestration, tools, skills, and model integration.
 
+pub mod atomic;
 pub mod bindings;
 pub mod budget;
 pub mod events;

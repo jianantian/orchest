@@ -27,8 +27,8 @@ use crate::protocol::{
 };
 use crate::{
     telemetry, CachePolicy, ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError,
-    ModelResponse, OptionAdjustment, RequestOptions, Role, StreamEvent, ThinkingLevel, ToolDef,
-    UpstreamErrorDetail,
+    ModelResponse, OptionAdjustment, RequestOptions, ResponseFormat, Role, StreamEvent,
+    ThinkingLevel, ToolDef, UpstreamErrorDetail,
 };
 
 use response::consume_event_stream;
@@ -355,6 +355,13 @@ impl ModelAdapter for MessagesAdapter {
         options: &RequestOptions,
         tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
+        if options.response_format == ResponseFormat::JsonObject {
+            return Err(ModelError::internal(
+                "Messages protocol does not support json_object response format",
+                "unsupported_response_format",
+            ));
+        }
+
         let provider = self.entry.name;
         let _span = telemetry::model_complete_span(provider, &self.model, tx.is_some());
         let cx = self.cx();

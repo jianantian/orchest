@@ -8,7 +8,7 @@ use crate::protocol::{Protocol, ProviderProfile, ResolvedModel};
 use crate::ModelAdapter;
 use crate::{
     defaults, CachePolicy, CapabilitySource, ContentBlock, MediaSource, Message, RequestOptions,
-    Role, StopReason, StreamEvent, ThinkingLevel,
+    ResponseFormat, Role, StopReason, StreamEvent, ThinkingLevel,
 };
 
 const MINIMAL_SSE: &str = r#"event: message_start
@@ -36,6 +36,27 @@ fn default_options() -> RequestOptions {
         thinking: ThinkingLevel::Off,
         ..Default::default()
     }
+}
+
+#[tokio::test]
+async fn json_object_response_format_is_rejected_before_messages_request() {
+    let adapter = MessagesAdapter::for_test(
+        "anthropic",
+        "claude-sonnet-4-20250514",
+        "http://127.0.0.1:1/v1/messages",
+        128,
+    );
+    let options = RequestOptions {
+        response_format: ResponseFormat::JsonObject,
+        ..default_options()
+    };
+
+    let error = adapter
+        .complete(&[], &[], &options, None)
+        .await
+        .expect_err("json_object must be rejected before network I/O");
+
+    assert_eq!(error.code.as_deref(), Some("unsupported_response_format"));
 }
 
 /// The shared Messages core carrying Anthropic's entry + profile. `api_url` is the
