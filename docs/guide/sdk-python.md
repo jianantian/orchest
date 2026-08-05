@@ -19,6 +19,7 @@ maturin develop          # 或：uvx maturin develop
 from orchest import Agent
 
 agent = Agent(
+    name="assistant",
     model="anthropic/claude-sonnet-4-6",
     system_prompt="You are a helpful assistant with access to tools.",
     api_key_env="ANTHROPIC_API_KEY",
@@ -27,7 +28,7 @@ agent = Agent(
 events = agent.run("What's the weather in Tokyo?")
 ```
 
-`Agent(...)` 常用参数：`model`（`provider/model` 字符串）、`system_prompt`、`api_key_env`（也可用 `api_key` 显式传，或 `api_url` 指向自建端点）、`max_tokens`、`budget`、`request_options`、`retry`（`True` 开启推荐模型重试：429/5xx/timeout/流中断，3 次指数退避；默认不重试）。
+`Agent(...)` 必填参数：`name`（日志与 handoff 使用的人类可读名称）、`model`（`provider/model` 字符串）、`system_prompt`。常用可选参数：`api_key_env`（也可用 `api_key` 显式传，或 `api_url` 指向自建端点）、`max_tokens`、`budget`、`request_options`、`retry`（`True` 开启推荐模型重试：429/5xx/timeout/流中断，3 次指数退避；默认不重试）。
 
 `run(input, messages=None)` 和 `run_sync(input, messages=None)` 都返回 `list[RuntimeEvent]`（一次性返回事件列表，不是流式 generator）。`messages` 是多轮历史（session 快照同款 serde 形状），经 `AgentRun::start_with_messages` 带入；`run_stream(input, on_event, messages=None)` 同理。事件 `run_completed.stop_reason` 标记完成原因：`"MaxTokens"` 表示输出被截断，消费方应续写/重试/报错，而非直接使用。
 

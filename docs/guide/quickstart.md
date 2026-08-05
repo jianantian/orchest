@@ -127,7 +127,7 @@ use orchest::tool::registry::ToolRegistry;
 let mut registry = ToolRegistry::new();
 registry.register(Arc::new(CurrentTimeTool))?;
 
-let config = AgentConfig::builder("anthropic/claude-sonnet-4-6")
+let config = AgentConfig::builder("assistant", "anthropic/claude-sonnet-4-6")
     .system_prompt("You are a helpful assistant. Use tools when useful.")
     .max_steps(5)
     .build()?;

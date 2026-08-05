@@ -80,7 +80,7 @@ and tools that depend on previous tool outputs.
 Parallel execution is opt-in:
 
 ```rust
-let config = AgentConfig::builder("mock/mock")
+let config = AgentConfig::builder("assistant", "mock/mock")
     .enable_parallel_tools()
     .build()
     .unwrap();

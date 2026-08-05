@@ -1,8 +1,8 @@
-实时语音识别服务通过 WebSocket 接收音频流并实时转写为带标点的文本，适用于直播字幕、在线会议、语音聊天、智能助手等场景。
+实时语音识别服务接收音频流并实时转写为带标点的文本，适用于直播字幕、在线会议、语音聊天、智能助手等场景。
 
 ## **概述**
 
-通过 WebSocket 流式协议实现低延迟音频到文本转换。
+实现低延迟音频到文本转换。
 
 -   支持普通话及粤语、四川话等多种方言的高精度语音识别
     
@@ -11,6 +11,8 @@
 -   支持惊讶、平静、愉快、悲伤、厌恶、愤怒、恐惧等多种情绪状态识别
     
 -   支持热词定制，可提升特定词汇的识别准确率
+    
+-   支持上下文增强，通过配置上下文提高识别准确率
     
 -   支持时间戳输出，生成结构化识别结果
     
@@ -25,12 +27,16 @@
     
 -   如果通过 DashScope SDK 调用，需要[安装最新版SDK](https://help.aliyun.com/zh/model-studio/install-sdk)。
     
+-   如果通过 AOQ 协议接入 Qwen-Audio-3.0-ASR-Flash-Streaming/Fun-ASR-Realtime，需要下载并集成 AOQ 客户端 SDK，详见[AOQ SDK 简介](https://help.aliyun.com/zh/model-studio/realtime-api-aoq-sdk-desc/)。
+    
 
 ## **快速开始**
 
 以下示例展示如何通过 DashScope SDK 快速调用实时语音识别服务。
 
-## **Fun-ASR**
+## Qwen-Audio-3.0-ASR-Flash-Streaming/**Fun-ASR**\-Realtime
+
+该模型除 WebSocket 协议外，还支持通过 AOQ 协议接入；如果是客户端对接，且更看重稳定的延迟、弱网下的交互能力、实时双工的降噪与回声消除，可优先考虑 AOQ，协议对比与选型请参见[模型/应用支持力度](https://help.aliyun.com/zh/model-studio/realtime-api-overview#rtov-s02h2)。
 
 ## 识别传入麦克风的语音
 
@@ -56,8 +62,8 @@ import java.util.concurrent.TimeUnit;
 
 public class Main {
     public static void main(String[] args) throws InterruptedException {
-        // 以下为华北2（北京）地域的URL，各地域的URL不同。
-        Constants.baseWebsocketApiUrl = "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
+        // 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+        Constants.baseWebsocketApiUrl = "wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference";
         ExecutorService executorService = Executors.newSingleThreadExecutor();
         executorService.submit(new RealtimeRecognitionTask());
         executorService.shutdown();
@@ -70,7 +76,7 @@ class RealtimeRecognitionTask implements Runnable {
     @Override
     public void run() {
         RecognitionParam param = RecognitionParam.builder()
-                .model("fun-asr-realtime")
+                .model("qwen-audio-3.0-asr-flash-streaming")
                 // 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
                 // 若没有配置环境变量，请用百炼API Key将下行替换为：.apiKey("sk-xxx")
                 .apiKey(System.getenv("DASHSCOPE_API_KEY"))
@@ -230,8 +236,8 @@ if __name__ == '__main__':
     # 若没有配置环境变量，请用百炼API Key将下行替换为：dashscope.api_key = "sk-xxx"
     dashscope.api_key = os.environ.get('DASHSCOPE_API_KEY')
 
-    # 以下为华北2（北京）地域的URL，各地域的URL不同。
-    dashscope.base_websocket_api_url='wss://dashscope.aliyuncs.com/api-ws/v1/inference'
+    # 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+    dashscope.base_websocket_api_url='wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference'
 
     # Create the recognition callback
     callback = Callback()
@@ -239,7 +245,7 @@ if __name__ == '__main__':
     # Call recognition service by async mode, you can customize the recognition parameters, like model, format,
     # sample_rate
     recognition = Recognition(
-        model='fun-asr-realtime',
+        model='qwen-audio-3.0-asr-flash-streaming',
         format=format_pcm,
         # 'pcm'、'wav'、'opus'、'speex'、'aac'、'amr', you can check the supported formats in the document
         sample_rate=sample_rate,
@@ -269,8 +275,6 @@ if __name__ == '__main__':
 识别本地音频文件并输出结果，适用于对话聊天、控制口令、语音输入法、语音搜索等较短的准实时场景。
 
 ## Java
-
-示例中用到的音频为：[asr\_example.wav](https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20250210/oiydrd/asr_example.wav)。
 
 ```
 import com.alibaba.dashscope.api.GeneralApi;
@@ -307,13 +311,13 @@ class TimeUtils {
 
 public class Main {
     public static void main(String[] args) throws InterruptedException {
-        // 以下为华北2（北京）地域的URL，各地域的URL不同。
-        Constants.baseWebsocketApiUrl = "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
+        // 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+        Constants.baseWebsocketApiUrl = "wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference";
         // 实际应用中，该方法仅在程序最开始执行一次即可，不必多次执行该方法。
         warmUp();
 
         ExecutorService executorService = Executors.newSingleThreadExecutor();
-        executorService.submit(new RealtimeRecognitionTask(Paths.get(System.getProperty("user.dir"), "asr_example.wav")));
+        executorService.submit(new RealtimeRecognitionTask(Paths.get(System.getProperty("user.dir"), "{YOUR_AUDIO_FILE}")));
         executorService.shutdown();
 
         // wait for all tasks to complete
@@ -350,7 +354,7 @@ class RealtimeRecognitionTask implements Runnable {
     @Override
     public void run() {
         RecognitionParam param = RecognitionParam.builder()
-                .model("fun-asr-realtime")
+                .model("qwen-audio-3.0-asr-flash-streaming")
                 // 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
                 // 若没有配置环境变量，请用百炼API Key将下行替换为：.apiKey("sk-xxx")
                 .apiKey(System.getenv("DASHSCOPE_API_KEY"))
@@ -429,8 +433,6 @@ class RealtimeRecognitionTask implements Runnable {
 
 ## Python
 
-示例中用到的音频为：[asr\_example.wav](https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20250210/acoict/asr_example.wav)。
-
 ```
 import os
 import time
@@ -441,8 +443,8 @@ from dashscope.audio.asr import *
 # 若没有配置环境变量，请用百炼API Key将下行替换为：dashscope.api_key = "sk-xxx"
 dashscope.api_key = os.environ.get('DASHSCOPE_API_KEY')
 
-# 以下为华北2（北京）地域的URL，各地域的URL不同。
-dashscope.base_websocket_api_url = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference'
+# 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+dashscope.base_websocket_api_url = 'wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference'
 
 from datetime import datetime
 
@@ -471,15 +473,15 @@ class Callback(RecognitionCallback):
 
 callback = Callback()
 
-recognition = Recognition(model='fun-asr-realtime',
+recognition = Recognition(model='qwen-audio-3.0-asr-flash-streaming',
                           format='wav',
                           sample_rate=16000,
                           callback=callback)
 
 try:
     audio_data: bytes = None
-    f = open("asr_example.wav", 'rb')
-    if os.path.getsize("asr_example.wav"):
+    f = open("{YOUR_AUDIO_FILE}", 'rb')
+    if os.path.getsize("{YOUR_AUDIO_FILE}"):
         # 一次性将文件数据全部读入buffer
         file_buffer = f.read()
         f.close()
@@ -523,7 +525,7 @@ print(
     ))
 ```
 
-## **Qwen-ASR**
+## **Qwen3-ASR-Flash-Realtime**
 
 **说明**
 
@@ -560,10 +562,10 @@ public class Qwen3AsrRealtimeUsage {
 
         OmniRealtimeParam param = OmniRealtimeParam.builder()
                 .model("qwen3-asr-flash-realtime")
-                // 以下为华北2（北京）地域的WebSocket URL，各地域的URL不同。
-                .url("wss://dashscope.aliyuncs.com/api-ws/v1/realtime")
+                // 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+                .url("wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime")
                 // 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
-                // 若没有配置环境变量，请用百炼API Key将下行替换为：.apikey("sk-xxx")
+                // 若没有配置环境变量，请用阿里云百炼API Key将下行替换为：.apikey("sk-xxx")
                 .apikey(System.getenv("DASHSCOPE_API_KEY"))
                 .build();
 
@@ -689,7 +691,7 @@ def setup_logging():
 def init_api_key():
     """初始化 API Key"""
     # 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
-    # 若没有配置环境变量，请用百炼API Key将下行替换为：dashscope.api_key = "sk-xxx"
+    # 若没有配置环境变量，请用阿里云百炼API Key将下行替换为：dashscope.api_key = "sk-xxx"
     dashscope.api_key = os.environ.get('DASHSCOPE_API_KEY', 'YOUR_API_KEY')
     if dashscope.api_key == 'YOUR_API_KEY':
         print('[Warning] Using placeholder API key, set DASHSCOPE_API_KEY environment variable.')
@@ -754,8 +756,8 @@ def main():
     callback = MyCallback(conversation=None)
     conversation = OmniRealtimeConversation(
         model='qwen3-asr-flash-realtime',
-        # 以下为华北2（北京）地域的WebSocket URL，各地域的URL不同。
-        url='wss://dashscope.aliyuncs.com/api-ws/v1/realtime',
+        # 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+        url='wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime',
         callback=callback,
     )
     callback.conversation = conversation  # 把 conversation 注入回调，用于回调中调用其方法
@@ -797,13 +799,13 @@ if __name__ == '__main__':
 
 ## **Paraformer**
 
-Paraformer示例代码和Fun-ASR相似，将model替换成Paraformer模型名即可。
+Paraformer示例代码和Qwen-Audio-3.0-ASR-Flash-Streaming/Fun-ASR-Realtime相似，将model替换成Paraformer模型名即可。
 
-## **进阶功能**
+## **识别配置**
 
-### **Qwen-ASR 交互模式**
+### **Qwen3-ASR-Flash-Realtime 交互模式**
 
-Qwen-ASR Realtime API 提供两种交互模式：
+Qwen3-ASR-Flash-Realtime Realtime API 提供两种交互模式：
 
 -   **VAD 模式（默认）**：服务端自动检测语音的起点和终点（断句），适用于实时对话、会议记录等场景。启用方式：配置 `session.turn_detection` 参数（默认启用）。
     
@@ -847,22 +849,28 @@ Qwen-ASR Realtime API 提供两种交互模式：
 
 VAD（Voice Activity Detection，语音活动检测）用于判定一段连续语音何时结束，从而触发"最终识别结果"事件。三类模型均默认启用服务端 VAD，但参数命名与可调粒度不同：
 
--   **Qwen-ASR**：通过 `session.turn_detection` 配置，含 `silence_duration_ms`（静音持续时长阈值，超过则判定 turn 结束，服务端默认 `800`，对话和聊天等需快速断句的场景推荐设为 `400`）与 `threshold`（VAD 检测灵敏度，服务端默认 `0.2`）。Qwen-ASR 还支持关闭 VAD 改用客户端 commit 控制断句的 Manual 模式，详见上文 [Qwen-ASR 交互模式](#rt03-qam-h3)。
+-   **Qwen-Audio-3.0-ASR-Flash-Streaming / Fun-ASR-Realtime / Paraformer**：通过 `max_sentence_silence`（VAD 断句静音阈值，毫秒）配置。当一段语音后的静音时长超过该阈值时，系统判定该句子已结束。
     
--   **Fun-ASR / Paraformer**：通过 `max_sentence_silence`（VAD 断句静音阈值，毫秒）配置。当一段语音后的静音时长超过该阈值时，系统判定该句子已结束。
+-   **Qwen3-ASR-Flash-Realtime**：通过 `session.turn_detection` 配置，含 `silence_duration_ms`（静音持续时长阈值，超过则判定 turn 结束，服务端默认 `800`，对话和聊天等需快速断句的场景推荐设为 `400`）与 `threshold`（VAD 检测灵敏度，服务端默认 `0.2`）。Qwen3-ASR-Flash-Realtime 还支持关闭 VAD 改用客户端 commit 控制断句的 Manual 模式，详见上文 [Qwen3-ASR-Flash-Realtime 交互模式](#rt03-qam-h3)。
     
 
-参数名因协议而异（同一含义在 Qwen-ASR 中称 `silence_duration_ms`，在 Fun-ASR / Paraformer 中称 `max_sentence_silence`）。完整字段定义请参见[API参考](#c09d428f2crac)。
+参数名因协议而异（同一含义在 Qwen-Audio-3.0-ASR-Flash-Streaming / Fun-ASR-Realtime / Paraformer 中称 `max_sentence_silence`，在 Qwen3-ASR-Flash-Realtime 中称 `silence_duration_ms`）。完整字段定义请参见[API参考](#c09d428f2crac)。
+
+## **进阶功能**
 
 ### 使用热词提升准确率
 
-Fun-ASR 和 Paraformer 系列支持通过热词提升特定词汇（品牌名、人名、专有术语等）的识别准确率。
+支持通过热词提升特定词汇（品牌名、人名、专有术语等）的识别准确率。
 
-详细的热词配置方法和使用说明，请参见[自定义热词](https://help.aliyun.com/zh/model-studio/custom-hot-words-user-guide)。
+详细的热词配置方法和使用说明，请参见[提升识别准确率](https://help.aliyun.com/zh/model-studio/improve-asr-accuracy)。
+
+### 使用上下文增强提升准确率
+
+支持上下文增强功能，可将对话历史或领域术语传入 ASR 模型，显著提升专有词汇的转写准确率。详细的使用方法和效果示例，请参见[上下文增强](https://help.aliyun.com/zh/model-studio/improve-asr-accuracy#ctx-enhance-h2)。
 
 ### 获取时间戳
 
-Fun-ASR 和 Paraformer 系列模型默认输出**句级**与**字级**两种粒度的时间戳，便于字幕对齐、关键词高亮、卡拉 OK 跟读等场景。**Qwen-ASR Realtime（qwen3-asr-flash-realtime）当前不返回时间戳信息**，如需时间戳请使用 Fun-ASR 或 Paraformer。Qwen-ASR 的录音文件转写模型 `qwen3-asr-flash-filetrans` 支持字级时间戳，详见[非实时语音识别](https://help.aliyun.com/zh/model-studio/non-realtime-speech-recognition-user-guide)。
+Qwen-Audio-3.0-ASR-Flash-Streaming、Fun-ASR-Realtime 和 Paraformer 系列模型默认输出**句级**与**字级**两种粒度的时间戳，便于字幕对齐、关键词高亮、卡拉 OK 跟读等场景。**Qwen3-ASR-Flash-Realtime（qwen3-asr-flash-realtime）当前不返回时间戳信息**，如需时间戳请使用 Qwen-Audio-3.0-ASR-Flash-Streaming、Fun-ASR-Realtime 或 Paraformer。**Qwen ASR** 的录音文件转写模型 `qwen3-asr-flash-filetrans` 支持字级时间戳，详见[非实时语音识别](https://help.aliyun.com/zh/model-studio/non-realtime-speech-recognition-user-guide)。
 
 时间戳单位均为毫秒，分两个层级返回：
 
@@ -900,9 +908,9 @@ Fun-ASR 和 Paraformer 系列模型默认输出**句级**与**字级**两种粒�
 
 ### 情感识别
 
-Qwen-ASR 与 Paraformer 部分模型可在转写结果中附带说话人的情绪状态，但两者输出粒度与开启方式不同。
+**Qwen3-ASR-Flash-Realtime** 与 Paraformer 部分模型可在转写结果中附带说话人的情绪状态，但两者输出粒度与开启方式不同。
 
-**Qwen-ASR（qwen3-asr-flash-realtime）**：固定开启，无需配置。在 `conversation.item.input_audio_transcription.text` 与 `conversation.item.input_audio_transcription.completed` 事件中均通过顶层 `emotion` 字段返回，取值为 7 类细粒度情绪：`surprised`（惊讶）、`neutral`（平静）、`happy`（愉快）、`sad`（悲伤）、`disgusted`（厌恶）、`angry`（愤怒）、`fearful`（恐惧）。
+**Qwen3-ASR-Flash-Realtime（qwen3-asr-flash-realtime）**：固定开启，无需配置。在 `conversation.item.input_audio_transcription.text` 与 `conversation.item.input_audio_transcription.completed` 事件中均通过顶层 `emotion` 字段返回，取值为 7 类细粒度情绪：`surprised`（惊讶）、`neutral`（平静）、`happy`（愉快）、`sad`（悲伤）、`disgusted`（厌恶）、`angry`（愤怒）、`fearful`（恐惧）。
 
 ```
 {
@@ -930,15 +938,50 @@ Qwen-ASR 与 Paraformer 部分模型可在转写结果中附带说话人的情�
 
 完整字段定义、取值约束与示例请参见[API参考](#c09d428f2crac)。
 
+### **敏感词过滤**
+
+敏感词过滤可对识别结果中的敏感词执行替换或移除，适用于客服质检、内容合规、字幕审核等场景。
+
+**支持范围：**仅Qwen-Audio-3.0-ASR-Flash-Streaming和Fun-ASR-Realtime。
+
+**使用限制：**最多支持设置32个敏感词。
+
+**默认行为：**未传入 `special_word_filter` 参数时，不会对敏感词进行过滤。
+
+**如何配置：**`special_word_filter` 是 JSON 对象，包含三个子字段：
+
+-   `filter_with_signed.word_list`：字符串数组，列出需要被替换为等长 `*` 的敏感词。例如 `["测试"]`，「帮我测试一下」会变成「帮我\*\*一下」。
+    
+-   `filter_with_empty.word_list`：字符串数组，列出需要从结果中完全移除的敏感词。例如 `["开始"]`，「比赛这就要开始了吗」会变成「比赛这就要了吗」。
+    
+-   `system_reserved_filter`：布尔值，默认 `false`。是否启用敏感词过滤功能。
+    
+
+配置示例：
+
+```
+{
+  "special_word_filter": {
+    "filter_with_signed": {
+      "word_list": ["测试"]
+    },
+    "filter_with_empty": {
+      "word_list": ["开始", "发生"]
+    },
+    "system_reserved_filter": true
+  }
+}
+```
+
+不同 SDK 暴露上述参数的命名习惯不同（如字典 key、对象属性、方法等），完整字段对照请参见 API参考。
+
 ### **WebSocket 原始协议调用**
 
 以下示例展示如何通过 WebSocket 原始协议直连服务端，适用于不使用 DashScope SDK 的场景。此为最小可运行实现，WebSocket 协议请参见各模型的 [API参考](#c09d428f2crac)。
 
 点击查看 WebSocket 原始协议调用示例
 
-## **Fun-ASR**
-
-如下示例中，使用的音频文件为[asr\_example.wav](https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20241114/mgiguo/asr_example.wav)。
+## Qwen-Audio-3.0-ASR-Flash-Streaming/**Fun-ASR-Realtime**
 
 ## **Python**
 
@@ -962,11 +1005,11 @@ import threading
 import websocket
 
 # 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
-# 若没有配置环境变量，请用百炼API Key将下行替换为：api_key = "sk-xxx"
+# 若没有配置环境变量，请用阿里云百炼API Key将下行替换为：api_key = "sk-xxx"
 api_key = os.environ.get('DASHSCOPE_API_KEY')
-# 以下为华北2（北京）地域的WebSocket URL，各地域的URL不同。
-url = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference/'  # WebSocket服务器地址
-audio_file = 'asr_example.wav'  # 替换为您的音频文件路径
+# 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+url = 'wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference/'  # WebSocket服务器地址
+audio_file = '{YOUR_AUDIO_FILE}'  # 替换为您的音频文件路径
 
 # 生成32位随机ID
 TASK_ID = uuid.uuid4().hex[:32]
@@ -986,7 +1029,7 @@ def send_run_task(ws):
             'task_group': 'audio',
             'task': 'asr',
             'function': 'recognition',
-            'model': 'fun-asr-realtime',
+            'model': 'qwen-audio-3.0-asr-flash-streaming',
             'parameters': {
                 'sample_rate': 16000,
                 'format': 'wav'
@@ -1123,12 +1166,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class FunASRRealtimeClient {
 
     // 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
-    // 若没有配置环境变量，请用百炼API Key将下行替换为：private static final String API_KEY = "sk-xxx";
+    // 若没有配置环境变量，请用阿里云百炼API Key将下行替换为：private static final String API_KEY = "sk-xxx";
     private static final String API_KEY = System.getenv().getOrDefault("DASHSCOPE_API_KEY", "sk-xxx");
-    // 以下为华北2（北京）地域的WebSocket URL，各地域的URL不同。
-    private static final String URL = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/";
-    private static final String AUDIO_FILE = "asr_example.wav"; // 替换为您的音频文件路径
-    private static final String MODEL = "fun-asr-realtime";
+    // 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+    private static final String URL = "wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference/";
+    private static final String AUDIO_FILE = "{YOUR_AUDIO_FILE}"; // 替换为您的音频文件路径
+    private static final String MODEL = "qwen-audio-3.0-asr-flash-streaming";
 
     // 生成32位随机ID
     private static final String TASK_ID = UUID.randomUUID().toString().replace("-", "").substring(0, 32);
@@ -1264,11 +1307,11 @@ const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid'); // 用于生成UUID
 
 // 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
-// 若没有配置环境变量，请用百炼API Key将下行替换为：const apiKey = "sk-xxx"
+// 若没有配置环境变量，请用阿里云百炼API Key将下行替换为：const apiKey = "sk-xxx"
 const apiKey = process.env.DASHSCOPE_API_KEY;
-// 以下为华北2（北京）地域的WebSocket URL，各地域的URL不同。
-const url = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference/'; // WebSocket服务器地址
-const audioFile = 'asr_example.wav'; // 替换为您的音频文件路径
+// 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+const url = 'wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference/'; // WebSocket服务器地址
+const audioFile = '{YOUR_AUDIO_FILE}'; // 替换为您的音频文件路径
 
 // 生成32位随机ID
 const TASK_ID = uuidv4().replace(/-/g, '').slice(0, 32);
@@ -1335,7 +1378,7 @@ function sendRunTask() {
       task_group: 'audio',
       task: 'asr',
       function: 'recognition',
-      model: 'fun-asr-realtime',
+      model: 'qwen-audio-3.0-asr-flash-streaming',
       parameters: {
         sample_rate: 16000,
         format: 'wav'
@@ -1412,13 +1455,13 @@ class Program {
     private static bool _taskStartedReceived = false;
     private static bool _taskFinishedReceived = false;
     // 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
-    // 若没有配置环境变量，请用百炼API Key将下行替换为：private static readonly string ApiKey = "sk-xxx"
+    // 若没有配置环境变量，请用阿里云百炼API Key将下行替换为：private static readonly string ApiKey = "sk-xxx"
     private static readonly string ApiKey = Environment.GetEnvironmentVariable("DASHSCOPE_API_KEY") ?? throw new InvalidOperationException("DASHSCOPE_API_KEY environment variable is not set.");
 
-    // 以下为华北2（北京）地域的WebSocket URL，各地域的URL不同。
-    private const string WebSocketUrl = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/";
+    // 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+    private const string WebSocketUrl = "wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference/";
     // 替换为您的音频文件路径
-    private const string AudioFilePath = "asr_example.wav";
+    private const string AudioFilePath = "{YOUR_AUDIO_FILE}";
 
     static async Task Main(string[] args) {
         // 建立WebSocket连接，配置headers进行鉴权
@@ -1547,7 +1590,7 @@ class Program {
                 ["task_group"] = "audio",
                 ["task"] = "asr",
                 ["function"] = "recognition",
-                ["model"] = "fun-asr-realtime",
+                ["model"] = "qwen-audio-3.0-asr-flash-streaming",
                 ["parameters"] = new JsonObject {
                     ["format"] = "wav",
                     ["sample_rate"] = 16000,
@@ -1618,11 +1661,11 @@ use React\Socket\Connector as SocketConnector;
 use Ratchet\rfc6455\Messaging\Frame;
 
 // 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
-// 若没有配置环境变量，请用百炼API Key将下行替换为：$api_key = "sk-xxx"
+// 若没有配置环境变量，请用阿里云百炼API Key将下行替换为：$api_key = "sk-xxx"
 $api_key = getenv("DASHSCOPE_API_KEY");
-// 以下为华北2（北京）地域的WebSocket URL，各地域的URL不同。
-$websocket_url = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference/';
-$audio_file_path = 'asr_example.wav'; // 替换为您的音频文件路径
+// 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+$websocket_url = 'wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference/';
+$audio_file_path = '{YOUR_AUDIO_FILE}'; // 替换为您的音频文件路径
 
 $loop = Loop::get();
 
@@ -1704,7 +1747,7 @@ function sendRunTaskMessage($conn, $taskId) {
             "task_group" => "audio",
             "task" => "asr",
             "function" => "recognition",
-            "model" => "fun-asr-realtime",
+            "model" => "qwen-audio-3.0-asr-flash-streaming",
             "parameters" => [
                 "format" => "wav",
                 "sample_rate" => 16000
@@ -1866,16 +1909,16 @@ import (
 )
 
 const (
-	// 以下为华北2（北京）地域的WebSocket URL，各地域的URL不同。
-	wsURL     = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/" // WebSocket服务器地址
-	audioFile = "asr_example.wav"                                   // 替换为您的音频文件路径
+	// 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+	wsURL     = "wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference/" // WebSocket服务器地址
+	audioFile = "{YOUR_AUDIO_FILE}"                                   // 替换为您的音频文件路径
 )
 
 var dialer = websocket.DefaultDialer
 
 func main() {
 	// 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
-    // 若没有配置环境变量，请用百炼API Key将下行替换为：apiKey := "sk-xxx"
+    // 若没有配置环境变量，请用阿里云百炼API Key将下行替换为：apiKey := "sk-xxx"
 	apiKey := os.Getenv("DASHSCOPE_API_KEY")
 
 	// 连接WebSocket服务
@@ -2018,7 +2061,7 @@ func generateRunTaskCmd() (string, string, error) {
 			TaskGroup: "audio",
 			Task:      "asr",
 			Function:  "recognition",
-			Model:     "fun-asr-realtime",
+			Model:     "qwen-audio-3.0-asr-flash-streaming",
 			Parameters: Params{
 				Format:     "wav",
 				SampleRate: 16000,
@@ -2136,7 +2179,7 @@ func closeConnection(conn *websocket.Conn) {
 }
 ```
 
-## **Qwen-ASR**
+## **Qwen3-ASR-Flash-Realtime**
 
 **说明**
 
@@ -2174,11 +2217,11 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 # 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
-# 若没有配置环境变量，请用百炼API Key将下行替换为：API_KEY="sk-xxx"
+# 若没有配置环境变量，请用阿里云百炼API Key将下行替换为：API_KEY="sk-xxx"
 API_KEY = os.environ.get("DASHSCOPE_API_KEY", "sk-xxx")
 QWEN_MODEL = "qwen3-asr-flash-realtime"
-# 以下为华北2（北京）地域的WebSocket URL，各地域的URL不同。
-baseUrl = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+# 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+baseUrl = "wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime"
 url = f"{baseUrl}?model={QWEN_MODEL}"
 print(f"Connecting to server: {url}")
 
@@ -2361,7 +2404,7 @@ public class QwenASRRealtimeClient {
 
     private static final Logger logger = Logger.getLogger(QwenASRRealtimeClient.class.getName());
     // 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
-    // 若没有配置环境变量，请用百炼API Key将下行替换为：private static final String API_KEY = "sk-xxx"
+    // 若没有配置环境变量，请用阿里云百炼API Key将下行替换为：private static final String API_KEY = "sk-xxx"
     private static final String API_KEY = System.getenv().getOrDefault("DASHSCOPE_API_KEY", "sk-xxx");
     private static final String MODEL = "qwen3-asr-flash-realtime";
 
@@ -2374,8 +2417,8 @@ public class QwenASRRealtimeClient {
     public static void main(String[] args) throws Exception {
         initLogger();
 
-        // 以下为华北2（北京）地域的WebSocket URL，各地域的URL不同。
-        String baseUrl = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime";
+        // 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+        String baseUrl = "wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime";
         String url = baseUrl + "?model=" + MODEL;
         logger.info("Connecting to server: " + url);
 
@@ -2570,14 +2613,14 @@ import fs from 'fs';
 
 // ===== 配置 =====
 // 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
-// 若没有配置环境变量，请用百炼API Key将下行替换为：const API_KEY = "sk-xxx"
+// 若没有配置环境变量，请用阿里云百炼API Key将下行替换为：const API_KEY = "sk-xxx"
 const API_KEY = process.env.DASHSCOPE_API_KEY || 'sk-xxx';
 const MODEL = 'qwen3-asr-flash-realtime';
 const enableServerVad = true; // true为VAD模式，false为Manual模式
 const localAudioPath = 'your_audio_file.pcm'; // PCM16、16kHz音频文件路径
 
-// 以下为华北2（北京）地域的WebSocket URL，各地域的URL不同。
-const baseUrl = 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime';
+// 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+const baseUrl = 'wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime';
 const url = `${baseUrl}?model=${MODEL}`;
 
 console.log(`Connecting to server: ${url}`);
@@ -2755,11 +2798,11 @@ class Program {
     private const bool EnableServerVad = true;
 
     // 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
-    // 若没有配置环境变量，请用百炼API Key将下行替换为：private static readonly string ApiKey = "sk-xxx"
+    // 若没有配置环境变量，请用阿里云百炼API Key将下行替换为：private static readonly string ApiKey = "sk-xxx"
     private static readonly string ApiKey = Environment.GetEnvironmentVariable("DASHSCOPE_API_KEY") ?? throw new InvalidOperationException("DASHSCOPE_API_KEY environment variable is not set.");
     private const string Model = "qwen3-asr-flash-realtime";
-    // 以下为华北2（北京）地域的WebSocket URL，各地域的URL不同。
-    private const string BaseUrl = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime";
+    // 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+    private const string BaseUrl = "wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime";
     private const string AudioFilePath = "your_audio_file.pcm"; // 替换为您的PCM音频文件路径
 
     static async Task Main(string[] args) {
@@ -2929,11 +2972,11 @@ use React\EventLoop\Loop;
 use React\Socket\Connector as SocketConnector;
 
 // 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
-// 若没有配置环境变量，请用百炼API Key将下行替换为：$api_key = "sk-xxx"
+// 若没有配置环境变量，请用阿里云百炼API Key将下行替换为：$api_key = "sk-xxx"
 $api_key = getenv("DASHSCOPE_API_KEY");
 $model = 'qwen3-asr-flash-realtime';
-// 以下为华北2（北京）地域的WebSocket URL，各地域的URL不同。
-$base_url = 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime';
+// 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+$base_url = 'wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime';
 $websocket_url = $base_url . '?model=' . $model;
 $audio_file_path = 'your_audio_file.pcm'; // 替换为您的PCM音频文件路径
 
@@ -3075,8 +3118,8 @@ import (
 )
 
 const (
-	// 以下为华北2（北京）地域的WebSocket URL，各地域的URL不同。
-	baseURL         = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+	// 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+	baseURL         = "wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime"
 	model           = "qwen3-asr-flash-realtime"
 	audioFile       = "your_audio_file.pcm" // 替换为您的PCM音频文件路径
 	enableServerVad = true                  // 控制是否使用 VAD 模式
@@ -3090,7 +3133,7 @@ type ServerEvent struct {
 
 func main() {
 	// 新加坡和北京地域的API Key不同。获取API Key：https://help.aliyun.com/zh/model-studio/get-api-key
-	// 若没有配置环境变量，请用百炼API Key将下行替换为：apiKey := "sk-xxx"
+	// 若没有配置环境变量，请用阿里云百炼API Key将下行替换为：apiKey := "sk-xxx"
 	apiKey := os.Getenv("DASHSCOPE_API_KEY")
 
 	url := baseURL + "?model=" + model
@@ -3239,11 +3282,13 @@ func receiveMessages(conn *websocket.Conn, sessionFinished chan<- bool) {
 
 ## **Paraformer**
 
-Paraformer示例代码和Fun-ASR相似，将model替换成Paraformer模型名即可。
+Paraformer示例代码和Qwen-Audio-3.0-ASR-Flash-Streaming/Fun-ASR-Realtime相似，将model替换成Paraformer模型名即可。
+
+## **应用于生产环境**
 
 ### **连接复用（WebSocket）**
 
-Fun-ASR 和 Paraformer 的 WebSocket 连接支持复用：一个识别任务结束后，无需重新建立连接即可开启下一个任务。
+Qwen-Audio-3.0-ASR-Flash-Streaming/Fun-ASR-Realtime 和 Paraformer 的 WebSocket 连接支持复用：一个识别任务结束后，无需重新建立连接即可开启下一个任务。
 
 **复用流程**：客户端发送 `finish-task`，服务端返回 `task-finished` 后，可重新发送 `run-task` 开启新任务。
 
@@ -3258,13 +3303,17 @@ Fun-ASR 和 Paraformer 的 WebSocket 连接支持复用：一个识别任务结�
 4.  任务结束后 60 秒无新任务，连接自动断开。
     
 
-Qwen-ASR Realtime 采用会话模式，每次会话结束后需主动断开连接，不支持连接复用。
+Qwen3-ASR-Flash-Realtime 采用会话模式，每次会话结束后需主动断开连接，不支持连接复用。
 
 各模型事件说明请参见对应的[API参考](#c09d428f2crac)。
 
 ### **高并发最佳实践**
 
-DashScope SDK 内置池化机制，可复用 WebSocket 连接和识别对象，避免频繁创建销毁带来的开销。目前仅 Paraformer Java SDK 支持此功能。
+DashScope SDK 内置池化机制，可复用 WebSocket 连接和识别对象，避免频繁创建销毁带来的开销。
+
+**重要**
+
+目前仅 Paraformer Java SDK 支持此功能。
 
 点击查看高并发最佳实践
 
@@ -3445,6 +3494,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
+import com.alibaba.dashscope.utils.Constants;
 
 public class Main {
     public static void checkoutEnv(String envName, int defaultSize) {
@@ -3459,6 +3509,8 @@ public class Main {
 
     public static void main(String[] args)
             throws NoApiKeyException, InterruptedException {
+        // 以下为华北2（北京）地域的配置，调用时请将"{WorkspaceId}"替换为真实的业务空间ID，各地域的配置不同。
+        Constants.baseHttpApiUrl = "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1";
         checkoutEnv("DASHSCOPE_CONNECTION_POOL_SIZE", 32);
         checkoutEnv("DASHSCOPE_MAXIMUM_ASYNC_REQUESTS", 32);
         checkoutEnv("DASHSCOPE_MAXIMUM_ASYNC_REQUESTS_PER_HOST", 32);
@@ -3468,9 +3520,9 @@ public class Main {
         int threadNums = 3;
         String currentDir = System.getProperty("user.dir");
         Path[] filePaths = {
-                Paths.get(currentDir, "asr_example.wav"),
-                Paths.get(currentDir, "asr_example.wav"),
-                Paths.get(currentDir, "asr_example.wav"),
+                Paths.get(currentDir, "{YOUR_AUDIO_FILE}"),
+                Paths.get(currentDir, "{YOUR_AUDIO_FILE}"),
+                Paths.get(currentDir, "{YOUR_AUDIO_FILE}"),
         };
         ExecutorService executorService = Executors.newFixedThreadPool(threadNums);
         for (int i = 0; i < threadNums; i++) {
@@ -3734,8 +3786,6 @@ DashScope Java SDK 通过全局单例的连接池管理和复用 WebSocket 连�
 2.  确认连接池已建立并维持足够的活跃连接后，再开始正式的性能数据采集。
     
 
-## **应用于生产环境**
-
 ### 提升识别效果
 
 -   **选择匹配采样率的模型**：8kHz 电话音频直接使用 8kHz 模型，避免升采样到 16kHz 造成的信息失真。
@@ -3758,52 +3808,52 @@ DashScope Java SDK 通过全局单例的连接池管理和复用 WebSocket 连�
 -   **模型限流**：在调用模型接口时请注意模型的[限流](https://help.aliyun.com/zh/model-studio/rate-limit)规则。
     
 
-## **适用范围**
+## **支持的模型与地域**
 
-**不同**[**服务部署范围**](https://help.aliyun.com/zh/model-studio/regions/)**支持的模型不同**：
-
-## 中国内地
-
-服务部署范围为[中国内地](https://help.aliyun.com/zh/model-studio/regions/#080da663a75xh)时，模型推理计算资源仅限于中国内地；静态数据存储于您所选的地域。该部署范围支持的地域：华北2（北京）。
+## 华北2（北京）
 
 调用以下模型时，请选择北京地域的[API Key](https://bailian.console.aliyun.com/?tab=model#/api-key)：
 
--   **Fun-ASR**：
+-   **Qwen-Audio-3.0-ASR-Flash-Streaming：**qwen-audio-3.0-asr-flash-streaming
+    
+-   **Fun-ASR-Realtime**：
     
     -   fun-asr-realtime（稳定版，当前等同fun-asr-realtime-2025-11-07）、fun-asr-realtime-2026-02-28（最新快照版）、fun-asr-realtime-2025-11-07（快照版）、fun-asr-realtime-2025-09-15（快照版）
         
     -   fun-asr-flash-8k-realtime（稳定版，当前等同fun-asr-flash-8k-realtime-2026-01-28）、fun-asr-flash-8k-realtime-2026-01-28
         
--   **千问3-ASR-Flash-Realtime**：qwen3-asr-flash-realtime（稳定版，当前等同qwen3-asr-flash-realtime-2025-10-27）、qwen3-asr-flash-realtime-2026-02-10（最新快照版）、qwen3-asr-flash-realtime-2025-10-27（快照版）
+-   **Qwen3-ASR-Flash-Realtime**：qwen3-asr-flash-realtime（稳定版，当前等同qwen3-asr-flash-realtime-2025-10-27）、qwen3-asr-flash-realtime-2026-02-10（最新快照版）、qwen3-asr-flash-realtime-2025-10-27（快照版）
     
 -   **Paraformer**：paraformer-realtime-v2、paraformer-realtime-v1、paraformer-realtime-8k-v2、paraformer-realtime-8k-v1
     
 
-## 国际
-
-服务部署范围为[国际](https://help.aliyun.com/zh/model-studio/regions/#080da663a75xh)时，模型推理计算资源在全球范围内动态调度（不含中国内地）；静态数据存储于您所选的地域。该部署范围支持的地域：新加坡。
+## 新加坡
 
 调用以下模型时，请选择新加坡地域的[API Key](https://modelstudio.console.aliyun.com/?tab=dashboard#/api-key)：
 
--   **Fun-ASR**：fun-asr-realtime（稳定版，当前等同fun-asr-realtime-2025-11-07）、fun-asr-realtime-2025-11-07（快照版）
+-   **Qwen-Audio-3.0-ASR-Flash-Streaming：**qwen-audio-3.0-asr-flash-streaming
     
--   **千问3-ASR-Flash-Realtime**：qwen3-asr-flash-realtime（稳定版，当前等同qwen3-asr-flash-realtime-2025-10-27）、qwen3-asr-flash-realtime-2026-02-10（最新快照版）、qwen3-asr-flash-realtime-2025-10-27（快照版）
+-   **Fun-ASR-Realtime**：fun-asr-realtime（稳定版，当前等同fun-asr-realtime-2025-11-07）、fun-asr-realtime-2025-11-07（快照版）
+    
+-   **Qwen3-ASR-Flash-Realtime**：qwen3-asr-flash-realtime（稳定版，当前等同qwen3-asr-flash-realtime-2025-10-27）、qwen3-asr-flash-realtime-2026-02-10（最新快照版）、qwen3-asr-flash-realtime-2025-10-27（快照版）
     
 
 ## **API参考**
 
--   [实时语音识别-Fun-ASR API参考](https://help.aliyun.com/zh/model-studio/fun-asr-real-time-speech-recognition-api-reference/)
+-   [实时语音识别-Qwen-Audio-3.0-ASR-Flash-Streaming/Fun-ASR-Realtime API参考](https://help.aliyun.com/zh/model-studio/fun-asr-real-time-speech-recognition-api-reference/)
     
--   [实时语音识别-Qwen-ASR API参考](https://help.aliyun.com/zh/model-studio/qwen-asr-realtime-api/)
+-   [实时语音识别-Qwen3-ASR-Flash-Realtime API参考](https://help.aliyun.com/zh/model-studio/qwen-asr-realtime-api/)
     
 -   [实时语音识别-Paraformer API参考](https://help.aliyun.com/zh/model-studio/paraformer-real-time-speech-recognition-api-reference/)
+    
+-   [AOQ客户端API](https://help.aliyun.com/zh/model-studio/realtime-api-aoq-api/)（适用于 Qwen-Audio-3.0-ASR-Flash-Streaming/Fun-ASR-Realtime）
     
 
 ## **常见问题**
 
 ### 实时语音识别支持哪些音频格式？
 
-Fun-ASR 和 Paraformer 模型支持 pcm、wav、mp3、opus、speex、aac、amr 格式。**Qwen-ASR 模型推荐使用 pcm 或 opus 格式**；其他格式（如 wav、aac、amr）虽然在 `session.update` 校验层会被接受，但服务端实际解码可能失败，请务必确认音频流为推荐格式后再发送。
+Qwen-Audio-3.0-ASR-Flash-Streaming、Fun-ASR-Realtime 和 Paraformer 模型支持 pcm、wav、mp3、opus、speex、aac、amr 格式。**Qwen3-ASR-Flash-Realtime 模型推荐使用 pcm 或 opus 格式**；其他格式（如 wav、aac、amr）虽然在 `session.update` 校验层会被接受，但服务端实际解码可能失败，请务必确认音频流为推荐格式后再发送。
 
 ### SDK 和 WebSocket API 有什么区别？该如何选择？
 
@@ -3811,7 +3861,7 @@ DashScope SDK 封装了 WebSocket 连接管理、鉴权、重连等细节，适�
 
 ### 如何提升专有名词的识别准确率？
 
-使用热词（Fun-ASR、Paraformer 支持）。热词适合提升固定词汇的识别率。
+使用热词或上下文增强。详细的配置方法和使用说明，请参见[提升识别准确率](https://help.aliyun.com/zh/model-studio/improve-asr-accuracy)。
 
 ### 连接经常断开怎么办？
 

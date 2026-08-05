@@ -44,7 +44,7 @@ incident response, or another durable role.
 Template:
 
 ```rust
-let triage_config = AgentConfig::builder("mock/routing")
+let triage_config = AgentConfig::builder("triage", "mock/routing")
     .system_prompt("you are a triage agent")
     .build()?
     .with_handoff(Handoff {
