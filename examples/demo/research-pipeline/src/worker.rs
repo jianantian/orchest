@@ -45,7 +45,7 @@ impl Worker {
     ) -> Result<Self, WorkerError> {
         let search = SearchCorpusTool::from_directory(materials_directory)?;
         let corpus_paths = search.corpus_paths();
-        let config = AgentConfig::builder("research-pipeline/worker")
+        let config = AgentConfig::builder("research-worker", "research-pipeline/worker")
             .system_prompt(
                 "You are the Research Pipeline worker. Search the supplied corpus, read \
                  relevant files, and write an evidence-backed draft. Call fault_trigger \

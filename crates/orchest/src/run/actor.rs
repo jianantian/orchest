@@ -159,7 +159,7 @@ impl Actor for WorkerActor {
 
         emit(&event_subs, RuntimeEvent::RunStarted { run_id }).await;
 
-        let agent_name = config.system_prompt[..config.system_prompt.len().min(60)].to_string();
+        let agent_name = config.name.clone();
         let mut run_hook_ctx = crate::hook::RunHookContext {
             run_id,
             agent_name,
@@ -1710,10 +1710,8 @@ async fn apply_tool_phase_results(
         tool_use_id,
         result: handoff_result,
     } = pending_handoff;
-    let previous_agent =
-        state.config.system_prompt[..state.config.system_prompt.len().min(60)].to_string();
-    let new_agent_prompt = handoff_result.target_agent.system_prompt.clone();
-    let new_agent = new_agent_prompt[..new_agent_prompt.len().min(60)].to_string();
+    let previous_agent = state.config.name.clone();
+    let new_agent = handoff_result.target_agent.name.clone();
     let handoff_input = json!({"tool": tool_name});
 
     let mut handoff_history = state.messages.clone();

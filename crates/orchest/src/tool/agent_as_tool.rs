@@ -734,7 +734,7 @@ mod tests {
     }
 
     fn test_agent_config() -> AgentConfig {
-        AgentConfig::builder("mock/model")
+        AgentConfig::builder("test-agent", "mock/model")
             .system_prompt("test")
             .max_steps(1)
             .build()

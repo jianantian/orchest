@@ -101,7 +101,7 @@ impl Hook for LoggingHook {
 
 #[tokio::main]
 async fn main() {
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("logging-agent", "mock/mock")
         .system_prompt("you are a helpful assistant")
         .max_steps(3)
         .repeated_failure_threshold(3)

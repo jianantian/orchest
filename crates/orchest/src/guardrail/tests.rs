@@ -22,6 +22,7 @@ use crate::tool::{
 
 fn test_config() -> AgentConfig {
     AgentConfig {
+        name: "test-agent".into(),
         system_prompt: "you are helpful".into(),
         model: config::ModelConfig {
             spec: ModelSpec {

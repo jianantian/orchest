@@ -113,7 +113,7 @@ impl ModelAdapter for LoopingModel {
 
 #[tokio::main]
 async fn main() {
-    let config = AgentConfig::builder("mock/looping")
+    let config = AgentConfig::builder("looping-agent", "mock/looping")
         .system_prompt("assistant")
         .max_steps(10)
         .build()

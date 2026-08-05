@@ -139,7 +139,7 @@ impl Tool for CatalogTool {
 
 #[tokio::main]
 async fn main() {
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("tool-search-agent", "mock/mock")
         .system_prompt("Search the tool catalog before calling tools.")
         .max_steps(5)
         .enable_tool_search()

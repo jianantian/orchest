@@ -172,7 +172,7 @@ impl Watcher for AbortOnRepeatedFailure {
 
 #[tokio::main]
 async fn main() {
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("watched-agent", "mock/mock")
         .system_prompt("You are a resilient assistant.")
         .max_steps(20)
         .build()

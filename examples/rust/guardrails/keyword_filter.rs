@@ -181,7 +181,7 @@ impl Tool for SearchTool {
 
 #[tokio::main]
 async fn main() {
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("filtered-agent", "mock/mock")
         .system_prompt("You are a helpful assistant.")
         .max_steps(5)
         .build()

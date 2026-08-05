@@ -138,7 +138,7 @@ impl Tool for FileTool {
 
 #[tokio::main]
 async fn main() {
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("draft-agent", "mock/mock")
         .system_prompt("Create a draft plan before committing file writes.")
         .max_steps(5)
         .approval_mode(ApprovalMode::None)

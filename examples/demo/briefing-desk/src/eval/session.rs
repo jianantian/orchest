@@ -290,7 +290,7 @@ mod tests {
     }
 
     fn base_config() -> AgentConfig {
-        AgentConfig::builder("test-model")
+        AgentConfig::builder("test-agent", "test-model")
             .system_prompt("test")
             .max_steps(5)
             .build()

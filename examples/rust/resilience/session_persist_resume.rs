@@ -70,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Phase 1: First run ────────────────────────────────────────────────────
 
     println!("=== Phase 1: Starting first run ===");
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("persistent-agent", "mock/mock")
         .system_prompt("You are a helpful assistant.")
         .max_steps(3)
         .session_store(store.clone() as Arc<dyn SessionStore>, SESSION_ID)

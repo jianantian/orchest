@@ -23,6 +23,7 @@ def configure_demo_provider() -> str | None:
 
 
 agent = Agent(
+    name="video-assistant",
     model="anthropic/claude-sonnet-4-20250514",
     system_prompt="You are a helpful assistant that can generate videos.",
     api_url=configure_demo_provider(),

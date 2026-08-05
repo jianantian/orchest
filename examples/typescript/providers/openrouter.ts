@@ -41,6 +41,7 @@ if (!process.env.OPENROUTER_API_KEY) {
 }
 
 const agent = new Agent({
+  name: "openrouter-assistant",
   model: "openrouter/anthropic/claude-sonnet-4-6",
   systemPrompt: "You are a helpful assistant. Answer concisely.",
   apiKeyEnv: "OPENROUTER_API_KEY",

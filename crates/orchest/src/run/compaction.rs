@@ -247,6 +247,7 @@ mod tests {
 
     fn make_config(threshold: f32, recent: usize, context_window: Option<u64>) -> AgentConfig {
         AgentConfig {
+            name: "test-agent".into(),
             system_prompt: "system".into(),
             model: crate::run::ModelConfig {
                 spec: crate::model::ModelSpec {
@@ -337,6 +338,7 @@ mod tests {
     #[tokio::test]
     async fn no_compaction_when_disabled() {
         let config = AgentConfig {
+            name: "test-agent".into(),
             system_prompt: "s".into(),
             model: crate::run::ModelConfig::default(),
             budget: budget_none(),

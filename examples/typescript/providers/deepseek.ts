@@ -48,6 +48,7 @@ if (!process.env.DEEPSEEK_API_KEY) {
 }
 
 const agent = new Agent({
+  name: "deepseek-assistant",
   model: "deepseek/deepseek-v4-pro",
   systemPrompt: "You are a concise reasoning assistant. Think step by step.",
   apiKeyEnv: "DEEPSEEK_API_KEY",

@@ -48,6 +48,7 @@ process.env.ANTHROPIC_API_KEY ||= "local-demo-key";
 
 setTimeout(async () => {
   const agent = new Agent({
+    name: "assistant",
     model: "anthropic/claude-sonnet-4-20250514",
     systemPrompt: "You are a helpful assistant with access to tools.",
     apiUrl: process.env.ANTHROPIC_API_URL || `http://127.0.0.1:${port}/v1/messages`,

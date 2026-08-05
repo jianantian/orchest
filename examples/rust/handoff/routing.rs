@@ -89,19 +89,19 @@ impl ModelAdapter for RoutingModel {
 
 #[tokio::main]
 async fn main() {
-    let billing_config = AgentConfig::builder("mock/routing")
+    let billing_config = AgentConfig::builder("billing", "mock/routing")
         .system_prompt("you are the billing department agent")
         .max_steps(2)
         .build()
         .unwrap();
 
-    let support_config = AgentConfig::builder("mock/routing")
+    let support_config = AgentConfig::builder("support", "mock/routing")
         .system_prompt("you are the support department agent")
         .max_steps(2)
         .build()
         .unwrap();
 
-    let triage_config = AgentConfig::builder("mock/routing")
+    let triage_config = AgentConfig::builder("triage", "mock/routing")
         .system_prompt("you are a triage agent; route queries to billing or support")
         .max_steps(4)
         .build()

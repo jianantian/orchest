@@ -245,7 +245,7 @@ pub async fn run_chat_agent(
     // message is the new user turn, and the middle is multi-turn history.
     let (system_prompt, history, input) = split_messages(messages)?;
 
-    let mut builder = AgentConfig::builder("music-gift/chat")
+    let mut builder = AgentConfig::builder("music-gift-chat", "music-gift/chat")
         .max_steps(5)
         .system_prompt(system_prompt);
     if let Some(dir) = skills_dir {
@@ -391,7 +391,7 @@ pub async fn run_text_pass(
     input: &str,
     validate: Option<&(dyn Fn(&str) -> bool + Send + Sync)>,
 ) -> PassOutcome {
-    let config = match AgentConfig::builder(agent_name)
+    let config = match AgentConfig::builder(agent_name, agent_name)
         .max_steps(1)
         .system_prompt(system_prompt)
         .build()

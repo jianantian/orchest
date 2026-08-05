@@ -184,7 +184,7 @@ async fn two_watchers_preserve_fifo_and_match_the_complete_no_drop_sequence() {
         calls: AtomicU32::new(0),
         first_call_gate: Arc::clone(&first_call_gate),
     });
-    let config = AgentConfig::builder("research-pipeline/ordering")
+    let config = AgentConfig::builder("ordering-supervisor", "research-pipeline/ordering")
         .system_prompt("Emit deterministic supervisor ordering milestones.")
         .max_steps(4)
         .build()

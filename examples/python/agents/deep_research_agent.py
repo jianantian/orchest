@@ -211,6 +211,7 @@ def print_event(event: RuntimeEvent) -> None:
 def build_web_search_agent() -> Agent:
     today = current_date_label()
     agent = Agent(
+        name="web-search",
         model=require_env("WEB_SEARCH_MODEL"),
         system_prompt=prompt_template("web_search_system", today=today),
         api_url=provider_url(),
@@ -238,6 +239,7 @@ def build_deep_research_agent(
     today = current_date_label()
     max_tokens = int(os.environ.get("DEEP_RESEARCH_MAX_TOKENS", DEFAULT_MAX_TOKENS))
     agent = Agent(
+        name="deep-research",
         model=require_env("DEEP_RESEARCH_MODEL"),
         system_prompt=prompt_template(
             "main_system",

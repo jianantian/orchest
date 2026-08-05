@@ -107,7 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     registry.register(Arc::new(CurrentTimeTool))?;
 
     // 3. Build the run configuration.
-    let config = AgentConfig::builder("anthropic/claude-sonnet-4-6")
+    let config = AgentConfig::builder("assistant", "anthropic/claude-sonnet-4-6")
         .system_prompt("You are a helpful assistant. Use tools when useful.")
         .max_steps(5)
         .build()?;

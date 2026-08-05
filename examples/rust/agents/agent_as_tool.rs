@@ -147,7 +147,7 @@ async fn main() {
     let child_model: Arc<dyn ModelAdapter> = Arc::new(ChildModel);
     let child_registry = ToolRegistry::new();
 
-    let child_config = AgentConfig::builder("mock/child")
+    let child_config = AgentConfig::builder("child", "mock/child")
         .system_prompt("you are a summariser")
         .max_steps(2)
         .build()
@@ -172,7 +172,7 @@ async fn main() {
         .build()
         .unwrap();
 
-    let parent_config = AgentConfig::builder("mock/parent")
+    let parent_config = AgentConfig::builder("parent", "mock/parent")
         .system_prompt("you are a research assistant")
         .max_steps(3)
         .build()

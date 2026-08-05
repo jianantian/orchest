@@ -121,7 +121,7 @@ impl Watcher for SteeringWatcher {
 
 #[tokio::main]
 async fn main() {
-    let config = AgentConfig::builder("mock")
+    let config = AgentConfig::builder("supervised-agent", "mock")
         .system_prompt("You are a research assistant.")
         .max_steps(5)
         .supervision_strategy(SupervisionStrategy::Restart { max_retries: 2 })

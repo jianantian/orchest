@@ -33,6 +33,7 @@ def configure_provider() -> str | None:
 
 
 agent = Agent(
+    name="anthropic-assistant",
     model="anthropic/claude-sonnet-4-20250514",
     system_prompt="You are a helpful assistant. Answer concisely.",
     api_key_env="ANTHROPIC_API_KEY",

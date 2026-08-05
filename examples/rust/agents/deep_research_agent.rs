@@ -289,12 +289,14 @@ impl Tool for ExaSearchTool {
 }
 
 fn agent_config(
+    name: &str,
     model_ref: &str,
     system_prompt: String,
     max_steps: u32,
 ) -> Result<AgentConfig, Box<dyn std::error::Error>> {
     let normalized = normalize_provider_model(model_ref)?;
     Ok(AgentConfig {
+        name: name.into(),
         system_prompt,
         model: ModelConfig {
             spec: ModelSpec {
@@ -345,6 +347,7 @@ fn build_web_search_agent() -> Result<ExampleAgentParts, Box<dyn std::error::Err
     let today = current_date_label();
     let model_ref = require_env("WEB_SEARCH_MODEL")?;
     let config = agent_config(
+        "web-search",
         &model_ref,
         prompt_template("web_search_system", &[("today", today)])?,
         10,
@@ -365,6 +368,7 @@ fn build_deep_research_agent(
     let today = current_date_label();
     let model_ref = require_env("DEEP_RESEARCH_MODEL")?;
     let config = agent_config(
+        "deep-research",
         &model_ref,
         prompt_template(
             "main_system",

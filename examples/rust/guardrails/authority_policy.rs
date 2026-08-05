@@ -218,7 +218,7 @@ async fn main() {
     let allowed_manager_medium = Arc::new(AtomicBool::new(false));
     let executed = Arc::new(AtomicBool::new(false));
 
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("authority-agent", "mock/mock")
         .system_prompt("You are an account operations assistant.")
         .max_steps(5)
         .build()

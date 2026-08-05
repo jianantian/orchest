@@ -122,13 +122,13 @@ impl ModelAdapter for HandoffModel {
 
 #[tokio::main]
 async fn main() {
-    let specialist_config = AgentConfig::builder("mock/handoff")
+    let specialist_config = AgentConfig::builder("specialist", "mock/handoff")
         .system_prompt("you are a specialist")
         .max_steps(2)
         .build()
         .unwrap();
 
-    let triage_config = AgentConfig::builder("mock/handoff")
+    let triage_config = AgentConfig::builder("triage", "mock/handoff")
         .system_prompt("you are a triage agent")
         .max_steps(4)
         .build()

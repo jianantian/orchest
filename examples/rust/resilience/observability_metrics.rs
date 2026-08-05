@@ -55,7 +55,7 @@ async fn main() {
     let snapshotter = recorder.snapshotter();
     recorder.install().expect("install metrics recorder");
 
-    let config = AgentConfig::builder("example/gpt-demo")
+    let config = AgentConfig::builder("observed-agent", "example/gpt-demo")
         .system_prompt("Answer tersely.")
         .max_tokens(100)
         .build()

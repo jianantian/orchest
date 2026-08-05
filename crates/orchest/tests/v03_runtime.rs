@@ -19,6 +19,7 @@ use tokio::sync::mpsc;
 
 fn test_config() -> AgentConfig {
     AgentConfig {
+        name: "test-agent".into(),
         system_prompt: "test".into(),
         model: ModelConfig {
             spec: ModelSpec {

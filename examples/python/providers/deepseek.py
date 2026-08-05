@@ -14,6 +14,7 @@ from typing import Any
 from orchest import Agent
 
 agent = Agent(
+    name="deepseek-assistant",
     model="deepseek/deepseek-v4-pro",
     system_prompt="You are a concise reasoning assistant. Think step by step.",
     api_key_env="DEEPSEEK_API_KEY",

@@ -188,7 +188,7 @@ impl Watcher for InjectWatcher {
 async fn watcher_inject_adds_user_message() {
     let seen = Arc::new(AtomicU32::new(0));
 
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("test-agent", "mock/mock")
         .system_prompt("assistant")
         .max_steps(10)
         .supervision_strategy(SupervisionStrategy::Stop)
@@ -250,7 +250,7 @@ impl Watcher for SteerWatcher {
 async fn watcher_steer_injects_system_instruction() {
     let steered = Arc::new(AtomicU32::new(0));
 
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("test-agent", "mock/mock")
         .system_prompt("assistant")
         .max_steps(10)
         .supervision_strategy(SupervisionStrategy::Stop)
@@ -307,7 +307,7 @@ impl Watcher for AbortWatcher {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn watcher_abort_terminates_run() {
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("test-agent", "mock/mock")
         .system_prompt("assistant")
         .max_steps(10)
         .supervision_strategy(SupervisionStrategy::Stop)
@@ -344,7 +344,7 @@ async fn watcher_abort_terminates_run() {
 
 #[tokio::test]
 async fn supervision_restart_strategy_configured() {
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("test-agent", "mock/mock")
         .system_prompt("assistant")
         .max_steps(5)
         .supervision_strategy(SupervisionStrategy::Restart { max_retries: 2 })
@@ -390,7 +390,7 @@ async fn multi_watcher_both_receive_events() {
     let count_a = Arc::new(AtomicU32::new(0));
     let count_b = Arc::new(AtomicU32::new(0));
 
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("test-agent", "mock/mock")
         .system_prompt("assistant")
         .max_steps(10)
         .supervision_strategy(SupervisionStrategy::Stop)

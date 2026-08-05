@@ -203,6 +203,7 @@ function printEvent(event: Record<string, unknown>): void {
 
 function buildWebSearchAgent(): any {
   const agent = new Agent({
+    name: "web-search",
     model: requireEnv("WEB_SEARCH_MODEL"),
     systemPrompt: promptTemplate("web_search_system", { today: currentDateLabel() }),
     apiUrl: process.env.ANTHROPIC_API_URL || undefined,
@@ -238,6 +239,7 @@ function researchInstructions(question: string, reportPath: string, minCalls: nu
 function buildDeepResearchAgent(webSearchAgent: any, reportPath: string, minCalls: number): any {
   const maxTokens = Number(process.env.DEEP_RESEARCH_MAX_TOKENS || DEFAULT_MAX_TOKENS);
   const agent = new Agent({
+    name: "deep-research",
     model: requireEnv("DEEP_RESEARCH_MODEL"),
     systemPrompt: promptTemplate("main_system", {
       today: currentDateLabel(),

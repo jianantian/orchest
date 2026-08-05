@@ -11,6 +11,7 @@ from typing import Any
 from orchest import Agent
 
 agent = Agent(
+    name="openrouter-assistant",
     model="openrouter/anthropic/claude-sonnet-4-6",
     system_prompt="You are a helpful assistant. Answer concisely.",
     api_key_env="OPENROUTER_API_KEY",

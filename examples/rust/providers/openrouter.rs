@@ -87,10 +87,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(WeatherTool))?;
 
-    let config = AgentConfig::builder("openrouter/anthropic/claude-sonnet-4")
-        .system_prompt("You are a helpful assistant. Answer concisely.")
-        .max_steps(5)
-        .build()?;
+    let config = AgentConfig::builder(
+        "openrouter-assistant",
+        "openrouter/anthropic/claude-sonnet-4",
+    )
+    .system_prompt("You are a helpful assistant. Answer concisely.")
+    .max_steps(5)
+    .build()?;
 
     let (_handle, mut rx) = AgentRun::start(
         config,

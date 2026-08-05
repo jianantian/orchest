@@ -75,7 +75,7 @@ impl ModelAdapter for CodeExecModel {
 
 #[tokio::main]
 async fn main() {
-    let config = AgentConfig::builder("example/code-exec-demo")
+    let config = AgentConfig::builder("code-exec-agent", "example/code-exec-demo")
         .system_prompt("Run trusted demo code.")
         .code_execution_executor(Arc::new(BareSubprocessExecutor::new()))
         .max_steps(4)

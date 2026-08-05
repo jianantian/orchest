@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(WeatherTool))?;
 
-    let config = AgentConfig::builder("deepseek/deepseek-v4-flash")
+    let config = AgentConfig::builder("deepseek-assistant", "deepseek/deepseek-v4-flash")
         .system_prompt("You are a helpful assistant. Answer concisely.")
         .max_steps(5)
         .build()?;

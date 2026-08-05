@@ -1,4 +1,6 @@
 export interface AgentOptions {
+  /** Human-readable identity used by run and handoff logs. */
+  name: string;
   model: string;
   systemPrompt: string;
   skillsDir?: string;

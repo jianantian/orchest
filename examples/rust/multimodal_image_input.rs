@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?);
 
-    let config = AgentConfig::builder("anthropic/claude-sonnet-4-6")
+    let config = AgentConfig::builder("image-assistant", "anthropic/claude-sonnet-4-6")
         .system_prompt("You are a helpful assistant.")
         .max_steps(3)
         .build()?;

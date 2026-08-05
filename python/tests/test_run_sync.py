@@ -1,3 +1,5 @@
+import pytest
+
 from orchest import Agent, AgentError, BudgetExceededError
 from orchest.exceptions import from_code
 
@@ -27,3 +29,10 @@ def test_agent_error_is_exception() -> None:
 
 def test_agent_exposes_run_sync() -> None:
     assert hasattr(Agent, "run_sync")
+
+
+def test_agent_requires_explicit_name() -> None:
+    with pytest.raises(TypeError):
+        Agent(model="anthropic/test", system_prompt="test")
+
+    Agent(name="test-agent", model="anthropic/test", system_prompt="test")

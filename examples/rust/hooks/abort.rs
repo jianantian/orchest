@@ -110,7 +110,7 @@ impl Hook for AbortAfterNHook {
 async fn main() {
     // Scenario A: panicking hook (run still terminates, emits HookPanicked)
     println!("=== Scenario A: panicking hook ===");
-    let config_a = AgentConfig::builder("mock/mock")
+    let config_a = AgentConfig::builder("abort-before-model", "mock/mock")
         .system_prompt("assistant")
         .max_steps(2)
         .build()
@@ -136,7 +136,7 @@ async fn main() {
 
     // Scenario B: hook returns Abort (run emits RunFailed)
     println!("\n=== Scenario B: hook aborts run ===");
-    let config_b = AgentConfig::builder("mock/mock")
+    let config_b = AgentConfig::builder("abort-before-tool", "mock/mock")
         .system_prompt("assistant")
         .max_steps(5)
         .build()

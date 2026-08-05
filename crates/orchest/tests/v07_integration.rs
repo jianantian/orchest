@@ -80,7 +80,7 @@ impl ModelAdapter for AlwaysRateLimitModel {
 
 #[tokio::test]
 async fn retry_policy_fires_retry_events_then_run_failed() {
-    let config = AgentConfig::builder("mock/rate-limited")
+    let config = AgentConfig::builder("retry-agent", "mock/rate-limited")
         .system_prompt("assistant")
         .max_steps(5)
         .retry_policy(RetryPolicy {
@@ -200,7 +200,7 @@ impl ModelAdapter for RepeatedToolModel {
 
 #[tokio::test]
 async fn loop_detection_aborts_on_repeated_tool_calls() {
-    let config = AgentConfig::builder("mock/repeating")
+    let config = AgentConfig::builder("repeating-agent", "mock/repeating")
         .system_prompt("assistant")
         .max_steps(10)
         .build()
@@ -271,7 +271,7 @@ impl ModelAdapter for NeverCalledModel {
 
 #[tokio::test]
 async fn hook_abort_before_model_emits_run_failed() {
-    let config = AgentConfig::builder("mock/never-called")
+    let config = AgentConfig::builder("hook-agent", "mock/never-called")
         .system_prompt("assistant")
         .max_steps(2)
         .build()
@@ -357,13 +357,13 @@ impl ModelAdapter for HandoffRoutingModel {
 
 #[tokio::test]
 async fn handoff_routing_emits_agent_updated() {
-    let billing_config = AgentConfig::builder("mock/routing")
+    let billing_config = AgentConfig::builder("billing", "mock/routing")
         .system_prompt("billing agent")
         .max_steps(2)
         .build()
         .unwrap();
 
-    let triage_config = AgentConfig::builder("mock/routing")
+    let triage_config = AgentConfig::builder("triage", "mock/routing")
         .system_prompt("triage agent")
         .max_steps(4)
         .build()
@@ -513,7 +513,7 @@ impl ModelAdapter for ChildAgentModel {
 
 #[tokio::test]
 async fn agent_as_tool_emits_sub_agent_events() {
-    let child_config = AgentConfig::builder("mock/child")
+    let child_config = AgentConfig::builder("child", "mock/child")
         .system_prompt("summariser")
         .max_steps(2)
         .build()
@@ -536,7 +536,7 @@ async fn agent_as_tool_emits_sub_agent_events() {
         .build()
         .unwrap();
 
-    let parent_config = AgentConfig::builder("mock/parent")
+    let parent_config = AgentConfig::builder("parent", "mock/parent")
         .system_prompt("research assistant")
         .max_steps(3)
         .build()

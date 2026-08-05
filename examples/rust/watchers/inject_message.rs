@@ -170,7 +170,7 @@ impl Watcher for InjectOnToolComplete {
 
 #[tokio::main]
 async fn main() {
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("watched-agent", "mock/mock")
         .system_prompt("You are a data analyst.")
         .max_steps(5)
         .build()

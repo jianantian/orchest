@@ -85,6 +85,7 @@ fn shared_runtime() -> &'static tokio::runtime::Runtime {
 
 #[napi(object)]
 pub struct AgentOptions {
+    pub name: String,
     pub model: String,
     pub system_prompt: String,
     pub skills_dir: Option<String>,
@@ -416,6 +417,7 @@ impl Tool for StaticTool {
 
 #[napi]
 pub struct Agent {
+    name: String,
     model: String,
     system_prompt: String,
     api_key: Option<String>,
@@ -437,6 +439,7 @@ impl Agent {
     #[napi(constructor)]
     pub fn new(options: AgentOptions) -> napi::Result<Self> {
         Ok(Self {
+            name: options.name,
             model: options.model,
             system_prompt: options.system_prompt,
             api_key: options.api_key,
@@ -784,6 +787,7 @@ impl Agent {
             .map_err(|e| napi::Error::from_reason(format!("invalid model config: {e}")))?;
 
         Ok(AgentConfig {
+            name: self.name.clone(),
             system_prompt: self.system_prompt.clone(),
             model: ModelConfig {
                 spec: ModelSpec {
@@ -1007,6 +1011,7 @@ mod tests {
     #[test]
     fn node_agent_provider_config_preserves_canonical_model() {
         let agent = Agent::new(AgentOptions {
+            name: "test-agent".into(),
             model: "openrouter/anthropic/claude-sonnet-4".into(),
             system_prompt: "test".into(),
             skills_dir: None,
@@ -1029,6 +1034,7 @@ mod tests {
     #[test]
     fn node_agent_config_normalizes_legacy_shorthand() {
         let agent = Agent::new(AgentOptions {
+            name: "test-agent".into(),
             model: "claude-sonnet-4".into(),
             system_prompt: "test".into(),
             skills_dir: None,
@@ -1044,6 +1050,7 @@ mod tests {
         })
         .expect("agent should construct");
         let config = agent.build_config().expect("config should build");
+        assert_eq!(config.name, "test-agent");
         assert_eq!(config.model.spec.provider, "anthropic");
         assert_eq!(config.model.spec.model, "claude-sonnet-4");
     }
@@ -1051,6 +1058,7 @@ mod tests {
     #[test]
     fn node_agent_retry_true_maps_to_recommended_policy() {
         let agent = Agent::new(AgentOptions {
+            name: "test-agent".into(),
             model: "claude-sonnet-4".into(),
             system_prompt: "test".into(),
             skills_dir: None,
@@ -1073,6 +1081,7 @@ mod tests {
     #[test]
     fn node_agent_retry_default_keeps_policy_off() {
         let agent = Agent::new(AgentOptions {
+            name: "test-agent".into(),
             model: "claude-sonnet-4".into(),
             system_prompt: "test".into(),
             skills_dir: None,

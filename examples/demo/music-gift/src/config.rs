@@ -175,7 +175,7 @@ pub fn build_countdown_tool(model: Arc<dyn ModelAdapter>) -> Option<Arc<dyn Tool
         return None;
     }
 
-    let config = match AgentConfig::builder("music-gift/countdown")
+    let config = match AgentConfig::builder("countdown", "music-gift/countdown")
         .system_prompt(COUNTDOWN_TEMPLATE.as_str())
         .max_steps(1)
         .build()

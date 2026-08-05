@@ -57,7 +57,7 @@ impl ModelAdapter for RateLimitedModel {
 
 #[tokio::main]
 async fn main() {
-    let config = AgentConfig::builder("mock/rate-limited")
+    let config = AgentConfig::builder("retry-agent", "mock/rate-limited")
         .system_prompt("assistant")
         .max_steps(5)
         .retry_policy(RetryPolicy {

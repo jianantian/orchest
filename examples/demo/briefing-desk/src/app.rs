@@ -215,8 +215,8 @@ where
         registry.register(Arc::new(SynthesizeBriefTool::new(audio_path, tts)))?;
     }
 
-    let mut builder =
-        AgentConfig::builder("briefing-desk/run").system_prompt(harness::MAIN_SYSTEM_PROMPT);
+    let mut builder = AgentConfig::builder("briefing-agent", "briefing-desk/run")
+        .system_prompt(harness::MAIN_SYSTEM_PROMPT);
 
     if let Some(id) = &args.session {
         let store: Arc<dyn SessionStore> = Arc::new(open_session_store(id)?);
@@ -346,7 +346,7 @@ pub struct CapturedRunOutcome {
 
 /// Build the same main-agent config the product run uses (for seed materialize).
 pub fn main_agent_config() -> Result<AgentConfig, DemoError> {
-    AgentConfig::builder("briefing-desk/run")
+    AgentConfig::builder("briefing-agent", "briefing-desk/run")
         .system_prompt(harness::MAIN_SYSTEM_PROMPT)
         .max_steps(10)
         .build()
@@ -365,7 +365,7 @@ pub const CHAT_MODEL_ENV: &str = LIVE_CHAT_MODEL_ENV;
 /// so it never sees the parent's conversation) as a `review_report` tool the
 /// parent model calls before `write_report`.
 fn reviewer_tool(model: &Arc<dyn ModelAdapter>) -> Result<Arc<dyn orchest::tool::Tool>, DemoError> {
-    let reviewer_config = AgentConfig::builder("briefing-desk/reviewer")
+    let reviewer_config = AgentConfig::builder("briefing-reviewer", "briefing-desk/reviewer")
         .system_prompt(harness::REVIEWER_SYSTEM_PROMPT)
         .max_steps(2)
         .build()

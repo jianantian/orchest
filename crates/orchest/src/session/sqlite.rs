@@ -159,7 +159,7 @@ mod tests {
             messages: vec![],
             step,
             budget_used: Default::default(),
-            active_config: AgentConfig::builder("test").build().unwrap(),
+            active_config: AgentConfig::builder("test-agent", "test").build().unwrap(),
         }
     }
 

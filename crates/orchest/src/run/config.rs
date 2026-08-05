@@ -120,6 +120,7 @@ impl From<&str> for RunInput {
 /// [`AgentConfig::builder`].
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
+    pub name: String,
     pub system_prompt: String,
     pub model: ModelConfig,
     pub budget: BudgetConfig,
@@ -143,6 +144,7 @@ pub struct AgentConfig {
 impl std::fmt::Debug for AgentConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentConfig")
+            .field("name", &self.name)
             .field("system_prompt", &self.system_prompt)
             .field("model", &self.model)
             .field("budget", &self.budget)
@@ -400,8 +402,8 @@ impl Default for CompactionConfig {
 // Builder
 
 impl AgentConfig {
-    pub fn builder(model: impl Into<String>) -> AgentConfigBuilder {
-        AgentConfigBuilder::new(model)
+    pub fn builder(name: impl Into<String>, model: impl Into<String>) -> AgentConfigBuilder {
+        AgentConfigBuilder::new(name, model)
     }
 
     pub fn with_hook(mut self, hook: std::sync::Arc<dyn crate::hook::Hook>) -> Self {
@@ -514,6 +516,7 @@ impl AgentConfig {
 }
 
 pub struct AgentConfigBuilder {
+    name: String,
     system_prompt: String,
     model: ModelConfig,
     budget: BudgetConfig,
@@ -528,9 +531,10 @@ pub struct AgentConfigBuilder {
 }
 
 impl AgentConfigBuilder {
-    pub fn new(model: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<String>, model: impl Into<String>) -> Self {
         let model_str = model.into();
         Self {
+            name: name.into(),
             system_prompt: String::new(),
             model: ModelConfig {
                 spec: ModelSpec {
@@ -701,6 +705,7 @@ impl AgentConfigBuilder {
             ));
         }
         Ok(AgentConfig {
+            name: self.name,
             system_prompt: self.system_prompt,
             model: self.model,
             budget: self.budget,
@@ -797,8 +802,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn builder_requires_and_exposes_agent_name() {
+        let config = AgentConfig::builder("researcher", "test-model")
+            .system_prompt("research carefully")
+            .build()
+            .unwrap();
+
+        assert_eq!(config.name, "researcher");
+    }
+
+    #[test]
     fn builder_sets_fields_correctly() {
-        let config = AgentConfig::builder("anthropic/claude-sonnet-4-6")
+        let config = AgentConfig::builder("test-agent", "anthropic/claude-sonnet-4-6")
             .system_prompt("test")
             .max_cost_usd(1.0)
             .skills_dir("./skills")
@@ -820,9 +835,9 @@ mod tests {
 
     #[test]
     fn builder_skills_strict_defaults_off_and_toggles() {
-        let config = AgentConfig::builder("m").build().unwrap();
+        let config = AgentConfig::builder("test-agent", "m").build().unwrap();
         assert!(!config.skills.strict);
-        let config = AgentConfig::builder("m")
+        let config = AgentConfig::builder("test-agent", "m")
             .skills_strict(true)
             .build()
             .unwrap();
@@ -831,7 +846,7 @@ mod tests {
 
     #[test]
     fn serde_round_trip() {
-        let config = AgentConfig::builder("test-model")
+        let config = AgentConfig::builder("test-agent", "test-model")
             .system_prompt("round trip")
             .max_steps(5)
             .enable_compaction(CompactionConfig::default())
@@ -839,6 +854,7 @@ mod tests {
             .unwrap();
         let json = serde_json::to_string(&config).expect("serialize");
         let deserialized: AgentConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(deserialized.name, "test-agent");
         assert_eq!(deserialized.system_prompt, "round trip");
         assert_eq!(deserialized.runtime.max_steps, 5);
         assert!(deserialized.runtime.compaction.is_some());
@@ -846,7 +862,7 @@ mod tests {
 
     #[test]
     fn missing_model_rejected() {
-        let err = AgentConfig::builder("").build().unwrap_err();
+        let err = AgentConfig::builder("test-agent", "").build().unwrap_err();
         assert!(matches!(err, ConfigError::MissingModel));
     }
 
@@ -946,13 +962,16 @@ mod tests {
 
     #[test]
     fn zero_max_steps_rejected() {
-        let err = AgentConfig::builder("m").max_steps(0).build().unwrap_err();
+        let err = AgentConfig::builder("test-agent", "m")
+            .max_steps(0)
+            .build()
+            .unwrap_err();
         assert!(matches!(err, ConfigError::InvalidMaxSteps(0)));
     }
 
     #[test]
     fn negative_max_cost_rejected() {
-        let err = AgentConfig::builder("m")
+        let err = AgentConfig::builder("test-agent", "m")
             .max_cost_usd(-1.0)
             .build()
             .unwrap_err();
@@ -961,9 +980,9 @@ mod tests {
 
     #[test]
     fn zero_max_tokens_rejected() {
-        let _no_max = AgentConfig::builder("m").build().unwrap(); // default has no max_tokens
-                                                                  // Now test with explicit 0
-        let mut builder = AgentConfig::builder("m");
+        let _no_max = AgentConfig::builder("test-agent", "m").build().unwrap(); // default has no max_tokens
+                                                                                // Now test with explicit 0
+        let mut builder = AgentConfig::builder("test-agent", "m");
         builder.budget.max_tokens = Some(0);
         let err = builder.build().unwrap_err();
         assert!(matches!(err, ConfigError::InvalidMaxTokens(0)));
@@ -971,7 +990,7 @@ mod tests {
 
     #[test]
     fn zero_max_tool_calls_rejected() {
-        let mut builder = AgentConfig::builder("m");
+        let mut builder = AgentConfig::builder("test-agent", "m");
         builder.budget.max_tool_calls = Some(0);
         let err = builder.build().unwrap_err();
         assert!(matches!(err, ConfigError::InvalidMaxToolCalls(0)));
@@ -979,7 +998,7 @@ mod tests {
 
     #[test]
     fn zero_repeated_failure_threshold_rejected() {
-        let err = AgentConfig::builder("m")
+        let err = AgentConfig::builder("test-agent", "m")
             .repeated_failure_threshold(0)
             .build()
             .unwrap_err();
@@ -991,7 +1010,7 @@ mod tests {
 
     #[test]
     fn valid_config_succeeds() {
-        let config = AgentConfig::builder("anthropic/claude-sonnet-4-6")
+        let config = AgentConfig::builder("test-agent", "anthropic/claude-sonnet-4-6")
             .system_prompt("test")
             .max_cost_usd(1.0)
             .max_steps(10)
@@ -1003,7 +1022,7 @@ mod tests {
     #[test]
     fn register_persistence_hook_deduplicates_same_session_id() {
         let store = Arc::new(crate::session::InMemorySessionStore::default());
-        let mut config = AgentConfig::builder("anthropic/claude-sonnet-4-6")
+        let mut config = AgentConfig::builder("test-agent", "anthropic/claude-sonnet-4-6")
             .session_store(store, "session-1")
             .build()
             .unwrap();

@@ -369,6 +369,7 @@ class SkillError(AgentError): ...
 class Agent:
     def __init__(
         self,
+        name: str,
         model: str,
         system_prompt: str,
         skills_dir: str | None = None,

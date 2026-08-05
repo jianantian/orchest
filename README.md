@@ -36,6 +36,7 @@ uvx maturin develop
 from orchest import Agent
 
 agent = Agent(
+    name="assistant",
     model="anthropic/claude-sonnet-4-6",
     system_prompt="You are a helpful assistant.",
     api_key_env="ANTHROPIC_API_KEY",
@@ -56,6 +57,7 @@ npm install && npm run build:native
 import { Agent } from "@orchest/sdk";
 
 const agent = new Agent({
+  name: "assistant",
   model: "anthropic/claude-sonnet-4-6",
   systemPrompt: "You are a helpful assistant.",
   apiKeyEnv: "ANTHROPIC_API_KEY",

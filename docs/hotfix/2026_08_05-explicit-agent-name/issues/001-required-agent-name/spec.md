@@ -13,9 +13,8 @@
 
 ## Acceptance Criteria
 
-- [ ] Rust、Python、Node 构造入口均无法省略 `name`。
-- [ ] `on_run_start` 收到显式 agent 名称。
-- [ ] handoff hook 与 `AgentUpdated` 记录显式的源/目标 agent 名称。
-- [ ] `system_prompt` 仍原样发送给模型，不参与名称生成。
-- [ ] workspace test、clippy 与 fmt 检查通过。
-
+- [x] Rust、Python、Node 构造入口均无法省略 `name`。
+- [x] `on_run_start` 收到显式 agent 名称。
+- [x] handoff hook 与 `AgentUpdated` 记录显式的源/目标 agent 名称。
+- [x] `system_prompt` 仍原样发送给模型，不参与名称生成。
+- [x] workspace test、clippy 与 fmt 检查通过。

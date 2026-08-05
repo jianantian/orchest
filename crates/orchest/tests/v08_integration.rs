@@ -221,7 +221,7 @@ impl ToolInputGuardrail for BannedKeywordGuardrail {
 
 #[tokio::test]
 async fn guardrail_and_approval_coexist() {
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("test-agent", "mock/mock")
         .system_prompt("assistant")
         .max_steps(5)
         .build()
@@ -287,7 +287,7 @@ async fn session_resume_with_hooks() {
     const SID: &str = "resume-hooks-session";
 
     // ── First run ──
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("test-agent", "mock/mock")
         .system_prompt("assistant")
         .max_steps(2)
         .session_store(store.clone() as Arc<dyn SessionStore>, SID)
@@ -363,7 +363,7 @@ async fn session_resume_after_handoff() {
     const SID: &str = "handoff-session";
 
     // Post-handoff config: represents Agent B that took over via handoff
-    let post_handoff_config = AgentConfig::builder("mock/mock")
+    let post_handoff_config = AgentConfig::builder("post-handoff", "mock/mock")
         .system_prompt("I am Agent B (post-handoff specialist)")
         .max_steps(2)
         .session_store(store.clone() as Arc<dyn SessionStore>, SID)
@@ -558,7 +558,7 @@ impl Watcher for CountAndInjectWatcher {
 async fn watcher_inject_during_tool_loop() {
     let completions_seen = Arc::new(AtomicU32::new(0));
 
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("test-agent", "mock/mock")
         .system_prompt("assistant")
         .max_steps(10)
         .build()
@@ -706,7 +706,7 @@ async fn all_v08_features_combined() {
     const SID: &str = "combined-session";
     let tool_completions = Arc::new(AtomicU32::new(0));
 
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("test-agent", "mock/mock")
         .system_prompt("combined feature assistant")
         .max_steps(10)
         .session_store(store.clone() as Arc<dyn SessionStore>, SID)
@@ -789,7 +789,7 @@ mod sqlite_tests {
         );
         const SID: &str = "sqlite-test";
 
-        let config = AgentConfig::builder("mock/mock")
+        let config = AgentConfig::builder("test-agent", "mock/mock")
             .system_prompt("sqlite test assistant")
             .max_steps(2)
             .session_store(store.clone() as Arc<dyn SessionStore>, SID)
@@ -827,7 +827,7 @@ mod sqlite_tests {
         );
         const SID: &str = "sqlite-resume";
 
-        let config = AgentConfig::builder("mock/mock")
+        let config = AgentConfig::builder("test-agent", "mock/mock")
             .system_prompt("resumable")
             .max_steps(2)
             .session_store(store.clone() as Arc<dyn SessionStore>, SID)

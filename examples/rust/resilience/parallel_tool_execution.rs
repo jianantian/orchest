@@ -132,7 +132,7 @@ impl Tool for LookupTool {
 
 #[tokio::main]
 async fn main() {
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("parallel-agent", "mock/mock")
         .system_prompt("Run independent read-only lookups.")
         .max_steps(4)
         .enable_parallel_tools()

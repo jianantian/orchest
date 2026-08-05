@@ -30,6 +30,7 @@ def main() -> None:
     thread.start()
     try:
         agent = Agent(
+            name="gil-demo",
             model=os.environ.get("ORCHEST_MODEL", "anthropic/claude-sonnet-4-6"),
             system_prompt="Answer in one short sentence.",
             api_key_env=os.environ.get("ORCHEST_API_KEY_ENV", "ANTHROPIC_API_KEY"),

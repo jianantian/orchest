@@ -22,6 +22,7 @@ use tokio::sync::Mutex;
 
 fn test_config() -> AgentConfig {
     AgentConfig {
+        name: "test-agent".into(),
         system_prompt: "You are a test assistant.".into(),
         model: ModelConfig {
             spec: ModelSpec {

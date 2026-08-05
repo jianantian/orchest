@@ -96,7 +96,7 @@ pub fn build_supervisor(
     } else {
         "Delegate the request, then synthesize the worker result."
     };
-    let config = AgentConfig::builder("research-pipeline/supervisor")
+    let config = AgentConfig::builder("research-supervisor", "research-pipeline/supervisor")
         .system_prompt(format!(
             "You are the Research Pipeline supervisor. {scenario} Use the \
              {RESEARCH_WORKER_TOOL} tool for the delegated work."

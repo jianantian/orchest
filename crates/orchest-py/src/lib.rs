@@ -87,6 +87,7 @@ fn run_coroutine_on_thread(py: Python<'_>, coro: Py<PyAny>) -> PyResult<Py<PyAny
 
 #[pyclass]
 struct Agent {
+    name: String,
     model: String,
     system_prompt: String,
     api_key: Option<String>,
@@ -484,6 +485,7 @@ impl Agent {
             .map_err(|e| PyRuntimeError::new_err(format!("invalid model config: {e}")))?;
 
         Ok(AgentConfig {
+            name: self.name.clone(),
             system_prompt: self.system_prompt.clone(),
             model: ModelConfig {
                 spec: ModelSpec {
@@ -559,9 +561,10 @@ impl Agent {
 #[pymethods]
 impl Agent {
     #[new]
-    #[pyo3(signature = (model, system_prompt, skills_dir=None, budget=None, api_url=None, api_key=None, api_key_env=None, max_tokens=None, request_options=None, approval_mode=None, skill_disclosure=None, retry=None))]
+    #[pyo3(signature = (name, model, system_prompt, skills_dir=None, budget=None, api_url=None, api_key=None, api_key_env=None, max_tokens=None, request_options=None, approval_mode=None, skill_disclosure=None, retry=None))]
     #[allow(clippy::too_many_arguments)] // justified: pyo3 constructor maps Python kwargs 1:1
     fn new(
+        name: String,
         model: String,
         system_prompt: String,
         skills_dir: Option<String>,
@@ -600,6 +603,7 @@ impl Agent {
         };
 
         Ok(Self {
+            name,
             model,
             system_prompt,
             api_key,

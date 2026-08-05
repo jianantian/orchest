@@ -101,7 +101,7 @@ impl Hook for ContextInjectorHook {
 
 #[tokio::main]
 async fn main() {
-    let config = AgentConfig::builder("mock/mock")
+    let config = AgentConfig::builder("modifier-agent", "mock/mock")
         .system_prompt("assistant")
         .max_steps(2)
         .build()

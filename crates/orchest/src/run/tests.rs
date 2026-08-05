@@ -88,6 +88,7 @@ impl ModelAdapter for FakeModelAdapter {
 
 fn test_config() -> AgentConfig {
     AgentConfig {
+        name: "test-agent".into(),
         system_prompt: "you are helpful".into(),
         model: config::ModelConfig {
             spec: ModelSpec {
@@ -5494,6 +5495,27 @@ struct RecordingHook {
     log: Arc<Mutex<Vec<String>>>,
 }
 
+struct AgentNameRecordingHook {
+    log: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl Hook for AgentNameRecordingHook {
+    async fn on_run_start(&self, ctx: &mut RunHookContext) {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("start:{}", ctx.agent_name));
+    }
+
+    async fn on_handoff(&self, ctx: &HandoffHookContext) {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("handoff:{}->{}", ctx.previous_agent, ctx.new_agent));
+    }
+}
+
 #[async_trait::async_trait]
 impl Hook for RecordingHook {
     async fn on_run_start(&self, _ctx: &mut RunHookContext) {
@@ -6641,10 +6663,16 @@ async fn handoff_transition_exposes_target_config_and_history() {
     use crate::handoff::{Handoff, HandoffTarget};
 
     let mut billing_config = test_config();
+    billing_config.name = "billing".into();
     billing_config.system_prompt = "billing agent".into();
 
+    let hook_log = Arc::new(Mutex::new(Vec::new()));
     let mut config = test_config();
+    config.name = "triage".into();
     config.system_prompt = "triage agent".into();
+    config.hooks.push(Arc::new(AgentNameRecordingHook {
+        log: Arc::clone(&hook_log),
+    }));
     config = config.with_handoff(Handoff {
         tool_name: "transfer_to_billing".into(),
         tool_description: "Transfer to billing agent".into(),
@@ -6667,9 +6695,14 @@ async fn handoff_transition_exposes_target_config_and_history() {
         events.iter().any(|e| matches!(
             e,
             RuntimeEvent::AgentUpdated { previous_agent, new_agent }
-                if previous_agent == "triage agent" && new_agent == "billing agent"
+                if previous_agent == "triage" && new_agent == "billing"
         )),
         "handoff should emit the exact target agent transition"
+    );
+    assert_eq!(
+        *hook_log.lock().unwrap(),
+        vec!["start:triage", "handoff:triage->billing"],
+        "run and handoff hooks should use explicit agent names"
     );
     assert!(
         events

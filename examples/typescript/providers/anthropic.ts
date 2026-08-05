@@ -53,6 +53,7 @@ process.env.ANTHROPIC_API_KEY ||= "local-demo-key";
 
 setTimeout(async () => {
   const agent = new Agent({
+    name: "anthropic-assistant",
     model: "anthropic/claude-sonnet-4-20250514",
     systemPrompt: "You are a helpful assistant. Answer concisely.",
     apiKeyEnv: "ANTHROPIC_API_KEY",
