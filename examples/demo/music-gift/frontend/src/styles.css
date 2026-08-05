@@ -97,6 +97,13 @@ html, body {
   overflow: hidden;
 }
 
+/* Desktop: one wide frame for every page. Content columns below cap and
+   center themselves; the frame and header never change width between
+   pages or tabs (replaces the old `#root:has(.studio)` width jump). */
+@media (min-width: 900px) {
+  #root { max-width: 1080px; }
+}
+
 /* ── Noise texture overlay ─────────────────── */
 body::after {
   content: '';
@@ -357,6 +364,23 @@ body::after {
   border-color: var(--gold); color: var(--gold);
 }
 
+/* ── Option pills (canonical "pick one of N" control) ──
+   Neutral bordered capsule → gold on hover/active. Two size tiers:
+   default (guided options, Vocal/Instrumental) and .opt-pill-sm
+   (style suggestions, version switcher, vocal gender). */
+.opt-pill {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 9px 17px; border: 1px solid var(--border); border-radius: 100px;
+  background: var(--surface); font-family: inherit; font-size: 13px;
+  color: var(--text2); cursor: pointer; user-select: none; white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+.opt-pill:hover { border-color: var(--gold); color: var(--gold); }
+.opt-pill.on { background: var(--gold-bg); border-color: var(--gold); color: var(--gold); font-weight: 500; }
+.opt-pill:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+.opt-pill:disabled { opacity: 0.5; cursor: default; }
+.opt-pill-sm { padding: 4px 12px; font-size: 12px; }
+
 .btn-full { width: 100%; }
 .btn-lg { padding: 15px 24px; font-size: 16px; }
 
@@ -414,6 +438,16 @@ body::after {
 .playlist-page {
   padding: 20px;
   display: flex; flex-direction: column; gap: 18px;
+}
+
+/* Desktop (≥900px): inside the 1080px frame, content columns keep their
+   single-column widths and center instead of stretching edge to edge. */
+@media (min-width: 900px) {
+  /* Guided chat: 520px column (direct child only — the studio's AI column
+     uses .chat-panel too and must keep its half of the frame). */
+  .create-page > .chat-panel { max-width: 520px; width: 100%; margin: 0 auto; }
+  /* Playlist / mine / set-password / reset-password pages. */
+  .playlist-page { max-width: 600px; width: 100%; margin: 0 auto; }
 }
 
 /* ── Gift page reveal stagger (after Unwrap) ── */
@@ -799,16 +833,8 @@ body::after {
 .mine-status.creating { color: var(--text2); }
 .mine-status .mine-private { color: var(--text3); opacity: 0.8; }
 .mine-actions {
-  display: inline-flex; align-items: center; gap: 12px;
+  display: inline-flex; align-items: center; gap: 8px;
 }
-.mine-btn {
-  padding: 0; border: none; background: none;
-  font-family: inherit; font-size: 12px; color: var(--text3);
-  cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
-}
-.mine-btn:hover:not(:disabled) { color: var(--gold); }
-.mine-btn.danger:hover:not(:disabled) { color: #c0554a; }
-.mine-btn:disabled { opacity: 0.5; cursor: default; }
 .mine-actions .owner-confirm { justify-content: flex-end; }
 .mine-account {
   display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
@@ -843,13 +869,10 @@ body::after {
 
 .free-panel.editorial { display: flex; flex-direction: column; gap: 28px; padding: 20px 20px 36px; }
 
-/* Mode bar — what are we making? */
-.mode-bar { display: flex; gap: 2px; background: var(--surface2); border-radius: 14px; padding: 4px; margin-bottom: 4px; }
-.mode-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 12px 0; border: none; border-radius: 11px; background: transparent; font-family: inherit; cursor: pointer; transition: background 0.2s, border-color 0.2s, color 0.2s, opacity 0.2s; }
-.mode-btn .mode-icon { font-size: 16px; line-height: 1; }
-.mode-btn .mode-label { font-size: 13px; font-weight: 500; color: var(--text2); }
-.mode-btn.active { background: var(--surface); box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
-.mode-btn.active .mode-label { color: var(--gold); font-weight: 600; }
+/* Vocal / Instrumental — two canonical option pills (replaces the old
+   .mode-bar segmented control). */
+.mode-select { display: flex; gap: 8px; margin-bottom: 4px; }
+.mode-select > .opt-pill { flex: 1; }
 
 /* More Options — accordion transition */
 .more-options { margin-top: 6px; }
@@ -873,8 +896,7 @@ body::after {
 }
 .more-label { font-size: 11px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.05em; margin: 0; }
 .gender-select { display: flex; gap: 6px; }
-.gender-opt { flex: 1; padding: 7px 0; border: 1px solid var(--border); border-radius: 8px; background: transparent; font-size: 13px; font-family: inherit; color: var(--text2); cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s; }
-.gender-opt.on { border-color: var(--gold-light); background: var(--gold-bg); color: var(--gold); font-weight: 500; }
+.gender-select > .opt-pill { flex: 1; }
 
 /* Sections */
 .editorial-section { display: flex; flex-direction: column; gap: 10px; }
@@ -916,34 +938,40 @@ body::after {
 .style-input:focus-visible { outline: none; border-color: var(--gold); }
 
 .style-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.style-chips .style-chip { display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border: 1px solid var(--gold-light); border-radius: 100px; background: var(--gold-bg); font-size: 13px; color: var(--gold); cursor: pointer; transition: background 0.18s; }
+/* Selected style = filled gold pill; radius/font match the canonical small
+   option pill so selected and suggested read as one family. */
+.style-chips .style-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 12px; border: 1px solid var(--gold-light); border-radius: 100px; background: var(--gold-bg); font-size: 12px; color: var(--gold); cursor: pointer; transition: background 0.18s; }
 .style-chips .style-chip:hover { background: var(--gold-light); }
 .style-chips .style-chip:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
 .style-chips .style-chip svg { width: 12px; height: 12px; opacity: 0.6; }
 
 .style-suggestions { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
-.suggest-refresh { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 50%; background: transparent; font-size: 14px; color: var(--text2); cursor: pointer; flex-shrink: 0; }
-.suggest-refresh:hover { border-color: var(--gold); color: var(--gold); }
-.suggest-refresh:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
-.suggest-chip { padding: 4px 10px; border: 1px solid var(--border); border-radius: 100px; background: transparent; font-size: 12px; font-family: inherit; color: var(--text2); cursor: pointer; white-space: nowrap; transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s; }
-.suggest-chip:hover { border-color: var(--gold); color: var(--gold); }
-
-.suggest-chip:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+/* Round icon buttons — one style everywhere (refresh / undo / restart). */
+.suggest-refresh, .undo-btn, .restart-btn {
+  width: 28px; height: 28px; padding: 0; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: 50%;
+  background: transparent; color: var(--text2);
+  font-family: inherit; font-size: 14px; line-height: 1; cursor: pointer;
+  transition: background 0.18s, border-color 0.18s, color 0.18s, transform 0.18s, opacity 0.18s;
+}
+.suggest-refresh:hover, .undo-btn:hover:not(:disabled), .restart-btn:hover { border-color: var(--gold); color: var(--gold); }
+.suggest-refresh:focus-visible, .undo-btn:focus-visible, .restart-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+.undo-btn:disabled { opacity: 0.4; cursor: default; }
+.restart-btn:hover { transform: rotate(-45deg); }
 /* Title */
 .title-input { width: 100%; padding: 12px 0; border: none; border-bottom: 1px solid var(--border); background: transparent; font-family: var(--font-display); font-size: 28px; font-weight: 500; color: var(--text); letter-spacing: 0.01em; }
 .title-input::placeholder { color: var(--text3); font-style: italic; }
 .title-input:focus-visible { outline: none; border-color: var(--gold); }
-.btn-ghost { min-height: 36px; padding: 6px 12px; border: none; border-radius: 100px; background: transparent; font-size: 13px; font-family: inherit; font-weight: 500; color: var(--text2); cursor: pointer; transition: background 0.18s, border-color 0.18s, color 0.18s, opacity 0.18s; display: inline-flex; align-items: center; gap: 4px; }
-/* Create button */
-.btn-create { width: 100%; padding: 16px 0; border: none; border-radius: 12px; background: var(--gold-action); color: #fff; font-family: inherit; font-size: 16px; font-weight: 600; cursor: pointer; letter-spacing: 0.03em; margin-top: 4px; transition: background 0.2s, transform 0.1s; }
-.btn-ghost:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
-.btn-create:hover { background: #b07645; }
-.btn-create:active { transform: scale(0.98); }
-.btn-create:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-create:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(200,149,108,0.3); }
+/* Ghost text buttons — one style for all tertiary actions. .mine-btn
+   (MyGifts card actions) shares the look; .danger keeps the red hover. */
+.btn-ghost, .mine-btn { min-height: 36px; padding: 6px 12px; border: none; border-radius: 100px; background: transparent; font-size: 13px; font-family: inherit; font-weight: 500; color: var(--text2); cursor: pointer; text-decoration: none; transition: background 0.18s, border-color 0.18s, color 0.18s, opacity 0.18s; display: inline-flex; align-items: center; gap: 4px; }
+.btn-ghost:focus-visible, .mine-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+.btn-ghost:hover, .mine-btn:hover:not(:disabled) { color: var(--gold); background: var(--gold-bg); }
+.mine-btn.danger:hover:not(:disabled) { color: #c0554a; background: rgba(192, 85, 74, 0.08); }
+.mine-btn:disabled { opacity: 0.5; cursor: default; }
 
 .btn-ghost .btn-icon { color: var(--gold); font-size: 14px; line-height: 1; }
-.btn-ghost:hover { color: var(--gold); background: var(--gold-bg); }
 
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--gold); border-radius: 50%; animation: spin 0.6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -965,16 +993,8 @@ body::after {
   padding: 10px 16px 0;
 }
 .dot-row { display: flex; align-items: center; gap: 5px; }
-.restart-btn {
-  width: 24px; height: 24px; padding: 0;
-  border: 1px solid var(--border); border-radius: 50%;
-  background: var(--surface); color: var(--text3);
-  font-family: inherit; font-size: 13px; line-height: 1; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: background 0.18s, border-color 0.18s, color 0.18s, transform 0.18s;
-}
-.restart-btn:hover { color: var(--gold); border-color: var(--gold); transform: rotate(-45deg); }
-.restart-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+/* .restart-btn shares the canonical round-icon-button rule with
+   .suggest-refresh/.undo-btn (see Style composer section). */
 
 .restart-confirm {
   position: absolute; top: 42px; right: 16px; z-index: 6;
@@ -1055,21 +1075,13 @@ body::after {
   margin-left: 6px; font-size: 13px; color: var(--text3);
 }
 
-/* Pills (interactive options) */
+/* Pills (interactive options) — canonical .opt-pill styles live in the
+   Buttons section; this is just the chat layout wrapper. */
 .pills-wrap {
   display: flex; flex-wrap: wrap; gap: 8px;
   max-width: 92%; align-self: flex-start;
   animation: bubblePop 0.35s ease;
 }
-.pill {
-  padding: 9px 17px; border: 1px solid var(--border);
-  border-radius: 100px; background: var(--surface);
-  font-size: 13px; color: var(--text2); cursor: pointer;
-  transition: background 0.18s, border-color 0.18s, color 0.18s, opacity 0.18s; user-select: none;
-  font-family: inherit;
-}
-.pill:hover { border-color: var(--gold); color: var(--text); }
-.pill.on { background: var(--gold-bg); border-color: var(--gold); color: var(--gold); font-weight: 500; }
 
 /* Inline input (name, custom scenario, etc.) */
 .inline-input {
@@ -1659,38 +1671,41 @@ body.locked { overflow: hidden; }
    STUDIO (draft editor + AI collaboration panel)
    ============================================= */
 
-/* The app frame is capped at 520px for the single-column flows; the studio
-   needs a real desktop width for its two columns. */
-@media (min-width: 900px) {
-  #root:has(.studio) { max-width: 1080px; }
-}
-
-.studio { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* Single-scroll model: the studio grows with natural height inside
+   .app-main (the one page scroller) — neither column scrolls internally.
+   The frame's fixed height chain (.create-page keeps flex: 1) lets taller
+   content overflow visibly into the .app-main scroll area. */
+.studio { display: flex; flex-direction: column; }
 
 /* Mobile-only tab switcher; hidden on desktop where both columns show. */
 .studio-mobile-tabs { display: none; }
 
-.studio-cols { display: flex; flex: 1; min-height: 0; }
-.studio-draft-col {
-  flex: 1; min-width: 0; min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) transparent;
-}
+.studio-cols { display: flex; }
+.studio-draft-col { flex: 1; min-width: 0; }
 .studio-ai-col {
-  flex: 1; min-width: 0; min-height: 0;
+  flex: 1; min-width: 0;
   display: flex; flex-direction: column;
   border-left: 1px solid var(--border);
 }
+
+/* The studio chat panel is page content, not a fixed-height frame: natural
+   growth, no internal scroll. overflow: visible also matters for sticky —
+   the base .chat-panel's overflow: hidden would make the panel itself the
+   sticky positioning context and the chat-bar would scroll away. */
+.studio-ai-col .chat-panel { flex: none; overflow: visible; }
+.studio-ai-col .chat-messages.guided { flex: none; overflow: visible; }
+
+/* Input bar stays visible at the viewport bottom while .app-main scrolls
+   (same "pinned input" mental model as the guided flow). Background and
+   border-top come from the base .chat-bar rule. */
+.studio-ai-col .chat-bar { position: sticky; bottom: 0; z-index: 5; }
 
 @media (max-width: 899px) {
   .studio-mobile-tabs { display: flex; padding: 6px 20px 0; gap: 6px; flex-shrink: 0; }
   .studio-cols { flex-direction: column; }
   .studio-draft-col, .studio-ai-col { display: none; }
-  .studio-draft-col.m-active, .studio-ai-col.m-active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .studio-draft-col.m-active, .studio-ai-col.m-active { display: flex; flex-direction: column; }
   .studio-ai-col { border-left: none; }
-  /* The chat panel scrolls its own message list; the draft column scrolls. */
-  .studio-ai-col.m-active { overflow: hidden; }
 }
 
 /* AI panel toolbar: title left, undo right. */
@@ -1703,17 +1718,8 @@ body.locked { overflow: hidden; }
   font-family: var(--font-display); font-size: 15px; font-weight: 500;
   color: var(--text2); letter-spacing: 0.04em;
 }
-.undo-btn {
-  width: 24px; height: 24px; padding: 0;
-  border: 1px solid var(--border); border-radius: 50%;
-  background: var(--surface); color: var(--text3);
-  font-family: inherit; font-size: 13px; line-height: 1; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: background 0.18s, border-color 0.18s, color 0.18s, transform 0.18s, opacity 0.18s;
-}
-.undo-btn:hover:not(:disabled) { color: var(--gold); border-color: var(--gold); }
-.undo-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
-.undo-btn:disabled { opacity: 0.4; cursor: default; }
+/* .undo-btn shares the canonical round-icon-button rule (see Style
+   composer section). */
 
 /* "Updated: …" confirmation attached to the assistant bubble. */
 .applied-note {
@@ -1799,31 +1805,6 @@ html[data-theme="dark"] #box-shadow { background: radial-gradient(ellipse at cen
 
 /* ── Free Create panel dark-theme refinements ── */
 
-/* Mode bar: lift from the dark background with a soft border */
-html[data-theme="dark"] .mode-bar { background: var(--surface); border: 1px solid var(--border); }
-html[data-theme="dark"] .mode-btn.active {
-  background: var(--surface2);
-  box-shadow: 0 1px 6px rgba(212, 165, 116, 0.12), inset 0 1px 0 rgba(255,255,255,0.03);
-}
-
-/* Suggest chips: subtle surface tone so they feel interactive */
-html[data-theme="dark"] .suggest-chip {
-  background: var(--surface);
-  color: var(--text2);
-}
-html[data-theme="dark"] .suggest-chip:hover {
-  border-color: var(--gold);
-  color: var(--gold);
-  background: var(--gold-bg);
-}
-html[data-theme="dark"] .suggest-refresh:hover {
-  border-color: var(--gold);
-  color: var(--gold);
-}
-
-/* Create button hover: brighter gold, not darker */
-html[data-theme="dark"] .btn-create:hover { background: #d49960; }
-
 /* Accent prompt bar: gold border on dark surface reads clearly */
 html[data-theme="dark"] .prompt-bar-input {
   background: var(--surface);
@@ -1832,14 +1813,6 @@ html[data-theme="dark"] .prompt-bar-input {
 
 /* More Options accordion body: tighten padding for dark */
 html[data-theme="dark"] .more-body { background: var(--bg); }
-
-/* Gender options: the toggle needs a background tone */
-html[data-theme="dark"] .gender-opt { border-color: var(--border); }
-html[data-theme="dark"] .gender-opt.on {
-  border-color: var(--gold-border);
-  background: var(--gold-bg);
-  color: var(--gold);
-}
 
 /* Spinner: brighter track for dark visibility */
 html[data-theme="dark"] .spinner { border-color: var(--border); }
@@ -1880,31 +1853,15 @@ html[data-theme="dark"] .audio-play-btn {
 
 .version-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .version-label { font-size: 12px; color: var(--text3); }
-.version-pill {
-  padding: 4px 12px; border: 1px solid var(--border); border-radius: 100px;
-  background: transparent; font-size: 12px; font-family: inherit; color: var(--text2);
-  cursor: pointer; white-space: nowrap; transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-.version-pill:hover { border-color: var(--gold); color: var(--gold); }
-.version-pill.active { background: var(--gold-bg); border-color: var(--gold-border); color: var(--gold); }
-.version-pill:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
-.version-load {
-  padding: 0; border: none; background: none; font-family: inherit; font-size: 12px;
-  color: var(--text3); cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
-  transition: color 0.15s;
-}
-.version-load:hover { color: var(--gold); }
+/* Version pills and "load to draft" use the canonical .opt-pill-sm and
+   .btn-secondary styles. */
+.version-bar .btn-secondary { padding: 6px 14px; font-size: 13px; }
 
 .edit-actions { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
-.edit-actions .btn-create { flex: 1; margin-top: 0; }
+.edit-actions .btn-primary { flex: 1; }
 .edit-actions .btn { white-space: nowrap; }
 
-.owner-edit {
-  align-self: flex-start; padding: 0; border: none; background: none;
-  font-family: inherit; font-size: 12px; color: var(--text3);
-  cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
-  transition: color 0.15s;
-}
-.owner-edit:hover { color: var(--gold); }
+/* Owner "edit" entry — secondary tier, left-aligned inside the panel. */
+.owner-panel > .btn-secondary { align-self: flex-start; }
 
 .open-studio-btn { margin-top: 8px; }

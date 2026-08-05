@@ -496,13 +496,13 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
                     {versions.map((v, i) => (
                       <button
                         key={v.version}
-                        className={`version-pill${i === versionIdx ? " active" : ""}`}
+                        className={`opt-pill opt-pill-sm${i === versionIdx ? " on" : ""}`}
                         onClick={() => { setVersionIdx(i); setPlayTime(0); }}
                       >
                         V{v.version}{i === 0 ? ` · ${t("version_latest")}` : ""}
                       </button>
                     ))}
-                    <button className="version-load" onClick={() => loadVersionToDraft(versions[versionIdx])}>
+                    <button className="btn btn-secondary" onClick={() => loadVersionToDraft(versions[versionIdx])}>
                       {t("load_to_draft")}
                     </button>
                   </div>
@@ -519,15 +519,13 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
                 ) : null)}
               </div>
             )}
-            {/* Vocal / Instrumental */}
-            <div className={`mode-bar${flash("vocal")}`}>
-              <button className={`mode-btn ${!instrumental ? "active" : ""}`} onClick={() => setInstrumental(false)}>
-                <span className="mode-icon"><MicIcon /></span>
-                <span className="mode-label">{t("vocal")}</span>
+            {/* Vocal / Instrumental — canonical option pills */}
+            <div className={`mode-select${flash("vocal")}`}>
+              <button className={`opt-pill${!instrumental ? " on" : ""}`} onClick={() => setInstrumental(false)}>
+                <MicIcon /> {t("vocal")}
               </button>
-              <button className={`mode-btn ${instrumental ? "active" : ""}`} onClick={() => setInstrumental(true)}>
-                <span className="mode-icon"><MusicNoteIcon /></span>
-                <span className="mode-label">{t("instrumental")}</span>
+              <button className={`opt-pill${instrumental ? " on" : ""}`} onClick={() => setInstrumental(true)}>
+                <MusicNoteIcon /> {t("instrumental")}
               </button>
             </div>
 
@@ -549,7 +547,7 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
                 {selectedStyles.length > 0 && <div className="style-chips">{selectedStyles.map(s => <span key={s} className="style-chip" onClick={() => removeStyle(s)} role="button" tabIndex={0} onKeyDown={e => e.key === "Enter" && removeStyle(s)}>{s} <XIcon /></span>)}</div>}
                 <div className="style-suggestions">
                   <button className="suggest-refresh" onClick={refreshSuggestions} title="More styles" aria-label="Refresh style suggestions">↻</button>
-                  {suggestions.map(s => <button key={s} className="suggest-chip" onClick={() => addStyle(s)}>{s}</button>)}
+                  {suggestions.map(s => <button key={s} className="opt-pill opt-pill-sm" onClick={() => addStyle(s)}>{s}</button>)}
                 </div>
 
                 {/* Vocal Gender — in More Options */}
@@ -565,8 +563,8 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
                       <div className="more-body t-acc-panel-inner">
                         <p className="more-label">{t("vocal_gender")}</p>
                         <div className="gender-select">
-                          <button className={`gender-opt ${vocalGender === "female" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "female" ? null : "female")}><FemaleIcon /> {t("gender_female")}</button>
-                          <button className={`gender-opt ${vocalGender === "male" ? "on" : ""}`} onClick={() => setVocalGender(vocalGender === "male" ? null : "male")}><MaleIcon /> {t("gender_male")}</button>
+                          <button className={`opt-pill opt-pill-sm${vocalGender === "female" ? " on" : ""}`} onClick={() => setVocalGender(vocalGender === "female" ? null : "female")}><FemaleIcon /> {t("gender_female")}</button>
+                          <button className={`opt-pill opt-pill-sm${vocalGender === "male" ? " on" : ""}`} onClick={() => setVocalGender(vocalGender === "male" ? null : "male")}><MaleIcon /> {t("gender_male")}</button>
                         </div>
                       </div>
                     </div>
@@ -590,7 +588,7 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
                   <button className="btn btn-secondary" onClick={() => void handleSaveTitle()} disabled={regen === "generating"}>
                     {savedFlash ? t("saved") : t("save")}
                   </button>
-                  <button className="btn-create" onClick={() => void handleSaveRegenerate()} disabled={regen === "generating" || needsLyrics}>
+                  <button className="btn btn-primary" onClick={() => void handleSaveRegenerate()} disabled={regen === "generating" || needsLyrics}>
                     {regen === "generating" ? <><span className="spinner" /> {t("generating")}</> : t("save_and_regenerate")}
                   </button>
                 </div>
@@ -599,7 +597,7 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
               </>
             ) : (
               <>
-                <button className="btn-create" onClick={handleGenerate} disabled={gen.state === "generating" || needsLyrics}>
+                <button className="btn btn-primary btn-lg btn-full" onClick={handleGenerate} disabled={gen.state === "generating" || needsLyrics}>
                   {gen.state === "generating" ? <><span className="spinner" /> {t("generating")}</> : t("create_song")}
                 </button>
 
