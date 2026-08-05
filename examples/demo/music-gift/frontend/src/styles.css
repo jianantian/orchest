@@ -136,6 +136,9 @@ body::after {
 .app-nav a {
   text-decoration: none; font-size: 13px; color: var(--text2);
   padding: 6px 12px; border-radius: 100px;
+  /* Two-character CJK labels wrap anywhere by default; never let a nav
+     link break vertically (mobile header must stay one row). */
+  white-space: nowrap;
   transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s; font-weight: 500;
 }
 .app-nav a:hover { background: var(--surface2); color: var(--text); }
@@ -168,6 +171,7 @@ body::after {
   padding: 5px 14px; border: 1px solid var(--border);
   border-radius: 100px; background: transparent;
   font-size: 12px; font-family: inherit; color: var(--text2);
+  white-space: nowrap;
   cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
 }
 .login-link:hover { border-color: var(--gold); color: var(--gold); }
@@ -265,6 +269,24 @@ body::after {
   transition: border-color 0.15s, color 0.15s;
 }
 .theme-toggle:hover { border-color: var(--gold); color: var(--gold); }
+
+/* Mobile header: keep logo + nav + theme/lang/avatar on ONE row.
+   Compaction only — same controls, tighter horizontal rhythm. */
+@media (max-width: 899px) {
+  .app-header { padding: 0 12px; height: 48px; }
+  .app-logo { font-size: 17px; letter-spacing: 0.02em; }
+  .app-nav { gap: 2px; }
+  .app-nav a { padding: 5px 7px; font-size: 12px; }
+  .header-right { gap: 5px; }
+  .lang-switch { padding: 4px 16px 4px 7px; background-position: right 4px center; }
+  .login-link { padding: 4px 10px; }
+}
+
+/* Very narrow phones (~320px): shave a few more px so nothing clips. */
+@media (max-width: 360px) {
+  .app-header { padding: 0 10px; }
+  .app-nav a { padding: 5px 5px; }
+}
 
 /* ── Main scroll area ──────────────────────── */
 .app-main {
