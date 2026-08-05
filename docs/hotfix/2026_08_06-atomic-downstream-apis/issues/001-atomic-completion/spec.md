@@ -21,8 +21,11 @@ budget、steps 或 runtime events，但仍应复用同一 provider adapter、opt
 - [ ] atomic completion 只调用一次 adapter（无 retry 时），tools 为空，不启动 agent run。
 - [ ] system 为空时不发送 system message；user message 始终存在且保持原文。
 - [ ] 返回响应中所有 Text block 的有序拼接；Thinking/tool block 不进入文本。
+- [ ] `JsonObject` 响应文本在返回前解析并验证为 JSON object；非法 JSON 或 array/scalar 顶层值报协议错，
+      成功时仍返回 provider 原始文本。
 - [ ] `retry=true` 只重试 recommended policy 覆盖的 transient 类别，默认不重试。
-- [ ] `MaxTokens`、ContentFilter、Refusal、ContextWindowExceeded 与 Interrupted 不作为成功文本返回。
+- [ ] 只有 `EndTurn` 与 `StopSequence` 返回成功文本；`ToolUse`、`MaxTokens`、`ContentFilter`、`Refusal`、
+      `ContextWindowExceeded`、`Pause`、`Interrupted` 与 `Other` 全部返回稳定错误。
 - [ ] provider unit tests、core unit tests、serde compatibility tests 全部通过。
 
 ## Notes

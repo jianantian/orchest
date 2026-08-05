@@ -18,19 +18,23 @@ multimodal-generation HTTP 接收 URL/Base64，并支持 m4a、language hints、
 
 ## Acceptance Criteria
 
-- [ ] HTTP catalog 公开 `aliyun/qwen-audio-3.0-asr-flash` 为 provider 默认，并公开非默认
-      `aliyun/fun-asr-flash-2026-06-15`。
+- [ ] HTTP catalog 公开非默认 `aliyun/qwen-audio-3.0-asr-flash` 与
+      `aliyun/fun-asr-flash-2026-06-15`；现有 `aliyun/fun-asr-realtime` provider 默认保持不变。
 - [ ] registry `.asr().id("aliyun/qwen-audio-3.0-asr-flash")` 构造 HTTP adapter，streaming model
       仍构造 WS adapter，调用方无需命名 impl crate。
 - [ ] m4a bytes 生成 `data:audio/mp4;base64,...`，aac 生成 `data:audio/aac;base64,...`。
 - [ ] HTTP request method、endpoint、headers、model、input.messages 与 parameters 逐字段 fixture 固定。
 - [ ] `language`、sample rate、vocabulary id、inline vocabulary、简化 context message 映射到设计规定位置；
       role/count/order/400 字符约束在发送请求或连接前验证。
+- [ ] 同步 HTTP request 把 `sample_rate` 序列化为十进制 JSON string；realtime run-task 把它序列化为
+      JSON integer，fixture 分别锁定两种 wire type。
 - [ ] 公共 endpoint 是默认值；完整 workspace endpoint 通过 `api_url` 原样使用，不重复追加 path。
 - [ ] response fixture 的 `output.text`、request id、usage 与 sentence detail 正确映射；缺失 text 报协议错。
 - [ ] HTTP ASR `start_stream()` 明确 unsupported；WS ASR `transcribe()` 仍明确 unsupported。
 - [ ] realtime run-task 把 context 放入 `payload.input.context`，不把 context 混入 parameters。
 - [ ] realtime format/sample rate/language hints/vocabulary 保持在 parameters；context 约束失败在连接前报错。
+- [ ] realtime start 发送 run-task 后等待 `task-started` 才返回 handle；task-failed、协议错误或提前 EOF
+      令 start 失败，fixture session 证明任何 binary audio 都不早于 `task-started`。
 - [ ] session Open/Finishing/Closed 状态遵循 PRD：finish 幂等、send-after-finish 失败、背压不丢 chunk、
       fatal error 令 wait 失败、drop best-effort finish。
 - [ ] request/error diagnostics 不含 API key 或 Base64 音频正文。

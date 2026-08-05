@@ -56,18 +56,19 @@ text = transcribe(
     api_key_env="DASHSCOPE_API_KEY",
 )
 
-stream = start_asr_stream(
-    format="aac",
-    sample_rate=48_000,
-    language="zh",
-    provider="aliyun/qwen-audio-3.0-asr-flash-streaming",
-    api_key_env="DASHSCOPE_API_KEY",
-    context=[{"role": "user", "text": "Emile，Orchest，Murmur"}],
-    on_event=handle_event,
-)
-stream.send_audio(chunk)
-stream.finish()
-stream.wait()
+async def relay_chunk(chunk: bytes) -> None:
+    stream = await start_asr_stream(
+        format="aac",
+        sample_rate=48_000,
+        language="zh",
+        provider="aliyun/qwen-audio-3.0-asr-flash-streaming",
+        api_key_env="DASHSCOPE_API_KEY",
+        context=[{"role": "user", "text": "Emile，Orchest，Murmur"}],
+        on_event=handle_event,
+    )
+    await stream.send_audio(chunk)
+    stream.finish()
+    await stream.wait()
 ```
 
 ### TypeScript
@@ -102,13 +103,14 @@ const stream = await startAsrStream(
   },
   handleEvent,
 );
-stream.sendAudio(chunk);
+await stream.sendAudio(chunk);
 stream.finish();
 await stream.wait();
 ```
 
 Binding 命名遵循各语言惯例（Python snake_case、TypeScript camelCase），但默认值、状态转换、错误
-条件与事件 wire shape 必须一致。
+条件与事件 wire shape 必须一致。两端 realtime 的 start、send 与 wait 都是 async；`finish()` 是同步、幂等的
+输入关闭操作。`on_event` 是同步 callback，按顺序执行，不接受 coroutine/Promise 返回值。
 
 ASR context 在两种绑定都使用同一简化结构：
 `{"role":"user"|"assistant","text":"..."}`。provider adapter 负责将 user 映射为
@@ -140,15 +142,19 @@ Python / TypeScript bindings
   `ChatModel::complete()`；不创建 `AgentConfig`、run、budget 或 runtime event stream。
 - 返回所有 `ContentBlock::Text` 按响应顺序拼接的字符串；Thinking 与其他 block 不混入返回值。
 - `json_mode=true` 映射为类型化 `ResponseFormat::JsonObject`。Chat-compatible provider 发送
-  `response_format:{"type":"json_object"}`；不支持该选项的方言必须在请求前报错，不静默降级。
+  `response_format:{"type":"json_object"}`；不支持该选项的方言必须在请求前报错，不静默降级。响应
+  文本仍按原文返回，但返回前必须能解析为 JSON object；非法 JSON 或非 object 顶层值是协议错误。
 - `retry=true` 使用 `RetryPolicy::recommended()`，仅重试 429、5xx、timeout 与 stream interruption；
   默认不重试。重试不得启动 agent loop。
-- `MaxTokens`、content filter、refusal 等 stop reason 保留为错误而不是把不完整文本冒充成功。
+- 只有 `EndTurn` 与 `StopSequence` 是成功终止；`ToolUse`、`MaxTokens`、`ContentFilter`、`Refusal`、
+  `ContextWindowExceeded`、`Pause`、`Interrupted` 与 `Other` 都作为错误返回，不把不完整文本冒充成功。
 
 ## One-shot Aliyun ASR Semantics
 
-- 默认模型：`aliyun/qwen-audio-3.0-asr-flash`；同 wire 的
-  `aliyun/fun-asr-flash-2026-06-15` 可被显式选择，但不作为默认。
+- one-shot binding 的默认模型：`aliyun/qwen-audio-3.0-asr-flash`；同 wire 的
+  `aliyun/fun-asr-flash-2026-06-15` 可被显式选择。两条 HTTP catalog row 都不设置
+  `default_for_provider`；registry 现有 `aliyun/fun-asr-realtime` provider 默认保持不变，避免改变
+  `.asr().provider("aliyun").select()` 的既有含义。
 - 默认端点为仍可用的公共 DashScope
   `https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation`；
   `api_url` 可覆盖为业务空间专属北京/新加坡端点。
@@ -157,21 +163,26 @@ Python / TypeScript bindings
 - 音频字节编码为 Data URL。`m4a` 使用 `audio/mp4`，`aac` 使用 `audio/aac`；协议层新增
   `AudioFormat::M4a` 与 `AudioFormat::Aac`。
 - `language` 映射为单元素 `language_hints`；`options` 中的 `sample_rate`、`vocabulary_id`、
-  `vocabulary` 进入 `parameters`，`context` 进入音频消息之前的 `input.messages`。
+  `vocabulary` 进入 `parameters`，`context` 进入音频消息之前的 `input.messages`。同步 HTTP wire 的
+  `sample_rate` 序列化为十进制字符串（如 `"16000"`），realtime WS wire 则保持 JSON integer。
 - 解析 `output.text` 为 `TranscribeResult.text`；request id、usage、sentence detail 保留在
   `diagnostic_metadata`。缺失或非字符串 `output.text` 是协议错误。
 - SDK 不自行转码、重采样或上传 OSS；格式、时长、大小等 provider 拒绝通过结构化错误上抛。
 
 ## Realtime ASR Session Contract
 
-Session 状态为 `Open -> Finishing -> Closed`：
+公开 session 状态为 `Open -> Finishing -> Closed`。内部启动阶段必须完成 Aliyun application-level
+handshake：发送 `run-task` 后等待 `task-started`，只有此后 start future 才成功返回 Open session；
+`task-failed`、协议错误或连接关闭都令 start 失败，任何 binary 音频不得早于 `task-started` 发送。
 
-- `send_audio(bytes)` 仅在 Open 接受非空 chunk；底层 channel 已满时显式返回 backpressure 错误，
-  不阻塞调用线程，也不静默丢 chunk。
+- `send_audio(bytes)` / `sendAudio(bytes)` 仅在 Open 接受非空 chunk，异步等待底层 channel 容量并
+  自然传播背压；等待期间不阻塞 Python GIL 或 Node event loop，也不静默丢 chunk。立即返回的
+  `try_send_audio`/`trySendAudio` 不在本 hotfix 的 public API 范围。
 - `finish()` 从 Open 转为 Finishing，关闭输入 channel，使阿里云方言发送一次 `finish-task`；重复
   `finish()` 幂等。Finishing/Closed 后 `send_audio` 报错。
-- provider event 按接收顺序交给 `on_event`，使用 `StreamEvent` 的现有 serde wire shape；
-  Provisional/Committed 与 `SegmentRef` 语义保持不变。
+- provider event 按接收顺序交给同步 `on_event`，使用 `StreamEvent` 的现有 serde wire shape；下一事件
+  只能在上一 callback 返回后交付，Provisional/Committed 与 `SegmentRef` 语义保持不变。callback
+  返回 coroutine/Promise 是本地类型错误。
 - `wait()` 等待 event stream 关闭并转为 Closed；重复调用安全。致命 provider error 同时作为
   `StreamEvent::Error` 交付，且让 `wait()` 返回错误。
 - session drop 等价于 best-effort `finish()`，不得泄漏凭证、后台 task 或 WebSocket。
@@ -185,7 +196,16 @@ Session 状态为 `Open -> Finishing -> Closed`：
   `Error` 边界转换；错误消息不得包含 API key 或完整 Base64 音频。
 - API key 优先级为显式 `api_key`/`apiKey` > 指定 env > provider 默认 env；指定 env 缺失时不回退。
 - 未知 model/provider、错误 format、空音频、非法 context、send-after-finish 均在本地明确失败。
-- callback 自身抛错会终止 event pump；错误由 `wait()` 返回，不继续吞事件。
+- Python/TypeScript public wrapper 捕获同步 callback 的首个异常、触发 `finish()` 并停止继续调用
+  callback；该异常由 async `wait()` 原样重新抛出。native callback 入队成功不等同于 callback 成功，
+  Node 不得用 uncaught/fatal exception 代替此契约。
+
+## Binding Code Organization
+
+- `crates/orchest-py/src/lib.rs` 与 `crates/orchest-node/src/lib.rs` 只保留模块装配与 exports；atomic
+  completion、one-shot ASR、ASR session/state/callback bridge 放入职责单一的新模块。
+- Python/TypeScript public wrapper 负责语言惯例、callback exception mediation 与类型声明同步；provider
+  选择、request lowering、retry 与 session wire 行为仍只在 Rust core/provider 层实现。
 
 ## Distribution and Documentation
 
