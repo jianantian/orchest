@@ -13,6 +13,16 @@ maturin develop          # 或：uvx maturin develop
 
 > PyPI 发布计划于 v1.0。在那之前用 `maturin develop` 从源码构建。
 
+下游项目使用 uv 时，可直接从 Orchest checkout 构建 editable 包：
+
+```bash
+uv add --editable /absolute/path/to/orchest
+uv run maturin develop --manifest-path /absolute/path/to/orchest/crates/orchest-py/Cargo.toml
+```
+
+原生扩展绑定 CPython ABI；切换到 CPython 3.12 或重建虚拟环境后，需要在该解释器环境中重新执行
+`uv run maturin develop`，不能复用其他 Python 小版本构建的扩展。
+
 ## 2. 基础用法
 
 ```python
@@ -65,7 +75,48 @@ agent.register_tool(get_weather, approval="never")   # "never" | "when_risky" | 
 
 异步 tool（长任务轮询）返回 `{"async_job": {...}}` 形状，见 [`examples/python/async_tool.py`](../../examples/python/async_tool.py)。
 
-## 4. 消费事件
+## 4. 原子下游 API
+
+不需要 agent loop 时，可直接使用 completion、一次性 ASR 和 realtime ASR：
+
+```python
+import asyncio
+from pathlib import Path
+
+from orchest import complete, start_asr_stream, transcribe
+
+text = complete(
+    model="deepseek/deepseek-chat",
+    user="用一句话概括这段录音",
+    api_key_env="DEEPSEEK_API_KEY",
+)
+
+transcript = transcribe(
+    Path("voice.m4a").read_bytes(),
+    format="m4a",
+    api_key_env="DASHSCOPE_API_KEY",
+)
+
+async def realtime() -> None:
+    stream = await start_asr_stream(
+        format="pcm",
+        sample_rate=16_000,
+        context=[{"role": "user", "text": "Emile，Orchest，Murmur"}],
+        api_key_env="DASHSCOPE_API_KEY",
+        on_event=lambda event: print(event),
+    )
+    await stream.send_audio(Path("chunk.pcm").read_bytes())
+    stream.finish()
+    await stream.wait()
+
+asyncio.run(realtime())
+```
+
+省略 ASR provider 时，一次性识别固定使用 `aliyun/qwen-audio-3.0-asr-flash`，realtime 固定使用
+`aliyun/qwen-audio-3.0-asr-flash-streaming`。`on_event` 必须是同步 callback；返回 coroutine 或抛出异常会终止输入，
+并由 `wait()` 抛出原始异常。
+
+## 5. 消费事件
 
 `run()` 返回的列表里每个 event 是带 `"type"` 字段的 dict：
 
@@ -87,7 +138,7 @@ for event in agent.run("What's the weather in Tokyo?"):
         print(f"\n[error] {event.get('error', '')}")
 ```
 
-## 5. Event type 速查
+## 6. Event type 速查
 
 来自 `python/orchest/__init__.pyi`：
 
@@ -104,7 +155,7 @@ sub_agent_failed       run_restarted           run_completed
 run_failed
 ```
 
-## 6. 异常
+## 7. 异常
 
 绑定层把内部错误转成 Python 异常（见 `python/orchest/exceptions.pyi`）：
 
@@ -115,6 +166,6 @@ run_failed
 - `ToolError`
 - `SkillError`
 
-## 7. 类型提示
+## 8. 类型提示
 
 完整签名与 TypedDict 见类型存根 [`python/orchest/__init__.pyi`](../../python/orchest/__init__.pyi)，覆盖 `Agent`、`BudgetOptions`、`RequestOptions`、`RuntimeEvent` 等。

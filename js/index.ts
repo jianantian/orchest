@@ -159,4 +159,108 @@ export type RuntimeEvent =
   | { type: "run_completed"; output: unknown; stop_reason: StopReason; run_depth: number; child_run_id: string | null }
   | { type: "run_failed"; error: string; kind: RunFailureKind; run_depth: number; child_run_id: string | null };
 
-export { Agent } from "./native";
+import {
+  Agent,
+  NativeAsrStream,
+  _startAsrStream,
+  complete,
+  transcribe,
+} from "./native";
+
+export { Agent, complete, transcribe };
+
+export interface CompletionOptions {
+  model: string;
+  user: string;
+  system?: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  apiUrl?: string;
+  jsonMode?: boolean;
+  retry?: boolean;
+  requestOptions?: RequestOptions;
+}
+
+export interface TranscribeOptions {
+  format: "m4a" | "aac" | "wav" | "mp3" | "pcm";
+  language?: string;
+  provider?: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  apiUrl?: string;
+  options?: Record<string, unknown>;
+}
+
+export interface AsrContextMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+export interface AsrStreamOptions extends TranscribeOptions {
+  sampleRate: number;
+  context?: AsrContextMessage[];
+}
+
+export type AsrStreamEvent = Record<string, unknown>;
+
+export class AsrStream {
+  constructor(
+    private readonly session: NativeAsrStream,
+    private readonly callbackError: unknown[],
+  ) {}
+
+  async sendAudio(audio: Uint8Array): Promise<void> {
+    await this.session.sendAudio(audio);
+  }
+
+  finish(): void {
+    this.session.finish();
+  }
+
+  async wait(): Promise<void> {
+    let nativeError: unknown;
+    let hasNativeError = false;
+    try {
+      await this.session.wait();
+    } catch (error) {
+      nativeError = error;
+      hasNativeError = true;
+    }
+    if (this.callbackError.length > 0) {
+      throw this.callbackError[0];
+    }
+    if (hasNativeError) {
+      throw nativeError;
+    }
+  }
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === "object" && value !== null) || typeof value === "function"
+  ) && "then" in value && typeof value.then === "function";
+}
+
+export async function startAsrStream(
+  options: AsrStreamOptions,
+  onEvent: (event: AsrStreamEvent) => void,
+): Promise<AsrStream> {
+  const callbackError: unknown[] = [];
+  let session: NativeAsrStream | undefined;
+  const guardedOnEvent = (event: AsrStreamEvent): void => {
+    if (callbackError.length > 0) return;
+    try {
+      const result: unknown = onEvent(event);
+      if (isThenable(result)) {
+        Promise.resolve(result).catch(() => undefined);
+        throw new TypeError("onEvent must be synchronous and return void");
+      }
+    } catch (error) {
+      callbackError.push(error);
+      session?.finish();
+    }
+  };
+  session = await _startAsrStream(options, guardedOnEvent);
+  if (callbackError.length > 0) session.finish();
+  return new AsrStream(session, callbackError);
+}

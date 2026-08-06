@@ -31,7 +31,7 @@ impl AliyunAsr {
     }
 }
 
-#[allow(clippy::result_large_err)]
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries provider diagnostics by workspace convention
 pub fn build_request_body(
     model: &str,
     request: &TranscribeRequest,
@@ -99,7 +99,7 @@ pub fn build_request_body(
     }))
 }
 
-#[allow(clippy::result_large_err)]
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries provider diagnostics by workspace convention
 pub fn parse_response(value: Value) -> Result<TranscribeResult, ProtocolError> {
     let text = value
         .pointer("/output/text")
@@ -122,6 +122,7 @@ pub fn parse_response(value: Value) -> Result<TranscribeResult, ProtocolError> {
     })
 }
 
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries provider diagnostics by workspace convention
 fn format_and_mime(format: AudioFormat) -> Result<(&'static str, &'static str), ProtocolError> {
     match format {
         AudioFormat::M4a => Ok(("m4a", "audio/mp4")),
@@ -136,7 +137,7 @@ fn format_and_mime(format: AudioFormat) -> Result<(&'static str, &'static str), 
     }
 }
 
-#[allow(clippy::result_large_err)]
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries provider diagnostics by workspace convention
 pub fn from_provider_config(cfg: &ProviderConfig) -> Result<AliyunAsr, ProtocolError> {
     let api_key = cfg
         .api_key

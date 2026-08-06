@@ -8,7 +8,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 orchest = { path = "../orchest" }
-orchest-provider = { path = "../orchest-provider", features = ["llm"] }
+orchest-protocol = { path = "../orchest-protocol" }
+orchest-provider = { path = "../orchest-provider", features = ["llm", "asr"] }
+bytes = "1"
 pyo3 = { version = "0.28", features = ["py-clone"] }
 async-trait = "0.1"
 pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }

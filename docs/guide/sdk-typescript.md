@@ -13,6 +13,18 @@ npm run build:native     # cargo build -p orchest-node + 复制 .node 插件
 
 > npm 发布计划于 v1.0。在那之前用 `npm run build:native` 从源码构建。
 
+要在另一个本地项目里使用，先构建并打包 native addon，再安装生成的 tarball：
+
+```bash
+cd /absolute/path/to/orchest
+npm run build:native
+npm pack
+cd /absolute/path/to/downstream
+npm install /absolute/path/to/orchest/orchest-sdk-0.1.0.tgz
+```
+
+不要只复制 `js/`；运行时同时需要与当前平台和 Node ABI 匹配的 `orchest_node.node`。
+
 ## 2. 基础用法
 
 ```typescript
@@ -64,7 +76,44 @@ agent.registerTool({
 
 `requiresApproval` 选项已移除；使用 `approval: "always"` 表达必须审批，使用 `approval: "never"` 表达不审批。`approvalMode: "sideEffectOnly"` 也已移除；使用默认 `approvalMode: "perTool"`，并在有副作用的 tool 上设置 `approval: "whenRisky"` 和 `sideEffect: true`。
 
-## 4. 消费事件
+## 4. 原子下游 API
+
+completion、一次性 ASR 和 realtime ASR 都可绕过 agent loop 直接调用：
+
+```typescript
+import { readFile } from "node:fs/promises";
+import { complete, startAsrStream, transcribe } from "@orchest/sdk";
+
+const text = await complete({
+  model: "deepseek/deepseek-chat",
+  user: "用一句话概括这段录音",
+  apiKeyEnv: "DEEPSEEK_API_KEY",
+});
+
+const transcript = await transcribe(await readFile("voice.m4a"), {
+  format: "m4a",
+  apiKeyEnv: "DASHSCOPE_API_KEY",
+});
+
+const stream = await startAsrStream(
+  {
+    format: "pcm",
+    sampleRate: 16_000,
+    context: [{ role: "user", text: "Emile，Orchest，Murmur" }],
+    apiKeyEnv: "DASHSCOPE_API_KEY",
+  },
+  (event) => console.log(event),
+);
+await stream.sendAudio(await readFile("chunk.pcm"));
+stream.finish();
+await stream.wait();
+```
+
+省略 ASR provider 时，一次性识别固定使用 `aliyun/qwen-audio-3.0-asr-flash`，realtime 固定使用
+`aliyun/qwen-audio-3.0-asr-flash-streaming`。event callback 必须同步返回；返回 Promise 或抛出异常会终止输入，
+并由 `wait()` 抛出原始异常。
+
+## 5. 消费事件
 
 `runSync` 返回的数组里每个 event 带 `type` 字段：
 
@@ -90,7 +139,7 @@ for (const event of agent.runSync("What's the weather in Tokyo?")) {
 }
 ```
 
-## 5. Event type 速查
+## 6. Event type 速查
 
 来自 `js/index.d.ts`：
 
@@ -107,6 +156,6 @@ run_failed
 
 > Python SDK 比 TS 多导出几个事件（`runtime_warning` / `context_compacted` / `run_restarted` 等）；TS 侧以 `js/index.d.ts` 的实际导出为准。
 
-## 6. 类型定义
+## 7. 类型定义
 
 完整类型见 [`js/index.d.ts`](../../js/index.d.ts)（`AgentOptions` / `RequestOptions` / `BudgetOptions` / `RuntimeEvent` / `StreamEvent` 等）和 [`js/native.d.ts`](../../js/native.d.ts)（napi 类绑定）。

@@ -4,6 +4,10 @@
 //! `orchest`; all business logic lives in core. The public surface
 //! is the `Agent` class exposed to Node via napi.
 
+mod asr;
+mod asr_stream;
+mod atomic;
+
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 

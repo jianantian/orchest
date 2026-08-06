@@ -17,7 +17,7 @@ pub struct ContextMessage {
     pub text: String,
 }
 
-#[allow(clippy::result_large_err)]
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries provider diagnostics by workspace convention
 pub fn parse_context(options: &Value) -> Result<Vec<ContextMessage>, ProtocolError> {
     let Some(raw) = options.get("context") else {
         return Ok(Vec::new());

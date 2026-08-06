@@ -1698,10 +1698,12 @@ name = "orchest-node"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "napi",
  "napi-build",
  "napi-derive",
  "orchest",
+ "orchest-protocol",
  "orchest-provider",
  "serde_json",
  "tokio",
@@ -1816,7 +1818,9 @@ name = "orchest-py"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "orchest",
+ "orchest-protocol",
  "orchest-provider",
  "pyo3",
  "pyo3-async-runtimes",

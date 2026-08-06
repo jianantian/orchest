@@ -258,6 +258,7 @@ impl AliyunMapper {
 /// Drive one DashScope session: send `run_task` (text), client audio as
 /// **binary**, `finish_task` (text) on input end; inbound **text** events project
 /// via [`AliyunMapper`]. Ends on `task-finished` / `task-failed` / transport EOF.
+#[allow(clippy::too_many_arguments)] // justified: driver channels and wire commands have distinct ownership
 pub async fn run_aliyun_stream<T: ByteDuplex>(
     mut transport: T,
     run_task: String,
@@ -382,6 +383,7 @@ impl AliyunAsr {
     }
 }
 
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries provider diagnostics by workspace convention
 fn realtime_format_name(format: AudioFormat) -> Result<&'static str, ProtocolError> {
     match format {
         AudioFormat::Pcm | AudioFormat::Pcm16Le => Ok("pcm"),
