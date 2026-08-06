@@ -362,9 +362,75 @@ class AgentError(Exception):
 
 class BudgetExceededError(AgentError): ...
 class ApprovalDeniedError(AgentError): ...
-class ModelError(AgentError): ...
+class ModelError(AgentError):
+    provider: str | None
+    model: str | None
+    status: int | None
+    retry_after_secs: int | None
+    upstream: object | None
+    diagnostic_metadata: object | None
+    def __init__(
+        self,
+        message: str,
+        code: str | None = None,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        status: int | None = None,
+        retry_after_secs: int | None = None,
+        upstream: object | None = None,
+        diagnostic_metadata: object | None = None,
+    ) -> None: ...
 class ToolError(AgentError): ...
 class SkillError(AgentError): ...
+
+def complete(
+    model: str,
+    user: str,
+    system: str | None = None,
+    api_key: str | None = None,
+    api_key_env: str | None = None,
+    api_url: str | None = None,
+    json_mode: bool = False,
+    retry: bool = False,
+    request_options: RequestOptions | None = None,
+) -> str: ...
+
+def transcribe(
+    audio: bytes,
+    format: str,
+    language: str | None = None,
+    provider: str | None = None,
+    api_key: str | None = None,
+    api_key_env: str | None = None,
+    api_url: str | None = None,
+    options: dict[str, Any] | None = None,
+) -> str: ...
+
+AsrStreamEvent: TypeAlias = dict[str, Any]
+
+class AsrContextMessage(TypedDict):
+    role: Literal["user", "assistant"]
+    text: str
+
+class AsrStream:
+    async def send_audio(self, audio: bytes) -> None: ...
+    def finish(self) -> None: ...
+    async def wait(self) -> None: ...
+
+async def start_asr_stream(
+    *,
+    format: str,
+    sample_rate: int,
+    on_event: Callable[[AsrStreamEvent], None],
+    language: str | None = None,
+    provider: str | None = None,
+    api_key: str | None = None,
+    api_key_env: str | None = None,
+    api_url: str | None = None,
+    context: list[AsrContextMessage] | None = None,
+    options: dict[str, Any] | None = None,
+) -> AsrStream: ...
 
 class Agent:
     def __init__(

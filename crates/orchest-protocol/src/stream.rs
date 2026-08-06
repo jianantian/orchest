@@ -33,6 +33,8 @@ pub enum AudioFormat {
     Opus,
     OggOpus,
     Mp3,
+    M4a,
+    Aac,
     Ogg,
     Flac,
 }
@@ -213,6 +215,12 @@ impl EventStream {
 mod tests {
     use super::*;
     use crate::types::MediaSource;
+
+    #[test]
+    fn mobile_audio_formats_use_stable_wire_names() {
+        assert_eq!(serde_json::to_value(AudioFormat::M4a).unwrap(), "m4a");
+        assert_eq!(serde_json::to_value(AudioFormat::Aac).unwrap(), "aac");
+    }
 
     /// The **Chameleon ruler** (Issue 007 acceptance): a chat turn that produces an
     /// image emits a full `Image` content block **in its own `StreamEvent` stream**

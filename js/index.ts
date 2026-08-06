@@ -159,4 +159,172 @@ export type RuntimeEvent =
   | { type: "run_completed"; output: unknown; stop_reason: StopReason; run_depth: number; child_run_id: string | null }
   | { type: "run_failed"; error: string; kind: RunFailureKind; run_depth: number; child_run_id: string | null };
 
-export { Agent } from "./native";
+import {
+  Agent,
+  NativeAsrStream,
+  _startAsrStream,
+  _complete,
+  _transcribe,
+} from "./native";
+
+export { Agent };
+
+export interface CompletionOptions {
+  model: string;
+  user: string;
+  system?: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  apiUrl?: string;
+  jsonMode?: boolean;
+  retry?: boolean;
+  requestOptions?: RequestOptions;
+}
+
+export interface TranscribeOptions {
+  format: "m4a" | "aac" | "wav" | "mp3" | "pcm";
+  language?: string;
+  provider?: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  apiUrl?: string;
+  options?: Record<string, unknown>;
+}
+
+export interface ProviderErrorDetails {
+  message: string;
+  code?: string;
+  provider?: string;
+  model?: string;
+  status?: number;
+  retryAfterSecs?: number;
+  upstream?: unknown;
+  diagnosticMetadata?: unknown;
+}
+
+export class ProviderError extends Error implements ProviderErrorDetails {
+  code?: string;
+  provider?: string;
+  model?: string;
+  status?: number;
+  retryAfterSecs?: number;
+  upstream?: unknown;
+  diagnosticMetadata?: unknown;
+
+  constructor(details: ProviderErrorDetails) {
+    super(details.message);
+    this.name = "ProviderError";
+    Object.assign(this, details);
+  }
+}
+
+const PROVIDER_ERROR_PREFIX = "__ORCHEST_PROVIDER_ERROR__:";
+
+function normalizeProviderError(error: unknown): unknown {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.startsWith(PROVIDER_ERROR_PREFIX)) return error;
+  try {
+    return new ProviderError(
+      JSON.parse(message.slice(PROVIDER_ERROR_PREFIX.length)) as ProviderErrorDetails,
+    );
+  } catch {
+    return error;
+  }
+}
+
+export async function complete(options: CompletionOptions): Promise<string> {
+  try {
+    return await _complete(options);
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
+}
+
+export async function transcribe(
+  audio: Uint8Array,
+  options: TranscribeOptions,
+): Promise<string> {
+  try {
+    return await _transcribe(audio, options);
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
+}
+
+export interface AsrContextMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+export interface AsrStreamOptions extends TranscribeOptions {
+  sampleRate: number;
+  context?: AsrContextMessage[];
+}
+
+export type AsrStreamEvent = Record<string, unknown>;
+
+export class AsrStream {
+  constructor(
+    private readonly session: NativeAsrStream,
+    private readonly callbackError: unknown[],
+  ) {}
+
+  async sendAudio(audio: Uint8Array): Promise<void> {
+    await this.session.sendAudio(audio);
+  }
+
+  finish(): void {
+    this.session.finish();
+  }
+
+  async wait(): Promise<void> {
+    let nativeError: unknown;
+    let hasNativeError = false;
+    try {
+      await this.session.wait();
+    } catch (error) {
+      nativeError = error;
+      hasNativeError = true;
+    }
+    if (this.callbackError.length > 0) {
+      throw this.callbackError[0];
+    }
+    if (hasNativeError) {
+      throw normalizeProviderError(nativeError);
+    }
+  }
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === "object" && value !== null) || typeof value === "function"
+  ) && "then" in value && typeof value.then === "function";
+}
+
+export async function startAsrStream(
+  options: AsrStreamOptions,
+  onEvent: (event: AsrStreamEvent) => void,
+): Promise<AsrStream> {
+  const callbackError: unknown[] = [];
+  let session: NativeAsrStream | undefined;
+  const guardedOnEvent = (event: AsrStreamEvent): void => {
+    if (callbackError.length > 0) return;
+    try {
+      const result: unknown = onEvent(event);
+      if (isThenable(result)) {
+        Promise.resolve(result).catch(() => undefined);
+        throw new TypeError("onEvent must be synchronous and return void");
+      }
+    } catch (error) {
+      callbackError.push(error);
+      session?.finish();
+    }
+  };
+  try {
+    session = await _startAsrStream(options, guardedOnEvent);
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
+  if (callbackError.length > 0) session.finish();
+  return new AsrStream(session, callbackError);
+}

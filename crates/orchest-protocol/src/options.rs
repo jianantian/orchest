@@ -35,6 +35,19 @@ pub enum CompatibilityPolicy {
     Strict,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub enum ResponseFormat {
+    #[default]
+    Text,
+    JsonObject,
+}
+
+impl ResponseFormat {
+    fn is_text(&self) -> bool {
+        *self == Self::Text
+    }
+}
+
 // `CapabilitySource` is now defined once in `crate::descriptor` (v0.9.12 spine
 // unification) and re-exported here so `ModelCapabilities.source` and existing
 // `options::CapabilitySource` paths keep resolving to the single canonical type.
@@ -58,6 +71,8 @@ pub struct RequestOptions {
     /// 跨 crate 时不要互相借用字符串值。
     #[serde(default)]
     pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ResponseFormat::is_text")]
+    pub response_format: ResponseFormat,
 }
 
 impl Default for RequestOptions {
@@ -72,7 +87,45 @@ impl Default for RequestOptions {
             top_p: None,
             cache_policy: CachePolicy::default(),
             service_tier: None,
+            response_format: ResponseFormat::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod request_option_tests {
+    use super::*;
+
+    #[test]
+    fn request_options_without_response_format_defaults_to_text() {
+        let value = serde_json::to_value(RequestOptions::default()).expect("serialize defaults");
+        let options: RequestOptions = serde_json::from_value(value).expect("deserialize defaults");
+
+        assert_eq!(options.response_format, ResponseFormat::Text);
+    }
+
+    #[test]
+    fn text_response_format_is_omitted_from_json() {
+        let value = serde_json::to_value(RequestOptions::default()).expect("serialize defaults");
+
+        assert!(value.get("response_format").is_none());
+    }
+
+    #[test]
+    fn json_object_response_format_round_trips() {
+        let options = RequestOptions {
+            response_format: ResponseFormat::JsonObject,
+            ..RequestOptions::default()
+        };
+
+        let value = serde_json::to_value(&options).expect("serialize json mode");
+        assert_eq!(value["response_format"], "JsonObject");
+        assert_eq!(
+            serde_json::from_value::<RequestOptions>(value)
+                .expect("deserialize json mode")
+                .response_format,
+            ResponseFormat::JsonObject
+        );
     }
 }
 

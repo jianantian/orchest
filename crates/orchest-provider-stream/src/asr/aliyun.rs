@@ -9,16 +9,18 @@
 
 use async_trait::async_trait;
 use orchest_protocol::{
-    Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
-    Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
+    Asr, AudioFormat, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language,
+    LifecycleEvent, Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
     StreamingTranscribeRequest, TranscribeRequest, TranscribeResult, TranscriptStability,
     TranscriptUpdateKind,
 };
+use orchest_provider_core::aliyun_asr::{parse_context, ContextRole};
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
 use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 
@@ -86,12 +88,55 @@ pub fn build_run_task(
     model: &str,
     options: &Value,
 ) -> Result<String, ProtocolError> {
-    let mut parameters = json!({ "sample_rate": 16000, "format": "pcm" });
-    if let Some(obj) = options.as_object() {
-        for (k, v) in obj {
-            parameters[k] = v.clone();
+    let context = parse_context(options)?;
+    let mut parameters = match options {
+        Value::Null => serde_json::Map::new(),
+        Value::Object(object) => object.clone(),
+        _ => {
+            return Err(ProtocolError::new(
+                ErrorCode::InvalidRequest,
+                "Aliyun realtime ASR options must be an object",
+            ))
+        }
+    };
+    parameters.remove("context");
+    parameters.entry("sample_rate").or_insert(json!(16000));
+    parameters.entry("format").or_insert(json!("pcm"));
+    if let Some(sample_rate) = parameters.get_mut("sample_rate") {
+        if let Value::String(value) = sample_rate {
+            let parsed = value.parse::<u64>().map_err(|_| {
+                ProtocolError::new(
+                    ErrorCode::InvalidRequest,
+                    "Aliyun realtime ASR sample_rate must be an integer",
+                )
+            })?;
+            *sample_rate = json!(parsed);
+        }
+        if !sample_rate.is_u64() {
+            return Err(ProtocolError::new(
+                ErrorCode::InvalidRequest,
+                "Aliyun realtime ASR sample_rate must be an integer",
+            ));
         }
     }
+    let context = context
+        .into_iter()
+        .map(|message| match message.role {
+            ContextRole::User => json!({
+                "role": "user",
+                "content": [{"type": "input_text", "text": message.text}]
+            }),
+            ContextRole::Assistant => json!({
+                "role": "assistant",
+                "content": [{"type": "text", "text": message.text}]
+            }),
+        })
+        .collect::<Vec<_>>();
+    let input = if context.is_empty() {
+        json!({})
+    } else {
+        json!({"context": context})
+    };
     let msg = ClientMessage {
         header: ClientHeader {
             action: "run-task".into(),
@@ -103,8 +148,8 @@ pub fn build_run_task(
             "task": "asr",
             "function": "recognition",
             "model": model,
-            "parameters": parameters,
-            "input": {},
+            "parameters": Value::Object(parameters),
+            "input": input,
         }),
     };
     serde_json::to_string(&msg)
@@ -213,29 +258,95 @@ impl AliyunMapper {
 /// Drive one DashScope session: send `run_task` (text), client audio as
 /// **binary**, `finish_task` (text) on input end; inbound **text** events project
 /// via [`AliyunMapper`]. Ends on `task-finished` / `task-failed` / transport EOF.
+#[allow(clippy::too_many_arguments)] // justified: driver channels and wire commands have distinct ownership
 pub async fn run_aliyun_stream<T: ByteDuplex>(
     mut transport: T,
     run_task: String,
     finish_task: String,
     mut input: mpsc::Receiver<SessionInput>,
     events: mpsc::Sender<StreamEvent>,
+    ready: oneshot::Sender<Result<(), ProtocolError>>,
 ) {
     if transport.send(WsFrame::Text(run_task)).await.is_err() {
+        let _ = ready.send(Err(ProtocolError::new(
+            ErrorCode::ProviderStreamError,
+            "failed to send Aliyun run-task",
+        )));
         return;
     }
     let mut mapper = AliyunMapper::new();
+    loop {
+        let Some(frame) = transport.recv().await else {
+            let _ = ready.send(Err(ProtocolError::new(
+                ErrorCode::ProviderStreamError,
+                "Aliyun stream closed before task-started",
+            )));
+            return;
+        };
+        let Some(text) = frame.as_text() else {
+            continue;
+        };
+        let event = match parse_server_event(text) {
+            Ok(event) => event,
+            Err(error) => {
+                let _ = ready.send(Err(error));
+                return;
+            }
+        };
+        match event.header.event.as_str() {
+            "task-started" => {
+                let _ = ready.send(Ok(()));
+                break;
+            }
+            "task-failed" => {
+                let message = event
+                    .header
+                    .error_message
+                    .or(event.header.error_code)
+                    .unwrap_or_else(|| "Aliyun task failed before start".to_string());
+                let _ = ready.send(Err(ProtocolError::new(
+                    ErrorCode::ProviderTaskFailed,
+                    message,
+                )));
+                return;
+            }
+            other => {
+                let _ = ready.send(Err(ProtocolError::new(
+                    ErrorCode::ProviderStreamError,
+                    format!("unexpected Aliyun event before task-started: {other}"),
+                )));
+                return;
+            }
+        }
+    }
     let mut input_open = true;
     loop {
         tokio::select! {
             maybe_input = input.recv(), if input_open => match maybe_input {
                 Some(SessionInput::Audio(bytes)) => {
                     if transport.send(WsFrame::Binary(bytes.to_vec())).await.is_err() {
+                        let _ = events.send(StreamEvent::Error {
+                            error: ProtocolError::new(
+                                ErrorCode::ProviderStreamError,
+                                "failed to send Aliyun audio frame",
+                            ),
+                            fatal: true,
+                        }).await;
                         break;
                     }
                 }
                 None | Some(SessionInput::Interrupt) => {
                     input_open = false;
-                    let _ = transport.send(WsFrame::Text(finish_task.clone())).await;
+                    if transport.send(WsFrame::Text(finish_task.clone())).await.is_err() {
+                        let _ = events.send(StreamEvent::Error {
+                            error: ProtocolError::new(
+                                ErrorCode::ProviderStreamError,
+                                "failed to send Aliyun finish-task",
+                            ),
+                            fatal: true,
+                        }).await;
+                        break;
+                    }
                 }
                 Some(_) => {}
             },
@@ -262,7 +373,16 @@ pub async fn run_aliyun_stream<T: ByteDuplex>(
                 },
                 None => match maybe_frame {
                     Some(_) => continue,
-                    None => break,
+                    None => {
+                        let _ = events.send(StreamEvent::Error {
+                            error: ProtocolError::new(
+                                ErrorCode::ProviderStreamError,
+                                "Aliyun stream closed before a terminal event",
+                            ),
+                            fatal: true,
+                        }).await;
+                        break;
+                    },
                 },
             },
         }
@@ -285,6 +405,21 @@ pub struct AliyunAsr {
 impl AliyunAsr {
     pub fn new(config: AliyunAsrConfig) -> Self {
         Self { config }
+    }
+}
+
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries provider diagnostics by workspace convention
+fn realtime_format_name(format: AudioFormat) -> Result<&'static str, ProtocolError> {
+    match format {
+        AudioFormat::Pcm | AudioFormat::Pcm16Le => Ok("pcm"),
+        AudioFormat::Wav | AudioFormat::WavPcm16Le => Ok("wav"),
+        AudioFormat::Mp3 => Ok("mp3"),
+        AudioFormat::Opus | AudioFormat::OggOpus => Ok("opus"),
+        AudioFormat::Aac => Ok("aac"),
+        _ => Err(ProtocolError::new(
+            ErrorCode::UnsupportedAudioFormat,
+            "audio format is not supported by Aliyun realtime ASR",
+        )),
     }
 }
 
@@ -370,7 +505,24 @@ impl Asr for AliyunAsr {
             ));
         }
         let task_id = uuid::Uuid::new_v4().simple().to_string();
-        let run_task = build_run_task(&task_id, &self.config.model, &request.options)?;
+        let mut options = match request.options {
+            Value::Null => serde_json::Map::new(),
+            Value::Object(object) => object,
+            _ => {
+                return Err(ProtocolError::new(
+                    ErrorCode::InvalidRequest,
+                    "Aliyun realtime ASR options must be an object",
+                ))
+            }
+        };
+        options.insert(
+            "format".into(),
+            json!(realtime_format_name(request.format)?),
+        );
+        if let Some(language) = request.language {
+            options.insert("language_hints".into(), json!([language.0]));
+        }
+        let run_task = build_run_task(&task_id, &self.config.model, &Value::Object(options))?;
         let finish_task = build_finish_task(&task_id)?;
 
         let ws_request = tungstenite::http::Request::builder()
@@ -398,13 +550,21 @@ impl Asr for AliyunAsr {
 
         let (input_tx, input_rx) = mpsc::channel(32);
         let (events_tx, events) = EventStream::channel(64);
+        let (ready_tx, ready_rx) = oneshot::channel();
         tokio::spawn(run_aliyun_stream(
             WsDuplex::new(ws_stream),
             run_task,
             finish_task,
             input_rx,
             events_tx,
+            ready_tx,
         ));
+        ready_rx.await.map_err(|_| {
+            ProtocolError::new(
+                ErrorCode::ProviderStreamError,
+                "Aliyun stream startup task closed before readiness",
+            )
+        })??;
         Ok(RealtimeHandle {
             input: input_tx,
             events,
@@ -415,6 +575,7 @@ impl Asr for AliyunAsr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn event(name: &str, text: Option<&str>, sentence_end: bool) -> String {
         event_at(name, text, sentence_end, None)
@@ -434,8 +595,28 @@ mod tests {
 
     #[test]
     fn run_task_and_finish_task_shapes() {
-        let run = build_run_task("t1", DEFAULT_MODEL, &json!({"vad": true})).unwrap();
+        let run = build_run_task(
+            "t1",
+            DEFAULT_MODEL,
+            &json!({
+                "sample_rate": 48000,
+                "language_hints": ["zh"],
+                "context": [
+                    {"role": "user", "text": "Murmur"},
+                    {"role": "assistant", "text": "好的"}
+                ]
+            }),
+        )
+        .unwrap();
         assert!(run.contains("run-task") && run.contains(DEFAULT_MODEL));
+        let value: Value = serde_json::from_str(&run).unwrap();
+        assert_eq!(value["payload"]["parameters"]["sample_rate"], 48000);
+        assert!(value["payload"]["parameters"].get("context").is_none());
+        assert_eq!(value["payload"]["input"]["context"][0]["role"], "user");
+        assert_eq!(
+            value["payload"]["input"]["context"][0]["content"][0]["type"],
+            "input_text"
+        );
         assert!(build_finish_task("t1").unwrap().contains("finish-task"));
     }
 
@@ -560,10 +741,11 @@ mod tests {
         };
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(8);
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let run = build_run_task("t", "m", &json!({})).unwrap();
         let finish = build_finish_task("t").unwrap();
         let handle = tokio::spawn(run_aliyun_stream(
-            transport, run, finish, input_rx, events_tx,
+            transport, run, finish, input_rx, events_tx, ready_tx,
         ));
 
         // first frame is the run-task text
@@ -576,6 +758,16 @@ mod tests {
             .send(SessionInput::Audio(bytes::Bytes::from_static(b"pcm")))
             .await
             .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), out_rx.recv())
+                .await
+                .is_err()
+        );
+        in_tx
+            .send(WsFrame::Text(event("task-started", None, false)))
+            .await
+            .unwrap();
+        ready_rx.await.unwrap().unwrap();
         assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Binary(_)));
 
         // a committed result, then task-finished -> Transcript + EndOfSpeech, then ends
@@ -597,6 +789,44 @@ mod tests {
         assert!(matches!(
             events_rx.recv().await.unwrap(),
             StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
+        ));
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_aliyun_stream_emits_fatal_error_on_eof_before_terminal() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (_input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let run = build_run_task("t", "m", &json!({})).unwrap();
+        let finish = build_finish_task("t").unwrap();
+        let handle = tokio::spawn(run_aliyun_stream(
+            transport, run, finish, input_rx, events_tx, ready_tx,
+        ));
+
+        assert!(matches!(out_rx.recv().await, Some(WsFrame::Text(_))));
+        in_tx
+            .send(WsFrame::Text(event("task-started", None, false)))
+            .await
+            .unwrap();
+        ready_rx.await.unwrap().unwrap();
+        drop(in_tx);
+
+        assert!(matches!(
+            events_rx.recv().await,
+            Some(StreamEvent::Error {
+                fatal: true,
+                error: ProtocolError {
+                    code: ErrorCode::ProviderStreamError,
+                    ..
+                }
+            })
         ));
         handle.await.unwrap();
     }

@@ -10,6 +10,63 @@ export interface HistoryMessage {
   content: Array<Record<string, unknown>>;
 }
 
+export interface RequestOptions {
+  thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  thinkingBudgetTokens?: number;
+  includeThinking?: boolean;
+  compatibilityPolicy?: "coerce" | "strict";
+  maxTokens?: number;
+  temperature?: number;
+  topP?: number;
+  cachePolicy?: "none" | "auto" | "long";
+}
+
+export interface CompletionOptions {
+  model: string;
+  user: string;
+  system?: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  apiUrl?: string;
+  jsonMode?: boolean;
+  retry?: boolean;
+  requestOptions?: RequestOptions;
+}
+
+export interface TranscribeOptions {
+  format: "m4a" | "aac" | "wav" | "mp3" | "pcm";
+  language?: string;
+  provider?: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  apiUrl?: string;
+  options?: Record<string, unknown>;
+}
+
+export interface AsrContextMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+export interface AsrStreamOptions extends TranscribeOptions {
+  sampleRate: number;
+  context?: AsrContextMessage[];
+}
+
+export class NativeAsrStream {
+  sendAudio(audio: Uint8Array): Promise<void>;
+  finish(): void;
+  wait(): Promise<void>;
+}
+
+export function _startAsrStream(
+  options: AsrStreamOptions,
+  onEvent: (event: Record<string, unknown>) => void,
+): Promise<NativeAsrStream>;
+
+export function _complete(options: CompletionOptions): Promise<string>;
+export function _transcribe(audio: Uint8Array, options: TranscribeOptions): Promise<string>;
+
 export class Agent {
   constructor(options: {
     /** Human-readable identity used by run and handoff logs. */

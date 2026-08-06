@@ -4,8 +4,8 @@ use super::*;
 use crate::chat::ChatAdapter;
 use crate::providers::anthropic::test_util::*;
 use crate::{
-    CachePolicy, CompatibilityPolicy, ContentBlock, MediaSource, Message, RequestOptions, Role,
-    StopReason, StreamEvent, ThinkingLevel,
+    CachePolicy, CompatibilityPolicy, ContentBlock, MediaSource, Message, RequestOptions,
+    ResponseFormat, Role, StopReason, StreamEvent, ThinkingLevel,
 };
 use serde_json::json;
 
@@ -18,6 +18,21 @@ fn default_options() -> RequestOptions {
 
 fn make_adapter(api_url: &str) -> ChatAdapter {
     ChatAdapter::for_test("openai", "gpt-4o-mini", api_url, 128)
+}
+
+#[test]
+fn json_object_response_format_lowers_to_chat_wire() {
+    let adapter = make_adapter("http://localhost/v1/chat/completions");
+    let options = RequestOptions {
+        response_format: ResponseFormat::JsonObject,
+        ..default_options()
+    };
+
+    let (body, _) = adapter
+        .request_body_for_test(&[], &[], &options)
+        .expect("request body");
+
+    assert_eq!(body["response_format"], json!({"type": "json_object"}));
 }
 
 #[test]

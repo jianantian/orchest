@@ -22,6 +22,76 @@ export interface AgentOptions {
   retry?: boolean;
 }
 
+export interface CompletionOptions {
+  model: string;
+  user: string;
+  system?: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  apiUrl?: string;
+  jsonMode?: boolean;
+  retry?: boolean;
+  requestOptions?: RequestOptions;
+}
+
+export interface TranscribeOptions {
+  format: "m4a" | "aac" | "wav" | "mp3" | "pcm";
+  language?: string;
+  provider?: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  apiUrl?: string;
+  options?: Record<string, unknown>;
+}
+
+export interface ProviderErrorDetails {
+  message: string;
+  code?: string;
+  provider?: string;
+  model?: string;
+  status?: number;
+  retryAfterSecs?: number;
+  upstream?: unknown;
+  diagnosticMetadata?: unknown;
+}
+
+export class ProviderError extends Error implements ProviderErrorDetails {
+  code?: string;
+  provider?: string;
+  model?: string;
+  status?: number;
+  retryAfterSecs?: number;
+  upstream?: unknown;
+  diagnosticMetadata?: unknown;
+  constructor(details: ProviderErrorDetails);
+}
+
+export interface AsrContextMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+export interface AsrStreamOptions extends TranscribeOptions {
+  sampleRate: number;
+  context?: AsrContextMessage[];
+}
+
+export type AsrStreamEvent = Record<string, unknown>;
+
+export class AsrStream {
+  sendAudio(audio: Uint8Array): Promise<void>;
+  finish(): void;
+  wait(): Promise<void>;
+}
+
+export function startAsrStream(
+  options: AsrStreamOptions,
+  onEvent: (event: AsrStreamEvent) => void,
+): Promise<AsrStream>;
+
+export function complete(options: CompletionOptions): Promise<string>;
+export function transcribe(audio: Uint8Array, options: TranscribeOptions): Promise<string>;
+
 export interface RequestOptions {
   thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   thinkingBudgetTokens?: number;

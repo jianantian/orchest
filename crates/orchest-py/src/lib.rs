@@ -4,6 +4,11 @@
 //! `orchest`; all business logic lives in core. The public surface
 //! is the `Agent` class exposed to Python via PyO3.
 
+mod asr;
+mod asr_stream;
+mod atomic;
+mod error;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -946,6 +951,10 @@ impl Agent {
 #[pymodule]
 fn orchest_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Agent>()?;
+    m.add_function(wrap_pyfunction!(atomic::complete, m)?)?;
+    m.add_function(wrap_pyfunction!(asr::transcribe, m)?)?;
+    m.add_class::<asr_stream::NativeAsrStream>()?;
+    m.add_function(wrap_pyfunction!(asr_stream::start_asr_stream, m)?)?;
     Ok(())
 }
 

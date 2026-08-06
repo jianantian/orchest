@@ -44,7 +44,7 @@ pub use error::{ErrorCode, ModelError, ProtocolError, UpstreamErrorDetail};
 // --- options / pricing ---
 pub use options::{
     CacheCapability, CachePolicy, CompatibilityPolicy, ModelCapabilities, ModelPricing,
-    PricingRates, PricingTier, ReasoningCapability, RequestOptions, ThinkingLevel,
+    PricingRates, PricingTier, ReasoningCapability, RequestOptions, ResponseFormat, ThinkingLevel,
 };
 
 // --- response ---
