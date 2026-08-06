@@ -242,6 +242,24 @@ pub fn grade_followup_grounding(
         (None, _) => false,
     };
 
+    let resume_evidence_ok = expected_seed_id.is_some()
+        && input.trajectory.iter().any(|event| {
+            event.kind == "followup_session_resumed"
+                && event
+                    .data
+                    .get("session_seed_id")
+                    .and_then(serde_json::Value::as_str)
+                    == expected_seed_id
+                && event
+                    .data
+                    .get("session_seed_hash")
+                    .and_then(serde_json::Value::as_str)
+                    == expected_seed_hash
+        });
+    if !resume_evidence_ok {
+        failures.push("missing retained follow-up session resume evidence".into());
+    }
+
     let mut forbidden_used = Vec::new();
     for tool in &input.case.tools.forbidden {
         if tool_was_selected(&trace, tool) {
@@ -284,10 +302,11 @@ pub fn grade_followup_grounding(
         "expected_seed_hash": expected_seed_hash,
         "actual_seed_id": input.session_seed_id,
         "actual_seed_hash": input.session_seed_hash,
+        "resume_evidence_observed": resume_evidence_ok,
         "forbidden_used": forbidden_used,
         "missing_facts": missing_facts,
         "actual_call_sequence": trace.started_sequence,
-        "seed_resumed": seed_id_ok && seed_hash_ok,
+        "seed_resumed": seed_id_ok && seed_hash_ok && resume_evidence_ok,
     });
 
     Ok(make_result(
