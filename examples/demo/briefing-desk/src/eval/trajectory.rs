@@ -64,6 +64,12 @@ pub struct TrajectoryRecorder {
     inconclusive: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetainedTerminal {
+    pub kind: String,
+    pub stop_reason: Option<String>,
+}
+
 impl Default for TrajectoryRecorder {
     fn default() -> Self {
         Self::new()
@@ -94,12 +100,65 @@ impl TrajectoryRecorder {
         }
     }
 
+    /// Record the application-level seed identity retained by a real resume.
+    pub fn record_followup_session_resumed(&mut self, seed_id: &str, seed_hash: &str) {
+        let event = TrajectoryEvent {
+            schema_version: TRAJECTORY_SCHEMA_VERSION.to_string(),
+            sequence: self.sequence,
+            elapsed_ms: self.start.elapsed().as_millis() as u64,
+            run_relation: RunRelation::default(),
+            kind: "followup_session_resumed".into(),
+            data: json!({
+                "session_seed_id": seed_id,
+                "session_seed_hash": seed_hash,
+            }),
+        };
+        self.sequence = self.sequence.saturating_add(1);
+        self.events.push(event);
+    }
+
     pub fn events(&self) -> &[TrajectoryEvent] {
         &self.events
     }
 
     pub fn is_inconclusive(&self) -> bool {
         self.inconclusive
+    }
+
+    pub fn stream_started(&self) -> bool {
+        self.events.iter().any(|event| event.kind == "run_started")
+    }
+
+    pub fn events_dropped(&self) -> bool {
+        self.events
+            .iter()
+            .any(|event| event.kind == "events_dropped")
+    }
+
+    /// Last retained top-level terminal; nested child terminals are excluded.
+    pub fn terminal(&self) -> Option<RetainedTerminal> {
+        self.events.iter().rev().find_map(|event| {
+            if event.run_relation.parent_run_id.is_some()
+                || event.run_relation.child_run_id.is_some()
+            {
+                return None;
+            }
+            match event.kind.as_str() {
+                "run_completed" => Some(RetainedTerminal {
+                    kind: event.kind.clone(),
+                    stop_reason: event
+                        .data
+                        .get("stop_reason")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                }),
+                "run_failed" | "run_aborted" => Some(RetainedTerminal {
+                    kind: event.kind.clone(),
+                    stop_reason: None,
+                }),
+                _ => None,
+            }
+        })
     }
 
     #[allow(dead_code)]
@@ -699,29 +758,7 @@ fn is_dropped_payload_key(key: &str) -> bool {
 
 /// Keys whose string values are replaced with `[REDACTED]`.
 pub fn is_secret_key(key: &str) -> bool {
-    matches!(
-        normalize_key(key).as_str(),
-        "apikey"
-            | "api_key"
-            | "authorization"
-            | "cookie"
-            | "setcookie"
-            | "xapikey"
-            | "accesstoken"
-            | "access_token"
-            | "secret"
-            | "password"
-            | "passwd"
-            | "token"
-            | "bearertoken"
-    ) || {
-        let n = normalize_key(key);
-        // Also catch common suffix/prefix variants after separator stripping.
-        n.ends_with("apikey")
-            || n.ends_with("accesstoken")
-            || n == "xapikey"
-            || n.contains("authorization")
-    }
+    super::credential::is_sensitive_configuration_name(key)
 }
 
 /// Lowercase and strip `_`, `-`, and whitespace for key matching.
@@ -734,30 +771,7 @@ pub fn normalize_key(key: &str) -> String {
 
 /// Best-effort free-text redaction for error strings (does not read env).
 pub fn sanitize_free_text(text: &str) -> String {
-    // Mask common `key=value` / `Bearer …` patterns without env lookup.
-    let mut out = text.to_string();
-    for needle in [
-        "api_key=",
-        "api-key=",
-        "apikey=",
-        "authorization=",
-        "Authorization:",
-        "Bearer ",
-        "x-api-key=",
-        "access_token=",
-    ] {
-        if let Some(idx) = out.find(needle) {
-            let start = idx + needle.len();
-            let end = out[start..]
-                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',')
-                .map(|i| start + i)
-                .unwrap_or(out.len());
-            if end > start {
-                out.replace_range(start..end, SECRET_REDACTION);
-            }
-        }
-    }
-    out
+    super::credential::redact_credentials_in_text(text, SECRET_REDACTION)
 }
 
 /// Helper for tests constructing nested child wrappers.
@@ -774,6 +788,7 @@ pub fn wrap_child(child_run_id: RunId, run_depth: u32, event: RuntimeEvent) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eval::credential::text_has_credentials;
     use orchest::model::StreamEvent;
     use orchest::tool::{Approval, ToolExecutionMode, ToolParallelism, ToolSource};
     use serde_json::json;
@@ -1059,5 +1074,81 @@ mod tests {
             take_kind(&RuntimeEvent::RunStarted { run_id: run_id() }).as_deref(),
             Some("run_started")
         );
+    }
+
+    #[test]
+    fn sanitizes_semantic_credentials_in_every_error_text_path() {
+        let events = [
+            RuntimeEvent::RunFailed {
+                error: "request failed: client_secret=run-failed-secret".into(),
+                kind: Default::default(),
+            },
+            RuntimeEvent::RunAborted {
+                reason: Some("interrupted: refresh_token: run-aborted-secret".into()),
+            },
+            RuntimeEvent::HookPanicked {
+                hook_name: "audit".into(),
+                message: "Authorization: Bearer hook-secret".into(),
+            },
+            RuntimeEvent::ToolCallFailed {
+                tool: "fetch".into(),
+                error: ToolError::fatal(
+                    "request URL: https://api.example.test/items?client_secret=tool-secret",
+                ),
+            },
+            RuntimeEvent::SubAgentFailed {
+                child_run_id: run_id(),
+                error: "X-API-Key: subagent-secret".into(),
+            },
+        ];
+
+        for event in events {
+            let outcome = sanitize_runtime_event(&event, 0, 0, RunRelation::default());
+            let retained = outcome.event.expect("error event is retained");
+            let encoded = serde_json::to_string(&retained.data).expect("event data serializes");
+            assert!(encoded.contains(SECRET_REDACTION), "{encoded}");
+            for secret in [
+                "run-failed-secret",
+                "run-aborted-secret",
+                "hook-secret",
+                "tool-secret",
+                "subagent-secret",
+            ] {
+                assert!(
+                    !encoded.contains(secret),
+                    "{} leaked from {}",
+                    secret,
+                    retained.kind
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn keeps_benign_free_text_unchanged() {
+        let message = "retry after timeout; config=release, service: healthy";
+        assert_eq!(sanitize_free_text(message), message);
+    }
+
+    #[test]
+    fn sanitizes_credential_canaries_across_trajectory_error_carriers() {
+        let canary = "CREDENTIAL-CANARY-9e97d2";
+        let cases = [
+            format!("provider failed: --api-key {canary}"),
+            format!("model failed: --client-secret {canary}"),
+            format!("pre-run failed: https://api.example.test/run?carrier=--api-key%20{canary}"),
+            format!("request failed: api_key={canary}"),
+            format!("request failed: Authorization: Bearer {canary}"),
+            format!("request failed: bearer {canary}"),
+        ];
+
+        for input in cases {
+            let redacted = sanitize_free_text(&input);
+            assert!(
+                !text_has_credentials(&redacted),
+                "detector still sees credentials in {redacted}"
+            );
+            assert!(!redacted.contains(canary), "canary leaked in {redacted}");
+        }
     }
 }

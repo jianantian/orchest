@@ -6,10 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use orchest::budget::BudgetConfig;
 use orchest::model::ModelAdapter;
-use orchest::run::SupervisionStrategy;
-use orchest::tool::registry::ToolRegistry;
 use serde_json::{json, Value};
 
 use super::artifact::{
@@ -25,16 +22,12 @@ use super::case::{
 };
 
 use super::compare::{AttemptResultRow, CaseResultRow, RunResults, RESULTS_SCHEMA_VERSION};
-use super::effective_config::{
-    fingerprint_registry, runtime_with_max_steps, CapabilityRoute, EffectiveConfigInput,
-    EffectiveConfigSnapshot, SessionPersistenceMode, EFFECTIVE_CONFIG_SCHEMA_VERSION,
-};
+use super::effective_config::{EffectiveConfigSnapshot, EFFECTIVE_CONFIG_SCHEMA_VERSION};
 use super::resource::{collect_resources, mean_gate_tokens, median_latency_ms, ResourceCoverage};
 use super::session::AttemptSession;
-use super::trajectory::TrajectoryRecorder;
+use super::trajectory::{sanitize_free_text, TrajectoryRecorder};
 use crate::app::{self, ResumeArgs, RunArgs};
-use crate::media;
-use crate::tools::{ReadFixtureTool, SearchFixturesTool, WriteReportTool};
+use crate::execution::{self, ResolvedChatModel, ResolvedExecutionEnvironment};
 
 /// Harness surface path suffix allowed to be dirty during eval.
 pub const HARNESS_PATH_SUFFIX: &str = "src/harness.rs";
@@ -222,18 +215,23 @@ pub async fn run_eval(req: EvalRunRequest) -> Result<EvalRunSummary, EvalRunErro
         ));
     }
 
+    let env = match &req.model {
+        Some(model) => ResolvedExecutionEnvironment::offline(
+            ResolvedChatModel::injected(Arc::clone(model), json!({"max_tokens": 4096}), None)
+                .map_err(|e| EvalRunError::Preflight(e.to_string()))?,
+        ),
+        None => ResolvedExecutionEnvironment::from_env()
+            .map_err(|e| EvalRunError::Preflight(e.to_string()))?,
+    };
+    let effective = build_effective_config(&req, &cases, &env).await?;
+    let eff_bytes = effective.normalize_bytes()?;
+    let model = Arc::clone(&env.chat.adapter);
+
     let run_dir = create_run_dir(&req.runs_root, &req.label)?;
     let harness = HarnessSnapshot::capture_current();
     let harness_ref = write_harness_snapshot(&run_dir, &harness)?;
     let surface_hashes = harness.surface_hashes();
 
-    let model: Arc<dyn ModelAdapter> = match &req.model {
-        Some(m) => Arc::clone(m),
-        None => app::live_chat_model().map_err(|e| EvalRunError::Other(e.to_string()))?,
-    };
-
-    let effective = build_effective_config(&req, &model)?;
-    let eff_bytes = effective.normalize_bytes()?;
     let eff_ref = write_effective_config_snapshot(&run_dir, &eff_bytes)?;
 
     let mut session_seeds = BTreeMap::new();
@@ -259,7 +257,7 @@ pub async fn run_eval(req: EvalRunRequest) -> Result<EvalRunSummary, EvalRunErro
         fix_rev,
         Some(model.provider_name().to_string()),
         Some(model.model_name().to_string()),
-        json!({}),
+        env.chat.request_options.clone(),
         harness_ref,
         surface_hashes,
         eff_ref,
@@ -306,11 +304,11 @@ pub async fn run_eval(req: EvalRunRequest) -> Result<EvalRunSummary, EvalRunErro
                 &req,
                 case,
                 attempt_no,
-                Arc::clone(&model),
+                env.clone(),
                 &run_dir,
                 &fixture_inventory,
             )
-            .await;
+            .await?;
 
             if outcome.resource.coverage == ResourceCoverage::Incomplete {
                 any_resource_incomplete = true;
@@ -412,15 +410,100 @@ struct AttemptOutcome {
     resource: super::resource::ResourceReport,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalEvidence {
+    pub kind: String,
+    pub stop_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttemptEvidence {
+    pub stream_started: bool,
+    pub terminal: Option<TerminalEvidence>,
+    pub events_dropped: bool,
+    pub stream_closed_early: bool,
+    pub cleanup_required: bool,
+    pub cleanup_succeeded: bool,
+    pub pre_run_failure: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttemptClassification {
+    pub status: AttemptStatus,
+    pub terminal_kind: Option<String>,
+    pub stop_reason: Option<String>,
+}
+
+/// Conservatively classify retained evidence without consulting execution text.
+pub fn classify_attempt(evidence: &AttemptEvidence) -> AttemptClassification {
+    let retained_kind = evidence.terminal.as_ref().map(|t| t.kind.clone());
+    let retained_stop = evidence
+        .terminal
+        .as_ref()
+        .and_then(|t| t.stop_reason.clone());
+    if evidence.events_dropped {
+        return AttemptClassification {
+            status: AttemptStatus::Inconclusive,
+            terminal_kind: retained_kind.or_else(|| Some("events_dropped".into())),
+            stop_reason: retained_stop,
+        };
+    }
+    if evidence.cleanup_required && !evidence.cleanup_succeeded {
+        return AttemptClassification {
+            status: AttemptStatus::Inconclusive,
+            terminal_kind: retained_kind.or_else(|| Some("cleanup_failed".into())),
+            stop_reason: retained_stop,
+        };
+    }
+    if evidence.stream_closed_early {
+        return AttemptClassification {
+            status: AttemptStatus::Inconclusive,
+            terminal_kind: retained_kind.or_else(|| Some("early_stream_closure".into())),
+            stop_reason: retained_stop,
+        };
+    }
+    if let Some(terminal) = &evidence.terminal {
+        let status = if terminal.kind == "run_completed" {
+            AttemptStatus::Completed
+        } else {
+            AttemptStatus::ExecutionFailure
+        };
+        return AttemptClassification {
+            status,
+            terminal_kind: Some(terminal.kind.clone()),
+            stop_reason: terminal.stop_reason.clone(),
+        };
+    }
+    if evidence.stream_started {
+        return AttemptClassification {
+            status: AttemptStatus::Inconclusive,
+            terminal_kind: Some("missing_terminal".into()),
+            stop_reason: None,
+        };
+    }
+    if evidence.pre_run_failure {
+        return AttemptClassification {
+            status: AttemptStatus::ExecutionFailure,
+            terminal_kind: Some("pre_run_failure".into()),
+            stop_reason: None,
+        };
+    }
+    AttemptClassification {
+        status: AttemptStatus::Inconclusive,
+        terminal_kind: Some("missing_terminal".into()),
+        stop_reason: None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn execute_attempt(
     req: &EvalRunRequest,
     case: &EvalCase,
     attempt_no: u32,
-    model: Arc<dyn ModelAdapter>,
+    env: ResolvedExecutionEnvironment,
     run_dir: &Path,
     fixture_inventory: &BTreeSet<String>,
-) -> AttemptOutcome {
+) -> Result<AttemptOutcome, EvalRunError> {
     let mut traj = TrajectoryRecorder::new();
     let started_unix = now_unix_ms();
     let outer_wall = Instant::now();
@@ -429,7 +512,12 @@ async fn execute_attempt(
         .join("cases")
         .join(&case.case_id)
         .join(attempt_no.to_string());
-    let _ = fs::create_dir_all(&attempt_out);
+    fs::create_dir_all(&attempt_out).map_err(|e| {
+        EvalRunError::Artifact(ArtifactError::io(format!(
+            "creating attempt directory {}: {e}",
+            attempt_out.display()
+        )))
+    })?;
     let output_path = attempt_out.join("report.md");
 
     let mut record = attempt_record_template(&case.case_id, attempt_no, AttemptStatus::Completed);
@@ -453,7 +541,7 @@ async fn execute_attempt(
                 no_tts: true,
             };
             let wall_start = Instant::now();
-            let result = app::run_with_model(args, model, |ev| traj.observe(ev)).await;
+            let result = app::run_with_environment(args, env, |ev| traj.observe(ev)).await;
             record.wall_latency_ms = wall_start.elapsed().as_millis() as u64;
             match result {
                 Ok(o) => {
@@ -486,7 +574,8 @@ async fn execute_attempt(
                             &seed,
                             question,
                             &output_path,
-                            model,
+                            &req.materials_dir,
+                            env,
                             &mut traj,
                             &mut store_cleanup,
                         )
@@ -512,28 +601,31 @@ async fn execute_attempt(
     record.session_seed_hash = seed_hash;
     record.store_cleanup = store_cleanup;
 
-    if traj.is_inconclusive() {
-        record.status = AttemptStatus::Inconclusive;
-        record.terminal_kind = Some("events_dropped_or_incomplete".into());
-    }
+    let pre_run_failure = exec_result.is_err()
+        && !traj
+            .events()
+            .iter()
+            .any(|event| event.kind == "run_started");
+    let stream_closed_early = exec_result
+        .as_ref()
+        .err()
+        .is_some_and(|error| error.contains("ended without producing output"));
+    let evidence = attempt_evidence(
+        &traj,
+        matches!(case.run, RunMode::FollowUp { .. }),
+        record.store_cleanup.succeeded,
+        pre_run_failure,
+        stream_closed_early,
+    );
+    let classification = classify_attempt(&evidence);
+    record.status = classification.status;
+    record.terminal_kind = classification.terminal_kind;
+    record.stop_reason = classification.stop_reason;
 
     let output_md = match exec_result {
-        Ok(text) => {
-            if record.status != AttemptStatus::Inconclusive {
-                record.status = AttemptStatus::Completed;
-            }
-            record.terminal_kind = record
-                .terminal_kind
-                .clone()
-                .or(Some("run_completed".into()));
-            text
-        }
+        Ok(text) => text,
         Err(e) => {
-            if record.status != AttemptStatus::Inconclusive {
-                record.status = AttemptStatus::ExecutionFailure;
-            }
-            record.terminal_kind = Some("run_failed".into());
-            record.error = Some(json!({"message": e}));
+            record.error = Some(attempt_error_payload(&e));
             String::new()
         }
     };
@@ -551,7 +643,7 @@ async fn execute_attempt(
         fixture_inventory,
     );
 
-    if let Err(e) = write_attempt_artifacts(
+    write_attempt_artifacts(
         run_dir,
         &case.case_id,
         attempt_no,
@@ -559,17 +651,42 @@ async fn execute_attempt(
         &output_md,
         &record,
         &scores,
-    ) {
-        eprintln!("[eval] failed writing attempt artifacts: {e}");
-    }
+    )?;
 
-    AttemptOutcome {
+    Ok(AttemptOutcome {
         record,
         score,
         passed,
         grader_status,
         gate_total_tokens: resource.totals.gate_total_tokens(),
         resource,
+    })
+}
+
+/// Build a persisted execution-error payload through the shared redactor.
+fn attempt_error_payload(message: &str) -> Value {
+    json!({"message": sanitize_free_text(message)})
+}
+
+fn attempt_evidence(
+    trajectory: &TrajectoryRecorder,
+    cleanup_required: bool,
+    cleanup_succeeded: bool,
+    pre_run_failure: bool,
+    stream_closed_early: bool,
+) -> AttemptEvidence {
+    let terminal = trajectory.terminal().map(|terminal| TerminalEvidence {
+        kind: terminal.kind,
+        stop_reason: terminal.stop_reason,
+    });
+    AttemptEvidence {
+        stream_started: trajectory.stream_started(),
+        terminal,
+        events_dropped: trajectory.events_dropped(),
+        stream_closed_early,
+        cleanup_required,
+        cleanup_succeeded,
+        pre_run_failure,
     }
 }
 
@@ -578,11 +695,23 @@ async fn materialize_and_resume(
     seed: &SessionSeed,
     question: &str,
     output_path: &Path,
-    model: Arc<dyn ModelAdapter>,
+    materials_dir: &Path,
+    env: ResolvedExecutionEnvironment,
     traj: &mut TrajectoryRecorder,
     store_cleanup: &mut StoreCleanupRecord,
 ) -> Result<(String, u64), String> {
-    let base = app::main_agent_config().map_err(|e| e.to_string())?;
+    let base = execution::prepare_run(
+        RunArgs {
+            materials: materials_dir.to_path_buf(),
+            question: "session seed preparation".into(),
+            output: output_path.to_path_buf(),
+            session: None,
+            no_tts: true,
+        },
+        env.clone(),
+    )
+    .map_err(|e| e.to_string())?
+    .config;
     let mut session = AttemptSession::materialize_async(seed, base)
         .await
         .map_err(|e| e.to_string())?;
@@ -595,7 +724,8 @@ async fn materialize_and_resume(
     };
     let wall_start = Instant::now();
     let mut local = TrajectoryRecorder::new();
-    let result = app::resume_with_model(snapshot, args, model, |ev| local.observe(ev)).await;
+    local.record_followup_session_resumed(&session.seed_id, &session.seed_hash);
+    let result = app::resume_with_environment(snapshot, args, env, |ev| local.observe(ev)).await;
     let wall_ms = wall_start.elapsed().as_millis() as u64;
     *traj = local;
     *store_cleanup = session.cleanup().await;
@@ -831,75 +961,86 @@ fn parse_split_label(s: &str) -> Option<EvalSplit> {
     }
 }
 
-fn build_effective_config(
+async fn build_effective_config(
     req: &EvalRunRequest,
-    model: &Arc<dyn ModelAdapter>,
+    cases: &[EvalCase],
+    env: &ResolvedExecutionEnvironment,
 ) -> Result<EffectiveConfigSnapshot, EvalRunError> {
-    let corpus =
-        media::discover(&req.materials_dir).map_err(|e| EvalRunError::Other(e.to_string()))?;
-    let text_entries: Vec<(PathBuf, String)> = corpus
-        .text
-        .iter()
-        .map(|path| {
-            let content = fs::read_to_string(path)
-                .map_err(|e| EvalRunError::Other(format!("reading {}: {e}", path.display())))?;
-            Ok((path.clone(), content))
-        })
-        .collect::<Result<_, EvalRunError>>()?;
-
-    let mut registry = ToolRegistry::new();
-    registry
-        .register(Arc::new(SearchFixturesTool::new(text_entries)))
-        .map_err(|e| EvalRunError::Other(e.to_string()))?;
-    registry
-        .register(Arc::new(ReadFixtureTool::new(corpus.text.clone())))
-        .map_err(|e| EvalRunError::Other(e.to_string()))?;
-    registry
-        .register(Arc::new(WriteReportTool::new(PathBuf::from(
-            "/tmp/briefing-desk-eval-fingerprint.md",
-        ))))
-        .map_err(|e| EvalRunError::Other(e.to_string()))?;
-
-    let tools = fingerprint_registry(&registry)?;
-    let provider = model.provider_name().to_string();
-    let model_name = model.model_name().to_string();
-
-    let input = EffectiveConfigInput {
-        main_model_provider: provider.clone(),
-        main_model_name: model_name.clone(),
-        main_request_options: json!({}),
-        main_runtime: runtime_with_max_steps(10),
-        main_budget: BudgetConfig::default(),
-        main_retry: None,
-        main_supervision: SupervisionStrategy::Stop,
-        main_hooks_label: "none".into(),
-        main_session_store_label: "none_or_seed".into(),
-        reviewer_model_provider: provider,
-        reviewer_model_name: model_name,
-        reviewer_request_options: json!({}),
-        reviewer_max_steps: 2,
-        reviewer_budget: BudgetConfig::default(),
-        reviewer_retry: None,
-        reviewer_supervision: SupervisionStrategy::Stop,
-        tools,
-        asr: CapabilityRoute::Fake,
-        tts: CapabilityRoute::Disabled,
-        vision: if corpus.images.is_empty() {
-            CapabilityRoute::Disabled
-        } else {
-            CapabilityRoute::Fake
-        },
-        session_mode: SessionPersistenceMode::None,
-        env_options: BTreeMap::from([
-            (
-                "chat_model".into(),
-                json!(format!("{}/{}", model.provider_name(), model.model_name())),
-            ),
-            ("chat_api_url_set".into(), json!(false)),
-            ("eval_no_tts".into(), json!(true)),
-        ]),
-    };
-    EffectiveConfigSnapshot::from_input(input).map_err(EvalRunError::from)
+    let mut profiles = Vec::with_capacity(cases.len());
+    for case in cases {
+        let output = PathBuf::from("briefing-desk-eval-preflight.md");
+        let mut profile = match &case.run {
+            RunMode::Fresh { question } => {
+                execution::prepare_run(
+                    RunArgs {
+                        materials: req.materials_dir.clone(),
+                        question: question.clone(),
+                        output,
+                        session: None,
+                        no_tts: true,
+                    },
+                    env.clone(),
+                )
+                .map_err(|e| EvalRunError::Preflight(e.to_string()))?
+                .profile
+            }
+            RunMode::FollowUp {
+                question,
+                session_seed_id,
+                session_seed_hash,
+            } => {
+                let seed_path = req.seeds_dir.join(format!("{session_seed_id}.json"));
+                let seed = load_session_seed(&seed_path)
+                    .map_err(|e| EvalRunError::Preflight(format!("load seed: {e}")))?;
+                let actual = seed
+                    .content_hash()
+                    .map_err(|e| EvalRunError::Preflight(format!("seed hash: {e}")))?;
+                if actual != *session_seed_hash {
+                    return Err(EvalRunError::Preflight(format!(
+                        "session seed hash mismatch: expected {session_seed_hash}, got {actual}"
+                    )));
+                }
+                let base = execution::prepare_run(
+                    RunArgs {
+                        materials: req.materials_dir.clone(),
+                        question: "session seed preparation".into(),
+                        output: output.clone(),
+                        session: None,
+                        no_tts: true,
+                    },
+                    env.clone(),
+                )
+                .map_err(|e| EvalRunError::Preflight(e.to_string()))?
+                .config;
+                let mut session = AttemptSession::materialize_async(&seed, base)
+                    .await
+                    .map_err(EvalRunError::from)?;
+                let prepared = execution::prepare_resume(
+                    session.resume_snapshot(),
+                    ResumeArgs {
+                        session: session.session_id.clone(),
+                        question: question.clone(),
+                        output,
+                        no_tts: true,
+                    },
+                    env.clone(),
+                )
+                .map_err(|e| EvalRunError::Preflight(e.to_string()))?;
+                let cleanup = session.cleanup().await;
+                if !cleanup.succeeded {
+                    return Err(EvalRunError::Preflight(format!(
+                        "preflight session cleanup failed: {:?}",
+                        cleanup.detail
+                    )));
+                }
+                prepared.profile
+            }
+        };
+        profile.case_ids = vec![case.case_id.clone()];
+        profiles.push(profile);
+    }
+    EffectiveConfigSnapshot::from_profiles(profiles, execution::resolved_env_options(&env.chat))
+        .map_err(EvalRunError::from)
 }
 
 fn write_results_and_summary(
@@ -960,6 +1101,156 @@ fn list_fixture_basenames(dir: &Path) -> Result<BTreeSet<String>, EvalRunError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eval::credential::text_has_credentials;
+    use crate::eval::scripted_model::{ScriptedModel, ScriptedTurn};
+
+    fn completed_evidence() -> AttemptEvidence {
+        AttemptEvidence {
+            stream_started: true,
+            terminal: Some(TerminalEvidence {
+                kind: "run_completed".into(),
+                stop_reason: Some("end_turn".into()),
+            }),
+            events_dropped: false,
+            stream_closed_early: false,
+            cleanup_required: false,
+            cleanup_succeeded: true,
+            pre_run_failure: false,
+        }
+    }
+
+    #[test]
+    fn classify_completed_retains_terminal_and_stop_reason() {
+        let result = classify_attempt(&completed_evidence());
+        assert_eq!(result.status, AttemptStatus::Completed);
+        assert_eq!(result.terminal_kind.as_deref(), Some("run_completed"));
+        assert_eq!(result.stop_reason.as_deref(), Some("end_turn"));
+    }
+
+    #[test]
+    fn classify_retained_run_failed_as_execution_failure() {
+        let mut evidence = completed_evidence();
+        evidence.terminal = Some(TerminalEvidence {
+            kind: "run_failed".into(),
+            stop_reason: None,
+        });
+        let result = classify_attempt(&evidence);
+        assert_eq!(result.status, AttemptStatus::ExecutionFailure);
+        assert_eq!(result.terminal_kind.as_deref(), Some("run_failed"));
+        assert_eq!(result.stop_reason, None);
+    }
+
+    #[test]
+    fn classify_drop_missing_terminal_early_close_and_cleanup_as_inconclusive() {
+        let mut dropped = completed_evidence();
+        dropped.events_dropped = true;
+        assert_eq!(
+            classify_attempt(&dropped).status,
+            AttemptStatus::Inconclusive
+        );
+
+        let missing = AttemptEvidence {
+            terminal: None,
+            ..completed_evidence()
+        };
+        let result = classify_attempt(&missing);
+        assert_eq!(result.status, AttemptStatus::Inconclusive);
+        assert_eq!(result.terminal_kind.as_deref(), Some("missing_terminal"));
+
+        let mut early = completed_evidence();
+        early.stream_closed_early = true;
+        assert_eq!(classify_attempt(&early).status, AttemptStatus::Inconclusive);
+
+        let mut cleanup = completed_evidence();
+        cleanup.cleanup_required = true;
+        cleanup.cleanup_succeeded = false;
+        let result = classify_attempt(&cleanup);
+        assert_eq!(result.status, AttemptStatus::Inconclusive);
+        assert_eq!(result.terminal_kind.as_deref(), Some("run_completed"));
+        assert_eq!(result.stop_reason.as_deref(), Some("end_turn"));
+    }
+
+    #[test]
+    fn classify_pre_run_failure_without_started_stream_as_execution_failure() {
+        let evidence = AttemptEvidence {
+            stream_started: false,
+            terminal: None,
+            events_dropped: false,
+            stream_closed_early: false,
+            cleanup_required: false,
+            cleanup_succeeded: true,
+            pre_run_failure: true,
+        };
+        let result = classify_attempt(&evidence);
+        assert_eq!(result.status, AttemptStatus::ExecutionFailure);
+        assert_eq!(result.terminal_kind.as_deref(), Some("pre_run_failure"));
+    }
+
+    #[test]
+    fn runner_error_payloads_redact_provider_model_and_pre_run_canaries() {
+        let canary = "CREDENTIAL-CANARY-9e97d2";
+        for message in [
+            format!("provider failed: --api-key {canary}"),
+            format!("model failed: Authorization: Bearer {canary}"),
+            format!(
+                "pre-run failed: https://api.example.test/run?carrier=--client-secret%20{canary}"
+            ),
+        ] {
+            let payload = attempt_error_payload(&message);
+            let message = payload["message"].as_str().unwrap();
+            assert!(!message.contains(canary), "canary leaked in {message}");
+            assert!(
+                !text_has_credentials(message),
+                "detector still sees credentials in {message}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_failure_retains_run_failed_terminal() {
+        let materials = tempfile::tempdir().unwrap();
+        std::fs::write(materials.path().join("notes.md"), "evidence").unwrap();
+        let model = Arc::new(ScriptedModel::new(vec![ScriptedTurn::Error {
+            message: "provider unavailable".into(),
+        }]));
+        let adapter: Arc<dyn ModelAdapter> = model.clone();
+        let chat = ResolvedChatModel::injected(adapter, json!({"max_tokens": 4096}), None).unwrap();
+        let mut trajectory = TrajectoryRecorder::new();
+        let result = app::run_with_environment(
+            RunArgs {
+                materials: materials.path().to_path_buf(),
+                question: "question".into(),
+                output: materials.path().join("report.md"),
+                session: None,
+                no_tts: true,
+            },
+            ResolvedExecutionEnvironment::offline(chat),
+            |event| trajectory.observe(event),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(model.call_count(), 1);
+        let evidence = attempt_evidence(&trajectory, false, true, false, false);
+        let classified = classify_attempt(&evidence);
+        assert_eq!(classified.status, AttemptStatus::ExecutionFailure);
+        assert_eq!(classified.terminal_kind.as_deref(), Some("run_failed"));
+    }
+
+    #[tokio::test]
+    async fn sensitive_preflight_failure_keeps_model_call_count_zero() {
+        let model = Arc::new(ScriptedModel::followup_text("unused"));
+        let adapter: Arc<dyn ModelAdapter> = model.clone();
+        let req = EvalRunRequest {
+            label: "preflight-no-sensitive".into(),
+            record_sensitive: false,
+            model: Some(adapter),
+            ..EvalRunRequest::default()
+        };
+        let result = run_eval(req).await;
+        assert!(result.is_err());
+        assert_eq!(model.call_count(), 0);
+    }
 
     #[test]
     fn parse_splits_ok() {

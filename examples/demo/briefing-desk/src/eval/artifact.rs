@@ -14,7 +14,9 @@ use sha2::{Digest, Sha256};
 
 use crate::harness::{self, SurfaceId};
 
-use super::trajectory::{TrajectoryError, TrajectoryEvent, TrajectoryRecorder};
+use super::trajectory::{
+    sanitize_free_text, sanitize_value, TrajectoryError, TrajectoryEvent, TrajectoryRecorder,
+};
 
 /// Schema version for run manifests.
 pub const MANIFEST_SCHEMA_VERSION: &str = "1";
@@ -368,7 +370,8 @@ pub fn write_attempt_artifacts(
     fs::write(attempt_dir.join("output.md"), output_md)
         .map_err(|e| ArtifactError::io(format!("writing output.md: {e}")))?;
 
-    write_json_pretty(&attempt_dir.join("attempt.json"), record)?;
+    let record = sanitized_attempt_record(record);
+    write_json_pretty(&attempt_dir.join("attempt.json"), &record)?;
     write_json_pretty(&attempt_dir.join("scores.json"), scores)?;
 
     // All four files must exist.
@@ -387,6 +390,21 @@ pub fn write_attempt_artifacts(
         }
     }
     Ok(attempt_dir)
+}
+
+/// Apply the shared free-text redactor at the final attempt-artifact boundary.
+///
+/// The runner is expected to sanitize execution errors before constructing the
+/// record, but this final gate also covers future pre-run and cleanup paths.
+fn sanitized_attempt_record(record: &AttemptRecord) -> AttemptRecord {
+    let mut sanitized = record.clone();
+    sanitized.error = sanitized.error.as_ref().map(sanitize_value);
+    sanitized.store_cleanup.detail = sanitized
+        .store_cleanup
+        .detail
+        .as_deref()
+        .map(sanitize_free_text);
+    sanitized
 }
 
 /// Write manifest.json at the run root.
@@ -600,6 +618,7 @@ pub type TrajectoryLine = TrajectoryEvent;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eval::credential::text_has_credentials;
     use crate::eval::trajectory::TrajectoryRecorder;
     use orchest::events::RuntimeEvent;
     use orchest::run::RunId;
@@ -701,6 +720,57 @@ mod tests {
         assert!(
             scores_raw.contains("\"aggregate\": null") || scores_raw.contains("\"aggregate\":null")
         );
+    }
+
+    #[test]
+    fn attempt_artifact_redacts_provider_model_and_pre_run_error_canaries() {
+        let root = tempfile::tempdir().unwrap();
+        let run_dir = create_run_dir(root.path(), "redaction").unwrap();
+        let canary = "CREDENTIAL-CANARY-9e97d2";
+        let errors = [
+            format!("provider failed: --api-key {canary}"),
+            format!("model failed: --client-secret {canary}"),
+            format!(
+                "pre-run failed: https://api.example.test/run?carrier=--client-secret%20{canary}"
+            ),
+            format!("provider failed: api_key={canary}"),
+            format!("model failed: Authorization: Bearer {canary}"),
+            format!("pre-run failed: bearer {canary}"),
+        ];
+
+        for (index, message) in errors.iter().enumerate() {
+            let record = AttemptRecord {
+                error: Some(json!({"message": message})),
+                store_cleanup: StoreCleanupRecord {
+                    attempted: true,
+                    succeeded: false,
+                    detail: Some(format!("cleanup failed: bearer {canary}")),
+                },
+                ..attempt_record_template(
+                    "case-redaction",
+                    (index + 1) as u32,
+                    AttemptStatus::ExecutionFailure,
+                )
+            };
+            let dir = write_attempt_artifacts(
+                &run_dir,
+                "case-redaction",
+                (index + 1) as u32,
+                &TrajectoryRecorder::new(),
+                "",
+                &record,
+                &ScoresPlaceholder::not_run(),
+            )
+            .unwrap();
+            let persisted = fs::read_to_string(dir.join("attempt.json")).unwrap();
+            assert!(!persisted.contains(canary), "canary leaked in {persisted}");
+            let parsed: Value = serde_json::from_str(&persisted).unwrap();
+            let message = parsed["error"]["message"].as_str().unwrap();
+            assert!(
+                !text_has_credentials(message),
+                "detector still sees credentials in {message}"
+            );
+        }
     }
 
     #[test]

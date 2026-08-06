@@ -13,6 +13,7 @@ pub mod artifact;
 pub mod case;
 pub mod cli;
 pub mod compare;
+pub mod credential;
 pub mod effective_config;
 pub mod grader;
 pub mod resource;

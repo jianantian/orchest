@@ -4,6 +4,7 @@
 
 mod app;
 mod eval;
+mod execution;
 mod harness;
 mod media;
 mod tools;

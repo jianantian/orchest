@@ -172,10 +172,38 @@ fn scripted_optimization_run_writes_artifacts() {
     assert!(run_dir.join("results.json").is_file());
     assert!(run_dir.join("summary.md").is_file());
 
+    let effective: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(run_dir.join("effective-config/snapshot.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(effective["schema_version"], "3");
+    assert_eq!(effective["main"]["request_options"]["max_tokens"], 4096);
+    let profiles = effective["case_profiles"].as_array().unwrap();
+    assert!(profiles
+        .iter()
+        .any(|profile| profile["session_mode"] == "none"));
+    assert!(profiles
+        .iter()
+        .any(|profile| profile["session_mode"] == "follow_up_from_seed"));
+    let all_tools: Vec<_> = profiles
+        .iter()
+        .flat_map(|profile| profile["tools"].as_array().into_iter().flatten())
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    for name in [
+        "review_report",
+        "transcribe_audio",
+        "describe_image",
+        "write_report",
+    ] {
+        assert!(all_tools.contains(&name), "missing tool {name}");
+    }
+
     // At least one case attempt four-file set.
     let cases_dir = run_dir.join("cases");
     assert!(cases_dir.is_dir());
     let mut found_attempt = false;
+    let mut found_completed_terminal = false;
     for case in std::fs::read_dir(&cases_dir).unwrap() {
         let case = case.unwrap().path();
         for att in std::fs::read_dir(&case).unwrap() {
@@ -193,10 +221,30 @@ fn scripted_optimization_run_writes_artifacts() {
                     att.display()
                 );
             }
+            let attempt: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(att.join("attempt.json")).unwrap())
+                    .unwrap();
+            if attempt["status"] == "completed" {
+                assert_eq!(attempt["terminal_kind"], "run_completed");
+                assert_eq!(attempt["stop_reason"], "end_turn");
+                found_completed_terminal = true;
+            }
             found_attempt = true;
         }
     }
     assert!(found_attempt, "expected at least one attempt directory");
+    assert!(
+        found_completed_terminal,
+        "expected a completed terminal record"
+    );
+
+    let retained_followup = walk_files(&cases_dir).into_iter().any(|path| {
+        path.file_name().and_then(|name| name.to_str()) == Some("trajectory.jsonl")
+            && std::fs::read_to_string(path)
+                .map(|text| text.contains("followup_session_resumed"))
+                .unwrap_or(false)
+    });
+    assert!(retained_followup, "expected retained follow-up seed event");
 
     // optimization = 1 rep per case; 10 cases.
     let manifest: serde_json::Value =
@@ -205,6 +253,25 @@ fn scripted_optimization_run_writes_artifacts() {
     assert_eq!(manifest["label"], "scripted-opt");
     assert_eq!(manifest["repetition"], 1);
     assert_eq!(manifest["case_ids"].as_array().unwrap().len(), 10);
+}
+
+fn walk_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    files
 }
 
 #[test]
