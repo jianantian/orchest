@@ -325,12 +325,28 @@ pub async fn run_aliyun_stream<T: ByteDuplex>(
             maybe_input = input.recv(), if input_open => match maybe_input {
                 Some(SessionInput::Audio(bytes)) => {
                     if transport.send(WsFrame::Binary(bytes.to_vec())).await.is_err() {
+                        let _ = events.send(StreamEvent::Error {
+                            error: ProtocolError::new(
+                                ErrorCode::ProviderStreamError,
+                                "failed to send Aliyun audio frame",
+                            ),
+                            fatal: true,
+                        }).await;
                         break;
                     }
                 }
                 None | Some(SessionInput::Interrupt) => {
                     input_open = false;
-                    let _ = transport.send(WsFrame::Text(finish_task.clone())).await;
+                    if transport.send(WsFrame::Text(finish_task.clone())).await.is_err() {
+                        let _ = events.send(StreamEvent::Error {
+                            error: ProtocolError::new(
+                                ErrorCode::ProviderStreamError,
+                                "failed to send Aliyun finish-task",
+                            ),
+                            fatal: true,
+                        }).await;
+                        break;
+                    }
                 }
                 Some(_) => {}
             },
@@ -357,7 +373,16 @@ pub async fn run_aliyun_stream<T: ByteDuplex>(
                 },
                 None => match maybe_frame {
                     Some(_) => continue,
-                    None => break,
+                    None => {
+                        let _ = events.send(StreamEvent::Error {
+                            error: ProtocolError::new(
+                                ErrorCode::ProviderStreamError,
+                                "Aliyun stream closed before a terminal event",
+                            ),
+                            fatal: true,
+                        }).await;
+                        break;
+                    },
                 },
             },
         }
@@ -764,6 +789,44 @@ mod tests {
         assert!(matches!(
             events_rx.recv().await.unwrap(),
             StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
+        ));
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_aliyun_stream_emits_fatal_error_on_eof_before_terminal() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (_input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let run = build_run_task("t", "m", &json!({})).unwrap();
+        let finish = build_finish_task("t").unwrap();
+        let handle = tokio::spawn(run_aliyun_stream(
+            transport, run, finish, input_rx, events_tx, ready_tx,
+        ));
+
+        assert!(matches!(out_rx.recv().await, Some(WsFrame::Text(_))));
+        in_tx
+            .send(WsFrame::Text(event("task-started", None, false)))
+            .await
+            .unwrap();
+        ready_rx.await.unwrap().unwrap();
+        drop(in_tx);
+
+        assert!(matches!(
+            events_rx.recv().await,
+            Some(StreamEvent::Error {
+                fatal: true,
+                error: ProtocolError {
+                    code: ErrorCode::ProviderStreamError,
+                    ..
+                }
+            })
         ));
         handle.await.unwrap();
     }

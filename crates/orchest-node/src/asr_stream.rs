@@ -5,7 +5,9 @@ use napi::bindgen_prelude::Buffer;
 use napi::threadsafe_function::{ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction};
 use napi::{Env, JsFunction, JsObject};
 use napi_derive::napi;
-use orchest_protocol::{Language, SessionInput, StreamingTranscribeRequest};
+use orchest_protocol::{
+    ErrorCode, Language, ProtocolError, SessionInput, StreamingTranscribeRequest,
+};
 use orchest_provider::{ProviderConfig, Registry};
 use tokio::sync::Notify;
 
@@ -111,13 +113,14 @@ async fn start(
         input.api_key,
         input.api_key_env.as_deref(),
         super::asr::default_key_env(&id),
+        &id,
     )?;
     let registry = Registry::with_builtin();
     let entry = registry
         .asr()
         .id(&id)
         .select()
-        .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        .map_err(super::error::protocol_error)?;
     let (provider, model) = id
         .split_once('/')
         .ok_or_else(|| napi::Error::from_reason("provider must be provider/model"))?;
@@ -130,7 +133,7 @@ async fn start(
             max_tokens: None,
             options: serde_json::Value::Null,
         })
-        .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        .map_err(super::error::protocol_error)?;
     let mut options = input.options.unwrap_or_else(|| serde_json::json!({}));
     if !options.is_object() {
         return Err(napi::Error::from_reason("options must be an object"));
@@ -147,12 +150,13 @@ async fn start(
             options,
         })
         .await
-        .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        .map_err(super::error::protocol_error)?;
     let input_sender = Arc::new(Mutex::new(Some(realtime.input)));
     let completion = Arc::new(Completion {
         result: Mutex::new(None),
         notify: Notify::new(),
     });
+    let input_task = Arc::clone(&input_sender);
     let completion_task = Arc::clone(&completion);
     tokio::spawn(async move {
         let mut events = realtime.events;
@@ -161,7 +165,7 @@ async fn start(
             let fatal_error = match &event {
                 orchest_protocol::StreamEvent::Error {
                     error, fatal: true, ..
-                } => Some(error.to_string()),
+                } => Some(super::error::ProviderErrorData::from(error.clone()).encoded()),
                 _ => None,
             };
             match serde_json::to_value(&event) {
@@ -179,6 +183,19 @@ async fn start(
             if let Some(error) = fatal_error {
                 result = Err(error);
                 break;
+            }
+        }
+        if result.is_ok() {
+            match input_task.lock() {
+                Ok(input) if input.is_some() => {
+                    result = Err(super::error::ProviderErrorData::from(ProtocolError::new(
+                        ErrorCode::ProviderStreamError,
+                        "ASR event stream closed before finish",
+                    ))
+                    .encoded());
+                }
+                Err(_) => result = Err("ASR session lock poisoned".to_string()),
+                _ => {}
             }
         }
         if let Ok(mut slot) = completion_task.result.lock() {

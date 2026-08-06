@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use orchest_protocol::{AudioFormat, Language, TranscribeRequest};
+use orchest_protocol::{AudioFormat, ErrorCode, Language, ProtocolError, TranscribeRequest};
 use orchest_provider::{ProviderConfig, Registry};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -26,13 +26,13 @@ pub fn transcribe(
         return Err(PyRuntimeError::new_err("audio cannot be empty"));
     }
     let id = provider.unwrap_or_else(|| DEFAULT_ASR.to_string());
-    let key = resolve_key(api_key, api_key_env.as_deref(), default_key_env(&id))?;
+    let key = resolve_key(api_key, api_key_env.as_deref(), default_key_env(&id), &id)?;
     let registry = Registry::with_builtin();
     let entry = registry
         .asr()
         .id(&id)
         .select()
-        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        .map_err(super::error::protocol_error)?;
     let (provider_name, model) = id
         .split_once('/')
         .ok_or_else(|| PyRuntimeError::new_err("provider must be provider/model"))?;
@@ -45,7 +45,7 @@ pub fn transcribe(
             max_tokens: None,
             options: Value::Null,
         })
-        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        .map_err(super::error::protocol_error)?;
     let options = py_dict_value(options)?;
     let request = TranscribeRequest {
         audio: Bytes::from(audio),
@@ -58,7 +58,7 @@ pub fn transcribe(
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
             .block_on(handle.transcribe(request))
             .map(|result| result.text)
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+            .map_err(super::error::protocol_error)
     })
 }
 
@@ -101,12 +101,19 @@ pub(crate) fn resolve_key(
     explicit: Option<String>,
     requested_env: Option<&str>,
     default_env: &str,
+    provider_id: &str,
 ) -> PyResult<String> {
     if let Some(key) = explicit.filter(|key| !key.is_empty()) {
         return Ok(key);
     }
     let env = requested_env.unwrap_or(default_env);
     std::env::var(env).map_err(|_| {
-        PyRuntimeError::new_err(format!("API key environment variable {env} is not set"))
+        super::error::protocol_error(
+            ProtocolError::new(
+                ErrorCode::MissingApiKey,
+                format!("API key environment variable {env} is not set"),
+            )
+            .with_provider(provider_id),
+        )
     })
 }

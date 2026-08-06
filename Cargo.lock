@@ -1705,6 +1705,7 @@ dependencies = [
  "orchest",
  "orchest-protocol",
  "orchest-provider",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",

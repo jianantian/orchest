@@ -1,6 +1,43 @@
 "use strict";
 
 const native = require("../orchest_node.node");
+const PROVIDER_ERROR_PREFIX = "__ORCHEST_PROVIDER_ERROR__:";
+
+class ProviderError extends Error {
+  constructor(details) {
+    super(details.message);
+    this.name = "ProviderError";
+    Object.assign(this, details);
+  }
+}
+
+function normalizeProviderError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.startsWith(PROVIDER_ERROR_PREFIX)) {
+    return error;
+  }
+  try {
+    return new ProviderError(JSON.parse(message.slice(PROVIDER_ERROR_PREFIX.length)));
+  } catch {
+    return error;
+  }
+}
+
+async function complete(options) {
+  try {
+    return await native._complete(options);
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
+}
+
+async function transcribe(audio, options) {
+  try {
+    return await native._transcribe(audio, options);
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
+}
 
 class AsrStream {
   constructor(session, callbackError) {
@@ -27,7 +64,7 @@ class AsrStream {
       throw this._callbackError[0];
     }
     if (nativeError !== undefined) {
-      throw nativeError;
+      throw normalizeProviderError(nativeError);
     }
   }
 }
@@ -52,7 +89,11 @@ async function startAsrStream(options, onEvent) {
       }
     }
   };
-  session = await native._startAsrStream(options, guardedOnEvent);
+  try {
+    session = await native._startAsrStream(options, guardedOnEvent);
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
   if (callbackError.length > 0) {
     session.finish();
   }
@@ -61,8 +102,9 @@ async function startAsrStream(options, onEvent) {
 
 module.exports = {
   Agent: native.Agent,
-  complete: native.complete,
-  transcribe: native.transcribe,
+  complete,
+  transcribe,
+  ProviderError,
   AsrStream,
   startAsrStream,
 };

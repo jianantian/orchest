@@ -163,11 +163,11 @@ import {
   Agent,
   NativeAsrStream,
   _startAsrStream,
-  complete,
-  transcribe,
+  _complete,
+  _transcribe,
 } from "./native";
 
-export { Agent, complete, transcribe };
+export { Agent };
 
 export interface CompletionOptions {
   model: string;
@@ -189,6 +189,66 @@ export interface TranscribeOptions {
   apiKeyEnv?: string;
   apiUrl?: string;
   options?: Record<string, unknown>;
+}
+
+export interface ProviderErrorDetails {
+  message: string;
+  code?: string;
+  provider?: string;
+  model?: string;
+  status?: number;
+  retryAfterSecs?: number;
+  upstream?: unknown;
+  diagnosticMetadata?: unknown;
+}
+
+export class ProviderError extends Error implements ProviderErrorDetails {
+  code?: string;
+  provider?: string;
+  model?: string;
+  status?: number;
+  retryAfterSecs?: number;
+  upstream?: unknown;
+  diagnosticMetadata?: unknown;
+
+  constructor(details: ProviderErrorDetails) {
+    super(details.message);
+    this.name = "ProviderError";
+    Object.assign(this, details);
+  }
+}
+
+const PROVIDER_ERROR_PREFIX = "__ORCHEST_PROVIDER_ERROR__:";
+
+function normalizeProviderError(error: unknown): unknown {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.startsWith(PROVIDER_ERROR_PREFIX)) return error;
+  try {
+    return new ProviderError(
+      JSON.parse(message.slice(PROVIDER_ERROR_PREFIX.length)) as ProviderErrorDetails,
+    );
+  } catch {
+    return error;
+  }
+}
+
+export async function complete(options: CompletionOptions): Promise<string> {
+  try {
+    return await _complete(options);
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
+}
+
+export async function transcribe(
+  audio: Uint8Array,
+  options: TranscribeOptions,
+): Promise<string> {
+  try {
+    return await _transcribe(audio, options);
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
 }
 
 export interface AsrContextMessage {
@@ -230,7 +290,7 @@ export class AsrStream {
       throw this.callbackError[0];
     }
     if (hasNativeError) {
-      throw nativeError;
+      throw normalizeProviderError(nativeError);
     }
   }
 }
@@ -260,7 +320,11 @@ export async function startAsrStream(
       session?.finish();
     }
   };
-  session = await _startAsrStream(options, guardedOnEvent);
+  try {
+    session = await _startAsrStream(options, guardedOnEvent);
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
   if (callbackError.length > 0) session.finish();
   return new AsrStream(session, callbackError);
 }

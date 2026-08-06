@@ -17,7 +17,7 @@ pub struct CompletionOptions {
     pub request_options: Option<super::RequestOptions>,
 }
 
-#[napi]
+#[napi(js_name = "_complete")]
 pub async fn complete(input: CompletionOptions) -> napi::Result<String> {
     let mut options = input
         .request_options
@@ -35,7 +35,7 @@ pub async fn complete(input: CompletionOptions) -> napi::Result<String> {
         api_url: input.api_url,
         max_tokens: options.max_tokens,
     })
-    .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+    .map_err(super::error::model_error)?;
     atomic_complete(
         adapter.as_ref(),
         CompletionRequest {
@@ -46,5 +46,5 @@ pub async fn complete(input: CompletionOptions) -> napi::Result<String> {
         },
     )
     .await
-    .map_err(|error| napi::Error::from_reason(error.to_string()))
+    .map_err(super::error::model_error)
 }

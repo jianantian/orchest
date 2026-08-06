@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
-use orchest_protocol::{Language, SessionInput, StreamingTranscribeRequest};
+use orchest_protocol::{
+    ErrorCode, Language, ProtocolError, SessionInput, StreamingTranscribeRequest,
+};
 use orchest_provider::{ProviderConfig, Registry};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -11,8 +13,23 @@ use tokio::sync::Notify;
 const DEFAULT_STREAMING_ASR: &str = "aliyun/qwen-audio-3.0-asr-flash-streaming";
 
 struct Completion {
-    result: Mutex<Option<Result<(), String>>>,
+    result: Mutex<Option<Result<(), StreamFailure>>>,
     notify: Notify,
+}
+
+#[derive(Debug, Clone)]
+enum StreamFailure {
+    Provider(super::error::ProviderErrorData),
+    Runtime(String),
+}
+
+impl StreamFailure {
+    fn into_pyerr(self) -> PyErr {
+        match self {
+            Self::Provider(error) => error.into_pyerr(),
+            Self::Runtime(message) => PyRuntimeError::new_err(message),
+        }
+    }
 }
 
 #[pyclass(name = "_NativeAsrStream")]
@@ -60,7 +77,7 @@ impl NativeAsrStream {
                     .map_err(|_| PyRuntimeError::new_err("ASR completion lock poisoned"))?
                     .clone()
                 {
-                    return result.map_err(PyRuntimeError::new_err);
+                    return result.map_err(StreamFailure::into_pyerr);
                 }
                 notified.await;
             }
@@ -116,6 +133,7 @@ pub fn start_asr_stream<'py>(
         api_key,
         api_key_env.as_deref(),
         super::asr::default_key_env(&id),
+        &id,
     )?;
 
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -124,7 +142,7 @@ pub fn start_asr_stream<'py>(
             .asr()
             .id(&id)
             .select()
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            .map_err(super::error::protocol_error)?;
         let (provider_name, model) = id
             .split_once('/')
             .ok_or_else(|| PyRuntimeError::new_err("provider must be provider/model"))?;
@@ -137,7 +155,7 @@ pub fn start_asr_stream<'py>(
                 max_tokens: None,
                 options: serde_json::Value::Null,
             })
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            .map_err(super::error::protocol_error)?;
         let realtime = handle
             .start_stream(StreamingTranscribeRequest {
                 format,
@@ -145,12 +163,13 @@ pub fn start_asr_stream<'py>(
                 options,
             })
             .await
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            .map_err(super::error::protocol_error)?;
         let input = Arc::new(Mutex::new(Some(realtime.input)));
         let completion = Arc::new(Completion {
             result: Mutex::new(None),
             notify: Notify::new(),
         });
+        let input_task = Arc::clone(&input);
         let completion_task = Arc::clone(&completion);
         tokio::spawn(async move {
             let mut events = realtime.events;
@@ -159,13 +178,13 @@ pub fn start_asr_stream<'py>(
                 let fatal_error = match &event {
                     orchest_protocol::StreamEvent::Error {
                         error, fatal: true, ..
-                    } => Some(error.to_string()),
+                    } => Some(super::error::ProviderErrorData::from(error.clone())),
                     _ => None,
                 };
                 let event_json = match serde_json::to_string(&event) {
                     Ok(value) => value,
                     Err(error) => {
-                        result = Err(error.to_string());
+                        result = Err(StreamFailure::Runtime(error.to_string()));
                         break;
                     }
                 };
@@ -175,12 +194,31 @@ pub fn start_asr_stream<'py>(
                     Ok(())
                 });
                 if let Err(error) = callback_result {
-                    result = Err(error.to_string());
+                    result = Err(StreamFailure::Runtime(error.to_string()));
                     break;
                 }
                 if let Some(error) = fatal_error {
-                    result = Err(error);
+                    result = Err(StreamFailure::Provider(error));
                     break;
+                }
+            }
+            if result.is_ok() {
+                match input_task.lock() {
+                    Ok(input) if input.is_some() => {
+                        result = Err(StreamFailure::Provider(
+                            ProtocolError::new(
+                                ErrorCode::ProviderStreamError,
+                                "ASR event stream closed before finish",
+                            )
+                            .into(),
+                        ));
+                    }
+                    Err(_) => {
+                        result = Err(StreamFailure::Runtime(
+                            "ASR session lock poisoned".to_string(),
+                        ));
+                    }
+                    _ => {}
                 }
             }
             if let Ok(mut slot) = completion_task.result.lock() {

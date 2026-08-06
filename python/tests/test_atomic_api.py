@@ -2,6 +2,7 @@ import asyncio
 import inspect
 
 import orchest
+import pytest
 
 
 class FakeNativeStream:
@@ -26,6 +27,36 @@ def test_atomic_exports_are_public() -> None:
     assert callable(orchest.transcribe)
     assert inspect.iscoroutinefunction(orchest.start_asr_stream)
     assert orchest.AsrStream
+
+
+def test_completion_preserves_structured_model_error(monkeypatch) -> None:
+    env_name = "ORCHEST_TEST_MISSING_COMPLETION_KEY"
+    monkeypatch.delenv(env_name, raising=False)
+
+    with pytest.raises(orchest.ModelError) as caught:
+        orchest.complete(
+            model="deepseek/deepseek-chat",
+            user="hello",
+            api_key_env=env_name,
+        )
+
+    assert caught.value.code == "missing_api_key"
+    assert caught.value.status is None
+    assert caught.value.provider is None
+    assert caught.value.retry_after_secs is None
+
+
+def test_transcribe_preserves_structured_protocol_error() -> None:
+    with pytest.raises(orchest.ModelError) as caught:
+        orchest.transcribe(
+            b"audio",
+            format="wav",
+            provider="missing/model",
+            api_key="test-key",
+        )
+
+    assert caught.value.code == "no_matching_provider"
+    assert caught.value.diagnostic_metadata is None
 
 
 def test_realtime_callback_error_is_rethrown_by_wait(monkeypatch) -> None:

@@ -10,6 +10,17 @@ export interface HistoryMessage {
   content: Array<Record<string, unknown>>;
 }
 
+export interface RequestOptions {
+  thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  thinkingBudgetTokens?: number;
+  includeThinking?: boolean;
+  compatibilityPolicy?: "coerce" | "strict";
+  maxTokens?: number;
+  temperature?: number;
+  topP?: number;
+  cachePolicy?: "none" | "auto" | "long";
+}
+
 export interface CompletionOptions {
   model: string;
   user: string;
@@ -19,7 +30,7 @@ export interface CompletionOptions {
   apiUrl?: string;
   jsonMode?: boolean;
   retry?: boolean;
-  requestOptions?: Record<string, unknown>;
+  requestOptions?: RequestOptions;
 }
 
 export interface TranscribeOptions {
@@ -53,8 +64,8 @@ export function _startAsrStream(
   onEvent: (event: Record<string, unknown>) => void,
 ): Promise<NativeAsrStream>;
 
-export function complete(options: CompletionOptions): Promise<string>;
-export function transcribe(audio: Uint8Array, options: TranscribeOptions): Promise<string>;
+export function _complete(options: CompletionOptions): Promise<string>;
+export function _transcribe(audio: Uint8Array, options: TranscribeOptions): Promise<string>;
 
 export class Agent {
   constructor(options: {

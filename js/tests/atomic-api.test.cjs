@@ -31,6 +31,41 @@ test("exports all atomic APIs without leaking native helpers", () => {
   assert.equal("_startAsrStream" in sdk, false);
 });
 
+test("completion preserves structured model errors", async () => {
+  const sdk = loadSdkWithStart(async () => fakeSession());
+  const envName = "ORCHEST_TEST_MISSING_COMPLETION_KEY";
+  delete process.env[envName];
+
+  await assert.rejects(
+    sdk.complete({
+      model: "deepseek/deepseek-chat",
+      user: "hello",
+      apiKeyEnv: envName,
+    }),
+    (error) =>
+      error instanceof sdk.ProviderError &&
+      error.code === "missing_api_key" &&
+      error.status === undefined &&
+      error.retryAfterSecs === undefined,
+  );
+});
+
+test("transcribe preserves structured protocol errors", async () => {
+  const sdk = loadSdkWithStart(async () => fakeSession());
+
+  await assert.rejects(
+    sdk.transcribe(Buffer.from("audio"), {
+      format: "wav",
+      provider: "missing/model",
+      apiKey: "test-key",
+    }),
+    (error) =>
+      error instanceof sdk.ProviderError &&
+      error.code === "no_matching_provider" &&
+      error.diagnosticMetadata === undefined,
+  );
+});
+
 test("wait rethrows the first callback exception and suppresses later callbacks", async () => {
   const session = fakeSession();
   const marker = new Error("callback failed");

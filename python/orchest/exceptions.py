@@ -23,6 +23,26 @@ class ApprovalDeniedError(AgentError):
 class ModelError(AgentError):
     """Raised when the LLM provider returns an error."""
 
+    def __init__(
+        self,
+        message: str,
+        code: str | None = None,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        status: int | None = None,
+        retry_after_secs: int | None = None,
+        upstream: object | None = None,
+        diagnostic_metadata: object | None = None,
+    ) -> None:
+        super().__init__(message, code)
+        self.provider = provider
+        self.model = model
+        self.status = status
+        self.retry_after_secs = retry_after_secs
+        self.upstream = upstream
+        self.diagnostic_metadata = diagnostic_metadata
+
 
 class ToolError(AgentError):
     """Raised when a tool execution fails."""

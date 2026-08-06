@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
-use orchest_protocol::{AudioFormat, Language, TranscribeRequest};
+use orchest_protocol::{AudioFormat, ErrorCode, Language, ProtocolError, TranscribeRequest};
 use orchest_provider::{ProviderConfig, Registry};
 
 const DEFAULT_ASR: &str = "aliyun/qwen-audio-3.0-asr-flash";
@@ -17,7 +17,7 @@ pub struct TranscribeOptions {
     pub options: Option<serde_json::Value>,
 }
 
-#[napi]
+#[napi(js_name = "_transcribe")]
 pub async fn transcribe(audio: Buffer, input: TranscribeOptions) -> napi::Result<String> {
     if audio.is_empty() {
         return Err(napi::Error::from_reason("audio cannot be empty"));
@@ -27,13 +27,14 @@ pub async fn transcribe(audio: Buffer, input: TranscribeOptions) -> napi::Result
         input.api_key,
         input.api_key_env.as_deref(),
         default_key_env(&id),
+        &id,
     )?;
     let registry = Registry::with_builtin();
     let entry = registry
         .asr()
         .id(&id)
         .select()
-        .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        .map_err(super::error::protocol_error)?;
     let (provider, model) = id
         .split_once('/')
         .ok_or_else(|| napi::Error::from_reason("provider must be provider/model"))?;
@@ -46,7 +47,7 @@ pub async fn transcribe(audio: Buffer, input: TranscribeOptions) -> napi::Result
             max_tokens: None,
             options: serde_json::Value::Null,
         })
-        .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        .map_err(super::error::protocol_error)?;
     handle
         .transcribe(TranscribeRequest {
             audio: Bytes::copy_from_slice(&audio),
@@ -56,7 +57,7 @@ pub async fn transcribe(audio: Buffer, input: TranscribeOptions) -> napi::Result
         })
         .await
         .map(|result| result.text)
-        .map_err(|error| napi::Error::from_reason(error.to_string()))
+        .map_err(super::error::protocol_error)
 }
 
 pub(crate) fn parse_audio_format(value: &str) -> napi::Result<AudioFormat> {
@@ -84,12 +85,19 @@ pub(crate) fn resolve_key(
     explicit: Option<String>,
     requested_env: Option<&str>,
     default_env: &str,
+    provider_id: &str,
 ) -> napi::Result<String> {
     if let Some(key) = explicit.filter(|key| !key.is_empty()) {
         return Ok(key);
     }
     let env = requested_env.unwrap_or(default_env);
     std::env::var(env).map_err(|_| {
-        napi::Error::from_reason(format!("API key environment variable {env} is not set"))
+        super::error::protocol_error(
+            ProtocolError::new(
+                ErrorCode::MissingApiKey,
+                format!("API key environment variable {env} is not set"),
+            )
+            .with_provider(provider_id),
+        )
     })
 }

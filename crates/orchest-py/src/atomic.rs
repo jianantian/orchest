@@ -46,7 +46,7 @@ pub fn complete(
         api_url,
         max_tokens: options.max_tokens,
     })
-    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+    .map_err(super::error::model_error)?;
     let request = CompletionRequest {
         system,
         user,
@@ -57,6 +57,6 @@ pub fn complete(
         tokio::runtime::Runtime::new()
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
             .block_on(atomic_complete(adapter.as_ref(), request))
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+            .map_err(super::error::model_error)
     })
 }

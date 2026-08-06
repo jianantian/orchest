@@ -44,6 +44,28 @@ export interface TranscribeOptions {
   options?: Record<string, unknown>;
 }
 
+export interface ProviderErrorDetails {
+  message: string;
+  code?: string;
+  provider?: string;
+  model?: string;
+  status?: number;
+  retryAfterSecs?: number;
+  upstream?: unknown;
+  diagnosticMetadata?: unknown;
+}
+
+export class ProviderError extends Error implements ProviderErrorDetails {
+  code?: string;
+  provider?: string;
+  model?: string;
+  status?: number;
+  retryAfterSecs?: number;
+  upstream?: unknown;
+  diagnosticMetadata?: unknown;
+  constructor(details: ProviderErrorDetails);
+}
+
 export interface AsrContextMessage {
   role: "user" | "assistant";
   text: string;
