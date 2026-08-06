@@ -22,6 +22,9 @@ test matrix, and expose cost without changing the existing token/latency limits.
 - [ ] Compare validates result case IDs, split membership, attempt numbering,
       expected repetitions, grader completion, and resource coverage against
       manifest/corpus expectations before computing eligibility.
+- [ ] Manifest schema v3 persists each selected case's immutable split,
+      must-pass flag, weight, and tags; compare rejects result-policy drift and
+      recomputes case/overall/per-tag summaries from attempt evidence.
 - [ ] Missing, duplicate, extra, or truncated case/attempt results make the runs
       incomparable or not eligible with a concrete mismatch.
 - [ ] Independent tests cover candidate must-pass failure, shared must-pass
@@ -45,4 +48,3 @@ test matrix, and expose cost without changing the existing token/latency limits.
 4. Add cost aggregation/status fields and render value-or-`unknown` in both
    report formats.
 5. Run package tests, clippy/fmt, self-review, and commit once.
-

@@ -14,16 +14,19 @@ use super::artifact::{
     default_runs_dir, fixture_revision, now_unix_ms, preflight_dirty_paths,
     require_record_sensitive, write_attempt_artifacts, write_effective_config_snapshot,
     write_harness_snapshot, write_manifest, ArtifactError, AttemptRecord, AttemptStatus,
-    HarnessSnapshot, ScoresPlaceholder, StoreCleanupRecord,
+    HarnessSnapshot, ManifestCasePolicy, ScoresPlaceholder, StoreCleanupRecord,
 };
 use super::case::{
     default_cases_path, default_fixtures_dir, default_seeds_dir, load_corpus, load_session_seed,
     BehaviorTag, CaseCorpus, EvalCase, EvalSplit, RunMode, SessionSeed, GATING_TAGS,
 };
 
-use super::compare::{AttemptResultRow, CaseResultRow, RunResults, RESULTS_SCHEMA_VERSION};
+use super::compare::{
+    derive_results_completeness, AttemptResultRow, CaseResultRow, RunResults,
+    RESULTS_SCHEMA_VERSION,
+};
 use super::effective_config::{EffectiveConfigSnapshot, EFFECTIVE_CONFIG_SCHEMA_VERSION};
-use super::resource::{collect_resources, mean_gate_tokens, median_latency_ms, ResourceCoverage};
+use super::resource::{collect_resources, mean_gate_tokens, median_latency_ms};
 use super::session::AttemptSession;
 use super::trajectory::{sanitize_free_text, TrajectoryRecorder};
 use crate::app::{self, ResumeArgs, RunArgs};
@@ -192,6 +195,7 @@ pub fn preflight(req: &EvalRunRequest) -> Result<CaseCorpus, EvalRunError> {
     Ok(corpus)
 }
 
+#[allow(clippy::too_many_lines)]
 pub async fn run_eval(req: EvalRunRequest) -> Result<EvalRunSummary, EvalRunError> {
     let corpus = preflight(&req)?;
     let sealed = req.splits.contains(&EvalSplit::Scorecard) && req.confirm_sealed;
@@ -267,6 +271,24 @@ pub async fn run_eval(req: EvalRunRequest) -> Result<EvalRunSummary, EvalRunErro
         split_names,
         manifest_repetition,
     );
+    manifest.case_policies = cases
+        .iter()
+        .map(|case| {
+            (
+                case.case_id.clone(),
+                ManifestCasePolicy {
+                    split: case.split.as_str().to_string(),
+                    must_pass: case.must_pass,
+                    weight: case.weight,
+                    tags: case
+                        .tags
+                        .iter()
+                        .map(|tag| tag.as_str().to_string())
+                        .collect(),
+                },
+            )
+        })
+        .collect();
     if sealed {
         manifest.request_options = json!({
             "sealed_scorecard": true,
@@ -281,9 +303,8 @@ pub async fn run_eval(req: EvalRunRequest) -> Result<EvalRunSummary, EvalRunErro
     let mut attempt_count = 0usize;
     let mut validation_gate_tokens: Vec<u64> = Vec::new();
     let mut validation_completed_latencies: Vec<u64> = Vec::new();
-    let mut any_inconclusive = false;
-    let mut any_resource_incomplete = false;
-    let mut all_completed = true;
+    let mut validation_costs: Vec<Option<f64>> = Vec::new();
+    let mut validation_cost_complete = true;
 
     for case in &cases {
         let reps = default_repetitions(case.split);
@@ -310,8 +331,9 @@ pub async fn run_eval(req: EvalRunRequest) -> Result<EvalRunSummary, EvalRunErro
             )
             .await?;
 
-            if outcome.resource.coverage == ResourceCoverage::Incomplete {
-                any_resource_incomplete = true;
+            if case.split == EvalSplit::Validation {
+                validation_cost_complete &= outcome.resource.cost_complete;
+                validation_costs.push(outcome.resource.totals.cost_usd);
             }
             match outcome.record.status {
                 AttemptStatus::Completed => {
@@ -321,14 +343,11 @@ pub async fn run_eval(req: EvalRunRequest) -> Result<EvalRunSummary, EvalRunErro
                     }
                 }
                 AttemptStatus::Inconclusive => {
-                    any_inconclusive = true;
-                    all_completed = false;
                     if case.split == EvalSplit::Validation {
                         validation_gate_tokens.push(outcome.gate_total_tokens);
                     }
                 }
                 AttemptStatus::ExecutionFailure => {
-                    all_completed = false;
                     if case.split == EvalSplit::Validation {
                         validation_gate_tokens.push(outcome.gate_total_tokens);
                     }
@@ -349,16 +368,14 @@ pub async fn run_eval(req: EvalRunRequest) -> Result<EvalRunSummary, EvalRunErro
                 wall_latency_ms: outcome.record.wall_latency_ms,
                 gate_total_tokens: outcome.gate_total_tokens,
                 resource_coverage: outcome.resource.coverage.as_str().into(),
+                cost_usd: outcome.resource.totals.cost_usd,
+                cost_complete: outcome.resource.cost_complete,
                 grader_status: outcome.grader_status,
             });
         }
 
         let (case_passed, case_score) =
             aggregate_case_repetitions(case.must_pass, &attempt_passes, &attempt_scores, reps);
-        if case_score.is_none() {
-            all_completed = false;
-        }
-
         case_rows.push(CaseResultRow {
             case_id: case.case_id.clone(),
             split: case.split.as_str().into(),
@@ -372,6 +389,17 @@ pub async fn run_eval(req: EvalRunRequest) -> Result<EvalRunSummary, EvalRunErro
     }
 
     let (overall, per_tag) = aggregate_split_scores(&case_rows, &req.splits);
+    validation_cost_complete &=
+        !validation_costs.is_empty() && validation_costs.iter().all(Option::is_some);
+    let validation_total_cost_usd = validation_cost_complete.then(|| {
+        validation_costs
+            .iter()
+            .filter_map(|cost| *cost)
+            .sum::<f64>()
+    });
+    let validation_mean_cost_usd =
+        validation_total_cost_usd.map(|total| total / validation_costs.len() as f64);
+    let completeness = derive_results_completeness(&case_rows);
 
     let results = RunResults {
         schema_version: RESULTS_SCHEMA_VERSION.into(),
@@ -384,9 +412,12 @@ pub async fn run_eval(req: EvalRunRequest) -> Result<EvalRunSummary, EvalRunErro
         validation_median_latency_ms: median_latency_ms(&validation_completed_latencies),
         validation_attempt_gate_tokens: validation_gate_tokens,
         validation_completed_latencies_ms: validation_completed_latencies,
-        any_inconclusive,
-        any_resource_incomplete,
-        all_completed,
+        validation_total_cost_usd,
+        validation_mean_cost_usd,
+        validation_cost_complete,
+        any_inconclusive: completeness.any_inconclusive,
+        any_resource_incomplete: completeness.any_resource_incomplete,
+        all_completed: completeness.all_completed,
     };
 
     write_results_and_summary(&run_dir, &results, sealed)?;
@@ -880,7 +911,7 @@ pub fn aggregate_case_repetitions(
     }
 }
 
-fn aggregate_split_scores(
+pub(super) fn aggregate_split_scores(
     cases: &[CaseResultRow],
     splits: &[EvalSplit],
 ) -> (Option<f64>, BTreeMap<String, f64>) {
@@ -1064,7 +1095,7 @@ fn write_results_and_summary(
         );
     }
     md.push_str(&format!(
-        "- overall: {}\n- all_completed: {}\n- any_inconclusive: {}\n- any_resource_incomplete: {}\n",
+        "- overall: {}\n- all_completed: {}\n- any_inconclusive: {}\n- any_resource_incomplete: {}\n- validation cost: {}\n",
         results
             .overall
             .map(|o| format!("{o:.2}"))
@@ -1072,6 +1103,7 @@ fn write_results_and_summary(
         results.all_completed,
         results.any_inconclusive,
         results.any_resource_incomplete,
+        format_run_cost(results),
     ));
     md.push_str("\n## Cases\n\n");
     for c in &results.cases {
@@ -1083,6 +1115,17 @@ fn write_results_and_summary(
     fs::write(run_dir.join("summary.md"), md)
         .map_err(|e| EvalRunError::Other(format!("write summary.md: {e}")))?;
     Ok(())
+}
+
+fn format_run_cost(results: &RunResults) -> String {
+    match (
+        results.validation_cost_complete,
+        results.validation_total_cost_usd,
+        results.validation_mean_cost_usd,
+    ) {
+        (true, Some(total), Some(mean)) => format!("total=${total:.4}, mean=${mean:.4}"),
+        _ => "unknown".into(),
+    }
 }
 
 fn list_fixture_basenames(dir: &Path) -> Result<BTreeSet<String>, EvalRunError> {

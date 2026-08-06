@@ -19,7 +19,7 @@ use super::trajectory::{
 };
 
 /// Schema version for run manifests.
-pub const MANIFEST_SCHEMA_VERSION: &str = "1";
+pub const MANIFEST_SCHEMA_VERSION: &str = "3";
 /// Schema version for attempt.json.
 pub const ATTEMPT_SCHEMA_VERSION: &str = "1";
 /// Relative directory for all sensitive run artifacts.
@@ -132,6 +132,15 @@ pub struct SnapshotRef {
     pub sha256: String,
 }
 
+/// Immutable corpus policy for one selected case.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ManifestCasePolicy {
+    pub split: String,
+    pub must_pass: bool,
+    pub weight: f64,
+    pub tags: Vec<String>,
+}
+
 /// Skeleton run manifest (issue 002 foundations; runner fills remaining fields).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunManifest {
@@ -149,6 +158,9 @@ pub struct RunManifest {
     pub effective_config_schema_version: String,
     pub session_seeds: BTreeMap<String, String>,
     pub case_ids: Vec<String>,
+    /// Immutable corpus policy for each selected case. Result rows are evidence,
+    /// never the authority for gate-affecting policy.
+    pub case_policies: BTreeMap<String, ManifestCasePolicy>,
     pub splits: Vec<String>,
     pub repetition: u32,
     pub record_sensitive: bool,
@@ -549,6 +561,7 @@ pub fn build_manifest_skeleton(
         effective_config_schema_version,
         session_seeds,
         case_ids,
+        case_policies: BTreeMap::new(),
         splits,
         repetition,
         record_sensitive: true,

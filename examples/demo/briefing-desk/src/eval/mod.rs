@@ -27,8 +27,8 @@ pub use artifact::{
     default_runs_dir, fixture_revision, preflight_dirty_paths, require_record_sensitive,
     write_attempt_artifacts, write_effective_config_snapshot, write_harness_snapshot,
     write_manifest, ArtifactError, AttemptRecord, AttemptStatus, GitInfo, HarnessSnapshot,
-    HarnessSurface, RunManifest, ScoresPlaceholder, SnapshotRef, StoreCleanupRecord,
-    ATTEMPT_SCHEMA_VERSION, MANIFEST_SCHEMA_VERSION, RUNS_DIR_REL,
+    HarnessSurface, ManifestCasePolicy, RunManifest, ScoresPlaceholder, SnapshotRef,
+    StoreCleanupRecord, ATTEMPT_SCHEMA_VERSION, MANIFEST_SCHEMA_VERSION, RUNS_DIR_REL,
 };
 pub use case::{
     load_corpus, load_session_seed, BehaviorTag, CaseCorpus, CaseLoadError, EvalCase, EvalSplit,

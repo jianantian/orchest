@@ -35,7 +35,12 @@ impl TokenTotals {
             .saturating_add(self.video_input_tokens)
     }
 
-    pub fn add_usage_value(&mut self, usage: &Value) {
+    /// Adds one usage record and reports whether it contained recognized,
+    /// nonnegative numeric evidence. Explicit zero is evidence.
+    pub fn add_usage_value(&mut self, usage: &Value) -> bool {
+        if !usage_has_recognized_numeric_evidence(usage) {
+            return false;
+        }
         self.input_tokens = self
             .input_tokens
             .saturating_add(u64_field(usage, "input_tokens"));
@@ -60,9 +65,10 @@ impl TokenTotals {
         self.video_input_tokens = self
             .video_input_tokens
             .saturating_add(u64_field(usage, "video_input_tokens"));
-        if let Some(c) = usage.get("cost_usd").and_then(Value::as_f64) {
+        if let Some(c) = nonnegative_f64_field(usage, "cost_usd") {
             self.cost_usd = Some(self.cost_usd.unwrap_or(0.0) + c);
         }
+        true
     }
 
     pub fn to_json(&self) -> Value {
@@ -105,6 +111,10 @@ pub struct ResourceReport {
     pub model_calls: u64,
     pub vision_calls: u64,
     pub missing_usage_calls: u64,
+    /// Cost is advisory, but a run summary may only aggregate it when every
+    /// known call supplies a nonnegative numeric value.
+    pub missing_cost_calls: u64,
+    pub cost_complete: bool,
     pub notes: Vec<String>,
 }
 
@@ -115,6 +125,8 @@ impl ResourceReport {
             "model_calls": self.model_calls,
             "vision_calls": self.vision_calls,
             "missing_usage_calls": self.missing_usage_calls,
+            "missing_cost_calls": self.missing_cost_calls,
+            "cost_complete": self.cost_complete,
             "notes": self.notes,
             "gate_total_tokens": self.totals.gate_total_tokens(),
         })
@@ -134,6 +146,7 @@ pub fn collect_resources(events: &[TrajectoryEvent]) -> ResourceReport {
     let mut model_calls = 0u64;
     let mut vision_calls = 0u64;
     let mut missing = 0u64;
+    let mut missing_cost = 0u64;
     let mut notes = Vec::new();
 
     for ev in events {
@@ -141,17 +154,19 @@ pub fn collect_resources(events: &[TrajectoryEvent]) -> ResourceReport {
             "model_call_completed" => {
                 model_calls += 1;
                 if let Some(usage) = ev.data.get("tokens").or_else(|| ev.data.get("usage")) {
-                    if usage_has_any_tokens(usage) || usage.is_object() {
-                        totals.add_usage_value(usage);
-                    } else {
+                    if !totals.add_usage_value(usage) {
                         missing += 1;
                         notes.push(format!(
                             "model_call_completed seq={} missing usage",
                             ev.sequence
                         ));
                     }
+                    if !usage_has_cost(usage) {
+                        missing_cost += 1;
+                    }
                 } else {
                     missing += 1;
+                    missing_cost += 1;
                     notes.push(format!(
                         "model_call_completed seq={} missing tokens field",
                         ev.sequence
@@ -179,14 +194,23 @@ pub fn collect_resources(events: &[TrajectoryEvent]) -> ResourceReport {
                                 .and_then(|o| o.get("details").cloned())
                         });
                     if let Some(usage) = usage {
-                        if usage_looks_like_tokens(&usage) {
-                            totals.add_usage_value(&usage);
-                        } else if let Some(nested) =
-                            usage.get("usage").or_else(|| usage.get("tokens"))
-                        {
-                            totals.add_usage_value(nested);
+                        let nested = usage.get("usage").or_else(|| usage.get("tokens"));
+                        // Wrappers may carry their own metadata (including a
+                        // cost) while the actual vision usage is nested. Prefer
+                        // direct token evidence, otherwise consume the nested
+                        // record once.
+                        let usage = if usage_has_recognized_token_evidence(&usage) {
+                            &usage
+                        } else {
+                            nested.unwrap_or(&usage)
+                        };
+                        if totals.add_usage_value(usage) {
+                            if !usage_has_cost(usage) {
+                                missing_cost += 1;
+                            }
                         } else {
                             missing += 1;
+                            missing_cost += 1;
                             notes.push(format!(
                                 "describe_image seq={} details lack token usage",
                                 ev.sequence
@@ -194,6 +218,7 @@ pub fn collect_resources(events: &[TrajectoryEvent]) -> ResourceReport {
                         }
                     } else {
                         missing += 1;
+                        missing_cost += 1;
                         notes.push(format!(
                             "describe_image seq={} missing usage details",
                             ev.sequence
@@ -217,6 +242,8 @@ pub fn collect_resources(events: &[TrajectoryEvent]) -> ResourceReport {
         model_calls,
         vision_calls,
         missing_usage_calls: missing,
+        missing_cost_calls: missing_cost,
+        cost_complete: missing_cost == 0,
         notes,
     }
 }
@@ -231,7 +258,7 @@ fn u64_field(v: &Value, key: &str) -> u64 {
         .unwrap_or(0)
 }
 
-fn usage_has_any_tokens(usage: &Value) -> bool {
+fn usage_has_recognized_numeric_evidence(usage: &Value) -> bool {
     [
         "input_tokens",
         "output_tokens",
@@ -239,14 +266,37 @@ fn usage_has_any_tokens(usage: &Value) -> bool {
         "image_input_tokens",
         "video_input_tokens",
         "reasoning_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "cost_usd",
     ]
     .iter()
-    .any(|k| u64_field(usage, k) > 0)
-        || usage.is_object()
+    .any(|key| nonnegative_f64_field(usage, key).is_some())
 }
 
-fn usage_looks_like_tokens(usage: &Value) -> bool {
-    usage.get("input_tokens").is_some() || usage.get("output_tokens").is_some()
+fn usage_has_recognized_token_evidence(usage: &Value) -> bool {
+    [
+        "input_tokens",
+        "output_tokens",
+        "audio_input_tokens",
+        "image_input_tokens",
+        "video_input_tokens",
+        "reasoning_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+    ]
+    .iter()
+    .any(|key| nonnegative_f64_field(usage, key).is_some())
+}
+
+fn nonnegative_f64_field(v: &Value, key: &str) -> Option<f64> {
+    v.get(key)
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && *value >= 0.0)
+}
+
+fn usage_has_cost(usage: &Value) -> bool {
+    nonnegative_f64_field(usage, "cost_usd").is_some()
 }
 
 /// Equal-weight mean of gate totals across all attempts (validation policy).
@@ -395,6 +445,85 @@ mod tests {
         assert_eq!(report.totals.input_tokens, 96);
         assert_eq!(report.totals.output_tokens, 181);
         assert_eq!(report.totals.gate_total_tokens(), 96 + 181);
+    }
+
+    #[test]
+    fn usage_requires_recognized_nonnegative_numeric_evidence() {
+        let invalid = [
+            json!({}),
+            json!({"unrelated": 1}),
+            json!({"input_tokens": "12"}),
+            json!({"input_tokens": -1}),
+        ];
+        for (sequence, usage) in invalid.into_iter().enumerate() {
+            let report = collect_resources(&[ev(
+                "model_call_completed",
+                sequence as u64,
+                json!({"tokens": usage}),
+            )]);
+            assert_eq!(report.missing_usage_calls, 1, "usage={usage}");
+            assert_eq!(report.coverage, ResourceCoverage::Incomplete);
+        }
+    }
+
+    #[test]
+    fn explicit_numeric_zero_is_usage_evidence() {
+        let report = collect_resources(&[ev(
+            "model_call_completed",
+            0,
+            json!({"tokens": {"input_tokens": 0}}),
+        )]);
+        assert_eq!(report.missing_usage_calls, 0);
+        assert_eq!(report.coverage, ResourceCoverage::Complete);
+        assert_eq!(report.totals.gate_total_tokens(), 0);
+    }
+
+    #[test]
+    fn vision_usage_requires_recognized_numeric_evidence() {
+        let report = collect_resources(&[ev(
+            "tool_call_completed",
+            0,
+            json!({"tool": "describe_image", "details": {"input_tokens": -1}}),
+        )]);
+        assert_eq!(report.missing_usage_calls, 1);
+        assert_eq!(report.coverage, ResourceCoverage::Incomplete);
+    }
+
+    #[test]
+    fn cost_is_complete_only_when_each_known_call_reports_a_cost() {
+        let report = collect_resources(&[
+            ev(
+                "model_call_completed",
+                0,
+                json!({"tokens": {"input_tokens": 1, "cost_usd": 0.0}}),
+            ),
+            ev(
+                "model_call_completed",
+                1,
+                json!({"tokens": {"input_tokens": 1}}),
+            ),
+        ]);
+        assert!(!report.cost_complete);
+        assert_eq!(report.missing_cost_calls, 1);
+        assert_eq!(report.totals.cost_usd, Some(0.0));
+    }
+
+    #[test]
+    fn vision_wrapper_uses_nested_usage_once_when_outer_has_only_cost() {
+        let report = collect_resources(&[ev(
+            "tool_call_completed",
+            0,
+            json!({
+                "tool": "describe_image",
+                "details": {
+                    "cost_usd": 0.1,
+                    "usage": {"input_tokens": 3, "cost_usd": 0.2}
+                }
+            }),
+        )]);
+        assert_eq!(report.totals.input_tokens, 3);
+        assert_eq!(report.totals.cost_usd, Some(0.2));
+        assert_eq!(report.vision_calls, 1);
     }
 
     #[test]
