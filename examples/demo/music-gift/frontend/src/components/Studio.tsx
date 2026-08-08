@@ -155,11 +155,16 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   const docCardRef = useRef<HTMLDivElement>(null);
   const overlayInnerRef = useRef<HTMLDivElement>(null);
   const selBlurTimer = useRef<number | null>(null);
+  /** Line range stashed by the toolbar's 自定义指令 command: clicking into
+   *  the chat input blurs the manuscript and clears selRange, so the range
+   *  survives here until the next chat send consumes it. */
+  const pendingSelRef = useRef<{ from: number; to: number } | null>(null);
 
   // ── AI proposal state: an inline lyric diff pending accept/reject,
-  // rendered in the manuscript in place of lines from–to (Task 10 fills
-  // this from Done.lines). While set, the manuscript swaps the textarea
-  // for a read-only line view and the selection UI is suppressed. ─────
+  // rendered in the manuscript in place of lines from–to (filled from
+  // Done.lines for scoped turns, or as a whole-manuscript diff when a chat
+  // turn re-emits the full lyrics). While set, the manuscript swaps the
+  // textarea for a read-only line view and the selection UI is suppressed.
   const [proposal, setProposal] = useState<Proposal | null>(null);
 
   // The undo stack lives in a ref (push happens inside the async chat loop);
@@ -378,20 +383,25 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   }
 
   /**
-   * Apply the non-null Done fields to the draft. The pre-change snapshot is
-   * pushed BEFORE applying; the changed fields flash AFTER. Purely
-   * conversational turns (all null) touch neither the draft nor the stack.
-   * Returns the applied field names for the chat confirmation.
+   * Apply the non-null Done fields to the draft. A full-lyrics change does
+   * NOT apply directly: it becomes a whole-manuscript diff proposal (§10.5),
+   * so accept/reject/undo all ride the Task 8 mechanism. The single-value
+   * fields (style/title/vocal) have no diff concept — they apply directly
+   * under one undo snapshot and flash. Purely conversational turns touch
+   * neither the draft nor the stack. Returns the applied field names for
+   * the chat confirmation.
    */
   function applyDone(e: DoneEvent): StudioField[] {
+    if (e.lyrics != null) {
+      const original = splitLines(draftRef.current.lyrics);
+      setProposal({ from: 1, to: original.length, original, replacement: splitLines(e.lyrics) });
+    }
     const fields: StudioField[] = [];
-    if (e.lyrics != null) fields.push("lyrics");
     if (e.style != null) fields.push("style");
     if (e.title != null) fields.push("title");
     if (e.vocal != null) fields.push("vocal");
     if (!fields.length) return fields;
     pushUndo(draftRef.current);
-    if (e.lyrics != null) setLyrics(e.lyrics);
     // An AI style replaces the manual chip selection: the backend combines
     // selectedStyles + styleInput the same way handleGenerate does, so the
     // returned style goes into styleInput and the chips clear.
@@ -407,6 +417,22 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
     return fields;
   }
 
+  /** Turn a scoped Done.lines into an inline diff proposal. The range is
+   *  clamped into the live manuscript — the draft may have shrunk since the
+   *  selection was sent, and an out-of-range `from` would render nothing. */
+  function applyScopedLines(lines: { from: number; to: number; text: string }) {
+    const draftLines = splitLines(draftRef.current.lyrics);
+    if (!draftLines.length) return;
+    const from = Math.min(Math.max(lines.from, 1), draftLines.length);
+    const to = Math.min(Math.max(lines.to, from), draftLines.length);
+    setProposal({
+      from,
+      to,
+      original: draftLines.slice(from - 1, to),
+      replacement: splitLines(lines.text),
+    });
+  }
+
   /** Scroll the bubble list to the end. The instant variant only fires when
    * already near the bottom, so a user who scrolled up to read isn't yanked
    * back down (same contract as the guided flow). */
@@ -418,7 +444,7 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
     el.scrollIntoView({ behavior, block: "end" });
   }
 
-  async function sendTurn(userText: string) {
+  async function sendTurn(userText: string, selection?: { from: number; to: number }) {
     // The transcript always opens on a user turn: studio messages only ever
     // come from this handler, so no synthetic opener is needed.
     const msgs: StudioMessage[] = [...messages, { role: "user", content: userText }];
@@ -427,7 +453,7 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
     let arrived = "";
 
     try {
-      const gen = streamChat({ mode: "studio", draft: draftForApi(), messages: msgs, meta: { lang }, photos: [] });
+      const gen = streamChat({ mode: "studio", draft: draftForApi(), selection, messages: msgs, meta: { lang }, photos: [] });
       for await (const e of gen) {
         if (e.type === "Delta") {
           // Direct append — no typewriter reveal. Guided's rAF reveal exists
@@ -436,6 +462,10 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
           setMessages([...msgs, { role: "assistant", content: arrived }]);
           scrollToBottom("auto");
         } else if (e.type === "Done") {
+          // A scoped replacement becomes an inline diff over the selected
+          // lines; a full-lyrics change becomes a whole-manuscript proposal
+          // inside applyDone. Neither touches the draft before accept.
+          if (e.lines) applyScopedLines(e.lines);
           const applied = applyDone(e);
           const note = applied.length
             ? t("applied_fields", { fields: applied.map(f => t(`field_${f}`)).join(t("field_sep")) })
@@ -453,9 +483,22 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
     }
   }
 
+  /** Scoped toolbar command → one chat turn carrying the instruction and the
+   *  selected line range; the reply's <<<LINES>>> block lands as a diff. */
+  async function sendScopedTurn(cmd: ScopedCommand, range: { from: number; to: number }) {
+    if (streaming) return;
+    await sendTurn(t(`scoped_prompt_${cmd}`, range), range);
+  }
+
   async function handleChatSend() {
     const text = input.trim(); if (!text || streaming) return;
-    setInput(""); await sendTurn(text);
+    // A pending scoped range (selection toolbar → 自定义指令, or a live
+    // manuscript selection) rides along with the message as `selection`.
+    const sel = selRange ?? pendingSelRef.current ?? undefined;
+    pendingSelRef.current = null;
+    setInput("");
+    if (selRange) setSelRange(null);
+    await sendTurn(text, sel);
   }
 
   /** ✨ 帮写 / 帮我写歌词: expand the AI region if collapsed, scroll it into
@@ -517,16 +560,22 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
     }, 150);
   }
 
-  /** No AI request yet (Task 10 wires the scoped commands). "custom" routes
-   *  to the chat input with the line range prefilled; the other commands
-   *  just keep the selection highlighted as a visual anchor. */
+  /** Toolbar command wiring (Task 10): the fixed commands fire a scoped
+   *  turn immediately; "custom" routes to the chat input with the line
+   *  range prefilled and stashed — the actual send happens in
+   *  handleChatSend, which attaches the range as `selection`. */
   function handleScopedAction(cmd: ScopedCommand) {
-    if (!selRange) return;
+    if (!selRange || streaming) return;
     if (cmd === "custom") {
+      pendingSelRef.current = selRange;
       setAiOpen(true);
       setInput(t("scoped_custom_prefill", { from: selRange.from, to: selRange.to }));
       requestAnimationFrame(() => aiRegionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      return;
     }
+    const range = selRange;
+    setSelRange(null);
+    void sendScopedTurn(cmd, range);
   }
 
   // ── Player range selection → LRC mapping → manuscript selection ─────
@@ -591,10 +640,13 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
 
   const lastMsg = messages[messages.length - 1];
   const lastAssistant = lastMsg && lastMsg.role === "assistant" ? lastMsg : null;
+  // Marker blocks (full lyrics or a scoped <<<LINES:N-M>>> replacement)
+  // belong to the draft / the diff view, never to the chat bubble.
   const lastTurnText = lastAssistant
-    ? stripMarkers(lastAssistant.content.split("<<<LYRICS>>>")[0]).trim()
+    ? stripMarkers(lastAssistant.content.split("<<<LYRICS>>>")[0].split("<<<LINES:")[0]).trim()
     : "";
-  const lyricsStreaming = streaming && !!lastAssistant && lastAssistant.content.includes("<<<LYRICS>>>");
+  const lyricsStreaming = streaming && !!lastAssistant
+    && (lastAssistant.content.includes("<<<LYRICS>>>") || lastAssistant.content.includes("<<<LINES:"));
 
   const flash = (f: StudioField) => (flashed.has(f) ? " ai-flash" : "");
 
@@ -832,10 +884,11 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
             {messages.length === 0 && <div className="bubble bot">{t("studio_ai_intro")}</div>}
 
             {messages.map((msg, i) => {
-              // Stop at <<<LYRICS>>> — marker blocks belong to the draft,
-              // not the chat bubble (same truncation as the guided flow).
+              // Stop at <<<LYRICS>>> / <<<LINES: — marker blocks belong to
+              // the draft, not the chat bubble (same truncation as the
+              // guided flow).
               const display = msg.role === "assistant"
-                ? stripMarkers(msg.content.split("<<<LYRICS>>>")[0])
+                ? stripMarkers(msg.content.split("<<<LYRICS>>>")[0].split("<<<LINES:")[0])
                 : stripMarkers(msg.content);
               if (!display.trim() && !msg.note) return null;
               return (

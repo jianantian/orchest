@@ -1,8 +1,8 @@
 import { useI18n } from "../../i18n";
 
-/** Scoped edit commands for the lyric selection toolbar. The AI wiring
- *  lands in a later task — for now only "custom" has an effect (it prefills
- *  the chat input); the rest are inert placeholders. */
+/** Scoped edit commands for the lyric selection toolbar. The fixed
+ *  commands fire a scoped chat turn immediately; "custom" routes to the
+ *  chat input with the range prefilled (Studio owns both paths). */
 export type ScopedCommand = "rewrite" | "rhyme" | "colloquial" | "shorten" | "custom";
 
 const COMMANDS: ScopedCommand[] = ["rewrite", "rhyme", "colloquial", "shorten", "custom"];

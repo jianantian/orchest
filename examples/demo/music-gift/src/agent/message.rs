@@ -4,7 +4,7 @@ use orchest_protocol::{ContentBlock, MediaSource, Message, Role};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::prompts::{STUDIO_SYSTEM_PROMPT, SYSTEM_PROMPT};
+use crate::prompts::{STUDIO_SCOPED_PROMPT, STUDIO_SYSTEM_PROMPT, SYSTEM_PROMPT};
 
 pub fn build_system_message(meta: &Value, photo_count: usize) -> Message {
     let mut system = SYSTEM_PROMPT.as_str().to_string();
@@ -48,6 +48,37 @@ pub fn build_studio_system_message(draft: Option<&StudioDraft>, photo_count: usi
         role: Role::System,
         content: vec![ContentBlock::Text(system)],
     }
+}
+
+/// System message for a scoped studio edit: the studio prompt plus the
+/// scoped-edit addendum and the selected lines (1-based closed interval,
+/// clamped to the draft's actual line count). The model answers with a
+/// `<<<LINES:N-M>>>` replacement block instead of a full `<<<LYRICS>>>`.
+pub fn build_scoped_system_message(
+    draft: Option<&StudioDraft>,
+    selection: &Selection,
+    photo_count: usize,
+) -> Message {
+    let mut msg = build_studio_system_message(draft, photo_count);
+    if let Some(ContentBlock::Text(system)) = msg.content.first_mut() {
+        system.push_str("\n\n");
+        system.push_str(STUDIO_SCOPED_PROMPT.as_str());
+        if let Some(draft) = draft {
+            if let Some(lyrics) = &draft.lyrics {
+                let lines: Vec<&str> = lyrics.lines().collect();
+                if !lines.is_empty() {
+                    // Clamp into the real manuscript: the client sends a
+                    // 1-based closed range that may outrun the draft (the
+                    // lyrics can shrink between selection and send).
+                    let from = selection.from.clamp(1, lines.len());
+                    let to = selection.to.clamp(from, lines.len());
+                    system.push_str(&format!("\n\nSelected lines {from}-{to}:\n"));
+                    system.push_str(&lines[from - 1..to].join("\n"));
+                }
+            }
+        }
+    }
+    msg
 }
 
 /// Append the photo-attachment note shared by both system prompts.
@@ -110,6 +141,17 @@ pub struct ChatRequest {
     /// The user's current working draft; only meaningful in studio mode.
     #[serde(default)]
     pub draft: Option<StudioDraft>,
+    /// Lyric-line selection for a scoped edit (1-based closed interval into
+    /// `draft.lyrics`). Present = scoped semantics within studio mode.
+    #[serde(default)]
+    pub selection: Option<Selection>,
+}
+
+/// A 1-based closed line range into the draft's lyrics.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct Selection {
+    pub from: usize,
+    pub to: usize,
 }
 
 /// The client's current working draft, sent with studio-mode chat requests.
@@ -265,5 +307,59 @@ mod tests {
         .expect("deserialize");
         assert!(req.mode.is_none());
         assert!(req.draft.is_none());
+        assert!(req.selection.is_none());
+    }
+
+    #[test]
+    fn chat_request_with_selection_deserializes() {
+        let req: ChatRequest = serde_json::from_value(serde_json::json!({
+            "messages": [{"role": "user", "content": "改写这几行"}],
+            "mode": "studio",
+            "draft": {"lyrics": "a\nb\nc"},
+            "selection": {"from": 2, "to": 3},
+        }))
+        .expect("deserialize");
+        let sel = req.selection.expect("selection present");
+        assert_eq!(sel.from, 2);
+        assert_eq!(sel.to, 3);
+    }
+
+    #[test]
+    fn scoped_system_message_contains_selected_lines_and_scoped_prompt() {
+        let draft = StudioDraft {
+            lyrics: Some("第一句\n第二句\n第三句".to_string()),
+            ..StudioDraft::default()
+        };
+        let sel = Selection { from: 2, to: 3 };
+        let content = text_of(&build_scoped_system_message(Some(&draft), &sel, 0));
+        assert!(content.contains(STUDIO_SYSTEM_PROMPT.as_str()));
+        assert!(content.contains(STUDIO_SCOPED_PROMPT.as_str()));
+        assert!(
+            content.contains("Selected lines 2-3:\n第二句\n第三句"),
+            "selected lines must appear verbatim, got: {content}"
+        );
+    }
+
+    #[test]
+    fn scoped_system_message_clamps_out_of_range_selection() {
+        // The draft can shrink between selection and send; the range must
+        // never index past the real manuscript.
+        let draft = StudioDraft {
+            lyrics: Some("only\ntwo".to_string()),
+            ..StudioDraft::default()
+        };
+        let sel = Selection { from: 2, to: 9 };
+        let content = text_of(&build_scoped_system_message(Some(&draft), &sel, 0));
+        assert!(
+            content.contains("Selected lines 2-2:\ntwo"),
+            "clamped range expected, got: {content}"
+        );
+
+        // No lyrics in the draft: no Selected lines block at all (the
+        // addendum prompt mentions the header by name, so match the
+        // injected "Selected lines N-M:" shape, not the bare words).
+        let content = text_of(&build_scoped_system_message(None, &sel, 0));
+        assert!(content.contains(STUDIO_SCOPED_PROMPT.as_str()));
+        assert!(!content.contains("Selected lines 2-9:"));
     }
 }

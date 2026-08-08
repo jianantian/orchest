@@ -52,6 +52,15 @@ pub fn parse_lyrics(full_text: &str) -> ParsedLyrics {
     }
 }
 
+/// A scoped replacement for draft lines `from`–`to` (1-based closed
+/// interval), parsed from a `<<<LINES:N-M>>>` block in a scoped studio turn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LinesChange {
+    pub from: usize,
+    pub to: usize,
+    pub text: String,
+}
+
 /// Field-level changes parsed from a studio-mode reply. Unlike
 /// `ParsedLyrics` (which fills defaults for the guided pipeline), every
 /// field the model did not re-emit stays `None`, so the client applies
@@ -63,6 +72,10 @@ pub struct StudioChanges {
     pub style: Option<String>,
     pub title: Option<String>,
     pub vocal: Option<String>,
+    /// Scoped line replacement (`<<<LINES:N-M>>>` block); mutually exclusive
+    /// with `lyrics` in practice — scoped turns are told not to re-emit the
+    /// full lyrics.
+    pub lines: Option<LinesChange>,
 }
 
 /// Parse a studio-mode reply: marker blocks appear only for fields the
@@ -78,13 +91,40 @@ pub fn parse_studio_output(full_text: &str) -> StudioChanges {
         extract_between(full_text, "<<<TITLE>>>", "<<<TITLE_END>>>").map(|s| s.trim().to_string());
     let vocal =
         extract_between(full_text, "<<<VOCAL>>>", "<<<VOCAL_END>>>").map(|s| normalize_vocal(&s));
+    let lines = extract_lines_block(full_text);
     StudioChanges {
         has_lyrics: lyrics.is_some(),
         lyrics,
         style,
         title,
         vocal,
+        lines,
     }
+}
+
+/// Extract a scoped replacement block: `<<<LINES:N-M>>>` up to `<<<END>>>`
+/// or end of text. Returns `None` when the block is absent, the range is
+/// reversed or zero-based, or the replacement text is empty.
+fn extract_lines_block(text: &str) -> Option<LinesChange> {
+    const OPEN: &str = "<<<LINES:";
+    let start = text.find(OPEN)? + OPEN.len();
+    let rest = &text[start..];
+    let header_end = rest.find(">>>")?;
+    let (from, to) = rest[..header_end].split_once('-')?;
+    let (from, to) = (
+        from.trim().parse::<usize>().ok()?,
+        to.trim().parse::<usize>().ok()?,
+    );
+    if from == 0 || from > to {
+        return None;
+    }
+    let body = &rest[header_end + 3..];
+    let end = body.find("<<<END>>>").unwrap_or(body.len());
+    let text = body[..end].trim().to_string();
+    if text.is_empty() {
+        return None;
+    }
+    Some(LinesChange { from, to, text })
 }
 
 /// Map a free-form vocal annotation ("male, warm", "女声, 空灵") to the
@@ -220,6 +260,9 @@ pub enum SseEvent {
         style: Option<String>,
         title: Option<String>,
         vocal: Option<String>,
+        /// Scoped line replacement from a `<<<LINES:N-M>>>` block (studio
+        /// scoped turns only); guided turns always send `None`.
+        lines: Option<LinesChange>,
         /// Review report from the second-pass review agent (may be empty if review skipped).
         review: Option<String>,
         /// Pipeline stages that fell back during this turn (e.g. ["review"]
@@ -545,6 +588,7 @@ pub async fn build_done_event(
             style: changes.style,
             title: changes.title,
             vocal: changes.vocal,
+            lines: changes.lines,
             review: None,
             degraded: Vec::new(),
         };
@@ -565,6 +609,7 @@ pub async fn build_done_event(
         style: Some(parsed.style),
         title: Some(parsed.title),
         vocal: Some(parsed.vocal),
+        lines: None,
         review,
         degraded,
     }
@@ -1239,6 +1284,7 @@ mod tests {
                 style: Some("City Pop, upbeat, clean guitars".to_string()),
                 title: None,
                 vocal: None,
+                lines: None,
             }
         );
     }
@@ -1268,8 +1314,97 @@ mod tests {
                 style: None,
                 title: None,
                 vocal: None,
+                lines: None,
             }
         );
+    }
+
+    #[test]
+    fn parse_studio_output_extracts_lines_block() {
+        let text = "改好了,这两行更顺口。\n<<<LINES:2-3>>>\n新的第二句\n新的第三句\n<<<END>>>";
+        let changes = parse_studio_output(text);
+        assert_eq!(
+            changes.lines,
+            Some(LinesChange {
+                from: 2,
+                to: 3,
+                text: "新的第二句\n新的第三句".to_string(),
+            })
+        );
+        // A scoped turn must not also re-emit the full lyrics.
+        assert!(changes.lyrics.is_none());
+        assert!(!changes.has_lyrics);
+    }
+
+    #[test]
+    fn extract_lines_block_recovers_when_end_marker_missing() {
+        let text = "reply\n<<<LINES:1-2>>>\n第一行\n第二行\n";
+        assert_eq!(
+            extract_lines_block(text),
+            Some(LinesChange {
+                from: 1,
+                to: 2,
+                text: "第一行\n第二行".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn extract_lines_block_none_without_block() {
+        assert_eq!(extract_lines_block("just chatting"), None);
+        assert_eq!(
+            extract_lines_block("<<<LYRICS>>>\nla\n<<<END>>>"),
+            None,
+            "a full-lyrics block is not a scoped block"
+        );
+    }
+
+    #[test]
+    fn extract_lines_block_rejects_reversed_or_zero_range() {
+        assert_eq!(
+            extract_lines_block("<<<LINES:5-3>>>\ntext\n<<<END>>>"),
+            None,
+            "reversed range must not parse"
+        );
+        assert_eq!(
+            extract_lines_block("<<<LINES:0-2>>>\ntext\n<<<END>>>"),
+            None,
+            "line numbers are 1-based"
+        );
+    }
+
+    #[test]
+    fn extract_lines_block_rejects_empty_replacement() {
+        assert_eq!(extract_lines_block("<<<LINES:2-2>>>\n\n<<<END>>>"), None);
+    }
+
+    /// A scoped studio Done carries the parsed LINES block; unscoped studio
+    /// turns keep lines = None.
+    #[tokio::test]
+    async fn studio_done_event_carries_lines_change() {
+        let model = Arc::new(CaptureModel::default());
+        let (tx, _rx) = mpsc::channel::<SseEvent>(16);
+        let text = "改好了。\n<<<LINES:2-2>>>\n替换行\n<<<END>>>";
+        let event = build_done_event(model.clone(), text, &tx, true).await;
+        let SseEvent::Done { lines, lyrics, .. } = event else {
+            panic!("expected Done");
+        };
+        assert_eq!(
+            lines,
+            Some(LinesChange {
+                from: 2,
+                to: 2,
+                text: "替换行".to_string(),
+            })
+        );
+        assert_eq!(lyrics, None);
+
+        let (tx, _rx) = mpsc::channel::<SseEvent>(16);
+        let event = build_done_event(model, "plain chat", &tx, true).await;
+        let SseEvent::Done { lines, .. } = event else {
+            panic!("expected Done");
+        };
+        assert_eq!(lines, None);
     }
 
     /// Studio mode must skip the elevate/review pipeline entirely: no model
@@ -1287,6 +1422,7 @@ mod tests {
             style,
             title,
             vocal,
+            lines,
             review,
             degraded,
         } = event
@@ -1298,6 +1434,7 @@ mod tests {
         assert_eq!(style, Some("City Pop".to_string()));
         assert_eq!(title, None);
         assert_eq!(vocal, None);
+        assert_eq!(lines, None);
         assert_eq!(review, None);
         assert!(degraded.is_empty());
         assert!(model

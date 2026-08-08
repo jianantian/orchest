@@ -1,6 +1,7 @@
 //! Prompt templates for the music-gift demo.
 //!
-//! All prompts — `SYSTEM_PROMPT`, `STUDIO_SYSTEM_PROMPT`, `COUNTDOWN_TEMPLATE`,
+//! All prompts — `SYSTEM_PROMPT`, `STUDIO_SYSTEM_PROMPT`, `STUDIO_SCOPED_PROMPT`,
+//! `COUNTDOWN_TEMPLATE`,
 //! and the per-provider music prompt skills — are embedded at compile time via
 //! `include_str!`, so the binary never depends on the runtime working directory.
 
@@ -17,6 +18,13 @@ pub static SYSTEM_PROMPT: LazyLock<String> =
 /// protocol markers.
 pub static STUDIO_SYSTEM_PROMPT: LazyLock<String> =
     LazyLock::new(|| include_str!("../prompts/studio.md").to_string());
+
+/// Addendum to the studio prompt for scoped edits: appended when the
+/// request carries a lyric-line selection. Teaches the `<<<LINES:N-M>>>`
+/// replacement block; the selected lines themselves are injected per
+/// request by `build_scoped_system_message`.
+pub static STUDIO_SCOPED_PROMPT: LazyLock<String> =
+    LazyLock::new(|| include_str!("../prompts/studio_scoped.md").to_string());
 
 /// Template for the birthday countdown HTML generator.
 ///

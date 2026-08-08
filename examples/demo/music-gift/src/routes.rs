@@ -18,8 +18,8 @@ use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 use crate::agent::{
-    build_done_event, build_messages, build_photo_blocks, build_studio_system_message,
-    build_system_message, run_chat_agent, ChatRequest, SseEvent,
+    build_done_event, build_messages, build_photo_blocks, build_scoped_system_message,
+    build_studio_system_message, build_system_message, run_chat_agent, ChatRequest, SseEvent,
 };
 use crate::auth::AuthStore;
 use crate::error::{AppError, AppResult};
@@ -125,7 +125,14 @@ pub async fn chat_handler(
 
     let photo_blocks = build_photo_blocks(&req.photos, &state.data_dir.to_string_lossy());
     let system_msg = if studio {
-        build_studio_system_message(req.draft.as_ref(), photo_blocks.len())
+        // A line selection turns the turn into a scoped edit: the addendum
+        // prompt + the selected lines go into the system message.
+        match req.selection {
+            Some(ref sel) => {
+                build_scoped_system_message(req.draft.as_ref(), sel, photo_blocks.len())
+            }
+            None => build_studio_system_message(req.draft.as_ref(), photo_blocks.len()),
+        }
     } else {
         build_system_message(&req.meta, photo_blocks.len())
     };

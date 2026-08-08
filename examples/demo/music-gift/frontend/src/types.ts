@@ -38,6 +38,9 @@ export interface ChatRequest {
     title?: string;
     vocal?: string;
   };
+  /** Lyric-line selection for a scoped edit (1-based closed interval into
+   *  draft.lyrics). Present = scoped semantics within studio mode. */
+  selection?: { from: number; to: number };
 }
 
 export type SseEvent =
@@ -55,6 +58,9 @@ export type SseEvent =
       style: string | null;
       title: string | null;
       vocal: string | null;
+      /** Scoped line replacement from a <<<LINES:N-M>>> block (studio scoped
+       *  turns only); 1-based closed interval into the draft lyrics. */
+      lines?: { from: number; to: number; text: string } | null;
       review?: string;
       /** Pipeline stages the server fell back on this turn (e.g. ["review"]). */
       degraded?: string[];
