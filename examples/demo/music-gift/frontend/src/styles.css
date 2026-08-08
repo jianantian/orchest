@@ -2004,6 +2004,21 @@ body.locked { overflow: hidden; }
 .wb-take-sub { font-size: 12px; color: var(--text-3); margin: 1px 0 0; }
 .wb-take-actions { display: flex; gap: 6px; }
 
+/* ── 试听卡选段：range selection bar under the player (ported from
+   styles-prototype.css .pw-range-*, renamed wb-*). Handle/sel positions
+   are inline (driven by pointer drags); the static .pw-range-played
+   indicator is dropped — AudioPlayer's own row already shows playback.
+   touch-action: none keeps touch drags on the bar from scrolling the
+   column; the small send button reuses .btn/.btn-primary sizing down. ── */
+.wb-range-wrap { margin-top: 14px; }
+.wb-range-bar { position: relative; height: 20px; touch-action: none; }
+.wb-range-track { position: absolute; left: 0; right: 0; top: 8px; height: 4px; border-radius: 2px; background: var(--surface-2); }
+.wb-range-sel { position: absolute; top: 6px; height: 8px; border-radius: 4px; background: var(--accent-tint-24); border: 1px solid var(--accent); }
+.wb-range-handle { position: absolute; top: 3px; width: 4px; height: 14px; border-radius: 2px; background: var(--accent); cursor: ew-resize; touch-action: none; }
+.wb-range-info { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 12px; color: var(--text-2); flex-wrap: wrap; }
+.wb-range-info .map { color: var(--accent); }
+.wb-range-send { margin-left: auto; padding: 6px 14px; font-size: 13px; }
+
 /* ── Selection state in the manuscript card ──
    Ported from styles-prototype.css (.pw-line/.pw-seltoolbar), renamed wb-*.
    The manuscript is a single <textarea> with no per-line DOM, so while a

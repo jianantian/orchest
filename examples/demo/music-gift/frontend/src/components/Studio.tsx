@@ -10,10 +10,12 @@ import { useMusicGen } from "../hooks/useMusicGen";
 import { MusicCard } from "./MusicCard";
 import AudioPlayer from "./AudioPlayer";
 import { LRCViewer } from "./LRCViewer";
-import { parseLRC } from "../lib/lrc";
+import { parseLRC, linesForRange } from "../lib/lrc";
+import { fmtMSS } from "../lib/time";
 import { SparklesIcon } from "./Icons";
 import { StyleCard } from "./studio/StyleCard";
 import { PlayerCard } from "./studio/PlayerCard";
+import { RangeSelect, type RangeValue } from "./studio/RangeSelect";
 import { TakesCard } from "./studio/TakesCard";
 import { SelectionToolbar, type ScopedCommand } from "./studio/SelectionToolbar";
 import { LyricsProposal, type Proposal } from "./studio/LyricsProposal";
@@ -130,6 +132,10 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   /** True after a 409 — a job is already in flight server-side. */
   const [conflict, setConflict] = useState(false);
   const [playTime, setPlayTime] = useState(0);
+  // ── Player range selection (Task 9): seconds range on the player bar,
+  // mapped onto LRC lines and handed to the manuscript selection. ──────
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [audioRange, setAudioRange] = useState<RangeValue | null>(null);
   const editWatchRef = useRef<GenerationWatch | null>(null);
   const savedTimerRef = useRef<number | null>(null);
 
@@ -523,6 +529,22 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
     }
   }
 
+  // ── Player range selection → LRC mapping → manuscript selection ─────
+
+  /** 「交给 AI 修改」: adopt the mapped LRC line range as the manuscript
+   *  selection (reusing the Task 7 highlight overlay + toolbar), scroll the
+   *  manuscript card into view, and cancel any pending blur-clear — the
+   *  button lives outside the doc card, so a textarea blur would otherwise
+   *  tear down the range we just set 150ms later. */
+  function handleRangeSendToAI() {
+    if (!rangeMapped) return;
+    if (selBlurTimer.current) window.clearTimeout(selBlurTimer.current);
+    setSelRange(rangeMapped);
+    const ta = manuscriptRef.current;
+    if (ta) setSelTop(computeSelTop(ta, rangeMapped.from));
+    docCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   // ── Inline diff proposal: accept applies the splice under an undo
   //  snapshot (same contract as applyDone); reject just drops it. ──────
 
@@ -587,6 +609,9 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   const shownTitle = (shownVersion ? shownVersion.meta.title : gift?.meta.title) ?? undefined;
   const shownLrc = shownVersion ? shownVersion.lrc : gift?.lrc ?? null;
   const shownLrcLines = shownLrc ? parseLRC(shownLrc) : null;
+  /** 选段映射到的 LRC 行范围（1-based 闭区间）；纯音乐/无 LRC/选段在首行
+   *  之前 → null —— 映射半句隐藏、「交给 AI 修改」disabled（§10.10）。 */
+  const rangeMapped = audioRange && shownLrcLines ? linesForRange(shownLrcLines, audioRange.start, audioRange.end) : null;
 
   if (editGiftId && editPhase === "loading") {
     return <div className="studio loading-page"><span className="spinner" /> {t("loading_gift")}</div>;
@@ -725,7 +750,22 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
             title={shownTitle}
             versionLabel={shownVersion ? `V${shownVersion.version}${versionIdx === 0 ? ` · ${t("version_latest")}` : ""}` : ""}
             onTimeUpdate={setPlayTime}
+            onDuration={setAudioDuration}
             generating={regen === "generating"}
+            rangeBar={audioDuration > 0 ? (
+              <div className="wb-range-wrap">
+                <RangeSelect duration={audioDuration} value={audioRange} onChange={setAudioRange} />
+                {audioRange && (
+                  <div className="wb-range-info">
+                    <span>{t("range_selected", { start: fmtMSS(audioRange.start), end: fmtMSS(audioRange.end) })}</span>
+                    {rangeMapped && <span className="map">{t("range_mapped", { from: rangeMapped.from, to: rangeMapped.to })}</span>}
+                    <button type="button" className="btn btn-primary wb-range-send" disabled={!rangeMapped} onClick={handleRangeSendToAI}>
+                      {t("range_send_to_ai")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : undefined}
           >
             {shownLrcLines?.length ? (
               <div className="edit-lyrics">
@@ -742,7 +782,7 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
             <TakesCard
               versions={versions}
               currentIdx={versionIdx}
-              onSelect={(i) => { setVersionIdx(i); setPlayTime(0); }}
+              onSelect={(i) => { setVersionIdx(i); setPlayTime(0); setAudioRange(null); }}
               onBranch={(i) => loadVersionToDraft(versions[i])}
             />
           )}

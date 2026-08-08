@@ -11,6 +11,12 @@ export interface PlayerCardProps {
   /** e.g. "V2 · 最新"; empty when the version list never loaded. */
   versionLabel: string;
   onTimeUpdate: (t: number) => void;
+  /** Fires with the audio length once metadata loads (passthrough of
+   *  AudioPlayer's onDuration — no DOM queries). */
+  onDuration?: (duration: number) => void;
+  /** Range-selection bar rendered right under the player (Task 9); hidden
+   *  while generating, same as the player itself. */
+  rangeBar?: ReactNode;
   /** True while a regeneration is in flight — the old audio is gone
    *  server-side, so the card shows the generating status instead of a
    *  broken player (same semantics as the old edit-head). */
@@ -20,10 +26,10 @@ export interface PlayerCardProps {
 }
 
 /** Artifact-column card: 试听卡 — cover disc + title/version row, the
- *  existing AudioPlayer, and the LRC/plain-lyrics panel passed in as
- *  children. Pure presentational move out of Studio's edit-head; all state
- *  stays in Studio. (Task 9 adds the range-selection UI inside this card.) */
-export function PlayerCard({ audioUrl, coverUrl, title, versionLabel, onTimeUpdate, generating = false, children }: PlayerCardProps) {
+ *  existing AudioPlayer, an optional range-selection bar (Task 9), and the
+ *  LRC/plain-lyrics panel passed in as children. Pure presentational move
+ *  out of Studio's edit-head; all state stays in Studio. */
+export function PlayerCard({ audioUrl, coverUrl, title, versionLabel, onTimeUpdate, onDuration, rangeBar, generating = false, children }: PlayerCardProps) {
   const { t } = useI18n();
   return (
     <div className="wb-card wb-player-card">
@@ -41,7 +47,8 @@ export function PlayerCard({ audioUrl, coverUrl, title, versionLabel, onTimeUpda
               {versionLabel && <p className="wb-player-sub">{versionLabel}</p>}
             </div>
           </div>
-          <AudioPlayer key={audioUrl} src={audioUrl} title={title} onTimeUpdate={onTimeUpdate} />
+          <AudioPlayer key={audioUrl} src={audioUrl} title={title} onTimeUpdate={onTimeUpdate} onDuration={onDuration} />
+          {rangeBar}
         </>
       ) : null}
       {!generating && children}
