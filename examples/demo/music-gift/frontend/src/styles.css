@@ -1351,8 +1351,8 @@ body::after {
   animation: bubblePop 0.35s ease; cursor: default;
 }
 .music-card-inner { display: flex; align-items: center; gap: 14px; padding: 16px 18px; }
-.music-card.ready { cursor: pointer; transition: box-shadow 0.2s; }
-.music-card.ready:hover { box-shadow: 0 2px 12px var(--accent-tint-24); }
+/* Only the error card is whole-card clickable (retry); ready uses a button. */
+.music-card[role="button"] { cursor: pointer; }
 
 /* Vinyl record */
 .vinyl {
@@ -1388,12 +1388,6 @@ body::after {
 .mc-progress { height: 3px; background: var(--surface-2); }
 .mc-progress-fill { height: 100%; background: var(--accent); width: 0; transition: width 0.4s linear; }
 .mc-progress-fill.full { width: 100%; }
-
-.mc-arrow {
-  flex-shrink: 0; width: 32px; height: 32px;
-  display: flex; align-items: center; justify-content: center;
-  color: var(--accent);
-}
 
 .mc-art {
   width: 48px; height: 48px; flex-shrink: 0;

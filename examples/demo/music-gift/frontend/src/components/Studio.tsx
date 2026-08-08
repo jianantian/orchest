@@ -102,6 +102,10 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   // styles already selected.
   const [styleSuggestions, setStyleSuggestions] = useState<string[]>(() => shuffleStyles(selectedStyles, 6));
   const [error, setError] = useState<string | null>(null);
+  // New-create artifact: the finished gift, fetched once the watch reports
+  // ready so the artifact column can show the player in place instead of
+  // navigating away to the gift page.
+  const [newGift, setNewGift] = useState<Gift | null>(null);
 
   // ── AI region collapse state (deliberately not persisted, per PRD). The
   // draft cards themselves are always expanded in the two-column workbench
@@ -159,6 +163,16 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
     const d = draftRef.current;
     try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ lang, ...d })); } catch { /* quota */ }
   }, [editGiftId, lang, lyrics, selectedStyles, styleInput, vocalGender, instrumental, title]);
+
+  // New-create mode: when the generation watch lands on ready, fetch the
+  // finished gift for the artifact-column player. Cleared again as soon as
+  // the state leaves ready (retry / reset / a fresh run).
+  useEffect(() => {
+    if (editGiftId || gen.state !== "ready" || !gen.giftId) { setNewGift(null); return; }
+    let cancelled = false;
+    void getGift(gen.giftId).then(g => { if (!cancelled) setNewGift(g); }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [editGiftId, gen.state, gen.giftId]);
 
   // ── Edit mode: load the gift + its versions, fill the draft. ──────────
   useEffect(() => {
@@ -561,7 +575,6 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
             </div>
 
             {(error || gen.error) && <p className="error-msg" role="alert">{error || gen.error}</p>}
-            {gen.giftId && <MusicCard initialState={musicState} onOpen={() => onNavigate(gen.giftId!)} onRetry={() => gen.retry(gen.giftId!)} />}
           </>
         )}
         </div>
@@ -600,6 +613,30 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
             />
           )}
         </>
+      )}
+      {/* New-create mode: the generation result lands in the artifact
+          column in place — MusicCard progress while cooking, the player
+          once ready, with the gift page kept as a secondary exit (no more
+          auto-navigation, spec §10.9). */}
+      {!editGiftId && gen.giftId && (
+        gen.state === "ready" && newGift ? (
+          <>
+            <PlayerCard
+              audioUrl={newGift.audio_url}
+              coverUrl={newGift.cover_url ?? null}
+              title={newGift.meta.title ?? undefined}
+              versionLabel={`V1 · ${t("version_latest")}`}
+              onTimeUpdate={setPlayTime}
+            />
+            <div className="wb-action-row">
+              <button type="button" className="btn btn-secondary" onClick={() => onNavigate(gen.giftId!)}>
+                {t("open_gift_page")}
+              </button>
+            </div>
+          </>
+        ) : (
+          <MusicCard initialState={musicState} onOpen={() => onNavigate(gen.giftId!)} onRetry={() => gen.retry(gen.giftId!)} />
+        )
       )}
       {/* ═══ AI collaboration region: collapsible — header holds the
           chevron + title + undo; collapsed hides bubbles and the pinned

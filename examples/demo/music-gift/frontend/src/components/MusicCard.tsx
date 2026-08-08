@@ -88,19 +88,19 @@ export function MusicCard({
     );
   }
 
+  // Ready: the open affordance is a secondary button, not the whole card —
+  // the card itself stays in place as a status artifact (in the workbench
+  // the player takes over in the artifact column anyway).
   return (
-    <div className="music-card ready" onClick={onOpen} role="button" tabIndex={0}>
+    <div className="music-card ready">
       <div className="music-card-inner">
         <div className="vinyl done" />
         <div className="mc-info">
           <div className="mc-title">{t("mc_ready")}</div>
-          <div className="mc-sub">{t("mc_open")}</div>
         </div>
-        <div className="mc-arrow">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M8 5v14l11-7z" />
-          </svg>
-        </div>
+        {onOpen && (
+          <button type="button" className="btn btn-secondary" onClick={onOpen}>{t("mc_open")}</button>
+        )}
       </div>
       <div className="mc-progress">
         <div className="mc-progress-fill full" />
