@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type SyntheticEvent } from
 import { streamChat, getGift, updateGift, regenerateGift, getGiftVersions, watchGeneration, type GenerationWatch } from "../api";
 import { useI18n } from "../i18n";
 import { shuffleStyles, stripMarkers } from "../lib/styles";
-import { lineRangeForSelection, splitLines } from "../lib/lyrics";
+import { lineRangeForSelection, splitLines, spliceLines } from "../lib/lyrics";
 import { isImeComposing } from "../lib/ime";
 import { creatorToken } from "../lib/creator";
 import { useAuth } from "../hooks/useAuth";
@@ -16,6 +16,7 @@ import { StyleCard } from "./studio/StyleCard";
 import { PlayerCard } from "./studio/PlayerCard";
 import { TakesCard } from "./studio/TakesCard";
 import { SelectionToolbar, type ScopedCommand } from "./studio/SelectionToolbar";
+import { LyricsProposal, type Proposal } from "./studio/LyricsProposal";
 import type { ChatMessage, Gift, GiftVersion, SseEvent } from "../types";
 
 export interface StudioProps { photos: string[]; lang: string; onNavigate: (giftId: string) => void; editGiftId?: string }
@@ -148,6 +149,12 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   const docCardRef = useRef<HTMLDivElement>(null);
   const overlayInnerRef = useRef<HTMLDivElement>(null);
   const selBlurTimer = useRef<number | null>(null);
+
+  // ── AI proposal state: an inline lyric diff pending accept/reject,
+  // rendered in the manuscript in place of lines from–to (Task 10 fills
+  // this from Done.lines). While set, the manuscript swaps the textarea
+  // for a read-only line view and the selection UI is suppressed. ─────
+  const [proposal, setProposal] = useState<Proposal | null>(null);
 
   // The undo stack lives in a ref (push happens inside the async chat loop);
   // undoCount is the render-facing mirror that drives the button's disabled
@@ -516,6 +523,25 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
     }
   }
 
+  // ── Inline diff proposal: accept applies the splice under an undo
+  //  snapshot (same contract as applyDone); reject just drops it. ──────
+
+  // A pending proposal is mutually exclusive with the selection overlay:
+  // the textarea is unmounted in proposal state, so any stale line range
+  // would float the toolbar over the read-only view.
+  useEffect(() => {
+    if (proposal) setSelRange(null);
+  }, [proposal]);
+
+  function acceptProposal() {
+    if (!proposal) return;
+    pushUndo(draftRef.current);
+    setLyrics(spliceLines(lyrics, proposal.from, proposal.to, proposal.replacement));
+    setProposal(null);
+  }
+
+  function rejectProposal() { setProposal(null); }
+
   // ── Generation (unchanged from the old free-create flow) ──────────────
 
   async function handleGenerate(e: FormEvent) {
@@ -596,14 +622,30 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
           </div>
           <hr className="wb-doc-divider" />
           <div className="wb-manuscript">
-            <textarea ref={manuscriptRef} className={`lyrics-manuscript${flash("lyrics")}`} value={lyrics} onChange={e => setLyrics(e.target.value)}
-              onSelect={handleLyricsSelect} onScroll={handleLyricsScroll}
-              placeholder={instrumental ? t("instrumental_ph") : t("paste_lyrics_ph")}
-              disabled={instrumental} rows={instrumental ? 2 : 7} />
+            {proposal ? (
+              /* Proposal state: read-only line view with the diff hunk in
+                 place of lines from–to; the textarea (and with it the
+                 selection UI) returns once the proposal is settled. */
+              <div className="wb-manuscript-view">
+                {splitLines(lyrics).map((line, i) => {
+                  const n = i + 1;
+                  if (n === proposal.from) {
+                    return <LyricsProposal key="proposal" proposal={proposal} onAccept={acceptProposal} onReject={rejectProposal} />;
+                  }
+                  if (n > proposal.from && n <= proposal.to) return null;
+                  return <p key={n} className="wb-line">{line || " "}</p>;
+                })}
+              </div>
+            ) : (
+              <textarea ref={manuscriptRef} className={`lyrics-manuscript${flash("lyrics")}`} value={lyrics} onChange={e => setLyrics(e.target.value)}
+                onSelect={handleLyricsSelect} onScroll={handleLyricsScroll}
+                placeholder={instrumental ? t("instrumental_ph") : t("paste_lyrics_ph")}
+                disabled={instrumental} rows={instrumental ? 2 : 7} />
+            )}
             {/* While a selection is active, a read-only line layer sits over
                 the textarea (transparent text, .sel rows tinted) — the
                 textarea has no per-line DOM to highlight directly. */}
-            {selRange && (
+            {selRange && !proposal && (
               <div className="wb-manuscript-overlay" aria-hidden="true">
                 <div ref={overlayInnerRef}>
                   {splitLines(lyrics).map((line, i) => (
@@ -612,7 +654,7 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
                 </div>
               </div>
             )}
-            {selRange && (
+            {selRange && !proposal && (
               <div style={{ position: "absolute", top: selTop, left: 0, right: 0 }}>
                 <SelectionToolbar onAction={handleScopedAction} />
               </div>

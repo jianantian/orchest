@@ -2043,6 +2043,54 @@ body.locked { overflow: hidden; }
   border: 6px solid transparent; border-top-color: var(--text);
 }
 
+/* ── Inline diff proposal in the manuscript card ──
+   Ported from styles-prototype.css (.pw-diff*), renamed wb-*; the danger
+   wash uses the Phase 1 danger-tint tokens instead of the prototype's
+   color-mix literals. While a proposal is pending the textarea is swapped
+   for a read-only line view (.wb-manuscript-view, same paper metrics as
+   .lyrics-manuscript) and the diff block replaces the from–to lines in
+   place. The mount animation expands via grid-template-rows (the retired
+   .draft-section-body technique), degrading to a plain fade under
+   prefers-reduced-motion. */
+.wb-manuscript-view {
+  padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--surface);
+  background-image: repeating-linear-gradient(transparent, transparent 33px, var(--rule-line) 34px);
+  font-family: var(--font-serif-cn); font-size: 17px; line-height: 2.0; color: var(--text);
+  min-height: 200px; box-shadow: var(--inset-shadow);
+  white-space: pre-wrap; overflow-wrap: break-word;
+}
+/* .wb-line is transparent by default (overlay duty); in the read-only
+   proposal view it carries the actual text. */
+.wb-manuscript-view .wb-line { color: var(--text); }
+
+.wb-diff-wrap { display: grid; grid-template-rows: 1fr; animation: wb-diff-in 0.25s ease; }
+.wb-diff-inner { overflow: hidden; min-height: 0; }
+@keyframes wb-diff-in {
+  from { grid-template-rows: 0fr; opacity: 0; }
+  to { grid-template-rows: 1fr; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wb-diff-wrap { animation: wb-diff-fade 0.2s ease; }
+}
+@keyframes wb-diff-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.wb-diff { margin: 0 -6px; border-radius: var(--r-sm); overflow: hidden; border: 1px solid var(--accent-tint-24); }
+.wb-diff-old { margin: 0; padding: 2px 10px; background: var(--danger-tint-8); color: var(--text-3); text-decoration: line-through; text-decoration-color: var(--danger-tint-40); }
+.wb-diff-new { margin: 0; padding: 2px 10px; background: var(--accent-tint-12); color: var(--text); }
+.wb-diff-actions {
+  display: flex; gap: 8px; padding: 6px 10px; background: var(--surface-2);
+  align-items: center; font-family: var(--font-body); line-height: 1.4;
+}
+.wb-diff-note { font-size: 12px; color: var(--text-3); margin-right: auto; }
+.wb-diff-btn {
+  border: 1px solid var(--accent-tint-24); background: transparent; color: var(--accent);
+  font: inherit; font-size: 12px; padding: 3px 12px; border-radius: var(--r-pill); cursor: pointer;
+}
+.wb-diff-btn:hover { background: var(--accent-tint-12); }
+.wb-diff-btn.reject { color: var(--text-2); border-color: var(--border); }
+.wb-diff-btn.reject:hover { background: var(--danger-tint-8); color: var(--danger); }
+
 
 /* ============================================
    Dark theme — deep warm editorial
