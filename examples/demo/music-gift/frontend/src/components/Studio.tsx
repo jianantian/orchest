@@ -12,6 +12,8 @@ import { LRCViewer } from "./LRCViewer";
 import { parseLRC } from "../lib/lrc";
 import { SparklesIcon } from "./Icons";
 import { StyleCard } from "./studio/StyleCard";
+import { PlayerCard } from "./studio/PlayerCard";
+import { TakesCard } from "./studio/TakesCard";
 import type { ChatMessage, Gift, GiftVersion, SseEvent } from "../types";
 
 export interface StudioProps { photos: string[]; lang: string; onNavigate: (giftId: string) => void; editGiftId?: string }
@@ -494,52 +496,10 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   return (
     <div className="studio">
       {/* ═══ Two-column workbench: driver (manuscript + style + actions)
-          left, artifacts right. The AI chat panel is parked in the artifact
-          column as-is until Task B/C mount the player/version cards. ═══ */}
+          left, artifacts right (edit mode: 试听卡 + 版本卡 above the AI
+          chat panel). ═══ */}
       <div className="wb-cols">
         <div className="wb-col wb-col-driver">
-        {/* Edit mode: current version player + version switcher. While a
-            regeneration is in flight the old audio is gone server-side —
-            show the generating state instead of a broken player. */}
-        {editGiftId && (
-          <div className="edit-head">
-            {regen === "generating" ? (
-              <div className="polish-status"><span className="spinner" /> {t("generating")}</div>
-            ) : shownAudio ? (
-              <>
-                {shownCover && <img className="edit-cover" src={shownCover} alt="" />}
-                <AudioPlayer key={shownAudio} src={shownAudio} title={shownTitle} onTimeUpdate={setPlayTime} />
-              </>
-            ) : null}
-            {versions.length > 1 && (
-              <div className="version-bar">
-                <span className="version-label">{t("versions")}</span>
-                {versions.map((v, i) => (
-                  <button
-                    key={v.version}
-                    className={`opt-pill opt-pill-sm${i === versionIdx ? " on" : ""}`}
-                    onClick={() => { setVersionIdx(i); setPlayTime(0); }}
-                  >
-                    V{v.version}{i === 0 ? ` · ${t("version_latest")}` : ""}
-                  </button>
-                ))}
-                <button className="btn btn-secondary" onClick={() => loadVersionToDraft(versions[versionIdx])}>
-                  {t("load_to_draft")}
-                </button>
-              </div>
-            )}
-            {regen !== "generating" && (shownLrcLines?.length ? (
-              <div className="edit-lyrics">
-                <LRCViewer lines={shownLrcLines} currentTime={playTime} onSeek={(time) => {
-                  const audio = document.querySelector("audio");
-                  if (audio) audio.currentTime = time;
-                }} />
-              </div>
-            ) : shownLyrics ? (
-              <div className="edit-lyrics">{shownLyrics}</div>
-            ) : null)}
-          </div>
-        )}
         {/* 1–2. Manuscript card: borderless serif title (with the ✨ 帮写
             tool pinned to its row), divider, then the lyrics body with a
             "帮我写歌词" CTA when empty. */}
@@ -607,6 +567,40 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
         </div>
 
         <div className="wb-col wb-col-artifact">
+      {/* Edit mode: 试听卡 + 版本卡. While a regeneration is in flight the
+          old audio is gone server-side — PlayerCard shows the generating
+          state instead of a broken player. */}
+      {editGiftId && (
+        <>
+          <PlayerCard
+            audioUrl={shownAudio}
+            coverUrl={shownCover}
+            title={shownTitle}
+            versionLabel={shownVersion ? `V${shownVersion.version}${versionIdx === 0 ? ` · ${t("version_latest")}` : ""}` : ""}
+            onTimeUpdate={setPlayTime}
+            generating={regen === "generating"}
+          >
+            {shownLrcLines?.length ? (
+              <div className="edit-lyrics">
+                <LRCViewer lines={shownLrcLines} currentTime={playTime} onSeek={(time) => {
+                  const audio = document.querySelector("audio");
+                  if (audio) audio.currentTime = time;
+                }} />
+              </div>
+            ) : shownLyrics ? (
+              <div className="edit-lyrics">{shownLyrics}</div>
+            ) : null}
+          </PlayerCard>
+          {versions.length > 1 && (
+            <TakesCard
+              versions={versions}
+              currentIdx={versionIdx}
+              onSelect={(i) => { setVersionIdx(i); setPlayTime(0); }}
+              onBranch={(i) => loadVersionToDraft(versions[i])}
+            />
+          )}
+        </>
+      )}
       {/* ═══ AI collaboration region: collapsible — header holds the
           chevron + title + undo; collapsed hides bubbles and the pinned
           input, leaving the pure manual panel. ═══ */}

@@ -1971,6 +1971,45 @@ body.locked { overflow: hidden; }
   .wb-col-driver { border-right: none; border-bottom: 1px solid var(--border); }
 }
 
+/* ── 试听卡：cover disc + title/version meta (ported from
+   styles-prototype.css .pw-player/.pw-disc/.pw-player-*, renamed wb-*).
+   The disc's vinyl body uses the existing --vinyl-2 token instead of the
+   prototype's literal hex; the cover art is applied as a background image
+   inline when available. ── */
+.wb-player { display: flex; gap: 14px; align-items: center; }
+.wb-disc {
+  width: 56px; height: 56px; border-radius: 50%; flex-shrink: 0;
+  background: radial-gradient(circle at center, var(--accent) 0 12%, var(--surface) 12% 20%, var(--vinyl-2) 20% 100%);
+  box-shadow: var(--shadow);
+}
+.wb-player-meta { flex: 1; min-width: 0; }
+.wb-player-title { font-size: 15px; font-weight: 600; margin: 0; }
+.wb-player-sub { font-size: 12px; color: var(--text-3); margin: 2px 0 0; }
+
+/* ── 版本卡：takes as rows inside ONE card, divider-separated (ported from
+   .pw-takes-card/.pw-take/.pw-take-badge and friends, renamed wb-*). The
+   round action buttons reuse the existing .wb-icon-btn (already ported
+   from .pw-icon-btn); #fff on the active badge becomes var(--on-accent). ── */
+.wb-takes-card { padding: 6px 20px; }
+.wb-take {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 10px; margin: 0 -10px;
+  border-radius: var(--r-md);
+}
+.wb-take + .wb-take { border-top: 1px solid var(--border); border-radius: 0; margin: 0; padding: 10px 0; }
+.wb-take.on { background: var(--accent-tint-12); }
+.wb-take-badge {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+  display: grid; place-items: center;
+  background: var(--surface-2); color: var(--text-2);
+}
+.wb-take.on .wb-take-badge { background: var(--accent); color: var(--on-accent); }
+.wb-take-meta { flex: 1; min-width: 0; }
+.wb-take-name { font-size: 13px; font-weight: 600; margin: 0; }
+.wb-take-sub { font-size: 12px; color: var(--text-3); margin: 1px 0 0; }
+.wb-take-actions { display: flex; gap: 6px; }
+
 
 /* ============================================
    Dark theme — deep warm editorial
@@ -2034,16 +2073,8 @@ html[data-theme="dark"] {
   --unwrap-floor-shadow: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.4), transparent 70%);
 }
 
-/* ── Edit mode (studio): version switcher, save actions, edit entries ── */
-.edit-head { margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px; }
-.edit-cover { width: 96px; height: 96px; object-fit: cover; border-radius: var(--r-md); border: 1px solid var(--border); }
+/* ── Edit mode (studio): lyrics panel, save actions, edit entries ── */
 .edit-lyrics { max-height: 240px; overflow-y: auto; font-size: 13px; line-height: 1.8; color: var(--text-2); white-space: pre-wrap; }
-
-.version-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.version-label { font-size: 12px; color: var(--text-3); }
-/* Version pills and "load to draft" use the canonical .opt-pill-sm and
-   .btn-secondary styles. */
-.version-bar .btn-secondary { padding: 6px 14px; font-size: 13px; }
 
 .edit-actions { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
 .edit-actions .btn-primary { flex: 1; }
