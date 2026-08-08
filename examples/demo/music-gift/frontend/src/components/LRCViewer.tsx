@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { type LRCLine } from "../lib/lrc";
 
 export interface LRCViewerProps {
@@ -60,12 +60,11 @@ export function LRCViewer({ lines, currentTime, onSeek }: LRCViewerProps) {
 
   return (
     <div className="lrc-container" ref={containerRef} onScroll={handleScroll}>
-      <div className="lrc-scroller" style={{ height: lines.length * LINE_HEIGHT }}>
+      <div className="lrc-scroller" style={{ "--lrc-h": `${lines.length * LINE_HEIGHT}px` } as CSSProperties}>
         {lines.map((line, i) => (
           <div
             key={i}
             className={`lrc-line ${i === activeIndex ? "active" : ""}`}
-            style={{ height: LINE_HEIGHT }}
             onClick={() => onSeek?.(line.time)}
             role="button"
             tabIndex={0}

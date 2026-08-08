@@ -82,7 +82,7 @@ export function MusicCard({
           </div>
         </div>
         <div className="mc-progress">
-          <div className="mc-progress-fill" style={{ width: "100%" }} />
+          <div className="mc-progress-fill full" />
         </div>
       </div>
     );
@@ -103,7 +103,7 @@ export function MusicCard({
         </div>
       </div>
       <div className="mc-progress">
-        <div className="mc-progress-fill" style={{ width: "100%" }} />
+        <div className="mc-progress-fill full" />
       </div>
     </div>
   );

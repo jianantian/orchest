@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 interface AudioPlayerProps {
   src: string;
@@ -103,7 +103,7 @@ export default function AudioPlayer({ src, title, compact, onTimeUpdate, onDurat
         <div className="audio-progress-row">
           <span className="audio-time">{fmt(current)}</span>
           <div className="audio-progress" onClick={seek}>
-            <div className="audio-progress-fill" style={{ width: `${pct}%` }} />
+            <div className="audio-progress-fill" style={{ "--progress": `${pct}%` } as CSSProperties} />
           </div>
           <span className="audio-time">{fmt(duration)}</span>
         </div>

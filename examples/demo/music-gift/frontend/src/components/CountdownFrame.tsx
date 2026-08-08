@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 /**
  * Renders the LLM-generated countdown scene inside a sandboxed iframe.
@@ -62,7 +62,7 @@ export function CountdownFrame({ html }: { html: string }) {
       title="Countdown"
       sandbox="allow-scripts"
       srcDoc={srcDoc}
-      style={{ height: height ? `${height}px` : "260px", border: "none", width: "100%" }}
+      style={{ "--cd-h": height ? `${height}px` : undefined } as CSSProperties}
     />
   );
 }

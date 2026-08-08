@@ -704,7 +704,7 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
 
             <div ref={bottomRef} />
           </div>
-          {chatError && <div className="error-msg" style={{ margin: "0 16px 8px" }}>{chatError}</div>}
+          {chatError && <div className="error-msg chat-error">{chatError}</div>}
           <div className="chat-bar">
             <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !isImeComposing(e)) { e.preventDefault(); handleChatSend(); } }} rows={1} disabled={streaming} placeholder={t("ai_placeholder")} />
             <button className="chat-send-btn" onClick={handleChatSend} disabled={streaming} aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z" /></svg></button>

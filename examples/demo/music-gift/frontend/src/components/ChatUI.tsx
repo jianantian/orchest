@@ -38,8 +38,7 @@ export function GoldPill({ label, onClick }: { label: string; onClick: () => voi
   return (
     <div className="pills-wrap">
       <span
-        className="opt-pill"
-        style={{ color: "var(--gold)", borderColor: "var(--gold)" }}
+        className="opt-pill accent"
         onClick={onClick}
         role="button"
         tabIndex={0}
@@ -118,7 +117,7 @@ export function BirthdayPicker({
         ))}
       </div>
       {selectedMonth !== null && (
-        <div className="inline-input" style={{ marginTop: 8 }}>
+        <div className="inline-input bday-day">
           <input
             type="number"
             value={day}
@@ -131,13 +130,12 @@ export function BirthdayPicker({
             }}
             onKeyDown={(e) => { if (e.key === "Enter") submitDay(); }}
             placeholder={dayPlaceholder}
-            style={{ width: 80 }}
             autoFocus
           />
           <button onClick={submitDay}>OK</button>
         </div>
       )}
-      <div style={{ alignSelf: "flex-start", marginTop: 6 }}>
+      <div className="bday-skip">
         <button className="btn-small" onClick={() => onPick(null)}>
           {skipLabel}
         </button>

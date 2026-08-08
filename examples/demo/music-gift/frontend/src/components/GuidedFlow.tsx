@@ -447,7 +447,7 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
 
         <div ref={bottomRef} />
       </div>
-      {(error || gen.error) && <div className="error-msg" style={{ margin: "0 16px 8px" }}>{error || gen.error}</div>}
+      {(error || gen.error) && <div className="error-msg chat-error">{error || gen.error}</div>}
       <div className="chat-bar">
         <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !isImeComposing(e)) { e.preventDefault(); handleChatSend(); } }} rows={1} disabled={streaming || !(step === "chat" || step === "review")} />
         <button className="chat-send-btn" onClick={handleChatSend} disabled={streaming} aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z" /></svg></button>
