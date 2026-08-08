@@ -921,11 +921,47 @@ body::after {
 .lyrics-manuscript::placeholder { color: var(--text3); font-style: italic; font-size: 16px; opacity: 0.65; }
 .lyrics-manuscript:focus-visible { border-color: var(--gold); box-shadow: inset 0 1px 6px rgba(42,31,20,0.04), 0 0 0 3px rgba(200,149,108,0.18); }
 .lyrics-manuscript:disabled { opacity: 0.4; }
-/* Attribute bar — one wrapping row: selected style chips, an inline style
-   input, and the vocal tri-state pill group. */
-.attr-block { display: flex; flex-direction: column; gap: 8px; }
-.attr-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.vocal-tristate { display: flex; gap: 6px; margin-left: auto; }
+/* Draft sections — Suno-style collapsible groups inside the draft card.
+   The header reads like the AI toolbar title (display font, small, muted);
+   the body collapses with a grid-rows + opacity/transform transition. */
+.draft-section { display: flex; flex-direction: column; }
+.draft-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.draft-section-toggle {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 0; border: none; background: transparent;
+  font-family: var(--font-display); font-size: 15px; font-weight: 500;
+  color: var(--text2); letter-spacing: 0.04em; cursor: pointer;
+  transition: color 0.18s;
+}
+.draft-section-toggle:hover { color: var(--gold); }
+.draft-section-toggle:focus-visible { outline: none; border-radius: 6px; box-shadow: 0 0 0 2px var(--gold); }
+.draft-section-toggle .chevron { flex-shrink: 0; transform: rotate(-90deg); transition: transform 0.22s ease; }
+.draft-section-toggle .chevron.open { transform: rotate(0deg); }
+.draft-section-tools { display: flex; align-items: center; gap: 6px; }
+.draft-section-body {
+  display: grid; grid-template-rows: 0fr;
+  opacity: 0; transform: translateY(-4px);
+  transition: grid-template-rows 0.25s ease, opacity 0.22s ease, transform 0.25s ease;
+}
+.draft-section.open .draft-section-body { grid-template-rows: 1fr; opacity: 1; transform: none; }
+.draft-section-inner { overflow: hidden; min-height: 0; }
+/* Vertical padding lives one level below the clipped wrapper so the 0fr
+   collapsed state leaves no residual gap. */
+.draft-section-pad { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .draft-section-toggle .chevron, .draft-section-body { transition: none; }
+}
+
+/* Style edit row: selected chips + the inline "+ 风格" input. */
+.style-edit-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* More-options rows: muted label left, .opt-pill choices right. */
+.opt-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.opt-row-label { flex-shrink: 0; min-width: 64px; font-size: 13px; color: var(--text3); }
+
+/* "帮我写歌词" CTA at the bottom of an empty lyrics body. */
+.write-for-me { align-self: flex-start; }
 
 /* Inline style input — compact, sits inside the attribute bar between the
    chips and the vocal pills; Enter commits to a chip. */
@@ -942,8 +978,8 @@ body::after {
 .style-chips .style-chip svg { width: 12px; height: 12px; opacity: 0.6; }
 
 .style-suggestions { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
-/* Round icon buttons — one style everywhere (undo / restart). */
-.undo-btn, .restart-btn {
+/* Round icon buttons — one style everywhere (help / refresh / undo / restart). */
+.icon-btn, .restart-btn {
   width: 28px; height: 28px; padding: 0; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
   border: 1px solid var(--border); border-radius: 50%;
@@ -951,9 +987,9 @@ body::after {
   font-family: inherit; font-size: 14px; line-height: 1; cursor: pointer;
   transition: background 0.18s, border-color 0.18s, color 0.18s, transform 0.18s, opacity 0.18s;
 }
-.undo-btn:hover:not(:disabled), .restart-btn:hover { border-color: var(--gold); color: var(--gold); }
-.undo-btn:focus-visible, .restart-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
-.undo-btn:disabled { opacity: 0.4; cursor: default; }
+.icon-btn:hover:not(:disabled), .restart-btn:hover { border-color: var(--gold); color: var(--gold); }
+.icon-btn:focus-visible, .restart-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+.icon-btn:disabled { opacity: 0.4; cursor: default; }
 .restart-btn:hover { transform: rotate(-45deg); }
 /* Title — borderless serif page title; gold underline only on focus. */
 .title-input { width: 100%; padding: 12px 0; border: none; border-bottom: 1px solid transparent; background: transparent; font-family: var(--font-display); font-size: 28px; font-weight: 500; color: var(--text); letter-spacing: 0.01em; }
@@ -990,7 +1026,7 @@ body::after {
 }
 .dot-row { display: flex; align-items: center; gap: 5px; }
 /* .restart-btn shares the canonical round-icon-button rule with
-   .undo-btn (see Style composer section). */
+   .icon-btn (see Style composer section). */
 
 .restart-confirm {
   position: absolute; top: 42px; right: 16px; z-index: 6;
@@ -1697,7 +1733,7 @@ body.locked { overflow: hidden; }
   font-family: var(--font-display); font-size: 15px; font-weight: 500;
   color: var(--text2); letter-spacing: 0.04em;
 }
-/* .undo-btn shares the canonical round-icon-button rule (see Style
+/* .icon-btn shares the canonical round-icon-button rule (see Style
    composer section). */
 
 /* "Updated: …" confirmation attached to the assistant bubble. */
