@@ -1838,6 +1838,64 @@ body.locked { overflow: hidden; }
 
 
 /* ============================================
+   Workbench topbar (create page)
+
+   Ported from styles-prototype.css (.pw-*), renamed wb-*. The bench frame
+   drops the prototype's fixed 1040px width — width is owned by the route
+   frame (#root.frame-home, Task 1). .create-page stays on the same element
+   to preserve the existing flex:1 height chain.
+   ============================================ */
+
+.wb-bench {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--frame-shadow, var(--shadow-lg));
+  overflow: hidden;
+  min-height: 640px;
+}
+
+/* top bar: mode tabs + global actions */
+.wb-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+.wb-tabs { display: flex; gap: 4px; background: var(--surface-2); border-radius: var(--r-pill); padding: 3px; }
+.wb-tab {
+  border: none; cursor: pointer; font: inherit; font-size: 13px; font-weight: 500;
+  padding: 6px 16px; border-radius: var(--r-pill);
+  background: transparent; color: var(--text-2);
+}
+.wb-tab.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.wb-topbar-actions { display: flex; gap: 8px; align-items: center; }
+.wb-draft-state { font-size: 12px; color: var(--text-3); letter-spacing: 0.01em; }
+.wb-icon-btn {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
+  width: 28px; height: 28px; border-radius: 50%; cursor: pointer; font-size: 13px;
+  display: grid; place-items: center;
+}
+.wb-icon-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+/* Tab content cross-fade: fade out, swap, fade back in (see CreatePage). */
+.wb-body {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  transition: opacity 150ms ease-out;
+}
+.wb-body.fading { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-body { transition: none; }
+}
+
+
+/* ============================================
    Dark theme — deep warm editorial
 
    Applied via [data-theme="dark"] on <html>, never the media query:
