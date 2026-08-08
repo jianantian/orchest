@@ -16,13 +16,13 @@
 - 可交互元素用原生 `<button>`（design-system §5 / D19 P0）。
 - Rust 侧：`unwrap()/expect()` 禁止出现在非 test 代码；现有测试模式（`agent.rs` 内 `#[cfg(test)]` + mock model）沿用。
 - 提交规范：`feat:` 前缀，一个 Task 一个 commit（WORKFLOW.md）；**执行 git commit 前需用户确认**（会话规则）。
-- 视觉验收基准：原型 `/prototype/studio` 三视图（实现完成后原型删除，见 Task F）。
+- 视觉验收基准：原型 `/prototype/studio` 三视图（实现完成后原型删除，见 Task 15）。
 
 ---
 
 ## Phase A · 布局骨架（桌面双栏 + 路由级宽度）
 
-### Task A1: 路由级框架宽度机制
+### Task 1: 路由级框架宽度机制
 
 **Files:**
 - Modify: `frontend/src/App.tsx`（Routes 区域）
@@ -68,15 +68,15 @@ Expected: 创作页宽 1040，其余页 720。
 
 - [ ] **Step 4: Commit**（经用户确认后）`feat: add route-level frame width for create workbench`
 
-### Task A2: 工作台顶栏（tabs + 草稿状态 + studio-only undo）
+### Task 2: 工作台顶栏（tabs + 草稿状态 + studio-only undo）
 
 **Files:**
 - Modify: `frontend/src/pages/CreatePage.tsx`（全文件重写 JSX 壳，保留 `?edit=` 逻辑）
 - Modify: `frontend/src/styles.css`（新增 `wb-topbar` 族）
 
 **Interfaces:**
-- Consumes: Task A1 的 `frame-home`。
-- Produces: `WorkbenchTopbar({ active, showTabs, undoSlot })`（CreatePage 内联组件）；`active: "guided"|"studio"`；edit 模式 `showTabs=false`。undo 按钮的实际 handler 由 Task A3 经 render prop 注入。
+- Consumes: Task 1 的 `frame-home`。
+- Produces: `WorkbenchTopbar({ active, showTabs, undoSlot })`（CreatePage 内联组件）；`active: "guided"|"studio"`；edit 模式 `showTabs=false`。undo 按钮的实际 handler 由 Task 3 经 render prop 注入。
 
 - [ ] **Step 1: 移植顶栏 CSS**
 
@@ -100,7 +100,7 @@ export default function CreatePage() {
             <button className={`wb-tab${tab === "studio" ? " on" : ""}`} onClick={() => setTab("studio")}>{t("tab_free")}</button>
           </div>
         ) : <span />}
-        <div className="wb-topbar-actions">{/* 草稿状态文案由 Task A3/A5 接线 */}</div>
+        <div className="wb-topbar-actions">{/* 草稿状态文案由 Task 3/5 接线 */}</div>
       </div>
       {tab === "guided" && !editId
         ? <GuidedFlow onNavigate={...} onSwitchToFree={() => setTab("studio")} />
@@ -116,7 +116,7 @@ export default function CreatePage() {
 - [ ] **Step 4: 截图验证**（两 tab 切换、edit 模式无 tabs）。
 - [ ] **Step 5: Commit** `feat: workbench topbar with mode tabs`
 
-### Task A3: Studio 桌面双栏重排
+### Task 3: Studio 桌面双栏重排
 
 **Files:**
 - Modify: `frontend/src/components/Studio.tsx`（JSX 重排为双栏；逻辑全保留）
@@ -124,7 +124,7 @@ export default function CreatePage() {
 - Modify: `frontend/src/styles.css`（移植卡片语言）
 
 **Interfaces:**
-- Consumes: Task A2 壳。
+- Consumes: Task 2 壳。
 - Produces: `.wb-card/.wb-doc/.wb-doc-divider/.wb-cols/.wb-col(-driver|-artifact)/.wb-chips/.wb-chip(.plain)/.wb-action-row`；Studio 右栏容器 `div.wb-col-artifact`（Task B/C 往里挂试听卡/版本卡/AI 卡）。
 
 - [ ] **Step 1: 移植卡片 CSS**
@@ -149,12 +149,12 @@ export default function CreatePage() {
     </div>
   </div>
   <div className="wb-col wb-col-artifact">
-    {/* Task B 挂试听卡/版本卡；AI chat-panel :658-713 暂存于此，Task A3 内先原样搬入 */}
+    {/* Task B 挂试听卡/版本卡；AI chat-panel :658-713 暂存于此，Task 3 内先原样搬入 */}
   </div>
 </div>
 ```
 
-DraftSection 折叠语义在创作室废弃（卡常驻展开）；`DraftSection` 组件保留给后续 review/其他调用方（确认无其他引用后可删，grep 决定）。edit-head（:527-565）**本 Task 不动**，留在 driver 栏顶部原位，Task B1 移入产物区。
+DraftSection 折叠语义在创作室废弃（卡常驻展开）；`DraftSection` 组件保留给后续 review/其他调用方（确认无其他引用后可删，grep 决定）。edit-head（:527-565）**本 Task 不动**，留在 driver 栏顶部原位，Task 4 移入产物区。
 
 - [ ] **Step 3: StyleCard.tsx**
 
@@ -167,7 +167,7 @@ DraftSection 折叠语义在创作室废弃（卡常驻展开）；`DraftSection
 
 ## Phase B · 试听区（player + takes）
 
-### Task B1: 试听卡 + 版本卡（edit 模式）
+### Task 4: 试听卡 + 版本卡（edit 模式）
 
 **Files:**
 - Create: `frontend/src/components/studio/PlayerCard.tsx`
@@ -177,7 +177,7 @@ DraftSection 折叠语义在创作室废弃（卡常驻展开）；`DraftSection
 
 **Interfaces:**
 - Produces:
-  - `PlayerCard({ audioUrl, coverUrl, title, versionLabel, onTimeUpdate }: { audioUrl: string; coverUrl: string|null; title?: string; versionLabel: string; onTimeUpdate: (t: number) => void })` — Task C4 往里加选段。
+  - `PlayerCard({ audioUrl, coverUrl, title, versionLabel, onTimeUpdate }: { audioUrl: string; coverUrl: string|null; title?: string; versionLabel: string; onTimeUpdate: (t: number) => void })` — Task 9 往里加选段。
   - `TakesCard({ versions, currentIdx, onSelect, onBranch }: { versions: GiftVersion[]; currentIdx: number; onSelect: (i: number) => void; onBranch: (i: number) => void })` — `onBranch` = 现 `loadVersionToDraft`（Studio.tsx:310）。
 
 - [ ] **Step 1: 移植 CSS**（`.pw-player/.pw-disc/.pw-player-meta/.pw-player-title/.pw-player-sub/.pw-takes-card/.pw-take(.on)/.pw-take-badge/.pw-take-meta/.pw-take-name/.pw-take-sub/.pw-take-actions` → `wb-`）。
@@ -187,14 +187,14 @@ DraftSection 折叠语义在创作室废弃（卡常驻展开）；`DraftSection
 - [ ] **Step 5: 截图验证**（edit 模式右栏两卡；分叉后手稿载入旧版字段）。
 - [ ] **Step 6: Commit** `feat: player and takes cards in studio artifact column`
 
-### Task B2: 新建模式生成后产物区
+### Task 5: 新建模式生成后产物区
 
 **Files:**
 - Modify: `frontend/src/components/Studio.tsx`（新建分支 :643-652）
 - Modify: `frontend/src/hooks/useMusicGen.ts`（无需改签名，仅消费）
 
 **Interfaces:**
-- Consumes: `gen.state/giftId/error`（useMusicGen.ts:157）；Task B1 的 PlayerCard。
+- Consumes: `gen.state/giftId/error`（useMusicGen.ts:157）；Task 4 的 PlayerCard。
 
 - [ ] **Step 1:** 新建模式 `gen.giftId` 非空时，产物区渲染：生成中 = 现有 `<MusicCard>`（:650 原样搬入右栏）；`gen.state === "ready"` 时 `getGift(gen.giftId)` 拉取后渲染 `<PlayerCard audioUrl={gift.audio_url} .../>` + 「打开礼物页」次级按钮（保留现 `onNavigate` 出口，spec §10.9：不再自动跳走）。
 - [ ] **Step 2:** MusicCard 的 `onOpen` 改为次级按钮样式，不再占主 CTA 位。
@@ -205,7 +205,7 @@ DraftSection 折叠语义在创作室废弃（卡常驻展开）；`DraftSection
 
 ## Phase C · 选区改稿（前端 + scoped 后端）
 
-### Task C1: vitest 基建 + 歌词行/LRC 映射纯逻辑
+### Task 6: vitest 基建 + 歌词行/LRC 映射纯逻辑
 
 **Files:**
 - Modify: `frontend/package.json`（devDeps + script）
@@ -351,7 +351,7 @@ export function linesForRange(lines: LRCLine[], startSec: number, endSec: number
 
 - [ ] **Step 7: `npm test` 全 PASS；Commit** `feat: lyric line utils and LRC range mapping with vitest`
 
-### Task C2: 手稿划选 → 浮动工具条
+### Task 7: 手稿划选 → 浮动工具条
 
 **Files:**
 - Create: `frontend/src/components/studio/SelectionToolbar.tsx`
@@ -360,22 +360,22 @@ export function linesForRange(lines: LRCLine[], startSec: number, endSec: number
 - Modify: `frontend/src/i18n.tsx`（新文案五语言）
 
 **Interfaces:**
-- Consumes: `lineRangeForSelection`（Task C1）。
+- Consumes: `lineRangeForSelection`（Task 6）。
 - Produces:
   - `SelectionToolbar({ onAction }: { onAction: (cmd: ScopedCommand) => void })`，`type ScopedCommand = "rewrite" | "rhyme" | "colloquial" | "shorten" | "custom"`。
-  - Studio 内部状态 `selRange: { from: number; to: number } | null`（Task C3/C4 共用）。
+  - Studio 内部状态 `selRange: { from: number; to: number } | null`（Task 8/C4 共用）。
 
 - [ ] **Step 1: i18n 五语言新 keys**（scoped_rewrite/scoped_rhyme/scoped_colloquial/scoped_shorten/scoped_custom → zh 改写/更押韵/更口语/缩短/自定义指令…，其余四语言按现有翻译风格补齐）。
-- [ ] **Step 2: SelectionToolbar.tsx** — 深色 pill（CSS 移植原型），五个 `<button>`（原生，§5）；`custom` 点击暂发 `"custom"`（Task C5 接自定义输入；本期 custom 落到聊天输入框预填，见 Step 4）。
+- [ ] **Step 2: SelectionToolbar.tsx** — 深色 pill（CSS 移植原型），五个 `<button>`（原生，§5）；`custom` 点击暂发 `"custom"`（Task 10 接自定义输入；本期 custom 落到聊天输入框预填，见 Step 4）。
 - [ ] **Step 3: Studio.tsx 手稿 textarea 接 selection**
 
 `lyrics-manuscript` textarea 加 `onSelect`：`const ta = e.currentTarget; const { from, to } = lineRangeForSelection(ta.value, ta.selectionStart, ta.selectionEnd); setSelRange(ta.selectionEnd > ta.selectionStart ? { from, to } : null);`（blur/点击别处时清空：在手稿卡 onBlur 延迟 150ms 判定，避免点工具条时选区先消失）。工具条绝对定位在手稿卡内（CSS 原型位）。
 
-- [ ] **Step 4:** `onAction` 暂不请求 AI——本 Task 只把选区行高亮（`.wb-line.sel` 类，移植 `.pw-line(.sel)`）+ 工具条显隐 + custom 落聊天输入框预填。AI 接线在 Task C5。
+- [ ] **Step 4:** `onAction` 暂不请求 AI——本 Task 只把选区行高亮（`.wb-line.sel` 类，移植 `.pw-line(.sel)`）+ 工具条显隐 + custom 落聊天输入框预填。AI 接线在 Task 10。
 - [ ] **Step 5: 截图验证**（划选 → 行高亮 + 工具条出现；点击空白消失）。
 - [ ] **Step 6: Commit** `feat: lyric selection toolbar in manuscript`
 
-### Task C3: 行内 diff 提案组件 + undo 集成
+### Task 8: 行内 diff 提案组件 + undo 集成
 
 **Files:**
 - Create: `frontend/src/components/studio/LyricsProposal.tsx`
@@ -386,7 +386,7 @@ export function linesForRange(lines: LRCLine[], startSec: number, endSec: number
 - Produces:
   - `interface Proposal { from: number; to: number; original: string[]; replacement: string[] }`
   - `LyricsProposal({ proposal, onAccept, onReject }: { proposal: Proposal; onAccept: () => void; onReject: () => void })`
-  - Studio state `proposal: Proposal | null`（Task C5 由 Done.lines 生成）。
+  - Studio state `proposal: Proposal | null`（Task 10 由 Done.lines 生成）。
 
 - [ ] **Step 1: 移植 CSS**（`.pw-diff/.pw-diff-old/.pw-diff-new/.pw-diff-actions/.pw-diff-note` → `wb-`；danger 淡底用 Phase 1 已有 `--danger-tint-8` 系 token 替换原型的 color-mix 字面量）。
 - [ ] **Step 2: LyricsProposal.tsx** — old 行（划线）/ new 行（高亮）/ 操作条（`AI 提案 · 第 N–M 行` + ✓接受/✕拒绝 两原生按钮）；出现动画 grid-rows 展开（spring-default 语义用 CSS 过渡近似，reduced-motion 降级淡入）。
@@ -397,7 +397,7 @@ export function linesForRange(lines: LRCLine[], startSec: number, endSec: number
 - [ ] **Step 4: 用假数据截图验证**（临时 useState 注入一个 Proposal 常量，截图后删除）。
 - [ ] **Step 5: Commit** `feat: inline diff proposal component with accept/reject`
 
-### Task C4: 播放器选段 → LRC 映射
+### Task 9: 播放器选段 → LRC 映射
 
 **Files:**
 - Create: `frontend/src/components/studio/RangeSelect.tsx`
@@ -407,17 +407,17 @@ export function linesForRange(lines: LRCLine[], startSec: number, endSec: number
 - Modify: `frontend/src/i18n.tsx`（新文案）
 
 **Interfaces:**
-- Consumes: `linesForRange`（Task C1）；Studio 的 `selRange`（Task C2）。
+- Consumes: `linesForRange`（Task 6）；Studio 的 `selRange`（Task 7）。
 - Produces: `RangeSelect({ duration, value, onChange }: { duration: number; value: { start: number; end: number } | null; onChange: (v: { start: number; end: number } | null) => void })`。
 
 - [ ] **Step 1: RangeSelect.tsx** — progress bar 覆盖层：双 handle（pointerdown + setPointerCapture 1:1 跟踪，§4.2）、选段高亮带、边界橡皮筋（拖过 0/duration 时按 `(x*d*0.55)/(d+0.55*|x|)` 衰减视觉位移，松手 clamp）；`onChange` 提交秒值。duration 从 AudioPlayer 的 audio 元素 `loadedmetadata` 获得（PlayerCard 内 ref 透传，不用 `document.querySelector`——§7 P2 明确禁止）。
 - [ ] **Step 2: PlayerCard 集成** — progress 区渲染 RangeSelect；`onTimeUpdate` 已存在。
-- [ ] **Step 3: Studio.tsx** — 选段 onChange → `linesForRange(shownLrcLines, v.start, v.end)` → 显示「已选 M:SS–M:SS → 对应歌词第 N–M 行」（i18n 插值；`linesForRange` 返回 null 或纯音乐无 LRC 时隐藏映射半句，§10.10）→「交给 AI 修改」按钮 = `setSelRange(mapped)` + 滚动手稿卡入视 + 高亮对应行（复用 Task C2 高亮机制）。
+- [ ] **Step 3: Studio.tsx** — 选段 onChange → `linesForRange(shownLrcLines, v.start, v.end)` → 显示「已选 M:SS–M:SS → 对应歌词第 N–M 行」（i18n 插值；`linesForRange` 返回 null 或纯音乐无 LRC 时隐藏映射半句，§10.10）→「交给 AI 修改」按钮 = `setSelRange(mapped)` + 滚动手稿卡入视 + 高亮对应行（复用 Task 7 高亮机制）。
 - [ ] **Step 4: i18n keys**（range_selected/range_mapped_to_lines/range_send_to_ai，五语言）。
 - [ ] **Step 5: 截图验证**（edit 模式拖选段 → 映射文案 → 点按钮手稿行高亮）。
 - [ ] **Step 6: Commit** `feat: audio range selection mapped to lyric lines`
 
-### Task C5: scoped 后端协议 + 前端接线
+### Task 10: scoped 后端协议 + 前端接线
 
 **Files:**
 - Create: `prompts/studio_scoped.md`
@@ -430,7 +430,7 @@ export function linesForRange(lines: LRCLine[], startSec: number, endSec: number
 - Test: `src/agent.rs` 内 `#[cfg(test)]` 追加；`src/agent/message.rs` 测试追加
 
 **Interfaces:**
-- Consumes: Task C2 `ScopedCommand`、Task C3 `Proposal`。
+- Consumes: Task 7 `ScopedCommand`、Task 8 `Proposal`。
 - Produces（协议，前后端一致）:
   - 请求：`ChatRequest.selection?: { from: number; to: number }`（1-based 闭区间，指向 `draft.lyrics` 行）+ `mode: "studio"`（复用 studio 分支，selection 存在即 scoped 语义）。
   - 响应：模型输出末尾 `<<<LINES:N-M>>>\n<替换文本>\n<<<END>>>`；`SseEvent::Done` 新增 `lines?: { from: number; to: number; text: string } | null`。
@@ -486,7 +486,7 @@ async function sendScopedTurn(cmd: ScopedCommand, range: { from: number; to: num
 
 - [ ] **Step 7b: 聊天整字段改稿同样落 diff（§10.5）**
 
-`applyDone`（Studio.tsx:371）分流：`e.lyrics != null` 时**不再直接 setLyrics**，改为生成整稿提案 `setProposal({ from: 1, to: splitLines(draftRef.current.lyrics).length, original: splitLines(draftRef.current.lyrics), replacement: splitLines(e.lyrics) })`（接受/拒绝/undo 复用 Task C3 机制）；`style/title/vocal` 是单值字段无 diff 概念，维持直接应用 + 字段高亮（现有行为）。
+`applyDone`（Studio.tsx:371）分流：`e.lyrics != null` 时**不再直接 setLyrics**，改为生成整稿提案 `setProposal({ from: 1, to: splitLines(draftRef.current.lyrics).length, original: splitLines(draftRef.current.lyrics), replacement: splitLines(e.lyrics) })`（接受/拒绝/undo 复用 Task 8 机制）；`style/title/vocal` 是单值字段无 diff 概念，维持直接应用 + 字段高亮（现有行为）。
 
 - [ ] **Step 8: i18n keys**（scoped_prompt_* 指令模板五语言）。
 - [ ] **Step 9: 端到端验证**（需 backend 跑着 + 模型配置；划选 → 改写 → diff 出现 → 接受 → undo）。
@@ -496,7 +496,7 @@ async function sendScopedTurn(cmd: ScopedCommand, range: { from: number; to: num
 
 ## Phase D · 移动端（dock + sheet）
 
-### Task D1: 吸底迷你播放器 + bottom sheet
+### Task 11: 吸底迷你播放器 + bottom sheet
 
 **Files:**
 - Create: `frontend/src/components/studio/MiniPlayerDock.tsx`
@@ -513,7 +513,7 @@ async function sendScopedTurn(cmd: ScopedCommand, range: { from: number; to: num
 - [ ] **Step 4: 截图验证**（390px 视口：dock 常驻、⌃ 上拉 sheet、拖拽可中断反向）。
 - [ ] **Step 5: Commit** `feat: mobile mini player dock and listen sheet`
 
-### Task D2: 移动端细节
+### Task 12: 移动端细节
 
 **Files:**
 - Modify: `frontend/src/styles.css`（紧凑工具条、移动 CTA）
@@ -529,7 +529,7 @@ async function sendScopedTurn(cmd: ScopedCommand, range: { from: number; to: num
 
 ## Phase E · 引导模式右栏搬家
 
-### Task E1: 需求卡（BriefCard）
+### Task 13: 需求卡（BriefCard）
 
 **Files:**
 - Create: `frontend/src/components/guided/BriefCard.tsx`
@@ -543,14 +543,14 @@ async function sendScopedTurn(cmd: ScopedCommand, range: { from: number; to: num
 - [ ] **Step 2: i18n keys**（brief_to/brief_occasion/brief_mood/brief_vocal 等，五语言）。
 - [ ] **Step 3: Commit** `feat: guided brief card`
 
-### Task E2: ReviewCard/MusicCard 移出聊天流
+### Task 14: ReviewCard/MusicCard 移出聊天流
 
 **Files:**
 - Modify: `frontend/src/components/GuidedFlow.tsx:445-446`（两处内联渲染移除）
 - Modify: `frontend/src/pages/CreatePage.tsx`（guided 模式双栏壳：左对话卡右产物区）
 
 **Interfaces:**
-- Consumes: Task A3 的 `.wb-cols` 壳与卡片 CSS；现有 `ReviewCard`/`MusicCard` props（ReviewCard.tsx:11-26、MusicCard.tsx:6-11）原样。
+- Consumes: Task 3 的 `.wb-cols` 壳与卡片 CSS；现有 `ReviewCard`/`MusicCard` props（ReviewCard.tsx:11-26、MusicCard.tsx:6-11）原样。
 
 - [ ] **Step 1:** CreatePage guided 分支套双栏：左 `.wb-card` 包对话流（气泡 + PillsRow 钉输入条上方——ChatUI 的 PillsRow 现渲染位置随聊天流，移到输入条上方固定区），右 `.wb-col-artifact`：`<BriefCard/>` 常驻；`step === "review"` 渲染 `<ReviewCard>`（props 从 GuidedFlow 现有 :445 处原样上移，经 callback/state 提升——GuidedFlow 需把 `draft/review/degraded/onSubmit/onOpenInStudio` 暴露给 CreatePage：给 GuidedFlow 加 `artifactSlot?: (node: ReactNode) => void` 或直接把右栏收进 GuidedFlow 渲染（更简单：GuidedFlow 自己套双栏，CreatePage 不传栏）。**取后者**：GuidedFlow 内部套 `.wb-cols`，CreatePage 无感知）。
 - [ ] **Step 2:** `step === "music"` 渲染 `<MusicCard>` 到右栏（:446 上移）；「在创作室中打开」交接（:329-332 `stageStudioDraft` + `onSwitchToFree`）不动。
@@ -561,7 +561,7 @@ async function sendScopedTurn(cmd: ScopedCommand, range: { from: number; to: num
 
 ## Phase F · 收尾
 
-### Task F: 原型吸收清理 + 文档状态
+### Task 15: 原型吸收清理 + 文档状态
 
 - [ ] **Step 1:** 删除 `frontend/src/pages/PrototypeStudioPage.tsx`、`frontend/src/components/PrototypeSwitcher.tsx`、`frontend/src/styles-prototype.css`，移除 `App.tsx` 的 `/prototype/studio` 路由与 import。
 - [ ] **Step 2:** 全文 grep 确认 `pw-` 零残留、`prototype` 零残留（styles.css 内 wb- 类均为移植后正式代码）。
