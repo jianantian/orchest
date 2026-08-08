@@ -2004,6 +2004,45 @@ body.locked { overflow: hidden; }
 .wb-take-sub { font-size: 12px; color: var(--text-3); margin: 1px 0 0; }
 .wb-take-actions { display: flex; gap: 6px; }
 
+/* ── Selection state in the manuscript card ──
+   Ported from styles-prototype.css (.pw-line/.pw-seltoolbar), renamed wb-*.
+   The manuscript is a single <textarea> with no per-line DOM, so while a
+   selection is active Studio overlays a read-only line layer
+   (.wb-manuscript-overlay) whose .sel rows carry the highlight tint; the
+   textarea's own text shows through the translucent tint. */
+.wb-manuscript { position: relative; }
+.wb-manuscript-overlay {
+  position: absolute; inset: 0; overflow: hidden; pointer-events: none;
+  /* Match the textarea's content box exactly (border included) so the
+     overlay lines sit pixel-aligned under the real text. */
+  border: 1px solid transparent; padding: 18px 20px;
+  font-family: var(--font-serif-cn); font-size: 17px; line-height: 2.0;
+  white-space: pre-wrap; overflow-wrap: break-word;
+}
+.wb-line { margin: 0; color: transparent; border-radius: 4px; padding: 0 6px; margin-left: -6px; margin-right: -6px; }
+.wb-line.sel { background: var(--accent-tint-12); }
+
+/* floating selection toolbar (dark pill). Uses the prototype's .compact
+   metrics by default — the full-size variant doesn't fit the 440px driver
+   column in all five languages. */
+.wb-seltoolbar {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 2px; align-items: center;
+  background: var(--text); color: var(--bg);
+  border-radius: var(--r-pill); padding: 4px; box-shadow: var(--shadow-lg);
+  font-size: 12px; white-space: nowrap; z-index: 5;
+}
+.wb-seltoolbar button {
+  border: none; background: transparent; color: inherit; font: inherit; cursor: pointer;
+  padding: 4px 9px; border-radius: var(--r-pill);
+}
+.wb-seltoolbar button:hover { background: color-mix(in srgb, var(--bg) 18%, transparent); }
+.wb-seltoolbar .accent { color: var(--accent); }
+.wb-seltoolbar::after {
+  content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  border: 6px solid transparent; border-top-color: var(--text);
+}
+
 
 /* ============================================
    Dark theme — deep warm editorial

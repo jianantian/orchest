@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type SyntheticEvent } from "react";
 import { streamChat, getGift, updateGift, regenerateGift, getGiftVersions, watchGeneration, type GenerationWatch } from "../api";
 import { useI18n } from "../i18n";
 import { shuffleStyles, stripMarkers } from "../lib/styles";
+import { lineRangeForSelection, splitLines } from "../lib/lyrics";
 import { isImeComposing } from "../lib/ime";
 import { creatorToken } from "../lib/creator";
 import { useAuth } from "../hooks/useAuth";
@@ -14,6 +15,7 @@ import { SparklesIcon } from "./Icons";
 import { StyleCard } from "./studio/StyleCard";
 import { PlayerCard } from "./studio/PlayerCard";
 import { TakesCard } from "./studio/TakesCard";
+import { SelectionToolbar, type ScopedCommand } from "./studio/SelectionToolbar";
 import type { ChatMessage, Gift, GiftVersion, SseEvent } from "../types";
 
 export interface StudioProps { photos: string[]; lang: string; onNavigate: (giftId: string) => void; editGiftId?: string }
@@ -136,6 +138,16 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   const [streaming, setStreaming] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [flashed, setFlashed] = useState<Set<StudioField>>(new Set());
+
+  // ── Manuscript selection state: the 1-based closed line range covering
+  // the textarea selection (Task 8/C4 consume this too), plus the toolbar's
+  // estimated vertical offset inside .wb-manuscript. ──────────────────────
+  const [selRange, setSelRange] = useState<{ from: number; to: number } | null>(null);
+  const [selTop, setSelTop] = useState(0);
+  const manuscriptRef = useRef<HTMLTextAreaElement>(null);
+  const docCardRef = useRef<HTMLDivElement>(null);
+  const overlayInnerRef = useRef<HTMLDivElement>(null);
+  const selBlurTimer = useRef<number | null>(null);
 
   // The undo stack lives in a ref (push happens inside the async chat loop);
   // undoCount is the render-facing mirror that drives the button's disabled
@@ -444,6 +456,66 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
     void sendTurn(t("ai_prompt_write_lyrics"));
   }
 
+  // ── Manuscript selection → floating toolbar ───────────────────────────
+
+  /** Toolbar offset from the top of .wb-manuscript: padding-top +
+   *  (from-1) × line-height, adjusted for scroll, placed just above the
+   *  first selected line (≈ toolbar height + arrow), clamped into view. */
+  function computeSelTop(ta: HTMLTextAreaElement, from: number): number {
+    const cs = getComputedStyle(ta);
+    const lineHeight = parseFloat(cs.lineHeight) || 34;
+    const padTop = parseFloat(cs.paddingTop) || 0;
+    return Math.max(4, padTop + (from - 1) * lineHeight - ta.scrollTop - 44);
+  }
+
+  function handleLyricsSelect(e: SyntheticEvent<HTMLTextAreaElement>) {
+    const ta = e.currentTarget;
+    if (ta.selectionEnd > ta.selectionStart) {
+      const { from, to } = lineRangeForSelection(ta.value, ta.selectionStart, ta.selectionEnd);
+      setSelRange({ from, to });
+      setSelTop(computeSelTop(ta, from));
+    } else {
+      setSelRange(null);
+    }
+  }
+
+  /** The read-only highlight overlay doesn't scroll itself — mirror the
+   *  textarea's scrollTop onto it, and keep the toolbar glued to the line. */
+  function handleLyricsScroll(e: SyntheticEvent<HTMLTextAreaElement>) {
+    const ta = e.currentTarget;
+    if (overlayInnerRef.current) overlayInnerRef.current.style.transform = `translateY(${-ta.scrollTop}px)`;
+    if (selRange) setSelTop(computeSelTop(ta, selRange.from));
+  }
+
+  // The overlay mounts after the selection is made; apply the current
+  // scroll offset once so a mid-scroll selection aligns immediately.
+  useEffect(() => {
+    if (selRange && overlayInnerRef.current && manuscriptRef.current)
+      overlayInnerRef.current.style.transform = `translateY(${-manuscriptRef.current.scrollTop}px)`;
+  }, [selRange]);
+
+  /** Clear the selection 150ms after focus leaves the manuscript card,
+   *  unless focus landed on something inside the card (the delay lets a
+   *  toolbar click land before the range is torn down). */
+  function handleDocBlur() {
+    if (selBlurTimer.current) window.clearTimeout(selBlurTimer.current);
+    selBlurTimer.current = window.setTimeout(() => {
+      if (!docCardRef.current?.contains(document.activeElement)) setSelRange(null);
+    }, 150);
+  }
+
+  /** No AI request yet (Task 10 wires the scoped commands). "custom" routes
+   *  to the chat input with the line range prefilled; the other commands
+   *  just keep the selection highlighted as a visual anchor. */
+  function handleScopedAction(cmd: ScopedCommand) {
+    if (!selRange) return;
+    if (cmd === "custom") {
+      setAiOpen(true);
+      setInput(t("scoped_custom_prefill", { from: selRange.from, to: selRange.to }));
+      requestAnimationFrame(() => aiRegionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    }
+  }
+
   // ── Generation (unchanged from the old free-create flow) ──────────────
 
   async function handleGenerate(e: FormEvent) {
@@ -517,15 +589,35 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
         {/* 1–2. Manuscript card: borderless serif title (with the ✨ 帮写
             tool pinned to its row), divider, then the lyrics body with a
             "帮我写歌词" CTA when empty. */}
-        <div className="wb-card wb-doc">
+        <div className="wb-card wb-doc" ref={docCardRef} onBlur={handleDocBlur}>
           <div className="wb-doc-head">
             <input type="text" className={`title-input${flash("title")}`} value={title} onChange={e => setTitle(e.target.value)} placeholder={t("free_title_ph")} maxLength={50} />
             <button type="button" className="icon-btn" onClick={handleWriteForMe} title={t("ai_help_write")} aria-label={t("ai_help_write")}><SparklesIcon /></button>
           </div>
           <hr className="wb-doc-divider" />
-          <textarea className={`lyrics-manuscript${flash("lyrics")}`} value={lyrics} onChange={e => setLyrics(e.target.value)}
-            placeholder={instrumental ? t("instrumental_ph") : t("paste_lyrics_ph")}
-            disabled={instrumental} rows={instrumental ? 2 : 7} />
+          <div className="wb-manuscript">
+            <textarea ref={manuscriptRef} className={`lyrics-manuscript${flash("lyrics")}`} value={lyrics} onChange={e => setLyrics(e.target.value)}
+              onSelect={handleLyricsSelect} onScroll={handleLyricsScroll}
+              placeholder={instrumental ? t("instrumental_ph") : t("paste_lyrics_ph")}
+              disabled={instrumental} rows={instrumental ? 2 : 7} />
+            {/* While a selection is active, a read-only line layer sits over
+                the textarea (transparent text, .sel rows tinted) — the
+                textarea has no per-line DOM to highlight directly. */}
+            {selRange && (
+              <div className="wb-manuscript-overlay" aria-hidden="true">
+                <div ref={overlayInnerRef}>
+                  {splitLines(lyrics).map((line, i) => (
+                    <p key={i} className={`wb-line${i + 1 >= selRange.from && i + 1 <= selRange.to ? " sel" : ""}`}>{line || " "}</p>
+                  ))}
+                </div>
+              </div>
+            )}
+            {selRange && (
+              <div style={{ position: "absolute", top: selTop, left: 0, right: 0 }}>
+                <SelectionToolbar onAction={handleScopedAction} />
+              </div>
+            )}
+          </div>
           {!instrumental && !lyrics.trim() && (
             <button type="button" className="opt-pill write-for-me" onClick={handleWriteForMe}><SparklesIcon /> {t("write_for_me")}</button>
           )}
