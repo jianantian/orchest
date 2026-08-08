@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type SyntheticEvent } from
 import { streamChat, getGift, updateGift, regenerateGift, getGiftVersions, watchGeneration, type GenerationWatch } from "../api";
 import { useI18n } from "../i18n";
 import { shuffleStyles, stripMarkers } from "../lib/styles";
-import { lineRangeForSelection, splitLines, spliceLines } from "../lib/lyrics";
+import { lineRangeForSelection, splitLines, spliceLines, manuscriptRangeForLrcRange } from "../lib/lyrics";
 import { isImeComposing } from "../lib/ime";
 import { creatorToken } from "../lib/creator";
 import { useAuth } from "../hooks/useAuth";
@@ -531,7 +531,7 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
 
   // ── Player range selection → LRC mapping → manuscript selection ─────
 
-  /** 「交给 AI 修改」: adopt the mapped LRC line range as the manuscript
+  /** 「交给 AI 修改」: adopt the mapped manuscript line range as the manuscript
    *  selection (reusing the Task 7 highlight overlay + toolbar), scroll the
    *  manuscript card into view, and cancel any pending blur-clear — the
    *  button lives outside the doc card, so a textarea blur would otherwise
@@ -609,9 +609,13 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   const shownTitle = (shownVersion ? shownVersion.meta.title : gift?.meta.title) ?? undefined;
   const shownLrc = shownVersion ? shownVersion.lrc : gift?.lrc ?? null;
   const shownLrcLines = shownLrc ? parseLRC(shownLrc) : null;
-  /** 选段映射到的 LRC 行范围（1-based 闭区间）；纯音乐/无 LRC/选段在首行
-   *  之前 → null —— 映射半句隐藏、「交给 AI 修改」disabled（§10.10）。 */
-  const rangeMapped = audioRange && shownLrcLines ? linesForRange(shownLrcLines, audioRange.start, audioRange.end) : null;
+  /** 选段映射到的手稿行范围（1-based 闭区间）：LRC 行号按可唱行序数映射回
+   *  当前试听版本歌词（shownLyrics），跳过空行与 [段落] 标记行；纯音乐/无
+   *  LRC/选段在首行之前/无可唱行 → null —— 映射半句隐藏、「交给 AI 修改」
+   *  disabled（§10.10）。基准用 shownLyrics 而非编辑中的 lyrics：LRC 是被
+   *  唱出那一版的产物；用户改词后两者偏离时序数映射是尽力而为。 */
+  const lrcRange = audioRange && shownLrcLines ? linesForRange(shownLrcLines, audioRange.start, audioRange.end) : null;
+  const rangeMapped = lrcRange && shownLyrics ? manuscriptRangeForLrcRange(shownLyrics, lrcRange) : null;
 
   if (editGiftId && editPhase === "loading") {
     return <div className="studio loading-page"><span className="spinner" /> {t("loading_gift")}</div>;

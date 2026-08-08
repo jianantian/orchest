@@ -21,3 +21,20 @@ export function lineRangeForSelection(text: string, selStart: number, selEnd: nu
   const to = text.slice(0, Math.max(selEnd, selStart)).split("\n").length;
   return { from, to: Math.max(to, from) };
 }
+
+/** 可唱行判定：非空且不是 [段落] 标记行。 */
+function isSingable(line: string): boolean {
+  const t = line.trim();
+  return t.length > 0 && !/^\[.*\]$/.test(t);
+}
+
+/** 把 LRC 行范围（1-based 闭区间，不含空行/标记行）映射回手稿行范围（含全部行）。
+ *  序数语义：LRC 第 k 行 = 手稿第 k 个可唱行。无可唱行 → null。 */
+export function manuscriptRangeForLrcRange(lyrics: string, lrcRange: { from: number; to: number }): { from: number; to: number } | null {
+  const singableIdx: number[] = [];
+  splitLines(lyrics).forEach((line, i) => { if (isSingable(line)) singableIdx.push(i + 1); });
+  if (singableIdx.length === 0) return null;
+  const from = singableIdx[Math.min(Math.max(lrcRange.from, 1), singableIdx.length) - 1];
+  const to = singableIdx[Math.min(Math.max(lrcRange.to, 1), singableIdx.length) - 1];
+  return { from, to: Math.max(to, from) };
+}
