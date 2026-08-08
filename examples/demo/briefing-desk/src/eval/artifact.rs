@@ -14,10 +14,12 @@ use sha2::{Digest, Sha256};
 
 use crate::harness::{self, SurfaceId};
 
-use super::trajectory::{TrajectoryError, TrajectoryEvent, TrajectoryRecorder};
+use super::trajectory::{
+    sanitize_free_text, sanitize_value, TrajectoryError, TrajectoryEvent, TrajectoryRecorder,
+};
 
 /// Schema version for run manifests.
-pub const MANIFEST_SCHEMA_VERSION: &str = "1";
+pub const MANIFEST_SCHEMA_VERSION: &str = "3";
 /// Schema version for attempt.json.
 pub const ATTEMPT_SCHEMA_VERSION: &str = "1";
 /// Relative directory for all sensitive run artifacts.
@@ -130,6 +132,15 @@ pub struct SnapshotRef {
     pub sha256: String,
 }
 
+/// Immutable corpus policy for one selected case.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ManifestCasePolicy {
+    pub split: String,
+    pub must_pass: bool,
+    pub weight: f64,
+    pub tags: Vec<String>,
+}
+
 /// Skeleton run manifest (issue 002 foundations; runner fills remaining fields).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunManifest {
@@ -147,6 +158,9 @@ pub struct RunManifest {
     pub effective_config_schema_version: String,
     pub session_seeds: BTreeMap<String, String>,
     pub case_ids: Vec<String>,
+    /// Immutable corpus policy for each selected case. Result rows are evidence,
+    /// never the authority for gate-affecting policy.
+    pub case_policies: BTreeMap<String, ManifestCasePolicy>,
     pub splits: Vec<String>,
     pub repetition: u32,
     pub record_sensitive: bool,
@@ -368,7 +382,8 @@ pub fn write_attempt_artifacts(
     fs::write(attempt_dir.join("output.md"), output_md)
         .map_err(|e| ArtifactError::io(format!("writing output.md: {e}")))?;
 
-    write_json_pretty(&attempt_dir.join("attempt.json"), record)?;
+    let record = sanitized_attempt_record(record);
+    write_json_pretty(&attempt_dir.join("attempt.json"), &record)?;
     write_json_pretty(&attempt_dir.join("scores.json"), scores)?;
 
     // All four files must exist.
@@ -387,6 +402,21 @@ pub fn write_attempt_artifacts(
         }
     }
     Ok(attempt_dir)
+}
+
+/// Apply the shared free-text redactor at the final attempt-artifact boundary.
+///
+/// The runner is expected to sanitize execution errors before constructing the
+/// record, but this final gate also covers future pre-run and cleanup paths.
+fn sanitized_attempt_record(record: &AttemptRecord) -> AttemptRecord {
+    let mut sanitized = record.clone();
+    sanitized.error = sanitized.error.as_ref().map(sanitize_value);
+    sanitized.store_cleanup.detail = sanitized
+        .store_cleanup
+        .detail
+        .as_deref()
+        .map(sanitize_free_text);
+    sanitized
 }
 
 /// Write manifest.json at the run root.
@@ -531,6 +561,7 @@ pub fn build_manifest_skeleton(
         effective_config_schema_version,
         session_seeds,
         case_ids,
+        case_policies: BTreeMap::new(),
         splits,
         repetition,
         record_sensitive: true,
@@ -600,6 +631,7 @@ pub type TrajectoryLine = TrajectoryEvent;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eval::credential::text_has_credentials;
     use crate::eval::trajectory::TrajectoryRecorder;
     use orchest::events::RuntimeEvent;
     use orchest::run::RunId;
@@ -701,6 +733,57 @@ mod tests {
         assert!(
             scores_raw.contains("\"aggregate\": null") || scores_raw.contains("\"aggregate\":null")
         );
+    }
+
+    #[test]
+    fn attempt_artifact_redacts_provider_model_and_pre_run_error_canaries() {
+        let root = tempfile::tempdir().unwrap();
+        let run_dir = create_run_dir(root.path(), "redaction").unwrap();
+        let canary = "CREDENTIAL-CANARY-9e97d2";
+        let errors = [
+            format!("provider failed: --api-key {canary}"),
+            format!("model failed: --client-secret {canary}"),
+            format!(
+                "pre-run failed: https://api.example.test/run?carrier=--client-secret%20{canary}"
+            ),
+            format!("provider failed: api_key={canary}"),
+            format!("model failed: Authorization: Bearer {canary}"),
+            format!("pre-run failed: bearer {canary}"),
+        ];
+
+        for (index, message) in errors.iter().enumerate() {
+            let record = AttemptRecord {
+                error: Some(json!({"message": message})),
+                store_cleanup: StoreCleanupRecord {
+                    attempted: true,
+                    succeeded: false,
+                    detail: Some(format!("cleanup failed: bearer {canary}")),
+                },
+                ..attempt_record_template(
+                    "case-redaction",
+                    (index + 1) as u32,
+                    AttemptStatus::ExecutionFailure,
+                )
+            };
+            let dir = write_attempt_artifacts(
+                &run_dir,
+                "case-redaction",
+                (index + 1) as u32,
+                &TrajectoryRecorder::new(),
+                "",
+                &record,
+                &ScoresPlaceholder::not_run(),
+            )
+            .unwrap();
+            let persisted = fs::read_to_string(dir.join("attempt.json")).unwrap();
+            assert!(!persisted.contains(canary), "canary leaked in {persisted}");
+            let parsed: Value = serde_json::from_str(&persisted).unwrap();
+            let message = parsed["error"]["message"].as_str().unwrap();
+            assert!(
+                !text_has_credentials(message),
+                "detector still sees credentials in {message}"
+            );
+        }
     }
 
     #[test]

@@ -341,12 +341,6 @@ pub(crate) fn extract_tool_trace(events: &[TrajectoryEvent]) -> ToolTrace {
                             .first_started_seq
                             .entry(tool.clone())
                             .or_insert(ev.sequence);
-                    } else {
-                        trace
-                            .first_completed_seq
-                            .entry(tool.clone())
-                            .or_insert(ev.sequence);
-                        trace.completed.insert(tool.clone());
                     }
                     trace.observed.insert(tool);
                 }
@@ -360,6 +354,11 @@ pub(crate) fn extract_tool_trace(events: &[TrajectoryEvent]) -> ToolTrace {
 /// A tool counts as "selected" if it was started, completed, failed, or retried.
 pub(crate) fn tool_was_selected(trace: &ToolTrace, tool: &str) -> bool {
     trace.observed.contains(tool)
+}
+
+/// A tool proves modality coverage only after a retained successful completion.
+pub(crate) fn tool_completed_successfully(trace: &ToolTrace, tool: &str) -> bool {
+    trace.completed.contains(tool)
 }
 
 /// Case-insensitive section heading match for markdown reports.
@@ -398,15 +397,15 @@ pub(crate) fn contains_all(haystack: &str, needles: &[String]) -> bool {
     needles.iter().all(|n| lower.contains(&n.to_lowercase()))
 }
 
-/// Extract formal citation candidates (backticks / brackets) from report text.
+/// Extract raw formal citation candidates (backticks / brackets) from report text.
+///
+/// Callers must validate the raw path before reducing it to a fixture basename.
 pub(crate) fn extract_citation_candidates(output: &str) -> Vec<String> {
     let mut found = BTreeSet::new();
     for part in output.split('`') {
         let candidate = part.trim();
         if looks_like_fixture_ref(candidate) {
-            if let Some(base) = basename_of(candidate) {
-                found.insert(base);
-            }
+            found.insert(candidate.to_string());
         }
     }
     let mut rest = output;
@@ -417,9 +416,7 @@ pub(crate) fn extract_citation_candidates(output: &str) -> Vec<String> {
             for token in inner.split([',', ';', '|']) {
                 let token = token.trim();
                 if looks_like_fixture_ref(token) {
-                    if let Some(base) = basename_of(token) {
-                        found.insert(base);
-                    }
+                    found.insert(token.to_string());
                 }
             }
             rest = &after[end + 1..];
@@ -430,20 +427,18 @@ pub(crate) fn extract_citation_candidates(output: &str) -> Vec<String> {
     found.into_iter().collect()
 }
 
-/// Bare fixture-looking tokens in free prose (not formal citations).
-pub(crate) fn extract_bare_fixture_mentions(output: &str) -> Vec<String> {
+/// Extract raw path-like entries listed in a formal Sources section.
+pub(crate) fn extract_source_paths(section: &str) -> Vec<String> {
     let mut found = BTreeSet::new();
-    for word in output.split_whitespace() {
-        let cleaned = word.trim_matches(|c: char| {
-            matches!(
-                c,
-                '(' | ')' | '"' | '\'' | ',' | '.' | ';' | ':' | '!' | '?'
-            )
-        });
-        if looks_like_fixture_ref(cleaned) {
-            if let Some(base) = basename_of(cleaned) {
-                found.insert(base);
-            }
+    for line in section.lines() {
+        let candidate = line
+            .trim()
+            .trim_start_matches(['-', '*'])
+            .trim()
+            .trim_matches('`')
+            .trim();
+        if looks_like_fixture_ref(candidate) {
+            found.insert(candidate.to_string());
         }
     }
     found.into_iter().collect()
@@ -460,8 +455,6 @@ fn looks_like_fixture_ref(s: &str) -> bool {
         || lower.ends_with(".jpg")
         || lower.ends_with(".jpeg")
         || lower.ends_with(".json")
-        || lower.contains('/')
-        || lower.contains('\\')
 }
 
 pub(crate) fn basename_of(path_like: &str) -> Option<String> {
@@ -476,11 +469,19 @@ pub(crate) fn resolve_under_fixtures(
     fixtures_dir: &Path,
     path_like: &str,
 ) -> Result<PathBuf, String> {
-    let candidate = if Path::new(path_like).is_absolute() {
-        PathBuf::from(path_like)
-    } else {
-        fixtures_dir.join(path_like)
-    };
+    let path = Path::new(path_like);
+    if path.is_absolute() {
+        return Err(format!("citation '{path_like}' is an absolute path"));
+    }
+    if path
+        .components()
+        .any(|component| component == std::path::Component::ParentDir)
+    {
+        return Err(format!(
+            "citation '{path_like}' contains '..' path traversal"
+        ));
+    }
+    let candidate = fixtures_dir.join(path);
     let fixtures_canon = fixtures_dir.canonicalize().map_err(|e| {
         format!(
             "cannot canonicalize fixtures dir {}: {e}",
@@ -500,31 +501,7 @@ pub(crate) fn resolve_under_fixtures(
         return Ok(canon);
     }
 
-    let lexical = if Path::new(path_like).is_absolute() {
-        normalize_path(Path::new(path_like))
-    } else {
-        normalize_path(&fixtures_dir.join(path_like))
-    };
-    if path_like.contains("..") && !path_is_under(&lexical, fixtures_dir) {
-        return Err(format!(
-            "citation '{path_like}' escapes fixture root via '..'"
-        ));
-    }
     Err(format!("citation target does not exist: {path_like}"))
-}
-
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for comp in path.components() {
-        match comp {
-            std::path::Component::ParentDir => {
-                out.pop();
-            }
-            std::path::Component::CurDir => {}
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
 }
 
 fn path_is_under(path: &Path, root: &Path) -> bool {
@@ -606,6 +583,7 @@ mod tests {
     };
     use crate::eval::AttemptStatus;
     use std::collections::BTreeSet;
+    use std::fs;
 
     fn fixtures_dir() -> PathBuf {
         default_fixtures_dir()
@@ -957,6 +935,94 @@ details
     }
 
     #[test]
+    fn citation_extractor_ignores_markdown_slash_between_backtick_sources() {
+        let output = "Evidence: `001-retention-dashboard-notes.md` / `chart.png`; metric `retention.loom-metrics/channels`.";
+        let candidates = extract_citation_candidates(output);
+        assert_eq!(
+            candidates,
+            vec!["001-retention-dashboard-notes.md", "chart.png"]
+        );
+    }
+
+    #[test]
+    fn citation_rejects_parent_traversal_with_existing_fixture_basename() {
+        let inv = inventory();
+        let fixtures = fixtures_dir();
+        let mut case = base_case("citation-traversal");
+        case.fixture_refs = vec!["001-retention-dashboard-notes.md".into()];
+        let spec = GraderSpec {
+            grader_id: "citation_quality".into(),
+            weight: 1.0,
+            required: true,
+        };
+        let output = "# Sources\n- ../001-retention-dashboard-notes.md\n";
+
+        let result = run_grader(&spec, &input_for(&case, &[], output, &inv, &fixtures))
+            .expect("citation grade");
+        assert!(!result.passed, "{result:?}");
+    }
+
+    #[test]
+    fn modality_requires_completed_media_tool_calls() {
+        let inv = inventory();
+        let fixtures = fixtures_dir();
+        let mut case = base_case("failed-media");
+        case.tools.required = vec![
+            "read_fixture".into(),
+            "transcribe_audio".into(),
+            "describe_image".into(),
+        ];
+        let spec = GraderSpec {
+            grader_id: "modality_coverage".into(),
+            weight: 1.0,
+            required: true,
+        };
+        let trajectory = vec![
+            tool_started(0, "read_fixture"),
+            tool_completed(1, "read_fixture"),
+            tool_started(2, "transcribe_audio"),
+            tool_failed(3, "transcribe_audio"),
+            tool_started(4, "describe_image"),
+            tool_failed(5, "describe_image"),
+        ];
+
+        let result = run_grader(&spec, &input_for(&case, &trajectory, "", &inv, &fixtures))
+            .expect("modality grade");
+        assert!(!result.passed, "{result:?}");
+    }
+
+    #[test]
+    fn modality_rejects_failed_parallel_batch_item_without_canonical_completion() {
+        let inv = inventory();
+        let fixtures = fixtures_dir();
+        let mut case = base_case("failed-parallel-media");
+        case.tools.required = vec!["transcribe_audio".into()];
+        let spec = GraderSpec {
+            grader_id: "modality_coverage".into(),
+            weight: 1.0,
+            required: true,
+        };
+        let trajectory = vec![
+            tool_started(0, "transcribe_audio"),
+            test_event(
+                1,
+                "tool_call_batch_item_completed",
+                json!({
+                    "batch_id": "parallel-media",
+                    "tool": "transcribe_audio",
+                    "requested_order": 0,
+                    "completion_order": 0,
+                }),
+            ),
+            tool_failed(2, "transcribe_audio"),
+        ];
+
+        let result = run_grader(&spec, &input_for(&case, &trajectory, "", &inv, &fixtures))
+            .expect("modality grade");
+        assert!(!result.passed, "{result:?}");
+    }
+
+    #[test]
     fn followup_grounding_seed_and_forbidden_tools() {
         let inv = inventory();
         let fixtures = fixtures_dir();
@@ -985,7 +1051,15 @@ details
         case.tags = vec![BehaviorTag::FollowupGrounding];
 
         let out = "Trust finance 42% over support 35%.";
-        let mut input = input_for(&case, &[], out, &inv, &fixtures);
+        let resumed = vec![test_event(
+            0,
+            "followup_session_resumed",
+            json!({
+                "session_seed_id": "seed-followup-retention",
+                "session_seed_hash": "abc",
+            }),
+        )];
+        let mut input = input_for(&case, &resumed, out, &inv, &fixtures);
         input.session_seed_id = Some("seed-followup-retention");
         input.session_seed_hash = Some("abc");
         let pass = run_grader(&case.graders[0], &input).unwrap();
@@ -1014,6 +1088,35 @@ details
         )
         .unwrap();
         assert!(!fail_fresh.passed);
+    }
+
+    #[test]
+    fn followup_requires_retained_resume_evidence() {
+        let inv = inventory();
+        let fixtures = fixtures_dir();
+        let mut case = base_case("followup-metadata-only");
+        case.run = RunMode::FollowUp {
+            question: "which number?".into(),
+            session_seed_id: "seed-followup-retention".into(),
+            session_seed_hash: "abc".into(),
+        };
+        case.expected_facts = vec![ExpectedFact {
+            id: "both".into(),
+            must_contain: vec!["42%".into(), "35%".into()],
+            source_fixture: None,
+        }];
+        let spec = GraderSpec {
+            grader_id: "followup_grounding".into(),
+            weight: 1.0,
+            required: true,
+        };
+        let mut input = input_for(&case, &[], "42% and 35%", &inv, &fixtures);
+        input.session_seed_id = Some("seed-followup-retention");
+        input.session_seed_hash = Some("abc");
+
+        let result = run_grader(&spec, &input).expect("follow-up grade");
+        assert!(!result.passed, "{result:?}");
+        assert_eq!(result.score, 100.0, "{result:?}");
     }
 
     #[test]
@@ -1090,14 +1193,248 @@ details
     }
 
     #[test]
-    fn fixture_files_cover_pass_fail_boundaries() {
+    fn committed_grader_fixtures_execute_with_expected_boundaries() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("evals/test-fixtures");
-        assert!(root.join("trajectories/tool_selection_pass.jsonl").exists());
-        assert!(root.join("trajectories/tool_selection_fail.jsonl").exists());
-        assert!(root.join("outputs/report_pass.md").exists());
-        assert!(root.join("outputs/citation_escape_fail.md").exists());
-        assert!(root.join("outputs/conflict_pass.md").exists());
-        assert!(root.join("outputs/conflict_bare_numbers_fail.md").exists());
-        assert!(root.join("outputs/followup_pass.md").exists());
+        let fixtures = fixtures_dir();
+        let inv = inventory();
+        let table = [
+            (
+                "trajectories/tool_selection_pass.jsonl",
+                None,
+                "tool_selection",
+                true,
+            ),
+            (
+                "trajectories/tool_selection_fail.jsonl",
+                None,
+                "tool_selection",
+                false,
+            ),
+            (
+                "trajectories/tool_selection_optional_ok.jsonl",
+                None,
+                "tool_selection",
+                true,
+            ),
+            (
+                "trajectories/tool_chaining_pass.jsonl",
+                None,
+                "tool_chaining",
+                true,
+            ),
+            (
+                "trajectories/tool_chaining_fail_early_write.jsonl",
+                None,
+                "tool_chaining",
+                false,
+            ),
+            (
+                "trajectories/tool_chaining_retry_pass.jsonl",
+                None,
+                "tool_chaining",
+                true,
+            ),
+            (
+                "trajectories/modality_pass.jsonl",
+                Some("outputs/modality_pass.md"),
+                "modality_coverage",
+                true,
+            ),
+            (
+                "trajectories/modality_fail_missing_media.jsonl",
+                Some("outputs/modality_pass.md"),
+                "modality_coverage",
+                false,
+            ),
+            (
+                "trajectories/followup_pass.jsonl",
+                Some("outputs/followup_pass.md"),
+                "followup_grounding",
+                true,
+            ),
+            (
+                "trajectories/followup_fail_reresearch.jsonl",
+                Some("outputs/followup_pass.md"),
+                "followup_grounding",
+                false,
+            ),
+            ("outputs/citation_pass.md", None, "citation_quality", true),
+            (
+                "outputs/citation_escape_fail.md",
+                None,
+                "citation_quality",
+                false,
+            ),
+            (
+                "outputs/citation_body_only_fail.md",
+                None,
+                "citation_quality",
+                false,
+            ),
+            (
+                "outputs/conflict_pass.md",
+                None,
+                "conflict_reconciliation",
+                true,
+            ),
+            (
+                "outputs/conflict_bare_numbers_fail.md",
+                None,
+                "conflict_reconciliation",
+                false,
+            ),
+            ("outputs/report_pass.md", None, "report_structure", true),
+            (
+                "outputs/report_missing_sections_fail.md",
+                None,
+                "report_structure",
+                false,
+            ),
+            (
+                "outputs/followup_missing_facts_fail.md",
+                Some("trajectories/followup_pass.jsonl"),
+                "followup_grounding",
+                false,
+            ),
+        ];
+
+        let mut listed = BTreeSet::new();
+        for (primary_path, paired_path, grader_id, expected_pass) in table {
+            listed.insert(primary_path.to_string());
+            if let Some(path) = paired_path {
+                listed.insert(path.to_string());
+            }
+            let (trajectory_path, output_path) = if primary_path.ends_with(".jsonl") {
+                (Some(primary_path), paired_path)
+            } else {
+                (paired_path, Some(primary_path))
+            };
+            let trajectory = trajectory_path
+                .map(|path| load_trajectory_fixture(&root.join(path)))
+                .unwrap_or_default();
+            let output = output_path
+                .map(|path| fs::read_to_string(root.join(path)).expect("read output fixture"))
+                .unwrap_or_default();
+            let case = fixture_case(grader_id);
+            let spec = GraderSpec {
+                grader_id: grader_id.into(),
+                weight: 1.0,
+                required: true,
+            };
+            let mut input = input_for(&case, &trajectory, &output, &inv, &fixtures);
+            if grader_id == "followup_grounding" {
+                input.session_seed_id = Some("seed-followup-retention");
+                input.session_seed_hash = Some("abc");
+            }
+            let result = run_grader(&spec, &input).expect("fixture grader execution");
+            assert_eq!(
+                result.passed, expected_pass,
+                "fixture={primary_path} paired={paired_path:?} grader={grader_id}: {result:?}"
+            );
+        }
+
+        assert_eq!(listed, committed_fixture_paths(&root));
+    }
+
+    fn load_trajectory_fixture(path: &Path) -> Vec<TrajectoryEvent> {
+        fs::read_to_string(path)
+            .expect("read trajectory fixture")
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("parse trajectory fixture event"))
+            .collect()
+    }
+
+    fn committed_fixture_paths(root: &Path) -> BTreeSet<String> {
+        ["outputs", "trajectories"]
+            .into_iter()
+            .flat_map(|dir| {
+                fs::read_dir(root.join(dir))
+                    .expect("read fixture directory")
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.path().is_file())
+                    .map(move |entry| format!("{dir}/{}", entry.file_name().to_string_lossy()))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    fn fixture_case(grader_id: &str) -> EvalCase {
+        let mut case = base_case("fixture-case");
+        match grader_id {
+            "tool_selection" => {
+                case.tools = ToolConstraints {
+                    required: vec!["search_fixtures".into(), "read_fixture".into()],
+                    forbidden: vec!["synthesize_brief".into()],
+                    optional: vec!["review_report".into()],
+                };
+            }
+            "tool_chaining" => {
+                case.order = vec![
+                    OrderConstraint {
+                        before: "search_fixtures".into(),
+                        after: "read_fixture".into(),
+                    },
+                    OrderConstraint {
+                        before: "read_fixture".into(),
+                        after: "write_report".into(),
+                    },
+                ];
+            }
+            "modality_coverage" => {
+                case.tools.required = vec![
+                    "read_fixture".into(),
+                    "transcribe_audio".into(),
+                    "describe_image".into(),
+                ];
+                case.expected_facts = vec![ExpectedFact {
+                    id: "media-facts".into(),
+                    must_contain: vec!["two hours".into(), "42%".into()],
+                    source_fixture: None,
+                }];
+            }
+            "conflict_reconciliation" => {
+                case.expected_conflict = Some(ExpectedConflict {
+                    left_value: "42%".into(),
+                    left_source: "001-retention-dashboard-notes.md".into(),
+                    right_value: "35%".into(),
+                    right_source: "002-support-ticket-summary.md".into(),
+                });
+            }
+            "report_structure" => {
+                case.report.required_sections = vec![
+                    "executive summary".into(),
+                    "key findings".into(),
+                    "conflicts".into(),
+                    "recommendation".into(),
+                    "sources".into(),
+                ];
+                case.expected_facts = vec![ExpectedFact {
+                    id: "retention".into(),
+                    must_contain: vec!["42%".into()],
+                    source_fixture: None,
+                }];
+            }
+            "citation_quality" => {
+                case.fixture_refs = vec![
+                    "001-retention-dashboard-notes.md".into(),
+                    "003-competitor-scan.md".into(),
+                ];
+            }
+            "followup_grounding" => {
+                case.run = RunMode::FollowUp {
+                    question: "which number?".into(),
+                    session_seed_id: "seed-followup-retention".into(),
+                    session_seed_hash: "abc".into(),
+                };
+                case.tools.forbidden = vec!["search_fixtures".into(), "read_fixture".into()];
+                case.expected_facts = vec![ExpectedFact {
+                    id: "both".into(),
+                    must_contain: vec!["42%".into(), "35%".into()],
+                    source_fixture: None,
+                }];
+            }
+            _ => panic!("unknown fixture grader {grader_id}"),
+        }
+        case
     }
 }

@@ -5,9 +5,9 @@ use std::collections::BTreeSet;
 use serde_json::json;
 
 use super::{
-    basename_of, contains_all, extract_bare_fixture_mentions, extract_citation_candidates,
-    extract_tool_trace, make_result, output_has_section, resolve_under_fixtures, tool_was_selected,
-    GraderError, GraderInput, GraderResult,
+    basename_of, contains_all, extract_citation_candidates, extract_source_paths,
+    extract_tool_trace, make_result, output_has_section, resolve_under_fixtures,
+    tool_completed_successfully, GraderError, GraderInput, GraderResult,
 };
 
 const AUDIO_TOOLS: &[&str] = &["transcribe_audio"];
@@ -61,9 +61,18 @@ pub fn grade_modality_coverage(
 
     let checks_needed = needs_audio || needs_image || needs_text;
 
-    let audio_ok = !needs_audio || AUDIO_TOOLS.iter().any(|t| tool_was_selected(&trace, t));
-    let image_ok = !needs_image || IMAGE_TOOLS.iter().any(|t| tool_was_selected(&trace, t));
-    let text_ok = !needs_text || TEXT_TOOLS.iter().any(|t| tool_was_selected(&trace, t));
+    let audio_ok = !needs_audio
+        || AUDIO_TOOLS
+            .iter()
+            .any(|tool| tool_completed_successfully(&trace, tool));
+    let image_ok = !needs_image
+        || IMAGE_TOOLS
+            .iter()
+            .any(|tool| tool_completed_successfully(&trace, tool));
+    let text_ok = !needs_text
+        || TEXT_TOOLS
+            .iter()
+            .any(|tool| tool_completed_successfully(&trace, tool));
 
     let mut missing_fact_ids = Vec::new();
     for fact in &input.case.expected_facts {
@@ -113,13 +122,13 @@ pub fn grade_modality_coverage(
 
     let mut failures = Vec::new();
     if !audio_ok {
-        failures.push("audio modality not proven (transcribe_audio not called)".into());
+        failures.push("audio modality not proven (transcribe_audio not completed)".into());
     }
     if !image_ok {
-        failures.push("image modality not proven (describe_image not called)".into());
+        failures.push("image modality not proven (describe_image not completed)".into());
     }
     if !text_ok {
-        failures.push("text modality not proven (search/read fixture not called)".into());
+        failures.push("text modality not proven (search/read fixture not completed)".into());
     }
     if !facts_ok {
         failures.push(format!(
@@ -363,52 +372,41 @@ pub fn grade_citation_quality(
     input: &GraderInput<'_>,
     weight: f64,
 ) -> Result<GraderResult, GraderError> {
-    let candidates = extract_citation_candidates(input.output_md);
+    let source_section = extract_sources_section(input.output_md);
+    let mut candidates = extract_citation_candidates(input.output_md);
+    if let Some(section) = &source_section {
+        candidates.extend(extract_source_paths(section));
+    }
+    candidates.sort();
+    candidates.dedup();
     let inventory = input.fixture_inventory;
 
     let mut valid = Vec::new();
     let mut missing = Vec::new();
     let mut escaped = Vec::new();
     let mut other_errors = Vec::new();
+    let mut valid_basenames = BTreeSet::new();
 
     for cite in &candidates {
-        let base = basename_of(cite).unwrap_or_else(|| cite.clone());
-        if !inventory.contains(&base) {
-            missing.push(cite.clone());
-            continue;
-        }
         match resolve_under_fixtures(input.fixtures_dir, cite) {
-            Ok(_) => valid.push(cite.clone()),
+            Ok(_) => {
+                let base = basename_of(cite).unwrap_or_else(|| cite.clone());
+                if inventory.contains(&base) {
+                    valid_basenames.insert(base);
+                    valid.push(cite.clone());
+                } else {
+                    missing.push(cite.clone());
+                }
+            }
             Err(err) => {
-                if err.contains("outside") || err.contains("..") {
+                if err.contains("outside") || err.contains("..") || err.contains("absolute") {
                     escaped.push(json!({"citation": cite, "error": err}));
                 } else if err.contains("does not exist") {
-                    match resolve_under_fixtures(input.fixtures_dir, &base) {
-                        Ok(_) => valid.push(base),
-                        Err(e2) => {
-                            if e2.contains("outside") || e2.contains("..") {
-                                escaped.push(json!({"citation": cite, "error": e2}));
-                            } else {
-                                missing.push(cite.clone());
-                            }
-                        }
-                    }
+                    missing.push(cite.clone());
                 } else {
                     other_errors.push(json!({"citation": cite, "error": err}));
                 }
             }
-        }
-    }
-
-    for cite in &candidates {
-        if cite.contains("..") {
-            if !escaped.iter().any(|e| e["citation"] == *cite) {
-                escaped.push(json!({
-                    "citation": cite,
-                    "error": "citation contains '..' path traversal",
-                }));
-            }
-            valid.retain(|v| v != cite);
         }
     }
 
@@ -433,45 +431,25 @@ pub fn grade_citation_quality(
         )
         .collect();
 
-    let source_section = extract_sources_section(input.output_md);
     let mut body_only = Vec::new();
     let mut missing_required = Vec::new();
 
-    let bare_mentions = extract_bare_fixture_mentions(input.output_md);
-
     for src in &required_sources {
         let base = basename_of(src).unwrap_or_else(|| src.clone());
-        let in_candidates = candidates.iter().any(|c| {
-            basename_of(c).as_deref() == Some(base.as_str()) || c == &base || c.ends_with(&base)
-        });
-        let in_sources_section = source_section
-            .as_ref()
-            .is_some_and(|sec| sec.to_lowercase().contains(&base.to_lowercase()));
         let in_output = input
             .output_md
             .to_lowercase()
             .contains(&base.to_lowercase());
-        let bare_only =
-            bare_mentions.iter().any(|b| b == &base) && !in_candidates && !in_sources_section;
 
         if !inventory.contains(&base) {
             missing_required.push(format!("{base} (not in fixture inventory)"));
             continue;
         }
 
-        // Formal citation = backtick/bracket candidate or listed under Sources.
-        if in_candidates || in_sources_section {
-            if let Err(err) = resolve_under_fixtures(input.fixtures_dir, &base) {
-                if err.contains("outside") || err.contains("..") {
-                    escaped.push(json!({"citation": base, "error": err}));
-                } else if !err.contains("does not exist") {
-                    other_errors.push(json!({"citation": base, "error": err}));
-                }
-            }
-        } else if bare_only || in_output {
+        if !valid_basenames.contains(&base) && in_output {
             // Named in prose without a source record.
             body_only.push(base);
-        } else {
+        } else if !valid_basenames.contains(&base) {
             missing_required.push(base);
         }
     }

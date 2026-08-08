@@ -7,6 +7,7 @@ use std::sync::Arc;
 use super::artifact::default_runs_dir;
 use super::case::{default_cases_path, default_fixtures_dir, default_seeds_dir};
 use super::compare::{compare_runs, load_run, write_compare_report, CompareStatus};
+use super::evidence::{export_evidence_bundle, verify_evidence_file, write_evidence_bundle};
 use super::runner::{parse_splits, run_eval, EvalRunRequest};
 use super::scripted_model::ScriptedModel;
 
@@ -32,6 +33,68 @@ pub struct EvalCompareCli {
     pub candidate: String,
     pub runs_dir: Option<PathBuf>,
     pub out_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EvalExportEvidenceCli {
+    pub baseline: String,
+    pub candidate: String,
+    pub runs_dir: Option<PathBuf>,
+    pub out_dir: PathBuf,
+    pub decision: String,
+    pub scorecard_state: String,
+}
+
+pub fn cmd_eval_export_evidence(args: EvalExportEvidenceCli) -> ExitCode {
+    let runs_root = args.runs_dir.unwrap_or_else(default_runs_dir);
+    let bundle = match export_evidence_bundle(
+        &runs_root,
+        &args.baseline,
+        &args.candidate,
+        &args.decision,
+        &args.scorecard_state,
+    ) {
+        Ok(bundle) => bundle,
+        Err(error) => {
+            eprintln!("eval evidence export failed: {error}");
+            return ExitCode::from(1);
+        }
+    };
+    match write_evidence_bundle(&args.out_dir, &bundle) {
+        Ok((json, hash, index)) => {
+            println!("[eval] wrote {}", json.display());
+            println!("[eval] wrote {}", hash.display());
+            println!("[eval] wrote {}", index.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("eval evidence export failed: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+pub fn cmd_eval_verify_evidence(bundle: PathBuf) -> ExitCode {
+    match verify_evidence_file(&bundle) {
+        Ok(verified) => {
+            println!(
+                "[eval] evidence verified status={} baseline_overall={:?} candidate_overall={:?}",
+                match verified.status {
+                    CompareStatus::EligibleForReview => "eligible_for_review",
+                    CompareStatus::NotEligible => "not_eligible",
+                    CompareStatus::InvalidBaseline => "invalid_baseline",
+                    CompareStatus::Incomparable => "incomparable",
+                },
+                verified.baseline_overall,
+                verified.candidate_overall,
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("eval evidence verify failed: {error}");
+            ExitCode::from(1)
+        }
+    }
 }
 
 pub async fn cmd_eval_run(args: EvalRunCli) -> ExitCode {

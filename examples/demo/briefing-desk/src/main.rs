@@ -4,6 +4,7 @@
 
 mod app;
 mod eval;
+mod execution;
 mod harness;
 mod media;
 mod tools;
@@ -113,6 +114,21 @@ enum EvalCommands {
         #[arg(long)]
         out_dir: Option<PathBuf>,
     },
+    /// Export an allowlist-only, deterministic evidence bundle.
+    ExportEvidence {
+        baseline: String,
+        candidate: String,
+        #[arg(long)]
+        runs_dir: Option<PathBuf>,
+        #[arg(long)]
+        out_dir: PathBuf,
+        #[arg(long)]
+        decision: String,
+        #[arg(long, default_value = "not_run")]
+        scorecard_state: String,
+    },
+    /// Verify a committed evidence bundle and recompute its comparison.
+    VerifyEvidence { bundle: PathBuf },
 }
 
 #[tokio::main]
@@ -200,6 +216,22 @@ async fn main() -> ExitCode {
                 runs_dir,
                 out_dir,
             }),
+            EvalCommands::ExportEvidence {
+                baseline,
+                candidate,
+                runs_dir,
+                out_dir,
+                decision,
+                scorecard_state,
+            } => eval::cli::cmd_eval_export_evidence(eval::cli::EvalExportEvidenceCli {
+                baseline,
+                candidate,
+                runs_dir,
+                out_dir,
+                decision,
+                scorecard_state,
+            }),
+            EvalCommands::VerifyEvidence { bundle } => eval::cli::cmd_eval_verify_evidence(bundle),
         },
     }
 }

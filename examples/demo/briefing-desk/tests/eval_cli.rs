@@ -1,5 +1,6 @@
 //! Offline CLI integration tests for eval run / compare (scripted model).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -21,11 +22,24 @@ fn clean_repo_root() -> tempfile::TempDir {
         .status()
         .expect("git init");
     assert!(status.success());
+    for (key, value) in [
+        ("user.name", "Briefing Desk Eval Test"),
+        ("user.email", "eval-test@example.invalid"),
+    ] {
+        let status = Command::new("git")
+            .args(["config", "--local", key, value])
+            .current_dir(dir.path())
+            .status()
+            .expect("git config");
+        assert!(status.success(), "failed to configure {key}");
+    }
     // Empty commit so rev-parse works.
-    let _ = Command::new("git")
+    let status = Command::new("git")
         .args(["commit", "--allow-empty", "-m", "init"])
         .current_dir(dir.path())
-        .status();
+        .status()
+        .expect("git commit");
+    assert!(status.success());
     dir
 }
 
@@ -172,10 +186,38 @@ fn scripted_optimization_run_writes_artifacts() {
     assert!(run_dir.join("results.json").is_file());
     assert!(run_dir.join("summary.md").is_file());
 
+    let effective: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(run_dir.join("effective-config/snapshot.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(effective["schema_version"], "3");
+    assert_eq!(effective["main"]["request_options"]["max_tokens"], 4096);
+    let profiles = effective["case_profiles"].as_array().unwrap();
+    assert!(profiles
+        .iter()
+        .any(|profile| profile["session_mode"] == "none"));
+    assert!(profiles
+        .iter()
+        .any(|profile| profile["session_mode"] == "follow_up_from_seed"));
+    let all_tools: Vec<_> = profiles
+        .iter()
+        .flat_map(|profile| profile["tools"].as_array().into_iter().flatten())
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    for name in [
+        "review_report",
+        "transcribe_audio",
+        "describe_image",
+        "write_report",
+    ] {
+        assert!(all_tools.contains(&name), "missing tool {name}");
+    }
+
     // At least one case attempt four-file set.
     let cases_dir = run_dir.join("cases");
     assert!(cases_dir.is_dir());
     let mut found_attempt = false;
+    let mut found_completed_terminal = false;
     for case in std::fs::read_dir(&cases_dir).unwrap() {
         let case = case.unwrap().path();
         for att in std::fs::read_dir(&case).unwrap() {
@@ -193,18 +235,65 @@ fn scripted_optimization_run_writes_artifacts() {
                     att.display()
                 );
             }
+            let attempt: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(att.join("attempt.json")).unwrap())
+                    .unwrap();
+            if attempt["status"] == "completed" {
+                assert_eq!(attempt["terminal_kind"], "run_completed");
+                assert_eq!(attempt["stop_reason"], "end_turn");
+                found_completed_terminal = true;
+            }
             found_attempt = true;
         }
     }
     assert!(found_attempt, "expected at least one attempt directory");
+    assert!(
+        found_completed_terminal,
+        "expected a completed terminal record"
+    );
+
+    let retained_followup = walk_files(&cases_dir).into_iter().any(|path| {
+        path.file_name().and_then(|name| name.to_str()) == Some("trajectory.jsonl")
+            && std::fs::read_to_string(path)
+                .map(|text| text.contains("followup_session_resumed"))
+                .unwrap_or(false)
+    });
+    assert!(retained_followup, "expected retained follow-up seed event");
 
     // optimization = 1 rep per case; 10 cases.
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(run_dir.join("manifest.json")).unwrap())
             .unwrap();
+    assert_eq!(manifest["schema_version"], "3");
     assert_eq!(manifest["label"], "scripted-opt");
     assert_eq!(manifest["repetition"], 1);
     assert_eq!(manifest["case_ids"].as_array().unwrap().len(), 10);
+    assert_eq!(manifest["case_policies"].as_object().unwrap().len(), 10);
+    for policy in manifest["case_policies"].as_object().unwrap().values() {
+        assert!(policy["split"].is_string());
+        assert!(policy["must_pass"].is_boolean());
+        assert!(policy["weight"].is_number());
+        assert!(policy["tags"].is_array());
+    }
+}
+
+fn walk_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    files
 }
 
 #[test]
@@ -290,8 +379,11 @@ fn compare_eligible_path_with_identical_scripted_runs() {
         );
     }
 
-    // Patch results so gates can pass: raise candidate overall by +5, keep tags/tokens/latency.
+    // Patch the underlying attempt evidence so fixed aggregation authentically
+    // yields a +10 candidate improvement while keeping tokens/latency stable.
     patch_results_for_eligibility(runs.path(), "cmp-base", "cmp-cand");
+    let before_baseline = snapshot_tree(&runs.path().join("cmp-base"));
+    let before_candidate = snapshot_tree(&runs.path().join("cmp-cand"));
 
     let out = bin()
         .args([
@@ -306,44 +398,39 @@ fn compare_eligible_path_with_identical_scripted_runs() {
         ])
         .output()
         .unwrap();
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    // Eligibility depends on must-pass + scores from graders; scripted may not
-    // pass graders. Assert report was written and status is one of the known set.
     assert!(
-        runs.path().join("_compare").exists()
-            || stdout.contains("compare status")
-            || !stderr.is_empty(),
-        "stdout={stdout}\nstderr={stderr}"
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
     );
     let compare_files: Vec<_> = std::fs::read_dir(runs.path().join("_compare"))
         .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).collect())
         .unwrap_or_default();
-    if !compare_files.is_empty() {
-        let json = compare_files
-            .iter()
-            .find(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
-            .expect("json report");
-        let report: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(json).unwrap()).unwrap();
-        let status = report["status"].as_str().unwrap_or("");
-        assert!(
-            [
-                "eligible_for_review",
-                "not_eligible",
-                "invalid_baseline",
-                "incomparable"
-            ]
-            .contains(&status),
-            "status={status}"
-        );
-        // Never auto-edit harness.
-        assert!(package_root().join("src/harness.rs").is_file());
-    }
+    let json = compare_files
+        .iter()
+        .find(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+        .expect("json report");
+    let markdown = compare_files
+        .iter()
+        .find(|p| p.extension().and_then(|e| e.to_str()) == Some("md"))
+        .expect("markdown report");
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(json).unwrap()).unwrap();
+    assert_eq!(report["status"], "eligible_for_review");
+    assert!(std::fs::read_to_string(markdown)
+        .unwrap()
+        .contains("**status**: `eligible_for_review`"));
+    assert_eq!(
+        snapshot_tree(&runs.path().join("cmp-base")),
+        before_baseline
+    );
+    assert_eq!(
+        snapshot_tree(&runs.path().join("cmp-cand")),
+        before_candidate
+    );
 }
 
 fn patch_results_for_eligibility(runs_root: &Path, base: &str, cand: &str) {
-    // Best-effort: if results exist, bump candidate overall when present.
     for label in [base, cand] {
         let path = runs_root.join(label).join("results.json");
         if !path.is_file() {
@@ -351,15 +438,61 @@ fn patch_results_for_eligibility(runs_root: &Path, base: &str, cand: &str) {
         }
         let mut v: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        if label == cand {
-            if let Some(o) = v.get("overall").and_then(|x| x.as_f64()) {
-                v["overall"] = serde_json::json!(o + 10.0);
-            } else {
-                v["overall"] = serde_json::json!(80.0);
-            }
-        } else if v.get("overall").and_then(|x| x.as_f64()).is_none() {
-            v["overall"] = serde_json::json!(70.0);
+        let score = if label == cand { 80.0 } else { 70.0 };
+        v["all_completed"] = serde_json::json!(true);
+        v["any_inconclusive"] = serde_json::json!(false);
+        v["any_resource_incomplete"] = serde_json::json!(false);
+        for tag in [
+            "tool_selection",
+            "tool_chaining",
+            "modality_coverage",
+            "conflict_reconciliation",
+            "report_structure",
+            "citation_quality",
+            "followup_grounding",
+        ] {
+            v["per_tag"][tag] = serde_json::json!(score);
         }
+        if let Some(cases) = v.get_mut("cases").and_then(serde_json::Value::as_array_mut) {
+            for case in cases {
+                case["passed"] = serde_json::json!(true);
+                case["score"] = serde_json::json!(score);
+                if let Some(attempts) = case
+                    .get_mut("attempts")
+                    .and_then(serde_json::Value::as_array_mut)
+                {
+                    for attempt in attempts {
+                        attempt["status"] = serde_json::json!("completed");
+                        attempt["grader_status"] = serde_json::json!("completed");
+                        attempt["passed"] = serde_json::json!(true);
+                        attempt["score"] = serde_json::json!(score);
+                        attempt["resource_coverage"] = serde_json::json!("complete");
+                    }
+                }
+            }
+        }
+        v["overall"] = serde_json::json!(score);
         std::fs::write(path, serde_json::to_vec_pretty(&v).unwrap()).unwrap();
+    }
+}
+
+fn snapshot_tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut files = BTreeMap::new();
+    snapshot_tree_into(root, root, &mut files);
+    files
+}
+
+fn snapshot_tree_into(root: &Path, directory: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
+    for entry in std::fs::read_dir(directory).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if entry.file_type().unwrap().is_dir() {
+            snapshot_tree_into(root, &path, files);
+        } else {
+            files.insert(
+                path.strip_prefix(root).unwrap().to_path_buf(),
+                std::fs::read(path).unwrap(),
+            );
+        }
     }
 }

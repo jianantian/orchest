@@ -13,7 +13,9 @@ pub mod artifact;
 pub mod case;
 pub mod cli;
 pub mod compare;
+pub mod credential;
 pub mod effective_config;
+pub mod evidence;
 pub mod grader;
 pub mod resource;
 pub mod runner;
@@ -26,8 +28,8 @@ pub use artifact::{
     default_runs_dir, fixture_revision, preflight_dirty_paths, require_record_sensitive,
     write_attempt_artifacts, write_effective_config_snapshot, write_harness_snapshot,
     write_manifest, ArtifactError, AttemptRecord, AttemptStatus, GitInfo, HarnessSnapshot,
-    HarnessSurface, RunManifest, ScoresPlaceholder, SnapshotRef, StoreCleanupRecord,
-    ATTEMPT_SCHEMA_VERSION, MANIFEST_SCHEMA_VERSION, RUNS_DIR_REL,
+    HarnessSurface, ManifestCasePolicy, RunManifest, ScoresPlaceholder, SnapshotRef,
+    StoreCleanupRecord, ATTEMPT_SCHEMA_VERSION, MANIFEST_SCHEMA_VERSION, RUNS_DIR_REL,
 };
 pub use case::{
     load_corpus, load_session_seed, BehaviorTag, CaseCorpus, CaseLoadError, EvalCase, EvalSplit,
@@ -37,6 +39,10 @@ pub use effective_config::{
     fingerprint_registry, surface_id_for_tool, AgentRoleSnapshot, CapabilityRoute,
     EffectiveConfigInput, EffectiveConfigSnapshot, SessionPersistenceMode, ToolFingerprint,
     EFFECTIVE_CONFIG_SCHEMA_VERSION,
+};
+pub use evidence::{
+    export_evidence_bundle, verify_evidence_bundle, verify_evidence_file, write_evidence_bundle,
+    EvidenceBundle, EvidenceError, VerifiedEvidence, EVIDENCE_SCHEMA_VERSION,
 };
 pub use grader::{
     aggregate_attempt, aggregate_case, aggregate_split, aggregate_tag, grade_attempt,

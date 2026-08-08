@@ -75,9 +75,13 @@ Hard rules:\n\
   002-support-ticket-summary.md). Name both sources; never pick one silently.\n\
 - Tempo pricing is TBD — never invent a price.\n\
 - Interview quotes must come from the audio transcript, cited as interview.wav.\n\
+- When chart.png is available, preserve the full referral Q1-Q3 sequence 38%, 40%, and 42%;\n\
+  do not omit intermediate values.\n\
 - The Sources section must list concrete fixture basenames that exist in the materials\n\
   directory (e.g. 001-retention-dashboard-notes.md, 002-support-ticket-summary.md,\n\
   003-competitor-scan.md, chart.png, interview.wav). Do not invent paths.\n\
+- Every fixture basename mentioned anywhere in the report body must also appear as its own\n\
+  entry in Sources.\n\
 - Prefer one focused search → read chain over many redundant searches.";
 
 /// Reviewer sub-agent system prompt.
@@ -160,5 +164,13 @@ mod tests {
         for id in SurfaceId::ALL {
             assert!(!text_for(id).is_empty(), "{}", id.as_str());
         }
+    }
+
+    #[test]
+    fn baseline_prompt_requires_complete_source_and_chart_evidence() {
+        assert!(MAIN_SYSTEM_PROMPT.contains(
+            "Every fixture basename mentioned anywhere in the report body must also appear"
+        ));
+        assert!(MAIN_SYSTEM_PROMPT.contains("38%, 40%, and 42%"));
     }
 }

@@ -2,106 +2,19 @@
 //! separate from tool implementations (`tools.rs`, issue 003) and media
 //! implementations (`media.rs`, issue 005 for the real gateways).
 //!
-//! Eval runner uses [`run_with_model`] / [`resume_with_model`] so tests can
-//! inject a scripted `ModelAdapter` without duplicating the product pipeline.
+//! Eval and product execution both consume typed preparation from `execution`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use orchest::events::RuntimeEvent;
 use orchest::model::ModelAdapter;
-use orchest::run::{AgentConfig, AgentRun, EventReceiver, RunHandle, RunInput};
-use orchest::session::{SessionSnapshot, SessionStore, SqliteSessionStore};
-use orchest::tool::agent_as_tool::ContextMode;
-use orchest::tool::registry::ToolRegistry;
-use orchest::tool::ToolError;
+use orchest::run::{AgentRun, EventReceiver, RunHandle};
+use orchest::session::{SessionSnapshot, SessionStore};
 
-use crate::harness;
-use crate::media::{self, DescribeImageTool, SynthesizeBriefTool, TranscribeAudioTool};
-use crate::tools::{ReadFixtureTool, SearchFixturesTool, WriteReportTool};
+use crate::execution::{self, PreparedResume, PreparedRun, ResolvedExecutionEnvironment};
 
 pub type DemoError = Box<dyn std::error::Error + Send + Sync>;
-
-/// If set (along with `_MODEL` and `_API_KEY`), `run` constructs a real ASR
-/// provider via the registry instead of `FakeAsr`. Manual/env-var-gated per
-/// the PRD - not exercised by any automated test in this repo.
-const LIVE_ASR_PROVIDER_ENV: &str = "BRIEFING_DESK_ASR_PROVIDER";
-const LIVE_ASR_MODEL_ENV: &str = "BRIEFING_DESK_ASR_MODEL";
-const LIVE_ASR_API_KEY_ENV: &str = "BRIEFING_DESK_ASR_API_KEY";
-
-/// Same idea as the `LIVE_ASR_*` triplet, for TTS.
-const LIVE_TTS_PROVIDER_ENV: &str = "BRIEFING_DESK_TTS_PROVIDER";
-const LIVE_TTS_MODEL_ENV: &str = "BRIEFING_DESK_TTS_MODEL";
-const LIVE_TTS_API_KEY_ENV: &str = "BRIEFING_DESK_TTS_API_KEY";
-
-/// Chat model configuration. Set `BRIEFING_DESK_CHAT_MODEL` to a
-/// `provider/model` string (e.g. `anthropic/claude-sonnet-4-6`,
-/// `deepseek/deepseek-v4-flash`). The API key goes in `_API_KEY`; if unset,
-/// the provider factory's default key env is used (e.g. `ANTHROPIC_API_KEY`
-/// for the anthropic provider). `_API_URL` overrides the endpoint;
-/// `_MAX_TOKENS` overrides the output token ceiling.
-const LIVE_CHAT_MODEL_ENV: &str = "BRIEFING_DESK_CHAT_MODEL";
-const LIVE_CHAT_API_KEY_ENV: &str = "BRIEFING_DESK_CHAT_API_KEY";
-const LIVE_CHAT_API_URL_ENV: &str = "BRIEFING_DESK_CHAT_API_URL";
-const LIVE_CHAT_MAX_TOKENS_ENV: &str = "BRIEFING_DESK_CHAT_MAX_TOKENS";
-
-fn live_asr_env() -> Option<(String, String, String)> {
-    Some((
-        std::env::var(LIVE_ASR_PROVIDER_ENV).ok()?,
-        std::env::var(LIVE_ASR_MODEL_ENV).ok()?,
-        std::env::var(LIVE_ASR_API_KEY_ENV).ok()?,
-    ))
-}
-
-fn live_tts_env() -> Option<(String, String, String)> {
-    Some((
-        std::env::var(LIVE_TTS_PROVIDER_ENV).ok()?,
-        std::env::var(LIVE_TTS_MODEL_ENV).ok()?,
-        std::env::var(LIVE_TTS_API_KEY_ENV).ok()?,
-    ))
-}
-
-/// Constructs the chat model adapter from `BRIEFING_DESK_CHAT_*` env vars.
-/// The same adapter is reused for the main agent, vision (`describe_image`),
-/// and the `review_report` sub-agent.
-fn chat_model() -> Result<Arc<dyn ModelAdapter>, DemoError> {
-    let model = std::env::var(LIVE_CHAT_MODEL_ENV).map_err(|_| {
-        format!(
-            "no chat model configured: set {LIVE_CHAT_MODEL_ENV} to a provider/model string \
-                 (e.g. anthropic/claude-sonnet-4-6). See .env.example for all \
-                 BRIEFING_DESK_CHAT_* variables."
-        )
-    })?;
-    let config = orchest_provider::ProviderRuntimeConfig {
-        model,
-        api_key: std::env::var(LIVE_CHAT_API_KEY_ENV).ok(),
-        api_key_env: None,
-        api_url: std::env::var(LIVE_CHAT_API_URL_ENV).ok(),
-        max_tokens: std::env::var(LIVE_CHAT_MAX_TOKENS_ENV)
-            .ok()
-            .and_then(|s| s.trim().parse::<u32>().ok()),
-    };
-    let adapter = orchest_provider::create_adapter_from_config(config)
-        .map_err(|e| format!("constructing chat model: {e}"))?;
-    Ok(Arc::from(adapter))
-}
-
-/// Sessions persist under `.briefing-desk-sessions/<session-id>.sqlite3`,
-/// relative to the current working directory, so `run --session X` and a
-/// later `resume --session X` (a separate process) agree on the same file.
-fn session_db_path(session_id: &str) -> PathBuf {
-    PathBuf::from(".briefing-desk-sessions").join(format!("{session_id}.sqlite3"))
-}
-
-fn open_session_store(session_id: &str) -> Result<SqliteSessionStore, DemoError> {
-    let path = session_db_path(session_id);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("creating {}: {e}", parent.display()))?;
-    }
-    SqliteSessionStore::open(&path)
-        .map_err(|e| format!("opening session store {}: {e}", path.display()).into())
-}
 
 pub struct RunArgs {
     pub materials: PathBuf,
@@ -119,12 +32,9 @@ pub struct ResumeArgs {
 }
 
 pub async fn run(args: RunArgs) -> Result<(), DemoError> {
-    let model = chat_model()?;
-    println!(
-        "[model] {}",
-        std::env::var(LIVE_CHAT_MODEL_ENV).unwrap_or_default()
-    );
-    let outcome = run_with_model(args, model, |_| {}).await?;
+    let env = ResolvedExecutionEnvironment::from_env()?;
+    println!("[model] {}/{}", env.chat.provider, env.chat.model);
+    let outcome = run_with_environment(args, env, |_| {}).await?;
     println!("[done] final message: {}", outcome.final_text);
     if outcome.output_path.exists() {
         println!("[report] written to {}", outcome.output_path.display());
@@ -145,108 +55,38 @@ pub async fn run(args: RunArgs) -> Result<(), DemoError> {
     Ok(())
 }
 
-/// Product pipeline with an injected model and optional event observer.
-///
-/// Used by the eval runner (scripted or live model). Ordinary CLI `run`
-/// constructs the model from env and passes a no-op observer.
-pub async fn run_with_model<F>(
+pub async fn run_with_environment<F>(
     args: RunArgs,
+    env: ResolvedExecutionEnvironment,
+    observer: F,
+) -> Result<CapturedRunOutcome, DemoError>
+where
+    F: FnMut(&RuntimeEvent),
+{
+    let model = Arc::clone(&env.chat.adapter);
+    let prepared = execution::prepare_run(args, env)?;
+    execute_prepared_run(prepared, model, observer).await
+}
+
+async fn execute_prepared_run<F>(
+    prepared: PreparedRun,
     model: Arc<dyn ModelAdapter>,
     observer: F,
 ) -> Result<CapturedRunOutcome, DemoError>
 where
     F: FnMut(&RuntimeEvent),
 {
-    let corpus = media::discover(&args.materials)?;
-    println!(
-        "[materials] {} text, {} image, {} audio source(s) in {}",
-        corpus.text.len(),
-        corpus.images.len(),
-        corpus.audio.len(),
-        args.materials.display()
-    );
-
-    let text_entries: Vec<(PathBuf, String)> = corpus
-        .text
-        .iter()
-        .map(|path| {
-            let content = std::fs::read_to_string(path)
-                .map_err(|e| format!("reading {}: {e}", path.display()))?;
-            Ok::<_, DemoError>((path.clone(), content))
-        })
-        .collect::<Result<_, _>>()?;
-
-    let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(SearchFixturesTool::new(text_entries)))?;
-    registry.register(Arc::new(ReadFixtureTool::new(corpus.text.clone())))?;
-    registry.register(reviewer_tool(&model)?)?;
-
-    if !corpus.audio.is_empty() {
-        let asr = match live_asr_env() {
-            Some((provider, model_name, key)) => {
-                println!("[asr] live provider={provider} model={model_name}");
-                media::live_asr(&provider, &model_name, &key)?
-            }
-            None => Box::new(media::fake_asr()),
-        };
-        registry.register(Arc::new(TranscribeAudioTool::new(
-            corpus.audio.clone(),
-            asr,
-        )))?;
-    }
-    if !corpus.images.is_empty() {
-        registry.register(Arc::new(DescribeImageTool::new(
-            corpus.images.clone(),
-            Arc::clone(&model),
-        )))?;
-    }
-
-    registry.register(Arc::new(WriteReportTool::new(args.output.clone())))?;
-
-    if !args.no_tts {
-        let tts = match live_tts_env() {
-            Some((provider, model_name, key)) => {
-                println!("[tts] live provider={provider} model={model_name}");
-                media::live_tts(&provider, &model_name, &key)?
-            }
-            None => Box::new(media::fake_tts()),
-        };
-        let audio_path = args.output.with_extension("wav");
-        registry.register(Arc::new(SynthesizeBriefTool::new(audio_path, tts)))?;
-    }
-
-    let mut builder = AgentConfig::builder("briefing-agent", "briefing-desk/run")
-        .system_prompt(harness::MAIN_SYSTEM_PROMPT);
-
-    if let Some(id) = &args.session {
-        let store: Arc<dyn SessionStore> = Arc::new(open_session_store(id)?);
-        builder = builder.session_store(store, id.clone());
-        println!("[session] persisting to {}", session_db_path(id).display());
-    } else {
-        println!("[session] no --session given; this run will not be resumable");
-    }
-
-    let config = builder
-        .max_steps(10)
-        .build()
-        .map_err(|e| format!("building agent config: {e}"))?;
-
-    let (handle, rx) = AgentRun::start(
-        config,
-        RunInput::text(args.question.clone()),
-        model,
-        registry,
-    );
+    let (handle, rx) = AgentRun::start(prepared.config, prepared.input, model, prepared.registry);
     let final_text = drain_events(handle, rx, observer).await?;
     Ok(CapturedRunOutcome {
         final_text,
-        output_path: args.output,
-        no_tts: args.no_tts,
+        output_path: prepared.output,
+        no_tts: prepared.no_tts,
     })
 }
 
 pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
-    let store = open_session_store(&args.session)?;
+    let store = execution::open_session_store(&args.session)?;
     let mut snapshot = store
         .load(&args.session)
         .await
@@ -255,62 +95,61 @@ pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
             format!(
                 "no persisted session found for '{}' at {}; run with --session {} first",
                 args.session,
-                session_db_path(&args.session).display(),
+                execution::session_db_path(&args.session).display(),
                 args.session
             )
         })?;
 
-    let model = chat_model()?;
-    println!(
-        "[model] {}",
-        std::env::var(LIVE_CHAT_MODEL_ENV).unwrap_or_default()
-    );
+    let env = ResolvedExecutionEnvironment::from_env()?;
+    println!("[model] {}/{}", env.chat.provider, env.chat.model);
 
     let store: Arc<dyn SessionStore> = Arc::new(store);
     snapshot.active_config = snapshot
         .active_config
         .with_session_store(Arc::clone(&store), args.session.clone());
 
-    let outcome = resume_with_model(snapshot, args, model, |_| {}).await?;
+    let outcome = resume_with_environment(snapshot, args, env, |_| {}).await?;
     println!("[done] follow-up answer: {}", outcome.final_text);
     Ok(())
 }
 
-/// Resume path with injected model + observer (eval follow-up attempts).
-pub async fn resume_with_model<F>(
+pub async fn resume_with_environment<F>(
     snapshot: SessionSnapshot,
     args: ResumeArgs,
+    env: ResolvedExecutionEnvironment,
+    observer: F,
+) -> Result<CapturedRunOutcome, DemoError>
+where
+    F: FnMut(&RuntimeEvent),
+{
+    let model = Arc::clone(&env.chat.adapter);
+    let prepared = execution::prepare_resume(snapshot, args, env)?;
+    execute_prepared_resume(prepared, model, observer).await
+}
+
+async fn execute_prepared_resume<F>(
+    mut prepared: PreparedResume,
     model: Arc<dyn ModelAdapter>,
     observer: F,
 ) -> Result<CapturedRunOutcome, DemoError>
 where
     F: FnMut(&RuntimeEvent),
 {
-    let (handle, rx) = AgentRun::resume_with_input(
-        snapshot,
-        RunInput::text(args.question.clone()),
-        model,
-        ToolRegistry::new(),
-    )?;
+    prepared.snapshot.active_config = prepared.config;
+    let (handle, rx) =
+        AgentRun::resume_with_input(prepared.snapshot, prepared.input, model, prepared.registry)?;
     let answer = drain_events(handle, rx, observer).await?;
 
-    std::fs::write(&args.output, &answer)
-        .map_err(|e| format!("writing {}: {e}", args.output.display()))?;
+    std::fs::write(&prepared.output, &answer)
+        .map_err(|e| format!("writing {}: {e}", prepared.output.display()))?;
     println!(
         "[report] follow-up answer written to {}",
-        args.output.display()
+        prepared.output.display()
     );
 
-    if args.no_tts {
+    if prepared.no_tts {
         println!("[synthesize] skipped (--no-tts)");
-    } else {
-        let tts: Box<dyn orchest_protocol::Tts> = match live_tts_env() {
-            Some((provider, model_name, key)) => {
-                println!("[tts] live provider={provider} model={model_name}");
-                media::live_tts(&provider, &model_name, &key)?
-            }
-            None => Box::new(media::fake_tts()),
-        };
+    } else if let Some(tts) = prepared.tts.take() {
         let result = tts
             .synthesize(orchest_protocol::SynthesizeRequest {
                 text: answer.clone(),
@@ -320,7 +159,7 @@ where
             })
             .await
             .map_err(|e| format!("TTS synthesis failed: {e}"))?;
-        let audio_path = args.output.with_extension("wav");
+        let audio_path = prepared.output.with_extension("wav");
         std::fs::write(&audio_path, &result.audio[..])
             .map_err(|e| format!("writing {}: {e}", audio_path.display()))?;
         println!(
@@ -331,8 +170,8 @@ where
 
     Ok(CapturedRunOutcome {
         final_text: answer,
-        output_path: args.output,
-        no_tts: args.no_tts,
+        output_path: prepared.output,
+        no_tts: prepared.no_tts,
     })
 }
 
@@ -344,55 +183,8 @@ pub struct CapturedRunOutcome {
     pub no_tts: bool,
 }
 
-/// Build the same main-agent config the product run uses (for seed materialize).
-pub fn main_agent_config() -> Result<AgentConfig, DemoError> {
-    AgentConfig::builder("briefing-agent", "briefing-desk/run")
-        .system_prompt(harness::MAIN_SYSTEM_PROMPT)
-        .max_steps(10)
-        .build()
-        .map_err(|e| format!("building agent config: {e}").into())
-}
-
-/// Expose chat model construction for the eval runner's live path.
-pub fn live_chat_model() -> Result<Arc<dyn ModelAdapter>, DemoError> {
-    chat_model()
-}
-
 /// Env var name for the required live chat model (eval refuses if unset).
-pub const CHAT_MODEL_ENV: &str = LIVE_CHAT_MODEL_ENV;
-
-/// Wraps a lightweight reviewer sub-agent (Agent-as-Tool, `ContextMode::Fresh`
-/// so it never sees the parent's conversation) as a `review_report` tool the
-/// parent model calls before `write_report`.
-fn reviewer_tool(model: &Arc<dyn ModelAdapter>) -> Result<Arc<dyn orchest::tool::Tool>, DemoError> {
-    let reviewer_config = AgentConfig::builder("briefing-reviewer", "briefing-desk/reviewer")
-        .system_prompt(harness::REVIEWER_SYSTEM_PROMPT)
-        .max_steps(2)
-        .build()
-        .map_err(|e| format!("building reviewer config: {e}"))?;
-
-    let tool = reviewer_config
-        .as_tool(
-            "review_report",
-            harness::REVIEW_REPORT_TOOL_DESCRIPTION,
-        )
-        .model(Arc::clone(model))
-        .registry(ToolRegistry::new())
-        .context_mode(ContextMode::Fresh)
-        .input_mapper(|input: serde_json::Value| {
-            input
-                .get("draft")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-                .ok_or_else(|| ToolError::fatal("missing required parameter 'draft'"))
-        })
-        .output_extractor(|details: serde_json::Value| {
-            serde_json::json!({"output": details.get("output").cloned().unwrap_or(details)})
-        })
-        .build()
-        .map_err(|e| format!("building reviewer_tool: {e}"))?;
-    Ok(tool)
-}
+pub const CHAT_MODEL_ENV: &str = execution::CHAT_MODEL_ENV;
 
 /// Drives an already-started run's event stream to completion: renders
 /// model/tool/approval/sub-agent/run-completion events to stdout, auto-approves

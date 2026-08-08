@@ -10,6 +10,7 @@ use orchest::budget::BudgetConfig;
 use orchest::run::{
     ApprovalMode, BackoffStrategy, RetryPolicy, RuntimeConfig, SupervisionStrategy,
 };
+use orchest::tool::mcp::McpTransport;
 use orchest::tool::registry::ToolRegistry;
 use orchest::tool::{Approval, ToolMetadata, ToolSource};
 use serde::{Deserialize, Serialize};
@@ -19,9 +20,13 @@ use sha2::{Digest, Sha256};
 use crate::harness::SurfaceId;
 
 use super::artifact::ArtifactError;
+use super::credential::{
+    is_sensitive_configuration_name, text_has_credentials, url_has_credentials,
+    value_has_credentials,
+};
 
 /// Effective-config schema version.
-pub const EFFECTIVE_CONFIG_SCHEMA_VERSION: &str = "1";
+pub const EFFECTIVE_CONFIG_SCHEMA_VERSION: &str = "3";
 
 /// How a media capability is routed for this run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +34,12 @@ pub const EFFECTIVE_CONFIG_SCHEMA_VERSION: &str = "1";
 pub enum CapabilityRoute {
     Disabled,
     Fake,
+    Injected {
+        provider: String,
+        model: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        endpoint: Option<String>,
+    },
     Live {
         provider: String,
         model: String,
@@ -74,13 +85,18 @@ pub struct AgentRoleSnapshot {
     pub role: String,
     pub model_provider: String,
     pub model_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
     /// Non-secret request options only.
     pub request_options: Value,
     pub max_steps: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_tools: Option<Vec<String>>,
     pub tool_search_enabled: bool,
-    pub compaction_enabled: bool,
+    pub compaction: Option<CompactionSnapshot>,
+    pub mcp_servers: Vec<McpServerSnapshot>,
+    pub webhook_enabled: bool,
+    pub code_execution: CodeExecutionSnapshot,
     pub run_depth: u32,
     pub repeated_failure_threshold: usize,
     pub supervision: String,
@@ -93,6 +109,38 @@ pub struct AgentRoleSnapshot {
     pub hooks_label: String,
     /// Stable label for session store attachment.
     pub session_store_label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompactionSnapshot {
+    pub threshold: f32,
+    pub recent_messages: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpServerSnapshot {
+    pub server_id: String,
+    pub transport: McpTransportSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum McpTransportSnapshot {
+    Stdio {
+        command: String,
+        args: Vec<String>,
+    },
+    StreamableHttp {
+        endpoint: String,
+        authentication: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeExecutionSnapshot {
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor_label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -125,8 +173,23 @@ pub struct EffectiveConfigSnapshot {
     pub tts: CapabilityRoute,
     pub vision: CapabilityRoute,
     pub session_mode: SessionPersistenceMode,
+    /// Distinct execution profiles selected by stable case id.
+    pub case_profiles: Vec<CaseProfileSnapshot>,
     /// Resolved non-secret environment-driven options (values, not raw secrets).
     pub env_options: BTreeMap<String, Value>,
+}
+
+/// Stable, credential-free profile produced by product preparation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CaseProfileSnapshot {
+    pub case_ids: Vec<String>,
+    pub main: AgentRoleSnapshot,
+    pub reviewer: AgentRoleSnapshot,
+    pub tools: Vec<ToolFingerprint>,
+    pub asr: CapabilityRoute,
+    pub tts: CapabilityRoute,
+    pub vision: CapabilityRoute,
+    pub session_mode: SessionPersistenceMode,
 }
 
 /// Inputs used to build an effective config snapshot without constructing live adapters.
@@ -141,6 +204,8 @@ pub struct EffectiveConfigInput {
     pub main_supervision: SupervisionStrategy,
     pub main_hooks_label: String,
     pub main_session_store_label: String,
+    /// Required when an enabled code-execution runtime has an executor.
+    pub main_executor_stable_label: Option<String>,
     pub reviewer_model_provider: String,
     pub reviewer_model_name: String,
     pub reviewer_request_options: Value,
@@ -163,6 +228,10 @@ impl EffectiveConfigSnapshot {
         preflight_env_options(&input.env_options)?;
         preflight_request_options(&input.main_request_options)?;
         preflight_request_options(&input.reviewer_request_options)?;
+        let main_runtime = runtime_snapshot(
+            &input.main_runtime,
+            input.main_executor_stable_label.as_deref(),
+        )?;
 
         let snap = Self {
             schema_version: EFFECTIVE_CONFIG_SCHEMA_VERSION.to_string(),
@@ -170,13 +239,17 @@ impl EffectiveConfigSnapshot {
                 role: "main".into(),
                 model_provider: input.main_model_provider,
                 model_name: input.main_model_name,
+                endpoint: None,
                 request_options: sanitize_request_options(&input.main_request_options),
-                max_steps: input.main_runtime.max_steps,
-                allowed_tools: input.main_runtime.allowed_tools.clone(),
-                tool_search_enabled: input.main_runtime.tool_search_enabled,
-                compaction_enabled: input.main_runtime.compaction.is_some(),
-                run_depth: input.main_runtime.run_depth,
-                repeated_failure_threshold: input.main_runtime.repeated_failure.threshold,
+                max_steps: main_runtime.max_steps,
+                allowed_tools: main_runtime.allowed_tools,
+                tool_search_enabled: main_runtime.tool_search_enabled,
+                compaction: main_runtime.compaction,
+                mcp_servers: main_runtime.mcp_servers,
+                webhook_enabled: main_runtime.webhook_enabled,
+                code_execution: main_runtime.code_execution,
+                run_depth: main_runtime.run_depth,
+                repeated_failure_threshold: main_runtime.repeated_failure_threshold,
                 supervision: supervision_label(&input.main_supervision),
                 approval_mode: approval_mode_label(input.main_runtime.approval_mode),
                 custom_approval: input.main_runtime.custom_approval_fn.is_some(),
@@ -190,11 +263,18 @@ impl EffectiveConfigSnapshot {
                 role: "reviewer".into(),
                 model_provider: input.reviewer_model_provider,
                 model_name: input.reviewer_model_name,
+                endpoint: None,
                 request_options: sanitize_request_options(&input.reviewer_request_options),
                 max_steps: input.reviewer_max_steps,
                 allowed_tools: None,
                 tool_search_enabled: false,
-                compaction_enabled: false,
+                compaction: None,
+                mcp_servers: Vec::new(),
+                webhook_enabled: false,
+                code_execution: CodeExecutionSnapshot {
+                    enabled: false,
+                    executor_label: None,
+                },
                 run_depth: 0,
                 repeated_failure_threshold: 0,
                 supervision: supervision_label(&input.reviewer_supervision),
@@ -215,8 +295,21 @@ impl EffectiveConfigSnapshot {
             tts: input.tts,
             vision: input.vision,
             session_mode: input.session_mode,
+            case_profiles: Vec::new(),
             env_options: input.env_options,
         };
+
+        let mut snap = snap;
+        snap.case_profiles.push(CaseProfileSnapshot {
+            case_ids: Vec::new(),
+            main: snap.main.clone(),
+            reviewer: snap.reviewer.clone(),
+            tools: snap.tools.clone(),
+            asr: snap.asr.clone(),
+            tts: snap.tts.clone(),
+            vision: snap.vision.clone(),
+            session_mode: snap.session_mode.clone(),
+        });
 
         // Secret-looking values are rejected in preflight_* before assembly.
         // Still hard-fail on common raw key material markers if any slipped through.
@@ -228,6 +321,60 @@ impl EffectiveConfigSnapshot {
             ));
         }
         Ok(snap)
+    }
+
+    /// Build one snapshot from the exact profiles produced by preparation.
+    pub fn from_profiles(
+        mut profiles: Vec<CaseProfileSnapshot>,
+        env_options: BTreeMap<String, Value>,
+    ) -> Result<Self, ArtifactError> {
+        if profiles.is_empty() {
+            return Err(ArtifactError::preflight(
+                "effective config requires at least one case profile",
+            ));
+        }
+        for profile in &mut profiles {
+            profile.case_ids.sort();
+            profile.case_ids.dedup();
+            profile.tools.sort_by(|a, b| a.name.cmp(&b.name));
+            preflight_capability_routes(&[&profile.asr, &profile.tts, &profile.vision])?;
+            preflight_request_options(&profile.main.request_options)?;
+            preflight_request_options(&profile.reviewer.request_options)?;
+            preflight_endpoint(profile.main.endpoint.as_deref())?;
+            preflight_endpoint(profile.reviewer.endpoint.as_deref())?;
+            if profile.main.hooks_label.trim().is_empty()
+                || profile.main.session_store_label.trim().is_empty()
+                || profile.reviewer.hooks_label.trim().is_empty()
+                || profile.reviewer.session_store_label.trim().is_empty()
+            {
+                return Err(ArtifactError::preflight(
+                    "enabled component is missing a stable hooks/store label",
+                ));
+            }
+        }
+        profiles.sort_by(|a, b| a.case_ids.cmp(&b.case_ids));
+        preflight_env_options(&env_options)?;
+        let representative = profiles[0].clone();
+        let snapshot = Self {
+            schema_version: EFFECTIVE_CONFIG_SCHEMA_VERSION.to_string(),
+            main: representative.main,
+            reviewer: representative.reviewer,
+            tools: representative.tools,
+            asr: representative.asr,
+            tts: representative.tts,
+            vision: representative.vision,
+            session_mode: representative.session_mode,
+            case_profiles: profiles,
+            env_options,
+        };
+        let bytes = snapshot.normalize_bytes()?;
+        let text = String::from_utf8_lossy(&bytes);
+        if text.contains("sk-live") || text.contains("sk-ant-") {
+            return Err(ArtifactError::preflight(
+                "effective config snapshot would contain secret material",
+            ));
+        }
+        Ok(snapshot)
     }
 
     /// Canonical normalized JSON bytes (sorted keys, trailing newline).
@@ -281,6 +428,53 @@ pub fn fingerprint_registry(
     Ok(out)
 }
 
+/// Convert an actual agent config into its stable, non-secret role snapshot.
+#[allow(clippy::too_many_arguments)]
+pub fn role_snapshot_from_config(
+    role: &str,
+    config: &orchest::run::AgentConfig,
+    provider: &str,
+    model: &str,
+    request_options: Value,
+    endpoint: Option<String>,
+    hooks_label: &str,
+    session_store_label: &str,
+    executor_stable_label: Option<&str>,
+) -> Result<AgentRoleSnapshot, ArtifactError> {
+    preflight_request_options(&request_options)?;
+    preflight_endpoint(endpoint.as_deref())?;
+    if hooks_label.trim().is_empty() || session_store_label.trim().is_empty() {
+        return Err(ArtifactError::preflight(
+            "enabled component is missing a stable hooks/store label",
+        ));
+    }
+    let runtime = runtime_snapshot(&config.runtime, executor_stable_label)?;
+    Ok(AgentRoleSnapshot {
+        role: role.into(),
+        model_provider: provider.into(),
+        model_name: model.into(),
+        endpoint,
+        request_options: sanitize_request_options(&request_options),
+        max_steps: runtime.max_steps,
+        allowed_tools: runtime.allowed_tools,
+        tool_search_enabled: runtime.tool_search_enabled,
+        compaction: runtime.compaction,
+        mcp_servers: runtime.mcp_servers,
+        webhook_enabled: runtime.webhook_enabled,
+        code_execution: runtime.code_execution,
+        run_depth: runtime.run_depth,
+        repeated_failure_threshold: runtime.repeated_failure_threshold,
+        supervision: supervision_label(&config.supervision_strategy),
+        approval_mode: approval_mode_label(config.runtime.approval_mode),
+        custom_approval: config.runtime.custom_approval_fn.is_some(),
+        tool_execution_policy: tool_policy_label(&config.runtime.tool_execution_policy),
+        budget: budget_limits(&config.budget),
+        retry: retry_snapshot(config.retry_policy.as_ref()),
+        hooks_label: hooks_label.into(),
+        session_store_label: session_store_label.into(),
+    })
+}
+
 /// Map known Briefing Desk tools to harness surface ids.
 pub fn surface_id_for_tool(tool_name: &str) -> Option<String> {
     let id = match tool_name {
@@ -318,6 +512,105 @@ fn schema_hash(schema: &Value) -> Result<String, ArtifactError> {
     let bytes = serde_json::to_vec(&normalized)
         .map_err(|e| ArtifactError::serialize(format!("schema hash: {e}")))?;
     Ok(hex_sha256(&bytes))
+}
+
+struct RuntimeSnapshot {
+    max_steps: u32,
+    allowed_tools: Option<Vec<String>>,
+    tool_search_enabled: bool,
+    compaction: Option<CompactionSnapshot>,
+    mcp_servers: Vec<McpServerSnapshot>,
+    webhook_enabled: bool,
+    code_execution: CodeExecutionSnapshot,
+    run_depth: u32,
+    repeated_failure_threshold: usize,
+}
+
+fn runtime_snapshot(
+    runtime: &RuntimeConfig,
+    executor_stable_label: Option<&str>,
+) -> Result<RuntimeSnapshot, ArtifactError> {
+    let mcp_servers = runtime
+        .mcp_servers
+        .iter()
+        .map(mcp_server_snapshot)
+        .collect::<Result<Vec<_>, _>>()?;
+    let executor_label =
+        if runtime.code_execution_enabled && runtime.code_execution_executor.is_some() {
+            Some(
+                executor_stable_label
+                    .filter(|label| !label.trim().is_empty())
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        ArtifactError::preflight(
+                            "enabled code executor is missing a stable executor label",
+                        )
+                    })?,
+            )
+        } else {
+            None
+        };
+    Ok(RuntimeSnapshot {
+        max_steps: runtime.max_steps,
+        allowed_tools: runtime.allowed_tools.clone(),
+        tool_search_enabled: runtime.tool_search_enabled,
+        compaction: runtime
+            .compaction
+            .as_ref()
+            .map(|config| CompactionSnapshot {
+                threshold: config.threshold,
+                recent_messages: config.recent_messages,
+            }),
+        mcp_servers,
+        webhook_enabled: runtime.webhook_enabled,
+        code_execution: CodeExecutionSnapshot {
+            enabled: runtime.code_execution_enabled,
+            executor_label,
+        },
+        run_depth: runtime.run_depth,
+        repeated_failure_threshold: runtime.repeated_failure.threshold,
+    })
+}
+
+fn mcp_server_snapshot(
+    server: &orchest::tool::mcp::McpServerConfig,
+) -> Result<McpServerSnapshot, ArtifactError> {
+    let transport = match &server.transport {
+        McpTransport::Stdio { command, args } => {
+            preflight_mcp_text("command", command)?;
+            for arg in args {
+                preflight_mcp_text("argument", arg)?;
+            }
+            McpTransportSnapshot::Stdio {
+                command: command.clone(),
+                args: args.clone(),
+            }
+        }
+        McpTransport::StreamableHttp { url, auth } => {
+            preflight_endpoint(Some(url))?;
+            McpTransportSnapshot::StreamableHttp {
+                endpoint: url.clone(),
+                authentication: if auth.is_some() {
+                    "bearer".into()
+                } else {
+                    "none".into()
+                },
+            }
+        }
+    };
+    Ok(McpServerSnapshot {
+        server_id: server.server_id.clone(),
+        transport,
+    })
+}
+
+fn preflight_mcp_text(kind: &str, value: &str) -> Result<(), ArtifactError> {
+    if text_has_credentials(value) {
+        return Err(ArtifactError::preflight(format!(
+            "MCP {kind} looks like secret material"
+        )));
+    }
+    Ok(())
 }
 
 fn budget_limits(b: &BudgetConfig) -> BudgetLimitsSnapshot {
@@ -421,7 +714,7 @@ fn sanitize_request_options(options: &Value) -> Value {
         Value::Object(map) => {
             let mut out = serde_json::Map::new();
             for (k, v) in map {
-                if super::trajectory::is_secret_key(k) {
+                if is_sensitive_configuration_name(k) {
                     continue;
                 }
                 out.insert(k.clone(), sanitize_request_options(v));
@@ -435,93 +728,51 @@ fn sanitize_request_options(options: &Value) -> Value {
 
 fn preflight_capability_routes(routes: &[&CapabilityRoute]) -> Result<(), ArtifactError> {
     for route in routes {
-        if let CapabilityRoute::Live {
-            endpoint: Some(url),
-            ..
-        } = route
-        {
-            if url_has_credentials(url) {
-                return Err(ArtifactError::preflight(format!(
-                    "capability endpoint must not include credentials: {url}"
-                )));
+        let endpoint = match route {
+            CapabilityRoute::Live { endpoint, .. } | CapabilityRoute::Injected { endpoint, .. } => {
+                endpoint.as_deref()
             }
+            CapabilityRoute::Disabled | CapabilityRoute::Fake => None,
+        };
+        if let Some(url) = endpoint {
+            preflight_endpoint(Some(url))?;
         }
+    }
+    Ok(())
+}
+
+fn preflight_endpoint(endpoint: Option<&str>) -> Result<(), ArtifactError> {
+    if endpoint.is_some_and(url_has_credentials) {
+        return Err(ArtifactError::preflight(
+            "capability endpoint must not include credentials",
+        ));
     }
     Ok(())
 }
 
 fn preflight_env_options(opts: &BTreeMap<String, Value>) -> Result<(), ArtifactError> {
     for (k, v) in opts {
-        if super::trajectory::is_secret_key(k) {
+        if is_sensitive_configuration_name(k) {
             return Err(ArtifactError::preflight(format!(
                 "secret env option '{k}' must not enter effective config"
             )));
         }
-        if let Value::String(s) = v {
-            if s.contains("://") && url_has_credentials(s) {
-                return Err(ArtifactError::preflight(format!(
-                    "env option '{k}' has credential-bearing URL"
-                )));
-            }
-            if looks_like_api_key_value(s) {
-                return Err(ArtifactError::preflight(format!(
-                    "env option '{k}' looks like a secret value"
-                )));
-            }
+        if value_has_credentials(v) {
+            return Err(ArtifactError::preflight(format!(
+                "env option '{k}' contains credential material"
+            )));
         }
     }
     Ok(())
 }
 
 fn preflight_request_options(options: &Value) -> Result<(), ArtifactError> {
-    match options {
-        Value::Object(map) => {
-            for (k, v) in map {
-                if super::trajectory::is_secret_key(k) {
-                    return Err(ArtifactError::preflight(format!(
-                        "request option '{k}' is secret and cannot be snapshotted"
-                    )));
-                }
-                preflight_request_options(v)?;
-            }
-            Ok(())
-        }
-        Value::Array(items) => {
-            for item in items {
-                preflight_request_options(item)?;
-            }
-            Ok(())
-        }
-        Value::String(s) if looks_like_api_key_value(s) => Err(ArtifactError::preflight(
-            "request options contain secret-looking string",
-        )),
-        _ => Ok(()),
+    if value_has_credentials(options) {
+        return Err(ArtifactError::preflight(
+            "request options contain credential material",
+        ));
     }
-}
-
-fn url_has_credentials(url: &str) -> bool {
-    // userinfo@ or query with key-like params
-    if let Some(after_scheme) = url.split("://").nth(1) {
-        let host_part = after_scheme.split('/').next().unwrap_or("");
-        if host_part.contains('@') {
-            return true;
-        }
-    }
-    let lower = url.to_ascii_lowercase();
-    lower.contains("api_key=")
-        || lower.contains("access_token=")
-        || lower.contains("token=")
-        || lower.contains("password=")
-}
-
-fn looks_like_api_key_value(s: &str) -> bool {
-    let t = s.trim();
-    t.starts_with("sk-")
-        || t.starts_with("sk-ant-")
-        || (t.len() >= 32
-            && t.chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
-            && (t.contains("sk") || t.starts_with("key"))
+    Ok(())
 }
 
 fn sort_value(value: Value) -> Value {
@@ -568,6 +819,7 @@ pub fn sample_input() -> EffectiveConfigInput {
         main_supervision: SupervisionStrategy::Stop,
         main_hooks_label: "none".into(),
         main_session_store_label: "none".into(),
+        main_executor_stable_label: None,
         reviewer_model_provider: "anthropic".into(),
         reviewer_model_name: "claude-sonnet".into(),
         reviewer_request_options: json!({}),
@@ -597,7 +849,624 @@ pub fn sample_input() -> EffectiveConfigInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{ResumeArgs, RunArgs};
+    use crate::eval::scripted_model::ScriptedModel;
+    use crate::execution::{
+        prepare_resume, prepare_run, ResolvedChatModel, ResolvedExecutionEnvironment,
+    };
+    use orchest::budget::BudgetUsage;
+    use orchest::run::{CompactionConfig, RunId};
+    use orchest::session::SessionSnapshot;
+    use orchest::skill::executor::BareSubprocessExecutor;
+    use orchest::tool::mcp::{McpAuth, McpServerConfig, McpTransport};
+    use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::Duration;
+
+    #[test]
+    fn product_preparation_profiles_actual_tools_routes_and_request_options() {
+        let materials = tempfile::tempdir().unwrap();
+        std::fs::write(materials.path().join("notes.md"), "evidence").unwrap();
+        std::fs::write(materials.path().join("chart.png"), b"png").unwrap();
+        std::fs::write(materials.path().join("interview.wav"), b"wav").unwrap();
+        let output = materials.path().join("report.md");
+        let chat = ResolvedChatModel::injected(
+            Arc::new(ScriptedModel::followup_text("done")),
+            json!({"max_tokens": 4096, "temperature": 0.0}),
+            Some("https://chat.example.test/v1".into()),
+        )
+        .unwrap();
+        let env = ResolvedExecutionEnvironment::offline(chat);
+
+        let prepared = prepare_run(
+            RunArgs {
+                materials: materials.path().to_path_buf(),
+                question: "question".into(),
+                output,
+                session: None,
+                no_tts: false,
+            },
+            env,
+        )
+        .unwrap();
+
+        let tool_names: Vec<_> = prepared
+            .profile
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect();
+        assert!(tool_names.contains(&"review_report"));
+        assert!(tool_names.contains(&"transcribe_audio"));
+        assert!(tool_names.contains(&"describe_image"));
+        assert!(tool_names.contains(&"synthesize_brief"));
+        assert_eq!(prepared.profile.main.max_steps, 14);
+        assert_eq!(prepared.profile.main.request_options["max_tokens"], 4096);
+        assert_eq!(
+            prepared.profile.vision,
+            CapabilityRoute::Injected {
+                provider: "scripted".into(),
+                model: "eval-script".into(),
+                endpoint: Some("https://chat.example.test/v1".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn fresh_and_followup_preparation_have_distinct_stable_session_profiles() {
+        let materials = tempfile::tempdir().unwrap();
+        std::fs::write(materials.path().join("notes.md"), "evidence").unwrap();
+        let chat = ResolvedChatModel::injected(
+            Arc::new(ScriptedModel::followup_text("done")),
+            json!({"max_tokens": 4096}),
+            None,
+        )
+        .unwrap();
+        let fresh = prepare_run(
+            RunArgs {
+                materials: materials.path().to_path_buf(),
+                question: "question".into(),
+                output: materials.path().join("report.md"),
+                session: None,
+                no_tts: true,
+            },
+            ResolvedExecutionEnvironment::offline(chat.clone()),
+        )
+        .unwrap();
+        let snapshot = SessionSnapshot {
+            schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
+            session_id: "seed-session".into(),
+            run_id: RunId::new(),
+            messages: vec![],
+            step: 0,
+            budget_used: BudgetUsage::default(),
+            active_config: fresh.config.clone(),
+        };
+        let followup = prepare_resume(
+            snapshot,
+            ResumeArgs {
+                session: "seed-session".into(),
+                question: "follow up".into(),
+                output: PathBuf::from("followup.md"),
+                no_tts: true,
+            },
+            ResolvedExecutionEnvironment::offline(chat),
+        )
+        .unwrap();
+
+        assert_eq!(fresh.profile.session_mode, SessionPersistenceMode::None);
+        assert_eq!(
+            followup.profile.session_mode,
+            SessionPersistenceMode::FollowUpFromSeed
+        );
+        assert_ne!(fresh.profile.session_mode, followup.profile.session_mode);
+    }
+
+    #[test]
+    fn injected_chat_rejects_nested_secret_option_before_normalization() {
+        let error = ResolvedChatModel::injected(
+            Arc::new(ScriptedModel::followup_text("done")),
+            json!({"transport": {"api_key": "sk-secret"}}),
+            None,
+        )
+        .err()
+        .expect("nested secret option must be rejected");
+
+        assert!(error.to_string().contains("secret-like"));
+    }
+
+    #[test]
+    fn nested_credentials_fail_in_injected_and_snapshot_preflight_without_leaking_values() {
+        const CANARY: &str = "opaque-cross-layer-canary";
+        let fixtures = [
+            json!({"transport": {"refresh_token": CANARY}}),
+            json!({"auth": [{"session_token": CANARY}]}),
+            json!({"provider": {"security_token": CANARY}}),
+            json!({"identity": {"access_key": CANARY}}),
+            json!({"credentials": {"secret_key": CANARY}}),
+            json!({"oauth": {"client_credential": CANARY}}),
+            json!({"headers": {"X-Custom-Auth": CANARY}}),
+        ];
+
+        for fixture in fixtures {
+            let injected_error = ResolvedChatModel::injected(
+                Arc::new(ScriptedModel::followup_text("done")),
+                fixture.clone(),
+                None,
+            )
+            .err()
+            .unwrap_or_else(|| panic!("injected construction accepted {fixture}"));
+            assert!(!injected_error.to_string().contains(CANARY));
+
+            let mut input = sample_input();
+            input.main_request_options = fixture.clone();
+            let snapshot_error = EffectiveConfigSnapshot::from_input(input)
+                .err()
+                .unwrap_or_else(|| panic!("snapshot preflight accepted {fixture}"));
+            assert!(!snapshot_error.to_string().contains(CANARY));
+        }
+    }
+
+    #[test]
+    fn request_option_urls_and_benign_nested_values_have_cross_layer_semantics() {
+        const CANARY: &str = "opaque-url-canary";
+        let credential_urls = [
+            format!("https://chat.example.test/v1?access_key={CANARY}"),
+            format!("https://chat.example.test/v1?client_credential={CANARY}"),
+            format!("https://chat.example.test/v1?headers%2Djson=%7B%22Authorization%22%3A%22{CANARY}%22%7D"),
+        ];
+
+        for url in credential_urls {
+            let fixture = json!({"service_tier": url});
+            let injected_error = ResolvedChatModel::injected(
+                Arc::new(ScriptedModel::followup_text("done")),
+                fixture.clone(),
+                None,
+            )
+            .err()
+            .unwrap_or_else(|| panic!("injected construction accepted credential URL"));
+            assert!(!injected_error.to_string().contains(CANARY));
+
+            let mut input = sample_input();
+            input.main_request_options = fixture;
+            let snapshot_error = EffectiveConfigSnapshot::from_input(input)
+                .err()
+                .unwrap_or_else(|| panic!("snapshot preflight accepted credential URL"));
+            assert!(!snapshot_error.to_string().contains(CANARY));
+        }
+
+        let benign = json!({
+            "service_tier": "https://chat.example.test/v1?region=public",
+            "transport": {
+                "retry_policy": {"max_attempts": 3},
+                "credential_type": "public",
+                "signature_algorithm": "sha256",
+                "signed_headers": "host"
+            }
+        });
+        assert!(ResolvedChatModel::injected(
+            Arc::new(ScriptedModel::followup_text("done")),
+            benign.clone(),
+            None,
+        )
+        .is_ok());
+
+        let mut input = sample_input();
+        input.main_request_options = benign.clone();
+        let snapshot = EffectiveConfigSnapshot::from_input(input)
+            .expect("benign nested public options must survive snapshot preflight");
+        assert_eq!(snapshot.main.request_options, benign);
+    }
+
+    #[test]
+    fn mcp_credential_flag_and_assignment_forms_fail_without_leaking_values() {
+        for args in [
+            vec!["--api-key".into(), "hunter2".into()],
+            vec!["--API_KEY".into(), "hunter2".into()],
+            vec!["--token=hunter2".into()],
+            vec!["--CLIENT-SECRET=hunter2".into()],
+            vec!["CLIENT_SECRET=hunter2".into()],
+        ] {
+            let mut input = sample_input();
+            input.main_runtime.mcp_servers.push(McpServerConfig {
+                server_id: "credentialed-stdio".into(),
+                transport: McpTransport::Stdio {
+                    command: "mcp-server".into(),
+                    args,
+                },
+            });
+
+            let error = EffectiveConfigSnapshot::from_input(input)
+                .err()
+                .expect("credential-bearing MCP args must fail preflight");
+            assert!(!error.to_string().contains("hunter2"));
+        }
+    }
+
+    #[test]
+    fn mcp_sensitive_semantic_name_variants_fail_without_leaking_values() {
+        const CANARY: &str = "opaque-canary-value";
+        let cases: &[(&str, &[&str])] = &[
+            (
+                "auth token assignment",
+                &["--auth-token=opaque-canary-value"],
+            ),
+            (
+                "auth token uppercase",
+                &["--AUTH_TOKEN=opaque-canary-value"],
+            ),
+            ("access token split", &["--access-token", CANARY]),
+            ("refresh token env", &["REFRESH_TOKEN=opaque-canary-value"]),
+            ("session token mixed case", &["--Session_Token", CANARY]),
+            ("bearer token", &["--bearer-token=opaque-canary-value"]),
+            ("security token", &["SECURITY_TOKEN", CANARY]),
+            ("api key mixed case", &["--Api_Key=opaque-canary-value"]),
+            ("access key split", &["--access-key", CANARY]),
+            ("secret key env", &["SECRET_KEY=opaque-canary-value"]),
+            ("client credential", &["--client-credential", CANARY]),
+            (
+                "request signature",
+                &["REQUEST_SIGNATURE=opaque-canary-value"],
+            ),
+            ("credential config", &["--credential-config", CANARY]),
+            ("signature config", &["--signature_config", CANARY]),
+            (
+                "authentication config",
+                &["--authentication-config", CANARY],
+            ),
+            ("bearer config", &["--bearer-config", CANARY]),
+            (
+                "header json",
+                &["--headers-json={\"X-Trace\":\"opaque-canary-value\"}"],
+            ),
+            ("header config split", &["--HEADER_CONFIG", CANARY]),
+            ("cookie", &["--session-cookie=opaque-canary-value"]),
+            ("cookie config", &["--cookie-config", CANARY]),
+            (
+                "authorization header",
+                &["Authorization: Bearer opaque-canary-value"],
+            ),
+            (
+                "access token header",
+                &["X-Access-Token: opaque-canary-value"],
+            ),
+        ];
+
+        for (label, args) in cases {
+            let mut input = sample_input();
+            input.main_runtime.mcp_servers.push(McpServerConfig {
+                server_id: format!("credentialed-{label}"),
+                transport: McpTransport::Stdio {
+                    command: "mcp-server".into(),
+                    args: args.iter().map(|value| (*value).to_owned()).collect(),
+                },
+            });
+
+            let error = EffectiveConfigSnapshot::from_input(input)
+                .err()
+                .unwrap_or_else(|| panic!("{label} must fail MCP credential preflight"));
+            assert!(
+                !error.to_string().contains(CANARY),
+                "{label} leaked the credential canary"
+            );
+        }
+    }
+
+    #[test]
+    fn mcp_nested_json_strings_fail_without_leaking_values() {
+        const CANARY: &str = "opaque-canary-value";
+        let cases = [
+            (
+                "nested object key",
+                r#"{"transport":{"refresh_token":"opaque-canary-value"}}"#,
+            ),
+            (
+                "nested array key",
+                r#"[{"options":[{"Secret-Key":"opaque-canary-value"}]}]"#,
+            ),
+            (
+                "name and bearer value",
+                r#"[{"name":"Authorization","value":"Bearer opaque-canary-value"}]"#,
+            ),
+            (
+                "json assignment",
+                r#"--options={"outer":{"access_token":"opaque-canary-value"}}"#,
+            ),
+            (
+                "stringified nested json",
+                r#"{"payload":"{\"session_token\":\"opaque-canary-value\"}"}"#,
+            ),
+        ];
+
+        for (label, argument) in cases {
+            let mut input = sample_input();
+            input.main_runtime.mcp_servers.push(McpServerConfig {
+                server_id: format!("credentialed-json-{label}"),
+                transport: McpTransport::Stdio {
+                    command: "mcp-server".into(),
+                    args: vec![argument.into()],
+                },
+            });
+
+            let error = EffectiveConfigSnapshot::from_input(input)
+                .err()
+                .unwrap_or_else(|| panic!("{label} must fail recursive MCP preflight"));
+            assert!(
+                !error.to_string().contains(CANARY),
+                "{label} leaked the credential canary"
+            );
+        }
+    }
+
+    #[test]
+    fn mcp_command_text_is_scanned_before_snapshot() {
+        const CANARY: &str = "opaque-canary-value";
+        let commands = [
+            "mcp-server --auth-token=opaque-canary-value",
+            "REFRESH_TOKEN=opaque-canary-value",
+            r#"mcp-server --options={"nested":{"api_key":"opaque-canary-value"}}"#,
+        ];
+
+        for command in commands {
+            let mut input = sample_input();
+            input.main_runtime.mcp_servers.push(McpServerConfig {
+                server_id: "credentialed-command".into(),
+                transport: McpTransport::Stdio {
+                    command: command.into(),
+                    args: Vec::new(),
+                },
+            });
+
+            let error = EffectiveConfigSnapshot::from_input(input)
+                .err()
+                .expect("credential-bearing MCP command must fail preflight");
+            assert!(!error.to_string().contains(CANARY));
+        }
+    }
+
+    #[test]
+    fn mcp_header_and_auth_injection_forms_fail_without_leaking_values() {
+        let cases = [
+            vec!["--header", "x-api-key:hunter2"],
+            vec!["-H", "Authorization: Bearer hunter2"],
+            vec!["-Hx-api-key:hunter2"],
+            vec!["--request-header=Cookie: session=hunter2"],
+            vec!["--HTTP_HEADER", "X-Api-Key: hunter2"],
+            vec!["x_api_key:hunter2"],
+            vec!["Authorization:Bearer hunter2"],
+            vec!["Proxy_Authorization: Basic hunter2"],
+            vec!["Cookie: session=hunter2"],
+            vec!["Set-Cookie: session=hunter2"],
+            vec!["Bearer hunter2"],
+            vec!["--oauth2-bearer", "hunter2"],
+            vec!["--basic-auth=hunter2"],
+            vec!["--cookie=session=hunter2"],
+        ];
+
+        for case in cases {
+            let mut input = sample_input();
+            input.main_runtime.mcp_servers.push(McpServerConfig {
+                server_id: "credentialed-stdio".into(),
+                transport: McpTransport::Stdio {
+                    command: "mcp-server".into(),
+                    args: case.into_iter().map(str::to_owned).collect(),
+                },
+            });
+
+            let error = EffectiveConfigSnapshot::from_input(input)
+                .err()
+                .expect("credential-bearing MCP header/auth args must fail preflight");
+            assert!(!error.to_string().contains("hunter2"));
+        }
+    }
+
+    #[test]
+    fn mcp_query_credentials_fail_without_leaking_values() {
+        for query_key in ["client_secret", "CLIENT-SECRET", "key", "AUTH"] {
+            let mut input = sample_input();
+            input.main_runtime.mcp_servers.push(McpServerConfig {
+                server_id: "credentialed-http".into(),
+                transport: McpTransport::StreamableHttp {
+                    url: format!("https://mcp.example.test/v1?{query_key}=hunter2"),
+                    auth: None,
+                },
+            });
+
+            let error = EffectiveConfigSnapshot::from_input(input)
+                .err()
+                .expect("credential-bearing MCP query must fail preflight");
+            assert!(!error.to_string().contains("hunter2"));
+        }
+    }
+
+    #[test]
+    fn cloud_signed_url_query_credentials_fail_without_leaking_values() {
+        let credential_keys = [
+            "X-Amz-Credential",
+            "X_AMZ_SIGNATURE",
+            "x-amz-security-token",
+            "X-Goog-Credential",
+            "x_goog_signature",
+            "X-Goog-Security-Token",
+            "AWSAccessKeyId",
+            "OSS_ACCESS_KEY_ID",
+            "x-amz-session-token",
+            "secret_access_key",
+            "signature",
+            "security_token",
+            "sig",
+            "X%2dAmz%2dSignature",
+        ];
+
+        for query_key in credential_keys {
+            let mut input = sample_input();
+            input.main_runtime.mcp_servers.push(McpServerConfig {
+                server_id: "signed-http".into(),
+                transport: McpTransport::StreamableHttp {
+                    url: format!("https://mcp.example.test/v1?{query_key}=hunter2"),
+                    auth: None,
+                },
+            });
+
+            let error = EffectiveConfigSnapshot::from_input(input)
+                .err()
+                .expect("cloud signed URL credentials must fail preflight");
+            assert!(!error.to_string().contains("hunter2"));
+        }
+    }
+
+    #[test]
+    fn percent_encoded_query_credentials_fail_without_leaking_values() {
+        const CANARY: &str = "opaque-canary-value";
+        let queries = [
+            "headers%2Djson=%7B%22X-Trace%22%3A%22opaque-canary-value%22%7D",
+            "config=%7B%22outer%22%3A%7B%22refresh_token%22%3A%22opaque-canary-value%22%7D%7D",
+            "%61uth%2Dtoken=opaque-canary-value",
+            "ACCESS%5Ftoken=opaque-canary-value",
+            "refresh%5Ftoken=opaque-canary-value",
+            "session%2Dtoken=opaque-canary-value",
+            "bearer%5Ftoken=opaque-canary-value",
+            "security%2Dtoken=opaque-canary-value",
+            "api%5Fkey=opaque-canary-value",
+            "access%2Dkey=opaque-canary-value",
+            "secret%5Fkey=opaque-canary-value",
+            "client%2Dcredential=opaque-canary-value",
+            "request%5Fsignature=opaque-canary-value",
+            "session%2Dcookie=opaque-canary-value",
+        ];
+
+        for query in queries {
+            let mut input = sample_input();
+            input.main_runtime.mcp_servers.push(McpServerConfig {
+                server_id: "credentialed-percent-query".into(),
+                transport: McpTransport::StreamableHttp {
+                    url: format!("https://mcp.example.test/v1?{query}"),
+                    auth: None,
+                },
+            });
+
+            let error = EffectiveConfigSnapshot::from_input(input)
+                .err()
+                .unwrap_or_else(|| panic!("encoded query must fail credential preflight"));
+            assert!(!error.to_string().contains(CANARY));
+        }
+    }
+
+    #[test]
+    fn mcp_non_secret_lookalikes_are_allowed() {
+        for argument in [
+            "--api-key-file",
+            "/var/run/mcp-key",
+            "--tokenizer=cl100k_base",
+            "--header-size=8192",
+            "--cookie-policy=strict",
+            "--user-agent=briefing-desk",
+            "--monkey-mode=curious",
+            "--keynote-theme=dark",
+            "CLIENT_SECRETARY=briefing",
+        ] {
+            let mut input = sample_input();
+            input.main_runtime.mcp_servers.push(McpServerConfig {
+                server_id: "safe-stdio".into(),
+                transport: McpTransport::Stdio {
+                    command: "mcp-server".into(),
+                    args: vec![argument.into()],
+                },
+            });
+            assert!(
+                EffectiveConfigSnapshot::from_input(input).is_ok(),
+                "benign MCP argument was rejected: {argument}"
+            );
+        }
+
+        let mut input = sample_input();
+        input.main_runtime.mcp_servers.push(McpServerConfig {
+            server_id: "safe-http".into(),
+            transport: McpTransport::StreamableHttp {
+                url: "https://mcp.example.test/v1?monkey=banana&monkey_mode=curious&keynote=launch&author=ada&signature_algorithm=sha256&credential_type=public&security_tokenizer=v2&signed_headers=host".into(),
+                auth: None,
+            },
+        });
+
+        assert!(EffectiveConfigSnapshot::from_input(input).is_ok());
+    }
+
+    #[test]
+    fn hash_changes_with_compaction_threshold_and_recent_messages() {
+        let base = EffectiveConfigSnapshot::from_input(sample_input())
+            .unwrap()
+            .content_hash()
+            .unwrap();
+        let mut changed = sample_input();
+        changed.main_runtime.compaction = Some(CompactionConfig {
+            threshold: 0.55,
+            recent_messages: 3,
+        });
+
+        assert_ne!(
+            EffectiveConfigSnapshot::from_input(changed)
+                .unwrap()
+                .content_hash()
+                .unwrap(),
+            base
+        );
+    }
+
+    #[test]
+    fn hash_changes_with_mcp_webhook_and_code_execution_runtime() {
+        let base = EffectiveConfigSnapshot::from_input(sample_input())
+            .unwrap()
+            .content_hash()
+            .unwrap();
+
+        let mut mcp = sample_input();
+        mcp.main_runtime.mcp_servers.push(McpServerConfig {
+            server_id: "fixtures".into(),
+            transport: McpTransport::StreamableHttp {
+                url: "https://mcp.example.test".into(),
+                auth: Some(McpAuth::Bearer {
+                    token: "sk-secret".into(),
+                }),
+            },
+        });
+        assert_ne!(
+            EffectiveConfigSnapshot::from_input(mcp)
+                .unwrap()
+                .content_hash()
+                .unwrap(),
+            base
+        );
+
+        let mut webhook = sample_input();
+        webhook.main_runtime.webhook_enabled = true;
+        assert_ne!(
+            EffectiveConfigSnapshot::from_input(webhook)
+                .unwrap()
+                .content_hash()
+                .unwrap(),
+            base
+        );
+
+        let mut code_execution = sample_input();
+        code_execution.main_runtime.code_execution_enabled = true;
+        assert_ne!(
+            EffectiveConfigSnapshot::from_input(code_execution)
+                .unwrap()
+                .content_hash()
+                .unwrap(),
+            base
+        );
+    }
+
+    #[test]
+    fn enabled_code_executor_without_stable_label_fails_preflight() {
+        let mut input = sample_input();
+        input.main_runtime.code_execution_enabled = true;
+        input.main_runtime.code_execution_executor = Some(Arc::new(BareSubprocessExecutor::new()));
+
+        let error = EffectiveConfigSnapshot::from_input(input).unwrap_err();
+        assert!(error.to_string().contains("stable executor label"));
+    }
 
     #[test]
     fn hash_stable_when_only_api_key_env_changes() {
@@ -714,6 +1583,21 @@ mod tests {
                 .unwrap(),
             base
         );
+
+        let mut max_tokens = sample_input();
+        max_tokens.main_request_options["max_tokens"] = json!(4096);
+        assert_ne!(
+            EffectiveConfigSnapshot::from_input(max_tokens)
+                .unwrap()
+                .content_hash()
+                .unwrap(),
+            base
+        );
+
+        let mut endpoint = EffectiveConfigSnapshot::from_input(sample_input()).unwrap();
+        endpoint.main.endpoint = Some("https://chat.example.test/v2".into());
+        endpoint.case_profiles[0].main.endpoint = endpoint.main.endpoint.clone();
+        assert_ne!(endpoint.content_hash().unwrap(), base);
 
         let mut session = sample_input();
         session.session_mode = SessionPersistenceMode::FollowUpFromSeed;

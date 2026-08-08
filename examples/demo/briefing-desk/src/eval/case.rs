@@ -45,6 +45,12 @@ impl EvalSplit {
             EvalSplit::Scorecard => "scorecard",
         }
     }
+
+    fn parse(s: &str) -> Option<Self> {
+        [Self::Optimization, Self::Validation, Self::Scorecard]
+            .into_iter()
+            .find(|split| split.as_str() == s)
+    }
 }
 
 /// How the runner should start the attempt.
@@ -232,10 +238,10 @@ impl std::fmt::Display for CaseLoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match (&self.case_id, &self.field) {
             (Some(case_id), Some(field)) => {
-                write!(f, "case '{case_id}' field '{field}': {}", self.message)
+                write!(f, "case_id={case_id} field={field}: {}", self.message)
             }
-            (Some(case_id), None) => write!(f, "case '{case_id}': {}", self.message),
-            (None, Some(field)) => write!(f, "field '{field}': {}", self.message),
+            (Some(case_id), None) => write!(f, "case_id={case_id}: {}", self.message),
+            (None, Some(field)) => write!(f, "field={field}: {}", self.message),
             (None, None) => write!(f, "{}", self.message),
         }
     }
@@ -265,11 +271,73 @@ pub fn load_corpus(
     let raw = fs::read_to_string(cases_path).map_err(|e| {
         CaseLoadError::new(format!("reading {}: {e}", cases_path.display())).with_field("path")
     })?;
-    let corpus: CaseCorpus = serde_json::from_str(&raw).map_err(|e| {
+    let value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
         CaseLoadError::new(format!("parse error: {e}")).with_field("schema_version")
+    })?;
+    validate_raw_case_enums(&value)?;
+    let corpus: CaseCorpus = serde_json::from_value(value).map_err(|e| {
+        CaseLoadError::new(format!("decode error: {e}")).with_field("schema_version")
     })?;
     corpus.validate(fixtures_dir, seeds_dir)?;
     Ok(corpus)
+}
+
+/// Validate enum-bearing case fields while their surrounding case context is
+/// still available to diagnostics.
+pub fn validate_raw_case_enums(value: &serde_json::Value) -> Result<(), CaseLoadError> {
+    let cases = value
+        .get("cases")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| CaseLoadError::new("cases must be an array").with_field("cases"))?;
+
+    for raw in cases {
+        let object = raw
+            .as_object()
+            .ok_or_else(|| CaseLoadError::new("case must be a JSON object").with_field("cases"))?;
+        let case_id = object
+            .get("case_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| {
+                CaseLoadError::new("case_id must be a non-empty string").with_field("case_id")
+            })?;
+
+        let split = object
+            .get("split")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                CaseLoadError::new("split must be a string")
+                    .with_case(case_id)
+                    .with_field("split")
+            })?;
+        if EvalSplit::parse(split).is_none() {
+            return Err(CaseLoadError::new(format!("unknown split '{split}'"))
+                .with_case(case_id)
+                .with_field("split"));
+        }
+
+        let tags = object
+            .get("tags")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| {
+                CaseLoadError::new("tags must be an array")
+                    .with_case(case_id)
+                    .with_field("tags")
+            })?;
+        for tag in tags {
+            let tag = tag.as_str().ok_or_else(|| {
+                CaseLoadError::new("tag must be a string")
+                    .with_case(case_id)
+                    .with_field("tags")
+            })?;
+            if BehaviorTag::parse(tag).is_none() {
+                return Err(CaseLoadError::new(format!("unknown behavior tag '{tag}'"))
+                    .with_case(case_id)
+                    .with_field("tags"));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Load one session seed file and reject mutable/extra fields.
@@ -801,7 +869,7 @@ mod tests {
         let err = corpus
             .validate(&fixtures_dir(), &seeds_dir())
             .expect_err("duplicate ids");
-        assert!(err.to_string().contains("case 'dup'"));
+        assert!(err.to_string().contains("case_id=dup"));
         assert_eq!(err.field.as_deref(), Some("case_id"));
     }
 
@@ -995,6 +1063,60 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unknown_tag_with_case_context() {
+        let mut value: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(default_cases_path()).expect("read committed corpus"),
+        )
+        .expect("parse committed corpus");
+        let case = value["cases"]
+            .as_array_mut()
+            .expect("cases array")
+            .iter_mut()
+            .find(|case| case["case_id"] == "opt-tool-search-first")
+            .expect("known case");
+        case["tags"] = json!(["unknown_behavior"]);
+
+        let path = write_temp_corpus(&value, "unknown-tag");
+        let err = load_corpus(&path, &fixtures_dir(), &seeds_dir()).expect_err("unknown tag");
+        let _ = fs::remove_file(path);
+
+        let message = err.to_string();
+        assert!(
+            message.contains("case_id=opt-tool-search-first"),
+            "{message}"
+        );
+        assert!(message.contains("field=tags"), "{message}");
+        assert!(message.contains("unknown_behavior"), "{message}");
+    }
+
+    #[test]
+    fn rejects_unknown_split_with_case_context() {
+        let mut value: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(default_cases_path()).expect("read committed corpus"),
+        )
+        .expect("parse committed corpus");
+        let case = value["cases"]
+            .as_array_mut()
+            .expect("cases array")
+            .iter_mut()
+            .find(|case| case["case_id"] == "opt-tool-search-first")
+            .expect("known case");
+        case["split"] = json!("unknown_split");
+
+        let path = write_temp_corpus(&value, "unknown-split");
+        let err = load_corpus(&path, &fixtures_dir(), &seeds_dir()).expect_err("unknown split");
+        let _ = fs::remove_file(path);
+
+        let message = err.to_string();
+        assert!(
+            message.contains("case_id=opt-tool-search-first"),
+            "{message}"
+        );
+        assert!(message.contains("field=split"), "{message}");
+        assert!(message.contains("unknown_split"), "{message}");
+    }
+
+    #[test]
 
     fn seed_hash_is_stable_and_changes_with_content() {
         let seed = sample_seed();
@@ -1004,6 +1126,17 @@ mod tests {
         let mut other = seed.clone();
         other.step = 99;
         assert_ne!(h1, other.content_hash().unwrap());
+    }
+
+    fn write_temp_corpus(value: &serde_json::Value, suffix: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "briefing-desk-{suffix}-{}-{}.json",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        fs::write(&path, serde_json::to_vec(value).expect("encode corpus"))
+            .expect("write mutated corpus");
+        path
     }
 
     /// Pad a partial corpus so split counts pass when the test is checking a
