@@ -279,6 +279,16 @@ cargo run -p briefing-desk-demo -- eval run \
 
 cargo run -p briefing-desk-demo -- eval compare baseline candidate-1
 
+# Export only safe, typed aggregates/config/hashes after the human decision.
+cargo run -p briefing-desk-demo -- eval export-evidence baseline candidate-1 \
+  --out-dir docs/review/evidence/v0_16_eval_repair \
+  --decision not_eligible \
+  --scorecard-state not_run
+
+# Recompute result contracts, hashes, and production comparison gates.
+cargo run -p briefing-desk-demo -- eval verify-evidence \
+  docs/review/evidence/v0_16_eval_repair/bundle.json
+
 # Sealed scorecard: only after a human selects an eligible candidate
 cargo run -p briefing-desk-demo -- eval run \
   --label final \
@@ -302,6 +312,13 @@ overall ≥ +5, no per-tag drop, mean gate tokens ≤ 115%, median wall latency 
 Compare emits JSON + Markdown reports and **never** auto-edits harness or
 deletes run directories. Final acceptance is always human.
 
+Evidence export reads only the run manifest, numeric `results.json`, and the
+credential-free effective-config/harness hashes. It never reads per-attempt
+trajectories, generated output, Tool payloads, or grader free text. The bundle
+is typed and deny-unknown; its verifier checks the bundle/source hash chain and
+recomputes production eligibility. A scorecard state other than `not_run` is
+rejected unless comparison is eligible and the human decision is `accepted`.
+
 ### Sealed scorecard semantics
 
 Scorecard is a **process contract**, not a security boundary:
@@ -323,4 +340,3 @@ cargo test -p briefing-desk-demo
 
 Eval CLI tests use a hidden `--scripted` model path so CI needs no API key.
 Live `eval run` without a model env var fails loudly (it does not skip).
-

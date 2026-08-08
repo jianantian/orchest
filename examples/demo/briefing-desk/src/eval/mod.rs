@@ -15,6 +15,7 @@ pub mod cli;
 pub mod compare;
 pub mod credential;
 pub mod effective_config;
+pub mod evidence;
 pub mod grader;
 pub mod resource;
 pub mod runner;
@@ -38,6 +39,10 @@ pub use effective_config::{
     fingerprint_registry, surface_id_for_tool, AgentRoleSnapshot, CapabilityRoute,
     EffectiveConfigInput, EffectiveConfigSnapshot, SessionPersistenceMode, ToolFingerprint,
     EFFECTIVE_CONFIG_SCHEMA_VERSION,
+};
+pub use evidence::{
+    export_evidence_bundle, verify_evidence_bundle, verify_evidence_file, write_evidence_bundle,
+    EvidenceBundle, EvidenceError, VerifiedEvidence, EVIDENCE_SCHEMA_VERSION,
 };
 pub use grader::{
     aggregate_attempt, aggregate_case, aggregate_split, aggregate_tag, grade_attempt,
