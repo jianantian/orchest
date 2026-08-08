@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { streamChat, getGift, updateGift, regenerateGift, getGiftVersions, watchGeneration, type GenerationWatch } from "../api";
 import { useI18n } from "../i18n";
 import { shuffleStyles, stripMarkers } from "../lib/styles";
@@ -10,7 +10,8 @@ import { MusicCard } from "./MusicCard";
 import AudioPlayer from "./AudioPlayer";
 import { LRCViewer } from "./LRCViewer";
 import { parseLRC } from "../lib/lrc";
-import { MusicNoteIcon, XIcon, FemaleIcon, MaleIcon, MicIcon, SparklesIcon } from "./Icons";
+import { SparklesIcon } from "./Icons";
+import { StyleCard } from "./studio/StyleCard";
 import type { ChatMessage, Gift, GiftVersion, SseEvent } from "../types";
 
 export interface StudioProps { photos: string[]; lang: string; onNavigate: (giftId: string) => void; editGiftId?: string }
@@ -76,32 +77,6 @@ export function stageStudioDraft(lang: string, fields: { lyrics: string; style: 
   try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch { /* quota */ }
 }
 
-/** Suno-style collapsible section inside the draft card: a header row with
- * a rotating chevron + label + optional tools, and a body that animates
- * open/closed (grid-rows + opacity/transform; no motion under
- * prefers-reduced-motion). Also used, in stripped-down form, for the AI
- * region header. */
-function DraftSection({ label, open, onToggle, tools, className, children }: {
-  label: string; open: boolean; onToggle: () => void; tools?: ReactNode; className?: string; children: ReactNode;
-}) {
-  return (
-    <section className={`draft-section${open ? " open" : ""}${className ?? ""}`}>
-      <div className="draft-section-head">
-        <button type="button" className="draft-section-toggle" onClick={onToggle} aria-expanded={open}>
-          <svg className={`chevron${open ? " open" : ""}`} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
-          <span>{label}</span>
-        </button>
-        {tools && <div className="draft-section-tools">{tools}</div>}
-      </div>
-      <div className="draft-section-body">
-        <div className="draft-section-inner">
-          <div className="draft-section-pad">{children}</div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   const { t } = useI18n();
   const { user } = useAuth();
@@ -126,10 +101,9 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   const [styleSuggestions, setStyleSuggestions] = useState<string[]>(() => shuffleStyles(selectedStyles, 6));
   const [error, setError] = useState<string | null>(null);
 
-  // ── Section collapse state (deliberately not persisted, per PRD). ─────
-  const [lyricsOpen, setLyricsOpen] = useState(true);
-  const [styleOpen, setStyleOpen] = useState(true);
-  const [moreOpen, setMoreOpen] = useState(false);
+  // ── AI region collapse state (deliberately not persisted, per PRD). The
+  // draft cards themselves are always expanded in the two-column workbench
+  // layout — the old DraftSection collapse is retired. ──────────────────
   const [aiOpen, setAiOpen] = useState(true);
 
   // ── Edit-mode state (only used when editGiftId is set). ──────────────
@@ -519,8 +493,11 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
 
   return (
     <div className="studio">
-      {/* ═══ Draft editor: the top of the single column ═══ */}
-      <div className="free-panel editorial">
+      {/* ═══ Two-column workbench: driver (manuscript + style + actions)
+          left, artifacts right. The AI chat panel is parked in the artifact
+          column as-is until Task B/C mount the player/version cards. ═══ */}
+      <div className="wb-cols">
+        <div className="wb-col wb-col-driver">
         {/* Edit mode: current version player + version switcher. While a
             regeneration is in flight the old audio is gone server-side —
             show the generating state instead of a broken player. */}
@@ -563,65 +540,40 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
             ) : null)}
           </div>
         )}
-        {/* 1. Title — borderless serif page title, no form section */}
-        <input type="text" className={`title-input${flash("title")}`} value={title} onChange={e => setTitle(e.target.value)} placeholder={t("free_title_ph")} maxLength={50} />
-
-        {/* 2. Lyrics section (default open) — the manuscript body, with a
-            ✨ 帮写 tool in the header and a "帮我写歌词" CTA when empty. */}
-        <DraftSection label={t("field_lyrics")} open={lyricsOpen} onToggle={() => setLyricsOpen(o => !o)}
-          tools={<button type="button" className="icon-btn" onClick={handleWriteForMe} title={t("ai_help_write")} aria-label={t("ai_help_write")}><SparklesIcon /></button>}>
+        {/* 1–2. Manuscript card: borderless serif title (with the ✨ 帮写
+            tool pinned to its row), divider, then the lyrics body with a
+            "帮我写歌词" CTA when empty. */}
+        <div className="wb-card wb-doc">
+          <div className="wb-doc-head">
+            <input type="text" className={`title-input${flash("title")}`} value={title} onChange={e => setTitle(e.target.value)} placeholder={t("free_title_ph")} maxLength={50} />
+            <button type="button" className="icon-btn" onClick={handleWriteForMe} title={t("ai_help_write")} aria-label={t("ai_help_write")}><SparklesIcon /></button>
+          </div>
+          <hr className="wb-doc-divider" />
           <textarea className={`lyrics-manuscript${flash("lyrics")}`} value={lyrics} onChange={e => setLyrics(e.target.value)}
             placeholder={instrumental ? t("instrumental_ph") : t("paste_lyrics_ph")}
             disabled={instrumental} rows={instrumental ? 2 : 7} />
           {!instrumental && !lyrics.trim() && (
             <button type="button" className="opt-pill write-for-me" onClick={handleWriteForMe}><SparklesIcon /> {t("write_for_me")}</button>
           )}
-        </DraftSection>
+        </div>
 
-        {/* 3. Style section (default open) — selected chips + an inline
-            "+ 风格" input (Enter commits to a chip) + a persistent
-            suggestion row: 6 pills and a ↻ refresh. */}
-        <DraftSection label={t("free_style")} open={styleOpen} onToggle={() => setStyleOpen(o => !o)} className={flash("style")}>
-          <div className="style-edit-row">
-            {selectedStyles.length > 0 && (
-              <div className="style-chips">{selectedStyles.map(s => <span key={s} className="style-chip" onClick={() => removeStyle(s)} role="button" tabIndex={0} onKeyDown={e => e.key === "Enter" && removeStyle(s)}>{s} <XIcon /></span>)}</div>
-            )}
-            <input type="text" className="style-input" value={styleInput} onChange={e => setStyleInput(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter" && !isImeComposing(e)) { e.preventDefault(); commitStyleInput(); } else if (e.key === "Backspace" && !styleInput && selectedStyles.length > 0) removeStyle(selectedStyles[selectedStyles.length - 1]); }}
-              placeholder={t("add_style_ph")} />
-          </div>
-          <div className="style-suggestions">
-            {styleSuggestions.map(s => <button key={s} type="button" className="opt-pill opt-pill-sm" onClick={() => addStyle(s)}>{s}</button>)}
-            <button type="button" className="icon-btn" onClick={refreshSuggestions} aria-label="↻">↻</button>
-          </div>
-        </DraftSection>
-
-        {/* 4. More options (default collapsed) — two option rows replacing
-            the vocal tri-state bar: 演唱方式 [演唱|器乐] and 人声 [女声|男声]
-            (disabled under 器乐). instrumental/vocalGender state and their
-            semantics are unchanged. */}
-        <DraftSection label={t("more_options")} open={moreOpen} onToggle={() => setMoreOpen(o => !o)} className={flash("vocal")}>
-          <div className="opt-row">
-            <span className="opt-row-label">{t("vocal_mode")}</span>
-            <button type="button" className={`opt-pill opt-pill-sm${!instrumental ? " on" : ""}`} onClick={() => setInstrumental(false)}>
-              <MicIcon /> {t("vocal_sung")}
-            </button>
-            <button type="button" className={`opt-pill opt-pill-sm${instrumental ? " on" : ""}`} onClick={() => setInstrumental(true)}>
-              <MusicNoteIcon /> {t("instrumental")}
-            </button>
-          </div>
-          <div className="opt-row">
-            <span className="opt-row-label">{t("vocal")}</span>
-            <button type="button" className={`opt-pill opt-pill-sm${!instrumental && vocalGender === "female" ? " on" : ""}`} disabled={instrumental}
-              onClick={() => { const deselect = vocalGender === "female"; setInstrumental(false); setVocalGender(deselect ? null : "female"); }}>
-              <FemaleIcon /> {t("gender_female")}
-            </button>
-            <button type="button" className={`opt-pill opt-pill-sm${!instrumental && vocalGender === "male" ? " on" : ""}`} disabled={instrumental}
-              onClick={() => { const deselect = vocalGender === "male"; setInstrumental(false); setVocalGender(deselect ? null : "male"); }}>
-              <MaleIcon /> {t("gender_male")}
-            </button>
-          </div>
-        </DraftSection>
+        {/* 3–4. Style + vocal options card (merged, always expanded). */}
+        <StyleCard
+          selectedStyles={selectedStyles}
+          styleInput={styleInput}
+          onStyleInputChange={setStyleInput}
+          styleSuggestions={styleSuggestions}
+          instrumental={instrumental}
+          vocalGender={vocalGender}
+          onInstrumentalChange={setInstrumental}
+          onVocalGenderChange={setVocalGender}
+          onAddStyle={addStyle}
+          onRemoveStyle={removeStyle}
+          onCommitStyleInput={commitStyleInput}
+          onRefreshSuggestions={refreshSuggestions}
+          styleFlash={flash("style")}
+          vocalFlash={flash("vocal")}
+        />
 
         {/* 5. Action area */}
         {needsLyrics && <p className="polish-status">{t("lyrics_required")}</p>}
@@ -629,7 +581,7 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
           <>
             {/* Two explicit save paths: light (title only, no generation)
                 and heavy (work fields + regenerate in place). */}
-            <div className="edit-actions">
+            <div className="wb-action-row edit-actions">
               <button className="btn btn-secondary" onClick={() => void handleSaveTitle()} disabled={regen === "generating"}>
                 {savedFlash ? t("saved") : t("save")}
               </button>
@@ -642,16 +594,19 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
           </>
         ) : (
           <>
-            <button className="btn btn-primary btn-lg btn-full" onClick={handleGenerate} disabled={gen.state === "generating" || needsLyrics}>
-              {gen.state === "generating" ? <><span className="spinner" /> {t("generating")}</> : t("create_song")}
-            </button>
+            <div className="wb-action-row">
+              <button className="btn btn-primary btn-lg btn-full" onClick={handleGenerate} disabled={gen.state === "generating" || needsLyrics}>
+                {gen.state === "generating" ? <><span className="spinner" /> {t("generating")}</> : t("create_song")}
+              </button>
+            </div>
 
             {(error || gen.error) && <p className="error-msg" role="alert">{error || gen.error}</p>}
             {gen.giftId && <MusicCard initialState={musicState} onOpen={() => onNavigate(gen.giftId!)} onRetry={() => gen.retry(gen.giftId!)} />}
           </>
         )}
-      </div>
+        </div>
 
+        <div className="wb-col wb-col-artifact">
       {/* ═══ AI collaboration region: collapsible — header holds the
           chevron + title + undo; collapsed hides bubbles and the pinned
           input, leaving the pure manual panel. ═══ */}
@@ -710,6 +665,8 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
             <button className="chat-send-btn" onClick={handleChatSend} disabled={streaming} aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z" /></svg></button>
           </div>
         </>)}
+      </div>
+        </div>
       </div>
     </div>
   );

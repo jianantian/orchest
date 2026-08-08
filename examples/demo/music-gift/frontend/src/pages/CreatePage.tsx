@@ -62,6 +62,11 @@ export default function CreatePage() {
   const [tab, setTab] = useState<CreateTab>(editGiftId ? "free" : "guided");
   const [fading, setFading] = useState(false);
   const fadeTimer = useRef<number | null>(null);
+  /** Target of an in-flight fade, if any. While the fade timer runs `tab`
+   * still holds the OLD tab, so comparing a click against `tab` alone
+   * would swallow rapid clicks (click A→B, then B→A before the timer fires
+   * looked like A→A). Always compare against the effective target. */
+  const pendingTab = useRef<CreateTab | null>(null);
 
   useEffect(
     () => () => {
@@ -77,14 +82,19 @@ export default function CreatePage() {
   /** Cross-fade tab content: fade out, swap, fade back in. Under reduced
    * motion the swap is immediate with no transition. */
   function switchTab(next: CreateTab) {
-    if (next === tab) return;
+    if (next === (pendingTab.current ?? tab)) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      if (fadeTimer.current !== null) window.clearTimeout(fadeTimer.current);
+      pendingTab.current = null;
+      setFading(false);
       setTab(next);
       return;
     }
     if (fadeTimer.current !== null) window.clearTimeout(fadeTimer.current);
+    pendingTab.current = next;
     setFading(true);
     fadeTimer.current = window.setTimeout(() => {
+      pendingTab.current = null;
       setTab(next);
       setFading(false);
     }, TAB_FADE_MS);

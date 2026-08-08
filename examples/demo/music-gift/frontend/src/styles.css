@@ -1785,23 +1785,23 @@ body.locked { overflow: hidden; }
    STUDIO (draft editor + AI collaboration panel)
    ============================================= */
 
-/* Single-scroll, single-column model: the studio is one vertical stack
-   (draft card → action area → AI region → pinned input) that grows with
-   natural height inside .app-main (the one page scroller) — no inner
-   scrollers. The frame's fixed height chain (.create-page keeps flex: 1)
-   lets taller content overflow visibly into the .app-main scroll area.
-   Mobile (<900px) is the same single column — no tab switcher. */
+/* Workbench model: the studio is a two-column grid (.wb-cols, see the
+   workbench two-column section below) inside the fixed-height bench —
+   each column scrolls internally. Below the wide-frame breakpoint it
+   collapses to one stacked column with a single scroller. The legacy
+   .free-panel.editorial wrapper only remains in the read-only edit
+   fallback. */
 .studio { display: flex; flex-direction: column; }
 
-/* The studio chat panel is page content, not a fixed-height frame: natural
-   growth, no internal scroll. overflow: visible also matters for sticky —
+/* The studio chat panel grows naturally inside the artifact column — no
+   internal scroll of its own. overflow: visible also matters for sticky —
    the base .chat-panel's overflow: hidden would make the panel itself the
    sticky positioning context and the chat-bar would scroll away. */
 .studio .chat-panel { flex: none; overflow: visible; }
 .studio .chat-messages.guided { flex: none; overflow: visible; }
 
-/* Input bar stays visible at the viewport bottom while .app-main scrolls
-   (same "pinned input" mental model as the guided flow). Background and
+/* Input bar stays visible at the bottom of the column scroller (same
+   "pinned input" mental model as the guided flow). Background and
    border-top come from the base .chat-bar rule. */
 .studio .chat-bar { position: sticky; bottom: 0; z-index: 5; }
 
@@ -1855,6 +1855,14 @@ body.locked { overflow: hidden; }
   min-height: 640px;
 }
 
+/* Short viewports (e.g. 390x667 phones): the 640px floor would push the
+   bench past the height:100dvh frame and, with overflow:hidden on both,
+   clip the bottom without any way to scroll. Drop the floor there — the
+   columns scroll internally instead. */
+@media (max-height: 700px) {
+  .wb-bench { min-height: 0; }
+}
+
 /* top bar: mode tabs + global actions */
 .wb-topbar {
   display: flex;
@@ -1892,6 +1900,75 @@ body.locked { overflow: hidden; }
 
 @media (prefers-reduced-motion: reduce) {
   .wb-body { transition: none; }
+}
+
+
+/* ============================================
+   Workbench two-column layout (studio)
+
+   Ported from styles-prototype.css (.pw-cols/.pw-col/.pw-card/.pw-doc/
+   .pw-chips/.pw-action-row), renamed wb-*. Buttons intentionally NOT
+   ported: the canonical .btn/.btn-primary/.btn-secondary tiers already
+   match the prototype's sizes (10-11px / 20-24px padding).
+   ============================================ */
+
+/* two columns — identical rhythm, padding and card language */
+.wb-cols { display: grid; grid-template-columns: 440px 1fr; flex: 1; min-height: 0; }
+.wb-col { padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+.wb-col-driver { border-right: 1px solid var(--border); }
+.wb-col-artifact { background: color-mix(in srgb, var(--surface-2) 30%, var(--bg)); }
+
+/* ── THE one card language: same radius/padding/shadow everywhere ── */
+.wb-card {
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  padding: 18px 20px;
+}
+
+/* 手稿卡：标题在纸上（✨帮写工具钉在标题行右侧），分隔线后是歌词正文。
+   The existing .title-input class is restyled inside .wb-doc rather than
+   duplicating a .wb-title-input rule. */
+.wb-doc-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.wb-doc-head .title-input {
+  flex: 1; min-width: 0; padding: 0;
+  font-size: 24px; line-height: 1.2; letter-spacing: -0.015em;
+}
+.wb-doc-divider { border: none; border-top: 1px solid var(--border); margin: 0 0 14px; }
+.wb-doc .write-for-me { margin-top: 10px; }
+
+/* chip language (interface for later tasks; the studio's selected-style
+   chips keep their existing .style-chips/.style-chip rules) */
+.wb-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.wb-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: var(--r-pill);
+  border: 1px solid var(--accent); background: var(--accent-tint-12);
+  color: var(--accent); font-size: 13px; cursor: pointer;
+}
+.wb-chip.plain { border-color: var(--border); background: transparent; color: var(--text-2); }
+
+/* action row under the driver cards */
+.wb-action-row { display: flex; gap: 10px; }
+.wb-action-row .grow { flex: 1; }
+
+/* StyleCard: merged style + vocal sections, always expanded (the old
+   DraftSection collapse is retired in the workbench layout). */
+.wb-style-card { display: flex; flex-direction: column; gap: 16px; }
+.wb-style-section, .wb-vocal-section { display: flex; flex-direction: column; gap: 10px; }
+.wb-card-head { display: flex; align-items: center; justify-content: space-between; }
+
+/* The studio fills the bench body so the two columns get a bounded height
+   and scroll internally (replaces the old single-scroll page model). */
+.studio { flex: 1; min-height: 0; }
+
+/* Below the wide-frame breakpoint (frame widens at 1100px, see
+   #root.frame-home) the bench falls back to one stacked column with a
+   single scroller. */
+@media (max-width: 1099px) {
+  .wb-cols { display: flex; flex-direction: column; overflow-y: auto; }
+  .wb-col { overflow: visible; padding: 16px; }
+  .wb-col-driver { border-right: none; border-bottom: 1px solid var(--border); }
 }
 
 
