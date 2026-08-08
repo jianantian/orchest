@@ -1,4 +1,5 @@
-import { NavLink, Route, Routes } from "react-router-dom";
+import { useEffect } from "react";
+import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { useI18n, LANGS, LANG_LABELS, type Lang } from "./i18n";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { LoginModal } from "./components/LoginModal";
@@ -25,6 +26,12 @@ export default function App() {
 function AppContent() {
   const { t, lang, setLang } = useI18n();
   const { user, loading, login, logout } = useAuth();
+  const { pathname } = useLocation();
+  useEffect(() => {
+    const root = document.getElementById("root");
+    root?.classList.toggle("frame-home", pathname === "/");
+    return () => root?.classList.remove("frame-home");
+  }, [pathname]);
 
   return (
     <>
