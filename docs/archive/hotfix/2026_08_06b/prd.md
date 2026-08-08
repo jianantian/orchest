@@ -13,7 +13,7 @@ changes.
 This hotfix repairs the application-local Eval Lab contract without changing
 Orchest runtime, protocol, provider crates, or bindings. The detailed approved
 design is
-[`docs/superpowers/specs/2026-08-06-v0-16-eval-contract-repair-design.md`](../../superpowers/specs/2026-08-06-v0-16-eval-contract-repair-design.md).
+[`docs/superpowers/specs/2026-08-06-v0-16-eval-contract-repair-design.md`](../../../superpowers/specs/2026-08-06-v0-16-eval-contract-repair-design.md).
 
 ## Goals
 

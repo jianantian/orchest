@@ -31,7 +31,7 @@
 - Modify: `examples/demo/briefing-desk/src/eval/grader/content.rs`
 - Modify: `examples/demo/briefing-desk/src/eval/grader/tool_flow.rs`
 - Modify/add fixtures: `examples/demo/briefing-desk/evals/test-fixtures/`
-- Source contract: `docs/hotfix/2026_08_06b/issues/001-corpus-grader-contract-repair/spec.md`
+- Source contract: `docs/archive/hotfix/2026_08_06b/issues/001-corpus-grader-contract-repair/spec.md`
 
 **Interfaces:**
 - Produce `validate_raw_case_enums(value: &serde_json::Value) -> Result<(), CaseLoadError>` in `case.rs`, called by `load_corpus` before `serde_json::from_value`.
@@ -151,7 +151,7 @@ git commit -m "fix: repair eval corpus and grader contracts (closes #289)"
 - Modify: `examples/demo/briefing-desk/src/eval/trajectory.rs`
 - Modify: `examples/demo/briefing-desk/src/eval/session.rs`
 - Modify: `examples/demo/briefing-desk/tests/eval_cli.rs`
-- Source contract: `docs/hotfix/2026_08_06b/issues/002-resolved-config-attempt-lifecycle/spec.md`
+- Source contract: `docs/archive/hotfix/2026_08_06b/issues/002-resolved-config-attempt-lifecycle/spec.md`
 
 **Interfaces:**
 - Produce `ResolvedChatModel`, which contains the adapter plus provider/model,
@@ -283,7 +283,7 @@ git commit -m "fix: resolve eval config and attempt lifecycle (closes #290)"
 - Modify: `examples/demo/briefing-desk/src/eval/runner.rs`
 - Modify: `examples/demo/briefing-desk/src/eval/artifact.rs`
 - Modify: `examples/demo/briefing-desk/tests/eval_cli.rs`
-- Source contract: `docs/hotfix/2026_08_06b/issues/003-resource-compare-hardening/spec.md`
+- Source contract: `docs/archive/hotfix/2026_08_06b/issues/003-resource-compare-hardening/spec.md`
 
 **Interfaces:**
 - Make usage parsing return whether recognized numeric evidence was consumed.
@@ -366,7 +366,7 @@ git commit -m "fix: harden eval resource and comparison gates (closes #291)"
 - Create: `docs/review/evidence/v0_16_eval_repair/`
 - Modify: `docs/review/v0_16_eval_lab.md`
 - Modify: `examples/demo/briefing-desk/README.md`
-- Source contract: `docs/hotfix/2026_08_06b/issues/004-live-evidence-closeout/spec.md`
+- Source contract: `docs/archive/hotfix/2026_08_06b/issues/004-live-evidence-closeout/spec.md`
 
 **Interfaces:**
 - Add an allowlisted `EvidenceBundle` schema containing only stable IDs, hashes,
