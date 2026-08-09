@@ -59,7 +59,7 @@ export function ListenSheet({ open, onClose, children }: ListenSheetProps) {
         dragConstraints={{ top: 0, bottom: 0 }}
         dragElastic={{ top: 0, bottom: 0.5 }}
         onDragEnd={handleDragEnd}
-        aria-hidden={!open}
+        inert={!open}
       >
         <div className="wb-sheet-grab" />
         <div className="wb-sheet-body">{children}</div>

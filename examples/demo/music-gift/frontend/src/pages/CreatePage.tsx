@@ -8,8 +8,9 @@ type CreateTab = "guided" | "free";
 
 const TAB_FADE_MS = 150;
 
-/** Workbench top bar: mode tabs on the left, global actions (draft state)
- * on the right. Edit mode hides the tabs. */
+/** Workbench top bar: mode tabs on the left, a (currently empty) global
+ * actions slot on the right — the draft-state indicator is deferred until
+ * the persisted timestamp is wired up. Edit mode hides the tabs. */
 function WorkbenchTopbar({
   active,
   showTabs,
@@ -40,9 +41,7 @@ function WorkbenchTopbar({
       ) : (
         <span />
       )}
-      <div className="wb-topbar-actions">
-        <span className="wb-draft-state" />
-      </div>
+      <div className="wb-topbar-actions" />
     </div>
   );
 }

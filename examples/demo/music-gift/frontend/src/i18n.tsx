@@ -1085,6 +1085,20 @@ const DICT: Record<Lang, Record<string, string>> = {
   },
 };
 
+// All five dictionaries must carry the same key set as `en` — a missing key
+// silently falls back to English mid-session, an extra one is dead weight.
+// Fail loudly at module load instead (same pattern as the STYLE_TAGS check).
+const EN_KEYS = new Set(Object.keys(DICT.en));
+for (const lang of LANGS) {
+  const missing = [...EN_KEYS].filter(k => !(k in DICT[lang]));
+  const extra = Object.keys(DICT[lang]).filter(k => !EN_KEYS.has(k));
+  if (missing.length > 0 || extra.length > 0) {
+    throw new Error(
+      `DICT.${lang} keys out of sync with en — missing: ${missing.join(", ") || "-"}, extra: ${extra.join(", ") || "-"}`,
+    );
+  }
+}
+
 function resolveLang(): Lang {
   try {
     const stored = localStorage.getItem("moment_lang");

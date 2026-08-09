@@ -97,7 +97,7 @@ export function RangeSelect({ duration, value, onChange }: RangeSelectProps) {
   const pct = (s: number) => `${duration > 0 ? (s / duration) * 100 : 0}%`;
 
   return (
-    <div className="wb-range-bar" ref={barRef} onPointerDown={onTrackDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
+    <div className="wb-range-bar" ref={barRef} onPointerDown={onTrackDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
       <div className="wb-range-track" />
       {hasSel && (
         <div className="wb-range-sel" style={{ left: pct(start), width: pct(Math.max(end - start, 0)) }} />
@@ -109,6 +109,7 @@ export function RangeSelect({ duration, value, onChange }: RangeSelectProps) {
           onPointerDown={e => beginHandleDrag("start", e)}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
         />
       )}
       {hasSel && (
@@ -118,6 +119,7 @@ export function RangeSelect({ duration, value, onChange }: RangeSelectProps) {
           onPointerDown={e => beginHandleDrag("end", e)}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
         />
       )}
     </div>
