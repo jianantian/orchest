@@ -1956,6 +1956,26 @@ body.locked { overflow: hidden; }
 .wb-style-section, .wb-vocal-section { display: flex; flex-direction: column; gap: 10px; }
 .wb-card-head { display: flex; align-items: center; justify-content: space-between; }
 
+/* ── 需求卡 (Task 13): the guided flow's collected brief, ported from
+   styles-prototype.css .pw-brief (two-column dl), renamed wb-*. Each dt/dd
+   pair is wrapped in a row div (valid inside <dl>) so the mount stagger can
+   animate one node per row — the 60ms delay is inline per row index, and
+   the reduced-motion override drops the transition (delay included). ── */
+.wb-brief { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 0; font-size: 13px; }
+.wb-brief-row {
+  display: grid; grid-template-columns: auto 1fr; gap: 14px;
+  opacity: 0; transform: translateY(4px);
+  transition: opacity 240ms ease-out, transform 240ms ease-out;
+}
+.wb-brief.on .wb-brief-row { opacity: 1; transform: none; }
+.wb-brief dt { color: var(--text-3); }
+.wb-brief dd { margin: 0; color: var(--text); }
+.wb-brief dd.empty { color: var(--text-3); }
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-brief-row { transition: none; }
+}
+
 /* The studio fills the bench body so the two columns get a bounded height
    and scroll internally (replaces the old single-scroll page model). */
 .studio { flex: 1; min-height: 0; }

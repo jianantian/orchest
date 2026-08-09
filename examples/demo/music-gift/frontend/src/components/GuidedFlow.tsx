@@ -4,6 +4,7 @@ import { useI18n, getMonths, getStyleTags } from "../i18n";
 import { useMusicGen } from "../hooks/useMusicGen";
 import { useGuidedState, clearGuided, type FlowStep, type GuidedMessage, type StepMeta } from "../hooks/useGuidedState";
 import { ReviewCard, type ReviewData } from "./ReviewCard";
+import { BriefCard } from "./guided/BriefCard";
 import { stageStudioDraft } from "./Studio";
 import { MusicCard } from "./MusicCard";
 import { PillsRow, GoldPill, InlineInput, BirthdayPicker } from "./ChatUI";
@@ -369,6 +370,9 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
         </div>
       )}
       <div className="chat-messages guided">
+        {/* 需求卡 (Task 13): temporary home at the top of the chat stream —
+            Task 14 moves it into the right artifact column. */}
+        <BriefCard meta={meta} draft={draft} />
         {bubbles.map((b, i) => <div key={`b-${i}`} className={`bubble ${b.role}`}>{b.text}</div>)}
 
         {step === "relationship" && <PillsRow options={relPills} onSelect={handleRelPick} />}
