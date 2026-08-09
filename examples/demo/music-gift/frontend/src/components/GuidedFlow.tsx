@@ -257,8 +257,9 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
           stopReveal();
           if (arrived) act.setMsg([...msgs, { role: "assistant", content: arrived }]);
           setStage(e.type === "Elevating" ? "elevate" : "review");
-          // The indicator renders above the ReviewCard, which fills the
-          // viewport — scroll to the indicator itself or the label is invisible.
+          // The indicator is a chat bubble in the scroll stream; the full-
+          // text flush above may leave it outside the visible area, so
+          // scroll it into view or the label is invisible.
           setTimeout(() => reviewingRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
         } else if (e.type === "Done") {
           stopReveal();
@@ -355,9 +356,9 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
   const lyricsStreaming = streaming && !!lastAssistant && lastAssistant.content.includes("<<<LYRICS>>>");
 
   // The current step's quick options (pills / inline input / birthday
-  // picker) render in a fixed zone pinned above the input bar — the
-  // prototype's .pw-quickpills intent — instead of inside the scroll stream,
-  // so the active question's options never scroll away.
+  // picker) render in a fixed zone pinned above the input bar instead of
+  // inside the scroll stream, so the active question's options never
+  // scroll away.
   const hasOptions = step === "relationship" || step === "name" || step === "gender" || step === "birthday" || step === "scenario";
 
   // Task 14: GuidedFlow wraps itself in the workbench two-column shell —

@@ -995,11 +995,9 @@ body::after {
 .lyrics-manuscript::placeholder { color: var(--text-3); font-style: italic; font-size: 16px; opacity: 0.65; }
 .lyrics-manuscript:focus-visible { border-color: var(--accent); box-shadow: inset 0 1px 6px var(--inset-line), 0 0 0 3px var(--accent-tint-24); }
 .lyrics-manuscript:disabled { opacity: 0.4; }
-/* Draft sections — Suno-style collapsible groups inside the draft card.
-   The header reads like the AI toolbar title (display font, small, muted);
-   the body collapses with a grid-rows + opacity/transform transition. */
-.draft-section { display: flex; flex-direction: column; }
-.draft-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* Draft-section toggle — collapsible-group header button (Suno-style).
+   Reused standalone by the Studio AI toolbar; the full DraftSection
+   component was retired, only this header button remains. */
 .draft-section-toggle {
   display: flex; align-items: center; gap: 6px;
   padding: 4px 0; border: none; background: transparent;
@@ -1011,20 +1009,9 @@ body::after {
 .draft-section-toggle:focus-visible { outline: none; border-radius: 6px; box-shadow: 0 0 0 2px var(--accent); }
 .draft-section-toggle .chevron { flex-shrink: 0; transform: rotate(-90deg); transition: transform 0.22s ease; }
 .draft-section-toggle .chevron.open { transform: rotate(0deg); }
-.draft-section-tools { display: flex; align-items: center; gap: 6px; }
-.draft-section-body {
-  display: grid; grid-template-rows: 0fr;
-  opacity: 0; transform: translateY(-4px);
-  transition: grid-template-rows 0.25s ease, opacity 0.22s ease, transform 0.25s ease;
-}
-.draft-section.open .draft-section-body { grid-template-rows: 1fr; opacity: 1; transform: none; }
-.draft-section-inner { overflow: hidden; min-height: 0; }
-/* Vertical padding lives one level below the clipped wrapper so the 0fr
-   collapsed state leaves no residual gap. */
-.draft-section-pad { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .draft-section-toggle .chevron, .draft-section-body { transition: none; }
+  .draft-section-toggle .chevron { transition: none; }
 }
 
 /* Style edit row: selected chips + the inline "+ 风格" input. */
@@ -2013,8 +2000,9 @@ body.locked { overflow: hidden; }
 .guided .wb-card.chat-panel { padding: 0; }
 
 /* Quick options pinned between the message list and the input bar. The
-   per-step blocks keep their own bubblePop mount animation. */
-.chat-options {
+   per-step blocks keep their own bubblePop mount animation. Scoped under
+   .guided — the class is generic and only the guided flow uses it. */
+.guided .chat-options {
   flex-shrink: 0; display: flex; flex-direction: column; gap: 8px;
   padding: 12px 16px 4px;
 }
@@ -2164,9 +2152,8 @@ body.locked { overflow: hidden; }
    color-mix literals. While a proposal is pending the textarea is swapped
    for a read-only line view (.wb-manuscript-view, same paper metrics as
    .lyrics-manuscript) and the diff block replaces the from–to lines in
-   place. The mount animation expands via grid-template-rows (the retired
-   .draft-section-body technique), degrading to a plain fade under
-   prefers-reduced-motion. */
+   place. The mount animation expands via grid-template-rows, degrading to
+   a plain fade under prefers-reduced-motion. */
 .wb-manuscript-view {
   padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--r-md);
   background: var(--surface);

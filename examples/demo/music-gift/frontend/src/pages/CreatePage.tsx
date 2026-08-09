@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useI18n } from "../i18n";
 import { GuidedFlow } from "../components/GuidedFlow";
@@ -9,18 +8,16 @@ type CreateTab = "guided" | "free";
 
 const TAB_FADE_MS = 150;
 
-/** Workbench top bar: mode tabs on the left, global actions (draft state,
- * studio-only undo slot) on the right. Edit mode hides the tabs. */
+/** Workbench top bar: mode tabs on the left, global actions (draft state)
+ * on the right. Edit mode hides the tabs. */
 function WorkbenchTopbar({
   active,
   showTabs,
   onSelect,
-  undoSlot,
 }: {
   active: CreateTab;
   showTabs: boolean;
   onSelect: (tab: CreateTab) => void;
-  undoSlot?: ReactNode;
 }) {
   const { t } = useI18n();
   return (
@@ -44,10 +41,7 @@ function WorkbenchTopbar({
         <span />
       )}
       <div className="wb-topbar-actions">
-        {/* Draft-state text is wired in Task 3/5. */}
         <span className="wb-draft-state" />
-        {/* Undo button is injected by Task 3; studio tab only. */}
-        {active === "free" ? undoSlot : null}
       </div>
     </div>
   );

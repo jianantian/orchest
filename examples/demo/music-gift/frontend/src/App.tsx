@@ -11,8 +11,6 @@ import MyGiftsPage from "./pages/MyGiftsPage";
 import PlaylistPage from "./pages/PlaylistPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import SetPasswordPage from "./pages/SetPasswordPage";
-// PROTOTYPE — throwaway, remove after Studio workbench design is approved.
-import PrototypeStudioPage from "./pages/PrototypeStudioPage";
 
 export default function App() {
   return (
@@ -78,10 +76,6 @@ function AppContent() {
           <Route path="/mine" element={<MyGiftsPage />} />
           <Route path="/set-password" element={<SetPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
-          {/* PROTOTYPE — dev-only Studio workbench mock, remove after approval */}
-          {import.meta.env.DEV && (
-            <Route path="/prototype/studio" element={<PrototypeStudioPage />} />
-          )}
         </Routes>
       </main>
     </>

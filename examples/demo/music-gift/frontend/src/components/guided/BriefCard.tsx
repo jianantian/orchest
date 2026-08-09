@@ -21,13 +21,15 @@ export function BriefCard({ meta, draft }: { meta: StepMeta; draft: LyricsDraft 
 
   // Pets skip the name question — the relationship label alone is the "to".
   const to = meta.name ? `${meta.name} (${meta.relationshipLabel})` : meta.relationshipLabel;
+  // Same display mapping as ReviewCard's vocal toggle: the stored value is
+  // "female"/"male", the label reuses the gender_* keys. Anything else
+  // (missing draft, unexpected value) falls back to the `--` placeholder.
+  const vocal = !draft ? "" : draft.vocal === "female" ? t("gender_female") : draft.vocal === "male" ? t("gender_male") : "";
   const rows: Array<{ label: string; value: string }> = [
     { label: t("brief_to"), value: to },
     { label: t("brief_occasion"), value: meta.scenarioLabel },
     { label: t("brief_mood"), value: draft?.style ?? "" },
-    // Same display mapping as ReviewCard's vocal toggle: the stored value is
-    // "female"/"male", the label reuses the gender_* keys.
-    { label: t("brief_vocal"), value: draft ? t(draft.vocal === "male" ? "gender_male" : "gender_female") : "" },
+    { label: t("brief_vocal"), value: vocal },
   ];
 
   return (

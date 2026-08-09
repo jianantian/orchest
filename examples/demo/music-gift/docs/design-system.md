@@ -198,7 +198,7 @@ apple-design 的核心要求——**可中断、从当前值起步、速度交�
 
 1. **Phase 1 · 地基（无视觉变化）**：装 `motion`；建 tokens（§3 全表 + dark 对等值）；grep 收编 68 处字面色与散档圆角；内联样式收编。验收：`grep -c '#[0-9a-f]\{6\}' styles.css` 仅剩 token 定义区。✅ 2026-08-08 完成
 2. **Phase 2 · 状态层 + P0 修复**：按钮/pill/卡片的按压与 hover 态；原生 button 替换；Modal Esc/焦点；P0 四项。视觉变化刻意最小。
-3. **Phase 3 · 创作页工作台（§10，todo #2）**：宽双栏 IA + 选区改稿 + take 试听区 + 引导模式宽形态 + 移动端 dock/sheet。
+3. **Phase 3 · 创作页工作台（§10，todo #2）**：宽双栏 IA + 选区改稿 + take 试听区 + 引导模式宽形态 + 移动端 dock/sheet。✅ 2026-08-08 完成
 4. **Phase 4 · gift 页音乐化（todo #1，含仪式动效）**：UnwrapStage 弹簧编排、reveal 级联、生成等待态、AIGC 背景链路。依赖生成链路改造，单独排期。
 5. **Phase 5 · P1/P2 收尾**：播放器互斥、分享降级、i18n 收编等。
 
