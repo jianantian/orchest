@@ -1970,6 +1970,11 @@ body.locked { overflow: hidden; }
   /* With the mini player dock stuck to the bench bottom (Task 11), keep
      the driver column's last card clear of it. */
   .wb-cols.has-dock { padding-bottom: 84px; }
+
+  /* Full-width CTA (Task 12): stacked narrow screens get one action per
+     row, the primary button spanning the whole column width. */
+  .wb-action-row { flex-direction: column; }
+  .wb-action-row .btn-primary { width: 100%; }
 }
 
 /* ── Mobile mini player dock + listen sheet (Task 11): ported from
@@ -2092,6 +2097,16 @@ body.locked { overflow: hidden; }
 .wb-seltoolbar::after {
   content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
   border: 6px solid transparent; border-top-color: var(--text);
+}
+
+/* One notch tighter still on stacked screens (Task 12): the manuscript
+   host is ~316px wide at 390px, where the desktop compact metrics
+   overflow in EN (+7px), ES (+32px) and RU (+41px). Must stay AFTER the
+   base .wb-seltoolbar rules so the equal-specificity cascade resolves to
+   these values. */
+@media (max-width: 1099px) {
+  .wb-seltoolbar { font-size: 11px; }
+  .wb-seltoolbar button { padding: 4px 6px; }
 }
 
 /* ── Inline diff proposal in the manuscript card ──
