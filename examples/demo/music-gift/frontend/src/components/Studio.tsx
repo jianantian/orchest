@@ -143,6 +143,8 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   // breakpoint the artifact column moves into a bottom sheet; the dock
   // mirrors/toggles the SAME audio element living in the sheet's
   // PlayerCard (registered here — no second media element). ─────────────
+  // 已知限制：跨越 1100px 断点时产物区整体换挂载点，audio 元素被销毁重建，
+  // 播放会停止（不只是进度归零）。
   const isMobile = useMediaQuery("(max-width: 1099px)");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
