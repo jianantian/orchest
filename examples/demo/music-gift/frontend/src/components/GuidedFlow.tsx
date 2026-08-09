@@ -354,107 +354,122 @@ export function GuidedFlow({ onNavigate, onSwitchToFree }: { onNavigate: (giftId
     : "";
   const lyricsStreaming = streaming && !!lastAssistant && lastAssistant.content.includes("<<<LYRICS>>>");
 
+  // The current step's quick options (pills / inline input / birthday
+  // picker) render in a fixed zone pinned above the input bar — the
+  // prototype's .pw-quickpills intent — instead of inside the scroll stream,
+  // so the active question's options never scroll away.
+  const hasOptions = step === "relationship" || step === "name" || step === "gender" || step === "birthday" || step === "scenario";
+
+  // Task 14: GuidedFlow wraps itself in the workbench two-column shell —
+  // CreatePage stays unaware. Left: the chat as a .wb-card; right artifact
+  // column: 需求卡常驻 + ReviewCard (review step) / MusicCard (music step).
   return (
-    <div className="chat-panel">
-      <div className="chat-panel-top">
-        <span className="dot-row"><span className={`dot ${!inChat ? "on" : "past"}`} /><span className={`dot ${inChat ? "on" : ""}`} /></span>
-        {canRestart && (
-          <button className="restart-btn" onClick={() => setConfirmRestart(true)} title={t("restart")} aria-label={t("restart")}>↻</button>
-        )}
-      </div>
-      {confirmRestart && (
-        <div className="restart-confirm" role="alertdialog" aria-label={t("restart_q")}>
-          <span className="restart-q">{t("restart_q")}</span>
-          <button className="restart-yes" onClick={handleRestart}>{t("restart_yes")}</button>
-          <button className="restart-no" onClick={() => setConfirmRestart(false)}>{t("restart_cancel")}</button>
+    <div className="guided wb-cols">
+      <div className="wb-col wb-col-driver">
+        <div className="wb-card chat-panel">
+          <div className="chat-panel-top">
+            <span className="dot-row"><span className={`dot ${!inChat ? "on" : "past"}`} /><span className={`dot ${inChat ? "on" : ""}`} /></span>
+            {canRestart && (
+              <button className="restart-btn" onClick={() => setConfirmRestart(true)} title={t("restart")} aria-label={t("restart")}>↻</button>
+            )}
+          </div>
+          {confirmRestart && (
+            <div className="restart-confirm" role="alertdialog" aria-label={t("restart_q")}>
+              <span className="restart-q">{t("restart_q")}</span>
+              <button className="restart-yes" onClick={handleRestart}>{t("restart_yes")}</button>
+              <button className="restart-no" onClick={() => setConfirmRestart(false)}>{t("restart_cancel")}</button>
+            </div>
+          )}
+          <div className="chat-messages guided">
+            {bubbles.map((b, i) => <div key={`b-${i}`} className={`bubble ${b.role}`}>{b.text}</div>)}
+
+            {inChat && messages.map((msg, i) => {
+              if (msg.hidden) return null;
+              const raw = msg.content;
+              // Stop at <<<LYRICS>>> — lyrics belong in ReviewCard, not the chat bubble
+              const display = msg.role === "assistant"
+                ? stripMarkers(raw.split("<<<LYRICS>>>")[0])
+                : stripMarkers(raw);
+              if (!display.trim()) return null;
+              return <div key={`m-${i}`} className={`bubble ${msg.role === "assistant" ? "bot" : msg.role}`}>{display}</div>;
+            })}
+
+            {/* Typing indicator: waiting for the first visible text of the
+                current assistant turn. Applies to every turn, not just the
+                first — later turns used to show nothing until the first token
+                landed. Hidden once the lyrics marker arrives (that phase gets
+                its own label below) and while a quality stage is labeled. */}
+            {streaming && !stage && !lyricsStreaming && !lastTurnText && (
+              <div className="bubble bot typing-indicator" aria-label="Assistant is typing">
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+              </div>
+            )}
+
+            {/* Lyrics payload streaming: the chat text is done and the hidden
+                <<<LYRICS>>> block (the bulk of the tokens on the final turn) is
+                arriving. Previously this whole phase was dead air. */}
+            {streaming && !stage && lyricsStreaming && (
+              <div className="bubble bot reviewing-indicator" role="status">
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+                <span className="reviewing-label">{t("writing_lyrics")}</span>
+              </div>
+            )}
+
+            {/* Post-stream quality stages (elevate → review): full LLM calls run
+                after the stream ends. Label the wait — previously this was silent
+                dead air with the input greyed out. Shown on any step: follow-up
+                edits from the review screen regenerate lyrics and hit the same
+                wait. */}
+            {stage && (
+              <div ref={reviewingRef} className="bubble bot reviewing-indicator" role="status">
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+                <span className="reviewing-label">{t(stage === "elevate" ? "elevating" : "reviewing")}</span>
+              </div>
+            )}
+
+            {/* Pre-generation transition: gen.start() fired but no giftId yet —
+                animate it like the other waiting phases, not a static bubble. */}
+            {step === "music" && !gen.giftId && gen.state === "generating" && (
+              <div className="bubble bot reviewing-indicator" role="status">
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+                <span className="reviewing-label">{t("creating_gift")}</span>
+              </div>
+            )}
+
+            <div ref={bottomRef} />
+          </div>
+          {hasOptions && (
+            <div className="chat-options">
+              {step === "relationship" && <PillsRow options={relPills} onSelect={handleRelPick} />}
+              {step === "relationship" && <GoldPill label={t("instrumental_btn")} onClick={() => { clearGuided(); onSwitchToFree?.(); }} />}
+              {step === "name" && <InlineInput placeholder={t("name_placeholder")} onSubmit={handleName} />}
+              {step === "gender" && <PillsRow options={genderPills} onSelect={(_, l) => handleGender(l)} />}
+              {step === "birthday" && <BirthdayPicker months={months} skipLabel={t("bday_skip")} dayPlaceholder={t("bday_day_placeholder")} onPick={handleBirthday} />}
+              {step === "scenario" && <PillsRow options={scenPills} onSelect={handleScenario} />}
+            </div>
+          )}
+          {(error || gen.error) && <div className="error-msg chat-error">{error || gen.error}</div>}
+          <div className="chat-bar">
+            <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !isImeComposing(e)) { e.preventDefault(); handleChatSend(); } }} rows={1} disabled={streaming || !(step === "chat" || step === "review")} />
+            <button className="chat-send-btn" onClick={handleChatSend} disabled={streaming} aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z" /></svg></button>
+          </div>
         </div>
-      )}
-      <div className="chat-messages guided">
-        {/* 需求卡 (Task 13): temporary home at the top of the chat stream —
-            Task 14 moves it into the right artifact column. */}
+      </div>
+      {/* Right artifact column: 需求卡常驻; the review draft and the
+          generation status card land here, not in the chat stream. Props
+          unchanged from their previous in-stream render. */}
+      <div className="wb-col wb-col-artifact">
         <BriefCard meta={meta} draft={draft} />
-        {bubbles.map((b, i) => <div key={`b-${i}`} className={`bubble ${b.role}`}>{b.text}</div>)}
-
-        {step === "relationship" && <PillsRow options={relPills} onSelect={handleRelPick} />}
-        {step === "relationship" && <GoldPill label={t("instrumental_btn")} onClick={() => { clearGuided(); onSwitchToFree?.(); }} />}
-
-        {step === "name" && <InlineInput placeholder={t("name_placeholder")} onSubmit={handleName} />}
-
-        {step === "gender" && <PillsRow options={genderPills} onSelect={(_, l) => handleGender(l)} />}
-
-        {step === "birthday" && <BirthdayPicker months={months} skipLabel={t("bday_skip")} dayPlaceholder={t("bday_day_placeholder")} onPick={handleBirthday} />}
-
-        {step === "scenario" && <PillsRow options={scenPills} onSelect={handleScenario} />}
-        {inChat && messages.map((msg, i) => {
-          if (msg.hidden) return null;
-          const raw = msg.content;
-          // Stop at <<<LYRICS>>> — lyrics belong in ReviewCard, not the chat bubble
-          const display = msg.role === "assistant"
-            ? stripMarkers(raw.split("<<<LYRICS>>>")[0])
-            : stripMarkers(raw);
-          if (!display.trim()) return null;
-          return <div key={`m-${i}`} className={`bubble ${msg.role === "assistant" ? "bot" : msg.role}`}>{display}</div>;
-        })}
-
-        {/* Typing indicator: waiting for the first visible text of the
-            current assistant turn. Applies to every turn, not just the
-            first — later turns used to show nothing until the first token
-            landed. Hidden once the lyrics marker arrives (that phase gets
-            its own label below) and while a quality stage is labeled. */}
-        {streaming && !stage && !lyricsStreaming && !lastTurnText && (
-          <div className="bubble bot typing-indicator" aria-label="Assistant is typing">
-            <span className="typing-dot" />
-            <span className="typing-dot" />
-            <span className="typing-dot" />
-          </div>
-        )}
-
-        {/* Lyrics payload streaming: the chat text is done and the hidden
-            <<<LYRICS>>> block (the bulk of the tokens on the final turn) is
-            arriving. Previously this whole phase was dead air. */}
-        {streaming && !stage && lyricsStreaming && (
-          <div className="bubble bot reviewing-indicator" role="status">
-            <span className="typing-dot" />
-            <span className="typing-dot" />
-            <span className="typing-dot" />
-            <span className="reviewing-label">{t("writing_lyrics")}</span>
-          </div>
-        )}
-
-        {/* Post-stream quality stages (elevate → review): full LLM calls run
-            after the stream ends. Label the wait — previously this was silent
-            dead air with the input greyed out. Shown on any step: follow-up
-            edits from the review screen regenerate lyrics and hit the same
-            wait. */}
-        {stage && (
-          <div ref={reviewingRef} className="bubble bot reviewing-indicator" role="status">
-            <span className="typing-dot" />
-            <span className="typing-dot" />
-            <span className="typing-dot" />
-            <span className="reviewing-label">{t(stage === "elevate" ? "elevating" : "reviewing")}</span>
-          </div>
-        )}
-
-        {/* Pre-generation transition: gen.start() fired but no giftId yet —
-            animate it like the other waiting phases, not a static bubble. */}
-        {step === "music" && !gen.giftId && gen.state === "generating" && (
-          <div className="bubble bot reviewing-indicator" role="status">
-            <span className="typing-dot" />
-            <span className="typing-dot" />
-            <span className="typing-dot" />
-            <span className="reviewing-label">{t("creating_gift")}</span>
-          </div>
-        )}
-
         {step === "review" && draft && <ReviewCard key={draft.lyrics} lyrics={draft.lyrics} style={draft.style} title={draft.title} vocal={draft.vocal} styleTags={getStyleTags(lang)} onSubmit={handleReviewSubmit} onOpenInStudio={handleOpenInStudio} creating={gen.state === "generating"} review={review ?? undefined} degraded={draftDegraded} />}
         {step === "music" && gen.giftId && <MusicCard initialState={gen.state === "ready" ? "ready" : gen.state === "error" ? "error" : "generating"} onOpen={handleMusicOpen} onRetry={handleMusicRetry} />}
-
-        <div ref={bottomRef} />
-      </div>
-      {(error || gen.error) && <div className="error-msg chat-error">{error || gen.error}</div>}
-      <div className="chat-bar">
-        <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !isImeComposing(e)) { e.preventDefault(); handleChatSend(); } }} rows={1} disabled={streaming || !(step === "chat" || step === "review")} />
-        <button className="chat-send-btn" onClick={handleChatSend} disabled={streaming} aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z" /></svg></button>
       </div>
     </div>
   );

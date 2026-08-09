@@ -8,8 +8,8 @@ import type { LyricsDraft, StepMeta } from "../../hooks/useGuidedState";
  * flow advances (mood/vocal only exist once the first lyrics draft lands).
  * Rows fade in on mount with a 60ms stagger (inline transition-delay per
  * row; the reduced-motion override kills the transition, delay included).
- * Until Task 14 builds the right artifact column this renders at the top of
- * the guided chat stream.
+ * Lives in the guided flow's right artifact column (Task 14), above the
+ * step-dependent ReviewCard / MusicCard.
  */
 export function BriefCard({ meta, draft }: { meta: StepMeta; draft: LyricsDraft | null }) {
   const { t } = useI18n();

@@ -1997,6 +1997,35 @@ body.locked { overflow: hidden; }
   .wb-action-row .btn-primary { width: 100%; }
 }
 
+/* ============================================
+   Guided flow workbench (Task 14)
+
+   GuidedFlow wraps itself in .wb-cols (CreatePage unaware). Left: the chat
+   panel as a .wb-card — bubbles scroll internally, the step's quick options
+   pin above the input bar (the prototype's .pw-quickpills intent). Right
+   artifact column: 需求卡常驻, ReviewCard at the review step, MusicCard at
+   the music step.
+   ============================================ */
+
+/* Card language without the card padding — chat internals own their metrics
+   (.chat-panel-top / .chat-messages / .chat-bar padding). The panel fills
+   the column and the message list scrolls inside it. */
+.guided .wb-card.chat-panel { padding: 0; }
+
+/* Quick options pinned between the message list and the input bar. The
+   per-step blocks keep their own bubblePop mount animation. */
+.chat-options {
+  flex-shrink: 0; display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 16px 4px;
+}
+
+@media (max-width: 1099px) {
+  /* Stacked single scroller (same collapse as the studio): the artifact
+     column follows the chat in natural DOM order, so the message list grows
+     naturally instead of trapping a second scroller inside the chat card. */
+  .guided .chat-messages.guided { flex: none; overflow: visible; }
+}
+
 /* ── Mobile mini player dock + listen sheet (Task 11): ported from
    styles-prototype.css (.pw-dock/.pw-dim/.pw-sheet*), renamed wb-*.
    Rendered by Studio's mobile branch only (React conditional — the
