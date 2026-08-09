@@ -12,7 +12,6 @@ members = [
     "crates/orchest-node",
     "examples/demo/briefing-desk",
     "examples/demo/research-pipeline",
-    "examples/demo/music-gift",
 ]
 
 [workspace.lints.clippy]
