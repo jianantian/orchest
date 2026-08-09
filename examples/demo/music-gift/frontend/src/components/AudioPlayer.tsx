@@ -6,9 +6,13 @@ interface AudioPlayerProps {
   compact?: boolean;
   onTimeUpdate?: (currentTime: number) => void;
   onDuration?: (duration: number) => void;
+  /** Hands the underlying <audio> element to the owner (mounted = element,
+   *  unmounted = null) so a remote control — the mobile mini player dock —
+   *  can toggle playback without a second media element (Task 11). */
+  registerAudio?: (el: HTMLAudioElement | null) => void;
 }
 
-export default function AudioPlayer({ src, title, compact, onTimeUpdate, onDuration }: AudioPlayerProps) {
+export default function AudioPlayer({ src, title, compact, onTimeUpdate, onDuration, registerAudio }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -16,13 +20,16 @@ export default function AudioPlayer({ src, title, compact, onTimeUpdate, onDurat
   const [loading, setLoading] = useState(true);
   const onTimeRef = useRef(onTimeUpdate);
   const onDurRef = useRef(onDuration);
+  const registerRef = useRef(registerAudio);
 
   useEffect(() => {
     onTimeRef.current = onTimeUpdate;
     onDurRef.current = onDuration;
+    registerRef.current = registerAudio;
     const el = audioRef.current;
     if (!el) return;
     const audio = el;
+    registerRef.current?.(audio);
 
     function onLoaded() {
       setDuration(audio.duration || 0);
@@ -37,17 +44,26 @@ export default function AudioPlayer({ src, title, compact, onTimeUpdate, onDurat
       setPlaying(false);
       setCurrent(0);
     }
+    // Play/pause can also come from outside (mini player dock) — keep the
+    // button icon in sync with the element rather than only local toggles.
+    function onPlay() { setPlaying(true); }
+    function onPause() { setPlaying(false); }
 
     audio.addEventListener("loadedmetadata", onLoaded);
     audio.addEventListener("timeupdate", onTime);
     audio.addEventListener("ended", onEnd);
     audio.addEventListener("canplay", onLoaded);
+    audio.addEventListener("play", onPlay);
+    audio.addEventListener("pause", onPause);
 
     return () => {
+      registerRef.current?.(null);
       audio.removeEventListener("loadedmetadata", onLoaded);
       audio.removeEventListener("timeupdate", onTime);
       audio.removeEventListener("ended", onEnd);
       audio.removeEventListener("canplay", onLoaded);
+      audio.removeEventListener("play", onPlay);
+      audio.removeEventListener("pause", onPause);
     };
   }, [src]);
 

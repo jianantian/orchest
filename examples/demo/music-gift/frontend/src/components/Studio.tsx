@@ -6,6 +6,7 @@ import { lineRangeForSelection, splitLines, spliceLines, manuscriptRangeForLrcRa
 import { isImeComposing } from "../lib/ime";
 import { creatorToken } from "../lib/creator";
 import { useAuth } from "../hooks/useAuth";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useMusicGen } from "../hooks/useMusicGen";
 import { MusicCard } from "./MusicCard";
 import AudioPlayer from "./AudioPlayer";
@@ -17,6 +18,8 @@ import { StyleCard } from "./studio/StyleCard";
 import { PlayerCard } from "./studio/PlayerCard";
 import { RangeSelect, type RangeValue } from "./studio/RangeSelect";
 import { TakesCard } from "./studio/TakesCard";
+import { MiniPlayerDock } from "./studio/MiniPlayerDock";
+import { ListenSheet } from "./studio/ListenSheet";
 import { SelectionToolbar, type ScopedCommand } from "./studio/SelectionToolbar";
 import { LyricsProposal, type Proposal } from "./studio/LyricsProposal";
 import type { ChatMessage, Gift, GiftVersion, SseEvent } from "../types";
@@ -136,6 +139,13 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   // mapped onto LRC lines and handed to the manuscript selection. ──────
   const [audioDuration, setAudioDuration] = useState(0);
   const [audioRange, setAudioRange] = useState<RangeValue | null>(null);
+  // ── Mobile mini player + listen sheet (Task 11): below the wide-frame
+  // breakpoint the artifact column moves into a bottom sheet; the dock
+  // mirrors/toggles the SAME audio element living in the sheet's
+  // PlayerCard (registered here — no second media element). ─────────────
+  const isMobile = useMediaQuery("(max-width: 1099px)");
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
   const editWatchRef = useRef<GenerationWatch | null>(null);
   const savedTimerRef = useRef<number | null>(null);
 
@@ -669,6 +679,168 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
   const lrcRange = audioRange && shownLrcLines ? linesForRange(shownLrcLines, audioRange.start, audioRange.end) : null;
   const rangeMapped = lrcRange && shownLyrics ? manuscriptRangeForLrcRange(shownLyrics, lrcRange) : null;
 
+  // ── Mobile player branch (Task 11): below the breakpoint, once there is
+  // audio the artifact column is replaced by the dock + listen sheet. ────
+  const mobileAudio = editGiftId
+    ? shownAudio
+    : gen.state === "ready" && newGift ? newGift.audio_url : null;
+  const mobilePlayer = isMobile && !!mobileAudio;
+  const dockTitle = editGiftId ? shownTitle : newGift?.meta.title ?? undefined;
+  const dockVersionLabel = editGiftId
+    ? shownVersion ? `V${shownVersion.version}${versionIdx === 0 ? ` · ${t("version_latest")}` : ""}` : ""
+    : `V1 · ${t("version_latest")}`;
+  const dockCover = editGiftId ? shownCover : newGift?.cover_url ?? null;
+
+  // Leaving the mobile-player branch (resize to desktop, audio gone) drops
+  // the sheet from the tree — reset its state so a later return starts closed.
+  useEffect(() => {
+    if (!mobilePlayer) setSheetOpen(false);
+  }, [mobilePlayer]);
+
+  /** The artifact column's content (edit: 试听卡 + 版本卡; new-create:
+   *  generation result; both: AI chat panel). Rendered in the column on
+   *  desktop, inside the listen sheet on mobile — one copy, never two. */
+  const artifactContent = (
+    <>
+      {/* Edit mode: 试听卡 + 版本卡. While a regeneration is in flight the
+          old audio is gone server-side — PlayerCard shows the generating
+          state instead of a broken player. */}
+      {editGiftId && (
+        <>
+          <PlayerCard
+            audioUrl={shownAudio}
+            coverUrl={shownCover}
+            title={shownTitle}
+            versionLabel={shownVersion ? `V${shownVersion.version}${versionIdx === 0 ? ` · ${t("version_latest")}` : ""}` : ""}
+            onTimeUpdate={setPlayTime}
+            onDuration={setAudioDuration}
+            registerAudio={setAudioEl}
+            generating={regen === "generating"}
+            rangeBar={audioDuration > 0 ? (
+              <div className="wb-range-wrap">
+                <RangeSelect duration={audioDuration} value={audioRange} onChange={setAudioRange} />
+                {audioRange && (
+                  <div className="wb-range-info">
+                    <span>{t("range_selected", { start: fmtMSS(audioRange.start), end: fmtMSS(audioRange.end) })}</span>
+                    {rangeMapped && <span className="map">{t("range_mapped", { from: rangeMapped.from, to: rangeMapped.to })}</span>}
+                    <button type="button" className="btn btn-primary wb-range-send" disabled={!rangeMapped} onClick={handleRangeSendToAI}>
+                      {t("range_send_to_ai")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : undefined}
+          >
+            {shownLrcLines?.length ? (
+              <div className="edit-lyrics">
+                <LRCViewer lines={shownLrcLines} currentTime={playTime} onSeek={(time) => {
+                  const audio = document.querySelector("audio");
+                  if (audio) audio.currentTime = time;
+                }} />
+              </div>
+            ) : shownLyrics ? (
+              <div className="edit-lyrics">{shownLyrics}</div>
+            ) : null}
+          </PlayerCard>
+          {versions.length > 1 && (
+            <TakesCard
+              versions={versions}
+              currentIdx={versionIdx}
+              onSelect={(i) => { setVersionIdx(i); setPlayTime(0); setAudioRange(null); }}
+              onBranch={(i) => loadVersionToDraft(versions[i])}
+            />
+          )}
+        </>
+      )}
+      {/* New-create mode: the generation result lands in the artifact
+          column in place — MusicCard progress while cooking, the player
+          once ready, with the gift page kept as a secondary exit (no more
+          auto-navigation, spec §10.9). */}
+      {!editGiftId && gen.giftId && (
+        gen.state === "ready" && newGift ? (
+          <>
+            <PlayerCard
+              audioUrl={newGift.audio_url}
+              coverUrl={newGift.cover_url ?? null}
+              title={newGift.meta.title ?? undefined}
+              versionLabel={`V1 · ${t("version_latest")}`}
+              onTimeUpdate={setPlayTime}
+              onDuration={setAudioDuration}
+              registerAudio={setAudioEl}
+            />
+            <div className="wb-action-row">
+              <button type="button" className="btn btn-secondary" onClick={() => onNavigate(gen.giftId!)}>
+                {t("open_gift_page")}
+              </button>
+            </div>
+          </>
+        ) : (
+          <MusicCard initialState={musicState} onOpen={() => onNavigate(gen.giftId!)} onRetry={() => gen.retry(gen.giftId!)} />
+        )
+      )}
+      {/* ═══ AI collaboration region: collapsible — header holds the
+          chevron + title + undo; collapsed hides bubbles and the pinned
+          input, leaving the pure manual panel. ═══ */}
+      <div className="chat-panel" ref={aiRegionRef}>
+        <div className="studio-ai-toolbar">
+          <button type="button" className="draft-section-toggle" onClick={() => setAiOpen(o => !o)} aria-expanded={aiOpen}>
+            <svg className={`chevron${aiOpen ? " open" : ""}`} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+            <span className="studio-ai-title">{t("studio_ai_tab")}</span>
+          </button>
+          <button className="icon-btn" onClick={handleUndo} disabled={undoCount === 0} title={t("undo")} aria-label={t("undo")}>↩</button>
+        </div>
+        {aiOpen && (<>
+          <div className="chat-messages guided">
+            {messages.length === 0 && <div className="bubble bot">{t("studio_ai_intro")}</div>}
+
+            {messages.map((msg, i) => {
+              // Stop at <<<LYRICS>>> / <<<LINES: — marker blocks belong to
+              // the draft, not the chat bubble (same truncation as the
+              // guided flow).
+              const display = msg.role === "assistant"
+                ? stripMarkers(msg.content.split("<<<LYRICS>>>")[0].split("<<<LINES:")[0])
+                : stripMarkers(msg.content);
+              if (!display.trim() && !msg.note) return null;
+              return (
+                <div key={`m-${i}`} className={`bubble ${msg.role === "assistant" ? "bot" : msg.role}`}>
+                  {display}
+                  {msg.note && <span className="applied-note">{msg.note}</span>}
+                </div>
+              );
+            })}
+
+            {/* Typing indicator: waiting for the first visible text of the
+                current assistant turn. */}
+            {streaming && !lyricsStreaming && !lastTurnText && (
+              <div className="bubble bot typing-indicator" aria-label="Assistant is typing">
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+              </div>
+            )}
+
+            {/* The hidden <<<LYRICS>>> block is streaming into the draft. */}
+            {streaming && lyricsStreaming && (
+              <div className="bubble bot reviewing-indicator" role="status">
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+                <span className="reviewing-label">{t("writing_lyrics")}</span>
+              </div>
+            )}
+
+            <div ref={bottomRef} />
+          </div>
+          {chatError && <div className="error-msg chat-error">{chatError}</div>}
+          <div className="chat-bar">
+            <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !isImeComposing(e)) { e.preventDefault(); handleChatSend(); } }} rows={1} disabled={streaming} placeholder={t("ai_placeholder")} />
+            <button className="chat-send-btn" onClick={handleChatSend} disabled={streaming} aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z" /></svg></button>
+          </div>
+        </>)}
+      </div>
+    </>
+  );
+
   if (editGiftId && editPhase === "loading") {
     return <div className="studio loading-page"><span className="spinner" /> {t("loading_gift")}</div>;
   }
@@ -691,7 +863,7 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
       {/* ═══ Two-column workbench: driver (manuscript + style + actions)
           left, artifacts right (edit mode: 试听卡 + 版本卡 above the AI
           chat panel). ═══ */}
-      <div className="wb-cols">
+      <div className={mobilePlayer ? "wb-cols has-dock" : "wb-cols"}>
         <div className="wb-col wb-col-driver">
         {/* 1–2. Manuscript card: borderless serif title (with the ✨ 帮写
             tool pinned to its row), divider, then the lyrics body with a
@@ -794,142 +966,30 @@ export function Studio({ photos, lang, onNavigate, editGiftId }: StudioProps) {
         )}
         </div>
 
-        <div className="wb-col wb-col-artifact">
-      {/* Edit mode: 试听卡 + 版本卡. While a regeneration is in flight the
-          old audio is gone server-side — PlayerCard shows the generating
-          state instead of a broken player. */}
-      {editGiftId && (
-        <>
-          <PlayerCard
-            audioUrl={shownAudio}
-            coverUrl={shownCover}
-            title={shownTitle}
-            versionLabel={shownVersion ? `V${shownVersion.version}${versionIdx === 0 ? ` · ${t("version_latest")}` : ""}` : ""}
-            onTimeUpdate={setPlayTime}
-            onDuration={setAudioDuration}
-            generating={regen === "generating"}
-            rangeBar={audioDuration > 0 ? (
-              <div className="wb-range-wrap">
-                <RangeSelect duration={audioDuration} value={audioRange} onChange={setAudioRange} />
-                {audioRange && (
-                  <div className="wb-range-info">
-                    <span>{t("range_selected", { start: fmtMSS(audioRange.start), end: fmtMSS(audioRange.end) })}</span>
-                    {rangeMapped && <span className="map">{t("range_mapped", { from: rangeMapped.from, to: rangeMapped.to })}</span>}
-                    <button type="button" className="btn btn-primary wb-range-send" disabled={!rangeMapped} onClick={handleRangeSendToAI}>
-                      {t("range_send_to_ai")}
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : undefined}
-          >
-            {shownLrcLines?.length ? (
-              <div className="edit-lyrics">
-                <LRCViewer lines={shownLrcLines} currentTime={playTime} onSeek={(time) => {
-                  const audio = document.querySelector("audio");
-                  if (audio) audio.currentTime = time;
-                }} />
-              </div>
-            ) : shownLyrics ? (
-              <div className="edit-lyrics">{shownLyrics}</div>
-            ) : null}
-          </PlayerCard>
-          {versions.length > 1 && (
-            <TakesCard
-              versions={versions}
-              currentIdx={versionIdx}
-              onSelect={(i) => { setVersionIdx(i); setPlayTime(0); setAudioRange(null); }}
-              onBranch={(i) => loadVersionToDraft(versions[i])}
-            />
-          )}
-        </>
-      )}
-      {/* New-create mode: the generation result lands in the artifact
-          column in place — MusicCard progress while cooking, the player
-          once ready, with the gift page kept as a secondary exit (no more
-          auto-navigation, spec §10.9). */}
-      {!editGiftId && gen.giftId && (
-        gen.state === "ready" && newGift ? (
+        {!mobilePlayer && (
+          <div className="wb-col wb-col-artifact">{artifactContent}</div>
+        )}
+        </div>
+
+        {/* Mobile (Task 11): once audio exists, the artifact column's
+            content lives in the bottom sheet; the dock mirrors and toggles
+            the SAME audio element mounted inside the sheet's PlayerCard. */}
+        {mobilePlayer && (
           <>
-            <PlayerCard
-              audioUrl={newGift.audio_url}
-              coverUrl={newGift.cover_url ?? null}
-              title={newGift.meta.title ?? undefined}
-              versionLabel={`V1 · ${t("version_latest")}`}
-              onTimeUpdate={setPlayTime}
+            <MiniPlayerDock
+              title={dockTitle}
+              versionLabel={dockVersionLabel}
+              coverUrl={dockCover}
+              audio={audioEl}
+              currentTime={playTime}
+              duration={audioDuration}
+              onExpand={() => setSheetOpen(true)}
             />
-            <div className="wb-action-row">
-              <button type="button" className="btn btn-secondary" onClick={() => onNavigate(gen.giftId!)}>
-                {t("open_gift_page")}
-              </button>
-            </div>
+            <ListenSheet open={sheetOpen} onClose={() => setSheetOpen(false)}>
+              {artifactContent}
+            </ListenSheet>
           </>
-        ) : (
-          <MusicCard initialState={musicState} onOpen={() => onNavigate(gen.giftId!)} onRetry={() => gen.retry(gen.giftId!)} />
-        )
-      )}
-      {/* ═══ AI collaboration region: collapsible — header holds the
-          chevron + title + undo; collapsed hides bubbles and the pinned
-          input, leaving the pure manual panel. ═══ */}
-      <div className="chat-panel" ref={aiRegionRef}>
-        <div className="studio-ai-toolbar">
-          <button type="button" className="draft-section-toggle" onClick={() => setAiOpen(o => !o)} aria-expanded={aiOpen}>
-            <svg className={`chevron${aiOpen ? " open" : ""}`} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
-            <span className="studio-ai-title">{t("studio_ai_tab")}</span>
-          </button>
-          <button className="icon-btn" onClick={handleUndo} disabled={undoCount === 0} title={t("undo")} aria-label={t("undo")}>↩</button>
-        </div>
-        {aiOpen && (<>
-          <div className="chat-messages guided">
-            {messages.length === 0 && <div className="bubble bot">{t("studio_ai_intro")}</div>}
-
-            {messages.map((msg, i) => {
-              // Stop at <<<LYRICS>>> / <<<LINES: — marker blocks belong to
-              // the draft, not the chat bubble (same truncation as the
-              // guided flow).
-              const display = msg.role === "assistant"
-                ? stripMarkers(msg.content.split("<<<LYRICS>>>")[0].split("<<<LINES:")[0])
-                : stripMarkers(msg.content);
-              if (!display.trim() && !msg.note) return null;
-              return (
-                <div key={`m-${i}`} className={`bubble ${msg.role === "assistant" ? "bot" : msg.role}`}>
-                  {display}
-                  {msg.note && <span className="applied-note">{msg.note}</span>}
-                </div>
-              );
-            })}
-
-            {/* Typing indicator: waiting for the first visible text of the
-                current assistant turn. */}
-            {streaming && !lyricsStreaming && !lastTurnText && (
-              <div className="bubble bot typing-indicator" aria-label="Assistant is typing">
-                <span className="typing-dot" />
-                <span className="typing-dot" />
-                <span className="typing-dot" />
-              </div>
-            )}
-
-            {/* The hidden <<<LYRICS>>> block is streaming into the draft. */}
-            {streaming && lyricsStreaming && (
-              <div className="bubble bot reviewing-indicator" role="status">
-                <span className="typing-dot" />
-                <span className="typing-dot" />
-                <span className="typing-dot" />
-                <span className="reviewing-label">{t("writing_lyrics")}</span>
-              </div>
-            )}
-
-            <div ref={bottomRef} />
-          </div>
-          {chatError && <div className="error-msg chat-error">{chatError}</div>}
-          <div className="chat-bar">
-            <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !isImeComposing(e)) { e.preventDefault(); handleChatSend(); } }} rows={1} disabled={streaming} placeholder={t("ai_placeholder")} />
-            <button className="chat-send-btn" onClick={handleChatSend} disabled={streaming} aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z" /></svg></button>
-          </div>
-        </>)}
+        )}
       </div>
-        </div>
-      </div>
-    </div>
   );
 }

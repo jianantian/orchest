@@ -17,6 +17,9 @@ export interface PlayerCardProps {
   /** Range-selection bar rendered right under the player (Task 9); hidden
    *  while generating, same as the player itself. */
   rangeBar?: ReactNode;
+  /** Passthrough of AudioPlayer's registerAudio (Task 11): the mobile mini
+   *  player dock toggles playback through this element — no second audio. */
+  registerAudio?: (el: HTMLAudioElement | null) => void;
   /** True while a regeneration is in flight — the old audio is gone
    *  server-side, so the card shows the generating status instead of a
    *  broken player (same semantics as the old edit-head). */
@@ -29,7 +32,7 @@ export interface PlayerCardProps {
  *  existing AudioPlayer, an optional range-selection bar (Task 9), and the
  *  LRC/plain-lyrics panel passed in as children. Pure presentational move
  *  out of Studio's edit-head; all state stays in Studio. */
-export function PlayerCard({ audioUrl, coverUrl, title, versionLabel, onTimeUpdate, onDuration, rangeBar, generating = false, children }: PlayerCardProps) {
+export function PlayerCard({ audioUrl, coverUrl, title, versionLabel, onTimeUpdate, onDuration, registerAudio, rangeBar, generating = false, children }: PlayerCardProps) {
   const { t } = useI18n();
   return (
     <div className="wb-card wb-player-card">
@@ -47,7 +50,7 @@ export function PlayerCard({ audioUrl, coverUrl, title, versionLabel, onTimeUpda
               {versionLabel && <p className="wb-player-sub">{versionLabel}</p>}
             </div>
           </div>
-          <AudioPlayer key={audioUrl} src={audioUrl} title={title} onTimeUpdate={onTimeUpdate} onDuration={onDuration} />
+          <AudioPlayer key={audioUrl} src={audioUrl} title={title} onTimeUpdate={onTimeUpdate} onDuration={onDuration} registerAudio={registerAudio} />
           {rangeBar}
         </>
       ) : null}
