@@ -2,6 +2,12 @@
 
 > 日期: 2026-05-23
 > 基线版本: orchest `c7bf76a` (feat: add core agent tools) / pi-agent-core `v0.75.5`
+>
+> **历史基线说明（2026-08-11）：** 本文保留当时的比较结论，不代表当前
+> Prime Agent。Prime Agent 后续加入 RLM、retained child agents、agent-to-agent
+> messaging、daemon continuity、persistent goals、heartbeats、schedules 与
+> continual harness。当前研究入口见
+> [`orchest-vs-prime-agent-runtime-lessons.md`](./orchest-vs-prime-agent-runtime-lessons.md)。
 
 ## 1. 代码规模概览
 
