@@ -242,6 +242,7 @@ impl GenTask for RenderfulGen {
             diagnostic_metadata: json!({ "provider": "renderful", "status": map_status(&response) }),
             timed_text: None,
             duration_secs: None,
+            track_meta: Vec::new(),
         })
     }
 }

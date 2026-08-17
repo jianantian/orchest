@@ -129,6 +129,7 @@ pub fn build_result(response: &Value) -> Result<GenResult, ProtocolError> {
         diagnostic_metadata,
         timed_text: None,
         duration_secs: None,
+        track_meta: Vec::new(),
     })
 }
 

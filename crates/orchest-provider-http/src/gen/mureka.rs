@@ -247,6 +247,7 @@ pub fn build_result(response: &Value, trace_id: &str) -> Result<GenResult, Proto
         diagnostic_metadata,
         timed_text: None,
         duration_secs: None,
+        track_meta: Vec::new(),
     })
 }
 /// Extract a [`ErrorCode::ProviderTaskFailed`] from a `status: "failed"`

@@ -16,7 +16,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use orchest_protocol::{
     Capability, CapabilityDescriptor, ErrorCode, GenAsset, GenAssetRole, GenHandle, GenRequest,
-    GenResult, GenStatus, GenTask, Modality, ProtocolError, TimedSegment, TimedText,
+    GenResult, GenStatus, GenTask, Modality, ProtocolError, TimedSegment, TimedText, TrackMeta,
 };
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::warn_unconsumed_params;
@@ -241,27 +241,73 @@ fn build_result(data: &Value) -> GenResult {
         diagnostic_metadata,
         timed_text: None,
         duration_secs,
+        // Filled by `fetch` once the per-track aligned lyrics are in.
+        track_meta: Vec::new(),
     }
 }
 
-/// The primary track's id (Suno's `audioId`) from a `record-info` `data` payload.
-/// Needed to request that track's aligned lyrics. Uses the same predicate as
-/// the asset list — the first track with a non-empty `audioUrl` — so the
-/// aligned lyrics attach to the same track `assets[0]` points at.
-fn primary_audio_id(data: &Value) -> Option<String> {
+/// The ids (Suno `audioId`) of every track with a non-empty `audioUrl` in a
+/// `record-info` `data` payload, in order. Same predicate as the asset list,
+/// so index `i` here is the same track the `i`-th Primary asset points at —
+/// `fetch` requests each track's aligned lyrics by id.
+fn audio_ids(data: &Value) -> Vec<String> {
     data.get("response")
         .and_then(|r| r.get("sunoData"))
-        .and_then(Value::as_array)?
-        .iter()
-        .find(|track| {
-            track
-                .get("audioUrl")
-                .and_then(Value::as_str)
-                .is_some_and(|s| !s.is_empty())
+        .and_then(Value::as_array)
+        .map(|tracks| {
+            tracks
+                .iter()
+                .filter(|track| {
+                    track
+                        .get("audioUrl")
+                        .and_then(Value::as_str)
+                        .is_some_and(|s| !s.is_empty())
+                })
+                .filter_map(|t| t.get("id").and_then(Value::as_str))
+                .map(ToString::to_string)
+                .collect()
         })
-        .and_then(|t| t.get("id"))
-        .and_then(Value::as_str)
-        .map(ToString::to_string)
+        .unwrap_or_default()
+}
+
+/// Per-track durations from a `record-info` `data` payload: one entry per
+/// track with a non-empty `audioUrl` (the same predicate as the asset list,
+/// so entries are index-aligned with the Primary assets). `None` when the
+/// track reports no duration.
+fn track_durations(data: &Value) -> Vec<Option<f64>> {
+    data.get("response")
+        .and_then(|r| r.get("sunoData"))
+        .and_then(Value::as_array)
+        .map(|tracks| {
+            tracks
+                .iter()
+                .filter(|track| {
+                    track
+                        .get("audioUrl")
+                        .and_then(Value::as_str)
+                        .is_some_and(|s| !s.is_empty())
+                })
+                .map(|t| t.get("duration").and_then(Value::as_f64))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Pair per-track durations with the fetched per-track aligned lyrics into
+/// one [`TrackMeta`] per Primary asset, index-aligned. Best-effort: a track
+/// whose timed-lyrics call failed simply keeps `timed_text: None`.
+fn assemble_track_meta(
+    durations: Vec<Option<f64>>,
+    timed_texts: Vec<Option<TimedText>>,
+) -> Vec<TrackMeta> {
+    durations
+        .into_iter()
+        .zip(timed_texts)
+        .map(|(duration_secs, timed_text)| TrackMeta {
+            duration_secs,
+            timed_text,
+        })
+        .collect()
 }
 
 /// Map a `get-timestamped-lyrics` `data` payload onto [`TimedText`]. Text is
@@ -287,10 +333,14 @@ enum JobState {
     Pending,
     Done {
         result: GenResult,
-        /// The primary track's id (Suno `audioId`), captured by `poll` from the
-        /// `record-info` payload. `fetch` needs it to request that track's
-        /// aligned lyrics; the payload itself is gone by then.
-        primary_audio_id: Option<String>,
+        /// The ids (Suno `audioId`) of every track with an audio URL, captured
+        /// by `poll` from the `record-info` payload. `fetch` needs them to
+        /// request each track's aligned lyrics; the payload itself is gone by
+        /// then. Index-aligned with `durations` and the Primary assets.
+        audio_ids: Vec<String>,
+        /// Per-track durations, index-aligned with `audio_ids` and the
+        /// Primary assets (`None` = track reported no duration).
+        durations: Vec<Option<f64>>,
     },
 }
 
@@ -544,12 +594,14 @@ impl GenTask for SunoMusicGen {
                 // layering) — `poll` may be repeated after SUCCESS, which
                 // would re-fire the lyrics request every time.
                 let result = build_result(&data);
-                let primary_audio_id = primary_audio_id(&data);
+                let audio_ids = audio_ids(&data);
+                let durations = track_durations(&data);
                 self.lock().insert(
                     handle.id.clone(),
                     JobState::Done {
                         result,
-                        primary_audio_id,
+                        audio_ids,
+                        durations,
                     },
                 );
                 Ok(GenStatus::Done)
@@ -570,24 +622,35 @@ impl GenTask for SunoMusicGen {
         match state {
             Some(JobState::Done {
                 mut result,
-                primary_audio_id,
+                audio_ids,
+                durations,
             }) => {
-                // Secondary call: forced-aligned lyrics for the primary track.
-                // A separate Suno endpoint (taskId + audioId); its result fills
-                // GenResult.timed_text without touching the submit→poll→fetch
-                // trait shape. Best-effort — a failure leaves timed_text = None
-                // and the consumer falls back to its own estimate. `fetch` is
-                // normally invoked once, so one extra read-only request here is
-                // acceptable.
-                if let Some(audio_id) = primary_audio_id {
-                    let (timed_text, hoot_cer) = self.fetch_timed_text(&handle.id, &audio_id).await;
-                    result.timed_text = timed_text;
-                    if let (Some(cer), Some(obj)) =
-                        (hoot_cer, result.diagnostic_metadata.as_object_mut())
-                    {
-                        obj.insert("alignment_hoot_cer".to_string(), json!(cer));
+                // Secondary calls: forced-aligned lyrics, one per track (Suno
+                // returns two tracks per generation). A separate Suno endpoint
+                // (taskId + audioId); its results fill GenResult.track_meta
+                // without touching the submit→poll→fetch trait shape.
+                // Best-effort — a failure leaves that track's timed_text =
+                // None and the consumer falls back to its own estimate.
+                // `fetch` is normally invoked once, so one extra read-only
+                // request per track here is acceptable; they run sequentially
+                // to keep the per-track order deterministic.
+                let mut timed_texts = Vec::with_capacity(audio_ids.len());
+                for (index, audio_id) in audio_ids.iter().enumerate() {
+                    let (timed_text, hoot_cer) = self.fetch_timed_text(&handle.id, audio_id).await;
+                    if index == 0 {
+                        // Track 0 keeps filling the global fields, exactly as
+                        // before multi-track support: the global timed_text /
+                        // duration_secs mirror track_meta[0].
+                        result.timed_text = timed_text.clone();
+                        if let (Some(cer), Some(obj)) =
+                            (hoot_cer, result.diagnostic_metadata.as_object_mut())
+                        {
+                            obj.insert("alignment_hoot_cer".to_string(), json!(cer));
+                        }
                     }
+                    timed_texts.push(timed_text);
                 }
+                result.track_meta = assemble_track_meta(durations, timed_texts);
                 Ok(result)
             }
             Some(JobState::Pending) => Err(ProtocolError::new(
@@ -659,21 +722,64 @@ mod tests {
     }
 
     #[test]
-    fn primary_audio_id_matches_first_track_with_audio_url() {
-        // Same predicate as the asset list (first track with a non-empty
-        // audioUrl), so the aligned lyrics attach to the track assets[0]
-        // points at — a leading track without audio must not steal it.
+    fn audio_ids_match_every_track_with_audio_url() {
+        // Same predicate as the asset list (every track with a non-empty
+        // audioUrl), so index i here is the track the i-th Primary asset
+        // points at — tracks without audio must not shift the alignment.
         let data = json!({ "response": { "sunoData": [
             {"id": "aud-no-url"},
             {"id": "aud-empty-url", "audioUrl": ""},
-            {"id": "aud-2", "audioUrl": "https://suno/track2.mp3"}
+            {"id": "aud-2", "audioUrl": "https://suno/track2.mp3"},
+            {"id": "aud-3", "audioUrl": "https://suno/track3.mp3"}
         ] } });
-        assert_eq!(primary_audio_id(&data), Some("aud-2".to_string()));
-        assert_eq!(primary_audio_id(&json!({})), None);
         assert_eq!(
-            primary_audio_id(&json!({ "response": { "sunoData": [{"id": "a"}] } })),
-            None
+            audio_ids(&data),
+            vec!["aud-2".to_string(), "aud-3".to_string()]
         );
+        assert_eq!(audio_ids(&json!({})), Vec::<String>::new());
+        assert_eq!(
+            audio_ids(&json!({ "response": { "sunoData": [{"id": "a"}] } })),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn track_meta_pairs_two_tracks_durations_with_timed_texts() {
+        // Two-track payload: build_result lifts the first track's duration to
+        // the global field; assemble_track_meta pairs every track's duration
+        // with its fetched timed text, index-aligned with the Primary assets.
+        let data = json!({ "response": { "sunoData": [
+            {"id": "aud-1", "audioUrl": "https://suno/track1.mp3", "duration": 31.84},
+            {"id": "aud-2", "audioUrl": "https://suno/track2.mp3", "duration": 28.5}
+        ] } });
+        let result = build_result(&data);
+        assert_eq!(result.assets.len(), 2);
+        assert_eq!(result.duration_secs, Some(31.84));
+
+        let durations = track_durations(&data);
+        assert_eq!(durations, vec![Some(31.84), Some(28.5)]);
+        assert_eq!(
+            audio_ids(&data),
+            vec!["aud-1".to_string(), "aud-2".to_string()]
+        );
+
+        let tt = |text: &str| TimedText {
+            segments: vec![TimedSegment {
+                text: text.to_string(),
+                start: 0.0,
+                end: Some(1.0),
+            }],
+        };
+        // Track 1's lyrics fetch failed (best-effort): only that entry is None.
+        let track_meta = assemble_track_meta(durations, vec![Some(tt("first")), None]);
+        assert_eq!(track_meta.len(), 2);
+        assert_eq!(track_meta[0].duration_secs, Some(31.84));
+        assert_eq!(track_meta[0].timed_text, Some(tt("first")));
+        assert_eq!(track_meta[1].duration_secs, Some(28.5));
+        assert_eq!(track_meta[1].timed_text, None);
+        // Globals mirror track 0 (duration was lifted by build_result; the
+        // global timed_text is set by `fetch` from the same track-0 value).
+        assert_eq!(result.duration_secs, track_meta[0].duration_secs);
     }
 
     #[test]
@@ -1252,12 +1358,30 @@ mod tests {
         assert!(result.diagnostic_metadata.get("cover_url").is_none());
         assert!(result.diagnostic_metadata.get("duration_secs").is_none());
 
+        // One track_meta entry per Primary asset: durations from record-info
+        // (track 2 reports none), timed text from the per-track lyrics call.
+        // The global fields mirror track 0.
+        assert_eq!(result.track_meta.len(), 2);
+        assert_eq!(result.track_meta[0].duration_secs, Some(31.84));
+        assert_eq!(result.track_meta[0].timed_text, Some(timed_text));
+        assert_eq!(result.track_meta[1].duration_secs, None);
+        assert_eq!(
+            result.track_meta[1]
+                .timed_text
+                .as_ref()
+                .map(|tt| tt.segments.len()),
+            Some(2)
+        );
+
         let lyrics_calls = server
             .request_lines()
             .iter()
             .filter(|l| l.contains("get-timestamped-lyrics"))
             .count();
-        assert_eq!(lyrics_calls, 1, "lyrics endpoint called once, by fetch");
+        assert_eq!(
+            lyrics_calls, 2,
+            "lyrics endpoint called once per track, by fetch"
+        );
     }
 
     #[tokio::test]
@@ -1282,5 +1406,12 @@ mod tests {
             .is_none());
         assert_eq!(result.assets.len(), 3);
         assert_eq!(result.duration_secs, Some(31.84));
+        // Best-effort per track: both entries keep their durations, both
+        // timed texts are None.
+        assert_eq!(result.track_meta.len(), 2);
+        assert_eq!(result.track_meta[0].duration_secs, Some(31.84));
+        assert_eq!(result.track_meta[0].timed_text, None);
+        assert_eq!(result.track_meta[1].duration_secs, None);
+        assert_eq!(result.track_meta[1].timed_text, None);
     }
 }

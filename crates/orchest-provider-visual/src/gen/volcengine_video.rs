@@ -244,6 +244,7 @@ impl GenTask for VolcengineVideoGen {
             diagnostic_metadata: json!({ "provider": "volcengine", "status": map_status(&response) }),
             timed_text: None,
             duration_secs: None,
+            track_meta: Vec::new(),
         })
     }
 }

@@ -183,6 +183,7 @@ impl GenTask for VolcengineGen {
             diagnostic_metadata: json!({ "provider": "volcengine" }),
             timed_text: None,
             duration_secs: None,
+            track_meta: Vec::new(),
         };
         Ok(self.cache.store("volcengine", result))
     }

@@ -28,7 +28,7 @@ pub use adapter::ChatModel as ModelAdapter;
 pub use capability::{
     Asr, GenAsset, GenAssetRole, GenHandle, GenRequest, GenResult, GenStatus, GenTask, Language,
     MusicParams, RealtimeHandle, RealtimeSession, SessionInput, StreamingTranscribeRequest,
-    SynthesizeRequest, SynthesizeResult, TimedSegment, TimedText, TranscribeRequest,
+    SynthesizeRequest, SynthesizeResult, TimedSegment, TimedText, TrackMeta, TranscribeRequest,
     TranscribeResult, Tts, VocalGender, VoiceManager,
 };
 

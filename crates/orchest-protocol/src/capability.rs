@@ -251,6 +251,19 @@ pub struct TimedSegment {
     pub end: Option<f64>,
 }
 
+/// Per-Primary-asset media metadata: duration and aligned text for the track
+/// at the same index in the result's Primary assets. Providers that return
+/// multiple product variants in one job (Suno returns two tracks per
+/// generation) fill one entry per variant; single-product providers leave it
+/// empty (the global fields on GenResult carry the same data for track 0).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TrackMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timed_text: Option<TimedText>,
+}
+
 /// The completed output of a generation job.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GenResult {
@@ -272,6 +285,12 @@ pub struct GenResult {
     /// untyped key because the typed surface had no home for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_secs: Option<f64>,
+    /// Per-Primary-track metadata, index-aligned with the Primary-role entries
+    /// in `assets`. Empty for providers that return a single product. The global
+    /// `timed_text` / `duration_secs` fields keep mirroring track 0 for
+    /// backward compatibility.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub track_meta: Vec<TrackMeta>,
 }
 
 /// Signed/polled generation capability (image/video), abstracted from
@@ -462,6 +481,22 @@ mod tests {
                 }],
             }),
             duration_secs: Some(31.84),
+            track_meta: vec![
+                TrackMeta {
+                    duration_secs: Some(31.84),
+                    timed_text: Some(TimedText {
+                        segments: vec![TimedSegment {
+                            text: "la".to_string(),
+                            start: 1.0,
+                            end: Some(2.0),
+                        }],
+                    }),
+                },
+                TrackMeta {
+                    duration_secs: Some(29.5),
+                    timed_text: None,
+                },
+            ],
         };
         let wire = serde_json::to_string(&result).unwrap();
         let restored: GenResult = serde_json::from_str(&wire).unwrap();
@@ -479,17 +514,20 @@ mod tests {
             diagnostic_metadata: Value::Null,
             timed_text: None,
             duration_secs: None,
+            track_meta: Vec::new(),
         };
         let wire = serde_json::to_string(&result).unwrap();
         let v: Value = serde_json::from_str(&wire).unwrap();
         assert!(v.get("timed_text").is_none());
         assert!(v.get("duration_secs").is_none());
         assert!(v.get("diagnostic_metadata").is_none());
+        assert!(v.get("track_meta").is_none());
 
         let minimal: GenResult = serde_json::from_value(json!({ "assets": [] })).unwrap();
         assert_eq!(minimal.timed_text, None);
         assert_eq!(minimal.duration_secs, None);
         assert_eq!(minimal.diagnostic_metadata, Value::Null);
+        assert_eq!(minimal.track_meta, Vec::new());
     }
 
     #[test]

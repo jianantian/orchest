@@ -194,6 +194,7 @@ impl GenTask for CrazyrouterGen {
             diagnostic_metadata: json!({ "provider": "crazyrouter" }),
             timed_text: None,
             duration_secs: None,
+            track_meta: Vec::new(),
         };
         Ok(self.cache.store("crazyrouter", result))
     }

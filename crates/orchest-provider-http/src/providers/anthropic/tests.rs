@@ -432,8 +432,8 @@ fn system_and_user_messages() -> Vec<Message> {
 /// The message sequence a multi-turn `AgentRun::start_with_messages` run
 /// assembles — [System(prompt)] + history (incl. a ToolUse/ToolResult pair)
 /// + [User(new input)] — must lower to a legal Anthropic Messages request:
-/// non-empty top-level `system`, role boundaries preserved, tool pairing
-/// intact.
+///   non-empty top-level `system`, role boundaries preserved, tool pairing
+///   intact.
 #[test]
 fn multi_turn_history_with_tool_blocks_is_wire_legal() {
     let adapter = adapter_with("claude-test", 128);

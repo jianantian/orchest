@@ -238,6 +238,7 @@ impl GenTask for AliyunGen {
             diagnostic_metadata: json!({ "provider": "aliyun", "status": map_status(&response) }),
             timed_text: None,
             duration_secs: None,
+            track_meta: Vec::new(),
         })
     }
 }
