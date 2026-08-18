@@ -1,0 +1,30 @@
+[package]
+name = "orchest-storage"
+version = "0.1.0"
+edition = "2021"
+
+# Unified object storage for asset persistence (docs/todo/object-storage.md):
+# Aliyun OSS V1 + Tencent COS V5 object signing behind one `ObjectStore` trait.
+#
+# Standalone crate by decision (2026-08-19): consumers are downstream products
+# (motif), not provider impl crates, and the coupling to provider-core was one
+# shared reqwest client — zero provider infrastructure is needed here. No
+# dependency on `orchest-protocol` / `orchest-provider-core`. See
+# docs/todo/object-storage.md for the placement decision and consumer contract.
+
+[dependencies]
+async-trait = "0.1"
+base64 = "0.22"
+bytes = "1"
+hex = "0.4"
+hmac = "0.12"
+md-5 = "0.10"
+reqwest = { version = "0.12" }
+sha1 = "0.10"
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+
+[lints]
+workspace = true

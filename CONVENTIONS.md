@@ -14,6 +14,7 @@ crates/
   orchest-provider-stream/# WebSocket tier: streaming ASR/TTS dialects + omni realtime (openspeech, minimax-ws)
   orchest-provider-visual/# signed/polled gen tier: image + video generation (aliyun, volcengine, crazyrouter, renderful)
   orchest-provider/       # umbrella facade + registry - the only provider surface consumers depend on
+  orchest-storage/        # unified object storage (asset persistence: OSS/COS) - standalone, consumed by products (motif), outside the provider wall
   orchest-py/             # PyO3 binding - no business logic
   orchest-node/           # napi-rs binding - no business logic
 examples/
@@ -21,8 +22,8 @@ skills/                          # example skills
 ```
 
 Each provider-tier crate keeps its own `src/` layout (e.g. `asr/<vendor>/`, `tts/<vendor>/`, `gen/<vendor>/`, `catalog`); see the crate's `lib.rs` for its module map.
+**Rule:** Runtime business logic lives in `orchest`; the shared protocol/capability contract lives in `orchest-protocol`; provider adapters live in their respective weight-tier crates (`orchest-provider-http`/`-stream`/`-visual`, each depending on `orchest-protocol` + `orchest-provider-core`, never on `orchest`). Consumers (`orchest`, `orchest-py`, `orchest-node`) only depend on `orchest-protocol` + `orchest-provider` - impl crates and wire dialects are never named outside the wall. Binding crates only do type conversion and FFI glue - no business decisions. Object storage is outside the provider wall: products that persist assets depend on `orchest-storage` directly (docs/todo/object-storage.md).
 
-**Rule:** Runtime business logic lives in `orchest`; the shared protocol/capability contract lives in `orchest-protocol`; provider adapters live in their respective weight-tier crates (`orchest-provider-http`/`-stream`/`-visual`, each depending on `orchest-protocol` + `orchest-provider-core`, never on `orchest`). Consumers (`orchest`, `orchest-py`, `orchest-node`) only depend on `orchest-protocol` + `orchest-provider` - impl crates and wire dialects are never named outside the wall. Binding crates only do type conversion and FFI glue - no business decisions.
 
 ## Dependencies
 
