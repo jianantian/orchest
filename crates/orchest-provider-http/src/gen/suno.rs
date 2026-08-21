@@ -583,7 +583,11 @@ impl GenTask for SunoMusicGen {
                 jobs.entry(handle.id.clone()).or_insert(JobState::Pending);
                 Ok(GenStatus::Pending)
             }
-            "SEARCHING" | "FIRST" => {
+            // Intermediate states: the provider keeps inventing new ones
+            // (SEARCHING, FIRST, TEXT_SUCCESS, FIRST_SUCCESS, …) — treat the
+            // whole `*_SUCCESS` family short of the terminal SUCCESS as
+            // Running instead of whack-a-moling each new name.
+            s if s == "SEARCHING" || s == "FIRST" || s.ends_with("_SUCCESS") => {
                 let mut jobs = self.lock();
                 jobs.entry(handle.id.clone()).or_insert(JobState::Pending);
                 Ok(GenStatus::Running)
@@ -610,10 +614,25 @@ impl GenTask for SunoMusicGen {
                 ErrorCode::ProviderTaskFailed,
                 format!("Suno music task {} failed", handle.id),
             )),
-            other => Err(ProtocolError::new(
-                ErrorCode::ProviderTaskFailed,
-                format!("Suno music task {} unknown status: {other}", handle.id),
-            )),
+            // Terminal provider rejections (e.g. SENSITIVE_WORD_ERROR for
+            // blocklisted artist names) arrive as statuses outside the
+            // lifecycle above — surface the provider's own errorMessage, it
+            // names the offending word and is the only actionable clue.
+            other => {
+                let detail = data
+                    .get("errorMessage")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty());
+                Err(ProtocolError::new(
+                    ErrorCode::ProviderTaskFailed,
+                    match detail {
+                        Some(msg) => {
+                            format!("Suno music task {} failed ({other}): {msg}", handle.id)
+                        }
+                        None => format!("Suno music task {} unknown status: {other}", handle.id),
+                    },
+                ))
+            },
         }
     }
 
