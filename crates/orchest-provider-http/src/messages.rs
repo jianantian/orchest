@@ -135,7 +135,8 @@ impl MessagesAdapter {
                     tool_use_id,
                     content: tr,
                 } => content.push(json!({
-                    "type": "tool_result", "tool_use_id": tool_use_id, "content": tr
+                    "type": "tool_result", "tool_use_id": tool_use_id,
+                    "content": normalize_tool_result_content(tr)
                 })),
                 // Multimodal blocks are the profile's content-encoding deviation.
                 ContentBlock::Image { .. }
@@ -331,6 +332,17 @@ impl MessagesAdapter {
         options: &RequestOptions,
     ) -> (Value, Vec<OptionAdjustment>) {
         self.build_request_body(options, messages, tools)
+    }
+}
+
+/// Anthropic accepts `tool_result.content` only as a string or a list of
+/// content blocks. Tool outputs are arbitrary JSON — the SDK's own
+/// `load_skill` returns an object — so anything else flattens to its JSON
+/// text here, at the protocol boundary, protecting every writer upstream.
+fn normalize_tool_result_content(value: &Value) -> Value {
+    match value {
+        Value::String(_) | Value::Array(_) => value.clone(),
+        other => Value::String(other.to_string()),
     }
 }
 

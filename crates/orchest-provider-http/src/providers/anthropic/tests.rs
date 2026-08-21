@@ -506,6 +506,54 @@ fn multi_turn_history_with_tool_blocks_is_wire_legal() {
         .any(|b| b["type"] == "tool_result" && b["tool_use_id"] == "toolu_1"));
 }
 
+/// Tool outputs are arbitrary JSON (the SDK's own load_skill returns an
+/// object), but Anthropic accepts `tool_result.content` only as a string or
+/// a list of content blocks — objects must flatten to JSON text at the
+/// protocol boundary, strings pass through untouched.
+#[test]
+fn tool_result_object_content_is_flattened_to_json_text() {
+    let adapter = adapter_with("claude-test", 128);
+    let opts = RequestOptions {
+        thinking: ThinkingLevel::Off,
+        cache_policy: CachePolicy::None,
+        ..Default::default()
+    };
+    let messages = vec![
+        Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::ToolUse {
+                id: "toolu_1".into(),
+                name: "load_skill".into(),
+                input: serde_json::json!({"name": "lyrics-writer"}),
+            }],
+        },
+        Message {
+            role: Role::User,
+            content: vec![
+                ContentBlock::ToolResult {
+                    tool_use_id: "toolu_1".into(),
+                    content: serde_json::json!({"name": "lyrics-writer", "skill_md": "..."}),
+                },
+                ContentBlock::ToolResult {
+                    tool_use_id: "toolu_2".into(),
+                    content: serde_json::json!("plain string"),
+                },
+            ],
+        },
+    ];
+
+    let (body, _) = adapter.request_body_for_test(&messages, &[], &opts);
+    let blocks = body["messages"][1]["content"]
+        .as_array()
+        .expect("tool result content blocks");
+
+    let flattened = blocks[0]["content"]
+        .as_str()
+        .expect("object content must flatten to a JSON string");
+    assert!(flattened.contains("lyrics-writer") && flattened.contains("skill_md"));
+    assert_eq!(blocks[1]["content"], serde_json::json!("plain string"));
+}
+
 #[test]
 fn cache_policy_auto_breakpoint_on_last_system_block() {
     let adapter = adapter_with("claude-test", 128);
