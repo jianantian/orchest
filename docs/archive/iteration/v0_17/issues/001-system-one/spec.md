@@ -1,7 +1,7 @@
 # 通用 Decision 能力与首个 OpenRouter 实现
 
 状态：已完成（2026-09-22）。GitHub [#295](https://github.com/jianantian/orchest/issues/295)（PR [#296](https://github.com/jianantian/orchest/pull/296)）。
-live OpenRouter 调用未运行，验收以离线契约测试、本地 HTTP 集成测试（Python/Node）与 Rust 测试为准。
+live 验证已完成（2026-09-21，Rust/Python/TypeScript 各一次真调用全部成功，见[证据](../../../../../review/evidence/v0_17_live_decisions/README.md)）。
 
 ## Background
 

@@ -1,6 +1,6 @@
 # v0.17 — System One Decisions API
 
-状态：已完成（2026-09-22）；实现见 [001-system-one](./issues/001-system-one/spec.md)（PR [#296](https://github.com/jianantian/orchest/pull/296)）。live OpenRouter 调用未运行。
+状态：已完成（2026-09-22）；实现见 [001-system-one](./issues/001-system-one/spec.md)（PR [#296](https://github.com/jianantian/orchest/pull/296)）。live OpenRouter 调用已验证（[证据](../../../review/evidence/v0_17_live_decisions/README.md)）。
 
 ## 背景
 
