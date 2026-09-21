@@ -1,6 +1,7 @@
 # 通用 Decision 能力与首个 OpenRouter 实现
 
-状态：设计已确认（2026-09-21）；实现中。GitHub [#295](https://github.com/jianantian/orchest/issues/295)。
+状态：已完成（2026-09-22）。GitHub [#295](https://github.com/jianantian/orchest/issues/295)（PR [#296](https://github.com/jianantian/orchest/pull/296)）。
+live OpenRouter 调用未运行，验收以离线契约测试、本地 HTTP 集成测试（Python/Node）与 Rust 测试为准。
 
 ## Background
 
@@ -93,22 +94,22 @@ instructions 或完整请求/响应正文。
 
 ## Acceptance Criteria
 
-- [ ] 不启用 HTTP feature 时，自定义本地 Decision 可经 Registry 选择并执行，允许任意 JSON state 和缺省 usage。
-- [ ] 公共契约不含 noul 或内置供应商；OpenRouter adapter 单独完成 boolean/probability ↔ noul 映射。
-- [ ] 用用户的客服示例提交 Boolean/Choice/Score 时，HTTP method/path/auth 和 JSON 均与 OpenRouter 契约一致。
-- [ ] state/instructions/criteria 使用嵌套对象或数组时，结构未经字符串化传到上游。
-- [ ] Boolean 的 0.95 返回为浮点概率；三级 Score 的 1.05 返回为浮点分数。
-- [ ] Choice/Score 的可选字段缺失时保持缺失；完整响应保留分布、置信度、结构化 legend、token usage 和 cost_usd。
-- [ ] 响应缺少答案、答案类型不符、未知 choice 或数值越界时调用失败，不把不完整判断当作成功结果。
-- [ ] 非法请求在发送前返回 InvalidRequest；401、429 + Retry-After、5xx、超时、非 JSON 成功响应均有测试。
-- [ ] Registry 无网络可发现 Decision；默认模型和固定版本正确选择，已选 factory 不被其他 config.model 偷换。
-- [ ] model 中的 `~` 和 `/` 原样保留，endpoint override 不被拼接为 chat/completions。
-- [ ] 显式 key、默认环境变量、自定义环境变量和缺失凭证路径均有测试。
-- [ ] Rust、Python、TypeScript 示例能表达同一批客服判断，并在代码中处理置信度缺省与升级逻辑。
-- [ ] Python 本地 HTTP 集成测试验证真实扩展调用和结构化错误，且网络等待不占 GIL。
-- [ ] Node 本地 HTTP 集成测试验证真实 native addon、JS 导出、类型声明和结构化错误。
-- [ ] cargo test --workspace、cargo clippy --workspace -- -D warnings、cargo fmt --check、scripts/lint-check.sh 通过。
-- [ ] Python 通过 maturin 构建验证，Node addon 构建及 SDK 测试通过；live 调用若未运行则明确记录。
+- [x] 不启用 HTTP feature 时，自定义本地 Decision 可经 Registry 选择并执行，允许任意 JSON state 和缺省 usage。
+- [x] 公共契约不含 noul 或内置供应商；OpenRouter adapter 单独完成 boolean/probability ↔ noul 映射。
+- [x] 用用户的客服示例提交 Boolean/Choice/Score 时，HTTP method/path/auth 和 JSON 均与 OpenRouter 契约一致。
+- [x] state/instructions/criteria 使用嵌套对象或数组时，结构未经字符串化传到上游。
+- [x] Boolean 的 0.95 返回为浮点概率；三级 Score 的 1.05 返回为浮点分数。
+- [x] Choice/Score 的可选字段缺失时保持缺失；完整响应保留分布、置信度、结构化 legend、token usage 和 cost_usd。
+- [x] 响应缺少答案、答案类型不符、未知 choice 或数值越界时调用失败，不把不完整判断当作成功结果。
+- [x] 非法请求在发送前返回 InvalidRequest；401、429 + Retry-After、5xx、超时、非 JSON 成功响应均有测试。
+- [x] Registry 无网络可发现 Decision；默认模型和固定版本正确选择，已选 factory 不被其他 config.model 偷换。
+- [x] model 中的 `~` 和 `/` 原样保留，endpoint override 不被拼接为 chat/completions。
+- [x] 显式 key、默认环境变量、自定义环境变量和缺失凭证路径均有测试。
+- [x] Rust、Python、TypeScript 示例能表达同一批客服判断，并在代码中处理置信度缺省与升级逻辑。
+- [x] Python 本地 HTTP 集成测试验证真实扩展调用和结构化错误，且网络等待不占 GIL。
+- [x] Node 本地 HTTP 集成测试验证真实 native addon、JS 导出、类型声明和结构化错误。
+- [x] cargo test --workspace、cargo clippy --workspace -- -D warnings、cargo fmt --check、scripts/lint-check.sh 通过。
+- [x] Python 通过 maturin 构建验证，Node addon 构建及 SDK 测试通过；live 调用若未运行则明确记录。
 
 ## Notes
 

@@ -1,6 +1,6 @@
 # SEP Reader Demo 规划（Demo C 候选）
 
-> 状态：**候选规划，未排期**。若排期为迭代，建议编号 v0.17，目录 `docs/iteration/v0_17/`，并按
+> 状态：**候选规划，未排期**。若排期为迭代，建议编号 v0.18，目录 `docs/iteration/v0_18/`，并按
 > WORKFLOW 拆 issues。本文档基于 2026-08-01 的产品分析讨论稿整理，设计决策以本文档为准。
 
 ## 背景
@@ -244,7 +244,7 @@ triage 规则进入独立 issue。手动 live 运行（真实 LLM）env-var 门�
 |---|---|---|---|
 | A Briefing Desk | v0.10 | 模态广度 | Rust CLI |
 | B Research Pipeline | v0.11 | 委派深度 | Rust CLI |
-| C SEP Reader（候选） | v0.17（若排期） | TS 绑定 + 检索密集 + 多轮 grounding | TS / PWA |
+| C SEP Reader（候选） | v0.18（若排期） | TS 绑定 + 检索密集 + 多轮 grounding | TS / PWA |
 
 Demo C 不进入 v1.0 依赖链（与 v0.16 相同定位：非阻塞、独立实验）。排期前需确认：① 优先级
 （v1.0 前或发布后）；② 是否接受 TS demo 的验证报告作为绑定层冻结证据。

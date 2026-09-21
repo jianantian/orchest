@@ -52,6 +52,7 @@
 | v0.14 | 重构 | Skill 机制（polaris「渐进式披露作为一等抽象」落地）：scanner 错误上报 `ScanOutcome` + `SkillLoadWarning`、frontmatter 行级解析；**零配置渐进式披露**（`<available_skills>` 元数据注入 + 内置 `load_skill` 三级加载、零 CWD 依赖）；注册容错（单 skill 失败跳过+警告、strict 开关、重名先注册者胜）；标准兼容（allowed-tools 双拼写、name/description 校验）+ env 路径注入防护；死字段裁定（声明预留不 enforce、`SkillDependencyError` 移除）；[#225](https://github.com/jianantian/orchest/issues/225)–[#229](https://github.com/jianantian/orchest/issues/229) 关闭（[#230](https://github.com/jianantian/orchest/pull/230)） |
 | v0.15 | 重构 | Gen 协议与子代理语义（music-gift 质量梳理 + seam-findings Finding 2）：`MusicParams` 类型化 + provider-core `warn_unconsumed_params`（9 个 gen provider 挑拣点全接）；`GenAssetRole`（Primary/Cover/Preview）+ 类型化 `GenResult.duration_secs`（`diagnostic_metadata` 回归真诊断）；agent-as-tool 子代理失败 `Err(ToolError)`（kind/code 映射）+ 输出格式契约（`expect_output`，Fenced/Json，一次自包含纠正轮）；正确性批 C5-C7（Chat 协议多模态丢弃可见、compaction tool_use 边界对齐、工具结果回插 role 统一 `Role::User`）；`ToolContext::oneshot` + `Tool::call_oneshot`（11 处手造点清偿）；[#234](https://github.com/jianantian/orchest/issues/234)–[#239](https://github.com/jianantian/orchest/issues/239) 关闭（[#243](https://github.com/jianantian/orchest/pull/243)） |
 | v0.16 | 功能 | Briefing Desk Eval Lab（应用层人工 harness 闭环：18 Loom cases、opt-in trajectory/manifest、确定性 graders、baseline/candidate compare、人工验证报告；不改 runtime/provider/bindings；[验证报告](../review/v0_16_eval_lab.md)） |
+| v0.17 | 功能 | 通用 Decision 能力（System One Decisions）：`orchest-protocol` 新增独立 `Decision` 契约（Boolean/Choice/Score 类型化问答 + 请求/响应校验，公共面不含 `noul`）；provider wall 增加 `Registry::decision`/`decide`/`decision` feature；OpenRouter `/api/alpha/decisions` 为首个 adapter（默认 `~typesafe/jev-latest`，consumer id 保留 `~` 与 `/`，endpoint override 不经 chat URL normalizer，显式 key > `OPENROUTER_API_KEY` > 自定义 env）；Python/TypeScript 对称公开 `decide` 与类型声明；三语言客服分流示例 + [Decisions 指南](../guide/decisions.md)；[#295](https://github.com/jianantian/orchest/issues/295) 关闭（[#296](https://github.com/jianantian/orchest/pull/296)）；live OpenRouter 调用未运行（[PRD](../archive/iteration/v0_17/prd.md)） |
 | hotfix 2026-08-05c | 重构 | Explicit Agent Name：agent 身份不再从 `system_prompt` 截取，改为 Rust/Python/Node 三端 agent 配置的必填 `name`，run hook、handoff hook 与 `AgentUpdated` 事件直接使用该字段；旧构造签名与 prompt fallback 不保留（[`b03a175`](https://github.com/jianantian/orchest/commit/b03a175)） |
 | hotfix 2026-08-06 | 功能 | 原子下游 API 公开面（Murmur 下游需求）：provider-neutral `complete()`（单轮 system/user、`ResponseFormat::JsonObject`、仅 `EndTurn`/`StopSequence` 成功、可选 recommended retry，不启动 agent run）；阿里云 `qwen-audio-3.0-asr-flash` 同步 HTTP ASR（Data URL 字节直传、HTTP `sample_rate` 字符串）+ realtime 修复（context 归位 `payload.input.context`、`task-started` 启动门）；Python/TS 对称公开 `complete`/`transcribe`/`start_asr_stream`；[#285](https://github.com/jianantian/orchest/issues/285)–[#287](https://github.com/jianantian/orchest/issues/287) 关闭（[#288](https://github.com/jianantian/orchest/pull/288)） |
 | hotfix 2026-08-06b | 重构 | v0.16 Eval Contract Repair：修复 corpus/grader、resolved config/attempt lifecycle、resource/result/compare gates；在最终合同上完成 14 cases / 22 attempts 的有效 live baseline（overall 100），候选因未达到 +5 gate 被拒绝，sealed scorecard 未运行；提交可复算且不含原始轨迹的[脱敏证据包](../review/evidence/v0_16_eval_repair/README.md)；[#289](https://github.com/jianantian/orchest/issues/289)–[#292](https://github.com/jianantian/orchest/issues/292) 关闭（[#294](https://github.com/jianantian/orchest/pull/294)） |
@@ -63,10 +64,6 @@
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
 
 ## 规划中
-
-### v0.17 — 通用 Decision 能力（实现中）
-
-类型化 Boolean/Choice/Score 原子判断；OpenRouter Decisions 为首个 provider，Rust/Python/TypeScript 提供独立 `decide`。公共契约可供本地或其他 provider 实现，应用掌握控制流。见 [PRD](./v0_17/prd.md)。
 
 ### v1.0 — 首次公开发布（规划）
 
@@ -165,3 +162,4 @@
 | TTS Provider Gateway | ~~无统一 TTS provider crate~~ → **v0.9.3 已完成** | ✅ |
 | 多模态图片输入（`ContentBlock::Image` 经 agent loop） | ~~v0.10 demo 验证发现无公开 API 可走~~ → **hotfix 2026-07-02 已完成**：新增 `RunInput` 类型，`AgentRun::start(config, RunInput, ..)`；`RunInput::text(..)`/`.with_image(..)`/`.from_blocks(..)` 覆盖纯文本与多模态；demo `describe_image` 工具驱动真实 `ContentBlock::Image` → `ModelAdapter::complete()` 调用（[#195](https://github.com/jianantian/orchest/issues/195)） | ✅ |
 | Harness eval / trajectory 闭环 | ~~无应用层闭环~~ → **v0.16 + hotfix 2026-08-06b 已完成**（Briefing Desk Eval Lab：corpus/recorder/graders/runner/compare；有效 live baseline、保守 attempt/resource contract、可复算[脱敏证据](../review/evidence/v0_16_eval_repair/README.md)；仍为 demo-local，非 core） | ✅ |
+| 通用 Decision 原子判断（Boolean/Choice/Score） | ~~无独立能力，窄判断只能借 ChatModel 或直连 provider~~ → **v0.17 已完成**：protocol `Decision` 契约 + registry 能力桶 + Rust/Python/TS `decide`；OpenRouter Decisions 为首个 provider，HTTP-free 的本地实现可注册替换 | ✅ |

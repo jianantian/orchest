@@ -1,6 +1,6 @@
 # v0.17 — System One Decisions API
 
-状态：设计已确认（2026-09-21）；实现中。
+状态：已完成（2026-09-22）；实现见 [001-system-one](./issues/001-system-one/spec.md)（PR [#296](https://github.com/jianantian/orchest/pull/296)）。live OpenRouter 调用未运行。
 
 ## 背景
 
@@ -50,8 +50,8 @@ System One/System Two 路由，不接 TypeSafe 原生服务，不新增独立 pr
 - [TypeSafe API](https://docs.typesafe.ai/api)：解释三种 primitive 的语义。
 - [How to build with TypeSafe](https://docs.typesafe.ai/concepts/how-to-build-with-system-one)：
   保持代码控制流程，批量提出独立窄问题。
-- [ADR-0001](../../adr/0001-provider-unification.md)、
-  [ADR-0002](../../adr/0002-protocol-provider-decoupling.md)。
+- [ADR-0001](../../../adr/0001-provider-unification.md)、
+  [ADR-0002](../../../adr/0002-protocol-provider-decoupling.md)。
 
 OpenRouter adapter 的字段必填规则优先于原生 TypeSafe 文档；这些 wire 规则不定义公共能力。Alpha API 的不兼容变化
 通过 provider 契约测试发现；不声称离线 fixture 等价于 live 验证。

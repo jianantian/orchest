@@ -39,13 +39,13 @@ OpenRouter noul wire；provider wall 负责注册、模型选择和原子调用�
    TS `decide({model,state,questions,apiKey?,apiKeyEnv?,apiUrl?,timeoutMs?})`
    返回 Promise，结果字段为 snake_case；两个入口共用 wall 的配置和验证。
 
-- [ ] Protocol：先添加公开合同测试，运行 `cargo test -p orchest-protocol --test decision`，
+- [x] Protocol：先添加公开合同测试，运行 `cargo test -p orchest-protocol --test decision`，
   确认新契约缺失使测试失败；实现类型和验证后通过。
-- [ ] Provider：先添加本地 HTTP 合同及无 HTTP 的自定义 Decision 注册测试，运行
+- [x] Provider：先添加本地 HTTP 合同及无 HTTP 的自定义 Decision 注册测试，运行
   `cargo test -p orchest-provider --features decision --test decision`，再补实现。
-- [ ] Bindings：先写 `python/tests/test_decision.py`、`js/tests/decision.test.cjs`；
+- [x] Bindings：先写 `python/tests/test_decision.py`、`js/tests/decision.test.cjs`；
   验证缺失导出失败后补 FFI、声明和包装，构建真实扩展后测试。
-- [ ] 文档与发布检查：补三语言示例，运行完整 workspace 检查，独立审阅最终 diff。
+- [x] 文档与发布检查：补三语言示例，运行完整 workspace 检查，独立审阅最终 diff。
 
 ## Files to read
 
