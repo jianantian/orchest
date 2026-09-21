@@ -108,12 +108,12 @@ async function startAsrStream(options, onEvent) {
   return new AsrStream(session, callbackError);
 }
 
-module.exports = {
-  Agent: native.Agent,
-  complete,
-  decide,
-  transcribe,
-  ProviderError,
-  AsrStream,
-  startAsrStream,
-};
+// Explicit `exports.X = ...` assignments: cjs-module-lexer only detects these
+// for ESM consumers, so `import { decide } from "@orchest/sdk"` works.
+exports.Agent = native.Agent;
+exports.complete = complete;
+exports.decide = decide;
+exports.transcribe = transcribe;
+exports.ProviderError = ProviderError;
+exports.AsrStream = AsrStream;
+exports.startAsrStream = startAsrStream;
