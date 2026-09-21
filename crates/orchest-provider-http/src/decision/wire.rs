@@ -1,5 +1,5 @@
 //! OpenRouter wire DTOs, isolated from the portable Decision vocabulary.
-//! Contract: https://openrouter.ai/openapi.json (2026-09-21).
+//! Contract: <https://openrouter.ai/openapi.json> (2026-09-21).
 
 use std::collections::BTreeMap;
 
