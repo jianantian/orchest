@@ -66,6 +66,19 @@ jobs:
           maturin develop
           python -m pytest python/tests/ -v
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Builds the same addon `npm run pack:local` ships, then runs the JS SDK
+      # suites against the real native module (js/tests/*.test.cjs) — the only
+      # execution path for those tests.
+      - name: Node SDK tests (native addon)
+        run: |
+          npm run build:native
+          npm test
+
       - name: cargo doc (deny warnings)
         run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
