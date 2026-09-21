@@ -25,7 +25,6 @@ pub enum PollOutcome {
 /// Poll `check` until it reports a terminal state or the attempt budget is
 /// exhausted, sleeping `policy.delay_for(attempt)` between polls. The shared loop
 /// under every signed/polled gen dialect.
-#[allow(clippy::result_large_err)] // ProtocolError carries several Strings; threshold is 128B
 pub async fn poll_until_done<F, Fut>(
     policy: &RetryPolicy,
     mut check: F,
