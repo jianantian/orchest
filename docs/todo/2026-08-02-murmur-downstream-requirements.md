@@ -1,6 +1,8 @@
 # TODO: Python SDK 下游需求（来自 Murmur）
 
-> 状态: **待评估** | 记录于 2026-08-02
+> 状态: **全部完成** —— 需求 1/2（含流式补充）/3 由 hotfix 2026-08-06（原子下游 API：`complete` /
+> `transcribe` / `start_asr_stream` + 构建与接入文档）落地，需求 4 由 hotfix 2026-08-05c（Explicit
+> Agent Name）落地 | 记录于 2026-08-02,收尾于 2026-09-21
 > 来源: Murmur（念念，`~/Develop/murmur`）—— Python FastAPI 后端，尝试作为 orchest Python SDK
 > 的第一个真实下游消费者。以下四条是接入过程中撞到的能力缺口，按阻塞程度排序。
 
