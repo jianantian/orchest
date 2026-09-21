@@ -132,11 +132,10 @@ music-gift 的 guided pipeline(引导收集 → chat 写词 → review 审核 �
 **建议**: 两个测试改用 `ENV_LOCK` 串行化(与 tests.rs 其他 env 测试一致)。
 **验收**: 高频复跑不再出现 env 相关 flake。
 
-### C9. `js/index.d.ts` `runSync` 返回类型失真(P2,存量)
+### C9. ~~`js/index.d.ts` `runSync` 返回类型失真(P2,存量)~~ ✅ 已修复(2026-09-22)
 
-**现状**(v0.13 评审附带发现,base 上即存在): `js/index.d.ts` 声明 `runSync(...)` 返回 `RuntimeEvent[]`,但 napi 侧是 async fn、`js/index.js` 直接透传 addon,运行时返回的是 Promise。
-**建议**: 核对 napi 真实行为,声明改为 `Promise<RuntimeEvent[]>`(或改实现真同步);顺带检查相邻声明是否同类失真。
-**验收**: 类型声明与运行时行为一致;sdk-typescript 指南不误导。
+**修复**: 删除与 `js/index.js` 重复的 `js/index.ts`(它同时遮蔽 index.js,使 TS runner 无法解析示例);`js/index.d.ts` 成为公共类型唯一来源,`js/native.d.ts` 只声明 napi 类/函数并从 index 导入共享类型,`Agent` 由 native re-export —— 因而 `runSync` 现为 `Promise<RuntimeEvent[]>`(napi 侧 `pub async fn`),同步的 `runStream` 保持 `void`。顺带以 `crates/orchest/src/events.rs` 为准重建 `RuntimeEvent` union(29 → 37 个变体:补 `model_retry`/`tool_call_retry`/batch 三连/`sub_agent_event`/`hook_panicked`/`agent_updated`,统一注入 `run_depth`/`child_run_id`),并新增 `scripts/check-ts-event-variants.sh` + CI 步骤防止再次漂移。
+**验收**: `tsc --strict` 消费者用例通过(含负例:未知 discriminant 被拒);sdk-typescript 指南 §2/§5/§6 已同步。
 
 ---
 

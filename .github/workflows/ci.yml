@@ -88,5 +88,8 @@ jobs:
       - name: TS event wire naming check
         run: bash scripts/check-ts-event-wire-naming.sh
 
+      - name: TS event variant drift check
+        run: bash scripts/check-ts-event-variants.sh
+
       - name: Supplementary lint checks
         run: bash scripts/lint-check.sh

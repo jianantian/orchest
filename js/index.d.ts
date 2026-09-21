@@ -1,3 +1,12 @@
+/**
+ * Public type surface for `@orchest/sdk`.
+ *
+ * Single source of truth for the module's types: the native addon surface is
+ * declared in `native.d.ts`, which imports the option and wire types defined
+ * here, and `Agent` is re-exported from there. The runtime lives in
+ * `index.js`; there is no second TypeScript copy of it.
+ */
+
 export interface AgentOptions {
   /** Human-readable identity used by run and handoff logs. */
   name: string;
@@ -150,7 +159,7 @@ export interface ToolWithHandler {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  handler: (input: any) => any;
+  handler(input: Record<string, unknown>): unknown;
   sideEffect?: boolean;
   approval?: string;
 }
@@ -225,36 +234,50 @@ export type StopReason =
  */
 export type RunFailureKind = "BudgetExceeded" | "MaxStepsReached" | "Other";
 
+/**
+ * Events on the run stream, in the binding wire shape: serde's externally
+ * tagged form plus `type` (snake_case discriminant) and an injected
+ * `run_depth` / `child_run_id` pair. One variant per core `RuntimeEvent`
+ * variant; `scripts/check-ts-event-variants.sh` fails when the two drift.
+ */
 export type RuntimeEvent =
-  | { type: "run_started"; run_id: string; run_depth: number }
-  | { type: "model_call_started"; step: number; run_depth: number }
-  | { type: "model_stream_chunk"; delta: StreamEvent; run_depth: number }
-  | { type: "model_call_completed"; tokens: TokenUsage; option_adjustments?: OptionAdjustment[]; run_depth: number }
-  | { type: "tool_call_started"; tool: string; metadata: ToolMetadata; input: unknown; run_depth: number }
-  | { type: "tool_call_update"; tool: string; tool_call_id: string; partial: unknown; run_depth: number }
-  | { type: "tool_call_completed"; tool: string; output: unknown; duration: unknown; run_depth: number }
-  | { type: "tool_call_failed"; tool: string; error: ToolExecutionError; run_depth: number }
-  | { type: "async_tool_started"; tool: string; job_id: string; run_depth: number }
-  | { type: "async_tool_progress"; tool: string; job_id: string; status: unknown; run_depth: number }
-  | { type: "async_tool_completed"; tool: string; job_id: string; output: unknown; elapsed: unknown; run_depth: number }
-  | { type: "skill_content_read"; skill_name: string; file: string; tokens: number; run_depth: number }
-  | { type: "approval_requested"; tool_call: unknown; run_depth: number }
-  | { type: "approval_granted"; tool_call: unknown; run_depth: number }
-  | { type: "approval_denied"; tool_call: unknown; run_depth: number }
-  | { type: "budget_warning"; used: unknown; limit: unknown; run_depth: number }
-  | { type: "runtime_warning"; message: string; run_depth: number }
-  | { type: "skill_missing_capabilities"; skill_name: string; run_depth: number }
-  | { type: "skill_load_warning"; path: string; reason: string; run_depth: number }
-  | { type: "context_compacted"; removed_messages: number; summary_tokens: number; run_depth: number }
-  | { type: "child_run_event"; child_run_id: string; run_depth: number; event: RuntimeEvent }
+  | { type: "run_started"; run_id: string; run_depth: number; child_run_id: string | null }
+  | { type: "model_call_started"; step: number; run_depth: number; child_run_id: string | null }
+  | { type: "model_stream_chunk"; delta: StreamEvent; run_depth: number; child_run_id: string | null }
+  | { type: "model_call_completed"; tokens: TokenUsage; option_adjustments?: OptionAdjustment[]; run_depth: number; child_run_id: string | null }
+  | { type: "model_retry"; attempt: number; error: string; next_delay: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "tool_call_started"; tool: string; metadata: ToolMetadata; input: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "tool_call_update"; tool: string; tool_call_id: string; partial: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "tool_call_completed"; tool: string; output: unknown; duration: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "tool_call_failed"; tool: string; error: ToolExecutionError; run_depth: number; child_run_id: string | null }
+  | { type: "tool_call_retry"; tool: string; attempt: number; previous_error: ToolExecutionError; next_delay: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "tool_call_batch_started"; batch_id: string; tool_count: number; run_depth: number; child_run_id: string | null }
+  | { type: "tool_call_batch_item_started"; batch_id: string; tool: string; requested_order: number; run_depth: number; child_run_id: string | null }
+  | { type: "tool_call_batch_item_completed"; batch_id: string; tool: string; requested_order: number; completion_order: number; run_depth: number; child_run_id: string | null }
+  | { type: "async_tool_started"; tool: string; job_id: string; run_depth: number; child_run_id: string | null }
+  | { type: "async_tool_progress"; tool: string; job_id: string; status: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "async_tool_completed"; tool: string; job_id: string; output: unknown; elapsed: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "skill_content_read"; skill_name: string; file: string; tokens: number; run_depth: number; child_run_id: string | null }
+  | { type: "approval_requested"; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "approval_granted"; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "approval_denied"; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "budget_warning"; used: unknown; limit: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "runtime_warning"; message: string; run_depth: number; child_run_id: string | null }
+  | { type: "skill_missing_capabilities"; skill_name: string; run_depth: number; child_run_id: string | null }
+  | { type: "skill_load_warning"; path: string; reason: string; run_depth: number; child_run_id: string | null }
+  | { type: "context_compacted"; removed_messages: number; summary_tokens: number; run_depth: number; child_run_id: string | null }
   | { type: "sub_agent_started"; parent_run_id: string; child_run_id: string; config_summary: unknown; run_depth: number }
   | { type: "sub_agent_completed"; child_run_id: string; output: unknown; budget_used: unknown; run_depth: number }
   | { type: "sub_agent_failed"; child_run_id: string; error: string; run_depth: number }
-  | { type: "run_restarted"; attempt: number; run_depth: number }
-  | { type: "run_aborted"; reason: string | null; run_depth: number; child_run_id: string | null }
+  | { type: "child_run_event"; child_run_id: string; run_depth: number; event: RuntimeEvent }
+  | { type: "sub_agent_event"; parent_run_id: string; child_run_id: string; run_depth: number; event: RuntimeEvent }
+  | { type: "hook_panicked"; hook_name: string; message: string; run_depth: number; child_run_id: string | null }
+  | { type: "agent_updated"; previous_agent: string; new_agent: string; run_depth: number; child_run_id: string | null }
   | { type: "events_dropped"; subscriber_id: number; count: number; run_depth: number; child_run_id: string | null }
-  | { type: "run_completed"; output: unknown; stop_reason: StopReason; run_depth: number }
-  | { type: "run_failed"; error: string; kind: RunFailureKind; run_depth: number };
+  | { type: "run_restarted"; attempt: number; run_depth: number; child_run_id: string | null }
+  | { type: "run_completed"; output: unknown; stop_reason: StopReason; run_depth: number; child_run_id: string | null }
+  | { type: "run_failed"; error: string; kind: RunFailureKind; run_depth: number; child_run_id: string | null }
+  | { type: "run_aborted"; reason: string | null; run_depth: number; child_run_id: string | null };
 
 export interface HistoryMessage {
   /** "system" | "user" | "assistant" | "tool" (plus provider-specific roles). */
@@ -268,21 +291,4 @@ export interface HistoryMessage {
   content: Array<Record<string, unknown>>;
 }
 
-export class Agent {
-  constructor(options: AgentOptions);
-  registerTool(options: ToolRegistration): void;
-  registerToolWithHandler(
-    name: string,
-    description: string,
-    inputSchema: Record<string, unknown>,
-    handler: (input: any) => any,
-    options?: { sideEffect?: boolean; approval?: string },
-  ): void;
-  runSync(input: string, messages?: HistoryMessage[]): RuntimeEvent[];
-  runStream(
-    input: string,
-    onEvent: (event: RuntimeEvent) => void,
-    messages?: HistoryMessage[],
-  ): void;
-  respondApproval(runId: string, approved: boolean): void;
-}
+export { Agent } from "./native";

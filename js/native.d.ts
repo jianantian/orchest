@@ -1,67 +1,20 @@
-export interface HistoryMessage {
-  /** "system" | "user" | "assistant" | "tool" (plus provider-specific roles). */
-  role: string;
-  /**
-   * Content blocks in the core serde JSON shape, e.g. `{ Text: "..." }`,
-   * `{ ToolUse: { id, name, input } }`, or `{ ToolResult: { tool_use_id, content } }`.
-   * ToolUse blocks belong in assistant messages, each matching ToolResult in
-   * the immediately following user message.
-   */
-  content: Array<Record<string, unknown>>;
-}
+/**
+ * Native addon surface (`orchest_node.node`) plus the wire types it returns.
+ *
+ * Shared option and wire types live in `index.d.ts`; this file declares only
+ * the napi classes and functions, typed in terms of them.
+ */
 
-export interface RequestOptions {
-  thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  thinkingBudgetTokens?: number;
-  includeThinking?: boolean;
-  compatibilityPolicy?: "coerce" | "strict";
-  maxTokens?: number;
-  temperature?: number;
-  topP?: number;
-  cachePolicy?: "none" | "auto" | "long";
-}
-
-export interface CompletionOptions {
-  model: string;
-  user: string;
-  system?: string;
-  apiKey?: string;
-  apiKeyEnv?: string;
-  apiUrl?: string;
-  jsonMode?: boolean;
-  retry?: boolean;
-  requestOptions?: RequestOptions;
-}
-
-export interface DecisionOptions {
-  model: string;
-  state: unknown;
-  questions: Record<string, unknown>;
-  apiKey?: string;
-  apiKeyEnv?: string;
-  apiUrl?: string;
-  timeoutMs?: number;
-}
-
-export interface TranscribeOptions {
-  format: "m4a" | "aac" | "wav" | "mp3" | "pcm";
-  language?: string;
-  provider?: string;
-  apiKey?: string;
-  apiKeyEnv?: string;
-  apiUrl?: string;
-  options?: Record<string, unknown>;
-}
-
-export interface AsrContextMessage {
-  role: "user" | "assistant";
-  text: string;
-}
-
-export interface AsrStreamOptions extends TranscribeOptions {
-  sampleRate: number;
-  context?: AsrContextMessage[];
-}
+import type {
+  AgentOptions,
+  AsrStreamOptions,
+  CompletionOptions,
+  DecisionOptions,
+  DecisionResponse,
+  HistoryMessage,
+  RuntimeEvent,
+  TranscribeOptions,
+} from "./index";
 
 export class NativeAsrStream {
   sendAudio(audio: Uint8Array): Promise<void>;
@@ -75,47 +28,11 @@ export function _startAsrStream(
 ): Promise<NativeAsrStream>;
 
 export function _complete(options: CompletionOptions): Promise<string>;
-export function _decide(options: DecisionOptions): Promise<unknown>;
+export function _decide(options: DecisionOptions): Promise<DecisionResponse>;
 export function _transcribe(audio: Uint8Array, options: TranscribeOptions): Promise<string>;
 
 export class Agent {
-  constructor(options: {
-    /** Human-readable identity used by run and handoff logs. */
-    name: string;
-    model: string;
-    systemPrompt: string;
-    skillsDir?: string;
-    /** Progressive skill disclosure; pass `false` to disable prompt injection and the load_skill tool. */
-    skillDisclosure?: boolean;
-    apiKey?: string;
-    apiKeyEnv?: string;
-    apiUrl?: string;
-    maxTokens?: number;
-    requestOptions?: {
-      thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-      thinkingBudgetTokens?: number;
-      includeThinking?: boolean;
-      compatibilityPolicy?: "coerce" | "strict";
-      maxTokens?: number;
-      temperature?: number;
-      topP?: number;
-      cachePolicy?: "none" | "auto" | "long";
-    };
-    budget?: {
-      maxTokens?: number;
-      maxToolCalls?: number;
-      maxDurationSecs?: number;
-      maxCostUsd?: number;
-    };
-    /** Run-level approval policy: "perTool" | "none" | "all". */
-    approvalMode?: string;
-    /**
-     * One-line recommended model retry policy (429 / 5xx / timeout /
-     * stream-interrupt; 3 retries, exponential backoff with jitter).
-     * Defaults to no retries.
-     */
-    retry?: boolean;
-  });
+  constructor(options: AgentOptions);
 
   /** Register a tool with schema only (no handler — tool calls will error). */
   registerTool(options: {
@@ -128,11 +45,11 @@ export class Agent {
   }): void;
 
   /** Register a tool with an executable handler function. */
-  registerToolWithHandler(
+  registerToolWithHandler<TInput = Record<string, unknown>, TOutput = unknown>(
     name: string,
     description: string,
     inputSchema: Record<string, unknown>,
-    handler: (input: any) => any,
+    handler: (input: TInput) => TOutput,
     options?: { sideEffect?: boolean; approval?: string },
   ): void;
 
@@ -141,29 +58,35 @@ export class Agent {
    * `handler(input)` returns `{ job_id, poll_interval_ms? }`.
    * `pollHandler(jobId)` returns `{ status, progress?, message?, result?, error? }`.
    */
-  registerAsyncToolWithHandler(
+  registerAsyncToolWithHandler<
+    TInput = Record<string, unknown>,
+    TJob extends { job_id: string; poll_interval_ms?: number } = { job_id: string; poll_interval_ms?: number },
+    TPoll = unknown,
+  >(
     name: string,
     description: string,
     inputSchema: Record<string, unknown>,
-    handler: (input: any) => { job_id: string; poll_interval_ms?: number },
-    pollHandler: (jobId: string) => { status: string; progress?: number; message?: string; result?: any; error?: string },
+    handler: (input: TInput) => TJob,
+    pollHandler: (jobId: string) => TPoll,
     options?: { sideEffect?: boolean; approval?: string },
   ): void;
 
   /**
-   * Run the agent and return all events as an array.
+   * Run the agent and return all events as an array. The underlying napi
+   * method is async, so the promise always resolves with the events.
    * `messages` (optional) is the prior conversation for a multi-turn start;
    * `input` is the new user turn.
    */
-  runSync(input: string, messages?: HistoryMessage[]): Promise<unknown[]>;
+  runSync(input: string, messages?: HistoryMessage[]): Promise<RuntimeEvent[]>;
 
   /**
-   * Stream events as they arrive; calls `onEvent` for each one.
+   * Stream events as they arrive; calls `onEvent` for each one. Synchronous:
+   * the callback drives delivery and the call returns once streaming starts.
    * `messages` (optional) is the prior conversation for a multi-turn start.
    */
   runStream(
     input: string,
-    onEvent: (event: unknown) => void,
+    onEvent: (event: RuntimeEvent) => void,
     messages?: HistoryMessage[],
   ): void;
 

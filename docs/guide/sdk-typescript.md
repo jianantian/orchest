@@ -36,8 +36,7 @@ OPENROUTER_API_KEY=sk-or-... node examples/typescript/providers/decisions.ts
 ```
 
 `examples/typescript/agents|streaming|basic.ts` 直接从 `target/debug` 取原生插件，先跑 `cargo build -p orchest-node`。
-Node < 22.18 需要自备 TS runner（如 `ts-node --compiler-options '{"module":"CommonJS"}'`）；注意 `tsx` 会把
-`js/index.js` 解析到未编译的 `js/index.ts`，不要用它跑本包示例。
+Node < 22.18 需要自备 TS runner，例如 `npx tsx examples/typescript/providers/decisions.ts`（tsx 也能直接跑这些示例）。
 
 `import { decide } from "@orchest/sdk"` 在 ESM/TS 工程里同样可用（具名导出已声明），示例用 `require` 只是为了能在本仓库零依赖直接执行。
 
@@ -53,7 +52,7 @@ const agent = new Agent({
   apiKeyEnv: "ANTHROPIC_API_KEY",
 });
 
-const events = agent.runSync("What's the weather in Tokyo?");
+const events = await agent.runSync("What's the weather in Tokyo?");
 ```
 
 必填构造参数：`name`（日志与 handoff 使用的人类可读名称）、`model`（`provider/model`）、`systemPrompt`。常用可选参数：`apiKeyEnv`（或显式 `apiKey`、自建端点 `apiUrl`）、`maxTokens`、`budget`、`requestOptions`、`retry`（`true` 开启推荐模型重试：429/5xx/timeout/流中断，3 次指数退避；默认不重试）。
@@ -152,10 +151,10 @@ await stream.wait();
 
 ## 5. 消费事件
 
-`runSync` 返回的数组里每个 event 带 `type` 字段：
+`runSync` 返回 Promise（napi 侧是 async fn），resolve 出的数组里每个 event 带 `type` 字段：
 
 ```typescript
-for (const event of agent.runSync("What's the weather in Tokyo?")) {
+for (const event of await agent.runSync("What's the weather in Tokyo?")) {
   switch (event.type) {
     case "model_stream_chunk":
       process.stdout.write(event.delta?.Text?.delta ?? "");
@@ -178,21 +177,24 @@ for (const event of agent.runSync("What's the weather in Tokyo?")) {
 
 ## 6. Event type 速查
 
-来自 `js/index.d.ts`：
+来自 `js/index.d.ts`（37 个变体，与 `crates/orchest/src/events.rs` 的 `RuntimeEvent` 一一对应，由 `scripts/check-ts-event-variants.sh` 守卫；Python 绑定走同一个 wire 转换，形状一致）：
 
 ```
-run_started            model_call_started      model_stream_chunk
-model_call_completed   tool_call_started       tool_call_update
-tool_call_completed    tool_call_failed        async_tool_started
-async_tool_progress    async_tool_completed    skill_content_read
-approval_requested     approval_granted        approval_denied
-budget_warning         child_run_event         sub_agent_started
-sub_agent_completed    sub_agent_failed        run_completed
-run_failed
+run_started                      model_call_started               model_stream_chunk
+model_call_completed             model_retry                      tool_call_started
+tool_call_update                 tool_call_completed              tool_call_failed
+tool_call_retry                  tool_call_batch_started          tool_call_batch_item_started
+tool_call_batch_item_completed   async_tool_started               async_tool_progress
+async_tool_completed             skill_content_read               approval_requested
+approval_granted                 approval_denied                  budget_warning
+runtime_warning                  skill_missing_capabilities       skill_load_warning
+context_compacted                sub_agent_started                sub_agent_completed
+sub_agent_failed                 child_run_event                  sub_agent_event
+hook_panicked                    agent_updated                    events_dropped
+run_restarted                    run_completed                    run_failed
+run_aborted
 ```
-
-> Python SDK 比 TS 多导出几个事件（`runtime_warning` / `context_compacted` / `run_restarted` 等）；TS 侧以 `js/index.d.ts` 的实际导出为准。
 
 ## 7. 类型定义
 
-完整类型见 [`js/index.d.ts`](../../js/index.d.ts)（`AgentOptions` / `RequestOptions` / `BudgetOptions` / `RuntimeEvent` / `StreamEvent` 等）和 [`js/native.d.ts`](../../js/native.d.ts)（napi 类绑定）。
+完整类型见 [`js/index.d.ts`](../../js/index.d.ts)（`AgentOptions` / `RequestOptions` / `BudgetOptions` / `RuntimeEvent` / `StreamEvent` 等公共类型的唯一来源）和 [`js/native.d.ts`](../../js/native.d.ts)（napi 类与函数声明，`Agent` 定义在此并从 index 侧 re-export，不再有第二份 `js/index.ts`）。
