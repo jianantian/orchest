@@ -52,14 +52,17 @@ impl LlmWatcherBuilder {
         self
     }
 
-    pub fn build(self) -> LlmWatcher {
-        LlmWatcher {
-            model: self.model.expect("LlmWatcherBuilder requires a model"),
+    pub fn build(self) -> Result<LlmWatcher, super::ConfigError> {
+        let model = self
+            .model
+            .ok_or(super::ConfigError::LlmWatcherMissingModel)?;
+        Ok(LlmWatcher {
+            model,
             system_prompt: self.system_prompt,
             eval_interval: self.eval_interval,
             event_buffer: Mutex::new(Vec::new()),
             event_count: AtomicUsize::new(0),
-        }
+        })
     }
 }
 
@@ -351,7 +354,11 @@ mod tests {
     #[tokio::test]
     async fn accumulates_events_before_eval_interval() {
         let model = Arc::new(MockModel::with_action("abort", "stop now"));
-        let watcher = LlmWatcher::builder().model(model).eval_interval(3).build();
+        let watcher = LlmWatcher::builder()
+            .model(model)
+            .eval_interval(3)
+            .build()
+            .unwrap();
 
         let r1 = watcher.on_event(&run_started()).await;
         assert!(matches!(r1, WatcherAction::Continue));
@@ -364,7 +371,11 @@ mod tests {
     #[tokio::test]
     async fn maps_steer_action() {
         let model = Arc::new(MockModel::with_action("steer", "focus on task"));
-        let watcher = LlmWatcher::builder().model(model).eval_interval(1).build();
+        let watcher = LlmWatcher::builder()
+            .model(model)
+            .eval_interval(1)
+            .build()
+            .unwrap();
         let result = watcher.on_event(&run_started()).await;
         assert!(matches!(result, WatcherAction::Steer(msg) if msg == "focus on task"));
     }
@@ -372,7 +383,11 @@ mod tests {
     #[tokio::test]
     async fn maps_inject_action() {
         let model = Arc::new(MockModel::with_action("inject", "try another approach"));
-        let watcher = LlmWatcher::builder().model(model).eval_interval(1).build();
+        let watcher = LlmWatcher::builder()
+            .model(model)
+            .eval_interval(1)
+            .build()
+            .unwrap();
         let result = watcher.on_event(&run_started()).await;
         assert!(matches!(result, WatcherAction::Inject(msg) if msg == "try another approach"));
     }
@@ -380,7 +395,11 @@ mod tests {
     #[tokio::test]
     async fn maps_continue_action() {
         let model = Arc::new(MockModel::with_action("continue", ""));
-        let watcher = LlmWatcher::builder().model(model).eval_interval(1).build();
+        let watcher = LlmWatcher::builder()
+            .model(model)
+            .eval_interval(1)
+            .build()
+            .unwrap();
         let result = watcher.on_event(&run_started()).await;
         assert!(matches!(result, WatcherAction::Continue));
     }
@@ -388,7 +407,11 @@ mod tests {
     #[tokio::test]
     async fn model_failure_degrades_to_continue() {
         let model: Arc<dyn ModelAdapter> = Arc::new(FailingModel);
-        let watcher = LlmWatcher::builder().model(model).eval_interval(1).build();
+        let watcher = LlmWatcher::builder()
+            .model(model)
+            .eval_interval(1)
+            .build()
+            .unwrap();
         let result = watcher.on_event(&run_started()).await;
         assert!(matches!(result, WatcherAction::Continue));
     }
@@ -396,9 +419,26 @@ mod tests {
     #[tokio::test]
     async fn no_tool_use_degrades_to_continue() {
         let model = Arc::new(MockModel::failing());
-        let watcher = LlmWatcher::builder().model(model).eval_interval(1).build();
+        let watcher = LlmWatcher::builder()
+            .model(model)
+            .eval_interval(1)
+            .build()
+            .unwrap();
         let result = watcher.on_event(&run_started()).await;
         assert!(matches!(result, WatcherAction::Continue));
+    }
+
+    #[test]
+    fn build_fails_with_missing_model_when_model_not_set() {
+        let result = LlmWatcher::builder().eval_interval(1).build();
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("build() should fail without .model()"),
+        };
+        assert!(matches!(
+            err,
+            crate::run::ConfigError::LlmWatcherMissingModel
+        ));
     }
 
     #[test]

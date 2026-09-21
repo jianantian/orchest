@@ -118,7 +118,7 @@ pub async fn start_with_live_watchers(
     input: String,
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
-) -> StartedSupervisor {
+) -> Result<StartedSupervisor, ConfigError> {
     let watcher_model = Arc::clone(&model);
     let (handle, events) = AgentRun::start(config, input.into(), model, registry);
 
@@ -136,7 +136,7 @@ pub async fn start_with_live_watchers(
     let llm_watcher = LlmWatcher::builder()
         .eval_interval(1)
         .model(Arc::clone(&watcher_model))
-        .build();
+        .build()?;
     let llm_watcher_completed_events = Arc::new(Mutex::new(Vec::new()));
     let llm_watcher_terminal_processed = Arc::new(Notify::new());
     handle
@@ -151,12 +151,12 @@ pub async fn start_with_live_watchers(
         )
         .await;
 
-    StartedSupervisor {
+    Ok(StartedSupervisor {
         handle,
         events,
         watcher_events,
         watcher_terminal_processed,
         llm_watcher_completed_events,
         llm_watcher_terminal_processed,
-    }
+    })
 }

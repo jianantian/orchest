@@ -336,7 +336,8 @@ async fn attach_deterministic_watchers(handle: &RunHandle) -> DeterministicWatch
     let llm_watcher = LlmWatcher::builder()
         .eval_interval(1)
         .model(Arc::clone(&watcher_model))
-        .build();
+        .build()
+        .expect("watcher model is configured");
     let llm_completed_events = Arc::new(Mutex::new(Vec::new()));
     let llm_activation_processed = Arc::new(Notify::new());
     let llm_terminal_processed = Arc::new(Notify::new());
@@ -800,7 +801,8 @@ async fn live_start_records_both_watcher_completions_as_best_effort() {
         supervisor_model,
         registry,
     )
-    .await;
+    .await
+    .expect("live watchers attach with configured model");
     first_call_gate.wait_until_entered().await;
     first_call_gate.release();
     delegation_call_gate.wait_until_entered().await;

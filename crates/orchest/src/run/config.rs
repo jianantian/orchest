@@ -744,6 +744,8 @@ pub enum ConfigError {
     SubAgentMissingModel,
     #[error("SubAgentBuilder requires .registry() before .build()")]
     SubAgentMissingRegistry,
+    #[error("LlmWatcherBuilder requires .model() before .build()")]
+    LlmWatcherMissingModel,
 }
 
 // Runtime types
