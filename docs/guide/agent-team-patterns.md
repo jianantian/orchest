@@ -91,7 +91,17 @@ impl Watcher for SteeringWatcher {
     }
 }
 
-handle.attach_watcher(Arc::new(SteeringWatcher), 256).await;
+// Prefer start_with_watchers when first-event observation is required:
+let (handle, rx) = AgentRun::start_with_watchers(
+    config,
+    input,
+    model,
+    registry,
+    vec![(Arc::new(SteeringWatcher) as Arc<dyn Watcher>, 256)],
+)?;
+
+// Post-start attach_watcher remains supported but is best-effort:
+// handle.attach_watcher(Arc::new(SteeringWatcher), 256).await;
 ```
 
 Runnable examples:

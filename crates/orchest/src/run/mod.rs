@@ -54,6 +54,28 @@ impl AgentRun {
         Self::start_with_messages(config, vec![], input, model, registry)
     }
 
+    /// Starts a run with watchers already active before the first runtime
+    /// event (`RunStarted`) and before the first model call.
+    ///
+    /// Declared watchers are pre-wired into the worker subscriber list, so
+    /// successful registration guarantees observation from that boundary
+    /// without application timing assumptions. Channel `capacity` must be
+    /// `> 0` for every watcher; invalid capacity returns
+    /// [`ConfigError::InvalidWatcherCapacity`] **before** execution begins.
+    ///
+    /// For dynamic attachment after a run has already started, use
+    /// [`RunHandle::attach_watcher`] — that path remains supported but is
+    /// best-effort and may miss events emitted before registration completes.
+    pub fn start_with_watchers(
+        config: AgentConfig,
+        input: RunInput,
+        model: Arc<dyn ModelAdapter>,
+        registry: ToolRegistry,
+        watchers: Vec<(Arc<dyn Watcher>, usize)>,
+    ) -> Result<(RunHandle, EventReceiver), ConfigError> {
+        Self::start_with_messages_and_watchers(config, vec![], input, model, registry, watchers)
+    }
+
     /// Starts a fresh run with a caller-supplied multi-turn history:
     /// `initial_messages` is the prior conversation, `input` is the new user
     /// turn. The initial message list seen by the model is assembled as
@@ -103,7 +125,35 @@ impl AgentRun {
             model,
             registry,
             ApprovalBus::default(),
+            vec![],
         )
+    }
+
+    /// Like [`AgentRun::start_with_messages`], but with watchers active before
+    /// the first runtime event. See [`AgentRun::start_with_watchers`].
+    #[allow(clippy::too_many_arguments)] // justified: mirrors start_with_messages + watchers
+    pub fn start_with_messages_and_watchers(
+        config: AgentConfig,
+        initial_messages: Vec<crate::model::Message>,
+        input: RunInput,
+        model: Arc<dyn ModelAdapter>,
+        registry: ToolRegistry,
+        watchers: Vec<(Arc<dyn Watcher>, usize)>,
+    ) -> Result<(RunHandle, EventReceiver), ConfigError> {
+        for (_, capacity) in &watchers {
+            if *capacity == 0 {
+                return Err(ConfigError::InvalidWatcherCapacity(0));
+            }
+        }
+        Ok(Self::start_with_bus(
+            config,
+            input.into_blocks(),
+            initial_messages,
+            model,
+            registry,
+            ApprovalBus::default(),
+            watchers,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)] // justified: internal API collecting all run params
@@ -114,6 +164,7 @@ impl AgentRun {
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
         approval_bus: ApprovalBus,
+        watchers: Vec<(Arc<dyn Watcher>, usize)>,
     ) -> (RunHandle, EventReceiver) {
         config.register_persistence_hook();
         let run_id = RunId::new();
@@ -128,8 +179,9 @@ impl AgentRun {
             approval_bus: approval_bus.clone(),
             resume: None,
             initial_messages,
+            initial_event_subs: vec![],
         };
-        supervisor::spawn_supervised(run_id, args, approval_bus, event_rx)
+        supervisor::spawn_supervised(run_id, args, approval_bus, event_rx, watchers)
     }
 
     /// Resumes a previous run from a persisted snapshot exactly as it left
@@ -173,12 +225,14 @@ impl AgentRun {
             approval_bus: approval_bus.clone(),
             resume: Some(resume),
             initial_messages: vec![],
+            initial_event_subs: vec![],
         };
         Ok(supervisor::spawn_supervised(
             run_id,
             args,
             approval_bus,
             event_rx,
+            vec![],
         ))
     }
 
@@ -224,12 +278,14 @@ impl AgentRun {
             approval_bus: approval_bus.clone(),
             resume: Some(resume),
             initial_messages: vec![],
+            initial_event_subs: vec![],
         };
         Ok(supervisor::spawn_supervised(
             run_id,
             args,
             approval_bus,
             event_rx,
+            vec![],
         ))
     }
 }

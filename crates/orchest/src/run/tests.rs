@@ -7365,6 +7365,120 @@ async fn attach_watcher_does_not_duplicate_supervisor_subscription() {
     );
 }
 
+struct FirstEventRecordingWatcher {
+    events: Arc<Mutex<Vec<RuntimeEvent>>>,
+}
+
+#[async_trait::async_trait]
+impl crate::run::Watcher for FirstEventRecordingWatcher {
+    async fn on_event(&self, event: &RuntimeEvent) -> crate::run::WatcherAction {
+        self.events.lock().unwrap().push(event.clone());
+        crate::run::WatcherAction::Continue
+    }
+}
+
+/// Deterministic SB-6 contract: start_with_watchers observes RunStarted (and
+/// ModelCallStarted) without gating the model or sleeping for attachment.
+#[tokio::test]
+async fn start_with_watchers_observes_run_started_before_model_call() {
+    let watched = Arc::new(Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(FakeModelAdapter::final_answer());
+    let (handle, mut rx) = AgentRun::start_with_watchers(
+        test_config(),
+        "hello".into(),
+        model,
+        ToolRegistry::new(),
+        vec![(
+            Arc::new(FirstEventRecordingWatcher {
+                events: Arc::clone(&watched),
+            }),
+            256,
+        )],
+    )
+    .expect("valid watcher capacity");
+
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let events = watched.lock().unwrap();
+    assert!(
+        !events.is_empty(),
+        "pre-wired watcher must observe at least one event"
+    );
+    assert!(
+        matches!(events[0], RuntimeEvent::RunStarted { .. }),
+        "first watched event must be RunStarted, got {:?}",
+        events[0]
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ModelCallStarted { .. })),
+        "watcher must also observe ModelCallStarted"
+    );
+}
+
+struct NeverCalledModel {
+    calls: AtomicU32,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for NeverCalledModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("should not run".into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[tokio::test]
+async fn start_with_watchers_rejects_zero_capacity_before_execution() {
+    let model = Arc::new(NeverCalledModel {
+        calls: AtomicU32::new(0),
+    });
+    let model_dyn: Arc<dyn ModelAdapter> = model.clone();
+    let result = AgentRun::start_with_watchers(
+        test_config(),
+        "hello".into(),
+        model_dyn,
+        ToolRegistry::new(),
+        vec![(
+            Arc::new(FirstEventRecordingWatcher {
+                events: Arc::new(Mutex::new(Vec::new())),
+            }),
+            0,
+        )],
+    );
+    assert!(matches!(
+        result,
+        Err(ConfigError::InvalidWatcherCapacity(0))
+    ));
+    assert_eq!(
+        model.calls.load(Ordering::SeqCst),
+        0,
+        "model must not be called when registration fails"
+    );
+}
+
 struct RestartInputRecordingModel {
     calls: AtomicU32,
     user_inputs: Arc<tokio::sync::Mutex<Vec<String>>>,

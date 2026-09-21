@@ -746,6 +746,8 @@ pub enum ConfigError {
     SubAgentMissingRegistry,
     #[error("LlmWatcherBuilder requires .model() before .build()")]
     LlmWatcherMissingModel,
+    #[error("watcher channel capacity must be > 0, got {0}")]
+    InvalidWatcherCapacity(usize),
 }
 
 // Runtime types

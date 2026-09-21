@@ -123,6 +123,12 @@ impl RunHandle {
     }
 
     /// Attach a watcher that receives events and can inject messages or abort the run.
+    ///
+    /// **Best-effort:** this registers after the run has already been scheduled.
+    /// Events emitted before registration completes (including `RunStarted` and
+    /// possibly the first model call) may be missed. Prefer
+    /// [`crate::run::AgentRun::start_with_watchers`] when observation must begin
+    /// at the first runtime event.
     pub async fn attach_watcher(&self, watcher: Arc<dyn Watcher>, capacity: usize) {
         loop {
             let notified = self.ready.notified();

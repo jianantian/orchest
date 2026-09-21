@@ -127,6 +127,10 @@ pub(crate) struct AgentRunArgs {
     pub resume: Option<ResumeState>,
     /// Extra messages to prepend (between system prompt and user input) on a fresh start.
     pub initial_messages: Vec<crate::model::Message>,
+    /// Pre-wired secondary subscribers (e.g. start-with-watchers channels).
+    /// Included in `event_subs` before the first emit so observation begins at
+    /// `RunStarted`. Empty for ordinary `AgentRun::start` / post-start attach.
+    pub initial_event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
 }
 
 // ── WorkerActor ───────────────────────────────────────────────────────────────
@@ -153,9 +157,12 @@ impl Actor for WorkerActor {
             approval_bus,
             resume,
             initial_messages,
+            initial_event_subs,
         } = args;
         backfill_context_window_size(&mut config, model.as_ref());
-        let event_subs = vec![event_tx];
+        let mut event_subs = Vec::with_capacity(1 + initial_event_subs.len());
+        event_subs.push(event_tx);
+        event_subs.extend(initial_event_subs);
 
         emit(&event_subs, RuntimeEvent::RunStarted { run_id }).await;
 

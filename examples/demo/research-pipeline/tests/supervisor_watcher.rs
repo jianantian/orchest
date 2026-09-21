@@ -842,7 +842,7 @@ async fn live_start_records_both_watcher_completions_as_best_effort() {
 }
 
 #[test]
-fn live_attachment_contract_is_explicitly_best_effort() {
-    assert!(LIVE_ATTACHMENT_BOUNDARY.contains("best-effort"));
-    assert!(LIVE_ATTACHMENT_BOUNDARY.contains("not guaranteed"));
+fn live_attachment_contract_guarantees_first_event() {
+    assert!(LIVE_ATTACHMENT_BOUNDARY.contains("start_with_watchers"));
+    assert!(LIVE_ATTACHMENT_BOUNDARY.contains("guaranteed"));
 }

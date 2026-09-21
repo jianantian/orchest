@@ -51,6 +51,8 @@ pub(crate) struct SupervisorArgs {
     pub actor_ref_shared: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
     pub ready: Arc<tokio::sync::Notify>,
     pub worker_args: AgentRunArgs,
+    /// Watchers declared at start (`start_with_watchers`); retained for restart.
+    pub initial_watchers: Vec<(Arc<dyn Watcher>, usize)>,
 }
 
 pub(crate) struct SupervisorActor;
@@ -86,7 +88,7 @@ impl Actor for SupervisorActor {
             actor_ref_shared: args.actor_ref_shared,
             ready: args.ready,
             event_tx: args.event_tx,
-            watchers: vec![],
+            watchers: args.initial_watchers,
             model: args.model,
             registry: args.registry,
             config: args.config,
@@ -194,10 +196,17 @@ fn reattach_watcher(
     capacity: usize,
     actor_ref_shared: &Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
 ) {
-    let (tx, mut rx) = mpsc::channel(capacity);
+    let (tx, rx) = mpsc::channel(capacity);
     let _ = worker_ref.cast(AgentMsg::Subscribe(tx));
-    let watcher = Arc::clone(watcher);
-    let actor_ref = Arc::clone(actor_ref_shared);
+    spawn_watcher_processor(rx, Arc::clone(watcher), Arc::clone(actor_ref_shared));
+}
+
+/// Drive a watcher from an already-subscribed (or pre-wired) event receiver.
+fn spawn_watcher_processor(
+    mut rx: mpsc::Receiver<RuntimeEvent>,
+    watcher: Arc<dyn Watcher>,
+    actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
+) {
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             match watcher.on_event(&event).await {
@@ -233,11 +242,16 @@ fn reattach_watcher(
     });
 }
 
+/// Spawn a supervised run. `initial_watchers` are wired into the worker's
+/// subscriber list before the first emit (`RunStarted`), so observation is
+/// deterministic from that boundary. Capacities must already be validated
+/// (`> 0`) by the public start-with-watchers entry point.
 pub(crate) fn spawn_supervised(
     run_id: RunId,
-    args: AgentRunArgs,
+    mut args: AgentRunArgs,
     approval_bus: ApprovalBus,
     event_rx: mpsc::Receiver<RuntimeEvent>,
+    initial_watchers: Vec<(Arc<dyn Watcher>, usize)>,
 ) -> (super::handle::RunHandle, super::EventReceiver) {
     let actor_ref_shared: Arc<Mutex<Option<ActorRef<AgentMsg>>>> = Arc::new(Mutex::new(None));
     let ready = Arc::new(tokio::sync::Notify::new());
@@ -246,6 +260,14 @@ pub(crate) fn spawn_supervised(
         Arc::new(Mutex::new(None));
     let supervisor_ref_for_handle = supervisor_ref_shared.clone();
     let ready_for_supervisor_ref = ready.clone();
+
+    let mut initial_event_subs = Vec::with_capacity(initial_watchers.len());
+    for (watcher, capacity) in &initial_watchers {
+        let (tx, rx) = mpsc::channel(*capacity);
+        initial_event_subs.push(tx);
+        spawn_watcher_processor(rx, Arc::clone(watcher), Arc::clone(&actor_ref_shared));
+    }
+    args.initial_event_subs = initial_event_subs;
 
     let sup_args = SupervisorArgs {
         run_id,
@@ -257,6 +279,7 @@ pub(crate) fn spawn_supervised(
         actor_ref_shared: actor_ref_shared.clone(),
         ready: ready.clone(),
         worker_args: args,
+        initial_watchers,
     };
 
     let actor_join = tokio::spawn(async move {
@@ -306,5 +329,7 @@ async fn build_restart_args(state: &SupervisorState) -> AgentRunArgs {
         approval_bus: state.approval_bus.clone(),
         resume,
         initial_messages: state.original_initial_messages.clone(),
+        // Restart reattaches via `reattach_watcher` / Subscribe, not pre-wiring.
+        initial_event_subs: vec![],
     }
 }

@@ -60,10 +60,9 @@ cargo run -p research-pipeline-demo --bin seam-report -- check \
 ```
 
 `research-pipeline run --question ... --materials fixtures/research` starts
-the live provider path. It builds the worker through `SubAgentBuilder`, starts
-the supervisor, then immediately attaches both watchers. This is explicitly
-best-effort: the public API cannot guarantee attachment before delegation or
-the first event.
+the live provider path. It builds the worker through `SubAgentBuilder`, then
+starts the supervisor with `AgentRun::start_with_watchers` so declared watchers
+observe from `RunStarted` before the first model call.
 
 ## Credential-gated live path
 

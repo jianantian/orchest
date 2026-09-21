@@ -294,6 +294,7 @@ impl AgentAsTool {
             Arc::clone(&self.model),
             self.registry.clone(),
             ctx.approval_bus.clone(),
+            vec![],
         );
         let child_run_id = handle.run_id;
 

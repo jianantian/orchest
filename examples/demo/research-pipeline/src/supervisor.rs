@@ -24,11 +24,10 @@ use crate::{
 
 pub const RESEARCH_WORKER_TOOL: &str = "research_worker";
 
-/// `AgentRun::start` schedules the run before returning its public handle.
-/// The live path therefore attaches immediately after start as best-effort;
-/// attachment before delegation or the first event is not guaranteed.
+/// `AgentRun::start_with_watchers` pre-wires declared watchers before the first
+/// runtime event (`RunStarted`) and before the first model call.
 pub const LIVE_ATTACHMENT_BOUNDARY: &str =
-    "best-effort immediately after AgentRun::start; first-event observation is not guaranteed";
+    "start_with_watchers: first-event observation guaranteed from RunStarted";
 
 pub struct StartedSupervisor {
     pub handle: RunHandle,
@@ -108,11 +107,8 @@ pub fn build_supervisor(
     Ok((config, registry))
 }
 
-/// Starts the live-shaped supervisor, then immediately attaches both watchers.
-///
-/// This order is intentionally the strongest order the current public API can
-/// express. It remains best-effort because `AgentRun::start` schedules model
-/// execution before returning the handle used for the two registrations.
+/// Starts the live-shaped supervisor with both watchers pre-wired via
+/// [`AgentRun::start_with_watchers`], so observation begins at `RunStarted`.
 pub async fn start_with_live_watchers(
     config: AgentConfig,
     input: String,
@@ -120,36 +116,34 @@ pub async fn start_with_live_watchers(
     registry: ToolRegistry,
 ) -> Result<StartedSupervisor, ConfigError> {
     let watcher_model = Arc::clone(&model);
-    let (handle, events) = AgentRun::start(config, input.into(), model, registry);
 
     let watcher_events = Arc::new(Mutex::new(Vec::new()));
     let watcher_terminal_processed = Arc::new(Notify::new());
-    handle
-        .attach_watcher(
-            Arc::new(RecordingActionWatcher::observing_until_terminal(
-                Arc::clone(&watcher_events),
-                Arc::clone(&watcher_terminal_processed),
-            )),
-            1024,
-        )
-        .await;
+    let action_watcher = Arc::new(RecordingActionWatcher::observing_until_terminal(
+        Arc::clone(&watcher_events),
+        Arc::clone(&watcher_terminal_processed),
+    ));
+
     let llm_watcher = LlmWatcher::builder()
         .eval_interval(1)
         .model(Arc::clone(&watcher_model))
         .build()?;
     let llm_watcher_completed_events = Arc::new(Mutex::new(Vec::new()));
     let llm_watcher_terminal_processed = Arc::new(Notify::new());
-    handle
-        .attach_watcher(
-            Arc::new(RecordingLlmWatcher::until_terminal(
-                llm_watcher,
-                Arc::clone(&llm_watcher_completed_events),
-                None,
-                Arc::clone(&llm_watcher_terminal_processed),
-            )),
-            1024,
-        )
-        .await;
+    let llm_wrapper = Arc::new(RecordingLlmWatcher::until_terminal(
+        llm_watcher,
+        Arc::clone(&llm_watcher_completed_events),
+        None,
+        Arc::clone(&llm_watcher_terminal_processed),
+    ));
+
+    let (handle, events) = AgentRun::start_with_watchers(
+        config,
+        input.into(),
+        model,
+        registry,
+        vec![(action_watcher, 1024), (llm_wrapper, 1024)],
+    )?;
 
     Ok(StartedSupervisor {
         handle,
