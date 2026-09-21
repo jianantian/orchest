@@ -33,6 +33,16 @@ export interface CompletionOptions {
   requestOptions?: RequestOptions;
 }
 
+export interface DecisionOptions {
+  model: string;
+  state: unknown;
+  questions: Record<string, unknown>;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  apiUrl?: string;
+  timeoutMs?: number;
+}
+
 export interface TranscribeOptions {
   format: "m4a" | "aac" | "wav" | "mp3" | "pcm";
   language?: string;
@@ -65,6 +75,7 @@ export function _startAsrStream(
 ): Promise<NativeAsrStream>;
 
 export function _complete(options: CompletionOptions): Promise<string>;
+export function _decide(options: DecisionOptions): Promise<unknown>;
 export function _transcribe(audio: Uint8Array, options: TranscribeOptions): Promise<string>;
 
 export class Agent {

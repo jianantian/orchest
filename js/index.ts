@@ -164,6 +164,7 @@ import {
   NativeAsrStream,
   _startAsrStream,
   _complete,
+  _decide,
   _transcribe,
 } from "./native";
 
@@ -179,6 +180,59 @@ export interface CompletionOptions {
   jsonMode?: boolean;
   retry?: boolean;
   requestOptions?: RequestOptions;
+}
+
+export type DecisionDescription = string | unknown[] | Record<string, unknown>;
+
+export type DecisionQuestion =
+  | {
+      type: "boolean";
+      instructions: DecisionDescription;
+      criteria?: { true: DecisionDescription; false: DecisionDescription };
+    }
+  | {
+      type: "choice";
+      instructions: DecisionDescription;
+      criteria: Record<string, DecisionDescription | null>;
+    }
+  | {
+      type: "score";
+      instructions: DecisionDescription;
+      criteria: DecisionDescription[];
+    };
+
+export type DecisionAnswer =
+  | { type: "boolean"; probability: number }
+  | {
+      type: "choice";
+      choice: string;
+      probabilities?: Record<string, number>;
+      confidence?: number;
+    }
+  | {
+      type: "score";
+      score: number;
+      legend?: Record<string, unknown>;
+      probabilities?: Record<string, number>;
+      confidence?: number;
+    };
+
+export interface DecisionOptions {
+  model: string;
+  state: unknown;
+  questions: Record<string, DecisionQuestion>;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  apiUrl?: string;
+  timeoutMs?: number;
+}
+
+export interface DecisionResponse {
+  model: string;
+  answers: Record<string, DecisionAnswer>;
+  usage?: { input_tokens: number; output_tokens: number; cost_usd?: number };
+  id?: string;
+  provider?: string;
 }
 
 export interface TranscribeOptions {
@@ -235,6 +289,14 @@ function normalizeProviderError(error: unknown): unknown {
 export async function complete(options: CompletionOptions): Promise<string> {
   try {
     return await _complete(options);
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
+}
+
+export async function decide(options: DecisionOptions): Promise<DecisionResponse> {
+  try {
+    return (await _decide(options)) as DecisionResponse;
   } catch (error) {
     throw normalizeProviderError(error);
   }

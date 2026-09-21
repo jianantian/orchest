@@ -32,6 +32,72 @@ class RequestOptions(TypedDict, total=False):
     cache_policy: Literal["none", "auto", "long"]
 
 
+DecisionDescription: TypeAlias = str | list[JsonValue] | dict[str, JsonValue]
+
+
+class BooleanCriteria(TypedDict):
+    true: DecisionDescription
+    false: DecisionDescription
+
+
+class BooleanQuestion(TypedDict):
+    type: Literal["boolean"]
+    instructions: DecisionDescription
+    criteria: NotRequired[BooleanCriteria]
+
+
+class ChoiceQuestion(TypedDict):
+    type: Literal["choice"]
+    instructions: DecisionDescription
+    criteria: dict[str, DecisionDescription | None]
+
+
+class ScoreQuestion(TypedDict):
+    type: Literal["score"]
+    instructions: DecisionDescription
+    criteria: list[DecisionDescription]
+
+
+DecisionQuestion: TypeAlias = BooleanQuestion | ChoiceQuestion | ScoreQuestion
+
+
+class BooleanAnswer(TypedDict):
+    type: Literal["boolean"]
+    probability: float
+
+
+class ChoiceAnswer(TypedDict):
+    type: Literal["choice"]
+    choice: str
+    probabilities: NotRequired[dict[str, float]]
+    confidence: NotRequired[float]
+
+
+class ScoreAnswer(TypedDict):
+    type: Literal["score"]
+    score: float
+    legend: NotRequired[dict[str, JsonValue]]
+    probabilities: NotRequired[dict[str, float]]
+    confidence: NotRequired[float]
+
+
+DecisionAnswer: TypeAlias = BooleanAnswer | ChoiceAnswer | ScoreAnswer
+
+
+class DecisionUsage(TypedDict):
+    input_tokens: int
+    output_tokens: int
+    cost_usd: NotRequired[float]
+
+
+class DecisionResponse(TypedDict):
+    model: str
+    answers: dict[str, DecisionAnswer]
+    usage: NotRequired[DecisionUsage]
+    id: NotRequired[str]
+    provider: NotRequired[str]
+
+
 class OptionAdjustment(TypedDict):
     option: str
     requested: JsonValue
@@ -395,6 +461,17 @@ def complete(
     retry: bool = False,
     request_options: RequestOptions | None = None,
 ) -> str: ...
+
+def decide(
+    *,
+    model: str,
+    state: JsonValue,
+    questions: dict[str, DecisionQuestion],
+    api_key: str | None = None,
+    api_key_env: str | None = None,
+    api_url: str | None = None,
+    timeout_ms: int | None = None,
+) -> DecisionResponse: ...
 
 def transcribe(
     audio: bytes,

@@ -26,6 +26,7 @@ fn build_catalog() -> Vec<ModelRecord> {
             for m in orchest_provider_http::catalog::list_models() {
                 out.push(project_llm(m));
             }
+            out.extend(orchest_provider_http::decision_models().iter().cloned());
             out.extend(
                 orchest_provider_http::catalog::http_asr_models()
                     .iter()

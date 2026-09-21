@@ -77,19 +77,35 @@ agent.register_tool(get_weather, approval="never")   # "never" | "when_risky" | 
 
 ## 4. 原子下游 API
 
-不需要 agent loop 时，可直接使用 completion、一次性 ASR 和 realtime ASR：
+不需要 agent loop 时，可直接使用 completion、结构化判断、一次性 ASR 和 realtime ASR：
 
 ```python
 import asyncio
 from pathlib import Path
 
-from orchest import complete, start_asr_stream, transcribe
+from orchest import complete, decide, start_asr_stream, transcribe
 
 text = complete(
     model="deepseek/deepseek-chat",
     user="用一句话概括这段录音",
     api_key_env="DEEPSEEK_API_KEY",
 )
+
+decision = decide(
+    model="openrouter/~typesafe/jev-latest",
+    state={"message": "I was charged twice"},
+    questions={
+        "urgent": {"type": "boolean", "instructions": "Is this urgent?"},
+        "team": {
+            "type": "choice",
+            "instructions": "Route the case",
+            "criteria": {"billing": "Payment issues", "support": "Product help"},
+        },
+    },
+    api_key_env="OPENROUTER_API_KEY",
+)
+if decision["answers"]["urgent"]["probability"] >= 0.8:
+    print("escalate")
 
 transcript = transcribe(
     Path("voice.m4a").read_bytes(),
@@ -111,6 +127,10 @@ async def realtime() -> None:
 
 asyncio.run(realtime())
 ```
+
+`decide` 一次提交共享 `state` 和按 ID 索引的多个问题。问题类型为 `boolean`、`choice`、
+`score`；结果保持 snake_case。`confidence`、概率分布、usage 等可选字段未返回时不会补默认值。
+完整客服路由示例见 [`examples/python/providers/decisions.py`](../../examples/python/providers/decisions.py)。
 
 省略 ASR provider 时，一次性识别固定使用 `aliyun/qwen-audio-3.0-asr-flash`，realtime 固定使用
 `aliyun/qwen-audio-3.0-asr-flash-streaming`。`on_event` 必须是同步 callback；返回 coroutine 或抛出异常会终止输入，

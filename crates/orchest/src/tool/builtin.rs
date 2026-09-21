@@ -139,8 +139,7 @@ impl Tool for ReadFileTool {
 
         let path = PathBuf::from(path_str);
         let content = tokio::fs::read_to_string(&path).await.map_err(|e| {
-            ToolError::fatal(format!("failed to read '{}': {}", path_str, e))
-                .with_code("READ_ERROR")
+            ToolError::fatal(format!("failed to read '{path_str}': {e}")).with_code("READ_ERROR")
         })?;
 
         let canonical = path.canonicalize().ok();
@@ -246,7 +245,7 @@ mod tests {
             ToolOutput::Immediate(Value::String(content)) => {
                 assert_eq!(content, "hello world");
             }
-            other => panic!("expected Immediate(String), got {:?}", other),
+            other => panic!("expected Immediate(String), got {other:?}"),
         }
     }
 
@@ -307,7 +306,7 @@ mod tests {
                 assert_eq!(file, skill_md.to_str().unwrap());
                 assert!(tokens > 0);
             }
-            other => panic!("expected SkillContentRead, got {:?}", other),
+            other => panic!("expected SkillContentRead, got {other:?}"),
         }
     }
 
@@ -362,7 +361,7 @@ mod tests {
                 assert_eq!(value["path"], file_path.to_str().unwrap());
                 assert_eq!(value["bytes_written"], 33);
             }
-            other => panic!("expected Immediate(Object), got {:?}", other),
+            other => panic!("expected Immediate(Object), got {other:?}"),
         }
     }
 

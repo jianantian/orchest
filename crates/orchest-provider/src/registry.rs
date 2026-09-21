@@ -11,7 +11,8 @@
 //! pick-one ([`Query::select`]) and list-then-choose ([`Query::list`]).
 
 use orchest_protocol::{
-    Asr, Capability, ChatModel, ErrorCode, GenTask, Modality, ProtocolError, RealtimeSession, Tts,
+    Asr, Capability, ChatModel, Decision, ErrorCode, GenTask, Modality, ProtocolError,
+    RealtimeSession, Tts,
 };
 use orchest_provider_core::registry::{Entry, ProviderConfig};
 
@@ -21,6 +22,7 @@ use orchest_provider_core::registry::{Entry, ProviderConfig};
 #[derive(Default)]
 pub struct Registry {
     chat: Vec<Entry<Box<dyn ChatModel>>>,
+    decision: Vec<Entry<Box<dyn Decision>>>,
     asr: Vec<Entry<Box<dyn Asr>>>,
     tts: Vec<Entry<Box<dyn Tts>>>,
     realtime: Vec<Entry<Box<dyn RealtimeSession>>>,
@@ -42,6 +44,8 @@ impl Registry {
         #[cfg(feature = "http")]
         {
             reg.chat.extend(orchest_provider_http::chat_entries());
+            reg.decision
+                .extend(orchest_provider_http::decision_entries());
             reg.asr.extend(orchest_provider_http::asr_entries());
             reg.tts.extend(orchest_provider_http::tts_entries());
             reg.gen.extend(orchest_provider_http::gen_entries());
@@ -65,6 +69,9 @@ impl Registry {
     pub fn register_chat(&mut self, entry: Entry<Box<dyn ChatModel>>) {
         self.chat.push(entry);
     }
+    pub fn register_decision(&mut self, entry: Entry<Box<dyn Decision>>) {
+        self.decision.push(entry);
+    }
     pub fn register_asr(&mut self, entry: Entry<Box<dyn Asr>>) {
         self.asr.push(entry);
     }
@@ -82,6 +89,9 @@ impl Registry {
 
     pub fn chat(&self) -> Query<'_, Box<dyn ChatModel>> {
         Query::new(&self.chat, Capability::Chat)
+    }
+    pub fn decision(&self) -> Query<'_, Box<dyn Decision>> {
+        Query::new(&self.decision, Capability::Decision)
     }
     pub fn asr(&self) -> Query<'_, Box<dyn Asr>> {
         Query::new(&self.asr, Capability::Asr)

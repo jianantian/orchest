@@ -146,22 +146,22 @@ async fn main() {
             let label = match &event {
                 RuntimeEvent::RunStarted { .. } => "RunStarted".to_string(),
                 RuntimeEvent::ModelCallStarted { step } => {
-                    format!("ModelCallStarted(step={})", step)
+                    format!("ModelCallStarted(step={step})")
                 }
-                RuntimeEvent::ToolCallStarted { tool, .. } => format!("ToolCallStarted({})", tool),
+                RuntimeEvent::ToolCallStarted { tool, .. } => format!("ToolCallStarted({tool})"),
                 RuntimeEvent::ToolCallCompleted { tool, duration, .. } => {
                     format!("ToolCallCompleted({}, {}ms)", tool, duration.as_millis())
                 }
                 RuntimeEvent::RunCompleted { .. } => "RunCompleted".to_string(),
                 RuntimeEvent::RunAborted { reason } => {
-                    format!("RunAborted({:?})", reason)
+                    format!("RunAborted({reason:?})")
                 }
                 RuntimeEvent::RunRestarted { attempt } => {
-                    format!("RunRestarted(attempt={})", attempt)
+                    format!("RunRestarted(attempt={attempt})")
                 }
-                _ => format!("{:?}", event).chars().take(60).collect(),
+                _ => format!("{event:?}").chars().take(60).collect(),
             };
-            println!("  [event] {}", label);
+            println!("  [event] {label}");
             events.push(event);
         }
         events

@@ -24,6 +24,8 @@ pub mod types;
 pub use types::*;
 
 pub mod asr;
+mod decision;
+pub use decision::{decision_entries, decision_models};
 pub mod gen;
 
 // Post-ADR-0002 the LLM provider modules are pure entry + profile + construction

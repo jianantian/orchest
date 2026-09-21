@@ -7968,7 +7968,7 @@ struct CountingWatcher {
 #[async_trait::async_trait]
 impl crate::run::Watcher for CountingWatcher {
     async fn on_event(&self, event: &RuntimeEvent) -> crate::run::WatcherAction {
-        let label = format!("{:?}", event).chars().take(80).collect::<String>();
+        let label = format!("{event:?}").chars().take(80).collect::<String>();
         self.seen.lock().await.push(label);
         crate::run::WatcherAction::Continue
     }
@@ -7984,7 +7984,7 @@ struct AbortingWatcher {
 #[async_trait::async_trait]
 impl crate::run::Watcher for AbortingWatcher {
     async fn on_event(&self, event: &RuntimeEvent) -> crate::run::WatcherAction {
-        let label = format!("{:?}", event).chars().take(80).collect::<String>();
+        let label = format!("{event:?}").chars().take(80).collect::<String>();
         self.seen.lock().await.push(label);
         let n = self
             .trigger_count

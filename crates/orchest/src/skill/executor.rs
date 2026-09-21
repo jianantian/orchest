@@ -88,7 +88,7 @@ impl ScriptExecutor for BareSubprocessExecutor {
             .kill_on_drop(true);
 
         let mut child = cmd.spawn().map_err(|e| ScriptError {
-            message: format!("failed to spawn process: {}", e),
+            message: format!("failed to spawn process: {e}"),
             code: Some("SPAWN_ERROR".into()),
         })?;
 
@@ -108,12 +108,12 @@ impl ScriptExecutor for BareSubprocessExecutor {
                     code: Some("TIMEOUT".into()),
                 })?
                 .map_err(|e| ScriptError {
-                    message: format!("process IO error: {}", e),
+                    message: format!("process IO error: {e}"),
                     code: Some("IO_ERROR".into()),
                 })?
         } else {
             wait_fut.await.map_err(|e| ScriptError {
-                message: format!("process IO error: {}", e),
+                message: format!("process IO error: {e}"),
                 code: Some("IO_ERROR".into()),
             })?
         };

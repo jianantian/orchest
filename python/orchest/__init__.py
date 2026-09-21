@@ -2,13 +2,14 @@
 
 import inspect
 from collections.abc import Callable
-from typing import Any, Literal, TypeAlias, TypedDict
+from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 
 from .orchest_py import (
     Agent,
     _NativeAsrStream,
     _start_asr_stream,
     complete,
+    decide,
     transcribe,
 )
 from .exceptions import (
@@ -29,6 +30,70 @@ ToolCall: TypeAlias = dict[str, Any]
 ToolRegistration: TypeAlias = dict[str, Any]
 RuntimeEvent: TypeAlias = dict[str, Any]
 AsrStreamEvent: TypeAlias = dict[str, Any]
+
+DecisionDescription: TypeAlias = str | list[JsonValue] | dict[str, JsonValue]
+BooleanCriteria = TypedDict(
+    "BooleanCriteria",
+    {"true": DecisionDescription, "false": DecisionDescription},
+)
+
+
+class BooleanQuestion(TypedDict):
+    type: Literal["boolean"]
+    instructions: DecisionDescription
+    criteria: NotRequired[BooleanCriteria]
+
+
+class ChoiceQuestion(TypedDict):
+    type: Literal["choice"]
+    instructions: DecisionDescription
+    criteria: dict[str, DecisionDescription | None]
+
+
+class ScoreQuestion(TypedDict):
+    type: Literal["score"]
+    instructions: DecisionDescription
+    criteria: list[DecisionDescription]
+
+
+DecisionQuestion: TypeAlias = BooleanQuestion | ChoiceQuestion | ScoreQuestion
+
+
+class BooleanAnswer(TypedDict):
+    type: Literal["boolean"]
+    probability: float
+
+
+class ChoiceAnswer(TypedDict):
+    type: Literal["choice"]
+    choice: str
+    probabilities: NotRequired[dict[str, float]]
+    confidence: NotRequired[float]
+
+
+class ScoreAnswer(TypedDict):
+    type: Literal["score"]
+    score: float
+    legend: NotRequired[dict[str, JsonValue]]
+    probabilities: NotRequired[dict[str, float]]
+    confidence: NotRequired[float]
+
+
+DecisionAnswer: TypeAlias = BooleanAnswer | ChoiceAnswer | ScoreAnswer
+
+
+class DecisionUsage(TypedDict):
+    input_tokens: int
+    output_tokens: int
+    cost_usd: NotRequired[float]
+
+
+class DecisionResponse(TypedDict):
+    model: str
+    answers: dict[str, DecisionAnswer]
+    usage: NotRequired[DecisionUsage]
+    id: NotRequired[str]
+    provider: NotRequired[str]
 
 
 class AsrContextMessage(TypedDict):
@@ -122,6 +187,16 @@ __all__ = [
     "AsrStreamEvent",
     "AsrContextMessage",
     "complete",
+    "decide",
+    "BooleanCriteria",
+    "BooleanAnswer",
+    "BooleanQuestion",
+    "ChoiceQuestion",
+    "DecisionDescription",
+    "DecisionAnswer",
+    "DecisionQuestion",
+    "DecisionResponse",
+    "DecisionUsage",
     "AgentError",
     "ApprovalDeniedError",
     "BudgetOptions",
@@ -132,6 +207,9 @@ __all__ = [
     "RequestOptions",
     "RuntimeEvent",
     "SkillError",
+    "ScoreQuestion",
+    "ScoreAnswer",
+    "ChoiceAnswer",
     "start_asr_stream",
     "TokenUsage",
     "ToolCall",
