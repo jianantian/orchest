@@ -25,6 +25,22 @@ npm install /absolute/path/to/orchest/orchest-sdk-0.1.0.tgz
 
 不要只复制 `js/`；运行时同时需要与当前平台和 Node ABI 匹配的 `orchest_node.node`。
 
+### 运行示例
+
+`examples/typescript/` 下的示例是 CommonJS 风格的 `.ts`（`declare` + `require`，与本包 `"type": "commonjs"` 一致），
+Node ≥ 22.18 可直接执行（内建 type stripping）：
+
+```bash
+npm run build:native                                   # 原子 API 示例走 js/index.js，需要仓库根目录的插件
+OPENROUTER_API_KEY=sk-or-... node examples/typescript/providers/decisions.ts
+```
+
+`examples/typescript/agents|streaming|basic.ts` 直接从 `target/debug` 取原生插件，先跑 `cargo build -p orchest-node`。
+Node < 22.18 需要自备 TS runner（如 `ts-node --compiler-options '{"module":"CommonJS"}'`）；注意 `tsx` 会把
+`js/index.js` 解析到未编译的 `js/index.ts`，不要用它跑本包示例。
+
+`import { decide } from "@orchest/sdk"` 在 ESM/TS 工程里同样可用（具名导出已声明），示例用 `require` 只是为了能在本仓库零依赖直接执行。
+
 ## 2. 基础用法
 
 ```typescript

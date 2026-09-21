@@ -43,8 +43,11 @@ Total live spend: ≈ 0.0000537 USD for three calls.
 - The Python example reported the structured score legend
   `{"0":"Low","1":"Moderate","2":{"escalate":true,"label":"High"}}`, i.e. nested description
   objects survive the round trip instead of being stringified.
-- TypeScript: the repo ships no TS runner (`type: commonjs`, no tsconfig, no devDependencies), so
-  the example was executed as an ESM copy inside the package. That path exposed the missing ESM
-  named exports fixed in `5ca9683`; `import { decide } from "@orchest/sdk"` now resolves.
+- TypeScript: at `5ca9683` the example was ESM while the package is CommonJS, and the repo ships no
+  TS runner (`type: commonjs`, no tsconfig, no devDependencies), so it was executed as an ESM copy
+  inside the package. That path exposed the missing ESM named exports fixed in `5ca9683`;
+  `import { decide } from "@orchest/sdk"` now resolves. The example itself was then converted to the
+  repo's CommonJS example pattern, so it runs as `node examples/typescript/providers/decisions.ts`
+  (re-verified live, same answer shape and escalation branch).
 - Raw responses are not committed. The values above are the sanitized extract required to
   recompute the application-side branches.

@@ -1,7 +1,54 @@
-/** Classify one customer-support case with OpenRouter Decisions.
+/**
+ * OpenRouter Decisions example: route one customer-support case with
+ * independent boolean/choice/score judgments and act on the answers.
+ *
+ * Usage:
+ *   npm run build:native
+ *   OPENROUTER_API_KEY=sk-or-... node examples/typescript/providers/decisions.ts
+ *
  * Requires: OPENROUTER_API_KEY
  */
-import { decide } from "@orchest/sdk";
+
+type DecisionAnswer =
+  | { type: "boolean"; probability: number }
+  | { type: "choice"; choice: string; confidence?: number }
+  | { type: "score"; score: number; confidence?: number };
+
+interface DecisionResponse {
+  model: string;
+  answers: Record<string, DecisionAnswer>;
+  usage?: { input_tokens: number; output_tokens: number; cost_usd?: number };
+}
+
+interface DecisionOptions {
+  model: string;
+  apiKeyEnv?: string;
+  state: unknown;
+  questions: Record<string, unknown>;
+}
+
+declare const __dirname: string;
+declare const console: { log(...values: unknown[]): void; error(...values: unknown[]): void };
+declare const process: {
+  env: Record<string, string | undefined>;
+  exit(code?: number): void;
+};
+declare function require(name: "node:path"): {
+  join(...parts: string[]): string;
+  resolve(...parts: string[]): string;
+};
+declare function require(name: string): {
+  decide(options: DecisionOptions): Promise<DecisionResponse>;
+};
+
+const { join, resolve } = require("node:path");
+const repoRoot = resolve(__dirname, "../../..");
+const { decide } = require(join(repoRoot, "js/index.js"));
+
+if (!process.env.OPENROUTER_API_KEY) {
+  console.error("Set OPENROUTER_API_KEY first.");
+  process.exit(1);
+}
 
 async function main(): Promise<void> {
   const result = await decide({
