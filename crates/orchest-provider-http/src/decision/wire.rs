@@ -83,7 +83,9 @@ pub(super) struct Response {
     answers: BTreeMap<String, Answer>,
     // Required on OpenRouter even though generic/local engines can omit usage.
     usage: Usage,
+    #[serde(default)]
     id: Option<String>,
+    #[serde(default)]
     provider: Option<String>,
 }
 
@@ -102,13 +104,18 @@ enum Answer {
     },
     Choice {
         choice: String,
+        #[serde(default)]
         probabilities: Option<BTreeMap<String, f64>>,
+        #[serde(default)]
         confidence: Option<f64>,
     },
     Score {
         score: f64,
+        #[serde(default)]
         legend: Option<BTreeMap<String, Value>>,
+        #[serde(default)]
         probabilities: Option<BTreeMap<String, f64>>,
+        #[serde(default)]
         confidence: Option<f64>,
     },
 }

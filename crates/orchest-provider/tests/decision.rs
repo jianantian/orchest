@@ -268,4 +268,27 @@ mod http {
         cfg.api_key = Some("explicit-wins".into());
         assert!(orchest_provider::create_decision(&cfg).is_ok());
     }
+
+    #[test]
+    fn default_openrouter_env_key_is_used_and_absent_key_fails() {
+        // Serialize env mutation so parallel tests cannot observe a torn key.
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LOCK.lock().unwrap();
+        let var = "OPENROUTER_API_KEY";
+        let previous = std::env::var(var).ok();
+        // SAFETY: exclusive lock above; restored before returning.
+        unsafe { std::env::remove_var(var) };
+        let cfg = DecisionConfig::new("openrouter/~typesafe/jev-latest");
+        let missing = match orchest_provider::create_decision(&cfg) {
+            Ok(_) => panic!("expected missing key"),
+            Err(e) => e,
+        };
+        assert_eq!(missing.code, ErrorCode::MissingApiKey);
+        unsafe { std::env::set_var(var, "env-fallback-key") };
+        assert!(orchest_provider::create_decision(&cfg).is_ok());
+        match previous {
+            Some(value) => unsafe { std::env::set_var(var, value) },
+            None => unsafe { std::env::remove_var(var) },
+        }
+    }
 }
