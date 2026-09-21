@@ -108,35 +108,38 @@ async function transcribe(audio, options) {
  * callback exception or a fatal provider error.
  */
 class AsrStream {
+  /** @type {import("./native").NativeAsrStream} */ #session;
+  /** @type {unknown[]} */ #callbackError;
+
   /**
    * @param {import("./native").NativeAsrStream} session
    * @param {unknown[]} callbackError
    */
   constructor(session, callbackError) {
-    this._session = session;
-    this._callbackError = callbackError;
+    this.#session = session;
+    this.#callbackError = callbackError;
   }
 
   /** @param {Uint8Array} audio @returns {Promise<void>} */
   async sendAudio(audio) {
-    await this._session.sendAudio(audio);
+    await this.#session.sendAudio(audio);
   }
 
   /** @returns {void} */
   finish() {
-    this._session.finish();
+    this.#session.finish();
   }
 
   /** @returns {Promise<void>} */
   async wait() {
     let nativeError;
     try {
-      await this._session.wait();
+      await this.#session.wait();
     } catch (error) {
       nativeError = error;
     }
-    if (this._callbackError.length > 0) {
-      throw this._callbackError[0];
+    if (this.#callbackError.length > 0) {
+      throw this.#callbackError[0];
     }
     if (nativeError !== undefined) {
       throw normalizeProviderError(nativeError);

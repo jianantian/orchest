@@ -48,8 +48,7 @@ declare function transcribe(audio: Uint8Array, options: import("./types").Transc
  * callback exception or a fatal provider error.
  */
 declare class AsrStream {
-    _session: import("./native").NativeAsrStream;
-    _callbackError: unknown[];
+    #private;
     /**
      * @param {import("./native").NativeAsrStream} session
      * @param {unknown[]} callbackError
