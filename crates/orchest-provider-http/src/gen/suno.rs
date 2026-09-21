@@ -632,7 +632,7 @@ impl GenTask for SunoMusicGen {
                         None => format!("Suno music task {} unknown status: {other}", handle.id),
                     },
                 ))
-            },
+            }
         }
     }
 
