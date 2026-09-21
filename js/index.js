@@ -31,6 +31,14 @@ async function complete(options) {
   }
 }
 
+async function decide(options) {
+  try {
+    return await native._decide(options);
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
+}
+
 async function transcribe(audio, options) {
   try {
     return await native._transcribe(audio, options);
@@ -103,6 +111,7 @@ async function startAsrStream(options, onEvent) {
 module.exports = {
   Agent: native.Agent,
   complete,
+  decide,
   transcribe,
   ProviderError,
   AsrStream,

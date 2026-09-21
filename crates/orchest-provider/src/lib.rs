@@ -29,11 +29,13 @@
 //! never enabled by default or by any other feature.
 
 pub mod catalog;
+pub mod decision;
 pub mod facade;
 #[cfg(feature = "testing")]
 pub mod fakes;
 pub mod registry;
 
+pub use decision::{create_decision, decide, DecisionConfig};
 pub use registry::{Query, Registry};
 
 // Credential-free multi-capability catalog discovery (Batch 0).

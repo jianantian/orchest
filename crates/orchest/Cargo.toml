@@ -57,6 +57,10 @@ name = "rust_provider_runtime_openrouter"
 path = "../../examples/rust/providers/openrouter.rs"
 
 [[example]]
+name = "decisions"
+path = "../../examples/rust/providers/decisions.rs"
+
+[[example]]
 name = "rust_deep_research_agent"
 path = "../../examples/rust/agents/deep_research_agent.rs"
 

@@ -62,6 +62,10 @@
 
 ## 规划中
 
+### v0.17 — 通用 Decision 能力（实现中）
+
+类型化 Boolean/Choice/Score 原子判断；OpenRouter Decisions 为首个 provider，Rust/Python/TypeScript 提供独立 `decide`。公共契约可供本地或其他 provider 实现，应用掌握控制流。见 [PRD](./v0_17/prd.md)。
+
 ### v1.0 — 首次公开发布（规划）
 
 第一个公开发布到 crates.io 的版本。包含发布准备的全部内容：Cargo publish 元数据、license 定稿、release workflow、CHANGELOG、版本号策略文档。权威范围与 gate 清单见 [`v1_0/prd.md`](./v1_0/prd.md)。

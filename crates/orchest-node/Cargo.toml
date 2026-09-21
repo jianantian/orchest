@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 [dependencies]
 orchest = { path = "../orchest" }
 orchest-protocol = { path = "../orchest-protocol" }
-orchest-provider = { path = "../orchest-provider", features = ["llm", "asr"] }
+orchest-provider = { path = "../orchest-provider", features = ["llm", "asr", "decision"] }
 bytes = "1"
 napi = { version = "2", features = ["napi8", "serde-json", "tokio_rt"] }
 napi-derive = "2"

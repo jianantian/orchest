@@ -7,6 +7,7 @@
 mod asr;
 mod asr_stream;
 mod atomic;
+mod decision;
 mod error;
 
 use std::sync::Arc;
@@ -952,6 +953,7 @@ impl Agent {
 fn orchest_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Agent>()?;
     m.add_function(wrap_pyfunction!(atomic::complete, m)?)?;
+    m.add_function(wrap_pyfunction!(decision::decide, m)?)?;
     m.add_function(wrap_pyfunction!(asr::transcribe, m)?)?;
     m.add_class::<asr_stream::NativeAsrStream>()?;
     m.add_function(wrap_pyfunction!(asr_stream::start_asr_stream, m)?)?;

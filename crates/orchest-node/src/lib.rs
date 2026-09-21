@@ -7,6 +7,7 @@
 mod asr;
 mod asr_stream;
 mod atomic;
+mod decision;
 mod error;
 
 use std::sync::{Arc, OnceLock};

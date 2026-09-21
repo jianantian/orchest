@@ -21,6 +21,7 @@ visual = ["dep:orchest-provider-visual"]
 # Capability convenience aliases (map to the weight tiers that host them).
 # `llm` pulls only the REST tier — no websocket/OSS deps.
 llm = ["http"]
+decision = ["http"]
 asr = ["http", "stream"]
 tts = ["http", "stream"]
 realtime = ["stream"]

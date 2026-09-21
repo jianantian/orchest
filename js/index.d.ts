@@ -34,6 +34,32 @@ export interface CompletionOptions {
   requestOptions?: RequestOptions;
 }
 
+export type DecisionDescription = string | unknown[] | Record<string, unknown>;
+export type DecisionQuestion =
+  | { type: "boolean"; instructions: DecisionDescription; criteria?: { true: DecisionDescription; false: DecisionDescription } }
+  | { type: "choice"; instructions: DecisionDescription; criteria: Record<string, DecisionDescription | null> }
+  | { type: "score"; instructions: DecisionDescription; criteria: DecisionDescription[] };
+export type DecisionAnswer =
+  | { type: "boolean"; probability: number }
+  | { type: "choice"; choice: string; probabilities?: Record<string, number>; confidence?: number }
+  | { type: "score"; score: number; legend?: Record<string, unknown>; probabilities?: Record<string, number>; confidence?: number };
+export interface DecisionOptions {
+  model: string;
+  state: unknown;
+  questions: Record<string, DecisionQuestion>;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  apiUrl?: string;
+  timeoutMs?: number;
+}
+export interface DecisionResponse {
+  model: string;
+  answers: Record<string, DecisionAnswer>;
+  usage?: { input_tokens: number; output_tokens: number; cost_usd?: number };
+  id?: string;
+  provider?: string;
+}
+
 export interface TranscribeOptions {
   format: "m4a" | "aac" | "wav" | "mp3" | "pcm";
   language?: string;
@@ -90,6 +116,7 @@ export function startAsrStream(
 ): Promise<AsrStream>;
 
 export function complete(options: CompletionOptions): Promise<string>;
+export function decide(options: DecisionOptions): Promise<DecisionResponse>;
 export function transcribe(audio: Uint8Array, options: TranscribeOptions): Promise<string>;
 
 export interface RequestOptions {

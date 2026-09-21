@@ -41,6 +41,8 @@ pub enum Modality {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Capability {
     Chat,
+    /// Atomic structured judgments, independent of chat generation.
+    Decision,
     Asr,
     Tts,
     Realtime,

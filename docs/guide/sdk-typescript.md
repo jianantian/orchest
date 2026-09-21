@@ -78,17 +78,34 @@ agent.registerTool({
 
 ## 4. 原子下游 API
 
-completion、一次性 ASR 和 realtime ASR 都可绕过 agent loop 直接调用：
+completion、结构化判断、一次性 ASR 和 realtime ASR 都可绕过 agent loop 直接调用：
 
 ```typescript
 import { readFile } from "node:fs/promises";
-import { complete, startAsrStream, transcribe } from "@orchest/sdk";
+import { complete, decide, startAsrStream, transcribe } from "@orchest/sdk";
 
 const text = await complete({
   model: "deepseek/deepseek-chat",
   user: "用一句话概括这段录音",
   apiKeyEnv: "DEEPSEEK_API_KEY",
 });
+
+const decision = await decide({
+  model: "openrouter/~typesafe/jev-latest",
+  state: { message: "I was charged twice" },
+  questions: {
+    urgent: { type: "boolean", instructions: "Is this urgent?" },
+    team: {
+      type: "choice",
+      instructions: "Route the case",
+      criteria: { billing: "Payment issues", support: "Product help" },
+    },
+  },
+  apiKeyEnv: "OPENROUTER_API_KEY",
+});
+if (decision.answers.urgent.type === "boolean" && decision.answers.urgent.probability >= 0.8) {
+  console.log("escalate");
+}
 
 const transcript = await transcribe(await readFile("voice.m4a"), {
   format: "m4a",
@@ -108,6 +125,10 @@ await stream.sendAudio(await readFile("chunk.pcm"));
 stream.finish();
 await stream.wait();
 ```
+
+`decide` 一次提交共享 `state` 和按 ID 索引的 `boolean`、`choice`、`score` 问题。
+响应字段保持 snake_case；`confidence`、概率分布和 usage 未返回时保持缺失。
+完整客服路由示例见 [`examples/typescript/providers/decisions.ts`](../../examples/typescript/providers/decisions.ts)。
 
 省略 ASR provider 时，一次性识别固定使用 `aliyun/qwen-audio-3.0-asr-flash`，realtime 固定使用
 `aliyun/qwen-audio-3.0-asr-flash-streaming`。event callback 必须同步返回；返回 Promise 或抛出异常会终止输入，

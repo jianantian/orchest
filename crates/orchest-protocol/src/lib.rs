@@ -9,6 +9,7 @@
 
 pub mod adapter;
 pub mod capability;
+pub mod decision;
 pub mod descriptor;
 pub mod error;
 pub mod options;
@@ -18,6 +19,10 @@ pub mod types;
 
 // --- chat ---
 pub use adapter::ChatModel;
+pub use decision::{
+    BooleanCriteria, Decision, DecisionAnswer, DecisionQuestion, DecisionRequest, DecisionResponse,
+    DecisionUsage,
+};
 
 /// Deprecated alias for [`ChatModel`] — renamed in v0.9.12 (provider
 /// unification). Existing `impl ModelAdapter for X` keeps working through this

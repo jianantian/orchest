@@ -69,6 +69,8 @@ pub enum ErrorCode {
     UnsupportedAudioFormat,
     InvalidAudio,
     InvalidRequest,
+    /// A capability returned data that violates its response contract.
+    InvalidResponse,
     // chat-side request outcomes
     ContentFilter,
     ContextWindowExceeded,
