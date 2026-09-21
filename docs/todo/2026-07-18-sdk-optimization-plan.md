@@ -134,7 +134,7 @@ music-gift 的 guided pipeline(引导收集 → chat 写词 → review 审核 �
 
 ### C9. ~~`js/index.d.ts` `runSync` 返回类型失真(P2,存量)~~ ✅ 已修复(2026-09-22)
 
-**修复**: 删除与 `js/index.js` 重复的 `js/index.ts`(它同时遮蔽 index.js,使 TS runner 无法解析示例);`js/index.d.ts` 成为公共类型唯一来源,`js/native.d.ts` 只声明 napi 类/函数并从 index 导入共享类型,`Agent` 由 native re-export —— 因而 `runSync` 现为 `Promise<RuntimeEvent[]>`(napi 侧 `pub async fn`),同步的 `runStream` 保持 `void`。顺带以 `crates/orchest/src/events.rs` 为准重建 `RuntimeEvent` union(29 → 37 个变体:补 `model_retry`/`tool_call_retry`/batch 三连/`sub_agent_event`/`hook_panicked`/`agent_updated`,统一注入 `run_depth`/`child_run_id`),并新增 `scripts/check-ts-event-variants.sh` + CI 步骤防止再次漂移。
+**修复**: 删除与 `js/index.js` 重复的 `js/index.ts`(它同时遮蔽 index.js,使 TS runner 无法解析示例);`js/index.d.ts` 成为公共类型唯一来源,`js/native.d.ts` 只声明 napi 类/函数并从 index 导入共享类型,`Agent` 由 native re-export —— 因而 `runSync` 现为 `Promise<RuntimeEvent[]>`(napi 侧 `pub async fn`),同步的 `runStream` 保持 `void`。顺带以 `crates/orchest/src/events.rs` 为准重建 `RuntimeEvent` union(29 → 37 个变体:补 `model_retry`/`tool_call_retry`/batch 三连/`sub_agent_event`/`hook_panicked`/`agent_updated`,统一注入 `run_depth`/`child_run_id`),并新增 `scripts/check-ts-event-variants.sh` + CI 步骤防止再次漂移。随后按 6 月 review 的方向把声明改为**生成而非手写**：`js/index.js` 加 JSDoc 注解成为签名来源,`js/index.d.ts` 由 `npm run build:types`(tsc)生成,CI 生成后 `git diff --exit-code` 卡漂移;手写数据形状收在 `js/types.d.ts`,包 `types` 入口为 `js/public.d.ts`;`tsconfig`(typescript + @types/node devDep)同时检查 `index.js` 与 8 个 TS 示例。
 **验收**: `tsc --strict` 消费者用例通过(含负例:未知 discriminant 被拒);sdk-typescript 指南 §2/§5/§6 已同步。
 
 ---

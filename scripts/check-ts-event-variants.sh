@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Guards the JS RuntimeEvent union against drift from the core enum.
 #
-# js/index.d.ts declares one union variant per `RuntimeEvent` variant in
+# js/types.d.ts declares one union variant per `RuntimeEvent` variant in
 # crates/orchest/src/events.rs, in the wire shape the bindings emit
 # (`type` = snake_case discriminant, plus injected run_depth/child_run_id).
 # This check fails when the two sets differ in either direction — the union
@@ -12,7 +12,7 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
 events="crates/orchest/src/events.rs"
-declarations="js/index.d.ts"
+declarations="js/types.d.ts"
 
 for file in "$events" "$declarations"; do
   if [[ ! -e "$file" ]]; then

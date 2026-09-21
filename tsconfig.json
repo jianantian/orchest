@@ -12,10 +12,13 @@
     "skipLibCheck": false,
     "types": [
       "node"
-    ]
+    ],
+    "allowJs": true,
+    "checkJs": true
   },
   "include": [
     "js/**/*.d.ts",
+    "js/index.js",
     "examples/typescript/**/*.ts"
   ]
 }

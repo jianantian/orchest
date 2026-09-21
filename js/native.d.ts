@@ -14,7 +14,7 @@ import type {
   HistoryMessage,
   RuntimeEvent,
   TranscribeOptions,
-} from "./index";
+} from "./types";
 
 export class NativeAsrStream {
   sendAudio(audio: Uint8Array): Promise<void>;

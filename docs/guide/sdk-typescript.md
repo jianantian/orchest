@@ -177,7 +177,7 @@ for (const event of await agent.runSync("What's the weather in Tokyo?")) {
 
 ## 6. Event type 速查
 
-来自 `js/index.d.ts`（37 个变体，与 `crates/orchest/src/events.rs` 的 `RuntimeEvent` 一一对应，由 `scripts/check-ts-event-variants.sh` 守卫；Python 绑定走同一个 wire 转换，形状一致）：
+来自 `js/types.d.ts`（37 个变体，与 `crates/orchest/src/events.rs` 的 `RuntimeEvent` 一一对应，由 `scripts/check-ts-event-variants.sh` 守卫；Python 绑定走同一个 wire 转换，形状一致）：
 
 ```
 run_started                      model_call_started               model_stream_chunk
@@ -197,6 +197,14 @@ run_aborted
 
 ## 7. 类型定义
 
-完整类型见 [`js/index.d.ts`](../../js/index.d.ts)（`AgentOptions` / `RequestOptions` / `BudgetOptions` / `RuntimeEvent` / `StreamEvent` 等公共类型的唯一来源）和 [`js/native.d.ts`](../../js/native.d.ts)（napi 类与函数声明，`Agent` 定义在此并从 index 侧 re-export，不再有第二份 `js/index.ts`）。
+`js/` 下各文件的职责分工：
 
-本仓库用 `npm install` 后的 `npm run typecheck`（`tsc --noEmit`）检查 `js/**/*.d.ts` 与 `examples/typescript/**/*.ts`；CI 里与之配套的是 `npm ci`。
+| 文件 | 角色 |
+| --- | --- |
+| `js/index.js` | 运行时，同时是运行时签名的唯一来源（JSDoc 注解） |
+| `js/index.d.ts` | **由 `index.js` 生成**（`npm run build:types`），不要手改；CI 用 `git diff --exit-code` 卡漂移 |
+| `js/types.d.ts` | 手写数据形状（`AgentOptions` / `RequestOptions` / `BudgetOptions` / `RuntimeEvent` / `StreamEvent` 等），含唯一的 `RuntimeEvent` 定义 |
+| `js/native.d.ts` | napi 类与函数声明（`Agent` 定义在此） |
+| `js/public.d.ts` | 包的 `types` 入口：re-export 上述三份 |
+
+本仓库验证：`npm install` 后 `npm run typecheck`（`tsc --noEmit`，含 `js/index.js` 的 `checkJs` 与 `examples/typescript/**`）；改动 `index.js` 签名后跑 `npm run build:types` 重新生成声明。CI 里对应 `npm ci` + typecheck + 生成后 `git diff --exit-code`。
