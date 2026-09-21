@@ -14,12 +14,12 @@ loss without silently weakening runtime progress.
 
 ## Acceptance Criteria
 
-- [ ] A saturated watcher cannot lose events without an attributable signal.
-- [ ] The public contract defines how a watcher recovers, replays, or resumes
+- [x] A saturated watcher cannot lose events without an attributable signal.
+- [x] The public contract defines how a watcher recovers, replays, or resumes
   after the loss signal.
-- [ ] A deterministic saturation test proves the declared recovery boundary.
-- [ ] Normal no-drop FIFO behavior remains unchanged.
-- [ ] Recovery state is bounded and cannot grow without limit.
+- [x] A deterministic saturation test proves the declared recovery boundary.
+- [x] Normal no-drop FIFO behavior remains unchanged.
+- [x] Recovery state is bounded and cannot grow without limit.
 
 ## Notes
 

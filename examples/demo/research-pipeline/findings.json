@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "iteration": "v0.11",
   "subject": "Research Pipeline",
-  "executiveSummary": "All deterministic contract, report, worker, supervisor/watcher, terminal-failure, and watcher-order checks passed. 5 supervised-delegation seam blockers and one release blocker remain open with owned GitHub issues; SB-4 and SB-8 are verified via ToolContext::emit_event fan-out and structured LlmWatcher nested formatting; SB-6 is verified via AgentRun::start_with_watchers. The credential-gated live-provider run was not attempted because RESEARCH_PIPELINE_CHAT_MODEL and RESEARCH_PIPELINE_API_KEY are absent; v1.0 remains blocked by #258 until live verification passes.",
+  "executiveSummary": "All deterministic contract, report, worker, supervisor/watcher, terminal-failure, and watcher-order checks passed. 4 supervised-delegation seam blockers and one release blocker remain open with owned GitHub issues; SB-4 and SB-8 are verified via ToolContext::emit_event fan-out and structured LlmWatcher nested formatting; SB-5 is verified via EventSink coalesced loss recovery; SB-6 is verified via AgentRun::start_with_watchers. The credential-gated live-provider run was not attempted because RESEARCH_PIPELINE_CHAT_MODEL and RESEARCH_PIPELINE_API_KEY are absent; v1.0 remains blocked by #258 until live verification passes.",
   "readinessVerdict": {
     "status": "unverified",
     "reason": "The required live-provider run is not-run because RESEARCH_PIPELINE_CHAT_MODEL and RESEARCH_PIPELINE_API_KEY are absent. No waiver has been accepted; #258 blocks v1.0 until live verification passes.",
@@ -229,6 +229,19 @@
       ]
     },
     {
+      "id": "run-event-loss-recovery",
+      "kind": "test",
+      "status": "passed",
+      "required": true,
+      "command": "cargo test -p orchest --lib events::",
+      "date": "2026-09-21",
+      "revision": "git:self",
+      "summary": "Focused orchest events:: unit tests prove coalesced secondary EventsDropped with sequence metadata, flush-before-resume, O(1) pending state under sustained saturation, and unchanged no-drop FIFO.",
+      "evidenceRefs": [
+        "EV-event-loss-recovery-test"
+      ]
+    },
+    {
       "id": "run-provider-fakes-verification",
       "kind": "test",
       "status": "passed",
@@ -397,9 +410,9 @@
     {
       "id": "EV-secondary-delivery-source",
       "kind": "source",
-      "summary": "The run actor blocks for the primary subscriber but uses try_send for secondary watcher subscribers, recording EventsDropped on observed channel-full loss.",
-      "path": "crates/orchest/src/run/actor.rs",
-      "symbol": "emit"
+      "summary": "Primary delivery awaits with timeout; secondaries use try_send with O(1) coalesced pending loss and EventsDropped recovery on the affected secondary (mirror to primary best-effort).",
+      "path": "crates/orchest/src/events.rs",
+      "symbol": "deliver_to_subscribers"
     },
     {
       "id": "EV-watcher-task-topology",
@@ -463,6 +476,16 @@
       "command": "cargo run -p research-pipeline-demo --bin seam-report -- check --findings examples/demo/research-pipeline/findings.json --report docs/iteration/v0_11/seam-gap-analysis.md",
       "runRef": "run-report-smoke",
       "result": "report current; byte-for-byte match"
+    },
+    {
+      "id": "EV-event-loss-recovery-test",
+      "kind": "test",
+      "summary": "Deterministic saturation tests prove coalesced secondary loss signals with from_seq/to_seq, flush-before-resume after drain, O(1) pending state under sustained saturation, and unchanged no-drop FIFO.",
+      "command": "cargo test -p orchest --lib events::",
+      "runRef": "run-event-loss-recovery",
+      "result": "10 passed; 0 failed; saturation + bounded pending + no-drop FIFO",
+      "path": "crates/orchest/src/events.rs",
+      "symbol": "secondary_saturation_delivers_coalesced_loss_then_resumes"
     }
   ],
   "findings": [
@@ -595,32 +618,35 @@
     {
       "id": "SB-5",
       "title": "Secondary watcher subscribers can drop events",
-      "apiSurface": "orchest::events::RuntimeEvent",
+      "apiSurface": "orchest::events::EventSink / orchest::events::RuntimeEvent::EventsDropped",
       "description": "Secondary watcher subscriptions use non-blocking delivery and can lose events under backpressure.",
       "observedConsequence": "A watcher has no recovery path for dropped events when its channel is full.",
-      "workaround": "Use sufficient capacity for deterministic no-drop tests and record the boundary.",
+      "workaround": "Prefer capacity that avoids saturation; when EventsDropped arrives on a secondary, treat the gap as bounded (payloads not replayed) and continue or resubscribe for future events.",
       "classification": "seam-blocker",
-      "status": "open",
+      "status": "verified",
       "evidenceRefs": [
         "EV-known-seams",
         "EV-secondary-delivery-source",
-        "EV-watcher-order-test"
+        "EV-watcher-order-test",
+        "EV-event-loss-recovery-test"
       ],
       "action": {
         "owner": "orchest-maintainers",
-        "summary": "Provide an observable watcher event-loss recovery or replay contract.",
+        "summary": "Secondary loss coalesces into O(1) pending state and surfaces as EventsDropped { subscriber_id, count, from_seq, to_seq } on the affected secondary once capacity frees (mirror to primary best-effort). Lost payloads are not replayed.",
         "issueRef": "#252"
       },
       "verification": {
         "status": "passed",
         "commands": [
+          "cargo test -p orchest --lib events::",
           "cargo test -p research-pipeline-demo --test watcher_order"
         ],
         "evidenceRefs": [
           "EV-secondary-delivery-source",
-          "EV-watcher-order-test"
+          "EV-watcher-order-test",
+          "EV-event-loss-recovery-test"
         ],
-        "summary": "With capacity 1024, both terminal-complete watchers recorded the same indexed sequence and the primary receiver observed no EventsDropped. This is a no-drop scenario only; source inspection preserves the possible try_send loss under backpressure."
+        "summary": "Saturation unit tests prove coalesced secondary EventsDropped with sequence metadata, flush-before-resume, and O(1) pending state; watcher_order remains the no-drop FIFO equivalence check."
       }
     },
     {

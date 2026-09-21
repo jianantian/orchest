@@ -100,9 +100,16 @@ impl RunHandle {
         }
     }
 
-    /// Subscribe to events emitted after this call. Returns a lossy receiver:
-    /// when the channel is full, events are dropped and
-    /// `RuntimeEvent::EventsDropped` is sent to the primary subscriber.
+    /// Subscribe to events emitted after this call.
+    ///
+    /// Secondary subscriptions are lossy under backpressure: when the channel
+    /// is full, event payloads are dropped and a coalesced
+    /// [`RuntimeEvent::EventsDropped`] (with `subscriber_id`, `count`, and
+    /// `from_seq`..=`to_seq`) is delivered on *this* receiver once capacity
+    /// frees, before the next accepted event. A mirror signal is also offered
+    /// to the primary subscriber. Missed payloads are not replayed — after
+    /// observing the loss signal, continue consuming or call this method again
+    /// for a fresh channel that sees only future events. See [`crate::events::EventSink`].
     /// Recommend `capacity >= 1024`.
     pub async fn subscribe_events(&self, capacity: usize) -> EventReceiver {
         let (tx, rx) = mpsc::channel(capacity);

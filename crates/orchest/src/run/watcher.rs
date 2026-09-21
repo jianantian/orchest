@@ -16,6 +16,13 @@ pub enum WatcherAction {
 }
 
 /// Observe and optionally intervene in an agent run's event stream.
+///
+/// Under secondary backpressure the runtime may deliver
+/// [`crate::events::RuntimeEvent::EventsDropped`] on this watcher's channel
+/// (coalesced, with stable sequence metadata). Lost payloads are not
+/// replayed; treat that signal as a bounded gap, then continue or
+/// re-attach via [`crate::run::RunHandle::attach_watcher`] /
+/// [`crate::run::AgentRun::start_with_watchers`]. See [`crate::events::EventSink`].
 #[async_trait]
 pub trait Watcher: Send + Sync {
     async fn on_event(&self, event: &RuntimeEvent) -> WatcherAction;

@@ -97,7 +97,7 @@ pub struct ToolContext {
     ///
     /// Empty when only [`Self::event_tx`] is set (oneshot / unit tests):
     /// [`Self::emit_event`] then falls back to `event_tx` alone.
-    pub event_subs: Vec<mpsc::Sender<crate::events::RuntimeEvent>>,
+    pub event_subs: Vec<crate::events::EventSink>,
 }
 
 impl ToolContext {

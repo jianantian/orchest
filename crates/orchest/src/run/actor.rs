@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use tracing::Instrument;
 
 use crate::budget::{BudgetConfig, BudgetGuard};
-use crate::events::{ApprovalContext, RunFailureKind, RuntimeEvent};
+use crate::events::{ApprovalContext, EventSink, RunFailureKind, RuntimeEvent};
 use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelResponse, ModelStreamChunk, Role, StopReason,
 };
@@ -80,7 +80,7 @@ pub(crate) struct AgentRunState {
     pub run_hook_ctx: crate::hook::RunHookContext,
     pub approval_bus: ApprovalBus,
     /// Subscriber list; index 0 is the primary (blocking send), rest use try_send.
-    pub event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
+    pub event_subs: Vec<EventSink>,
     pub webhook_runtime: Option<WebhookRuntime>,
     pub repeated_failures: HashMap<(String, ErrorKind), Vec<ToolError>>,
 }
@@ -160,9 +160,19 @@ impl Actor for WorkerActor {
             initial_event_subs,
         } = args;
         backfill_context_window_size(&mut config, model.as_ref());
+        let next_seq = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
         let mut event_subs = Vec::with_capacity(1 + initial_event_subs.len());
-        event_subs.push(event_tx);
-        event_subs.extend(initial_event_subs);
+        event_subs.push(EventSink::primary(
+            event_tx.clone(),
+            std::sync::Arc::clone(&next_seq),
+        ));
+        for (idx, tx) in initial_event_subs.into_iter().enumerate() {
+            event_subs.push(EventSink::secondary(
+                tx,
+                (idx + 1) as u64,
+                std::sync::Arc::clone(&next_seq),
+            ));
+        }
 
         emit(&event_subs, RuntimeEvent::RunStarted { run_id }).await;
 
@@ -384,7 +394,15 @@ impl Actor for WorkerActor {
                 }
             }
             AgentMsg::Subscribe(tx) => {
-                state.event_subs.push(tx);
+                let subscriber_id = state.event_subs.len() as u64;
+                let next_seq = state
+                    .event_subs
+                    .first()
+                    .map(EventSink::sequence_counter)
+                    .unwrap_or_else(|| std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+                state
+                    .event_subs
+                    .push(EventSink::secondary(tx, subscriber_id, next_seq));
             }
             AgentMsg::Steer(cmd) => {
                 state.messages.push(Message {
@@ -426,7 +444,7 @@ impl Actor for WorkerActor {
 async fn register_code_execution_tools(
     config: &AgentConfig,
     registry: &mut ToolRegistry,
-    event_subs: &[mpsc::Sender<RuntimeEvent>],
+    event_subs: &[EventSink],
 ) -> Result<(), ToolError> {
     let tools = CodeExecutionMcpServer::tools(config.runtime.code_execution_executor.clone())?;
     for tool in tools {
@@ -452,7 +470,7 @@ async fn register_code_execution_tools(
 #[allow(clippy::too_many_arguments)] // justified: per-call context for the after_tool hook chain
 async fn finalize_after_tool(
     hooks: &[std::sync::Arc<dyn crate::hook::Hook>],
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     run_id: RunId,
     tool_name: &str,
     tool_input: &serde_json::Value,
@@ -513,7 +531,7 @@ fn tool_retry_delay(next_attempt: u32) -> Duration {
 
 struct RetryApprovalRequest<'a> {
     approval_bus: &'a ApprovalBus,
-    subs: &'a [mpsc::Sender<RuntimeEvent>],
+    subs: &'a [EventSink],
     run_id: RunId,
     tool_call: &'a ToolCall,
     attempt: u32,
@@ -572,7 +590,7 @@ async fn request_retry_approval(request: RetryApprovalRequest<'_>) -> bool {
 
 async fn record_repeated_failure(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     tool_name: &str,
     error: &ToolError,
 ) -> Result<(), String> {
@@ -603,7 +621,7 @@ async fn record_repeated_failure(
     }
 }
 
-async fn check_step_limits(state: &mut AgentRunState, subs: &[mpsc::Sender<RuntimeEvent>]) -> bool {
+async fn check_step_limits(state: &mut AgentRunState, subs: &[EventSink]) -> bool {
     let step = state.step;
 
     if step >= state.config.runtime.max_steps {
@@ -659,10 +677,7 @@ async fn check_step_limits(state: &mut AgentRunState, subs: &[mpsc::Sender<Runti
     true
 }
 
-async fn call_model_phase(
-    state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
-) -> Option<ModelResponse> {
+async fn call_model_phase(state: &mut AgentRunState, subs: &[EventSink]) -> Option<ModelResponse> {
     let step = state.step;
     let run_id = state.run_id;
 
@@ -758,7 +773,7 @@ pub(crate) fn backfill_context_window_size(config: &mut AgentConfig, model: &dyn
 
 async fn validate_context_window(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     call_messages: &[Message],
 ) -> bool {
     let Some(context_window_size) = state.config.model.spec.context_window_size else {
@@ -793,7 +808,7 @@ async fn validate_context_window(
 
 async fn dispatch_model_call(
     state: &AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     call_messages: &[Message],
 ) -> Result<ModelResponse, crate::model::ModelError> {
     let (stream_tx, mut stream_rx) = mpsc::channel::<ModelStreamChunk>(64);
@@ -844,7 +859,7 @@ async fn dispatch_model_call(
 
 async fn apply_after_model_hooks(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     call_messages: Vec<Message>,
     mut response: ModelResponse,
 ) -> Option<ModelResponse> {
@@ -885,7 +900,7 @@ async fn apply_after_model_hooks(
 
 async fn handle_model_error_or_retry(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     error: &crate::model::ModelError,
     retry_attempt: u32,
 ) -> bool {
@@ -958,7 +973,7 @@ struct ParallelExecutionContext {
     run_id: RunId,
     run_depth: u32,
     event_tx: mpsc::Sender<RuntimeEvent>,
-    event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
+    event_subs: Vec<EventSink>,
     webhook_base_url: Option<String>,
     approval_bus: ApprovalBus,
     remaining_budget: BudgetConfig,
@@ -1095,7 +1110,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
 #[allow(clippy::too_many_lines)] // justified: mechanical extraction of existing tool dispatch flow; narrower helpers follow in later refactors
 async fn run_tool_and_handoff_phase(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     run_id: RunId,
     response: &ModelResponse,
     tool_uses: &[ToolCall],
@@ -1699,7 +1714,7 @@ async fn run_tool_and_handoff_phase(
 
 async fn apply_tool_phase_results(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     run_id: RunId,
     pending_handoff: Option<PendingHandoff>,
     mut tool_results: Vec<ContentBlock>,
@@ -1869,7 +1884,7 @@ fn replace_tool_result(tool_results: &mut [ContentBlock], tool_use_id: &str, con
 
 // ── Utility helpers ──────────────────────────────────────────────────────────
 
-async fn emit(subs: &[mpsc::Sender<RuntimeEvent>], event: RuntimeEvent) {
+async fn emit(subs: &[EventSink], event: RuntimeEvent) {
     crate::events::deliver_to_subscribers(subs, event).await;
 }
 
@@ -1883,9 +1898,10 @@ fn estimate_context_tokens(messages: &[Message], tool_defs: &[ToolDef]) -> u64 {
     message_tokens + tool_tokens
 }
 
-fn primary(subs: &[mpsc::Sender<RuntimeEvent>]) -> &mpsc::Sender<RuntimeEvent> {
+fn primary(subs: &[EventSink]) -> &mpsc::Sender<RuntimeEvent> {
     subs.first()
         .expect("event_subs always has at least one subscriber")
+        .sender()
 }
 
 fn approval_context_for(meta: &ToolMetadata) -> ApprovalContext {
@@ -1910,7 +1926,7 @@ fn tool_source_label(source: &ToolSource) -> &'static str {
 
 async fn run_parallel_tool_batch_if_allowed(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     run_id: RunId,
     tool_uses: &[ToolCall],
 ) -> Option<Vec<ContentBlock>> {
@@ -2073,7 +2089,7 @@ async fn execute_parallel_tool_call(
 
 async fn finalize_parallel_tool_result(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     result: ParallelToolResult,
 ) -> ContentBlock {
     match result.result {
@@ -2217,7 +2233,7 @@ fn deferred_tool_exposure_error(state: &AgentRunState, tool_name: &str) -> Optio
 #[allow(clippy::too_many_arguments)] // justified: mirrors pre_start owned state needed to terminate startup cleanly
 async fn fail_pre_start(
     myself: &ActorRef<AgentMsg>,
-    event_subs: &[mpsc::Sender<RuntimeEvent>],
+    event_subs: &[EventSink],
     run_id: RunId,
     config: AgentConfig,
     model: Arc<dyn ModelAdapter>,
@@ -2253,7 +2269,7 @@ fn failed_state(
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
     approval_bus: ApprovalBus,
-    event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
+    event_subs: Vec<EventSink>,
     run_hook_ctx: crate::hook::RunHookContext,
 ) -> AgentRunState {
     AgentRunState {
