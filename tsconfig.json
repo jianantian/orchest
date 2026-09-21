@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022"
+    ],
+    "module": "node16",
+    "moduleResolution": "node16",
+    "moduleDetection": "force",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": false,
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "js/**/*.d.ts",
+    "examples/typescript/**/*.ts"
+  ]
+}

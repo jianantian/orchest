@@ -70,6 +70,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+
+      - name: TypeScript typecheck
+        run: |
+          npm ci
+          npm run typecheck
 
       # Builds the same addon `npm run pack:local` ships, then runs the JS SDK
       # suites against the real native module (js/tests/*.test.cjs) — the only

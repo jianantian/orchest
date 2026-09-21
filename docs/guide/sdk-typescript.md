@@ -198,3 +198,5 @@ run_aborted
 ## 7. 类型定义
 
 完整类型见 [`js/index.d.ts`](../../js/index.d.ts)（`AgentOptions` / `RequestOptions` / `BudgetOptions` / `RuntimeEvent` / `StreamEvent` 等公共类型的唯一来源）和 [`js/native.d.ts`](../../js/native.d.ts)（napi 类与函数声明，`Agent` 定义在此并从 index 侧 re-export，不再有第二份 `js/index.ts`）。
+
+本仓库用 `npm install` 后的 `npm run typecheck`（`tsc --noEmit`）检查 `js/**/*.d.ts` 与 `examples/typescript/**/*.ts`；CI 里与之配套的是 `npm ci`。

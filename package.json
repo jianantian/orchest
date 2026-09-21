@@ -28,10 +28,15 @@
   "scripts": {
     "build:native": "cargo build -p orchest-node --release && node scripts/copy-node-addon.mjs",
     "pack:local": "npm run build:native && npm pack",
-    "test": "node --test js/tests/*.test.cjs"
+    "test": "node --test js/tests/*.test.cjs",
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=18"
   },
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "typescript": "^7.0.2"
+  }
 }
