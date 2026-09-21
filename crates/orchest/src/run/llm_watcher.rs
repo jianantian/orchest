@@ -144,7 +144,67 @@ pub fn format_event(event: &RuntimeEvent) -> String {
         }
         RuntimeEvent::RunRestarted { attempt } => format!("Run restarted: attempt {attempt}"),
         RuntimeEvent::BudgetWarning { .. } => "Budget warning".to_string(),
-        _ => format!("{event:?}").chars().take(200).collect(),
+        RuntimeEvent::SubAgentStarted {
+            parent_run_id,
+            child_run_id,
+            config_summary,
+        } => {
+            let summary = serde_json::to_string(config_summary)
+                .unwrap_or_default()
+                .chars()
+                .take(120)
+                .collect::<String>();
+            format!(
+                "Sub-agent started: child={}, parent={}, summary={}",
+                child_run_id, parent_run_id, summary
+            )
+        }
+        RuntimeEvent::SubAgentCompleted {
+            child_run_id,
+            output,
+            budget_used,
+        } => {
+            let output_summary = serde_json::to_string(output)
+                .unwrap_or_default()
+                .chars()
+                .take(120)
+                .collect::<String>();
+            format!(
+                "Sub-agent completed: child={}, tokens_used={}, tool_calls_used={}, cost_usd={:.4}, output={}",
+                child_run_id,
+                budget_used.tokens_used,
+                budget_used.tool_calls_used,
+                budget_used.cost_usd,
+                output_summary
+            )
+        }
+        RuntimeEvent::SubAgentFailed {
+            child_run_id,
+            error,
+        } => {
+            format!("Sub-agent failed: child={}, error={}", child_run_id, error)
+        }
+        RuntimeEvent::SubAgentEvent {
+            parent_run_id,
+            child_run_id,
+            event: inner,
+        } => format!(
+            "Sub-agent event: child={}, parent={}: {}",
+            child_run_id,
+            parent_run_id,
+            format_event(inner)
+        ),
+        RuntimeEvent::ChildRunEvent {
+            child_run_id,
+            run_depth,
+            event: inner,
+        } => format!(
+            "Child run event: child={}, depth={}: {}",
+            child_run_id,
+            run_depth,
+            format_event(inner)
+        ),
+        _ => format!("{:?}", event).chars().take(200).collect(),
     }
 }
 
@@ -464,5 +524,64 @@ mod tests {
         });
         assert!(s.contains("my_tool"));
         assert!(s.contains("42ms"));
+    }
+
+    #[test]
+    fn format_event_sub_agent_lifecycle_and_nested_events_are_structured() {
+        let parent = crate::run::RunId::new();
+        let child = crate::run::RunId::new();
+
+        let started = format_event(&RuntimeEvent::SubAgentStarted {
+            parent_run_id: parent,
+            child_run_id: child,
+            config_summary: json!({"run_depth": 1}),
+        });
+        assert!(started.contains("Sub-agent started"));
+        assert!(started.contains(&child.to_string()));
+        assert!(started.contains(&parent.to_string()));
+        assert!(!started.starts_with("SubAgentStarted"));
+
+        let completed = format_event(&RuntimeEvent::SubAgentCompleted {
+            child_run_id: child,
+            output: json!("done"),
+            budget_used: crate::budget::BudgetUsage {
+                tokens_used: 11,
+                tool_calls_used: 2,
+                cost_usd: 0.01,
+            },
+        });
+        assert!(completed.contains("Sub-agent completed"));
+        assert!(completed.contains("tokens_used=11"));
+        assert!(!completed.starts_with("SubAgentCompleted"));
+
+        let failed = format_event(&RuntimeEvent::SubAgentFailed {
+            child_run_id: child,
+            error: "boom".into(),
+        });
+        assert!(failed.contains("Sub-agent failed"));
+        assert!(failed.contains("boom"));
+        assert!(!failed.starts_with("SubAgentFailed"));
+
+        let nested = format_event(&RuntimeEvent::SubAgentEvent {
+            parent_run_id: parent,
+            child_run_id: child,
+            event: Box::new(RuntimeEvent::RunCompleted {
+                output: json!("child done"),
+                stop_reason: crate::model::StopReason::EndTurn,
+            }),
+        });
+        assert!(nested.contains("Sub-agent event"));
+        assert!(nested.contains("Run completed"));
+        assert!(!nested.contains("SubAgentEvent"));
+
+        let child_run = format_event(&RuntimeEvent::ChildRunEvent {
+            child_run_id: child,
+            run_depth: 2,
+            event: Box::new(RuntimeEvent::ModelCallStarted { step: 3 }),
+        });
+        assert!(child_run.contains("Child run event"));
+        assert!(child_run.contains("depth=2"));
+        assert!(child_run.contains("Model call started: step 3"));
+        assert!(!child_run.contains("ChildRunEvent"));
     }
 }

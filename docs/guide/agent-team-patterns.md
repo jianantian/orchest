@@ -104,6 +104,14 @@ let (handle, rx) = AgentRun::start_with_watchers(
 // handle.attach_watcher(Arc::new(SteeringWatcher), 256).await;
 ```
 
+When a supervisor delegates through Agent-as-Tool, forwarded child lifecycle
+and runtime events (`SubAgentStarted` / `SubAgentEvent` / `SubAgentCompleted` /
+`SubAgentFailed`) are delivered to attached watcher subscriptions through the
+same fan-out contract as other run events (`ToolContext::emit_event`). The
+primary `EventReceiver` still receives each event once, in order; watchers
+observe the same nested stream without duplicate primary delivery.
+`LlmWatcher` formats those nested events structurally (not via `Debug`).
+
 Runnable examples:
 
 ```bash

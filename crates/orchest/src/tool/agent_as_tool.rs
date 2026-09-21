@@ -204,14 +204,11 @@ impl Tool for AgentAsTool {
 
         if ctx.run_depth >= 3 {
             let child_run_id = crate::run::RunId::new();
-            if let Some(ref tx) = ctx.event_tx {
-                let _ = tx
-                    .send(RuntimeEvent::SubAgentFailed {
-                        child_run_id,
-                        error: "max_run_depth_exceeded".into(),
-                    })
-                    .await;
-            }
+            ctx.emit_event(RuntimeEvent::SubAgentFailed {
+                child_run_id,
+                error: "max_run_depth_exceeded".into(),
+            })
+            .await;
             return Err(ToolError::fatal(format!(
                 "sub-agent run {child_run_id} failed: max_run_depth_exceeded"
             ))
@@ -298,18 +295,15 @@ impl AgentAsTool {
         );
         let child_run_id = handle.run_id;
 
-        if let Some(ref tx) = ctx.event_tx {
-            let _ = tx
-                .send(RuntimeEvent::SubAgentStarted {
-                    parent_run_id,
-                    child_run_id,
-                    config_summary: json!({
-                        "run_depth": ctx.run_depth + 1,
-                        "input": child_input,
-                    }),
-                })
-                .await;
-        }
+        ctx.emit_event(RuntimeEvent::SubAgentStarted {
+            parent_run_id,
+            child_run_id,
+            config_summary: json!({
+                "run_depth": ctx.run_depth + 1,
+                "input": child_input,
+            }),
+        })
+        .await;
 
         let mut child_usage = BudgetUsage::default();
         let mut output = Value::Null;
@@ -337,27 +331,21 @@ impl AgentAsTool {
                 }
                 _ => {}
             }
-            if let Some(ref tx) = ctx.event_tx {
-                let _ = tx
-                    .send(RuntimeEvent::SubAgentEvent {
-                        parent_run_id,
-                        child_run_id,
-                        event: Box::new(event),
-                    })
-                    .await;
-            }
+            ctx.emit_event(RuntimeEvent::SubAgentEvent {
+                parent_run_id,
+                child_run_id,
+                event: Box::new(event),
+            })
+            .await;
         }
         handle.wait().await;
 
         if let Some((error, kind)) = failed {
-            if let Some(ref tx) = ctx.event_tx {
-                let _ = tx
-                    .send(RuntimeEvent::SubAgentFailed {
-                        child_run_id,
-                        error: error.clone(),
-                    })
-                    .await;
-            }
+            ctx.emit_event(RuntimeEvent::SubAgentFailed {
+                child_run_id,
+                error: error.clone(),
+            })
+            .await;
             return Err(child_failure_error(
                 child_run_id,
                 &error,
@@ -366,15 +354,12 @@ impl AgentAsTool {
             ));
         }
 
-        if let Some(ref tx) = ctx.event_tx {
-            let _ = tx
-                .send(RuntimeEvent::SubAgentCompleted {
-                    child_run_id,
-                    output: output.clone(),
-                    budget_used: child_usage.clone(),
-                })
-                .await;
-        }
+        ctx.emit_event(RuntimeEvent::SubAgentCompleted {
+            child_run_id,
+            output: output.clone(),
+            budget_used: child_usage.clone(),
+        })
+        .await;
         Ok(ChildAttempt {
             run_id: child_run_id,
             output,
@@ -410,17 +395,13 @@ impl AgentAsTool {
                 Some(first.output),
             )),
             Err(first_reason) => {
-                if let Some(ref tx) = ctx.event_tx {
-                    let _ = tx
-                        .send(RuntimeEvent::RuntimeWarning {
+                ctx.emit_event(RuntimeEvent::RuntimeWarning {
                             message: format!(
                                 "sub-agent run {} output violates the declared contract ({}): {first_reason}; retrying once with a correction prompt",
                                 first.run_id,
                                 expect.describe()
                             ),
-                        })
-                        .await;
-                }
+                        }).await;
                 let correction = format!(
                     "Your previous reply did not satisfy the required output format ({}): {first_reason}\n\
                      Reply to the original request again, responding with ONLY the requested content \

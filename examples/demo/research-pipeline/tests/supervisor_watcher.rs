@@ -556,9 +556,12 @@ async fn activated_watchers_prove_nested_routing_and_applied_supervisor_actions(
     assert!(recording_events
         .iter()
         .any(|event| matches!(event, RuntimeEvent::RunCompleted { .. })));
-    assert!(!recording_events
-        .iter()
-        .any(|event| matches!(event, RuntimeEvent::SubAgentEvent { .. })));
+    assert!(
+        recording_events
+            .iter()
+            .any(|event| matches!(event, RuntimeEvent::SubAgentEvent { .. })),
+        "attached recording watcher must receive forwarded SubAgentEvent"
+    );
     drop(recording_events);
 
     let llm_completed_events = watchers
@@ -568,18 +571,32 @@ async fn activated_watchers_prove_nested_routing_and_applied_supervisor_actions(
     assert!(llm_completed_events
         .iter()
         .any(|event| matches!(event, RuntimeEvent::RunCompleted { .. })));
-    assert!(!llm_completed_events
-        .iter()
-        .any(|event| matches!(event, RuntimeEvent::SubAgentEvent { .. })));
+    assert!(
+        llm_completed_events
+            .iter()
+            .any(|event| matches!(event, RuntimeEvent::SubAgentEvent { .. })),
+        "attached LlmWatcher must receive forwarded SubAgentEvent"
+    );
     drop(llm_completed_events);
 
     let llm_prompts = watchers.llm_prompts.lock().expect("LLM prompts");
     assert!(llm_prompts
         .iter()
         .any(|prompt| prompt.contains("Run completed")));
-    assert!(!llm_prompts
-        .iter()
-        .any(|prompt| prompt.contains("SubAgentEvent")));
+    assert!(
+        llm_prompts.iter().any(|prompt| {
+            prompt.contains("Sub-agent event")
+                || prompt.contains("Sub-agent started")
+                || prompt.contains("Sub-agent completed")
+        }),
+        "LlmWatcher prompts must use structured nested formatting, not Debug"
+    );
+    assert!(
+        !llm_prompts
+            .iter()
+            .any(|prompt| prompt.contains("SubAgentEvent")),
+        "LlmWatcher must not fall back to Debug SubAgentEvent text"
+    );
     drop(llm_prompts);
 
     let supervisor_calls = supervisor_histories.lock().expect("supervisor histories");
@@ -825,9 +842,12 @@ async fn live_start_records_both_watcher_completions_as_best_effort() {
     assert!(watcher_events
         .iter()
         .any(|event| matches!(event, RuntimeEvent::RunCompleted { .. })));
-    assert!(!watcher_events
-        .iter()
-        .any(|event| matches!(event, RuntimeEvent::SubAgentEvent { .. })));
+    assert!(
+        watcher_events
+            .iter()
+            .any(|event| matches!(event, RuntimeEvent::SubAgentEvent { .. })),
+        "live-attached watcher must receive forwarded SubAgentEvent"
+    );
     drop(watcher_events);
     let llm_watcher_events = started
         .llm_watcher_completed_events
@@ -836,9 +856,12 @@ async fn live_start_records_both_watcher_completions_as_best_effort() {
     assert!(llm_watcher_events
         .iter()
         .any(|event| matches!(event, RuntimeEvent::RunCompleted { .. })));
-    assert!(!llm_watcher_events
-        .iter()
-        .any(|event| matches!(event, RuntimeEvent::SubAgentEvent { .. })));
+    assert!(
+        llm_watcher_events
+            .iter()
+            .any(|event| matches!(event, RuntimeEvent::SubAgentEvent { .. })),
+        "live-attached LlmWatcher must receive forwarded SubAgentEvent"
+    );
 }
 
 #[test]

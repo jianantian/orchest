@@ -34,12 +34,11 @@ Later issues use these public imports only:
 
 Private `orchest::run::handle::*` and `orchest::run::config::*` paths are out
 of bounds. The supervisor owns the only public `RunHandle`. Attached watchers
-receive supervisor actor-emitted events, while forwarded `SubAgentEvent`s
-reach the primary supervisor `EventReceiver` and bypass those watcher
-subscription channels (SB-8). The deterministic watcher action is triggered
-only by the supervisor-level delegation
-`ToolCallStarted { tool: "research_worker", .. }`; no child or nested event
-triggers it.
+receive supervisor actor-emitted events and, via `ToolContext::emit_event`,
+forwarded nested `SubAgentEvent`s (SB-8 verified). The deterministic watcher
+action is triggered only by the supervisor-level delegation
+`ToolCallStarted { tool: "research_worker", .. }`; nested events are observed
+but do not trigger that action.
 
 ## Commands
 

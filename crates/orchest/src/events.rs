@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::mpsc;
 
 use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::model::{ModelStreamChunk, OptionAdjustment, StopReason, TokenUsage};
@@ -250,6 +251,63 @@ pub enum RuntimeEvent {
 /// `EndTurn` (not truncated) is the faithful reading.
 fn default_run_completed_stop_reason() -> StopReason {
     StopReason::EndTurn
+}
+
+/// Timeout for primary (blocking) event delivery. Matches the run actor.
+pub const EVENT_DELIVERY_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// Deliver a runtime event to a subscriber list using the public fan-out contract:
+///
+/// - index `0` is the primary event receiver — awaited send with
+///   [`EVENT_DELIVERY_TIMEOUT`];
+/// - remaining subscribers are attached watcher channels — non-blocking
+///   `try_send` (a full channel may drop; see SB-5 / #252).
+///
+/// Each event is offered at most once per subscriber, preserving primary
+/// order. Tools that forward nested child events should call
+/// [`crate::tool::ToolContext::emit_event`], which uses this helper so
+/// attached watchers observe the same stream as the primary receiver.
+pub async fn deliver_to_subscribers(
+    subscribers: &[mpsc::Sender<RuntimeEvent>],
+    event: RuntimeEvent,
+) {
+    if let Some(primary) = subscribers.first() {
+        match tokio::time::timeout(EVENT_DELIVERY_TIMEOUT, primary.send(event.clone())).await {
+            Ok(Ok(())) | Ok(Err(_)) => {}
+            Err(_) => {
+                crate::telemetry::record_event_drop("primary", 1);
+                if primary
+                    .try_send(RuntimeEvent::EventsDropped {
+                        subscriber_id: 0,
+                        count: 1,
+                    })
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "primary event subscriber timed out and EventsDropped notification channel is full"
+                    );
+                }
+            }
+        }
+    }
+    for (subscriber_id, sub) in subscribers.iter().enumerate().skip(1) {
+        if let Err(mpsc::error::TrySendError::Full(_)) = sub.try_send(event.clone()) {
+            crate::telemetry::record_event_drop("secondary", 1);
+            if let Some(p) = subscribers.first() {
+                if p.try_send(RuntimeEvent::EventsDropped {
+                    subscriber_id: subscriber_id as u64,
+                    count: 1,
+                })
+                .is_err()
+                {
+                    tracing::warn!(
+                        subscriber_id,
+                        "secondary event subscriber dropped an event and primary notification channel is full"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -958,6 +958,7 @@ struct ParallelExecutionContext {
     run_id: RunId,
     run_depth: u32,
     event_tx: mpsc::Sender<RuntimeEvent>,
+    event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
     webhook_base_url: Option<String>,
     approval_bus: ApprovalBus,
     remaining_budget: BudgetConfig,
@@ -1358,6 +1359,7 @@ async fn run_tool_and_handoff_phase(
                 run_depth: state.config.runtime.run_depth,
                 tool_call_id: tool_call.id.clone(),
                 event_tx: Some(primary(subs).clone()),
+                event_subs: subs.to_vec(),
                 webhook_base_url: state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone()),
                 approval_bus: state.approval_bus.clone(),
                 remaining_budget: state.budget.remaining_config(),
@@ -1868,43 +1870,7 @@ fn replace_tool_result(tool_results: &mut [ContentBlock], tool_use_id: &str, con
 // ── Utility helpers ──────────────────────────────────────────────────────────
 
 async fn emit(subs: &[mpsc::Sender<RuntimeEvent>], event: RuntimeEvent) {
-    if let Some(primary) = subs.first() {
-        match tokio::time::timeout(EVENT_SEND_TIMEOUT, primary.send(event.clone())).await {
-            Ok(Ok(())) | Ok(Err(_)) => {}
-            Err(_) => {
-                telemetry::record_event_drop("primary", 1);
-                if primary
-                    .try_send(RuntimeEvent::EventsDropped {
-                        subscriber_id: 0,
-                        count: 1,
-                    })
-                    .is_err()
-                {
-                    tracing::warn!(
-                        "primary event subscriber timed out and EventsDropped notification channel is full"
-                    );
-                }
-            }
-        }
-    }
-    for (subscriber_id, sub) in subs.iter().enumerate().skip(1) {
-        if let Err(mpsc::error::TrySendError::Full(_)) = sub.try_send(event.clone()) {
-            telemetry::record_event_drop("secondary", 1);
-            if let Some(p) = subs.first() {
-                if p.try_send(RuntimeEvent::EventsDropped {
-                    subscriber_id: subscriber_id as u64,
-                    count: 1,
-                })
-                .is_err()
-                {
-                    tracing::warn!(
-                        subscriber_id,
-                        "secondary event subscriber dropped an event and primary notification channel is full"
-                    );
-                }
-            }
-        }
-    }
+    crate::events::deliver_to_subscribers(subs, event).await;
 }
 
 fn estimate_context_tokens(messages: &[Message], tool_defs: &[ToolDef]) -> u64 {
@@ -2025,6 +1991,7 @@ async fn run_parallel_tool_batch_if_allowed(
                 run_id,
                 run_depth: state.config.runtime.run_depth,
                 event_tx,
+                event_subs: subs.to_vec(),
                 webhook_base_url,
                 approval_bus,
                 remaining_budget,
@@ -2070,6 +2037,7 @@ async fn execute_parallel_tool_call(
         run_depth: parallel_ctx.run_depth,
         tool_call_id: call.tool_call.id.clone(),
         event_tx: Some(parallel_ctx.event_tx.clone()),
+        event_subs: parallel_ctx.event_subs.clone(),
         webhook_base_url: parallel_ctx.webhook_base_url,
         approval_bus: parallel_ctx.approval_bus,
         remaining_budget: parallel_ctx.remaining_budget,

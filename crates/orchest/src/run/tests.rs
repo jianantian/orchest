@@ -7479,6 +7479,227 @@ async fn start_with_watchers_rejects_zero_capacity_before_execution() {
     );
 }
 
+struct ParentSpawnsChildModel {
+    calls: AtomicU32,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for ParentSpawnsChildModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let n = self.calls.fetch_add(1, Ordering::SeqCst);
+        let usage = TokenUsage {
+            input_tokens: 2,
+            output_tokens: 2,
+            ..Default::default()
+        };
+        if n == 0 {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "spawn-1".into(),
+                    name: "spawn_child".into(),
+                    input: json!({}),
+                }],
+                usage,
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        } else {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("parent done".into())],
+                usage,
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+fn make_spawn_child_tool() -> Arc<dyn Tool> {
+    let child_registry = ToolRegistry::new();
+    let mut config = test_config();
+    config.budget.max_tokens = Some(50);
+    config.budget.max_tool_calls = Some(5);
+    config.budget.max_duration = Some(Duration::from_secs(10));
+    config
+        .as_tool("spawn_child", "spawn a child agent")
+        .model(Arc::new(FakeModelAdapter::final_answer()))
+        .registry(child_registry)
+        .input_mapper(|_| Ok("child task".into()))
+        .output_extractor(|details| details.get("output").cloned().unwrap_or(details.clone()))
+        .build()
+        .unwrap()
+}
+
+/// SB-8 / #250: pre-wired watchers receive forwarded child events; primary
+/// receives each event once (no duplicate forwarding); per-watcher FIFO holds.
+#[tokio::test]
+async fn start_with_watchers_receives_forwarded_child_events_without_primary_duplicates() {
+    let watched_a = Arc::new(Mutex::new(Vec::new()));
+    let watched_b = Arc::new(Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(ParentSpawnsChildModel {
+        calls: AtomicU32::new(0),
+    });
+    let mut registry = ToolRegistry::new();
+    registry.register(make_spawn_child_tool()).unwrap();
+
+    let (handle, mut rx) = AgentRun::start_with_watchers(
+        test_config(),
+        "delegate".into(),
+        model,
+        registry,
+        vec![
+            (
+                Arc::new(FirstEventRecordingWatcher {
+                    events: Arc::clone(&watched_a),
+                }),
+                256,
+            ),
+            (
+                Arc::new(FirstEventRecordingWatcher {
+                    events: Arc::clone(&watched_b),
+                }),
+                256,
+            ),
+        ],
+    )
+    .expect("valid watcher capacity");
+
+    let mut primary = Vec::new();
+    while let Some(event) = rx.recv().await {
+        primary.push(event);
+    }
+    handle.wait().await;
+
+    let watcher_a = watched_a.lock().unwrap().clone();
+    let watcher_b = watched_b.lock().unwrap().clone();
+
+    assert!(
+        matches!(watcher_a.first(), Some(RuntimeEvent::RunStarted { .. })),
+        "watcher A must be active before delegation (RunStarted first)"
+    );
+    assert!(
+        matches!(watcher_b.first(), Some(RuntimeEvent::RunStarted { .. })),
+        "watcher B must be active before delegation (RunStarted first)"
+    );
+
+    let primary_nested: Vec<_> = primary
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                RuntimeEvent::SubAgentStarted { .. }
+                    | RuntimeEvent::SubAgentEvent { .. }
+                    | RuntimeEvent::SubAgentCompleted { .. }
+                    | RuntimeEvent::SubAgentFailed { .. }
+            )
+        })
+        .collect();
+    assert!(
+        !primary_nested.is_empty(),
+        "primary must observe forwarded child events"
+    );
+    assert!(
+        primary
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::SubAgentEvent { .. })),
+        "primary must observe SubAgentEvent"
+    );
+
+    let count_kind = |events: &[RuntimeEvent], pred: fn(&RuntimeEvent) -> bool| {
+        events.iter().filter(|e| pred(e)).count()
+    };
+    let is_sub_event = |e: &RuntimeEvent| matches!(e, RuntimeEvent::SubAgentEvent { .. });
+    let is_sub_started = |e: &RuntimeEvent| matches!(e, RuntimeEvent::SubAgentStarted { .. });
+    let is_sub_completed = |e: &RuntimeEvent| matches!(e, RuntimeEvent::SubAgentCompleted { .. });
+
+    assert_eq!(
+        count_kind(&primary, is_sub_started),
+        count_kind(&watcher_a, is_sub_started),
+        "watcher A must receive the same SubAgentStarted count as primary (no loss, no dup vs primary)"
+    );
+    assert_eq!(
+        count_kind(&primary, is_sub_event),
+        count_kind(&watcher_a, is_sub_event)
+    );
+    assert_eq!(
+        count_kind(&primary, is_sub_completed),
+        count_kind(&watcher_a, is_sub_completed)
+    );
+    assert_eq!(
+        count_kind(&watcher_a, is_sub_event),
+        count_kind(&watcher_b, is_sub_event),
+        "both watchers must receive the same nested event counts"
+    );
+
+    // Primary has no duplicate SubAgentStarted (exactly one delegation).
+    assert_eq!(
+        count_kind(&primary, is_sub_started),
+        1,
+        "primary must not receive duplicate SubAgentStarted"
+    );
+
+    // Per-watcher FIFO: first nested lifecycle event is SubAgentStarted,
+    // last among nested lifecycle is SubAgentCompleted.
+    let nested_a: Vec<_> = watcher_a
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                RuntimeEvent::SubAgentStarted { .. }
+                    | RuntimeEvent::SubAgentEvent { .. }
+                    | RuntimeEvent::SubAgentCompleted { .. }
+            )
+        })
+        .collect();
+    assert!(
+        matches!(nested_a.first(), Some(RuntimeEvent::SubAgentStarted { .. })),
+        "per-watcher FIFO: SubAgentStarted before nested body"
+    );
+    assert!(
+        matches!(
+            nested_a.last(),
+            Some(RuntimeEvent::SubAgentCompleted { .. })
+        ),
+        "per-watcher FIFO: SubAgentCompleted after nested body"
+    );
+
+    // Distinguish parent vs forwarded child: parent ToolCallStarted for spawn_child
+    // is present on watchers, and nested child RunCompleted appears only inside SubAgentEvent.
+    assert!(watcher_a.iter().any(|e| matches!(
+        e,
+        RuntimeEvent::ToolCallStarted { tool, .. } if tool == "spawn_child"
+    )));
+    assert!(watcher_a.iter().any(|e| matches!(
+        e,
+        RuntimeEvent::SubAgentEvent { event, .. }
+            if matches!(event.as_ref(), RuntimeEvent::RunCompleted { .. })
+    )));
+    // Parent RunCompleted is a top-level event; child RunCompleted is wrapped.
+    let top_level_completed = watcher_a
+        .iter()
+        .filter(|e| matches!(e, RuntimeEvent::RunCompleted { .. }))
+        .count();
+    assert_eq!(
+        top_level_completed, 1,
+        "exactly one top-level RunCompleted (parent); child completion is wrapped"
+    );
+}
+
 struct RestartInputRecordingModel {
     calls: AtomicU32,
     user_inputs: Arc<tokio::sync::Mutex<Vec<String>>>,

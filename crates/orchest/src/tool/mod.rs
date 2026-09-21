@@ -89,6 +89,15 @@ pub struct ToolContext {
     /// Parent run's message history; supplied when AgentAsTool uses
     /// `ContextMode::Fork`.
     pub parent_messages: Vec<Message>,
+    /// Snapshot of all event subscribers at tool-call construction time.
+    /// Index 0 is the primary event receiver; remaining entries are attached
+    /// watcher channels. Used by [`ToolContext::emit_event`] to fan out
+    /// tool-originated events (including forwarded child lifecycle/runtime
+    /// events) without duplicating delivery on the primary receiver.
+    ///
+    /// Empty when only [`Self::event_tx`] is set (oneshot / unit tests):
+    /// [`Self::emit_event`] then falls back to `event_tx` alone.
+    pub event_subs: Vec<mpsc::Sender<crate::events::RuntimeEvent>>,
 }
 
 impl ToolContext {
@@ -118,6 +127,23 @@ impl ToolContext {
             approval_bus: crate::run::ApprovalBus::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
             parent_messages: vec![],
+            event_subs: vec![],
+        }
+    }
+
+    /// Emit a runtime event through the documented subscriber contract.
+    ///
+    /// When [`Self::event_subs`] is non-empty (the normal in-run path), the
+    /// event is delivered once to the primary receiver and to every attached
+    /// watcher subscription known when this tool call started — the same
+    /// fan-out the run actor uses for its own events. When `event_subs` is
+    /// empty, falls back to a single send on [`Self::event_tx`] for oneshot
+    /// and test contexts that only wire a primary channel.
+    pub async fn emit_event(&self, event: crate::events::RuntimeEvent) {
+        if !self.event_subs.is_empty() {
+            crate::events::deliver_to_subscribers(&self.event_subs, event).await;
+        } else if let Some(tx) = &self.event_tx {
+            let _ = tx.send(event).await;
         }
     }
 }
