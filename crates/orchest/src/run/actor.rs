@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use tracing::Instrument;
 
 use crate::budget::{BudgetConfig, BudgetGuard};
-use crate::events::{ApprovalContext, EventSink, RunFailureKind, RuntimeEvent};
+use crate::events::{ApprovalContext, EventSink, FanoutWaveBus, RunFailureKind, RuntimeEvent};
 use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelResponse, ModelStreamChunk, Role, StopReason,
 };
@@ -58,6 +58,12 @@ pub(crate) struct CancelCmd {
 pub(crate) enum AgentMsg {
     RunStep,
     Subscribe(mpsc::Sender<RuntimeEvent>),
+    /// Watcher secondary with arbitration wave bus (SB-7).
+    SubscribeWatcher {
+        tx: mpsc::Sender<RuntimeEvent>,
+        wave_bus: std::sync::Arc<dyn FanoutWaveBus>,
+        watcher_index: usize,
+    },
     Steer(SteerCmd),
     Inject(InjectCmd),
     Cancel(CancelCmd),
@@ -131,6 +137,9 @@ pub(crate) struct AgentRunArgs {
     /// Included in `event_subs` before the first emit so observation begins at
     /// `RunStarted`. Empty for ordinary `AgentRun::start` / post-start attach.
     pub initial_event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
+    /// When set, each `initial_event_subs` entry is a watcher secondary that
+    /// participates in multi-watcher action arbitration (SB-7).
+    pub watcher_wave_bus: Option<std::sync::Arc<dyn FanoutWaveBus>>,
 }
 
 // ── WorkerActor ───────────────────────────────────────────────────────────────
@@ -158,6 +167,7 @@ impl Actor for WorkerActor {
             resume,
             initial_messages,
             initial_event_subs,
+            watcher_wave_bus,
         } = args;
         backfill_context_window_size(&mut config, model.as_ref());
         let next_seq = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
@@ -167,11 +177,21 @@ impl Actor for WorkerActor {
             std::sync::Arc::clone(&next_seq),
         ));
         for (idx, tx) in initial_event_subs.into_iter().enumerate() {
-            event_subs.push(EventSink::secondary(
-                tx,
-                (idx + 1) as u64,
-                std::sync::Arc::clone(&next_seq),
-            ));
+            if let Some(ref bus) = watcher_wave_bus {
+                event_subs.push(EventSink::secondary_with_wave(
+                    tx,
+                    (idx + 1) as u64,
+                    std::sync::Arc::clone(&next_seq),
+                    std::sync::Arc::clone(bus),
+                    idx,
+                ));
+            } else {
+                event_subs.push(EventSink::secondary(
+                    tx,
+                    (idx + 1) as u64,
+                    std::sync::Arc::clone(&next_seq),
+                ));
+            }
         }
 
         emit(&event_subs, RuntimeEvent::RunStarted { run_id }).await;
@@ -403,6 +423,25 @@ impl Actor for WorkerActor {
                 state
                     .event_subs
                     .push(EventSink::secondary(tx, subscriber_id, next_seq));
+            }
+            AgentMsg::SubscribeWatcher {
+                tx,
+                wave_bus,
+                watcher_index,
+            } => {
+                let subscriber_id = state.event_subs.len() as u64;
+                let next_seq = state
+                    .event_subs
+                    .first()
+                    .map(EventSink::sequence_counter)
+                    .unwrap_or_else(|| std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+                state.event_subs.push(EventSink::secondary_with_wave(
+                    tx,
+                    subscriber_id,
+                    next_seq,
+                    wave_bus,
+                    watcher_index,
+                ));
             }
             AgentMsg::Steer(cmd) => {
                 state.messages.push(Message {

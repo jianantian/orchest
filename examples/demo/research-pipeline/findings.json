@@ -686,9 +686,9 @@
       "apiSurface": "orchest::run::WatcherAction",
       "description": "Each watcher runs independently, so actions returned by multiple watchers do not have a global registration-order execution guarantee.",
       "observedConsequence": "Concurrent Inject, Steer, or Abort actions cannot be attributed to watcher registration order.",
-      "workaround": "Test per-watcher FIFO separately and do not claim cross-watcher action ordering.",
+      "workaround": "N/A \u2014 arbitration contract is public and enforced.",
       "classification": "seam-blocker",
-      "status": "open",
+      "status": "verified",
       "evidenceRefs": [
         "EV-known-seams",
         "EV-watcher-task-topology",
@@ -696,19 +696,21 @@
       ],
       "action": {
         "owner": "orchest-maintainers",
-        "summary": "Define and implement deterministic arbitration for actions from multiple watchers.",
+        "summary": "Implemented deterministic multi-watcher action arbitration via ActionArbitrator / arbitrate_watcher_actions.",
         "issueRef": "#254"
       },
       "verification": {
         "status": "passed",
         "commands": [
+          "cargo test -p orchest --lib watcher_arbitration",
           "cargo test -p research-pipeline-demo --test watcher_order"
         ],
         "evidenceRefs": [
           "EV-watcher-task-topology",
-          "EV-watcher-order-test"
+          "EV-watcher-order-test",
+          "EV-watcher-action-arbitration-test"
         ],
-        "summary": "The delivery-only CountingWatchers preserve FIFO and receive equivalent indexed sequences, but return no actions. Source shows one independent Tokio task per watcher and applies each action after its own on_event future, so registration order is not a global action-order contract."
+        "summary": "Fan-out waves gate actions until the delivery cohort completes; Abort wins; otherwise Inject/Steer apply in registration order. Adversarial gated arbitrator tests are schedule-independent; watcher_order remains the delivery-FIFO check."
       }
     },
     {

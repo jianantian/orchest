@@ -314,13 +314,35 @@ struct PendingLoss {
 /// next event is offered. Subscribers that want the resumed event to land in
 /// the same delivery should leave at least two free slots (or drain before the
 /// runtime offers the next event).
-#[derive(Clone, Debug)]
+/// Observes secondary deliveries so multi-watcher action arbitration can gate
+/// on the exact cohort that received each fan-out (SB-7 / #254).
+///
+/// Implemented by the run supervisor's action arbitrator. Non-watcher
+/// secondaries (`subscribe_events`) leave this unset.
+pub trait FanoutWaveBus: Send + Sync {
+    /// Record that a fan-out event is about to be enqueued for this watcher.
+    /// Must be called *before* `try_send` so a woken receiver always finds a ticket.
+    fn push_wave_ticket(&self, watcher_index: usize, fanout_seq: u64);
+    /// Record that a per-subscriber signal is about to be enqueued.
+    fn push_signal_ticket(&self, watcher_index: usize);
+    /// Drop the most recent ticket if the corresponding `try_send` failed.
+    fn rollback_last_ticket(&self, watcher_index: usize);
+    /// All secondary offers for this fan-out sequence have finished; the cohort
+    /// membership for `fanout_seq` is now final.
+    fn seal_wave(&self, fanout_seq: u64);
+}
+
+#[derive(Clone)]
 pub struct EventSink {
     tx: mpsc::Sender<RuntimeEvent>,
     subscriber_id: u64,
     next_seq: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// `None` for the primary slot (index 0).
     pending: Option<std::sync::Arc<std::sync::Mutex<PendingLoss>>>,
+    /// Watcher arbitration bus; `None` for primary and non-watcher secondaries.
+    wave_bus: Option<std::sync::Arc<dyn FanoutWaveBus>>,
+    /// Registration index among watchers when `wave_bus` is set.
+    watcher_index: Option<usize>,
 }
 
 impl EventSink {
@@ -334,6 +356,8 @@ impl EventSink {
             subscriber_id: 0,
             next_seq,
             pending: None,
+            wave_bus: None,
+            watcher_index: None,
         }
     }
 
@@ -351,6 +375,28 @@ impl EventSink {
             pending: Some(std::sync::Arc::new(std::sync::Mutex::new(
                 PendingLoss::default(),
             ))),
+            wave_bus: None,
+            watcher_index: None,
+        }
+    }
+
+    /// Secondary sink participating in multi-watcher action arbitration.
+    pub fn secondary_with_wave(
+        tx: mpsc::Sender<RuntimeEvent>,
+        subscriber_id: u64,
+        next_seq: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        wave_bus: std::sync::Arc<dyn FanoutWaveBus>,
+        watcher_index: usize,
+    ) -> Self {
+        Self {
+            tx,
+            subscriber_id,
+            next_seq,
+            pending: Some(std::sync::Arc::new(std::sync::Mutex::new(
+                PendingLoss::default(),
+            ))),
+            wave_bus: Some(wave_bus),
+            watcher_index: Some(watcher_index),
         }
     }
 
@@ -394,6 +440,11 @@ impl EventSink {
                 from_seq: pending.from_seq,
                 to_seq: pending.to_seq,
             };
+            // Push the ticket *before* try_send so a woken receiver cannot
+            // observe the message without a matching ticket (SB-7 race).
+            if let (Some(bus), Some(idx)) = (&self.wave_bus, self.watcher_index) {
+                bus.push_signal_ticket(idx);
+            }
             match self.tx.try_send(signal) {
                 Ok(()) => {
                     pending.count = 0;
@@ -401,21 +452,52 @@ impl EventSink {
                     pending.to_seq = 0;
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
+                    // Roll back the speculative signal ticket.
+                    if let (Some(bus), Some(idx)) = (&self.wave_bus, self.watcher_index) {
+                        bus.rollback_last_ticket(idx);
+                    }
                     Self::record_pending_locked(&mut pending, seq);
                     return true;
                 }
-                Err(mpsc::error::TrySendError::Closed(_)) => return false,
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    if let (Some(bus), Some(idx)) = (&self.wave_bus, self.watcher_index) {
+                        bus.rollback_last_ticket(idx);
+                    }
+                    return false;
+                }
             }
         }
 
+        if let (Some(bus), Some(idx)) = (&self.wave_bus, self.watcher_index) {
+            bus.push_wave_ticket(idx, seq);
+        }
         match self.tx.try_send(event) {
             Ok(()) => false,
             Err(mpsc::error::TrySendError::Full(_)) => {
+                if let (Some(bus), Some(idx)) = (&self.wave_bus, self.watcher_index) {
+                    bus.rollback_last_ticket(idx);
+                }
                 Self::record_pending_locked(&mut pending, seq);
                 true
             }
-            Err(mpsc::error::TrySendError::Closed(_)) => false,
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                if let (Some(bus), Some(idx)) = (&self.wave_bus, self.watcher_index) {
+                    bus.rollback_last_ticket(idx);
+                }
+                false
+            }
         }
+    }
+}
+
+impl std::fmt::Debug for EventSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventSink")
+            .field("subscriber_id", &self.subscriber_id)
+            .field("watcher_index", &self.watcher_index)
+            .field("has_wave_bus", &self.wave_bus.is_some())
+            .field("has_pending", &self.pending.is_some())
+            .finish()
     }
 }
 
@@ -457,8 +539,14 @@ pub async fn deliver_to_subscribers(subscribers: &[EventSink], event: RuntimeEve
         }
     }
 
+    let mut wave_bus_to_seal: Option<std::sync::Arc<dyn FanoutWaveBus>> = None;
     for sink in subscribers.iter().skip(1) {
-        if sink.offer_secondary(event.clone(), seq) {
+        let lost = sink.offer_secondary(event.clone(), seq);
+        if !lost {
+            if let Some(bus) = sink.wave_bus.as_ref() {
+                wave_bus_to_seal = Some(std::sync::Arc::clone(bus));
+            }
+        } else {
             crate::telemetry::record_event_drop("secondary", 1);
             if let Some(primary) = subscribers.first() {
                 if primary
@@ -478,6 +566,9 @@ pub async fn deliver_to_subscribers(subscribers: &[EventSink], event: RuntimeEve
                 }
             }
         }
+    }
+    if let Some(bus) = wave_bus_to_seal {
+        bus.seal_wave(seq);
     }
 }
 

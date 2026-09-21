@@ -5,11 +5,12 @@ use std::sync::{Arc, Mutex};
 use ractor::{Actor, ActorProcessingErr, ActorRef, SupervisionEvent};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::events::RuntimeEvent;
+use crate::events::{FanoutWaveBus, RuntimeEvent};
 use crate::model::ModelAdapter;
 use crate::session::SessionStore;
 use crate::tool::registry::ToolRegistry;
 
+use super::action_arbitration::{ActionArbitrator, DeliveryTicket};
 use super::actor::{AgentMsg, AgentRunArgs, ResumeState, WorkerActor};
 use super::config::{RunId, SupervisionStrategy};
 use super::handle::ApprovalBus;
@@ -39,6 +40,7 @@ pub(crate) struct SupervisorState {
     original_initial_messages: Vec<crate::model::Message>,
     original_resume: Option<ResumeState>,
     worker_handle: Option<ractor::concurrency::JoinHandle<()>>,
+    arbitrator: std::sync::Arc<ActionArbitrator>,
 }
 
 pub(crate) struct SupervisorArgs {
@@ -53,6 +55,7 @@ pub(crate) struct SupervisorArgs {
     pub worker_args: AgentRunArgs,
     /// Watchers declared at start (`start_with_watchers`); retained for restart.
     pub initial_watchers: Vec<(Arc<dyn Watcher>, usize)>,
+    pub arbitrator: std::sync::Arc<ActionArbitrator>,
 }
 
 pub(crate) struct SupervisorActor;
@@ -99,6 +102,7 @@ impl Actor for SupervisorActor {
             original_initial_messages,
             original_resume,
             worker_handle: Some(worker_handle),
+            arbitrator: args.arbitrator,
         })
     }
 
@@ -110,14 +114,16 @@ impl Actor for SupervisorActor {
     ) -> Result<(), ActorProcessingErr> {
         match msg {
             SupervisorMsg::RegisterWatcher(watcher, capacity, ack) => {
+                let index = state.watchers.len();
                 state.watchers.push((watcher.clone(), capacity));
+                state.arbitrator.register_watcher(index);
                 let worker_ref = state
                     .actor_ref_shared
                     .lock()
                     .ok()
                     .and_then(|guard| guard.clone());
                 if let Some(aref) = worker_ref {
-                    reattach_watcher(&aref, &watcher, capacity, &state.actor_ref_shared);
+                    reattach_watcher(&aref, &watcher, capacity, index, &state.arbitrator);
                 }
                 let _ = ack.send(());
             }
@@ -176,8 +182,9 @@ impl Actor for SupervisorActor {
                     state.ready.notify_waiters();
                     state.worker_handle = Some(worker_handle);
 
-                    for (watcher, capacity) in &state.watchers {
-                        reattach_watcher(&worker_ref, watcher, *capacity, &state.actor_ref_shared);
+                    for (index, (watcher, capacity)) in state.watchers.iter().enumerate() {
+                        state.arbitrator.register_watcher(index);
+                        reattach_watcher(&worker_ref, watcher, *capacity, index, &state.arbitrator);
                     }
                 }
             },
@@ -194,48 +201,43 @@ fn reattach_watcher(
     worker_ref: &ActorRef<AgentMsg>,
     watcher: &Arc<dyn Watcher>,
     capacity: usize,
-    actor_ref_shared: &Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
+    watcher_index: usize,
+    arbitrator: &Arc<ActionArbitrator>,
 ) {
     let (tx, rx) = mpsc::channel(capacity);
-    let _ = worker_ref.cast(AgentMsg::Subscribe(tx));
-    spawn_watcher_processor(rx, Arc::clone(watcher), Arc::clone(actor_ref_shared));
+    let _ = worker_ref.cast(AgentMsg::SubscribeWatcher {
+        tx,
+        wave_bus: Arc::clone(arbitrator) as Arc<dyn FanoutWaveBus>,
+        watcher_index,
+    });
+    spawn_watcher_processor(
+        rx,
+        Arc::clone(watcher),
+        watcher_index,
+        Arc::clone(arbitrator),
+    );
 }
 
 /// Drive a watcher from an already-subscribed (or pre-wired) event receiver.
+///
+/// Actions are submitted to [`ActionArbitrator`] so multi-watcher outcomes for
+/// the same fan-out wave are gated and resolved deterministically (SB-7).
 fn spawn_watcher_processor(
     mut rx: mpsc::Receiver<RuntimeEvent>,
     watcher: Arc<dyn Watcher>,
-    actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
+    watcher_index: usize,
+    arbitrator: Arc<ActionArbitrator>,
 ) {
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
-            match watcher.on_event(&event).await {
-                super::watcher::WatcherAction::Continue => {}
-                super::watcher::WatcherAction::Inject(msg) => {
-                    if let Ok(guard) = actor_ref.lock() {
-                        if let Some(ref aref) = *guard {
-                            let _ = aref
-                                .cast(AgentMsg::Inject(super::actor::InjectCmd { message: msg }));
-                        }
-                    }
+            let ticket = arbitrator.take_ticket(watcher_index);
+            let action = watcher.on_event(&event).await;
+            match ticket {
+                DeliveryTicket::Wave(seq) => {
+                    arbitrator.submit_wave(seq, watcher_index, action).await;
                 }
-                super::watcher::WatcherAction::Steer(instruction) => {
-                    if let Ok(guard) = actor_ref.lock() {
-                        if let Some(ref aref) = *guard {
-                            let _ =
-                                aref.cast(AgentMsg::Steer(super::actor::SteerCmd { instruction }));
-                        }
-                    }
-                }
-                super::watcher::WatcherAction::Abort(reason) => {
-                    if let Ok(guard) = actor_ref.lock() {
-                        if let Some(ref aref) = *guard {
-                            let _ = aref.cast(AgentMsg::Cancel(super::actor::CancelCmd {
-                                reason: Some(reason),
-                            }));
-                        }
-                    }
-                    break;
+                DeliveryTicket::Signal => {
+                    arbitrator.submit_signal(watcher_index, action).await;
                 }
             }
         }
@@ -261,13 +263,16 @@ pub(crate) fn spawn_supervised(
     let supervisor_ref_for_handle = supervisor_ref_shared.clone();
     let ready_for_supervisor_ref = ready.clone();
 
+    let arbitrator = ActionArbitrator::new(Arc::clone(&actor_ref_shared));
     let mut initial_event_subs = Vec::with_capacity(initial_watchers.len());
-    for (watcher, capacity) in &initial_watchers {
+    for (index, (watcher, capacity)) in initial_watchers.iter().enumerate() {
         let (tx, rx) = mpsc::channel(*capacity);
         initial_event_subs.push(tx);
-        spawn_watcher_processor(rx, Arc::clone(watcher), Arc::clone(&actor_ref_shared));
+        arbitrator.register_watcher(index);
+        spawn_watcher_processor(rx, Arc::clone(watcher), index, Arc::clone(&arbitrator));
     }
     args.initial_event_subs = initial_event_subs;
+    args.watcher_wave_bus = Some(Arc::clone(&arbitrator) as Arc<dyn FanoutWaveBus>);
 
     let sup_args = SupervisorArgs {
         run_id,
@@ -280,6 +285,7 @@ pub(crate) fn spawn_supervised(
         ready: ready.clone(),
         worker_args: args,
         initial_watchers,
+        arbitrator,
     };
 
     let actor_join = tokio::spawn(async move {
@@ -331,5 +337,6 @@ async fn build_restart_args(state: &SupervisorState) -> AgentRunArgs {
         initial_messages: state.original_initial_messages.clone(),
         // Restart reattaches via `reattach_watcher` / Subscribe, not pre-wiring.
         initial_event_subs: vec![],
+        watcher_wave_bus: None,
     }
 }

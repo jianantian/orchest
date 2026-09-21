@@ -8794,3 +8794,141 @@ async fn resume_without_session_id_is_unaffected_by_session_store_check() {
     while rx.recv().await.is_some() {}
     handle.wait().await;
 }
+
+// ── Issue #254 / SB-7: deterministic multi-watcher action arbitration ────────
+
+/// Adversarial proof: two concurrent `submit_wave` tasks with opposite release
+/// orders always resolve to the same Abort (lowest registration index).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn watcher_arbitration_abort_wins_independent_of_completion_order() {
+    use super::action_arbitration::{ActionArbitrator, ArbitratedActions, DeliveryTicket};
+    use crate::events::FanoutWaveBus;
+
+    for inject_submits_first in [true, false] {
+        let actor_ref = Arc::new(Mutex::new(None));
+        let arb = ActionArbitrator::new(Arc::clone(&actor_ref));
+        arb.register_watcher(0);
+        arb.register_watcher(1);
+
+        // Deliver fan-out seq=42 to both watchers, then seal (mirrors EventSink).
+        FanoutWaveBus::push_wave_ticket(arb.as_ref(), 0, 42);
+        FanoutWaveBus::push_wave_ticket(arb.as_ref(), 1, 42);
+        FanoutWaveBus::seal_wave(arb.as_ref(), 42);
+        assert!(matches!(arb.take_ticket(0), DeliveryTicket::Wave(42)));
+        assert!(matches!(arb.take_ticket(1), DeliveryTicket::Wave(42)));
+
+        let (gate_a_tx, gate_a_rx) = tokio::sync::oneshot::channel::<()>();
+        let (gate_b_tx, gate_b_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let arb_a = Arc::clone(&arb);
+        let arb_b = Arc::clone(&arb);
+        let t0 = tokio::spawn(async move {
+            let _ = gate_a_rx.await;
+            arb_a
+                .submit_wave(42, 0, WatcherAction::Abort("from-0".into()))
+                .await;
+        });
+        let t1 = tokio::spawn(async move {
+            let _ = gate_b_rx.await;
+            arb_b
+                .submit_wave(42, 1, WatcherAction::Inject("from-1".into()))
+                .await;
+        });
+
+        if inject_submits_first {
+            let _ = gate_b_tx.send(());
+            tokio::task::yield_now().await;
+            let _ = gate_a_tx.send(());
+        } else {
+            let _ = gate_a_tx.send(());
+            tokio::task::yield_now().await;
+            let _ = gate_b_tx.send(());
+        }
+
+        t0.await.unwrap();
+        t1.await.unwrap();
+
+        let log = arb.take_applied_log();
+        assert_eq!(
+            log,
+            vec![ArbitratedActions::Abort("from-0".into())],
+            "inject_submits_first={inject_submits_first}"
+        );
+    }
+}
+
+/// Adversarial proof: Inject (reg 0) + Steer (reg 1) always apply in registration
+/// order, independent of which `submit_wave` finishes first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn watcher_arbitration_inject_steer_registration_order_independent_of_scheduling() {
+    use super::action_arbitration::{ActionArbitrator, ArbitratedActions, DeliveryTicket};
+    use crate::events::FanoutWaveBus;
+
+    for steer_submits_first in [true, false] {
+        let actor_ref = Arc::new(Mutex::new(None));
+        let arb = ActionArbitrator::new(Arc::clone(&actor_ref));
+        arb.register_watcher(0);
+        arb.register_watcher(1);
+
+        FanoutWaveBus::push_wave_ticket(arb.as_ref(), 0, 7);
+        FanoutWaveBus::push_wave_ticket(arb.as_ref(), 1, 7);
+        FanoutWaveBus::seal_wave(arb.as_ref(), 7);
+        assert!(matches!(arb.take_ticket(0), DeliveryTicket::Wave(7)));
+        assert!(matches!(arb.take_ticket(1), DeliveryTicket::Wave(7)));
+
+        let (gate_a_tx, gate_a_rx) = tokio::sync::oneshot::channel::<()>();
+        let (gate_b_tx, gate_b_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let arb_a = Arc::clone(&arb);
+        let arb_b = Arc::clone(&arb);
+        let t0 = tokio::spawn(async move {
+            let _ = gate_a_rx.await;
+            arb_a
+                .submit_wave(7, 0, WatcherAction::Inject("inject-0".into()))
+                .await;
+        });
+        let t1 = tokio::spawn(async move {
+            let _ = gate_b_rx.await;
+            arb_b
+                .submit_wave(7, 1, WatcherAction::Steer("steer-1".into()))
+                .await;
+        });
+
+        if steer_submits_first {
+            let _ = gate_b_tx.send(());
+            tokio::task::yield_now().await;
+            let _ = gate_a_tx.send(());
+        } else {
+            let _ = gate_a_tx.send(());
+            tokio::task::yield_now().await;
+            let _ = gate_b_tx.send(());
+        }
+
+        t0.await.unwrap();
+        t1.await.unwrap();
+
+        let log = arb.take_applied_log();
+        assert_eq!(
+            log,
+            vec![ArbitratedActions::Effects(vec![
+                WatcherAction::Inject("inject-0".into()),
+                WatcherAction::Steer("steer-1".into()),
+            ])],
+            "steer_submits_first={steer_submits_first}"
+        );
+    }
+}
+
+#[test]
+fn public_arbitrate_watcher_actions_documents_precedence() {
+    use crate::run::arbitrate_watcher_actions;
+    let resolved = arbitrate_watcher_actions(&[
+        (1, WatcherAction::Inject("i".into())),
+        (0, WatcherAction::Abort("a".into())),
+        (2, WatcherAction::Steer("s".into())),
+    ]);
+    assert!(matches!(
+        resolved,
+        crate::run::ArbitratedActions::Abort(r) if r == "a"
+    ));
+}

@@ -41,7 +41,7 @@ All deterministic contract, report, worker, supervisor/watcher, terminal-failure
 | SB-4 | LlmWatcher does not format nested delegation events | `seam-blocker` | `verified` | #250 |
 | SB-5 | Secondary watcher subscribers can drop events | `seam-blocker` | `verified` | #252 |
 | SB-6 | No public start-with-watchers or pre-run pause seam | `seam-blocker` | `verified` | #253 |
-| SB-7 | Watcher actions have no global registration-order guarantee | `seam-blocker` | `open` | #254 |
+| SB-7 | Watcher actions have no global registration-order guarantee | `seam-blocker` | `verified` | #254 |
 | SB-8 | Forwarded child events bypass attached watchers | `seam-blocker` | `verified` | #250 |
 
 ### P1-1 — LlmWatcher is not root re-exported
@@ -408,11 +408,11 @@ All deterministic contract, report, worker, supervisor/watcher, terminal-failure
 
 ### SB-7 — Watcher actions have no global registration-order guarantee
 
-**API surface:** `orchest::run::WatcherAction`
+**API surface:** `orchest::run::WatcherAction` / `orchest::run::arbitrate_watcher_actions`
 
 **Classification:** `seam-blocker`
 
-**Status:** `open`
+**Status:** `verified`
 
 **Description:** Each watcher runs independently, so actions returned by multiple watchers do not have a global registration-order execution guarantee.
 
@@ -424,17 +424,17 @@ All deterministic contract, report, worker, supervisor/watcher, terminal-failure
 
 **Action owner:** orchest-maintainers
 
-**Action:** Define and implement deterministic arbitration for actions from multiple watchers.
+**Action:** Fan-out waves are sealed per delivery cohort; actions are gated until the cohort completes, then resolved by `Abort` > `Steer`/`Inject` (registration order) via `arbitrate_watcher_actions` / `ActionArbitrator`.
 
 **Issue:** #254
 
 **Verification status:** `passed`
 
-**Verification summary:** The delivery-only CountingWatchers preserve FIFO and receive equivalent indexed sequences, but return no actions. Source shows one independent Tokio task per watcher and applies each action after its own on_event future, so registration order is not a global action-order contract.
+**Verification summary:** Adversarial gated `ActionArbitrator` tests prove Abort wins and Inject/Steer apply in registration order independent of task scheduling; delivery FIFO remains covered separately by watcher_order.
 
-**Verification commands:** `cargo test -p research-pipeline-demo --test watcher_order`
+**Verification commands:** `cargo test -p orchest --lib watcher_arbitration`; `cargo test -p research-pipeline-demo --test watcher_order`
 
-**Verification evidence:** `EV-watcher-order-test`, `EV-watcher-task-topology`
+**Verification evidence:** `EV-watcher-order-test`, `EV-watcher-task-topology`, `EV-watcher-action-arbitration-test`
 
 ### SB-8 — Forwarded child events bypass attached watchers
 
@@ -482,7 +482,7 @@ All deterministic contract, report, worker, supervisor/watcher, terminal-failure
 | SB-4 | `passed` | `cargo test -p research-pipeline-demo --test supervisor_watcher` | `EV-llm-watcher-format-source`, `EV-supervisor-watcher-test` | LlmWatcher::format_event emits structured text for SubAgentStarted/Completed/Failed, SubAgentEvent, and ChildRunEvent. Attached LlmWatcher receives and formats nested events in supervisor_watcher after SB-8 repair (unit coverage lives in orchest::run::llm_watcher). |
 | SB-5 | `passed` | `cargo test -p orchest --lib events::`; `cargo test -p research-pipeline-demo --test watcher_order` | `EV-secondary-delivery-source`, `EV-watcher-order-test`, `EV-event-loss-recovery-test` | Saturation unit tests prove coalesced secondary `EventsDropped` with sequence metadata, flush-before-resume, and O(1) pending state; watcher_order remains the no-drop FIFO equivalence check. |
 | SB-6 | `passed` | `cargo test -p research-pipeline-demo --test supervisor_watcher` | `EV-supervisor-source`, `EV-supervisor-watcher-test` | Live helper uses AgentRun::start_with_watchers so declared watchers observe from RunStarted; post-start attach_watcher remains best-effort. Deterministic suite still passes. |
-| SB-7 | `passed` | `cargo test -p research-pipeline-demo --test watcher_order` | `EV-watcher-order-test`, `EV-watcher-task-topology` | The delivery-only CountingWatchers preserve FIFO and receive equivalent indexed sequences, but return no actions. Source shows one independent Tokio task per watcher and applies each action after its own on_event future, so registration order is not a global action-order contract. |
+| SB-7 | `passed` | `cargo test -p orchest --lib watcher_arbitration`; `cargo test -p research-pipeline-demo --test watcher_order` | `EV-watcher-order-test`, `EV-watcher-task-topology`, `EV-watcher-action-arbitration-test` | Fan-out waves gate actions until the delivery cohort completes; `Abort` wins; otherwise `Inject`/`Steer` apply in registration order. Adversarial gated arbitrator tests are schedule-independent; watcher_order remains the delivery-FIFO check. |
 | SB-8 | `passed` | `cargo test -p research-pipeline-demo --test supervisor_watcher` | `EV-agent-as-tool-forwarding-source`, `EV-primary-tool-context-source`, `EV-supervisor-watcher-test` | Attached watchers receive forwarded SubAgentEvent values via ToolContext::emit_event; primary remains single-delivery; activation-before-delegation holds. Deterministic supervisor_watcher proves nested delivery on custom and LlmWatcher vectors. |
 
 ## Run evidence
@@ -564,10 +564,11 @@ Eight deterministic worker tests passed: corpus tools, fatal unsafe fault shape,
 | EV-supervisor-source | `source` | `examples/demo/research-pipeline/src/supervisor.rs` · `build_supervisor and start_with_live_watchers` | — | — | — | The demo builds the worker through Worker::as_tool, registers it with an Orchest supervisor, instructs the fault path to call search_corpus before fault_trigger and then return an escalation summary without retrying, exposes only the supervisor RunHandle, and starts with AgentRun::start_with_watchers so declared watchers observe from RunStarted. |
 | EV-supervisor-watcher-test | `test` | `examples/demo/research-pipeline/tests/supervisor_watcher.rs` · `activated_watchers_prove_nested_routing_and_applied_supervisor_actions` | run-supervisor-watcher-deterministic | `cargo test -p research-pipeline-demo --test supervisor_watcher` | 8 passed; 0 failed; both watcher terminal-complete vectors contain forwarded SubAgentEvent | The focused target gates the first supervisor call, releases a harmless probe so queued subscriptions activate, and releases second-step delegation only after both watcher wrappers complete its ModelCallStarted event. It proves each public steering path changes only supervisor history, observes forwarded child completion on the primary EventReceiver and on both attached watchers, and reaches terminal-complete custom and LLM watcher vectors containing nested SubAgentEvent with structured LlmWatcher prompt formatting. |
 | EV-watcher-action-routing | `source` | `crates/orchest/src/run/supervisor.rs` · `reattach_watcher` | — | — | — | Watcher Inject and Steer actions are cast to the currently watched supervisor worker actor. |
+| EV-watcher-action-arbitration-test | `test` | `crates/orchest/src/run/tests.rs` · `watcher_arbitration_*` | run-watcher-action-arbitration | `cargo test -p orchest --lib watcher_arbitration` | 2 passed; schedule-independent Abort / Inject+Steer order | Adversarial gated `ActionArbitrator` tests prove the public arbitration contract independent of task scheduling. |
 | EV-watcher-order-test | `test` | `examples/demo/research-pipeline/tests/watcher_order.rs` · `two_watchers_preserve_fifo_and_match_the_complete_no_drop_sequence` | run-watcher-order-deterministic | `cargo test -p research-pipeline-demo --test watcher_order` | 1 passed; 0 failed; sequences equal; no action-order inference | The focused target attaches two CountingWatchers to one supervisor RunHandle, proves the expected stable FIFO milestones in each stream, and compares their complete indexed sequences after terminal processing with capacity 1024 and no observed EventsDropped. |
 | EV-event-loss-recovery-test | `test` | `crates/orchest/src/events.rs` · `secondary_saturation_delivers_coalesced_loss_then_resumes` | run-event-loss-recovery | `cargo test -p orchest --lib events::` | 10 passed; 0 failed; saturation + bounded pending + no-drop FIFO | Deterministic saturation tests prove coalesced secondary loss signals with `from_seq`/`to_seq`, flush-before-resume after drain, O(1) pending state under sustained saturation, and unchanged no-drop FIFO. |
 | EV-watcher-source | `source` | `examples/demo/research-pipeline/src/watcher.rs` · `stable_event_key and CountingWatcher::on_event and RecordingActionWatcher::on_event and RecordingLlmWatcher::on_event` | — | — | — | The custom watcher returns one public WatcherAction only for the supervisor-level research_worker ToolCallStarted event. The action and LLM wrappers record completion through terminal supervisor events; CountingWatcher maps every accepted event to a stable key and always returns Continue for delivery-only evidence. |
-| EV-watcher-task-topology | `source` | `crates/orchest/src/run/supervisor.rs` · `reattach_watcher` | — | — | — | Each registered watcher is processed in its own Tokio task, and its action is applied only after that independent on_event future completes; registration order is not serialized into action application order. |
+| EV-watcher-task-topology | `source` | `crates/orchest/src/run/supervisor.rs` · `reattach_watcher` / `crates/orchest/src/run/action_arbitration.rs` · `ActionArbitrator` | — | — | — | Each watcher still runs in its own Tokio task, but actions for a sealed fan-out wave are collected and resolved by `ActionArbitrator` before application. |
 | EV-worker-events | `source` | `examples/demo/research-pipeline/src/events.rs` · `render_event` | — | — | — | The event renderer labels model turns, tool calls, tool results, nested worker events, and terminal status from RuntimeEvent values. |
 | EV-worker-source | `source` | `examples/demo/research-pipeline/src/worker.rs` · `Worker::from_paths` | — | — | — | Worker::from_paths registers search_corpus, read_file, write_draft, and fault_trigger, configures repeated_failure_threshold(1), and sets public SupervisionStrategy::Restart with one retry. |
 | EV-worker-test | `test` | `examples/demo/research-pipeline/tests/worker.rs` · `worker_threshold_and_abort_hook_produce_terminal_run_failed` | run-worker-deterministic | `cargo test -p research-pipeline-demo --test worker` | 8 passed; 0 failed; P1-3 exercised through public Tool::call_oneshot | The focused worker target separately proves the tool error, threshold-plus-hook terminal failure, Fresh and bounded Fork histories, the empty-parent error through public Tool::call_oneshot without a model call, deterministic tools, and event rendering. |
@@ -591,7 +592,6 @@ Unresolved supervised-delegation seam blockers:
 - SB-1 — Delegation does not expose a child RunHandle (`open`, #249)
 - SB-2 — Steering targets the supervisor rather than delegated worker (`open`, #249)
 - SB-3 — Restart does not cover run-level failure (`open`, #251)
-- SB-7 — Watcher actions have no global registration-order guarantee (`open`, #254)
 
 ### Post-1.0 backlog
 

@@ -112,6 +112,12 @@ primary `EventReceiver` still receives each event once, in order; watchers
 observe the same nested stream without duplicate primary delivery.
 `LlmWatcher` formats those nested events structurally (not via `Debug`).
 
+When multiple watchers return actions for the same fan-out event, the runtime
+gates until every watcher in that delivery cohort finishes `on_event`, then
+resolves with a public deterministic rule (`Abort` wins; otherwise `Inject` /
+`Steer` apply in registration order). Per-watcher delivery FIFO is a separate
+property. See [`arbitrate_watcher_actions`](../../crates/orchest/src/run/action_arbitration.rs).
+
 Runnable examples:
 
 ```bash

@@ -1,5 +1,6 @@
 //! Agent run orchestration, split into single-responsibility modules.
 
+pub(crate) mod action_arbitration;
 pub(crate) mod actor;
 pub(crate) mod compaction;
 pub(crate) mod config;
@@ -13,6 +14,7 @@ pub(crate) mod tool_exec;
 pub mod watcher;
 pub(crate) mod webhook;
 
+pub use action_arbitration::{arbitrate_watcher_actions, ArbitratedActions};
 pub use config::{
     AgentConfig, AgentConfigBuilder, AgentRun, ApprovalMode, CompactionConfig, ConfigError,
     ModelConfig, RepeatedFailureConfig, RunId, RunInput, RunInputError, RunState, RunStatus,
@@ -180,6 +182,7 @@ impl AgentRun {
             resume: None,
             initial_messages,
             initial_event_subs: vec![],
+            watcher_wave_bus: None,
         };
         supervisor::spawn_supervised(run_id, args, approval_bus, event_rx, watchers)
     }
@@ -226,6 +229,7 @@ impl AgentRun {
             resume: Some(resume),
             initial_messages: vec![],
             initial_event_subs: vec![],
+            watcher_wave_bus: None,
         };
         Ok(supervisor::spawn_supervised(
             run_id,
@@ -279,6 +283,7 @@ impl AgentRun {
             resume: Some(resume),
             initial_messages: vec![],
             initial_event_subs: vec![],
+            watcher_wave_bus: None,
         };
         Ok(supervisor::spawn_supervised(
             run_id,

@@ -15,13 +15,13 @@ actions returned by multiple watchers.
 
 ## Acceptance Criteria
 
-- [ ] Conflicting actions for the same event resolve according to one public,
+- [x] Conflicting actions for the same event resolve according to one public,
   deterministic rule.
-- [ ] The rule covers `Continue`, `Inject`, `Steer`, and `Abort`.
-- [ ] Slow watcher completion cannot make the result nondeterministic.
-- [ ] Per-watcher FIFO and no-drop sequence tests remain distinct from action
+- [x] The rule covers `Continue`, `Inject`, `Steer`, and `Abort`.
+- [x] Slow watcher completion cannot make the result nondeterministic.
+- [x] Per-watcher FIFO and no-drop sequence tests remain distinct from action
   arbitration tests.
-- [ ] Tests prove the same effective action order across repeated runs.
+- [x] Tests prove the same effective action order across repeated runs.
 
 ## Notes
 

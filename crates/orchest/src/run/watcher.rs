@@ -5,6 +5,20 @@ use async_trait::async_trait;
 use crate::events::RuntimeEvent;
 
 /// Action returned by a watcher after observing a runtime event.
+///
+/// # Multi-watcher arbitration
+///
+/// When multiple watchers receive the same fan-out event, their actions are
+/// gated and resolved by [`crate::run::arbitrate_watcher_actions`] before any
+/// mutation is applied:
+///
+/// - Precedence: `Abort` > `Steer` > `Inject` > `Continue`
+/// - Any `Abort` wins (earliest registration index); other actions are discarded
+/// - Otherwise all `Inject` / `Steer` apply in ascending registration order
+///
+/// Slow [`Watcher::on_event`] completion cannot reorder the effective outcome.
+/// Per-watcher delivery FIFO remains a separate property.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WatcherAction {
     Continue,
     /// Inject a user-role message into the run's conversation at the next model call.
