@@ -1077,8 +1077,7 @@ mod tests {
             });
 
             let error = EffectiveConfigSnapshot::from_input(input)
-                .err()
-                .expect("credential-bearing MCP args must fail preflight");
+                .expect_err("credential-bearing MCP args must fail preflight");
             assert!(!error.to_string().contains("hunter2"));
         }
     }
@@ -1218,8 +1217,7 @@ mod tests {
             });
 
             let error = EffectiveConfigSnapshot::from_input(input)
-                .err()
-                .expect("credential-bearing MCP command must fail preflight");
+                .expect_err("credential-bearing MCP command must fail preflight");
             assert!(!error.to_string().contains(CANARY));
         }
     }
@@ -1254,8 +1252,7 @@ mod tests {
             });
 
             let error = EffectiveConfigSnapshot::from_input(input)
-                .err()
-                .expect("credential-bearing MCP header/auth args must fail preflight");
+                .expect_err("credential-bearing MCP header/auth args must fail preflight");
             assert!(!error.to_string().contains("hunter2"));
         }
     }
@@ -1273,8 +1270,7 @@ mod tests {
             });
 
             let error = EffectiveConfigSnapshot::from_input(input)
-                .err()
-                .expect("credential-bearing MCP query must fail preflight");
+                .expect_err("credential-bearing MCP query must fail preflight");
             assert!(!error.to_string().contains("hunter2"));
         }
     }
@@ -1309,8 +1305,7 @@ mod tests {
             });
 
             let error = EffectiveConfigSnapshot::from_input(input)
-                .err()
-                .expect("cloud signed URL credentials must fail preflight");
+                .expect_err("cloud signed URL credentials must fail preflight");
             assert!(!error.to_string().contains("hunter2"));
         }
     }

@@ -156,14 +156,14 @@ fn canonical_json(value: &Value) -> String {
             pairs.sort_by_key(|(k, _)| *k);
             let inner = pairs
                 .iter()
-                .map(|(k, v)| format!("\"{}\":{}", k, v))
+                .map(|(k, v)| format!("\"{k}\":{v}"))
                 .collect::<Vec<_>>()
                 .join(",");
-            format!("{{{}}}", inner)
+            format!("{{{inner}}}")
         }
         Value::Array(arr) => {
             let inner = arr.iter().map(canonical_json).collect::<Vec<_>>().join(",");
-            format!("[{}]", inner)
+            format!("[{inner}]")
         }
         _ => value.to_string(),
     }

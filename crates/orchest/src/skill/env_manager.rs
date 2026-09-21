@@ -260,7 +260,7 @@ fn node_deps_hash(deps: &BTreeMap<String, String>) -> String {
 
 fn hash8(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    format!("{:x}", digest)[..8].to_string()
+    format!("{digest:x}")[..8].to_string()
 }
 
 async fn install_python_orchest_sdk(env_dir: &Path) -> Result<(), EnvError> {

@@ -126,22 +126,22 @@ pub fn format_event(event: &RuntimeEvent) -> String {
                 tool, error.kind, error.message
             )
         }
-        RuntimeEvent::ModelCallStarted { step } => format!("Model call started: step {}", step),
+        RuntimeEvent::ModelCallStarted { step } => format!("Model call started: step {step}"),
         RuntimeEvent::ModelCallCompleted { tokens, .. } => {
             format!(
                 "Model call completed: {} input + {} output tokens",
                 tokens.input_tokens, tokens.output_tokens
             )
         }
-        RuntimeEvent::RunStarted { run_id } => format!("Run started: {}", run_id),
+        RuntimeEvent::RunStarted { run_id } => format!("Run started: {run_id}"),
         RuntimeEvent::RunCompleted { .. } => "Run completed".to_string(),
-        RuntimeEvent::RunFailed { error, .. } => format!("Run failed: {}", error),
+        RuntimeEvent::RunFailed { error, .. } => format!("Run failed: {error}"),
         RuntimeEvent::RunAborted { reason } => {
             format!("Run aborted: {}", reason.as_deref().unwrap_or("unknown"))
         }
-        RuntimeEvent::RunRestarted { attempt } => format!("Run restarted: attempt {}", attempt),
+        RuntimeEvent::RunRestarted { attempt } => format!("Run restarted: attempt {attempt}"),
         RuntimeEvent::BudgetWarning { .. } => "Budget warning".to_string(),
-        _ => format!("{:?}", event).chars().take(200).collect(),
+        _ => format!("{event:?}").chars().take(200).collect(),
     }
 }
 
@@ -194,8 +194,7 @@ impl LlmWatcher {
             Message {
                 role: Role::User,
                 content: vec![ContentBlock::Text(format!(
-                    "Recent agent events:\n{}",
-                    event_summary
+                    "Recent agent events:\n{event_summary}"
                 ))],
             },
         ];

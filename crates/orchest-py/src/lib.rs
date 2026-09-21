@@ -160,7 +160,7 @@ impl Tool for PyTool {
     async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let callback = &self.def.callback;
         let input_str = serde_json::to_string(&input)
-            .map_err(|e| ToolError::fatal(format!("failed to serialize input: {}", e)))?;
+            .map_err(|e| ToolError::fatal(format!("failed to serialize input: {e}")))?;
 
         let result = Python::attach(|py| -> PyResult<Py<PyAny>> {
             let json_mod = py.import("json")?;
@@ -183,7 +183,7 @@ impl Tool for PyTool {
                 Ok(raw_result)
             }
         })
-        .map_err(|e| ToolError::fatal(format!("Python tool error: {}", e)))?;
+        .map_err(|e| ToolError::fatal(format!("Python tool error: {e}")))?;
 
         if let Some(job_handle) = py_async_job_handle(&result)? {
             return Ok(ToolOutput::AsyncJob(job_handle));
@@ -195,10 +195,10 @@ impl Tool for PyTool {
                 .call_method1("dumps", (result.bind(py),))?
                 .extract()
         })
-        .map_err(|e| ToolError::fatal(format!("failed to serialize Python return value: {}", e)))?;
+        .map_err(|e| ToolError::fatal(format!("failed to serialize Python return value: {e}")))?;
 
         let value: Value = serde_json::from_str(&result_str)
-            .map_err(|e| ToolError::fatal(format!("failed to parse Python return value: {}", e)))?;
+            .map_err(|e| ToolError::fatal(format!("failed to parse Python return value: {e}")))?;
 
         Ok(ToolOutput::Immediate(value))
     }
@@ -232,13 +232,13 @@ fn py_async_job_handle(result: &Py<PyAny>) -> Result<Option<JobHandle>, ToolErro
             Box::pin(async move {
                 Python::attach(|py| -> Result<JobStatus, ToolError> {
                     let raw_value = poll.call0(py).map_err(|e| {
-                        ToolError::fatal(format!("Python async job poll error: {}", e))
+                        ToolError::fatal(format!("Python async job poll error: {e}"))
                     })?;
 
                     // If the poll result is a coroutine, await it
-                    let inspect = py.import("inspect").map_err(|e| {
-                        ToolError::fatal(format!("failed to import inspect: {}", e))
-                    })?;
+                    let inspect = py
+                        .import("inspect")
+                        .map_err(|e| ToolError::fatal(format!("failed to import inspect: {e}")))?;
                     let is_coro: bool = inspect
                         .call_method1("iscoroutine", (raw_value.bind(py),))
                         .and_then(|v| v.extract())
@@ -246,7 +246,7 @@ fn py_async_job_handle(result: &Py<PyAny>) -> Result<Option<JobHandle>, ToolErro
 
                     let value = if is_coro {
                         await_coroutine(py, raw_value).map_err(|e| {
-                            ToolError::fatal(format!("failed to await async poll: {}", e))
+                            ToolError::fatal(format!("failed to await async poll: {e}"))
                         })?
                     } else {
                         raw_value
@@ -254,15 +254,15 @@ fn py_async_job_handle(result: &Py<PyAny>) -> Result<Option<JobHandle>, ToolErro
 
                     let json_mod = py
                         .import("json")
-                        .map_err(|e| ToolError::fatal(format!("failed to import json: {}", e)))?;
+                        .map_err(|e| ToolError::fatal(format!("failed to import json: {e}")))?;
                     let json_str: String = json_mod
                         .call_method1("dumps", (value.bind(py),))
                         .and_then(|v| v.extract())
                         .map_err(|e| {
-                            ToolError::fatal(format!("failed to serialize poll result: {}", e))
+                            ToolError::fatal(format!("failed to serialize poll result: {e}"))
                         })?;
                     let parsed: Value = serde_json::from_str(&json_str).map_err(|e| {
-                        ToolError::fatal(format!("failed to parse poll result: {}", e))
+                        ToolError::fatal(format!("failed to parse poll result: {e}"))
                     })?;
 
                     match parsed.get("status").and_then(|v| v.as_str()) {
@@ -302,7 +302,7 @@ fn py_async_job_handle(result: &Py<PyAny>) -> Result<Option<JobHandle>, ToolErro
             webhook: None,
         }))
     })
-    .map_err(|e| ToolError::fatal(format!("invalid Python async job return value: {}", e)))
+    .map_err(|e| ToolError::fatal(format!("invalid Python async job return value: {e}")))
 }
 
 fn infer_schema_from_hints(py: Python<'_>, func: &Py<PyAny>) -> PyResult<Value> {
@@ -384,9 +384,9 @@ fn py_messages_to_core(
 fn runtime_event_to_dict(py: Python<'_>, event: &RuntimeEvent) -> PyResult<Py<PyDict>> {
     // Target-language glue remains here: core produces JSON, PyO3 converts it to a Python dict.
     let event_obj = runtime_event_to_wire_value(event)
-        .map_err(|e| PyRuntimeError::new_err(format!("failed to serialize event: {}", e)))?;
+        .map_err(|e| PyRuntimeError::new_err(format!("failed to serialize event: {e}")))?;
     let json_str = serde_json::to_string(&event_obj)
-        .map_err(|e| PyRuntimeError::new_err(format!("failed to serialize event dict: {}", e)))?;
+        .map_err(|e| PyRuntimeError::new_err(format!("failed to serialize event dict: {e}")))?;
 
     let json_mod = py.import("json")?;
     let dict = json_mod.call_method1("loads", (&json_str,))?;
@@ -537,7 +537,7 @@ impl Agent {
         for tool in &self.native_tools {
             registry
                 .register(Arc::clone(tool))
-                .map_err(|e| PyRuntimeError::new_err(format!("failed to register tool: {}", e)))?;
+                .map_err(|e| PyRuntimeError::new_err(format!("failed to register tool: {e}")))?;
         }
         for tool_def in &self.tools {
             let tool = PyTool {
@@ -552,14 +552,14 @@ impl Agent {
             };
             registry
                 .register(Arc::new(tool))
-                .map_err(|e| PyRuntimeError::new_err(format!("failed to register tool: {}", e)))?;
+                .map_err(|e| PyRuntimeError::new_err(format!("failed to register tool: {e}")))?;
         }
         Ok(registry)
     }
 
     fn build_model(&self) -> Result<Arc<dyn orchest::model::ModelAdapter>, PyErr> {
         let adapter = create_adapter_from_config(self.provider_config())
-            .map_err(|e| PyRuntimeError::new_err(format!("failed to create model: {}", e)))?;
+            .map_err(|e| PyRuntimeError::new_err(format!("failed to create model: {e}")))?;
         Ok(Arc::from(adapter))
     }
 }
@@ -650,7 +650,7 @@ impl Agent {
             let description: String = func
                 .getattr(py, "__doc__")
                 .and_then(|d| d.extract(py))
-                .unwrap_or_else(|_| format!("Tool: {}", name));
+                .unwrap_or_else(|_| format!("Tool: {name}"));
             let input_schema = infer_schema_from_hints(py, &func)?;
             let resolved = parse_binding_approval(approval.as_deref(), Approval::Never);
             let execution_mode =
@@ -691,7 +691,7 @@ impl Agent {
         let description: String = func
             .getattr(py, "__doc__")
             .and_then(|d| d.extract(py))
-            .unwrap_or_else(|_| format!("Tool: {}", name));
+            .unwrap_or_else(|_| format!("Tool: {name}"));
         let input_schema = infer_schema_from_hints(py, &func)?;
         let resolved = parse_binding_approval(approval.as_deref(), Approval::Never);
         let execution_mode =
@@ -759,7 +759,7 @@ impl Agent {
                 .output_extractor(move |v| output_mapper(v))
                 .build()
                 .map_err(|e| {
-                    PyRuntimeError::new_err(format!("failed to build sub-agent tool: {}", e))
+                    PyRuntimeError::new_err(format!("failed to build sub-agent tool: {e}"))
                 })?,
         );
 
@@ -795,7 +795,7 @@ impl Agent {
         let run_handle_ref = Arc::clone(&self.run_handle);
 
         let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyRuntimeError::new_err(format!("failed to create runtime: {}", e)))?;
+            .map_err(|e| PyRuntimeError::new_err(format!("failed to create runtime: {e}")))?;
 
         let events = py.detach(|| {
             rt.block_on(async {
@@ -926,14 +926,14 @@ impl Agent {
         let run_handle_ref = Arc::clone(&self.run_handle);
 
         let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyRuntimeError::new_err(format!("failed to create runtime: {}", e)))?;
+            .map_err(|e| PyRuntimeError::new_err(format!("failed to create runtime: {e}")))?;
 
         rt.block_on(async {
             let guard = run_handle_ref.lock().await;
             if let Some(ref handle) = *guard {
                 let run_id: orchest::run::RunId = orchest::run::RunId(
                     uuid::Uuid::parse_str(&run_id_str)
-                        .map_err(|e| PyRuntimeError::new_err(format!("invalid run_id: {}", e)))?,
+                        .map_err(|e| PyRuntimeError::new_err(format!("invalid run_id: {e}")))?,
                 );
                 handle
                     .respond_approval(run_id, approved)

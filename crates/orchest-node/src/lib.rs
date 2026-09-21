@@ -621,7 +621,7 @@ impl Agent {
         for tool in &self.tools {
             registry
                 .register(Arc::clone(tool))
-                .map_err(|e| napi::Error::from_reason(format!("{}", e)))?;
+                .map_err(|e| napi::Error::from_reason(format!("{e}")))?;
         }
 
         let model: Arc<dyn orchest::model::ModelAdapter> = Arc::from(
@@ -662,7 +662,7 @@ impl Agent {
         for event in &events {
             // Target-language glue remains here: core produces JSON, napi converts it to JS values.
             let value = runtime_event_to_wire_value(event)
-                .map_err(|e| napi::Error::from_reason(format!("serialize error: {}", e)))?;
+                .map_err(|e| napi::Error::from_reason(format!("serialize error: {e}")))?;
             result.push(value);
         }
 
@@ -684,7 +684,7 @@ impl Agent {
         for tool in &self.tools {
             registry
                 .register(Arc::clone(tool))
-                .map_err(|e| napi::Error::from_reason(format!("{}", e)))?;
+                .map_err(|e| napi::Error::from_reason(format!("{e}")))?;
         }
 
         let model: Arc<dyn orchest::model::ModelAdapter> = Arc::from(
@@ -722,7 +722,7 @@ impl Agent {
             while let Some(event) = event_rx.recv().await {
                 // Target-language glue remains here: core produces JSON, napi converts it to JS values.
                 let value = runtime_event_to_wire_value(&event)
-                    .map_err(|e| napi::Error::from_reason(format!("serialize error: {}", e)))?;
+                    .map_err(|e| napi::Error::from_reason(format!("serialize error: {e}")))?;
                 let status = tsfn.call(value, ThreadsafeFunctionCallMode::NonBlocking);
                 if status != napi::Status::Ok {
                     tracing::warn!("node event callback dropped: {:?}", status);
@@ -753,7 +753,7 @@ impl Agent {
             if let Some(ref handle) = *guard {
                 let run_id = orchest::run::RunId(
                     uuid::Uuid::parse_str(&run_id)
-                        .map_err(|e| napi::Error::from_reason(format!("invalid run_id: {}", e)))?,
+                        .map_err(|e| napi::Error::from_reason(format!("invalid run_id: {e}")))?,
                 );
                 handle
                     .respond_approval(run_id, approved)

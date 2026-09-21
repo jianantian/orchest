@@ -412,7 +412,7 @@ mod tests {
             ToolOutput::Immediate(Value::String(content)) => {
                 assert_eq!(content, "moon / june\n");
             }
-            other => panic!("expected Immediate(String), got {:?}", other),
+            other => panic!("expected Immediate(String), got {other:?}"),
         }
     }
 
@@ -503,7 +503,7 @@ mod tests {
                 assert!(file.ends_with("SKILL.md"));
                 assert!(tokens > 0);
             }
-            other => panic!("expected SkillContentRead, got {:?}", other),
+            other => panic!("expected SkillContentRead, got {other:?}"),
         }
         let second = rx.try_recv().unwrap();
         match second {
@@ -516,7 +516,7 @@ mod tests {
                 assert!(file.ends_with("notes.txt"));
                 assert!(tokens > 0);
             }
-            other => panic!("expected SkillContentRead, got {:?}", other),
+            other => panic!("expected SkillContentRead, got {other:?}"),
         }
     }
 }

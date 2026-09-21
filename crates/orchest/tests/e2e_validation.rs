@@ -486,10 +486,10 @@ async fn e2e_event_serialization_round_trip() {
 
     for event in &events {
         let json_str = serde_json::to_string(event)
-            .unwrap_or_else(|e| panic!("failed to serialize {:?}: {}", event, e));
+            .unwrap_or_else(|e| panic!("failed to serialize {event:?}: {e}"));
 
         let deserialized: RuntimeEvent = serde_json::from_str(&json_str)
-            .unwrap_or_else(|e| panic!("failed to deserialize '{}': {}", json_str, e));
+            .unwrap_or_else(|e| panic!("failed to deserialize '{json_str}': {e}"));
 
         let re_serialized = serde_json::to_string(&deserialized).unwrap();
         assert_eq!(json_str, re_serialized, "round-trip mismatch");
@@ -571,7 +571,7 @@ async fn e2e_run_state_serialization() {
             assert_eq!(job_handle.job_id, "job_state");
             assert_eq!(job_handle.poll_interval, Duration::from_millis(25));
         }
-        other => panic!("expected WaitingForAsyncTool, got {:?}", other),
+        other => panic!("expected WaitingForAsyncTool, got {other:?}"),
     }
 }
 

@@ -149,7 +149,7 @@ impl Actor for SupervisorActor {
                         let _ = state
                             .event_tx
                             .send(RuntimeEvent::RunAborted {
-                                reason: Some(format!("max retries ({}) exceeded", max_retries)),
+                                reason: Some(format!("max retries ({max_retries}) exceeded")),
                             })
                             .await;
                         myself.stop(None);

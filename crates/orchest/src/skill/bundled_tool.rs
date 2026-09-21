@@ -280,7 +280,7 @@ impl Tool for SkillBundledTool {
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let input_json = serde_json::to_vec(&input).map_err(|e| {
-            ToolError::fatal(format!("failed to serialize input: {}", e))
+            ToolError::fatal(format!("failed to serialize input: {e}"))
                 .with_code("SERIALIZATION_ERROR")
         })?;
 
@@ -313,7 +313,7 @@ impl Tool for SkillBundledTool {
         }
 
         let parsed: Value = serde_json::from_str(stdout.trim()).map_err(|e| {
-            ToolError::fatal(format!("failed to parse script stdout as JSON: {}", e))
+            ToolError::fatal(format!("failed to parse script stdout as JSON: {e}"))
                 .with_code("INVALID_OUTPUT")
         })?;
 
@@ -372,7 +372,7 @@ impl Tool for SkillBundledTool {
                     }
 
                     let parsed: Value = serde_json::from_str(stdout.trim()).map_err(|e| {
-                        ToolError::fatal(format!("failed to parse poll output: {}", e))
+                        ToolError::fatal(format!("failed to parse poll output: {e}"))
                             .with_code("INVALID_OUTPUT")
                     })?;
 
@@ -451,7 +451,7 @@ mod tests {
         let skill_dir = tmp.join("test_skill");
         fs::create_dir_all(skill_dir.join("scripts")).unwrap();
         fs::write(
-            skill_dir.join(format!("scripts/{}", script_name)),
+            skill_dir.join(format!("scripts/{script_name}")),
             script_content,
         )
         .unwrap();
@@ -608,7 +608,7 @@ fi
                     JobStatus::Completed(v) => {
                         assert_eq!(v["done"], true);
                     }
-                    other => panic!("expected Completed, got {:?}", other),
+                    other => panic!("expected Completed, got {other:?}"),
                 }
             }
             _ => panic!("expected AsyncJob output"),
