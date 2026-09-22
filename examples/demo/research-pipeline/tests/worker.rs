@@ -10,13 +10,13 @@ use std::{
 
 use async_trait::async_trait;
 use orchest::{
-    events::RuntimeEvent,
+    events::{RunFailureKind, RuntimeEvent},
     hook::{Hook, HookAction, RepeatedFailureHookContext},
     model::{
         ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
         RequestOptions, Role, StopReason, TokenUsage, ToolDef,
     },
-    run::{AgentRun, RunId},
+    run::{AgentRun, RunId, SupervisionStrategy},
     tool::{
         agent_as_tool::ContextMode, Approval, ErrorKind, RetryHint, Tool, ToolContext, ToolOutput,
     },
@@ -195,6 +195,10 @@ async fn worker_threshold_and_abort_hook_produce_terminal_run_failed() {
         ["search_corpus", "read_file", "write_draft", "fault_trigger"]
     );
     assert_eq!(worker.config().runtime.repeated_failure.threshold, 1);
+    assert!(matches!(
+        &worker.config().supervision_strategy,
+        SupervisionStrategy::Restart { max_retries: 1 }
+    ));
 
     let calls = Arc::new(AtomicU32::new(0));
     let model: Arc<dyn ModelAdapter> = Arc::new(FaultCallingModel {
@@ -212,10 +216,13 @@ async fn worker_threshold_and_abort_hook_produce_terminal_run_failed() {
     }
     handle.wait().await;
 
+    // Hook abort maps to RunFailureKind::Other, which is restartable under #251.
+    // With max_retries=1 the worker gets one bounded restart (a second model turn),
+    // then stays terminal — no infinite loop.
     assert_eq!(
         calls.load(Ordering::SeqCst),
-        1,
-        "threshold and hook abort before another model turn"
+        2,
+        "Restart retries the eligible Other/hook-abort failure once"
     );
     assert!(events.iter().any(|event| matches!(
         event,
@@ -225,10 +232,28 @@ async fn worker_threshold_and_abort_hook_produce_terminal_run_failed() {
                 && error.retry == RetryHint::Unsafe
                 && error.code.as_deref() == Some(CONTROLLED_FAULT_CODE)
     )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        RuntimeEvent::RunFailed { error, .. } if error == CONTROLLED_FAULT_ABORT_REASON
-    )));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, RuntimeEvent::RunRestarted { attempt: 1 })),
+        "eligible RunFailed must emit RunRestarted before the retry"
+    );
+    let run_failed = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                RuntimeEvent::RunFailed {
+                    error,
+                    kind: RunFailureKind::Other
+                } if error == CONTROLLED_FAULT_ABORT_REASON
+            )
+        })
+        .count();
+    assert_eq!(
+        run_failed, 2,
+        "initial abort plus post-restart abort must both emit RunFailed"
+    );
     assert!(!events
         .iter()
         .any(|event| matches!(event, RuntimeEvent::RunCompleted { .. })));
