@@ -194,6 +194,20 @@ async fn worker_threshold_and_abort_hook_produce_terminal_run_failed() {
         names,
         ["search_corpus", "read_file", "write_draft", "fault_trigger"]
     );
+    let drill = Worker::from_paths_fault_drill(&corpus, temp.path().join("drill.md"))
+        .expect("build fault-drill worker");
+    let drill_names = drill
+        .registry()
+        .list()
+        .into_iter()
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        drill_names,
+        ["search_corpus", "fault_trigger"],
+        "the drill exposes only the search step and the fault so the restart \
+         sequence stays the run's outcome"
+    );
     assert_eq!(worker.config().runtime.repeated_failure.threshold, 1);
     assert!(matches!(
         &worker.config().supervision_strategy,

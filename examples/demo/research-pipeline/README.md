@@ -72,9 +72,40 @@ observe from `RunStarted` before the first model call.
 The live provider scenario uses `RESEARCH_PIPELINE_CHAT_MODEL` and its provider
 credentials (with optional `RESEARCH_PIPELINE_API_KEY`,
 `RESEARCH_PIPELINE_API_URL`, and `RESEARCH_PIPELINE_MAX_TOKENS`). It is not a
-CI prerequisite. Until a real command is executed and recorded, the required
-live-provider run remains `not-run`, and the contract requires the readiness
-verdict to remain `unverified`.
+CI prerequisite.
+
+```bash
+set -a && . ./.env && set +a
+export RESEARCH_PIPELINE_CHAT_MODEL=openrouter/anthropic/claude-sonnet-4.6
+export RESEARCH_PIPELINE_API_KEY=<openrouter key>
+
+# Normal scenario (run-live-provider)
+cargo run -p research-pipeline-demo --bin research-pipeline -- run \
+  --question "Is Loom worth continued investment in Q4?" \
+  --materials examples/demo/research-pipeline/fixtures/research
+
+# Controlled-fault drill (run-live-provider-controlled-fault). --fault builds the
+# worker through Worker::from_paths_fault_drill: the fault instruction lives in
+# the worker's own prompt, its tool set is search_corpus + fault_trigger, and the
+# live watcher prompt is scoped to the drill, so the run reliably reaches
+# run-level Restart and supervisor escalation.
+cargo run -p research-pipeline-demo --bin research-pipeline -- run \
+  --question "Run the scheduled Q4 investment review over the fixture corpus." \
+  --materials examples/demo/research-pipeline/fixtures/research --fault
+```
+
+Both scenarios were executed on 2026-09-22 with the repository credentials and
+both passed: `run-live-provider` (normal: delegated workers completed, root
+`EndTurn`) and `run-live-provider-controlled-fault` (fault → `RunRestarted`
+attempt 1 → second fault → escalation without panic) in all four post-repair
+runs. The drill's first wiring asked for the fault in the *delegated* request,
+which the attached live `LlmWatcher` read as a prompt injection and aborted in
+2 of 4 attempts — the reason the fault instruction now sits in the worker's own
+prompt and the watcher prompt is drill-scoped. P1-6 records the underlying
+observation that the default watcher prompt states no boundary for `abort`.
+
+Fixture, deterministic, smoke, and live evidence stay separate: `findings.json`
+is the only place that records which of them ran.
 
 The distinct provider smoke is an ignored integration test, so ordinary
 `cargo test -p research-pipeline-demo` runs never call a live provider:

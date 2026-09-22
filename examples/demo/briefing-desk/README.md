@@ -178,15 +178,28 @@ of a modality's variables to use a real provider from the
 
 ```bash
 # ASR: real transcription instead of FakeAsr
-export BRIEFING_DESK_ASR_PROVIDER=volcengine
-export BRIEFING_DESK_ASR_MODEL=<model id>
+export BRIEFING_DESK_ASR_PROVIDER=aliyun
+export BRIEFING_DESK_ASR_MODEL=fun-asr-flash-2026-06-15
 export BRIEFING_DESK_ASR_API_KEY=<key>
 
 # TTS: real synthesis instead of FakeTts
 export BRIEFING_DESK_TTS_PROVIDER=volcengine
-export BRIEFING_DESK_TTS_MODEL=<model id>
+export BRIEFING_DESK_TTS_MODEL=volc.service_type.10029
 export BRIEFING_DESK_TTS_API_KEY=<key>
+export BRIEFING_DESK_TTS_VOICE=zh_female_shuangkuaisisi_moon_bigtts
 ```
+
+Two selection details are worth knowing before pointing these at a provider:
+
+- `PROVIDER` + `MODEL` are both honored. `transcribe_audio` calls the batch
+  `Asr::transcribe` entry point, so the model must name a batch dialect
+  (`aliyun/fun-asr-flash-2026-06-15`, `aliyun/qwen-audio-3.0-asr-flash`,
+  `assemblyai/universal`, `speechmatics/enhanced`); the streaming dialects in
+  the registry reject `transcribe` with `UnsupportedOperation`.
+- Live TTS requires `BRIEFING_DESK_TTS_VOICE`: every live dialect sends the
+  voice to the provider verbatim, and the providers reject an empty one. The
+  offline `FakeTts` ignores it. For volcengine, `MODEL` doubles as the
+  `X-Api-Resource-Id` header, so the voice must belong to that resource.
 
 ASR/TTS liveness is independent of the chat model: you can mix live chat with
 fake ASR, or any combination. This path is manual and untested by CI (no

@@ -153,7 +153,7 @@ where
         let result = tts
             .synthesize(orchest_protocol::SynthesizeRequest {
                 text: answer.clone(),
-                voice: None,
+                voice: prepared.tts_voice.clone(),
                 format: orchest_protocol::AudioFormat::Wav,
                 options: serde_json::Value::Null,
             })

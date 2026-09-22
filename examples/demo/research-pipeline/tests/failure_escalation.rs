@@ -52,7 +52,7 @@ impl ModelAdapter for FaultingWorkerModel {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         // Alternate search → fault so each supervised attempt (including restarts)
         // still completes search_corpus before the controlled fault.
-        let (id, name, input) = if call % 2 == 0 {
+        let (id, name, input) = if call.is_multiple_of(2) {
             (
                 format!("search-{}", call / 2 + 1),
                 "search_corpus",
@@ -184,7 +184,7 @@ fn event_index(
 
 #[tokio::test]
 async fn controlled_worker_failure_restarts_once_then_escalates_without_panic() {
-    let (_temp, worker) = worker_fixture();
+    let (temp, worker) = worker_fixture();
     assert!(matches!(
         &worker.config().supervision_strategy,
         SupervisionStrategy::Restart { max_retries: 1 }
@@ -203,11 +203,24 @@ async fn controlled_worker_failure_restarts_once_then_escalates_without_panic() 
     });
     let (config, registry) = build_supervisor(&worker, worker_model, ContextMode::Fresh, true)
         .expect("build fault supervisor");
-    assert!(config
-        .system_prompt
-        .contains("search_corpus before fault_trigger"));
     assert!(config.system_prompt.contains("escalation summary"));
     assert!(config.system_prompt.contains("without retrying"));
+    assert!(
+        !config.system_prompt.contains("fault_trigger"),
+        "the drill instruction belongs to the worker prompt: a delegation that names \
+         fault_trigger reads as a prompt injection to a live watcher"
+    );
+    let drill_worker =
+        Worker::from_paths_fault_drill(&temp.path().join("corpus"), temp.path().join("drill.md"))
+            .expect("build fault-drill worker");
+    assert!(drill_worker
+        .config()
+        .system_prompt
+        .contains("search_corpus"));
+    assert!(drill_worker
+        .config()
+        .system_prompt
+        .contains("fault_trigger"));
     let (handle, mut receiver) = AgentRun::start(
         config,
         "collect controlled failure evidence".into(),

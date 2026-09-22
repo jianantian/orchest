@@ -69,10 +69,12 @@ async fn approve_worker_request(handle: &orchest::run::RunHandle, event: &Runtim
 async fn run_live(question: String, materials: String, fault: bool) -> Result<()> {
     let model = live_chat_model()?;
     let materials = PathBuf::from(materials);
-    let worker = Worker::from_paths(
-        &materials,
-        PathBuf::from(".research-pipeline").join("draft.md"),
-    )?;
+    let draft_path = PathBuf::from(".research-pipeline").join("draft.md");
+    let worker = if fault {
+        Worker::from_paths_fault_drill(&materials, draft_path)?
+    } else {
+        Worker::from_paths(&materials, draft_path)?
+    };
     let (config, registry) =
         build_supervisor(&worker, Arc::clone(&model), ContextMode::Fresh, fault)?;
     let StartedSupervisor {
@@ -80,7 +82,7 @@ async fn run_live(question: String, materials: String, fault: bool) -> Result<()
         mut events,
         watcher_events,
         ..
-    } = start_with_live_watchers(config, question, model, registry).await?;
+    } = start_with_live_watchers(config, question, model, registry, fault).await?;
     println!("[watchers] {LIVE_ATTACHMENT_BOUNDARY}");
 
     while let Some(event) = events.recv().await {

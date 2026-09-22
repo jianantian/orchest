@@ -75,11 +75,17 @@ fn audio_format_for(path: &Path) -> AudioFormat {
 /// test in this repo (no network/credentials in CI); run manually per the
 /// README's "Live provider run" section and record the outcome in the
 /// validation report.
+///
+/// Both triplets are honored: `provider` picks the vendor and `model` picks the
+/// dialect. The model filter matters because this demo only calls the batch
+/// [`Asr::transcribe`] entry point — streaming-only dialects reject it with
+/// `UnsupportedOperation`, so `provider` alone can select an unusable handle.
 pub fn live_asr(provider: &str, model: &str, api_key: &str) -> Result<Box<dyn Asr>, DemoError> {
     let registry = orchest_provider::Registry::with_builtin();
     registry
         .asr()
         .provider(provider)
+        .id(model)
         .build(&orchest_provider::ProviderConfig::new(provider, model).with_api_key(api_key))
         .map_err(|e| format!("constructing live ASR provider '{provider}/{model}': {e}").into())
 }
@@ -378,18 +384,24 @@ impl Tool for DescribeImageTool {
 /// Synthesizes an audio version of the final brief via `Tts::synthesize`
 /// (real or fake, chosen by the caller at construction time). Writes only to
 /// a fixed path decided by the CLI. Always requires approval.
+///
+/// `voice` is passed through verbatim: every live TTS dialect in the registry
+/// requires an explicit voice at the provider boundary, so leaving it unset is
+/// only viable for the offline fakes.
 pub struct SynthesizeBriefTool {
     output_path: PathBuf,
     tts: Box<dyn Tts>,
+    voice: Option<String>,
     metadata: ToolMetadata,
     input_schema: Value,
 }
 
 impl SynthesizeBriefTool {
-    pub fn new(output_path: PathBuf, tts: Box<dyn Tts>) -> Self {
+    pub fn new(output_path: PathBuf, tts: Box<dyn Tts>, voice: Option<String>) -> Self {
         Self {
             output_path,
             tts,
+            voice,
             metadata: ToolMetadata {
                 side_effect: true,
                 approval: Approval::Always,
@@ -438,7 +450,7 @@ impl Tool for SynthesizeBriefTool {
             .tts
             .synthesize(SynthesizeRequest {
                 text: text.to_string(),
-                voice: None,
+                voice: self.voice.clone(),
                 format: AudioFormat::Wav,
                 options: Value::Null,
             })
@@ -621,7 +633,7 @@ mod tests {
     async fn synthesize_brief_tool_writes_exactly_one_file_and_marks_side_effect() {
         let dir = tempfile::tempdir().expect("tempdir");
         let output_path = dir.path().join("brief.wav");
-        let tool = SynthesizeBriefTool::new(output_path.clone(), Box::new(fake_tts()));
+        let tool = SynthesizeBriefTool::new(output_path.clone(), Box::new(fake_tts()), None);
 
         tool.execute(json!({"text": "the brief"}), &test_ctx())
             .await

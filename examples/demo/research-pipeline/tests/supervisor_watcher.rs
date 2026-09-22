@@ -821,6 +821,7 @@ async fn live_start_records_both_watcher_completions_as_best_effort() {
         "live-shaped parent question".to_string(),
         supervisor_model,
         registry,
+        false,
     )
     .await
     .expect("live watchers attach with configured model");

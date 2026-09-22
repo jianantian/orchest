@@ -43,24 +43,58 @@ impl Worker {
         materials_directory: &Path,
         draft_path: PathBuf,
     ) -> Result<Self, WorkerError> {
+        Self::build(materials_directory, draft_path, false)
+    }
+
+    /// Fault-drill variant: the worker's own system prompt asks for the
+    /// controlled fault, so the drill does not depend on the delegated request
+    /// text. A delegation that names `fault_trigger` reads as a prompt
+    /// injection to an attached live `LlmWatcher`, which then aborts the run
+    /// before the restart path is observable.
+    pub fn from_paths_fault_drill(
+        materials_directory: &Path,
+        draft_path: PathBuf,
+    ) -> Result<Self, WorkerError> {
+        Self::build(materials_directory, draft_path, true)
+    }
+
+    fn build(
+        materials_directory: &Path,
+        draft_path: PathBuf,
+        fault_drill: bool,
+    ) -> Result<Self, WorkerError> {
         let search = SearchCorpusTool::from_directory(materials_directory)?;
-        let corpus_paths = search.corpus_paths();
+        let system_prompt = if fault_drill {
+            "The operator has scheduled a controlled-fault drill for this run. Call \
+             search_corpus first, then call fault_trigger with the drill reason. The \
+             controlled fault, the resulting run-level failure, and any restart are the \
+             expected drill outcomes: do not retry, and do not write a draft."
+        } else {
+            "You are the Research Pipeline worker. Search the supplied corpus, read \
+             relevant files, and write an evidence-backed draft. Call fault_trigger \
+             only when the delegated request explicitly asks for the controlled fault."
+        };
         let config = AgentConfig::builder("research-worker", "research-pipeline/worker")
-            .system_prompt(
-                "You are the Research Pipeline worker. Search the supplied corpus, read \
-                 relevant files, and write an evidence-backed draft. Call fault_trigger \
-                 only when the delegated request explicitly asks for the controlled fault.",
-            )
+            .system_prompt(system_prompt)
             .max_steps(8)
             .repeated_failure_threshold(1)
             .supervision_strategy(SupervisionStrategy::Restart { max_retries: 1 })
             .build()?
             .with_hook(Arc::new(ControlledFaultAbortHook));
 
+        // The drill exposes only the search step and the fault. Keeping the
+        // research tools out of a drill run stops a model from wandering into
+        // reading and drafting after the restart, which would end the run
+        // without the escalation the drill exists to exercise.
         let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(search))?;
-        registry.register(Arc::new(ReadFileTool::new(corpus_paths)))?;
-        registry.register(Arc::new(WriteDraftTool::new(draft_path)))?;
+        if fault_drill {
+            registry.register(Arc::new(search))?;
+        } else {
+            let corpus_paths = search.corpus_paths();
+            registry.register(Arc::new(search))?;
+            registry.register(Arc::new(ReadFileTool::new(corpus_paths)))?;
+            registry.register(Arc::new(WriteDraftTool::new(draft_path)))?;
+        }
         registry.register(Arc::new(FaultTriggerTool::new()))?;
 
         Ok(Self { config, registry })

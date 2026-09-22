@@ -32,6 +32,7 @@ const ASR_API_KEY_ENV: &str = "BRIEFING_DESK_ASR_API_KEY";
 const TTS_PROVIDER_ENV: &str = "BRIEFING_DESK_TTS_PROVIDER";
 const TTS_MODEL_ENV: &str = "BRIEFING_DESK_TTS_MODEL";
 const TTS_API_KEY_ENV: &str = "BRIEFING_DESK_TTS_API_KEY";
+const TTS_VOICE_ENV: &str = "BRIEFING_DESK_TTS_VOICE";
 const DEFAULT_MAX_TOKENS: u32 = 4096;
 // The live demo routinely needs search, multimodal reads, reviewer correction,
 // and the final write. Ten steps truncated a valid formal eval case before its
@@ -153,6 +154,8 @@ pub struct ResolvedExecutionEnvironment {
     pub chat: ResolvedChatModel,
     asr: ResolvedAsr,
     tts: ResolvedTts,
+    /// Voice handed to `Tts::synthesize`. Every live dialect requires one.
+    tts_voice: Option<String>,
 }
 
 impl ResolvedExecutionEnvironment {
@@ -161,6 +164,7 @@ impl ResolvedExecutionEnvironment {
             chat,
             asr: ResolvedAsr::Fake,
             tts: ResolvedTts::Fake,
+            tts_voice: None,
         }
     }
 
@@ -168,7 +172,16 @@ impl ResolvedExecutionEnvironment {
         let chat = ResolvedChatModel::from_env()?;
         let asr = resolve_asr_env()?;
         let tts = resolve_tts_env()?;
-        Ok(Self { chat, asr, tts })
+        let tts_voice = std::env::var(TTS_VOICE_ENV)
+            .ok()
+            .map(|voice| voice.trim().to_string())
+            .filter(|voice| !voice.is_empty());
+        Ok(Self {
+            chat,
+            asr,
+            tts,
+            tts_voice,
+        })
     }
 }
 
@@ -193,6 +206,7 @@ pub struct PreparedResume {
     pub output: PathBuf,
     pub no_tts: bool,
     pub tts: Option<Box<dyn Tts>>,
+    pub tts_voice: Option<String>,
 }
 
 pub fn prepare_run(
@@ -248,6 +262,7 @@ pub fn prepare_run(
         registry.register(Arc::new(SynthesizeBriefTool::new(
             args.output.with_extension("wav"),
             adapter,
+            env.tts_voice.clone(),
         )))?;
         route
     };
@@ -324,6 +339,7 @@ pub fn prepare_resume(
         output: args.output,
         no_tts: args.no_tts,
         tts,
+        tts_voice: env.tts_voice.clone(),
     })
 }
 
@@ -424,6 +440,20 @@ fn reviewer_tool(
         .model(Arc::clone(model))
         .registry(ToolRegistry::new())
         .context_mode(ContextMode::Fresh)
+        // The advertised schema must agree with `input_mapper` and with the
+        // tool description, both of which name `draft`; `SubAgentBuilder`'s
+        // default schema is `{"input": "string"}`, which a live model follows
+        // to the letter and the mapper then rejects.
+        .input_schema(json!({
+            "type": "object",
+            "properties": {
+                "draft": {
+                    "type": "string",
+                    "description": "full draft Markdown to review"
+                }
+            },
+            "required": ["draft"]
+        }))
         .input_mapper(|input: Value| {
             input
                 .get("draft")
