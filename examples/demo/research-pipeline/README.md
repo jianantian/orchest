@@ -4,6 +4,8 @@ Research Pipeline is the v0.11 evidence-run demo for supervised delegation.
 It deliberately tests only Orchest's public APIs and records every seam in
 [`findings.json`](findings.json), the sole editable source for finding identity,
 evidence, classification, lifecycle, action ownership, and readiness.
+Keep prose curated and short: it is an identity/evidence ledger, not an
+evaluation dump (no repeated assessment narratives or raw run transcripts).
 
 ## Evidence flow
 
