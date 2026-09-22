@@ -34,7 +34,7 @@ Deterministic Research Pipeline seam checks passed. Both required live-provider 
 | P1-3 | Fork empty-parent context error is unreachable | `post-1.0-backlog` | `deferred` | #257 |
 | P1-4 | Delegation has no explicit child completion receiver | `post-1.0-backlog` | `verified` | #249 |
 | P1-5 | Provider test fakes were previously inaccessible | `post-1.0-backlog` | `verified` | #196 |
-| P1-6 | Default LlmWatcher prompt leaves abort authority unscoped | `post-1.0-backlog` | `open` | — |
+| P1-6 | Default LlmWatcher prompt leaves abort authority unscoped | `post-1.0-backlog` | `open` | #298 |
 | RB-1 | LlmWatcher builder panics without a model | `release-blocker` | `verified` | #255 |
 | SB-1 | Delegation does not expose a child RunHandle | `seam-blocker` | `verified` | #249 |
 | SB-2 | Steering targets the supervisor rather than delegated worker | `seam-blocker` | `verified` | #249 |
@@ -217,7 +217,7 @@ Deterministic Research Pipeline seam checks passed. Both required live-provider 
 
 **Action:** Document or bound watcher abort authority in the default prompt, and keep drill-shaped runs pre-scoped.
 
-**Issue:** —
+**Issue:** #298
 
 **Verification status:** `not-run`
 
@@ -663,4 +663,4 @@ No unresolved seam blockers are recorded.
 - P1-3 — Fork empty-parent context error is unreachable (`deferred`, #257)
 - P1-4 — Delegation has no explicit child completion receiver (`verified`, #249)
 - P1-5 — Provider test fakes were previously inaccessible (`verified`, #196)
-- P1-6 — Default LlmWatcher prompt leaves abort authority unscoped (`open`, no issue recorded)
+- P1-6 — Default LlmWatcher prompt leaves abort authority unscoped (`open`, #298)

@@ -953,7 +953,8 @@
       "evidenceRefs": ["EV-live-provider-controlled-fault", "EV-llm-watcher-format-source"],
       "action": {
         "owner": "orchest-maintainers",
-        "summary": "Document or bound watcher abort authority in the default prompt, and keep drill-shaped runs pre-scoped."
+        "summary": "Document or bound watcher abort authority in the default prompt, and keep drill-shaped runs pre-scoped.",
+        "issueRef": "#298"
       },
       "verification": {
         "status": "not-run",

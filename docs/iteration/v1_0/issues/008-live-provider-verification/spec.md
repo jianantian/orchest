@@ -65,4 +65,7 @@ no open seam or release blocker. The generated report was re-rendered and
 `seam-report check` reports it current.
 
 **Open after this issue** — review of the recorded live evidence; the v1.0
-release-packaging acceptance items are separate.
+release-packaging acceptance items are separate. The backlog items the live
+runs produced are bound to GitHub issues: P1-6 → #298 (watcher abort
+authority), v0.10 triage row 12 → #299 (`input_mapper` vs `input_schema`),
+v0.10 triage row 14 → #300 (`SynthesizeRequest.voice` semantics).
