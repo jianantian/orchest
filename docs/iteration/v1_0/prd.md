@@ -7,10 +7,14 @@ public Rust API only after the v0.10 and v0.11 product-validation evidence has
 been reviewed and all pre-freeze/release gates have passed.
 
 The canonical v0.11
-[Seam Gap Analysis](../../review/v0_11_seam_gap_analysis.md) records eight open
-supervised-delegation seam blockers, one open release blocker, and an
-unexecuted required live-provider run. Deterministic v0.11 evidence may be
-complete without making v1.0 ready.
+[Seam Gap Analysis](../../review/v0_11_seam_gap_analysis.md) recorded eight
+open supervised-delegation seam blockers, one open release blocker, and an
+unexecuted required live-provider run when this PRD was written. As of the
+2026-09-22 evidence update: SB-1–SB-8 and RB-1 are `verified`, both required
+live-provider runs are `passed` (normal run and controlled-fault drill), and
+the canonical readiness verdict is `ready`; P1-6 is recorded but classified
+post-1.0 backlog. The ledger's live evidence awaits review; the remaining v1.0
+acceptance items are the release-packaging ones below.
 
 ## Goal
 
@@ -39,8 +43,10 @@ These existing GitHub issues are v1.0 prerequisites:
 | #255 | Fallible `LlmWatcherBuilder` | RB-1 |
 | #258 | v0.10/v0.11 live-provider verification | `run-live-provider` |
 
-Issue #258 remains a release gate while the live run is `not-run` and
-readiness is `unverified`. No waiver has been accepted.
+Issue #258 was a release gate while the live run was `not-run` and readiness
+was `unverified`. Both required live runs are now recorded in the canonical
+ledger as `passed` and readiness is `ready`; the gate closes once that
+evidence is reviewed. No waiver has been accepted.
 
 ## Post-1.0 Backlog
 
@@ -63,10 +69,10 @@ These issues do not block v1.0.
 ## Acceptance Criteria
 
 - [ ] #249–#255 are closed with their declared verifier evidence.
-- [ ] #258 records executed v0.10 and v0.11 live-provider evidence, and the
+- [x] #258 records executed v0.10 and v0.11 live-provider evidence, and the
   v0.11 canonical readiness result is no longer `unverified` because of a
   missing required live run.
-- [ ] The v0.11 generated report remains byte-current with its canonical JSON.
+- [x] The v0.11 generated report remains byte-current with its canonical JSON.
 - [ ] Cargo publish metadata, license, release workflow, changelog, and
   versioning strategy are complete and reviewed.
 - [ ] All workspace tests, lint checks, formatting checks, and documentation

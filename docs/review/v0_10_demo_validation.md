@@ -18,7 +18,7 @@ file/function references. **No live provider run was performed** (see
 until one is completed or the release gate is consciously changed, per this
 issue's own instructions.
 
-**Update (hotfix 2026-07-02, issue 006 closeout)**: all 5 release-blocker
+**Update (2026-07-02, hotfix issue 006 closeout)**: all 5 release-blocker
 findings below (#195–#199) are fixed and merged — see the Triage table and
 the Freeze Coverage Statement for what changed. The demo was fully re-run
 after all five landed (`cargo test -p briefing-desk-demo`, plus a manual
@@ -28,6 +28,14 @@ LLM/ASR/TTS credentials — so the original gate stands unchanged: v1.0 must
 not proceed on live-path evidence until a maintainer with credentials runs
 the commands in "Live provider run" below, or the project consciously
 changes the release gate.
+
+**Update (2026-09-22, issue [#258](https://github.com/jianantian/orchest/issues/258))**:
+the live provider run **is performed** — see "Live provider run" below. Chat,
+vision, ASR, and TTS all ran against real providers in one end-to-end session
+at revision `8a52610` plus three demo-side wiring fixes the run itself
+surfaced, and the Freeze Coverage Statement's Live column is updated
+accordingly. The paragraphs above are kept as the record of the state before
+that run.
 
 ## Runs
 
@@ -82,38 +90,102 @@ cargo run -p briefing-desk-demo -- resume \
 
 ### Live provider run
 
-**Not performed.** This environment has no LLM/ASR/TTS credentials and no
-network egress. Per this issue's own instructions: this report says so
-explicitly, and **v1.0 must not proceed on the strength of this report alone
-until a live run is completed, or the project consciously decides to change
-the release gate.**
+**Performed 2026-09-22** (issue [#258](https://github.com/jianantian/orchest/issues/258))
+against real providers, one end-to-end session covering chat, vision, ASR, and
+TTS. Revision `8a52610` plus the demo-side fixes below; worktree otherwise
+clean; environment key names only — no key material is recorded here.
 
-The commands a maintainer with credentials should run, exactly as documented
-in [`examples/demo/briefing-desk/README.md`](../../examples/demo/briefing-desk/README.md#live-provider-run):
+- Chat (agent loop, `review_report` sub-agent): `openrouter`,
+  `anthropic/claude-sonnet-4.6`
+- Vision (`describe_image`, same chat adapter): `openrouter`,
+  `anthropic/claude-sonnet-4.6`
+- ASR (`transcribe_audio`): `aliyun` (DashScope), `fun-asr-flash-2026-06-15`
+- TTS (`synthesize_brief`): `volcengine`, model/resource
+  `volc.service_type.10029`, voice `zh_female_shuangkuaisisi_moon_bigtts`
+
+Exact command (the CLI no longer has `--fake`; `run`/`resume` always build a
+real chat adapter from `BRIEFING_DESK_CHAT_MODEL`):
 
 ```bash
-export BRIEFING_DESK_ASR_PROVIDER=volcengine
-export BRIEFING_DESK_ASR_MODEL=<model id>
-export BRIEFING_DESK_ASR_API_KEY=<key>
+set -a && . ./.env && set +a
+export BRIEFING_DESK_CHAT_MODEL=openrouter/anthropic/claude-sonnet-4.6
+export BRIEFING_DESK_CHAT_API_KEY=<openrouter key>
+export BRIEFING_DESK_ASR_PROVIDER=aliyun
+export BRIEFING_DESK_ASR_MODEL=fun-asr-flash-2026-06-15
+export BRIEFING_DESK_ASR_API_KEY=<DashScope key>
 export BRIEFING_DESK_TTS_PROVIDER=volcengine
-export BRIEFING_DESK_TTS_MODEL=<model id>
-export BRIEFING_DESK_TTS_API_KEY=<key>
+export BRIEFING_DESK_TTS_MODEL=volc.service_type.10029
+export BRIEFING_DESK_TTS_API_KEY=<volcengine key>
+export BRIEFING_DESK_TTS_VOICE=zh_female_shuangkuaisisi_moon_bigtts
 
 cargo run -p briefing-desk-demo -- run \
   --materials examples/demo/briefing-desk/fixtures/research \
   --question "Is Loom worth continued investment in Q4?" \
-  --output /tmp/brief.md \
-  --fake   # still required — governs the chat model only, see below
+  --output /tmp/bd-live/brief.md
+# exit 0; 6 model turns (1.6k-10.8k prompt tokens each)
+# search_fixtures -> transcribe_audio -> describe_image -> read_fixture x5
+# -> review_report (real Agent-as-Tool child run 1265e902, verdict FAIL on the
+# first draft) -> write_report (auto-approved, 7290 bytes)
+# -> synthesize_brief (auto-approved, 13269484 bytes)
+# [done] final message; [report] and [synthesize] both written.
 ```
 
-Note even this live command still passes `--fake`: no v0.10 issue wires a
-live chat/LLM provider into this CLI (see "LLM (text)" row in the freeze
-coverage statement below) — `--fake` selects `FakeModel` for the chat step
-regardless, while the ASR/TTS env vars independently select real provider
-instances for those two steps only. Whoever runs this should record: exact
-command, provider, model, date, and outcome (success / error, with the
-`ProtocolError` if any) — either as an update to this report or a follow-up
-entry in `docs/archive/iteration/v0_10/validation-notes.md`.
+Per-layer outcome, all four rows live:
+
+| Layer | Outcome | Evidence |
+|---|---|---|
+| Chat / agent loop | **Pass** | 6 turns, tool loop drove the whole pipeline, final answer returned |
+| Vision (`describe_image`) | **Pass** | real `ContentBlock::Image` → `ModelAdapter::complete()`, child usage 21 in / 35 out tokens (the corpus chart is a ~1 KB PNG), description used in the draft |
+| ASR (`transcribe_audio`) | **Pass** | transcript returned the fixture's audio-only line ("... lose about two hours a day ..."), i.e. not the offline `FAKE_TRANSCRIPT` string |
+| TTS (`synthesize_brief`) | **Pass** | 13.3 MB audio written; RIFF/16-bit PCM/mono/24 kHz (volcengine streams a WAV with an unpatched RIFF length field and an `ISFT Lavf58.7` tag, so strict WAV parsers report an unknown length while the samples are valid PCM) |
+| Reviewer sub-agent | **Pass** | genuine child run; verdict (`FAIL` on the first draft) forwarded to the parent event stream and appended to the brief |
+
+Diagnostics kept out of the report for brevity: raw stdout for each run lives
+in the session scratch logs (`live2.log`), not in the repository.
+
+### Live-path defects this run found
+
+Three defects were unreachable from the offline/scripted path and only
+surfaced with a real model and real providers. All three are demo-side wiring
+bugs — the public SDK surface behaved as documented — and all three are fixed
+in this issue, with the code paths recorded in
+[`examples/demo/briefing-desk/`](../../examples/demo/briefing-desk/):
+
+1. **`review_report` advertised one parameter and required another.** The tool
+   description and `input_mapper` both name `draft`, but `SubAgentBuilder`
+   defaults to `{"input": "string"}` and the demo never called
+   `.input_schema(..)`. A live model follows the schema, so every call failed
+   with `missing required parameter 'draft'` (two attempts, then the model
+   reasoned explicitly about the contradiction). Scripted models call the tool
+   with `draft` directly, which is why `cargo test -p briefing-desk-demo`
+   stayed green. Fixed by declaring the schema.
+2. **`BRIEFING_DESK_ASR_MODEL` did not select anything.** `live_asr` filtered
+   only by provider, and the registry's unique `default_for_provider` for
+   `aliyun` is the *streaming* dialect, whose `transcribe` returns
+   `UnsupportedOperation: aliyun ASR is streaming-only; use start_stream`.
+   The README's documented `volcengine` example was likewise impossible —
+   that dialect requires `api_url`, which the demo never sets. Fixed by
+   filtering on provider **and** model, so the documented triplet picks a
+   batch dialect (`aliyun/fun-asr-flash-2026-06-15`).
+3. **Live TTS had no voice.** `SynthesizeBriefTool` always sent
+   `voice: None`, and every live dialect forwards that as an empty voice:
+   aliyun `Request voice is invalid!`, minimax `invalid params, empty field`,
+   volcengine `403 Forbidden` (with the resource id defaulting to the model
+   string) or `55000000 resource ID is mismatched with speaker related
+   resource`. Fixed by adding the optional `BRIEFING_DESK_TTS_VOICE`; the
+   offline `FakeTts` ignores it.
+
+The live run above uses the fixed wiring. Earlier failure output and the
+provider/model probes that identified the working configurations
+(`aliyun/cosyvoice-v2` + `longxiaochun_v2`, `minimax/speech-2.8-hd` +
+`English_Graceful_Lady`, `volcengine/volc.service_type.10029` +
+`zh_female_shuangkuaisisi_moon_bigtts`) are recorded in the triage rows below.
+
+Two SDK-side observations fall out of the same run and are **not** release
+blockers (both fail loudly, both have workarounds): `SynthesizeRequest.voice`
+is documented nowhere, so `None` silently becomes an empty provider field; and
+`SubAgentBuilder` accepts an `input_mapper` without requiring a matching
+`input_schema`, so a mismatch only fails at call time.
 
 ## Freeze Coverage Statement
 
@@ -122,17 +194,19 @@ freezes their API surface:
 
 | Gateway | Exercised? | Fake | Live | Notes |
 |---|---|---|---|---|
-| LLM (text, chat) | Partially | Yes (`FakeModel`, all 5 issues) | **No** | No v0.10 issue scoped wiring a live chat provider into this CLI; the runtime's chat-adapter path itself is separately exercised by `examples/rust/basic_agent_run.rs` and friends, just not from *this* demo. Flagged as a coverage gap, not a blocker — the chat/model adapter surface is the most mature and most independently-tested part of the runtime. |
-| ASR | **Yes** | Yes (`orchest_provider::fakes::FakeAsr`, real `Asr` trait impl, since issue 005) | Wired, untested (no credentials) | `transcribe_audio` tool, real `orchest_protocol::Asr` + `orchest_provider::Registry` construction path. This is exactly the kind of newly-added satellite surface (v0.9.1/v0.9.6) the PRD wanted dogfooded. The demo's fake used to be hand-written locally; issue 005 moved it to `orchest-provider`'s `testing` feature so every downstream crate can reuse it. |
-| TTS | **Yes** | Yes (`orchest_provider::fakes::FakeTts`, real `Tts` trait impl, since issue 005) | Wired, untested (no credentials) | `synthesize_brief` tool, same pattern as ASR. Independently approval-gated from `write_report`. |
-| Multimodal image input | **Yes (fixed)** | Yes (`DescribeImageFakeModel`, real `ContentBlock::Image` construction + real `ModelAdapter::complete()` call) | Not exercised (demo has no live chat adapter wiring at all — separate, pre-existing gap, not part of this fix) | Fixed by [#195](https://github.com/jianantian/orchest/issues/195): `AgentRun::start` now takes a `RunInput` (`RunInput::text(..).with_image(..)` or `.from_blocks(..)`), and `describe_image` builds a real `ContentBlock::Image` from the corpus file and drives it through a real `ModelAdapter::complete()` call. See `crates/orchest/src/run/config.rs` (`RunInput`) and `examples/demo/briefing-desk/src/media.rs` (`DescribeImageTool`). **Covered, not a blocker as of hotfix 2026-07-02.** |
+| LLM (text, chat) | **Yes** | Yes (`FakeModel`, v0.10 issues; `--scripted` model in the v0.16 Eval Lab) | **Yes** (2026-09-22, issue #258) | `run`/`resume` now always build a real adapter from `BRIEFING_DESK_CHAT_MODEL` (the `--fake` flag was removed after v0.10); the live session at revision `8a52610` drove the full pipeline, 6 model turns, plus a real `review_report` child run. |
+| ASR | **Yes** | Yes (`orchest_provider::fakes::FakeAsr`, real `Asr` trait impl, since issue 005) | **Yes** (2026-09-22, issue #258) | `transcribe_audio` tool, real `orchest_protocol::Asr` + `orchest_provider::Registry` construction path. Live: `aliyun/fun-asr-flash-2026-06-15` returned the audio-only quote from `interview.wav`. The registry's provider-only default for `aliyun` is a streaming dialect that rejects `transcribe`, so the model filter is what makes this path usable — see "Live-path defects". |
+| TTS | **Yes** | Yes (`orchest_provider::fakes::FakeTts`, real `Tts` trait impl, since issue 005) | **Yes** (2026-09-22, issue #258) | `synthesize_brief` tool, independently approval-gated from `write_report`. Live: volcengine `volc.service_type.10029` + `zh_female_shuangkuaisisi_moon_bigtts` produced 13.3 MB of RIFF/16-bit PCM audio. Every live dialect rejects an empty voice, so `BRIEFING_DESK_TTS_VOICE` is required for this path. |
+| Multimodal image input | **Yes (fixed)** | Yes (`DescribeImageFakeModel`, real `ContentBlock::Image` construction + real `ModelAdapter::complete()` call) | **Yes** (2026-09-22, issue #258) | Fixed by [#195](https://github.com/jianantian/orchest/issues/195): `AgentRun::start` now takes a `RunInput` (`RunInput::text(..).with_image(..)` or `.from_blocks(..)`), and `describe_image` builds a real `ContentBlock::Image` from the corpus file and drives it through a real `ModelAdapter::complete()` call. See `crates/orchest/src/run/config.rs` (`RunInput`) and `examples/demo/briefing-desk/src/media.rs` (`DescribeImageTool`). Live: the corpus chart was described by the vision-capable chat adapter and the description fed the brief. |
 | AIGC image generation | **Not exercised — consciously skipped** | — | — | Optional stretch per the PRD ("lowest freeze risk... if skipped, record it as a conscious coverage gap"). Skipped because the demo's materials-ingestion flow (search/read/transcribe/describe) didn't produce a genuine need for a generated figure — forcing one in would have been a contrived, low-signal integration. Risk accepted consciously: AIGC (`orchest-provider-visual`) is the most mature of the four modality gateways (v0.6.1 + two hotfix passes, `docs/archive/iteration/v0_6_1/`), with its own crate-level test coverage, unlike ASR/TTS/multimodal-image which are all v0.9.x-era and had zero non-test-internal usage anywhere in the repo before this demo (see findings below). |
 
 **Two gateways (ASR, TTS) go from zero real usage anywhere in the repository
 to dogfooded and passing.** One gateway (multimodal image input) goes from
 zero real usage to a confirmed, concrete blocker — which is exactly the kind
 of finding this validation round exists to produce. AIGC's absence is a
-conscious, argued choice, not an oversight.
+conscious, argued choice, not an oversight. As of the 2026-09-22 live run all
+four required rows (LLM/chat, ASR, TTS, multimodal image input) have live
+evidence; the live run's own three demo-side defects are triaged below.
 
 ## Findings
 
@@ -247,6 +321,10 @@ None found in `examples/demo/briefing-desk` itself at time of writing — all
 | 8 | TTS empty `http`-tier registry, no compile-time signal | Modality gateway friction | Post-1.0 backlog | — | Matches the provider crate's own "filled in later" comment; not introduced by this iteration, and the `tts` feature alias already routes around it correctly. |
 | 9 | `quickstart.md` pointers lack prose for resume/Agent-as-Tool gotchas | Documentation friction | Post-1.0 backlog | — | Nice-to-have; the example files themselves are correct, just under-narrated. |
 | 10 | `AgentRun::resume` doc comment omits the input-parameter gotcha | Documentation friction | **Fixed** (hotfix 2026-07-02, issue 002, commit `39290e8`) | [#197](https://github.com/jianantian/orchest/issues/197) | `resume`'s rustdoc now states explicitly that it does not append input and points to `resume_with_input` for the follow-up case; `docs/guide/quickstart.md` §8's `session_persist_resume.rs` pointer got the same note. |
+| 11 | `review_report` advertised `{"input": "string"}` while its mapper, schema-less tool description, and scripted callers all used `draft` | Product bug (demo) | **Fixed** (2026-09-22, issue #258) | — | Live-only: a real model follows the advertised schema, so the tool could never be called; scripted models call it with `draft` directly, which is why the deterministic suite stayed green. Demo now declares `.input_schema(..)`; SDK-side note (12) is separate. |
+| 12 | `SubAgentBuilder` accepts an `input_mapper` without requiring a matching `input_schema`, so the mismatch only fails at call time | API friction | Post-1.0 backlog | — | Fails loudly with a clear message once reached, and the builder already exposes `.input_schema(..)`; a build-time consistency check is ergonomics, not correctness. Deriving a schema from the mapper is not generally possible. |
+| 13 | `BRIEFING_DESK_ASR_MODEL` selected nothing: provider-only registry filtering resolved `aliyun` to the streaming dialect, whose `transcribe` returns `UnsupportedOperation`; the README's `volcengine` example was impossible too (that dialect requires `api_url`) | Modality gateway friction | **Fixed** (2026-09-22, issue #258) | — | The gateway is usable from application code — `Registry` exposes `.id("provider/model")` — but provider-only selection silently picks `default_for_provider`, which for ASR is streaming-only. Demo now filters on provider **and** model; README documents which dialects this batch tool can drive. |
+| 14 | Live TTS sends `voice: None` as an empty voice, which every dialect's provider rejects | API friction | **Fixed** in the demo (2026-09-22, issue #258); SDK doc gap stays post-1.0 | — | Observed: aliyun `Request voice is invalid!`, minimax `invalid params, empty field`, volcengine `403` / `resource ID is mismatched with speaker related resource`. Demo now passes `BRIEFING_DESK_TTS_VOICE`. SDK-side: `SynthesizeRequest.voice` has no documented meaning for `None`, and no dialect substitutes a default — a doc fix at minimum. |
 
 Each release-blocker row has a tracking issue, labeled `release-blocker`, whose
 acceptance criteria require re-running Briefing Desk (`cargo test -p
