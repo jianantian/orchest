@@ -11,7 +11,7 @@
 //!
 //! 1. **Gate** — wait until every watcher in that delivery cohort returns from
 //!    `on_event` before applying any action from the wave.
-//! 2. **Precedence** — `Abort` > `Steer` > `Inject` > `Continue`.
+//! 2. **Precedence** — `Abort` (exclusive) > remaining `Inject`/`Steer` in registration order > `Continue`.
 //! 3. **Abort** — if any watcher returns `Abort`, apply exactly one: the
 //!    `Abort` from the lowest registration index; discard all other actions.
 //! 4. **Otherwise** — apply every `Inject` / `Steer` in ascending registration

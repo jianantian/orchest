@@ -12,7 +12,7 @@ use crate::events::RuntimeEvent;
 /// gated and resolved by [`crate::run::arbitrate_watcher_actions`] before any
 /// mutation is applied:
 ///
-/// - Precedence: `Abort` > `Steer` > `Inject` > `Continue`
+/// - Precedence: `Abort` (exclusive) > remaining `Inject`/`Steer` in registration order > `Continue`
 /// - Any `Abort` wins (earliest registration index); other actions are discarded
 /// - Otherwise all `Inject` / `Steer` apply in ascending registration order
 ///
