@@ -338,17 +338,21 @@ impl AgentAsTool {
                     output: child_output,
                     ..
                 } => {
+                    // Success is always terminal — supervision does not restart after it.
+                    failed = None;
                     output = child_output.clone();
                     let _ = outcome_tx.send(Some(crate::run::ChildRunOutcome::Completed {
                         output: child_output.clone(),
                     }));
                 }
                 RuntimeEvent::RunFailed { error, kind } => {
+                    // Defer publishing Failed until the child event stream ends so an
+                    // eligible SupervisionStrategy::Restart can supersede this attempt.
                     failed = Some((error.clone(), *kind));
-                    let _ = outcome_tx.send(Some(crate::run::ChildRunOutcome::Failed {
-                        error: error.clone(),
-                        kind: *kind,
-                    }));
+                }
+                RuntimeEvent::RunRestarted { .. } => {
+                    failed = None;
+                    output = Value::Null;
                 }
                 _ => {}
             }
@@ -364,6 +368,10 @@ impl AgentAsTool {
         // post-terminal wait_completion lookups still resolve (P1-4).
 
         if let Some((error, kind)) = failed {
+            let _ = outcome_tx.send(Some(crate::run::ChildRunOutcome::Failed {
+                error: error.clone(),
+                kind,
+            }));
             ctx.emit_event(RuntimeEvent::SubAgentFailed {
                 child_run_id,
                 error: error.clone(),

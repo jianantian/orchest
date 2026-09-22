@@ -2,7 +2,7 @@
 
 ## Executive summary
 
-All deterministic contract, report, worker, supervisor/watcher, terminal-failure, and watcher-order checks passed. 2 supervised-delegation seam blockers and one release blocker remain open with owned GitHub issues; SB-1/SB-2/P1-4 are verified via ChildRunHandle / ChildRunRegistry; SB-4 and SB-8 are verified via ToolContext::emit_event fan-out and structured LlmWatcher nested formatting; SB-5 is verified via EventSink coalesced loss recovery; SB-6 is verified via AgentRun::start_with_watchers; SB-7 is verified via ActionArbitrator. The credential-gated live-provider run was not attempted because RESEARCH_PIPELINE_CHAT_MODEL and RESEARCH_PIPELINE_API_KEY are absent; v1.0 remains blocked by #258 until live verification passes.
+All deterministic contract, report, worker, supervisor/watcher, terminal-failure, and watcher-order checks passed. 1 supervised-delegation seam blocker and one release blocker remain open with owned GitHub issues; SB-1/SB-2/P1-4 are verified via ChildRunHandle / ChildRunRegistry; SB-3 is verified via SupervisionStrategy::Restart on eligible RunFailed; SB-4 and SB-8 are verified via ToolContext::emit_event fan-out and structured LlmWatcher nested formatting; SB-5 is verified via EventSink coalesced loss recovery; SB-6 is verified via AgentRun::start_with_watchers; SB-7 is verified via ActionArbitrator. The credential-gated live-provider run was not attempted because RESEARCH_PIPELINE_CHAT_MODEL and RESEARCH_PIPELINE_API_KEY are absent; v1.0 remains blocked by #258 until live verification passes.
 
 ## Readiness verdict
 
@@ -18,7 +18,7 @@ All deterministic contract, report, worker, supervisor/watcher, terminal-failure
 | --- | --- | --- | --- | --- | --- | --- |
 | API-1 | Watcher attachment and external steering | `orchest::run::RunHandle` | Attach watchers and exercise external steering through the supervisor handle. | `exercised` | `EV-public-api`, `EV-supervisor-source`, `EV-supervisor-watcher-test` | `SB-1`, `SB-2`, `SB-6` |
 | API-2 | Supervisor event observation | `orchest::run::EventReceiver` | Observe terminal supervisor events without a fixed timeout. | `exercised` | `EV-failure-escalation-test`, `EV-public-api`, `EV-supervisor-watcher-test` | `P1-4` |
-| API-3 | Worker restart policy | `orchest::run::SupervisionStrategy` | Configure restart and record whether a run-level failure restarts the delegated worker. | `exercised` | `EV-failure-escalation-test`, `EV-public-api`, `EV-supervisor-restart-source` | `SB-3` |
+| API-3 | Worker restart policy | `orchest::run::SupervisionStrategy` | Configure restart and record whether a run-level failure restarts the delegated worker. | `exercised` | `EV-failure-escalation-test`, `EV-public-api`, `EV-run-level-restart-unit-test`, `EV-supervisor-restart-source` | `SB-3` |
 | API-4 | Watcher-originated steering | `orchest::run::WatcherAction` | Exercise Inject and Steer without claiming a child-worker target or cross-watcher action ordering. | `exercised` | `EV-public-api`, `EV-supervisor-watcher-test`, `EV-watcher-action-routing` | `SB-2`, `SB-7` |
 | API-5 | LLM watcher | `orchest::run::llm_watcher::LlmWatcher` | Use the public watcher builder and preserve nested-event formatting and missing-model seams. | `exercised` | `EV-llm-watcher-format-source`, `EV-public-api`, `EV-supervisor-source`, `EV-supervisor-watcher-test` | `P1-1`, `RB-1`, `SB-4`, `SB-8` |
 | API-6 | Delegated context transfer | `orchest::tool::agent_as_tool::ContextMode` | Exercise Fresh and bounded Fork context modes. | `exercised` | `EV-public-api`, `EV-worker-test` | `P1-2`, `P1-3` |
@@ -37,7 +37,7 @@ All deterministic contract, report, worker, supervisor/watcher, terminal-failure
 | RB-1 | LlmWatcher builder panics without a model | `release-blocker` | `open` | #255 |
 | SB-1 | Delegation does not expose a child RunHandle | `seam-blocker` | `verified` | #249 |
 | SB-2 | Steering targets the supervisor rather than delegated worker | `seam-blocker` | `verified` | #249 |
-| SB-3 | Restart does not cover run-level failure | `seam-blocker` | `open` | #251 |
+| SB-3 | Restart does not cover run-level failure | `seam-blocker` | `verified` | #251 |
 | SB-4 | LlmWatcher does not format nested delegation events | `seam-blocker` | `verified` | #250 |
 | SB-5 | Secondary watcher subscribers can drop events | `seam-blocker` | `verified` | #252 |
 | SB-6 | No public start-with-watchers or pre-run pause seam | `seam-blocker` | `verified` | #253 |
@@ -292,29 +292,29 @@ All deterministic contract, report, worker, supervisor/watcher, terminal-failure
 
 **Classification:** `seam-blocker`
 
-**Status:** `open`
+**Status:** `verified`
 
-**Description:** Restart reacts to actor crashes rather than RunFailed outcomes from tool errors, budgets, or max steps.
+**Description:** Pre-fix: Restart reacted to actor crashes rather than RunFailed outcomes from tool errors, budgets, or max steps. Post-fix: eligible Other RunFailed outcomes share the bounded Restart policy; BudgetExceeded and MaxStepsReached stay terminal.
 
-**Observed consequence:** A delegated worker can terminally fail without the configured restart policy recovering it.
+**Observed consequence:** A delegated worker can recover from eligible run-level failures up to max_retries, with attributable RunRestarted evidence; non-restartable failures escalate immediately.
 
-**Workaround:** Use repeated-failure abort and supervisor escalation while recording restart absence.
+**Workaround:** No longer required for eligible RunFailed; budget/max-steps failures still escalate without restart by design.
 
-**Evidence:** `EV-failure-escalation-test`, `EV-known-seams`, `EV-supervisor-restart-source`, `EV-worker-source`
+**Evidence:** `EV-failure-escalation-test`, `EV-known-seams`, `EV-run-level-restart-unit-test`, `EV-supervisor-restart-source`, `EV-worker-source`
 
 **Action owner:** orchest-maintainers
 
-**Action:** Apply bounded delegated-run restart policy to run-level failures and emit restart evidence.
+**Action:** Applied bounded delegated-run restart to restartable RunFailed (Other) via ActorTerminated stop reasons; emit RunRestarted per attempt; keep actor-crash path.
 
 **Issue:** #251
 
 **Verification status:** `passed`
 
-**Verification summary:** Restart with max_retries one was configured on the delegated worker. After a successful search_corpus step, indexed evidence showed the controlled RunFailed, SubAgentFailed, parent SUB_AGENT_RUN_FAILED, and supervisor RunCompleted escalation in order without panic; no RunRestarted event was captured, matching the ActorFailed-only source branch.
+**Verification summary:** Restart with max_retries one on the delegated worker emits nested RunRestarted after the controlled RunFailed, retries search→fault once, then escalates through final RunFailed / SubAgentFailed / SUB_AGENT_RUN_FAILED / supervisor RunCompleted. Unit tests cover restart success, exhaustion, and non-restartable budget/max-steps failures; actor-crash restart remains covered.
 
-**Verification commands:** `cargo test -p research-pipeline-demo --test failure_escalation`
+**Verification commands:** `cargo test -p orchest --lib run_failed_; cargo test -p orchest --lib restart_`<br>`cargo test -p research-pipeline-demo --test failure_escalation`
 
-**Verification evidence:** `EV-failure-escalation-test`, `EV-supervisor-restart-source`
+**Verification evidence:** `EV-failure-escalation-test`, `EV-run-level-restart-unit-test`, `EV-supervisor-restart-source`
 
 ### SB-4 — LlmWatcher does not format nested delegation events
 
@@ -478,7 +478,7 @@ All deterministic contract, report, worker, supervisor/watcher, terminal-failure
 | RB-1 | `not-run` | — | `EV-llm-watcher-builder-source` | Source inspection confirms the panic path; GitHub issue #255 owns the fallible API repair and verifier. |
 | SB-1 | `passed` | `cargo test -p orchest --lib child_control`<br>`cargo test -p research-pipeline-demo --test supervisor_watcher` | `EV-agent-as-tool-forwarding-source`, `EV-child-control-demo-test`, `EV-child-control-unit-test`, `EV-supervisor-watcher-test` | RunHandle::child resolves a public ChildRunHandle after SubAgentStarted; supervisor_watcher and orchest child_control tests prove lookup, child-target inject/steer, and independent wait_completion. |
 | SB-2 | `passed` | `cargo test -p orchest --lib child_control`<br>`cargo test -p research-pipeline-demo --test supervisor_watcher` | `EV-child-control-demo-test`, `EV-child-control-unit-test`, `EV-supervisor-watcher-test`, `EV-watcher-action-routing` | child_control_surface_targets_worker_and_awaits_completion proves child inject/steer land only in the child conversation; existing supervisor_watcher steering path tests still prove supervisor-only targeting for WatcherAction and RunHandle paths. |
-| SB-3 | `passed` | `cargo test -p research-pipeline-demo --test failure_escalation` | `EV-failure-escalation-test`, `EV-supervisor-restart-source` | Restart with max_retries one was configured on the delegated worker. After a successful search_corpus step, indexed evidence showed the controlled RunFailed, SubAgentFailed, parent SUB_AGENT_RUN_FAILED, and supervisor RunCompleted escalation in order without panic; no RunRestarted event was captured, matching the ActorFailed-only source branch. |
+| SB-3 | `passed` | `cargo test -p orchest --lib run_failed_; cargo test -p orchest --lib restart_`<br>`cargo test -p research-pipeline-demo --test failure_escalation` | `EV-failure-escalation-test`, `EV-run-level-restart-unit-test`, `EV-supervisor-restart-source` | Restart with max_retries one on the delegated worker emits nested RunRestarted after the controlled RunFailed, retries search→fault once, then escalates through final RunFailed / SubAgentFailed / SUB_AGENT_RUN_FAILED / supervisor RunCompleted. Unit tests cover restart success, exhaustion, and non-restartable budget/max-steps failures; actor-crash restart remains covered. |
 | SB-4 | `passed` | `cargo test -p research-pipeline-demo --test supervisor_watcher` | `EV-llm-watcher-format-source`, `EV-supervisor-watcher-test` | LlmWatcher::format_event emits structured text for SubAgentStarted/Completed/Failed, SubAgentEvent, and ChildRunEvent. Attached LlmWatcher receives and formats nested events in supervisor_watcher after SB-8 repair (unit coverage lives in orchest::run::llm_watcher). |
 | SB-5 | `passed` | `cargo test -p orchest --lib events::`<br>`cargo test -p research-pipeline-demo --test watcher_order` | `EV-event-loss-recovery-test`, `EV-secondary-delivery-source`, `EV-watcher-order-test` | Saturation unit tests prove coalesced secondary EventsDropped with sequence metadata, flush-before-resume, and O(1) pending state; watcher_order remains the no-drop FIFO equivalence check. |
 | SB-6 | `passed` | `cargo test -p research-pipeline-demo --test supervisor_watcher` | `EV-supervisor-source`, `EV-supervisor-watcher-test` | Live helper uses AgentRun::start_with_watchers so declared watchers observe from RunStarted; post-start attach_watcher remains best-effort. Deterministic suite still passes. |
@@ -494,8 +494,9 @@ Revision `git:self` denotes the commit containing the canonical findings file an
 | run-child-control-unit | `test` | `passed` | yes | `cargo test -p orchest --lib child_control` | 2026-09-22 | `git:self` | — | — | `EV-child-control-unit-test` |
 | run-deterministic-runtime | `test` | `passed` | yes | `cargo test -p research-pipeline-demo` | 2026-07-31 | `git:self` | — | — | `EV-demo-package-test` |
 | run-event-loss-recovery | `test` | `passed` | yes | `cargo test -p orchest --lib events::` | 2026-09-21 | `git:self` | — | — | `EV-event-loss-recovery-test` |
-| run-failure-escalation-deterministic | `test` | `passed` | yes | `cargo test -p research-pipeline-demo --test failure_escalation` | 2026-07-31 | `git:self` | — | — | `EV-failure-escalation-test` |
+| run-failure-escalation-deterministic | `test` | `passed` | yes | `cargo test -p research-pipeline-demo --test failure_escalation` | 2026-09-22 | `git:self` | — | — | `EV-failure-escalation-test` |
 | run-fixture-contract | `fixture` | `passed` | yes | `cargo test -p research-pipeline-demo --test findings_contract` | 2026-07-31 | `git:self` | — | — | `EV-fixture-contract-test` |
+| run-level-restart-unit | `test` | `passed` | yes | `cargo test -p orchest --lib run_failed_; cargo test -p orchest --lib restart_` | 2026-09-22 | `git:self` | — | — | `EV-run-level-restart-unit-test` |
 | run-live-provider | `live-provider` | `not-run` | yes | — | — | — | configured-by-env | configured-by-env | — |
 | run-provider-fakes-verification | `test` | `passed` | yes | `cargo test -p orchest-provider --features testing fakes` | 2026-07-31 | `git:self` | — | — | `EV-provider-fakes-test` |
 | run-report-smoke | `smoke` | `passed` | yes | `cargo run -p research-pipeline-demo --bin seam-report -- check --findings examples/demo/research-pipeline/findings.json --report docs/iteration/v0_11/seam-gap-analysis.md` | 2026-07-31 | `git:self` | — | — | `EV-report-smoke` |
@@ -518,11 +519,15 @@ Focused orchest events:: unit tests prove coalesced secondary EventsDropped with
 
 #### run-failure-escalation-deterministic
 
-The worker completed search_corpus before triggering the controlled Fatal/Unsafe fault. Indexed primary-receiver boundaries then proved nested fault failure, nested RunFailed, SubAgentFailed, parent SUB_AGENT_RUN_FAILED, and supervisor escalation in strict order. Restart was configured but no RunRestarted event was captured.
+Focused failure_escalation test passed: controlled worker RunFailed restarts once (RunRestarted attempt=1), exhausts retries, then escalates through SubAgentFailed / SUB_AGENT_RUN_FAILED / supervisor RunCompleted without panic.
 
 #### run-fixture-contract
 
 All 42 contract tests passed, including canonical final-run provenance, closed enums, graph references, canonical paths, calendar dates, strict revisions and symbols, lifecycle/readiness rules, systematic privacy, and action ownership.
+
+#### run-level-restart-unit
+
+Focused orchest lib tests prove eligible RunFailed restart success, retry exhaustion without a loop, non-restartable BudgetExceeded/MaxStepsReached, and existing actor-crash restart coverage.
 
 #### run-live-provider
 
@@ -567,7 +572,7 @@ Eight deterministic worker tests passed: corpus tools, fatal unsafe fault shape,
 | EV-demo-package-test | `test` | `examples/demo/research-pipeline/Cargo.toml` | run-deterministic-runtime | `cargo test -p research-pipeline-demo` | 69 passed; 0 failed; 1 credential-gated live smoke ignored | The complete provider-independent Research Pipeline package passed without executing the ignored credential-gated provider smoke or writing the tracked canonical report. |
 | EV-event-loss-recovery-test | `test` | `crates/orchest/src/events.rs` · `secondary_saturation_delivers_coalesced_loss_then_resumes` | run-event-loss-recovery | `cargo test -p orchest --lib events::` | 10 passed; 0 failed; saturation + bounded pending + no-drop FIFO | Deterministic saturation tests prove coalesced secondary loss signals with from_seq/to_seq, flush-before-resume after drain, O(1) pending state under sustained saturation, and unchanged no-drop FIFO. |
 | EV-evidence-contract | `documentation` | `docs/archive/iteration/v0_11/finding-evidence-contract-design.md` · `Stable Seam Finding Evidence Design` | — | — | — | The evidence contract defines lifecycle, reference, and readiness requirements. |
-| EV-failure-escalation-test | `test` | `examples/demo/research-pipeline/tests/failure_escalation.rs` · `controlled_worker_failure_reaches_supervisor_escalation_without_restart_or_panic` | run-failure-escalation-deterministic | `cargo test -p research-pipeline-demo --test failure_escalation` | 1 passed; 0 failed; ordered search-to-escalation chain; no RunRestarted captured | The focused target gates completion on the public supervisor EventReceiver terminal event, requires completed search_corpus before fault_trigger, and extracts strict indices for nested Fatal/Unsafe failure, threshold-one abort RunFailed, SubAgentFailed, parent SUB_AGENT_RUN_FAILED, and supervisor escalation. It separately proves configured restart absence and no hook panic. |
+| EV-failure-escalation-test | `test` | `examples/demo/research-pipeline/tests/failure_escalation.rs` · `controlled_worker_failure_restarts_once_then_escalates_without_panic` | run-failure-escalation-deterministic | `cargo test -p research-pipeline-demo --test failure_escalation` | 1 passed; 0 failed; ordered search-to-restart-to-escalation chain; exactly one RunRestarted captured | The focused target gates completion on the public supervisor EventReceiver terminal event, requires completed search_corpus before fault_trigger on each attempt, and extracts strict indices for nested Fatal/Unsafe failure, threshold-one abort RunFailed, RunRestarted(attempt=1), final RunFailed, SubAgentFailed, parent SUB_AGENT_RUN_FAILED, and supervisor escalation. It proves exactly one nested restart and no hook panic. |
 | EV-fixture-contract-test | `runtime-output` | `examples/demo/research-pipeline/tests/findings_contract.rs` · `canonical_final_executed_rows_use_the_containing_commit_revision` | run-fixture-contract | `cargo test -p research-pipeline-demo --test findings_contract` | 42 passed; 0 failed | The strict canonical contract fixture target passed, including the containing-commit provenance guard for final executed rows. |
 | EV-known-seams | `documentation` | `docs/archive/iteration/v0_11/design-decisions.md` · `Pre-Identified Seam Gap Findings Summary` | — | — | — | Locked design decisions list the pre-identified seams and their stable ids. |
 | EV-llm-watcher-builder-source | `source` | `crates/orchest/src/run/llm_watcher.rs` · `LlmWatcherBuilder::build` | — | — | — | LlmWatcherBuilder::build uses expect when no model was configured, causing a public library panic instead of a configuration error. |
@@ -577,8 +582,9 @@ Eight deterministic worker tests passed: corpus tools, fatal unsafe fault shape,
 | EV-provider-fakes-test | `test` | `crates/orchest-provider/src/fakes.rs` · `tests` | run-provider-fakes-verification | `cargo test -p orchest-provider --features testing fakes` | 5 passed; 0 failed; 7 filtered out | The focused provider-fakes test filter passed all five FakeAsr/FakeTts tests. |
 | EV-public-api | `documentation` | `docs/archive/iteration/v0_11/implementation-plan.md` · `Public paths` | — | — | — | The v0.11 implementation overview fixes the public imports that the demo may use. |
 | EV-report-smoke | `smoke-run` | `examples/demo/research-pipeline/src/bin/seam-report.rs` · `Command::Check` | run-report-smoke | `cargo run -p research-pipeline-demo --bin seam-report -- check --findings examples/demo/research-pipeline/findings.json --report docs/iteration/v0_11/seam-gap-analysis.md` | report current; byte-for-byte match | The seam-report staleness check passed against the deterministic Markdown projection. |
+| EV-run-level-restart-unit-test | `test` | `crates/orchest/src/run/tests.rs` · `run_failed_from_tool_hook_restarts_and_succeeds` | run-level-restart-unit | `cargo test -p orchest --lib run_failed_; cargo test -p orchest --lib restart_` | 4 focused restart-policy tests passed; actor-crash restart suite still passes | Unit coverage proves tool/hook-driven RunFailed restarts and succeeds, retry exhaustion without a restart loop, and non-restartable BudgetExceeded / MaxStepsReached terminal semantics; existing actor-crash restart tests remain green. |
 | EV-secondary-delivery-source | `source` | `crates/orchest/src/events.rs` · `deliver_to_subscribers` | — | — | — | Primary delivery awaits with timeout; secondaries use try_send with O(1) coalesced pending loss and EventsDropped recovery on the affected secondary (mirror to primary best-effort). |
-| EV-supervisor-restart-source | `source` | `crates/orchest/src/run/supervisor.rs` · `SupervisorActor::handle_supervisor_evt` | — | — | — | The runtime emits RunRestarted only from SupervisorActor's ActorFailed branch; clean WorkerActor termination after RunFailed follows ActorTerminated instead. |
+| EV-supervisor-restart-source | `source` | `crates/orchest/src/run/supervisor.rs` · `SupervisorActor::handle_supervisor_evt` | — | — | — | SupervisorActor restarts on ActorFailed and on ActorTerminated stop reasons that encode restartable RunFailed (Other). BudgetExceeded and MaxStepsReached remain terminal. Exhausted run-level retries stop without emitting an extra RunAborted. |
 | EV-supervisor-source | `source` | `examples/demo/research-pipeline/src/supervisor.rs` · `build_supervisor and start_with_live_watchers` | — | — | — | The demo builds the worker through Worker::as_tool, registers it with an Orchest supervisor, instructs the fault path to call search_corpus before fault_trigger and then return an escalation summary without retrying, exposes only the supervisor RunHandle, and starts with AgentRun::start_with_watchers so declared watchers observe from RunStarted. |
 | EV-supervisor-watcher-test | `test` | `examples/demo/research-pipeline/tests/supervisor_watcher.rs` · `activated_watchers_prove_nested_routing_and_applied_supervisor_actions` | run-supervisor-watcher-deterministic | `cargo test -p research-pipeline-demo --test supervisor_watcher` | 9 passed; 0 failed; nested SubAgentEvent + child control resolve/await + child-target inject/steer | The focused target gates the first supervisor call, releases a harmless probe so queued subscriptions activate, and releases second-step delegation only after both watcher wrappers complete its ModelCallStarted event. It proves each public supervisor steering path changes only supervisor history, observes forwarded child completion on the primary EventReceiver and on both attached watchers, resolves RunHandle::child after SubAgentStarted, awaits child completion independently, and includes a dedicated child-target inject/steer proof. |
 | EV-watcher-action-arbitration-test | `test` | `crates/orchest/src/run/tests.rs` · `watcher_arbitration_abort_wins_independent_of_completion_order` | run-watcher-arbitration-unit | `cargo test -p orchest --lib watcher_arbitration` | watcher_arbitration tests passed; schedule-independent Abort and registration-order Inject/Steer | Adversarial gated ActionArbitrator tests prove Abort wins regardless of completion order and Inject/Steer apply in registration order; public arbitrate_watcher_actions documents precedence. |
@@ -604,9 +610,7 @@ Unresolved release blockers:
 
 ### Multivac M2
 
-Unresolved supervised-delegation seam blockers:
-
-- SB-3 — Restart does not cover run-level failure (`open`, #251)
+No unresolved seam blockers are recorded.
 
 ### Post-1.0 backlog
 

@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "iteration": "v0.11",
   "subject": "Research Pipeline",
-  "executiveSummary": "All deterministic contract, report, worker, supervisor/watcher, terminal-failure, and watcher-order checks passed. 2 supervised-delegation seam blockers and one release blocker remain open with owned GitHub issues; SB-1/SB-2/P1-4 are verified via ChildRunHandle / ChildRunRegistry; SB-4 and SB-8 are verified via ToolContext::emit_event fan-out and structured LlmWatcher nested formatting; SB-5 is verified via EventSink coalesced loss recovery; SB-6 is verified via AgentRun::start_with_watchers; SB-7 is verified via ActionArbitrator. The credential-gated live-provider run was not attempted because RESEARCH_PIPELINE_CHAT_MODEL and RESEARCH_PIPELINE_API_KEY are absent; v1.0 remains blocked by #258 until live verification passes.",
+  "executiveSummary": "All deterministic contract, report, worker, supervisor/watcher, terminal-failure, and watcher-order checks passed. 1 supervised-delegation seam blocker and one release blocker remain open with owned GitHub issues; SB-1/SB-2/P1-4 are verified via ChildRunHandle / ChildRunRegistry; SB-3 is verified via SupervisionStrategy::Restart on eligible RunFailed; SB-4 and SB-8 are verified via ToolContext::emit_event fan-out and structured LlmWatcher nested formatting; SB-5 is verified via EventSink coalesced loss recovery; SB-6 is verified via AgentRun::start_with_watchers; SB-7 is verified via ActionArbitrator. The credential-gated live-provider run was not attempted because RESEARCH_PIPELINE_CHAT_MODEL and RESEARCH_PIPELINE_API_KEY are absent; v1.0 remains blocked by #258 until live verification passes.",
   "readinessVerdict": {
     "status": "unverified",
     "reason": "The required live-provider run is not-run because RESEARCH_PIPELINE_CHAT_MODEL and RESEARCH_PIPELINE_API_KEY are absent. No waiver has been accepted; #258 blocks v1.0 until live verification passes.",
@@ -53,7 +53,8 @@
       "evidenceRefs": [
         "EV-public-api",
         "EV-supervisor-restart-source",
-        "EV-failure-escalation-test"
+        "EV-failure-escalation-test",
+        "EV-run-level-restart-unit-test"
       ],
       "findingRefs": [
         "SB-3"
@@ -222,11 +223,24 @@
       "status": "passed",
       "required": true,
       "command": "cargo test -p research-pipeline-demo --test failure_escalation",
-      "date": "2026-07-31",
+      "date": "2026-09-22",
       "revision": "git:self",
-      "summary": "The worker completed search_corpus before triggering the controlled Fatal/Unsafe fault. Indexed primary-receiver boundaries then proved nested fault failure, nested RunFailed, SubAgentFailed, parent SUB_AGENT_RUN_FAILED, and supervisor escalation in strict order. Restart was configured but no RunRestarted event was captured.",
+      "summary": "Focused failure_escalation test passed: controlled worker RunFailed restarts once (RunRestarted attempt=1), exhausts retries, then escalates through SubAgentFailed / SUB_AGENT_RUN_FAILED / supervisor RunCompleted without panic.",
       "evidenceRefs": [
         "EV-failure-escalation-test"
+      ]
+    },
+    {
+      "id": "run-level-restart-unit",
+      "kind": "test",
+      "status": "passed",
+      "required": true,
+      "command": "cargo test -p orchest --lib run_failed_; cargo test -p orchest --lib restart_",
+      "date": "2026-09-22",
+      "revision": "git:self",
+      "summary": "Focused orchest lib tests prove eligible RunFailed restart success, retry exhaustion without a loop, non-restartable BudgetExceeded/MaxStepsReached, and existing actor-crash restart coverage.",
+      "evidenceRefs": [
+        "EV-run-level-restart-unit-test"
       ]
     },
     {
@@ -430,7 +444,7 @@
     {
       "id": "EV-supervisor-restart-source",
       "kind": "source",
-      "summary": "The runtime emits RunRestarted only from SupervisorActor's ActorFailed branch; clean WorkerActor termination after RunFailed follows ActorTerminated instead.",
+      "summary": "SupervisorActor restarts on ActorFailed and on ActorTerminated stop reasons that encode restartable RunFailed (Other). BudgetExceeded and MaxStepsReached remain terminal. Exhausted run-level retries stop without emitting an extra RunAborted.",
       "path": "crates/orchest/src/run/supervisor.rs",
       "symbol": "SupervisorActor::handle_supervisor_evt"
     },
@@ -451,12 +465,12 @@
     {
       "id": "EV-failure-escalation-test",
       "kind": "test",
-      "summary": "The focused target gates completion on the public supervisor EventReceiver terminal event, requires completed search_corpus before fault_trigger, and extracts strict indices for nested Fatal/Unsafe failure, threshold-one abort RunFailed, SubAgentFailed, parent SUB_AGENT_RUN_FAILED, and supervisor escalation. It separately proves configured restart absence and no hook panic.",
+      "summary": "The focused target gates completion on the public supervisor EventReceiver terminal event, requires completed search_corpus before fault_trigger on each attempt, and extracts strict indices for nested Fatal/Unsafe failure, threshold-one abort RunFailed, RunRestarted(attempt=1), final RunFailed, SubAgentFailed, parent SUB_AGENT_RUN_FAILED, and supervisor escalation. It proves exactly one nested restart and no hook panic.",
       "path": "examples/demo/research-pipeline/tests/failure_escalation.rs",
-      "symbol": "controlled_worker_failure_reaches_supervisor_escalation_without_restart_or_panic",
+      "symbol": "controlled_worker_failure_restarts_once_then_escalates_without_panic",
       "command": "cargo test -p research-pipeline-demo --test failure_escalation",
       "runRef": "run-failure-escalation-deterministic",
-      "result": "1 passed; 0 failed; ordered search-to-escalation chain; no RunRestarted captured"
+      "result": "1 passed; 0 failed; ordered search-to-restart-to-escalation chain; exactly one RunRestarted captured"
     },
     {
       "id": "EV-watcher-order-test",
@@ -543,6 +557,16 @@
       "result": "watcher_arbitration tests passed; schedule-independent Abort and registration-order Inject/Steer",
       "path": "crates/orchest/src/run/tests.rs",
       "symbol": "watcher_arbitration_abort_wins_independent_of_completion_order"
+    },
+    {
+      "id": "EV-run-level-restart-unit-test",
+      "kind": "test",
+      "summary": "Unit coverage proves tool/hook-driven RunFailed restarts and succeeds, retry exhaustion without a restart loop, and non-restartable BudgetExceeded / MaxStepsReached terminal semantics; existing actor-crash restart tests remain green.",
+      "path": "crates/orchest/src/run/tests.rs",
+      "symbol": "run_failed_from_tool_hook_restarts_and_succeeds",
+      "command": "cargo test -p orchest --lib run_failed_; cargo test -p orchest --lib restart_",
+      "runRef": "run-level-restart-unit",
+      "result": "4 focused restart-policy tests passed; actor-crash restart suite still passes"
     }
   ],
   "findings": [
@@ -623,32 +647,35 @@
       "id": "SB-3",
       "title": "Restart does not cover run-level failure",
       "apiSurface": "orchest::run::SupervisionStrategy",
-      "description": "Restart reacts to actor crashes rather than RunFailed outcomes from tool errors, budgets, or max steps.",
-      "observedConsequence": "A delegated worker can terminally fail without the configured restart policy recovering it.",
-      "workaround": "Use repeated-failure abort and supervisor escalation while recording restart absence.",
+      "description": "Pre-fix: Restart reacted to actor crashes rather than RunFailed outcomes from tool errors, budgets, or max steps. Post-fix: eligible Other RunFailed outcomes share the bounded Restart policy; BudgetExceeded and MaxStepsReached stay terminal.",
+      "observedConsequence": "A delegated worker can recover from eligible run-level failures up to max_retries, with attributable RunRestarted evidence; non-restartable failures escalate immediately.",
+      "workaround": "No longer required for eligible RunFailed; budget/max-steps failures still escalate without restart by design.",
       "classification": "seam-blocker",
-      "status": "open",
+      "status": "verified",
       "evidenceRefs": [
         "EV-known-seams",
         "EV-worker-source",
         "EV-supervisor-restart-source",
-        "EV-failure-escalation-test"
+        "EV-failure-escalation-test",
+        "EV-run-level-restart-unit-test"
       ],
       "action": {
         "owner": "orchest-maintainers",
-        "summary": "Apply bounded delegated-run restart policy to run-level failures and emit restart evidence.",
+        "summary": "Applied bounded delegated-run restart to restartable RunFailed (Other) via ActorTerminated stop reasons; emit RunRestarted per attempt; keep actor-crash path.",
         "issueRef": "#251"
       },
       "verification": {
         "status": "passed",
         "commands": [
+          "cargo test -p orchest --lib run_failed_; cargo test -p orchest --lib restart_",
           "cargo test -p research-pipeline-demo --test failure_escalation"
         ],
         "evidenceRefs": [
           "EV-supervisor-restart-source",
-          "EV-failure-escalation-test"
+          "EV-failure-escalation-test",
+          "EV-run-level-restart-unit-test"
         ],
-        "summary": "Restart with max_retries one was configured on the delegated worker. After a successful search_corpus step, indexed evidence showed the controlled RunFailed, SubAgentFailed, parent SUB_AGENT_RUN_FAILED, and supervisor RunCompleted escalation in order without panic; no RunRestarted event was captured, matching the ActorFailed-only source branch."
+        "summary": "Restart with max_retries one on the delegated worker emits nested RunRestarted after the controlled RunFailed, retries search\u2192fault once, then escalates through final RunFailed / SubAgentFailed / SUB_AGENT_RUN_FAILED / supervisor RunCompleted. Unit tests cover restart success, exhaustion, and non-restartable budget/max-steps failures; actor-crash restart remains covered."
       }
     },
     {
@@ -753,7 +780,7 @@
       "apiSurface": "orchest::run::WatcherAction",
       "description": "Each watcher runs independently, so actions returned by multiple watchers do not have a global registration-order execution guarantee.",
       "observedConsequence": "Concurrent Inject, Steer, or Abort actions cannot be attributed to watcher registration order.",
-      "workaround": "N/A — arbitration contract is public and enforced.",
+      "workaround": "N/A \u2014 arbitration contract is public and enforced.",
       "classification": "seam-blocker",
       "status": "verified",
       "evidenceRefs": [

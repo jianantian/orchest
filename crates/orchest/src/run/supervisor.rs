@@ -1,4 +1,5 @@
-//! SupervisorActor: monitors WorkerActor, implements crash recovery via supervision tree.
+//! SupervisorActor: monitors WorkerActor, implements crash and eligible run-level
+//! failure recovery via the supervision tree.
 
 use std::sync::{Arc, Mutex};
 
@@ -15,6 +16,30 @@ use super::actor::{AgentMsg, AgentRunArgs, ResumeState, WorkerActor};
 use super::config::{RunId, SupervisionStrategy};
 use super::handle::{ApprovalBus, ChildRunRegistry};
 use super::watcher::Watcher;
+
+/// Stop-reason token WorkerActor uses after emitting `RunFailed`.
+pub(crate) fn format_run_failed_stop_reason(kind: crate::events::RunFailureKind) -> String {
+    match kind {
+        crate::events::RunFailureKind::BudgetExceeded => "run_failed:BudgetExceeded".into(),
+        crate::events::RunFailureKind::MaxStepsReached => "run_failed:MaxStepsReached".into(),
+        crate::events::RunFailureKind::Other => "run_failed:Other".into(),
+    }
+}
+
+fn parse_run_failed_stop_reason(reason: &str) -> Option<crate::events::RunFailureKind> {
+    match reason {
+        "run_failed:BudgetExceeded" => Some(crate::events::RunFailureKind::BudgetExceeded),
+        "run_failed:MaxStepsReached" => Some(crate::events::RunFailureKind::MaxStepsReached),
+        "run_failed:Other" => Some(crate::events::RunFailureKind::Other),
+        _ => None,
+    }
+}
+
+/// Budget / max-steps failures are deterministic for the same config and must
+/// keep terminal semantics. Tool/hook-driven `Other` failures are restartable.
+pub(crate) fn is_restartable_run_failure(kind: crate::events::RunFailureKind) -> bool {
+    matches!(kind, crate::events::RunFailureKind::Other)
+}
 
 #[allow(dead_code)] // justified: Shutdown reserved for graceful supervisor teardown from RunHandle
 pub(crate) enum SupervisorMsg {
@@ -144,59 +169,93 @@ impl Actor for SupervisorActor {
         state: &mut SupervisorState,
     ) -> Result<(), ActorProcessingErr> {
         match message {
-            SupervisionEvent::ActorFailed(_who, _err) => match &state.strategy {
-                SupervisionStrategy::Stop => {
-                    let _ = state
-                        .event_tx
-                        .send(RuntimeEvent::RunAborted {
-                            reason: Some("worker failed (strategy: Stop)".into()),
-                        })
-                        .await;
+            SupervisionEvent::ActorFailed(_who, _err) => {
+                maybe_restart_worker(myself, state, RestartCause::ActorCrash).await?;
+            }
+            SupervisionEvent::ActorTerminated(_who, _state_box, reason) => {
+                let restartable = reason
+                    .as_deref()
+                    .and_then(parse_run_failed_stop_reason)
+                    .is_some_and(is_restartable_run_failure);
+                if restartable {
+                    // Eligible RunFailed: apply the same bounded Restart policy.
+                    // Exhaustion leaves the already-emitted RunFailed as the
+                    // terminal evidence (no extra RunAborted / restart loop).
+                    maybe_restart_worker(myself, state, RestartCause::RunFailed).await?;
+                } else {
                     myself.stop(None);
                 }
-                SupervisionStrategy::Restart { max_retries } => {
-                    state.attempts += 1;
-                    if state.attempts > *max_retries {
-                        let _ = state
-                            .event_tx
-                            .send(RuntimeEvent::RunAborted {
-                                reason: Some(format!("max retries ({max_retries}) exceeded")),
-                            })
-                            .await;
-                        myself.stop(None);
-                        return Ok(());
-                    }
-
-                    let _ = state
-                        .event_tx
-                        .send(RuntimeEvent::RunRestarted {
-                            attempt: state.attempts,
-                        })
-                        .await;
-
-                    let new_args = build_restart_args(state).await;
-
-                    let (worker_ref, worker_handle) =
-                        Actor::spawn_linked(None, WorkerActor, new_args, myself.get_cell()).await?;
-
-                    if let Ok(mut guard) = state.actor_ref_shared.lock() {
-                        *guard = Some(worker_ref.clone());
-                    }
-                    state.ready.notify_waiters();
-                    state.worker_handle = Some(worker_handle);
-
-                    for (index, (watcher, capacity)) in state.watchers.iter().enumerate() {
-                        state.arbitrator.register_watcher(index);
-                        reattach_watcher(&worker_ref, watcher, *capacity, index, &state.arbitrator);
-                    }
-                }
-            },
-            SupervisionEvent::ActorTerminated(_who, _state_box, _reason) => {
-                myself.stop(None);
             }
             _ => {}
         }
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RestartCause {
+    ActorCrash,
+    RunFailed,
+}
+
+async fn maybe_restart_worker(
+    myself: ActorRef<SupervisorMsg>,
+    state: &mut SupervisorState,
+    cause: RestartCause,
+) -> Result<(), ActorProcessingErr> {
+    match &state.strategy {
+        SupervisionStrategy::Stop => {
+            if matches!(cause, RestartCause::ActorCrash) {
+                let _ = state
+                    .event_tx
+                    .send(RuntimeEvent::RunAborted {
+                        reason: Some("worker failed (strategy: Stop)".into()),
+                    })
+                    .await;
+            }
+            myself.stop(None);
+            Ok(())
+        }
+        SupervisionStrategy::Restart { max_retries } => {
+            let max_retries = *max_retries;
+            state.attempts += 1;
+            if state.attempts > max_retries {
+                if matches!(cause, RestartCause::ActorCrash) {
+                    let _ = state
+                        .event_tx
+                        .send(RuntimeEvent::RunAborted {
+                            reason: Some(format!("max retries ({max_retries}) exceeded")),
+                        })
+                        .await;
+                }
+                myself.stop(None);
+                return Ok(());
+            }
+
+            let _ = state
+                .event_tx
+                .send(RuntimeEvent::RunRestarted {
+                    attempt: state.attempts,
+                })
+                .await;
+
+            let new_args = build_restart_args(state).await;
+
+            let (worker_ref, worker_handle) =
+                Actor::spawn_linked(None, WorkerActor, new_args, myself.get_cell()).await?;
+
+            if let Ok(mut guard) = state.actor_ref_shared.lock() {
+                *guard = Some(worker_ref.clone());
+            }
+            state.ready.notify_waiters();
+            state.worker_handle = Some(worker_handle);
+
+            for (index, (watcher, capacity)) in state.watchers.iter().enumerate() {
+                state.arbitrator.register_watcher(index);
+                reattach_watcher(&worker_ref, watcher, *capacity, index, &state.arbitrator);
+            }
+            Ok(())
+        }
     }
 }
 

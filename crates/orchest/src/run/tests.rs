@@ -7903,6 +7903,263 @@ async fn restart_replays_latest_session_store_snapshot() {
     );
 }
 
+struct RunLevelRestartModel {
+    /// Number of model calls that should request `unstable_tool` before answering.
+    fail_tool_calls: u32,
+    calls: AtomicU32,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for RunLevelRestartModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "run-level-restart"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call < self.fail_tool_calls {
+            return Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: format!("boom-{call}"),
+                    name: "unstable_tool".into(),
+                    input: json!({}),
+                }],
+                usage: TokenUsage {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    ..Default::default()
+                },
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            });
+        }
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text(
+                "recovered after run-level restart".into(),
+            )],
+            usage: TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                ..Default::default()
+            },
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+fn aborting_repeated_failure_config(max_retries: u32) -> AgentConfig {
+    let mut config = test_config();
+    config.supervision_strategy = SupervisionStrategy::Restart { max_retries };
+    config.runtime.repeated_failure.threshold = 1;
+    config.hooks.push(Arc::new(RepeatedFailureRecordingHook {
+        records: Arc::new(Mutex::new(Vec::new())),
+        abort: true,
+    }));
+    config
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn run_failed_from_tool_hook_restarts_and_succeeds() {
+    let model = Arc::new(RunLevelRestartModel {
+        fail_tool_calls: 1,
+        calls: AtomicU32::new(0),
+    });
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(RepeatedFailureTool {
+            kinds: vec![ErrorKind::Fatal],
+            calls: Arc::new(AtomicU32::new(0)),
+        }))
+        .unwrap();
+
+    let (handle, mut rx) = AgentRun::start(
+        aborting_repeated_failure_config(1),
+        "recover please".into(),
+        model,
+        registry,
+    );
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    let restarts: Vec<u32> = events
+        .iter()
+        .filter_map(|e| match e {
+            RuntimeEvent::RunRestarted { attempt } => Some(*attempt),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        restarts,
+        vec![1],
+        "eligible RunFailed must emit one RunRestarted"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::RunFailed { kind, .. } if *kind == RunFailureKind::Other
+        )),
+        "first attempt must emit RunFailed"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::RunCompleted { output, .. }
+                if output == "recovered after run-level restart"
+        )),
+        "restart must complete successfully"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn run_failed_restart_exhausts_retries_without_loop() {
+    let model = Arc::new(RunLevelRestartModel {
+        fail_tool_calls: u32::MAX,
+        calls: AtomicU32::new(0),
+    });
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(RepeatedFailureTool {
+            kinds: vec![ErrorKind::Fatal],
+            calls: Arc::new(AtomicU32::new(0)),
+        }))
+        .unwrap();
+
+    let (handle, mut rx) = AgentRun::start(
+        aborting_repeated_failure_config(1),
+        "keep failing".into(),
+        model,
+        registry,
+    );
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    let restarts: Vec<u32> = events
+        .iter()
+        .filter_map(|e| match e {
+            RuntimeEvent::RunRestarted { attempt } => Some(*attempt),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        restarts,
+        vec![1],
+        "max_retries=1 must restart once then stop"
+    );
+    let failures = events
+        .iter()
+        .filter(|e| matches!(e, RuntimeEvent::RunFailed { .. }))
+        .count();
+    assert_eq!(failures, 2, "initial failure plus post-restart failure");
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        "exhausted retries must remain failed"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunAborted { .. })),
+        "run-level exhaustion keeps the final RunFailed (no RunAborted loop marker)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn budget_exceeded_run_failed_is_not_restarted() {
+    let mut config = test_config();
+    config.supervision_strategy = SupervisionStrategy::Restart { max_retries: 2 };
+    config.budget.max_tokens = Some(50);
+
+    let model = Arc::new(OneToolThenTextModel {
+        tool_name: "usage_bomb",
+        calls: AtomicU32::new(0),
+    });
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(UsageBombTool {
+            parallelism: ToolParallelism::Serial,
+        }))
+        .unwrap();
+
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::RunFailed {
+                kind: RunFailureKind::BudgetExceeded,
+                ..
+            }
+        )),
+        "expected BudgetExceeded terminal failure"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunRestarted { .. })),
+        "BudgetExceeded must keep terminal semantics under Restart"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn max_steps_run_failed_is_not_restarted() {
+    let mut config = test_config();
+    config.supervision_strategy = SupervisionStrategy::Restart { max_retries: 2 };
+    config.runtime.max_steps = 0;
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::RunFailed {
+                kind: RunFailureKind::MaxStepsReached,
+                ..
+            }
+        )),
+        "expected MaxStepsReached terminal failure"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunRestarted { .. })),
+        "MaxStepsReached must keep terminal semantics under Restart"
+    );
+}
+
 #[tokio::test]
 async fn subscribe_events_receives_subsequent_events() {
     let model = Arc::new(FakeModelAdapter::final_answer());
