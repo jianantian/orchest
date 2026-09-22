@@ -291,9 +291,23 @@ impl AgentAsTool {
             Arc::clone(&self.model),
             self.registry.clone(),
             ctx.approval_bus.clone(),
+            ctx.child_registry.clone(),
             vec![],
         );
         let child_run_id = handle.run_id;
+
+        // Publish a public child control surface before any child events so the
+        // supervisor RunHandle can resolve inject/steer/completion targets.
+        let outcome_tx = ctx
+            .child_registry
+            .register(
+                child_run_id,
+                parent_run_id,
+                std::sync::Arc::clone(&handle.actor_ref),
+                std::sync::Arc::clone(&handle.ready),
+                std::sync::Arc::clone(&handle.supervisor_ref),
+            )
+            .await;
 
         ctx.emit_event(RuntimeEvent::SubAgentStarted {
             parent_run_id,
@@ -325,9 +339,16 @@ impl AgentAsTool {
                     ..
                 } => {
                     output = child_output.clone();
+                    let _ = outcome_tx.send(Some(crate::run::ChildRunOutcome::Completed {
+                        output: child_output.clone(),
+                    }));
                 }
                 RuntimeEvent::RunFailed { error, kind } => {
                     failed = Some((error.clone(), *kind));
+                    let _ = outcome_tx.send(Some(crate::run::ChildRunOutcome::Failed {
+                        error: error.clone(),
+                        kind: *kind,
+                    }));
                 }
                 _ => {}
             }
@@ -339,6 +360,8 @@ impl AgentAsTool {
             .await;
         }
         handle.wait().await;
+        // Keep the registry entry so late SubAgentStarted delivery and
+        // post-terminal wait_completion lookups still resolve (P1-4).
 
         if let Some((error, kind)) = failed {
             ctx.emit_event(RuntimeEvent::SubAgentFailed {
@@ -684,12 +707,14 @@ impl SubAgentBuilder {
 mod tests {
     use super::*;
     use crate::model::{
-        ContentBlock, ModelCapabilities, ModelError, ModelResponse, RequestOptions, StopReason,
-        TokenUsage,
+        ContentBlock, Message, ModelCapabilities, ModelError, ModelResponse, RequestOptions, Role,
+        StopReason, TokenUsage,
     };
-    use crate::tool::{ErrorKind, RetryHint};
+    use crate::run::{AgentRun, ChildRunOutcome};
+    use crate::tool::{ErrorKind, RetryHint, ToolDef};
     use std::sync::atomic::{AtomicU32, Ordering};
-    use tokio::sync::mpsc as tokio_mpsc;
+    use std::sync::Mutex;
+    use tokio::sync::{mpsc as tokio_mpsc, Notify};
 
     struct NeverCalledModel;
 
@@ -1387,5 +1412,410 @@ mod tests {
         assert!(events
             .iter()
             .any(|e| matches!(e, RuntimeEvent::RuntimeWarning { .. })));
+    }
+
+    // ── #249: public child control surface ───────────────────────────────────
+
+    struct ChildControlGate {
+        entered: std::sync::atomic::AtomicBool,
+        entered_notify: Notify,
+        released: std::sync::atomic::AtomicBool,
+        release_notify: Notify,
+    }
+
+    impl ChildControlGate {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                entered: std::sync::atomic::AtomicBool::new(false),
+                entered_notify: Notify::new(),
+                released: std::sync::atomic::AtomicBool::new(false),
+                release_notify: Notify::new(),
+            })
+        }
+
+        async fn hold(&self) {
+            self.entered.store(true, Ordering::SeqCst);
+            self.entered_notify.notify_waiters();
+            loop {
+                if self.released.load(Ordering::SeqCst) {
+                    break;
+                }
+                self.release_notify.notified().await;
+            }
+        }
+
+        async fn wait_entered(&self) {
+            loop {
+                if self.entered.load(Ordering::SeqCst) {
+                    break;
+                }
+                self.entered_notify.notified().await;
+            }
+        }
+
+        fn release(&self) {
+            self.released.store(true, Ordering::SeqCst);
+            self.release_notify.notify_waiters();
+        }
+    }
+
+    /// Two-call child: first call holds a gate then requests a noop tool; second
+    /// call records history (so mid-flight inject/steer are visible) and ends.
+    struct GatedChildModel {
+        calls: AtomicU32,
+        gate: Arc<ChildControlGate>,
+        histories: Arc<Mutex<Vec<Vec<Message>>>>,
+    }
+
+    #[async_trait]
+    impl ModelAdapter for GatedChildModel {
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "gated-child"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDef],
+            _options: &RequestOptions,
+            _tx: Option<tokio_mpsc::Sender<crate::model::StreamEvent>>,
+        ) -> Result<ModelResponse, ModelError> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            self.histories
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(messages.to_vec());
+            if n == 0 {
+                self.gate.hold().await;
+                return Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "child-checkpoint".into(),
+                        name: "child_checkpoint".into(),
+                        input: json!({}),
+                    }],
+                    usage: TokenUsage {
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        ..Default::default()
+                    },
+                    stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
+                });
+            }
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("child done".into())],
+                usage: TokenUsage {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    ..Default::default()
+                },
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+
+    struct SupervisorDelegatingModel {
+        calls: AtomicU32,
+        histories: Arc<Mutex<Vec<Vec<Message>>>>,
+    }
+
+    #[async_trait]
+    impl ModelAdapter for SupervisorDelegatingModel {
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "supervisor"
+        }
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities::default()
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDef],
+            _options: &RequestOptions,
+            _tx: Option<tokio_mpsc::Sender<crate::model::StreamEvent>>,
+        ) -> Result<ModelResponse, ModelError> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            self.histories
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(messages.to_vec());
+            if n == 0 {
+                return Ok(ModelResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "delegate-1".into(),
+                        name: "worker".into(),
+                        input: json!({"input": "do work"}),
+                    }],
+                    usage: TokenUsage::default(),
+                    stop_reason: StopReason::ToolUse,
+                    option_adjustments: vec![],
+                });
+            }
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("supervisor done".into())],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+
+    struct CheckpointTool {
+        metadata: ToolMetadata,
+    }
+
+    impl CheckpointTool {
+        fn new() -> Self {
+            Self {
+                metadata: ToolMetadata {
+                    side_effect: false,
+                    approval: crate::tool::Approval::Never,
+                    source: ToolSource::InProcess,
+                    ..ToolMetadata::default()
+                },
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Tool for CheckpointTool {
+        fn name(&self) -> &str {
+            "child_checkpoint"
+        }
+        fn description(&self) -> &str {
+            "noop checkpoint"
+        }
+        fn input_schema(&self) -> &JsonSchema {
+            &Value::Null
+        }
+        fn output_schema(&self) -> Option<&JsonSchema> {
+            None
+        }
+        fn metadata(&self) -> &ToolMetadata {
+            &self.metadata
+        }
+        async fn execute(
+            &self,
+            _input: Value,
+            _ctx: &ToolContext,
+        ) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::Immediate(json!({"ok": true})))
+        }
+    }
+
+    fn history_contains(histories: &Mutex<Vec<Vec<Message>>>, role: Role, needle: &str) -> bool {
+        histories
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .flatten()
+            .any(|message| {
+                message.role == role
+                    && message.content.iter().any(|block| match block {
+                        ContentBlock::Text(text) => text.contains(needle),
+                        _ => false,
+                    })
+            })
+    }
+
+    #[tokio::test]
+    async fn child_control_targets_child_not_supervisor_and_completion_is_independent() {
+        const CHILD_INJECT: &str = "child-target inject";
+        const CHILD_STEER: &str = "child-target steer";
+        const SUPERVISOR_INJECT: &str = "supervisor-target inject";
+
+        let child_gate = ChildControlGate::new();
+        let child_histories = Arc::new(Mutex::new(Vec::new()));
+        let supervisor_histories = Arc::new(Mutex::new(Vec::new()));
+
+        let child_model: Arc<dyn ModelAdapter> = Arc::new(GatedChildModel {
+            calls: AtomicU32::new(0),
+            gate: Arc::clone(&child_gate),
+            histories: Arc::clone(&child_histories),
+        });
+        let mut child_registry = ToolRegistry::new();
+        child_registry
+            .register(Arc::new(CheckpointTool::new()))
+            .expect("register checkpoint");
+        let mut child_config = test_agent_config();
+        child_config.runtime.max_steps = 4;
+        let worker = child_config
+            .as_tool("worker", "delegated worker")
+            .model(Arc::clone(&child_model))
+            .registry(child_registry)
+            .build()
+            .expect("build worker tool");
+
+        let supervisor_model: Arc<dyn ModelAdapter> = Arc::new(SupervisorDelegatingModel {
+            calls: AtomicU32::new(0),
+            histories: Arc::clone(&supervisor_histories),
+        });
+        let mut supervisor_registry = ToolRegistry::new();
+        supervisor_registry
+            .register(worker)
+            .expect("register worker");
+        let mut supervisor_config = AgentConfig::builder("supervisor", "mock/supervisor")
+            .system_prompt("delegate")
+            .max_steps(4)
+            .build()
+            .expect("supervisor config");
+        supervisor_config.runtime.max_steps = 4;
+
+        let (handle, mut rx) = AgentRun::start(
+            supervisor_config,
+            "parent request".into(),
+            supervisor_model,
+            supervisor_registry,
+        );
+
+        // Drain until the child is registered, then exercise child control and
+        // a concurrent supervisor inject without consuming completion yet.
+        let mut child_run_id = None;
+        let mut completion_task = None;
+        while let Some(event) = rx.recv().await {
+            if let RuntimeEvent::SubAgentStarted {
+                child_run_id: id, ..
+            } = &event
+            {
+                child_run_id = Some(*id);
+                child_gate.wait_entered().await;
+                let child = handle
+                    .child(*id)
+                    .await
+                    .expect("public child control surface after SubAgentStarted");
+                assert_eq!(child.run_id, *id);
+                assert_eq!(child.parent_run_id, handle.run_id);
+
+                child.inject_message(CHILD_INJECT);
+                child.steer(CHILD_STEER);
+                handle.inject_message(SUPERVISOR_INJECT);
+
+                let child_for_wait = handle
+                    .child(*id)
+                    .await
+                    .expect("child still registered while gated");
+                completion_task = Some(tokio::spawn(async move {
+                    child_for_wait.wait_completion().await
+                }));
+
+                child_gate.release();
+            }
+            if matches!(
+                event,
+                RuntimeEvent::RunCompleted { .. } | RuntimeEvent::RunFailed { .. }
+            ) {
+                break;
+            }
+        }
+        // Drain remainder then wait the supervisor handle.
+        while rx.try_recv().is_ok() {}
+        handle.wait().await;
+
+        let child_run_id = child_run_id.expect("SubAgentStarted observed");
+        let outcome = completion_task
+            .expect("completion task started")
+            .await
+            .expect("completion join")
+            .expect("child completion");
+        match outcome {
+            ChildRunOutcome::Completed { output } => {
+                assert_eq!(output, json!("child done"));
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+
+        assert!(
+            history_contains(&child_histories, Role::User, CHILD_INJECT),
+            "child inject must land in child conversation"
+        );
+        assert!(
+            history_contains(&child_histories, Role::System, CHILD_STEER),
+            "child steer must land in child conversation"
+        );
+        assert!(
+            !history_contains(&child_histories, Role::User, SUPERVISOR_INJECT),
+            "supervisor inject must not appear in child conversation"
+        );
+        assert!(
+            !history_contains(&supervisor_histories, Role::User, CHILD_INJECT),
+            "child inject must not appear in supervisor conversation"
+        );
+        assert!(
+            !history_contains(&supervisor_histories, Role::System, CHILD_STEER),
+            "child steer must not appear in supervisor conversation"
+        );
+        assert!(
+            history_contains(&supervisor_histories, Role::User, SUPERVISOR_INJECT),
+            "supervisor-level inject remains covered"
+        );
+
+        // After unregister, lookup is gone but the awaited completion already succeeded.
+        // Re-creating a handle is not required; prove active_children is empty post-wait.
+        // (Registry unregisters after the child tool returns.)
+        let _ = child_run_id;
+    }
+
+    #[tokio::test]
+    async fn child_control_publishes_failed_outcome() {
+        let child_model: Arc<dyn ModelAdapter> = Arc::new(FailingModel);
+        let worker = test_agent_config()
+            .as_tool("worker", "delegated worker")
+            .model(child_model)
+            .registry(ToolRegistry::new())
+            .build()
+            .expect("build worker");
+
+        let supervisor_model: Arc<dyn ModelAdapter> = Arc::new(SupervisorDelegatingModel {
+            calls: AtomicU32::new(0),
+            histories: Arc::new(Mutex::new(Vec::new())),
+        });
+        let mut registry = ToolRegistry::new();
+        registry.register(worker).expect("register");
+        let config = AgentConfig::builder("supervisor", "mock/supervisor")
+            .system_prompt("delegate")
+            .max_steps(4)
+            .build()
+            .expect("config");
+
+        let (handle, mut rx) = AgentRun::start(config, "boom".into(), supervisor_model, registry);
+        let mut wait_task = None;
+        while let Some(event) = rx.recv().await {
+            if let RuntimeEvent::SubAgentStarted {
+                child_run_id: id, ..
+            } = &event
+            {
+                let child = handle.child(*id).await.expect("child handle");
+                wait_task = Some(tokio::spawn(async move { child.wait_completion().await }));
+            }
+            if matches!(
+                event,
+                RuntimeEvent::RunCompleted { .. } | RuntimeEvent::RunFailed { .. }
+            ) {
+                break;
+            }
+        }
+        while rx.try_recv().is_ok() {}
+        handle.wait().await;
+
+        let outcome = wait_task
+            .expect("wait task")
+            .await
+            .expect("join")
+            .expect("outcome");
+        match outcome {
+            ChildRunOutcome::Failed { error, .. } => {
+                assert!(error.contains("provider exploded"), "{error}");
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
     }
 }

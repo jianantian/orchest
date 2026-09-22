@@ -13,7 +13,7 @@ use crate::tool::registry::ToolRegistry;
 use super::action_arbitration::{ActionArbitrator, DeliveryTicket};
 use super::actor::{AgentMsg, AgentRunArgs, ResumeState, WorkerActor};
 use super::config::{RunId, SupervisionStrategy};
-use super::handle::ApprovalBus;
+use super::handle::{ApprovalBus, ChildRunRegistry};
 use super::watcher::Watcher;
 
 #[allow(dead_code)] // justified: Shutdown reserved for graceful supervisor teardown from RunHandle
@@ -34,6 +34,7 @@ pub(crate) struct SupervisorState {
     registry: ToolRegistry,
     config: crate::run::AgentConfig,
     approval_bus: ApprovalBus,
+    child_registry: ChildRunRegistry,
     session_store: Option<Arc<dyn SessionStore>>,
     session_id: Option<String>,
     original_input: Vec<crate::model::ContentBlock>,
@@ -50,6 +51,7 @@ pub(crate) struct SupervisorArgs {
     pub registry: ToolRegistry,
     pub event_tx: mpsc::Sender<RuntimeEvent>,
     pub approval_bus: ApprovalBus,
+    pub child_registry: ChildRunRegistry,
     pub actor_ref_shared: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
     pub ready: Arc<tokio::sync::Notify>,
     pub worker_args: AgentRunArgs,
@@ -96,6 +98,7 @@ impl Actor for SupervisorActor {
             registry: args.registry,
             config: args.config,
             approval_bus: args.approval_bus,
+            child_registry: args.child_registry,
             session_store,
             session_id,
             original_input,
@@ -252,6 +255,7 @@ pub(crate) fn spawn_supervised(
     run_id: RunId,
     mut args: AgentRunArgs,
     approval_bus: ApprovalBus,
+    child_registry: ChildRunRegistry,
     event_rx: mpsc::Receiver<RuntimeEvent>,
     initial_watchers: Vec<(Arc<dyn Watcher>, usize)>,
 ) -> (super::handle::RunHandle, super::EventReceiver) {
@@ -281,6 +285,7 @@ pub(crate) fn spawn_supervised(
         registry: args.registry.clone(),
         event_tx: args.event_tx.clone(),
         approval_bus: approval_bus.clone(),
+        child_registry: child_registry.clone(),
         actor_ref_shared: actor_ref_shared.clone(),
         ready: ready.clone(),
         worker_args: args,
@@ -305,6 +310,7 @@ pub(crate) fn spawn_supervised(
         ready,
         actor_join,
         approval_bus,
+        child_registry,
         supervisor_ref: supervisor_ref_for_handle,
     };
     (handle, event_rx)
@@ -333,6 +339,7 @@ async fn build_restart_args(state: &SupervisorState) -> AgentRunArgs {
         registry: state.registry.clone(),
         event_tx: state.event_tx.clone(),
         approval_bus: state.approval_bus.clone(),
+        child_registry: state.child_registry.clone(),
         resume,
         initial_messages: state.original_initial_messages.clone(),
         // Restart reattaches via `reattach_watcher` / Subscribe, not pre-wiring.

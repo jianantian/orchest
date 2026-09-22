@@ -15,14 +15,14 @@ steering and completion without leaking private runtime paths.
 
 ## Acceptance Criteria
 
-- [ ] A caller can obtain or resolve a public control surface for the
+- [x] A caller can obtain or resolve a public control surface for the
   delegated child started by `AgentAsTool`.
-- [ ] Child-target inject and steer operations demonstrably change the child
+- [x] Child-target inject and steer operations demonstrably change the child
   conversation and not the supervisor conversation.
-- [ ] Child completion/failure can be awaited without consuming the supervisor
+- [x] Child completion/failure can be awaited without consuming the supervisor
   completion channel.
-- [ ] Existing supervisor-level steering behavior remains covered.
-- [ ] Public examples use no `pub(crate)` implementation paths.
+- [x] Existing supervisor-level steering behavior remains covered.
+- [x] Public examples use no `pub(crate)` implementation paths.
 
 ## Notes
 

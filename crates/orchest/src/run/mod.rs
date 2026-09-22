@@ -20,7 +20,10 @@ pub use config::{
     ModelConfig, RepeatedFailureConfig, RunId, RunInput, RunInputError, RunState, RunStatus,
     RuntimeConfig, SkillDisclosure, SkillsConfig, SubAgentRuntime, SupervisionStrategy,
 };
-pub use handle::{ApprovalBus, EventReceiver, RunHandle};
+pub use handle::{
+    ApprovalBus, ChildCompletionError, ChildRunHandle, ChildRunOutcome, ChildRunRegistry,
+    EventReceiver, RunHandle,
+};
 pub use retry::{BackoffStrategy, RetryPolicy};
 pub use watcher::{Watcher, WatcherAction};
 
@@ -127,6 +130,7 @@ impl AgentRun {
             model,
             registry,
             ApprovalBus::default(),
+            ChildRunRegistry::default(),
             vec![],
         )
     }
@@ -154,6 +158,7 @@ impl AgentRun {
             model,
             registry,
             ApprovalBus::default(),
+            ChildRunRegistry::default(),
             watchers,
         ))
     }
@@ -166,6 +171,7 @@ impl AgentRun {
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
         approval_bus: ApprovalBus,
+        child_registry: ChildRunRegistry,
         watchers: Vec<(Arc<dyn Watcher>, usize)>,
     ) -> (RunHandle, EventReceiver) {
         config.register_persistence_hook();
@@ -179,12 +185,20 @@ impl AgentRun {
             registry,
             event_tx,
             approval_bus: approval_bus.clone(),
+            child_registry: child_registry.clone(),
             resume: None,
             initial_messages,
             initial_event_subs: vec![],
             watcher_wave_bus: None,
         };
-        supervisor::spawn_supervised(run_id, args, approval_bus, event_rx, watchers)
+        supervisor::spawn_supervised(
+            run_id,
+            args,
+            approval_bus,
+            child_registry,
+            event_rx,
+            watchers,
+        )
     }
 
     /// Resumes a previous run from a persisted snapshot exactly as it left
@@ -213,6 +227,7 @@ impl AgentRun {
         let run_id = snapshot.run_id;
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
         let approval_bus = ApprovalBus::default();
+        let child_registry = ChildRunRegistry::default();
         let resume = ResumeState {
             messages: snapshot.messages,
             step: snapshot.step,
@@ -226,6 +241,7 @@ impl AgentRun {
             registry,
             event_tx,
             approval_bus: approval_bus.clone(),
+            child_registry: child_registry.clone(),
             resume: Some(resume),
             initial_messages: vec![],
             initial_event_subs: vec![],
@@ -235,6 +251,7 @@ impl AgentRun {
             run_id,
             args,
             approval_bus,
+            child_registry,
             event_rx,
             vec![],
         ))
@@ -262,6 +279,7 @@ impl AgentRun {
         let run_id = snapshot.run_id;
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
         let approval_bus = ApprovalBus::default();
+        let child_registry = ChildRunRegistry::default();
         let mut messages = snapshot.messages;
         messages.push(crate::model::Message {
             role: crate::model::Role::User,
@@ -280,6 +298,7 @@ impl AgentRun {
             registry,
             event_tx,
             approval_bus: approval_bus.clone(),
+            child_registry: child_registry.clone(),
             resume: Some(resume),
             initial_messages: vec![],
             initial_event_subs: vec![],
@@ -289,6 +308,7 @@ impl AgentRun {
             run_id,
             args,
             approval_bus,
+            child_registry,
             event_rx,
             vec![],
         ))

@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "iteration": "v0.11",
   "subject": "Research Pipeline",
-  "executiveSummary": "All deterministic contract, report, worker, supervisor/watcher, terminal-failure, and watcher-order checks passed. 4 supervised-delegation seam blockers and one release blocker remain open with owned GitHub issues; SB-4 and SB-8 are verified via ToolContext::emit_event fan-out and structured LlmWatcher nested formatting; SB-5 is verified via EventSink coalesced loss recovery; SB-6 is verified via AgentRun::start_with_watchers. The credential-gated live-provider run was not attempted because RESEARCH_PIPELINE_CHAT_MODEL and RESEARCH_PIPELINE_API_KEY are absent; v1.0 remains blocked by #258 until live verification passes.",
+  "executiveSummary": "All deterministic contract, report, worker, supervisor/watcher, terminal-failure, and watcher-order checks passed. 2 supervised-delegation seam blockers and one release blocker remain open with owned GitHub issues; SB-1/SB-2/P1-4 are verified via ChildRunHandle / ChildRunRegistry; SB-4 and SB-8 are verified via ToolContext::emit_event fan-out and structured LlmWatcher nested formatting; SB-5 is verified via EventSink coalesced loss recovery; SB-6 is verified via AgentRun::start_with_watchers; SB-7 is verified via ActionArbitrator. The credential-gated live-provider run was not attempted because RESEARCH_PIPELINE_CHAT_MODEL and RESEARCH_PIPELINE_API_KEY are absent; v1.0 remains blocked by #258 until live verification passes.",
   "readinessVerdict": {
     "status": "unverified",
     "reason": "The required live-provider run is not-run because RESEARCH_PIPELINE_CHAT_MODEL and RESEARCH_PIPELINE_API_KEY are absent. No waiver has been accepted; #258 blocks v1.0 until live verification passes.",
@@ -197,9 +197,23 @@
       "command": "cargo test -p research-pipeline-demo --test supervisor_watcher",
       "date": "2026-07-31",
       "revision": "git:self",
-      "summary": "Eight deterministic tests passed: a probe activates both watcher subscriptions before second-step delegation, terminal-complete custom and LLM watcher vectors prove primary-receiver-only nested forwarding, each public steering path reaches only the supervisor history, Fresh and bounded Fork delegate, and the live-shaped helper uses start_with_watchers for first-event attachment.",
+      "summary": "Nine deterministic supervisor_watcher tests passed, including nested SubAgentEvent delivery, supervisor-only public steering paths, RunHandle::child resolve/await, and child-target inject/steer.",
       "evidenceRefs": [
-        "EV-supervisor-watcher-test"
+        "EV-supervisor-watcher-test",
+        "EV-child-control-demo-test"
+      ]
+    },
+    {
+      "id": "run-child-control-unit",
+      "kind": "test",
+      "status": "passed",
+      "required": true,
+      "command": "cargo test -p orchest --lib child_control",
+      "date": "2026-09-22",
+      "revision": "git:self",
+      "summary": "Orchest child_control unit tests prove RunHandle::child lookup, child-target inject/steer, preserved supervisor inject, and independent Completed/Failed wait_completion.",
+      "evidenceRefs": [
+        "EV-child-control-unit-test"
       ]
     },
     {
@@ -226,6 +240,19 @@
       "summary": "Two supervisor watchers with capacity 1024 each observed the expected stable milestone subsequence and the same complete indexed sequence with no EventsDropped observed. The test returns no actions and makes no action-order claim.",
       "evidenceRefs": [
         "EV-watcher-order-test"
+      ]
+    },
+    {
+      "id": "run-watcher-arbitration-unit",
+      "kind": "test",
+      "status": "passed",
+      "required": true,
+      "command": "cargo test -p orchest --lib watcher_arbitration",
+      "date": "2026-09-22",
+      "revision": "git:self",
+      "summary": "Orchest watcher_arbitration unit tests prove Abort precedence and registration-order Inject/Steer application independent of completion scheduling.",
+      "evidenceRefs": [
+        "EV-watcher-action-arbitration-test"
       ]
     },
     {
@@ -372,7 +399,7 @@
     {
       "id": "EV-agent-as-tool-forwarding-source",
       "kind": "source",
-      "summary": "AgentAsTool forwards child RuntimeEvent values as SubAgentEvent through ToolContext::emit_event so attached watchers receive the nested stream; the child RunHandle remains internal until wait completes.",
+      "summary": "AgentAsTool forwards child RuntimeEvent values as SubAgentEvent through ToolContext::emit_event so attached watchers receive the nested stream; each child is registered on the shared ChildRunRegistry and publishes ChildRunOutcome for wait_completion.",
       "path": "crates/orchest/src/tool/agent_as_tool.rs",
       "symbol": "AgentAsTool::run_child_attempt"
     },
@@ -393,12 +420,12 @@
     {
       "id": "EV-supervisor-watcher-test",
       "kind": "test",
-      "summary": "The focused target gates the first supervisor call, releases a harmless probe so queued subscriptions activate, and releases second-step delegation only after both watcher wrappers complete its ModelCallStarted event. It proves each public steering path changes only supervisor history, observes forwarded child completion on the primary EventReceiver and on both attached watchers, and reaches terminal-complete custom and LLM watcher vectors containing nested SubAgentEvent with structured LlmWatcher prompt formatting.",
+      "summary": "The focused target gates the first supervisor call, releases a harmless probe so queued subscriptions activate, and releases second-step delegation only after both watcher wrappers complete its ModelCallStarted event. It proves each public supervisor steering path changes only supervisor history, observes forwarded child completion on the primary EventReceiver and on both attached watchers, resolves RunHandle::child after SubAgentStarted, awaits child completion independently, and includes a dedicated child-target inject/steer proof.",
       "path": "examples/demo/research-pipeline/tests/supervisor_watcher.rs",
       "symbol": "activated_watchers_prove_nested_routing_and_applied_supervisor_actions",
       "command": "cargo test -p research-pipeline-demo --test supervisor_watcher",
       "runRef": "run-supervisor-watcher-deterministic",
-      "result": "8 passed; 0 failed; both watcher terminal-complete vectors contain forwarded SubAgentEvent"
+      "result": "9 passed; 0 failed; nested SubAgentEvent + child control resolve/await + child-target inject/steer"
     },
     {
       "id": "EV-supervisor-restart-source",
@@ -486,6 +513,36 @@
       "result": "10 passed; 0 failed; saturation + bounded pending + no-drop FIFO",
       "path": "crates/orchest/src/events.rs",
       "symbol": "secondary_saturation_delivers_coalesced_loss_then_resumes"
+    },
+    {
+      "id": "EV-child-control-unit-test",
+      "kind": "test",
+      "summary": "Orchest lib tests prove RunHandle::child resolves after SubAgentStarted, child-target inject/steer change only the child conversation, supervisor inject remains supervisor-targeted, and wait_completion publishes Completed/Failed independently of the supervisor EventReceiver.",
+      "command": "cargo test -p orchest --lib child_control",
+      "runRef": "run-child-control-unit",
+      "result": "2 passed; 0 failed; child vs supervisor targeting and Failed outcome proven",
+      "path": "crates/orchest/src/tool/agent_as_tool.rs",
+      "symbol": "child_control_targets_child_not_supervisor_and_completion_is_independent"
+    },
+    {
+      "id": "EV-child-control-demo-test",
+      "kind": "test",
+      "summary": "Research Pipeline supervisor_watcher proves public resolve_delegated_worker_target / await_delegated_worker_completion and child_control_surface_targets_worker_and_awaits_completion for child-target inject/steer without altering supervisor histories.",
+      "command": "cargo test -p research-pipeline-demo --test supervisor_watcher",
+      "runRef": "run-supervisor-watcher-deterministic",
+      "result": "9 passed; 0 failed; child control resolve/await + child-target inject/steer proven",
+      "path": "examples/demo/research-pipeline/tests/supervisor_watcher.rs",
+      "symbol": "child_control_surface_targets_worker_and_awaits_completion"
+    },
+    {
+      "id": "EV-watcher-action-arbitration-test",
+      "kind": "test",
+      "summary": "Adversarial gated ActionArbitrator tests prove Abort wins regardless of completion order and Inject/Steer apply in registration order; public arbitrate_watcher_actions documents precedence.",
+      "command": "cargo test -p orchest --lib watcher_arbitration",
+      "runRef": "run-watcher-arbitration-unit",
+      "result": "watcher_arbitration tests passed; schedule-independent Abort and registration-order Inject/Steer",
+      "path": "crates/orchest/src/run/tests.rs",
+      "symbol": "watcher_arbitration_abort_wins_independent_of_completion_order"
     }
   ],
   "findings": [
@@ -494,31 +551,36 @@
       "title": "Delegation does not expose a child RunHandle",
       "apiSurface": "orchest::tool::agent_as_tool::AgentAsTool",
       "description": "AgentAsTool retains the delegated child handle internally, leaving application code with only the supervisor RunHandle.",
-      "observedConsequence": "A caller cannot attach a watcher to or steer the delegated worker through a public handle.",
-      "workaround": "Attach to the supervisor and inspect forwarded nested events on the primary EventReceiver.",
+      "observedConsequence": "Pre-fix: callers could not attach a watcher to or steer the delegated worker through a public handle.",
+      "workaround": "Use RunHandle::child after SubAgentStarted for inject/steer/completion; supervisor-level steering remains available on the supervisor handle.",
       "classification": "seam-blocker",
-      "status": "open",
+      "status": "verified",
       "evidenceRefs": [
         "EV-known-seams",
         "EV-supervisor-source",
         "EV-agent-as-tool-forwarding-source",
-        "EV-supervisor-watcher-test"
+        "EV-supervisor-watcher-test",
+        "EV-child-control-unit-test",
+        "EV-child-control-demo-test"
       ],
       "action": {
         "owner": "orchest-maintainers",
-        "summary": "Expose a public delegated child run control and completion surface.",
+        "summary": "Exposed ChildRunHandle via ChildRunRegistry on the supervisor RunHandle; AgentAsTool registers each delegated child for inject/steer/abort/subscribe/attach_watcher and wait_completion.",
         "issueRef": "#249"
       },
       "verification": {
         "status": "passed",
         "commands": [
+          "cargo test -p orchest --lib child_control",
           "cargo test -p research-pipeline-demo --test supervisor_watcher"
         ],
         "evidenceRefs": [
           "EV-agent-as-tool-forwarding-source",
-          "EV-supervisor-watcher-test"
+          "EV-supervisor-watcher-test",
+          "EV-child-control-unit-test",
+          "EV-child-control-demo-test"
         ],
-        "summary": "The authentic public-surface attempt consumes and waits the only owned supervisor RunHandle while preserving the distinct child run id observed in forwarded evidence; no public child-handle constructor or lookup exists."
+        "summary": "RunHandle::child resolves a public ChildRunHandle after SubAgentStarted; supervisor_watcher and orchest child_control tests prove lookup, child-target inject/steer, and independent wait_completion."
       }
     },
     {
@@ -526,30 +588,35 @@
       "title": "Steering targets the supervisor rather than delegated worker",
       "apiSurface": "orchest::run::WatcherAction and orchest::run::RunHandle",
       "description": "Watcher and external Inject or Steer actions target the watched supervisor actor when delegation uses AgentAsTool.",
-      "observedConsequence": "Application code cannot direct a message specifically to the delegated worker.",
-      "workaround": "Use supervisor-level steering and preserve the target mismatch as evidence.",
+      "observedConsequence": "Pre-fix: application code could not direct a message specifically to the delegated worker; supervisor-level Inject/Steer still target the supervisor.",
+      "workaround": "Use ChildRunHandle::inject_message / steer for worker-targeted control; keep RunHandle / WatcherAction paths for supervisor-targeted steering.",
       "classification": "seam-blocker",
-      "status": "open",
+      "status": "verified",
       "evidenceRefs": [
         "EV-known-seams",
         "EV-watcher-action-routing",
-        "EV-supervisor-watcher-test"
+        "EV-supervisor-watcher-test",
+        "EV-child-control-unit-test",
+        "EV-child-control-demo-test"
       ],
       "action": {
         "owner": "orchest-maintainers",
-        "summary": "Route public delegated child inject and steer operations through the child control surface.",
+        "summary": "Routed public delegated child inject and steer through ChildRunHandle; supervisor-level WatcherAction and RunHandle steering remain supervisor-targeted.",
         "issueRef": "#249"
       },
       "verification": {
         "status": "passed",
         "commands": [
+          "cargo test -p orchest --lib child_control",
           "cargo test -p research-pipeline-demo --test supervisor_watcher"
         ],
         "evidenceRefs": [
           "EV-watcher-action-routing",
-          "EV-supervisor-watcher-test"
+          "EV-supervisor-watcher-test",
+          "EV-child-control-unit-test",
+          "EV-child-control-demo-test"
         ],
-        "summary": "The custom WatcherAction is triggered specifically by the supervisor-level research_worker ToolCallStarted event. WatcherAction::Inject, WatcherAction::Steer, RunHandle::inject_message, and RunHandle::steer all appeared in supervisor model histories and in none of the Fresh delegated-worker messages."
+        "summary": "child_control_surface_targets_worker_and_awaits_completion proves child inject/steer land only in the child conversation; existing supervisor_watcher steering path tests still prove supervisor-only targeting for WatcherAction and RunHandle paths."
       }
     },
     {
@@ -686,13 +753,14 @@
       "apiSurface": "orchest::run::WatcherAction",
       "description": "Each watcher runs independently, so actions returned by multiple watchers do not have a global registration-order execution guarantee.",
       "observedConsequence": "Concurrent Inject, Steer, or Abort actions cannot be attributed to watcher registration order.",
-      "workaround": "N/A \u2014 arbitration contract is public and enforced.",
+      "workaround": "N/A — arbitration contract is public and enforced.",
       "classification": "seam-blocker",
       "status": "verified",
       "evidenceRefs": [
         "EV-known-seams",
         "EV-watcher-task-topology",
-        "EV-watcher-order-test"
+        "EV-watcher-order-test",
+        "EV-watcher-action-arbitration-test"
       ],
       "action": {
         "owner": "orchest-maintainers",
@@ -860,30 +928,36 @@
       "title": "Delegation has no explicit child completion receiver",
       "apiSurface": "orchest::run::EventReceiver",
       "description": "Delegated worker completion is consumed by AgentAsTool and does not expose a separate child EventReceiver.",
-      "observedConsequence": "Application-level completion can only be gated through the supervisor event receiver.",
-      "workaround": "Wait for the supervisor terminal event and observe nested completion through forwarded events.",
+      "observedConsequence": "Pre-fix: application-level completion could only be gated through the supervisor event receiver.",
+      "workaround": "Await ChildRunHandle::wait_completion (or await_delegated_worker_completion) without draining the supervisor EventReceiver.",
       "classification": "post-1.0-backlog",
-      "status": "open",
+      "status": "verified",
       "evidenceRefs": [
         "EV-known-seams",
         "EV-agent-as-tool-forwarding-source",
-        "EV-failure-escalation-test"
+        "EV-failure-escalation-test",
+        "EV-child-control-unit-test",
+        "EV-child-control-demo-test"
       ],
       "action": {
         "owner": "orchest-maintainers",
-        "summary": "Expose delegated child completion through the public child control surface.",
+        "summary": "Exposed ChildRunHandle::wait_completion backed by a watch channel published from AgentAsTool on RunCompleted/RunFailed.",
         "issueRef": "#249"
       },
       "verification": {
         "status": "passed",
         "commands": [
+          "cargo test -p orchest --lib child_control",
+          "cargo test -p research-pipeline-demo --test supervisor_watcher",
           "cargo test -p research-pipeline-demo --test failure_escalation"
         ],
         "evidenceRefs": [
           "EV-agent-as-tool-forwarding-source",
-          "EV-failure-escalation-test"
+          "EV-failure-escalation-test",
+          "EV-child-control-unit-test",
+          "EV-child-control-demo-test"
         ],
-        "summary": "The controlled failure loop receives forwarded child RunFailed and SubAgentFailed on the primary supervisor EventReceiver, then gates application completion on the supervisor RunCompleted terminal event without a fixed timeout."
+        "summary": "Child completion/failure is awaitable via ChildRunHandle::wait_completion without consuming the supervisor EventReceiver; failure_escalation still gates supervisor RunCompleted on the primary channel."
       }
     },
     {

@@ -82,6 +82,9 @@ pub struct ToolContext {
     /// Shared approval bus for the entire run tree; used by AgentAsTool to forward
     /// child approval requests to the parent's RunHandle.
     pub approval_bus: crate::run::handle::ApprovalBus,
+    /// Shared delegated-child registry for the run tree; AgentAsTool registers
+    /// each child so the supervisor [`crate::run::RunHandle`] can resolve it.
+    pub child_registry: crate::run::handle::ChildRunRegistry,
     /// Remaining budget in the parent run at the time this tool is called.
     /// AgentAsTool uses this to cap the child run so it cannot exceed what
     /// the parent has left.
@@ -125,6 +128,7 @@ impl ToolContext {
             event_tx: None,
             webhook_base_url: None,
             approval_bus: crate::run::ApprovalBus::default(),
+            child_registry: crate::run::ChildRunRegistry::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
             parent_messages: vec![],
             event_subs: vec![],

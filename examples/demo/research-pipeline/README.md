@@ -25,20 +25,22 @@ fixtures (along with the rest of the Briefing Desk corpus).
 
 Later issues use these public imports only:
 
-- `orchest::run::RunHandle`, `EventReceiver`, `SupervisionStrategy`, and
-  `WatcherAction`
+- `orchest::run::RunHandle`, `ChildRunHandle`, `EventReceiver`,
+  `SupervisionStrategy`, and `WatcherAction`
 - `orchest::run::llm_watcher::LlmWatcher`
 - `orchest::tool::agent_as_tool::ContextMode`
 - `orchest::hook::{Hook, HookAction, RepeatedFailureHookContext}`
 - `orchest::events::RuntimeEvent`
 
 Private `orchest::run::handle::*` and `orchest::run::config::*` paths are out
-of bounds. The supervisor owns the only public `RunHandle`. Attached watchers
-receive supervisor actor-emitted events and, via `ToolContext::emit_event`,
-forwarded nested `SubAgentEvent`s (SB-8 verified). The deterministic watcher
-action is triggered only by the supervisor-level delegation
-`ToolCallStarted { tool: "research_worker", .. }`; nested events are observed
-but do not trigger that action.
+of bounds. The supervisor owns the root public `RunHandle`. After
+`SubAgentStarted`, `RunHandle::child` resolves a public `ChildRunHandle` for
+child-target inject/steer and `wait_completion` (SB-1/SB-2/P1-4 verified).
+Attached watchers receive supervisor actor-emitted events and, via
+`ToolContext::emit_event`, forwarded nested `SubAgentEvent`s (SB-8 verified).
+The deterministic watcher action is triggered only by the supervisor-level
+delegation `ToolCallStarted { tool: "research_worker", .. }`; nested events are
+observed but do not trigger that action.
 
 ## Commands
 

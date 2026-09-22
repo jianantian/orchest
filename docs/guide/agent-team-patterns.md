@@ -35,6 +35,23 @@ Runnable example:
 cargo run -p orchest --example agent_as_tool
 ```
 
+While a delegated child is running, resolve its public control surface from the
+supervisor handle after `SubAgentStarted`:
+
+```rust
+if let RuntimeEvent::SubAgentStarted { child_run_id, .. } = event {
+    if let Some(child) = handle.child(child_run_id).await {
+        child.inject_message("Focus on primary sources.");
+        child.steer("Return a short evidence summary.");
+        let outcome = child.wait_completion().await?;
+    }
+}
+```
+
+`RunHandle::inject_message` / `steer` and `WatcherAction::{Inject,Steer}` still
+target the supervisor conversation. Use `ChildRunHandle` when the worker must
+receive the message.
+
 ## Pattern 2: Triage Handoff
 
 Use Handoff when ownership should transfer from one agent to another. This is

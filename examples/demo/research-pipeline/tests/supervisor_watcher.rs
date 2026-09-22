@@ -21,8 +21,8 @@ use orchest::{
 };
 use research_pipeline_demo::{
     supervisor::{
-        attempt_delegated_worker_target, build_supervisor, start_with_live_watchers,
-        DelegatedWorkerTargetBlocker, LIVE_ATTACHMENT_BOUNDARY, RESEARCH_WORKER_TOOL,
+        await_delegated_worker_completion, build_supervisor, resolve_delegated_worker_target,
+        start_with_live_watchers, LIVE_ATTACHMENT_BOUNDARY, RESEARCH_WORKER_TOOL,
     },
     watcher::{RecordingActionWatcher, RecordingLlmWatcher},
     worker::Worker,
@@ -542,15 +542,19 @@ async fn activated_watchers_prove_nested_routing_and_applied_supervisor_actions(
             if *child_run_id == observed_child_run_id
                 && matches!(event.as_ref(), RuntimeEvent::RunCompleted { .. })
     )));
-    let target_attempt = attempt_delegated_worker_target(handle, observed_child_run_id).await;
-    assert_ne!(
-        target_attempt.owned_supervisor_run_id,
-        target_attempt.observed_child_run_id
-    );
-    assert_eq!(
-        target_attempt.blocker,
-        DelegatedWorkerTargetBlocker::NoPublicChildHandleConstructorOrLookup
-    );
+    let target = resolve_delegated_worker_target(&handle, observed_child_run_id)
+        .await
+        .expect("public child control surface resolves after SubAgentStarted");
+    assert_ne!(target.owned_supervisor_run_id, target.observed_child_run_id);
+    assert_eq!(target.child_parent_run_id, target.owned_supervisor_run_id);
+    let child_outcome = await_delegated_worker_completion(&handle, observed_child_run_id)
+        .await
+        .expect("child completion is awaitable without supervisor EventReceiver");
+    assert!(matches!(
+        child_outcome,
+        orchest::run::ChildRunOutcome::Completed { .. }
+    ));
+    handle.wait().await;
 
     let recording_events = watchers.recording_events.lock().expect("recording events");
     assert!(recording_events
@@ -868,4 +872,230 @@ async fn live_start_records_both_watcher_completions_as_best_effort() {
 fn live_attachment_contract_guarantees_first_event() {
     assert!(LIVE_ATTACHMENT_BOUNDARY.contains("start_with_watchers"));
     assert!(LIVE_ATTACHMENT_BOUNDARY.contains("guaranteed"));
+}
+
+const CHILD_INJECT: &str = "child-target inject";
+const CHILD_STEER: &str = "child-target steer";
+const CHILD_CHECKPOINT: &str = "child_checkpoint";
+
+struct RaceFreeGate {
+    entered: AtomicU32,
+    entered_notify: Notify,
+    released: AtomicU32,
+    release_notify: Notify,
+}
+
+impl RaceFreeGate {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            entered: AtomicU32::new(0),
+            entered_notify: Notify::new(),
+            released: AtomicU32::new(0),
+            release_notify: Notify::new(),
+        })
+    }
+
+    async fn hold(&self) {
+        self.entered.store(1, Ordering::SeqCst);
+        self.entered_notify.notify_waiters();
+        while self.released.load(Ordering::SeqCst) == 0 {
+            self.release_notify.notified().await;
+        }
+    }
+
+    async fn wait_entered(&self) {
+        while self.entered.load(Ordering::SeqCst) == 0 {
+            self.entered_notify.notified().await;
+        }
+    }
+
+    fn release(&self) {
+        self.released.store(1, Ordering::SeqCst);
+        self.release_notify.notify_waiters();
+    }
+}
+
+struct GatedCapturingChildModel {
+    calls: AtomicU32,
+    gate: Arc<RaceFreeGate>,
+    histories: Arc<Mutex<Vec<Vec<Message>>>>,
+}
+
+#[async_trait]
+impl ModelAdapter for GatedCapturingChildModel {
+    fn provider_name(&self) -> &str {
+        "deterministic"
+    }
+
+    fn model_name(&self) -> &str {
+        "gated-capturing-child"
+    }
+
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        self.histories
+            .lock()
+            .expect("child history lock")
+            .push(messages.to_vec());
+        if call == 0 {
+            self.gate.hold().await;
+            return Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "child-checkpoint-1".to_string(),
+                    name: CHILD_CHECKPOINT.to_string(),
+                    input: json!({}),
+                }],
+                usage: TokenUsage::default(),
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            });
+        }
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("worker complete".to_string())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[tokio::test]
+async fn child_control_surface_targets_worker_and_awaits_completion() {
+    let (_temp, worker) = worker_fixture();
+    let child_gate = RaceFreeGate::new();
+    let child_histories = Arc::new(Mutex::new(Vec::new()));
+    let supervisor_histories = Arc::new(Mutex::new(Vec::new()));
+    let first_call_gate = Arc::new(CallGate::default());
+    let delegation_call_gate = Arc::new(CallGate::default());
+
+    let supervisor_model: Arc<dyn ModelAdapter> = Arc::new(TwoStageSupervisorModel {
+        calls: AtomicU32::new(0),
+        first_call_gate: Arc::clone(&first_call_gate),
+        delegation_call_gate: Arc::clone(&delegation_call_gate),
+        histories: Arc::clone(&supervisor_histories),
+        required_messages: vec![],
+    });
+
+    let mut child_registry = worker.registry().clone();
+    child_registry
+        .register(Arc::new(NoopTool::new(CHILD_CHECKPOINT)))
+        .expect("register child checkpoint");
+    let worker_tool = worker
+        .config()
+        .clone()
+        .as_tool(
+            RESEARCH_WORKER_TOOL,
+            "Delegate a research request to the Research Pipeline worker.",
+        )
+        .model(Arc::new(GatedCapturingChildModel {
+            calls: AtomicU32::new(0),
+            gate: Arc::clone(&child_gate),
+            histories: Arc::clone(&child_histories),
+        }) as Arc<dyn ModelAdapter>)
+        .registry(child_registry)
+        .context_mode(ContextMode::Fresh)
+        .build()
+        .expect("build gated worker tool");
+
+    let mut config =
+        orchest::run::AgentConfig::builder("research-supervisor", "research-pipeline/supervisor")
+            .system_prompt("Delegate via research_worker.")
+            .max_steps(8)
+            .build()
+            .expect("supervisor config");
+    config.runtime.max_steps = 8;
+    let mut registry = orchest::tool::registry::ToolRegistry::new();
+    registry.register(worker_tool).expect("register worker");
+    registry
+        .register(Arc::new(NoopTool::new(PROBE_TOOL)))
+        .expect("probe");
+
+    let (handle, mut receiver) = AgentRun::start(
+        config,
+        "parent research question".into(),
+        supervisor_model,
+        registry,
+    );
+
+    first_call_gate.wait_until_entered().await;
+    first_call_gate.release();
+    delegation_call_gate.wait_until_entered().await;
+    delegation_call_gate.release();
+
+    let mut observed_child_run_id = None;
+    let mut completion_task = None;
+    let mut primary_events = Vec::new();
+    while let Some(event) = receiver.recv().await {
+        if let RuntimeEvent::SubAgentStarted {
+            child_run_id: id, ..
+        } = &event
+        {
+            observed_child_run_id = Some(*id);
+            child_gate.wait_entered().await;
+            let child = handle
+                .child(*id)
+                .await
+                .expect("resolve public child control surface");
+            child.inject_message(CHILD_INJECT);
+            child.steer(CHILD_STEER);
+            let child_for_wait = handle.child(*id).await.expect("child still registered");
+            completion_task = Some(tokio::spawn(async move {
+                child_for_wait.wait_completion().await
+            }));
+            child_gate.release();
+        }
+        primary_events.push(event);
+    }
+    assert_completed(&primary_events);
+
+    let child_run_id = observed_child_run_id.expect("SubAgentStarted");
+    let resolved = resolve_delegated_worker_target(&handle, child_run_id)
+        .await
+        .expect("child control surface remains resolvable");
+    assert_eq!(resolved.observed_child_run_id, child_run_id);
+    assert_eq!(resolved.child_parent_run_id, handle.run_id);
+
+    let outcome = completion_task
+        .expect("completion task")
+        .await
+        .expect("join")
+        .expect("child completion without supervisor channel");
+    assert!(matches!(
+        outcome,
+        orchest::run::ChildRunOutcome::Completed { .. }
+    ));
+    handle.wait().await;
+
+    let child_histories = child_histories.lock().expect("child histories");
+    assert!(
+        child_histories.iter().flatten().any(|message| {
+            message.role == Role::User && message_contains(message, CHILD_INJECT)
+        }),
+        "child inject must change the child conversation"
+    );
+    assert!(
+        child_histories.iter().flatten().any(|message| {
+            message.role == Role::System && message_contains(message, CHILD_STEER)
+        }),
+        "child steer must change the child conversation"
+    );
+    drop(child_histories);
+
+    let supervisor_histories = supervisor_histories.lock().expect("supervisor histories");
+    assert!(
+        supervisor_histories.iter().flatten().all(|message| {
+            !message_contains(message, CHILD_INJECT) && !message_contains(message, CHILD_STEER)
+        }),
+        "child-target control must not alter the supervisor conversation"
+    );
 }

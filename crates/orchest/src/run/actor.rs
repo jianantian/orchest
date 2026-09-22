@@ -27,7 +27,7 @@ use crate::tool::{
 
 use super::compaction::maybe_compact_context;
 use super::config::{AgentConfig, RunId, SkillDisclosure, ToolExecutionPolicy};
-use super::handle::ApprovalBus;
+use super::handle::{ApprovalBus, ChildRunRegistry};
 use super::helpers::{append_searched_tool_defs, connect_mcp_servers, truncate_output};
 use super::skills::register_skills;
 use super::tool_exec::{poll_async_job, tool_error_result, tool_skipped_by_hook_result};
@@ -85,6 +85,7 @@ pub(crate) struct AgentRunState {
     pub cancelled: bool,
     pub run_hook_ctx: crate::hook::RunHookContext,
     pub approval_bus: ApprovalBus,
+    pub child_registry: ChildRunRegistry,
     /// Subscriber list; index 0 is the primary (blocking send), rest use try_send.
     pub event_subs: Vec<EventSink>,
     pub webhook_runtime: Option<WebhookRuntime>,
@@ -129,6 +130,7 @@ pub(crate) struct AgentRunArgs {
     pub registry: ToolRegistry,
     pub event_tx: mpsc::Sender<RuntimeEvent>,
     pub approval_bus: ApprovalBus,
+    pub child_registry: ChildRunRegistry,
     /// `None` on a fresh start; `Some` when resuming from a persisted snapshot.
     pub resume: Option<ResumeState>,
     /// Extra messages to prepend (between system prompt and user input) on a fresh start.
@@ -164,6 +166,7 @@ impl Actor for WorkerActor {
             mut registry,
             event_tx,
             approval_bus,
+            child_registry,
             resume,
             initial_messages,
             initial_event_subs,
@@ -233,6 +236,7 @@ impl Actor for WorkerActor {
                 model,
                 registry,
                 approval_bus,
+                child_registry.clone(),
                 run_hook_ctx,
                 error.message,
             )
@@ -251,6 +255,7 @@ impl Actor for WorkerActor {
                     model,
                     registry,
                     approval_bus,
+                    child_registry.clone(),
                     run_hook_ctx,
                     error.to_string(),
                 )
@@ -271,6 +276,7 @@ impl Actor for WorkerActor {
                         model,
                         registry,
                         approval_bus,
+                        child_registry.clone(),
                         run_hook_ctx,
                         format!("skill loading failed: {error}"),
                     )
@@ -304,6 +310,7 @@ impl Actor for WorkerActor {
                 model,
                 registry,
                 approval_bus,
+                child_registry.clone(),
                 run_hook_ctx,
                 format!("tool metadata validation failed: {error}"),
             )
@@ -357,6 +364,7 @@ impl Actor for WorkerActor {
                     model,
                     registry,
                     approval_bus,
+                    child_registry,
                     event_subs,
                     run_hook_ctx,
                 ));
@@ -388,6 +396,7 @@ impl Actor for WorkerActor {
             cancelled: false,
             run_hook_ctx,
             approval_bus,
+            child_registry,
             event_subs,
             webhook_runtime,
             repeated_failures: HashMap::new(),
@@ -1015,6 +1024,7 @@ struct ParallelExecutionContext {
     event_subs: Vec<EventSink>,
     webhook_base_url: Option<String>,
     approval_bus: ApprovalBus,
+    child_registry: ChildRunRegistry,
     remaining_budget: BudgetConfig,
     parent_messages: Vec<Message>,
 }
@@ -1416,6 +1426,7 @@ async fn run_tool_and_handoff_phase(
                 event_subs: subs.to_vec(),
                 webhook_base_url: state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone()),
                 approval_bus: state.approval_bus.clone(),
+                child_registry: state.child_registry.clone(),
                 remaining_budget: state.budget.remaining_config(),
                 parent_messages,
             };
@@ -2034,6 +2045,7 @@ async fn run_parallel_tool_batch_if_allowed(
         let event_tx = primary(subs).clone();
         let webhook_base_url = state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone());
         let approval_bus = state.approval_bus.clone();
+        let child_registry = state.child_registry.clone();
         let remaining_budget = state.budget.remaining_config();
         let parent_messages = if call.tool.needs_parent_context() {
             state.messages.clone()
@@ -2049,6 +2061,7 @@ async fn run_parallel_tool_batch_if_allowed(
                 event_subs: subs.to_vec(),
                 webhook_base_url,
                 approval_bus,
+                child_registry,
                 remaining_budget,
                 parent_messages,
             },
@@ -2095,6 +2108,7 @@ async fn execute_parallel_tool_call(
         event_subs: parallel_ctx.event_subs.clone(),
         webhook_base_url: parallel_ctx.webhook_base_url,
         approval_bus: parallel_ctx.approval_bus,
+        child_registry: parallel_ctx.child_registry,
         remaining_budget: parallel_ctx.remaining_budget,
         parent_messages: parallel_ctx.parent_messages,
     };
@@ -2278,6 +2292,7 @@ async fn fail_pre_start(
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
     approval_bus: ApprovalBus,
+    child_registry: ChildRunRegistry,
     run_hook_ctx: crate::hook::RunHookContext,
     error: String,
 ) -> AgentRunState {
@@ -2296,6 +2311,7 @@ async fn fail_pre_start(
         model,
         registry,
         approval_bus,
+        child_registry,
         event_subs.to_vec(),
         run_hook_ctx,
     )
@@ -2308,6 +2324,7 @@ fn failed_state(
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
     approval_bus: ApprovalBus,
+    child_registry: ChildRunRegistry,
     event_subs: Vec<EventSink>,
     run_hook_ctx: crate::hook::RunHookContext,
 ) -> AgentRunState {
@@ -2330,6 +2347,7 @@ fn failed_state(
         cancelled: true,
         run_hook_ctx,
         approval_bus,
+        child_registry,
         event_subs,
         webhook_runtime: None,
         repeated_failures: HashMap::new(),
