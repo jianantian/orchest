@@ -81,6 +81,9 @@ impl Asr for FakeAsr {
 /// Deterministic offline `Tts`: synthesizes a fixed marker payload derived
 /// from the input text (not real audio), so callers can assert on it without
 /// a network round-trip. Streaming/duplex are unsupported.
+///
+/// Unlike live stream dialects, [`SynthesizeRequest::voice`] may be `None`
+/// here — the fake ignores voice entirely.
 #[derive(Debug, Clone)]
 pub struct FakeTts {
     marker_prefix: String,

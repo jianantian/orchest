@@ -379,9 +379,31 @@ pub struct RealtimeHandle {
 }
 
 /// Text-to-speech synthesis request.
+///
+/// # `voice`
+///
+/// `voice: None` means the caller did **not** select a voice. It is **not** a
+/// request for a provider-chosen default, and dialects must not invent one.
+///
+/// Per-dialect contract for the current stream TTS adapters:
+///
+/// | Dialect (`provider`) | `voice: None` / empty |
+/// |----------------------|------------------------|
+/// | `aliyun`             | **Required** — reject with [`crate::ErrorCode::InvalidRequest`] before provider I/O |
+/// | `minimax`            | **Required** — same |
+/// | `volcengine`         | **Required** — same |
+/// | offline `FakeTts`    | Allowed — voice is ignored |
+///
+/// Callers targeting a live dialect must supply an explicit non-empty provider
+/// voice id (for example Briefing Desk's `BRIEFING_DESK_TTS_VOICE`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SynthesizeRequest {
     pub text: String,
+    /// Selected voice / speaker id for the target dialect.
+    ///
+    /// See the struct-level docs for `None` semantics: live stream dialects
+    /// treat missing or empty values as invalid rather than substituting a
+    /// default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice: Option<String>,
     pub format: AudioFormat,

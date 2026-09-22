@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
+use crate::tts::require_explicit_voice;
 
 const DEFAULT_WS_URL: &str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/";
 
@@ -202,12 +203,12 @@ impl AliyunTts {
                 "WebSocket URL must use wss:// for secure credential transport",
             ));
         }
+        let voice = require_explicit_voice(&request)?;
         let task_id = uuid::Uuid::new_v4().simple().to_string();
-        let voice = request.voice.clone().unwrap_or_default();
         let run_task = build_run_task(
             &task_id,
             &self.config.model,
-            &voice,
+            voice,
             &request.format,
             &request.options,
         );
@@ -444,5 +445,29 @@ mod tests {
             StreamEvent::Done { .. }
         ));
         handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_voice_before_network() {
+        let tts = AliyunTts::new(AliyunTtsConfig {
+            model: "cosyvoice-v2".into(),
+            ws_url: "wss://example.invalid/tts".into(),
+            api_key: "test-key".into(),
+        });
+        let err = tts
+            .synthesize(SynthesizeRequest {
+                text: "hi".into(),
+                voice: None,
+                format: AudioFormat::Mp3,
+                options: Value::Null,
+            })
+            .await
+            .expect_err("missing voice must fail before dialing the provider");
+        assert_eq!(err.code, ErrorCode::InvalidRequest);
+        assert!(
+            err.message.contains("voice"),
+            "expected voice-focused message, got {}",
+            err.message
+        );
     }
 }
