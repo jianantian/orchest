@@ -306,18 +306,31 @@ fn spawn_watcher_processor(
     });
 }
 
+/// Inputs for [`spawn_supervised`].
+pub(crate) struct SpawnSupervised {
+    pub run_id: RunId,
+    pub args: AgentRunArgs,
+    pub approval_bus: ApprovalBus,
+    pub child_registry: ChildRunRegistry,
+    pub event_rx: mpsc::Receiver<RuntimeEvent>,
+    pub initial_watchers: Vec<(Arc<dyn Watcher>, usize)>,
+}
+
 /// Spawn a supervised run. `initial_watchers` are wired into the worker's
 /// subscriber list before the first emit (`RunStarted`), so observation is
 /// deterministic from that boundary. Capacities must already be validated
 /// (`> 0`) by the public start-with-watchers entry point.
 pub(crate) fn spawn_supervised(
-    run_id: RunId,
-    mut args: AgentRunArgs,
-    approval_bus: ApprovalBus,
-    child_registry: ChildRunRegistry,
-    event_rx: mpsc::Receiver<RuntimeEvent>,
-    initial_watchers: Vec<(Arc<dyn Watcher>, usize)>,
+    spawn: SpawnSupervised,
 ) -> (super::handle::RunHandle, super::EventReceiver) {
+    let SpawnSupervised {
+        run_id,
+        mut args,
+        approval_bus,
+        child_registry,
+        event_rx,
+        initial_watchers,
+    } = spawn;
     let actor_ref_shared: Arc<Mutex<Option<ActorRef<AgentMsg>>>> = Arc::new(Mutex::new(None));
     let ready = Arc::new(tokio::sync::Notify::new());
 

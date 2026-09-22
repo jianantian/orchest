@@ -72,27 +72,32 @@ impl std::fmt::Debug for ChildRunRegistry {
     }
 }
 
+/// Inputs for [`ChildRunRegistry::register`].
+pub(crate) struct ChildRegistration {
+    pub run_id: RunId,
+    pub parent_run_id: RunId,
+    pub actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
+    pub ready: Arc<Notify>,
+    pub supervisor_ref: Arc<Mutex<Option<ActorRef<SupervisorMsg>>>>,
+}
+
 impl ChildRunRegistry {
     /// Register a newly started delegated child. Returns the watch sender the
     /// starter uses to publish the terminal outcome.
     pub(crate) async fn register(
         &self,
-        run_id: RunId,
-        parent_run_id: RunId,
-        actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
-        ready: Arc<Notify>,
-        supervisor_ref: Arc<Mutex<Option<ActorRef<SupervisorMsg>>>>,
+        reg: ChildRegistration,
     ) -> watch::Sender<Option<ChildRunOutcome>> {
         let (outcome_tx, outcome_rx) = watch::channel(None);
         let entry = RegisteredChild {
-            parent_run_id,
-            actor_ref,
-            ready,
-            supervisor_ref,
+            parent_run_id: reg.parent_run_id,
+            actor_ref: reg.actor_ref,
+            ready: reg.ready,
+            supervisor_ref: reg.supervisor_ref,
             outcome_tx: outcome_tx.clone(),
             _outcome_rx: outcome_rx,
         };
-        self.inner.lock().await.insert(run_id, entry);
+        self.inner.lock().await.insert(reg.run_id, entry);
         outcome_tx
     }
 

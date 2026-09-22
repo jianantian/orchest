@@ -238,6 +238,8 @@ impl ActionArbitrator {
         None
     }
 
+    /// Test-only drain of applied arbitration outcomes (used by SB-7 proofs).
+    #[cfg(test)]
     pub(crate) fn take_applied_log(&self) -> Vec<ArbitratedActions> {
         std::mem::take(&mut *self.applied_log.lock().unwrap_or_else(|p| p.into_inner()))
     }

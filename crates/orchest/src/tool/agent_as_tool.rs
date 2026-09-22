@@ -300,13 +300,13 @@ impl AgentAsTool {
         // supervisor RunHandle can resolve inject/steer/completion targets.
         let outcome_tx = ctx
             .child_registry
-            .register(
-                child_run_id,
+            .register(crate::run::handle::ChildRegistration {
+                run_id: child_run_id,
                 parent_run_id,
-                std::sync::Arc::clone(&handle.actor_ref),
-                std::sync::Arc::clone(&handle.ready),
-                std::sync::Arc::clone(&handle.supervisor_ref),
-            )
+                actor_ref: std::sync::Arc::clone(&handle.actor_ref),
+                ready: std::sync::Arc::clone(&handle.ready),
+                supervisor_ref: std::sync::Arc::clone(&handle.supervisor_ref),
+            })
             .await;
 
         ctx.emit_event(RuntimeEvent::SubAgentStarted {

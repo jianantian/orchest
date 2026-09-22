@@ -191,14 +191,14 @@ impl AgentRun {
             initial_event_subs: vec![],
             watcher_wave_bus: None,
         };
-        supervisor::spawn_supervised(
+        supervisor::spawn_supervised(supervisor::SpawnSupervised {
             run_id,
             args,
             approval_bus,
             child_registry,
             event_rx,
-            watchers,
-        )
+            initial_watchers: watchers,
+        })
     }
 
     /// Resumes a previous run from a persisted snapshot exactly as it left
@@ -247,14 +247,14 @@ impl AgentRun {
             initial_event_subs: vec![],
             watcher_wave_bus: None,
         };
-        Ok(supervisor::spawn_supervised(
+        Ok(supervisor::spawn_supervised(supervisor::SpawnSupervised {
             run_id,
             args,
             approval_bus,
             child_registry,
             event_rx,
-            vec![],
-        ))
+            initial_watchers: vec![],
+        }))
     }
 
     /// Resumes a previous run from a persisted snapshot and appends `input`
@@ -304,14 +304,14 @@ impl AgentRun {
             initial_event_subs: vec![],
             watcher_wave_bus: None,
         };
-        Ok(supervisor::spawn_supervised(
+        Ok(supervisor::spawn_supervised(supervisor::SpawnSupervised {
             run_id,
             args,
             approval_bus,
             child_registry,
             event_rx,
-            vec![],
-        ))
+            initial_watchers: vec![],
+        }))
     }
 }
 

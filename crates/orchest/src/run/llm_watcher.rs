@@ -155,8 +155,7 @@ pub fn format_event(event: &RuntimeEvent) -> String {
                 .take(120)
                 .collect::<String>();
             format!(
-                "Sub-agent started: child={}, parent={}, summary={}",
-                child_run_id, parent_run_id, summary
+                "Sub-agent started: child={child_run_id}, parent={parent_run_id}, summary={summary}"
             )
         }
         RuntimeEvent::SubAgentCompleted {
@@ -170,28 +169,24 @@ pub fn format_event(event: &RuntimeEvent) -> String {
                 .take(120)
                 .collect::<String>();
             format!(
-                "Sub-agent completed: child={}, tokens_used={}, tool_calls_used={}, cost_usd={:.4}, output={}",
-                child_run_id,
+                "Sub-agent completed: child={child_run_id}, tokens_used={}, tool_calls_used={}, cost_usd={:.4}, output={output_summary}",
                 budget_used.tokens_used,
                 budget_used.tool_calls_used,
                 budget_used.cost_usd,
-                output_summary
             )
         }
         RuntimeEvent::SubAgentFailed {
             child_run_id,
             error,
         } => {
-            format!("Sub-agent failed: child={}, error={}", child_run_id, error)
+            format!("Sub-agent failed: child={child_run_id}, error={error}")
         }
         RuntimeEvent::SubAgentEvent {
             parent_run_id,
             child_run_id,
             event: inner,
         } => format!(
-            "Sub-agent event: child={}, parent={}: {}",
-            child_run_id,
-            parent_run_id,
+            "Sub-agent event: child={child_run_id}, parent={parent_run_id}: {}",
             format_event(inner)
         ),
         RuntimeEvent::ChildRunEvent {
@@ -199,12 +194,10 @@ pub fn format_event(event: &RuntimeEvent) -> String {
             run_depth,
             event: inner,
         } => format!(
-            "Child run event: child={}, depth={}: {}",
-            child_run_id,
-            run_depth,
+            "Child run event: child={child_run_id}, depth={run_depth}: {}",
             format_event(inner)
         ),
-        _ => format!("{:?}", event).chars().take(200).collect(),
+        _ => format!("{event:?}").chars().take(200).collect(),
     }
 }
 

@@ -15,7 +15,7 @@ use crate::events::{ApprovalContext, EventSink, FanoutWaveBus, RunFailureKind, R
 use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelResponse, ModelStreamChunk, Role, StopReason,
 };
-use crate::skill::disclosure::with_disclosure_block;
+use crate::skill::disclosure::{with_disclosure_block, SkillSummary};
 use crate::telemetry;
 use crate::tool::code_exec::CodeExecutionMcpServer;
 use crate::tool::registry::ToolRegistry;
@@ -175,29 +175,7 @@ impl Actor for WorkerActor {
             watcher_wave_bus,
         } = args;
         backfill_context_window_size(&mut config, model.as_ref());
-        let next_seq = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
-        let mut event_subs = Vec::with_capacity(1 + initial_event_subs.len());
-        event_subs.push(EventSink::primary(
-            event_tx.clone(),
-            std::sync::Arc::clone(&next_seq),
-        ));
-        for (idx, tx) in initial_event_subs.into_iter().enumerate() {
-            if let Some(ref bus) = watcher_wave_bus {
-                event_subs.push(EventSink::secondary_with_wave(
-                    tx,
-                    (idx + 1) as u64,
-                    std::sync::Arc::clone(&next_seq),
-                    std::sync::Arc::clone(bus),
-                    idx,
-                ));
-            } else {
-                event_subs.push(EventSink::secondary(
-                    tx,
-                    (idx + 1) as u64,
-                    std::sync::Arc::clone(&next_seq),
-                ));
-            }
-        }
+        let event_subs = build_pre_start_event_subs(event_tx, initial_event_subs, watcher_wave_bus);
 
         emit(&event_subs, RuntimeEvent::RunStarted { run_id }).await;
 
@@ -287,19 +265,7 @@ impl Actor for WorkerActor {
             }
         }
 
-        for handoff in config.handoffs.drain(..) {
-            let tool: Arc<dyn Tool> =
-                Arc::new(crate::tool::handoff_tool::HandoffTool::new(handoff));
-            if let Err(e) = registry.register(tool) {
-                emit(
-                    &event_subs,
-                    RuntimeEvent::RuntimeWarning {
-                        message: format!("failed to register handoff tool: {e}"),
-                    },
-                )
-                .await;
-            }
-        }
+        register_handoff_tools(&mut config, &mut registry, &event_subs).await;
 
         let unfiltered_registry = registry.clone();
         let mut registry = registry.filter_by_allowed(&config.runtime.allowed_tools);
@@ -319,42 +285,16 @@ impl Actor for WorkerActor {
             .await);
         }
 
-        let (messages, initial_step, initial_budget_used) = if let Some(rs) = resume {
-            (rs.messages, rs.step, Some(rs.budget_used))
-        } else {
-            // Level-1 skill disclosure: scanned skill metadata rides at the
-            // tail of the system prompt (or forms the whole System message
-            // when no prompt was configured). `Off` injects nothing.
-            let system_prompt = if config.skills.disclosure == SkillDisclosure::Off {
-                config.system_prompt.clone()
-            } else {
-                with_disclosure_block(&config.system_prompt, &disclosed_skills)
-            };
-            let mut msgs = vec![Message {
-                role: Role::System,
-                content: vec![ContentBlock::Text(system_prompt)],
-            }];
-            msgs.extend(initial_messages);
-            msgs.push(Message {
-                role: Role::User,
-                content: input,
-            });
-            (msgs, 0, None)
-        };
+        let (messages, initial_step, initial_budget_used) =
+            build_startup_conversation(resume, &config, &disclosed_skills, initial_messages, input);
 
-        let all_tool_defs = registry.list();
-        let tool_defs = if config.runtime.tool_search_enabled {
-            let search_tool = Arc::new(SearchToolsTool::new(all_tool_defs));
-            let search_def = ToolDef {
-                name: search_tool.name().to_string(),
-                description: search_tool.description().to_string(),
-                input_schema: search_tool.input_schema().clone(),
-            };
-            if let Err(error) = registry.register(search_tool) {
+        let tool_defs = match prepare_initial_tool_defs(&config, &mut registry) {
+            Ok(defs) => defs,
+            Err(error) => {
                 emit(
                     &event_subs,
                     RuntimeEvent::RunFailed {
-                        error: error.to_string(),
+                        error,
                         kind: RunFailureKind::Other,
                     },
                 )
@@ -371,9 +311,6 @@ impl Actor for WorkerActor {
                     run_hook_ctx,
                 ));
             }
-            vec![search_def]
-        } else {
-            all_tool_defs
         };
 
         let budget = if let Some(used) = initial_budget_used {
@@ -490,6 +427,107 @@ impl Actor for WorkerActor {
         state.approval_bus.cancel(state.run_id).await;
         Ok(())
     }
+}
+
+fn prepare_initial_tool_defs(
+    config: &AgentConfig,
+    registry: &mut ToolRegistry,
+) -> Result<Vec<ToolDef>, String> {
+    let all_tool_defs = registry.list();
+    if !config.runtime.tool_search_enabled {
+        return Ok(all_tool_defs);
+    }
+    let search_tool = Arc::new(SearchToolsTool::new(all_tool_defs));
+    let search_def = ToolDef {
+        name: search_tool.name().to_string(),
+        description: search_tool.description().to_string(),
+        input_schema: search_tool.input_schema().clone(),
+    };
+    registry
+        .register(search_tool)
+        .map_err(|error| error.to_string())?;
+    Ok(vec![search_def])
+}
+
+async fn register_handoff_tools(
+    config: &mut AgentConfig,
+    registry: &mut ToolRegistry,
+    event_subs: &[EventSink],
+) {
+    for handoff in config.handoffs.drain(..) {
+        let tool: Arc<dyn Tool> = Arc::new(crate::tool::handoff_tool::HandoffTool::new(handoff));
+        if let Err(e) = registry.register(tool) {
+            emit(
+                event_subs,
+                RuntimeEvent::RuntimeWarning {
+                    message: format!("failed to register handoff tool: {e}"),
+                },
+            )
+            .await;
+        }
+    }
+}
+
+fn build_pre_start_event_subs(
+    event_tx: mpsc::Sender<RuntimeEvent>,
+    initial_event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
+    watcher_wave_bus: Option<std::sync::Arc<dyn FanoutWaveBus>>,
+) -> Vec<EventSink> {
+    let next_seq = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
+    let mut event_subs = Vec::with_capacity(1 + initial_event_subs.len());
+    event_subs.push(EventSink::primary(
+        event_tx,
+        std::sync::Arc::clone(&next_seq),
+    ));
+    for (idx, tx) in initial_event_subs.into_iter().enumerate() {
+        if let Some(ref bus) = watcher_wave_bus {
+            event_subs.push(EventSink::secondary_with_wave(
+                tx,
+                (idx + 1) as u64,
+                std::sync::Arc::clone(&next_seq),
+                std::sync::Arc::clone(bus),
+                idx,
+            ));
+        } else {
+            event_subs.push(EventSink::secondary(
+                tx,
+                (idx + 1) as u64,
+                std::sync::Arc::clone(&next_seq),
+            ));
+        }
+    }
+    event_subs
+}
+
+/// Build the initial conversation for a fresh start or resume snapshot.
+fn build_startup_conversation(
+    resume: Option<ResumeState>,
+    config: &AgentConfig,
+    disclosed_skills: &[SkillSummary],
+    initial_messages: Vec<Message>,
+    input: Vec<ContentBlock>,
+) -> (Vec<Message>, u32, Option<crate::budget::BudgetUsage>) {
+    if let Some(rs) = resume {
+        return (rs.messages, rs.step, Some(rs.budget_used));
+    }
+    // Level-1 skill disclosure: scanned skill metadata rides at the
+    // tail of the system prompt (or forms the whole System message
+    // when no prompt was configured). `Off` injects nothing.
+    let system_prompt = if config.skills.disclosure == SkillDisclosure::Off {
+        config.system_prompt.clone()
+    } else {
+        with_disclosure_block(&config.system_prompt, disclosed_skills)
+    };
+    let mut msgs = vec![Message {
+        role: Role::System,
+        content: vec![ContentBlock::Text(system_prompt)],
+    }];
+    msgs.extend(initial_messages);
+    msgs.push(Message {
+        role: Role::User,
+        content: input,
+    });
+    (msgs, 0, None)
 }
 
 async fn register_code_execution_tools(
@@ -831,7 +869,7 @@ async fn validate_context_window(
         primary(subs),
     )
     .await;
-    emit_run_failed(state, &subs, error, RunFailureKind::Other).await;
+    emit_run_failed(state, subs, error, RunFailureKind::Other).await;
     false
 }
 
@@ -956,7 +994,7 @@ async fn handle_model_error_or_retry(
         primary(subs),
     )
     .await;
-    emit_run_failed(state, &subs, error, RunFailureKind::Other).await;
+    emit_run_failed(state, subs, error, RunFailureKind::Other).await;
     false
 }
 
