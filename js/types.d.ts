@@ -248,7 +248,7 @@ export type RuntimeEvent =
   | { type: "sub_agent_event"; parent_run_id: string; child_run_id: string; run_depth: number; event: RuntimeEvent }
   | { type: "hook_panicked"; hook_name: string; message: string; run_depth: number; child_run_id: string | null }
   | { type: "agent_updated"; previous_agent: string; new_agent: string; run_depth: number; child_run_id: string | null }
-  | { type: "events_dropped"; subscriber_id: number; count: number; run_depth: number; child_run_id: string | null }
+  | { type: "events_dropped"; subscriber_id: number; count: number; from_seq: number; to_seq: number; run_depth: number; child_run_id: string | null }
   | { type: "run_restarted"; attempt: number; run_depth: number; child_run_id: string | null }
   | { type: "run_completed"; output: unknown; stop_reason: StopReason; run_depth: number; child_run_id: string | null }
   | { type: "run_failed"; error: string; kind: RunFailureKind; run_depth: number; child_run_id: string | null }

@@ -275,6 +275,8 @@ pub fn sanitize_runtime_event(
         RuntimeEvent::EventsDropped {
             subscriber_id,
             count,
+            from_seq,
+            to_seq,
         } => SanitizeOutcome {
             event: Some(TrajectoryEvent {
                 schema_version: TRAJECTORY_SCHEMA_VERSION.to_string(),
@@ -285,6 +287,8 @@ pub fn sanitize_runtime_event(
                 data: json!({
                     "subscriber_id": subscriber_id,
                     "count": count,
+                    "from_seq": from_seq,
+                    "to_seq": to_seq,
                 }),
             }),
             mark_inconclusive: true,
@@ -863,6 +867,8 @@ mod tests {
         let event = RuntimeEvent::EventsDropped {
             subscriber_id: 7,
             count: 3,
+            from_seq: 0,
+            to_seq: 0,
         };
         let outcome = sanitize_runtime_event(&event, 5, 12, RunRelation::default());
         assert!(outcome.mark_inconclusive);
@@ -1068,6 +1074,8 @@ mod tests {
         rec.observe(&RuntimeEvent::EventsDropped {
             subscriber_id: 1,
             count: 2,
+            from_seq: 0,
+            to_seq: 0,
         });
         assert!(rec.is_inconclusive());
         assert_eq!(

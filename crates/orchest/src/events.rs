@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::mpsc;
 
 use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::model::{ModelStreamChunk, OptionAdjustment, StopReason, TokenUsage};
@@ -205,9 +206,22 @@ pub enum RuntimeEvent {
         new_agent: String,
     },
 
+    /// One or more events were not delivered to a subscriber under
+    /// backpressure. Secondary subscribers receive this on their own channel
+    /// once capacity frees (coalesced); the primary also observes a mirror
+    /// for operator visibility. Missed payloads are not replayed — see
+    /// [`deliver_to_subscribers`] recovery contract.
     EventsDropped {
         subscriber_id: u64,
         count: u64,
+        /// Inclusive start of the lost delivery-sequence range. `0` when
+        /// unknown (legacy events deserialized without this field).
+        #[serde(default)]
+        from_seq: u64,
+        /// Inclusive end of the lost delivery-sequence range. `0` when
+        /// unknown (legacy events deserialized without this field).
+        #[serde(default)]
+        to_seq: u64,
     },
 
     RunRestarted {
@@ -250,6 +264,312 @@ pub enum RuntimeEvent {
 /// `EndTurn` (not truncated) is the faithful reading.
 fn default_run_completed_stop_reason() -> StopReason {
     StopReason::EndTurn
+}
+
+/// Timeout for primary (blocking) event delivery. Matches the run actor.
+pub const EVENT_DELIVERY_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// Coalesced secondary loss awaiting delivery on that subscriber's channel.
+///
+/// State is O(1) per subscriber: a count and inclusive sequence bounds. It
+/// cannot grow with the number of lost events.
+#[derive(Debug, Default)]
+struct PendingLoss {
+    count: u64,
+    from_seq: u64,
+    to_seq: u64,
+}
+
+/// One fan-out slot in a run's event subscriber list.
+///
+/// Index `0` is always the primary receiver (awaited send with timeout).
+/// Remaining slots are secondary watcher / `subscribe_events` channels that
+/// use non-blocking delivery with coalesced [`RuntimeEvent::EventsDropped`]
+/// recovery signals.
+///
+/// # Recovery contract (SB-5 / #252)
+///
+/// Secondary delivery is lossy under backpressure so a slow watcher cannot
+/// stall the run. When a secondary `try_send` fails:
+///
+/// 1. **Observe** — the loss is recorded with stable metadata
+///    (`subscriber_id`, coalesced `count`, `from_seq`..=`to_seq`) and, once
+///    the secondary channel has capacity, an `EventsDropped` is delivered on
+///    *that same channel* before the next accepted event. A mirror signal is
+///    also offered to the primary (best-effort) for operators.
+/// 2. **Bounded failure** — lost event *payloads* are not retained or
+///    replayed. The gap is permanent for content recovery; only the loss
+///    signal is guaranteed once capacity frees.
+/// 3. **Continue or resubscribe** — after observing `EventsDropped`, keep
+///    consuming for subsequent FIFO events, or call
+///    [`crate::run::RunHandle::subscribe_events`] /
+///    [`crate::run::RunHandle::attach_watcher`] for a fresh channel that sees
+///    only future events.
+///
+/// Primary backpressure semantics are unchanged: awaited send with
+/// [`EVENT_DELIVERY_TIMEOUT`]. Recovery state per secondary is a fixed-size
+/// pending counter (cannot grow without bound).
+///
+/// Flushing a pending `EventsDropped` consumes one channel slot before the
+/// next event is offered. Subscribers that want the resumed event to land in
+/// the same delivery should leave at least two free slots (or drain before the
+/// runtime offers the next event).
+/// Observes secondary deliveries so multi-watcher action arbitration can gate
+/// on the exact cohort that received each fan-out (SB-7 / #254).
+///
+/// Implemented by the run supervisor's action arbitrator. Non-watcher
+/// secondaries (`subscribe_events`) leave this unset.
+pub trait FanoutWaveBus: Send + Sync {
+    /// Record that a fan-out event is about to be enqueued for this watcher.
+    /// Must be called *before* `try_send` so a woken receiver always finds a ticket.
+    fn push_wave_ticket(&self, watcher_index: usize, fanout_seq: u64);
+    /// Record that a per-subscriber signal is about to be enqueued.
+    fn push_signal_ticket(&self, watcher_index: usize);
+    /// Drop the most recent ticket if the corresponding `try_send` failed.
+    fn rollback_last_ticket(&self, watcher_index: usize);
+    /// All secondary offers for this fan-out sequence have finished; the cohort
+    /// membership for `fanout_seq` is now final.
+    fn seal_wave(&self, fanout_seq: u64);
+}
+
+#[derive(Clone)]
+pub struct EventSink {
+    tx: mpsc::Sender<RuntimeEvent>,
+    subscriber_id: u64,
+    next_seq: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// `None` for the primary slot (index 0).
+    pending: Option<std::sync::Arc<std::sync::Mutex<PendingLoss>>>,
+    /// Watcher arbitration bus; `None` for primary and non-watcher secondaries.
+    wave_bus: Option<std::sync::Arc<dyn FanoutWaveBus>>,
+    /// Registration index among watchers when `wave_bus` is set.
+    watcher_index: Option<usize>,
+}
+
+impl EventSink {
+    /// Build the primary (index 0) sink sharing a run-scoped sequence counter.
+    pub fn primary(
+        tx: mpsc::Sender<RuntimeEvent>,
+        next_seq: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    ) -> Self {
+        Self {
+            tx,
+            subscriber_id: 0,
+            next_seq,
+            pending: None,
+            wave_bus: None,
+            watcher_index: None,
+        }
+    }
+
+    /// Build a secondary sink. `subscriber_id` should match the fan-out index
+    /// at registration time (stable for the life of this subscription).
+    pub fn secondary(
+        tx: mpsc::Sender<RuntimeEvent>,
+        subscriber_id: u64,
+        next_seq: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    ) -> Self {
+        Self {
+            tx,
+            subscriber_id,
+            next_seq,
+            pending: Some(std::sync::Arc::new(std::sync::Mutex::new(
+                PendingLoss::default(),
+            ))),
+            wave_bus: None,
+            watcher_index: None,
+        }
+    }
+
+    /// Secondary sink participating in multi-watcher action arbitration.
+    pub fn secondary_with_wave(
+        tx: mpsc::Sender<RuntimeEvent>,
+        subscriber_id: u64,
+        next_seq: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        wave_bus: std::sync::Arc<dyn FanoutWaveBus>,
+        watcher_index: usize,
+    ) -> Self {
+        Self {
+            tx,
+            subscriber_id,
+            next_seq,
+            pending: Some(std::sync::Arc::new(std::sync::Mutex::new(
+                PendingLoss::default(),
+            ))),
+            wave_bus: Some(wave_bus),
+            watcher_index: Some(watcher_index),
+        }
+    }
+
+    /// Shared run-scoped sequence allocator used by this fan-out.
+    pub fn sequence_counter(&self) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
+        std::sync::Arc::clone(&self.next_seq)
+    }
+
+    /// Borrow the underlying channel sender (hooks / primary-only paths).
+    pub fn sender(&self) -> &mpsc::Sender<RuntimeEvent> {
+        &self.tx
+    }
+
+    fn alloc_seq(&self) -> u64 {
+        self.next_seq
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn record_pending_locked(pending: &mut PendingLoss, seq: u64) {
+        if pending.count == 0 {
+            pending.from_seq = seq;
+        }
+        pending.count = pending.count.saturating_add(1);
+        pending.to_seq = seq;
+    }
+
+    /// Offer one event to this secondary sink. Returns `true` when a loss was
+    /// recorded (channel full).
+    fn offer_secondary(&self, event: RuntimeEvent, seq: u64) -> bool {
+        let Some(pending_mtx) = &self.pending else {
+            return false;
+        };
+        let mut pending = pending_mtx
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        if pending.count > 0 {
+            let signal = RuntimeEvent::EventsDropped {
+                subscriber_id: self.subscriber_id,
+                count: pending.count,
+                from_seq: pending.from_seq,
+                to_seq: pending.to_seq,
+            };
+            // Push the ticket *before* try_send so a woken receiver cannot
+            // observe the message without a matching ticket (SB-7 race).
+            if let (Some(bus), Some(idx)) = (&self.wave_bus, self.watcher_index) {
+                bus.push_signal_ticket(idx);
+            }
+            match self.tx.try_send(signal) {
+                Ok(()) => {
+                    pending.count = 0;
+                    pending.from_seq = 0;
+                    pending.to_seq = 0;
+                }
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    // Roll back the speculative signal ticket.
+                    if let (Some(bus), Some(idx)) = (&self.wave_bus, self.watcher_index) {
+                        bus.rollback_last_ticket(idx);
+                    }
+                    Self::record_pending_locked(&mut pending, seq);
+                    return true;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    if let (Some(bus), Some(idx)) = (&self.wave_bus, self.watcher_index) {
+                        bus.rollback_last_ticket(idx);
+                    }
+                    return false;
+                }
+            }
+        }
+
+        if let (Some(bus), Some(idx)) = (&self.wave_bus, self.watcher_index) {
+            bus.push_wave_ticket(idx, seq);
+        }
+        match self.tx.try_send(event) {
+            Ok(()) => false,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                if let (Some(bus), Some(idx)) = (&self.wave_bus, self.watcher_index) {
+                    bus.rollback_last_ticket(idx);
+                }
+                Self::record_pending_locked(&mut pending, seq);
+                true
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                if let (Some(bus), Some(idx)) = (&self.wave_bus, self.watcher_index) {
+                    bus.rollback_last_ticket(idx);
+                }
+                false
+            }
+        }
+    }
+}
+
+impl std::fmt::Debug for EventSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventSink")
+            .field("subscriber_id", &self.subscriber_id)
+            .field("watcher_index", &self.watcher_index)
+            .field("has_wave_bus", &self.wave_bus.is_some())
+            .field("has_pending", &self.pending.is_some())
+            .finish()
+    }
+}
+
+/// Deliver a runtime event to a subscriber list using the public fan-out contract:
+///
+/// - index `0` is the primary event receiver — awaited send with
+///   [`EVENT_DELIVERY_TIMEOUT`];
+/// - remaining subscribers are attached watcher channels — non-blocking
+///   `try_send` with coalesced [`RuntimeEvent::EventsDropped`] recovery on
+///   the affected secondary (see [`EventSink`] recovery contract).
+///
+/// Each event is offered at most once per subscriber, preserving primary
+/// order. Tools that forward nested child events should call
+/// [`crate::tool::ToolContext::emit_event`], which uses this helper so
+/// attached watchers observe the same stream as the primary receiver.
+pub async fn deliver_to_subscribers(subscribers: &[EventSink], event: RuntimeEvent) {
+    let seq = subscribers.first().map(EventSink::alloc_seq).unwrap_or(0);
+
+    if let Some(primary) = subscribers.first() {
+        match tokio::time::timeout(EVENT_DELIVERY_TIMEOUT, primary.tx.send(event.clone())).await {
+            Ok(Ok(())) | Ok(Err(_)) => {}
+            Err(_) => {
+                crate::telemetry::record_event_drop("primary", 1);
+                if primary
+                    .tx
+                    .try_send(RuntimeEvent::EventsDropped {
+                        subscriber_id: 0,
+                        count: 1,
+                        from_seq: seq,
+                        to_seq: seq,
+                    })
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "primary event subscriber timed out and EventsDropped notification channel is full"
+                    );
+                }
+            }
+        }
+    }
+
+    let mut wave_bus_to_seal: Option<std::sync::Arc<dyn FanoutWaveBus>> = None;
+    for sink in subscribers.iter().skip(1) {
+        let lost = sink.offer_secondary(event.clone(), seq);
+        if !lost {
+            if let Some(bus) = sink.wave_bus.as_ref() {
+                wave_bus_to_seal = Some(std::sync::Arc::clone(bus));
+            }
+        } else {
+            crate::telemetry::record_event_drop("secondary", 1);
+            if let Some(primary) = subscribers.first() {
+                if primary
+                    .tx
+                    .try_send(RuntimeEvent::EventsDropped {
+                        subscriber_id: sink.subscriber_id,
+                        count: 1,
+                        from_seq: seq,
+                        to_seq: seq,
+                    })
+                    .is_err()
+                {
+                    tracing::warn!(
+                        subscriber_id = sink.subscriber_id,
+                        "secondary event subscriber dropped an event and primary notification channel is full"
+                    );
+                }
+            }
+        }
+    }
+    if let Some(bus) = wave_bus_to_seal {
+        bus.seal_wave(seq);
+    }
 }
 
 #[cfg(test)]
@@ -388,5 +708,162 @@ mod tests {
             }
             other => panic!("unexpected event: {other:?}"),
         }
+    }
+
+    #[test]
+    fn events_dropped_without_seq_deserializes_as_zero() {
+        let legacy = json!({"EventsDropped": {"subscriber_id": 2, "count": 4}});
+        let event: RuntimeEvent =
+            serde_json::from_value(legacy).expect("deserialize legacy EventsDropped");
+        match event {
+            RuntimeEvent::EventsDropped {
+                subscriber_id,
+                count,
+                from_seq,
+                to_seq,
+            } => {
+                assert_eq!(subscriber_id, 2);
+                assert_eq!(count, 4);
+                assert_eq!(from_seq, 0);
+                assert_eq!(to_seq, 0);
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn secondary_saturation_delivers_coalesced_loss_then_resumes() {
+        let next_seq = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
+        // Large primary capacity so mirror EventsDropped signals never block delivery.
+        let (primary_tx, mut primary_rx) = mpsc::channel(64);
+        // Capacity 2: leaves room to flush EventsDropped and the next event together
+        // after the buffered prefixes are drained (capacity 1 would re-lose the
+        // resumed event immediately after the loss signal).
+        let (secondary_tx, mut secondary_rx) = mpsc::channel(2);
+        let sinks = vec![
+            EventSink::primary(primary_tx, std::sync::Arc::clone(&next_seq)),
+            EventSink::secondary(secondary_tx, 1, std::sync::Arc::clone(&next_seq)),
+        ];
+
+        for step in 1..=5u32 {
+            deliver_to_subscribers(&sinks, RuntimeEvent::ModelCallStarted { step }).await;
+        }
+
+        let mut primary_started = 0u32;
+        let mut primary_drop_mirrors = 0u64;
+        while let Ok(event) = primary_rx.try_recv() {
+            match event {
+                RuntimeEvent::ModelCallStarted { .. } => primary_started += 1,
+                RuntimeEvent::EventsDropped {
+                    subscriber_id: 1, ..
+                } => primary_drop_mirrors += 1,
+                other => panic!("unexpected primary event: {other:?}"),
+            }
+        }
+        assert_eq!(primary_started, 5);
+        assert!(primary_drop_mirrors >= 1);
+
+        let first = secondary_rx.try_recv().expect("buffered event 1");
+        let second = secondary_rx.try_recv().expect("buffered event 2");
+        assert!(matches!(first, RuntimeEvent::ModelCallStarted { step: 1 }));
+        assert!(matches!(second, RuntimeEvent::ModelCallStarted { step: 2 }));
+
+        // Channel empty; pending loss still recorded. Next offer flushes the
+        // coalesced signal then delivers the new event.
+        deliver_to_subscribers(&sinks, RuntimeEvent::ModelCallStarted { step: 6 }).await;
+
+        let loss = secondary_rx
+            .try_recv()
+            .expect("coalesced EventsDropped should flush before the resumed event");
+        match loss {
+            RuntimeEvent::EventsDropped {
+                subscriber_id,
+                count,
+                from_seq,
+                to_seq,
+            } => {
+                assert_eq!(subscriber_id, 1);
+                assert!(
+                    count >= 3,
+                    "expected coalesced loss count >= 3, got {count}"
+                );
+                assert!(from_seq >= 1);
+                assert!(to_seq >= from_seq);
+            }
+            other => panic!("expected EventsDropped, got {other:?}"),
+        }
+
+        let resumed = secondary_rx
+            .try_recv()
+            .expect("resumed event after loss signal");
+        assert!(matches!(
+            resumed,
+            RuntimeEvent::ModelCallStarted { step: 6 }
+        ));
+    }
+
+    #[tokio::test]
+    async fn secondary_no_drop_preserves_fifo() {
+        let next_seq = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let (primary_tx, mut primary_rx) = mpsc::channel(32);
+        let (secondary_tx, mut secondary_rx) = mpsc::channel(32);
+        let sinks = vec![
+            EventSink::primary(primary_tx, std::sync::Arc::clone(&next_seq)),
+            EventSink::secondary(secondary_tx, 1, next_seq),
+        ];
+
+        for step in 1..=8u32 {
+            deliver_to_subscribers(&sinks, RuntimeEvent::ModelCallStarted { step }).await;
+        }
+
+        let mut primary_steps = Vec::new();
+        while let Ok(RuntimeEvent::ModelCallStarted { step }) = primary_rx.try_recv() {
+            primary_steps.push(step);
+        }
+        let mut secondary_steps = Vec::new();
+        while let Ok(RuntimeEvent::ModelCallStarted { step }) = secondary_rx.try_recv() {
+            secondary_steps.push(step);
+        }
+        assert_eq!(primary_steps, (1..=8).collect::<Vec<_>>());
+        assert_eq!(secondary_steps, primary_steps);
+        assert!(primary_rx.try_recv().is_err());
+        assert!(secondary_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn pending_loss_state_stays_bounded_under_sustained_saturation() {
+        let next_seq = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
+        // Drain primary in the background so mirror signals never fill it and
+        // trip the primary delivery timeout (which would make this test slow).
+        let (primary_tx, mut primary_rx) = mpsc::channel(32);
+        tokio::spawn(async move { while primary_rx.recv().await.is_some() {} });
+        let (secondary_tx, secondary_rx) = mpsc::channel(1);
+        let sinks = vec![
+            EventSink::primary(primary_tx, std::sync::Arc::clone(&next_seq)),
+            EventSink::secondary(secondary_tx, 1, next_seq),
+        ];
+
+        // Fill secondary, then lose many events without draining.
+        deliver_to_subscribers(&sinks, RuntimeEvent::ModelCallStarted { step: 1 }).await;
+        for step in 2..=200u32 {
+            deliver_to_subscribers(&sinks, RuntimeEvent::ModelCallStarted { step }).await;
+        }
+
+        let pending = sinks[1]
+            .pending
+            .as_ref()
+            .expect("secondary has pending slot")
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        // O(1) state: only count + bounds, not one record per lost event.
+        assert_eq!(
+            std::mem::size_of_val(&*pending),
+            std::mem::size_of::<PendingLoss>()
+        );
+        assert!(pending.count >= 199);
+        assert!(pending.from_seq > 0);
+        assert!(pending.to_seq >= pending.from_seq);
+        // Hold receiver so the channel stays alive through the asserts.
+        drop(secondary_rx);
     }
 }

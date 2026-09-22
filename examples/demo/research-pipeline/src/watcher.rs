@@ -75,7 +75,9 @@ pub fn stable_event_key(event: &RuntimeEvent) -> String {
         RuntimeEvent::EventsDropped {
             subscriber_id,
             count,
-        } => format!("events.dropped:{subscriber_id}:{count}"),
+            from_seq,
+            to_seq,
+        } => format!("events.dropped:{subscriber_id}:{count}:{from_seq}:{to_seq}"),
         RuntimeEvent::RunRestarted { attempt } => format!("run.restarted:{attempt}"),
         RuntimeEvent::RunCompleted { stop_reason, .. } => {
             format!("run.completed:{stop_reason:?}")

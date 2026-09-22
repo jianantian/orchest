@@ -76,8 +76,10 @@ impl Tool for InProcessTool {
             run_depth: ctx.run_depth,
             tool_call_id: ctx.tool_call_id.clone(),
             event_tx: ctx.event_tx.clone(),
+            event_subs: ctx.event_subs.clone(),
             webhook_base_url: ctx.webhook_base_url.clone(),
             approval_bus: ctx.approval_bus.clone(),
+            child_registry: ctx.child_registry.clone(),
             remaining_budget: ctx.remaining_budget.clone(),
             parent_messages: ctx.parent_messages.clone(),
         };

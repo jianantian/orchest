@@ -50,21 +50,24 @@ impl ModelAdapter for FaultingWorkerModel {
         _tx: Option<mpsc::Sender<orchest::model::StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
-        let (id, name, input) = match call {
-            0 => (
-                "search-1",
+        // Alternate search → fault so each supervised attempt (including restarts)
+        // still completes search_corpus before the controlled fault.
+        let (id, name, input) = if call % 2 == 0 {
+            (
+                format!("search-{}", call / 2 + 1),
                 "search_corpus",
                 json!({"query": "failure escalation evidence"}),
-            ),
-            _ => (
-                "fault-1",
+            )
+        } else {
+            (
+                format!("fault-{}", call / 2 + 1),
                 "fault_trigger",
                 json!({"reason": "failure escalation evidence"}),
-            ),
+            )
         };
         Ok(ModelResponse {
             content: vec![ContentBlock::ToolUse {
-                id: id.to_string(),
+                id,
                 name: name.to_string(),
                 input,
             }],
@@ -180,7 +183,7 @@ fn event_index(
 }
 
 #[tokio::test]
-async fn controlled_worker_failure_reaches_supervisor_escalation_without_restart_or_panic() {
+async fn controlled_worker_failure_restarts_once_then_escalates_without_panic() {
     let (_temp, worker) = worker_fixture();
     assert!(matches!(
         &worker.config().supervision_strategy,
@@ -223,7 +226,7 @@ async fn controlled_worker_failure_reaches_supervisor_escalation_without_restart
     handle.wait().await;
 
     assert!(events.last().is_some_and(is_terminal));
-    assert_eq!(worker_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(worker_calls.load(Ordering::SeqCst), 4);
     assert_eq!(supervisor_calls.load(Ordering::SeqCst), 2);
 
     let search_completed = event_index(&events, "nested search_corpus completion", |event| {
@@ -255,6 +258,26 @@ async fn controlled_worker_failure_reaches_supervisor_escalation_without_restart
                 if matches!(event.as_ref(), RuntimeEvent::RunFailed { .. })
         )
     });
+    let worker_restarted = event_index(&events, "nested worker RunRestarted", |event| {
+        matches!(
+            event,
+            RuntimeEvent::SubAgentEvent { event, .. }
+                if matches!(event.as_ref(), RuntimeEvent::RunRestarted { attempt: 1 })
+        )
+    });
+    let worker_run_failed_final = events
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, event)| {
+            matches!(
+                event,
+                RuntimeEvent::SubAgentEvent { event, .. }
+                    if matches!(event.as_ref(), RuntimeEvent::RunFailed { .. })
+            )
+        })
+        .map(|(idx, _)| idx)
+        .expect("missing final nested worker RunFailed");
     let sub_agent_failed = event_index(&events, "SubAgentFailed lifecycle event", |event| {
         matches!(event, RuntimeEvent::SubAgentFailed { .. })
     });
@@ -272,11 +295,14 @@ async fn controlled_worker_failure_reaches_supervisor_escalation_without_restart
     assert!(
         search_completed < controlled_fault
             && controlled_fault < worker_run_failed
-            && worker_run_failed < sub_agent_failed
+            && worker_run_failed < worker_restarted
+            && worker_restarted < worker_run_failed_final
+            && worker_run_failed_final < sub_agent_failed
             && sub_agent_failed < delegation_failed
             && delegation_failed < supervisor_escalated,
         "failure boundaries out of order: search={search_completed}, fault={controlled_fault}, \
-         worker_failed={worker_run_failed}, sub_agent_failed={sub_agent_failed}, \
+         worker_failed={worker_run_failed}, restarted={worker_restarted}, \
+         worker_failed_final={worker_run_failed_final}, sub_agent_failed={sub_agent_failed}, \
          delegation_failed={delegation_failed}, escalation={supervisor_escalated}"
     );
 
@@ -315,7 +341,7 @@ async fn controlled_worker_failure_reaches_supervisor_escalation_without_restart
         unreachable!("escalation index has the asserted event");
     };
     assert_eq!(output, ESCALATION_SUMMARY);
-    assert!(!events.iter().any(contains_restart));
+    assert_eq!(events.iter().filter(|e| contains_restart(e)).count(), 1);
     assert!(!events
         .iter()
         .any(|event| matches!(event, RuntimeEvent::HookPanicked { .. })));

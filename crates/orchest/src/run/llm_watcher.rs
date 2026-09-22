@@ -52,14 +52,17 @@ impl LlmWatcherBuilder {
         self
     }
 
-    pub fn build(self) -> LlmWatcher {
-        LlmWatcher {
-            model: self.model.expect("LlmWatcherBuilder requires a model"),
+    pub fn build(self) -> Result<LlmWatcher, super::ConfigError> {
+        let model = self
+            .model
+            .ok_or(super::ConfigError::LlmWatcherMissingModel)?;
+        Ok(LlmWatcher {
+            model,
             system_prompt: self.system_prompt,
             eval_interval: self.eval_interval,
             event_buffer: Mutex::new(Vec::new()),
             event_count: AtomicUsize::new(0),
-        }
+        })
     }
 }
 
@@ -141,6 +144,59 @@ pub fn format_event(event: &RuntimeEvent) -> String {
         }
         RuntimeEvent::RunRestarted { attempt } => format!("Run restarted: attempt {attempt}"),
         RuntimeEvent::BudgetWarning { .. } => "Budget warning".to_string(),
+        RuntimeEvent::SubAgentStarted {
+            parent_run_id,
+            child_run_id,
+            config_summary,
+        } => {
+            let summary = serde_json::to_string(config_summary)
+                .unwrap_or_default()
+                .chars()
+                .take(120)
+                .collect::<String>();
+            format!(
+                "Sub-agent started: child={child_run_id}, parent={parent_run_id}, summary={summary}"
+            )
+        }
+        RuntimeEvent::SubAgentCompleted {
+            child_run_id,
+            output,
+            budget_used,
+        } => {
+            let output_summary = serde_json::to_string(output)
+                .unwrap_or_default()
+                .chars()
+                .take(120)
+                .collect::<String>();
+            format!(
+                "Sub-agent completed: child={child_run_id}, tokens_used={}, tool_calls_used={}, cost_usd={:.4}, output={output_summary}",
+                budget_used.tokens_used,
+                budget_used.tool_calls_used,
+                budget_used.cost_usd,
+            )
+        }
+        RuntimeEvent::SubAgentFailed {
+            child_run_id,
+            error,
+        } => {
+            format!("Sub-agent failed: child={child_run_id}, error={error}")
+        }
+        RuntimeEvent::SubAgentEvent {
+            parent_run_id,
+            child_run_id,
+            event: inner,
+        } => format!(
+            "Sub-agent event: child={child_run_id}, parent={parent_run_id}: {}",
+            format_event(inner)
+        ),
+        RuntimeEvent::ChildRunEvent {
+            child_run_id,
+            run_depth,
+            event: inner,
+        } => format!(
+            "Child run event: child={child_run_id}, depth={run_depth}: {}",
+            format_event(inner)
+        ),
         _ => format!("{event:?}").chars().take(200).collect(),
     }
 }
@@ -351,7 +407,11 @@ mod tests {
     #[tokio::test]
     async fn accumulates_events_before_eval_interval() {
         let model = Arc::new(MockModel::with_action("abort", "stop now"));
-        let watcher = LlmWatcher::builder().model(model).eval_interval(3).build();
+        let watcher = LlmWatcher::builder()
+            .model(model)
+            .eval_interval(3)
+            .build()
+            .unwrap();
 
         let r1 = watcher.on_event(&run_started()).await;
         assert!(matches!(r1, WatcherAction::Continue));
@@ -364,7 +424,11 @@ mod tests {
     #[tokio::test]
     async fn maps_steer_action() {
         let model = Arc::new(MockModel::with_action("steer", "focus on task"));
-        let watcher = LlmWatcher::builder().model(model).eval_interval(1).build();
+        let watcher = LlmWatcher::builder()
+            .model(model)
+            .eval_interval(1)
+            .build()
+            .unwrap();
         let result = watcher.on_event(&run_started()).await;
         assert!(matches!(result, WatcherAction::Steer(msg) if msg == "focus on task"));
     }
@@ -372,7 +436,11 @@ mod tests {
     #[tokio::test]
     async fn maps_inject_action() {
         let model = Arc::new(MockModel::with_action("inject", "try another approach"));
-        let watcher = LlmWatcher::builder().model(model).eval_interval(1).build();
+        let watcher = LlmWatcher::builder()
+            .model(model)
+            .eval_interval(1)
+            .build()
+            .unwrap();
         let result = watcher.on_event(&run_started()).await;
         assert!(matches!(result, WatcherAction::Inject(msg) if msg == "try another approach"));
     }
@@ -380,7 +448,11 @@ mod tests {
     #[tokio::test]
     async fn maps_continue_action() {
         let model = Arc::new(MockModel::with_action("continue", ""));
-        let watcher = LlmWatcher::builder().model(model).eval_interval(1).build();
+        let watcher = LlmWatcher::builder()
+            .model(model)
+            .eval_interval(1)
+            .build()
+            .unwrap();
         let result = watcher.on_event(&run_started()).await;
         assert!(matches!(result, WatcherAction::Continue));
     }
@@ -388,7 +460,11 @@ mod tests {
     #[tokio::test]
     async fn model_failure_degrades_to_continue() {
         let model: Arc<dyn ModelAdapter> = Arc::new(FailingModel);
-        let watcher = LlmWatcher::builder().model(model).eval_interval(1).build();
+        let watcher = LlmWatcher::builder()
+            .model(model)
+            .eval_interval(1)
+            .build()
+            .unwrap();
         let result = watcher.on_event(&run_started()).await;
         assert!(matches!(result, WatcherAction::Continue));
     }
@@ -396,9 +472,26 @@ mod tests {
     #[tokio::test]
     async fn no_tool_use_degrades_to_continue() {
         let model = Arc::new(MockModel::failing());
-        let watcher = LlmWatcher::builder().model(model).eval_interval(1).build();
+        let watcher = LlmWatcher::builder()
+            .model(model)
+            .eval_interval(1)
+            .build()
+            .unwrap();
         let result = watcher.on_event(&run_started()).await;
         assert!(matches!(result, WatcherAction::Continue));
+    }
+
+    #[test]
+    fn build_fails_with_missing_model_when_model_not_set() {
+        let result = LlmWatcher::builder().eval_interval(1).build();
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("build() should fail without .model()"),
+        };
+        assert!(matches!(
+            err,
+            crate::run::ConfigError::LlmWatcherMissingModel
+        ));
     }
 
     #[test]
@@ -424,5 +517,64 @@ mod tests {
         });
         assert!(s.contains("my_tool"));
         assert!(s.contains("42ms"));
+    }
+
+    #[test]
+    fn format_event_sub_agent_lifecycle_and_nested_events_are_structured() {
+        let parent = crate::run::RunId::new();
+        let child = crate::run::RunId::new();
+
+        let started = format_event(&RuntimeEvent::SubAgentStarted {
+            parent_run_id: parent,
+            child_run_id: child,
+            config_summary: json!({"run_depth": 1}),
+        });
+        assert!(started.contains("Sub-agent started"));
+        assert!(started.contains(&child.to_string()));
+        assert!(started.contains(&parent.to_string()));
+        assert!(!started.starts_with("SubAgentStarted"));
+
+        let completed = format_event(&RuntimeEvent::SubAgentCompleted {
+            child_run_id: child,
+            output: json!("done"),
+            budget_used: crate::budget::BudgetUsage {
+                tokens_used: 11,
+                tool_calls_used: 2,
+                cost_usd: 0.01,
+            },
+        });
+        assert!(completed.contains("Sub-agent completed"));
+        assert!(completed.contains("tokens_used=11"));
+        assert!(!completed.starts_with("SubAgentCompleted"));
+
+        let failed = format_event(&RuntimeEvent::SubAgentFailed {
+            child_run_id: child,
+            error: "boom".into(),
+        });
+        assert!(failed.contains("Sub-agent failed"));
+        assert!(failed.contains("boom"));
+        assert!(!failed.starts_with("SubAgentFailed"));
+
+        let nested = format_event(&RuntimeEvent::SubAgentEvent {
+            parent_run_id: parent,
+            child_run_id: child,
+            event: Box::new(RuntimeEvent::RunCompleted {
+                output: json!("child done"),
+                stop_reason: crate::model::StopReason::EndTurn,
+            }),
+        });
+        assert!(nested.contains("Sub-agent event"));
+        assert!(nested.contains("Run completed"));
+        assert!(!nested.contains("SubAgentEvent"));
+
+        let child_run = format_event(&RuntimeEvent::ChildRunEvent {
+            child_run_id: child,
+            run_depth: 2,
+            event: Box::new(RuntimeEvent::ModelCallStarted { step: 3 }),
+        });
+        assert!(child_run.contains("Child run event"));
+        assert!(child_run.contains("depth=2"));
+        assert!(child_run.contains("Model call started: step 3"));
+        assert!(!child_run.contains("ChildRunEvent"));
     }
 }

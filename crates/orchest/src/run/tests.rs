@@ -7365,6 +7365,341 @@ async fn attach_watcher_does_not_duplicate_supervisor_subscription() {
     );
 }
 
+struct FirstEventRecordingWatcher {
+    events: Arc<Mutex<Vec<RuntimeEvent>>>,
+}
+
+#[async_trait::async_trait]
+impl crate::run::Watcher for FirstEventRecordingWatcher {
+    async fn on_event(&self, event: &RuntimeEvent) -> crate::run::WatcherAction {
+        self.events.lock().unwrap().push(event.clone());
+        crate::run::WatcherAction::Continue
+    }
+}
+
+/// Deterministic SB-6 contract: start_with_watchers observes RunStarted (and
+/// ModelCallStarted) without gating the model or sleeping for attachment.
+#[tokio::test]
+async fn start_with_watchers_observes_run_started_before_model_call() {
+    let watched = Arc::new(Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(FakeModelAdapter::final_answer());
+    let (handle, mut rx) = AgentRun::start_with_watchers(
+        test_config(),
+        "hello".into(),
+        model,
+        ToolRegistry::new(),
+        vec![(
+            Arc::new(FirstEventRecordingWatcher {
+                events: Arc::clone(&watched),
+            }),
+            256,
+        )],
+    )
+    .expect("valid watcher capacity");
+
+    while rx.recv().await.is_some() {}
+    handle.wait().await;
+
+    let events = watched.lock().unwrap();
+    assert!(
+        !events.is_empty(),
+        "pre-wired watcher must observe at least one event"
+    );
+    assert!(
+        matches!(events[0], RuntimeEvent::RunStarted { .. }),
+        "first watched event must be RunStarted, got {:?}",
+        events[0]
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::ModelCallStarted { .. })),
+        "watcher must also observe ModelCallStarted"
+    );
+}
+
+struct NeverCalledModel {
+    calls: AtomicU32,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for NeverCalledModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text("should not run".into())],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+#[tokio::test]
+async fn start_with_watchers_rejects_zero_capacity_before_execution() {
+    let model = Arc::new(NeverCalledModel {
+        calls: AtomicU32::new(0),
+    });
+    let model_dyn: Arc<dyn ModelAdapter> = model.clone();
+    let result = AgentRun::start_with_watchers(
+        test_config(),
+        "hello".into(),
+        model_dyn,
+        ToolRegistry::new(),
+        vec![(
+            Arc::new(FirstEventRecordingWatcher {
+                events: Arc::new(Mutex::new(Vec::new())),
+            }),
+            0,
+        )],
+    );
+    assert!(matches!(
+        result,
+        Err(ConfigError::InvalidWatcherCapacity(0))
+    ));
+    assert_eq!(
+        model.calls.load(Ordering::SeqCst),
+        0,
+        "model must not be called when registration fails"
+    );
+}
+
+struct ParentSpawnsChildModel {
+    calls: AtomicU32,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for ParentSpawnsChildModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let n = self.calls.fetch_add(1, Ordering::SeqCst);
+        let usage = TokenUsage {
+            input_tokens: 2,
+            output_tokens: 2,
+            ..Default::default()
+        };
+        if n == 0 {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "spawn-1".into(),
+                    name: "spawn_child".into(),
+                    input: json!({}),
+                }],
+                usage,
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            })
+        } else {
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text("parent done".into())],
+                usage,
+                stop_reason: StopReason::EndTurn,
+                option_adjustments: vec![],
+            })
+        }
+    }
+}
+
+fn make_spawn_child_tool() -> Arc<dyn Tool> {
+    let child_registry = ToolRegistry::new();
+    let mut config = test_config();
+    config.budget.max_tokens = Some(50);
+    config.budget.max_tool_calls = Some(5);
+    config.budget.max_duration = Some(Duration::from_secs(10));
+    config
+        .as_tool("spawn_child", "spawn a child agent")
+        .model(Arc::new(FakeModelAdapter::final_answer()))
+        .registry(child_registry)
+        .input_mapper(|_| Ok("child task".into()))
+        .output_extractor(|details| details.get("output").cloned().unwrap_or(details.clone()))
+        .build()
+        .unwrap()
+}
+
+/// SB-8 / #250: pre-wired watchers receive forwarded child events; primary
+/// receives each event once (no duplicate forwarding); per-watcher FIFO holds.
+#[tokio::test]
+async fn start_with_watchers_receives_forwarded_child_events_without_primary_duplicates() {
+    let watched_a = Arc::new(Mutex::new(Vec::new()));
+    let watched_b = Arc::new(Mutex::new(Vec::new()));
+    let model: Arc<dyn ModelAdapter> = Arc::new(ParentSpawnsChildModel {
+        calls: AtomicU32::new(0),
+    });
+    let mut registry = ToolRegistry::new();
+    registry.register(make_spawn_child_tool()).unwrap();
+
+    let (handle, mut rx) = AgentRun::start_with_watchers(
+        test_config(),
+        "delegate".into(),
+        model,
+        registry,
+        vec![
+            (
+                Arc::new(FirstEventRecordingWatcher {
+                    events: Arc::clone(&watched_a),
+                }),
+                256,
+            ),
+            (
+                Arc::new(FirstEventRecordingWatcher {
+                    events: Arc::clone(&watched_b),
+                }),
+                256,
+            ),
+        ],
+    )
+    .expect("valid watcher capacity");
+
+    let mut primary = Vec::new();
+    while let Some(event) = rx.recv().await {
+        primary.push(event);
+    }
+    handle.wait().await;
+
+    let watcher_a = watched_a.lock().unwrap().clone();
+    let watcher_b = watched_b.lock().unwrap().clone();
+
+    assert!(
+        matches!(watcher_a.first(), Some(RuntimeEvent::RunStarted { .. })),
+        "watcher A must be active before delegation (RunStarted first)"
+    );
+    assert!(
+        matches!(watcher_b.first(), Some(RuntimeEvent::RunStarted { .. })),
+        "watcher B must be active before delegation (RunStarted first)"
+    );
+
+    let primary_nested: Vec<_> = primary
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                RuntimeEvent::SubAgentStarted { .. }
+                    | RuntimeEvent::SubAgentEvent { .. }
+                    | RuntimeEvent::SubAgentCompleted { .. }
+                    | RuntimeEvent::SubAgentFailed { .. }
+            )
+        })
+        .collect();
+    assert!(
+        !primary_nested.is_empty(),
+        "primary must observe forwarded child events"
+    );
+    assert!(
+        primary
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::SubAgentEvent { .. })),
+        "primary must observe SubAgentEvent"
+    );
+
+    let count_kind = |events: &[RuntimeEvent], pred: fn(&RuntimeEvent) -> bool| {
+        events.iter().filter(|e| pred(e)).count()
+    };
+    let is_sub_event = |e: &RuntimeEvent| matches!(e, RuntimeEvent::SubAgentEvent { .. });
+    let is_sub_started = |e: &RuntimeEvent| matches!(e, RuntimeEvent::SubAgentStarted { .. });
+    let is_sub_completed = |e: &RuntimeEvent| matches!(e, RuntimeEvent::SubAgentCompleted { .. });
+
+    assert_eq!(
+        count_kind(&primary, is_sub_started),
+        count_kind(&watcher_a, is_sub_started),
+        "watcher A must receive the same SubAgentStarted count as primary (no loss, no dup vs primary)"
+    );
+    assert_eq!(
+        count_kind(&primary, is_sub_event),
+        count_kind(&watcher_a, is_sub_event)
+    );
+    assert_eq!(
+        count_kind(&primary, is_sub_completed),
+        count_kind(&watcher_a, is_sub_completed)
+    );
+    assert_eq!(
+        count_kind(&watcher_a, is_sub_event),
+        count_kind(&watcher_b, is_sub_event),
+        "both watchers must receive the same nested event counts"
+    );
+
+    // Primary has no duplicate SubAgentStarted (exactly one delegation).
+    assert_eq!(
+        count_kind(&primary, is_sub_started),
+        1,
+        "primary must not receive duplicate SubAgentStarted"
+    );
+
+    // Per-watcher FIFO: first nested lifecycle event is SubAgentStarted,
+    // last among nested lifecycle is SubAgentCompleted.
+    let nested_a: Vec<_> = watcher_a
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                RuntimeEvent::SubAgentStarted { .. }
+                    | RuntimeEvent::SubAgentEvent { .. }
+                    | RuntimeEvent::SubAgentCompleted { .. }
+            )
+        })
+        .collect();
+    assert!(
+        matches!(nested_a.first(), Some(RuntimeEvent::SubAgentStarted { .. })),
+        "per-watcher FIFO: SubAgentStarted before nested body"
+    );
+    assert!(
+        matches!(
+            nested_a.last(),
+            Some(RuntimeEvent::SubAgentCompleted { .. })
+        ),
+        "per-watcher FIFO: SubAgentCompleted after nested body"
+    );
+
+    // Distinguish parent vs forwarded child: parent ToolCallStarted for spawn_child
+    // is present on watchers, and nested child RunCompleted appears only inside SubAgentEvent.
+    assert!(watcher_a.iter().any(|e| matches!(
+        e,
+        RuntimeEvent::ToolCallStarted { tool, .. } if tool == "spawn_child"
+    )));
+    assert!(watcher_a.iter().any(|e| matches!(
+        e,
+        RuntimeEvent::SubAgentEvent { event, .. }
+            if matches!(event.as_ref(), RuntimeEvent::RunCompleted { .. })
+    )));
+    // Parent RunCompleted is a top-level event; child RunCompleted is wrapped.
+    let top_level_completed = watcher_a
+        .iter()
+        .filter(|e| matches!(e, RuntimeEvent::RunCompleted { .. }))
+        .count();
+    assert_eq!(
+        top_level_completed, 1,
+        "exactly one top-level RunCompleted (parent); child completion is wrapped"
+    );
+}
+
 struct RestartInputRecordingModel {
     calls: AtomicU32,
     user_inputs: Arc<tokio::sync::Mutex<Vec<String>>>,
@@ -7565,6 +7900,263 @@ async fn restart_replays_latest_session_store_snapshot() {
         inputs.as_slice(),
         &["original input".to_string(), "stored input".to_string()],
         "restart should replay the latest persisted session snapshot"
+    );
+}
+
+struct RunLevelRestartModel {
+    /// Number of model calls that should request `unstable_tool` before answering.
+    fail_tool_calls: u32,
+    calls: AtomicU32,
+}
+
+#[async_trait::async_trait]
+impl ModelAdapter for RunLevelRestartModel {
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "run-level-restart"
+    }
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
+    }
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDef],
+        _options: &RequestOptions,
+        _tx: Option<mpsc::Sender<StreamEvent>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call < self.fail_tool_calls {
+            return Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: format!("boom-{call}"),
+                    name: "unstable_tool".into(),
+                    input: json!({}),
+                }],
+                usage: TokenUsage {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    ..Default::default()
+                },
+                stop_reason: StopReason::ToolUse,
+                option_adjustments: vec![],
+            });
+        }
+        Ok(ModelResponse {
+            content: vec![ContentBlock::Text(
+                "recovered after run-level restart".into(),
+            )],
+            usage: TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                ..Default::default()
+            },
+            stop_reason: StopReason::EndTurn,
+            option_adjustments: vec![],
+        })
+    }
+}
+
+fn aborting_repeated_failure_config(max_retries: u32) -> AgentConfig {
+    let mut config = test_config();
+    config.supervision_strategy = SupervisionStrategy::Restart { max_retries };
+    config.runtime.repeated_failure.threshold = 1;
+    config.hooks.push(Arc::new(RepeatedFailureRecordingHook {
+        records: Arc::new(Mutex::new(Vec::new())),
+        abort: true,
+    }));
+    config
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn run_failed_from_tool_hook_restarts_and_succeeds() {
+    let model = Arc::new(RunLevelRestartModel {
+        fail_tool_calls: 1,
+        calls: AtomicU32::new(0),
+    });
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(RepeatedFailureTool {
+            kinds: vec![ErrorKind::Fatal],
+            calls: Arc::new(AtomicU32::new(0)),
+        }))
+        .unwrap();
+
+    let (handle, mut rx) = AgentRun::start(
+        aborting_repeated_failure_config(1),
+        "recover please".into(),
+        model,
+        registry,
+    );
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    let restarts: Vec<u32> = events
+        .iter()
+        .filter_map(|e| match e {
+            RuntimeEvent::RunRestarted { attempt } => Some(*attempt),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        restarts,
+        vec![1],
+        "eligible RunFailed must emit one RunRestarted"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::RunFailed { kind, .. } if *kind == RunFailureKind::Other
+        )),
+        "first attempt must emit RunFailed"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::RunCompleted { output, .. }
+                if output == "recovered after run-level restart"
+        )),
+        "restart must complete successfully"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn run_failed_restart_exhausts_retries_without_loop() {
+    let model = Arc::new(RunLevelRestartModel {
+        fail_tool_calls: u32::MAX,
+        calls: AtomicU32::new(0),
+    });
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(RepeatedFailureTool {
+            kinds: vec![ErrorKind::Fatal],
+            calls: Arc::new(AtomicU32::new(0)),
+        }))
+        .unwrap();
+
+    let (handle, mut rx) = AgentRun::start(
+        aborting_repeated_failure_config(1),
+        "keep failing".into(),
+        model,
+        registry,
+    );
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    let restarts: Vec<u32> = events
+        .iter()
+        .filter_map(|e| match e {
+            RuntimeEvent::RunRestarted { attempt } => Some(*attempt),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        restarts,
+        vec![1],
+        "max_retries=1 must restart once then stop"
+    );
+    let failures = events
+        .iter()
+        .filter(|e| matches!(e, RuntimeEvent::RunFailed { .. }))
+        .count();
+    assert_eq!(failures, 2, "initial failure plus post-restart failure");
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })),
+        "exhausted retries must remain failed"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunAborted { .. })),
+        "run-level exhaustion keeps the final RunFailed (no RunAborted loop marker)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn budget_exceeded_run_failed_is_not_restarted() {
+    let mut config = test_config();
+    config.supervision_strategy = SupervisionStrategy::Restart { max_retries: 2 };
+    config.budget.max_tokens = Some(50);
+
+    let model = Arc::new(OneToolThenTextModel {
+        tool_name: "usage_bomb",
+        calls: AtomicU32::new(0),
+    });
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(UsageBombTool {
+            parallelism: ToolParallelism::Serial,
+        }))
+        .unwrap();
+
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, registry);
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::RunFailed {
+                kind: RunFailureKind::BudgetExceeded,
+                ..
+            }
+        )),
+        "expected BudgetExceeded terminal failure"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunRestarted { .. })),
+        "BudgetExceeded must keep terminal semantics under Restart"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn max_steps_run_failed_is_not_restarted() {
+    let mut config = test_config();
+    config.supervision_strategy = SupervisionStrategy::Restart { max_retries: 2 };
+    config.runtime.max_steps = 0;
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, ToolRegistry::new());
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            RuntimeEvent::RunFailed {
+                kind: RunFailureKind::MaxStepsReached,
+                ..
+            }
+        )),
+        "expected MaxStepsReached terminal failure"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunRestarted { .. })),
+        "MaxStepsReached must keep terminal semantics under Restart"
     );
 }
 
@@ -8458,4 +9050,142 @@ async fn resume_without_session_id_is_unaffected_by_session_store_check() {
         .expect("no session_id on active_config means the check doesn't apply");
     while rx.recv().await.is_some() {}
     handle.wait().await;
+}
+
+// ── Issue #254 / SB-7: deterministic multi-watcher action arbitration ────────
+
+/// Adversarial proof: two concurrent `submit_wave` tasks with opposite release
+/// orders always resolve to the same Abort (lowest registration index).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn watcher_arbitration_abort_wins_independent_of_completion_order() {
+    use super::action_arbitration::{ActionArbitrator, ArbitratedActions, DeliveryTicket};
+    use crate::events::FanoutWaveBus;
+
+    for inject_submits_first in [true, false] {
+        let actor_ref = Arc::new(Mutex::new(None));
+        let arb = ActionArbitrator::new(Arc::clone(&actor_ref));
+        arb.register_watcher(0);
+        arb.register_watcher(1);
+
+        // Deliver fan-out seq=42 to both watchers, then seal (mirrors EventSink).
+        FanoutWaveBus::push_wave_ticket(arb.as_ref(), 0, 42);
+        FanoutWaveBus::push_wave_ticket(arb.as_ref(), 1, 42);
+        FanoutWaveBus::seal_wave(arb.as_ref(), 42);
+        assert!(matches!(arb.take_ticket(0), DeliveryTicket::Wave(42)));
+        assert!(matches!(arb.take_ticket(1), DeliveryTicket::Wave(42)));
+
+        let (gate_a_tx, gate_a_rx) = tokio::sync::oneshot::channel::<()>();
+        let (gate_b_tx, gate_b_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let arb_a = Arc::clone(&arb);
+        let arb_b = Arc::clone(&arb);
+        let t0 = tokio::spawn(async move {
+            let _ = gate_a_rx.await;
+            arb_a
+                .submit_wave(42, 0, WatcherAction::Abort("from-0".into()))
+                .await;
+        });
+        let t1 = tokio::spawn(async move {
+            let _ = gate_b_rx.await;
+            arb_b
+                .submit_wave(42, 1, WatcherAction::Inject("from-1".into()))
+                .await;
+        });
+
+        if inject_submits_first {
+            let _ = gate_b_tx.send(());
+            tokio::task::yield_now().await;
+            let _ = gate_a_tx.send(());
+        } else {
+            let _ = gate_a_tx.send(());
+            tokio::task::yield_now().await;
+            let _ = gate_b_tx.send(());
+        }
+
+        t0.await.unwrap();
+        t1.await.unwrap();
+
+        let log = arb.take_applied_log();
+        assert_eq!(
+            log,
+            vec![ArbitratedActions::Abort("from-0".into())],
+            "inject_submits_first={inject_submits_first}"
+        );
+    }
+}
+
+/// Adversarial proof: Inject (reg 0) + Steer (reg 1) always apply in registration
+/// order, independent of which `submit_wave` finishes first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn watcher_arbitration_inject_steer_registration_order_independent_of_scheduling() {
+    use super::action_arbitration::{ActionArbitrator, ArbitratedActions, DeliveryTicket};
+    use crate::events::FanoutWaveBus;
+
+    for steer_submits_first in [true, false] {
+        let actor_ref = Arc::new(Mutex::new(None));
+        let arb = ActionArbitrator::new(Arc::clone(&actor_ref));
+        arb.register_watcher(0);
+        arb.register_watcher(1);
+
+        FanoutWaveBus::push_wave_ticket(arb.as_ref(), 0, 7);
+        FanoutWaveBus::push_wave_ticket(arb.as_ref(), 1, 7);
+        FanoutWaveBus::seal_wave(arb.as_ref(), 7);
+        assert!(matches!(arb.take_ticket(0), DeliveryTicket::Wave(7)));
+        assert!(matches!(arb.take_ticket(1), DeliveryTicket::Wave(7)));
+
+        let (gate_a_tx, gate_a_rx) = tokio::sync::oneshot::channel::<()>();
+        let (gate_b_tx, gate_b_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let arb_a = Arc::clone(&arb);
+        let arb_b = Arc::clone(&arb);
+        let t0 = tokio::spawn(async move {
+            let _ = gate_a_rx.await;
+            arb_a
+                .submit_wave(7, 0, WatcherAction::Inject("inject-0".into()))
+                .await;
+        });
+        let t1 = tokio::spawn(async move {
+            let _ = gate_b_rx.await;
+            arb_b
+                .submit_wave(7, 1, WatcherAction::Steer("steer-1".into()))
+                .await;
+        });
+
+        if steer_submits_first {
+            let _ = gate_b_tx.send(());
+            tokio::task::yield_now().await;
+            let _ = gate_a_tx.send(());
+        } else {
+            let _ = gate_a_tx.send(());
+            tokio::task::yield_now().await;
+            let _ = gate_b_tx.send(());
+        }
+
+        t0.await.unwrap();
+        t1.await.unwrap();
+
+        let log = arb.take_applied_log();
+        assert_eq!(
+            log,
+            vec![ArbitratedActions::Effects(vec![
+                WatcherAction::Inject("inject-0".into()),
+                WatcherAction::Steer("steer-1".into()),
+            ])],
+            "steer_submits_first={steer_submits_first}"
+        );
+    }
+}
+
+#[test]
+fn public_arbitrate_watcher_actions_documents_precedence() {
+    use crate::run::arbitrate_watcher_actions;
+    let resolved = arbitrate_watcher_actions(&[
+        (1, WatcherAction::Inject("i".into())),
+        (0, WatcherAction::Abort("a".into())),
+        (2, WatcherAction::Steer("s".into())),
+    ]);
+    assert!(matches!(
+        resolved,
+        crate::run::ArbitratedActions::Abort(r) if r == "a"
+    ));
 }

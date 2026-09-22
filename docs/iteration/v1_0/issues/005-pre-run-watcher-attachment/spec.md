@@ -14,13 +14,13 @@ first-event watcher observation deterministic.
 
 ## Acceptance Criteria
 
-- [ ] A caller can register declared watchers before the first model call is
+- [x] A caller can register declared watchers before the first model call is
   released.
-- [ ] Successful registration guarantees observation from the documented
+- [x] Successful registration guarantees observation from the documented
   first runtime boundary.
-- [ ] Registration failure is returned before execution begins.
-- [ ] Existing post-start `attach_watcher` behavior remains compatible.
-- [ ] A non-fixture integration test proves first-event observation without
+- [x] Registration failure is returned before execution begins.
+- [x] Existing post-start `attach_watcher` behavior remains compatible.
+- [x] A non-fixture integration test proves first-event observation without
   application timing assumptions.
 
 ## Notes

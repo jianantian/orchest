@@ -24,11 +24,10 @@ use crate::{
 
 pub const RESEARCH_WORKER_TOOL: &str = "research_worker";
 
-/// `AgentRun::start` schedules the run before returning its public handle.
-/// The live path therefore attaches immediately after start as best-effort;
-/// attachment before delegation or the first event is not guaranteed.
+/// `AgentRun::start_with_watchers` pre-wires declared watchers before the first
+/// runtime event (`RunStarted`) and before the first model call.
 pub const LIVE_ATTACHMENT_BOUNDARY: &str =
-    "best-effort immediately after AgentRun::start; first-event observation is not guaranteed";
+    "start_with_watchers: first-event observation guaranteed from RunStarted";
 
 pub struct StartedSupervisor {
     pub handle: RunHandle,
@@ -47,34 +46,40 @@ pub enum SupervisorError {
     Registry(#[from] RegistryError),
 }
 
-/// Public-surface blocker encountered while attempting to steer a delegated
-/// worker observed through the supervisor event stream.
+/// Result of resolving the public delegated-child control surface from the
+/// supervisor [`RunHandle`] after observing `SubAgentStarted`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DelegatedWorkerTargetBlocker {
-    NoPublicChildHandleConstructorOrLookup,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BlockedDelegatedWorkerTarget {
+pub struct ResolvedDelegatedWorkerTarget {
     pub owned_supervisor_run_id: RunId,
     pub observed_child_run_id: RunId,
-    pub blocker: DelegatedWorkerTargetBlocker,
+    pub child_parent_run_id: RunId,
 }
 
-/// Consumes the only public handle owned by the caller and waits for that
-/// supervisor run. The forwarded child id remains evidence rather than a
-/// steerable target because no public constructor or lookup yields its handle.
-pub async fn attempt_delegated_worker_target(
-    supervisor_handle: RunHandle,
+/// Resolve the public child control surface for a delegated worker without
+/// consuming the supervisor event channel or waiting the supervisor handle.
+pub async fn resolve_delegated_worker_target(
+    supervisor_handle: &RunHandle,
     observed_child_run_id: RunId,
-) -> BlockedDelegatedWorkerTarget {
-    let owned_supervisor_run_id = supervisor_handle.run_id;
-    supervisor_handle.wait().await;
-    BlockedDelegatedWorkerTarget {
-        owned_supervisor_run_id,
-        observed_child_run_id,
-        blocker: DelegatedWorkerTargetBlocker::NoPublicChildHandleConstructorOrLookup,
-    }
+) -> Option<ResolvedDelegatedWorkerTarget> {
+    let child = supervisor_handle.child(observed_child_run_id).await?;
+    Some(ResolvedDelegatedWorkerTarget {
+        owned_supervisor_run_id: supervisor_handle.run_id,
+        observed_child_run_id: child.run_id,
+        child_parent_run_id: child.parent_run_id,
+    })
+}
+
+/// Look up the child handle and wait for its terminal outcome without draining
+/// the supervisor [`orchest::run::EventReceiver`].
+pub async fn await_delegated_worker_completion(
+    supervisor_handle: &RunHandle,
+    observed_child_run_id: RunId,
+) -> Result<orchest::run::ChildRunOutcome, String> {
+    let child = supervisor_handle
+        .child(observed_child_run_id)
+        .await
+        .ok_or_else(|| format!("no public child control surface for {observed_child_run_id}"))?;
+    child.wait_completion().await.map_err(|err| err.to_string())
 }
 
 pub fn build_supervisor(
@@ -108,55 +113,50 @@ pub fn build_supervisor(
     Ok((config, registry))
 }
 
-/// Starts the live-shaped supervisor, then immediately attaches both watchers.
-///
-/// This order is intentionally the strongest order the current public API can
-/// express. It remains best-effort because `AgentRun::start` schedules model
-/// execution before returning the handle used for the two registrations.
+/// Starts the live-shaped supervisor with both watchers pre-wired via
+/// [`AgentRun::start_with_watchers`], so observation begins at `RunStarted`.
 pub async fn start_with_live_watchers(
     config: AgentConfig,
     input: String,
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
-) -> StartedSupervisor {
+) -> Result<StartedSupervisor, ConfigError> {
     let watcher_model = Arc::clone(&model);
-    let (handle, events) = AgentRun::start(config, input.into(), model, registry);
 
     let watcher_events = Arc::new(Mutex::new(Vec::new()));
     let watcher_terminal_processed = Arc::new(Notify::new());
-    handle
-        .attach_watcher(
-            Arc::new(RecordingActionWatcher::observing_until_terminal(
-                Arc::clone(&watcher_events),
-                Arc::clone(&watcher_terminal_processed),
-            )),
-            1024,
-        )
-        .await;
+    let action_watcher = Arc::new(RecordingActionWatcher::observing_until_terminal(
+        Arc::clone(&watcher_events),
+        Arc::clone(&watcher_terminal_processed),
+    ));
+
     let llm_watcher = LlmWatcher::builder()
         .eval_interval(1)
         .model(Arc::clone(&watcher_model))
-        .build();
+        .build()?;
     let llm_watcher_completed_events = Arc::new(Mutex::new(Vec::new()));
     let llm_watcher_terminal_processed = Arc::new(Notify::new());
-    handle
-        .attach_watcher(
-            Arc::new(RecordingLlmWatcher::until_terminal(
-                llm_watcher,
-                Arc::clone(&llm_watcher_completed_events),
-                None,
-                Arc::clone(&llm_watcher_terminal_processed),
-            )),
-            1024,
-        )
-        .await;
+    let llm_wrapper = Arc::new(RecordingLlmWatcher::until_terminal(
+        llm_watcher,
+        Arc::clone(&llm_watcher_completed_events),
+        None,
+        Arc::clone(&llm_watcher_terminal_processed),
+    ));
 
-    StartedSupervisor {
+    let (handle, events) = AgentRun::start_with_watchers(
+        config,
+        input.into(),
+        model,
+        registry,
+        vec![(action_watcher, 1024), (llm_wrapper, 1024)],
+    )?;
+
+    Ok(StartedSupervisor {
         handle,
         events,
         watcher_events,
         watcher_terminal_processed,
         llm_watcher_completed_events,
         llm_watcher_terminal_processed,
-    }
+    })
 }

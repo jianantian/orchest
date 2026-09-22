@@ -11,11 +11,11 @@ use tokio::sync::mpsc;
 use tracing::Instrument;
 
 use crate::budget::{BudgetConfig, BudgetGuard};
-use crate::events::{ApprovalContext, RunFailureKind, RuntimeEvent};
+use crate::events::{ApprovalContext, EventSink, FanoutWaveBus, RunFailureKind, RuntimeEvent};
 use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelResponse, ModelStreamChunk, Role, StopReason,
 };
-use crate::skill::disclosure::with_disclosure_block;
+use crate::skill::disclosure::{with_disclosure_block, SkillSummary};
 use crate::telemetry;
 use crate::tool::code_exec::CodeExecutionMcpServer;
 use crate::tool::registry::ToolRegistry;
@@ -27,7 +27,7 @@ use crate::tool::{
 
 use super::compaction::maybe_compact_context;
 use super::config::{AgentConfig, RunId, SkillDisclosure, ToolExecutionPolicy};
-use super::handle::ApprovalBus;
+use super::handle::{ApprovalBus, ChildRunRegistry};
 use super::helpers::{append_searched_tool_defs, connect_mcp_servers, truncate_output};
 use super::skills::register_skills;
 use super::tool_exec::{poll_async_job, tool_error_result, tool_skipped_by_hook_result};
@@ -58,6 +58,12 @@ pub(crate) struct CancelCmd {
 pub(crate) enum AgentMsg {
     RunStep,
     Subscribe(mpsc::Sender<RuntimeEvent>),
+    /// Watcher secondary with arbitration wave bus (SB-7).
+    SubscribeWatcher {
+        tx: mpsc::Sender<RuntimeEvent>,
+        wave_bus: std::sync::Arc<dyn FanoutWaveBus>,
+        watcher_index: usize,
+    },
     Steer(SteerCmd),
     Inject(InjectCmd),
     Cancel(CancelCmd),
@@ -79,10 +85,13 @@ pub(crate) struct AgentRunState {
     pub cancelled: bool,
     pub run_hook_ctx: crate::hook::RunHookContext,
     pub approval_bus: ApprovalBus,
+    pub child_registry: ChildRunRegistry,
     /// Subscriber list; index 0 is the primary (blocking send), rest use try_send.
-    pub event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
+    pub event_subs: Vec<EventSink>,
     pub webhook_runtime: Option<WebhookRuntime>,
     pub repeated_failures: HashMap<(String, ErrorKind), Vec<ToolError>>,
+    /// Set when this worker emits `RunFailed`; supervisor reads via stop reason.
+    pub last_failure: Option<RunFailureKind>,
 }
 
 struct PreparedHandoffTransition {
@@ -123,10 +132,18 @@ pub(crate) struct AgentRunArgs {
     pub registry: ToolRegistry,
     pub event_tx: mpsc::Sender<RuntimeEvent>,
     pub approval_bus: ApprovalBus,
+    pub child_registry: ChildRunRegistry,
     /// `None` on a fresh start; `Some` when resuming from a persisted snapshot.
     pub resume: Option<ResumeState>,
     /// Extra messages to prepend (between system prompt and user input) on a fresh start.
     pub initial_messages: Vec<crate::model::Message>,
+    /// Pre-wired secondary subscribers (e.g. start-with-watchers channels).
+    /// Included in `event_subs` before the first emit so observation begins at
+    /// `RunStarted`. Empty for ordinary `AgentRun::start` / post-start attach.
+    pub initial_event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
+    /// When set, each `initial_event_subs` entry is a watcher secondary that
+    /// participates in multi-watcher action arbitration (SB-7).
+    pub watcher_wave_bus: Option<std::sync::Arc<dyn FanoutWaveBus>>,
 }
 
 // ── WorkerActor ───────────────────────────────────────────────────────────────
@@ -151,11 +168,14 @@ impl Actor for WorkerActor {
             mut registry,
             event_tx,
             approval_bus,
+            child_registry,
             resume,
             initial_messages,
+            initial_event_subs,
+            watcher_wave_bus,
         } = args;
         backfill_context_window_size(&mut config, model.as_ref());
-        let event_subs = vec![event_tx];
+        let event_subs = build_pre_start_event_subs(event_tx, initial_event_subs, watcher_wave_bus);
 
         emit(&event_subs, RuntimeEvent::RunStarted { run_id }).await;
 
@@ -196,6 +216,7 @@ impl Actor for WorkerActor {
                 model,
                 registry,
                 approval_bus,
+                child_registry.clone(),
                 run_hook_ctx,
                 error.message,
             )
@@ -214,6 +235,7 @@ impl Actor for WorkerActor {
                     model,
                     registry,
                     approval_bus,
+                    child_registry.clone(),
                     run_hook_ctx,
                     error.to_string(),
                 )
@@ -234,6 +256,7 @@ impl Actor for WorkerActor {
                         model,
                         registry,
                         approval_bus,
+                        child_registry.clone(),
                         run_hook_ctx,
                         format!("skill loading failed: {error}"),
                     )
@@ -242,19 +265,7 @@ impl Actor for WorkerActor {
             }
         }
 
-        for handoff in config.handoffs.drain(..) {
-            let tool: Arc<dyn Tool> =
-                Arc::new(crate::tool::handoff_tool::HandoffTool::new(handoff));
-            if let Err(e) = registry.register(tool) {
-                emit(
-                    &event_subs,
-                    RuntimeEvent::RuntimeWarning {
-                        message: format!("failed to register handoff tool: {e}"),
-                    },
-                )
-                .await;
-            }
-        }
+        register_handoff_tools(&mut config, &mut registry, &event_subs).await;
 
         let unfiltered_registry = registry.clone();
         let mut registry = registry.filter_by_allowed(&config.runtime.allowed_tools);
@@ -267,48 +278,23 @@ impl Actor for WorkerActor {
                 model,
                 registry,
                 approval_bus,
+                child_registry.clone(),
                 run_hook_ctx,
                 format!("tool metadata validation failed: {error}"),
             )
             .await);
         }
 
-        let (messages, initial_step, initial_budget_used) = if let Some(rs) = resume {
-            (rs.messages, rs.step, Some(rs.budget_used))
-        } else {
-            // Level-1 skill disclosure: scanned skill metadata rides at the
-            // tail of the system prompt (or forms the whole System message
-            // when no prompt was configured). `Off` injects nothing.
-            let system_prompt = if config.skills.disclosure == SkillDisclosure::Off {
-                config.system_prompt.clone()
-            } else {
-                with_disclosure_block(&config.system_prompt, &disclosed_skills)
-            };
-            let mut msgs = vec![Message {
-                role: Role::System,
-                content: vec![ContentBlock::Text(system_prompt)],
-            }];
-            msgs.extend(initial_messages);
-            msgs.push(Message {
-                role: Role::User,
-                content: input,
-            });
-            (msgs, 0, None)
-        };
+        let (messages, initial_step, initial_budget_used) =
+            build_startup_conversation(resume, &config, &disclosed_skills, initial_messages, input);
 
-        let all_tool_defs = registry.list();
-        let tool_defs = if config.runtime.tool_search_enabled {
-            let search_tool = Arc::new(SearchToolsTool::new(all_tool_defs));
-            let search_def = ToolDef {
-                name: search_tool.name().to_string(),
-                description: search_tool.description().to_string(),
-                input_schema: search_tool.input_schema().clone(),
-            };
-            if let Err(error) = registry.register(search_tool) {
+        let tool_defs = match prepare_initial_tool_defs(&config, &mut registry) {
+            Ok(defs) => defs,
+            Err(error) => {
                 emit(
                     &event_subs,
                     RuntimeEvent::RunFailed {
-                        error: error.to_string(),
+                        error,
                         kind: RunFailureKind::Other,
                     },
                 )
@@ -320,13 +306,11 @@ impl Actor for WorkerActor {
                     model,
                     registry,
                     approval_bus,
+                    child_registry,
                     event_subs,
                     run_hook_ctx,
                 ));
             }
-            vec![search_def]
-        } else {
-            all_tool_defs
         };
 
         let budget = if let Some(used) = initial_budget_used {
@@ -351,9 +335,11 @@ impl Actor for WorkerActor {
             cancelled: false,
             run_hook_ctx,
             approval_bus,
+            child_registry,
             event_subs,
             webhook_runtime,
             repeated_failures: HashMap::new(),
+            last_failure: None,
         })
     }
 
@@ -366,18 +352,45 @@ impl Actor for WorkerActor {
         match msg {
             AgentMsg::RunStep => {
                 if state.cancelled {
-                    myself.stop(None);
+                    myself.stop(run_failed_stop_reason(state.last_failure));
                     return Ok(());
                 }
                 let should_continue = run_one_step(state).await;
                 if should_continue {
                     myself.cast(AgentMsg::RunStep)?;
                 } else {
-                    myself.stop(None);
+                    myself.stop(run_failed_stop_reason(state.last_failure));
                 }
             }
             AgentMsg::Subscribe(tx) => {
-                state.event_subs.push(tx);
+                let subscriber_id = state.event_subs.len() as u64;
+                let next_seq = state
+                    .event_subs
+                    .first()
+                    .map(EventSink::sequence_counter)
+                    .unwrap_or_else(|| std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+                state
+                    .event_subs
+                    .push(EventSink::secondary(tx, subscriber_id, next_seq));
+            }
+            AgentMsg::SubscribeWatcher {
+                tx,
+                wave_bus,
+                watcher_index,
+            } => {
+                let subscriber_id = state.event_subs.len() as u64;
+                let next_seq = state
+                    .event_subs
+                    .first()
+                    .map(EventSink::sequence_counter)
+                    .unwrap_or_else(|| std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+                state.event_subs.push(EventSink::secondary_with_wave(
+                    tx,
+                    subscriber_id,
+                    next_seq,
+                    wave_bus,
+                    watcher_index,
+                ));
             }
             AgentMsg::Steer(cmd) => {
                 state.messages.push(Message {
@@ -416,10 +429,111 @@ impl Actor for WorkerActor {
     }
 }
 
+fn prepare_initial_tool_defs(
+    config: &AgentConfig,
+    registry: &mut ToolRegistry,
+) -> Result<Vec<ToolDef>, String> {
+    let all_tool_defs = registry.list();
+    if !config.runtime.tool_search_enabled {
+        return Ok(all_tool_defs);
+    }
+    let search_tool = Arc::new(SearchToolsTool::new(all_tool_defs));
+    let search_def = ToolDef {
+        name: search_tool.name().to_string(),
+        description: search_tool.description().to_string(),
+        input_schema: search_tool.input_schema().clone(),
+    };
+    registry
+        .register(search_tool)
+        .map_err(|error| error.to_string())?;
+    Ok(vec![search_def])
+}
+
+async fn register_handoff_tools(
+    config: &mut AgentConfig,
+    registry: &mut ToolRegistry,
+    event_subs: &[EventSink],
+) {
+    for handoff in config.handoffs.drain(..) {
+        let tool: Arc<dyn Tool> = Arc::new(crate::tool::handoff_tool::HandoffTool::new(handoff));
+        if let Err(e) = registry.register(tool) {
+            emit(
+                event_subs,
+                RuntimeEvent::RuntimeWarning {
+                    message: format!("failed to register handoff tool: {e}"),
+                },
+            )
+            .await;
+        }
+    }
+}
+
+fn build_pre_start_event_subs(
+    event_tx: mpsc::Sender<RuntimeEvent>,
+    initial_event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
+    watcher_wave_bus: Option<std::sync::Arc<dyn FanoutWaveBus>>,
+) -> Vec<EventSink> {
+    let next_seq = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
+    let mut event_subs = Vec::with_capacity(1 + initial_event_subs.len());
+    event_subs.push(EventSink::primary(
+        event_tx,
+        std::sync::Arc::clone(&next_seq),
+    ));
+    for (idx, tx) in initial_event_subs.into_iter().enumerate() {
+        if let Some(ref bus) = watcher_wave_bus {
+            event_subs.push(EventSink::secondary_with_wave(
+                tx,
+                (idx + 1) as u64,
+                std::sync::Arc::clone(&next_seq),
+                std::sync::Arc::clone(bus),
+                idx,
+            ));
+        } else {
+            event_subs.push(EventSink::secondary(
+                tx,
+                (idx + 1) as u64,
+                std::sync::Arc::clone(&next_seq),
+            ));
+        }
+    }
+    event_subs
+}
+
+/// Build the initial conversation for a fresh start or resume snapshot.
+fn build_startup_conversation(
+    resume: Option<ResumeState>,
+    config: &AgentConfig,
+    disclosed_skills: &[SkillSummary],
+    initial_messages: Vec<Message>,
+    input: Vec<ContentBlock>,
+) -> (Vec<Message>, u32, Option<crate::budget::BudgetUsage>) {
+    if let Some(rs) = resume {
+        return (rs.messages, rs.step, Some(rs.budget_used));
+    }
+    // Level-1 skill disclosure: scanned skill metadata rides at the
+    // tail of the system prompt (or forms the whole System message
+    // when no prompt was configured). `Off` injects nothing.
+    let system_prompt = if config.skills.disclosure == SkillDisclosure::Off {
+        config.system_prompt.clone()
+    } else {
+        with_disclosure_block(&config.system_prompt, disclosed_skills)
+    };
+    let mut msgs = vec![Message {
+        role: Role::System,
+        content: vec![ContentBlock::Text(system_prompt)],
+    }];
+    msgs.extend(initial_messages);
+    msgs.push(Message {
+        role: Role::User,
+        content: input,
+    });
+    (msgs, 0, None)
+}
+
 async fn register_code_execution_tools(
     config: &AgentConfig,
     registry: &mut ToolRegistry,
-    event_subs: &[mpsc::Sender<RuntimeEvent>],
+    event_subs: &[EventSink],
 ) -> Result<(), ToolError> {
     let tools = CodeExecutionMcpServer::tools(config.runtime.code_execution_executor.clone())?;
     for tool in tools {
@@ -445,7 +559,7 @@ async fn register_code_execution_tools(
 #[allow(clippy::too_many_arguments)] // justified: per-call context for the after_tool hook chain
 async fn finalize_after_tool(
     hooks: &[std::sync::Arc<dyn crate::hook::Hook>],
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     run_id: RunId,
     tool_name: &str,
     tool_input: &serde_json::Value,
@@ -506,7 +620,7 @@ fn tool_retry_delay(next_attempt: u32) -> Duration {
 
 struct RetryApprovalRequest<'a> {
     approval_bus: &'a ApprovalBus,
-    subs: &'a [mpsc::Sender<RuntimeEvent>],
+    subs: &'a [EventSink],
     run_id: RunId,
     tool_call: &'a ToolCall,
     attempt: u32,
@@ -565,7 +679,7 @@ async fn request_retry_approval(request: RetryApprovalRequest<'_>) -> bool {
 
 async fn record_repeated_failure(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     tool_name: &str,
     error: &ToolError,
 ) -> Result<(), String> {
@@ -596,7 +710,7 @@ async fn record_repeated_failure(
     }
 }
 
-async fn check_step_limits(state: &mut AgentRunState, subs: &[mpsc::Sender<RuntimeEvent>]) -> bool {
+async fn check_step_limits(state: &mut AgentRunState, subs: &[EventSink]) -> bool {
     let step = state.step;
 
     if step >= state.config.runtime.max_steps {
@@ -608,12 +722,11 @@ async fn check_step_limits(state: &mut AgentRunState, subs: &[mpsc::Sender<Runti
             primary(subs),
         )
         .await;
-        emit(
+        emit_run_failed(
+            state,
             subs,
-            RuntimeEvent::RunFailed {
-                error: "max_steps_reached".into(),
-                kind: RunFailureKind::MaxStepsReached,
-            },
+            "max_steps_reached",
+            RunFailureKind::MaxStepsReached,
         )
         .await;
         return false;
@@ -638,24 +751,14 @@ async fn check_step_limits(state: &mut AgentRunState, subs: &[mpsc::Sender<Runti
             primary(subs),
         )
         .await;
-        emit(
-            subs,
-            RuntimeEvent::RunFailed {
-                error,
-                kind: RunFailureKind::BudgetExceeded,
-            },
-        )
-        .await;
+        emit_run_failed(state, subs, error, RunFailureKind::BudgetExceeded).await;
         return false;
     }
 
     true
 }
 
-async fn call_model_phase(
-    state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
-) -> Option<ModelResponse> {
+async fn call_model_phase(state: &mut AgentRunState, subs: &[EventSink]) -> Option<ModelResponse> {
     let step = state.step;
     let run_id = state.run_id;
 
@@ -694,14 +797,7 @@ async fn call_model_phase(
                         primary(subs),
                     )
                     .await;
-                    emit(
-                        subs,
-                        RuntimeEvent::RunFailed {
-                            error: reason,
-                            kind: RunFailureKind::Other,
-                        },
-                    )
-                    .await;
+                    emit_run_failed(state, subs, reason, RunFailureKind::Other).await;
                     return None;
                 }
                 crate::hook::ModelHookAction::Continue => {}
@@ -751,7 +847,7 @@ pub(crate) fn backfill_context_window_size(config: &mut AgentConfig, model: &dyn
 
 async fn validate_context_window(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     call_messages: &[Message],
 ) -> bool {
     let Some(context_window_size) = state.config.model.spec.context_window_size else {
@@ -773,20 +869,13 @@ async fn validate_context_window(
         primary(subs),
     )
     .await;
-    emit(
-        subs,
-        RuntimeEvent::RunFailed {
-            error,
-            kind: RunFailureKind::Other,
-        },
-    )
-    .await;
+    emit_run_failed(state, subs, error, RunFailureKind::Other).await;
     false
 }
 
 async fn dispatch_model_call(
     state: &AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     call_messages: &[Message],
 ) -> Result<ModelResponse, crate::model::ModelError> {
     let (stream_tx, mut stream_rx) = mpsc::channel::<ModelStreamChunk>(64);
@@ -837,7 +926,7 @@ async fn dispatch_model_call(
 
 async fn apply_after_model_hooks(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     call_messages: Vec<Message>,
     mut response: ModelResponse,
 ) -> Option<ModelResponse> {
@@ -859,14 +948,7 @@ async fn apply_after_model_hooks(
             primary(subs),
         )
         .await;
-        emit(
-            subs,
-            RuntimeEvent::RunFailed {
-                error: reason,
-                kind: RunFailureKind::Other,
-            },
-        )
-        .await;
+        emit_run_failed(state, subs, reason, RunFailureKind::Other).await;
         return None;
     }
     // Read back any rewrite the hook applied to the response.
@@ -878,7 +960,7 @@ async fn apply_after_model_hooks(
 
 async fn handle_model_error_or_retry(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     error: &crate::model::ModelError,
     retry_attempt: u32,
 ) -> bool {
@@ -912,14 +994,7 @@ async fn handle_model_error_or_retry(
         primary(subs),
     )
     .await;
-    emit(
-        subs,
-        RuntimeEvent::RunFailed {
-            error,
-            kind: RunFailureKind::Other,
-        },
-    )
-    .await;
+    emit_run_failed(state, subs, error, RunFailureKind::Other).await;
     false
 }
 
@@ -951,8 +1026,10 @@ struct ParallelExecutionContext {
     run_id: RunId,
     run_depth: u32,
     event_tx: mpsc::Sender<RuntimeEvent>,
+    event_subs: Vec<EventSink>,
     webhook_base_url: Option<String>,
     approval_bus: ApprovalBus,
+    child_registry: ChildRunRegistry,
     remaining_budget: BudgetConfig,
     parent_messages: Vec<Message>,
 }
@@ -1068,14 +1145,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 primary(&subs),
             )
             .await;
-            emit(
-                &subs,
-                RuntimeEvent::RunFailed {
-                    error,
-                    kind: RunFailureKind::Other,
-                },
-            )
-            .await;
+            emit_run_failed(state, &subs, error, RunFailureKind::Other).await;
             return false;
         }
         _ => {}
@@ -1087,7 +1157,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
 #[allow(clippy::too_many_lines)] // justified: mechanical extraction of existing tool dispatch flow; narrower helpers follow in later refactors
 async fn run_tool_and_handoff_phase(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     run_id: RunId,
     response: &ModelResponse,
     tool_uses: &[ToolCall],
@@ -1198,14 +1268,7 @@ async fn run_tool_and_handoff_phase(
                 continue;
             }
             crate::hook::HookAction::Abort(reason) => {
-                emit(
-                    subs,
-                    RuntimeEvent::RunFailed {
-                        error: reason,
-                        kind: RunFailureKind::Other,
-                    },
-                )
-                .await;
+                emit_run_failed(state, subs, reason, RunFailureKind::Other).await;
                 return false;
             }
             crate::hook::HookAction::Continue => {}
@@ -1236,14 +1299,7 @@ async fn run_tool_and_handoff_phase(
                 Ok(result) => result.unwrap_or(false),
                 Err(_) => {
                     telemetry::record_approval("timeout", approval_started.elapsed());
-                    emit(
-                        subs,
-                        RuntimeEvent::RunFailed {
-                            error: "approval_timeout".into(),
-                            kind: RunFailureKind::Other,
-                        },
-                    )
-                    .await;
+                    emit_run_failed(state, subs, "approval_timeout", RunFailureKind::Other).await;
                     return false;
                 }
             };
@@ -1351,8 +1407,10 @@ async fn run_tool_and_handoff_phase(
                 run_depth: state.config.runtime.run_depth,
                 tool_call_id: tool_call.id.clone(),
                 event_tx: Some(primary(subs).clone()),
+                event_subs: subs.to_vec(),
                 webhook_base_url: state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone()),
                 approval_bus: state.approval_bus.clone(),
+                child_registry: state.child_registry.clone(),
                 remaining_budget: state.budget.remaining_config(),
                 parent_messages,
             };
@@ -1477,14 +1535,7 @@ async fn run_tool_and_handoff_phase(
                 )
                 .await
                 {
-                    emit(
-                        subs,
-                        RuntimeEvent::RunFailed {
-                            error: reason,
-                            kind: RunFailureKind::Other,
-                        },
-                    )
-                    .await;
+                    emit_run_failed(state, subs, reason, RunFailureKind::Other).await;
                     return false;
                 }
             }
@@ -1531,14 +1582,7 @@ async fn run_tool_and_handoff_phase(
                 )
                 .await
                 {
-                    emit(
-                        subs,
-                        RuntimeEvent::RunFailed {
-                            error: reason,
-                            kind: RunFailureKind::Other,
-                        },
-                    )
-                    .await;
+                    emit_run_failed(state, subs, reason, RunFailureKind::Other).await;
                     return false;
                 }
             }
@@ -1573,14 +1617,7 @@ async fn run_tool_and_handoff_phase(
                 )
                 .await
                 {
-                    emit(
-                        subs,
-                        RuntimeEvent::RunFailed {
-                            error: reason,
-                            kind: RunFailureKind::Other,
-                        },
-                    )
-                    .await;
+                    emit_run_failed(state, subs, reason, RunFailureKind::Other).await;
                     return false;
                 }
                 continue;
@@ -1625,14 +1662,7 @@ async fn run_tool_and_handoff_phase(
                 )
                 .await
                 {
-                    emit(
-                        subs,
-                        RuntimeEvent::RunFailed {
-                            error: reason,
-                            kind: RunFailureKind::Other,
-                        },
-                    )
-                    .await;
+                    emit_run_failed(state, subs, reason, RunFailureKind::Other).await;
                     return false;
                 }
             }
@@ -1644,14 +1674,7 @@ async fn run_tool_and_handoff_phase(
                 }
                 if let Err(reason) = record_repeated_failure(state, subs, &tool_call.name, &e).await
                 {
-                    emit(
-                        subs,
-                        RuntimeEvent::RunFailed {
-                            error: reason,
-                            kind: RunFailureKind::Other,
-                        },
-                    )
-                    .await;
+                    emit_run_failed(state, subs, reason, RunFailureKind::Other).await;
                     return false;
                 }
                 tool_results.push(ContentBlock::ToolResult {
@@ -1669,14 +1692,7 @@ async fn run_tool_and_handoff_phase(
                 )
                 .await
                 {
-                    emit(
-                        subs,
-                        RuntimeEvent::RunFailed {
-                            error: reason,
-                            kind: RunFailureKind::Other,
-                        },
-                    )
-                    .await;
+                    emit_run_failed(state, subs, reason, RunFailureKind::Other).await;
                     return false;
                 }
             }
@@ -1690,7 +1706,7 @@ async fn run_tool_and_handoff_phase(
 
 async fn apply_tool_phase_results(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     run_id: RunId,
     pending_handoff: Option<PendingHandoff>,
     mut tool_results: Vec<ContentBlock>,
@@ -1860,44 +1876,29 @@ fn replace_tool_result(tool_results: &mut [ContentBlock], tool_use_id: &str, con
 
 // ── Utility helpers ──────────────────────────────────────────────────────────
 
-async fn emit(subs: &[mpsc::Sender<RuntimeEvent>], event: RuntimeEvent) {
-    if let Some(primary) = subs.first() {
-        match tokio::time::timeout(EVENT_SEND_TIMEOUT, primary.send(event.clone())).await {
-            Ok(Ok(())) | Ok(Err(_)) => {}
-            Err(_) => {
-                telemetry::record_event_drop("primary", 1);
-                if primary
-                    .try_send(RuntimeEvent::EventsDropped {
-                        subscriber_id: 0,
-                        count: 1,
-                    })
-                    .is_err()
-                {
-                    tracing::warn!(
-                        "primary event subscriber timed out and EventsDropped notification channel is full"
-                    );
-                }
-            }
-        }
-    }
-    for (subscriber_id, sub) in subs.iter().enumerate().skip(1) {
-        if let Err(mpsc::error::TrySendError::Full(_)) = sub.try_send(event.clone()) {
-            telemetry::record_event_drop("secondary", 1);
-            if let Some(p) = subs.first() {
-                if p.try_send(RuntimeEvent::EventsDropped {
-                    subscriber_id: subscriber_id as u64,
-                    count: 1,
-                })
-                .is_err()
-                {
-                    tracing::warn!(
-                        subscriber_id,
-                        "secondary event subscriber dropped an event and primary notification channel is full"
-                    );
-                }
-            }
-        }
-    }
+fn run_failed_stop_reason(kind: Option<RunFailureKind>) -> Option<String> {
+    kind.map(crate::run::supervisor::format_run_failed_stop_reason)
+}
+
+async fn emit_run_failed(
+    state: &mut AgentRunState,
+    subs: &[EventSink],
+    error: impl Into<String>,
+    kind: RunFailureKind,
+) {
+    state.last_failure = Some(kind);
+    emit(
+        subs,
+        RuntimeEvent::RunFailed {
+            error: error.into(),
+            kind,
+        },
+    )
+    .await;
+}
+
+async fn emit(subs: &[EventSink], event: RuntimeEvent) {
+    crate::events::deliver_to_subscribers(subs, event).await;
 }
 
 fn estimate_context_tokens(messages: &[Message], tool_defs: &[ToolDef]) -> u64 {
@@ -1910,9 +1911,10 @@ fn estimate_context_tokens(messages: &[Message], tool_defs: &[ToolDef]) -> u64 {
     message_tokens + tool_tokens
 }
 
-fn primary(subs: &[mpsc::Sender<RuntimeEvent>]) -> &mpsc::Sender<RuntimeEvent> {
+fn primary(subs: &[EventSink]) -> &mpsc::Sender<RuntimeEvent> {
     subs.first()
         .expect("event_subs always has at least one subscriber")
+        .sender()
 }
 
 fn approval_context_for(meta: &ToolMetadata) -> ApprovalContext {
@@ -1937,7 +1939,7 @@ fn tool_source_label(source: &ToolSource) -> &'static str {
 
 async fn run_parallel_tool_batch_if_allowed(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     run_id: RunId,
     tool_uses: &[ToolCall],
 ) -> Option<Vec<ContentBlock>> {
@@ -2006,6 +2008,7 @@ async fn run_parallel_tool_batch_if_allowed(
         let event_tx = primary(subs).clone();
         let webhook_base_url = state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone());
         let approval_bus = state.approval_bus.clone();
+        let child_registry = state.child_registry.clone();
         let remaining_budget = state.budget.remaining_config();
         let parent_messages = if call.tool.needs_parent_context() {
             state.messages.clone()
@@ -2018,8 +2021,10 @@ async fn run_parallel_tool_batch_if_allowed(
                 run_id,
                 run_depth: state.config.runtime.run_depth,
                 event_tx,
+                event_subs: subs.to_vec(),
                 webhook_base_url,
                 approval_bus,
+                child_registry,
                 remaining_budget,
                 parent_messages,
             },
@@ -2063,8 +2068,10 @@ async fn execute_parallel_tool_call(
         run_depth: parallel_ctx.run_depth,
         tool_call_id: call.tool_call.id.clone(),
         event_tx: Some(parallel_ctx.event_tx.clone()),
+        event_subs: parallel_ctx.event_subs.clone(),
         webhook_base_url: parallel_ctx.webhook_base_url,
         approval_bus: parallel_ctx.approval_bus,
+        child_registry: parallel_ctx.child_registry,
         remaining_budget: parallel_ctx.remaining_budget,
         parent_messages: parallel_ctx.parent_messages,
     };
@@ -2098,7 +2105,7 @@ async fn execute_parallel_tool_call(
 
 async fn finalize_parallel_tool_result(
     state: &mut AgentRunState,
-    subs: &[mpsc::Sender<RuntimeEvent>],
+    subs: &[EventSink],
     result: ParallelToolResult,
 ) -> ContentBlock {
     match result.result {
@@ -2242,12 +2249,13 @@ fn deferred_tool_exposure_error(state: &AgentRunState, tool_name: &str) -> Optio
 #[allow(clippy::too_many_arguments)] // justified: mirrors pre_start owned state needed to terminate startup cleanly
 async fn fail_pre_start(
     myself: &ActorRef<AgentMsg>,
-    event_subs: &[mpsc::Sender<RuntimeEvent>],
+    event_subs: &[EventSink],
     run_id: RunId,
     config: AgentConfig,
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
     approval_bus: ApprovalBus,
+    child_registry: ChildRunRegistry,
     run_hook_ctx: crate::hook::RunHookContext,
     error: String,
 ) -> AgentRunState {
@@ -2266,6 +2274,7 @@ async fn fail_pre_start(
         model,
         registry,
         approval_bus,
+        child_registry,
         event_subs.to_vec(),
         run_hook_ctx,
     )
@@ -2278,7 +2287,8 @@ fn failed_state(
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
     approval_bus: ApprovalBus,
-    event_subs: Vec<mpsc::Sender<RuntimeEvent>>,
+    child_registry: ChildRunRegistry,
+    event_subs: Vec<EventSink>,
     run_hook_ctx: crate::hook::RunHookContext,
 ) -> AgentRunState {
     AgentRunState {
@@ -2300,9 +2310,11 @@ fn failed_state(
         cancelled: true,
         run_hook_ctx,
         approval_bus,
+        child_registry,
         event_subs,
         webhook_runtime: None,
         repeated_failures: HashMap::new(),
+        last_failure: Some(RunFailureKind::Other),
     }
 }
 

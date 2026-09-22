@@ -14,13 +14,13 @@ make restart attempts observable.
 
 ## Acceptance Criteria
 
-- [ ] An eligible delegated `RunFailed` result triggers at most the configured
+- [x] An eligible delegated `RunFailed` result triggers at most the configured
   retry count.
-- [ ] Each restart emits attributable `RunRestarted` evidence.
-- [ ] Retry-unsafe or explicitly non-restartable failures preserve their
+- [x] Each restart emits attributable `RunRestarted` evidence.
+- [x] Retry-unsafe or explicitly non-restartable failures preserve their
   declared terminal semantics.
-- [ ] Exhausted retries escalate one final failure without a restart loop.
-- [ ] Existing actor-crash restart behavior remains covered.
+- [x] Exhausted retries escalate one final failure without a restart loop.
+- [x] Existing actor-crash restart behavior remains covered.
 
 ## Notes
 

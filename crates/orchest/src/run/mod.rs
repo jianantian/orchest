@@ -1,5 +1,6 @@
 //! Agent run orchestration, split into single-responsibility modules.
 
+pub(crate) mod action_arbitration;
 pub(crate) mod actor;
 pub(crate) mod compaction;
 pub(crate) mod config;
@@ -13,12 +14,16 @@ pub(crate) mod tool_exec;
 pub mod watcher;
 pub(crate) mod webhook;
 
+pub use action_arbitration::{arbitrate_watcher_actions, ArbitratedActions};
 pub use config::{
     AgentConfig, AgentConfigBuilder, AgentRun, ApprovalMode, CompactionConfig, ConfigError,
     ModelConfig, RepeatedFailureConfig, RunId, RunInput, RunInputError, RunState, RunStatus,
     RuntimeConfig, SkillDisclosure, SkillsConfig, SubAgentRuntime, SupervisionStrategy,
 };
-pub use handle::{ApprovalBus, EventReceiver, RunHandle};
+pub use handle::{
+    ApprovalBus, ChildCompletionError, ChildRunHandle, ChildRunOutcome, ChildRunRegistry,
+    EventReceiver, RunHandle,
+};
 pub use retry::{BackoffStrategy, RetryPolicy};
 pub use watcher::{Watcher, WatcherAction};
 
@@ -52,6 +57,28 @@ impl AgentRun {
         registry: ToolRegistry,
     ) -> (RunHandle, EventReceiver) {
         Self::start_with_messages(config, vec![], input, model, registry)
+    }
+
+    /// Starts a run with watchers already active before the first runtime
+    /// event (`RunStarted`) and before the first model call.
+    ///
+    /// Declared watchers are pre-wired into the worker subscriber list, so
+    /// successful registration guarantees observation from that boundary
+    /// without application timing assumptions. Channel `capacity` must be
+    /// `> 0` for every watcher; invalid capacity returns
+    /// [`ConfigError::InvalidWatcherCapacity`] **before** execution begins.
+    ///
+    /// For dynamic attachment after a run has already started, use
+    /// [`RunHandle::attach_watcher`] — that path remains supported but is
+    /// best-effort and may miss events emitted before registration completes.
+    pub fn start_with_watchers(
+        config: AgentConfig,
+        input: RunInput,
+        model: Arc<dyn ModelAdapter>,
+        registry: ToolRegistry,
+        watchers: Vec<(Arc<dyn Watcher>, usize)>,
+    ) -> Result<(RunHandle, EventReceiver), ConfigError> {
+        Self::start_with_messages_and_watchers(config, vec![], input, model, registry, watchers)
     }
 
     /// Starts a fresh run with a caller-supplied multi-turn history:
@@ -103,7 +130,37 @@ impl AgentRun {
             model,
             registry,
             ApprovalBus::default(),
+            ChildRunRegistry::default(),
+            vec![],
         )
+    }
+
+    /// Like [`AgentRun::start_with_messages`], but with watchers active before
+    /// the first runtime event. See [`AgentRun::start_with_watchers`].
+    #[allow(clippy::too_many_arguments)] // justified: mirrors start_with_messages + watchers
+    pub fn start_with_messages_and_watchers(
+        config: AgentConfig,
+        initial_messages: Vec<crate::model::Message>,
+        input: RunInput,
+        model: Arc<dyn ModelAdapter>,
+        registry: ToolRegistry,
+        watchers: Vec<(Arc<dyn Watcher>, usize)>,
+    ) -> Result<(RunHandle, EventReceiver), ConfigError> {
+        for (_, capacity) in &watchers {
+            if *capacity == 0 {
+                return Err(ConfigError::InvalidWatcherCapacity(0));
+            }
+        }
+        Ok(Self::start_with_bus(
+            config,
+            input.into_blocks(),
+            initial_messages,
+            model,
+            registry,
+            ApprovalBus::default(),
+            ChildRunRegistry::default(),
+            watchers,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)] // justified: internal API collecting all run params
@@ -114,6 +171,8 @@ impl AgentRun {
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
         approval_bus: ApprovalBus,
+        child_registry: ChildRunRegistry,
+        watchers: Vec<(Arc<dyn Watcher>, usize)>,
     ) -> (RunHandle, EventReceiver) {
         config.register_persistence_hook();
         let run_id = RunId::new();
@@ -126,10 +185,20 @@ impl AgentRun {
             registry,
             event_tx,
             approval_bus: approval_bus.clone(),
+            child_registry: child_registry.clone(),
             resume: None,
             initial_messages,
+            initial_event_subs: vec![],
+            watcher_wave_bus: None,
         };
-        supervisor::spawn_supervised(run_id, args, approval_bus, event_rx)
+        supervisor::spawn_supervised(supervisor::SpawnSupervised {
+            run_id,
+            args,
+            approval_bus,
+            child_registry,
+            event_rx,
+            initial_watchers: watchers,
+        })
     }
 
     /// Resumes a previous run from a persisted snapshot exactly as it left
@@ -158,6 +227,7 @@ impl AgentRun {
         let run_id = snapshot.run_id;
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
         let approval_bus = ApprovalBus::default();
+        let child_registry = ChildRunRegistry::default();
         let resume = ResumeState {
             messages: snapshot.messages,
             step: snapshot.step,
@@ -171,15 +241,20 @@ impl AgentRun {
             registry,
             event_tx,
             approval_bus: approval_bus.clone(),
+            child_registry: child_registry.clone(),
             resume: Some(resume),
             initial_messages: vec![],
+            initial_event_subs: vec![],
+            watcher_wave_bus: None,
         };
-        Ok(supervisor::spawn_supervised(
+        Ok(supervisor::spawn_supervised(supervisor::SpawnSupervised {
             run_id,
             args,
             approval_bus,
+            child_registry,
             event_rx,
-        ))
+            initial_watchers: vec![],
+        }))
     }
 
     /// Resumes a previous run from a persisted snapshot and appends `input`
@@ -204,6 +279,7 @@ impl AgentRun {
         let run_id = snapshot.run_id;
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
         let approval_bus = ApprovalBus::default();
+        let child_registry = ChildRunRegistry::default();
         let mut messages = snapshot.messages;
         messages.push(crate::model::Message {
             role: crate::model::Role::User,
@@ -222,15 +298,20 @@ impl AgentRun {
             registry,
             event_tx,
             approval_bus: approval_bus.clone(),
+            child_registry: child_registry.clone(),
             resume: Some(resume),
             initial_messages: vec![],
+            initial_event_subs: vec![],
+            watcher_wave_bus: None,
         };
-        Ok(supervisor::spawn_supervised(
+        Ok(supervisor::spawn_supervised(supervisor::SpawnSupervised {
             run_id,
             args,
             approval_bus,
+            child_registry,
             event_rx,
-        ))
+            initial_watchers: vec![],
+        }))
     }
 }
 

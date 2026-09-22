@@ -35,6 +35,23 @@ Runnable example:
 cargo run -p orchest --example agent_as_tool
 ```
 
+While a delegated child is running, resolve its public control surface from the
+supervisor handle after `SubAgentStarted`:
+
+```rust
+if let RuntimeEvent::SubAgentStarted { child_run_id, .. } = event {
+    if let Some(child) = handle.child(child_run_id).await {
+        child.inject_message("Focus on primary sources.");
+        child.steer("Return a short evidence summary.");
+        let outcome = child.wait_completion().await?;
+    }
+}
+```
+
+`RunHandle::inject_message` / `steer` and `WatcherAction::{Inject,Steer}` still
+target the supervisor conversation. Use `ChildRunHandle` when the worker must
+receive the message.
+
 ## Pattern 2: Triage Handoff
 
 Use Handoff when ownership should transfer from one agent to another. This is
@@ -91,8 +108,32 @@ impl Watcher for SteeringWatcher {
     }
 }
 
-handle.attach_watcher(Arc::new(SteeringWatcher), 256).await;
+// Prefer start_with_watchers when first-event observation is required:
+let (handle, rx) = AgentRun::start_with_watchers(
+    config,
+    input,
+    model,
+    registry,
+    vec![(Arc::new(SteeringWatcher) as Arc<dyn Watcher>, 256)],
+)?;
+
+// Post-start attach_watcher remains supported but is best-effort:
+// handle.attach_watcher(Arc::new(SteeringWatcher), 256).await;
 ```
+
+When a supervisor delegates through Agent-as-Tool, forwarded child lifecycle
+and runtime events (`SubAgentStarted` / `SubAgentEvent` / `SubAgentCompleted` /
+`SubAgentFailed`) are delivered to attached watcher subscriptions through the
+same fan-out contract as other run events (`ToolContext::emit_event`). The
+primary `EventReceiver` still receives each event once, in order; watchers
+observe the same nested stream without duplicate primary delivery.
+`LlmWatcher` formats those nested events structurally (not via `Debug`).
+
+When multiple watchers return actions for the same fan-out event, the runtime
+gates until every watcher in that delivery cohort finishes `on_event`, then
+resolves with a public deterministic rule (`Abort` wins; otherwise `Inject` /
+`Steer` apply in registration order). Per-watcher delivery FIFO is a separate
+property. See [`arbitrate_watcher_actions`](../../crates/orchest/src/run/action_arbitration.rs).
 
 Runnable examples:
 

@@ -386,6 +386,8 @@ class EventsDroppedEvent(TypedDict):
     type: Literal["events_dropped"]
     subscriber_id: int
     count: int
+    from_seq: int
+    to_seq: int
     run_depth: int
     child_run_id: str | None
 

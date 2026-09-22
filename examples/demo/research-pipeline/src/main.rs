@@ -80,7 +80,7 @@ async fn run_live(question: String, materials: String, fault: bool) -> Result<()
         mut events,
         watcher_events,
         ..
-    } = start_with_live_watchers(config, question, model, registry).await;
+    } = start_with_live_watchers(config, question, model, registry).await?;
     println!("[watchers] {LIVE_ATTACHMENT_BOUNDARY}");
 
     while let Some(event) = events.recv().await {
