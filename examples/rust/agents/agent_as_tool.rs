@@ -15,8 +15,8 @@ use orchest::model::{
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
 use orchest::run::{AgentConfig, AgentRun};
-use orchest::tool::agent_as_tool::ContextMode;
 use orchest::tool::registry::ToolRegistry;
+use orchest::tool::ContextMode;
 use orchest::tool::ToolError;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;

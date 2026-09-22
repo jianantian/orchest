@@ -11,8 +11,8 @@ use orchest::model::{
 use orchest::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
 use orchest::skill::executor::BareSubprocessExecutor;
 use orchest::skill::{SkillDependencies, SkillEnvManager, SkillManifest};
-use orchest::tool::agent_as_tool::ContextMode;
 use orchest::tool::registry::ToolRegistry;
+use orchest::tool::ContextMode;
 use orchest::tool::{Tool, ToolContext, ToolOutput};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;

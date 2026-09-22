@@ -10,9 +10,8 @@ use orchest::{
     model::ModelAdapter,
     run::{AgentConfig, ConfigError, SupervisionStrategy},
     tool::{
-        agent_as_tool::ContextMode,
         registry::{RegistryError, ToolRegistry},
-        Approval, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
+        Approval, ContextMode, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
     },
 };
 use serde_json::{json, Value};
