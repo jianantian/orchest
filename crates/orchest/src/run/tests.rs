@@ -5272,6 +5272,9 @@ fn make_spawn_sub_tool() -> Arc<dyn Tool> {
         .as_tool("spawn_sub", "spawn a sub-agent")
         .model(Arc::new(SubAgentApprovalModel))
         .registry(child_registry)
+        .input_schema(
+            serde_json::json!({"type": "object", "properties": {"input": {"type": "string"}}}),
+        )
         .input_mapper(|_| Ok("child with approval".into()))
         .output_extractor(|details| details.get("output").cloned().unwrap_or(details.clone()))
         .build()
@@ -7539,6 +7542,9 @@ fn make_spawn_child_tool() -> Arc<dyn Tool> {
         .as_tool("spawn_child", "spawn a child agent")
         .model(Arc::new(FakeModelAdapter::final_answer()))
         .registry(child_registry)
+        .input_schema(
+            serde_json::json!({"type": "object", "properties": {"input": {"type": "string"}}}),
+        )
         .input_mapper(|_| Ok("child task".into()))
         .output_extractor(|details| details.get("output").cloned().unwrap_or(details.clone()))
         .build()

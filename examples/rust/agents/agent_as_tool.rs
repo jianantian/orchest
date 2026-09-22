@@ -159,6 +159,11 @@ async fn main() {
         .model(Arc::clone(&child_model))
         .registry(child_registry)
         .context_mode(ContextMode::Fresh)
+        .input_schema(json!({
+            "type": "object",
+            "properties": {"input": {"type": "string"}},
+            "required": ["input"]
+        }))
         .input_mapper(|input: Value| {
             input
                 .get("input")
