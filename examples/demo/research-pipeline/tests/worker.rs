@@ -17,9 +17,7 @@ use orchest::{
         RequestOptions, Role, StopReason, TokenUsage, ToolDef,
     },
     run::{AgentRun, RunId, SupervisionStrategy},
-    tool::{
-        agent_as_tool::ContextMode, Approval, ErrorKind, RetryHint, Tool, ToolContext, ToolOutput,
-    },
+    tool::{Approval, ContextMode, ErrorKind, RetryHint, Tool, ToolContext, ToolOutput},
 };
 use research_pipeline_demo::events::render_event;
 use research_pipeline_demo::fault::{

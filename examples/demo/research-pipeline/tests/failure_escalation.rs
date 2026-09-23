@@ -11,7 +11,7 @@ use orchest::{
         RequestOptions, StopReason, TokenUsage, ToolDef,
     },
     run::{AgentRun, SupervisionStrategy},
-    tool::{agent_as_tool::ContextMode, ErrorKind, RetryHint},
+    tool::{ContextMode, ErrorKind, RetryHint},
 };
 use research_pipeline_demo::{
     fault::{CONTROLLED_FAULT_ABORT_REASON, CONTROLLED_FAULT_CODE},

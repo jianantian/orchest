@@ -744,6 +744,11 @@ pub enum ConfigError {
     SubAgentMissingModel,
     #[error("SubAgentBuilder requires .registry() before .build()")]
     SubAgentMissingRegistry,
+    #[error(
+        "SubAgentBuilder requires .input_schema(..) when .input_mapper(..) is set; \
+         do not pair a custom mapper with the default {{\"input\": \"string\"}} schema"
+    )]
+    SubAgentMapperRequiresSchema,
     #[error("LlmWatcherBuilder requires .model() before .build()")]
     LlmWatcherMissingModel,
     #[error("watcher channel capacity must be > 0, got {0}")]

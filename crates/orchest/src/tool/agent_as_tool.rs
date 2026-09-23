@@ -686,6 +686,12 @@ impl SubAgentBuilder {
         self
     }
 
+    /// Map the parent tool call's JSON arguments into the child agent's
+    /// input string.
+    ///
+    /// When set, a matching [`Self::input_schema`] is required: the default
+    /// `{"input": "string"}` schema must not be advertised alongside a custom
+    /// mapper (see #299). Callers that set neither keep the default pair.
     pub fn input_mapper(
         mut self,
         f: impl Fn(Value) -> Result<String, ToolError> + Send + Sync + 'static,
@@ -720,6 +726,9 @@ impl SubAgentBuilder {
     pub fn build(self) -> Result<Arc<dyn Tool>, ConfigError> {
         let model = self.model.ok_or(ConfigError::SubAgentMissingModel)?;
         let registry = self.registry.ok_or(ConfigError::SubAgentMissingRegistry)?;
+        if self.input_mapper.is_some() && self.input_schema.is_none() {
+            return Err(ConfigError::SubAgentMapperRequiresSchema);
+        }
         let input_schema = self.input_schema.unwrap_or_else(
             || json!({"type": "object", "properties": {"input": {"type": "string"}}}),
         );
@@ -837,6 +846,76 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(tool.name(), "t");
+    }
+
+    #[test]
+    fn build_fails_when_input_mapper_set_without_input_schema() {
+        let result = test_agent_config()
+            .as_tool("t", "d")
+            .model(Arc::new(NeverCalledModel))
+            .registry(ToolRegistry::new())
+            .input_mapper(|input: Value| {
+                input
+                    .get("draft")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| ToolError::fatal("missing draft"))
+            })
+            .build();
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("build() should fail when mapper lacks a matching schema"),
+        };
+        assert!(matches!(err, ConfigError::SubAgentMapperRequiresSchema));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("input_schema") && msg.contains("input_mapper"),
+            "error should name both methods: {msg}"
+        );
+    }
+
+    #[test]
+    fn build_succeeds_when_input_mapper_and_input_schema_both_set() {
+        let tool = test_agent_config()
+            .as_tool("t", "d")
+            .model(Arc::new(NeverCalledModel))
+            .registry(ToolRegistry::new())
+            .input_schema(json!({
+                "type": "object",
+                "properties": {"draft": {"type": "string"}},
+                "required": ["draft"]
+            }))
+            .input_mapper(|input: Value| {
+                input
+                    .get("draft")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| ToolError::fatal("missing draft"))
+            })
+            .build()
+            .unwrap();
+        assert_eq!(
+            tool.input_schema(),
+            &json!({
+                "type": "object",
+                "properties": {"draft": {"type": "string"}},
+                "required": ["draft"]
+            })
+        );
+    }
+
+    #[test]
+    fn build_keeps_default_schema_when_neither_mapper_nor_schema_set() {
+        let tool = test_agent_config()
+            .as_tool("t", "d")
+            .model(Arc::new(NeverCalledModel))
+            .registry(ToolRegistry::new())
+            .build()
+            .unwrap();
+        assert_eq!(
+            tool.input_schema(),
+            &json!({"type": "object", "properties": {"input": {"type": "string"}}})
+        );
     }
 
     // ── execute: failure → Err(ToolError), success → Structured ─────────────

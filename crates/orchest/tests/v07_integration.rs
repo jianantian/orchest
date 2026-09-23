@@ -523,6 +523,7 @@ async fn agent_as_tool_emits_sub_agent_events() {
         .as_tool("summariser", "Summarises text")
         .model(Arc::new(ChildAgentModel))
         .registry(ToolRegistry::new())
+        .input_schema(json!({"type": "object", "properties": {"input": {"type": "string"}}}))
         .input_mapper(|input: Value| {
             input
                 .get("input")
