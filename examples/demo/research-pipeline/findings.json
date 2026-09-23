@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "iteration": "v0.11",
   "subject": "Research Pipeline",
-  "executiveSummary": "Deterministic Research Pipeline seam checks passed. Both required live-provider runs executed against the configured real chat model and passed: the normal supervisor/worker/LlmWatcher run, and the controlled-fault drill (worker fault, run-level Restart, escalation) in 4 of 4 post-repair runs. SB-1-SB-8 and RB-1 are verified; P1-6 records watcher abort-authority scope.",
+  "executiveSummary": "Deterministic Research Pipeline seam checks passed. Both required live-provider runs executed against the configured real chat model and passed: the normal supervisor/worker/LlmWatcher run, and the controlled-fault drill (worker fault, run-level Restart, escalation) in 4 of 4 post-repair runs. Every seam, release and backlog finding is verified (SB-1-SB-8, RB-1, P1-6); the backlog this round produced (#298, #299, #300) is closed.",
   "readinessVerdict": {
     "status": "ready",
     "reason": "Every required live-provider run passed on the recorded commands and no seam or release blocker remains open.",
@@ -272,6 +272,17 @@
       "revision": "git:self",
       "summary": "Issue #255 verifier: both builder implementations reject a missing model with a typed error instead of panicking.",
       "evidenceRefs": ["EV-llm-watcher-builder-test"]
+    },
+    {
+      "id": "run-llm-watcher-abort-bound-unit",
+      "kind": "test",
+      "status": "passed",
+      "required": true,
+      "command": "cargo test -p orchest --lib llm_watcher",
+      "date": "2026-09-23",
+      "revision": "git:self",
+      "summary": "Issue #298 verifier: the default watcher prompt and decide_action schema state the abort boundary.",
+      "evidenceRefs": ["EV-llm-watcher-abort-bound-test"]
     }
   ],
   "evidence": [
@@ -552,6 +563,23 @@
       "result": "2 passed; 0 failed; 371 filtered out (run::llm_watcher and tool::agent_as_tool missing-model cases)",
       "path": "crates/orchest/src/run/llm_watcher.rs",
       "symbol": "build_fails_with_missing_model_when_model_not_set"
+    },
+    {
+      "id": "EV-llm-watcher-abort-bound-source",
+      "kind": "source",
+      "summary": "Default watcher prompt and decide_action schema state the abort boundary.",
+      "path": "crates/orchest/src/run/llm_watcher.rs",
+      "symbol": "default_system_prompt and decide_action_tool"
+    },
+    {
+      "id": "EV-llm-watcher-abort-bound-test",
+      "kind": "test",
+      "summary": "Abort-boundary assertions on the default prompt and the decide_action schema.",
+      "command": "cargo test -p orchest --lib llm_watcher",
+      "runRef": "run-llm-watcher-abort-bound-unit",
+      "result": "14 passed; 0 failed; 365 filtered out",
+      "path": "crates/orchest/src/run/llm_watcher.rs",
+      "symbol": "default_system_prompt_bounds_abort_authority and decide_action_tool_describes_bounded_abort"
     }
   ],
   "findings": [
@@ -950,24 +978,28 @@
     },
     {
       "id": "P1-6",
-      "title": "Default LlmWatcher prompt leaves abort authority unscoped",
+      "title": "Default LlmWatcher prompt left abort authority unscoped",
       "apiSurface": "orchest::run::llm_watcher::LlmWatcherBuilder",
-      "description": "The default watcher prompt asks the model to review events and choose an action but states no boundary for `abort`, so a live model decides on its own what counts as abort-worthy. A delegation whose text named the failing fault_trigger tool was judged a prompt injection and aborted the drill run.",
-      "observedConsequence": "An operator-authorized fault drill was vetoed by the watcher before the restart path became observable, in 2 of 4 pre-repair live attempts; consumers have no documented policy for what a watcher may abort.",
-      "workaround": "Demos that need a long-running drill to finish scope their watcher prompt explicitly (see FAULT_DRILL_WATCHER_PROMPT); deterministic coverage uses scripted watchers.",
+      "description": "The default watcher prompt asked the model to review events and choose an action but stated no boundary for `abort`, so a live model decided on its own what counted as abort-worthy. Resolved by #298: the default prompt and the `decide_action` schema now reserve abort for unrecoverable failures or policy violations and exclude handled tool faults, retries, RunFailed, RunRestarted, and controlled-fault drills.",
+      "observedConsequence": "Before the fix, an operator-authorized fault drill was vetoed by the watcher before the restart path became observable, in 2 of 4 pre-repair live attempts.",
+      "workaround": "Resolved: the default prompt states the boundary; drill-shaped runs still scope their watcher prompt explicitly (see FAULT_DRILL_WATCHER_PROMPT).",
       "classification": "post-1.0-backlog",
-      "status": "open",
-      "evidenceRefs": ["EV-live-provider-controlled-fault", "EV-llm-watcher-format-source"],
+      "status": "verified",
+      "evidenceRefs": [
+        "EV-llm-watcher-abort-bound-source",
+        "EV-llm-watcher-abort-bound-test",
+        "EV-live-provider-controlled-fault"
+      ],
       "action": {
         "owner": "orchest-maintainers",
-        "summary": "Document or bound watcher abort authority in the default prompt, and keep drill-shaped runs pre-scoped.",
+        "summary": "Bounded the default prompt and decide_action schema; drill runs stay pre-scoped (closed by #298).",
         "issueRef": "#298"
       },
       "verification": {
-        "status": "not-run",
-        "commands": [],
-        "evidenceRefs": ["EV-live-provider-controlled-fault"],
-        "summary": "Observed in the pre-repair live attempts; the drill repair removes the veto for the demo but does not change the default prompt."
+        "status": "passed",
+        "commands": ["cargo test -p orchest --lib llm_watcher"],
+        "evidenceRefs": ["EV-llm-watcher-abort-bound-test"],
+        "summary": "Default prompt and decide_action schema assert the abort boundary (#298)."
       }
     }
   ]

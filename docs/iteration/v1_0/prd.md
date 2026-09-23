@@ -12,9 +12,10 @@ open supervised-delegation seam blockers, one open release blocker, and an
 unexecuted required live-provider run when this PRD was written. As of the
 2026-09-22 evidence update: SB-1–SB-8 and RB-1 are `verified`, both required
 live-provider runs are `passed` (normal run and controlled-fault drill), and
-the canonical readiness verdict is `ready`; P1-6 is recorded but classified
-post-1.0 backlog. The ledger's live evidence awaits review; the remaining v1.0
-acceptance items are the release-packaging ones below.
+the canonical readiness verdict is `ready`; the backlog the round produced is
+`verified` (P1-6 → #298, plus #299 and #300, fixed in #302, #303 and #305).
+The ledger's live evidence awaits review; the remaining v1.0 acceptance items
+are the release-packaging ones below.
 
 ## Goal
 
@@ -50,13 +51,20 @@ evidence is reviewed. No waiver has been accepted.
 
 ## Post-1.0 Backlog
 
-The reviewed report explicitly defers:
+The reviewed report deferred, and these are now closed:
 
 - #256: convenience re-exports for `LlmWatcher` and `ContextMode` (P1-1,
-  P1-2);
-- #257: reconciliation of the empty-parent Fork contract (P1-3).
+  P1-2) — closed by #301;
+- #257: reconciliation of the empty-parent Fork contract (P1-3) — closed by
+  #304.
 
-These issues do not block v1.0.
+The #258 live-validation round added three more, all closed as well:
+
+- #298: default `LlmWatcher` abort authority (P1-6) — closed by #302;
+- #299: `input_mapper` without a matching `input_schema` — closed by #303;
+- #300: `SynthesizeRequest.voice` semantics for `None` — closed by #305.
+
+None of these block v1.0.
 
 ## Out of Scope
 

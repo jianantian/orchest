@@ -2,7 +2,7 @@
 
 ## Executive summary
 
-Deterministic Research Pipeline seam checks passed. Both required live-provider runs executed against the configured real chat model and passed: the normal supervisor/worker/LlmWatcher run, and the controlled-fault drill (worker fault, run-level Restart, escalation) in 4 of 4 post-repair runs. SB-1-SB-8 and RB-1 are verified; P1-6 records watcher abort-authority scope.
+Deterministic Research Pipeline seam checks passed. Both required live-provider runs executed against the configured real chat model and passed: the normal supervisor/worker/LlmWatcher run, and the controlled-fault drill (worker fault, run-level Restart, escalation) in 4 of 4 post-repair runs. Every seam, release and backlog finding is verified (SB-1-SB-8, RB-1, P1-6); the backlog this round produced (#298, #299, #300) is closed.
 
 ## Readiness verdict
 
@@ -34,7 +34,7 @@ Deterministic Research Pipeline seam checks passed. Both required live-provider 
 | P1-3 | Fork empty-parent context error is unreachable via normal delegation | `post-1.0-backlog` | `verified` | #257 |
 | P1-4 | Delegation has no explicit child completion receiver | `post-1.0-backlog` | `verified` | #249 |
 | P1-5 | Provider test fakes were previously inaccessible | `post-1.0-backlog` | `verified` | #196 |
-| P1-6 | Default LlmWatcher prompt leaves abort authority unscoped | `post-1.0-backlog` | `open` | #298 |
+| P1-6 | Default LlmWatcher prompt left abort authority unscoped | `post-1.0-backlog` | `verified` | #298 |
 | RB-1 | LlmWatcher builder panics without a model | `release-blocker` | `verified` | #255 |
 | SB-1 | Delegation does not expose a child RunHandle | `seam-blocker` | `verified` | #249 |
 | SB-2 | Steering targets the supervisor rather than delegated worker | `seam-blocker` | `verified` | #249 |
@@ -197,35 +197,35 @@ Deterministic Research Pipeline seam checks passed. Both required live-provider 
 
 **Verification evidence:** `EV-provider-fakes-test`
 
-### P1-6 — Default LlmWatcher prompt leaves abort authority unscoped
+### P1-6 — Default LlmWatcher prompt left abort authority unscoped
 
 **API surface:** `orchest::run::llm_watcher::LlmWatcherBuilder`
 
 **Classification:** `post-1.0-backlog`
 
-**Status:** `open`
+**Status:** `verified`
 
-**Description:** The default watcher prompt asks the model to review events and choose an action but states no boundary for `abort`, so a live model decides on its own what counts as abort-worthy. A delegation whose text named the failing fault_trigger tool was judged a prompt injection and aborted the drill run.
+**Description:** The default watcher prompt asked the model to review events and choose an action but stated no boundary for `abort`, so a live model decided on its own what counted as abort-worthy. Resolved by #298: the default prompt and the `decide_action` schema now reserve abort for unrecoverable failures or policy violations and exclude handled tool faults, retries, RunFailed, RunRestarted, and controlled-fault drills.
 
-**Observed consequence:** An operator-authorized fault drill was vetoed by the watcher before the restart path became observable, in 2 of 4 pre-repair live attempts; consumers have no documented policy for what a watcher may abort.
+**Observed consequence:** Before the fix, an operator-authorized fault drill was vetoed by the watcher before the restart path became observable, in 2 of 4 pre-repair live attempts.
 
-**Workaround:** Demos that need a long-running drill to finish scope their watcher prompt explicitly (see FAULT_DRILL_WATCHER_PROMPT); deterministic coverage uses scripted watchers.
+**Workaround:** Resolved: the default prompt states the boundary; drill-shaped runs still scope their watcher prompt explicitly (see FAULT_DRILL_WATCHER_PROMPT).
 
-**Evidence:** `EV-live-provider-controlled-fault`, `EV-llm-watcher-format-source`
+**Evidence:** `EV-live-provider-controlled-fault`, `EV-llm-watcher-abort-bound-source`, `EV-llm-watcher-abort-bound-test`
 
 **Action owner:** orchest-maintainers
 
-**Action:** Document or bound watcher abort authority in the default prompt, and keep drill-shaped runs pre-scoped.
+**Action:** Bounded the default prompt and decide_action schema; drill runs stay pre-scoped (closed by #298).
 
 **Issue:** #298
 
-**Verification status:** `not-run`
+**Verification status:** `passed`
 
-**Verification summary:** Observed in the pre-repair live attempts; the drill repair removes the veto for the demo but does not change the default prompt.
+**Verification summary:** Default prompt and decide_action schema assert the abort boundary (#298).
 
-**Verification commands:** —
+**Verification commands:** `cargo test -p orchest --lib llm_watcher`
 
-**Verification evidence:** `EV-live-provider-controlled-fault`
+**Verification evidence:** `EV-llm-watcher-abort-bound-test`
 
 ### RB-1 — LlmWatcher builder panics without a model
 
@@ -506,7 +506,7 @@ Deterministic Research Pipeline seam checks passed. Both required live-provider 
 | P1-3 | `passed` | `cargo test -p research-pipeline-demo --test worker` | `EV-worker-test` | Decision recorded in rustdocs; unit + worker tests continue to assert EMPTY_PARENT_CONTEXT (#257). |
 | P1-4 | `passed` | `cargo test -p orchest --lib child_control`<br>`cargo test -p research-pipeline-demo --test failure_escalation`<br>`cargo test -p research-pipeline-demo --test supervisor_watcher` | `EV-agent-as-tool-forwarding-source`, `EV-child-control-demo-test`, `EV-child-control-unit-test`, `EV-failure-escalation-test` | Child await proofs in supervisor_watcher passed. |
 | P1-5 | `passed` | `cargo test -p orchest-provider --features testing fakes` | `EV-provider-fakes-test` | Provider fakes unit verification passed. |
-| P1-6 | `not-run` | — | `EV-live-provider-controlled-fault` | Observed in the pre-repair live attempts; the drill repair removes the veto for the demo but does not change the default prompt. |
+| P1-6 | `passed` | `cargo test -p orchest --lib llm_watcher` | `EV-llm-watcher-abort-bound-test` | Default prompt and decide_action schema assert the abort boundary (#298). |
 | RB-1 | `passed` | `cargo test -p orchest --lib build_fails_with_missing_model_when_model_not_set` | `EV-llm-watcher-builder-source`, `EV-llm-watcher-builder-test` | Issue #255 verifier passed: both builders return the typed missing-model error without panic. |
 | SB-1 | `passed` | `cargo test -p orchest --lib child_control`<br>`cargo test -p research-pipeline-demo --test supervisor_watcher` | `EV-agent-as-tool-forwarding-source`, `EV-child-control-demo-test`, `EV-child-control-unit-test`, `EV-supervisor-watcher-test` | Child resolve/await and child-target inject/steer proofs passed. |
 | SB-2 | `passed` | `cargo test -p orchest --lib child_control`<br>`cargo test -p research-pipeline-demo --test supervisor_watcher` | `EV-child-control-demo-test`, `EV-child-control-unit-test`, `EV-supervisor-watcher-test`, `EV-watcher-action-routing` | Child-target inject/steer deterministic proofs passed. |
@@ -531,6 +531,7 @@ Revision `git:self` denotes the commit containing the canonical findings file an
 | run-level-restart-unit | `test` | `passed` | yes | `cargo test -p orchest --lib run_failed_; cargo test -p orchest --lib restart_` | 2026-09-22 | `git:self` | — | — | `EV-run-level-restart-unit-test` |
 | run-live-provider | `live-provider` | `passed` | yes | `cargo run -p research-pipeline-demo --bin research-pipeline -- run --question "Is Loom worth continued investment in Q4?" --materials examples/demo/research-pipeline/fixtures/research` | 2026-09-22 | `git:self` | openrouter | openrouter/anthropic/claude-sonnet-4.6 | `EV-live-provider-normal` |
 | run-live-provider-controlled-fault | `live-provider` | `passed` | yes | `cargo run -p research-pipeline-demo --bin research-pipeline -- run --question "Run the scheduled Q4 investment review over the fixture corpus." --materials examples/demo/research-pipeline/fixtures/research --fault` | 2026-09-22 | `git:self` | openrouter | openrouter/anthropic/claude-sonnet-4.6 | `EV-live-provider-controlled-fault` |
+| run-llm-watcher-abort-bound-unit | `test` | `passed` | yes | `cargo test -p orchest --lib llm_watcher` | 2026-09-23 | `git:self` | — | — | `EV-llm-watcher-abort-bound-test` |
 | run-llm-watcher-builder-unit | `test` | `passed` | yes | `cargo test -p orchest --lib build_fails_with_missing_model_when_model_not_set` | 2026-09-22 | `git:self` | — | — | `EV-llm-watcher-builder-test` |
 | run-provider-fakes-verification | `test` | `passed` | yes | `cargo test -p orchest-provider --features testing fakes` | 2026-07-31 | `git:self` | — | — | `EV-provider-fakes-test` |
 | run-report-smoke | `smoke` | `passed` | yes | `cargo run -p research-pipeline-demo --bin seam-report -- check --findings examples/demo/research-pipeline/findings.json --report docs/review/v0_11_seam_gap_analysis.md` | 2026-07-31 | `git:self` | — | — | `EV-report-smoke` |
@@ -574,6 +575,10 @@ Live supervisor/worker/LlmWatcher run over the shared fixture corpus: delegated 
 Controlled-fault drill observed live: worker search_corpus then fault_trigger (fatal), run-level Restart attempt 1, second fatal error, supervisor escalation without panic.
 
 **Redacted diagnostic:** Prior wiring, where the delegation named fault_trigger and the watcher used its default prompt: 1 of 4 attempts reached the designed path (2 aborted by the live LlmWatcher as a suspected prompt injection, 1 completed without the fault). After moving the fault instruction into the worker prompt and scoping the drill watcher prompt: 3 of 4. After restricting the drill tool set to search_corpus + fault_trigger: 4 of 4, the runs recorded here.
+
+#### run-llm-watcher-abort-bound-unit
+
+Issue #298 verifier: the default watcher prompt and decide_action schema state the abort boundary.
 
 #### run-llm-watcher-builder-unit
 
@@ -625,6 +630,8 @@ Deterministic worker tests passed.
 | EV-known-seams | `documentation` | `docs/archive/iteration/v0_11/design-decisions.md` · `Pre-Identified Seam Gap Findings Summary` | — | — | — | Documented supervised-delegation seam inventory. |
 | EV-live-provider-controlled-fault | `live-run` | `examples/demo/research-pipeline/src/main.rs` · `run_live` | run-live-provider-controlled-fault | `cargo run -p research-pipeline-demo --bin research-pipeline -- run --question "Run the scheduled Q4 investment review over the fixture corpus." --materials examples/demo/research-pipeline/fixtures/research --fault` | exit 0; 4 of 4 post-repair runs: worker search_corpus then fault_trigger failed (controlled worker fault) -> terminal failed (repeated-failure threshold) -> RunRestarted { attempt: 1 } -> second fault_trigger failed -> terminal failed -> parent tool result research_worker failed -> supervisor final turn -> root terminal completed (EndTurn); no panic, no abort; 10-14 supervisor actor-emitted watcher events. | Live controlled-fault drill: fatal fault, run-level restart, second fatal error, supervisor escalation without panic. |
 | EV-live-provider-normal | `live-run` | `examples/demo/research-pipeline/src/main.rs` · `run_live` | run-live-provider | `cargo run -p research-pipeline-demo --bin research-pipeline -- run --question "Is Loom worth continued investment in Q4?" --materials examples/demo/research-pipeline/fixtures/research` | exit 0; three delegated research_worker runs completed (10 search_corpus, 14 read_file, 3 write_draft, all EndTurn); root terminal completed (EndTurn); 77 supervisor actor-emitted watcher events observed; no provider error surfaced. | Live supervisor/worker/LlmWatcher scenario over the shared fixture corpus. |
+| EV-llm-watcher-abort-bound-source | `source` | `crates/orchest/src/run/llm_watcher.rs` · `default_system_prompt and decide_action_tool` | — | — | — | Default watcher prompt and decide_action schema state the abort boundary. |
+| EV-llm-watcher-abort-bound-test | `test` | `crates/orchest/src/run/llm_watcher.rs` · `default_system_prompt_bounds_abort_authority and decide_action_tool_describes_bounded_abort` | run-llm-watcher-abort-bound-unit | `cargo test -p orchest --lib llm_watcher` | 14 passed; 0 failed; 365 filtered out | Abort-boundary assertions on the default prompt and the decide_action schema. |
 | EV-llm-watcher-builder-source | `source` | `crates/orchest/src/run/llm_watcher.rs` · `LlmWatcherBuilder::build` | — | — | — | LlmWatcher builder missing-model seam. |
 | EV-llm-watcher-builder-test | `test` | `crates/orchest/src/run/llm_watcher.rs` · `build_fails_with_missing_model_when_model_not_set` | run-llm-watcher-builder-unit | `cargo test -p orchest --lib build_fails_with_missing_model_when_model_not_set` | 2 passed; 0 failed; 371 filtered out (run::llm_watcher and tool::agent_as_tool missing-model cases) | Missing-model builder error asserted for both builders without panic. |
 | EV-llm-watcher-format-source | `source` | `crates/orchest/src/run/llm_watcher.rs` · `format_event` | — | — | — | LlmWatcher nested event formatting. |
@@ -663,4 +670,4 @@ No unresolved seam blockers are recorded.
 - P1-3 — Fork empty-parent context error is unreachable via normal delegation (`verified`, #257)
 - P1-4 — Delegation has no explicit child completion receiver (`verified`, #249)
 - P1-5 — Provider test fakes were previously inaccessible (`verified`, #196)
-- P1-6 — Default LlmWatcher prompt leaves abort authority unscoped (`open`, #298)
+- P1-6 — Default LlmWatcher prompt left abort authority unscoped (`verified`, #298)

@@ -156,7 +156,7 @@
 | Supervised Delegation 基础 | ~~无~~ → Watcher trait + InjectCmd 双向通信 | ✅ v0.8 |
 | Mid-run Steering | ~~只有 approval~~ → Steering API | ✅ v0.9 |
 | Supervised Delegation 完整 | ~~无~~ → LlmWatcher + supervisor 恢复 + 多 watcher FIFO | ✅ v0.9 |
-| Multivac M2 Supervised Delegation seam readiness | v0.11 deterministic evidence 已通过；[Seam Gap Analysis](../review/v0_11_seam_gap_analysis.md) 中 SB-1–SB-8 与 RB-1 均已 `verified`；required live provider 两项均 `passed`（normal + controlled-fault，4/4 复现），readiness `ready` | v1.0 前复核 #258 证据（live 证据已记录，待 review） |
+| Multivac M2 Supervised Delegation seam readiness | v0.11 deterministic evidence 已通过；[Seam Gap Analysis](../review/v0_11_seam_gap_analysis.md) 中 SB-1–SB-8、RB-1 与 P1-6 均已 `verified`；required live provider 两项均 `passed`（normal + controlled-fault，4/4 复现），readiness `ready` | #258 证据已复核关闭（#301–#305 收尾 backlog） |
 | Image AIGC Gateway | ~~无~~ → **v0.6.1 已完成** | ✅ |
 | ASR Provider Gateway | ~~无~~ → **v0.9.1 已完成** | ✅ |
 | TTS Provider Gateway | ~~无统一 TTS provider crate~~ → **v0.9.3 已完成** | ✅ |
