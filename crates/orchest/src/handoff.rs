@@ -29,6 +29,7 @@ pub trait HandoffInputFilter: Send + Sync {
 // ---------------------------------------------------------------------------
 
 /// Input data available to a `HandoffInputFilter`.
+#[non_exhaustive]
 pub struct HandoffInputData {
     /// Full conversation history (including system message) up to the handoff.
     pub history: Vec<Message>,
@@ -38,6 +39,7 @@ pub struct HandoffInputData {
 
 /// The configured target of a handoff.
 #[derive(Clone)]
+#[non_exhaustive]
 pub enum HandoffTarget {
     /// A fixed agent config resolved at registration time.
     Static(Box<AgentConfig>),
@@ -65,6 +67,7 @@ pub struct Handoff {
 /// The resolved result produced by `HandoffTool::execute`.
 ///
 /// Carried inside `ToolOutput::Handoff`; the run loop consumes it.
+#[non_exhaustive]
 pub struct HandoffResult {
     pub target_agent: AgentConfig,
     pub transfer_message: String,
@@ -86,6 +89,7 @@ impl std::fmt::Debug for HandoffResult {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum HandoffError {
     #[error("handoff resolution failed: {0}")]
     Resolution(String),

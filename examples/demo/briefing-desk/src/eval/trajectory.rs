@@ -593,6 +593,8 @@ pub fn sanitize_runtime_event(
                 | RuntimeEvent::ChildRunEvent { .. }
                 | RuntimeEvent::SubAgentEvent { .. }
                 | RuntimeEvent::EventsDropped { .. } => unreachable!(),
+                // Events added to the runtime later keep only their kind.
+                _ => ("unknown", json!({})),
             };
 
             SanitizeOutcome {
@@ -626,6 +628,7 @@ fn stop_reason_label(reason: &StopReason) -> String {
         StopReason::Pause => "pause".into(),
         StopReason::Interrupted => "interrupted".into(),
         StopReason::Other(s) => format!("other:{s}"),
+        _ => "unknown".into(),
     }
 }
 
@@ -685,6 +688,7 @@ fn sanitize_approval_context(ctx: &ApprovalContext) -> Value {
             // Keep the discriminant without free-form failure payload leakage.
             json!({ "kind": "retry_after_failure" })
         }
+        _ => json!({ "kind": "unknown" }),
     }
 }
 
@@ -720,6 +724,7 @@ fn sanitize_job_status(status: &JobStatus) -> Value {
             "kind": "failed",
             "error": sanitize_free_text(msg),
         }),
+        _ => json!({ "kind": "unknown" }),
     }
 }
 

@@ -59,6 +59,7 @@ pub struct SkillDependencies {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SkillCapabilities {
     #[serde(default)]
     pub network: bool,
@@ -73,6 +74,7 @@ pub struct SkillCapabilities {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct BundledToolDef {
     pub name: String,
     pub description: String,
@@ -88,6 +90,7 @@ pub struct BundledToolDef {
 /// [`skill_name_violations`]. Spec-violating skills still load, so a warning
 /// does not imply the skill is absent from `manifests`.
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct ScanOutcome {
     pub manifests: Vec<SkillManifest>,
     pub warnings: Vec<ScanWarning>,
@@ -95,6 +98,7 @@ pub struct ScanOutcome {
 
 /// A single skill scan problem: the SKILL.md it concerns and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ScanWarning {
     pub path: PathBuf,
     pub reason: String,
@@ -139,6 +143,7 @@ pub fn skill_name_violations(name: &str) -> Vec<String> {
 
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
 #[error("{message}")]
+#[non_exhaustive]
 pub struct EnvError {
     pub message: String,
     pub code: Option<String>,

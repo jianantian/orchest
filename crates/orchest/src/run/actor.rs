@@ -2411,6 +2411,7 @@ mod history_clone_profile_tests {
             } => media_source_bytes(source) + detail.as_deref().map(str::len).unwrap_or(0),
             ContentBlock::Audio { source } => media_source_bytes(source),
             ContentBlock::MidConvSystem(text) => text.len(),
+            _ => 0,
         }
     }
 
@@ -2420,6 +2421,7 @@ mod history_clone_profile_tests {
             orchest_protocol::MediaSource::Base64 { media_type, data } => {
                 media_type.len() + data.len()
             }
+            _ => 0,
         }
     }
 

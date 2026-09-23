@@ -29,6 +29,7 @@ pub struct BooleanCriteria {
 /// belong to the caller, not the provider.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[non_exhaustive]
 pub enum DecisionQuestion {
     /// Estimate P(true); consumers choose their own thresholds.
     Boolean {

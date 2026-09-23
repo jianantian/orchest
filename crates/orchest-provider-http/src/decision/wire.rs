@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use orchest_protocol::{
     BooleanCriteria, DecisionAnswer, DecisionQuestion, DecisionRequest, DecisionResponse,
-    DecisionUsage,
+    DecisionUsage, ErrorCode, ProtocolError,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,16 +18,16 @@ pub(super) struct Request<'a> {
 }
 
 impl<'a> Request<'a> {
-    pub fn new(model: &'a str, request: &'a DecisionRequest) -> Self {
-        Self {
+    pub fn new(model: &'a str, request: &'a DecisionRequest) -> Result<Self, ProtocolError> {
+        Ok(Self {
             model,
             state: &request.state,
             questions: request
                 .questions
                 .iter()
-                .map(|(id, q)| (id.as_str(), q.into()))
-                .collect(),
-        }
+                .map(|(id, q)| Ok((id.as_str(), Question::try_from(q)?)))
+                .collect::<Result<_, ProtocolError>>()?,
+        })
     }
 }
 
@@ -49,9 +49,13 @@ pub(super) enum Question<'a> {
     },
 }
 
-impl<'a> From<&'a DecisionQuestion> for Question<'a> {
-    fn from(q: &'a DecisionQuestion) -> Self {
-        match q {
+impl<'a> TryFrom<&'a DecisionQuestion> for Question<'a> {
+    type Error = ProtocolError;
+
+    /// Fails for question kinds added to the protocol after this dialect was
+    /// written (`DecisionQuestion` is `#[non_exhaustive]`).
+    fn try_from(q: &'a DecisionQuestion) -> Result<Self, Self::Error> {
+        Ok(match q {
             DecisionQuestion::Boolean {
                 instructions,
                 criteria,
@@ -73,7 +77,13 @@ impl<'a> From<&'a DecisionQuestion> for Question<'a> {
                 instructions,
                 criteria,
             },
-        }
+            _ => {
+                return Err(ProtocolError::new(
+                    ErrorCode::InvalidRequest,
+                    "OpenRouter Decisions does not support this question kind",
+                ))
+            }
+        })
     }
 }
 

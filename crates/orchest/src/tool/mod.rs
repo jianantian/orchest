@@ -56,6 +56,7 @@ pub trait Tool: Send + Sync {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ToolOutput {
     Immediate(Value),
     /// `model_output` is what the model sees as the tool result.
@@ -72,6 +73,7 @@ pub enum ToolOutput {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Approval {
     Never,
     #[default]

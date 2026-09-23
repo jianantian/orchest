@@ -38,6 +38,8 @@ pub(crate) fn downgrade_minimax_role(
         Role::Group => (CompatibleRole::User, "group"),
         Role::SampleMessageUser => (CompatibleRole::User, "sample_message_user"),
         Role::SampleMessageAi => (CompatibleRole::User, "sample_message_ai"),
+        // Roles added to the protocol later downgrade to `user`.
+        _ => (CompatibleRole::User, "unknown"),
     };
     let applied_str = match applied {
         CompatibleRole::System => "system",

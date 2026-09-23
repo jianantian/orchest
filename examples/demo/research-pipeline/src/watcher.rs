@@ -84,6 +84,7 @@ pub fn stable_event_key(event: &RuntimeEvent) -> String {
         }
         RuntimeEvent::RunFailed { .. } => "run.failed".to_string(),
         RuntimeEvent::RunAborted { .. } => "run.aborted".to_string(),
+        _ => "unknown".to_string(),
     }
 }
 

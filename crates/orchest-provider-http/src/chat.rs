@@ -38,6 +38,7 @@ fn content_block_kind(block: &ContentBlock) -> &'static str {
         ContentBlock::Video { .. } => "video",
         ContentBlock::Audio { .. } => "audio",
         ContentBlock::MidConvSystem(_) => "mid_conv_system",
+        _ => "unknown",
     }
 }
 

@@ -11,6 +11,7 @@ use crate::{ErrorCode, ProtocolError};
 /// never zero certainty. Values are preserved, not recomputed or thresholded.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum DecisionAnswer {
     Boolean {
         /// Probability of the positive outcome, in [0, 1].

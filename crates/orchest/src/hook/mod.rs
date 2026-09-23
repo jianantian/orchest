@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+#[non_exhaustive]
 pub enum HookAction {
     Continue,
     Skip,
@@ -14,11 +15,13 @@ pub enum HookAction {
     Reject(String),
 }
 
+#[non_exhaustive]
 pub enum ModelHookAction {
     Continue,
     Abort(String),
 }
 
+#[non_exhaustive]
 pub struct RunHookContext {
     pub run_id: crate::run::RunId,
     pub agent_name: String,
@@ -33,6 +36,7 @@ pub struct RunHookContext {
     pub active_config: Option<crate::run::AgentConfig>,
 }
 
+#[non_exhaustive]
 pub struct ModelHookContext {
     pub run_id: crate::run::RunId,
     pub messages: Vec<crate::model::Message>,
@@ -43,6 +47,7 @@ pub struct ModelHookContext {
     pub response: Option<Vec<crate::model::ContentBlock>>,
 }
 
+#[non_exhaustive]
 pub struct ToolHookContext {
     pub run_id: crate::run::RunId,
     pub tool_name: String,
@@ -61,6 +66,7 @@ pub struct RepeatedFailureHookContext {
     pub count: usize,
 }
 
+#[non_exhaustive]
 pub struct HandoffHookContext {
     pub run_id: crate::run::RunId,
     pub previous_agent: String,
@@ -68,6 +74,7 @@ pub struct HandoffHookContext {
     pub handoff_input: serde_json::Value,
 }
 
+#[non_exhaustive]
 pub struct CompactHookContext {
     pub run_id: crate::run::RunId,
     pub messages: Vec<crate::model::Message>,

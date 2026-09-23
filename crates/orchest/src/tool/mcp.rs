@@ -23,17 +23,20 @@ pub struct McpServerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum McpTransport {
     Stdio { command: String, args: Vec<String> },
     StreamableHttp { url: String, auth: Option<McpAuth> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum McpAuth {
     Bearer { token: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct McpToolDef {
     pub name: String,
     pub description: String,
@@ -42,6 +45,7 @@ pub struct McpToolDef {
 
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
 #[error("{message}")]
+#[non_exhaustive]
 pub struct McpError {
     pub message: String,
     pub code: Option<String>,
@@ -442,6 +446,7 @@ fn parse_rpc_response(value: Value) -> Result<Value, McpError> {
 }
 
 #[derive(Clone)]
+#[non_exhaustive]
 pub enum McpClient {
     Stdio(Arc<McpStdioClient>),
     Http(Arc<McpHttpClient>),

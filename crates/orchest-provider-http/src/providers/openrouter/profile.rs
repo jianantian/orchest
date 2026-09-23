@@ -69,6 +69,8 @@ impl ProviderProfile for OpenRouterProfile {
                     ThinkingLevel::High => "high",
                     ThinkingLevel::XHigh => "xhigh",
                     ThinkingLevel::Max => "max",
+                    // Levels added to the protocol later map to the middle.
+                    _ => "medium",
                 };
                 reasoning["effort"] = json!(effort);
             }

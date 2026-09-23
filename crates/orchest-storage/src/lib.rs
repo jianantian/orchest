@@ -66,10 +66,13 @@ pub trait ObjectStore: Send + Sync {
 
 /// Errors from object-storage operations.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ObjectStoreError {
-    /// Transport-level failure (DNS, connect, TLS, timeout, body read).
+    /// Transport-level failure (DNS, connect, TLS, timeout, body read). The
+    /// source is the HTTP client's error, boxed so the client crate is not
+    /// part of this crate's public API.
     #[error("object store transport failure: {0}")]
-    Transport(#[from] reqwest::Error),
+    Transport(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     /// The server answered with a non-success status (404 is success only for
     /// idempotent deletes). `body` is truncated — the diagnosis lifeline for
@@ -78,7 +81,8 @@ pub enum ObjectStoreError {
     Rejected {
         method: &'static str,
         path: String,
-        status: reqwest::StatusCode,
+        /// HTTP status code.
+        status: u16,
         body: String,
     },
 
@@ -94,6 +98,7 @@ pub enum ObjectStoreError {
 /// The storage dialect. Chosen by identity at construction — the same
 /// selection pattern the provider registry uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ObjectStoreDialect {
     /// Aliyun OSS, V1 header signature.
     AliyunOss,
@@ -279,18 +284,22 @@ async fn send(
     request: reqwest::RequestBuilder,
     idempotent_delete: bool,
 ) -> Result<reqwest::Response, ObjectStoreError> {
-    let response = request.send().await?;
+    let response = request.send().await.map_err(transport)?;
     let status = response.status();
     if status.is_success() || (idempotent_delete && status == reqwest::StatusCode::NOT_FOUND) {
         return Ok(response);
     }
-    let body = summarize(response.bytes().await?);
+    let body = summarize(response.bytes().await.map_err(transport)?);
     Err(ObjectStoreError::Rejected {
         method,
         path: path.to_string(),
-        status,
+        status: status.as_u16(),
         body,
     })
+}
+
+fn transport(error: reqwest::Error) -> ObjectStoreError {
+    ObjectStoreError::Transport(Box::new(error))
 }
 
 /// Send and discard the body (put/delete paths).
@@ -312,7 +321,7 @@ pub(crate) async fn fetch(
     request: reqwest::RequestBuilder,
 ) -> Result<Vec<u8>, ObjectStoreError> {
     let response = send(method, path, request, false).await?;
-    Ok(response.bytes().await?.to_vec())
+    Ok(response.bytes().await.map_err(transport)?.to_vec())
 }
 
 /// Truncate a response body to ~200 chars for error reporting (an XML error

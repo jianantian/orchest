@@ -30,7 +30,7 @@
 
 pub mod catalog;
 pub mod decision;
-pub mod facade;
+mod facade;
 #[cfg(feature = "testing")]
 pub mod fakes;
 pub mod registry;

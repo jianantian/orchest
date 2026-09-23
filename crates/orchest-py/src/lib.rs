@@ -32,7 +32,7 @@ use orchest::model::{
 };
 use orchest::run::{
     AgentConfig, AgentRun, ApprovalMode, ModelConfig, RetryPolicy, RunHandle, RunInput,
-    RuntimeConfig, SkillDisclosure, SkillsConfig,
+    SkillDisclosure, SkillsConfig,
 };
 use orchest::tool::async_job::{JobHandle, JobStatus};
 use orchest::tool::builtin::WriteFileTool;
@@ -490,10 +490,9 @@ impl Agent {
         let normalized = normalize_provider_model(&self.model)
             .map_err(|e| PyRuntimeError::new_err(format!("invalid model config: {e}")))?;
 
-        Ok(AgentConfig {
-            name: self.name.clone(),
-            system_prompt: self.system_prompt.clone(),
-            model: ModelConfig {
+        let mut config = AgentConfig::new(
+            self.name.clone(),
+            ModelConfig {
                 spec: ModelSpec {
                     provider: normalized.provider.into(),
                     model: normalized.model.into(),
@@ -504,32 +503,24 @@ impl Agent {
                 },
                 options: self.request_options.clone(),
             },
-            budget: budget_config,
-            skills: SkillsConfig {
-                dir: self.skills_dir.clone(),
-                disclosure: match self.skill_disclosure {
-                    Some(false) => SkillDisclosure::Off,
-                    _ => SkillDisclosure::Progressive,
-                },
-                ..SkillsConfig::default()
+        );
+        config.system_prompt = self.system_prompt.clone();
+        config.budget = budget_config;
+        config.skills = SkillsConfig {
+            dir: self.skills_dir.clone(),
+            disclosure: match self.skill_disclosure {
+                Some(false) => SkillDisclosure::Off,
+                _ => SkillDisclosure::Progressive,
             },
-            runtime: RuntimeConfig {
-                approval_mode: parse_approval_mode(self.approval_mode.as_deref())?,
-                ..RuntimeConfig::default()
-            },
-            hooks: vec![],
-            // `retry=True` opts into the recommended policy (429/5xx/timeout/
-            // stream-interrupt); default stays off (None) as before.
-            retry_policy: if self.retry.unwrap_or(false) {
-                Some(RetryPolicy::recommended())
-            } else {
-                None
-            },
-            handoffs: vec![],
-            session_store: None,
-            session_id: None,
-            supervision_strategy: Default::default(),
-        })
+            ..SkillsConfig::default()
+        };
+        config.runtime.approval_mode = parse_approval_mode(self.approval_mode.as_deref())?;
+        // `retry=True` opts into the recommended policy (429/5xx/timeout/
+        // stream-interrupt); default stays off (None) as before.
+        if self.retry.unwrap_or(false) {
+            config.retry_policy = Some(RetryPolicy::recommended());
+        }
+        Ok(config)
     }
 
     fn build_registry(&self) -> Result<ToolRegistry, PyErr> {

@@ -113,8 +113,18 @@ depending on `orchest-provider-core` directly is **not** a supported
 extension path in 1.0. Opening it later is an additive decision that needs
 its own review.
 
-#309 reviews the full re-exported set, keeps it to what the extension point
-needs, and records the final list in this ADR.
+The re-exported set was reviewed in #309
+([v1.0 public API review](../review/v1_0_public_api.md), P6) and kept
+unchanged:
+
+- from `orchest-provider-core`: `Entry`, `Factory`, `ProviderConfig`,
+  `CatalogExt`, `ModelFilter`, `ModelRecord`, `ModelStatus`;
+- from `orchest-provider-http`: `create_adapter`,
+  `create_adapter_from_config`, `normalize_provider_model`,
+  `NormalizedProviderModel`, `ProviderRuntimeConfig`.
+
+Items marked `#[doc(hidden)]` are excluded from the SemVer promise. Today
+that is `orchest::bindings`, which only the binding crates use.
 
 ### D3. Versioning scheme
 
@@ -149,8 +159,11 @@ Changes allowed in a **minor** version:
 
 A **patch** version holds only bug fixes and documentation changes.
 
-Before a crate's first release, #309 records its public dependency list.
-That list is the set this policy applies to.
+The public dependency set recorded by #309 is `serde`, `serde_json`,
+`tokio`, `bytes`, `tracing` and `uuid`. This policy applies to that set,
+and adding a new public dependency is itself a change reviewed under D4.
+The review also lists the structs that stay exhaustive (frozen) in 1.x;
+adding a field to one of them is a major change.
 
 ### D5. MSRV
 

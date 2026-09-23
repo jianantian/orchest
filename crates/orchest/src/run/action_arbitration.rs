@@ -46,6 +46,7 @@ pub(crate) enum DeliveryTicket {
 
 /// Result of resolving one wave of watcher actions.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ArbitratedActions {
     /// Run should abort with this reason.
     Abort(String),

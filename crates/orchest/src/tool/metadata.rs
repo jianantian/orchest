@@ -35,6 +35,7 @@ impl Default for ToolMetadata {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ToolExecutionMode {
     #[default]
     Normal,
@@ -48,6 +49,7 @@ pub enum ToolExecutionMode {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ToolParallelism {
     #[default]
     Serial,
@@ -55,6 +57,7 @@ pub enum ToolParallelism {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ToolSource {
     InProcess,
     McpServer { server_id: String },
@@ -63,6 +66,7 @@ pub enum ToolSource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum CostHint {
     Free,
     Low,

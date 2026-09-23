@@ -66,9 +66,13 @@ pub enum ClientFrame {
     Interrupt,
 }
 
-impl From<SessionInput> for ClientFrame {
-    fn from(input: SessionInput) -> Self {
-        match input {
+impl TryFrom<SessionInput> for ClientFrame {
+    type Error = ProtocolError;
+
+    /// Fails for `SessionInput` variants added to the protocol after this
+    /// dialect was written (`SessionInput` is `#[non_exhaustive]`).
+    fn try_from(input: SessionInput) -> Result<Self, Self::Error> {
+        Ok(match input {
             SessionInput::Audio(data) => ClientFrame::Audio(data),
             SessionInput::Text(text) => ClientFrame::Text(text),
             SessionInput::ToolResult {
@@ -79,7 +83,13 @@ impl From<SessionInput> for ClientFrame {
                 content,
             },
             SessionInput::Interrupt => ClientFrame::Interrupt,
-        }
+            _ => {
+                return Err(ProtocolError::new(
+                    ErrorCode::InvalidRequest,
+                    "omni session does not support this input kind",
+                ))
+            }
+        })
     }
 }
 
@@ -201,7 +211,8 @@ impl RealtimeSession for OmniSession {
                 "omni session is closed",
             ));
         }
-        self.commands.send(input.into()).await.map_err(|_| {
+        let frame = ClientFrame::try_from(input)?;
+        self.commands.send(frame).await.map_err(|_| {
             ProtocolError::new(ErrorCode::ProviderStreamError, "omni command loop closed")
         })
     }

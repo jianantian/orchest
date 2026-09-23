@@ -21,6 +21,7 @@ pub(crate) use tool_input::ToolInputGuardrailHook;
 pub(crate) use tool_output::ToolOutputGuardrailHook;
 
 /// Decision for an [`InputGuardrail`] (runs at `before_model`).
+#[non_exhaustive]
 pub enum InputGuardrailAction {
     Allow,
     /// Replace the messages sent to the model.
@@ -30,6 +31,7 @@ pub enum InputGuardrailAction {
 }
 
 /// Decision for an [`OutputGuardrail`] (runs at `after_model`).
+#[non_exhaustive]
 pub enum OutputGuardrailAction {
     Allow,
     /// Replace the model response content (flows into conversation history).
@@ -38,6 +40,7 @@ pub enum OutputGuardrailAction {
 }
 
 /// Decision for a [`ToolInputGuardrail`] (runs at `before_tool`).
+#[non_exhaustive]
 pub enum ToolInputGuardrailAction {
     Allow,
     /// Replace the tool input before execution.
@@ -48,6 +51,7 @@ pub enum ToolInputGuardrailAction {
 }
 
 /// Decision for a [`ToolOutputGuardrail`] (runs at `after_tool`).
+#[non_exhaustive]
 pub enum ToolOutputGuardrailAction {
     Allow,
     /// Replace the tool output the model sees.

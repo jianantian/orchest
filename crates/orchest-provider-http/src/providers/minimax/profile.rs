@@ -36,15 +36,27 @@ impl MinimaxProfile {
         }
     }
 
-    fn media_source_value(source: &MediaSource) -> Value {
+    /// `None` for source kinds added to the protocol later (`MediaSource` is
+    /// `#[non_exhaustive]`); the caller drops the block and records it.
+    fn media_source_value(source: &MediaSource) -> Option<Value> {
         match source {
-            MediaSource::Url { url } => json!({"type": "url", "url": url}),
-            MediaSource::Base64 { media_type, data } => json!({
+            MediaSource::Url { url } => Some(json!({"type": "url", "url": url})),
+            MediaSource::Base64 { media_type, data } => Some(json!({
                 "type": "base64",
                 "media_type": media_type,
                 "data": data,
-            }),
+            })),
+            _ => None,
         }
+    }
+
+    fn record_dropped_block(adjustments: &mut Vec<OptionAdjustment>, kind: &str, reason: &str) {
+        adjustments.push(OptionAdjustment {
+            option: "content_block".into(),
+            requested: json!(kind),
+            applied: json!(null),
+            reason: reason.into(),
+        });
     }
 }
 
@@ -66,6 +78,8 @@ impl ProviderProfile for MinimaxProfile {
             Role::Group => "group",
             Role::SampleMessageUser => "sample_message_user",
             Role::SampleMessageAi => "sample_message_ai",
+            // Roles added to the protocol later fall back to `user`.
+            _ => "user",
         }
     }
 
@@ -96,7 +110,15 @@ impl ProviderProfile for MinimaxProfile {
         match block {
             // Minimax 原生支持 image,与 Anthropic 同 schema(`llm/api.md:1215-1305`)。
             ContentBlock::Image { source, detail } => {
-                let mut obj = json!({"type": "image", "source": Self::media_source_value(source)});
+                let Some(source_value) = Self::media_source_value(source) else {
+                    Self::record_dropped_block(
+                        adjustments,
+                        "image",
+                        "minimax_unsupported_media_source",
+                    );
+                    return None;
+                };
+                let mut obj = json!({"type": "image", "source": source_value});
                 if let Some(d) = detail {
                     obj["detail"] = json!(d);
                 }
@@ -109,7 +131,15 @@ impl ProviderProfile for MinimaxProfile {
                 detail,
                 max_long_side_pixel,
             } => {
-                let mut obj = json!({"type": "video", "source": Self::media_source_value(source)});
+                let Some(source_value) = Self::media_source_value(source) else {
+                    Self::record_dropped_block(
+                        adjustments,
+                        "video",
+                        "minimax_unsupported_media_source",
+                    );
+                    return None;
+                };
+                let mut obj = json!({"type": "video", "source": source_value});
                 if let Some(f) = fps {
                     obj["fps"] = json!(f);
                 }
@@ -135,7 +165,15 @@ impl ProviderProfile for MinimaxProfile {
                 });
                 None
             }
-            _ => None,
+            // Block kinds added to the protocol later — drop + record.
+            _ => {
+                Self::record_dropped_block(
+                    adjustments,
+                    "unknown",
+                    "minimax_unsupported_content_block",
+                );
+                None
+            }
         }
     }
 

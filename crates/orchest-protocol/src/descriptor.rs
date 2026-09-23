@@ -18,6 +18,7 @@ use crate::options::{CacheCapability, ModelPricing, ReasoningCapability};
 /// (`types.rs:416`). Serialized as-is (PascalCase) to match the spine's original
 /// `agent-runtime-model` form, which `core/node/py` already consume.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CapabilitySource {
     #[default]
     Static,
@@ -29,6 +30,7 @@ pub enum CapabilitySource {
 /// (`agent-runtime-providers::catalog::Modality`) into the spine so the modality
 /// bit lives in the same struct as `thinking`/`tools` (PRD §Starting Point).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Modality {
     Text,
     Image,
@@ -39,6 +41,7 @@ pub enum Modality {
 /// The capability primitive a descriptor describes. One descriptor = one
 /// `(capability, provider, model)` row in the registry (Issue 004).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Capability {
     Chat,
     /// Atomic structured judgments, independent of chat generation.
@@ -184,6 +187,7 @@ impl CapabilityDescriptor {
 /// (Issues 006/007). Until then those variants carry the provider's raw detail
 /// as `Value` so no information is lost.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub enum CapabilityExt {
     #[default]
     None,

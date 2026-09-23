@@ -139,10 +139,10 @@ impl MessagesAdapter {
                     "content": normalize_tool_result_content(tr)
                 })),
                 // Multimodal blocks are the profile's content-encoding deviation.
-                ContentBlock::Image { .. }
-                | ContentBlock::Video { .. }
-                | ContentBlock::Audio { .. }
-                | ContentBlock::MidConvSystem(_) => {
+                // Block kinds added to the protocol later (`ContentBlock` is
+                // `#[non_exhaustive]`) take the same path, so the profile drops
+                // them visibly with an adjustment.
+                _ => {
                     if let Some(v) = self.profile.encode_multimodal_block(cx, block, adjustments) {
                         content.push(v);
                     }
@@ -220,6 +220,8 @@ impl MessagesAdapter {
                         ThinkingLevel::XHigh => "xhigh",
                         ThinkingLevel::Max => "max",
                         ThinkingLevel::Off => unreachable!(),
+                        // Levels added to the protocol later map to the middle.
+                        _ => "medium",
                     };
                     body["thinking"] = json!({"type": "adaptive"});
                     body["thinking"]["display"] = json!(display);
@@ -241,6 +243,8 @@ impl MessagesAdapter {
                         ThinkingLevel::XHigh => 65536,
                         ThinkingLevel::Max => effective_max_tokens,
                         ThinkingLevel::Off => unreachable!(),
+                        // Levels added to the protocol later map to the middle.
+                        _ => 10240,
                     });
                     body["thinking"] = json!({"type": "enabled", "budget_tokens": budget});
                     body["thinking"]["display"] = json!(display);
@@ -279,6 +283,8 @@ impl MessagesAdapter {
             CachePolicy::Auto => Some(json!({"type": "ephemeral"})),
             CachePolicy::Long => Some(json!({"type": "ephemeral", "ttl": "1h"})),
             CachePolicy::None => None,
+            // Policies added to the protocol later emit no provider marker.
+            _ => None,
         };
         if let Some(cc) = cache_control {
             if !system_parts.is_empty() {

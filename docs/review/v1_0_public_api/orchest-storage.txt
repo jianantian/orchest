@@ -1,0 +1,29 @@
+pub mod orchest_storage
+#[non_exhaustive] pub enum orchest_storage::ObjectStoreDialect
+pub orchest_storage::ObjectStoreDialect::AliyunOss
+pub orchest_storage::ObjectStoreDialect::TencentCos
+pub orchest_storage::ObjectStoreDialect::VolcengineTos
+#[non_exhaustive] pub enum orchest_storage::ObjectStoreError
+pub orchest_storage::ObjectStoreError::InvalidConfig(alloc::string::String)
+pub orchest_storage::ObjectStoreError::Rejected
+pub orchest_storage::ObjectStoreError::Rejected::body: alloc::string::String
+pub orchest_storage::ObjectStoreError::Rejected::method: &'static str
+pub orchest_storage::ObjectStoreError::Rejected::path: alloc::string::String
+pub orchest_storage::ObjectStoreError::Rejected::status: u16
+pub orchest_storage::ObjectStoreError::Transport(alloc::boxed::Box<(dyn core::error::Error + core::marker::Send + core::marker::Sync)>)
+pub orchest_storage::ObjectStoreError::UnsupportedDialect(alloc::string::String)
+pub struct orchest_storage::ObjectStoreConfig
+pub orchest_storage::ObjectStoreConfig::access_key_id: alloc::string::String
+pub orchest_storage::ObjectStoreConfig::access_key_secret: alloc::string::String
+pub orchest_storage::ObjectStoreConfig::bucket: alloc::string::String
+pub orchest_storage::ObjectStoreConfig::dialect: orchest_storage::ObjectStoreDialect
+pub orchest_storage::ObjectStoreConfig::endpoint: alloc::string::String
+pub orchest_storage::ObjectStoreConfig::public_base: alloc::string::String
+pub trait orchest_storage::ObjectStore: core::marker::Send + core::marker::Sync
+pub fn orchest_storage::ObjectStore::delete_object<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest_storage::ObjectStoreError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest_storage::ObjectStore::get_object<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<u8>, orchest_storage::ObjectStoreError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest_storage::ObjectStore::presigned_url(&self, &str, core::time::Duration) -> alloc::string::String
+pub fn orchest_storage::ObjectStore::public_base(&self) -> &str
+pub fn orchest_storage::ObjectStore::public_url(&self, &str) -> alloc::string::String
+pub fn orchest_storage::ObjectStore::put_object<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, alloc::vec::Vec<u8>, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest_storage::ObjectStoreError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn orchest_storage::create_object_store(orchest_storage::ObjectStoreConfig) -> core::result::Result<alloc::sync::Arc<dyn orchest_storage::ObjectStore>, orchest_storage::ObjectStoreError>

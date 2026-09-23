@@ -154,10 +154,12 @@ impl Decision for OpenRouterDecision {
                 "OpenRouter Decisions state must be a string, object, or array",
             )));
         }
+        let body =
+            wire::Request::new(self.model_name(), &request).map_err(|e| self.contextualize(e))?;
         let mut http = crate::http::shared_client()
             .post(self.endpoint.clone())
             .bearer_auth(&self.api_key)
-            .json(&wire::Request::new(self.model_name(), &request));
+            .json(&body);
         if let Some(timeout) = self.timeout {
             http = http.timeout(timeout);
         }

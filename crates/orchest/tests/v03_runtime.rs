@@ -8,7 +8,7 @@ use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
     RequestOptions, Role, StopReason, StreamEvent, TokenUsage,
 };
-use orchest::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
+use orchest::run::{AgentConfig, AgentRun, ModelConfig};
 use orchest::skill::executor::BareSubprocessExecutor;
 use orchest::skill::{SkillDependencies, SkillEnvManager, SkillManifest};
 use orchest::tool::registry::ToolRegistry;
@@ -18,10 +18,9 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 fn test_config() -> AgentConfig {
-    AgentConfig {
-        name: "test-agent".into(),
-        system_prompt: "test".into(),
-        model: ModelConfig {
+    let mut config = AgentConfig::new(
+        "test-agent",
+        ModelConfig {
             spec: ModelSpec {
                 provider: "test".into(),
                 model: "test".into(),
@@ -32,26 +31,18 @@ fn test_config() -> AgentConfig {
             },
             options: RequestOptions::default(),
         },
-        budget: BudgetConfig {
-            max_tokens: Some(1_000),
-            max_tool_calls: Some(20),
-            max_duration: Some(Duration::from_secs(30)),
-            max_cost_usd: None,
-        },
-        skills: SkillsConfig::default(),
-        runtime: RuntimeConfig {
-            max_steps: 4,
-            code_execution_enabled: true,
-            code_execution_executor: Some(Arc::new(BareSubprocessExecutor::new())),
-            ..RuntimeConfig::default()
-        },
-        hooks: vec![],
-        retry_policy: None,
-        handoffs: vec![],
-        session_store: None,
-        session_id: None,
-        supervision_strategy: Default::default(),
-    }
+    );
+    config.system_prompt = "test".into();
+    config.budget = BudgetConfig {
+        max_tokens: Some(1_000),
+        max_tool_calls: Some(20),
+        max_duration: Some(Duration::from_secs(30)),
+        max_cost_usd: None,
+    };
+    config.runtime.max_steps = 4;
+    config.runtime.code_execution_enabled = true;
+    config.runtime.code_execution_executor = Some(Arc::new(BareSubprocessExecutor::new()));
+    config
 }
 
 struct CodeExecModel;

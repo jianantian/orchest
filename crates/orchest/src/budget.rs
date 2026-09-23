@@ -22,6 +22,7 @@ pub struct BudgetUsage {
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
 pub enum BudgetViolation {
     #[error("token limit exceeded")]
     MaxTokensExceeded,

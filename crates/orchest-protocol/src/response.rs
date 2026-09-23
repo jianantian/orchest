@@ -50,6 +50,7 @@ fn is_zero_u64(v: &u64) -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StopReason {
     EndTurn,
     ToolUse,

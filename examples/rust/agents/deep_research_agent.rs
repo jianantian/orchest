@@ -5,10 +5,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use orchest::budget::BudgetConfig;
 use orchest::events::RuntimeEvent;
 use orchest::model::{ModelSpec, ProviderRuntimeConfig, RequestOptions};
-use orchest::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
+use orchest::run::{AgentConfig, AgentRun, ModelConfig};
 use orchest::tool::builtin::WriteFileTool;
 use orchest::tool::registry::ToolRegistry;
 use orchest::tool::ContextMode;
@@ -295,10 +294,9 @@ fn agent_config(
     max_steps: u32,
 ) -> Result<AgentConfig, Box<dyn std::error::Error>> {
     let normalized = normalize_provider_model(model_ref)?;
-    Ok(AgentConfig {
-        name: name.into(),
-        system_prompt,
-        model: ModelConfig {
+    let mut config = AgentConfig::new(
+        name,
+        ModelConfig {
             spec: ModelSpec {
                 provider: normalized.provider.into(),
                 model: normalized.model.into(),
@@ -309,24 +307,10 @@ fn agent_config(
             },
             options: RequestOptions::default(),
         },
-        budget: BudgetConfig {
-            max_tokens: None,
-            max_tool_calls: None,
-            max_duration: None,
-            max_cost_usd: None,
-        },
-        skills: SkillsConfig::default(),
-        runtime: RuntimeConfig {
-            max_steps,
-            ..RuntimeConfig::default()
-        },
-        hooks: vec![],
-        retry_policy: None,
-        handoffs: vec![],
-        session_store: None,
-        session_id: None,
-        supervision_strategy: Default::default(),
-    })
+    );
+    config.system_prompt = system_prompt;
+    config.runtime.max_steps = max_steps;
+    Ok(config)
 }
 
 fn provider_model(
