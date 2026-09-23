@@ -183,9 +183,32 @@ pub fn cmd_eval_compare(args: EvalCompareCli) -> ExitCode {
 
     match report.status {
         CompareStatus::EligibleForReview => ExitCode::SUCCESS,
-        CompareStatus::NotEligible
+        status @ (CompareStatus::NotEligible
         | CompareStatus::InvalidBaseline
-        | CompareStatus::Incomparable => ExitCode::from(1),
+        | CompareStatus::Incomparable) => {
+            // Surface the reason on stderr so integration tests and CI logs are
+            // not left with an empty stderr when exit status is non-zero.
+            let failed: Vec<&str> = report
+                .gates
+                .iter()
+                .filter(|gate| !gate.passed)
+                .map(|gate| gate.gate_id.as_str())
+                .collect();
+            if failed.is_empty() {
+                eprintln!(
+                    "eval compare status={} mismatches={}",
+                    status.as_str(),
+                    report.mismatches.len()
+                );
+            } else {
+                eprintln!(
+                    "eval compare status={} failed_gates={}",
+                    status.as_str(),
+                    failed.join(",")
+                );
+            }
+            ExitCode::from(1)
+        }
     }
 }
 
