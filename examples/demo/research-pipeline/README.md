@@ -102,7 +102,7 @@ runs. The drill's first wiring asked for the fault in the *delegated* request,
 which the attached live `LlmWatcher` read as a prompt injection and aborted in
 2 of 4 attempts — the reason the fault instruction now sits in the worker's own
 prompt and the watcher prompt is drill-scoped. P1-6 records the underlying
-observation that the default watcher prompt states no boundary for `abort`.
+observation that the default watcher prompt stated no boundary for `abort` (addressed in #298).
 
 Fixture, deterministic, smoke, and live evidence stay separate: `findings.json`
 is the only place that records which of them ran.

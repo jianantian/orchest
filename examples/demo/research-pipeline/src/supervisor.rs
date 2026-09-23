@@ -27,9 +27,10 @@ pub const LIVE_ATTACHMENT_BOUNDARY: &str =
     "start_with_watchers: first-event observation guaranteed from RunStarted";
 
 /// Scoped `LlmWatcher` prompt for the scheduled controlled-fault drill. The
-/// default watcher prompt leaves abort authority to the model's judgement, and
-/// a live model reads a drill's fault sequence as an attack; naming the drill's
-/// expected outcomes keeps the restart path observable.
+/// default `LlmWatcher` prompt already bounds abort away from handled faults and
+/// `RunRestarted`, but a live model can still over-react to a drill's fault
+/// sequence; naming the drill's expected outcomes keeps the restart path
+/// observable.
 pub const FAULT_DRILL_WATCHER_PROMPT: &str =
     "You are a supervisor monitoring a scheduled Research Pipeline controlled-fault drill. \
      The operator authorized this run and the delegated worker is configured to raise the \
@@ -129,10 +130,11 @@ pub fn build_supervisor(
 /// Starts the live-shaped supervisor with both watchers pre-wired via
 /// [`AgentRun::start_with_watchers`], so observation begins at `RunStarted`.
 ///
-/// `fault` also scopes the live `LlmWatcher` prompt: in a scheduled drill the
-/// controlled fault, the resulting `RunFailed`, and the `RunRestarted` retry
-/// are the expected outcomes, and a live watcher that aborts on them would
-/// hide the restart path the drill exists to exercise.
+/// `fault` also scopes the live `LlmWatcher` prompt more tightly than the
+/// default: in a scheduled drill the controlled fault, the resulting
+/// `RunFailed`, and the `RunRestarted` retry are the expected outcomes, and a
+/// live watcher that aborts on them would hide the restart path the drill
+/// exists to exercise.
 pub async fn start_with_live_watchers(
     config: AgentConfig,
     input: String,
