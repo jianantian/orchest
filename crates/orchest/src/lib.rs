@@ -16,4 +16,4 @@ pub mod telemetry;
 pub mod tokenizer;
 pub mod tool;
 
-pub use run::{Watcher, WatcherAction};
+pub use run::{LlmWatcher, Watcher, WatcherAction};

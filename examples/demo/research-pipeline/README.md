@@ -29,8 +29,8 @@ Later issues use these public imports only:
 
 - `orchest::run::RunHandle`, `ChildRunHandle`, `EventReceiver`,
   `SupervisionStrategy`, and `WatcherAction`
-- `orchest::run::llm_watcher::LlmWatcher`
-- `orchest::tool::agent_as_tool::ContextMode`
+- `orchest::run::LlmWatcher`
+- `orchest::tool::ContextMode`
 - `orchest::hook::{Hook, HookAction, RepeatedFailureHookContext}`
 - `orchest::events::RuntimeEvent`
 

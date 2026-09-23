@@ -24,6 +24,7 @@ pub use handle::{
     ApprovalBus, ChildCompletionError, ChildRunHandle, ChildRunOutcome, ChildRunRegistry,
     EventReceiver, RunHandle,
 };
+pub use llm_watcher::LlmWatcher;
 pub use retry::{BackoffStrategy, RetryPolicy};
 pub use watcher::{Watcher, WatcherAction};
 

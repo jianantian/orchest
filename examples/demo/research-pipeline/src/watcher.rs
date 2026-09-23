@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use orchest::{
     events::RuntimeEvent,
-    run::{llm_watcher::LlmWatcher, Watcher, WatcherAction},
+    run::{LlmWatcher, Watcher, WatcherAction},
 };
 use tokio::sync::Notify;
 

@@ -21,6 +21,7 @@ use crate::model::Message;
 use async_job::JobHandle;
 
 pub use crate::model::{JsonSchema, ToolDef};
+pub use agent_as_tool::ContextMode;
 pub use error::{ErrorKind, RetryHint, ToolError};
 pub use metadata::{CostHint, ToolExecutionMode, ToolMetadata, ToolParallelism, ToolSource};
 

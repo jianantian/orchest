@@ -5,13 +5,10 @@ use std::sync::{Arc, Mutex};
 use orchest::{
     events::RuntimeEvent,
     model::ModelAdapter,
-    run::{
-        llm_watcher::LlmWatcher, AgentConfig, AgentRun, ConfigError, EventReceiver, RunHandle,
-        RunId,
-    },
+    run::{AgentConfig, AgentRun, ConfigError, EventReceiver, LlmWatcher, RunHandle, RunId},
     tool::{
-        agent_as_tool::ContextMode,
         registry::{RegistryError, ToolRegistry},
+        ContextMode,
     },
 };
 use thiserror::Error;
