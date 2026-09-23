@@ -23,6 +23,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
+use crate::tts::require_explicit_voice;
 
 const DEFAULT_WSS_URL: &str = "wss://api.minimaxi.com/ws/v1/t2a_v2";
 
@@ -326,10 +327,10 @@ impl MinimaxTts {
                 "WebSocket URL must use wss:// for secure credential transport",
             ));
         }
-        let voice = request.voice.clone().unwrap_or_default();
+        let voice = require_explicit_voice(&request)?;
         let start_body = build_task_start_body(
             &self.config.model,
-            &voice,
+            voice,
             &request.format,
             None,
             &request.options,
@@ -685,5 +686,29 @@ mod tests {
         let err = aggregate_frames(vec![frame("task_started", None, 1004, false)]).unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidApiKey);
         assert!(err.message.contains("1004"));
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_voice_before_network() {
+        let tts = MinimaxTts::new(MinimaxTtsConfig {
+            model: "speech-2.8-hd".into(),
+            ws_url: "wss://example.invalid/tts".into(),
+            api_key: "test-key".into(),
+        });
+        let err = tts
+            .synthesize(SynthesizeRequest {
+                text: "hi".into(),
+                voice: None,
+                format: AudioFormat::Mp3,
+                options: Value::Null,
+            })
+            .await
+            .expect_err("missing voice must fail before dialing the provider");
+        assert_eq!(err.code, ErrorCode::InvalidRequest);
+        assert!(
+            err.message.contains("voice"),
+            "expected voice-focused message, got {}",
+            err.message
+        );
     }
 }

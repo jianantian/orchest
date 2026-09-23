@@ -25,6 +25,7 @@ use crate::openspeech::{
     SER_JSON, SER_NONE,
 };
 use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
+use crate::tts::require_explicit_voice;
 
 const DEFAULT_UNIDIRECTIONAL_WS_URL: &str =
     "wss://openspeech.bytedance.com/api/v3/tts/unidirectional/stream";
@@ -336,10 +337,10 @@ fn audio_format_name(format: &AudioFormat) -> &'static str {
     }
 }
 
-fn build_synthesis_payload(request: &SynthesizeRequest) -> Value {
+fn build_synthesis_payload(request: &SynthesizeRequest, voice: &str) -> Value {
     let mut req_params = serde_json::json!({
         "text": request.text,
-        "speaker": request.voice.clone().unwrap_or_default(),
+        "speaker": voice,
         "audio_params": {
             "format": audio_format_name(&request.format),
             "sample_rate": 24000,
@@ -388,9 +389,11 @@ impl VolcengineTts {
                 "WebSocket URL must use wss:// for secure credential transport",
             ));
         }
-        let payload = serde_json::to_vec(&build_synthesis_payload(&request)).map_err(|e| {
-            ProtocolError::new(ErrorCode::InvalidRequest, format!("serialize: {e}"))
-        })?;
+        let voice = require_explicit_voice(&request)?;
+        let payload =
+            serde_json::to_vec(&build_synthesis_payload(&request, voice)).map_err(|e| {
+                ProtocolError::new(ErrorCode::InvalidRequest, format!("serialize: {e}"))
+            })?;
         let request_frame = build_send_frame(&payload);
 
         let connect_id = uuid::Uuid::new_v4().to_string();
@@ -761,5 +764,31 @@ mod tests {
         // The stream terminates on the failure — no Done, no further events.
         assert!(events_rx.recv().await.is_none());
         handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_voice_before_network() {
+        let tts = VolcengineTts::new(VolcengineTtsConfig {
+            model: "tts".into(),
+            ws_url: "wss://example.invalid/tts".into(),
+            api_key: "test-key".into(),
+            access_key: None,
+            resource_id: "res".into(),
+        });
+        let err = tts
+            .synthesize(SynthesizeRequest {
+                text: "hi".into(),
+                voice: None,
+                format: AudioFormat::Pcm16Le,
+                options: Value::Null,
+            })
+            .await
+            .expect_err("missing voice must fail before dialing the provider");
+        assert_eq!(err.code, ErrorCode::InvalidRequest);
+        assert!(
+            err.message.contains("voice"),
+            "expected voice-focused message, got {}",
+            err.message
+        );
     }
 }

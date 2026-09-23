@@ -176,6 +176,14 @@ impl ResolvedExecutionEnvironment {
             .ok()
             .map(|voice| voice.trim().to_string())
             .filter(|voice| !voice.is_empty());
+        // Live dialects reject `SynthesizeRequest.voice: None` (no provider
+        // default). Fail here so the demo never dials TTS with an empty voice.
+        if matches!(tts, ResolvedTts::Live { .. }) && tts_voice.is_none() {
+            return Err(format!(
+                "live TTS requires {TTS_VOICE_ENV}: every live dialect rejects voice: None (it is not a provider default)"
+            )
+            .into());
+        }
         Ok(Self {
             chat,
             asr,
