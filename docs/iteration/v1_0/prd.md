@@ -15,7 +15,7 @@ live-provider runs are `passed` (normal run and controlled-fault drill), and
 the canonical readiness verdict is `ready`; the backlog the round produced is
 `verified` (P1-6 → #298, plus #299 and #300, fixed in #302, #303 and #305).
 The ledger's live evidence awaits review; the remaining v1.0 acceptance items
-are the release-packaging ones below.
+are the release-packaging ones below, tracked as #306–#311.
 
 ## Goal
 
@@ -49,6 +49,23 @@ was `unverified`. Both required live runs are now recorded in the canonical
 ledger as `passed`, readiness is `ready`, and the gate is closed on that
 evidence. No waiver has been accepted.
 
+## Release-Packaging Issues
+
+The remaining acceptance items are split into these issues, in dependency
+order:
+
+| Issue | Work | Blocked by |
+| --- | --- | --- |
+| #306 | Release policy ADR: license, publish set, versioning, MSRV | — |
+| #307 | Cargo publish metadata and license files | #306 |
+| #308 | `CHANGELOG.md` with the 1.0.0 entry | #306 |
+| #309 | Public API freeze review | #306 |
+| #310 | Tag-triggered release workflow | #307, #308 |
+| #311 | Release candidate verification and 1.0.0 publish | #306–#310 |
+
+Python and Node binding packages (PyPI, npm) are not part of v1.0; the
+binding crates are `publish = false`.
+
 ## Post-1.0 Backlog
 
 The reviewed report deferred, and these are now closed:
@@ -73,6 +90,7 @@ None of these block v1.0.
 - Accepting unavailable live evidence without a named decision owner and
   recorded rationale.
 - Adding product UI, user management, or multi-channel routing.
+- Publishing the Python or Node binding packages.
 
 ## Acceptance Criteria
 
@@ -88,8 +106,7 @@ None of these block v1.0.
 
 ## Issue Documents
 
-The current issue documents cover only the evidence-backed pre-freeze and
-release gates:
+Pre-freeze and release gates:
 
 1. [Delegated child control](issues/001-delegated-child-control/spec.md)
 2. [Nested watcher events](issues/002-nested-watcher-events/spec.md)
@@ -100,5 +117,11 @@ release gates:
 7. [Fallible LLM watcher builder](issues/007-fallible-llm-watcher-builder/spec.md)
 8. [Live-provider verification](issues/008-live-provider-verification/spec.md)
 
-Release-packaging work must receive real GitHub issue references before its
-implementation documents are added.
+Release packaging:
+
+9. [Release policy](issues/009-release-policy/spec.md)
+10. [Publish metadata and license](issues/010-publish-metadata/spec.md)
+11. [Changelog](issues/011-changelog/spec.md)
+12. [Public API freeze review](issues/012-public-api-freeze/spec.md)
+13. [Release workflow](issues/013-release-workflow/spec.md)
+14. [Release candidate and 1.0.0 publish](issues/014-release-candidate/spec.md)
