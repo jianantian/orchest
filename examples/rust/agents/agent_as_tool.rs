@@ -15,8 +15,8 @@ use orchest::model::{
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
 use orchest::run::{AgentConfig, AgentRun};
-use orchest::tool::agent_as_tool::ContextMode;
 use orchest::tool::registry::ToolRegistry;
+use orchest::tool::ContextMode;
 use orchest::tool::ToolError;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -159,6 +159,11 @@ async fn main() {
         .model(Arc::clone(&child_model))
         .registry(child_registry)
         .context_mode(ContextMode::Fresh)
+        .input_schema(json!({
+            "type": "object",
+            "properties": {"input": {"type": "string"}},
+            "required": ["input"]
+        }))
         .input_mapper(|input: Value| {
             input
                 .get("input")

@@ -11,8 +11,8 @@ use orchest::model::{
 use orchest::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
 use orchest::skill::executor::BareSubprocessExecutor;
 use orchest::skill::{SkillDependencies, SkillEnvManager, SkillManifest};
-use orchest::tool::agent_as_tool::ContextMode;
 use orchest::tool::registry::ToolRegistry;
+use orchest::tool::ContextMode;
 use orchest::tool::{Tool, ToolContext, ToolOutput};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -236,6 +236,7 @@ fn make_spawn_child_tool() -> Arc<dyn Tool> {
         .model(Arc::new(SubAgentModel))
         .registry(ToolRegistry::new())
         .context_mode(ContextMode::Fresh)
+        .input_schema(json!({"type": "object", "properties": {"input": {"type": "string"}}}))
         .input_mapper(|_| Ok("child task".into()))
         .output_extractor(|details| details.get("output").cloned().unwrap_or(details.clone()))
         .build()
@@ -262,6 +263,7 @@ fn context_echo_tool(context_mode: ContextMode) -> Arc<dyn Tool> {
         .model(Arc::new(ContextEchoModel))
         .registry(ToolRegistry::new())
         .context_mode(context_mode)
+        .input_schema(json!({"type": "object", "properties": {"input": {"type": "string"}}}))
         .input_mapper(|input: Value| {
             Ok(input
                 .get("input")
@@ -443,6 +445,9 @@ async fn agent_tool_runs_child_agent_with_isolated_context() {
                 .model(Arc::new(SubAgentModel))
                 .registry(ToolRegistry::new())
                 .context_mode(ContextMode::Fresh)
+                .input_schema(
+                    json!({"type": "object", "properties": {"input": {"type": "string"}}}),
+                )
                 .input_mapper(|_| Ok("child task".into()))
                 .output_extractor(|details| {
                     details.get("output").cloned().unwrap_or(details.clone())
@@ -535,6 +540,11 @@ fn context_mode_fork_depth_is_non_zero() {
     assert!(NonZeroUsize::new(0).is_none());
 }
 
+/// Empty-parent Fork is reachable via oneshot / hand-built empty ToolContext,
+/// not via normal AgentAsTool delegation (parent history is non-empty there).
+/// Product stance (#257): keep the stable `EMPTY_PARENT_CONTEXT` contract as a
+/// defensive loud failure; do not treat empty-parent Fork as a supported
+/// public scenario or silently fall back to Fresh.
 #[tokio::test]
 async fn context_mode_fork_with_empty_parent_context_fails_loudly() {
     let tool = context_echo_tool(ContextMode::Fork {

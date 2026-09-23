@@ -21,6 +21,7 @@ use crate::model::Message;
 use async_job::JobHandle;
 
 pub use crate::model::{JsonSchema, ToolDef};
+pub use agent_as_tool::ContextMode;
 pub use error::{ErrorKind, RetryHint, ToolError};
 pub use metadata::{CostHint, ToolExecutionMode, ToolMetadata, ToolParallelism, ToolSource};
 
@@ -40,6 +41,12 @@ pub trait Tool: Send + Sync {
     /// outside any run — and for tests — when the caller has no run state to
     /// thread through. Inside a run the runtime builds the real context and
     /// calls [`Tool::execute`] directly; do not use this there.
+    ///
+    /// `ToolContext::oneshot()` has empty `parent_messages`. An AgentAsTool
+    /// configured with [`agent_as_tool::ContextMode::Fork`] therefore returns
+    /// `EMPTY_PARENT_CONTEXT` here; use [`agent_as_tool::ContextMode::Fresh`]
+    /// (or supply a real parent history via [`Tool::execute`]) instead
+    /// (issue #257).
     async fn call_oneshot(&self, input: Value) -> Result<ToolOutput, ToolError> {
         self.execute(input, &ToolContext::oneshot()).await
     }
@@ -90,7 +97,15 @@ pub struct ToolContext {
     /// the parent has left.
     pub remaining_budget: crate::budget::BudgetConfig,
     /// Parent run's message history; supplied when AgentAsTool uses
-    /// `ContextMode::Fork`.
+    /// [`agent_as_tool::ContextMode::Fork`].
+    ///
+    /// Under normal AgentAsTool delegation the run actor clones `state.messages`
+    /// here whenever [`Tool::needs_parent_context`] is true, so the slice is
+    /// non-empty (at least system prompt + user input). [`Self::oneshot`] and
+    /// hand-built contexts leave this empty; combining that with
+    /// `ContextMode::Fork` yields the stable `EMPTY_PARENT_CONTEXT` error —
+    /// defensive for misuse, not a supported public empty-parent Fork path
+    /// (issue #257).
     pub parent_messages: Vec<Message>,
     /// Snapshot of all event subscribers at tool-call construction time.
     /// Index 0 is the primary event receiver; remaining entries are attached
@@ -117,6 +132,12 @@ impl ToolContext {
     /// there. When a call site needs one real field (typically an event
     /// channel), override it with struct-update syntax:
     /// `ToolContext { event_tx: Some(tx), ..ToolContext::oneshot() }`.
+    ///
+    /// Empty `parent_messages` means AgentAsTool +
+    /// [`agent_as_tool::ContextMode::Fork`] fails with `EMPTY_PARENT_CONTEXT`
+    /// rather than inheriting nothing — that combination is not a supported
+    /// public empty-parent Fork scenario (issue #257). Prefer
+    /// [`agent_as_tool::ContextMode::Fresh`] for oneshot sub-agent calls.
     ///
     /// [`Tool::call_oneshot`] wraps this for the common case of no overrides.
     pub fn oneshot() -> Self {

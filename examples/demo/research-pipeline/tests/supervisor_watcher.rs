@@ -13,10 +13,9 @@ use orchest::{
         ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
         RequestOptions, Role, StopReason, StreamEvent, TokenUsage, ToolDef,
     },
-    run::{llm_watcher::LlmWatcher, AgentRun, RunHandle, RunId, WatcherAction},
+    run::{AgentRun, LlmWatcher, RunHandle, RunId, WatcherAction},
     tool::{
-        agent_as_tool::ContextMode, Approval, Tool, ToolContext, ToolError, ToolMetadata,
-        ToolOutput, ToolSource,
+        Approval, ContextMode, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
     },
 };
 use research_pipeline_demo::{

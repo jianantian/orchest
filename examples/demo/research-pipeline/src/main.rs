@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use orchest::{events::RuntimeEvent, model::ModelAdapter, tool::agent_as_tool::ContextMode};
+use orchest::{events::RuntimeEvent, model::ModelAdapter, tool::ContextMode};
 use research_pipeline_demo::{
     events::render_event,
     supervisor::{

@@ -9,9 +9,9 @@ use orchest::budget::BudgetConfig;
 use orchest::events::RuntimeEvent;
 use orchest::model::{ModelSpec, ProviderRuntimeConfig, RequestOptions};
 use orchest::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
-use orchest::tool::agent_as_tool::ContextMode;
 use orchest::tool::builtin::WriteFileTool;
 use orchest::tool::registry::ToolRegistry;
+use orchest::tool::ContextMode;
 use orchest::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
 };
@@ -395,6 +395,16 @@ fn build_deep_research_agent(
             .model(web_model)
             .registry(web_registry)
             .context_mode(ContextMode::Fresh)
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "Research question to delegate to the web-search sub-agent"
+                    }
+                },
+                "required": ["question"]
+            }))
             .input_mapper(|value: serde_json::Value| {
                 value
                     .get("question")

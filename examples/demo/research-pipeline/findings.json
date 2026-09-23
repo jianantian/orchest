@@ -861,24 +861,31 @@
     },
     {
       "id": "P1-3",
-      "title": "Fork empty-parent context error is unreachable",
+      "title": "Fork empty-parent context error is unreachable via normal delegation",
       "apiSurface": "orchest::tool::agent_as_tool::ContextMode::Fork",
-      "description": "Fork empty-parent context error path is unreachable in practice.",
-      "observedConsequence": "Error taxonomy claims a case callers cannot hit.",
-      "workaround": "Document the unreachable path; tracked by #257.",
+      "description": "Fork empty-parent context error is unreachable via normal AgentAsTool delegation (parent history is non-empty). It remains reachable via Tool::call_oneshot / ToolContext::oneshot and hand-built empty contexts.",
+      "observedConsequence": "Error taxonomy used to look like a public case that normal callers cannot hit.",
+      "workaround": "Empty-parent Fork is not a supported public scenario. Keep the stable EMPTY_PARENT_CONTEXT code as a defensive loud failure for oneshot/manual empty ctx; document reachability on ContextMode / ToolContext rustdocs. Do not remove the branch; do not fall back to Fresh. Fresh and bounded non-empty Fork semantics are unchanged.",
       "classification": "post-1.0-backlog",
-      "status": "deferred",
-      "evidenceRefs": ["EV-known-seams", "EV-worker-test"],
+      "status": "verified",
+      "evidenceRefs": [
+        "EV-known-seams",
+        "EV-worker-test"
+      ],
       "action": {
         "owner": "orchest-maintainers",
-        "summary": "Clarify or remove the unreachable Fork empty-parent error (#257).",
+        "summary": "Documented + keep defensive error (closed by #257).",
         "issueRef": "#257"
       },
       "verification": {
         "status": "passed",
-        "commands": ["cargo test -p research-pipeline-demo --test worker"],
-        "evidenceRefs": ["EV-worker-test"],
-        "summary": "Deferred to post-1.0 backlog under #257."
+        "commands": [
+          "cargo test -p research-pipeline-demo --test worker"
+        ],
+        "evidenceRefs": [
+          "EV-worker-test"
+        ],
+        "summary": "Decision recorded in rustdocs; unit + worker tests continue to assert EMPTY_PARENT_CONTEXT (#257)."
       }
     },
     {

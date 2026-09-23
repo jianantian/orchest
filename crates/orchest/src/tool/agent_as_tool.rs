@@ -3,6 +3,12 @@
 //! The child run executes in its own tokio task (spawned by AgentRun::start_with_bus);
 //! AgentAsTool::execute awaits completion and forwards every child RuntimeEvent
 //! upward as SubAgentEvent, giving consumers a continuous event stream.
+//!
+//! Child history seeding is controlled by [`ContextMode`]: [`ContextMode::Fresh`]
+//! (default) or bounded [`ContextMode::Fork`]. Empty-parent Fork is **not** a
+//! supported public scenario — it fails with stable code `EMPTY_PARENT_CONTEXT`
+//! for oneshot / hand-built empty [`super::ToolContext`]s; normal delegation
+//! always has non-empty parent history (issue #257).
 
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -20,13 +26,44 @@ use crate::tool::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOu
 type InputMapperFn = dyn Fn(Value) -> Result<String, ToolError> + Send + Sync;
 type OutputExtractorFn = dyn Fn(Value) -> Value + Send + Sync;
 
+/// How an [`AgentAsTool`] seeds the child run's initial message history.
+///
+/// - [`Fresh`](Self::Fresh) (default): the child starts with an empty history.
+///   The mapped tool input becomes its first user message.
+/// - [`Fork`](Self::Fork): the child inherits the trailing `depth` messages from
+///   [`ToolContext::parent_messages`].
+///
+/// # Empty-parent Fork — defensive, not a supported public scenario
+///
+/// If `ContextMode::Fork` runs against an empty `parent_messages`,
+/// [`AgentAsTool::execute`] returns [`ToolError::invalid_input`] with the
+/// **stable** code `EMPTY_PARENT_CONTEXT` and does **not** fall back to
+/// [`Fresh`](Self::Fresh).
+///
+/// That branch is reachable mainly via [`Tool::call_oneshot`] /
+/// [`ToolContext::oneshot`] (or a hand-built empty [`ToolContext`]), which
+/// supply no parent history. It is **not** reachable through normal
+/// AgentAsTool delegation: the run actor fills `parent_messages` from
+/// `state.messages`, which already contains at least the system prompt and
+/// user input by the time a tool executes (issue #257 / P1-3).
+///
+/// Product stance: empty-parent Fork is **not** promoted as a supported public
+/// scenario. The defensive error and stable code stay so oneshot / manual
+/// empty-context misuse fails loudly; callers that want a blank child history
+/// should use [`Fresh`](Self::Fresh). Bounded non-empty Fork and Fresh
+/// semantics are unchanged.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ContextMode {
+    /// Child starts with no inherited parent messages.
     #[default]
     Fresh,
-    Fork {
-        depth: NonZeroUsize,
-    },
+    /// Inherit the trailing `depth` messages from
+    /// [`ToolContext::parent_messages`].
+    ///
+    /// Empty `parent_messages` yields `EMPTY_PARENT_CONTEXT` (see enum docs);
+    /// that is defensive for oneshot/manual empty contexts, not a normal
+    /// delegation path.
+    Fork { depth: NonZeroUsize },
 }
 
 /// Output format contract for a sub-agent's raw text output (v0.15).
@@ -222,6 +259,10 @@ impl Tool for AgentAsTool {
         let initial_messages = match self.context_mode {
             ContextMode::Fresh => Vec::new(),
             ContextMode::Fork { depth } => {
+                // Defensive loud failure for oneshot / hand-built empty
+                // ToolContext. Normal AgentAsTool delegation always supplies
+                // non-empty parent history (issue #257). Stable code:
+                // EMPTY_PARENT_CONTEXT — not a supported public scenario.
                 if ctx.parent_messages.is_empty() {
                     return Err(ToolError::invalid_input(
                         "ContextMode::Fork requires parent message history",
@@ -645,6 +686,12 @@ impl SubAgentBuilder {
         self
     }
 
+    /// Map the parent tool call's JSON arguments into the child agent's
+    /// input string.
+    ///
+    /// When set, a matching [`Self::input_schema`] is required: the default
+    /// `{"input": "string"}` schema must not be advertised alongside a custom
+    /// mapper (see #299). Callers that set neither keep the default pair.
     pub fn input_mapper(
         mut self,
         f: impl Fn(Value) -> Result<String, ToolError> + Send + Sync + 'static,
@@ -658,6 +705,11 @@ impl SubAgentBuilder {
         self
     }
 
+    /// Set how the child run inherits (or ignores) parent message history.
+    ///
+    /// See [`ContextMode`] for Fresh vs bounded Fork semantics and for why
+    /// empty-parent Fork returns `EMPTY_PARENT_CONTEXT` rather than being a
+    /// supported public path (issue #257).
     pub fn context_mode(mut self, mode: ContextMode) -> Self {
         self.context_mode = mode;
         self
@@ -674,6 +726,9 @@ impl SubAgentBuilder {
     pub fn build(self) -> Result<Arc<dyn Tool>, ConfigError> {
         let model = self.model.ok_or(ConfigError::SubAgentMissingModel)?;
         let registry = self.registry.ok_or(ConfigError::SubAgentMissingRegistry)?;
+        if self.input_mapper.is_some() && self.input_schema.is_none() {
+            return Err(ConfigError::SubAgentMapperRequiresSchema);
+        }
         let input_schema = self.input_schema.unwrap_or_else(
             || json!({"type": "object", "properties": {"input": {"type": "string"}}}),
         );
@@ -791,6 +846,76 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(tool.name(), "t");
+    }
+
+    #[test]
+    fn build_fails_when_input_mapper_set_without_input_schema() {
+        let result = test_agent_config()
+            .as_tool("t", "d")
+            .model(Arc::new(NeverCalledModel))
+            .registry(ToolRegistry::new())
+            .input_mapper(|input: Value| {
+                input
+                    .get("draft")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| ToolError::fatal("missing draft"))
+            })
+            .build();
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("build() should fail when mapper lacks a matching schema"),
+        };
+        assert!(matches!(err, ConfigError::SubAgentMapperRequiresSchema));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("input_schema") && msg.contains("input_mapper"),
+            "error should name both methods: {msg}"
+        );
+    }
+
+    #[test]
+    fn build_succeeds_when_input_mapper_and_input_schema_both_set() {
+        let tool = test_agent_config()
+            .as_tool("t", "d")
+            .model(Arc::new(NeverCalledModel))
+            .registry(ToolRegistry::new())
+            .input_schema(json!({
+                "type": "object",
+                "properties": {"draft": {"type": "string"}},
+                "required": ["draft"]
+            }))
+            .input_mapper(|input: Value| {
+                input
+                    .get("draft")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| ToolError::fatal("missing draft"))
+            })
+            .build()
+            .unwrap();
+        assert_eq!(
+            tool.input_schema(),
+            &json!({
+                "type": "object",
+                "properties": {"draft": {"type": "string"}},
+                "required": ["draft"]
+            })
+        );
+    }
+
+    #[test]
+    fn build_keeps_default_schema_when_neither_mapper_nor_schema_set() {
+        let tool = test_agent_config()
+            .as_tool("t", "d")
+            .model(Arc::new(NeverCalledModel))
+            .registry(ToolRegistry::new())
+            .build()
+            .unwrap();
+        assert_eq!(
+            tool.input_schema(),
+            &json!({"type": "object", "properties": {"input": {"type": "string"}}})
+        );
     }
 
     // ── execute: failure → Err(ToolError), success → Structured ─────────────
