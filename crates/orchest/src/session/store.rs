@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 use super::snapshot::SessionSnapshot;
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum SessionError {
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),

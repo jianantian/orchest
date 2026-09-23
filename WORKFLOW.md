@@ -83,10 +83,31 @@ Rules:
 - **`closes #N` in every commit** — triggers automatic issue closing on push
 - **Dependency order** — follow the order in the PRD; don't jump ahead
 - If the plan and spec conflict, update the docs first before continuing
+- **Changelog entry for user-visible changes**: see [Changelog](#changelog) below
 
 Each issue's documentation:
 - `docs/iteration/<version>/issues/<NNN-slug>/spec.md` — acceptance criteria (hotfix uses same path under `docs/hotfix/<date>/issues/`)
 - `docs/iteration/<version>/issues/<NNN-slug>/plan.md` — implementation steps (iterations only; hotfix issues embed the plan directly in spec.md)
+
+### Changelog
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+A commit adds an entry under `## [Unreleased]` in the same commit when it
+changes anything a user of a published crate can observe:
+
+- public API of a Supported crate (ADR-0003 D2), including items
+  `orchest-provider` re-exports;
+- Cargo features, MSRV or public dependencies;
+- documented runtime behavior (event ordering, wire field names, error
+  kinds, default options);
+- bug fixes that users can observe.
+
+Use the Keep a Changelog categories: Added, Changed, Deprecated, Removed,
+Fixed, Security. A breaking change starts with **Breaking:**. Commits that
+only touch docs, tests, CI, internal refactoring, bindings or examples need
+no entry. At release time the `Unreleased` section is renamed to the new
+version (ADR-0003 D7 tag format) and a fresh empty `Unreleased` section is
+added above it.
 
 ### 5. Run Checks Before Merging
 
@@ -132,6 +153,54 @@ After merge:
 - Every `closes #N` commit **automatically closes its issue**
 - All Project board cards **move to Done**
 - The milestone progress bar advances
+
+---
+
+## Releasing
+
+Published crates are released in lockstep from a version tag through
+`.github/workflows/release.yml` ([ADR-0003](docs/adr/0003-release-policy.md)).
+
+### One-time setup
+
+- Create a crates.io API token with the `publish-new` and `publish-update`
+  scopes, and add it as the repository secret `CARGO_REGISTRY_TOKEN`.
+
+### Cutting a release
+
+1. On `main`, set `[workspace.package] version` and every internal
+   requirement in `[workspace.dependencies]` to the new version: a caret for
+   Supported crates, `=` for Internal crates.
+2. Rename `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z]`, add a fresh
+   empty `## [Unreleased]` above it, and update the compare links.
+3. Check locally:
+
+   ```bash
+   scripts/release-check.sh vX.Y.Z
+   scripts/release-publish.sh X.Y.Z --dry-run
+   ```
+
+4. Optionally run the **Release** workflow manually with `dry_run` checked
+   (the default). It runs the guards, the full CI suite and
+   `cargo publish --workspace --dry-run`, and uploads nothing.
+5. Commit, then tag and push:
+
+   ```bash
+   git tag vX.Y.Z
+   git push origin main vX.Y.Z
+   ```
+
+The tag push runs the guards and the full CI suite. It then publishes the
+crates in ADR-0003 D7 order and creates the GitHub Release from the
+changelog section. A version with a pre-release suffix (`-rc.N`) is marked
+as a prerelease.
+
+### Recovering a failed release
+
+Re-run the **Release** workflow manually from the same tag with `dry_run`
+unchecked. Crates already on crates.io at that version are skipped, and an
+existing GitHub Release is left alone. A version that was published with a
+defect cannot be replaced: yank it with `cargo yank` and release a patch.
 
 ---
 

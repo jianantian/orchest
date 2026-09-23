@@ -98,11 +98,13 @@ impl Clone for JobHandle {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct WebhookConfig {
     pub expected_job_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum JobStatus {
     Pending {
         progress: Option<f32>,

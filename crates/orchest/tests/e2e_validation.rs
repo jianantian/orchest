@@ -8,7 +8,7 @@ use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
     OptionAdjustment, RequestOptions, StopReason, StreamEvent, ThinkingLevel, TokenUsage,
 };
-use orchest::run::{AgentConfig, AgentRun, ModelConfig, RuntimeConfig, SkillsConfig};
+use orchest::run::{AgentConfig, AgentRun, ModelConfig};
 use orchest::tool::async_job::{JobHandle, JobStatus};
 use orchest::tool::builtin::ReadFileTool;
 use orchest::tool::registry::ToolRegistry;
@@ -21,10 +21,9 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
 fn test_config() -> AgentConfig {
-    AgentConfig {
-        name: "test-agent".into(),
-        system_prompt: "You are a test assistant.".into(),
-        model: ModelConfig {
+    let mut config = AgentConfig::new(
+        "test-agent",
+        ModelConfig {
             spec: ModelSpec {
                 provider: "test".into(),
                 model: "test-model".into(),
@@ -35,24 +34,16 @@ fn test_config() -> AgentConfig {
             },
             options: RequestOptions::default(),
         },
-        budget: BudgetConfig {
-            max_tokens: Some(100_000),
-            max_tool_calls: Some(10),
-            max_duration: Some(Duration::from_secs(30)),
-            max_cost_usd: Some(1.0),
-        },
-        skills: SkillsConfig::default(),
-        runtime: RuntimeConfig {
-            max_steps: 10,
-            ..RuntimeConfig::default()
-        },
-        hooks: vec![],
-        retry_policy: None,
-        handoffs: vec![],
-        session_store: None,
-        session_id: None,
-        supervision_strategy: Default::default(),
-    }
+    );
+    config.system_prompt = "You are a test assistant.".into();
+    config.budget = BudgetConfig {
+        max_tokens: Some(100_000),
+        max_tool_calls: Some(10),
+        max_duration: Some(Duration::from_secs(30)),
+        max_cost_usd: Some(1.0),
+    };
+    config.runtime.max_steps = 10;
+    config
 }
 
 struct E2EModelAdapter;
@@ -328,6 +319,7 @@ async fn e2e_event_coverage() {
             RuntimeEvent::AgentUpdated { .. } => "AgentUpdated",
             RuntimeEvent::EventsDropped { .. } => "EventsDropped",
             RuntimeEvent::RunRestarted { .. } => "RunRestarted",
+            _ => "Unknown",
         })
         .collect();
 

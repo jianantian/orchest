@@ -11,6 +11,7 @@ pub struct RetryPolicy {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum BackoffStrategy {
     Fixed(Duration),
     Exponential {

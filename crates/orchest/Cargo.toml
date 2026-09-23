@@ -1,7 +1,14 @@
 [package]
 name = "orchest"
-version = "0.1.0"
-edition = "2021"
+description = "Skill-first agent runtime core: agent loop, state management, event streaming, tool dispatch and skill loading."
+readme = "README.md"
+keywords = ["agent", "llm", "ai", "skills", "runtime"]
+categories = ["artificial-intelligence", "asynchronous"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util", "process", "fs", "net"] }
@@ -17,7 +24,7 @@ which = "7"
 sha2 = "0.10"
 tempfile = "3"
 tokio-util = { version = "0.7", features = ["rt"] }
-orchest-protocol = { path = "../orchest-protocol" }
+orchest-protocol = { workspace = true }
 tracing = "0.1"
 metrics = "0.24"
 tiktoken-rs = "0.6"
@@ -32,7 +39,7 @@ sqlite-session = ["dep:rusqlite"]
 libc = "0.2"
 
 [dev-dependencies]
-orchest-provider = { path = "../orchest-provider", features = ["llm"] }
+orchest-provider = { workspace = true, features = ["llm"] }
 metrics-util = "0.20"
 tracing-subscriber = { version = "0.3", features = ["fmt", "registry"] }
 

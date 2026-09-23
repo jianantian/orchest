@@ -244,7 +244,7 @@ mod tests {
             } => {
                 assert_eq!(method, "DELETE");
                 assert_eq!(path, "/audio/a.mp3");
-                assert_eq!(status.as_u16(), 403);
+                assert_eq!(status, 403);
                 assert!(
                     body.contains("SignatureDoesNotMatch"),
                     "body summary: {body}"
@@ -312,7 +312,7 @@ mod tests {
             .expect_err("reads are not idempotent");
         match err {
             ObjectStoreError::Rejected { status, body, .. } => {
-                assert_eq!(status.as_u16(), 404);
+                assert_eq!(status, 404);
                 assert!(body.contains("NoSuchKey"), "body summary: {body}");
             }
             other => panic!("expected Rejected, got {other:?}"),

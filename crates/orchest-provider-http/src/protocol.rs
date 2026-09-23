@@ -177,6 +177,8 @@ pub trait ProviderProfile: Send + Sync {
                 ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
                 ThinkingLevel::Medium => "medium",
                 ThinkingLevel::High | ThinkingLevel::XHigh | ThinkingLevel::Max => "high",
+                // Levels added to the protocol later map to the middle.
+                _ => "medium",
             };
             body["reasoning_effort"] = json!(effort);
         }
@@ -249,7 +251,9 @@ pub trait ProviderProfile: Send + Sync {
                 });
                 "user"
             }
-            Role::Group | Role::SampleMessageUser | Role::SampleMessageAi => {
+            // Group / SampleMessageUser / SampleMessageAi, and roles added to
+            // the protocol later (`Role` is `#[non_exhaustive]`).
+            _ => {
                 adjustments.push(OptionAdjustment {
                     option: "role".into(),
                     requested: json!(format!("{role:?}")),

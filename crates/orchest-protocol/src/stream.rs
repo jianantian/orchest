@@ -25,6 +25,7 @@ use crate::types::ContentBlock;
 /// per-crate `AudioFormat`s; those converge onto this in Issue 006.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AudioFormat {
     Pcm,
     Pcm16Le,
@@ -42,6 +43,7 @@ pub enum AudioFormat {
 /// Whether a transcript fragment is still revisable or finalized.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TranscriptStability {
     Provisional,
     Committed,
@@ -50,6 +52,7 @@ pub enum TranscriptStability {
 /// Whether a transcript update replaces the segment or appends to it.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TranscriptUpdateKind {
     Snapshot,
     Append,
@@ -76,6 +79,7 @@ pub struct SegmentRef {
 /// `Started`, and the realtime transport lifecycle.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "lifecycle", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum LifecycleEvent {
     RouteSelected {
         provider: String,
@@ -101,6 +105,7 @@ pub enum LifecycleEvent {
 /// capability that genuinely needs it; not a god-payload.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "capability", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CapabilityEventExt {
     /// ASR-specific detail (segment/endpointing/diagnostics) the rich
     /// `AsrModelCapabilities`-class events fold into during Issue 006.
@@ -112,6 +117,7 @@ pub enum CapabilityEventExt {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum StreamEvent {
     // --- text / thinking (unchanged delta granularity) ---
     Text {

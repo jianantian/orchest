@@ -113,8 +113,18 @@ depending on `orchest-provider-core` directly is **not** a supported
 extension path in 1.0. Opening it later is an additive decision that needs
 its own review.
 
-#309 reviews the full re-exported set, keeps it to what the extension point
-needs, and records the final list in this ADR.
+The re-exported set was reviewed in #309
+([v1.0 public API review](../review/v1_0_public_api.md), P6) and kept
+unchanged:
+
+- from `orchest-provider-core`: `Entry`, `Factory`, `ProviderConfig`,
+  `CatalogExt`, `ModelFilter`, `ModelRecord`, `ModelStatus`;
+- from `orchest-provider-http`: `create_adapter`,
+  `create_adapter_from_config`, `normalize_provider_model`,
+  `NormalizedProviderModel`, `ProviderRuntimeConfig`.
+
+Items marked `#[doc(hidden)]` are excluded from the SemVer promise. Today
+that is `orchest::bindings`, which only the binding crates use.
 
 ### D3. Versioning scheme
 
@@ -149,14 +159,17 @@ Changes allowed in a **minor** version:
 
 A **patch** version holds only bug fixes and documentation changes.
 
-Before a crate's first release, #309 records its public dependency list.
-That list is the set this policy applies to.
+The public dependency set recorded by #309 is `serde`, `serde_json`,
+`tokio`, `bytes`, `tracing` and `uuid`. This policy applies to that set,
+and adding a new public dependency is itself a change reviewed under D4.
+The review also lists the structs that stay exhaustive (frozen) in 1.x;
+adding a field to one of them is a major change.
 
 ### D5. MSRV
 
 | Option | Notes |
 | --- | --- |
-| **`rust-version = "1.86"`** (chosen, provisional) | Lowest version the current dependency tree allows. #307 verifies that Orchest's own code builds on 1.86 and raises the value to the lowest version that actually builds, if needed. CI gains an MSRV job. |
+| **`rust-version = "1.87"`** (chosen) | Chosen as 1.86, the lowest version the current dependency tree allows, and then raised to 1.87 by #307. `orchest` uses the unsigned-integer `is_multiple_of`, which became stable in 1.87, and 1.87 is the lowest toolchain that builds every published crate with all features. CI gains an MSRV job. |
 | Track latest stable | Zero maintenance, but it excludes enterprise and distro toolchains. |
 
 **Bump policy** (chosen):

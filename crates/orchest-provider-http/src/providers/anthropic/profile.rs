@@ -74,6 +74,16 @@ impl ProviderProfile for AnthropicProfile {
                         "media_type": media_type,
                         "data": data,
                     }),
+                    // Source kinds added to the protocol later — drop + record.
+                    _ => {
+                        adjustments.push(OptionAdjustment {
+                            option: "content_block".into(),
+                            requested: json!("image"),
+                            applied: json!(null),
+                            reason: "anthropic_unsupported_media_source".into(),
+                        });
+                        return None;
+                    }
                 };
                 Some(json!({"type": "image", "source": source_value}))
             }

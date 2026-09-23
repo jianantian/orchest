@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 use crate::skill::{BundledToolDef, SkillCapabilities};
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ExecutionContext {
     pub work_dir: PathBuf,
     pub env: HashMap<String, String>,
@@ -22,6 +23,7 @@ pub struct ExecutionContext {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ScriptOutput {
     pub stdout: String,
     pub stderr: String,
@@ -30,6 +32,7 @@ pub struct ScriptOutput {
 
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("{message}")]
+#[non_exhaustive]
 pub struct ScriptError {
     pub message: String,
     pub code: Option<String>,

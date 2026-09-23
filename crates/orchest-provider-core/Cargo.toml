@@ -1,7 +1,14 @@
 [package]
 name = "orchest-provider-core"
-version = "0.1.0"
-edition = "2021"
+description = "Internal building blocks for the Orchest provider crates. Not for direct use: depend on orchest-provider."
+readme = "README.md"
+keywords = ["orchest"]
+categories = ["artificial-intelligence"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 # L0 building blocks + L1 header-auth strategies + cross-cutting services for the
 # provider impl crates (v0.9.12 provider unification, Issue 003). Weight-gated:
@@ -20,7 +27,7 @@ ws = ["dep:tokio-tungstenite", "dep:futures-util"]
 oss = ["dep:hmac", "dep:sha2", "dep:hex", "dep:base64"]
 
 [dependencies]
-orchest-protocol = { path = "../orchest-protocol" }
+orchest-protocol = { workspace = true }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
 serde = { version = "1", features = ["derive"] }

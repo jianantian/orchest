@@ -23,6 +23,7 @@ pub type EventReceiver = mpsc::Receiver<RuntimeEvent>;
 /// Published on the child control surface when the child run completes or fails,
 /// independently of the supervisor [`EventReceiver`].
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ChildRunOutcome {
     Completed { output: Value },
     Failed { error: String, kind: RunFailureKind },
@@ -30,6 +31,7 @@ pub enum ChildRunOutcome {
 
 /// Error awaiting [`ChildRunHandle::wait_completion`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ChildCompletionError {
     /// The registry entry was dropped before a terminal outcome was published.
     Disconnected,
@@ -138,6 +140,7 @@ impl ChildRunRegistry {
 /// observing `RuntimeEvent::SubAgentStarted`. Inject and steer target this
 /// child's conversation; [`Self::wait_completion`] awaits the child's terminal
 /// outcome without consuming the supervisor event channel.
+#[non_exhaustive]
 pub struct ChildRunHandle {
     pub run_id: RunId,
     pub parent_run_id: RunId,
@@ -278,6 +281,7 @@ impl ApprovalBus {
 
 /// Handle to a running agent: wait for completion, abort, subscribe to events,
 /// attach watchers, respond to approvals, and steer the run mid-flight.
+#[non_exhaustive]
 pub struct RunHandle {
     pub run_id: RunId,
     /// Current worker actor reference.

@@ -1,0 +1,1084 @@
+pub mod orchest_protocol
+pub mod orchest_protocol::adapter
+pub trait orchest_protocol::adapter::ChatModel: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::adapter::ChatModel::capabilities(&self) -> orchest_protocol::options::ModelCapabilities
+pub fn orchest_protocol::adapter::ChatModel::complete<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 [orchest_protocol::types::Message], &'life2 [orchest_protocol::types::ToolDef], &'life3 orchest_protocol::options::RequestOptions, core::option::Option<tokio::sync::mpsc::bounded::Sender<orchest_protocol::stream::StreamEvent>>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::response::ModelResponse, orchest_protocol::error::ModelError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn orchest_protocol::adapter::ChatModel::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_protocol::adapter::ChatModel::model_name(&self) -> &str
+pub fn orchest_protocol::adapter::ChatModel::provider_name(&self) -> &str
+pub mod orchest_protocol::capability
+#[non_exhaustive] pub enum orchest_protocol::capability::GenAsset
+pub orchest_protocol::capability::GenAsset::Bytes
+pub orchest_protocol::capability::GenAsset::Bytes::data: bytes::bytes::Bytes
+pub orchest_protocol::capability::GenAsset::Bytes::media_type: alloc::string::String
+pub orchest_protocol::capability::GenAsset::Bytes::role: orchest_protocol::capability::GenAssetRole
+pub orchest_protocol::capability::GenAsset::Url
+pub orchest_protocol::capability::GenAsset::Url::media_type: core::option::Option<alloc::string::String>
+pub orchest_protocol::capability::GenAsset::Url::role: orchest_protocol::capability::GenAssetRole
+pub orchest_protocol::capability::GenAsset::Url::url: alloc::string::String
+#[non_exhaustive] pub enum orchest_protocol::capability::GenAssetRole
+pub orchest_protocol::capability::GenAssetRole::Cover
+pub orchest_protocol::capability::GenAssetRole::Preview
+pub orchest_protocol::capability::GenAssetRole::Primary
+#[non_exhaustive] pub enum orchest_protocol::capability::GenStatus
+pub orchest_protocol::capability::GenStatus::Done
+pub orchest_protocol::capability::GenStatus::Failed
+pub orchest_protocol::capability::GenStatus::Pending
+pub orchest_protocol::capability::GenStatus::Running
+#[non_exhaustive] pub enum orchest_protocol::capability::SessionInput
+pub orchest_protocol::capability::SessionInput::Audio(bytes::bytes::Bytes)
+pub orchest_protocol::capability::SessionInput::Interrupt
+pub orchest_protocol::capability::SessionInput::Text(alloc::string::String)
+pub orchest_protocol::capability::SessionInput::ToolResult
+pub orchest_protocol::capability::SessionInput::ToolResult::content: serde_json::value::Value
+pub orchest_protocol::capability::SessionInput::ToolResult::tool_use_id: alloc::string::String
+#[non_exhaustive] pub enum orchest_protocol::capability::VocalGender
+pub orchest_protocol::capability::VocalGender::Female
+pub orchest_protocol::capability::VocalGender::Male
+pub struct orchest_protocol::capability::GenHandle
+pub orchest_protocol::capability::GenHandle::id: alloc::string::String
+pub orchest_protocol::capability::GenHandle::provider: core::option::Option<alloc::string::String>
+pub struct orchest_protocol::capability::GenRequest
+pub orchest_protocol::capability::GenRequest::music: core::option::Option<orchest_protocol::capability::MusicParams>
+pub orchest_protocol::capability::GenRequest::params: serde_json::value::Value
+pub orchest_protocol::capability::GenRequest::prompt: alloc::string::String
+pub struct orchest_protocol::capability::GenResult
+pub orchest_protocol::capability::GenResult::assets: alloc::vec::Vec<orchest_protocol::capability::GenAsset>
+pub orchest_protocol::capability::GenResult::diagnostic_metadata: serde_json::value::Value
+pub orchest_protocol::capability::GenResult::duration_secs: core::option::Option<f64>
+pub orchest_protocol::capability::GenResult::timed_text: core::option::Option<orchest_protocol::capability::TimedText>
+pub orchest_protocol::capability::GenResult::track_meta: alloc::vec::Vec<orchest_protocol::capability::TrackMeta>
+pub struct orchest_protocol::capability::Language(pub alloc::string::String)
+pub struct orchest_protocol::capability::MusicParams
+pub orchest_protocol::capability::MusicParams::audio_weight: core::option::Option<f64>
+pub orchest_protocol::capability::MusicParams::instrumental: core::option::Option<bool>
+pub orchest_protocol::capability::MusicParams::lyrics: core::option::Option<alloc::string::String>
+pub orchest_protocol::capability::MusicParams::negative_tags: core::option::Option<alloc::string::String>
+pub orchest_protocol::capability::MusicParams::style: core::option::Option<alloc::string::String>
+pub orchest_protocol::capability::MusicParams::style_weight: core::option::Option<f64>
+pub orchest_protocol::capability::MusicParams::title: core::option::Option<alloc::string::String>
+pub orchest_protocol::capability::MusicParams::vocal_gender: core::option::Option<orchest_protocol::capability::VocalGender>
+pub orchest_protocol::capability::MusicParams::weirdness_constraint: core::option::Option<f64>
+pub struct orchest_protocol::capability::RealtimeHandle
+pub orchest_protocol::capability::RealtimeHandle::events: orchest_protocol::stream::EventStream
+pub orchest_protocol::capability::RealtimeHandle::input: tokio::sync::mpsc::bounded::Sender<orchest_protocol::capability::SessionInput>
+pub struct orchest_protocol::capability::StreamingTranscribeRequest
+pub orchest_protocol::capability::StreamingTranscribeRequest::format: orchest_protocol::stream::AudioFormat
+pub orchest_protocol::capability::StreamingTranscribeRequest::language: core::option::Option<orchest_protocol::capability::Language>
+pub orchest_protocol::capability::StreamingTranscribeRequest::options: serde_json::value::Value
+pub struct orchest_protocol::capability::SynthesizeRequest
+pub orchest_protocol::capability::SynthesizeRequest::format: orchest_protocol::stream::AudioFormat
+pub orchest_protocol::capability::SynthesizeRequest::options: serde_json::value::Value
+pub orchest_protocol::capability::SynthesizeRequest::text: alloc::string::String
+pub orchest_protocol::capability::SynthesizeRequest::voice: core::option::Option<alloc::string::String>
+pub struct orchest_protocol::capability::SynthesizeResult
+pub orchest_protocol::capability::SynthesizeResult::audio: bytes::bytes::Bytes
+pub orchest_protocol::capability::SynthesizeResult::diagnostic_metadata: serde_json::value::Value
+pub orchest_protocol::capability::SynthesizeResult::format: orchest_protocol::stream::AudioFormat
+pub struct orchest_protocol::capability::TimedSegment
+pub orchest_protocol::capability::TimedSegment::end: core::option::Option<f64>
+pub orchest_protocol::capability::TimedSegment::start: f64
+pub orchest_protocol::capability::TimedSegment::text: alloc::string::String
+pub struct orchest_protocol::capability::TimedText
+pub orchest_protocol::capability::TimedText::segments: alloc::vec::Vec<orchest_protocol::capability::TimedSegment>
+pub struct orchest_protocol::capability::TrackMeta
+pub orchest_protocol::capability::TrackMeta::duration_secs: core::option::Option<f64>
+pub orchest_protocol::capability::TrackMeta::timed_text: core::option::Option<orchest_protocol::capability::TimedText>
+pub struct orchest_protocol::capability::TranscribeRequest
+pub orchest_protocol::capability::TranscribeRequest::audio: bytes::bytes::Bytes
+pub orchest_protocol::capability::TranscribeRequest::format: orchest_protocol::stream::AudioFormat
+pub orchest_protocol::capability::TranscribeRequest::language: core::option::Option<orchest_protocol::capability::Language>
+pub orchest_protocol::capability::TranscribeRequest::options: serde_json::value::Value
+pub struct orchest_protocol::capability::TranscribeResult
+pub orchest_protocol::capability::TranscribeResult::diagnostic_metadata: serde_json::value::Value
+pub orchest_protocol::capability::TranscribeResult::language: core::option::Option<orchest_protocol::capability::Language>
+pub orchest_protocol::capability::TranscribeResult::text: alloc::string::String
+pub trait orchest_protocol::capability::Asr: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::capability::Asr::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_protocol::capability::Asr::model_name(&self) -> &str
+pub fn orchest_protocol::capability::Asr::provider_name(&self) -> &str
+pub fn orchest_protocol::capability::Asr::start_stream<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::StreamingTranscribeRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::RealtimeHandle, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_protocol::capability::Asr::supported_languages(&self) -> &[orchest_protocol::capability::Language]
+pub fn orchest_protocol::capability::Asr::transcribe<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::TranscribeRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::TranscribeResult, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub trait orchest_protocol::capability::GenTask: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::capability::GenTask::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_protocol::capability::GenTask::fetch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest_protocol::capability::GenHandle) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::GenResult, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest_protocol::capability::GenTask::model_name(&self) -> &str
+pub fn orchest_protocol::capability::GenTask::poll<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest_protocol::capability::GenHandle) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::GenStatus, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest_protocol::capability::GenTask::provider_name(&self) -> &str
+pub fn orchest_protocol::capability::GenTask::submit<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::GenRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::GenHandle, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub trait orchest_protocol::capability::RealtimeSession: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::capability::RealtimeSession::close<'life0, 'async_trait>(&'life0 mut self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_protocol::capability::RealtimeSession::events(&mut self) -> &mut orchest_protocol::stream::EventStream
+pub fn orchest_protocol::capability::RealtimeSession::send<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::SessionInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub trait orchest_protocol::capability::Tts: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::capability::Tts::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_protocol::capability::Tts::model_name(&self) -> &str
+pub fn orchest_protocol::capability::Tts::provider_name(&self) -> &str
+pub fn orchest_protocol::capability::Tts::start_duplex_stream<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::RealtimeHandle, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_protocol::capability::Tts::stream_synthesize<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::SynthesizeRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::stream::EventStream, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_protocol::capability::Tts::synthesize<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::SynthesizeRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::SynthesizeResult, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub trait orchest_protocol::capability::VoiceManager: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::capability::VoiceManager::clone_voice<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<serde_json::value::Value, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_protocol::capability::VoiceManager::delete_voice<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest_protocol::capability::VoiceManager::design_voice<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<serde_json::value::Value, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub mod orchest_protocol::decision
+#[non_exhaustive] pub enum orchest_protocol::decision::DecisionAnswer
+pub orchest_protocol::decision::DecisionAnswer::Boolean
+pub orchest_protocol::decision::DecisionAnswer::Boolean::probability: f64
+pub orchest_protocol::decision::DecisionAnswer::Choice
+pub orchest_protocol::decision::DecisionAnswer::Choice::choice: alloc::string::String
+pub orchest_protocol::decision::DecisionAnswer::Choice::confidence: core::option::Option<f64>
+pub orchest_protocol::decision::DecisionAnswer::Choice::probabilities: core::option::Option<alloc::collections::btree::map::BTreeMap<alloc::string::String, f64>>
+pub orchest_protocol::decision::DecisionAnswer::Score
+pub orchest_protocol::decision::DecisionAnswer::Score::confidence: core::option::Option<f64>
+pub orchest_protocol::decision::DecisionAnswer::Score::legend: core::option::Option<alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>>
+pub orchest_protocol::decision::DecisionAnswer::Score::probabilities: core::option::Option<alloc::collections::btree::map::BTreeMap<alloc::string::String, f64>>
+pub orchest_protocol::decision::DecisionAnswer::Score::score: f64
+#[non_exhaustive] pub enum orchest_protocol::decision::DecisionQuestion
+pub orchest_protocol::decision::DecisionQuestion::Boolean
+pub orchest_protocol::decision::DecisionQuestion::Boolean::criteria: core::option::Option<orchest_protocol::BooleanCriteria>
+pub orchest_protocol::decision::DecisionQuestion::Boolean::instructions: serde_json::value::Value
+pub orchest_protocol::decision::DecisionQuestion::Choice
+pub orchest_protocol::decision::DecisionQuestion::Choice::criteria: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub orchest_protocol::decision::DecisionQuestion::Choice::instructions: serde_json::value::Value
+pub orchest_protocol::decision::DecisionQuestion::Score
+pub orchest_protocol::decision::DecisionQuestion::Score::criteria: alloc::vec::Vec<serde_json::value::Value>
+pub orchest_protocol::decision::DecisionQuestion::Score::instructions: serde_json::value::Value
+pub struct orchest_protocol::decision::BooleanCriteria
+pub orchest_protocol::decision::BooleanCriteria::false_: serde_json::value::Value
+pub orchest_protocol::decision::BooleanCriteria::true_: serde_json::value::Value
+pub struct orchest_protocol::decision::DecisionRequest
+pub orchest_protocol::decision::DecisionRequest::questions: alloc::collections::btree::map::BTreeMap<alloc::string::String, orchest_protocol::DecisionQuestion>
+pub orchest_protocol::decision::DecisionRequest::state: serde_json::value::Value
+impl orchest_protocol::DecisionRequest
+pub fn orchest_protocol::DecisionRequest::validate(&self) -> core::result::Result<(), orchest_protocol::error::ProtocolError>
+pub struct orchest_protocol::decision::DecisionResponse
+pub orchest_protocol::decision::DecisionResponse::answers: alloc::collections::btree::map::BTreeMap<alloc::string::String, orchest_protocol::DecisionAnswer>
+pub orchest_protocol::decision::DecisionResponse::id: core::option::Option<alloc::string::String>
+pub orchest_protocol::decision::DecisionResponse::model: alloc::string::String
+pub orchest_protocol::decision::DecisionResponse::provider: core::option::Option<alloc::string::String>
+pub orchest_protocol::decision::DecisionResponse::usage: core::option::Option<orchest_protocol::DecisionUsage>
+impl orchest_protocol::DecisionResponse
+pub fn orchest_protocol::DecisionResponse::validate_for(&self, &orchest_protocol::DecisionRequest) -> core::result::Result<(), orchest_protocol::error::ProtocolError>
+pub struct orchest_protocol::decision::DecisionUsage
+pub orchest_protocol::decision::DecisionUsage::cost_usd: core::option::Option<f64>
+pub orchest_protocol::decision::DecisionUsage::input_tokens: u64
+pub orchest_protocol::decision::DecisionUsage::output_tokens: u64
+pub trait orchest_protocol::decision::Decision: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::decision::Decision::decide<'life0, 'async_trait>(&'life0 self, orchest_protocol::DecisionRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::DecisionResponse, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_protocol::decision::Decision::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_protocol::decision::Decision::model_name(&self) -> &str
+pub fn orchest_protocol::decision::Decision::provider_name(&self) -> &str
+pub mod orchest_protocol::descriptor
+#[non_exhaustive] pub enum orchest_protocol::descriptor::Capability
+pub orchest_protocol::descriptor::Capability::Asr
+pub orchest_protocol::descriptor::Capability::Chat
+pub orchest_protocol::descriptor::Capability::Decision
+pub orchest_protocol::descriptor::Capability::GenTask
+pub orchest_protocol::descriptor::Capability::Realtime
+pub orchest_protocol::descriptor::Capability::Tts
+pub orchest_protocol::descriptor::Capability::VoiceManagement
+#[non_exhaustive] pub enum orchest_protocol::descriptor::CapabilityExt
+pub orchest_protocol::descriptor::CapabilityExt::Asr(serde_json::value::Value)
+pub orchest_protocol::descriptor::CapabilityExt::Chat(orchest_protocol::descriptor::ChatCapabilityExt)
+pub orchest_protocol::descriptor::CapabilityExt::GenTask(serde_json::value::Value)
+pub orchest_protocol::descriptor::CapabilityExt::None
+pub orchest_protocol::descriptor::CapabilityExt::Realtime(serde_json::value::Value)
+pub orchest_protocol::descriptor::CapabilityExt::Tts(serde_json::value::Value)
+#[non_exhaustive] pub enum orchest_protocol::descriptor::CapabilitySource
+pub orchest_protocol::descriptor::CapabilitySource::Assumed
+pub orchest_protocol::descriptor::CapabilitySource::ProviderMetadata
+pub orchest_protocol::descriptor::CapabilitySource::Static
+#[non_exhaustive] pub enum orchest_protocol::descriptor::Modality
+pub orchest_protocol::descriptor::Modality::Audio
+pub orchest_protocol::descriptor::Modality::Image
+pub orchest_protocol::descriptor::Modality::Text
+pub orchest_protocol::descriptor::Modality::Video
+pub struct orchest_protocol::descriptor::CapabilityDescriptor
+pub orchest_protocol::descriptor::CapabilityDescriptor::capability: orchest_protocol::descriptor::Capability
+pub orchest_protocol::descriptor::CapabilityDescriptor::default_for_provider: bool
+pub orchest_protocol::descriptor::CapabilityDescriptor::duplex: bool
+pub orchest_protocol::descriptor::CapabilityDescriptor::ext: orchest_protocol::descriptor::CapabilityExt
+pub orchest_protocol::descriptor::CapabilityDescriptor::input_modalities: alloc::vec::Vec<orchest_protocol::descriptor::Modality>
+pub orchest_protocol::descriptor::CapabilityDescriptor::interruptible: bool
+pub orchest_protocol::descriptor::CapabilityDescriptor::model: alloc::borrow::Cow<'static, str>
+pub orchest_protocol::descriptor::CapabilityDescriptor::output_modalities: alloc::vec::Vec<orchest_protocol::descriptor::Modality>
+pub orchest_protocol::descriptor::CapabilityDescriptor::provider: alloc::borrow::Cow<'static, str>
+pub orchest_protocol::descriptor::CapabilityDescriptor::source: orchest_protocol::descriptor::CapabilitySource
+pub orchest_protocol::descriptor::CapabilityDescriptor::streaming: bool
+pub orchest_protocol::descriptor::CapabilityDescriptor::thinking: bool
+pub orchest_protocol::descriptor::CapabilityDescriptor::tools: bool
+impl orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::accepts(&self, &[orchest_protocol::descriptor::Modality]) -> bool
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::default_for_provider(self, bool) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::duplex(self, bool) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::emits(&self, &[orchest_protocol::descriptor::Modality]) -> bool
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::interruptible(self, bool) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::new(impl core::convert::Into<alloc::borrow::Cow<'static, str>>, impl core::convert::Into<alloc::borrow::Cow<'static, str>>, orchest_protocol::descriptor::Capability) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::streaming(self, bool) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::thinking(self, bool) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::tools(self, bool) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::with_ext(self, orchest_protocol::descriptor::CapabilityExt) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::with_input_modalities(self, impl core::convert::Into<alloc::vec::Vec<orchest_protocol::descriptor::Modality>>) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::with_output_modalities(self, impl core::convert::Into<alloc::vec::Vec<orchest_protocol::descriptor::Modality>>) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::with_source(self, orchest_protocol::descriptor::CapabilitySource) -> Self
+pub struct orchest_protocol::descriptor::ChatCapabilityExt
+pub orchest_protocol::descriptor::ChatCapabilityExt::context_window_size: core::option::Option<u64>
+pub orchest_protocol::descriptor::ChatCapabilityExt::max_output_tokens: core::option::Option<u32>
+pub orchest_protocol::descriptor::ChatCapabilityExt::parallel_tool_use: bool
+pub orchest_protocol::descriptor::ChatCapabilityExt::pricing: core::option::Option<orchest_protocol::options::ModelPricing>
+pub orchest_protocol::descriptor::ChatCapabilityExt::prompt_cache: orchest_protocol::options::CacheCapability
+pub orchest_protocol::descriptor::ChatCapabilityExt::reasoning: orchest_protocol::options::ReasoningCapability
+pub trait orchest_protocol::descriptor::CatalogEntry
+pub fn orchest_protocol::descriptor::CatalogEntry::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub mod orchest_protocol::error
+#[non_exhaustive] pub enum orchest_protocol::error::ErrorCode
+pub orchest_protocol::error::ErrorCode::Cancelled
+pub orchest_protocol::error::ErrorCode::ContentFilter
+pub orchest_protocol::error::ErrorCode::ContextWindowExceeded
+pub orchest_protocol::error::ErrorCode::Internal
+pub orchest_protocol::error::ErrorCode::InvalidApiKey
+pub orchest_protocol::error::ErrorCode::InvalidAudio
+pub orchest_protocol::error::ErrorCode::InvalidRequest
+pub orchest_protocol::error::ErrorCode::InvalidResponse
+pub orchest_protocol::error::ErrorCode::MissingApiKey
+pub orchest_protocol::error::ErrorCode::NoMatchingProvider
+pub orchest_protocol::error::ErrorCode::Other
+pub orchest_protocol::error::ErrorCode::ProviderHttpError
+pub orchest_protocol::error::ErrorCode::ProviderStreamError
+pub orchest_protocol::error::ErrorCode::ProviderTaskFailed
+pub orchest_protocol::error::ErrorCode::Timeout
+pub orchest_protocol::error::ErrorCode::UnknownModel
+pub orchest_protocol::error::ErrorCode::UnknownProvider
+pub orchest_protocol::error::ErrorCode::UnsupportedAudioFormat
+pub orchest_protocol::error::ErrorCode::UnsupportedLanguage
+pub orchest_protocol::error::ErrorCode::UnsupportedOperation
+pub orchest_protocol::error::ErrorCode::UnsupportedOption
+pub struct orchest_protocol::error::ModelError
+pub orchest_protocol::error::ModelError::code: core::option::Option<alloc::string::String>
+pub orchest_protocol::error::ModelError::message: alloc::string::String
+pub orchest_protocol::error::ModelError::provider: core::option::Option<alloc::string::String>
+pub orchest_protocol::error::ModelError::retry_after_secs: core::option::Option<u64>
+pub orchest_protocol::error::ModelError::status: core::option::Option<u16>
+pub orchest_protocol::error::ModelError::upstream: core::option::Option<alloc::sync::Arc<orchest_protocol::error::UpstreamErrorDetail>>
+impl orchest_protocol::error::ModelError
+pub fn orchest_protocol::error::ModelError::internal(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::convert::From<orchest_protocol::error::ModelError> for orchest_protocol::error::ProtocolError
+pub fn orchest_protocol::error::ProtocolError::from(orchest_protocol::error::ModelError) -> Self
+impl core::convert::From<orchest_protocol::error::ProtocolError> for orchest_protocol::error::ModelError
+pub fn orchest_protocol::error::ModelError::from(orchest_protocol::error::ProtocolError) -> Self
+pub struct orchest_protocol::error::ProtocolError
+pub orchest_protocol::error::ProtocolError::code: orchest_protocol::error::ErrorCode
+pub orchest_protocol::error::ProtocolError::diagnostic_metadata: serde_json::value::Value
+pub orchest_protocol::error::ProtocolError::message: alloc::string::String
+pub orchest_protocol::error::ProtocolError::model: core::option::Option<alloc::string::String>
+pub orchest_protocol::error::ProtocolError::provider: core::option::Option<alloc::string::String>
+pub orchest_protocol::error::ProtocolError::retry_after_secs: core::option::Option<u64>
+pub orchest_protocol::error::ProtocolError::status: core::option::Option<u16>
+pub orchest_protocol::error::ProtocolError::upstream: core::option::Option<alloc::sync::Arc<orchest_protocol::error::UpstreamErrorDetail>>
+impl orchest_protocol::error::ProtocolError
+pub fn orchest_protocol::error::ProtocolError::internal_err(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest_protocol::error::ProtocolError::new(orchest_protocol::error::ErrorCode, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest_protocol::error::ProtocolError::with_model(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest_protocol::error::ProtocolError::with_provider(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest_protocol::error::ProtocolError::with_status(self, u16) -> Self
+impl core::convert::From<orchest_protocol::error::ModelError> for orchest_protocol::error::ProtocolError
+pub fn orchest_protocol::error::ProtocolError::from(orchest_protocol::error::ModelError) -> Self
+impl core::convert::From<orchest_protocol::error::ProtocolError> for orchest_protocol::error::ModelError
+pub fn orchest_protocol::error::ModelError::from(orchest_protocol::error::ProtocolError) -> Self
+pub struct orchest_protocol::error::UpstreamErrorDetail
+pub orchest_protocol::error::UpstreamErrorDetail::body: core::option::Option<serde_json::value::Value>
+pub orchest_protocol::error::UpstreamErrorDetail::code: core::option::Option<alloc::string::String>
+pub orchest_protocol::error::UpstreamErrorDetail::message: core::option::Option<alloc::string::String>
+pub mod orchest_protocol::options
+#[non_exhaustive] pub enum orchest_protocol::options::CachePolicy
+pub orchest_protocol::options::CachePolicy::Auto
+pub orchest_protocol::options::CachePolicy::Long
+pub orchest_protocol::options::CachePolicy::None
+#[non_exhaustive] pub enum orchest_protocol::options::CapabilitySource
+pub orchest_protocol::options::CapabilitySource::Assumed
+pub orchest_protocol::options::CapabilitySource::ProviderMetadata
+pub orchest_protocol::options::CapabilitySource::Static
+#[non_exhaustive] pub enum orchest_protocol::options::CompatibilityPolicy
+pub orchest_protocol::options::CompatibilityPolicy::Coerce
+pub orchest_protocol::options::CompatibilityPolicy::Strict
+#[non_exhaustive] pub enum orchest_protocol::options::ResponseFormat
+pub orchest_protocol::options::ResponseFormat::JsonObject
+pub orchest_protocol::options::ResponseFormat::Text
+#[non_exhaustive] pub enum orchest_protocol::options::ThinkingLevel
+pub orchest_protocol::options::ThinkingLevel::High
+pub orchest_protocol::options::ThinkingLevel::Low
+pub orchest_protocol::options::ThinkingLevel::Max
+pub orchest_protocol::options::ThinkingLevel::Medium
+pub orchest_protocol::options::ThinkingLevel::Minimal
+pub orchest_protocol::options::ThinkingLevel::Off
+pub orchest_protocol::options::ThinkingLevel::XHigh
+pub struct orchest_protocol::options::CacheCapability
+pub orchest_protocol::options::CacheCapability::explicit_breakpoints: bool
+pub orchest_protocol::options::CacheCapability::long_ttl: bool
+pub orchest_protocol::options::CacheCapability::supported: bool
+pub struct orchest_protocol::options::ModelCapabilities
+pub orchest_protocol::options::ModelCapabilities::context_window_size: core::option::Option<u64>
+pub orchest_protocol::options::ModelCapabilities::max_output_tokens: core::option::Option<u32>
+pub orchest_protocol::options::ModelCapabilities::parallel_tool_use: bool
+pub orchest_protocol::options::ModelCapabilities::pricing: core::option::Option<orchest_protocol::options::ModelPricing>
+pub orchest_protocol::options::ModelCapabilities::prompt_cache: orchest_protocol::options::CacheCapability
+pub orchest_protocol::options::ModelCapabilities::reasoning: orchest_protocol::options::ReasoningCapability
+pub orchest_protocol::options::ModelCapabilities::source: orchest_protocol::descriptor::CapabilitySource
+pub orchest_protocol::options::ModelCapabilities::streaming: bool
+pub orchest_protocol::options::ModelCapabilities::tool_use: bool
+pub struct orchest_protocol::options::ModelPricing
+pub orchest_protocol::options::ModelPricing::currency: alloc::string::String
+pub orchest_protocol::options::ModelPricing::tiers: alloc::vec::Vec<orchest_protocol::options::PricingTier>
+impl orchest_protocol::options::ModelPricing
+pub fn orchest_protocol::options::ModelPricing::calculate(&self, &orchest_protocol::response::TokenUsage) -> f64
+pub fn orchest_protocol::options::ModelPricing::flat_text(impl core::convert::Into<alloc::string::String>, f64, f64) -> Self
+pub fn orchest_protocol::options::ModelPricing::single_tier(impl core::convert::Into<alloc::string::String>, orchest_protocol::options::PricingRates) -> Self
+pub fn orchest_protocol::options::ModelPricing::tier_for_input(&self, u64) -> core::option::Option<&orchest_protocol::options::PricingTier>
+pub struct orchest_protocol::options::PricingRates
+pub orchest_protocol::options::PricingRates::audio_input_per_million: core::option::Option<f64>
+pub orchest_protocol::options::PricingRates::cache_read_per_million: core::option::Option<f64>
+pub orchest_protocol::options::PricingRates::cache_write_per_million: core::option::Option<f64>
+pub orchest_protocol::options::PricingRates::image_input_per_million: core::option::Option<f64>
+pub orchest_protocol::options::PricingRates::text_input_per_million: f64
+pub orchest_protocol::options::PricingRates::text_output_per_million: f64
+pub orchest_protocol::options::PricingRates::video_input_per_million: core::option::Option<f64>
+impl orchest_protocol::options::PricingRates
+pub fn orchest_protocol::options::PricingRates::text(f64, f64) -> Self
+pub fn orchest_protocol::options::PricingRates::with_audio_input(self, f64) -> Self
+pub fn orchest_protocol::options::PricingRates::with_cache(self, core::option::Option<f64>, core::option::Option<f64>) -> Self
+pub fn orchest_protocol::options::PricingRates::with_image_input(self, f64) -> Self
+pub fn orchest_protocol::options::PricingRates::with_video_input(self, f64) -> Self
+pub struct orchest_protocol::options::PricingTier
+pub orchest_protocol::options::PricingTier::max_input_tokens: core::option::Option<u64>
+pub orchest_protocol::options::PricingTier::rates: orchest_protocol::options::PricingRates
+pub struct orchest_protocol::options::ReasoningCapability
+pub orchest_protocol::options::ReasoningCapability::budget_tokens: bool
+pub orchest_protocol::options::ReasoningCapability::efforts: alloc::vec::Vec<orchest_protocol::options::ThinkingLevel>
+pub orchest_protocol::options::ReasoningCapability::output_exclusion: bool
+pub orchest_protocol::options::ReasoningCapability::replay_metadata_required: bool
+pub orchest_protocol::options::ReasoningCapability::supported: bool
+pub struct orchest_protocol::options::RequestOptions
+pub orchest_protocol::options::RequestOptions::cache_policy: orchest_protocol::options::CachePolicy
+pub orchest_protocol::options::RequestOptions::compatibility_policy: orchest_protocol::options::CompatibilityPolicy
+pub orchest_protocol::options::RequestOptions::include_thinking: bool
+pub orchest_protocol::options::RequestOptions::max_tokens: core::option::Option<u32>
+pub orchest_protocol::options::RequestOptions::response_format: orchest_protocol::options::ResponseFormat
+pub orchest_protocol::options::RequestOptions::service_tier: core::option::Option<alloc::string::String>
+pub orchest_protocol::options::RequestOptions::temperature: core::option::Option<f32>
+pub orchest_protocol::options::RequestOptions::thinking: orchest_protocol::options::ThinkingLevel
+pub orchest_protocol::options::RequestOptions::thinking_budget_tokens: core::option::Option<u32>
+pub orchest_protocol::options::RequestOptions::top_p: core::option::Option<f32>
+impl core::default::Default for orchest_protocol::options::RequestOptions
+pub fn orchest_protocol::options::RequestOptions::default() -> Self
+pub mod orchest_protocol::response
+#[non_exhaustive] pub enum orchest_protocol::response::StopReason
+pub orchest_protocol::response::StopReason::ContentFilter
+pub orchest_protocol::response::StopReason::ContextWindowExceeded
+pub orchest_protocol::response::StopReason::EndTurn
+pub orchest_protocol::response::StopReason::Interrupted
+pub orchest_protocol::response::StopReason::MaxTokens
+pub orchest_protocol::response::StopReason::Other(alloc::string::String)
+pub orchest_protocol::response::StopReason::Pause
+pub orchest_protocol::response::StopReason::Refusal
+pub orchest_protocol::response::StopReason::StopSequence
+pub orchest_protocol::response::StopReason::ToolUse
+pub struct orchest_protocol::response::ModelResponse
+pub orchest_protocol::response::ModelResponse::content: alloc::vec::Vec<orchest_protocol::types::ContentBlock>
+pub orchest_protocol::response::ModelResponse::option_adjustments: alloc::vec::Vec<orchest_protocol::response::OptionAdjustment>
+pub orchest_protocol::response::ModelResponse::stop_reason: orchest_protocol::response::StopReason
+pub orchest_protocol::response::ModelResponse::usage: orchest_protocol::response::TokenUsage
+pub struct orchest_protocol::response::OptionAdjustment
+pub orchest_protocol::response::OptionAdjustment::applied: serde_json::value::Value
+pub orchest_protocol::response::OptionAdjustment::option: alloc::string::String
+pub orchest_protocol::response::OptionAdjustment::reason: alloc::string::String
+pub orchest_protocol::response::OptionAdjustment::requested: serde_json::value::Value
+pub struct orchest_protocol::response::TokenUsage
+pub orchest_protocol::response::TokenUsage::audio_input_tokens: u64
+pub orchest_protocol::response::TokenUsage::cache_read_tokens: u64
+pub orchest_protocol::response::TokenUsage::cache_write_tokens: u64
+pub orchest_protocol::response::TokenUsage::cost_usd: core::option::Option<f64>
+pub orchest_protocol::response::TokenUsage::details: std::collections::hash::map::HashMap<alloc::string::String, u64>
+pub orchest_protocol::response::TokenUsage::image_input_tokens: u64
+pub orchest_protocol::response::TokenUsage::input_tokens: u64
+pub orchest_protocol::response::TokenUsage::output_tokens: u64
+pub orchest_protocol::response::TokenUsage::reasoning_tokens: u64
+pub orchest_protocol::response::TokenUsage::video_input_tokens: u64
+pub mod orchest_protocol::stream
+#[non_exhaustive] pub enum orchest_protocol::stream::AudioFormat
+pub orchest_protocol::stream::AudioFormat::Aac
+pub orchest_protocol::stream::AudioFormat::Flac
+pub orchest_protocol::stream::AudioFormat::M4a
+pub orchest_protocol::stream::AudioFormat::Mp3
+pub orchest_protocol::stream::AudioFormat::Ogg
+pub orchest_protocol::stream::AudioFormat::OggOpus
+pub orchest_protocol::stream::AudioFormat::Opus
+pub orchest_protocol::stream::AudioFormat::Pcm
+pub orchest_protocol::stream::AudioFormat::Pcm16Le
+pub orchest_protocol::stream::AudioFormat::Wav
+pub orchest_protocol::stream::AudioFormat::WavPcm16Le
+#[non_exhaustive] pub enum orchest_protocol::stream::CapabilityEventExt
+pub orchest_protocol::stream::CapabilityEventExt::Asr(serde_json::value::Value)
+#[non_exhaustive] pub enum orchest_protocol::stream::LifecycleEvent
+pub orchest_protocol::stream::LifecycleEvent::EndOfSpeech
+pub orchest_protocol::stream::LifecycleEvent::EndOfSpeech::segment: core::option::Option<orchest_protocol::stream::SegmentRef>
+pub orchest_protocol::stream::LifecycleEvent::Interrupted
+pub orchest_protocol::stream::LifecycleEvent::RouteSelected
+pub orchest_protocol::stream::LifecycleEvent::RouteSelected::model: alloc::string::String
+pub orchest_protocol::stream::LifecycleEvent::RouteSelected::provider: alloc::string::String
+pub orchest_protocol::stream::LifecycleEvent::RouteSelected::trace_id: core::option::Option<alloc::string::String>
+pub orchest_protocol::stream::LifecycleEvent::SessionClosed
+pub orchest_protocol::stream::LifecycleEvent::SessionStarted
+pub orchest_protocol::stream::LifecycleEvent::SessionStarted::session_id: core::option::Option<alloc::string::String>
+#[non_exhaustive] pub enum orchest_protocol::stream::StreamEvent
+pub orchest_protocol::stream::StreamEvent::AudioDelta
+pub orchest_protocol::stream::StreamEvent::AudioDelta::data: bytes::bytes::Bytes
+pub orchest_protocol::stream::StreamEvent::AudioDelta::format: orchest_protocol::stream::AudioFormat
+pub orchest_protocol::stream::StreamEvent::AudioDelta::sequence: u64
+pub orchest_protocol::stream::StreamEvent::Content
+pub orchest_protocol::stream::StreamEvent::Content::block: orchest_protocol::types::ContentBlock
+pub orchest_protocol::stream::StreamEvent::Done
+pub orchest_protocol::stream::StreamEvent::Done::usage: orchest_protocol::response::TokenUsage
+pub orchest_protocol::stream::StreamEvent::Error
+pub orchest_protocol::stream::StreamEvent::Error::error: orchest_protocol::error::ProtocolError
+pub orchest_protocol::stream::StreamEvent::Error::fatal: bool
+pub orchest_protocol::stream::StreamEvent::Extension(orchest_protocol::stream::CapabilityEventExt)
+pub orchest_protocol::stream::StreamEvent::Lifecycle(orchest_protocol::stream::LifecycleEvent)
+pub orchest_protocol::stream::StreamEvent::Text
+pub orchest_protocol::stream::StreamEvent::Text::delta: alloc::string::String
+pub orchest_protocol::stream::StreamEvent::Thinking
+pub orchest_protocol::stream::StreamEvent::Thinking::delta: alloc::string::String
+pub orchest_protocol::stream::StreamEvent::ThinkingEnd
+pub orchest_protocol::stream::StreamEvent::ThinkingEnd::provider_details: core::option::Option<serde_json::value::Value>
+pub orchest_protocol::stream::StreamEvent::ThinkingEnd::signature: core::option::Option<alloc::string::String>
+pub orchest_protocol::stream::StreamEvent::ThinkingStart
+pub orchest_protocol::stream::StreamEvent::ToolUseArgsChunk
+pub orchest_protocol::stream::StreamEvent::ToolUseArgsChunk::delta: alloc::string::String
+pub orchest_protocol::stream::StreamEvent::ToolUseArgsChunk::id: alloc::string::String
+pub orchest_protocol::stream::StreamEvent::ToolUseEnd
+pub orchest_protocol::stream::StreamEvent::ToolUseEnd::id: alloc::string::String
+pub orchest_protocol::stream::StreamEvent::ToolUseStart
+pub orchest_protocol::stream::StreamEvent::ToolUseStart::id: alloc::string::String
+pub orchest_protocol::stream::StreamEvent::ToolUseStart::name: alloc::string::String
+pub orchest_protocol::stream::StreamEvent::Transcript
+pub orchest_protocol::stream::StreamEvent::Transcript::segment: core::option::Option<orchest_protocol::stream::SegmentRef>
+pub orchest_protocol::stream::StreamEvent::Transcript::stability: orchest_protocol::stream::TranscriptStability
+pub orchest_protocol::stream::StreamEvent::Transcript::text: alloc::string::String
+#[non_exhaustive] pub enum orchest_protocol::stream::TranscriptStability
+pub orchest_protocol::stream::TranscriptStability::Committed
+pub orchest_protocol::stream::TranscriptStability::Provisional
+#[non_exhaustive] pub enum orchest_protocol::stream::TranscriptUpdateKind
+pub orchest_protocol::stream::TranscriptUpdateKind::Append
+pub orchest_protocol::stream::TranscriptUpdateKind::Snapshot
+pub struct orchest_protocol::stream::EventStream
+impl orchest_protocol::stream::EventStream
+pub fn orchest_protocol::stream::EventStream::channel(usize) -> (tokio::sync::mpsc::bounded::Sender<orchest_protocol::stream::StreamEvent>, Self)
+pub fn orchest_protocol::stream::EventStream::new(tokio::sync::mpsc::bounded::Receiver<orchest_protocol::stream::StreamEvent>) -> Self
+pub async fn orchest_protocol::stream::EventStream::next(&mut self) -> core::option::Option<orchest_protocol::stream::StreamEvent>
+pub struct orchest_protocol::stream::SegmentRef
+pub orchest_protocol::stream::SegmentRef::segment_id: core::option::Option<alloc::string::String>
+pub orchest_protocol::stream::SegmentRef::update_kind: orchest_protocol::stream::TranscriptUpdateKind
+pub mod orchest_protocol::types
+#[non_exhaustive] pub enum orchest_protocol::types::ContentBlock
+pub orchest_protocol::types::ContentBlock::Audio
+pub orchest_protocol::types::ContentBlock::Audio::source: orchest_protocol::types::MediaSource
+pub orchest_protocol::types::ContentBlock::Image
+pub orchest_protocol::types::ContentBlock::Image::detail: core::option::Option<alloc::string::String>
+pub orchest_protocol::types::ContentBlock::Image::source: orchest_protocol::types::MediaSource
+pub orchest_protocol::types::ContentBlock::MidConvSystem(alloc::string::String)
+pub orchest_protocol::types::ContentBlock::Text(alloc::string::String)
+pub orchest_protocol::types::ContentBlock::Thinking
+pub orchest_protocol::types::ContentBlock::Thinking::provider_details: core::option::Option<serde_json::value::Value>
+pub orchest_protocol::types::ContentBlock::Thinking::signature: core::option::Option<alloc::string::String>
+pub orchest_protocol::types::ContentBlock::Thinking::text: core::option::Option<alloc::string::String>
+pub orchest_protocol::types::ContentBlock::ToolResult
+pub orchest_protocol::types::ContentBlock::ToolResult::content: serde_json::value::Value
+pub orchest_protocol::types::ContentBlock::ToolResult::tool_use_id: alloc::string::String
+pub orchest_protocol::types::ContentBlock::ToolUse
+pub orchest_protocol::types::ContentBlock::ToolUse::id: alloc::string::String
+pub orchest_protocol::types::ContentBlock::ToolUse::input: serde_json::value::Value
+pub orchest_protocol::types::ContentBlock::ToolUse::name: alloc::string::String
+pub orchest_protocol::types::ContentBlock::Video
+pub orchest_protocol::types::ContentBlock::Video::detail: core::option::Option<alloc::string::String>
+pub orchest_protocol::types::ContentBlock::Video::fps: core::option::Option<f32>
+pub orchest_protocol::types::ContentBlock::Video::max_long_side_pixel: core::option::Option<u32>
+pub orchest_protocol::types::ContentBlock::Video::source: orchest_protocol::types::MediaSource
+#[non_exhaustive] pub enum orchest_protocol::types::MediaSource
+pub orchest_protocol::types::MediaSource::Base64
+pub orchest_protocol::types::MediaSource::Base64::data: alloc::string::String
+pub orchest_protocol::types::MediaSource::Base64::media_type: alloc::string::String
+pub orchest_protocol::types::MediaSource::Url
+pub orchest_protocol::types::MediaSource::Url::url: alloc::string::String
+#[non_exhaustive] pub enum orchest_protocol::types::Role
+pub orchest_protocol::types::Role::Assistant
+pub orchest_protocol::types::Role::Group
+pub orchest_protocol::types::Role::SampleMessageAi
+pub orchest_protocol::types::Role::SampleMessageUser
+pub orchest_protocol::types::Role::System
+pub orchest_protocol::types::Role::Tool
+pub orchest_protocol::types::Role::User
+pub orchest_protocol::types::Role::UserSystem
+pub struct orchest_protocol::types::Message
+pub orchest_protocol::types::Message::content: alloc::vec::Vec<orchest_protocol::types::ContentBlock>
+pub orchest_protocol::types::Message::role: orchest_protocol::types::Role
+pub struct orchest_protocol::types::ModelSpec
+pub orchest_protocol::types::ModelSpec::api_key_env: core::option::Option<alloc::string::String>
+pub orchest_protocol::types::ModelSpec::api_url: core::option::Option<alloc::string::String>
+pub orchest_protocol::types::ModelSpec::context_window_size: core::option::Option<u64>
+pub orchest_protocol::types::ModelSpec::max_tokens: core::option::Option<u32>
+pub orchest_protocol::types::ModelSpec::model: alloc::string::String
+pub orchest_protocol::types::ModelSpec::provider: alloc::string::String
+impl core::convert::From<orchest_protocol::types::ModelSpec> for orchest_protocol::types::ProviderRuntimeConfig
+pub fn orchest_protocol::types::ProviderRuntimeConfig::from(orchest_protocol::types::ModelSpec) -> Self
+pub struct orchest_protocol::types::ProviderRuntimeConfig
+pub orchest_protocol::types::ProviderRuntimeConfig::api_key: core::option::Option<alloc::string::String>
+pub orchest_protocol::types::ProviderRuntimeConfig::api_key_env: core::option::Option<alloc::string::String>
+pub orchest_protocol::types::ProviderRuntimeConfig::api_url: core::option::Option<alloc::string::String>
+pub orchest_protocol::types::ProviderRuntimeConfig::max_tokens: core::option::Option<u32>
+pub orchest_protocol::types::ProviderRuntimeConfig::model: alloc::string::String
+impl core::convert::From<orchest_protocol::types::ModelSpec> for orchest_protocol::types::ProviderRuntimeConfig
+pub fn orchest_protocol::types::ProviderRuntimeConfig::from(orchest_protocol::types::ModelSpec) -> Self
+pub struct orchest_protocol::types::ToolDef
+pub orchest_protocol::types::ToolDef::description: alloc::string::String
+pub orchest_protocol::types::ToolDef::input_schema: orchest_protocol::types::JsonSchema
+pub orchest_protocol::types::ToolDef::name: alloc::string::String
+pub type orchest_protocol::types::JsonSchema = serde_json::value::Value
+#[non_exhaustive] pub enum orchest_protocol::AudioFormat
+pub orchest_protocol::AudioFormat::Aac
+pub orchest_protocol::AudioFormat::Flac
+pub orchest_protocol::AudioFormat::M4a
+pub orchest_protocol::AudioFormat::Mp3
+pub orchest_protocol::AudioFormat::Ogg
+pub orchest_protocol::AudioFormat::OggOpus
+pub orchest_protocol::AudioFormat::Opus
+pub orchest_protocol::AudioFormat::Pcm
+pub orchest_protocol::AudioFormat::Pcm16Le
+pub orchest_protocol::AudioFormat::Wav
+pub orchest_protocol::AudioFormat::WavPcm16Le
+#[non_exhaustive] pub enum orchest_protocol::CachePolicy
+pub orchest_protocol::CachePolicy::Auto
+pub orchest_protocol::CachePolicy::Long
+pub orchest_protocol::CachePolicy::None
+#[non_exhaustive] pub enum orchest_protocol::Capability
+pub orchest_protocol::Capability::Asr
+pub orchest_protocol::Capability::Chat
+pub orchest_protocol::Capability::Decision
+pub orchest_protocol::Capability::GenTask
+pub orchest_protocol::Capability::Realtime
+pub orchest_protocol::Capability::Tts
+pub orchest_protocol::Capability::VoiceManagement
+#[non_exhaustive] pub enum orchest_protocol::CapabilityEventExt
+pub orchest_protocol::CapabilityEventExt::Asr(serde_json::value::Value)
+#[non_exhaustive] pub enum orchest_protocol::CapabilityExt
+pub orchest_protocol::CapabilityExt::Asr(serde_json::value::Value)
+pub orchest_protocol::CapabilityExt::Chat(orchest_protocol::descriptor::ChatCapabilityExt)
+pub orchest_protocol::CapabilityExt::GenTask(serde_json::value::Value)
+pub orchest_protocol::CapabilityExt::None
+pub orchest_protocol::CapabilityExt::Realtime(serde_json::value::Value)
+pub orchest_protocol::CapabilityExt::Tts(serde_json::value::Value)
+#[non_exhaustive] pub enum orchest_protocol::CapabilitySource
+pub orchest_protocol::CapabilitySource::Assumed
+pub orchest_protocol::CapabilitySource::ProviderMetadata
+pub orchest_protocol::CapabilitySource::Static
+#[non_exhaustive] pub enum orchest_protocol::CompatibilityPolicy
+pub orchest_protocol::CompatibilityPolicy::Coerce
+pub orchest_protocol::CompatibilityPolicy::Strict
+#[non_exhaustive] pub enum orchest_protocol::ContentBlock
+pub orchest_protocol::ContentBlock::Audio
+pub orchest_protocol::ContentBlock::Audio::source: orchest_protocol::types::MediaSource
+pub orchest_protocol::ContentBlock::Image
+pub orchest_protocol::ContentBlock::Image::detail: core::option::Option<alloc::string::String>
+pub orchest_protocol::ContentBlock::Image::source: orchest_protocol::types::MediaSource
+pub orchest_protocol::ContentBlock::MidConvSystem(alloc::string::String)
+pub orchest_protocol::ContentBlock::Text(alloc::string::String)
+pub orchest_protocol::ContentBlock::Thinking
+pub orchest_protocol::ContentBlock::Thinking::provider_details: core::option::Option<serde_json::value::Value>
+pub orchest_protocol::ContentBlock::Thinking::signature: core::option::Option<alloc::string::String>
+pub orchest_protocol::ContentBlock::Thinking::text: core::option::Option<alloc::string::String>
+pub orchest_protocol::ContentBlock::ToolResult
+pub orchest_protocol::ContentBlock::ToolResult::content: serde_json::value::Value
+pub orchest_protocol::ContentBlock::ToolResult::tool_use_id: alloc::string::String
+pub orchest_protocol::ContentBlock::ToolUse
+pub orchest_protocol::ContentBlock::ToolUse::id: alloc::string::String
+pub orchest_protocol::ContentBlock::ToolUse::input: serde_json::value::Value
+pub orchest_protocol::ContentBlock::ToolUse::name: alloc::string::String
+pub orchest_protocol::ContentBlock::Video
+pub orchest_protocol::ContentBlock::Video::detail: core::option::Option<alloc::string::String>
+pub orchest_protocol::ContentBlock::Video::fps: core::option::Option<f32>
+pub orchest_protocol::ContentBlock::Video::max_long_side_pixel: core::option::Option<u32>
+pub orchest_protocol::ContentBlock::Video::source: orchest_protocol::types::MediaSource
+#[non_exhaustive] pub enum orchest_protocol::DecisionAnswer
+pub orchest_protocol::DecisionAnswer::Boolean
+pub orchest_protocol::DecisionAnswer::Boolean::probability: f64
+pub orchest_protocol::DecisionAnswer::Choice
+pub orchest_protocol::DecisionAnswer::Choice::choice: alloc::string::String
+pub orchest_protocol::DecisionAnswer::Choice::confidence: core::option::Option<f64>
+pub orchest_protocol::DecisionAnswer::Choice::probabilities: core::option::Option<alloc::collections::btree::map::BTreeMap<alloc::string::String, f64>>
+pub orchest_protocol::DecisionAnswer::Score
+pub orchest_protocol::DecisionAnswer::Score::confidence: core::option::Option<f64>
+pub orchest_protocol::DecisionAnswer::Score::legend: core::option::Option<alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>>
+pub orchest_protocol::DecisionAnswer::Score::probabilities: core::option::Option<alloc::collections::btree::map::BTreeMap<alloc::string::String, f64>>
+pub orchest_protocol::DecisionAnswer::Score::score: f64
+#[non_exhaustive] pub enum orchest_protocol::DecisionQuestion
+pub orchest_protocol::DecisionQuestion::Boolean
+pub orchest_protocol::DecisionQuestion::Boolean::criteria: core::option::Option<orchest_protocol::BooleanCriteria>
+pub orchest_protocol::DecisionQuestion::Boolean::instructions: serde_json::value::Value
+pub orchest_protocol::DecisionQuestion::Choice
+pub orchest_protocol::DecisionQuestion::Choice::criteria: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub orchest_protocol::DecisionQuestion::Choice::instructions: serde_json::value::Value
+pub orchest_protocol::DecisionQuestion::Score
+pub orchest_protocol::DecisionQuestion::Score::criteria: alloc::vec::Vec<serde_json::value::Value>
+pub orchest_protocol::DecisionQuestion::Score::instructions: serde_json::value::Value
+#[non_exhaustive] pub enum orchest_protocol::ErrorCode
+pub orchest_protocol::ErrorCode::Cancelled
+pub orchest_protocol::ErrorCode::ContentFilter
+pub orchest_protocol::ErrorCode::ContextWindowExceeded
+pub orchest_protocol::ErrorCode::Internal
+pub orchest_protocol::ErrorCode::InvalidApiKey
+pub orchest_protocol::ErrorCode::InvalidAudio
+pub orchest_protocol::ErrorCode::InvalidRequest
+pub orchest_protocol::ErrorCode::InvalidResponse
+pub orchest_protocol::ErrorCode::MissingApiKey
+pub orchest_protocol::ErrorCode::NoMatchingProvider
+pub orchest_protocol::ErrorCode::Other
+pub orchest_protocol::ErrorCode::ProviderHttpError
+pub orchest_protocol::ErrorCode::ProviderStreamError
+pub orchest_protocol::ErrorCode::ProviderTaskFailed
+pub orchest_protocol::ErrorCode::Timeout
+pub orchest_protocol::ErrorCode::UnknownModel
+pub orchest_protocol::ErrorCode::UnknownProvider
+pub orchest_protocol::ErrorCode::UnsupportedAudioFormat
+pub orchest_protocol::ErrorCode::UnsupportedLanguage
+pub orchest_protocol::ErrorCode::UnsupportedOperation
+pub orchest_protocol::ErrorCode::UnsupportedOption
+#[non_exhaustive] pub enum orchest_protocol::GenAsset
+pub orchest_protocol::GenAsset::Bytes
+pub orchest_protocol::GenAsset::Bytes::data: bytes::bytes::Bytes
+pub orchest_protocol::GenAsset::Bytes::media_type: alloc::string::String
+pub orchest_protocol::GenAsset::Bytes::role: orchest_protocol::capability::GenAssetRole
+pub orchest_protocol::GenAsset::Url
+pub orchest_protocol::GenAsset::Url::media_type: core::option::Option<alloc::string::String>
+pub orchest_protocol::GenAsset::Url::role: orchest_protocol::capability::GenAssetRole
+pub orchest_protocol::GenAsset::Url::url: alloc::string::String
+#[non_exhaustive] pub enum orchest_protocol::GenAssetRole
+pub orchest_protocol::GenAssetRole::Cover
+pub orchest_protocol::GenAssetRole::Preview
+pub orchest_protocol::GenAssetRole::Primary
+#[non_exhaustive] pub enum orchest_protocol::GenStatus
+pub orchest_protocol::GenStatus::Done
+pub orchest_protocol::GenStatus::Failed
+pub orchest_protocol::GenStatus::Pending
+pub orchest_protocol::GenStatus::Running
+#[non_exhaustive] pub enum orchest_protocol::LifecycleEvent
+pub orchest_protocol::LifecycleEvent::EndOfSpeech
+pub orchest_protocol::LifecycleEvent::EndOfSpeech::segment: core::option::Option<orchest_protocol::stream::SegmentRef>
+pub orchest_protocol::LifecycleEvent::Interrupted
+pub orchest_protocol::LifecycleEvent::RouteSelected
+pub orchest_protocol::LifecycleEvent::RouteSelected::model: alloc::string::String
+pub orchest_protocol::LifecycleEvent::RouteSelected::provider: alloc::string::String
+pub orchest_protocol::LifecycleEvent::RouteSelected::trace_id: core::option::Option<alloc::string::String>
+pub orchest_protocol::LifecycleEvent::SessionClosed
+pub orchest_protocol::LifecycleEvent::SessionStarted
+pub orchest_protocol::LifecycleEvent::SessionStarted::session_id: core::option::Option<alloc::string::String>
+#[non_exhaustive] pub enum orchest_protocol::MediaSource
+pub orchest_protocol::MediaSource::Base64
+pub orchest_protocol::MediaSource::Base64::data: alloc::string::String
+pub orchest_protocol::MediaSource::Base64::media_type: alloc::string::String
+pub orchest_protocol::MediaSource::Url
+pub orchest_protocol::MediaSource::Url::url: alloc::string::String
+#[non_exhaustive] pub enum orchest_protocol::Modality
+pub orchest_protocol::Modality::Audio
+pub orchest_protocol::Modality::Image
+pub orchest_protocol::Modality::Text
+pub orchest_protocol::Modality::Video
+#[non_exhaustive] pub enum orchest_protocol::ResponseFormat
+pub orchest_protocol::ResponseFormat::JsonObject
+pub orchest_protocol::ResponseFormat::Text
+#[non_exhaustive] pub enum orchest_protocol::Role
+pub orchest_protocol::Role::Assistant
+pub orchest_protocol::Role::Group
+pub orchest_protocol::Role::SampleMessageAi
+pub orchest_protocol::Role::SampleMessageUser
+pub orchest_protocol::Role::System
+pub orchest_protocol::Role::Tool
+pub orchest_protocol::Role::User
+pub orchest_protocol::Role::UserSystem
+#[non_exhaustive] pub enum orchest_protocol::SessionInput
+pub orchest_protocol::SessionInput::Audio(bytes::bytes::Bytes)
+pub orchest_protocol::SessionInput::Interrupt
+pub orchest_protocol::SessionInput::Text(alloc::string::String)
+pub orchest_protocol::SessionInput::ToolResult
+pub orchest_protocol::SessionInput::ToolResult::content: serde_json::value::Value
+pub orchest_protocol::SessionInput::ToolResult::tool_use_id: alloc::string::String
+#[non_exhaustive] pub enum orchest_protocol::StopReason
+pub orchest_protocol::StopReason::ContentFilter
+pub orchest_protocol::StopReason::ContextWindowExceeded
+pub orchest_protocol::StopReason::EndTurn
+pub orchest_protocol::StopReason::Interrupted
+pub orchest_protocol::StopReason::MaxTokens
+pub orchest_protocol::StopReason::Other(alloc::string::String)
+pub orchest_protocol::StopReason::Pause
+pub orchest_protocol::StopReason::Refusal
+pub orchest_protocol::StopReason::StopSequence
+pub orchest_protocol::StopReason::ToolUse
+#[non_exhaustive] pub enum orchest_protocol::StreamEvent
+pub orchest_protocol::StreamEvent::AudioDelta
+pub orchest_protocol::StreamEvent::AudioDelta::data: bytes::bytes::Bytes
+pub orchest_protocol::StreamEvent::AudioDelta::format: orchest_protocol::stream::AudioFormat
+pub orchest_protocol::StreamEvent::AudioDelta::sequence: u64
+pub orchest_protocol::StreamEvent::Content
+pub orchest_protocol::StreamEvent::Content::block: orchest_protocol::types::ContentBlock
+pub orchest_protocol::StreamEvent::Done
+pub orchest_protocol::StreamEvent::Done::usage: orchest_protocol::response::TokenUsage
+pub orchest_protocol::StreamEvent::Error
+pub orchest_protocol::StreamEvent::Error::error: orchest_protocol::error::ProtocolError
+pub orchest_protocol::StreamEvent::Error::fatal: bool
+pub orchest_protocol::StreamEvent::Extension(orchest_protocol::stream::CapabilityEventExt)
+pub orchest_protocol::StreamEvent::Lifecycle(orchest_protocol::stream::LifecycleEvent)
+pub orchest_protocol::StreamEvent::Text
+pub orchest_protocol::StreamEvent::Text::delta: alloc::string::String
+pub orchest_protocol::StreamEvent::Thinking
+pub orchest_protocol::StreamEvent::Thinking::delta: alloc::string::String
+pub orchest_protocol::StreamEvent::ThinkingEnd
+pub orchest_protocol::StreamEvent::ThinkingEnd::provider_details: core::option::Option<serde_json::value::Value>
+pub orchest_protocol::StreamEvent::ThinkingEnd::signature: core::option::Option<alloc::string::String>
+pub orchest_protocol::StreamEvent::ThinkingStart
+pub orchest_protocol::StreamEvent::ToolUseArgsChunk
+pub orchest_protocol::StreamEvent::ToolUseArgsChunk::delta: alloc::string::String
+pub orchest_protocol::StreamEvent::ToolUseArgsChunk::id: alloc::string::String
+pub orchest_protocol::StreamEvent::ToolUseEnd
+pub orchest_protocol::StreamEvent::ToolUseEnd::id: alloc::string::String
+pub orchest_protocol::StreamEvent::ToolUseStart
+pub orchest_protocol::StreamEvent::ToolUseStart::id: alloc::string::String
+pub orchest_protocol::StreamEvent::ToolUseStart::name: alloc::string::String
+pub orchest_protocol::StreamEvent::Transcript
+pub orchest_protocol::StreamEvent::Transcript::segment: core::option::Option<orchest_protocol::stream::SegmentRef>
+pub orchest_protocol::StreamEvent::Transcript::stability: orchest_protocol::stream::TranscriptStability
+pub orchest_protocol::StreamEvent::Transcript::text: alloc::string::String
+#[non_exhaustive] pub enum orchest_protocol::ThinkingLevel
+pub orchest_protocol::ThinkingLevel::High
+pub orchest_protocol::ThinkingLevel::Low
+pub orchest_protocol::ThinkingLevel::Max
+pub orchest_protocol::ThinkingLevel::Medium
+pub orchest_protocol::ThinkingLevel::Minimal
+pub orchest_protocol::ThinkingLevel::Off
+pub orchest_protocol::ThinkingLevel::XHigh
+#[non_exhaustive] pub enum orchest_protocol::TranscriptStability
+pub orchest_protocol::TranscriptStability::Committed
+pub orchest_protocol::TranscriptStability::Provisional
+#[non_exhaustive] pub enum orchest_protocol::TranscriptUpdateKind
+pub orchest_protocol::TranscriptUpdateKind::Append
+pub orchest_protocol::TranscriptUpdateKind::Snapshot
+#[non_exhaustive] pub enum orchest_protocol::VocalGender
+pub orchest_protocol::VocalGender::Female
+pub orchest_protocol::VocalGender::Male
+pub struct orchest_protocol::BooleanCriteria
+pub orchest_protocol::BooleanCriteria::false_: serde_json::value::Value
+pub orchest_protocol::BooleanCriteria::true_: serde_json::value::Value
+pub struct orchest_protocol::CacheCapability
+pub orchest_protocol::CacheCapability::explicit_breakpoints: bool
+pub orchest_protocol::CacheCapability::long_ttl: bool
+pub orchest_protocol::CacheCapability::supported: bool
+pub struct orchest_protocol::CapabilityDescriptor
+pub orchest_protocol::CapabilityDescriptor::capability: orchest_protocol::descriptor::Capability
+pub orchest_protocol::CapabilityDescriptor::default_for_provider: bool
+pub orchest_protocol::CapabilityDescriptor::duplex: bool
+pub orchest_protocol::CapabilityDescriptor::ext: orchest_protocol::descriptor::CapabilityExt
+pub orchest_protocol::CapabilityDescriptor::input_modalities: alloc::vec::Vec<orchest_protocol::descriptor::Modality>
+pub orchest_protocol::CapabilityDescriptor::interruptible: bool
+pub orchest_protocol::CapabilityDescriptor::model: alloc::borrow::Cow<'static, str>
+pub orchest_protocol::CapabilityDescriptor::output_modalities: alloc::vec::Vec<orchest_protocol::descriptor::Modality>
+pub orchest_protocol::CapabilityDescriptor::provider: alloc::borrow::Cow<'static, str>
+pub orchest_protocol::CapabilityDescriptor::source: orchest_protocol::descriptor::CapabilitySource
+pub orchest_protocol::CapabilityDescriptor::streaming: bool
+pub orchest_protocol::CapabilityDescriptor::thinking: bool
+pub orchest_protocol::CapabilityDescriptor::tools: bool
+impl orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::accepts(&self, &[orchest_protocol::descriptor::Modality]) -> bool
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::default_for_provider(self, bool) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::duplex(self, bool) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::emits(&self, &[orchest_protocol::descriptor::Modality]) -> bool
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::interruptible(self, bool) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::new(impl core::convert::Into<alloc::borrow::Cow<'static, str>>, impl core::convert::Into<alloc::borrow::Cow<'static, str>>, orchest_protocol::descriptor::Capability) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::streaming(self, bool) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::thinking(self, bool) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::tools(self, bool) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::with_ext(self, orchest_protocol::descriptor::CapabilityExt) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::with_input_modalities(self, impl core::convert::Into<alloc::vec::Vec<orchest_protocol::descriptor::Modality>>) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::with_output_modalities(self, impl core::convert::Into<alloc::vec::Vec<orchest_protocol::descriptor::Modality>>) -> Self
+pub fn orchest_protocol::descriptor::CapabilityDescriptor::with_source(self, orchest_protocol::descriptor::CapabilitySource) -> Self
+pub struct orchest_protocol::ChatCapabilityExt
+pub orchest_protocol::ChatCapabilityExt::context_window_size: core::option::Option<u64>
+pub orchest_protocol::ChatCapabilityExt::max_output_tokens: core::option::Option<u32>
+pub orchest_protocol::ChatCapabilityExt::parallel_tool_use: bool
+pub orchest_protocol::ChatCapabilityExt::pricing: core::option::Option<orchest_protocol::options::ModelPricing>
+pub orchest_protocol::ChatCapabilityExt::prompt_cache: orchest_protocol::options::CacheCapability
+pub orchest_protocol::ChatCapabilityExt::reasoning: orchest_protocol::options::ReasoningCapability
+pub struct orchest_protocol::DecisionRequest
+pub orchest_protocol::DecisionRequest::questions: alloc::collections::btree::map::BTreeMap<alloc::string::String, orchest_protocol::DecisionQuestion>
+pub orchest_protocol::DecisionRequest::state: serde_json::value::Value
+impl orchest_protocol::DecisionRequest
+pub fn orchest_protocol::DecisionRequest::validate(&self) -> core::result::Result<(), orchest_protocol::error::ProtocolError>
+pub struct orchest_protocol::DecisionResponse
+pub orchest_protocol::DecisionResponse::answers: alloc::collections::btree::map::BTreeMap<alloc::string::String, orchest_protocol::DecisionAnswer>
+pub orchest_protocol::DecisionResponse::id: core::option::Option<alloc::string::String>
+pub orchest_protocol::DecisionResponse::model: alloc::string::String
+pub orchest_protocol::DecisionResponse::provider: core::option::Option<alloc::string::String>
+pub orchest_protocol::DecisionResponse::usage: core::option::Option<orchest_protocol::DecisionUsage>
+impl orchest_protocol::DecisionResponse
+pub fn orchest_protocol::DecisionResponse::validate_for(&self, &orchest_protocol::DecisionRequest) -> core::result::Result<(), orchest_protocol::error::ProtocolError>
+pub struct orchest_protocol::DecisionUsage
+pub orchest_protocol::DecisionUsage::cost_usd: core::option::Option<f64>
+pub orchest_protocol::DecisionUsage::input_tokens: u64
+pub orchest_protocol::DecisionUsage::output_tokens: u64
+pub struct orchest_protocol::EventStream
+impl orchest_protocol::stream::EventStream
+pub fn orchest_protocol::stream::EventStream::channel(usize) -> (tokio::sync::mpsc::bounded::Sender<orchest_protocol::stream::StreamEvent>, Self)
+pub fn orchest_protocol::stream::EventStream::new(tokio::sync::mpsc::bounded::Receiver<orchest_protocol::stream::StreamEvent>) -> Self
+pub async fn orchest_protocol::stream::EventStream::next(&mut self) -> core::option::Option<orchest_protocol::stream::StreamEvent>
+pub struct orchest_protocol::GenHandle
+pub orchest_protocol::GenHandle::id: alloc::string::String
+pub orchest_protocol::GenHandle::provider: core::option::Option<alloc::string::String>
+pub struct orchest_protocol::GenRequest
+pub orchest_protocol::GenRequest::music: core::option::Option<orchest_protocol::capability::MusicParams>
+pub orchest_protocol::GenRequest::params: serde_json::value::Value
+pub orchest_protocol::GenRequest::prompt: alloc::string::String
+pub struct orchest_protocol::GenResult
+pub orchest_protocol::GenResult::assets: alloc::vec::Vec<orchest_protocol::capability::GenAsset>
+pub orchest_protocol::GenResult::diagnostic_metadata: serde_json::value::Value
+pub orchest_protocol::GenResult::duration_secs: core::option::Option<f64>
+pub orchest_protocol::GenResult::timed_text: core::option::Option<orchest_protocol::capability::TimedText>
+pub orchest_protocol::GenResult::track_meta: alloc::vec::Vec<orchest_protocol::capability::TrackMeta>
+pub struct orchest_protocol::Language(pub alloc::string::String)
+pub struct orchest_protocol::Message
+pub orchest_protocol::Message::content: alloc::vec::Vec<orchest_protocol::types::ContentBlock>
+pub orchest_protocol::Message::role: orchest_protocol::types::Role
+pub struct orchest_protocol::ModelCapabilities
+pub orchest_protocol::ModelCapabilities::context_window_size: core::option::Option<u64>
+pub orchest_protocol::ModelCapabilities::max_output_tokens: core::option::Option<u32>
+pub orchest_protocol::ModelCapabilities::parallel_tool_use: bool
+pub orchest_protocol::ModelCapabilities::pricing: core::option::Option<orchest_protocol::options::ModelPricing>
+pub orchest_protocol::ModelCapabilities::prompt_cache: orchest_protocol::options::CacheCapability
+pub orchest_protocol::ModelCapabilities::reasoning: orchest_protocol::options::ReasoningCapability
+pub orchest_protocol::ModelCapabilities::source: orchest_protocol::descriptor::CapabilitySource
+pub orchest_protocol::ModelCapabilities::streaming: bool
+pub orchest_protocol::ModelCapabilities::tool_use: bool
+pub struct orchest_protocol::ModelError
+pub orchest_protocol::ModelError::code: core::option::Option<alloc::string::String>
+pub orchest_protocol::ModelError::message: alloc::string::String
+pub orchest_protocol::ModelError::provider: core::option::Option<alloc::string::String>
+pub orchest_protocol::ModelError::retry_after_secs: core::option::Option<u64>
+pub orchest_protocol::ModelError::status: core::option::Option<u16>
+pub orchest_protocol::ModelError::upstream: core::option::Option<alloc::sync::Arc<orchest_protocol::error::UpstreamErrorDetail>>
+impl orchest_protocol::error::ModelError
+pub fn orchest_protocol::error::ModelError::internal(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::convert::From<orchest_protocol::error::ModelError> for orchest_protocol::error::ProtocolError
+pub fn orchest_protocol::error::ProtocolError::from(orchest_protocol::error::ModelError) -> Self
+impl core::convert::From<orchest_protocol::error::ProtocolError> for orchest_protocol::error::ModelError
+pub fn orchest_protocol::error::ModelError::from(orchest_protocol::error::ProtocolError) -> Self
+pub struct orchest_protocol::ModelPricing
+pub orchest_protocol::ModelPricing::currency: alloc::string::String
+pub orchest_protocol::ModelPricing::tiers: alloc::vec::Vec<orchest_protocol::options::PricingTier>
+impl orchest_protocol::options::ModelPricing
+pub fn orchest_protocol::options::ModelPricing::calculate(&self, &orchest_protocol::response::TokenUsage) -> f64
+pub fn orchest_protocol::options::ModelPricing::flat_text(impl core::convert::Into<alloc::string::String>, f64, f64) -> Self
+pub fn orchest_protocol::options::ModelPricing::single_tier(impl core::convert::Into<alloc::string::String>, orchest_protocol::options::PricingRates) -> Self
+pub fn orchest_protocol::options::ModelPricing::tier_for_input(&self, u64) -> core::option::Option<&orchest_protocol::options::PricingTier>
+pub struct orchest_protocol::ModelResponse
+pub orchest_protocol::ModelResponse::content: alloc::vec::Vec<orchest_protocol::types::ContentBlock>
+pub orchest_protocol::ModelResponse::option_adjustments: alloc::vec::Vec<orchest_protocol::response::OptionAdjustment>
+pub orchest_protocol::ModelResponse::stop_reason: orchest_protocol::response::StopReason
+pub orchest_protocol::ModelResponse::usage: orchest_protocol::response::TokenUsage
+pub struct orchest_protocol::ModelSpec
+pub orchest_protocol::ModelSpec::api_key_env: core::option::Option<alloc::string::String>
+pub orchest_protocol::ModelSpec::api_url: core::option::Option<alloc::string::String>
+pub orchest_protocol::ModelSpec::context_window_size: core::option::Option<u64>
+pub orchest_protocol::ModelSpec::max_tokens: core::option::Option<u32>
+pub orchest_protocol::ModelSpec::model: alloc::string::String
+pub orchest_protocol::ModelSpec::provider: alloc::string::String
+impl core::convert::From<orchest_protocol::types::ModelSpec> for orchest_protocol::types::ProviderRuntimeConfig
+pub fn orchest_protocol::types::ProviderRuntimeConfig::from(orchest_protocol::types::ModelSpec) -> Self
+pub struct orchest_protocol::MusicParams
+pub orchest_protocol::MusicParams::audio_weight: core::option::Option<f64>
+pub orchest_protocol::MusicParams::instrumental: core::option::Option<bool>
+pub orchest_protocol::MusicParams::lyrics: core::option::Option<alloc::string::String>
+pub orchest_protocol::MusicParams::negative_tags: core::option::Option<alloc::string::String>
+pub orchest_protocol::MusicParams::style: core::option::Option<alloc::string::String>
+pub orchest_protocol::MusicParams::style_weight: core::option::Option<f64>
+pub orchest_protocol::MusicParams::title: core::option::Option<alloc::string::String>
+pub orchest_protocol::MusicParams::vocal_gender: core::option::Option<orchest_protocol::capability::VocalGender>
+pub orchest_protocol::MusicParams::weirdness_constraint: core::option::Option<f64>
+pub struct orchest_protocol::OptionAdjustment
+pub orchest_protocol::OptionAdjustment::applied: serde_json::value::Value
+pub orchest_protocol::OptionAdjustment::option: alloc::string::String
+pub orchest_protocol::OptionAdjustment::reason: alloc::string::String
+pub orchest_protocol::OptionAdjustment::requested: serde_json::value::Value
+pub struct orchest_protocol::PricingRates
+pub orchest_protocol::PricingRates::audio_input_per_million: core::option::Option<f64>
+pub orchest_protocol::PricingRates::cache_read_per_million: core::option::Option<f64>
+pub orchest_protocol::PricingRates::cache_write_per_million: core::option::Option<f64>
+pub orchest_protocol::PricingRates::image_input_per_million: core::option::Option<f64>
+pub orchest_protocol::PricingRates::text_input_per_million: f64
+pub orchest_protocol::PricingRates::text_output_per_million: f64
+pub orchest_protocol::PricingRates::video_input_per_million: core::option::Option<f64>
+impl orchest_protocol::options::PricingRates
+pub fn orchest_protocol::options::PricingRates::text(f64, f64) -> Self
+pub fn orchest_protocol::options::PricingRates::with_audio_input(self, f64) -> Self
+pub fn orchest_protocol::options::PricingRates::with_cache(self, core::option::Option<f64>, core::option::Option<f64>) -> Self
+pub fn orchest_protocol::options::PricingRates::with_image_input(self, f64) -> Self
+pub fn orchest_protocol::options::PricingRates::with_video_input(self, f64) -> Self
+pub struct orchest_protocol::PricingTier
+pub orchest_protocol::PricingTier::max_input_tokens: core::option::Option<u64>
+pub orchest_protocol::PricingTier::rates: orchest_protocol::options::PricingRates
+pub struct orchest_protocol::ProtocolError
+pub orchest_protocol::ProtocolError::code: orchest_protocol::error::ErrorCode
+pub orchest_protocol::ProtocolError::diagnostic_metadata: serde_json::value::Value
+pub orchest_protocol::ProtocolError::message: alloc::string::String
+pub orchest_protocol::ProtocolError::model: core::option::Option<alloc::string::String>
+pub orchest_protocol::ProtocolError::provider: core::option::Option<alloc::string::String>
+pub orchest_protocol::ProtocolError::retry_after_secs: core::option::Option<u64>
+pub orchest_protocol::ProtocolError::status: core::option::Option<u16>
+pub orchest_protocol::ProtocolError::upstream: core::option::Option<alloc::sync::Arc<orchest_protocol::error::UpstreamErrorDetail>>
+impl orchest_protocol::error::ProtocolError
+pub fn orchest_protocol::error::ProtocolError::internal_err(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest_protocol::error::ProtocolError::new(orchest_protocol::error::ErrorCode, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest_protocol::error::ProtocolError::with_model(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest_protocol::error::ProtocolError::with_provider(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest_protocol::error::ProtocolError::with_status(self, u16) -> Self
+impl core::convert::From<orchest_protocol::error::ModelError> for orchest_protocol::error::ProtocolError
+pub fn orchest_protocol::error::ProtocolError::from(orchest_protocol::error::ModelError) -> Self
+impl core::convert::From<orchest_protocol::error::ProtocolError> for orchest_protocol::error::ModelError
+pub fn orchest_protocol::error::ModelError::from(orchest_protocol::error::ProtocolError) -> Self
+pub struct orchest_protocol::ProviderRuntimeConfig
+pub orchest_protocol::ProviderRuntimeConfig::api_key: core::option::Option<alloc::string::String>
+pub orchest_protocol::ProviderRuntimeConfig::api_key_env: core::option::Option<alloc::string::String>
+pub orchest_protocol::ProviderRuntimeConfig::api_url: core::option::Option<alloc::string::String>
+pub orchest_protocol::ProviderRuntimeConfig::max_tokens: core::option::Option<u32>
+pub orchest_protocol::ProviderRuntimeConfig::model: alloc::string::String
+impl core::convert::From<orchest_protocol::types::ModelSpec> for orchest_protocol::types::ProviderRuntimeConfig
+pub fn orchest_protocol::types::ProviderRuntimeConfig::from(orchest_protocol::types::ModelSpec) -> Self
+pub struct orchest_protocol::RealtimeHandle
+pub orchest_protocol::RealtimeHandle::events: orchest_protocol::stream::EventStream
+pub orchest_protocol::RealtimeHandle::input: tokio::sync::mpsc::bounded::Sender<orchest_protocol::capability::SessionInput>
+pub struct orchest_protocol::ReasoningCapability
+pub orchest_protocol::ReasoningCapability::budget_tokens: bool
+pub orchest_protocol::ReasoningCapability::efforts: alloc::vec::Vec<orchest_protocol::options::ThinkingLevel>
+pub orchest_protocol::ReasoningCapability::output_exclusion: bool
+pub orchest_protocol::ReasoningCapability::replay_metadata_required: bool
+pub orchest_protocol::ReasoningCapability::supported: bool
+pub struct orchest_protocol::RequestOptions
+pub orchest_protocol::RequestOptions::cache_policy: orchest_protocol::options::CachePolicy
+pub orchest_protocol::RequestOptions::compatibility_policy: orchest_protocol::options::CompatibilityPolicy
+pub orchest_protocol::RequestOptions::include_thinking: bool
+pub orchest_protocol::RequestOptions::max_tokens: core::option::Option<u32>
+pub orchest_protocol::RequestOptions::response_format: orchest_protocol::options::ResponseFormat
+pub orchest_protocol::RequestOptions::service_tier: core::option::Option<alloc::string::String>
+pub orchest_protocol::RequestOptions::temperature: core::option::Option<f32>
+pub orchest_protocol::RequestOptions::thinking: orchest_protocol::options::ThinkingLevel
+pub orchest_protocol::RequestOptions::thinking_budget_tokens: core::option::Option<u32>
+pub orchest_protocol::RequestOptions::top_p: core::option::Option<f32>
+impl core::default::Default for orchest_protocol::options::RequestOptions
+pub fn orchest_protocol::options::RequestOptions::default() -> Self
+pub struct orchest_protocol::SegmentRef
+pub orchest_protocol::SegmentRef::segment_id: core::option::Option<alloc::string::String>
+pub orchest_protocol::SegmentRef::update_kind: orchest_protocol::stream::TranscriptUpdateKind
+pub struct orchest_protocol::StreamingTranscribeRequest
+pub orchest_protocol::StreamingTranscribeRequest::format: orchest_protocol::stream::AudioFormat
+pub orchest_protocol::StreamingTranscribeRequest::language: core::option::Option<orchest_protocol::capability::Language>
+pub orchest_protocol::StreamingTranscribeRequest::options: serde_json::value::Value
+pub struct orchest_protocol::SynthesizeRequest
+pub orchest_protocol::SynthesizeRequest::format: orchest_protocol::stream::AudioFormat
+pub orchest_protocol::SynthesizeRequest::options: serde_json::value::Value
+pub orchest_protocol::SynthesizeRequest::text: alloc::string::String
+pub orchest_protocol::SynthesizeRequest::voice: core::option::Option<alloc::string::String>
+pub struct orchest_protocol::SynthesizeResult
+pub orchest_protocol::SynthesizeResult::audio: bytes::bytes::Bytes
+pub orchest_protocol::SynthesizeResult::diagnostic_metadata: serde_json::value::Value
+pub orchest_protocol::SynthesizeResult::format: orchest_protocol::stream::AudioFormat
+pub struct orchest_protocol::TimedSegment
+pub orchest_protocol::TimedSegment::end: core::option::Option<f64>
+pub orchest_protocol::TimedSegment::start: f64
+pub orchest_protocol::TimedSegment::text: alloc::string::String
+pub struct orchest_protocol::TimedText
+pub orchest_protocol::TimedText::segments: alloc::vec::Vec<orchest_protocol::capability::TimedSegment>
+pub struct orchest_protocol::TokenUsage
+pub orchest_protocol::TokenUsage::audio_input_tokens: u64
+pub orchest_protocol::TokenUsage::cache_read_tokens: u64
+pub orchest_protocol::TokenUsage::cache_write_tokens: u64
+pub orchest_protocol::TokenUsage::cost_usd: core::option::Option<f64>
+pub orchest_protocol::TokenUsage::details: std::collections::hash::map::HashMap<alloc::string::String, u64>
+pub orchest_protocol::TokenUsage::image_input_tokens: u64
+pub orchest_protocol::TokenUsage::input_tokens: u64
+pub orchest_protocol::TokenUsage::output_tokens: u64
+pub orchest_protocol::TokenUsage::reasoning_tokens: u64
+pub orchest_protocol::TokenUsage::video_input_tokens: u64
+pub struct orchest_protocol::ToolDef
+pub orchest_protocol::ToolDef::description: alloc::string::String
+pub orchest_protocol::ToolDef::input_schema: orchest_protocol::types::JsonSchema
+pub orchest_protocol::ToolDef::name: alloc::string::String
+pub struct orchest_protocol::TrackMeta
+pub orchest_protocol::TrackMeta::duration_secs: core::option::Option<f64>
+pub orchest_protocol::TrackMeta::timed_text: core::option::Option<orchest_protocol::capability::TimedText>
+pub struct orchest_protocol::TranscribeRequest
+pub orchest_protocol::TranscribeRequest::audio: bytes::bytes::Bytes
+pub orchest_protocol::TranscribeRequest::format: orchest_protocol::stream::AudioFormat
+pub orchest_protocol::TranscribeRequest::language: core::option::Option<orchest_protocol::capability::Language>
+pub orchest_protocol::TranscribeRequest::options: serde_json::value::Value
+pub struct orchest_protocol::TranscribeResult
+pub orchest_protocol::TranscribeResult::diagnostic_metadata: serde_json::value::Value
+pub orchest_protocol::TranscribeResult::language: core::option::Option<orchest_protocol::capability::Language>
+pub orchest_protocol::TranscribeResult::text: alloc::string::String
+pub struct orchest_protocol::UpstreamErrorDetail
+pub orchest_protocol::UpstreamErrorDetail::body: core::option::Option<serde_json::value::Value>
+pub orchest_protocol::UpstreamErrorDetail::code: core::option::Option<alloc::string::String>
+pub orchest_protocol::UpstreamErrorDetail::message: core::option::Option<alloc::string::String>
+pub trait orchest_protocol::Asr: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::Asr::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_protocol::Asr::model_name(&self) -> &str
+pub fn orchest_protocol::Asr::provider_name(&self) -> &str
+pub fn orchest_protocol::Asr::start_stream<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::StreamingTranscribeRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::RealtimeHandle, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_protocol::Asr::supported_languages(&self) -> &[orchest_protocol::capability::Language]
+pub fn orchest_protocol::Asr::transcribe<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::TranscribeRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::TranscribeResult, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub trait orchest_protocol::CatalogEntry
+pub fn orchest_protocol::CatalogEntry::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub trait orchest_protocol::ChatModel: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::ChatModel::capabilities(&self) -> orchest_protocol::options::ModelCapabilities
+pub fn orchest_protocol::ChatModel::complete<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 [orchest_protocol::types::Message], &'life2 [orchest_protocol::types::ToolDef], &'life3 orchest_protocol::options::RequestOptions, core::option::Option<tokio::sync::mpsc::bounded::Sender<orchest_protocol::stream::StreamEvent>>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::response::ModelResponse, orchest_protocol::error::ModelError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn orchest_protocol::ChatModel::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_protocol::ChatModel::model_name(&self) -> &str
+pub fn orchest_protocol::ChatModel::provider_name(&self) -> &str
+pub trait orchest_protocol::Decision: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::Decision::decide<'life0, 'async_trait>(&'life0 self, orchest_protocol::DecisionRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::DecisionResponse, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_protocol::Decision::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_protocol::Decision::model_name(&self) -> &str
+pub fn orchest_protocol::Decision::provider_name(&self) -> &str
+pub trait orchest_protocol::GenTask: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::GenTask::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_protocol::GenTask::fetch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest_protocol::capability::GenHandle) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::GenResult, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest_protocol::GenTask::model_name(&self) -> &str
+pub fn orchest_protocol::GenTask::poll<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest_protocol::capability::GenHandle) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::GenStatus, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest_protocol::GenTask::provider_name(&self) -> &str
+pub fn orchest_protocol::GenTask::submit<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::GenRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::GenHandle, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub trait orchest_protocol::ModelAdapter: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::ModelAdapter::capabilities(&self) -> orchest_protocol::options::ModelCapabilities
+pub fn orchest_protocol::ModelAdapter::complete<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 [orchest_protocol::types::Message], &'life2 [orchest_protocol::types::ToolDef], &'life3 orchest_protocol::options::RequestOptions, core::option::Option<tokio::sync::mpsc::bounded::Sender<orchest_protocol::stream::StreamEvent>>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::response::ModelResponse, orchest_protocol::error::ModelError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn orchest_protocol::ModelAdapter::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_protocol::ModelAdapter::model_name(&self) -> &str
+pub fn orchest_protocol::ModelAdapter::provider_name(&self) -> &str
+pub trait orchest_protocol::RealtimeSession: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::RealtimeSession::close<'life0, 'async_trait>(&'life0 mut self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_protocol::RealtimeSession::events(&mut self) -> &mut orchest_protocol::stream::EventStream
+pub fn orchest_protocol::RealtimeSession::send<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::SessionInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub trait orchest_protocol::Tts: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::Tts::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_protocol::Tts::model_name(&self) -> &str
+pub fn orchest_protocol::Tts::provider_name(&self) -> &str
+pub fn orchest_protocol::Tts::start_duplex_stream<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::RealtimeHandle, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_protocol::Tts::stream_synthesize<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::SynthesizeRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::stream::EventStream, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_protocol::Tts::synthesize<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::SynthesizeRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::SynthesizeResult, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub trait orchest_protocol::VoiceManager: core::marker::Send + core::marker::Sync
+pub fn orchest_protocol::VoiceManager::clone_voice<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<serde_json::value::Value, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_protocol::VoiceManager::delete_voice<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest_protocol::VoiceManager::design_voice<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<serde_json::value::Value, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub type orchest_protocol::JsonSchema = serde_json::value::Value

@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The release workflow runs the full suite before publishing.
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
@@ -106,3 +108,27 @@ jobs:
 
       - name: Supplementary lint checks
         run: bash scripts/lint-check.sh
+
+  # Published crates must build on the declared rust-version (ADR-0003 D5).
+  # Keep the toolchain below in sync with [workspace.package] rust-version.
+  msrv:
+    name: MSRV (published crates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.87
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+
+      - name: cargo check on the MSRV
+        run: >
+          cargo check --locked --all-features
+          -p orchest-protocol -p orchest-storage -p orchest-provider-core
+          -p orchest-provider-http -p orchest-provider-stream
+          -p orchest-provider-visual -p orchest-provider -p orchest
+
+      - name: Declared rust-version matches this job
+        run: grep -qx 'rust-version = "1.87"' Cargo.toml

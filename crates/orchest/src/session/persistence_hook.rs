@@ -10,6 +10,7 @@ use crate::run::AgentConfig;
 use super::snapshot::SessionSnapshot;
 use super::store::SessionStore;
 
+#[non_exhaustive]
 pub struct SessionPersistenceHook {
     pub store: Arc<dyn SessionStore>,
     pub session_id: String,

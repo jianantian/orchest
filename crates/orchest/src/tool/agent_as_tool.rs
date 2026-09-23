@@ -53,6 +53,7 @@ type OutputExtractorFn = dyn Fn(Value) -> Value + Send + Sync;
 /// should use [`Fresh`](Self::Fresh). Bounded non-empty Fork and Fresh
 /// semantics are unchanged.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ContextMode {
     /// Child starts with no inherited parent messages.
     #[default]
@@ -78,6 +79,7 @@ pub enum ContextMode {
 /// prompt when extraction fails, and returns `Err(ToolError)` when it still
 /// does not conform — non-conforming output never reaches the consumer.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SubAgentOutputExpect {
     /// The output text must contain a fenced code block; the block's content
     /// (fence lines stripped) becomes the output. When `lang` is set, the

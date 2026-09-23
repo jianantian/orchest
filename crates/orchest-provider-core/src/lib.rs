@@ -1,6 +1,11 @@
 //! `orchest-provider-core` — L0 building blocks + L1 header-auth strategies for
 //! the provider impl crates (v0.9.12 provider unification, Issue 003).
 //!
+//! **Internal crate — not for direct use.** It is published only because
+//! `orchest-provider` depends on it; its API carries no SemVer guarantee and
+//! `orchest-provider` pins it to an exact version (ADR-0003 D2). Depend on
+//! `orchest-provider` instead.
+//!
 //! Organized so dependency weight is isolated by feature:
 //! - **L0 (always):** [`http`] client builder, [`retry`] backoff, [`telemetry`]
 //!   primitives.

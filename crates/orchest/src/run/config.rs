@@ -15,6 +15,7 @@ use crate::tool::Tool;
 use super::helpers::{min_option, min_option_f64};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SupervisionStrategy {
     #[default]
     Stop,
@@ -83,6 +84,7 @@ impl RunInput {
                 ContentBlock::ToolResult { .. } => "tool_result",
                 ContentBlock::Thinking { .. } => "thinking",
                 ContentBlock::MidConvSystem(_) => "mid_conv_system",
+                _ => "unsupported",
             };
             return Err(RunInputError { kind });
         }
@@ -119,6 +121,7 @@ impl From<&str> for RunInput {
 /// approval policy, hooks, handoffs, session, and supervision. Build it with
 /// [`AgentConfig::builder`].
 #[derive(Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AgentConfig {
     pub name: String,
     pub system_prompt: String,
@@ -233,6 +236,7 @@ pub struct SkillsConfig {
 /// registers the built-in `load_skill` tool; `Off` disables both, keeping the
 /// pre-disclosure behavior (bundled tools still register as before).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SkillDisclosure {
     #[default]
     Progressive,
@@ -246,6 +250,7 @@ pub type CustomApprovalFn = Arc<dyn Fn(&crate::tool::ToolMetadata) -> bool + Sen
 /// Run-level approval strategy. Works with the per-tool
 /// [`Approval`](crate::tool::Approval) enum to decide whether a call needs approval.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ApprovalMode {
     /// Use each tool's `approval` field (default).
     #[default]
@@ -257,6 +262,7 @@ pub enum ApprovalMode {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ToolExecutionPolicy {
     #[default]
     Sequential,
@@ -265,6 +271,7 @@ pub enum ToolExecutionPolicy {
 
 // RuntimeConfig holds a non-Debug `Arc<dyn Fn>`, so Debug is implemented manually.
 #[derive(Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RuntimeConfig {
     pub max_steps: u32,
     pub allowed_tools: Option<Vec<String>>,
@@ -374,6 +381,7 @@ impl Default for RuntimeConfig {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RepeatedFailureConfig {
     pub threshold: usize,
 }
@@ -404,6 +412,27 @@ impl Default for CompactionConfig {
 impl AgentConfig {
     pub fn builder(name: impl Into<String>, model: impl Into<String>) -> AgentConfigBuilder {
         AgentConfigBuilder::new(name, model)
+    }
+
+    /// A config for `model` with every other field at its default and no
+    /// validation. Callers that assemble a config field by field (for example
+    /// the language bindings) start here and assign the public fields;
+    /// [`AgentConfig::builder`] is the validated path.
+    pub fn new(name: impl Into<String>, model: ModelConfig) -> Self {
+        Self {
+            name: name.into(),
+            system_prompt: String::new(),
+            model,
+            budget: BudgetConfig::default(),
+            skills: SkillsConfig::default(),
+            runtime: RuntimeConfig::default(),
+            hooks: vec![],
+            retry_policy: None,
+            handoffs: vec![],
+            session_store: None,
+            session_id: None,
+            supervision_strategy: SupervisionStrategy::default(),
+        }
     }
 
     pub fn with_hook(mut self, hook: std::sync::Arc<dyn crate::hook::Hook>) -> Self {
@@ -722,6 +751,7 @@ impl AgentConfigBuilder {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ConfigError {
     #[error("model must be specified")]
     MissingModel,
@@ -771,6 +801,7 @@ pub struct RunState {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RunStatus {
     Running,
     WaitingForApproval {

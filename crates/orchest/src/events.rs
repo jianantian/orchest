@@ -13,6 +13,7 @@ use crate::tool::async_job::JobStatus;
 use crate::tool::{ToolCall, ToolError, ToolMetadata};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub enum ApprovalContext {
     #[default]
     InitialToolCall,
@@ -31,6 +32,7 @@ pub enum ApprovalContext {
 /// categories with a real consumer get their own variant — everything else
 /// is [`RunFailureKind::Other`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RunFailureKind {
     /// The budget guard fired; `error` starts with `"budget_exceeded"`.
     BudgetExceeded,
@@ -46,6 +48,7 @@ pub enum RunFailureKind {
 /// tool calls, approvals, budget, sub-agents, and steering. Consumers receive
 /// these from the `EventReceiver` returned by `AgentRun::start`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RuntimeEvent {
     RunStarted {
         run_id: RunId,

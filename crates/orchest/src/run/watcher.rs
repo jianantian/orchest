@@ -19,6 +19,7 @@ use crate::events::RuntimeEvent;
 /// Slow [`Watcher::on_event`] completion cannot reorder the effective outcome.
 /// Per-watcher delivery FIFO remains a separate property.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum WatcherAction {
     Continue,
     /// Inject a user-role message into the run's conversation at the next model call.

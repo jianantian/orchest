@@ -10,6 +10,7 @@ use crate::run::ApprovalMode;
 use crate::tool::Approval;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BindingNameStyle {
     Python,
     Node,

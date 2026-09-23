@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::budget::BudgetUsage;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ErrorKind {
     InvalidInput,
     NotSupported,
@@ -16,6 +17,7 @@ pub enum ErrorKind {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RetryHint {
     Safe,
     Caution,
@@ -25,6 +27,7 @@ pub enum RetryHint {
 
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
 #[error("{message}")]
+#[non_exhaustive]
 pub struct ToolError {
     pub message: String,
     pub kind: ErrorKind,

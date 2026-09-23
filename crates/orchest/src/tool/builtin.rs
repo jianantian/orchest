@@ -26,6 +26,7 @@ pub struct WriteFileTool {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SkillPathEntry {
     pub skill_name: String,
     pub skill_md_path: PathBuf,

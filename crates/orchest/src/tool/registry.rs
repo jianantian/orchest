@@ -6,6 +6,7 @@ use std::sync::Arc;
 use super::{Tool, ToolDef, ToolExecutionMode};
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum RegistryError {
     #[error("tool '{0}' is already registered")]
     DuplicateName(String),

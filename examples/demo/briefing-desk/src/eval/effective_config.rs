@@ -597,6 +597,11 @@ fn mcp_server_snapshot(
                 },
             }
         }
+        _ => {
+            return Err(ArtifactError::preflight(
+                "MCP transport kind is not supported by the snapshot".to_string(),
+            ))
+        }
     };
     Ok(McpServerSnapshot {
         server_id: server.server_id.clone(),
@@ -649,6 +654,14 @@ fn retry_snapshot(policy: Option<&RetryPolicy>) -> RetrySnapshot {
                 max_delay_ms: Some(max.as_millis() as u64),
                 jitter: Some(*jitter),
             },
+            _ => RetrySnapshot {
+                configured: true,
+                max_retries: Some(p.max_retries),
+                backoff: Some("unknown".into()),
+                base_delay_ms: None,
+                max_delay_ms: None,
+                jitter: None,
+            },
         },
     }
 }
@@ -657,6 +670,7 @@ fn supervision_label(s: &SupervisionStrategy) -> String {
     match s {
         SupervisionStrategy::Stop => "stop".into(),
         SupervisionStrategy::Restart { max_retries } => format!("restart:{max_retries}"),
+        _ => "unknown".into(),
     }
 }
 
@@ -665,6 +679,7 @@ fn approval_mode_label(m: ApprovalMode) -> String {
         ApprovalMode::PerTool => "per_tool".into(),
         ApprovalMode::None => "none".into(),
         ApprovalMode::All => "all".into(),
+        _ => "unknown".into(),
     }
 }
 
@@ -684,6 +699,7 @@ fn approval_label(a: Approval) -> String {
         Approval::Never => "never".into(),
         Approval::WhenRisky => "when_risky".into(),
         Approval::Always => "always".into(),
+        _ => "unknown".into(),
     }
 }
 
@@ -696,6 +712,7 @@ fn execution_mode_label(meta: &ToolMetadata) -> String {
         orchest::tool::ToolExecutionMode::Commit { draft_tool } => {
             format!("commit:{draft_tool}")
         }
+        _ => "unknown".into(),
     }
 }
 
@@ -705,6 +722,7 @@ fn source_label(source: &ToolSource) -> String {
         ToolSource::McpServer { server_id } => format!("mcp:{server_id}"),
         ToolSource::Skill { skill_name } => format!("skill:{skill_name}"),
         ToolSource::Builtin => "builtin".into(),
+        _ => "unknown".into(),
     }
 }
 
@@ -801,10 +819,9 @@ fn hex_sha256(bytes: &[u8]) -> String {
 
 /// Convenience: default empty RuntimeConfig with max_steps override.
 pub fn runtime_with_max_steps(max_steps: u32) -> RuntimeConfig {
-    RuntimeConfig {
-        max_steps,
-        ..RuntimeConfig::default()
-    }
+    let mut runtime = RuntimeConfig::default();
+    runtime.max_steps = max_steps;
+    runtime
 }
 
 /// Build a test-friendly baseline input.

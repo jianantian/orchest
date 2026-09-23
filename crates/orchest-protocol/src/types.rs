@@ -15,6 +15,7 @@ pub struct Message {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Role {
     System,
     User,
@@ -37,6 +38,7 @@ pub enum Role {
 /// Anthropic image source 形态(`{type:url}` / `{type:base64, media_type, data}`)。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "type")]
+#[non_exhaustive]
 pub enum MediaSource {
     /// 远程 URL。
     Url { url: String },
@@ -45,6 +47,7 @@ pub enum MediaSource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum ContentBlock {
     Text(String),
     Thinking {

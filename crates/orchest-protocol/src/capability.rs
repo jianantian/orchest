@@ -25,6 +25,7 @@ use crate::stream::{AudioFormat, EventStream};
 /// design §6.1). Lifted from `VolcengineRealtimeSession`'s
 /// `send_audio_chunk`/`interrupt`/text-input surface.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum SessionInput {
     /// A chunk of input audio (e.g. microphone PCM). ← `send_audio_chunk`.
     Audio(Bytes),
@@ -92,6 +93,7 @@ pub struct GenRequest {
 /// boundary. An unknown wire value fails deserialization loudly instead of
 /// being silently dropped.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum VocalGender {
     #[serde(rename = "m")]
     Male,
@@ -181,6 +183,7 @@ pub struct GenHandle {
 /// Lifecycle state of a generation job.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum GenStatus {
     Pending,
     Running,
@@ -197,6 +200,7 @@ pub enum GenStatus {
 /// the wire means the asset is the product itself.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum GenAssetRole {
     #[default]
     Primary,
@@ -207,6 +211,7 @@ pub enum GenAssetRole {
 /// One produced asset (image/video), as a URL or inline bytes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum GenAsset {
     Url {
         url: String,

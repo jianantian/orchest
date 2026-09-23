@@ -2,6 +2,8 @@
 name = "orchest-node"
 version = "0.1.0"
 edition = "2021"
+# Binding packages are out of v1.0 scope (ADR-0003 D2).
+publish = false
 
 [lib]
 crate-type = ["cdylib"]

@@ -1,7 +1,14 @@
 [package]
 name = "orchest-storage"
-version = "0.1.0"
-edition = "2021"
+description = "Unified object storage for Orchest asset persistence: Aliyun OSS and Tencent COS behind one async trait."
+readme = "README.md"
+keywords = ["object-storage", "oss", "cos", "aliyun", "tencent-cloud"]
+categories = ["api-bindings", "asynchronous", "web-programming::http-client"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 # Unified object storage for asset persistence (docs/todo/object-storage.md):
 # Aliyun OSS V1 + Tencent COS V5 object signing behind one `ObjectStore` trait.

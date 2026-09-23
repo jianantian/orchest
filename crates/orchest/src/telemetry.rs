@@ -22,7 +22,7 @@ pub const METRIC_CONTEXT_COMPACTION_TOKEN_SAVINGS: &str =
     "orchest_context_compaction_token_savings";
 pub const METRIC_EVENT_DROPS_TOTAL: &str = "orchest_event_drops_total";
 
-pub fn tool_execute_span(tool: &str, source: &str) -> Span {
+pub(crate) fn tool_execute_span(tool: &str, source: &str) -> Span {
     tracing::info_span!(
         "tool.execute",
         tool_name = tool,
@@ -31,7 +31,7 @@ pub fn tool_execute_span(tool: &str, source: &str) -> Span {
     )
 }
 
-pub fn record_tool_success(_tool: &str, source: &str, duration: Duration) {
+pub(crate) fn record_tool_success(_tool: &str, source: &str, duration: Duration) {
     metrics::histogram!(
         METRIC_TOOL_CALL_DURATION,
         "tool_source" => source.to_string(),
@@ -47,7 +47,7 @@ pub fn record_tool_success(_tool: &str, source: &str, duration: Duration) {
     .increment(1);
 }
 
-pub fn record_tool_error(_tool: &str, source: &str, duration: Duration) {
+pub(crate) fn record_tool_error(_tool: &str, source: &str, duration: Duration) {
     metrics::histogram!(
         METRIC_TOOL_CALL_DURATION,
         "tool_source" => source.to_string(),
@@ -63,7 +63,7 @@ pub fn record_tool_error(_tool: &str, source: &str, duration: Duration) {
     .increment(1);
 }
 
-pub fn record_tool_timeout(_tool: &str, source: &str, duration: Duration) {
+pub(crate) fn record_tool_timeout(_tool: &str, source: &str, duration: Duration) {
     metrics::histogram!(
         METRIC_TOOL_CALL_DURATION,
         "tool_source" => source.to_string(),
@@ -79,7 +79,7 @@ pub fn record_tool_timeout(_tool: &str, source: &str, duration: Duration) {
     .increment(1);
 }
 
-pub fn model_complete_span(provider: &str, model: &str, streaming: bool) -> Span {
+pub(crate) fn model_complete_span(provider: &str, model: &str, streaming: bool) -> Span {
     tracing::info_span!(
         "model.complete",
         provider = provider,
@@ -91,16 +91,21 @@ pub fn model_complete_span(provider: &str, model: &str, streaming: bool) -> Span
     )
 }
 
-pub fn record_model_success(provider: &str, model: &str, duration: Duration, usage: &TokenUsage) {
+pub(crate) fn record_model_success(
+    provider: &str,
+    model: &str,
+    duration: Duration,
+    usage: &TokenUsage,
+) {
     record_model_request(provider, model, "ok", duration);
     record_model_tokens(provider, model, usage);
 }
 
-pub fn record_model_error(provider: &str, model: &str, duration: Duration) {
+pub(crate) fn record_model_error(provider: &str, model: &str, duration: Duration) {
     record_model_request(provider, model, "error", duration);
 }
 
-pub fn record_budget_usage(usage: &BudgetUsage, config: &BudgetConfig) {
+pub(crate) fn record_budget_usage(usage: &BudgetUsage, config: &BudgetConfig) {
     metrics::counter!(METRIC_BUDGET_TOKENS_TOTAL, "kind" => "total").increment(usage.tokens_used);
     record_utilization(
         "tokens",
@@ -115,24 +120,24 @@ pub fn record_budget_usage(usage: &BudgetUsage, config: &BudgetConfig) {
     record_utilization("cost", usage.cost_usd, config.max_cost_usd);
 }
 
-pub fn record_budget_exceeded(kind: &str) {
+pub(crate) fn record_budget_exceeded(kind: &str) {
     metrics::counter!(METRIC_BUDGET_EXCEEDED_TOTAL, "kind" => kind.to_string()).increment(1);
 }
 
-pub fn record_approval(status: &str, duration: Duration) {
+pub(crate) fn record_approval(status: &str, duration: Duration) {
     metrics::counter!(METRIC_APPROVAL_REQUESTS_TOTAL, "status" => status.to_string()).increment(1);
     metrics::histogram!(METRIC_APPROVAL_LATENCY_SECONDS, "status" => status.to_string())
         .record(duration.as_secs_f64());
 }
 
-pub fn record_context_compaction(removed_messages: usize, token_savings: u64) {
+pub(crate) fn record_context_compaction(removed_messages: usize, token_savings: u64) {
     metrics::counter!(METRIC_CONTEXT_COMPACTIONS_TOTAL).increment(1);
     metrics::histogram!(METRIC_CONTEXT_COMPACTION_TOKEN_SAVINGS).record(token_savings as f64);
     metrics::histogram!("orchest_context_compaction_removed_messages")
         .record(removed_messages as f64);
 }
 
-pub fn record_event_drop(subscriber: &str, count: u64) {
+pub(crate) fn record_event_drop(subscriber: &str, count: u64) {
     metrics::counter!(METRIC_EVENT_DROPS_TOTAL, "subscriber" => subscriber.to_string())
         .increment(count);
 }

@@ -90,11 +90,13 @@ pub fn build_submit_body(model: &str, request: &GenRequest) -> Value {
         if let Some(instrumental) = music.instrumental {
             input["is_instrumental"] = json!(instrumental);
         }
-        if let Some(gender) = music.vocal_gender {
-            input["gender"] = json!(match gender {
-                VocalGender::Male => "male",
-                VocalGender::Female => "female",
-            });
+        match music.vocal_gender {
+            Some(VocalGender::Male) => input["gender"] = json!("male"),
+            Some(VocalGender::Female) => input["gender"] = json!("female"),
+            Some(other) => {
+                tracing::warn!(?other, "aliyun music: vocal_gender not supported, dropped")
+            }
+            None => {}
         }
     }
     json!({ "model": model, "input": input })

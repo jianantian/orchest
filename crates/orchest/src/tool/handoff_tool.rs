@@ -9,6 +9,7 @@ use serde_json::Value;
 use crate::handoff::{Handoff, HandoffResult, HandoffTarget};
 use crate::tool::{CostHint, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
 
+#[non_exhaustive]
 pub struct HandoffTool {
     pub handoff: Handoff,
     metadata: ToolMetadata,

@@ -245,7 +245,7 @@ mod tests {
             } => {
                 assert_eq!(method, "PUT");
                 assert_eq!(path, "/audio/a.mp3");
-                assert_eq!(status.as_u16(), 403);
+                assert_eq!(status, 403);
                 assert!(
                     body.contains("SignatureDoesNotMatch"),
                     "body summary: {body}"
@@ -323,7 +323,7 @@ mod tests {
             } => {
                 assert_eq!(method, "GET");
                 assert_eq!(path, "/audio/a.mp3");
-                assert_eq!(status.as_u16(), 403);
+                assert_eq!(status, 403);
                 assert!(body.contains("AccessDenied"), "body summary: {body}");
             }
             other => panic!("expected Rejected, got {other:?}"),

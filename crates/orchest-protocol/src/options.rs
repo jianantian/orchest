@@ -9,6 +9,7 @@ use crate::response::TokenUsage;
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ThinkingLevel {
     Off,
     Minimal,
@@ -21,6 +22,7 @@ pub enum ThinkingLevel {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CachePolicy {
     None,
     #[default]
@@ -29,6 +31,7 @@ pub enum CachePolicy {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CompatibilityPolicy {
     #[default]
     Coerce,
@@ -36,6 +39,7 @@ pub enum CompatibilityPolicy {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ResponseFormat {
     #[default]
     Text,

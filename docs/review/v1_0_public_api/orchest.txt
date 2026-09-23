@@ -1,0 +1,1489 @@
+pub mod orchest
+pub mod orchest::atomic
+pub struct orchest::atomic::CompletionRequest
+pub orchest::atomic::CompletionRequest::options: orchest_protocol::options::RequestOptions
+pub orchest::atomic::CompletionRequest::retry_policy: core::option::Option<orchest::run::RetryPolicy>
+pub orchest::atomic::CompletionRequest::system: core::option::Option<alloc::string::String>
+pub orchest::atomic::CompletionRequest::user: alloc::string::String
+pub async fn orchest::atomic::complete(&dyn orchest_protocol::adapter::ChatModel, orchest::atomic::CompletionRequest) -> core::result::Result<alloc::string::String, orchest_protocol::error::ModelError>
+pub mod orchest::budget
+#[non_exhaustive] pub enum orchest::budget::BudgetViolation
+pub orchest::budget::BudgetViolation::MaxCostExceeded
+pub orchest::budget::BudgetViolation::MaxDurationExceeded
+pub orchest::budget::BudgetViolation::MaxTokensExceeded
+pub orchest::budget::BudgetViolation::MaxToolCallsExceeded
+pub struct orchest::budget::BudgetConfig
+pub orchest::budget::BudgetConfig::max_cost_usd: core::option::Option<f64>
+pub orchest::budget::BudgetConfig::max_duration: core::option::Option<core::time::Duration>
+pub orchest::budget::BudgetConfig::max_tokens: core::option::Option<u64>
+pub orchest::budget::BudgetConfig::max_tool_calls: core::option::Option<u32>
+pub struct orchest::budget::BudgetGuard
+impl orchest::budget::BudgetGuard
+pub fn orchest::budget::BudgetGuard::check(&self) -> core::option::Option<orchest::budget::BudgetViolation>
+pub fn orchest::budget::BudgetGuard::config(&self) -> &orchest::budget::BudgetConfig
+pub fn orchest::budget::BudgetGuard::new(orchest::budget::BudgetConfig) -> Self
+pub fn orchest::budget::BudgetGuard::record_external_usage(&mut self, &orchest::budget::BudgetUsage)
+pub fn orchest::budget::BudgetGuard::record_model_call(&mut self, &orchest_protocol::response::TokenUsage)
+pub fn orchest::budget::BudgetGuard::record_tool_call(&mut self)
+pub fn orchest::budget::BudgetGuard::remaining_config(&self) -> orchest::budget::BudgetConfig
+pub fn orchest::budget::BudgetGuard::usage(&self) -> &orchest::budget::BudgetUsage
+pub fn orchest::budget::BudgetGuard::with_usage(orchest::budget::BudgetConfig, orchest::budget::BudgetUsage) -> Self
+pub struct orchest::budget::BudgetUsage
+pub orchest::budget::BudgetUsage::cost_usd: f64
+pub orchest::budget::BudgetUsage::tokens_used: u64
+pub orchest::budget::BudgetUsage::tool_calls_used: u32
+pub mod orchest::events
+#[non_exhaustive] pub enum orchest::events::ApprovalContext
+pub orchest::events::ApprovalContext::CommitToolCall
+pub orchest::events::ApprovalContext::CommitToolCall::draft_tool: alloc::string::String
+pub orchest::events::ApprovalContext::InitialToolCall
+pub orchest::events::ApprovalContext::RetryAfterFailure
+pub orchest::events::ApprovalContext::RetryAfterFailure::attempt: u32
+pub orchest::events::ApprovalContext::RetryAfterFailure::previous_error: orchest::tool::error::ToolError
+#[non_exhaustive] pub enum orchest::events::RunFailureKind
+pub orchest::events::RunFailureKind::BudgetExceeded
+pub orchest::events::RunFailureKind::MaxStepsReached
+pub orchest::events::RunFailureKind::Other
+#[non_exhaustive] pub enum orchest::events::RuntimeEvent
+pub orchest::events::RuntimeEvent::AgentUpdated
+pub orchest::events::RuntimeEvent::AgentUpdated::new_agent: alloc::string::String
+pub orchest::events::RuntimeEvent::AgentUpdated::previous_agent: alloc::string::String
+pub orchest::events::RuntimeEvent::ApprovalDenied
+pub orchest::events::RuntimeEvent::ApprovalDenied::context: orchest::events::ApprovalContext
+pub orchest::events::RuntimeEvent::ApprovalDenied::tool_call: orchest::tool::ToolCall
+pub orchest::events::RuntimeEvent::ApprovalGranted
+pub orchest::events::RuntimeEvent::ApprovalGranted::context: orchest::events::ApprovalContext
+pub orchest::events::RuntimeEvent::ApprovalGranted::tool_call: orchest::tool::ToolCall
+pub orchest::events::RuntimeEvent::ApprovalRequested
+pub orchest::events::RuntimeEvent::ApprovalRequested::context: orchest::events::ApprovalContext
+pub orchest::events::RuntimeEvent::ApprovalRequested::tool_call: orchest::tool::ToolCall
+pub orchest::events::RuntimeEvent::AsyncToolCompleted
+pub orchest::events::RuntimeEvent::AsyncToolCompleted::elapsed: core::time::Duration
+pub orchest::events::RuntimeEvent::AsyncToolCompleted::job_id: alloc::string::String
+pub orchest::events::RuntimeEvent::AsyncToolCompleted::output: serde_json::value::Value
+pub orchest::events::RuntimeEvent::AsyncToolCompleted::tool: alloc::string::String
+pub orchest::events::RuntimeEvent::AsyncToolProgress
+pub orchest::events::RuntimeEvent::AsyncToolProgress::job_id: alloc::string::String
+pub orchest::events::RuntimeEvent::AsyncToolProgress::status: orchest::tool::async_job::JobStatus
+pub orchest::events::RuntimeEvent::AsyncToolProgress::tool: alloc::string::String
+pub orchest::events::RuntimeEvent::AsyncToolStarted
+pub orchest::events::RuntimeEvent::AsyncToolStarted::job_id: alloc::string::String
+pub orchest::events::RuntimeEvent::AsyncToolStarted::tool: alloc::string::String
+pub orchest::events::RuntimeEvent::BudgetWarning
+pub orchest::events::RuntimeEvent::BudgetWarning::limit: orchest::budget::BudgetConfig
+pub orchest::events::RuntimeEvent::BudgetWarning::used: orchest::budget::BudgetUsage
+pub orchest::events::RuntimeEvent::ChildRunEvent
+pub orchest::events::RuntimeEvent::ChildRunEvent::child_run_id: orchest::run::RunId
+pub orchest::events::RuntimeEvent::ChildRunEvent::event: alloc::boxed::Box<orchest::events::RuntimeEvent>
+pub orchest::events::RuntimeEvent::ChildRunEvent::run_depth: u32
+pub orchest::events::RuntimeEvent::ContextCompacted
+pub orchest::events::RuntimeEvent::ContextCompacted::removed_messages: usize
+pub orchest::events::RuntimeEvent::ContextCompacted::summary_tokens: u32
+pub orchest::events::RuntimeEvent::EventsDropped
+pub orchest::events::RuntimeEvent::EventsDropped::count: u64
+pub orchest::events::RuntimeEvent::EventsDropped::from_seq: u64
+pub orchest::events::RuntimeEvent::EventsDropped::subscriber_id: u64
+pub orchest::events::RuntimeEvent::EventsDropped::to_seq: u64
+pub orchest::events::RuntimeEvent::HookPanicked
+pub orchest::events::RuntimeEvent::HookPanicked::hook_name: alloc::string::String
+pub orchest::events::RuntimeEvent::HookPanicked::message: alloc::string::String
+pub orchest::events::RuntimeEvent::ModelCallCompleted
+pub orchest::events::RuntimeEvent::ModelCallCompleted::option_adjustments: alloc::vec::Vec<orchest_protocol::response::OptionAdjustment>
+pub orchest::events::RuntimeEvent::ModelCallCompleted::tokens: orchest_protocol::response::TokenUsage
+pub orchest::events::RuntimeEvent::ModelCallStarted
+pub orchest::events::RuntimeEvent::ModelCallStarted::step: u32
+pub orchest::events::RuntimeEvent::ModelRetry
+pub orchest::events::RuntimeEvent::ModelRetry::attempt: u32
+pub orchest::events::RuntimeEvent::ModelRetry::error: alloc::string::String
+pub orchest::events::RuntimeEvent::ModelRetry::next_delay: core::time::Duration
+pub orchest::events::RuntimeEvent::ModelStreamChunk
+pub orchest::events::RuntimeEvent::ModelStreamChunk::delta: orchest::model::ModelStreamChunk
+pub orchest::events::RuntimeEvent::RunAborted
+pub orchest::events::RuntimeEvent::RunAborted::reason: core::option::Option<alloc::string::String>
+pub orchest::events::RuntimeEvent::RunCompleted
+pub orchest::events::RuntimeEvent::RunCompleted::output: serde_json::value::Value
+pub orchest::events::RuntimeEvent::RunCompleted::stop_reason: orchest_protocol::response::StopReason
+pub orchest::events::RuntimeEvent::RunFailed
+pub orchest::events::RuntimeEvent::RunFailed::error: alloc::string::String
+pub orchest::events::RuntimeEvent::RunFailed::kind: orchest::events::RunFailureKind
+pub orchest::events::RuntimeEvent::RunRestarted
+pub orchest::events::RuntimeEvent::RunRestarted::attempt: u32
+pub orchest::events::RuntimeEvent::RunStarted
+pub orchest::events::RuntimeEvent::RunStarted::run_id: orchest::run::RunId
+pub orchest::events::RuntimeEvent::RuntimeWarning
+pub orchest::events::RuntimeEvent::RuntimeWarning::message: alloc::string::String
+pub orchest::events::RuntimeEvent::SkillContentRead
+pub orchest::events::RuntimeEvent::SkillContentRead::file: alloc::string::String
+pub orchest::events::RuntimeEvent::SkillContentRead::skill_name: alloc::string::String
+pub orchest::events::RuntimeEvent::SkillContentRead::tokens: u32
+pub orchest::events::RuntimeEvent::SkillLoadWarning
+pub orchest::events::RuntimeEvent::SkillLoadWarning::path: alloc::string::String
+pub orchest::events::RuntimeEvent::SkillLoadWarning::reason: alloc::string::String
+pub orchest::events::RuntimeEvent::SkillMissingCapabilities
+pub orchest::events::RuntimeEvent::SkillMissingCapabilities::skill_name: alloc::string::String
+pub orchest::events::RuntimeEvent::SubAgentCompleted
+pub orchest::events::RuntimeEvent::SubAgentCompleted::budget_used: orchest::budget::BudgetUsage
+pub orchest::events::RuntimeEvent::SubAgentCompleted::child_run_id: orchest::run::RunId
+pub orchest::events::RuntimeEvent::SubAgentCompleted::output: serde_json::value::Value
+pub orchest::events::RuntimeEvent::SubAgentEvent
+pub orchest::events::RuntimeEvent::SubAgentEvent::child_run_id: orchest::run::RunId
+pub orchest::events::RuntimeEvent::SubAgentEvent::event: alloc::boxed::Box<orchest::events::RuntimeEvent>
+pub orchest::events::RuntimeEvent::SubAgentEvent::parent_run_id: orchest::run::RunId
+pub orchest::events::RuntimeEvent::SubAgentFailed
+pub orchest::events::RuntimeEvent::SubAgentFailed::child_run_id: orchest::run::RunId
+pub orchest::events::RuntimeEvent::SubAgentFailed::error: alloc::string::String
+pub orchest::events::RuntimeEvent::SubAgentStarted
+pub orchest::events::RuntimeEvent::SubAgentStarted::child_run_id: orchest::run::RunId
+pub orchest::events::RuntimeEvent::SubAgentStarted::config_summary: serde_json::value::Value
+pub orchest::events::RuntimeEvent::SubAgentStarted::parent_run_id: orchest::run::RunId
+pub orchest::events::RuntimeEvent::ToolCallBatchItemCompleted
+pub orchest::events::RuntimeEvent::ToolCallBatchItemCompleted::batch_id: alloc::string::String
+pub orchest::events::RuntimeEvent::ToolCallBatchItemCompleted::completion_order: usize
+pub orchest::events::RuntimeEvent::ToolCallBatchItemCompleted::requested_order: usize
+pub orchest::events::RuntimeEvent::ToolCallBatchItemCompleted::tool: alloc::string::String
+pub orchest::events::RuntimeEvent::ToolCallBatchItemStarted
+pub orchest::events::RuntimeEvent::ToolCallBatchItemStarted::batch_id: alloc::string::String
+pub orchest::events::RuntimeEvent::ToolCallBatchItemStarted::requested_order: usize
+pub orchest::events::RuntimeEvent::ToolCallBatchItemStarted::tool: alloc::string::String
+pub orchest::events::RuntimeEvent::ToolCallBatchStarted
+pub orchest::events::RuntimeEvent::ToolCallBatchStarted::batch_id: alloc::string::String
+pub orchest::events::RuntimeEvent::ToolCallBatchStarted::tool_count: usize
+pub orchest::events::RuntimeEvent::ToolCallCompleted
+pub orchest::events::RuntimeEvent::ToolCallCompleted::duration: core::time::Duration
+pub orchest::events::RuntimeEvent::ToolCallCompleted::output: serde_json::value::Value
+pub orchest::events::RuntimeEvent::ToolCallCompleted::tool: alloc::string::String
+pub orchest::events::RuntimeEvent::ToolCallFailed
+pub orchest::events::RuntimeEvent::ToolCallFailed::error: orchest::tool::error::ToolError
+pub orchest::events::RuntimeEvent::ToolCallFailed::tool: alloc::string::String
+pub orchest::events::RuntimeEvent::ToolCallRetry
+pub orchest::events::RuntimeEvent::ToolCallRetry::attempt: u32
+pub orchest::events::RuntimeEvent::ToolCallRetry::next_delay: core::time::Duration
+pub orchest::events::RuntimeEvent::ToolCallRetry::previous_error: orchest::tool::error::ToolError
+pub orchest::events::RuntimeEvent::ToolCallRetry::tool: alloc::string::String
+pub orchest::events::RuntimeEvent::ToolCallStarted
+pub orchest::events::RuntimeEvent::ToolCallStarted::input: serde_json::value::Value
+pub orchest::events::RuntimeEvent::ToolCallStarted::metadata: orchest::tool::metadata::ToolMetadata
+pub orchest::events::RuntimeEvent::ToolCallStarted::tool: alloc::string::String
+pub orchest::events::RuntimeEvent::ToolCallUpdate
+pub orchest::events::RuntimeEvent::ToolCallUpdate::partial: serde_json::value::Value
+pub orchest::events::RuntimeEvent::ToolCallUpdate::tool: alloc::string::String
+pub orchest::events::RuntimeEvent::ToolCallUpdate::tool_call_id: alloc::string::String
+pub struct orchest::events::EventSink
+impl orchest::events::EventSink
+pub fn orchest::events::EventSink::primary(tokio::sync::mpsc::bounded::Sender<orchest::events::RuntimeEvent>, alloc::sync::Arc<core::sync::atomic::AtomicU64>) -> Self
+pub fn orchest::events::EventSink::secondary(tokio::sync::mpsc::bounded::Sender<orchest::events::RuntimeEvent>, u64, alloc::sync::Arc<core::sync::atomic::AtomicU64>) -> Self
+pub fn orchest::events::EventSink::secondary_with_wave(tokio::sync::mpsc::bounded::Sender<orchest::events::RuntimeEvent>, u64, alloc::sync::Arc<core::sync::atomic::AtomicU64>, alloc::sync::Arc<dyn orchest::events::FanoutWaveBus>, usize) -> Self
+pub fn orchest::events::EventSink::sender(&self) -> &tokio::sync::mpsc::bounded::Sender<orchest::events::RuntimeEvent>
+pub fn orchest::events::EventSink::sequence_counter(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
+impl core::fmt::Debug for orchest::events::EventSink
+pub fn orchest::events::EventSink::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub const orchest::events::EVENT_DELIVERY_TIMEOUT: core::time::Duration
+pub trait orchest::events::FanoutWaveBus: core::marker::Send + core::marker::Sync
+pub fn orchest::events::FanoutWaveBus::push_signal_ticket(&self, usize)
+pub fn orchest::events::FanoutWaveBus::push_wave_ticket(&self, usize, u64)
+pub fn orchest::events::FanoutWaveBus::rollback_last_ticket(&self, usize)
+pub fn orchest::events::FanoutWaveBus::seal_wave(&self, u64)
+pub async fn orchest::events::deliver_to_subscribers(&[orchest::events::EventSink], orchest::events::RuntimeEvent)
+pub mod orchest::guardrail
+#[non_exhaustive] pub enum orchest::guardrail::InputGuardrailAction
+pub orchest::guardrail::InputGuardrailAction::Abort(alloc::string::String)
+pub orchest::guardrail::InputGuardrailAction::Allow
+pub orchest::guardrail::InputGuardrailAction::Replace(alloc::vec::Vec<orchest_protocol::types::Message>)
+#[non_exhaustive] pub enum orchest::guardrail::OutputGuardrailAction
+pub orchest::guardrail::OutputGuardrailAction::Abort(alloc::string::String)
+pub orchest::guardrail::OutputGuardrailAction::Allow
+pub orchest::guardrail::OutputGuardrailAction::Replace(alloc::vec::Vec<orchest_protocol::types::ContentBlock>)
+#[non_exhaustive] pub enum orchest::guardrail::ToolInputGuardrailAction
+pub orchest::guardrail::ToolInputGuardrailAction::Abort(alloc::string::String)
+pub orchest::guardrail::ToolInputGuardrailAction::Allow
+pub orchest::guardrail::ToolInputGuardrailAction::Modify(serde_json::value::Value)
+pub orchest::guardrail::ToolInputGuardrailAction::Reject(alloc::string::String)
+#[non_exhaustive] pub enum orchest::guardrail::ToolOutputGuardrailAction
+pub orchest::guardrail::ToolOutputGuardrailAction::Abort(alloc::string::String)
+pub orchest::guardrail::ToolOutputGuardrailAction::Allow
+pub orchest::guardrail::ToolOutputGuardrailAction::Modify(serde_json::value::Value)
+pub trait orchest::guardrail::InputGuardrail: core::marker::Send + core::marker::Sync
+pub fn orchest::guardrail::InputGuardrail::check<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::guardrail::InputGuardrailAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub trait orchest::guardrail::OutputGuardrail: core::marker::Send + core::marker::Sync
+pub fn orchest::guardrail::OutputGuardrail::check<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::guardrail::OutputGuardrailAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub trait orchest::guardrail::ToolInputGuardrail: core::marker::Send + core::marker::Sync
+pub fn orchest::guardrail::ToolInputGuardrail::check<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::guardrail::ToolInputGuardrailAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub trait orchest::guardrail::ToolOutputGuardrail: core::marker::Send + core::marker::Sync
+pub fn orchest::guardrail::ToolOutputGuardrail::check<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::guardrail::ToolOutputGuardrailAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub mod orchest::handoff
+#[non_exhaustive] pub enum orchest::handoff::HandoffError
+pub orchest::handoff::HandoffError::Filter(alloc::string::String)
+pub orchest::handoff::HandoffError::Resolution(alloc::string::String)
+#[non_exhaustive] pub enum orchest::handoff::HandoffTarget
+pub orchest::handoff::HandoffTarget::Dynamic(alloc::sync::Arc<dyn orchest::handoff::HandoffResolver>)
+pub orchest::handoff::HandoffTarget::Static(alloc::boxed::Box<orchest::run::AgentConfig>)
+pub struct orchest::handoff::Handoff
+pub orchest::handoff::Handoff::input_filter: core::option::Option<alloc::sync::Arc<dyn orchest::handoff::HandoffInputFilter>>
+pub orchest::handoff::Handoff::input_schema: serde_json::value::Value
+pub orchest::handoff::Handoff::nest_history: bool
+pub orchest::handoff::Handoff::target: orchest::handoff::HandoffTarget
+pub orchest::handoff::Handoff::tool_description: alloc::string::String
+pub orchest::handoff::Handoff::tool_name: alloc::string::String
+impl core::convert::From<orchest::handoff::Handoff> for alloc::sync::Arc<dyn orchest::tool::Tool>
+pub fn alloc::sync::Arc<dyn orchest::tool::Tool>::from(orchest::handoff::Handoff) -> alloc::sync::Arc<dyn orchest::tool::Tool>
+#[non_exhaustive] pub struct orchest::handoff::HandoffInputData
+pub orchest::handoff::HandoffInputData::handoff_input: serde_json::value::Value
+pub orchest::handoff::HandoffInputData::history: alloc::vec::Vec<orchest_protocol::types::Message>
+#[non_exhaustive] pub struct orchest::handoff::HandoffResult
+pub orchest::handoff::HandoffResult::input_filter: core::option::Option<alloc::sync::Arc<dyn orchest::handoff::HandoffInputFilter>>
+pub orchest::handoff::HandoffResult::nest_history: bool
+pub orchest::handoff::HandoffResult::target_agent: orchest::run::AgentConfig
+pub orchest::handoff::HandoffResult::transfer_message: alloc::string::String
+impl orchest::handoff::HandoffResult
+pub async fn orchest::handoff::HandoffResult::apply_filter(&self, alloc::vec::Vec<orchest_protocol::types::Message>, serde_json::value::Value) -> core::result::Result<alloc::vec::Vec<orchest_protocol::types::Message>, orchest::handoff::HandoffError>
+impl core::fmt::Debug for orchest::handoff::HandoffResult
+pub fn orchest::handoff::HandoffResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub trait orchest::handoff::HandoffInputFilter: core::marker::Send + core::marker::Sync
+pub fn orchest::handoff::HandoffInputFilter::filter<'life0, 'async_trait>(&'life0 self, orchest::handoff::HandoffInputData) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::handoff::HandoffInputData, orchest::handoff::HandoffError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub trait orchest::handoff::HandoffResolver: core::marker::Send + core::marker::Sync
+pub fn orchest::handoff::HandoffResolver::resolve<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::run::AgentConfig, orchest::handoff::HandoffError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub mod orchest::hook
+pub mod orchest::hook::loop_detection
+pub struct orchest::hook::loop_detection::LoopDetectionConfig
+pub orchest::hook::loop_detection::LoopDetectionConfig::stop_threshold: usize
+pub orchest::hook::loop_detection::LoopDetectionConfig::warn_threshold: usize
+pub orchest::hook::loop_detection::LoopDetectionConfig::window_size: usize
+impl core::convert::From<orchest::hook::loop_detection::LoopDetectionConfig> for orchest::hook::loop_detection::LoopDetectionHook
+pub fn orchest::hook::loop_detection::LoopDetectionHook::from(orchest::hook::loop_detection::LoopDetectionConfig) -> Self
+impl core::default::Default for orchest::hook::loop_detection::LoopDetectionConfig
+pub fn orchest::hook::loop_detection::LoopDetectionConfig::default() -> Self
+pub struct orchest::hook::loop_detection::LoopDetectionHook
+impl orchest::hook::loop_detection::LoopDetectionHook
+pub fn orchest::hook::loop_detection::LoopDetectionHook::new(orchest::hook::loop_detection::LoopDetectionConfig) -> Self
+impl core::convert::From<orchest::hook::loop_detection::LoopDetectionConfig> for orchest::hook::loop_detection::LoopDetectionHook
+pub fn orchest::hook::loop_detection::LoopDetectionHook::from(orchest::hook::loop_detection::LoopDetectionConfig) -> Self
+impl core::default::Default for orchest::hook::loop_detection::LoopDetectionHook
+pub fn orchest::hook::loop_detection::LoopDetectionHook::default() -> Self
+impl orchest::hook::Hook for orchest::hook::loop_detection::LoopDetectionHook
+pub fn orchest::hook::loop_detection::LoopDetectionHook::after_model<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::after_tool<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::before_compact<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::CompactHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::before_model<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::ModelHookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::before_tool<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_handoff<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::HandoffHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_repeated_failure<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::RepeatedFailureHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_run_end<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::RunHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_run_error<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 orchest::hook::RunHookContext, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_run_start<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::RunHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::persistence_session_id(&self) -> core::option::Option<&str>
+#[non_exhaustive] pub enum orchest::hook::HookAction
+pub orchest::hook::HookAction::Abort(alloc::string::String)
+pub orchest::hook::HookAction::Continue
+pub orchest::hook::HookAction::Reject(alloc::string::String)
+pub orchest::hook::HookAction::Skip
+#[non_exhaustive] pub enum orchest::hook::ModelHookAction
+pub orchest::hook::ModelHookAction::Abort(alloc::string::String)
+pub orchest::hook::ModelHookAction::Continue
+#[non_exhaustive] pub struct orchest::hook::CompactHookContext
+pub orchest::hook::CompactHookContext::messages: alloc::vec::Vec<orchest_protocol::types::Message>
+pub orchest::hook::CompactHookContext::run_id: orchest::run::RunId
+pub orchest::hook::CompactHookContext::token_count: u32
+#[non_exhaustive] pub struct orchest::hook::HandoffHookContext
+pub orchest::hook::HandoffHookContext::handoff_input: serde_json::value::Value
+pub orchest::hook::HandoffHookContext::new_agent: alloc::string::String
+pub orchest::hook::HandoffHookContext::previous_agent: alloc::string::String
+pub orchest::hook::HandoffHookContext::run_id: orchest::run::RunId
+pub struct orchest::hook::LoopDetectionConfig
+pub orchest::hook::LoopDetectionConfig::stop_threshold: usize
+pub orchest::hook::LoopDetectionConfig::warn_threshold: usize
+pub orchest::hook::LoopDetectionConfig::window_size: usize
+impl core::convert::From<orchest::hook::loop_detection::LoopDetectionConfig> for orchest::hook::loop_detection::LoopDetectionHook
+pub fn orchest::hook::loop_detection::LoopDetectionHook::from(orchest::hook::loop_detection::LoopDetectionConfig) -> Self
+impl core::default::Default for orchest::hook::loop_detection::LoopDetectionConfig
+pub fn orchest::hook::loop_detection::LoopDetectionConfig::default() -> Self
+pub struct orchest::hook::LoopDetectionHook
+impl orchest::hook::loop_detection::LoopDetectionHook
+pub fn orchest::hook::loop_detection::LoopDetectionHook::new(orchest::hook::loop_detection::LoopDetectionConfig) -> Self
+impl core::convert::From<orchest::hook::loop_detection::LoopDetectionConfig> for orchest::hook::loop_detection::LoopDetectionHook
+pub fn orchest::hook::loop_detection::LoopDetectionHook::from(orchest::hook::loop_detection::LoopDetectionConfig) -> Self
+impl core::default::Default for orchest::hook::loop_detection::LoopDetectionHook
+pub fn orchest::hook::loop_detection::LoopDetectionHook::default() -> Self
+impl orchest::hook::Hook for orchest::hook::loop_detection::LoopDetectionHook
+pub fn orchest::hook::loop_detection::LoopDetectionHook::after_model<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::after_tool<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::before_compact<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::CompactHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::before_model<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::ModelHookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::before_tool<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_handoff<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::HandoffHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_repeated_failure<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::RepeatedFailureHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_run_end<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::RunHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_run_error<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 orchest::hook::RunHookContext, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_run_start<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::RunHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::persistence_session_id(&self) -> core::option::Option<&str>
+#[non_exhaustive] pub struct orchest::hook::ModelHookContext
+pub orchest::hook::ModelHookContext::messages: alloc::vec::Vec<orchest_protocol::types::Message>
+pub orchest::hook::ModelHookContext::model_spec: orchest_protocol::types::ModelSpec
+pub orchest::hook::ModelHookContext::response: core::option::Option<alloc::vec::Vec<orchest_protocol::types::ContentBlock>>
+pub orchest::hook::ModelHookContext::run_id: orchest::run::RunId
+pub struct orchest::hook::RepeatedFailureHookContext
+pub orchest::hook::RepeatedFailureHookContext::count: usize
+pub orchest::hook::RepeatedFailureHookContext::error_history: alloc::vec::Vec<orchest::tool::error::ToolError>
+pub orchest::hook::RepeatedFailureHookContext::error_kind: orchest::tool::error::ErrorKind
+pub orchest::hook::RepeatedFailureHookContext::run_id: orchest::run::RunId
+pub orchest::hook::RepeatedFailureHookContext::tool_name: alloc::string::String
+#[non_exhaustive] pub struct orchest::hook::RunHookContext
+pub orchest::hook::RunHookContext::active_config: core::option::Option<orchest::run::AgentConfig>
+pub orchest::hook::RunHookContext::agent_name: alloc::string::String
+pub orchest::hook::RunHookContext::budget_used: orchest::budget::BudgetUsage
+pub orchest::hook::RunHookContext::final_messages: alloc::vec::Vec<orchest_protocol::types::Message>
+pub orchest::hook::RunHookContext::run_id: orchest::run::RunId
+pub orchest::hook::RunHookContext::step: u32
+#[non_exhaustive] pub struct orchest::hook::ToolHookContext
+pub orchest::hook::ToolHookContext::run_id: orchest::run::RunId
+pub orchest::hook::ToolHookContext::tool_input: serde_json::value::Value
+pub orchest::hook::ToolHookContext::tool_metadata: orchest::tool::metadata::ToolMetadata
+pub orchest::hook::ToolHookContext::tool_name: alloc::string::String
+pub orchest::hook::ToolHookContext::tool_output: core::option::Option<serde_json::value::Value>
+pub trait orchest::hook::Hook: core::marker::Send + core::marker::Sync
+pub fn orchest::hook::Hook::after_model<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::Hook::after_tool<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::Hook::before_compact<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::CompactHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::Hook::before_model<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::ModelHookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::Hook::before_tool<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::Hook::on_handoff<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::HandoffHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::Hook::on_repeated_failure<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::RepeatedFailureHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::Hook::on_run_end<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::RunHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::Hook::on_run_error<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 orchest::hook::RunHookContext, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn orchest::hook::Hook::on_run_start<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::RunHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::Hook::persistence_session_id(&self) -> core::option::Option<&str>
+impl orchest::hook::Hook for orchest::hook::loop_detection::LoopDetectionHook
+pub fn orchest::hook::loop_detection::LoopDetectionHook::after_model<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::after_tool<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::before_compact<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::CompactHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::before_model<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::ModelHookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::before_tool<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_handoff<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::HandoffHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_repeated_failure<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::RepeatedFailureHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_run_end<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::RunHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_run_error<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 orchest::hook::RunHookContext, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::on_run_start<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::RunHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::hook::loop_detection::LoopDetectionHook::persistence_session_id(&self) -> core::option::Option<&str>
+impl orchest::hook::Hook for orchest::session::persistence_hook::SessionPersistenceHook
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::after_model<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::after_tool<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::before_compact<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::CompactHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::before_model<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::ModelHookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::before_tool<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_handoff<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::HandoffHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_repeated_failure<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::RepeatedFailureHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_run_end<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::RunHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_run_error<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 orchest::hook::RunHookContext, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_run_start<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::RunHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::persistence_session_id(&self) -> core::option::Option<&str>
+pub fn orchest::hook::with_hook(&mut alloc::vec::Vec<alloc::sync::Arc<dyn orchest::hook::Hook>>, alloc::sync::Arc<dyn orchest::hook::Hook>)
+pub mod orchest::model
+pub use orchest::model::CacheCapability
+pub use orchest::model::CachePolicy
+pub use orchest::model::CapabilitySource
+pub use orchest::model::CompatibilityPolicy
+pub use orchest::model::ContentBlock
+pub use orchest::model::JsonSchema
+pub use orchest::model::MediaSource
+pub use orchest::model::Message
+pub use orchest::model::ModelAdapter
+pub use orchest::model::ModelCapabilities
+pub use orchest::model::ModelError
+pub use orchest::model::ModelPricing
+pub use orchest::model::ModelResponse
+pub use orchest::model::ModelSpec
+pub use orchest::model::OptionAdjustment
+pub use orchest::model::ProviderRuntimeConfig
+pub use orchest::model::ReasoningCapability
+pub use orchest::model::RequestOptions
+pub use orchest::model::ResponseFormat
+pub use orchest::model::Role
+pub use orchest::model::StopReason
+pub use orchest::model::StreamEvent
+pub use orchest::model::ThinkingLevel
+pub use orchest::model::TokenUsage
+pub use orchest::model::ToolDef
+pub use orchest::model::UpstreamErrorDetail
+pub type orchest::model::ModelStreamChunk = orchest_protocol::stream::StreamEvent
+pub mod orchest::run
+pub mod orchest::run::llm_watcher
+pub struct orchest::run::llm_watcher::LlmWatcher
+impl orchest::run::llm_watcher::LlmWatcher
+pub fn orchest::run::llm_watcher::LlmWatcher::builder() -> orchest::run::llm_watcher::LlmWatcherBuilder
+impl orchest::run::watcher::Watcher for orchest::run::llm_watcher::LlmWatcher
+pub fn orchest::run::llm_watcher::LlmWatcher::on_event<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::events::RuntimeEvent) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::run::watcher::WatcherAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub struct orchest::run::llm_watcher::LlmWatcherBuilder
+impl orchest::run::llm_watcher::LlmWatcherBuilder
+pub fn orchest::run::llm_watcher::LlmWatcherBuilder::build(self) -> core::result::Result<orchest::run::llm_watcher::LlmWatcher, orchest::run::ConfigError>
+pub fn orchest::run::llm_watcher::LlmWatcherBuilder::eval_interval(self, usize) -> Self
+pub fn orchest::run::llm_watcher::LlmWatcherBuilder::model(self, alloc::sync::Arc<dyn orchest_protocol::adapter::ChatModel>) -> Self
+pub fn orchest::run::llm_watcher::LlmWatcherBuilder::new() -> Self
+pub fn orchest::run::llm_watcher::LlmWatcherBuilder::system_prompt(self, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::default::Default for orchest::run::llm_watcher::LlmWatcherBuilder
+pub fn orchest::run::llm_watcher::LlmWatcherBuilder::default() -> Self
+pub fn orchest::run::llm_watcher::format_event(&orchest::events::RuntimeEvent) -> alloc::string::String
+pub mod orchest::run::watcher
+#[non_exhaustive] pub enum orchest::run::watcher::WatcherAction
+pub orchest::run::watcher::WatcherAction::Abort(alloc::string::String)
+pub orchest::run::watcher::WatcherAction::Continue
+pub orchest::run::watcher::WatcherAction::Inject(alloc::string::String)
+pub orchest::run::watcher::WatcherAction::Steer(alloc::string::String)
+pub trait orchest::run::watcher::Watcher: core::marker::Send + core::marker::Sync
+pub fn orchest::run::watcher::Watcher::on_event<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::events::RuntimeEvent) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::run::watcher::WatcherAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+impl orchest::run::watcher::Watcher for orchest::run::llm_watcher::LlmWatcher
+pub fn orchest::run::llm_watcher::LlmWatcher::on_event<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::events::RuntimeEvent) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::run::watcher::WatcherAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+#[non_exhaustive] pub enum orchest::run::ApprovalMode
+pub orchest::run::ApprovalMode::All
+pub orchest::run::ApprovalMode::None
+pub orchest::run::ApprovalMode::PerTool
+#[non_exhaustive] pub enum orchest::run::ArbitratedActions
+pub orchest::run::ArbitratedActions::Abort(alloc::string::String)
+pub orchest::run::ArbitratedActions::Effects(alloc::vec::Vec<orchest::run::watcher::WatcherAction>)
+#[non_exhaustive] pub enum orchest::run::BackoffStrategy
+pub orchest::run::BackoffStrategy::Exponential
+pub orchest::run::BackoffStrategy::Exponential::base: core::time::Duration
+pub orchest::run::BackoffStrategy::Exponential::jitter: bool
+pub orchest::run::BackoffStrategy::Exponential::max: core::time::Duration
+pub orchest::run::BackoffStrategy::Fixed(core::time::Duration)
+#[non_exhaustive] pub enum orchest::run::ChildCompletionError
+pub orchest::run::ChildCompletionError::Disconnected
+impl core::error::Error for orchest::run::ChildCompletionError
+impl core::fmt::Display for orchest::run::ChildCompletionError
+pub fn orchest::run::ChildCompletionError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum orchest::run::ChildRunOutcome
+pub orchest::run::ChildRunOutcome::Completed
+pub orchest::run::ChildRunOutcome::Completed::output: serde_json::value::Value
+pub orchest::run::ChildRunOutcome::Failed
+pub orchest::run::ChildRunOutcome::Failed::error: alloc::string::String
+pub orchest::run::ChildRunOutcome::Failed::kind: orchest::events::RunFailureKind
+#[non_exhaustive] pub enum orchest::run::ConfigError
+pub orchest::run::ConfigError::InvalidMaxCost(f64)
+pub orchest::run::ConfigError::InvalidMaxSteps(u32)
+pub orchest::run::ConfigError::InvalidMaxTokens(u64)
+pub orchest::run::ConfigError::InvalidMaxToolCalls(u32)
+pub orchest::run::ConfigError::InvalidRepeatedFailureThreshold(usize)
+pub orchest::run::ConfigError::InvalidWatcherCapacity(usize)
+pub orchest::run::ConfigError::LlmWatcherMissingModel
+pub orchest::run::ConfigError::MissingModel
+pub orchest::run::ConfigError::SessionStoreMissing
+pub orchest::run::ConfigError::SessionStoreMissing::session_id: alloc::string::String
+pub orchest::run::ConfigError::SubAgentMapperRequiresSchema
+pub orchest::run::ConfigError::SubAgentMissingModel
+pub orchest::run::ConfigError::SubAgentMissingRegistry
+#[non_exhaustive] pub enum orchest::run::RunStatus
+pub orchest::run::RunStatus::Aborted
+pub orchest::run::RunStatus::Completed
+pub orchest::run::RunStatus::Completed::output: serde_json::value::Value
+pub orchest::run::RunStatus::Failed
+pub orchest::run::RunStatus::Failed::error: alloc::string::String
+pub orchest::run::RunStatus::Running
+pub orchest::run::RunStatus::WaitingForApproval
+pub orchest::run::RunStatus::WaitingForApproval::tool_call: orchest::tool::ToolCall
+pub orchest::run::RunStatus::WaitingForAsyncTool
+pub orchest::run::RunStatus::WaitingForAsyncTool::job_handle: orchest::tool::async_job::JobHandle
+pub orchest::run::RunStatus::WaitingForAsyncTool::since: std::time::Instant
+pub orchest::run::RunStatus::WaitingForAsyncTool::tool_call: orchest::tool::ToolCall
+#[non_exhaustive] pub enum orchest::run::SkillDisclosure
+pub orchest::run::SkillDisclosure::Off
+pub orchest::run::SkillDisclosure::Progressive
+#[non_exhaustive] pub enum orchest::run::SupervisionStrategy
+pub orchest::run::SupervisionStrategy::Restart
+pub orchest::run::SupervisionStrategy::Restart::max_retries: u32
+pub orchest::run::SupervisionStrategy::Stop
+#[non_exhaustive] pub enum orchest::run::WatcherAction
+pub orchest::run::WatcherAction::Abort(alloc::string::String)
+pub orchest::run::WatcherAction::Continue
+pub orchest::run::WatcherAction::Inject(alloc::string::String)
+pub orchest::run::WatcherAction::Steer(alloc::string::String)
+#[non_exhaustive] pub struct orchest::run::AgentConfig
+pub orchest::run::AgentConfig::budget: orchest::budget::BudgetConfig
+pub orchest::run::AgentConfig::handoffs: alloc::vec::Vec<orchest::handoff::Handoff>
+pub orchest::run::AgentConfig::hooks: alloc::vec::Vec<alloc::sync::Arc<dyn orchest::hook::Hook>>
+pub orchest::run::AgentConfig::model: orchest::run::ModelConfig
+pub orchest::run::AgentConfig::name: alloc::string::String
+pub orchest::run::AgentConfig::retry_policy: core::option::Option<orchest::run::RetryPolicy>
+pub orchest::run::AgentConfig::runtime: orchest::run::RuntimeConfig
+pub orchest::run::AgentConfig::session_id: core::option::Option<alloc::string::String>
+pub orchest::run::AgentConfig::session_store: core::option::Option<alloc::sync::Arc<dyn orchest::session::store::SessionStore>>
+pub orchest::run::AgentConfig::skills: orchest::run::SkillsConfig
+pub orchest::run::AgentConfig::supervision_strategy: orchest::run::SupervisionStrategy
+pub orchest::run::AgentConfig::system_prompt: alloc::string::String
+impl orchest::run::AgentConfig
+pub fn orchest::run::AgentConfig::as_tool(&self, &str, &str) -> orchest::tool::agent_as_tool::SubAgentBuilder
+impl orchest::run::AgentConfig
+pub fn orchest::run::AgentConfig::builder(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> orchest::run::AgentConfigBuilder
+pub fn orchest::run::AgentConfig::new(impl core::convert::Into<alloc::string::String>, orchest::run::ModelConfig) -> Self
+pub fn orchest::run::AgentConfig::with_handoff(self, orchest::handoff::Handoff) -> Self
+pub fn orchest::run::AgentConfig::with_hook(self, alloc::sync::Arc<dyn orchest::hook::Hook>) -> Self
+pub fn orchest::run::AgentConfig::with_input_guardrail(self, alloc::sync::Arc<dyn orchest::guardrail::InputGuardrail>) -> Self
+pub fn orchest::run::AgentConfig::with_loop_detection(self) -> Self
+pub fn orchest::run::AgentConfig::with_loop_detection_config(self, orchest::hook::loop_detection::LoopDetectionConfig) -> Self
+pub fn orchest::run::AgentConfig::with_output_guardrail(self, alloc::sync::Arc<dyn orchest::guardrail::OutputGuardrail>) -> Self
+pub fn orchest::run::AgentConfig::with_session_store(self, alloc::sync::Arc<dyn orchest::session::store::SessionStore>, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::run::AgentConfig::with_tool_input_guardrail(self, alloc::sync::Arc<dyn orchest::guardrail::ToolInputGuardrail>) -> Self
+pub fn orchest::run::AgentConfig::with_tool_output_guardrail(self, alloc::sync::Arc<dyn orchest::guardrail::ToolOutputGuardrail>) -> Self
+impl core::fmt::Debug for orchest::run::AgentConfig
+pub fn orchest::run::AgentConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct orchest::run::AgentConfigBuilder
+impl orchest::run::AgentConfigBuilder
+pub fn orchest::run::AgentConfigBuilder::allowed_skills(self, alloc::vec::Vec<alloc::string::String>) -> Self
+pub fn orchest::run::AgentConfigBuilder::approval_mode(self, orchest::run::ApprovalMode) -> Self
+pub fn orchest::run::AgentConfigBuilder::build(self) -> core::result::Result<orchest::run::AgentConfig, orchest::run::ConfigError>
+pub fn orchest::run::AgentConfigBuilder::code_execution_executor(self, alloc::sync::Arc<dyn orchest::skill::executor::ScriptExecutor>) -> Self
+pub fn orchest::run::AgentConfigBuilder::custom_approval<F>(self, F) -> Self where F: core::ops::function::Fn(&orchest::tool::metadata::ToolMetadata) -> bool + core::marker::Send + core::marker::Sync + 'static
+pub fn orchest::run::AgentConfigBuilder::enable_code_execution(self) -> Self
+pub fn orchest::run::AgentConfigBuilder::enable_compaction(self, orchest::run::CompactionConfig) -> Self
+pub fn orchest::run::AgentConfigBuilder::enable_parallel_tools(self) -> Self
+pub fn orchest::run::AgentConfigBuilder::enable_tool_search(self) -> Self
+pub fn orchest::run::AgentConfigBuilder::max_cost_usd(self, f64) -> Self
+pub fn orchest::run::AgentConfigBuilder::max_steps(self, u32) -> Self
+pub fn orchest::run::AgentConfigBuilder::max_tokens(self, u64) -> Self
+pub fn orchest::run::AgentConfigBuilder::max_tool_calls(self, u32) -> Self
+pub fn orchest::run::AgentConfigBuilder::mcp_server(self, orchest::tool::mcp::McpServerConfig) -> Self
+pub fn orchest::run::AgentConfigBuilder::new(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::run::AgentConfigBuilder::repeated_failure_threshold(self, usize) -> Self
+pub fn orchest::run::AgentConfigBuilder::retry_policy(self, orchest::run::RetryPolicy) -> Self
+pub fn orchest::run::AgentConfigBuilder::run_depth(self, u32) -> Self
+pub fn orchest::run::AgentConfigBuilder::session_store(self, alloc::sync::Arc<dyn orchest::session::store::SessionStore>, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::run::AgentConfigBuilder::skill_disclosure(self, orchest::run::SkillDisclosure) -> Self
+pub fn orchest::run::AgentConfigBuilder::skills_dir(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::run::AgentConfigBuilder::skills_strict(self, bool) -> Self
+pub fn orchest::run::AgentConfigBuilder::supervision_strategy(self, orchest::run::SupervisionStrategy) -> Self
+pub fn orchest::run::AgentConfigBuilder::system_prompt(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub struct orchest::run::AgentRun
+impl orchest::run::AgentRun
+pub fn orchest::run::AgentRun::resume(orchest::session::snapshot::SessionSnapshot, alloc::sync::Arc<dyn orchest_protocol::adapter::ChatModel>, orchest::tool::registry::ToolRegistry) -> core::result::Result<(orchest::run::RunHandle, orchest::run::EventReceiver), orchest::run::ConfigError>
+pub fn orchest::run::AgentRun::resume_with_input(orchest::session::snapshot::SessionSnapshot, orchest::run::RunInput, alloc::sync::Arc<dyn orchest_protocol::adapter::ChatModel>, orchest::tool::registry::ToolRegistry) -> core::result::Result<(orchest::run::RunHandle, orchest::run::EventReceiver), orchest::run::ConfigError>
+pub fn orchest::run::AgentRun::start(orchest::run::AgentConfig, orchest::run::RunInput, alloc::sync::Arc<dyn orchest_protocol::adapter::ChatModel>, orchest::tool::registry::ToolRegistry) -> (orchest::run::RunHandle, orchest::run::EventReceiver)
+pub fn orchest::run::AgentRun::start_with_messages(orchest::run::AgentConfig, alloc::vec::Vec<orchest_protocol::types::Message>, orchest::run::RunInput, alloc::sync::Arc<dyn orchest_protocol::adapter::ChatModel>, orchest::tool::registry::ToolRegistry) -> (orchest::run::RunHandle, orchest::run::EventReceiver)
+pub fn orchest::run::AgentRun::start_with_messages_and_watchers(orchest::run::AgentConfig, alloc::vec::Vec<orchest_protocol::types::Message>, orchest::run::RunInput, alloc::sync::Arc<dyn orchest_protocol::adapter::ChatModel>, orchest::tool::registry::ToolRegistry, alloc::vec::Vec<(alloc::sync::Arc<dyn orchest::run::watcher::Watcher>, usize)>) -> core::result::Result<(orchest::run::RunHandle, orchest::run::EventReceiver), orchest::run::ConfigError>
+pub fn orchest::run::AgentRun::start_with_watchers(orchest::run::AgentConfig, orchest::run::RunInput, alloc::sync::Arc<dyn orchest_protocol::adapter::ChatModel>, orchest::tool::registry::ToolRegistry, alloc::vec::Vec<(alloc::sync::Arc<dyn orchest::run::watcher::Watcher>, usize)>) -> core::result::Result<(orchest::run::RunHandle, orchest::run::EventReceiver), orchest::run::ConfigError>
+pub struct orchest::run::ApprovalBus
+impl orchest::run::ApprovalBus
+pub async fn orchest::run::ApprovalBus::cancel(&self, orchest::run::RunId)
+pub async fn orchest::run::ApprovalBus::request(&self, orchest::run::RunId) -> tokio::sync::oneshot::Receiver<bool>
+pub async fn orchest::run::ApprovalBus::respond(&self, orchest::run::RunId, bool) -> core::result::Result<(), alloc::string::String>
+#[non_exhaustive] pub struct orchest::run::ChildRunHandle
+pub orchest::run::ChildRunHandle::parent_run_id: orchest::run::RunId
+pub orchest::run::ChildRunHandle::run_id: orchest::run::RunId
+impl orchest::run::ChildRunHandle
+pub fn orchest::run::ChildRunHandle::abort(&self)
+pub async fn orchest::run::ChildRunHandle::attach_watcher(&self, alloc::sync::Arc<dyn orchest::run::watcher::Watcher>, usize)
+pub fn orchest::run::ChildRunHandle::completion_now(&self) -> core::option::Option<orchest::run::ChildRunOutcome>
+pub fn orchest::run::ChildRunHandle::inject_message(&self, &str)
+pub fn orchest::run::ChildRunHandle::steer(&self, &str)
+pub async fn orchest::run::ChildRunHandle::subscribe_events(&self, usize) -> orchest::run::EventReceiver
+pub async fn orchest::run::ChildRunHandle::wait_completion(&self) -> core::result::Result<orchest::run::ChildRunOutcome, orchest::run::ChildCompletionError>
+pub struct orchest::run::ChildRunRegistry
+impl orchest::run::ChildRunRegistry
+pub async fn orchest::run::ChildRunRegistry::get(&self, orchest::run::RunId) -> core::option::Option<orchest::run::ChildRunHandle>
+pub async fn orchest::run::ChildRunRegistry::list(&self) -> alloc::vec::Vec<orchest::run::ChildRunHandle>
+impl core::fmt::Debug for orchest::run::ChildRunRegistry
+pub fn orchest::run::ChildRunRegistry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct orchest::run::CompactionConfig
+pub orchest::run::CompactionConfig::recent_messages: usize
+pub orchest::run::CompactionConfig::threshold: f32
+impl core::default::Default for orchest::run::CompactionConfig
+pub fn orchest::run::CompactionConfig::default() -> Self
+pub struct orchest::run::LlmWatcher
+impl orchest::run::llm_watcher::LlmWatcher
+pub fn orchest::run::llm_watcher::LlmWatcher::builder() -> orchest::run::llm_watcher::LlmWatcherBuilder
+impl orchest::run::watcher::Watcher for orchest::run::llm_watcher::LlmWatcher
+pub fn orchest::run::llm_watcher::LlmWatcher::on_event<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::events::RuntimeEvent) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::run::watcher::WatcherAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub struct orchest::run::ModelConfig
+pub orchest::run::ModelConfig::options: orchest_protocol::options::RequestOptions
+pub orchest::run::ModelConfig::spec: orchest_protocol::types::ModelSpec
+impl core::default::Default for orchest::run::ModelConfig
+pub fn orchest::run::ModelConfig::default() -> Self
+#[non_exhaustive] pub struct orchest::run::RepeatedFailureConfig
+pub orchest::run::RepeatedFailureConfig::threshold: usize
+impl core::default::Default for orchest::run::RepeatedFailureConfig
+pub fn orchest::run::RepeatedFailureConfig::default() -> Self
+pub struct orchest::run::RetryPolicy
+pub orchest::run::RetryPolicy::backoff: orchest::run::BackoffStrategy
+pub orchest::run::RetryPolicy::max_retries: u32
+impl orchest::run::RetryPolicy
+pub fn orchest::run::RetryPolicy::recommended() -> Self
+impl core::default::Default for orchest::run::RetryPolicy
+pub fn orchest::run::RetryPolicy::default() -> Self
+#[non_exhaustive] pub struct orchest::run::RunHandle
+pub orchest::run::RunHandle::run_id: orchest::run::RunId
+impl orchest::run::RunHandle
+pub fn orchest::run::RunHandle::abort(&self)
+pub async fn orchest::run::RunHandle::active_children(&self) -> alloc::vec::Vec<orchest::run::ChildRunHandle>
+pub async fn orchest::run::RunHandle::attach_watcher(&self, alloc::sync::Arc<dyn orchest::run::watcher::Watcher>, usize)
+pub async fn orchest::run::RunHandle::child(&self, orchest::run::RunId) -> core::option::Option<orchest::run::ChildRunHandle>
+pub fn orchest::run::RunHandle::inject_message(&self, &str)
+pub async fn orchest::run::RunHandle::respond_approval(&self, orchest::run::RunId, bool) -> core::result::Result<(), alloc::string::String>
+pub fn orchest::run::RunHandle::steer(&self, &str)
+pub async fn orchest::run::RunHandle::subscribe_events(&self, usize) -> orchest::run::EventReceiver
+pub async fn orchest::run::RunHandle::wait(self)
+pub struct orchest::run::RunId(pub uuid::Uuid)
+impl orchest::run::RunId
+pub fn orchest::run::RunId::new() -> Self
+impl core::default::Default for orchest::run::RunId
+pub fn orchest::run::RunId::default() -> Self
+impl core::fmt::Display for orchest::run::RunId
+pub fn orchest::run::RunId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct orchest::run::RunInput
+impl orchest::run::RunInput
+pub fn orchest::run::RunInput::from_blocks(alloc::vec::Vec<orchest_protocol::types::ContentBlock>) -> core::result::Result<Self, orchest::run::RunInputError>
+pub fn orchest::run::RunInput::text(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::run::RunInput::with_image(self, orchest_protocol::types::MediaSource) -> Self
+impl core::convert::From<&str> for orchest::run::RunInput
+pub fn orchest::run::RunInput::from(&str) -> Self
+impl core::convert::From<alloc::string::String> for orchest::run::RunInput
+pub fn orchest::run::RunInput::from(alloc::string::String) -> Self
+pub struct orchest::run::RunInputError
+pub struct orchest::run::RunState
+pub orchest::run::RunState::available_tools: alloc::vec::Vec<alloc::sync::Arc<dyn orchest::tool::Tool>>
+pub orchest::run::RunState::budget_used: orchest::budget::BudgetUsage
+pub orchest::run::RunState::config: orchest::run::AgentConfig
+pub orchest::run::RunState::messages: alloc::vec::Vec<orchest_protocol::types::Message>
+pub orchest::run::RunState::run_id: orchest::run::RunId
+pub orchest::run::RunState::schema_version: alloc::string::String
+pub orchest::run::RunState::status: orchest::run::RunStatus
+pub orchest::run::RunState::step: u32
+#[non_exhaustive] pub struct orchest::run::RuntimeConfig
+pub orchest::run::RuntimeConfig::allowed_tools: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+pub orchest::run::RuntimeConfig::approval_mode: orchest::run::ApprovalMode
+pub orchest::run::RuntimeConfig::code_execution_enabled: bool
+pub orchest::run::RuntimeConfig::code_execution_executor: core::option::Option<alloc::sync::Arc<dyn orchest::skill::executor::ScriptExecutor>>
+pub orchest::run::RuntimeConfig::compaction: core::option::Option<orchest::run::CompactionConfig>
+pub orchest::run::RuntimeConfig::custom_approval_fn: core::option::Option<alloc::sync::Arc<(dyn core::ops::function::Fn(&orchest::tool::metadata::ToolMetadata) -> bool + core::marker::Send + core::marker::Sync)>>
+pub orchest::run::RuntimeConfig::max_steps: u32
+pub orchest::run::RuntimeConfig::mcp_servers: alloc::vec::Vec<orchest::tool::mcp::McpServerConfig>
+pub orchest::run::RuntimeConfig::repeated_failure: orchest::run::RepeatedFailureConfig
+pub orchest::run::RuntimeConfig::run_depth: u32
+pub orchest::run::RuntimeConfig::tool_execution_policy: orchest::run::config::ToolExecutionPolicy
+pub orchest::run::RuntimeConfig::tool_search_enabled: bool
+pub orchest::run::RuntimeConfig::webhook_enabled: bool
+impl orchest::run::RuntimeConfig
+pub fn orchest::run::RuntimeConfig::should_approve(&self, &orchest::tool::metadata::ToolMetadata) -> bool
+impl core::default::Default for orchest::run::RuntimeConfig
+pub fn orchest::run::RuntimeConfig::default() -> Self
+impl core::fmt::Debug for orchest::run::RuntimeConfig
+pub fn orchest::run::RuntimeConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct orchest::run::SkillsConfig
+pub orchest::run::SkillsConfig::allowed: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+pub orchest::run::SkillsConfig::dir: core::option::Option<alloc::string::String>
+pub orchest::run::SkillsConfig::disclosure: orchest::run::SkillDisclosure
+pub orchest::run::SkillsConfig::strict: bool
+pub struct orchest::run::SubAgentRuntime
+impl orchest::run::SubAgentRuntime
+pub fn orchest::run::SubAgentRuntime::cap_budget(&orchest::budget::BudgetConfig, &orchest::budget::BudgetConfig) -> orchest::budget::BudgetConfig
+pub trait orchest::run::Watcher: core::marker::Send + core::marker::Sync
+pub fn orchest::run::Watcher::on_event<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::events::RuntimeEvent) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::run::watcher::WatcherAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+impl orchest::run::watcher::Watcher for orchest::run::llm_watcher::LlmWatcher
+pub fn orchest::run::llm_watcher::LlmWatcher::on_event<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::events::RuntimeEvent) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::run::watcher::WatcherAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::run::arbitrate_watcher_actions(&[(usize, orchest::run::watcher::WatcherAction)]) -> orchest::run::ArbitratedActions
+pub type orchest::run::EventReceiver = tokio::sync::mpsc::bounded::Receiver<orchest::events::RuntimeEvent>
+pub mod orchest::session
+pub mod orchest::session::persistence_hook
+#[non_exhaustive] pub struct orchest::session::persistence_hook::SessionPersistenceHook
+pub orchest::session::persistence_hook::SessionPersistenceHook::session_id: alloc::string::String
+pub orchest::session::persistence_hook::SessionPersistenceHook::store: alloc::sync::Arc<dyn orchest::session::store::SessionStore>
+impl orchest::session::persistence_hook::SessionPersistenceHook
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::new(alloc::sync::Arc<dyn orchest::session::store::SessionStore>, alloc::string::String, orchest::run::AgentConfig) -> Self
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::session_id(&self) -> &str
+impl orchest::hook::Hook for orchest::session::persistence_hook::SessionPersistenceHook
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::after_model<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::after_tool<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::before_compact<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::CompactHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::before_model<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::ModelHookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::before_tool<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_handoff<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::HandoffHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_repeated_failure<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::RepeatedFailureHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_run_end<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::RunHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_run_error<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 orchest::hook::RunHookContext, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_run_start<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::RunHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::persistence_session_id(&self) -> core::option::Option<&str>
+pub mod orchest::session::snapshot
+pub struct orchest::session::snapshot::SessionSnapshot
+pub orchest::session::snapshot::SessionSnapshot::active_config: orchest::run::AgentConfig
+pub orchest::session::snapshot::SessionSnapshot::budget_used: orchest::budget::BudgetUsage
+pub orchest::session::snapshot::SessionSnapshot::messages: alloc::vec::Vec<orchest_protocol::types::Message>
+pub orchest::session::snapshot::SessionSnapshot::run_id: orchest::run::RunId
+pub orchest::session::snapshot::SessionSnapshot::schema_version: alloc::string::String
+pub orchest::session::snapshot::SessionSnapshot::session_id: alloc::string::String
+pub orchest::session::snapshot::SessionSnapshot::step: u32
+impl orchest::session::snapshot::SessionSnapshot
+pub const orchest::session::snapshot::SessionSnapshot::CURRENT_SCHEMA_VERSION: &'static str
+pub mod orchest::session::sqlite
+pub struct orchest::session::sqlite::SqliteSessionStore
+impl orchest::session::sqlite::SqliteSessionStore
+pub fn orchest::session::sqlite::SqliteSessionStore::open(impl core::convert::AsRef<std::path::Path>) -> core::result::Result<Self, orchest::session::store::SessionError>
+pub fn orchest::session::sqlite::SqliteSessionStore::open_in_memory() -> core::result::Result<Self, orchest::session::store::SessionError>
+impl orchest::session::store::SessionStore for orchest::session::sqlite::SqliteSessionStore
+pub fn orchest::session::sqlite::SqliteSessionStore::delete<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::sqlite::SqliteSessionStore::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<alloc::string::String>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::session::sqlite::SqliteSessionStore::load<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<orchest::session::snapshot::SessionSnapshot>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::sqlite::SqliteSessionStore::save<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 orchest::session::snapshot::SessionSnapshot) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub mod orchest::session::store
+#[non_exhaustive] pub enum orchest::session::store::SessionError
+pub orchest::session::store::SessionError::SchemaMismatch
+pub orchest::session::store::SessionError::SchemaMismatch::expected: alloc::string::String
+pub orchest::session::store::SessionError::SchemaMismatch::found: alloc::string::String
+pub orchest::session::store::SessionError::Serialization(serde_json::error::Error)
+pub orchest::session::store::SessionError::Storage(alloc::string::String)
+pub struct orchest::session::store::InMemorySessionStore
+impl orchest::session::store::InMemorySessionStore
+pub fn orchest::session::store::InMemorySessionStore::new() -> Self
+impl orchest::session::store::SessionStore for orchest::session::store::InMemorySessionStore
+pub fn orchest::session::store::InMemorySessionStore::delete<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::store::InMemorySessionStore::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<alloc::string::String>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::session::store::InMemorySessionStore::load<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<orchest::session::snapshot::SessionSnapshot>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::store::InMemorySessionStore::save<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 orchest::session::snapshot::SessionSnapshot) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub trait orchest::session::store::SessionStore: core::marker::Send + core::marker::Sync
+pub fn orchest::session::store::SessionStore::delete<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::store::SessionStore::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<alloc::string::String>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::session::store::SessionStore::load<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<orchest::session::snapshot::SessionSnapshot>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::store::SessionStore::save<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 orchest::session::snapshot::SessionSnapshot) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl orchest::session::store::SessionStore for orchest::session::sqlite::SqliteSessionStore
+pub fn orchest::session::sqlite::SqliteSessionStore::delete<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::sqlite::SqliteSessionStore::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<alloc::string::String>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::session::sqlite::SqliteSessionStore::load<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<orchest::session::snapshot::SessionSnapshot>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::sqlite::SqliteSessionStore::save<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 orchest::session::snapshot::SessionSnapshot) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl orchest::session::store::SessionStore for orchest::session::store::InMemorySessionStore
+pub fn orchest::session::store::InMemorySessionStore::delete<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::store::InMemorySessionStore::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<alloc::string::String>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::session::store::InMemorySessionStore::load<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<orchest::session::snapshot::SessionSnapshot>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::store::InMemorySessionStore::save<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 orchest::session::snapshot::SessionSnapshot) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+#[non_exhaustive] pub enum orchest::session::SessionError
+pub orchest::session::SessionError::SchemaMismatch
+pub orchest::session::SessionError::SchemaMismatch::expected: alloc::string::String
+pub orchest::session::SessionError::SchemaMismatch::found: alloc::string::String
+pub orchest::session::SessionError::Serialization(serde_json::error::Error)
+pub orchest::session::SessionError::Storage(alloc::string::String)
+pub struct orchest::session::InMemorySessionStore
+impl orchest::session::store::InMemorySessionStore
+pub fn orchest::session::store::InMemorySessionStore::new() -> Self
+impl orchest::session::store::SessionStore for orchest::session::store::InMemorySessionStore
+pub fn orchest::session::store::InMemorySessionStore::delete<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::store::InMemorySessionStore::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<alloc::string::String>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::session::store::InMemorySessionStore::load<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<orchest::session::snapshot::SessionSnapshot>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::store::InMemorySessionStore::save<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 orchest::session::snapshot::SessionSnapshot) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+#[non_exhaustive] pub struct orchest::session::SessionPersistenceHook
+pub orchest::session::SessionPersistenceHook::session_id: alloc::string::String
+pub orchest::session::SessionPersistenceHook::store: alloc::sync::Arc<dyn orchest::session::store::SessionStore>
+impl orchest::session::persistence_hook::SessionPersistenceHook
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::new(alloc::sync::Arc<dyn orchest::session::store::SessionStore>, alloc::string::String, orchest::run::AgentConfig) -> Self
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::session_id(&self) -> &str
+impl orchest::hook::Hook for orchest::session::persistence_hook::SessionPersistenceHook
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::after_model<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::after_tool<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::before_compact<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::CompactHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::before_model<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ModelHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::ModelHookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::before_tool<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::ToolHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_handoff<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::HandoffHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_repeated_failure<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::RepeatedFailureHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::hook::HookAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_run_end<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::hook::RunHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_run_error<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 orchest::hook::RunHookContext, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::on_run_start<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 mut orchest::hook::RunHookContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = ()> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::persistence_hook::SessionPersistenceHook::persistence_session_id(&self) -> core::option::Option<&str>
+pub struct orchest::session::SessionSnapshot
+pub orchest::session::SessionSnapshot::active_config: orchest::run::AgentConfig
+pub orchest::session::SessionSnapshot::budget_used: orchest::budget::BudgetUsage
+pub orchest::session::SessionSnapshot::messages: alloc::vec::Vec<orchest_protocol::types::Message>
+pub orchest::session::SessionSnapshot::run_id: orchest::run::RunId
+pub orchest::session::SessionSnapshot::schema_version: alloc::string::String
+pub orchest::session::SessionSnapshot::session_id: alloc::string::String
+pub orchest::session::SessionSnapshot::step: u32
+impl orchest::session::snapshot::SessionSnapshot
+pub const orchest::session::snapshot::SessionSnapshot::CURRENT_SCHEMA_VERSION: &'static str
+pub struct orchest::session::SqliteSessionStore
+impl orchest::session::sqlite::SqliteSessionStore
+pub fn orchest::session::sqlite::SqliteSessionStore::open(impl core::convert::AsRef<std::path::Path>) -> core::result::Result<Self, orchest::session::store::SessionError>
+pub fn orchest::session::sqlite::SqliteSessionStore::open_in_memory() -> core::result::Result<Self, orchest::session::store::SessionError>
+impl orchest::session::store::SessionStore for orchest::session::sqlite::SqliteSessionStore
+pub fn orchest::session::sqlite::SqliteSessionStore::delete<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::sqlite::SqliteSessionStore::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<alloc::string::String>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::session::sqlite::SqliteSessionStore::load<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<orchest::session::snapshot::SessionSnapshot>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::sqlite::SqliteSessionStore::save<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 orchest::session::snapshot::SessionSnapshot) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub trait orchest::session::SessionStore: core::marker::Send + core::marker::Sync
+pub fn orchest::session::SessionStore::delete<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::SessionStore::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<alloc::string::String>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::session::SessionStore::load<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<orchest::session::snapshot::SessionSnapshot>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::SessionStore::save<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 orchest::session::snapshot::SessionSnapshot) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl orchest::session::store::SessionStore for orchest::session::sqlite::SqliteSessionStore
+pub fn orchest::session::sqlite::SqliteSessionStore::delete<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::sqlite::SqliteSessionStore::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<alloc::string::String>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::session::sqlite::SqliteSessionStore::load<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<orchest::session::snapshot::SessionSnapshot>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::sqlite::SqliteSessionStore::save<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 orchest::session::snapshot::SessionSnapshot) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl orchest::session::store::SessionStore for orchest::session::store::InMemorySessionStore
+pub fn orchest::session::store::InMemorySessionStore::delete<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::store::InMemorySessionStore::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<alloc::string::String>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::session::store::InMemorySessionStore::load<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<orchest::session::snapshot::SessionSnapshot>, orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::session::store::InMemorySessionStore::save<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 orchest::session::snapshot::SessionSnapshot) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), orchest::session::store::SessionError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub mod orchest::skill
+pub mod orchest::skill::bundled_tool
+pub struct orchest::skill::bundled_tool::SkillBundledTool
+impl orchest::skill::bundled_tool::SkillBundledTool
+pub fn orchest::skill::bundled_tool::SkillBundledTool::new(&orchest::skill::types::BundledToolDef, std::path::PathBuf, alloc::string::String) -> core::result::Result<Self, orchest::tool::error::ToolError>
+pub fn orchest::skill::bundled_tool::SkillBundledTool::new_with_options(&orchest::skill::types::BundledToolDef, std::path::PathBuf, alloc::string::String, orchest::skill::types::SkillDependencies, core::option::Option<orchest::skill::types::SkillCapabilities>, alloc::sync::Arc<dyn orchest::skill::executor::ScriptExecutor>) -> core::result::Result<Self, orchest::tool::error::ToolError>
+impl core::fmt::Debug for orchest::skill::bundled_tool::SkillBundledTool
+pub fn orchest::skill::bundled_tool::SkillBundledTool::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl orchest::tool::Tool for orchest::skill::bundled_tool::SkillBundledTool
+pub fn orchest::skill::bundled_tool::SkillBundledTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::skill::bundled_tool::SkillBundledTool::description(&self) -> &str
+pub fn orchest::skill::bundled_tool::SkillBundledTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::skill::bundled_tool::SkillBundledTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::skill::bundled_tool::SkillBundledTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::skill::bundled_tool::SkillBundledTool::name(&self) -> &str
+pub fn orchest::skill::bundled_tool::SkillBundledTool::needs_parent_context(&self) -> bool
+pub fn orchest::skill::bundled_tool::SkillBundledTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+pub mod orchest::skill::disclosure
+pub mod orchest::skill::env_manager
+pub struct orchest::skill::env_manager::CapabilityValidator
+impl orchest::skill::env_manager::CapabilityValidator
+pub fn orchest::skill::env_manager::CapabilityValidator::execution_env(core::option::Option<&orchest::skill::types::SkillCapabilities>) -> std::collections::hash::map::HashMap<alloc::string::String, alloc::string::String>
+pub fn orchest::skill::env_manager::CapabilityValidator::missing_capabilities_warning(&orchest::skill::types::SkillManifest) -> bool
+pub struct orchest::skill::env_manager::SkillEnvManager
+impl orchest::skill::env_manager::SkillEnvManager
+pub fn orchest::skill::env_manager::SkillEnvManager::default_cache_dir() -> std::path::PathBuf
+pub async fn orchest::skill::env_manager::SkillEnvManager::ensure_builtin_node_sdk(&self) -> core::result::Result<std::path::PathBuf, orchest::skill::types::EnvError>
+pub async fn orchest::skill::env_manager::SkillEnvManager::ensure_node_env(&self, &orchest::skill::types::SkillManifest) -> core::result::Result<std::path::PathBuf, orchest::skill::types::EnvError>
+pub async fn orchest::skill::env_manager::SkillEnvManager::ensure_python_env(&self, &orchest::skill::types::SkillManifest) -> core::result::Result<std::path::PathBuf, orchest::skill::types::EnvError>
+pub fn orchest::skill::env_manager::SkillEnvManager::new(std::path::PathBuf) -> Self
+pub fn orchest::skill::env_manager::SkillEnvManager::node_env_path(&self, &orchest::skill::types::SkillManifest) -> core::result::Result<std::path::PathBuf, orchest::skill::types::EnvError>
+pub fn orchest::skill::env_manager::SkillEnvManager::python_env_path(&self, &orchest::skill::types::SkillManifest) -> core::result::Result<std::path::PathBuf, orchest::skill::types::EnvError>
+impl core::default::Default for orchest::skill::env_manager::SkillEnvManager
+pub fn orchest::skill::env_manager::SkillEnvManager::default() -> Self
+pub mod orchest::skill::executor
+pub struct orchest::skill::executor::BareSubprocessExecutor
+impl orchest::skill::executor::BareSubprocessExecutor
+pub fn orchest::skill::executor::BareSubprocessExecutor::new() -> Self
+impl orchest::skill::executor::ScriptExecutor for orchest::skill::executor::BareSubprocessExecutor
+pub fn orchest::skill::executor::BareSubprocessExecutor::execute<'life0, 'life1, 'life2, 'life3, 'life4, 'life5, 'async_trait>(&'life0 self, &'life1 orchest::skill::types::BundledToolDef, &'life2 std::path::Path, &'life3 [alloc::string::String], &'life4 [u8], &'life5 orchest::skill::executor::ExecutionContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::skill::executor::ScriptOutput, orchest::skill::executor::ScriptError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait, 'life4: 'async_trait, 'life5: 'async_trait
+#[non_exhaustive] pub struct orchest::skill::executor::ExecutionContext
+pub orchest::skill::executor::ExecutionContext::capabilities: core::option::Option<orchest::skill::types::SkillCapabilities>
+pub orchest::skill::executor::ExecutionContext::env: std::collections::hash::map::HashMap<alloc::string::String, alloc::string::String>
+pub orchest::skill::executor::ExecutionContext::on_update: core::option::Option<tokio::sync::mpsc::bounded::Sender<serde_json::value::Value>>
+pub orchest::skill::executor::ExecutionContext::timeout: core::option::Option<core::time::Duration>
+pub orchest::skill::executor::ExecutionContext::work_dir: std::path::PathBuf
+#[non_exhaustive] pub struct orchest::skill::executor::ScriptError
+pub orchest::skill::executor::ScriptError::code: core::option::Option<alloc::string::String>
+pub orchest::skill::executor::ScriptError::message: alloc::string::String
+#[non_exhaustive] pub struct orchest::skill::executor::ScriptOutput
+pub orchest::skill::executor::ScriptOutput::exit_code: i32
+pub orchest::skill::executor::ScriptOutput::stderr: alloc::string::String
+pub orchest::skill::executor::ScriptOutput::stdout: alloc::string::String
+pub trait orchest::skill::executor::ScriptExecutor: core::marker::Send + core::marker::Sync
+pub fn orchest::skill::executor::ScriptExecutor::execute<'life0, 'life1, 'life2, 'life3, 'life4, 'life5, 'async_trait>(&'life0 self, &'life1 orchest::skill::types::BundledToolDef, &'life2 std::path::Path, &'life3 [alloc::string::String], &'life4 [u8], &'life5 orchest::skill::executor::ExecutionContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::skill::executor::ScriptOutput, orchest::skill::executor::ScriptError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait, 'life4: 'async_trait, 'life5: 'async_trait
+impl orchest::skill::executor::ScriptExecutor for orchest::skill::executor::BareSubprocessExecutor
+pub fn orchest::skill::executor::BareSubprocessExecutor::execute<'life0, 'life1, 'life2, 'life3, 'life4, 'life5, 'async_trait>(&'life0 self, &'life1 orchest::skill::types::BundledToolDef, &'life2 std::path::Path, &'life3 [alloc::string::String], &'life4 [u8], &'life5 orchest::skill::executor::ExecutionContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::skill::executor::ScriptOutput, orchest::skill::executor::ScriptError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait, 'life4: 'async_trait, 'life5: 'async_trait
+pub mod orchest::skill::scanner
+pub struct orchest::skill::scanner::SkillScanner
+impl orchest::skill::scanner::SkillScanner
+pub fn orchest::skill::scanner::SkillScanner::scan(&std::path::Path) -> orchest::skill::types::ScanOutcome
+pub mod orchest::skill::types
+#[non_exhaustive] pub struct orchest::skill::types::BundledToolDef
+pub orchest::skill::types::BundledToolDef::description: alloc::string::String
+pub orchest::skill::types::BundledToolDef::executable: alloc::string::String
+pub orchest::skill::types::BundledToolDef::input_schema: orchest_protocol::types::JsonSchema
+pub orchest::skill::types::BundledToolDef::name: alloc::string::String
+pub orchest::skill::types::BundledToolDef::script: std::path::PathBuf
+#[non_exhaustive] pub struct orchest::skill::types::EnvError
+pub orchest::skill::types::EnvError::code: core::option::Option<alloc::string::String>
+pub orchest::skill::types::EnvError::message: alloc::string::String
+#[non_exhaustive] pub struct orchest::skill::types::ScanOutcome
+pub orchest::skill::types::ScanOutcome::manifests: alloc::vec::Vec<orchest::skill::types::SkillManifest>
+pub orchest::skill::types::ScanOutcome::warnings: alloc::vec::Vec<orchest::skill::types::ScanWarning>
+#[non_exhaustive] pub struct orchest::skill::types::ScanWarning
+pub orchest::skill::types::ScanWarning::path: std::path::PathBuf
+pub orchest::skill::types::ScanWarning::reason: alloc::string::String
+#[non_exhaustive] pub struct orchest::skill::types::SkillCapabilities
+pub orchest::skill::types::SkillCapabilities::env: alloc::vec::Vec<alloc::string::String>
+pub orchest::skill::types::SkillCapabilities::filesystem_read: alloc::vec::Vec<std::path::PathBuf>
+pub orchest::skill::types::SkillCapabilities::filesystem_write: alloc::vec::Vec<std::path::PathBuf>
+pub orchest::skill::types::SkillCapabilities::max_memory_mb: core::option::Option<u32>
+pub orchest::skill::types::SkillCapabilities::network: bool
+pub struct orchest::skill::types::SkillDependencies
+pub orchest::skill::types::SkillDependencies::node: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub orchest::skill::types::SkillDependencies::python: alloc::vec::Vec<alloc::string::String>
+pub struct orchest::skill::types::SkillManifest
+pub orchest::skill::types::SkillManifest::allowed_tools: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+pub orchest::skill::types::SkillManifest::bundled_tools: alloc::vec::Vec<orchest::skill::types::BundledToolDef>
+pub orchest::skill::types::SkillManifest::capabilities: core::option::Option<orchest::skill::types::SkillCapabilities>
+pub orchest::skill::types::SkillManifest::dependencies: orchest::skill::types::SkillDependencies
+pub orchest::skill::types::SkillManifest::description: alloc::string::String
+pub orchest::skill::types::SkillManifest::name: alloc::string::String
+pub orchest::skill::types::SkillManifest::path: std::path::PathBuf
+pub orchest::skill::types::SkillManifest::raw_frontmatter: serde_json::value::Value
+pub orchest::skill::types::SkillManifest::skill_md_path: std::path::PathBuf
+impl orchest::skill::types::SkillManifest
+pub fn orchest::skill::types::SkillManifest::build_tool_metadata(&self, &orchest::skill::types::BundledToolDef) -> orchest::tool::metadata::ToolMetadata
+pub fn orchest::skill::types::skill_name_violations(&str) -> alloc::vec::Vec<alloc::string::String>
+#[non_exhaustive] pub struct orchest::skill::BundledToolDef
+pub orchest::skill::BundledToolDef::description: alloc::string::String
+pub orchest::skill::BundledToolDef::executable: alloc::string::String
+pub orchest::skill::BundledToolDef::input_schema: orchest_protocol::types::JsonSchema
+pub orchest::skill::BundledToolDef::name: alloc::string::String
+pub orchest::skill::BundledToolDef::script: std::path::PathBuf
+pub struct orchest::skill::CapabilityValidator
+impl orchest::skill::env_manager::CapabilityValidator
+pub fn orchest::skill::env_manager::CapabilityValidator::execution_env(core::option::Option<&orchest::skill::types::SkillCapabilities>) -> std::collections::hash::map::HashMap<alloc::string::String, alloc::string::String>
+pub fn orchest::skill::env_manager::CapabilityValidator::missing_capabilities_warning(&orchest::skill::types::SkillManifest) -> bool
+#[non_exhaustive] pub struct orchest::skill::EnvError
+pub orchest::skill::EnvError::code: core::option::Option<alloc::string::String>
+pub orchest::skill::EnvError::message: alloc::string::String
+#[non_exhaustive] pub struct orchest::skill::ScanOutcome
+pub orchest::skill::ScanOutcome::manifests: alloc::vec::Vec<orchest::skill::types::SkillManifest>
+pub orchest::skill::ScanOutcome::warnings: alloc::vec::Vec<orchest::skill::types::ScanWarning>
+#[non_exhaustive] pub struct orchest::skill::ScanWarning
+pub orchest::skill::ScanWarning::path: std::path::PathBuf
+pub orchest::skill::ScanWarning::reason: alloc::string::String
+#[non_exhaustive] pub struct orchest::skill::SkillCapabilities
+pub orchest::skill::SkillCapabilities::env: alloc::vec::Vec<alloc::string::String>
+pub orchest::skill::SkillCapabilities::filesystem_read: alloc::vec::Vec<std::path::PathBuf>
+pub orchest::skill::SkillCapabilities::filesystem_write: alloc::vec::Vec<std::path::PathBuf>
+pub orchest::skill::SkillCapabilities::max_memory_mb: core::option::Option<u32>
+pub orchest::skill::SkillCapabilities::network: bool
+pub struct orchest::skill::SkillDependencies
+pub orchest::skill::SkillDependencies::node: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub orchest::skill::SkillDependencies::python: alloc::vec::Vec<alloc::string::String>
+pub struct orchest::skill::SkillEnvManager
+impl orchest::skill::env_manager::SkillEnvManager
+pub fn orchest::skill::env_manager::SkillEnvManager::default_cache_dir() -> std::path::PathBuf
+pub async fn orchest::skill::env_manager::SkillEnvManager::ensure_builtin_node_sdk(&self) -> core::result::Result<std::path::PathBuf, orchest::skill::types::EnvError>
+pub async fn orchest::skill::env_manager::SkillEnvManager::ensure_node_env(&self, &orchest::skill::types::SkillManifest) -> core::result::Result<std::path::PathBuf, orchest::skill::types::EnvError>
+pub async fn orchest::skill::env_manager::SkillEnvManager::ensure_python_env(&self, &orchest::skill::types::SkillManifest) -> core::result::Result<std::path::PathBuf, orchest::skill::types::EnvError>
+pub fn orchest::skill::env_manager::SkillEnvManager::new(std::path::PathBuf) -> Self
+pub fn orchest::skill::env_manager::SkillEnvManager::node_env_path(&self, &orchest::skill::types::SkillManifest) -> core::result::Result<std::path::PathBuf, orchest::skill::types::EnvError>
+pub fn orchest::skill::env_manager::SkillEnvManager::python_env_path(&self, &orchest::skill::types::SkillManifest) -> core::result::Result<std::path::PathBuf, orchest::skill::types::EnvError>
+impl core::default::Default for orchest::skill::env_manager::SkillEnvManager
+pub fn orchest::skill::env_manager::SkillEnvManager::default() -> Self
+pub struct orchest::skill::SkillManifest
+pub orchest::skill::SkillManifest::allowed_tools: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+pub orchest::skill::SkillManifest::bundled_tools: alloc::vec::Vec<orchest::skill::types::BundledToolDef>
+pub orchest::skill::SkillManifest::capabilities: core::option::Option<orchest::skill::types::SkillCapabilities>
+pub orchest::skill::SkillManifest::dependencies: orchest::skill::types::SkillDependencies
+pub orchest::skill::SkillManifest::description: alloc::string::String
+pub orchest::skill::SkillManifest::name: alloc::string::String
+pub orchest::skill::SkillManifest::path: std::path::PathBuf
+pub orchest::skill::SkillManifest::raw_frontmatter: serde_json::value::Value
+pub orchest::skill::SkillManifest::skill_md_path: std::path::PathBuf
+impl orchest::skill::types::SkillManifest
+pub fn orchest::skill::types::SkillManifest::build_tool_metadata(&self, &orchest::skill::types::BundledToolDef) -> orchest::tool::metadata::ToolMetadata
+pub struct orchest::skill::SkillScanner
+impl orchest::skill::scanner::SkillScanner
+pub fn orchest::skill::scanner::SkillScanner::scan(&std::path::Path) -> orchest::skill::types::ScanOutcome
+pub mod orchest::telemetry
+pub const orchest::telemetry::METRIC_APPROVAL_LATENCY_SECONDS: &str
+pub const orchest::telemetry::METRIC_APPROVAL_REQUESTS_TOTAL: &str
+pub const orchest::telemetry::METRIC_BUDGET_EXCEEDED_TOTAL: &str
+pub const orchest::telemetry::METRIC_BUDGET_TOKENS_TOTAL: &str
+pub const orchest::telemetry::METRIC_BUDGET_UTILIZATION_RATIO: &str
+pub const orchest::telemetry::METRIC_CONTEXT_COMPACTIONS_TOTAL: &str
+pub const orchest::telemetry::METRIC_CONTEXT_COMPACTION_TOKEN_SAVINGS: &str
+pub const orchest::telemetry::METRIC_EVENT_DROPS_TOTAL: &str
+pub const orchest::telemetry::METRIC_MODEL_REQUESTS_TOTAL: &str
+pub const orchest::telemetry::METRIC_MODEL_REQUEST_DURATION_SECONDS: &str
+pub const orchest::telemetry::METRIC_MODEL_TOKENS_TOTAL: &str
+pub const orchest::telemetry::METRIC_TOOL_CALL_COUNT: &str
+pub const orchest::telemetry::METRIC_TOOL_CALL_DURATION: &str
+pub mod orchest::tool
+pub use orchest::tool::JsonSchema
+pub use orchest::tool::ToolDef
+pub mod orchest::tool::agent_as_tool
+#[non_exhaustive] pub enum orchest::tool::agent_as_tool::ContextMode
+pub orchest::tool::agent_as_tool::ContextMode::Fork
+pub orchest::tool::agent_as_tool::ContextMode::Fork::depth: core::num::nonzero::NonZeroUsize
+pub orchest::tool::agent_as_tool::ContextMode::Fresh
+#[non_exhaustive] pub enum orchest::tool::agent_as_tool::SubAgentOutputExpect
+pub orchest::tool::agent_as_tool::SubAgentOutputExpect::Fenced
+pub orchest::tool::agent_as_tool::SubAgentOutputExpect::Fenced::lang: core::option::Option<alloc::string::String>
+pub orchest::tool::agent_as_tool::SubAgentOutputExpect::Json
+pub struct orchest::tool::agent_as_tool::AgentAsTool
+impl orchest::tool::Tool for orchest::tool::agent_as_tool::AgentAsTool
+pub fn orchest::tool::agent_as_tool::AgentAsTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::agent_as_tool::AgentAsTool::description(&self) -> &str
+pub fn orchest::tool::agent_as_tool::AgentAsTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::agent_as_tool::AgentAsTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::agent_as_tool::AgentAsTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::agent_as_tool::AgentAsTool::name(&self) -> &str
+pub fn orchest::tool::agent_as_tool::AgentAsTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::agent_as_tool::AgentAsTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+pub struct orchest::tool::agent_as_tool::SubAgentBuilder
+impl orchest::tool::agent_as_tool::SubAgentBuilder
+pub fn orchest::tool::agent_as_tool::SubAgentBuilder::build(self) -> core::result::Result<alloc::sync::Arc<dyn orchest::tool::Tool>, orchest::run::ConfigError>
+pub fn orchest::tool::agent_as_tool::SubAgentBuilder::context_mode(self, orchest::tool::agent_as_tool::ContextMode) -> Self
+pub fn orchest::tool::agent_as_tool::SubAgentBuilder::expect_output(self, orchest::tool::agent_as_tool::SubAgentOutputExpect) -> Self
+pub fn orchest::tool::agent_as_tool::SubAgentBuilder::input_mapper(self, impl core::ops::function::Fn(serde_json::value::Value) -> core::result::Result<alloc::string::String, orchest::tool::error::ToolError> + core::marker::Send + core::marker::Sync + 'static) -> Self
+pub fn orchest::tool::agent_as_tool::SubAgentBuilder::input_schema(self, serde_json::value::Value) -> Self
+pub fn orchest::tool::agent_as_tool::SubAgentBuilder::model(self, alloc::sync::Arc<dyn orchest_protocol::adapter::ChatModel>) -> Self
+pub fn orchest::tool::agent_as_tool::SubAgentBuilder::output_extractor(self, impl core::ops::function::Fn(serde_json::value::Value) -> serde_json::value::Value + core::marker::Send + core::marker::Sync + 'static) -> Self
+pub fn orchest::tool::agent_as_tool::SubAgentBuilder::registry(self, orchest::tool::registry::ToolRegistry) -> Self
+pub mod orchest::tool::async_job
+#[non_exhaustive] pub enum orchest::tool::async_job::JobStatus
+pub orchest::tool::async_job::JobStatus::Completed(serde_json::value::Value)
+pub orchest::tool::async_job::JobStatus::Failed(alloc::string::String)
+pub orchest::tool::async_job::JobStatus::Pending
+pub orchest::tool::async_job::JobStatus::Pending::message: core::option::Option<alloc::string::String>
+pub orchest::tool::async_job::JobStatus::Pending::progress: core::option::Option<f32>
+pub struct orchest::tool::async_job::JobHandle
+pub orchest::tool::async_job::JobHandle::job_id: alloc::string::String
+pub orchest::tool::async_job::JobHandle::poll: core::option::Option<alloc::sync::Arc<orchest::tool::async_job::PollFn>>
+pub orchest::tool::async_job::JobHandle::poll_interval: core::time::Duration
+pub orchest::tool::async_job::JobHandle::timeout: core::option::Option<core::time::Duration>
+pub orchest::tool::async_job::JobHandle::webhook: core::option::Option<orchest::tool::async_job::WebhookConfig>
+impl core::clone::Clone for orchest::tool::async_job::JobHandle
+pub fn orchest::tool::async_job::JobHandle::clone(&self) -> Self
+impl core::fmt::Debug for orchest::tool::async_job::JobHandle
+pub fn orchest::tool::async_job::JobHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for orchest::tool::async_job::JobHandle
+pub fn orchest::tool::async_job::JobHandle::serialize<S>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error> where S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for orchest::tool::async_job::JobHandle
+pub fn orchest::tool::async_job::JobHandle::deserialize<D>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error> where D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct orchest::tool::async_job::WebhookConfig
+pub orchest::tool::async_job::WebhookConfig::expected_job_id: alloc::string::String
+pub type orchest::tool::async_job::PollFn = (dyn core::ops::function::Fn() -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::async_job::JobStatus, orchest::tool::error::ToolError>> + core::marker::Send)>> + core::marker::Send + core::marker::Sync)
+pub mod orchest::tool::builtin
+pub struct orchest::tool::builtin::ReadFileTool
+impl orchest::tool::builtin::ReadFileTool
+pub fn orchest::tool::builtin::ReadFileTool::new() -> Self
+pub async fn orchest::tool::builtin::ReadFileTool::register_skill(&self, alloc::string::String, std::path::PathBuf)
+pub fn orchest::tool::builtin::ReadFileTool::skill_paths(&self) -> alloc::sync::Arc<tokio::sync::rwlock::RwLock<alloc::vec::Vec<orchest::tool::builtin::SkillPathEntry>>>
+impl core::default::Default for orchest::tool::builtin::ReadFileTool
+pub fn orchest::tool::builtin::ReadFileTool::default() -> Self
+impl orchest::tool::Tool for orchest::tool::builtin::ReadFileTool
+pub fn orchest::tool::builtin::ReadFileTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::builtin::ReadFileTool::description(&self) -> &str
+pub fn orchest::tool::builtin::ReadFileTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::builtin::ReadFileTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::builtin::ReadFileTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::builtin::ReadFileTool::name(&self) -> &str
+pub fn orchest::tool::builtin::ReadFileTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::builtin::ReadFileTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+#[non_exhaustive] pub struct orchest::tool::builtin::SkillPathEntry
+pub orchest::tool::builtin::SkillPathEntry::skill_md_path: std::path::PathBuf
+pub orchest::tool::builtin::SkillPathEntry::skill_name: alloc::string::String
+pub struct orchest::tool::builtin::WriteFileTool
+impl orchest::tool::builtin::WriteFileTool
+pub fn orchest::tool::builtin::WriteFileTool::new() -> Self
+pub fn orchest::tool::builtin::WriteFileTool::new_with_approval(orchest::tool::Approval) -> Self
+impl core::default::Default for orchest::tool::builtin::WriteFileTool
+pub fn orchest::tool::builtin::WriteFileTool::default() -> Self
+impl orchest::tool::Tool for orchest::tool::builtin::WriteFileTool
+pub fn orchest::tool::builtin::WriteFileTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::builtin::WriteFileTool::description(&self) -> &str
+pub fn orchest::tool::builtin::WriteFileTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::builtin::WriteFileTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::builtin::WriteFileTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::builtin::WriteFileTool::name(&self) -> &str
+pub fn orchest::tool::builtin::WriteFileTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::builtin::WriteFileTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+pub mod orchest::tool::code_exec
+pub struct orchest::tool::code_exec::CodeExecutionMcpServer
+impl orchest::tool::code_exec::CodeExecutionMcpServer
+pub fn orchest::tool::code_exec::CodeExecutionMcpServer::tools(core::option::Option<alloc::sync::Arc<dyn orchest::skill::executor::ScriptExecutor>>) -> core::result::Result<alloc::vec::Vec<alloc::sync::Arc<dyn orchest::tool::Tool>>, orchest::tool::error::ToolError>
+pub struct orchest::tool::code_exec::ExecuteJavaScriptTool
+impl orchest::tool::code_exec::ExecuteJavaScriptTool
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::new(alloc::sync::Arc<dyn orchest::skill::executor::ScriptExecutor>) -> Self
+impl orchest::tool::Tool for orchest::tool::code_exec::ExecuteJavaScriptTool
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::description(&self) -> &str
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::name(&self) -> &str
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+pub struct orchest::tool::code_exec::ExecutePythonTool
+impl orchest::tool::code_exec::ExecutePythonTool
+pub fn orchest::tool::code_exec::ExecutePythonTool::new(alloc::sync::Arc<dyn orchest::skill::executor::ScriptExecutor>) -> Self
+impl orchest::tool::Tool for orchest::tool::code_exec::ExecutePythonTool
+pub fn orchest::tool::code_exec::ExecutePythonTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::code_exec::ExecutePythonTool::description(&self) -> &str
+pub fn orchest::tool::code_exec::ExecutePythonTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::code_exec::ExecutePythonTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::code_exec::ExecutePythonTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::code_exec::ExecutePythonTool::name(&self) -> &str
+pub fn orchest::tool::code_exec::ExecutePythonTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::code_exec::ExecutePythonTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+pub mod orchest::tool::error
+#[non_exhaustive] pub enum orchest::tool::error::ErrorKind
+pub orchest::tool::error::ErrorKind::Ambiguity
+pub orchest::tool::error::ErrorKind::Fatal
+pub orchest::tool::error::ErrorKind::InvalidInput
+pub orchest::tool::error::ErrorKind::NotSupported
+pub orchest::tool::error::ErrorKind::SpecGap
+pub orchest::tool::error::ErrorKind::Transient
+#[non_exhaustive] pub enum orchest::tool::error::RetryHint
+pub orchest::tool::error::RetryHint::Caution
+pub orchest::tool::error::RetryHint::Safe
+pub orchest::tool::error::RetryHint::Unsafe
+#[non_exhaustive] pub struct orchest::tool::error::ToolError
+pub orchest::tool::error::ToolError::code: core::option::Option<alloc::string::String>
+pub orchest::tool::error::ToolError::external_usage: core::option::Option<orchest::budget::BudgetUsage>
+pub orchest::tool::error::ToolError::kind: orchest::tool::error::ErrorKind
+pub orchest::tool::error::ToolError::message: alloc::string::String
+pub orchest::tool::error::ToolError::next_step: core::option::Option<alloc::string::String>
+pub orchest::tool::error::ToolError::retry: orchest::tool::error::RetryHint
+impl orchest::tool::error::ToolError
+pub fn orchest::tool::error::ToolError::ambiguity(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::tool::error::ToolError::fatal(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::tool::error::ToolError::invalid_input(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::tool::error::ToolError::spec_gap(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::tool::error::ToolError::transient(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::tool::error::ToolError::with_code(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::tool::error::ToolError::with_external_usage(self, orchest::budget::BudgetUsage) -> Self
+pub fn orchest::tool::error::ToolError::with_next_step(self, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::convert::From<orchest::tool::mcp::McpError> for orchest::tool::error::ToolError
+pub fn orchest::tool::error::ToolError::from(orchest::tool::mcp::McpError) -> Self
+pub mod orchest::tool::handoff_tool
+#[non_exhaustive] pub struct orchest::tool::handoff_tool::HandoffTool
+pub orchest::tool::handoff_tool::HandoffTool::handoff: orchest::handoff::Handoff
+impl orchest::tool::handoff_tool::HandoffTool
+pub fn orchest::tool::handoff_tool::HandoffTool::new(orchest::handoff::Handoff) -> Self
+impl orchest::tool::Tool for orchest::tool::handoff_tool::HandoffTool
+pub fn orchest::tool::handoff_tool::HandoffTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::handoff_tool::HandoffTool::description(&self) -> &str
+pub fn orchest::tool::handoff_tool::HandoffTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::handoff_tool::HandoffTool::input_schema(&self) -> &serde_json::value::Value
+pub fn orchest::tool::handoff_tool::HandoffTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::handoff_tool::HandoffTool::name(&self) -> &str
+pub fn orchest::tool::handoff_tool::HandoffTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::handoff_tool::HandoffTool::output_schema(&self) -> core::option::Option<&serde_json::value::Value>
+pub mod orchest::tool::in_process
+pub struct orchest::tool::in_process::InProcessTool
+impl orchest::tool::in_process::InProcessTool
+pub fn orchest::tool::in_process::InProcessTool::new(alloc::string::String, alloc::string::String, orchest_protocol::types::JsonSchema, core::option::Option<orchest_protocol::types::JsonSchema>, orchest::tool::metadata::ToolMetadata, orchest::tool::in_process::ToolCallback) -> Self
+impl orchest::tool::Tool for orchest::tool::in_process::InProcessTool
+pub fn orchest::tool::in_process::InProcessTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::in_process::InProcessTool::description(&self) -> &str
+pub fn orchest::tool::in_process::InProcessTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::in_process::InProcessTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::in_process::InProcessTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::in_process::InProcessTool::name(&self) -> &str
+pub fn orchest::tool::in_process::InProcessTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::in_process::InProcessTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+pub type orchest::tool::in_process::ToolCallback = alloc::sync::Arc<(dyn core::ops::function::Fn(serde_json::value::Value, orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send)>> + core::marker::Send + core::marker::Sync)>
+pub mod orchest::tool::mcp
+#[non_exhaustive] pub enum orchest::tool::mcp::McpAuth
+pub orchest::tool::mcp::McpAuth::Bearer
+pub orchest::tool::mcp::McpAuth::Bearer::token: alloc::string::String
+#[non_exhaustive] pub enum orchest::tool::mcp::McpClient
+pub orchest::tool::mcp::McpClient::Http(alloc::sync::Arc<orchest::tool::mcp::McpHttpClient>)
+pub orchest::tool::mcp::McpClient::Stdio(alloc::sync::Arc<orchest::tool::mcp::McpStdioClient>)
+#[non_exhaustive] pub enum orchest::tool::mcp::McpTransport
+pub orchest::tool::mcp::McpTransport::Stdio
+pub orchest::tool::mcp::McpTransport::Stdio::args: alloc::vec::Vec<alloc::string::String>
+pub orchest::tool::mcp::McpTransport::Stdio::command: alloc::string::String
+pub orchest::tool::mcp::McpTransport::StreamableHttp
+pub orchest::tool::mcp::McpTransport::StreamableHttp::auth: core::option::Option<orchest::tool::mcp::McpAuth>
+pub orchest::tool::mcp::McpTransport::StreamableHttp::url: alloc::string::String
+#[non_exhaustive] pub struct orchest::tool::mcp::McpError
+pub orchest::tool::mcp::McpError::code: core::option::Option<alloc::string::String>
+pub orchest::tool::mcp::McpError::message: alloc::string::String
+impl core::convert::From<orchest::tool::mcp::McpError> for orchest::tool::error::ToolError
+pub fn orchest::tool::error::ToolError::from(orchest::tool::mcp::McpError) -> Self
+pub struct orchest::tool::mcp::McpHttpClient
+impl orchest::tool::mcp::McpHttpClient
+pub async fn orchest::tool::mcp::McpHttpClient::call_tool(&self, &str, serde_json::value::Value) -> core::result::Result<serde_json::value::Value, orchest::tool::mcp::McpError>
+pub async fn orchest::tool::mcp::McpHttpClient::call_tool_with_timeout(&self, &str, serde_json::value::Value, core::option::Option<core::time::Duration>) -> core::result::Result<serde_json::value::Value, orchest::tool::mcp::McpError>
+pub async fn orchest::tool::mcp::McpHttpClient::connect(&str, core::option::Option<orchest::tool::mcp::McpAuth>) -> core::result::Result<Self, orchest::tool::mcp::McpError>
+pub async fn orchest::tool::mcp::McpHttpClient::list_tools(&self) -> core::result::Result<alloc::vec::Vec<orchest::tool::mcp::McpToolDef>, orchest::tool::mcp::McpError>
+pub struct orchest::tool::mcp::McpServerConfig
+pub orchest::tool::mcp::McpServerConfig::server_id: alloc::string::String
+pub orchest::tool::mcp::McpServerConfig::transport: orchest::tool::mcp::McpTransport
+pub struct orchest::tool::mcp::McpStdioClient
+impl orchest::tool::mcp::McpStdioClient
+pub async fn orchest::tool::mcp::McpStdioClient::call_tool(&self, &str, serde_json::value::Value) -> core::result::Result<serde_json::value::Value, orchest::tool::mcp::McpError>
+pub async fn orchest::tool::mcp::McpStdioClient::connect(&str, &[&str]) -> core::result::Result<Self, orchest::tool::mcp::McpError>
+pub async fn orchest::tool::mcp::McpStdioClient::connect_owned(&str, &[alloc::string::String]) -> core::result::Result<Self, orchest::tool::mcp::McpError>
+pub async fn orchest::tool::mcp::McpStdioClient::list_tools(&self) -> core::result::Result<alloc::vec::Vec<orchest::tool::mcp::McpToolDef>, orchest::tool::mcp::McpError>
+impl core::ops::drop::Drop for orchest::tool::mcp::McpStdioClient
+pub fn orchest::tool::mcp::McpStdioClient::drop(&mut self)
+pub struct orchest::tool::mcp::McpTool
+impl orchest::tool::mcp::McpTool
+pub fn orchest::tool::mcp::McpTool::new(alloc::string::String, orchest::tool::mcp::McpToolDef, orchest::tool::mcp::McpClient) -> Self
+impl orchest::tool::Tool for orchest::tool::mcp::McpTool
+pub fn orchest::tool::mcp::McpTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::mcp::McpTool::description(&self) -> &str
+pub fn orchest::tool::mcp::McpTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::mcp::McpTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::mcp::McpTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::mcp::McpTool::name(&self) -> &str
+pub fn orchest::tool::mcp::McpTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::mcp::McpTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+#[non_exhaustive] pub struct orchest::tool::mcp::McpToolDef
+pub orchest::tool::mcp::McpToolDef::description: alloc::string::String
+pub orchest::tool::mcp::McpToolDef::input_schema: orchest_protocol::types::JsonSchema
+pub orchest::tool::mcp::McpToolDef::name: alloc::string::String
+pub mod orchest::tool::metadata
+#[non_exhaustive] pub enum orchest::tool::metadata::CostHint
+pub orchest::tool::metadata::CostHint::Free
+pub orchest::tool::metadata::CostHint::High
+pub orchest::tool::metadata::CostHint::Low
+pub orchest::tool::metadata::CostHint::Medium
+#[non_exhaustive] pub enum orchest::tool::metadata::ToolExecutionMode
+pub orchest::tool::metadata::ToolExecutionMode::Commit
+pub orchest::tool::metadata::ToolExecutionMode::Commit::draft_tool: alloc::string::String
+pub orchest::tool::metadata::ToolExecutionMode::Draft
+pub orchest::tool::metadata::ToolExecutionMode::Draft::commit_tool: alloc::string::String
+pub orchest::tool::metadata::ToolExecutionMode::Normal
+#[non_exhaustive] pub enum orchest::tool::metadata::ToolParallelism
+pub orchest::tool::metadata::ToolParallelism::ParallelSafe
+pub orchest::tool::metadata::ToolParallelism::Serial
+#[non_exhaustive] pub enum orchest::tool::metadata::ToolSource
+pub orchest::tool::metadata::ToolSource::Builtin
+pub orchest::tool::metadata::ToolSource::InProcess
+pub orchest::tool::metadata::ToolSource::McpServer
+pub orchest::tool::metadata::ToolSource::McpServer::server_id: alloc::string::String
+pub orchest::tool::metadata::ToolSource::Skill
+pub orchest::tool::metadata::ToolSource::Skill::skill_name: alloc::string::String
+pub struct orchest::tool::metadata::ToolMetadata
+pub orchest::tool::metadata::ToolMetadata::approval: orchest::tool::Approval
+pub orchest::tool::metadata::ToolMetadata::cost_hint: core::option::Option<orchest::tool::metadata::CostHint>
+pub orchest::tool::metadata::ToolMetadata::execution_mode: orchest::tool::metadata::ToolExecutionMode
+pub orchest::tool::metadata::ToolMetadata::max_output_tokens: core::option::Option<u64>
+pub orchest::tool::metadata::ToolMetadata::parallelism: orchest::tool::metadata::ToolParallelism
+pub orchest::tool::metadata::ToolMetadata::side_effect: bool
+pub orchest::tool::metadata::ToolMetadata::source: orchest::tool::metadata::ToolSource
+pub orchest::tool::metadata::ToolMetadata::timeout: core::option::Option<core::time::Duration>
+impl core::default::Default for orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::metadata::ToolMetadata::default() -> Self
+pub mod orchest::tool::registry
+#[non_exhaustive] pub enum orchest::tool::registry::RegistryError
+pub orchest::tool::registry::RegistryError::AmbiguousLink
+pub orchest::tool::registry::RegistryError::AmbiguousLink::linked_tool: alloc::string::String
+pub orchest::tool::registry::RegistryError::DuplicateName(alloc::string::String)
+pub orchest::tool::registry::RegistryError::MissingLinkedTool
+pub orchest::tool::registry::RegistryError::MissingLinkedTool::linked_tool: alloc::string::String
+pub orchest::tool::registry::RegistryError::MissingLinkedTool::tool: alloc::string::String
+pub orchest::tool::registry::RegistryError::NonReciprocalLink
+pub orchest::tool::registry::RegistryError::NonReciprocalLink::linked_tool: alloc::string::String
+pub orchest::tool::registry::RegistryError::NonReciprocalLink::tool: alloc::string::String
+pub orchest::tool::registry::RegistryError::SelfLink
+pub orchest::tool::registry::RegistryError::SelfLink::tool: alloc::string::String
+pub struct orchest::tool::registry::ToolRegistry
+impl orchest::tool::registry::ToolRegistry
+pub fn orchest::tool::registry::ToolRegistry::contains(&self, &str) -> bool
+pub fn orchest::tool::registry::ToolRegistry::filter_by_allowed(&self, &core::option::Option<alloc::vec::Vec<alloc::string::String>>) -> orchest::tool::registry::ToolRegistry
+pub fn orchest::tool::registry::ToolRegistry::get(&self, &str) -> core::option::Option<alloc::sync::Arc<dyn orchest::tool::Tool>>
+pub fn orchest::tool::registry::ToolRegistry::list(&self) -> alloc::vec::Vec<orchest_protocol::types::ToolDef>
+pub fn orchest::tool::registry::ToolRegistry::new() -> Self
+pub fn orchest::tool::registry::ToolRegistry::register(&mut self, alloc::sync::Arc<dyn orchest::tool::Tool>) -> core::result::Result<(), orchest::tool::registry::RegistryError>
+pub fn orchest::tool::registry::ToolRegistry::validate_metadata_links(&self) -> core::result::Result<(), orchest::tool::registry::RegistryError>
+pub mod orchest::tool::search
+pub struct orchest::tool::search::SearchToolsTool
+impl orchest::tool::search::SearchToolsTool
+pub fn orchest::tool::search::SearchToolsTool::new(alloc::vec::Vec<orchest_protocol::types::ToolDef>) -> Self
+pub fn orchest::tool::search::SearchToolsTool::search(&self, &str, usize) -> alloc::vec::Vec<orchest_protocol::types::ToolDef>
+impl orchest::tool::Tool for orchest::tool::search::SearchToolsTool
+pub fn orchest::tool::search::SearchToolsTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::search::SearchToolsTool::description(&self) -> &str
+pub fn orchest::tool::search::SearchToolsTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::search::SearchToolsTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::search::SearchToolsTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::search::SearchToolsTool::name(&self) -> &str
+pub fn orchest::tool::search::SearchToolsTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::search::SearchToolsTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+#[non_exhaustive] pub enum orchest::tool::Approval
+pub orchest::tool::Approval::Always
+pub orchest::tool::Approval::Never
+pub orchest::tool::Approval::WhenRisky
+#[non_exhaustive] pub enum orchest::tool::ContextMode
+pub orchest::tool::ContextMode::Fork
+pub orchest::tool::ContextMode::Fork::depth: core::num::nonzero::NonZeroUsize
+pub orchest::tool::ContextMode::Fresh
+#[non_exhaustive] pub enum orchest::tool::CostHint
+pub orchest::tool::CostHint::Free
+pub orchest::tool::CostHint::High
+pub orchest::tool::CostHint::Low
+pub orchest::tool::CostHint::Medium
+#[non_exhaustive] pub enum orchest::tool::ErrorKind
+pub orchest::tool::ErrorKind::Ambiguity
+pub orchest::tool::ErrorKind::Fatal
+pub orchest::tool::ErrorKind::InvalidInput
+pub orchest::tool::ErrorKind::NotSupported
+pub orchest::tool::ErrorKind::SpecGap
+pub orchest::tool::ErrorKind::Transient
+#[non_exhaustive] pub enum orchest::tool::RetryHint
+pub orchest::tool::RetryHint::Caution
+pub orchest::tool::RetryHint::Safe
+pub orchest::tool::RetryHint::Unsafe
+#[non_exhaustive] pub enum orchest::tool::ToolExecutionMode
+pub orchest::tool::ToolExecutionMode::Commit
+pub orchest::tool::ToolExecutionMode::Commit::draft_tool: alloc::string::String
+pub orchest::tool::ToolExecutionMode::Draft
+pub orchest::tool::ToolExecutionMode::Draft::commit_tool: alloc::string::String
+pub orchest::tool::ToolExecutionMode::Normal
+#[non_exhaustive] pub enum orchest::tool::ToolOutput
+pub orchest::tool::ToolOutput::AsyncJob(orchest::tool::async_job::JobHandle)
+pub orchest::tool::ToolOutput::Handoff(alloc::boxed::Box<orchest::handoff::HandoffResult>)
+pub orchest::tool::ToolOutput::Immediate(serde_json::value::Value)
+pub orchest::tool::ToolOutput::Structured
+pub orchest::tool::ToolOutput::Structured::details: serde_json::value::Value
+pub orchest::tool::ToolOutput::Structured::external_usage: core::option::Option<orchest::budget::BudgetUsage>
+pub orchest::tool::ToolOutput::Structured::model_output: serde_json::value::Value
+#[non_exhaustive] pub enum orchest::tool::ToolParallelism
+pub orchest::tool::ToolParallelism::ParallelSafe
+pub orchest::tool::ToolParallelism::Serial
+#[non_exhaustive] pub enum orchest::tool::ToolSource
+pub orchest::tool::ToolSource::Builtin
+pub orchest::tool::ToolSource::InProcess
+pub orchest::tool::ToolSource::McpServer
+pub orchest::tool::ToolSource::McpServer::server_id: alloc::string::String
+pub orchest::tool::ToolSource::Skill
+pub orchest::tool::ToolSource::Skill::skill_name: alloc::string::String
+pub struct orchest::tool::ToolCall
+pub orchest::tool::ToolCall::id: alloc::string::String
+pub orchest::tool::ToolCall::input: serde_json::value::Value
+pub orchest::tool::ToolCall::name: alloc::string::String
+pub struct orchest::tool::ToolContext
+pub orchest::tool::ToolContext::approval_bus: orchest::run::ApprovalBus
+pub orchest::tool::ToolContext::child_registry: orchest::run::ChildRunRegistry
+pub orchest::tool::ToolContext::event_subs: alloc::vec::Vec<orchest::events::EventSink>
+pub orchest::tool::ToolContext::event_tx: core::option::Option<tokio::sync::mpsc::bounded::Sender<orchest::events::RuntimeEvent>>
+pub orchest::tool::ToolContext::parent_messages: alloc::vec::Vec<orchest_protocol::types::Message>
+pub orchest::tool::ToolContext::remaining_budget: orchest::budget::BudgetConfig
+pub orchest::tool::ToolContext::run_depth: u32
+pub orchest::tool::ToolContext::run_id: orchest::run::RunId
+pub orchest::tool::ToolContext::tool_call_id: alloc::string::String
+pub orchest::tool::ToolContext::webhook_base_url: core::option::Option<alloc::string::String>
+impl orchest::tool::ToolContext
+pub async fn orchest::tool::ToolContext::emit_event(&self, orchest::events::RuntimeEvent)
+pub fn orchest::tool::ToolContext::oneshot() -> Self
+#[non_exhaustive] pub struct orchest::tool::ToolError
+pub orchest::tool::ToolError::code: core::option::Option<alloc::string::String>
+pub orchest::tool::ToolError::external_usage: core::option::Option<orchest::budget::BudgetUsage>
+pub orchest::tool::ToolError::kind: orchest::tool::error::ErrorKind
+pub orchest::tool::ToolError::message: alloc::string::String
+pub orchest::tool::ToolError::next_step: core::option::Option<alloc::string::String>
+pub orchest::tool::ToolError::retry: orchest::tool::error::RetryHint
+impl orchest::tool::error::ToolError
+pub fn orchest::tool::error::ToolError::ambiguity(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::tool::error::ToolError::fatal(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::tool::error::ToolError::invalid_input(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::tool::error::ToolError::spec_gap(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::tool::error::ToolError::transient(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::tool::error::ToolError::with_code(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest::tool::error::ToolError::with_external_usage(self, orchest::budget::BudgetUsage) -> Self
+pub fn orchest::tool::error::ToolError::with_next_step(self, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::convert::From<orchest::tool::mcp::McpError> for orchest::tool::error::ToolError
+pub fn orchest::tool::error::ToolError::from(orchest::tool::mcp::McpError) -> Self
+pub struct orchest::tool::ToolMetadata
+pub orchest::tool::ToolMetadata::approval: orchest::tool::Approval
+pub orchest::tool::ToolMetadata::cost_hint: core::option::Option<orchest::tool::metadata::CostHint>
+pub orchest::tool::ToolMetadata::execution_mode: orchest::tool::metadata::ToolExecutionMode
+pub orchest::tool::ToolMetadata::max_output_tokens: core::option::Option<u64>
+pub orchest::tool::ToolMetadata::parallelism: orchest::tool::metadata::ToolParallelism
+pub orchest::tool::ToolMetadata::side_effect: bool
+pub orchest::tool::ToolMetadata::source: orchest::tool::metadata::ToolSource
+pub orchest::tool::ToolMetadata::timeout: core::option::Option<core::time::Duration>
+impl core::default::Default for orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::metadata::ToolMetadata::default() -> Self
+pub trait orchest::tool::Tool: core::marker::Send + core::marker::Sync
+pub fn orchest::tool::Tool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::Tool::description(&self) -> &str
+pub fn orchest::tool::Tool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::Tool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::Tool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::Tool::name(&self) -> &str
+pub fn orchest::tool::Tool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::Tool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+impl orchest::tool::Tool for orchest::skill::bundled_tool::SkillBundledTool
+pub fn orchest::skill::bundled_tool::SkillBundledTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::skill::bundled_tool::SkillBundledTool::description(&self) -> &str
+pub fn orchest::skill::bundled_tool::SkillBundledTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::skill::bundled_tool::SkillBundledTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::skill::bundled_tool::SkillBundledTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::skill::bundled_tool::SkillBundledTool::name(&self) -> &str
+pub fn orchest::skill::bundled_tool::SkillBundledTool::needs_parent_context(&self) -> bool
+pub fn orchest::skill::bundled_tool::SkillBundledTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+impl orchest::tool::Tool for orchest::tool::agent_as_tool::AgentAsTool
+pub fn orchest::tool::agent_as_tool::AgentAsTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::agent_as_tool::AgentAsTool::description(&self) -> &str
+pub fn orchest::tool::agent_as_tool::AgentAsTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::agent_as_tool::AgentAsTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::agent_as_tool::AgentAsTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::agent_as_tool::AgentAsTool::name(&self) -> &str
+pub fn orchest::tool::agent_as_tool::AgentAsTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::agent_as_tool::AgentAsTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+impl orchest::tool::Tool for orchest::tool::builtin::ReadFileTool
+pub fn orchest::tool::builtin::ReadFileTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::builtin::ReadFileTool::description(&self) -> &str
+pub fn orchest::tool::builtin::ReadFileTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::builtin::ReadFileTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::builtin::ReadFileTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::builtin::ReadFileTool::name(&self) -> &str
+pub fn orchest::tool::builtin::ReadFileTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::builtin::ReadFileTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+impl orchest::tool::Tool for orchest::tool::builtin::WriteFileTool
+pub fn orchest::tool::builtin::WriteFileTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::builtin::WriteFileTool::description(&self) -> &str
+pub fn orchest::tool::builtin::WriteFileTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::builtin::WriteFileTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::builtin::WriteFileTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::builtin::WriteFileTool::name(&self) -> &str
+pub fn orchest::tool::builtin::WriteFileTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::builtin::WriteFileTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+impl orchest::tool::Tool for orchest::tool::code_exec::ExecuteJavaScriptTool
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::description(&self) -> &str
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::name(&self) -> &str
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::code_exec::ExecuteJavaScriptTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+impl orchest::tool::Tool for orchest::tool::code_exec::ExecutePythonTool
+pub fn orchest::tool::code_exec::ExecutePythonTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::code_exec::ExecutePythonTool::description(&self) -> &str
+pub fn orchest::tool::code_exec::ExecutePythonTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::code_exec::ExecutePythonTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::code_exec::ExecutePythonTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::code_exec::ExecutePythonTool::name(&self) -> &str
+pub fn orchest::tool::code_exec::ExecutePythonTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::code_exec::ExecutePythonTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+impl orchest::tool::Tool for orchest::tool::handoff_tool::HandoffTool
+pub fn orchest::tool::handoff_tool::HandoffTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::handoff_tool::HandoffTool::description(&self) -> &str
+pub fn orchest::tool::handoff_tool::HandoffTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::handoff_tool::HandoffTool::input_schema(&self) -> &serde_json::value::Value
+pub fn orchest::tool::handoff_tool::HandoffTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::handoff_tool::HandoffTool::name(&self) -> &str
+pub fn orchest::tool::handoff_tool::HandoffTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::handoff_tool::HandoffTool::output_schema(&self) -> core::option::Option<&serde_json::value::Value>
+impl orchest::tool::Tool for orchest::tool::in_process::InProcessTool
+pub fn orchest::tool::in_process::InProcessTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::in_process::InProcessTool::description(&self) -> &str
+pub fn orchest::tool::in_process::InProcessTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::in_process::InProcessTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::in_process::InProcessTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::in_process::InProcessTool::name(&self) -> &str
+pub fn orchest::tool::in_process::InProcessTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::in_process::InProcessTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+impl orchest::tool::Tool for orchest::tool::mcp::McpTool
+pub fn orchest::tool::mcp::McpTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::mcp::McpTool::description(&self) -> &str
+pub fn orchest::tool::mcp::McpTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::mcp::McpTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::mcp::McpTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::mcp::McpTool::name(&self) -> &str
+pub fn orchest::tool::mcp::McpTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::mcp::McpTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+impl orchest::tool::Tool for orchest::tool::search::SearchToolsTool
+pub fn orchest::tool::search::SearchToolsTool::call_oneshot<'life0, 'async_trait>(&'life0 self, serde_json::value::Value) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest::tool::search::SearchToolsTool::description(&self) -> &str
+pub fn orchest::tool::search::SearchToolsTool::execute<'life0, 'life1, 'async_trait>(&'life0 self, serde_json::value::Value, &'life1 orchest::tool::ToolContext) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest::tool::ToolOutput, orchest::tool::error::ToolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn orchest::tool::search::SearchToolsTool::input_schema(&self) -> &orchest_protocol::types::JsonSchema
+pub fn orchest::tool::search::SearchToolsTool::metadata(&self) -> &orchest::tool::metadata::ToolMetadata
+pub fn orchest::tool::search::SearchToolsTool::name(&self) -> &str
+pub fn orchest::tool::search::SearchToolsTool::needs_parent_context(&self) -> bool
+pub fn orchest::tool::search::SearchToolsTool::output_schema(&self) -> core::option::Option<&orchest_protocol::types::JsonSchema>
+#[non_exhaustive] pub enum orchest::WatcherAction
+pub orchest::WatcherAction::Abort(alloc::string::String)
+pub orchest::WatcherAction::Continue
+pub orchest::WatcherAction::Inject(alloc::string::String)
+pub orchest::WatcherAction::Steer(alloc::string::String)
+pub struct orchest::LlmWatcher
+impl orchest::run::llm_watcher::LlmWatcher
+pub fn orchest::run::llm_watcher::LlmWatcher::builder() -> orchest::run::llm_watcher::LlmWatcherBuilder
+impl orchest::run::watcher::Watcher for orchest::run::llm_watcher::LlmWatcher
+pub fn orchest::run::llm_watcher::LlmWatcher::on_event<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::events::RuntimeEvent) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::run::watcher::WatcherAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub trait orchest::Watcher: core::marker::Send + core::marker::Sync
+pub fn orchest::Watcher::on_event<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::events::RuntimeEvent) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::run::watcher::WatcherAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+impl orchest::run::watcher::Watcher for orchest::run::llm_watcher::LlmWatcher
+pub fn orchest::run::llm_watcher::LlmWatcher::on_event<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 orchest::events::RuntimeEvent) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = orchest::run::watcher::WatcherAction> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait

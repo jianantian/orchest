@@ -54,6 +54,7 @@ impl ModelError {
 /// flow should switch on this, not on message strings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ErrorCode {
     // auth
     MissingApiKey,

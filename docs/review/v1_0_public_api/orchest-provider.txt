@@ -1,0 +1,145 @@
+pub mod orchest_provider
+pub use orchest_provider::CatalogExt
+pub use orchest_provider::Entry
+pub use orchest_provider::Factory
+pub use orchest_provider::ModelFilter
+pub use orchest_provider::ModelRecord
+pub use orchest_provider::ModelStatus
+pub use orchest_provider::NormalizedProviderModel
+pub use orchest_provider::ProviderConfig
+pub use orchest_provider::ProviderRuntimeConfig
+pub use orchest_provider::create_adapter
+pub use orchest_provider::create_adapter_from_config
+pub use orchest_provider::normalize_provider_model
+pub mod orchest_provider::catalog
+pub use orchest_provider::catalog::CatalogExt
+pub use orchest_provider::catalog::ModelFilter
+pub use orchest_provider::catalog::ModelRecord
+pub use orchest_provider::catalog::ModelStatus
+pub fn orchest_provider::catalog::find_model(&str) -> core::option::Option<&'static orchest_provider_core::catalog::ModelRecord>
+pub fn orchest_provider::catalog::find_model_for(&str, orchest_protocol::descriptor::Capability) -> core::option::Option<&'static orchest_provider_core::catalog::ModelRecord>
+pub fn orchest_provider::catalog::list_models(orchest_provider_core::catalog::ModelFilter) -> impl core::iter::traits::iterator::Iterator<Item = &'static orchest_provider_core::catalog::ModelRecord>
+pub mod orchest_provider::decision
+pub struct orchest_provider::decision::DecisionConfig
+pub orchest_provider::decision::DecisionConfig::api_key: core::option::Option<alloc::string::String>
+pub orchest_provider::decision::DecisionConfig::api_key_env: core::option::Option<alloc::string::String>
+pub orchest_provider::decision::DecisionConfig::api_url: core::option::Option<alloc::string::String>
+pub orchest_provider::decision::DecisionConfig::model: alloc::string::String
+pub orchest_provider::decision::DecisionConfig::timeout_ms: core::option::Option<u64>
+impl orchest_provider::decision::DecisionConfig
+pub fn orchest_provider::decision::DecisionConfig::new(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::fmt::Debug for orchest_provider::decision::DecisionConfig
+pub fn orchest_provider::decision::DecisionConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn orchest_provider::decision::create_decision(&orchest_provider::decision::DecisionConfig) -> core::result::Result<alloc::boxed::Box<dyn orchest_protocol::decision::provider::Decision>, orchest_protocol::error::ProtocolError>
+pub async fn orchest_provider::decision::decide(&orchest_provider::decision::DecisionConfig, orchest_protocol::decision::request::DecisionRequest) -> core::result::Result<orchest_protocol::decision::answer::DecisionResponse, orchest_protocol::error::ProtocolError>
+pub mod orchest_provider::fakes
+pub struct orchest_provider::fakes::FakeAsr
+impl orchest_provider::fakes::FakeAsr
+pub fn orchest_provider::fakes::FakeAsr::new(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::default::Default for orchest_provider::fakes::FakeAsr
+pub fn orchest_provider::fakes::FakeAsr::default() -> Self
+impl orchest_protocol::capability::Asr for orchest_provider::fakes::FakeAsr
+pub fn orchest_provider::fakes::FakeAsr::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_provider::fakes::FakeAsr::model_name(&self) -> &str
+pub fn orchest_provider::fakes::FakeAsr::provider_name(&self) -> &str
+pub fn orchest_provider::fakes::FakeAsr::start_stream<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::StreamingTranscribeRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::RealtimeHandle, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_provider::fakes::FakeAsr::supported_languages(&self) -> &[orchest_protocol::capability::Language]
+pub fn orchest_provider::fakes::FakeAsr::transcribe<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::TranscribeRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::TranscribeResult, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub struct orchest_provider::fakes::FakeTts
+impl orchest_provider::fakes::FakeTts
+pub fn orchest_provider::fakes::FakeTts::new(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::default::Default for orchest_provider::fakes::FakeTts
+pub fn orchest_provider::fakes::FakeTts::default() -> Self
+impl orchest_protocol::capability::Tts for orchest_provider::fakes::FakeTts
+pub fn orchest_provider::fakes::FakeTts::descriptor(&self) -> orchest_protocol::descriptor::CapabilityDescriptor
+pub fn orchest_provider::fakes::FakeTts::model_name(&self) -> &str
+pub fn orchest_provider::fakes::FakeTts::provider_name(&self) -> &str
+pub fn orchest_provider::fakes::FakeTts::start_duplex_stream<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::RealtimeHandle, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_provider::fakes::FakeTts::stream_synthesize<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::SynthesizeRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::stream::EventStream, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn orchest_provider::fakes::FakeTts::synthesize<'life0, 'async_trait>(&'life0 self, orchest_protocol::capability::SynthesizeRequest) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<orchest_protocol::capability::SynthesizeResult, orchest_protocol::error::ProtocolError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub mod orchest_provider::providers
+pub mod orchest_provider::providers::volcengine
+pub fn orchest_provider::providers::volcengine::asr(&orchest_provider::registry::Registry, orchest_provider_core::registry::ProviderConfig) -> core::result::Result<alloc::boxed::Box<dyn orchest_protocol::capability::Asr>, orchest_protocol::error::ProtocolError>
+pub fn orchest_provider::providers::volcengine::chat(&orchest_provider::registry::Registry, orchest_provider_core::registry::ProviderConfig) -> core::result::Result<alloc::boxed::Box<dyn orchest_protocol::adapter::ChatModel>, orchest_protocol::error::ProtocolError>
+pub fn orchest_provider::providers::volcengine::realtime(&orchest_provider::registry::Registry, orchest_provider_core::registry::ProviderConfig) -> core::result::Result<alloc::boxed::Box<dyn orchest_protocol::capability::RealtimeSession>, orchest_protocol::error::ProtocolError>
+pub fn orchest_provider::providers::volcengine::tts(&orchest_provider::registry::Registry, orchest_provider_core::registry::ProviderConfig) -> core::result::Result<alloc::boxed::Box<dyn orchest_protocol::capability::Tts>, orchest_protocol::error::ProtocolError>
+pub mod orchest_provider::registry
+pub struct orchest_provider::registry::Query<'r, H>
+impl<'r, H> orchest_provider::registry::Query<'r, H>
+pub fn orchest_provider::registry::Query<'r, H>::accepts(self, impl core::iter::traits::collect::IntoIterator<Item = orchest_protocol::descriptor::Modality>) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::bidirectional(self) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::build(&self, &orchest_provider_core::registry::ProviderConfig) -> core::result::Result<H, orchest_protocol::error::ProtocolError>
+pub fn orchest_provider::registry::Query<'r, H>::emits(self, impl core::iter::traits::collect::IntoIterator<Item = orchest_protocol::descriptor::Modality>) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::id(self, &str) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::interruptible(self) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::list(&self) -> alloc::vec::Vec<&'r orchest_provider_core::registry::Entry<H>>
+pub fn orchest_provider::registry::Query<'r, H>::provider(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::select(&self) -> core::result::Result<&'r orchest_provider_core::registry::Entry<H>, orchest_protocol::error::ProtocolError>
+pub fn orchest_provider::registry::Query<'r, H>::streaming(self) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::thinking(self) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::tools(self) -> Self
+pub struct orchest_provider::registry::Registry
+impl orchest_provider::registry::Registry
+pub fn orchest_provider::registry::Registry::asr(&self) -> orchest_provider::registry::Query<'_, alloc::boxed::Box<dyn orchest_protocol::capability::Asr>>
+pub fn orchest_provider::registry::Registry::chat(&self) -> orchest_provider::registry::Query<'_, alloc::boxed::Box<dyn orchest_protocol::adapter::ChatModel>>
+pub fn orchest_provider::registry::Registry::decision(&self) -> orchest_provider::registry::Query<'_, alloc::boxed::Box<dyn orchest_protocol::decision::provider::Decision>>
+pub fn orchest_provider::registry::Registry::gen(&self) -> orchest_provider::registry::Query<'_, alloc::boxed::Box<dyn orchest_protocol::capability::GenTask>>
+pub fn orchest_provider::registry::Registry::new() -> Self
+pub fn orchest_provider::registry::Registry::realtime(&self) -> orchest_provider::registry::Query<'_, alloc::boxed::Box<dyn orchest_protocol::capability::RealtimeSession>>
+pub fn orchest_provider::registry::Registry::register_asr(&mut self, orchest_provider_core::registry::Entry<alloc::boxed::Box<dyn orchest_protocol::capability::Asr>>)
+pub fn orchest_provider::registry::Registry::register_chat(&mut self, orchest_provider_core::registry::Entry<alloc::boxed::Box<dyn orchest_protocol::adapter::ChatModel>>)
+pub fn orchest_provider::registry::Registry::register_decision(&mut self, orchest_provider_core::registry::Entry<alloc::boxed::Box<dyn orchest_protocol::decision::provider::Decision>>)
+pub fn orchest_provider::registry::Registry::register_gen(&mut self, orchest_provider_core::registry::Entry<alloc::boxed::Box<dyn orchest_protocol::capability::GenTask>>)
+pub fn orchest_provider::registry::Registry::register_realtime(&mut self, orchest_provider_core::registry::Entry<alloc::boxed::Box<dyn orchest_protocol::capability::RealtimeSession>>)
+pub fn orchest_provider::registry::Registry::register_tts(&mut self, orchest_provider_core::registry::Entry<alloc::boxed::Box<dyn orchest_protocol::capability::Tts>>)
+pub fn orchest_provider::registry::Registry::tts(&self) -> orchest_provider::registry::Query<'_, alloc::boxed::Box<dyn orchest_protocol::capability::Tts>>
+pub fn orchest_provider::registry::Registry::with_builtin() -> Self
+impl orchest_provider::registry::Registry
+pub fn orchest_provider::registry::Registry::create_decision(&self, &orchest_provider::decision::DecisionConfig) -> core::result::Result<alloc::boxed::Box<dyn orchest_protocol::decision::provider::Decision>, orchest_protocol::error::ProtocolError>
+pub struct orchest_provider::DecisionConfig
+pub orchest_provider::DecisionConfig::api_key: core::option::Option<alloc::string::String>
+pub orchest_provider::DecisionConfig::api_key_env: core::option::Option<alloc::string::String>
+pub orchest_provider::DecisionConfig::api_url: core::option::Option<alloc::string::String>
+pub orchest_provider::DecisionConfig::model: alloc::string::String
+pub orchest_provider::DecisionConfig::timeout_ms: core::option::Option<u64>
+impl orchest_provider::decision::DecisionConfig
+pub fn orchest_provider::decision::DecisionConfig::new(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::fmt::Debug for orchest_provider::decision::DecisionConfig
+pub fn orchest_provider::decision::DecisionConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct orchest_provider::Query<'r, H>
+impl<'r, H> orchest_provider::registry::Query<'r, H>
+pub fn orchest_provider::registry::Query<'r, H>::accepts(self, impl core::iter::traits::collect::IntoIterator<Item = orchest_protocol::descriptor::Modality>) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::bidirectional(self) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::build(&self, &orchest_provider_core::registry::ProviderConfig) -> core::result::Result<H, orchest_protocol::error::ProtocolError>
+pub fn orchest_provider::registry::Query<'r, H>::emits(self, impl core::iter::traits::collect::IntoIterator<Item = orchest_protocol::descriptor::Modality>) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::id(self, &str) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::interruptible(self) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::list(&self) -> alloc::vec::Vec<&'r orchest_provider_core::registry::Entry<H>>
+pub fn orchest_provider::registry::Query<'r, H>::provider(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::select(&self) -> core::result::Result<&'r orchest_provider_core::registry::Entry<H>, orchest_protocol::error::ProtocolError>
+pub fn orchest_provider::registry::Query<'r, H>::streaming(self) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::thinking(self) -> Self
+pub fn orchest_provider::registry::Query<'r, H>::tools(self) -> Self
+pub struct orchest_provider::Registry
+impl orchest_provider::registry::Registry
+pub fn orchest_provider::registry::Registry::asr(&self) -> orchest_provider::registry::Query<'_, alloc::boxed::Box<dyn orchest_protocol::capability::Asr>>
+pub fn orchest_provider::registry::Registry::chat(&self) -> orchest_provider::registry::Query<'_, alloc::boxed::Box<dyn orchest_protocol::adapter::ChatModel>>
+pub fn orchest_provider::registry::Registry::decision(&self) -> orchest_provider::registry::Query<'_, alloc::boxed::Box<dyn orchest_protocol::decision::provider::Decision>>
+pub fn orchest_provider::registry::Registry::gen(&self) -> orchest_provider::registry::Query<'_, alloc::boxed::Box<dyn orchest_protocol::capability::GenTask>>
+pub fn orchest_provider::registry::Registry::new() -> Self
+pub fn orchest_provider::registry::Registry::realtime(&self) -> orchest_provider::registry::Query<'_, alloc::boxed::Box<dyn orchest_protocol::capability::RealtimeSession>>
+pub fn orchest_provider::registry::Registry::register_asr(&mut self, orchest_provider_core::registry::Entry<alloc::boxed::Box<dyn orchest_protocol::capability::Asr>>)
+pub fn orchest_provider::registry::Registry::register_chat(&mut self, orchest_provider_core::registry::Entry<alloc::boxed::Box<dyn orchest_protocol::adapter::ChatModel>>)
+pub fn orchest_provider::registry::Registry::register_decision(&mut self, orchest_provider_core::registry::Entry<alloc::boxed::Box<dyn orchest_protocol::decision::provider::Decision>>)
+pub fn orchest_provider::registry::Registry::register_gen(&mut self, orchest_provider_core::registry::Entry<alloc::boxed::Box<dyn orchest_protocol::capability::GenTask>>)
+pub fn orchest_provider::registry::Registry::register_realtime(&mut self, orchest_provider_core::registry::Entry<alloc::boxed::Box<dyn orchest_protocol::capability::RealtimeSession>>)
+pub fn orchest_provider::registry::Registry::register_tts(&mut self, orchest_provider_core::registry::Entry<alloc::boxed::Box<dyn orchest_protocol::capability::Tts>>)
+pub fn orchest_provider::registry::Registry::tts(&self) -> orchest_provider::registry::Query<'_, alloc::boxed::Box<dyn orchest_protocol::capability::Tts>>
+pub fn orchest_provider::registry::Registry::with_builtin() -> Self
+impl orchest_provider::registry::Registry
+pub fn orchest_provider::registry::Registry::create_decision(&self, &orchest_provider::decision::DecisionConfig) -> core::result::Result<alloc::boxed::Box<dyn orchest_protocol::decision::provider::Decision>, orchest_protocol::error::ProtocolError>
+pub fn orchest_provider::create_decision(&orchest_provider::decision::DecisionConfig) -> core::result::Result<alloc::boxed::Box<dyn orchest_protocol::decision::provider::Decision>, orchest_protocol::error::ProtocolError>
+pub async fn orchest_provider::decide(&orchest_provider::decision::DecisionConfig, orchest_protocol::decision::request::DecisionRequest) -> core::result::Result<orchest_protocol::decision::answer::DecisionResponse, orchest_protocol::error::ProtocolError>
+pub fn orchest_provider::find_model(&str) -> core::option::Option<&'static orchest_provider_core::catalog::ModelRecord>
+pub fn orchest_provider::find_model_for(&str, orchest_protocol::descriptor::Capability) -> core::option::Option<&'static orchest_provider_core::catalog::ModelRecord>
+pub fn orchest_provider::list_models(orchest_provider_core::catalog::ModelFilter) -> impl core::iter::traits::iterator::Iterator<Item = &'static orchest_provider_core::catalog::ModelRecord>
