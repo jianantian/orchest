@@ -31,7 +31,7 @@ Deterministic Research Pipeline seam checks passed. Both required live-provider 
 | --- | --- | --- | --- | --- |
 | P1-1 | LlmWatcher is not root re-exported | `post-1.0-backlog` | `deferred` | #256 |
 | P1-2 | ContextMode is not root re-exported | `post-1.0-backlog` | `deferred` | #256 |
-| P1-3 | Fork empty-parent context error is unreachable via normal delegation | `post-1.0-backlog` | `resolved` (document + keep defensive error) | #257 |
+| P1-3 | Fork empty-parent context error is unreachable via normal delegation | `post-1.0-backlog` | `verified` | #257 |
 | P1-4 | Delegation has no explicit child completion receiver | `post-1.0-backlog` | `verified` | #249 |
 | P1-5 | Provider test fakes were previously inaccessible | `post-1.0-backlog` | `verified` | #196 |
 | P1-6 | Default LlmWatcher prompt leaves abort authority unscoped | `post-1.0-backlog` | `open` | #298 |
@@ -105,26 +105,19 @@ Deterministic Research Pipeline seam checks passed. Both required live-provider 
 
 **Verification evidence:** `EV-public-api`
 
-### P1-3 — Fork empty-parent context error is unreachable
+### P1-3 — Fork empty-parent context error is unreachable via normal delegation
 
 **API surface:** `orchest::tool::agent_as_tool::ContextMode::Fork`
 
 **Classification:** `post-1.0-backlog`
 
-**Status:** `resolved` (document + keep defensive error; #257)
+**Status:** `verified`
 
-**Description:** Fork empty-parent context error is unreachable via normal
-AgentAsTool delegation (parent history is non-empty). It remains reachable via
-`Tool::call_oneshot` / `ToolContext::oneshot` and hand-built empty contexts.
+**Description:** Fork empty-parent context error is unreachable via normal AgentAsTool delegation (parent history is non-empty). It remains reachable via Tool::call_oneshot / ToolContext::oneshot and hand-built empty contexts.
 
-**Observed consequence:** Error taxonomy used to look like a public case that
-normal callers cannot hit.
+**Observed consequence:** Error taxonomy used to look like a public case that normal callers cannot hit.
 
-**Resolution:** Empty-parent Fork is **not** a supported public scenario.
-Keep the stable `EMPTY_PARENT_CONTEXT` code as a defensive loud failure for
-oneshot/manual empty ctx; document reachability on `ContextMode` /
-`ToolContext` rustdocs. Do not remove the branch; do not fall back to Fresh.
-Fresh and bounded non-empty Fork semantics are unchanged.
+**Workaround:** Empty-parent Fork is not a supported public scenario. Keep the stable EMPTY_PARENT_CONTEXT code as a defensive loud failure for oneshot/manual empty ctx; document reachability on ContextMode / ToolContext rustdocs. Do not remove the branch; do not fall back to Fresh. Fresh and bounded non-empty Fork semantics are unchanged.
 
 **Evidence:** `EV-known-seams`, `EV-worker-test`
 
@@ -136,10 +129,9 @@ Fresh and bounded non-empty Fork semantics are unchanged.
 
 **Verification status:** `passed`
 
-**Verification summary:** Decision recorded in rustdocs; unit + worker tests
-continue to assert `EMPTY_PARENT_CONTEXT`.
+**Verification summary:** Decision recorded in rustdocs; unit + worker tests continue to assert EMPTY_PARENT_CONTEXT (#257).
 
-**Verification commands:** `cargo test -p orchest --test v03_runtime context_mode_fork_with_empty_parent_context_fails_loudly`; `cargo test -p research-pipeline-demo --test worker fork_context_without_parent_history_returns_clear_error`
+**Verification commands:** `cargo test -p research-pipeline-demo --test worker`
 
 **Verification evidence:** `EV-worker-test`
 
@@ -511,7 +503,7 @@ continue to assert `EMPTY_PARENT_CONTEXT`.
 | --- | --- | --- | --- | --- |
 | P1-1 | `not-applicable` | — | `EV-public-api` | Deferred to post-1.0 backlog under #256. |
 | P1-2 | `not-applicable` | — | `EV-public-api` | Deferred to post-1.0 backlog under #256. |
-| P1-3 | `passed` | `cargo test -p orchest --test v03_runtime context_mode_fork_with_empty_parent_context_fails_loudly`; `cargo test -p research-pipeline-demo --test worker fork_context_without_parent_history_returns_clear_error` | `EV-worker-test` | Documented + keep `EMPTY_PARENT_CONTEXT` (#257). |
+| P1-3 | `passed` | `cargo test -p research-pipeline-demo --test worker` | `EV-worker-test` | Decision recorded in rustdocs; unit + worker tests continue to assert EMPTY_PARENT_CONTEXT (#257). |
 | P1-4 | `passed` | `cargo test -p orchest --lib child_control`<br>`cargo test -p research-pipeline-demo --test failure_escalation`<br>`cargo test -p research-pipeline-demo --test supervisor_watcher` | `EV-agent-as-tool-forwarding-source`, `EV-child-control-demo-test`, `EV-child-control-unit-test`, `EV-failure-escalation-test` | Child await proofs in supervisor_watcher passed. |
 | P1-5 | `passed` | `cargo test -p orchest-provider --features testing fakes` | `EV-provider-fakes-test` | Provider fakes unit verification passed. |
 | P1-6 | `not-run` | — | `EV-live-provider-controlled-fault` | Observed in the pre-repair live attempts; the drill repair removes the veto for the demo but does not change the default prompt. |
@@ -668,7 +660,7 @@ No unresolved seam blockers are recorded.
 
 - P1-1 — LlmWatcher is not root re-exported (`deferred`, #256)
 - P1-2 — ContextMode is not root re-exported (`deferred`, #256)
-- P1-3 — Fork empty-parent context error is unreachable via normal delegation (`resolved`: document + keep defensive error, #257)
+- P1-3 — Fork empty-parent context error is unreachable via normal delegation (`verified`, #257)
 - P1-4 — Delegation has no explicit child completion receiver (`verified`, #249)
 - P1-5 — Provider test fakes were previously inaccessible (`verified`, #196)
 - P1-6 — Default LlmWatcher prompt leaves abort authority unscoped (`open`, #298)
