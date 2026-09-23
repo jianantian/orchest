@@ -83,6 +83,27 @@ Rules:
 - **`closes #N` in every commit** — triggers automatic issue closing on push
 - **Dependency order** — follow the order in the PRD; don't jump ahead
 - If the plan and spec conflict, update the docs first before continuing
+- **Changelog entry for user-visible changes**: see [Changelog](#changelog) below
+
+### Changelog
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+A commit adds an entry under `## [Unreleased]` in the same commit when it
+changes anything a user of a published crate can observe:
+
+- public API of a Supported crate (ADR-0003 D2), including items
+  `orchest-provider` re-exports;
+- Cargo features, MSRV or public dependencies;
+- documented runtime behavior (event ordering, wire field names, error
+  kinds, default options);
+- bug fixes that users can observe.
+
+Use the Keep a Changelog categories: Added, Changed, Deprecated, Removed,
+Fixed, Security. A breaking change starts with **Breaking:**. Commits that
+only touch docs, tests, CI, internal refactoring, bindings or examples need
+no entry. At release time the `Unreleased` section is renamed to the new
+version (ADR-0003 D7 tag format) and a fresh empty `Unreleased` section is
+added above it.
 
 Each issue's documentation:
 - `docs/iteration/<version>/issues/<NNN-slug>/spec.md` — acceptance criteria (hotfix uses same path under `docs/hotfix/<date>/issues/`)
