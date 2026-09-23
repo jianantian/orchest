@@ -42,12 +42,12 @@ These existing GitHub issues are v1.0 prerequisites:
 | #253 | Watcher attachment before execution | SB-6 |
 | #254 | Deterministic multi-watcher action arbitration | SB-7 |
 | #255 | Fallible `LlmWatcherBuilder` | RB-1 |
-| #258 | v0.10/v0.11 live-provider verification | `run-live-provider` |
+| #258 | v0.10/v0.11 live-provider verification | `run-live-provider`, `run-live-provider-controlled-fault` |
 
 Issue #258 was a release gate while the live run was `not-run` and readiness
 was `unverified`. Both required live runs are now recorded in the canonical
-ledger as `passed` and readiness is `ready`; the gate closes once that
-evidence is reviewed. No waiver has been accepted.
+ledger as `passed`, readiness is `ready`, and the gate is closed on that
+evidence. No waiver has been accepted.
 
 ## Post-1.0 Backlog
 
@@ -76,7 +76,7 @@ None of these block v1.0.
 
 ## Acceptance Criteria
 
-- [ ] #249–#255 are closed with their declared verifier evidence.
+- [x] #249–#255 are closed with their declared verifier evidence.
 - [x] #258 records executed v0.10 and v0.11 live-provider evidence, and the
   v0.11 canonical readiness result is no longer `unverified` because of a
   missing required live run.

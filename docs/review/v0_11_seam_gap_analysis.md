@@ -524,7 +524,7 @@ Revision `git:self` denotes the commit containing the canonical findings file an
 | ID | Kind | Status | Required | Command | Date | Revision | Provider | Model | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | run-child-control-unit | `test` | `passed` | yes | `cargo test -p orchest --lib child_control` | 2026-09-22 | `git:self` | — | — | `EV-child-control-unit-test` |
-| run-deterministic-runtime | `test` | `passed` | yes | `cargo test -p research-pipeline-demo` | 2026-07-31 | `git:self` | — | — | `EV-demo-package-test` |
+| run-deterministic-runtime | `test` | `passed` | yes | `cargo test -p research-pipeline-demo` | 2026-09-23 | `git:self` | — | — | `EV-demo-package-test` |
 | run-event-loss-recovery | `test` | `passed` | yes | `cargo test -p orchest --lib events::` | 2026-09-21 | `git:self` | — | — | `EV-event-loss-recovery-test` |
 | run-failure-escalation-deterministic | `test` | `passed` | yes | `cargo test -p research-pipeline-demo --test failure_escalation` | 2026-09-22 | `git:self` | — | — | `EV-failure-escalation-test` |
 | run-fixture-contract | `fixture` | `passed` | yes | `cargo test -p research-pipeline-demo --test findings_contract` | 2026-07-31 | `git:self` | — | — | `EV-fixture-contract-test` |
@@ -533,7 +533,7 @@ Revision `git:self` denotes the commit containing the canonical findings file an
 | run-live-provider-controlled-fault | `live-provider` | `passed` | yes | `cargo run -p research-pipeline-demo --bin research-pipeline -- run --question "Run the scheduled Q4 investment review over the fixture corpus." --materials examples/demo/research-pipeline/fixtures/research --fault` | 2026-09-22 | `git:self` | openrouter | openrouter/anthropic/claude-sonnet-4.6 | `EV-live-provider-controlled-fault` |
 | run-llm-watcher-abort-bound-unit | `test` | `passed` | yes | `cargo test -p orchest --lib llm_watcher` | 2026-09-23 | `git:self` | — | — | `EV-llm-watcher-abort-bound-test` |
 | run-llm-watcher-builder-unit | `test` | `passed` | yes | `cargo test -p orchest --lib build_fails_with_missing_model_when_model_not_set` | 2026-09-22 | `git:self` | — | — | `EV-llm-watcher-builder-test` |
-| run-provider-fakes-verification | `test` | `passed` | yes | `cargo test -p orchest-provider --features testing fakes` | 2026-07-31 | `git:self` | — | — | `EV-provider-fakes-test` |
+| run-provider-fakes-verification | `test` | `passed` | yes | `cargo test -p orchest-provider --features testing fakes` | 2026-09-23 | `git:self` | — | — | `EV-provider-fakes-test` |
 | run-report-smoke | `smoke` | `passed` | yes | `cargo run -p research-pipeline-demo --bin seam-report -- check --findings examples/demo/research-pipeline/findings.json --report docs/review/v0_11_seam_gap_analysis.md` | 2026-07-31 | `git:self` | — | — | `EV-report-smoke` |
 | run-supervisor-watcher-deterministic | `test` | `passed` | yes | `cargo test -p research-pipeline-demo --test supervisor_watcher` | 2026-07-31 | `git:self` | — | — | `EV-child-control-demo-test`, `EV-supervisor-watcher-test` |
 | run-watcher-arbitration-unit | `test` | `passed` | yes | `cargo test -p orchest --lib watcher_arbitration` | 2026-09-22 | `git:self` | — | — | `EV-watcher-action-arbitration-test` |
@@ -546,7 +546,7 @@ ChildRunHandle unit proofs passed.
 
 #### run-deterministic-runtime
 
-Provider-independent research-pipeline-demo package tests passed; live smoke ignored.
+Provider-independent research-pipeline-demo package tests passed (70 tests, including the 42 contract fixtures); live smoke ignored.
 
 #### run-event-loss-recovery
 
@@ -622,7 +622,7 @@ Deterministic worker tests passed.
 | EV-child-control-demo-test | `test` | `examples/demo/research-pipeline/tests/supervisor_watcher.rs` · `child_control_surface_targets_worker_and_awaits_completion` | run-supervisor-watcher-deterministic | `cargo test -p research-pipeline-demo --test supervisor_watcher` | 9 passed | Demo child resolve/await / inject/steer proofs. |
 | EV-child-control-unit-test | `test` | `crates/orchest/src/tool/agent_as_tool.rs` · `child_control_targets_child_not_supervisor_and_completion_is_independent` | run-child-control-unit | `cargo test -p orchest --lib child_control` | 2 passed; 0 failed; child vs supervisor targeting and Failed outcome proven | ChildRunHandle unit proofs. |
 | EV-controlled-fault | `source` | `examples/demo/research-pipeline/src/fault.rs` · `FaultTriggerTool::execute and ControlledFaultAbortHook::on_repeated_failure` | — | — | — | Controlled fault injection for failure escalation. |
-| EV-demo-package-test | `test` | `examples/demo/research-pipeline/Cargo.toml` | run-deterministic-runtime | `cargo test -p research-pipeline-demo` | 69 passed; 0 failed; 1 credential-gated live smoke ignored | Full provider-independent demo package tests. |
+| EV-demo-package-test | `test` | `examples/demo/research-pipeline/Cargo.toml` | run-deterministic-runtime | `cargo test -p research-pipeline-demo` | 70 passed; 0 failed; 1 credential-gated live smoke ignored | Full provider-independent demo package tests. |
 | EV-event-loss-recovery-test | `test` | `crates/orchest/src/events.rs` · `secondary_saturation_delivers_coalesced_loss_then_resumes` | run-event-loss-recovery | `cargo test -p orchest --lib events::` | 10 passed; 0 failed; saturation + bounded pending + no-drop FIFO | Coalesced secondary-subscriber loss recovery. |
 | EV-evidence-contract | `documentation` | `docs/archive/iteration/v0_11/finding-evidence-contract-design.md` · `Stable Seam Finding Evidence Design` | — | — | — | Finding/evidence contract for canonical findings.json. |
 | EV-failure-escalation-test | `test` | `examples/demo/research-pipeline/tests/failure_escalation.rs` · `controlled_worker_failure_restarts_once_then_escalates_without_panic` | run-failure-escalation-deterministic | `cargo test -p research-pipeline-demo --test failure_escalation` | 1 passed | Terminal failure / restart escalation proofs. |
@@ -637,7 +637,7 @@ Deterministic worker tests passed.
 | EV-llm-watcher-format-source | `source` | `crates/orchest/src/run/llm_watcher.rs` · `format_event` | — | — | — | LlmWatcher nested event formatting. |
 | EV-primary-tool-context-source | `source` | `crates/orchest/src/run/actor.rs` · `run_tool_and_handoff_phase` | — | — | — | ToolContext emit_event fan-out path. |
 | EV-provider-fakes-source | `source` | `crates/orchest-provider/src/fakes.rs` · `FakeAsr and FakeTts` | — | — | — | Shared provider fakes export. |
-| EV-provider-fakes-test | `test` | `crates/orchest-provider/src/fakes.rs` · `tests` | run-provider-fakes-verification | `cargo test -p orchest-provider --features testing fakes` | 5 passed; 0 failed; 7 filtered out | Provider fakes unit tests. |
+| EV-provider-fakes-test | `test` | `crates/orchest-provider/src/fakes.rs` · `tests` | run-provider-fakes-verification | `cargo test -p orchest-provider --features testing fakes` | 5 passed; 0 failed | Provider fakes unit tests. |
 | EV-public-api | `documentation` | `docs/archive/iteration/v0_11/implementation-plan.md` · `Public paths` | — | — | — | Public API boundary for the Research Pipeline demo. |
 | EV-report-smoke | `smoke-run` | `examples/demo/research-pipeline/src/bin/seam-report.rs` · `Command::Check` | run-report-smoke | `cargo run -p research-pipeline-demo --bin seam-report -- check --findings examples/demo/research-pipeline/findings.json --report docs/review/v0_11_seam_gap_analysis.md` | report current; byte-for-byte match | seam-report check against canonical Markdown projection. |
 | EV-run-level-restart-unit-test | `test` | `crates/orchest/src/run/tests.rs` · `run_failed_from_tool_hook_restarts_and_succeeds` | run-level-restart-unit | `cargo test -p orchest --lib run_failed_; cargo test -p orchest --lib restart_` | 4 focused restart-policy tests passed; actor-crash restart suite still passes | Run-level Restart success/exhaustion/terminal cases. |

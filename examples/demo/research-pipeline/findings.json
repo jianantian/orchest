@@ -119,9 +119,9 @@
       "status": "passed",
       "required": true,
       "command": "cargo test -p research-pipeline-demo",
-      "date": "2026-07-31",
+      "date": "2026-09-23",
       "revision": "git:self",
-      "summary": "Provider-independent research-pipeline-demo package tests passed; live smoke ignored.",
+      "summary": "Provider-independent research-pipeline-demo package tests passed (70 tests, including the 42 contract fixtures); live smoke ignored.",
       "evidenceRefs": ["EV-demo-package-test"]
     },
     {
@@ -218,7 +218,7 @@
       "status": "passed",
       "required": true,
       "command": "cargo test -p orchest-provider --features testing fakes",
-      "date": "2026-07-31",
+      "date": "2026-09-23",
       "revision": "git:self",
       "summary": "Provider fakes verification passed.",
       "evidenceRefs": ["EV-provider-fakes-test"]
@@ -455,7 +455,7 @@
       "path": "examples/demo/research-pipeline/Cargo.toml",
       "command": "cargo test -p research-pipeline-demo",
       "runRef": "run-deterministic-runtime",
-      "result": "69 passed; 0 failed; 1 credential-gated live smoke ignored"
+      "result": "70 passed; 0 failed; 1 credential-gated live smoke ignored"
     },
     {
       "id": "EV-provider-fakes-source",
@@ -472,7 +472,7 @@
       "symbol": "tests",
       "command": "cargo test -p orchest-provider --features testing fakes",
       "runRef": "run-provider-fakes-verification",
-      "result": "5 passed; 0 failed; 7 filtered out"
+      "result": "5 passed; 0 failed"
     },
     {
       "id": "EV-report-smoke",

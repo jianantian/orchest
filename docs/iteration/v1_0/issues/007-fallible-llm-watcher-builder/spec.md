@@ -15,12 +15,12 @@ public API freezes.
 
 ## Acceptance Criteria
 
-- [ ] `LlmWatcherBuilder::build()` returns `Result<LlmWatcher, ConfigError>`.
-- [ ] A missing model returns a dedicated, asserted error variant without
+- [x] `LlmWatcherBuilder::build()` returns `Result<LlmWatcher, ConfigError>`.
+- [x] A missing model returns a dedicated, asserted error variant without
   panic.
-- [ ] Valid builder call sites use `?` or explicitly handle the result.
-- [ ] Rust examples and bindings compile against the fallible signature.
-- [ ] No new `unwrap()` or `expect()` is added to library code.
+- [x] Valid builder call sites use `?` or explicitly handle the result.
+- [x] Rust examples and bindings compile against the fallible signature.
+- [x] No new `unwrap()` or `expect()` is added to library code.
 
 ## Notes
 

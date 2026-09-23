@@ -3,7 +3,7 @@
 ## Files to read
 
 - `docs/review/v0_11_seam_gap_analysis.md`
-- `crates/orchest/src/run.rs`
+- `crates/orchest/src/run/mod.rs`
 - `crates/orchest/src/run/handle.rs`
 
 ## Files to change
