@@ -16,21 +16,21 @@ shared metadata defined once at the workspace root.
 
 ## Acceptance Criteria
 
-- [ ] The root `Cargo.toml` defines `[workspace.package]` with at least
+- [x] The root `Cargo.toml` defines `[workspace.package]` with at least
   `version`, `edition`, `license`, `repository` and `rust-version` per the
   ADR, and published crates inherit them with `.workspace = true`.
-- [ ] Each published crate has a `description`, `readme`, up to five
+- [x] Each published crate has a `description`, `readme`, up to five
   `keywords` and valid crates.io `categories`, and its README exists.
-- [ ] Every intra-workspace dependency of a published crate carries a
+- [x] Every intra-workspace dependency of a published crate carries a
   `version` (via `[workspace.dependencies]`) matching the workspace version.
-- [ ] Every member the ADR excludes has `publish = false`.
-- [ ] `orchest-provider` depends on each Internal-tier crate with an exact
+- [x] Every member the ADR excludes has `publish = false`.
+- [x] `orchest-provider` depends on each Internal-tier crate with an exact
   `=` version requirement, and each Internal-tier crate's crate-level docs
   state it is not for direct use (ADR-0003 D2).
-- [ ] The license file(s) exist at the repository root and appear in
+- [x] The license file(s) exist at the repository root and appear in
   `cargo package --list` for each published crate.
-- [ ] `cargo publish --workspace --dry-run` succeeds.
-- [ ] `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`,
+- [x] `cargo publish --workspace --dry-run` succeeds.
+- [x] `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`,
   `cargo fmt --check` and the CI `cargo doc` step still pass.
 
 ## Blocked by

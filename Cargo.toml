@@ -15,6 +15,30 @@ members = [
     "examples/demo/research-pipeline",
 ]
 
+# Shared package metadata (ADR-0003). Published crates are released in
+# lockstep: every crate inherits this version, and the internal
+# [workspace.dependencies] requirements below must be bumped with it.
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jianantian/orchest"
+
+# Internal crates carry a `version` so they can be published. Supported-tier
+# crates use a caret requirement; Internal-tier crates (provider-core and the
+# weight-tier impl crates) are pinned with `=` so any change to them ships as
+# a new orchest-provider release (ADR-0003 D2).
+[workspace.dependencies]
+orchest = { path = "crates/orchest", version = "0.1.0" }
+orchest-protocol = { path = "crates/orchest-protocol", version = "0.1.0" }
+orchest-provider = { path = "crates/orchest-provider", version = "0.1.0" }
+orchest-storage = { path = "crates/orchest-storage", version = "0.1.0" }
+orchest-provider-core = { path = "crates/orchest-provider-core", version = "=0.1.0" }
+orchest-provider-http = { path = "crates/orchest-provider-http", version = "=0.1.0" }
+orchest-provider-stream = { path = "crates/orchest-provider-stream", version = "=0.1.0" }
+orchest-provider-visual = { path = "crates/orchest-provider-visual", version = "=0.1.0" }
+
 [workspace.lints.clippy]
 too_many_lines = "warn"
 too_many_arguments = "warn"

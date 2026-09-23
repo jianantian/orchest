@@ -1,7 +1,14 @@
 [package]
 name = "orchest-provider"
-version = "0.1.0"
-edition = "2021"
+description = "Provider registry for Orchest: select LLM, ASR, TTS, realtime and generation providers by capability or identity."
+readme = "README.md"
+keywords = ["agent", "llm", "provider", "asr", "tts"]
+categories = ["artificial-intelligence", "api-bindings", "asynchronous"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 # THE WALL: the consumer-facing registry + vendor facade + feature flags
 # (v0.9.12 provider unification, Issue 004). Consumers depend on exactly
@@ -33,13 +40,13 @@ gen = ["http", "visual"]
 testing = ["dep:async-trait", "dep:bytes"]
 
 [dependencies]
-orchest-protocol = { path = "../orchest-protocol" }
-orchest-provider-core = { path = "../orchest-provider-core" }
+orchest-protocol = { workspace = true }
+orchest-provider-core = { workspace = true }
 serde_json = "1"
 
-orchest-provider-http = { path = "../orchest-provider-http", optional = true }
-orchest-provider-stream = { path = "../orchest-provider-stream", optional = true }
-orchest-provider-visual = { path = "../orchest-provider-visual", optional = true }
+orchest-provider-http = { workspace = true, optional = true }
+orchest-provider-stream = { workspace = true, optional = true }
+orchest-provider-visual = { workspace = true, optional = true }
 
 async-trait = { version = "0.1", optional = true }
 bytes = { version = "1", optional = true }

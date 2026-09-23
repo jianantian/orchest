@@ -1,7 +1,14 @@
 [package]
 name = "orchest-provider-stream"
-version = "0.1.0"
-edition = "2021"
+description = "Internal WebSocket provider dialects for Orchest. Not for direct use: depend on orchest-provider."
+readme = "README.md"
+keywords = ["orchest"]
+categories = ["artificial-intelligence"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 # L2/L3 WebSocket dialects (openspeech[asr/tts/omni] · minimax-ws · streaming
 # asr). Absorbs the realtime + asr/tts streaming crates. Skeleton created in
@@ -12,8 +19,8 @@ edition = "2021"
 default = []
 
 [dependencies]
-orchest-protocol = { path = "../orchest-protocol" }
-orchest-provider-core = { path = "../orchest-provider-core", features = ["ws"] }
+orchest-protocol = { workspace = true }
+orchest-provider-core = { workspace = true, features = ["ws"] }
 base64 = "0.22"
 flate2 = "1"
 hex = "0.4"

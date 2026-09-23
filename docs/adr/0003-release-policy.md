@@ -156,7 +156,7 @@ That list is the set this policy applies to.
 
 | Option | Notes |
 | --- | --- |
-| **`rust-version = "1.86"`** (chosen, provisional) | Lowest version the current dependency tree allows. #307 verifies that Orchest's own code builds on 1.86 and raises the value to the lowest version that actually builds, if needed. CI gains an MSRV job. |
+| **`rust-version = "1.87"`** (chosen) | Chosen as 1.86, the lowest version the current dependency tree allows, and then raised to 1.87 by #307. `orchest` uses the unsigned-integer `is_multiple_of`, which became stable in 1.87, and 1.87 is the lowest toolchain that builds every published crate with all features. CI gains an MSRV job. |
 | Track latest stable | Zero maintenance, but it excludes enterprise and distro toolchains. |
 
 **Bump policy** (chosen):

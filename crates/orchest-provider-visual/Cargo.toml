@@ -1,7 +1,14 @@
 [package]
 name = "orchest-provider-visual"
-version = "0.1.0"
-edition = "2021"
+description = "Internal signed/polled generation dialects for Orchest. Not for direct use: depend on orchest-provider."
+readme = "README.md"
+keywords = ["orchest"]
+categories = ["artificial-intelligence"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 # L2/L3 signed/polled generation (volc-visual · aliyun · crazyrouter · renderful).
 # Absorbs the aigc image/video gen. Skeleton created in Issue 004; GenTask impls
@@ -11,8 +18,8 @@ edition = "2021"
 default = []
 
 [dependencies]
-orchest-protocol = { path = "../orchest-protocol" }
-orchest-provider-core = { path = "../orchest-provider-core", features = ["oss"] }
+orchest-protocol = { workspace = true }
+orchest-provider-core = { workspace = true, features = ["oss"] }
 async-trait = "0.1"
 bytes = "1"
 serde = { version = "1", features = ["derive"] }

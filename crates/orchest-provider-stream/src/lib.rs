@@ -1,5 +1,10 @@
 //! `orchest-provider-stream` — WebSocket wire dialects (the WS weight tier).
 //!
+//! **Internal crate — not for direct use.** It is published only because
+//! `orchest-provider` depends on it; its API carries no SemVer guarantee and
+//! `orchest-provider` pins it to an exact version (ADR-0003 D2). Depend on
+//! `orchest-provider` instead.
+//!
 //! Houses the openspeech binary protocol (shared by Volcengine asr/tts/omni),
 //! minimax-ws TTS, the per-vendor streaming-ASR dialects, and the omni
 //! `RealtimeSession` impl — the absorbed `agent-runtime-realtime-providers`

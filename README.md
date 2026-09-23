@@ -96,6 +96,7 @@ crates/
   orchest-provider-stream/# Streaming ASR/TTS + omni realtime (WebSocket tier)
   orchest-provider-visual/# Image/video generation (signed/polled tier)
   orchest-provider/       # Umbrella facade + registry — the provider surface consumers depend on
+  orchest-storage/        # Object storage (Aliyun OSS, Tencent COS) for asset persistence
   orchest-py/             # PyO3 binding
   orchest-node/           # napi-rs binding
 python/
@@ -145,4 +146,10 @@ See [`AGENTS.md`](./AGENTS.md) for conventions, [`WORKFLOW.md`](./WORKFLOW.md) f
 
 ## License
 
-UNLICENSED — internal development.
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in Orchest by you, as defined in the Apache-2.0
+license, shall be dual licensed as above, without any additional terms or
+conditions.
