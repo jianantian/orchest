@@ -395,6 +395,16 @@ fn build_deep_research_agent(
             .model(web_model)
             .registry(web_registry)
             .context_mode(ContextMode::Fresh)
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "Research question to delegate to the web-search sub-agent"
+                    }
+                },
+                "required": ["question"]
+            }))
             .input_mapper(|value: serde_json::Value| {
                 value
                     .get("question")

@@ -722,7 +722,7 @@ impl Agent {
         let child_config = agent.build_config()?;
         let child_registry = agent.build_registry()?;
         let child_model = agent.build_model()?;
-        let _input_schema = serde_json::json!({
+        let input_schema = serde_json::json!({
             "type": "object",
             "properties": {
                 input_key.clone(): {
@@ -755,6 +755,7 @@ impl Agent {
                 .as_tool(&name, &description)
                 .model(child_model)
                 .registry(child_registry)
+                .input_schema(input_schema)
                 .input_mapper(move |v| input_mapper(v))
                 .output_extractor(move |v| output_mapper(v))
                 .build()
