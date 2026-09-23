@@ -1,0 +1,114 @@
+name: Release
+
+# Lockstep crates.io release (ADR-0003). See WORKFLOW.md "Releasing".
+#
+# - Push a `vX.Y.Z` / `vX.Y.Z-rc.N` tag: guards, full CI, publish, GitHub
+#   Release.
+# - Run manually with `dry_run: true` (the default) from any ref: guards,
+#   full CI and `cargo publish --workspace --dry-run`. Nothing is uploaded.
+# - Run manually with `dry_run: false` from a tag: re-runs a failed release.
+#   Crates already on crates.io are skipped.
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Package and verify only; upload nothing
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+
+jobs:
+  guard:
+    name: Version and changelog guards
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: A real release must run from a tag
+        if: env.DRY_RUN != 'true' && github.ref_type != 'tag'
+        run: |
+          echo "error: publishing requires a vX.Y.Z tag ref; use dry_run for other refs" >&2
+          exit 1
+
+      - name: Check tag, workspace version, internal pins and changelog
+        id: check
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            version=$(scripts/release-check.sh "${{ github.ref_name }}")
+          else
+            version=$(scripts/release-check.sh)
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  ci:
+    name: Full CI suite
+    needs: guard
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish to crates.io
+    needs: [guard, ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+
+      - name: Dry run
+        if: env.DRY_RUN == 'true'
+        run: scripts/release-publish.sh "${{ needs.guard.outputs.version }}" --dry-run
+
+      - name: Publish in ADR-0003 order
+        if: env.DRY_RUN != 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [[ -z "$CARGO_REGISTRY_TOKEN" ]]; then
+            echo "error: the CARGO_REGISTRY_TOKEN secret is not set" >&2
+            exit 1
+          fi
+          scripts/release-publish.sh "${{ needs.guard.outputs.version }}"
+
+  github-release:
+    name: GitHub Release
+    needs: [guard, publish]
+    if: github.ref_type == 'tag' && (github.event_name == 'push' || inputs.dry_run == false)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create the release from the changelog section
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "skip: release $TAG already exists"
+            exit 0
+          fi
+          scripts/release-notes.sh "$VERSION" > notes.md
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$TAG" --verify-tag --title "$TAG" \
+            --notes-file notes.md "${prerelease[@]}"
