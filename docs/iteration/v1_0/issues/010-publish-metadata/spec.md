@@ -24,6 +24,9 @@ shared metadata defined once at the workspace root.
 - [ ] Every intra-workspace dependency of a published crate carries a
   `version` (via `[workspace.dependencies]`) matching the workspace version.
 - [ ] Every member the ADR excludes has `publish = false`.
+- [ ] `orchest-provider` depends on each Internal-tier crate with an exact
+  `=` version requirement, and each Internal-tier crate's crate-level docs
+  state it is not for direct use (ADR-0003 D2).
 - [ ] The license file(s) exist at the repository root and appear in
   `cargo package --list` for each published crate.
 - [ ] `cargo publish --workspace --dry-run` succeeds.

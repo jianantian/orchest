@@ -18,15 +18,15 @@ of truth.
 
 ## Acceptance Criteria
 
-- [ ] The ADR states the license as an SPDX expression with its rationale.
-- [ ] The ADR classifies every workspace member as published or
+- [x] The ADR states the license as an SPDX expression with its rationale.
+- [x] The ADR classifies every workspace member as published or
   `publish = false`; `orchest-py`, `orchest-node` and the demo examples are
   `publish = false` (binding packages are out of v1.0 scope).
-- [ ] The ADR states the versioning scheme (lockstep or per-crate), what counts
+- [x] The ADR states the versioning scheme (lockstep or per-crate), what counts
   as a breaking change (public API definition, feature flags, public
   dependency upgrades) and the MSRV value and bump policy.
-- [ ] The ADR states the release tag format and the crate publish order.
-- [ ] The ADR status is `Accepted` and names the decision owner.
+- [x] The ADR states the release tag format and the crate publish order.
+- [x] The ADR status is `Accepted` and names the decision owner.
 
 ## Blocked by
 
