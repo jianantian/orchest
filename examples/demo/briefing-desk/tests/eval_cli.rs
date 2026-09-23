@@ -379,8 +379,8 @@ fn compare_eligible_path_with_identical_scripted_runs() {
         );
     }
 
-    // Patch the underlying attempt evidence so fixed aggregation authentically
-    // yields a +10 candidate improvement while keeping tokens/latency stable.
+    // Patch scores for a deterministic +10 delta and pin tokens/latency so the
+    // compare resource gates cannot flake on wall-clock jitter from scripted runs.
     patch_results_for_eligibility(runs.path(), "cmp-base", "cmp-cand");
     let before_baseline = snapshot_tree(&runs.path().join("cmp-base"));
     let before_candidate = snapshot_tree(&runs.path().join("cmp-cand"));
@@ -398,10 +398,11 @@ fn compare_eligible_path_with_identical_scripted_runs() {
         ])
         .output()
         .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         out.status.success(),
-        "stderr={}",
-        String::from_utf8_lossy(&out.stderr)
+        "compare CLI should succeed for patched identical scripted runs\nstdout={stdout}\nstderr={stderr}"
     );
     let compare_files: Vec<_> = std::fs::read_dir(runs.path().join("_compare"))
         .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).collect())
@@ -431,6 +432,12 @@ fn compare_eligible_path_with_identical_scripted_runs() {
 }
 
 fn patch_results_for_eligibility(runs_root: &Path, base: &str, cand: &str) {
+    // Stable resource numbers so compare's tokens/latency gates are not exposed to
+    // wall-clock jitter from the preceding scripted runs (the flake that showed up
+    // as empty stderr + non-zero exit when status was not_eligible).
+    const STABLE_GATE_TOKENS: u64 = 100;
+    const STABLE_LATENCY_MS: u64 = 100;
+
     for label in [base, cand] {
         let path = runs_root.join(label).join("results.json");
         if !path.is_file() {
@@ -453,10 +460,16 @@ fn patch_results_for_eligibility(runs_root: &Path, base: &str, cand: &str) {
         ] {
             v["per_tag"][tag] = serde_json::json!(score);
         }
+        let mut validation_tokens: Vec<u64> = Vec::new();
+        let mut validation_latencies: Vec<u64> = Vec::new();
         if let Some(cases) = v.get_mut("cases").and_then(serde_json::Value::as_array_mut) {
             for case in cases {
                 case["passed"] = serde_json::json!(true);
                 case["score"] = serde_json::json!(score);
+                let is_validation = case
+                    .get("split")
+                    .and_then(|s| s.as_str())
+                    .is_some_and(|s| s == "validation");
                 if let Some(attempts) = case
                     .get_mut("attempts")
                     .and_then(serde_json::Value::as_array_mut)
@@ -467,11 +480,29 @@ fn patch_results_for_eligibility(runs_root: &Path, base: &str, cand: &str) {
                         attempt["passed"] = serde_json::json!(true);
                         attempt["score"] = serde_json::json!(score);
                         attempt["resource_coverage"] = serde_json::json!("complete");
+                        attempt["gate_total_tokens"] = serde_json::json!(STABLE_GATE_TOKENS);
+                        attempt["wall_latency_ms"] = serde_json::json!(STABLE_LATENCY_MS);
+                        if is_validation {
+                            validation_tokens.push(STABLE_GATE_TOKENS);
+                            validation_latencies.push(STABLE_LATENCY_MS);
+                        }
                     }
                 }
             }
         }
         v["overall"] = serde_json::json!(score);
+        // Keep aggregates consistent with attempt rows so load_run's results
+        // contract validation succeeds.
+        let has_validation = !validation_tokens.is_empty();
+        v["validation_attempt_gate_tokens"] = serde_json::json!(validation_tokens);
+        v["validation_completed_latencies_ms"] = serde_json::json!(validation_latencies);
+        if has_validation {
+            v["validation_mean_gate_tokens"] = serde_json::json!(STABLE_GATE_TOKENS as f64);
+            v["validation_median_latency_ms"] = serde_json::json!(STABLE_LATENCY_MS as f64);
+        } else {
+            v["validation_mean_gate_tokens"] = serde_json::Value::Null;
+            v["validation_median_latency_ms"] = serde_json::Value::Null;
+        }
         std::fs::write(path, serde_json::to_vec_pretty(&v).unwrap()).unwrap();
     }
 }
