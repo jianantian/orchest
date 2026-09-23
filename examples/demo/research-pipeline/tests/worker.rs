@@ -416,6 +416,10 @@ async fn fork_context_inherits_only_the_bounded_parent_tail() {
     assert_eq!(message_text(&messages[3]), "child request");
 }
 
+/// `call_oneshot` supplies an empty ToolContext; Fork must fail loudly with
+/// stable `EMPTY_PARENT_CONTEXT` rather than falling back to Fresh. This is
+/// the documented defensive path for oneshot/manual empty ctx — not a
+/// supported public empty-parent Fork scenario (issue #257 / P1-3).
 #[tokio::test]
 async fn fork_context_without_parent_history_returns_clear_error() {
     let (_temp, worker) = worker_fixture();

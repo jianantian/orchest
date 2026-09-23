@@ -3,6 +3,12 @@
 //! The child run executes in its own tokio task (spawned by AgentRun::start_with_bus);
 //! AgentAsTool::execute awaits completion and forwards every child RuntimeEvent
 //! upward as SubAgentEvent, giving consumers a continuous event stream.
+//!
+//! Child history seeding is controlled by [`ContextMode`]: [`ContextMode::Fresh`]
+//! (default) or bounded [`ContextMode::Fork`]. Empty-parent Fork is **not** a
+//! supported public scenario — it fails with stable code `EMPTY_PARENT_CONTEXT`
+//! for oneshot / hand-built empty [`super::ToolContext`]s; normal delegation
+//! always has non-empty parent history (issue #257).
 
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -20,13 +26,44 @@ use crate::tool::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOu
 type InputMapperFn = dyn Fn(Value) -> Result<String, ToolError> + Send + Sync;
 type OutputExtractorFn = dyn Fn(Value) -> Value + Send + Sync;
 
+/// How an [`AgentAsTool`] seeds the child run's initial message history.
+///
+/// - [`Fresh`](Self::Fresh) (default): the child starts with an empty history.
+///   The mapped tool input becomes its first user message.
+/// - [`Fork`](Self::Fork): the child inherits the trailing `depth` messages from
+///   [`ToolContext::parent_messages`].
+///
+/// # Empty-parent Fork — defensive, not a supported public scenario
+///
+/// If `ContextMode::Fork` runs against an empty `parent_messages`,
+/// [`AgentAsTool::execute`] returns [`ToolError::invalid_input`] with the
+/// **stable** code `EMPTY_PARENT_CONTEXT` and does **not** fall back to
+/// [`Fresh`](Self::Fresh).
+///
+/// That branch is reachable mainly via [`Tool::call_oneshot`] /
+/// [`ToolContext::oneshot`] (or a hand-built empty [`ToolContext`]), which
+/// supply no parent history. It is **not** reachable through normal
+/// AgentAsTool delegation: the run actor fills `parent_messages` from
+/// `state.messages`, which already contains at least the system prompt and
+/// user input by the time a tool executes (issue #257 / P1-3).
+///
+/// Product stance: empty-parent Fork is **not** promoted as a supported public
+/// scenario. The defensive error and stable code stay so oneshot / manual
+/// empty-context misuse fails loudly; callers that want a blank child history
+/// should use [`Fresh`](Self::Fresh). Bounded non-empty Fork and Fresh
+/// semantics are unchanged.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ContextMode {
+    /// Child starts with no inherited parent messages.
     #[default]
     Fresh,
-    Fork {
-        depth: NonZeroUsize,
-    },
+    /// Inherit the trailing `depth` messages from
+    /// [`ToolContext::parent_messages`].
+    ///
+    /// Empty `parent_messages` yields `EMPTY_PARENT_CONTEXT` (see enum docs);
+    /// that is defensive for oneshot/manual empty contexts, not a normal
+    /// delegation path.
+    Fork { depth: NonZeroUsize },
 }
 
 /// Output format contract for a sub-agent's raw text output (v0.15).
@@ -222,6 +259,10 @@ impl Tool for AgentAsTool {
         let initial_messages = match self.context_mode {
             ContextMode::Fresh => Vec::new(),
             ContextMode::Fork { depth } => {
+                // Defensive loud failure for oneshot / hand-built empty
+                // ToolContext. Normal AgentAsTool delegation always supplies
+                // non-empty parent history (issue #257). Stable code:
+                // EMPTY_PARENT_CONTEXT — not a supported public scenario.
                 if ctx.parent_messages.is_empty() {
                     return Err(ToolError::invalid_input(
                         "ContextMode::Fork requires parent message history",
@@ -664,6 +705,11 @@ impl SubAgentBuilder {
         self
     }
 
+    /// Set how the child run inherits (or ignores) parent message history.
+    ///
+    /// See [`ContextMode`] for Fresh vs bounded Fork semantics and for why
+    /// empty-parent Fork returns `EMPTY_PARENT_CONTEXT` rather than being a
+    /// supported public path (issue #257).
     pub fn context_mode(mut self, mode: ContextMode) -> Self {
         self.context_mode = mode;
         self

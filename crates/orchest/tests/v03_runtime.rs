@@ -540,6 +540,11 @@ fn context_mode_fork_depth_is_non_zero() {
     assert!(NonZeroUsize::new(0).is_none());
 }
 
+/// Empty-parent Fork is reachable via oneshot / hand-built empty ToolContext,
+/// not via normal AgentAsTool delegation (parent history is non-empty there).
+/// Product stance (#257): keep the stable `EMPTY_PARENT_CONTEXT` contract as a
+/// defensive loud failure; do not treat empty-parent Fork as a supported
+/// public scenario or silently fall back to Fresh.
 #[tokio::test]
 async fn context_mode_fork_with_empty_parent_context_fails_loudly() {
     let tool = context_echo_tool(ContextMode::Fork {
