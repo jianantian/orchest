@@ -14,6 +14,12 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+## [1.0.0-rc.1]
+
+Release candidate for 1.0.0. Same feature set as the [1.0.0] section
+below; published so crates.io consumers can verify the lockstep crates before
+the final release.
+
 ## [1.0.0]
 
 First public release on crates.io. The pre-1.0 development history (v0.1
@@ -84,5 +90,6 @@ in this file.
   and public URLs. It is backed by Aliyun OSS (V1 signature) and Tencent
   COS (V5 signature), and `create_object_store` picks the dialect.
 
-[Unreleased]: https://github.com/jianantian/orchest/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/jianantian/orchest/compare/v1.0.0-rc.1...HEAD
+[1.0.0-rc.1]: https://github.com/jianantian/orchest/releases/tag/v1.0.0-rc.1
 [1.0.0]: https://github.com/jianantian/orchest/releases/tag/v1.0.0
