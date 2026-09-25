@@ -25,7 +25,9 @@ first, publishes in dependency order and creates the GitHub Release.
   crates.io.
 - [x] It creates a GitHub Release whose body is the changelog section, marked
   prerelease when the version has a pre-release suffix.
-- [ ] A `dry_run` run succeeds and is linked from this issue.
+- [x] A `dry_run` run succeeds and is linked from this issue
+  ([run 36085825661](https://github.com/jianantian/orchest/actions/runs/36085825661),
+  `main` at `cda5867`, version `1.0.0-rc.1`).
 - [x] `WORKFLOW.md` documents the release steps and the required secret.
 
 ## Blocked by
