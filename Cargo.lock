@@ -1380,7 +1380,7 @@ dependencies = [
 
 [[package]]
 name = "orchest"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -1429,7 +1429,7 @@ dependencies = [
 
 [[package]]
 name = "orchest-protocol"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1441,7 +1441,7 @@ dependencies = [
 
 [[package]]
 name = "orchest-provider"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1456,7 +1456,7 @@ dependencies = [
 
 [[package]]
 name = "orchest-provider-core"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1478,7 +1478,7 @@ dependencies = [
 
 [[package]]
 name = "orchest-provider-http"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1499,7 +1499,7 @@ dependencies = [
 
 [[package]]
 name = "orchest-provider-stream"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1517,7 +1517,7 @@ dependencies = [
 
 [[package]]
 name = "orchest-provider-visual"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1547,7 +1547,7 @@ dependencies = [
 
 [[package]]
 name = "orchest-storage"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
