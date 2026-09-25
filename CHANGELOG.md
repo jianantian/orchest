@@ -16,9 +16,9 @@ except for the items `orchest-provider` re-exports.
 
 ## [1.0.0-rc.1]
 
-Release candidate for 1.0.0. Same feature set as the [1.0.0] section
-below; published so crates.io consumers can verify the lockstep crates before
-the final release.
+Release candidate for 1.0.0, with the same feature set as the 1.0.0 entry
+in [CHANGELOG.md](CHANGELOG.md#100). Published so crates.io users can try
+the lockstep crates before the final release.
 
 ## [1.0.0]
 
