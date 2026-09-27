@@ -133,25 +133,23 @@ impl ScriptExecutor for BareSubprocessExecutor {
 mod tests {
     use super::*;
 
+    // Unix-only: the child is a `/bin/sh` script and liveness is checked with
+    // `kill(pid, 0)`.
+    #[cfg(unix)]
     #[tokio::test]
     async fn bare_executor_kills_child_on_timeout() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let pid_file = tmp.path().join("child_pid.txt");
-        let script = tmp.path().join("slow.py");
-        let pid_path_str = pid_file.to_str().unwrap().replace('\\', "\\\\");
+        let script = tmp.path().join("slow.sh");
 
+        // `sh` starts in milliseconds, so the PID file is written well inside
+        // the timeout even on a loaded CI runner (a `python3` child could be
+        // killed before its interpreter finished starting). `exec` keeps the
+        // PID, so the recorded PID is the process the executor must kill.
         std::fs::write(
             // allow-blocking-io: test-only setup
             &script,
-            format!(
-                r#"
-import os, sys, time
-with open("{pid_path_str}", "w") as f:
-    f.write(str(os.getpid()))
-# Hang indefinitely
-time.sleep(300)
-"#,
-            ),
+            "echo $$ > child_pid.txt\nexec sleep 300\n",
         )
         .expect("write script");
 
@@ -159,7 +157,7 @@ time.sleep(300)
         let tool_def = BundledToolDef {
             name: "slow_tool".into(),
             description: "".into(),
-            executable: "python3".into(),
+            executable: "/bin/sh".into(),
             script: script.clone(),
             input_schema: serde_json::json!({"type": "object"}),
         };
@@ -168,31 +166,35 @@ time.sleep(300)
             work_dir: tmp.path().to_path_buf(),
             env: std::env::vars().collect(),
             capabilities: None,
-            timeout: Some(Duration::from_millis(500)),
+            timeout: Some(Duration::from_secs(2)),
             on_update: None,
         };
 
         let result = executor.execute(&tool_def, &script, &[], b"{}", &ctx).await;
 
-        assert!(result.is_err());
-        let err = result.unwrap_err();
+        let err = result.expect_err("a hanging script must time out");
         assert_eq!(err.code.as_deref(), Some("TIMEOUT"));
 
-        // Read the PID and verify the child was killed
-        let pid_str = std::fs::read_to_string(&pid_file).expect("read pid"); // allow-blocking-io: test-only
-        let pid: u32 = pid_str.trim().parse().expect("parse pid");
+        let pid_str = std::fs::read_to_string(&pid_file) // allow-blocking-io: test-only
+            .expect("child must record its PID before the 2 s timeout");
+        let pid: i32 = pid_str.trim().parse().expect("parse pid");
 
-        // Give the OS a moment to reap
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        #[cfg(unix)]
-        {
-            // SAFETY: pid is a valid child process ID obtained from the child
-            // that was spawned and later killed by `kill_on_drop`. Sending
-            // signal 0 checks only whether the process still exists without
-            // delivering a real signal. This is test-only, platform-gated
-            // behind `#[cfg(unix)]`.
-            let alive = unsafe { libc::kill(pid as i32, 0) == 0 };
-            assert!(!alive, "child process {pid} should be dead after timeout");
+        // `kill_on_drop` sends SIGKILL; tokio reaps the orphan asynchronously,
+        // and an unreaped zombie still answers `kill(pid, 0)`. Poll instead of
+        // sleeping a fixed amount.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            // SAFETY: pid came from the child the executor spawned. Signal 0
+            // only checks whether the process exists; nothing is delivered.
+            let alive = unsafe { libc::kill(pid, 0) == 0 };
+            if !alive {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "child process {pid} should be dead after timeout"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
 }
