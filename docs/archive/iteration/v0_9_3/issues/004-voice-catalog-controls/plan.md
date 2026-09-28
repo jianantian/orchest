@@ -4,7 +4,7 @@
 
 - `docs/external/aliyun/tts-api-doc.md` — Aliyun voice and instruction behavior
 - `docs/external/aliyun/tts-guideline.md` — custom voice/design behavior
-- `docs/external/volceengine/tts.md` — Volcengine voice and control behavior
+- `docs/external/volceengine/tts_bidirection.md` — Volcengine voice and control behavior
 - `crates/agent-runtime-tts-providers/src/routing.rs` — compatibility hooks from 002
 
 ## 步骤

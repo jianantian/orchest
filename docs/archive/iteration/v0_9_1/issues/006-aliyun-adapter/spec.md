@@ -8,7 +8,7 @@ GitHub: [#114](https://github.com/jianantian/orchest/issues/114)
 
 ## 参考资料
 
-- Vendor docs: `docs/external/aliyun/asr-api-doc.md`, `docs/external/aliyun/asr-guideline.md`
+- Vendor docs: `docs/external/aliyun/asr/realtime/base.md`, `docs/external/aliyun/asr/asr-guideline.md`
 - PRD provider-specific notes: `docs/iteration/v0_9_1/prd.md` → Aliyun 相关段落
 
 ## 影响范围

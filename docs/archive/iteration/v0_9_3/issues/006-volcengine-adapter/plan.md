@@ -2,7 +2,7 @@
 
 ## 要读的资料
 
-- `docs/external/volceengine/tts.md` — protocol, auth, session lifecycle and response shape
+- `docs/external/volceengine/tts_bidirection.md` — protocol, auth, session lifecycle and response shape
 - `crates/agent-runtime-tts-providers/src/config.rs` — factory hooks
 - `crates/agent-runtime-tts-providers/src/streaming.rs` — stream contract
 - `crates/agent-runtime-tts-providers/src/voices.rs` — voice/control validation

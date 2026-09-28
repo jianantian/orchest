@@ -21,8 +21,8 @@ ElevenLabs Scribe v2 Realtime 作为接口校准参考，但不进入 v0.9.1 实
 
 本地供应商资料：
 
-- [docs/external/aliyun/asr-api-doc.md](/Users/emile/Develop/orchest/docs/external/aliyun/asr-api-doc.md)
-- [docs/external/aliyun/asr-guideline.md](/Users/emile/Develop/orchest/docs/external/aliyun/asr-guideline.md)
+- [docs/external/aliyun/asr/realtime/base.md](/Users/emile/Develop/orchest/docs/external/aliyun/asr/realtime/base.md)
+- [docs/external/aliyun/asr/asr-guideline.md](/Users/emile/Develop/orchest/docs/external/aliyun/asr/asr-guideline.md)
 - [docs/external/volceengine/asr.md](/Users/emile/Develop/orchest/docs/external/volceengine/asr.md)
 
 本地既有实现参考：
@@ -500,7 +500,7 @@ The prefix selects the factory, and the suffix is passed to the provider adapter
 
 These notes are implementation constraints from the local vendor docs, not extra public API surface:
 
-- **Local references are implementation aids, not protocol truth sources.** Aliyun adapter work should review `docs/external/aliyun/asr-api-doc.md` and `docs/external/aliyun/asr-guideline.md`; Volcengine adapter work should review `docs/external/volceengine/asr.md` plus the study_buddy ASR implementation files listed above for observed binary-frame, flush timeout, and definite-utterance deduplication behavior. The adapter contract remains this PRD plus vendor documentation, not the local reference implementations.
+- **Local references are implementation aids, not protocol truth sources.** Aliyun adapter work should review `docs/external/aliyun/asr/realtime/base.md` and `docs/external/aliyun/asr/asr-guideline.md`; Volcengine adapter work should review `docs/external/volceengine/asr.md` plus the study_buddy ASR implementation files listed above for observed binary-frame, flush timeout, and definite-utterance deduplication behavior. The adapter contract remains this PRD plus vendor documentation, not the local reference implementations.
 - **Endpointing varies by provider.** Some providers expose explicit acoustic silence VAD with configurable silence timeouts; some expose semantic/end-of-turn detection; some emit final segments through provider-defined natural segmentation without a configurable VAD mode; some require manual commit/finish events for finalization. Adapters must map these behaviors into `EndpointingMode`, `EndOfSpeech`, `AsrFinalReason`, `segment_flush`, and `multi_segment_streaming` rather than assuming one universal VAD model.
 - **Audio timeline requirements vary by provider.** Some providers expect continuous realtime audio and may use transmitted silence for endpointing, timeout, or segment timing. Others tolerate sparse speech-only chunks when timestamps are preserved, or operate mainly through explicit commit/flush boundaries. Adapters must validate `StreamingTranscribeRequest.timeline` against `AsrModelCapabilities.audio_timeline_modes`; they must not insert synthetic silence to make an unsupported sparse stream look continuous.
 - **Aliyun Fun-ASR / Paraformer realtime** use WebSocket duplex tasks: send `run-task`, wait for `task-started`, stream binary audio chunks, receive `result-generated`, then send `finish-task` and wait for `task-finished`. `task-failed` is fatal for the current stream. Fun-ASR / Paraformer connections can be reused only after `task-finished`; failed tasks must discard the connection. Reused tasks need new provider task IDs, so this maps to `ConnectionReuse::ReusableAfterProviderTaskFinished`, not transparent reuse of one provider task.

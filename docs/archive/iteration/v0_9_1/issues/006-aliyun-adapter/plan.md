@@ -2,8 +2,8 @@
 
 ## 要读的现有代码
 
-- `docs/external/aliyun/asr-api-doc.md` — 完整 API 文档：SDK 调用示例 + WebSocket 原始协议示例（Python/Java/Node.js）、事件生命周期、response 结构、断句配置、时间戳、情感识别
-- `docs/external/aliyun/asr-guideline.md` — 模型选型：Fun-ASR vs Qwen-ASR 特性对比、音频规格、支持语言
+- `docs/external/aliyun/asr/realtime/base.md` — 完整 API 文档：SDK 调用示例 + WebSocket 原始协议示例（Python/Java/Node.js）、事件生命周期、response 结构、断句配置、时间戳、情感识别
+- `docs/external/aliyun/asr/asr-guideline.md` — 模型选型：Fun-ASR vs Qwen-ASR 特性对比、音频规格、支持语言
 - `crates/agent-runtime-aigc-providers/src/providers/aliyun.rs` — AIGC 的 Aliyun adapter，参考 DashScope API key 处理
 - `crates/agent-runtime-asr-providers/src/streaming.rs` — 003 的 streaming contract
 - `crates/agent-runtime-asr-providers/src/providers/volcengine.rs` — 005 的 adapter，参考 WebSocket + adapter task 模式

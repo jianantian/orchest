@@ -212,6 +212,17 @@ makes each crate's source public either way.
 | **Make the repository public at the 1.0.0 publish** (chosen) | `repository` links work and issues can be filed. Before the switch, review `docs/external/` (copied vendor API docs) and `docs/analysis` (symlink into Multivac): remove them or confirm they may be redistributed. |
 | Keep private | Omit `repository` and point `homepage` at docs.rs. External users have no issue tracker. |
 
+Review outcome (2026-09-28):
+
+- `docs/external/` stays in the repository by owner decision. It holds the
+  vendor API snapshots that the provider dialects are implemented against,
+  and code comments and design docs cite it by path and line. No crate
+  package includes it, because each package contains only its own crate
+  directory.
+- `docs/analysis` is no longer in the tree: `2260da1a` removed the symlink.
+  Earlier commits still contain its Multivac notes, and the owner decides
+  whether that is acceptable before the repository is made public (#311).
+
 ## Consequences
 
 - #307 implements D1, D2, D3 and D5 in `Cargo.toml`, adds the license files,

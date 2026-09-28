@@ -605,7 +605,7 @@ git commit -m "feat: make Query::select default-aware (C2)"
 **Description convention example:**
 
 ```rust
-// Source: docs/external/aliyun/asr-api-doc.md
+// Source: docs/external/aliyun/asr/realtime/base.md
 description: "阿里云 DashScope 实时语音识别（Fun-ASR），WebSocket inference 双工流式",
 ```
 

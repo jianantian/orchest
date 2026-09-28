@@ -41,7 +41,6 @@ docs/
 ├── todo/                       # Forward-looking direction notes not yet scheduled (e.g. provider-unification.md)
 ├── external/                   # Upstream vendor API docs (anthropic, minimax, volceengine, aliyun, …)
 ├── research/                   # Architecture research
-├── analysis/                   # Symlink to ../multivac-suite/multivac/docs/analysis for moved Multivac notes
 └── guide/                      # User-facing quickstart + Python/TS SDK guides
 ```
 

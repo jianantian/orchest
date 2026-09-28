@@ -12,7 +12,7 @@ use orchest_provider_core::catalog::{AsrCatalogExt, CatalogExt, ModelRecord, Mod
 /// Stream-tier ASR models exposed for discovery and model-pinned registry entries.
 pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
     vec![
-        // Source: docs/external/aliyun/asr-api-doc.md
+        // Source: docs/external/aliyun/asr/realtime/base.md
         ModelRecord {
             id: "aliyun/fun-asr-realtime",
             provider: "aliyun",

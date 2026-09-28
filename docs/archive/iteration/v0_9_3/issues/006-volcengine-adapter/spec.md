@@ -47,7 +47,7 @@ Implement the feature-gated Volcengine adapter with config factory support, capa
 
 ## Notes
 
-Read `docs/external/volceengine/tts.md` before implementation. Bidirectional text input and unidirectional output streaming must remain distinct internally. Provider buffering is allowed only when required by the selected provider protocol and must preserve first-audio latency reporting.
+Read `docs/external/volceengine/tts_bidirection.md` before implementation. Bidirectional text input and unidirectional output streaming must remain distinct internally. Provider buffering is allowed only when required by the selected provider protocol and must preserve first-audio latency reporting.
 
 This issue must prove Volcengine compliance with shared public contracts, not only compile the adapter. In particular, request selector mismatch, receiver-drop cancellation, session cleanup, and provider-specific redaction must be covered by offline tests or deterministic fake-transport tests.
 

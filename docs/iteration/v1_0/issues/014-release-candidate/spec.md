@@ -24,9 +24,11 @@ Cut and verify `1.0.0-rc.1`, then publish `1.0.0` and close v1.0.
 - [ ] `1.0.0-rc.1` is published by the release workflow, and a scratch
   project depending on it from crates.io builds and runs a basic agent
   example.
-- [ ] Before `1.0.0` is tagged, `docs/external/` and the `docs/analysis`
-  symlink are removed or confirmed redistributable, and the repository is
-  made public (ADR-0003 D8).
+- [ ] Before `1.0.0` is tagged, the repository is made public
+  (ADR-0003 D8). `docs/external/` stays as development reference by owner
+  decision (2026-09-28). `docs/analysis` is already out of the tree; the
+  owner has decided whether its Multivac notes in earlier commits may
+  become public.
 - [ ] After owner sign-off, `1.0.0` is published by the release workflow and
   its GitHub Release exists.
 - [ ] The PRD's remaining acceptance items are checked and the roadmap marks

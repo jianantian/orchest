@@ -18,7 +18,7 @@ TTS 在实时 voice agent 中通常是渲染/输出层能力：agent 产出文�
 
 - [`docs/external/aliyun/tts-api-doc.md`](../../external/aliyun/tts-api-doc.md)
 - [`docs/external/aliyun/tts-guideline.md`](../../external/aliyun/tts-guideline.md)
-- [`docs/external/volceengine/tts.md`](../../external/volceengine/tts.md)
+- [`docs/external/volceengine/tts_bidirection.md`](../../external/volceengine/tts_bidirection.md)
 
 ## 目标
 
