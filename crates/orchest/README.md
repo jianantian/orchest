@@ -16,8 +16,8 @@ types live in [`orchest-protocol`](https://crates.io/crates/orchest-protocol).
 
 ```toml
 [dependencies]
-orchest = "0.1"
-orchest-provider = { version = "0.1", features = ["llm"] }
+orchest = "1"
+orchest-provider = { version = "1", features = ["llm"] }
 ```
 
 See the [quickstart](https://github.com/jianantian/orchest/blob/main/docs/guide/quickstart.md) and the

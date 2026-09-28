@@ -20,14 +20,14 @@
 
 ```toml
 [dependencies]
-orchest = { git = "https://github.com/jianantian/orchest" }
-orchest-provider = { git = "https://github.com/jianantian/orchest", features = ["llm"] }
+orchest = "1"
+orchest-provider = { version = "1", features = ["llm"] }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 serde_json = "1"
 ```
 
-> Orchest 尚未发布到 crates.io（计划于 v1.0）。在那之前用 git 依赖；发布后改为 `orchest = "x.y"`。
+> Orchest 自 1.0 起发布在 crates.io。`orchest-provider` 的 feature 决定编进哪些 provider，`llm` 只拉 REST 层。
 
 ## 3. 配置 provider
 
