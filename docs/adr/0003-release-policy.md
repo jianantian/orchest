@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-09-23 (accepted 2026-09-23)
 **Deciders:** Orchest maintainer (emile) — decision owner
-**Related:** [v1.0 PRD](../iteration/v1_0/prd.md), [#306](https://github.com/jianantian/orchest/issues/306),
+**Related:** [v1.0 PRD](../archive/iteration/v1_0/prd.md), [#306](https://github.com/jianantian/orchest/issues/306),
 [ADR-0001](./0001-provider-unification.md)
 
 ## Context

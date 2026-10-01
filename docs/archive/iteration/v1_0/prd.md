@@ -7,7 +7,7 @@ public Rust API only after the v0.10 and v0.11 product-validation evidence has
 been reviewed and all pre-freeze/release gates have passed.
 
 The canonical v0.11
-[Seam Gap Analysis](../../review/v0_11_seam_gap_analysis.md) recorded eight
+[Seam Gap Analysis](../../../review/v0_11_seam_gap_analysis.md) recorded eight
 open supervised-delegation seam blockers, one open release blocker, and an
 unexecuted required live-provider run when this PRD was written. As of the
 2026-09-22 evidence update: SB-1–SB-8 and RB-1 are `verified`, both required

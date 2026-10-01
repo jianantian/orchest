@@ -196,7 +196,7 @@ Prime Agent evidence was inspected at revision `14d6e7491`, primarily from:
 Orchest evidence was inspected at revision `834b697`, primarily from:
 
 - `docs/polaris/{overview,concept-boundaries,non-goals}.md`;
-- `docs/iteration/v1_0/`;
+- `docs/archive/iteration/v1_0/`;
 - `crates/orchest/src/run/`;
 - `crates/orchest/src/tool/agent_as_tool.rs` and `code_exec.rs`;
 - `crates/orchest/src/session/`; and

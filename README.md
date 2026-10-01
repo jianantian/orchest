@@ -1,5 +1,10 @@
 # Orchest
 
+[![crates.io](https://img.shields.io/crates/v/orchest.svg)](https://crates.io/crates/orchest)
+[![docs.rs](https://img.shields.io/docsrs/orchest)](https://docs.rs/orchest)
+[![CI](https://github.com/jianantian/orchest/actions/workflows/ci.yml/badge.svg)](https://github.com/jianantian/orchest/actions/workflows/ci.yml)
+[![license](https://img.shields.io/crates/l/orchest.svg)](#license)
+
 **Skill-first agent runtime.** Rust core, Python/TypeScript SDKs.  
 Aligns with the [Anthropic Agent Skills](https://agentskills.io) open standard.
 
@@ -26,7 +31,22 @@ Tool / MCP / Skill are distinct layers:
 
 ## Quick start
 
+### Rust
+
+The Rust crates are published on [crates.io](https://crates.io/crates/orchest):
+
+```toml
+[dependencies]
+orchest = "1"
+orchest-provider = { version = "1", features = ["llm"] }
+tokio = { version = "1", features = ["full"] }
+```
+
+`orchest-provider` features select which providers are compiled in (`llm` pulls only the REST tier). The [Rust quickstart](./docs/guide/quickstart.md) walks from zero to a running agent with a tool and the event stream; API docs are on [docs.rs](https://docs.rs/orchest).
+
 ### Python
+
+> The Python and TypeScript SDKs are not published to PyPI / npm yet; build them from this repository.
 
 ```bash
 uvx maturin develop
@@ -133,7 +153,7 @@ See [`AGENTS.md`](./AGENTS.md) for conventions, [`WORKFLOW.md`](./WORKFLOW.md) f
 
 | Document | Audience |
 |----------|----------|
-| [`docs/overview.md`](./docs/overview.md) | Everyone — concepts and philosophy |
+| [`docs/polaris/overview.md`](./docs/polaris/overview.md) | Everyone — concepts and philosophy |
 | [`docs/guide/quickstart.md`](./docs/guide/quickstart.md) | New users — zero to a running Rust agent |
 | [`docs/guide/sdk-python.md`](./docs/guide/sdk-python.md) | Python users — `orchest` package guide |
 | [`docs/guide/sdk-typescript.md`](./docs/guide/sdk-typescript.md) | TypeScript users — `@orchest/sdk` guide |

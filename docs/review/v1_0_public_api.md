@@ -13,15 +13,23 @@ The review covers the four Supported-tier crates: `orchest`,
 Internal crates.
 
 The inventories live in [`v1_0_public_api/`](./v1_0_public_api/), one file
-per crate. They were produced with `cargo-public-api` 0.52.0 on nightly
-2026-09-22:
+per crate. They were produced with `cargo-public-api` 0.52.0 on the pinned
+toolchain `nightly-2026-09-22`:
 
 ```bash
+rustup toolchain install nightly-2026-09-22 --profile minimal
+cargo install cargo-public-api --version 0.52.0 --locked
 for c in orchest orchest-protocol orchest-provider orchest-storage; do
-  cargo +nightly public-api -p "$c" --all-features -sss \
+  cargo +nightly-2026-09-22 public-api -p "$c" --all-features -sss \
     > "docs/review/v1_0_public_api/$c.txt"
 done
 ```
+
+Keep the toolchain pinned. rustdoc's output paths change between nightlies:
+from 2026-09-30, `Arc` renders as `alloc::rcs::arc::Arc` instead of
+`alloc::sync::Arc`. An unpinned run then reports a diff in every crate even
+when the API is unchanged. Move the pin only together with a regenerated,
+reviewed inventory.
 
 `-sss` leaves out blanket, auto-trait and auto-derived impls. The files
 record the API **after** the approved changes below. #311 regenerates them

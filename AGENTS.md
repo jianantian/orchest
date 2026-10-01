@@ -4,7 +4,7 @@
 
 Orchest is a **low-level Rust SDK** that provides the agent runtime core for building AI agent applications. It is not a complete agent product — it is the engine that other agent products run on: responsible for the agent loop, state management, event streaming, tool dispatch, and skill loading.
 
-Current stage: **pre-1.0, actively implemented**. The Rust core (`orchest`) and the shared protocol spine (`orchest-protocol`) are built out, alongside weight-tier provider crates (`orchest-provider-http`/`-stream`/`-visual`, covering LLM, ASR, TTS, and image/video AIGC) behind the `orchest-provider` registry wall. Design docs under `docs/` remain the authoritative implementation contract; code lives in `crates/`, `examples/`, and `skills/` per the Rust Project Conventions below. The living roadmap is [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md).
+Current stage: **1.x, released** — `1.0.0` of the eight lockstep crates is on crates.io (2026-10-01; versioning and SemVer policy in [ADR-0003](./docs/adr/0003-release-policy.md)). The Python/TypeScript binding packages are not published yet. The Rust core (`orchest`) and the shared protocol spine (`orchest-protocol`) are built out, alongside weight-tier provider crates (`orchest-provider-http`/`-stream`/`-visual`, covering LLM, ASR, TTS, and image/video AIGC) behind the `orchest-provider` registry wall. Design docs under `docs/` remain the authoritative implementation contract; code lives in `crates/`, `examples/`, and `skills/` per the Rust Project Conventions below. The living roadmap is [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md).
 
 ---
 
@@ -34,10 +34,11 @@ docs/
 │                               #   design-principles, observability, non-goals
 ├── iteration/
 │   ├── roadmap.md             # Living iteration roadmap + dependency graph + capability-gap map (START HERE)
-│   ├── v0_9_6/ … v0_9_10/     # Active/planned iterations — each: prd.md + issues/NNN-slug/{spec,plan}.md
-│   └── v0_10/                 # Demo Product Validation (Briefing Desk)
-├── hotfix/                     # Refactor/repair iterations (e.g. 2026_06_17)
-├── archive/                    # Completed iterations + hotfixes (v0_1 … v0_9), moved here after closeout
+│   └── <version>/             # Active/planned iterations — each: prd.md + issues/NNN-slug/{spec,plan}.md
+├── hotfix/<date>/              # Active refactor/repair iterations (created when needed)
+├── archive/                    # Completed iterations + hotfixes (v0_1 … v1_0, hotfix/<date>), moved here after closeout
+├── adr/                        # Architecture decision records (0001 provider unification … 0003 release policy)
+├── review/                     # Validation reports and reviews (e.g. v1_0_public_api.md + inventories)
 ├── todo/                       # Forward-looking direction notes not yet scheduled (e.g. provider-unification.md)
 ├── external/                   # Upstream vendor API docs (anthropic, minimax, volceengine, aliyun, …)
 ├── research/                   # Architecture research
@@ -60,7 +61,7 @@ The living iteration index is [`docs/iteration/roadmap.md`](./docs/iteration/roa
 
 The authoritative, up-to-date status lives in [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md) (已完成 / 规划中 tables + dependency graph). Do not duplicate it here.
 
-Snapshot (2026-06): v0.1–v0.9.5 shipped; satellite provider crates landed (ASR v0.9.1, TTS v0.9.3, Image/Video AIGC v0.6.1); v0.9.6–v0.9.9 runtime/satellite iterations planned; **v0.9.10 Minimax multimodal provider integration** in progress; then v0.10 Demo Product Validation → v1.0 first public release.
+Snapshot (2026-10): v0.1–v0.17 and v1.0 shipped; `1.0.0` is on crates.io and the repository is public. hotfix 2026-10-01 (DeepSeek model list and `deepseek-flash` image input) is merged and ships with 1.1.0. Nothing else is scheduled yet; candidate directions live in `docs/todo/`.
 
 ---
 

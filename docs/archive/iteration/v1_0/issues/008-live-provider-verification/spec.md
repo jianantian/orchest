@@ -44,7 +44,7 @@ the repository credentials.
 surfaced three demo-side wiring defects (`review_report` schema/mapper
 mismatch, ASR model filter ignored, live TTS voice missing); all three are
 fixed here and triaged as rows 11–14 of
-[`docs/review/v0_10_demo_validation.md`](../../../review/v0_10_demo_validation.md).
+[`docs/review/v0_10_demo_validation.md`](../../../../../review/v0_10_demo_validation.md).
 
 **v0.11 Research Pipeline** — `run-live-provider` `passed` (normal scenario,
 3 delegated workers, root `EndTurn`, 57 watcher events) and
