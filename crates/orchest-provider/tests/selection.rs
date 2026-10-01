@@ -79,11 +79,12 @@ fn fixture_registry() -> Registry {
             .with_input_modalities([Modality::Text, Modality::Image, Modality::Video]),
         |c| Ok(Box::new(FakeChat("openai", leak(&c.model))) as Box<dyn ChatModel>),
     ));
-    // A text-only, non-thinking chat model.
+    // A text-only thinking chat model.
     reg.register_chat(Entry::new(
-        chat_desc("deepseek", "deepseek-chat")
+        chat_desc("deepseek", "deepseek-v4-pro")
             .streaming(true)
-            .tools(true),
+            .tools(true)
+            .thinking(true),
         |c| Ok(Box::new(FakeChat("deepseek", leak(&c.model))) as Box<dyn ChatModel>),
     ));
     // Two ASR providers, one bidirectional (Volcengine), one not.
@@ -121,7 +122,7 @@ fn capability_query_filters_on_descriptor() {
 #[test]
 fn identity_pick_by_provider_slash_model() {
     let reg = fixture_registry();
-    let picked = reg.chat().id("deepseek/deepseek-chat").select().unwrap();
+    let picked = reg.chat().id("deepseek/deepseek-v4-pro").select().unwrap();
     assert_eq!(picked.descriptor.provider.as_ref(), "deepseek");
 }
 
@@ -635,4 +636,54 @@ fn defaults_unique_per_capability_provider() {
             "{provider} must have exactly one gen default"
         );
     }
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn with_builtin_selects_deepseek_flash_for_image_input() {
+    // Hotfix 2026-10-01 #319: deepseek-flash declares image input in the
+    // catalog; deepseek-v4-pro stays text-only.
+    let reg = Registry::with_builtin();
+    let image_models: Vec<String> = reg
+        .chat()
+        .provider("deepseek")
+        .accepts([Modality::Image])
+        .list()
+        .iter()
+        .map(|e| e.descriptor.model.to_string())
+        .collect();
+    assert_eq!(image_models, ["deepseek-flash"]);
+    let picked = reg
+        .chat()
+        .id("deepseek/deepseek-v4-pro")
+        .select()
+        .expect("v4-pro is registered");
+    assert!(!picked
+        .descriptor
+        .input_modalities
+        .contains(&Modality::Image));
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn deprecated_deepseek_v4_flash_still_resolves_by_id() {
+    // 1.0.0 shipped deepseek/deepseek-v4-flash; it stays resolvable in 1.x
+    // (ADR-0003 D4) but is hidden from default discovery.
+    use orchest_provider::{find_model, list_models, ModelFilter, ModelStatus};
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .chat()
+        .id("deepseek/deepseek-v4-flash")
+        .select()
+        .expect("deprecated row is still registered");
+    assert_eq!(picked.descriptor.model.as_ref(), "deepseek-v4-flash");
+
+    let row = find_model("deepseek/deepseek-v4-flash").expect("still in the catalog");
+    assert_eq!(row.status, ModelStatus::Deprecated);
+    assert!(list_models(ModelFilter::default()).all(|m| m.id != "deepseek/deepseek-v4-flash"));
+    assert!(list_models(ModelFilter {
+        include_deprecated: true,
+        ..ModelFilter::default()
+    })
+    .any(|m| m.id == "deepseek/deepseek-v4-flash"));
 }

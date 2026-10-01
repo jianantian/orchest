@@ -14,6 +14,43 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+### Added
+
+- DeepSeek: `deepseek/deepseek-flash` accepts image input. `ContentBlock::Image`
+  in user messages is sent as OpenAI Chat `image_url` content parts (`Url`
+  as-is, `Base64` as a `data:` URL, `detail` forwarded), and the catalog row
+  declares `Modality::Image`, so `Registry::chat().accepts([Modality::Image])`
+  can select it. The unlisted legacy name `deepseek-v4-flash-vision-exp`
+  behaves the same. For a DeepSeek model without image input
+  (`deepseek-v4-pro`, and the deprecated `deepseek-v4-flash` row), a
+  `CompatibilityPolicy::Strict` request carrying an image fails before it is
+  sent with the `ModelError` code `unsupported_image_input`; under `Coerce`
+  the image is dropped and recorded as a `content_block` `OptionAdjustment`.
+  Other Chat providers keep dropping images as before
+  ([#319](https://github.com/jianantian/orchest/issues/319)).
+
+### Changed
+
+- DeepSeek: the static catalog adds `deepseek/deepseek-flash`
+  (DeepSeek-V4.1-Flash) and updates `deepseek/deepseek-v4-pro` to the current
+  1M context / 384K output limits and peak-hour CNY pricing. Thinking efforts
+  now lower to the official `low` / `high` / `max` (`Minimal`/`Low` → `low`,
+  `Medium`/`High` → `high`, `XHigh`/`Max` → `max`)
+  ([#318](https://github.com/jianantian/orchest/issues/318)).
+- DeepSeek: `deepseek-chat` / `deepseek-reasoner`, which DeepSeek discontinued
+  on 2026-07-24, are no longer recognized by name as thinking-capable
+  1M-context models and get the unknown-model defaults. They were never
+  catalog rows ([#318](https://github.com/jianantian/orchest/issues/318)).
+
+### Deprecated
+
+- DeepSeek: the `deepseek/deepseek-v4-flash` catalog row. DeepSeek routes the
+  name to V4.1 Flash, so it stays resolvable for 1.x (identity picks,
+  `find_model`) with its 1.0.0 capabilities (text input only) and current
+  pricing, but it is now `ModelStatus::Deprecated` and hidden from default
+  `list_models` discovery. Use `deepseek/deepseek-flash`, which also accepts
+  images ([#318](https://github.com/jianantian/orchest/issues/318)).
+
 ## [1.0.0]
 
 First public release on crates.io. The pre-1.0 development history (v0.1

@@ -86,7 +86,7 @@ from pathlib import Path
 from orchest import complete, decide, start_asr_stream, transcribe
 
 text = complete(
-    model="deepseek/deepseek-chat",
+    model="deepseek/deepseek-flash",
     user="用一句话概括这段录音",
     api_key_env="DEEPSEEK_API_KEY",
 )

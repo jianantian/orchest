@@ -16,7 +16,7 @@ fn default_options() -> RequestOptions {
 }
 
 fn make_adapter(api_url: &str) -> ChatAdapter {
-    ChatAdapter::for_test("deepseek", "deepseek-chat", api_url, 4096)
+    ChatAdapter::for_test("deepseek", "deepseek-flash", api_url, 4096)
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn env_var_resolution() {
     let _env_lock = lock_env();
     let _key = EnvVarGuard::remove("DEEPSEEK_API_KEY");
 
-    let config = orchest_provider_core::registry::ProviderConfig::new("deepseek", "deepseek-chat");
+    let config = orchest_provider_core::registry::ProviderConfig::new("deepseek", "deepseek-flash");
     let result = super::resolve_api_key(&config);
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().code.as_deref(), Some("missing_api_key"));
@@ -54,10 +54,10 @@ fn thinking_off_disables_reasoning() {
 }
 
 #[test]
-fn thinking_levels_map_to_high_and_max() {
+fn thinking_levels_map_to_low_high_and_max() {
     let adapter = make_adapter("http://localhost");
 
-    // Minimal → high
+    // Minimal → low
     let opts = RequestOptions {
         thinking: ThinkingLevel::Minimal,
         ..Default::default()
@@ -66,9 +66,9 @@ fn thinking_levels_map_to_high_and_max() {
         .request_body_for_test(&[], &[], &opts)
         .expect("body");
     assert_eq!(body["thinking"]["type"], "enabled");
-    assert_eq!(body["reasoning_effort"], "high");
+    assert_eq!(body["reasoning_effort"], "low");
 
-    // Low → high
+    // Low → low
     let opts = RequestOptions {
         thinking: ThinkingLevel::Low,
         ..Default::default()
@@ -76,7 +76,7 @@ fn thinking_levels_map_to_high_and_max() {
     let (body, _) = adapter
         .request_body_for_test(&[], &[], &opts)
         .expect("body");
-    assert_eq!(body["reasoning_effort"], "high");
+    assert_eq!(body["reasoning_effort"], "low");
 
     // Medium → high
     let opts = RequestOptions {
@@ -355,7 +355,7 @@ data: [DONE]
 fn provider_name_and_model_name() {
     let adapter = make_adapter("http://localhost");
     assert_eq!(adapter.provider_name(), "deepseek");
-    assert_eq!(adapter.model_name(), "deepseek-chat");
+    assert_eq!(adapter.model_name(), "deepseek-flash");
 }
 
 #[test]
@@ -377,22 +377,49 @@ fn max_tokens_override() {
 }
 
 #[test]
-fn v4_pro_supports_thinking() {
-    // v4-pro supports thinking per official thinking_mode guide.
-    let adapter = ChatAdapter::for_test("deepseek", "deepseek-v4-pro", "http://localhost", 4096);
-    assert!(
-        adapter.capabilities().reasoning.supported,
-        "v4-pro capabilities should report reasoning.supported = true"
-    );
+fn online_models_report_thinking_and_1m_context() {
+    // deepseek-flash / deepseek-v4-pro are the online models (pricing page);
+    // deepseek-v4-flash is a legacy name routed to V4.1 Flash.
+    for model in ["deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"] {
+        let adapter = ChatAdapter::for_test("deepseek", model, "http://localhost", 4096);
+        let caps = adapter.capabilities();
+        assert!(caps.reasoning.supported, "{model} supports thinking");
+        assert_eq!(
+            caps.reasoning.efforts,
+            vec![ThinkingLevel::Low, ThinkingLevel::High, ThinkingLevel::Max],
+            "{model} efforts"
+        );
+        assert_eq!(caps.context_window_size, Some(1_000_000), "{model}");
+    }
 }
 
 #[test]
-fn v4_flash_supports_thinking() {
-    let adapter = ChatAdapter::for_test("deepseek", "deepseek-v4-flash", "http://localhost", 4096);
-    assert!(
-        adapter.capabilities().reasoning.supported,
-        "deepseek-v4-flash should support thinking"
-    );
+fn catalog_models_report_catalog_pricing() {
+    let flash = ChatAdapter::for_test("deepseek", "deepseek-flash", "http://localhost", 4096);
+    let rates = &flash.capabilities().pricing.expect("pricing").tiers[0].rates;
+    assert_eq!(rates.text_input_per_million, 2.0);
+    assert_eq!(rates.cache_read_per_million, Some(0.04));
+
+    let pro = ChatAdapter::for_test("deepseek", "deepseek-v4-pro", "http://localhost", 4096);
+    let rates = &pro.capabilities().pricing.expect("pricing").tiers[0].rates;
+    assert_eq!(rates.text_input_per_million, 9.0);
+    assert_eq!(rates.cache_read_per_million, Some(0.30));
+}
+
+#[test]
+fn discontinued_models_are_not_recognized() {
+    // deepseek-chat / deepseek-reasoner were discontinued 2026-07-24: they get
+    // the conservative unknown-model defaults, not V4 capabilities.
+    for model in ["deepseek-chat", "deepseek-reasoner"] {
+        let adapter = ChatAdapter::for_test("deepseek", model, "http://localhost", 4096);
+        let caps = adapter.capabilities();
+        assert!(
+            !caps.reasoning.supported,
+            "{model} is not a known thinking model"
+        );
+        assert!(caps.reasoning.efforts.is_empty(), "{model}");
+        assert_eq!(caps.context_window_size, Some(64_000), "{model}");
+    }
 }
 
 #[test]
@@ -450,7 +477,7 @@ data: [DONE]
     .await;
 
     let adapter = crate::create_adapter_from_config(crate::ProviderRuntimeConfig {
-        model: "deepseek/deepseek-v4-flash".into(),
+        model: "deepseek/deepseek-flash".into(),
         api_key: Some("key".into()),
         api_key_env: None,
         api_url: Some(api_url),
@@ -459,7 +486,7 @@ data: [DONE]
     .expect("deepseek resolves through the protocol-factory path");
 
     assert_eq!(adapter.provider_name(), "deepseek");
-    assert_eq!(adapter.model_name(), "deepseek-v4-flash");
+    assert_eq!(adapter.model_name(), "deepseek-flash");
 
     let response = adapter
         .complete(&[], &[], &default_options(), None)
@@ -467,4 +494,272 @@ data: [DONE]
         .expect("request should complete");
     assert!(matches!(&response.content[0], ContentBlock::Text(t) if t == "hi"));
     assert_eq!(response.usage.input_tokens, 3);
+}
+
+// ---------------------------------------------------------------------------
+// Hotfix 2026-10-01 #319: deepseek-flash image input (Chat `image_url` parts).
+// Source: https://api-docs.deepseek.com/guides/vision
+// ---------------------------------------------------------------------------
+
+fn url_image(detail: Option<&str>) -> ContentBlock {
+    ContentBlock::Image {
+        source: crate::MediaSource::Url {
+            url: "https://example.com/cat.jpg".into(),
+        },
+        detail: detail.map(String::from),
+    }
+}
+
+fn base64_image() -> ContentBlock {
+    ContentBlock::Image {
+        source: crate::MediaSource::Base64 {
+            media_type: "image/png".into(),
+            data: "iVBORw0KGgo=".into(),
+        },
+        detail: None,
+    }
+}
+
+fn user(content: Vec<ContentBlock>) -> Vec<Message> {
+    vec![Message {
+        role: Role::User,
+        content,
+    }]
+}
+
+fn has_content_block_drop(adjustments: &[crate::OptionAdjustment], kind: &str) -> bool {
+    adjustments.iter().any(|a| {
+        a.option == "content_block"
+            && a.requested == json!(kind)
+            && a.reason == "chat_unsupported_content_block"
+    })
+}
+
+const OK_SSE: &str = r#"data: {"choices":[{"delta":{"content":"a cat"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}
+
+data: [DONE]
+
+"#;
+
+#[test]
+fn flash_encodes_images_as_ordered_image_url_parts() {
+    let adapter = make_adapter("http://localhost");
+    let messages = user(vec![
+        ContentBlock::Text("What is in these images?".into()),
+        url_image(Some("low")),
+        base64_image(),
+    ]);
+    let (body, adjustments) = adapter
+        .request_body_for_test(&messages, &[], &default_options())
+        .expect("body");
+    assert_eq!(
+        body["messages"][0]["content"],
+        json!([
+            {"type": "text", "text": "What is in these images?"},
+            {"type": "image_url", "image_url": {"url": "https://example.com/cat.jpg", "detail": "low"}},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}
+        ])
+    );
+    assert!(
+        !adjustments.iter().any(|a| a.option == "content_block"),
+        "no drop expected: {adjustments:?}"
+    );
+}
+
+#[test]
+fn text_only_user_content_stays_a_string() {
+    let adapter = make_adapter("http://localhost");
+    let messages = user(vec![
+        ContentBlock::Text("hello".into()),
+        ContentBlock::Text("world".into()),
+    ]);
+    let (body, _) = adapter
+        .request_body_for_test(&messages, &[], &default_options())
+        .expect("body");
+    assert_eq!(body["messages"][0]["content"], json!("hello\nworld"));
+}
+
+#[test]
+fn unlisted_flash_alias_encodes_images() {
+    // deepseek-v4-flash-vision-exp has no catalog row; the profile's name
+    // fallback routes it to the multimodal V4.1 Flash.
+    let adapter = ChatAdapter::for_test(
+        "deepseek",
+        "deepseek-v4-flash-vision-exp",
+        "http://localhost",
+        4096,
+    );
+    let (body, _) = adapter
+        .request_body_for_test(&user(vec![url_image(None)]), &[], &default_options())
+        .expect("body");
+    assert_eq!(body["messages"][0]["content"][0]["type"], "image_url");
+}
+
+#[test]
+fn deprecated_v4_flash_row_keeps_text_only_behavior() {
+    // The deprecated 1.0.0 row is text-only, as in 1.0.0: an image is dropped
+    // and recorded under the default Coerce policy, not sent.
+    let adapter = ChatAdapter::for_test("deepseek", "deepseek-v4-flash", "http://localhost", 4096);
+    let (body, adjustments) = adapter
+        .request_body_for_test(
+            &user(vec![ContentBlock::Text("hi".into()), url_image(None)]),
+            &[],
+            &default_options(),
+        )
+        .expect("body");
+    assert_eq!(body["messages"][0]["content"], json!("hi"));
+    assert!(
+        has_content_block_drop(&adjustments, "image"),
+        "{adjustments:?}"
+    );
+}
+
+#[test]
+fn images_outside_user_text_turns_are_still_dropped() {
+    let adapter = make_adapter("http://localhost");
+    let messages = vec![
+        Message {
+            role: Role::System,
+            content: vec![ContentBlock::Text("sys".into()), url_image(None)],
+        },
+        Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::Text("ok".into()), url_image(None)],
+        },
+        Message {
+            role: Role::User,
+            content: vec![
+                ContentBlock::ToolResult {
+                    tool_use_id: "call_1".into(),
+                    content: json!("result"),
+                },
+                url_image(None),
+            ],
+        },
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Video {
+                source: crate::MediaSource::Url {
+                    url: "https://example.com/v.mp4".into(),
+                },
+                fps: None,
+                detail: None,
+                max_long_side_pixel: None,
+            }],
+        },
+    ];
+    let (body, adjustments) = adapter
+        .request_body_for_test(&messages, &[], &default_options())
+        .expect("body");
+    assert_eq!(body["messages"][0]["content"], json!("sys"));
+    assert_eq!(body["messages"][1]["content"], json!("ok"));
+    assert_eq!(body["messages"][2]["role"], "tool");
+    let image_drops = adjustments
+        .iter()
+        .filter(|a| a.requested == json!("image"))
+        .count();
+    assert_eq!(image_drops, 3, "{adjustments:?}");
+    assert!(has_content_block_drop(&adjustments, "image"));
+    assert!(has_content_block_drop(&adjustments, "video"));
+}
+
+#[tokio::test]
+async fn text_only_model_strict_rejects_images_before_request() {
+    // Port 1: any request attempt would fail with request_failed instead.
+    let adapter = ChatAdapter::for_test("deepseek", "deepseek-v4-pro", "http://localhost:1", 4096);
+    let opts = RequestOptions {
+        compatibility_policy: CompatibilityPolicy::Strict,
+        ..default_options()
+    };
+    let err = adapter
+        .complete(
+            &user(vec![ContentBlock::Text("hi".into()), url_image(None)]),
+            &[],
+            &opts,
+            None,
+        )
+        .await
+        .expect_err("v4-pro has no image input");
+    assert_eq!(err.code.as_deref(), Some("unsupported_image_input"));
+    assert_eq!(err.provider.as_deref(), Some("deepseek"));
+    assert_eq!(err.status, None);
+}
+
+#[tokio::test]
+async fn text_only_model_coerce_drops_images_visibly() {
+    let (api_url, capture) = serve_sse_once_capture(OK_SSE).await;
+    let adapter = ChatAdapter::for_test("deepseek", "deepseek-v4-pro", &api_url, 4096);
+    let response = adapter
+        .complete(
+            &user(vec![ContentBlock::Text("hi".into()), url_image(None)]),
+            &[],
+            &default_options(),
+            None,
+        )
+        .await
+        .expect("coerce degrades instead of failing");
+    assert!(has_content_block_drop(
+        &response.option_adjustments,
+        "image"
+    ));
+    let body = request_json(capture.await.expect("captured request"));
+    assert_eq!(body["messages"][0]["content"], json!("hi"));
+}
+
+#[tokio::test]
+async fn strict_text_request_on_text_only_model_is_unaffected() {
+    let api_url = serve_sse_once(OK_SSE).await;
+    let adapter = ChatAdapter::for_test("deepseek", "deepseek-v4-pro", &api_url, 4096);
+    let opts = RequestOptions {
+        compatibility_policy: CompatibilityPolicy::Strict,
+        ..default_options()
+    };
+    adapter
+        .complete(
+            &user(vec![ContentBlock::Text("hi".into())]),
+            &[],
+            &opts,
+            None,
+        )
+        .await
+        .expect("no image, no rejection");
+}
+
+#[tokio::test]
+async fn flash_round_trip_sends_image_url_parts() {
+    let (api_url, capture) = serve_sse_once_capture(OK_SSE).await;
+    let adapter = crate::create_adapter_from_config(crate::ProviderRuntimeConfig {
+        model: "deepseek/deepseek-flash".into(),
+        api_key: Some("key".into()),
+        api_key_env: None,
+        api_url: Some(api_url),
+        max_tokens: Some(128),
+    })
+    .expect("deepseek-flash resolves");
+    let opts = RequestOptions {
+        compatibility_policy: CompatibilityPolicy::Strict,
+        ..default_options()
+    };
+    let response = adapter
+        .complete(
+            &user(vec![ContentBlock::Text("Describe".into()), base64_image()]),
+            &[],
+            &opts,
+            None,
+        )
+        .await
+        .expect("flash accepts images under Strict");
+    assert!(matches!(&response.content[0], ContentBlock::Text(t) if t == "a cat"));
+
+    let body = request_json(capture.await.expect("captured request"));
+    assert_eq!(body["model"], "deepseek-flash");
+    assert_eq!(
+        body["messages"][0]["content"][1],
+        json!({"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}})
+    );
+}
+
+fn request_json(raw: String) -> serde_json::Value {
+    let (_, body) = raw.split_once("\r\n\r\n").expect("HTTP request has a body");
+    serde_json::from_str(body).expect("request body is JSON")
 }

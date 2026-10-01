@@ -35,7 +35,7 @@ def test_completion_preserves_structured_model_error(monkeypatch) -> None:
 
     with pytest.raises(orchest.ModelError) as caught:
         orchest.complete(
-            model="deepseek/deepseek-chat",
+            model="deepseek/deepseek-flash",
             user="hello",
             api_key_env=env_name,
         )

@@ -18,13 +18,15 @@ use orchest_provider_core::registry::ProviderConfig;
 
 use crate::catalog::LlmModelEntry;
 use crate::protocol::{
-    normalize_chat_stop_reason, resolve_chat_preflight, resolve_headers, Protocol, ProviderEntry,
-    ProviderProfile, ResolvedModel, CANONICAL_CHAT,
+    normalize_chat_stop_reason, resolve_chat_content_preflight, resolve_chat_preflight,
+    resolve_headers, ImageInputSupport, Protocol, ProviderEntry, ProviderProfile, ResolvedModel,
+    CANONICAL_CHAT,
 };
 use crate::role_compat::{downgrade_minimax_role, CompatibleRole};
 use crate::{
-    telemetry, ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
-    OptionAdjustment, RequestOptions, ResponseFormat, StreamEvent, ToolDef, UpstreamErrorDetail,
+    telemetry, ContentBlock, MediaSource, Message, ModelAdapter, ModelCapabilities, ModelError,
+    ModelResponse, OptionAdjustment, RequestOptions, ResponseFormat, StreamEvent, ToolDef,
+    UpstreamErrorDetail,
 };
 
 /// Stable kind label for a [`ContentBlock`], used in drop diagnostics.
@@ -62,6 +64,23 @@ fn record_dropped_block(
         applied: json!(null),
         reason: "chat_unsupported_content_block".into(),
     });
+}
+
+/// Encode an `Image` block as the canonical Chat `image_url` content part:
+/// `Url` passes through, `Base64` becomes a `data:` URL, `detail` is forwarded.
+/// Returns `None` for media-source kinds added to the protocol later; the caller
+/// records the drop.
+fn encode_image_url_part(source: &MediaSource, detail: Option<&str>) -> Option<Value> {
+    let url = match source {
+        MediaSource::Url { url } => url.clone(),
+        MediaSource::Base64 { media_type, data } => format!("data:{media_type};base64,{data}"),
+        _ => return None,
+    };
+    let mut image_url = json!({ "url": url });
+    if let Some(d) = detail {
+        image_url["detail"] = json!(d);
+    }
+    Some(json!({"type": "image_url", "image_url": image_url}))
 }
 
 /// The shared Chat adapter. Constructed by each provider's `build_chat_adapter`
@@ -176,15 +195,36 @@ impl ChatAdapter {
                     api_messages.push(json!({"role": "system", "content": text_parts.join("\n")}));
                 }
                 CompatibleRole::User => {
+                    let images_supported = matches!(
+                        self.profile.chat_image_input(&cx),
+                        ImageInputSupport::Supported
+                    );
                     let mut text_parts = Vec::new();
+                    // Ordered text/image content parts, used only when at
+                    // least one image was encoded; otherwise `content` stays
+                    // the joined string (byte-for-byte the text-only shape).
+                    let mut parts: Vec<Value> = Vec::new();
+                    let mut image_parts = 0usize;
                     let mut tool_results = Vec::new();
                     for block in &message.content {
                         match block {
-                            ContentBlock::Text(t) => text_parts.push(t.clone()),
+                            ContentBlock::Text(t) => {
+                                text_parts.push(t.clone());
+                                parts.push(json!({"type": "text", "text": t}));
+                            }
                             ContentBlock::ToolResult {
                                 tool_use_id,
                                 content,
                             } => tool_results.push((tool_use_id.clone(), content.clone())),
+                            ContentBlock::Image { source, detail } if images_supported => {
+                                match encode_image_url_part(source, detail.as_deref()) {
+                                    Some(part) => {
+                                        parts.push(part);
+                                        image_parts += 1;
+                                    }
+                                    None => record_dropped_block(&mut adjustments, "user", "image"),
+                                }
+                            }
                             other => record_dropped_block(
                                 &mut adjustments,
                                 "user",
@@ -194,10 +234,14 @@ impl ChatAdapter {
                     }
                     if !tool_results.is_empty() {
                         // A mixed Text + ToolResult user message is split into
-                        // wire `role:"tool"` messages; the text has nowhere to
-                        // go — record the drop instead of discarding silently.
+                        // wire `role:"tool"` messages; the text (and any image)
+                        // has nowhere to go — record the drop instead of
+                        // discarding silently.
                         if !text_parts.is_empty() {
                             record_dropped_block(&mut adjustments, "user", "text");
+                        }
+                        for _ in 0..image_parts {
+                            record_dropped_block(&mut adjustments, "user", "image");
                         }
                         for (tool_call_id, content) in tool_results {
                             let content_str = match &content {
@@ -210,6 +254,8 @@ impl ChatAdapter {
                                 "content": content_str
                             }));
                         }
+                    } else if image_parts > 0 {
+                        api_messages.push(json!({"role": "user", "content": parts}));
                     } else {
                         api_messages
                             .push(json!({"role": "user", "content": text_parts.join("\n")}));
@@ -332,6 +378,7 @@ impl ChatAdapter {
     ) -> Result<(Value, Vec<OptionAdjustment>), ModelError> {
         let cx = self.cx();
         let (effective, mut adjustments) = resolve_chat_preflight(self.profile, &cx, options)?;
+        resolve_chat_content_preflight(self.profile, &cx, messages, options.compatibility_policy)?;
         let (body, body_adj) = self.build_request_body(&effective, messages, tools)?;
         adjustments.extend(body_adj);
         Ok((body, adjustments))
@@ -366,6 +413,7 @@ impl ModelAdapter for ChatAdapter {
         // Uniform CompatibilityPolicy handling (Strict errors / degrades).
         let (effective_options, mut option_adjustments) =
             resolve_chat_preflight(self.profile, &cx, options)?;
+        resolve_chat_content_preflight(self.profile, &cx, messages, options.compatibility_policy)?;
 
         let (body, body_adjustments) =
             self.build_request_body(&effective_options, messages, tools)?;

@@ -575,3 +575,32 @@ fn unlisted_model_falls_back_to_prefix_tables() {
     let non_reasoning = adapter_for("gpt-4o");
     assert!(!non_reasoning.capabilities().reasoning.supported);
 }
+
+#[tokio::test]
+async fn strict_image_request_still_drops_without_error() {
+    // Hotfix 2026-10-01 #319: the default `chat_image_input` keeps the C5 drop
+    // semantics for non-DeepSeek Chat providers — no Strict rejection.
+    let api_url = serve_sse_once(
+        r#"data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}
+
+data: [DONE]
+
+"#,
+    )
+    .await;
+    let adapter = make_adapter(&api_url);
+    let messages = vec![Message {
+        role: Role::User,
+        content: vec![ContentBlock::Text("hi".into()), image_block()],
+    }];
+    let opts = RequestOptions {
+        thinking: crate::ThinkingLevel::Off,
+        compatibility_policy: CompatibilityPolicy::Strict,
+        ..Default::default()
+    };
+    let response = adapter
+        .complete(&messages, &[], &opts, None)
+        .await
+        .expect("strict does not reject images for the default profile");
+    assert_content_block_drop(&response.option_adjustments, "image");
+}

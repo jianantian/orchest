@@ -57,14 +57,16 @@ pub fn openai_pricing(model: &str) -> ModelPricing {
 /// Pricing for DeepSeek models.
 ///
 /// Source: <https://api-docs.deepseek.com/zh-cn/quick_start/pricing>
+///
+/// Peak-hour list prices (off-peak is half; time-of-day rates are not modelled).
 pub fn deepseek_pricing(model: &str) -> ModelPricing {
     match model {
-        // v4-flash (non-thinking): ¥1 / ¥2 per MTok
-        // v4-flash (thinking):     ¥4 / ¥16 per MTok  — reported at runtime, not here
-        "deepseek-v4-flash" | "deepseek-chat" => cny(1.0, 2.0),
-        // v4-pro: ¥3 / ¥6 per MTok
-        "deepseek-v4-pro" | "deepseek-reasoner" => cny(3.0, 6.0),
-        _ => cny(1.0, 2.0),
+        // deepseek-v4-pro: ¥9 / ¥27 per MTok
+        m if m.starts_with("deepseek-v4-pro") => cny(9.0, 27.0),
+        // deepseek-flash (V4.1 Flash): ¥2 / ¥8 per MTok. The legacy
+        // deepseek-v4-flash* names are routed to V4.1 Flash and billed at the
+        // Flash price upstream. Unknown ids fall back to the Flash price.
+        _ => cny(2.0, 8.0),
     }
 }
 
@@ -145,15 +147,23 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_v4_flash_pricing() {
-        let p = deepseek_pricing("deepseek-v4-flash");
-        assert_eq!(headline(&p).text_input_per_million, 1.0);
-        assert_eq!(p.currency, "CNY");
+    fn deepseek_flash_pricing() {
+        for model in [
+            "deepseek-flash",
+            "deepseek-v4-flash",
+            "deepseek-v4-flash-vision-exp",
+        ] {
+            let p = deepseek_pricing(model);
+            assert_eq!(headline(&p).text_input_per_million, 2.0, "{model}");
+            assert_eq!(headline(&p).text_output_per_million, 8.0, "{model}");
+            assert_eq!(p.currency, "CNY");
+        }
     }
 
     #[test]
     fn deepseek_v4_pro_pricing() {
         let p = deepseek_pricing("deepseek-v4-pro");
-        assert_eq!(headline(&p).text_input_per_million, 3.0);
+        assert_eq!(headline(&p).text_input_per_million, 9.0);
+        assert_eq!(headline(&p).text_output_per_million, 27.0);
     }
 }
