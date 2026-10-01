@@ -14,6 +14,24 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+### Changed
+
+- DeepSeek: the static catalog now lists the two online models,
+  `deepseek/deepseek-flash` (DeepSeek-V4.1-Flash) and
+  `deepseek/deepseek-v4-pro`, with the current 1M context / 384K output
+  limits and peak-hour CNY pricing. Thinking efforts now lower to the official
+  `low` / `high` / `max` (`Minimal`/`Low` → `low`, `Medium`/`High` → `high`,
+  `XHigh`/`Max` → `max`). The legacy `deepseek-v4-flash*` names, which
+  DeepSeek still routes to V4.1 Flash, keep Flash capabilities by name but are
+  no longer catalog rows ([#318](https://github.com/jianantian/orchest/issues/318)).
+
+### Removed
+
+- DeepSeek: **Breaking:** `deepseek/deepseek-v4-flash` is no longer a catalog
+  row, and the discontinued `deepseek-chat` / `deepseek-reasoner` names are no
+  longer recognized as thinking-capable 1M-context models; they get the
+  unknown-model defaults ([#318](https://github.com/jianantian/orchest/issues/318)).
+
 ## [1.0.0]
 
 First public release on crates.io. The pre-1.0 development history (v0.1

@@ -79,11 +79,12 @@ fn fixture_registry() -> Registry {
             .with_input_modalities([Modality::Text, Modality::Image, Modality::Video]),
         |c| Ok(Box::new(FakeChat("openai", leak(&c.model))) as Box<dyn ChatModel>),
     ));
-    // A text-only, non-thinking chat model.
+    // A text-only thinking chat model.
     reg.register_chat(Entry::new(
-        chat_desc("deepseek", "deepseek-chat")
+        chat_desc("deepseek", "deepseek-v4-pro")
             .streaming(true)
-            .tools(true),
+            .tools(true)
+            .thinking(true),
         |c| Ok(Box::new(FakeChat("deepseek", leak(&c.model))) as Box<dyn ChatModel>),
     ));
     // Two ASR providers, one bidirectional (Volcengine), one not.
@@ -121,7 +122,7 @@ fn capability_query_filters_on_descriptor() {
 #[test]
 fn identity_pick_by_provider_slash_model() {
     let reg = fixture_registry();
-    let picked = reg.chat().id("deepseek/deepseek-chat").select().unwrap();
+    let picked = reg.chat().id("deepseek/deepseek-v4-pro").select().unwrap();
     assert_eq!(picked.descriptor.provider.as_ref(), "deepseek");
 }
 

@@ -122,7 +122,7 @@ fn factory_routes_by_provider() {
     let openai = create_adapter("openai/gpt-4o", Some("key".into())).expect("openai should create");
     assert_eq!(openai.provider_name(), "openai");
 
-    let deepseek = create_adapter("deepseek/deepseek-chat", Some("key".into()))
+    let deepseek = create_adapter("deepseek/deepseek-flash", Some("key".into()))
         .expect("deepseek should create");
     assert_eq!(deepseek.provider_name(), "deepseek");
 
@@ -157,9 +157,9 @@ fn provider_config_normalizes_legacy_anthropic_model() {
 
 #[test]
 fn provider_config_preserves_canonical_provider_model() {
-    let normalized = normalize_provider_model("deepseek/deepseek-chat").expect("normalizes");
+    let normalized = normalize_provider_model("deepseek/deepseek-flash").expect("normalizes");
     assert_eq!(normalized.provider, "deepseek");
-    assert_eq!(normalized.model, "deepseek-chat");
+    assert_eq!(normalized.model, "deepseek-flash");
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn two_segment_forms_auto_detect_protocol() {
     for model in [
         "anthropic/claude-sonnet-5",
         "openai/gpt-4.1",
-        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-flash",
     ] {
         let n = normalize_provider_model(model).expect("normalizes");
         assert_eq!(
@@ -559,7 +559,7 @@ fn all_adapters_report_normalized_capabilities() {
         )),
         Box::new(crate::chat::ChatAdapter::for_test(
             "deepseek",
-            "deepseek-chat",
+            "deepseek-flash",
             "http://localhost",
             4096,
         )),

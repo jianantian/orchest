@@ -100,7 +100,7 @@ import { readFile } from "node:fs/promises";
 import { complete, decide, startAsrStream, transcribe } from "@orchest/sdk";
 
 const text = await complete({
-  model: "deepseek/deepseek-chat",
+  model: "deepseek/deepseek-flash",
   user: "用一句话概括这段录音",
   apiKeyEnv: "DEEPSEEK_API_KEY",
 });

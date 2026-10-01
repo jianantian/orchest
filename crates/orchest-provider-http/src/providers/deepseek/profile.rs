@@ -23,11 +23,18 @@ pub struct DeepSeekProfile;
 pub static DEEPSEEK_PROFILE: DeepSeekProfile = DeepSeekProfile;
 
 impl DeepSeekProfile {
-    /// v4-flash / v4-pro (and legacy deepseek-reasoner) support thinking.
-    fn supports_thinking(model: &str) -> bool {
-        model.starts_with("deepseek-v4-flash")
-            || model.starts_with("deepseek-v4-pro")
-            || model.starts_with("deepseek-reasoner")
+    /// The Flash family: `deepseek-flash` (DeepSeek-V4.1-Flash) plus the legacy
+    /// `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` names, which DeepSeek
+    /// still accepts and routes to V4.1 Flash (pricing page footnote 1).
+    fn is_flash_family(model: &str) -> bool {
+        model.starts_with("deepseek-flash") || model.starts_with("deepseek-v4-flash")
+    }
+
+    /// The online models (Flash family and `deepseek-v4-pro`): thinking-capable,
+    /// 1M context. Discontinued names (`deepseek-chat`, `deepseek-reasoner`) and
+    /// unknown ids fall through to the conservative defaults.
+    fn is_online_model(model: &str) -> bool {
+        Self::is_flash_family(model) || model.starts_with("deepseek-v4-pro")
     }
 }
 
@@ -43,7 +50,9 @@ impl ProviderProfile for DeepSeekProfile {
 
         if thinking_enabled {
             body["thinking"] = json!({"type": "enabled"});
+            // Official efforts are low / high / max (thinking_mode guide).
             let effort = match options.thinking {
+                ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
                 ThinkingLevel::XHigh | ThinkingLevel::Max => "max",
                 _ => "high",
             };
@@ -154,12 +163,14 @@ impl ProviderProfile for DeepSeekProfile {
     }
 
     fn capabilities(&self, cx: &ResolvedModel<'_>, max_output_tokens: u32) -> ModelCapabilities {
-        let context_window = if cx.model.starts_with("deepseek-v4") {
-            1_000_000
-        } else {
-            64_000
-        };
-        let thinks = Self::supports_thinking(cx.model);
+        // Catalog rows are the capability source of truth; the name fallback
+        // covers the routed legacy Flash names and unlisted ids.
+        let online = Self::is_online_model(cx.model);
+        let context_window =
+            cx.catalog
+                .map(|c| c.context_window)
+                .unwrap_or(if online { 1_000_000 } else { 64_000 });
+        let thinks = cx.catalog.map(|c| c.thinking.is_some()).unwrap_or(online);
         ModelCapabilities {
             streaming: true,
             tool_use: true,
@@ -167,7 +178,7 @@ impl ProviderProfile for DeepSeekProfile {
             reasoning: ReasoningCapability {
                 supported: thinks,
                 efforts: if thinks {
-                    vec![ThinkingLevel::High, ThinkingLevel::Max]
+                    vec![ThinkingLevel::Low, ThinkingLevel::High, ThinkingLevel::Max]
                 } else {
                     vec![]
                 },
@@ -183,7 +194,10 @@ impl ProviderProfile for DeepSeekProfile {
             max_output_tokens: Some(max_output_tokens),
             context_window_size: Some(context_window),
             source: CapabilitySource::Static,
-            pricing: Some(crate::pricing::deepseek_pricing(cx.model)),
+            pricing: cx
+                .catalog
+                .and_then(|c| c.pricing.clone())
+                .or_else(|| Some(crate::pricing::deepseek_pricing(cx.model))),
         }
     }
 }

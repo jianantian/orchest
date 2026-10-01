@@ -176,7 +176,7 @@ mod tests {
     fn model_family_extracts_prefix() {
         assert_eq!(model_family("claude-sonnet-4-20250514"), "claude");
         assert_eq!(model_family("gpt-4o-mini"), "gpt");
-        assert_eq!(model_family("deepseek-chat"), "deepseek");
+        assert_eq!(model_family("deepseek-flash"), "deepseek");
         assert_eq!(model_family("o3-mini"), "o3");
     }
 }

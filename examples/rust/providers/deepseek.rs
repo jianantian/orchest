@@ -1,6 +1,6 @@
 //! DeepSeek provider example: agent run with tool calling.
 //!
-//! Uses deepseek-v4-flash (fast, cheap) with a weather tool.
+//! Uses deepseek-flash (DeepSeek V4.1 Flash: fast, cheap) with a weather tool.
 //!
 //! Run with:
 //!   DEEPSEEK_API_KEY=sk-... cargo run -p orchest --example rust_provider_runtime_deepseek
@@ -79,7 +79,7 @@ impl Tool for WeatherTool {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model: Arc<dyn ModelAdapter> =
         Arc::from(create_adapter_from_config(ProviderRuntimeConfig {
-            model: "deepseek/deepseek-v4-flash".into(),
+            model: "deepseek/deepseek-flash".into(),
             api_key: None,
             api_key_env: Some("DEEPSEEK_API_KEY".into()),
             api_url: None,
@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(WeatherTool))?;
 
-    let config = AgentConfig::builder("deepseek-assistant", "deepseek/deepseek-v4-flash")
+    let config = AgentConfig::builder("deepseek-assistant", "deepseek/deepseek-flash")
         .system_prompt("You are a helpful assistant. Answer concisely.")
         .max_steps(5)
         .build()?;

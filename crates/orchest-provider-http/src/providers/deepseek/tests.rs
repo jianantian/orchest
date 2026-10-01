@@ -15,7 +15,7 @@ fn default_options() -> RequestOptions {
 }
 
 fn make_adapter(api_url: &str) -> ChatAdapter {
-    ChatAdapter::for_test("deepseek", "deepseek-chat", api_url, 4096)
+    ChatAdapter::for_test("deepseek", "deepseek-flash", api_url, 4096)
 }
 
 #[test]
@@ -33,7 +33,7 @@ fn env_var_resolution() {
     let saved = std::env::var("DEEPSEEK_API_KEY").ok();
     std::env::remove_var("DEEPSEEK_API_KEY");
 
-    let config = orchest_provider_core::registry::ProviderConfig::new("deepseek", "deepseek-chat");
+    let config = orchest_provider_core::registry::ProviderConfig::new("deepseek", "deepseek-flash");
     let result = super::resolve_api_key(&config);
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().code.as_deref(), Some("missing_api_key"));
@@ -57,10 +57,10 @@ fn thinking_off_disables_reasoning() {
 }
 
 #[test]
-fn thinking_levels_map_to_high_and_max() {
+fn thinking_levels_map_to_low_high_and_max() {
     let adapter = make_adapter("http://localhost");
 
-    // Minimal → high
+    // Minimal → low
     let opts = RequestOptions {
         thinking: ThinkingLevel::Minimal,
         ..Default::default()
@@ -69,9 +69,9 @@ fn thinking_levels_map_to_high_and_max() {
         .request_body_for_test(&[], &[], &opts)
         .expect("body");
     assert_eq!(body["thinking"]["type"], "enabled");
-    assert_eq!(body["reasoning_effort"], "high");
+    assert_eq!(body["reasoning_effort"], "low");
 
-    // Low → high
+    // Low → low
     let opts = RequestOptions {
         thinking: ThinkingLevel::Low,
         ..Default::default()
@@ -79,7 +79,7 @@ fn thinking_levels_map_to_high_and_max() {
     let (body, _) = adapter
         .request_body_for_test(&[], &[], &opts)
         .expect("body");
-    assert_eq!(body["reasoning_effort"], "high");
+    assert_eq!(body["reasoning_effort"], "low");
 
     // Medium → high
     let opts = RequestOptions {
@@ -358,7 +358,7 @@ data: [DONE]
 fn provider_name_and_model_name() {
     let adapter = make_adapter("http://localhost");
     assert_eq!(adapter.provider_name(), "deepseek");
-    assert_eq!(adapter.model_name(), "deepseek-chat");
+    assert_eq!(adapter.model_name(), "deepseek-flash");
 }
 
 #[test]
@@ -380,22 +380,49 @@ fn max_tokens_override() {
 }
 
 #[test]
-fn v4_pro_supports_thinking() {
-    // v4-pro supports thinking per official thinking_mode guide.
-    let adapter = ChatAdapter::for_test("deepseek", "deepseek-v4-pro", "http://localhost", 4096);
-    assert!(
-        adapter.capabilities().reasoning.supported,
-        "v4-pro capabilities should report reasoning.supported = true"
-    );
+fn online_models_report_thinking_and_1m_context() {
+    // deepseek-flash / deepseek-v4-pro are the online models (pricing page);
+    // deepseek-v4-flash is a legacy name routed to V4.1 Flash.
+    for model in ["deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"] {
+        let adapter = ChatAdapter::for_test("deepseek", model, "http://localhost", 4096);
+        let caps = adapter.capabilities();
+        assert!(caps.reasoning.supported, "{model} supports thinking");
+        assert_eq!(
+            caps.reasoning.efforts,
+            vec![ThinkingLevel::Low, ThinkingLevel::High, ThinkingLevel::Max],
+            "{model} efforts"
+        );
+        assert_eq!(caps.context_window_size, Some(1_000_000), "{model}");
+    }
 }
 
 #[test]
-fn v4_flash_supports_thinking() {
-    let adapter = ChatAdapter::for_test("deepseek", "deepseek-v4-flash", "http://localhost", 4096);
-    assert!(
-        adapter.capabilities().reasoning.supported,
-        "deepseek-v4-flash should support thinking"
-    );
+fn catalog_models_report_catalog_pricing() {
+    let flash = ChatAdapter::for_test("deepseek", "deepseek-flash", "http://localhost", 4096);
+    let rates = &flash.capabilities().pricing.expect("pricing").tiers[0].rates;
+    assert_eq!(rates.text_input_per_million, 2.0);
+    assert_eq!(rates.cache_read_per_million, Some(0.04));
+
+    let pro = ChatAdapter::for_test("deepseek", "deepseek-v4-pro", "http://localhost", 4096);
+    let rates = &pro.capabilities().pricing.expect("pricing").tiers[0].rates;
+    assert_eq!(rates.text_input_per_million, 9.0);
+    assert_eq!(rates.cache_read_per_million, Some(0.30));
+}
+
+#[test]
+fn discontinued_models_are_not_recognized() {
+    // deepseek-chat / deepseek-reasoner were discontinued 2026-07-24: they get
+    // the conservative unknown-model defaults, not V4 capabilities.
+    for model in ["deepseek-chat", "deepseek-reasoner"] {
+        let adapter = ChatAdapter::for_test("deepseek", model, "http://localhost", 4096);
+        let caps = adapter.capabilities();
+        assert!(
+            !caps.reasoning.supported,
+            "{model} is not a known thinking model"
+        );
+        assert!(caps.reasoning.efforts.is_empty(), "{model}");
+        assert_eq!(caps.context_window_size, Some(64_000), "{model}");
+    }
 }
 
 #[test]
@@ -453,7 +480,7 @@ data: [DONE]
     .await;
 
     let adapter = crate::create_adapter_from_config(crate::ProviderRuntimeConfig {
-        model: "deepseek/deepseek-v4-flash".into(),
+        model: "deepseek/deepseek-flash".into(),
         api_key: Some("key".into()),
         api_key_env: None,
         api_url: Some(api_url),
@@ -462,7 +489,7 @@ data: [DONE]
     .expect("deepseek resolves through the protocol-factory path");
 
     assert_eq!(adapter.provider_name(), "deepseek");
-    assert_eq!(adapter.model_name(), "deepseek-v4-flash");
+    assert_eq!(adapter.model_name(), "deepseek-flash");
 
     let response = adapter
         .complete(&[], &[], &default_options(), None)

@@ -875,8 +875,8 @@ mod tests {
 
     #[test]
     fn canonical_lower_options_emits_reasoning_effort_for_thinking_model() {
-        // deepseek-v4-flash declares thinking support in the catalog.
-        let cx = resolved("deepseek-v4-flash", "deepseek/deepseek-v4-flash");
+        // deepseek-flash declares thinking support in the catalog.
+        let cx = resolved("deepseek-flash", "deepseek/deepseek-flash");
         let opts = RequestOptions {
             thinking: ThinkingLevel::Medium,
             temperature: Some(0.5),
@@ -918,7 +918,7 @@ mod tests {
 
     #[test]
     fn canonical_replay_reasoning_is_noop() {
-        let cx = resolved("deepseek-v4-flash", "deepseek/deepseek-v4-flash");
+        let cx = resolved("deepseek-flash", "deepseek/deepseek-flash");
         let mut msg = json!({"role": "assistant"});
         let blocks = vec![
             ContentBlock::Thinking {

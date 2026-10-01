@@ -38,7 +38,7 @@ test("completion preserves structured model errors", async () => {
 
   await assert.rejects(
     sdk.complete({
-      model: "deepseek/deepseek-chat",
+      model: "deepseek/deepseek-flash",
       user: "hello",
       apiKeyEnv: envName,
     }),

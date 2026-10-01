@@ -156,8 +156,8 @@ fn deepseek_models_publish_cache_hit_price() {
     // DeepSeek lists a per-model cache-hit input price; absence indicates a regression.
     // No separate cache-write price exists, so cache_write_per_million stays None.
     let expected = [
-        ("deepseek/deepseek-v4-flash", 0.02),
-        ("deepseek/deepseek-v4-pro", 0.025),
+        ("deepseek/deepseek-flash", 0.04),
+        ("deepseek/deepseek-v4-pro", 0.30),
     ];
     for (model_id, want) in expected {
         let entry = list_models()
@@ -221,7 +221,7 @@ fn text_only_models_have_only_text_modality() {
         // input for it. If nano is confirmed text-only, add it here and fix the catalog.
         // doubao-seed-character-260628 is intentionally absent: the 2.1 refresh added
         // image + audio input for multi-role companion scenarios.
-        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-flash",
         "deepseek/deepseek-v4-pro",
     ];
     for model_id in text_only {
@@ -311,7 +311,7 @@ fn coding_scene_for_dev_oriented_models() {
         "anthropic/claude-sonnet-4-6",
         "anthropic/claude-opus-4-8",
         "openai/gpt-5.4",
-        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-flash",
         "deepseek/deepseek-v4-pro",
     ];
     for model_id in coding_models {
@@ -322,5 +322,44 @@ fn coding_scene_for_dev_oriented_models() {
             entry.scenes.contains(&ModelScene::Coding),
             "{model_id} should be flagged for Coding scene",
         );
+    }
+}
+
+#[test]
+fn deepseek_lists_only_the_online_models() {
+    // Source: https://api-docs.deepseek.com/zh-cn/quick_start/pricing (2026-10-01).
+    let ids: Vec<&str> = list_models()
+        .filter(|m| m.provider == "deepseek")
+        .map(|m| m.model_id)
+        .collect();
+    assert_eq!(ids, ["deepseek/deepseek-flash", "deepseek/deepseek-v4-pro"]);
+    // Legacy names are not catalog rows: deepseek-v4-flash is an upstream
+    // routing alias (profile fallback), deepseek-chat/-reasoner are discontinued.
+    for legacy in [
+        "deepseek-v4-flash",
+        "deepseek-v4-flash-vision-exp",
+        "deepseek-chat",
+        "deepseek-reasoner",
+    ] {
+        assert!(find_model(legacy).is_none(), "{legacy} must not be listed");
+    }
+}
+
+#[test]
+fn deepseek_rows_match_official_limits_and_peak_pricing() {
+    for (model_id, input, output) in [
+        ("deepseek/deepseek-flash", 2.0, 8.0),
+        ("deepseek/deepseek-v4-pro", 9.0, 27.0),
+    ] {
+        let entry = find_model(model_id).unwrap_or_else(|| panic!("{model_id} missing"));
+        assert_eq!(entry.context_window, 1_000_000, "{model_id}");
+        assert_eq!(entry.max_output_tokens, Some(384_000), "{model_id}");
+        assert_eq!(entry.max_input_tokens, Some(616_000), "{model_id}");
+        assert!(entry.thinking.is_some(), "{model_id} supports thinking");
+        let pricing = entry.pricing.as_ref().expect("pricing");
+        assert_eq!(pricing.currency, "CNY");
+        let rates = &pricing.tiers[0].rates;
+        assert_eq!(rates.text_input_per_million, input, "{model_id}");
+        assert_eq!(rates.text_output_per_million, output, "{model_id}");
     }
 }
