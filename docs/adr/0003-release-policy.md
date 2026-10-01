@@ -220,8 +220,8 @@ Review outcome (2026-09-28):
   package includes it, because each package contains only its own crate
   directory.
 - `docs/analysis` is no longer in the tree: `2260da1a` removed the symlink.
-  Earlier commits still contain its Multivac notes, and the owner decides
-  whether that is acceptable before the repository is made public (#311).
+  Earlier commits still contain its Multivac notes; the owner approved
+  making that history public (2026-09-28).
 
 ## Consequences
 
