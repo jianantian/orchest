@@ -1,7 +1,7 @@
 # ADR-0003: Release Policy for v1.0
 
 **Status:** Accepted
-**Date:** 2026-09-23 (accepted 2026-09-23)
+**Date:** 2026-09-23 (accepted 2026-09-23; D4 amended 2026-10-01 with the provider catalog rules)
 **Deciders:** Orchest maintainer (emile) — decision owner
 **Related:** [v1.0 PRD](../archive/iteration/v1_0/prd.md), [#306](https://github.com/jianantian/orchest/issues/306),
 [ADR-0001](./0001-provider-unification.md)
@@ -164,6 +164,38 @@ The public dependency set recorded by #309 is `serde`, `serde_json`,
 and adding a new public dependency is itself a change reviewed under D4.
 The review also lists the structs that stay exhaustive (frozen) in 1.x;
 adding a field to one of them is a major change.
+
+#### Provider catalog data (amended 2026-10-01)
+
+The static provider catalog is observable behavior of `orchest-provider`.
+It is the set of model rows behind `Registry::with_builtin()`,
+`list_models`, `find_model` and identity picks such as
+`Registry::chat().id("provider/model")`. Its contents follow the vendors,
+so it gets its own rules:
+
+- **Minor:** updating an existing row's pricing, context and output
+  limits, display name or description, and adding new rows.
+- **Major:** removing a row. Identity picks and `find_model` calls that
+  resolved it would stop resolving.
+- **A vendor discontinues or renames a model:** in a minor release, mark
+  the row `ModelStatus::Deprecated` (`DEPRECATED_MODEL_IDS` in
+  `orchest-provider-http`'s catalog). It stays resolvable by identity and
+  is hidden from default discovery (`ModelFilter` with
+  `include_deprecated: false`). Remove it only in the next major version.
+  If the vendor has shut the model down, calls to it may fail upstream;
+  that is not an Orchest change and does not make the removal non-breaking.
+- **Changelog:** row updates and additions go under *Changed* / *Added*,
+  and deprecations under *Deprecated*.
+
+Changing a row's capabilities (modalities, thinking, tools) can change
+which entry a capability query selects, and can make a query that used to
+select one entry ambiguous. Review such changes against the existing
+`Registry` queries.
+
+Precedent: hotfix 2026-10-01 (#318–#320, released in 1.1.0) kept
+`deepseek/deepseek-v4-flash` as a deprecated row in its 1.0.0 text-only
+shape. The new `deepseek/deepseek-flash` row is the one that accepts
+images, so `accepts([Image])` stays unambiguous.
 
 ### D5. MSRV
 
