@@ -3165,25 +3165,36 @@ fn concurrency_metadata(parallelism: ToolParallelism, approval: Approval) -> Too
     }
 }
 
-fn register_concurrency_tool(
-    registry: &mut ToolRegistry,
-    name: &'static str,
-    metadata: ToolMetadata,
-    current: Arc<AtomicU32>,
-    max_seen: Arc<AtomicU32>,
-    sleep_ms: u64,
-    fail: bool,
-) {
-    registry
-        .register(Arc::new(ConcurrencyTool {
+impl ConcurrencyTool {
+    fn new(
+        name: &'static str,
+        metadata: ToolMetadata,
+        current: &Arc<AtomicU32>,
+        max_seen: &Arc<AtomicU32>,
+    ) -> Self {
+        Self {
             name,
             metadata,
-            current,
-            max_seen,
-            sleep_ms,
-            fail,
-        }))
-        .unwrap();
+            current: Arc::clone(current),
+            max_seen: Arc::clone(max_seen),
+            sleep_ms: 0,
+            fail: false,
+        }
+    }
+
+    fn sleep_ms(mut self, sleep_ms: u64) -> Self {
+        self.sleep_ms = sleep_ms;
+        self
+    }
+
+    fn failing(mut self) -> Self {
+        self.fail = true;
+        self
+    }
+
+    fn register(self, registry: &mut ToolRegistry) {
+        registry.register(Arc::new(self)).unwrap();
+    }
 }
 
 #[tokio::test]
@@ -3192,15 +3203,14 @@ async fn parallel_tool_execution_is_disabled_by_default() {
     let max_seen = Arc::new(AtomicU32::new(0));
     let mut registry = ToolRegistry::new();
     for name in ["parallel_a", "parallel_b"] {
-        register_concurrency_tool(
-            &mut registry,
+        ConcurrencyTool::new(
             name,
             concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never),
-            current.clone(),
-            max_seen.clone(),
-            20,
-            false,
-        );
+            &current,
+            &max_seen,
+        )
+        .sleep_ms(20)
+        .register(&mut registry);
     }
     let model = Arc::new(SameTurnToolCallModel {
         call_count: AtomicU32::new(0),
@@ -3226,15 +3236,14 @@ async fn parallel_safe_tools_execute_concurrently_when_enabled() {
     let max_seen = Arc::new(AtomicU32::new(0));
     let mut registry = ToolRegistry::new();
     for name in ["parallel_a", "parallel_b"] {
-        register_concurrency_tool(
-            &mut registry,
+        ConcurrencyTool::new(
             name,
             concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never),
-            current.clone(),
-            max_seen.clone(),
-            50,
-            false,
-        );
+            &current,
+            &max_seen,
+        )
+        .sleep_ms(50)
+        .register(&mut registry);
     }
     let mut config = test_config();
     config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;
@@ -3340,15 +3349,14 @@ async fn parallel_tool_results_are_pushed_as_user_role() {
     let max_seen = Arc::new(AtomicU32::new(0));
     let mut registry = ToolRegistry::new();
     for name in ["parallel_a", "parallel_b"] {
-        register_concurrency_tool(
-            &mut registry,
+        ConcurrencyTool::new(
             name,
             concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never),
-            current.clone(),
-            max_seen.clone(),
-            20,
-            false,
-        );
+            &current,
+            &max_seen,
+        )
+        .sleep_ms(20)
+        .register(&mut registry);
     }
     let mut config = test_config();
     config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;
@@ -3390,24 +3398,23 @@ async fn parallel_batch_records_failures_deterministically() {
     let current = Arc::new(AtomicU32::new(0));
     let max_seen = Arc::new(AtomicU32::new(0));
     let mut registry = ToolRegistry::new();
-    register_concurrency_tool(
-        &mut registry,
+    ConcurrencyTool::new(
         "parallel_ok",
         concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never),
-        current.clone(),
-        max_seen.clone(),
-        30,
-        false,
-    );
-    register_concurrency_tool(
-        &mut registry,
+        &current,
+        &max_seen,
+    )
+    .sleep_ms(30)
+    .register(&mut registry);
+    ConcurrencyTool::new(
         "parallel_fail",
         concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never),
-        current.clone(),
-        max_seen.clone(),
-        30,
-        true,
-    );
+        &current,
+        &max_seen,
+    )
+    .sleep_ms(30)
+    .failing()
+    .register(&mut registry);
     let mut config = test_config();
     config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;
     let model = Arc::new(SameTurnToolCallModel {
@@ -3437,24 +3444,22 @@ async fn mixed_serial_parallel_tools_fall_back_to_ordered_execution() {
     let current = Arc::new(AtomicU32::new(0));
     let max_seen = Arc::new(AtomicU32::new(0));
     let mut registry = ToolRegistry::new();
-    register_concurrency_tool(
-        &mut registry,
+    ConcurrencyTool::new(
         "serial",
         concurrency_metadata(ToolParallelism::Serial, Approval::Never),
-        current.clone(),
-        max_seen.clone(),
-        20,
-        false,
-    );
-    register_concurrency_tool(
-        &mut registry,
+        &current,
+        &max_seen,
+    )
+    .sleep_ms(20)
+    .register(&mut registry);
+    ConcurrencyTool::new(
         "parallel",
         concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never),
-        current.clone(),
-        max_seen.clone(),
-        20,
-        false,
-    );
+        &current,
+        &max_seen,
+    )
+    .sleep_ms(20)
+    .register(&mut registry);
     let mut config = test_config();
     config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;
     let model = Arc::new(SameTurnToolCallModel {
@@ -3481,15 +3486,14 @@ async fn approval_gated_tools_are_excluded_from_parallel_execution() {
     let max_seen = Arc::new(AtomicU32::new(0));
     let mut registry = ToolRegistry::new();
     for name in ["guarded_a", "guarded_b"] {
-        register_concurrency_tool(
-            &mut registry,
+        ConcurrencyTool::new(
             name,
             concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Always),
-            current.clone(),
-            max_seen.clone(),
-            20,
-            false,
-        );
+            &current,
+            &max_seen,
+        )
+        .sleep_ms(20)
+        .register(&mut registry);
     }
     let mut config = test_config();
     config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;
@@ -3525,15 +3529,9 @@ async fn parallel_timeout_is_reported_per_tool() {
     metadata.timeout = Some(Duration::from_millis(5));
     let mut registry = ToolRegistry::new();
     for name in ["timeout_a", "timeout_b"] {
-        register_concurrency_tool(
-            &mut registry,
-            name,
-            metadata.clone(),
-            current.clone(),
-            max_seen.clone(),
-            50,
-            false,
-        );
+        ConcurrencyTool::new(name, metadata.clone(), &current, &max_seen)
+            .sleep_ms(50)
+            .register(&mut registry);
     }
     let mut config = test_config();
     config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;
@@ -3568,15 +3566,14 @@ async fn parallel_batch_honors_abort_after_batch_boundary() {
     let max_seen = Arc::new(AtomicU32::new(0));
     let mut registry = ToolRegistry::new();
     for name in ["abort_a", "abort_b"] {
-        register_concurrency_tool(
-            &mut registry,
+        ConcurrencyTool::new(
             name,
             concurrency_metadata(ToolParallelism::ParallelSafe, Approval::Never),
-            current.clone(),
-            max_seen.clone(),
-            30,
-            false,
-        );
+            &current,
+            &max_seen,
+        )
+        .sleep_ms(30)
+        .register(&mut registry);
     }
     let mut config = test_config();
     config.runtime.tool_execution_policy = crate::run::config::ToolExecutionPolicy::ParallelSafe;

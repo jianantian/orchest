@@ -82,14 +82,14 @@ The table above is the **core** crate's locked dependency set. Satellite provide
 - **Unit tests**: `#[cfg(test)]` module at the bottom of the relevant file; use plain structs implementing the trait for fakes (no mockall or similar frameworks)
 - **Integration tests**: `tests/` at the workspace root, one file per scenario, named after the scenario (`tool_async_job.rs`, `skill_loading.rs`)
 - **Test helpers** are named with a `Fake` prefix: `FakeModelAdapter`, `FakeScriptExecutor`; place them in a `#[cfg(test)]` module or `tests/helpers/`
-- CI must pass: `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`, `cargo fmt --check`
+- CI must pass: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`
 
 ## Python / PyO3 Build Verification
 
 - `orchest-py` is a PyO3 `extension-module` crate. On macOS, `cargo build -p orchest-py` may fail at link time with missing Python symbols; do **not** treat that command as the authoritative Python binding build check.
 - Use `maturin develop` or `maturin build` from the workspace root to verify the Python extension package. If `maturin` is not installed globally, `uvx maturin develop` is the preferred local command.
 - After `maturin develop`, verify Python package behavior with the project virtualenv, for example: `.venv/bin/python -m pytest python/tests/test_run_sync.py -v`.
-- Rust workspace checks still use `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`, and `cargo fmt --check`; those commands exercise the PyO3 crate in test/check mode without replacing the `maturin` packaging verification.
+- Rust workspace checks still use `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --check`; those commands exercise the PyO3 crate in test/check mode without replacing the `maturin` packaging verification.
 
 ## Naming Conventions
 

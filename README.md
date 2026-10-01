@@ -134,7 +134,7 @@ skills/                    # Example skill packages
 ```bash
 # Rust
 cargo test --workspace
-cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 
 # Python

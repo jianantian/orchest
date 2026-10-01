@@ -4,6 +4,12 @@
 //! `orchest`; all business logic lives in core. The public surface
 //! is the `Agent` class exposed to Node via napi.
 
+// napi-derive compiles the export registration that references `#[napi]`
+// items only outside `cfg(test)`, so in the test build the exports in the
+// private modules (`asr`, `atomic`, `decision`, …) look unused. Normal builds
+// still lint dead code.
+#![cfg_attr(test, allow(dead_code))] // justified: napi export registration is not compiled under cfg(test)
+
 mod asr;
 mod asr_stream;
 mod atomic;
