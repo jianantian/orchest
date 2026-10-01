@@ -413,4 +413,6 @@ pub fn events(
 }
 
 #[cfg(test)]
+mod test_env;
+#[cfg(test)]
 mod tests;

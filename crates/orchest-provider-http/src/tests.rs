@@ -1,47 +1,14 @@
 use super::*;
+use crate::test_env::{lock_env, EnvVarGuard};
 use serde_json::json;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 // -----------------------------------------------------------------------
 // MockAdapter for helper / runtime_contract tests
 // -----------------------------------------------------------------------
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-struct EnvVarGuard {
-    name: &'static str,
-    previous: Option<String>,
-}
-
-impl EnvVarGuard {
-    fn set(name: &'static str, value: &str) -> Self {
-        let previous = std::env::var(name).ok();
-        std::env::set_var(name, value);
-        Self { name, previous }
-    }
-
-    fn remove(name: &'static str) -> Self {
-        let previous = std::env::var(name).ok();
-        std::env::remove_var(name);
-        Self { name, previous }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        match &self.previous {
-            Some(value) => std::env::set_var(self.name, value),
-            None => std::env::remove_var(self.name),
-        }
-    }
-}
-
-fn lock_env() -> MutexGuard<'static, ()> {
-    ENV_LOCK.lock().expect("env lock poisoned")
-}
-
 struct MockAdapter {
     call_count: Arc<AtomicU32>,
 }

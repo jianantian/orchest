@@ -3,6 +3,7 @@ use tokio::sync::mpsc;
 use super::*;
 use crate::chat::ChatAdapter;
 use crate::providers::anthropic::test_util::*;
+use crate::test_env::{lock_env, lock_env_async, EnvVarGuard};
 use crate::{
     CapabilitySource, ContentBlock, Message, RequestOptions, Role, StopReason, StreamEvent,
     ThinkingLevel,
@@ -46,10 +47,9 @@ fn empty_api_key_still_resolves() {
 #[tokio::test]
 async fn sends_custom_headers() {
     // The routing headers come from env-declared HeaderValue::Env on the entry.
-    let saved_title = std::env::var("OPENROUTER_APP_TITLE").ok();
-    let saved_site = std::env::var("OPENROUTER_SITE_URL").ok();
-    std::env::set_var("OPENROUTER_APP_TITLE", "TestApp");
-    std::env::set_var("OPENROUTER_SITE_URL", "https://example.com");
+    let _env_lock = lock_env_async().await;
+    let _title = EnvVarGuard::set("OPENROUTER_APP_TITLE", "TestApp");
+    let _site = EnvVarGuard::set("OPENROUTER_SITE_URL", "https://example.com");
 
     let (api_url, capture_rx) = serve_sse_once_capture(
         r#"data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}
@@ -80,15 +80,6 @@ data: [DONE]
         raw_lower.contains("authorization: bearer test-key"),
         "should contain Authorization header"
     );
-
-    match saved_title {
-        Some(v) => std::env::set_var("OPENROUTER_APP_TITLE", v),
-        None => std::env::remove_var("OPENROUTER_APP_TITLE"),
-    }
-    match saved_site {
-        Some(v) => std::env::set_var("OPENROUTER_SITE_URL", v),
-        None => std::env::remove_var("OPENROUTER_SITE_URL"),
-    }
 }
 
 #[test]
@@ -472,11 +463,9 @@ fn entry_declares_env_routing_headers() {
 
 #[test]
 fn resolve_headers_reads_env_values() {
-    // This test exclusively owns these env vars.
-    let saved_title = std::env::var("OPENROUTER_APP_TITLE").ok();
-    let saved_site = std::env::var("OPENROUTER_SITE_URL").ok();
-    std::env::set_var("OPENROUTER_APP_TITLE", "MyApp");
-    std::env::remove_var("OPENROUTER_SITE_URL");
+    let _env_lock = lock_env();
+    let _title = EnvVarGuard::set("OPENROUTER_APP_TITLE", "MyApp");
+    let _site = EnvVarGuard::remove("OPENROUTER_SITE_URL");
 
     let entry = provider_entry("openrouter").unwrap();
     let headers = resolve_headers(entry);
@@ -489,14 +478,6 @@ fn resolve_headers_reads_env_values() {
         Some("MyApp")
     );
     assert!(headers.iter().all(|(n, _)| *n != "HTTP-Referer"));
-
-    match saved_title {
-        Some(v) => std::env::set_var("OPENROUTER_APP_TITLE", v),
-        None => std::env::remove_var("OPENROUTER_APP_TITLE"),
-    }
-    if let Some(v) = saved_site {
-        std::env::set_var("OPENROUTER_SITE_URL", v);
-    }
 }
 
 #[tokio::test]

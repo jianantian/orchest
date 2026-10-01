@@ -4,6 +4,7 @@ use tokio::sync::mpsc;
 use super::*;
 use crate::chat::ChatAdapter;
 use crate::providers::anthropic::test_util::*;
+use crate::test_env::{lock_env, EnvVarGuard};
 use crate::{CompatibilityPolicy, Message, RequestOptions, StreamEvent, ThinkingLevel};
 use crate::{ContentBlock, Role};
 
@@ -30,17 +31,13 @@ fn default_api_url() {
 fn env_var_resolution() {
     // Remove DEEPSEEK_API_KEY from the environment so the test is
     // deterministic regardless of ambient shell configuration.
-    let saved = std::env::var("DEEPSEEK_API_KEY").ok();
-    std::env::remove_var("DEEPSEEK_API_KEY");
+    let _env_lock = lock_env();
+    let _key = EnvVarGuard::remove("DEEPSEEK_API_KEY");
 
     let config = orchest_provider_core::registry::ProviderConfig::new("deepseek", "deepseek-chat");
     let result = super::resolve_api_key(&config);
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().code.as_deref(), Some("missing_api_key"));
-
-    if let Some(val) = saved {
-        std::env::set_var("DEEPSEEK_API_KEY", val);
-    }
 }
 #[test]
 fn thinking_off_disables_reasoning() {
