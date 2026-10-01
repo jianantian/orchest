@@ -15,23 +15,29 @@ Cut and verify `1.0.0-rc.1`, then publish `1.0.0` and close v1.0.
 
 ## Acceptance Criteria
 
-- [ ] The workspace version is `1.0.0-rc.1` and `CHANGELOG.md` is updated for
+- [x] The workspace version is `1.0.0-rc.1` and `CHANGELOG.md` is updated for
   it.
-- [ ] The full `ci.yml` suite passes on the candidate commit, including
+- [x] The full `ci.yml` suite passes on the candidate commit, including
   `cargo doc` with warnings denied, `cargo build --examples` and
   `scripts/lint-check.sh`.
-- [ ] Regenerating the public API inventory from 012 produces no diff.
+- [x] Regenerating the public API inventory from 012 produces no diff.
 - [ ] `1.0.0-rc.1` is published by the release workflow, and a scratch
   project depending on it from crates.io builds and runs a basic agent
   example.
-- [ ] Before `1.0.0` is tagged, the repository is made public
+  — partially met: `1.0.0-rc.1` was published by the release workflow, and a
+  scratch project depending on the crates.io release builds and runs.
+  Without a model API key it covers `AgentConfig::builder`, the provider
+  registry and catalog, and `orchest-storage` URL signing. No live agent
+  loop has run (the same holds for `1.0.0`); the owner decides whether
+  that is accepted.
+- [x] Before `1.0.0` is tagged, the repository is made public
   (ADR-0003 D8). `docs/external/` stays as development reference by owner
   decision (2026-09-28). `docs/analysis` is already out of the tree, and
   the owner approved making its Multivac notes in earlier commits public
   (2026-09-28).
-- [ ] After owner sign-off, `1.0.0` is published by the release workflow and
+- [x] After owner sign-off, `1.0.0` is published by the release workflow and
   its GitHub Release exists.
-- [ ] The PRD's remaining acceptance items are checked and the roadmap marks
+- [x] The PRD's remaining acceptance items are checked and the roadmap marks
   v1.0 completed.
 
 ## Blocked by

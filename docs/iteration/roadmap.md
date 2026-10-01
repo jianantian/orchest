@@ -57,6 +57,7 @@
 | hotfix 2026-08-06 | 功能 | 原子下游 API 公开面（Murmur 下游需求）：provider-neutral `complete()`（单轮 system/user、`ResponseFormat::JsonObject`、仅 `EndTurn`/`StopSequence` 成功、可选 recommended retry，不启动 agent run）；阿里云 `qwen-audio-3.0-asr-flash` 同步 HTTP ASR（Data URL 字节直传、HTTP `sample_rate` 字符串）+ realtime 修复（context 归位 `payload.input.context`、`task-started` 启动门）；Python/TS 对称公开 `complete`/`transcribe`/`start_asr_stream`；[#285](https://github.com/jianantian/orchest/issues/285)–[#287](https://github.com/jianantian/orchest/issues/287) 关闭（[#288](https://github.com/jianantian/orchest/pull/288)） |
 | hotfix 2026-08-06b | 重构 | v0.16 Eval Contract Repair：修复 corpus/grader、resolved config/attempt lifecycle、resource/result/compare gates；在最终合同上完成 14 cases / 22 attempts 的有效 live baseline（overall 100），候选因未达到 +5 gate 被拒绝，sealed scorecard 未运行；提交可复算且不含原始轨迹的[脱敏证据包](../review/evidence/v0_16_eval_repair/README.md)；[#289](https://github.com/jianantian/orchest/issues/289)–[#292](https://github.com/jianantian/orchest/issues/292) 关闭（[#294](https://github.com/jianantian/orchest/pull/294)） |
 | hotfix 2026-07-27 | 重构 | v0.15 评审跟进：`new_trace_id` 混入进程级单调序列（macOS µs 时钟下同调用点 id 碰撞，flake + 生产关联断裂）；`RuntimeEvent::RunFailed` 新增结构化 `RunFailureKind`（BudgetExceeded/MaxStepsReached/Other，serde 向后兼容，agent-as-tool 分类器删除字符串匹配，Py/Node wire 声明同步）；`ToolError.external_usage` + actor 串/并行工具 Err 路径折算失败子代理 budget 回父 BudgetGuard（修复 v0.15 #236 引入的核算回退）；[#240](https://github.com/jianantian/orchest/issues/240)–[#242](https://github.com/jianantian/orchest/issues/242) 关闭（[#266](https://github.com/jianantian/orchest/pull/266)） |
+| v1.0 | 功能 | 首次公开发布：8 个 crate 以 `1.0.0` 统一版本发布到 crates.io（`orchest` / `orchest-protocol` / `orchest-provider` / `orchest-storage` 受 SemVer 约束，`orchest-provider-core/http/stream/visual` 为 `=` 锁定的内部档）；[ADR-0003](../adr/0003-release-policy.md) 发布策略（MIT OR Apache-2.0、MSRV 1.87、`vX.Y.Z` tag）；publish 元数据 + license、CHANGELOG、tag 触发的 release workflow、[公开 API 冻结审查](../review/v1_0_public_api.md)（全部公开 enum `#[non_exhaustive]`、冻结 struct 清单）；`1.0.0-rc.1` 经 crates.io 冒烟验证后发布 `1.0.0`，仓库转公开；[#306](https://github.com/jianantian/orchest/issues/306)–[#311](https://github.com/jianantian/orchest/issues/311)（[#312](https://github.com/jianantian/orchest/pull/312)、[#314](https://github.com/jianantian/orchest/pull/314)–[#316](https://github.com/jianantian/orchest/pull/316)；[release v1.0.0](https://github.com/jianantian/orchest/releases/tag/v1.0.0)） |
 
 ## 迭代编号约定
 
@@ -64,12 +65,6 @@
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
 
 ## 规划中
-
-### v1.0 — 首次公开发布（规划）
-
-第一个公开发布到 crates.io 的版本。包含发布准备的全部内容：Cargo publish 元数据、license 定稿、release workflow、CHANGELOG、版本号策略文档。权威范围与 gate 清单见 [`v1_0/prd.md`](./v1_0/prd.md)。
-
-**依赖**：v0.11 Demo B 完成（Supervised Delegation API 经产品验证后才冻结公开 API）、v0.12 完成（ADR-0002 Phase 3 的 legacy adapter/factory 移除必须在冻结前落地）。发布前必须清偿两份验证报告各自的 release blocker 清单：[v0.10 Demo A 验证报告](../review/v0_10_demo_validation.md)的 5 项 release blocker **已全部由 hotfix 2026-07-02 清偿**（[#195](https://github.com/jianantian/orchest/issues/195)–[#199](https://github.com/jianantian/orchest/issues/199) 全部关闭，详见验证报告 Triage 表与本文档「已完成」表的 hotfix 2026-07-02 行），以及 v0.11 Demo B [Seam Gap Analysis](../review/v0_11_seam_gap_analysis.md) 的 pre-freeze/release gates [#249](https://github.com/jianantian/orchest/issues/249)–[#255](https://github.com/jianantian/orchest/issues/255)。**v0.10 与 v0.11 live provider 验证已完成**（两个 required run `passed`，canonical evidence readiness `ready`，[#258](https://github.com/jianantian/orchest/issues/258) 已关闭）；pre-freeze/release gates [#249](https://github.com/jianantian/orchest/issues/249)–[#255](https://github.com/jianantian/orchest/issues/255) 全部关闭且 evidence 已入 ledger。[#256](https://github.com/jianantian/orchest/issues/256)–[#257](https://github.com/jianantian/orchest/issues/257) 与 [#298](https://github.com/jianantian/orchest/issues/298)–[#300](https://github.com/jianantian/orchest/issues/300) 是已关闭的 post-1.0 backlog，不阻塞发布。剩余未完成项为 PRD 的发布准备部分，已拆为 [#306](https://github.com/jianantian/orchest/issues/306)–[#311](https://github.com/jianantian/orchest/issues/311)：发布策略 ADR（license / 发布范围 / 版本号 / MSRV）→ publish 元数据与 license 文件、CHANGELOG、公开 API 冻结审查 → release workflow → RC 验证与 1.0.0 发布。Python/Node 绑定包不进 v1.0。
 
 ### 依赖图
 
@@ -111,7 +106,7 @@
 ✅ v0.12: ADR-0002 Phase 3 — legacy adapter/factory 移除（重构，v1.0 冻结前）
             │
             ▼
-   v1.0: 首次公开发布（crates.io + release workflow + license 定稿）
+✅ v1.0: 首次公开发布（crates.io 1.0.0，2026-10-01）
 
 ✅ v0.10: Briefing Desk
             │

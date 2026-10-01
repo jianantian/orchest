@@ -17,6 +17,11 @@ the canonical readiness verdict is `ready`; the backlog the round produced is
 The ledger's live evidence awaits review; the remaining v1.0 acceptance items
 are the release-packaging ones below, tracked as #306–#311.
 
+**Status (2026-10-01):** released. All eight crates are published to
+crates.io at `1.0.0`, the
+[GitHub Release](https://github.com/jianantian/orchest/releases/tag/v1.0.0)
+exists, and the repository is public. Every acceptance item below is met.
+
 ## Goal
 
 Publish the first stable Orchest release with:
@@ -99,9 +104,9 @@ None of these block v1.0.
   v0.11 canonical readiness result is no longer `unverified` because of a
   missing required live run.
 - [x] The v0.11 generated report remains byte-current with its canonical JSON.
-- [ ] Cargo publish metadata, license, release workflow, changelog, and
+- [x] Cargo publish metadata, license, release workflow, changelog, and
   versioning strategy are complete and reviewed.
-- [ ] All workspace tests, lint checks, formatting checks, and documentation
+- [x] All workspace tests, lint checks, formatting checks, and documentation
   checks pass on the release candidate.
 
 ## Issue Documents
