@@ -10,6 +10,8 @@ pub mod asr;
 pub use asr::{http_asr_models, HTTP_ASR_MODELS};
 use std::sync::LazyLock;
 
+use orchest_provider_core::catalog::ModelStatus;
+
 use orchest_protocol::{
     Capability, CapabilityDescriptor, CapabilityExt, CapabilitySource, CatalogEntry,
     ChatCapabilityExt, Modality as ProtoModality, ModelPricing, PricingRates, PricingTier,
@@ -348,8 +350,10 @@ fn deepseek_models() -> LlmProviderInfo {
     // Online models: deepseek-flash (DeepSeek-V4.1-Flash) and deepseek-v4-pro
     // (DeepSeek-V4-Pro-0813). Legacy names: deepseek-v4-flash and
     // deepseek-v4-flash-vision-exp are still accepted upstream and routed to
-    // V4.1 Flash (recognized by the DeepSeek profile, not listed here);
-    // deepseek-chat / deepseek-reasoner were discontinued 2026-07-24.
+    // V4.1 Flash. deepseek-v4-flash keeps its 1.0.0 row, marked Deprecated
+    // (see DEPRECATED_MODEL_IDS); deepseek-v4-flash-vision-exp is recognized
+    // by the DeepSeek profile only. deepseek-chat / deepseek-reasoner were
+    // discontinued 2026-07-24.
     // Pricing: CNY, peak-hour list price (off-peak is half; `ModelPricing`
     // cannot express time-of-day rates, so budgets use the conservative peak).
     // max_input_tokens = context_window - max_output_tokens.
@@ -399,6 +403,35 @@ fn deepseek_models() -> LlmProviderInfo {
             pricing: Some(ModelPricing::single_tier(
                 "CNY",
                 PricingRates::text(9.0, 27.0).with_cache(Some(0.30), None),
+            )),
+        },
+        // Deprecated 1.0.0 row, kept so identity picks and `find_model` keep
+        // resolving it within 1.x (ADR-0003 D4). It keeps its 1.0.0 shape
+        // (text input only), so capability queries such as
+        // `accepts([Image])` select `deepseek-flash` without ambiguity; only
+        // pricing follows upstream, which bills the name as V4.1 Flash.
+        LlmModelEntry {
+            model_id: "deepseek/deepseek-v4-flash",
+            provider: "deepseek",
+            display_name: "DeepSeek V4 Flash (deprecated)",
+            description:
+                "已弃用：上游路由到 V4.1 Flash；新代码请用 deepseek/deepseek-flash（支持图像输入）",
+            context_window: 1_000_000,
+            max_input_tokens: Some(616_000),
+            max_output_tokens: Some(384_000),
+            thinking: Some(ThinkingSpec {
+                max_thinking_tokens: None,
+            }),
+            input_modalities: &[Modality::Text],
+            output_modalities: &[Modality::Text],
+            scenes: &[
+                ModelScene::General,
+                ModelScene::Reasoning,
+                ModelScene::Coding,
+            ],
+            pricing: Some(ModelPricing::single_tier(
+                "CNY",
+                PricingRates::text(2.0, 8.0).with_cache(Some(0.04), None),
             )),
         },
     ];
@@ -802,6 +835,22 @@ pub fn list_providers() -> &'static [LlmProviderInfo] {
 
 /// Returns all individually enumerable LLM models across all providers.
 /// Dynamic providers (e.g. OpenRouter) are excluded; use `list_providers()` to see them.
+/// Chat rows kept for 1.x compatibility but superseded upstream. Projected as
+/// `ModelStatus::Deprecated`, so default discovery (`ModelFilter` with
+/// `include_deprecated: false`) hides them while identity lookups still
+/// resolve them.
+pub const DEPRECATED_MODEL_IDS: &[&str] = &["deepseek/deepseek-v4-flash"];
+
+/// Catalog status of a Chat row: `Deprecated` for [`DEPRECATED_MODEL_IDS`],
+/// otherwise `Stable`.
+pub fn llm_model_status(model_id: &str) -> ModelStatus {
+    if DEPRECATED_MODEL_IDS.contains(&model_id) {
+        ModelStatus::Deprecated
+    } else {
+        ModelStatus::Stable
+    }
+}
+
 pub fn list_models() -> impl Iterator<Item = &'static LlmModelEntry> {
     LLM_PROVIDERS.iter().flat_map(|p| match &p.models {
         LlmModelList::Known(models) => models.as_slice(),

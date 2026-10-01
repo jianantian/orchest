@@ -72,7 +72,7 @@ fn project_llm(m: &orchest_provider_http::catalog::LlmModelEntry) -> ModelRecord
         interruptible: false,
         tools: true,
         thinking: m.thinking.is_some(),
-        status: ModelStatus::Stable,
+        status: orchest_provider_http::catalog::llm_model_status(m.model_id),
         // No Chat defaults until Batch 4.
         default_for_provider: false,
         pricing: m.pricing.clone(),

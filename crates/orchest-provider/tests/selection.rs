@@ -663,3 +663,27 @@ fn with_builtin_selects_deepseek_flash_for_image_input() {
         .input_modalities
         .contains(&Modality::Image));
 }
+
+#[cfg(feature = "http")]
+#[test]
+fn deprecated_deepseek_v4_flash_still_resolves_by_id() {
+    // 1.0.0 shipped deepseek/deepseek-v4-flash; it stays resolvable in 1.x
+    // (ADR-0003 D4) but is hidden from default discovery.
+    use orchest_provider::{find_model, list_models, ModelFilter, ModelStatus};
+    let reg = Registry::with_builtin();
+    let picked = reg
+        .chat()
+        .id("deepseek/deepseek-v4-flash")
+        .select()
+        .expect("deprecated row is still registered");
+    assert_eq!(picked.descriptor.model.as_ref(), "deepseek-v4-flash");
+
+    let row = find_model("deepseek/deepseek-v4-flash").expect("still in the catalog");
+    assert_eq!(row.status, ModelStatus::Deprecated);
+    assert!(list_models(ModelFilter::default()).all(|m| m.id != "deepseek/deepseek-v4-flash"));
+    assert!(list_models(ModelFilter {
+        include_deprecated: true,
+        ..ModelFilter::default()
+    })
+    .any(|m| m.id == "deepseek/deepseek-v4-flash"));
+}

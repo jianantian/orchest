@@ -40,7 +40,7 @@ facts from the resolution」）。
 - Chat 预检：请求含 `Image` block 而 hook 返回 `Unsupported { strict_error: Some(..) }` 且策略为
   `Strict` 时，发请求前返回 `ModelError`；`Coerce` 下逐 block 可见丢弃（既有 `OptionAdjustment`）。
 - `DeepSeekProfile` 覆盖该 hook：catalog 行 `input_modalities` 含 `Image` → `Supported`；无 catalog 行时
-  名称兜底仅对官方路由别名 `deepseek-v4-flash*` 返回 `Supported`；其余返回
+  名称兜底仅对无 catalog 行的官方路由别名（`deepseek-v4-flash-vision-exp`）返回 `Supported`；其余返回
   `Unsupported { strict_error: Some(("unsupported_image_input", ..)) }`。
 - catalog：`deepseek/deepseek-flash` `input_modalities = [Text, Image]`；`deepseek/deepseek-v4-pro`
   保持 `[Text]`。
@@ -59,7 +59,8 @@ facts from the resolution」）。
 - [x] `deepseek-v4-pro` + `Image` + `CompatibilityPolicy::Strict`：`complete()` 在任何 HTTP 请求前返回
       `code = "unsupported_image_input"` 的 `ModelError`；`Coerce`：请求成功（mock SSE），图像被丢弃并记录
       `chat_unsupported_content_block`，`content` 为字符串。
-- [x] 路由别名 `deepseek-v4-flash` 同样编码 `image_url`；`deepseek-flash` 经 mock HTTP 服务端的完整
+- [x] 无 catalog 行的路由别名 `deepseek-v4-flash-vision-exp` 同样编码 `image_url`；Deprecated 行
+      `deepseek-v4-flash` 保持 1.0.0 的纯文本能力（图像按 `Coerce` 丢弃并记录）；`deepseek-flash` 经 mock HTTP 服务端的完整
       `complete()` 往返成功，服务端收到的请求体含 `image_url` part。
 - [x] OpenAI / Volcengine / OpenRouter / Elss-chat 行为不变：既有 C5 丢弃测试保持通过，
       即使 `Strict` 也不因图像报错。

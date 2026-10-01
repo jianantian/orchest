@@ -583,13 +583,38 @@ fn text_only_user_content_stays_a_string() {
 }
 
 #[test]
-fn legacy_flash_alias_encodes_images() {
-    // deepseek-v4-flash is not a catalog row but routes to V4.1 Flash upstream.
-    let adapter = ChatAdapter::for_test("deepseek", "deepseek-v4-flash", "http://localhost", 4096);
+fn unlisted_flash_alias_encodes_images() {
+    // deepseek-v4-flash-vision-exp has no catalog row; the profile's name
+    // fallback routes it to the multimodal V4.1 Flash.
+    let adapter = ChatAdapter::for_test(
+        "deepseek",
+        "deepseek-v4-flash-vision-exp",
+        "http://localhost",
+        4096,
+    );
     let (body, _) = adapter
         .request_body_for_test(&user(vec![url_image(None)]), &[], &default_options())
         .expect("body");
     assert_eq!(body["messages"][0]["content"][0]["type"], "image_url");
+}
+
+#[test]
+fn deprecated_v4_flash_row_keeps_text_only_behavior() {
+    // The deprecated 1.0.0 row is text-only, as in 1.0.0: an image is dropped
+    // and recorded under the default Coerce policy, not sent.
+    let adapter = ChatAdapter::for_test("deepseek", "deepseek-v4-flash", "http://localhost", 4096);
+    let (body, adjustments) = adapter
+        .request_body_for_test(
+            &user(vec![ContentBlock::Text("hi".into()), url_image(None)]),
+            &[],
+            &default_options(),
+        )
+        .expect("body");
+    assert_eq!(body["messages"][0]["content"], json!("hi"));
+    assert!(
+        has_content_block_drop(&adjustments, "image"),
+        "{adjustments:?}"
+    );
 }
 
 #[test]

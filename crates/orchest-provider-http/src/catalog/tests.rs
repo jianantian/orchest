@@ -1,4 +1,5 @@
 use super::*;
+use orchest_provider_core::catalog::ModelStatus;
 
 #[test]
 fn catalog_has_expected_provider_count() {
@@ -326,17 +327,28 @@ fn coding_scene_for_dev_oriented_models() {
 }
 
 #[test]
-fn deepseek_lists_only_the_online_models() {
+fn deepseek_lists_the_online_models_plus_the_deprecated_1_0_row() {
     // Source: https://api-docs.deepseek.com/zh-cn/quick_start/pricing (2026-10-01).
-    let ids: Vec<&str> = list_models()
+    let rows: Vec<(&str, ModelStatus)> = list_models()
         .filter(|m| m.provider == "deepseek")
-        .map(|m| m.model_id)
+        .map(|m| (m.model_id, llm_model_status(m.model_id)))
         .collect();
-    assert_eq!(ids, ["deepseek/deepseek-flash", "deepseek/deepseek-v4-pro"]);
-    // Legacy names are not catalog rows: deepseek-v4-flash is an upstream
-    // routing alias (profile fallback), deepseek-chat/-reasoner are discontinued.
+    assert_eq!(
+        rows,
+        [
+            ("deepseek/deepseek-flash", ModelStatus::Stable),
+            ("deepseek/deepseek-v4-pro", ModelStatus::Stable),
+            // Kept from 1.0.0 so identity picks keep resolving (ADR-0003 D4).
+            ("deepseek/deepseek-v4-flash", ModelStatus::Deprecated),
+        ]
+    );
+    // The deprecated row keeps its 1.0.0 text-only shape, so image selection
+    // has a single DeepSeek candidate.
+    let legacy = find_model("deepseek/deepseek-v4-flash").expect("deprecated row");
+    assert_eq!(legacy.input_modalities, &[Modality::Text]);
+    // Never-listed legacy names stay out of the catalog: the vision-exp alias
+    // is a profile fallback, deepseek-chat/-reasoner are discontinued.
     for legacy in [
-        "deepseek-v4-flash",
         "deepseek-v4-flash-vision-exp",
         "deepseek-chat",
         "deepseek-reasoner",
