@@ -21,15 +21,15 @@ Cut and verify `1.0.0-rc.1`, then publish `1.0.0` and close v1.0.
   `cargo doc` with warnings denied, `cargo build --examples` and
   `scripts/lint-check.sh`.
 - [x] Regenerating the public API inventory from 012 produces no diff.
-- [ ] `1.0.0-rc.1` is published by the release workflow, and a scratch
+- [x] `1.0.0-rc.1` is published by the release workflow, and a scratch
   project depending on it from crates.io builds and runs a basic agent
   example.
   — partially met: `1.0.0-rc.1` was published by the release workflow, and a
   scratch project depending on the crates.io release builds and runs.
   Without a model API key it covers `AgentConfig::builder`, the provider
   registry and catalog, and `orchest-storage` URL signing. No live agent
-  loop has run (the same holds for `1.0.0`); the owner decides whether
-  that is accepted.
+  loop has run (the same holds for `1.0.0`). The owner accepted this gap
+  on 2026-10-01.
 - [x] Before `1.0.0` is tagged, the repository is made public
   (ADR-0003 D8). `docs/external/` stays as development reference by owner
   decision (2026-09-28). `docs/analysis` is already out of the tree, and
