@@ -302,6 +302,18 @@ pub trait ProviderProfile: Send + Sync {
         (None, None)
     }
 
+    /// Whether the model accepts image input as canonical Chat `image_url`
+    /// content parts. Encoding stays in the shared Chat core (it is the
+    /// protocol-canonical OpenAI shape, not a dialect fork); the profile only
+    /// declares the capability fact, preferably from `cx.catalog`.
+    ///
+    /// Default: [`ImageInputSupport::Unsupported`] with no strict error — the
+    /// core drops each image visibly (`chat_unsupported_content_block`) under
+    /// every policy. DeepSeek overrides for its vision models.
+    fn chat_image_input(&self, _cx: &ResolvedModel<'_>) -> ImageInputSupport {
+        ImageInputSupport::Unsupported { strict_error: None }
+    }
+
     /// Report the model's capabilities. Default: the catalog-driven canonical Chat
     /// capabilities. Providers whose reasoning-capability detail (effort list,
     /// budget/exclusion flags, replay-metadata, source, pricing, name-prefix
@@ -432,6 +444,19 @@ pub enum RequestOption {
     ReasoningOutputExclusion,
 }
 
+/// Chat image-input support declared by [`ProviderProfile::chat_image_input`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageInputSupport {
+    /// `Image` blocks in user messages are encoded as `image_url` parts.
+    Supported,
+    /// `Image` blocks are dropped and recorded. With `strict_error` set,
+    /// [`resolve_chat_content_preflight`] fails a `Strict` request that carries
+    /// an image with that `(code, message)` before anything is sent.
+    Unsupported {
+        strict_error: Option<(&'static str, &'static str)>,
+    },
+}
+
 /// The value recorded in a degradation [`OptionAdjustment`]'s `applied` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppliedValue {
@@ -533,6 +558,43 @@ pub fn resolve_chat_preflight(
     }
 
     Ok((effective, adjustments))
+}
+
+/// Content-side Chat pre-flight: a `Strict` request carrying an `Image` block
+/// fails before any request is built or sent when the profile declares the model
+/// cannot take images and names a strict error. `Coerce` (and profiles without a
+/// strict error) fall through to the core's visible per-block drop.
+#[allow(clippy::result_large_err)] // justified: ModelError carries diagnostic context (workspace convention)
+pub fn resolve_chat_content_preflight(
+    profile: &dyn ProviderProfile,
+    cx: &ResolvedModel<'_>,
+    messages: &[crate::Message],
+    policy: CompatibilityPolicy,
+) -> Result<(), ModelError> {
+    if policy != CompatibilityPolicy::Strict {
+        return Ok(());
+    }
+    let ImageInputSupport::Unsupported {
+        strict_error: Some((code, message)),
+    } = profile.chat_image_input(cx)
+    else {
+        return Ok(());
+    };
+    let has_image = messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .any(|b| matches!(b, ContentBlock::Image { .. }));
+    if has_image {
+        return Err(ModelError {
+            message: message.into(),
+            code: Some(code.into()),
+            provider: Some(cx.provider.name.into()),
+            status: None,
+            retry_after_secs: None,
+            upstream: None,
+        });
+    }
+    Ok(())
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)] // justified: ModelError carries diagnostic context; args are the shared option-application inputs

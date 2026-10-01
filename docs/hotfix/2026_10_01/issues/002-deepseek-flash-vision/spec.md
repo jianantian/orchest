@@ -47,26 +47,26 @@ facts from the resolution」）。
 
 ## Acceptance Criteria
 
-- [ ] `find_model("deepseek-flash")` 的 `input_modalities` 含 `Modality::Image`，`deepseek-v4-pro` 不含；
+- [x] `find_model("deepseek-flash")` 的 `input_modalities` 含 `Modality::Image`，`deepseek-v4-pro` 不含；
       其 `CapabilityDescriptor` 输入模态同步，`orchest-provider` registry `.chat().accepts([Image])`
       可选中 `deepseek/deepseek-flash`、不会选中 `deepseek/deepseek-v4-pro`。
-- [ ] `deepseek-flash` 请求体：user 消息 `[Text, Image(Url, detail=low), Image(Base64 png)]` 编码为
+- [x] `deepseek-flash` 请求体：user 消息 `[Text, Image(Url, detail=low), Image(Base64 png)]` 编码为
       `[{"type":"text",..}, {"type":"image_url","image_url":{"url":"https://..","detail":"low"}},
       {"type":"image_url","image_url":{"url":"data:image/png;base64,.."}}]`，顺序保持，无丢弃 adjustment。
-- [ ] 纯文本 user 消息的 `content` 仍为字符串（与本 hotfix 前逐字节一致）。
-- [ ] `system` / `assistant` 中的 `Image` block 仍被丢弃并记录 `chat_unsupported_content_block`；
+- [x] 纯文本 user 消息的 `content` 仍为字符串（与本 hotfix 前逐字节一致）。
+- [x] `system` / `assistant` 中的 `Image` block 仍被丢弃并记录 `chat_unsupported_content_block`；
       与 `ToolResult` 混排的 `Image` 同样可见丢弃；`Video` / `Audio` 仍丢弃。
-- [ ] `deepseek-v4-pro` + `Image` + `CompatibilityPolicy::Strict`：`complete()` 在任何 HTTP 请求前返回
+- [x] `deepseek-v4-pro` + `Image` + `CompatibilityPolicy::Strict`：`complete()` 在任何 HTTP 请求前返回
       `code = "unsupported_image_input"` 的 `ModelError`；`Coerce`：请求成功（mock SSE），图像被丢弃并记录
       `chat_unsupported_content_block`，`content` 为字符串。
-- [ ] 路由别名 `deepseek-v4-flash` 同样编码 `image_url`；`deepseek-flash` 经 mock HTTP 服务端的完整
+- [x] 路由别名 `deepseek-v4-flash` 同样编码 `image_url`；`deepseek-flash` 经 mock HTTP 服务端的完整
       `complete()` 往返成功，服务端收到的请求体含 `image_url` part。
-- [ ] OpenAI / Volcengine / OpenRouter / Elss-chat 行为不变：既有 C5 丢弃测试保持通过，
+- [x] OpenAI / Volcengine / OpenRouter / Elss-chat 行为不变：既有 C5 丢弃测试保持通过，
       即使 `Strict` 也不因图像报错。
-- [ ] 不新增 Supported crate（`orchest` / `orchest-protocol` / `orchest-provider` / `orchest-storage`）公开类型或
+- [x] 不新增 Supported crate（`orchest` / `orchest-protocol` / `orchest-provider` / `orchest-storage`）公开类型或
       函数；新增 hook 与 `ImageInputSupport` 位于 `orchest-provider-http` 的 `pub(crate)` `protocol` 模块。
-- [ ] CHANGELOG `[Unreleased]` 记录 DeepSeek 图像输入（Added）与新错误码 `unsupported_image_input`。
-- [ ] `cargo test --workspace`、`cargo clippy --workspace -- -D warnings`、`cargo fmt --check`、
+- [x] CHANGELOG `[Unreleased]` 记录 DeepSeek 图像输入（Added）与新错误码 `unsupported_image_input`。
+- [x] `cargo test --workspace`、`cargo clippy --workspace -- -D warnings`、`cargo fmt --check`、
       `bash scripts/lint-check.sh`、`cargo doc` 通过。
 
 ## Notes

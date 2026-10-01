@@ -358,14 +358,15 @@ fn deepseek_models() -> LlmProviderInfo {
             model_id: "deepseek/deepseek-flash",
             provider: "deepseek",
             display_name: "DeepSeek V4.1 Flash",
-            description: "快速推理模型，支持思考/非思考双模式，1M 上下文",
+            description: "快速推理模型，原生图像理解，支持思考/非思考双模式，1M 上下文",
             context_window: 1_000_000,
             max_input_tokens: Some(616_000),
             max_output_tokens: Some(384_000),
             thinking: Some(ThinkingSpec {
                 max_thinking_tokens: None,
             }),
-            input_modalities: &[Modality::Text],
+            // Vision guide: https://api-docs.deepseek.com/guides/vision
+            input_modalities: &[Modality::Text, Modality::Image],
             output_modalities: &[Modality::Text],
             scenes: &[
                 ModelScene::General,

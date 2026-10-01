@@ -202,6 +202,7 @@ fn multimodal_models_declare_image_input() {
         "anthropic/claude-sonnet-4-6",
         "anthropic/claude-haiku-4-5",
         "openai/gpt-5.4-mini",
+        "deepseek/deepseek-flash",
     ];
     for model_id in must_have_image {
         let entry = list_models()
@@ -221,7 +222,6 @@ fn text_only_models_have_only_text_modality() {
         // input for it. If nano is confirmed text-only, add it here and fix the catalog.
         // doubao-seed-character-260628 is intentionally absent: the 2.1 refresh added
         // image + audio input for multi-role companion scenarios.
-        "deepseek/deepseek-flash",
         "deepseek/deepseek-v4-pro",
     ];
     for model_id in text_only {

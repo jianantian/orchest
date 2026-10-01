@@ -4,12 +4,16 @@
 //! with a reasoning-dialect deviation: a top-level `thinking: {type}` +
 //! `reasoning_effort`, `reasoning_content` replay, a `reasoning` SSE field, forced
 //! `cache_write_tokens = 0`, and its own capability facts. Reasoning-output
-//! exclusion and thinking-budget support are declared as data on `option_support`.
+//! exclusion and thinking-budget support are declared as data on `option_support`;
+//! image input (vision guide: `deepseek-flash` only) is declared on
+//! `chat_image_input` and encoded by the shared Chat core as `image_url` parts.
 
 use serde_json::{json, Value};
 
+use crate::catalog::Modality;
 use crate::protocol::{
-    AdjustmentSpec, AppliedValue, OptionSupport, ProviderProfile, RequestOption, ResolvedModel,
+    AdjustmentSpec, AppliedValue, ImageInputSupport, OptionSupport, ProviderProfile, RequestOption,
+    ResolvedModel,
 };
 use crate::{
     CacheCapability, CachePolicy, CapabilitySource, ContentBlock, ModelCapabilities, ModelError,
@@ -132,6 +136,26 @@ impl ProviderProfile for DeepSeekProfile {
                     reason: "output_exclusion_unsupported_disables_reasoning",
                 }),
             },
+        }
+    }
+
+    fn chat_image_input(&self, cx: &ResolvedModel<'_>) -> ImageInputSupport {
+        // Catalog `input_modalities` is the source of truth; unlisted ids fall
+        // back to the Flash family (the legacy deepseek-v4-flash* names route to
+        // the multimodal V4.1 Flash).
+        let supported = cx
+            .catalog
+            .map(|c| c.input_modalities.contains(&Modality::Image))
+            .unwrap_or_else(|| Self::is_flash_family(cx.model));
+        if supported {
+            ImageInputSupport::Supported
+        } else {
+            ImageInputSupport::Unsupported {
+                strict_error: Some((
+                    "unsupported_image_input",
+                    "DeepSeek model does not accept image input",
+                )),
+            }
         }
     }
 

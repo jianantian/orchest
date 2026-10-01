@@ -637,3 +637,29 @@ fn defaults_unique_per_capability_provider() {
         );
     }
 }
+
+#[cfg(feature = "http")]
+#[test]
+fn with_builtin_selects_deepseek_flash_for_image_input() {
+    // Hotfix 2026-10-01 #319: deepseek-flash declares image input in the
+    // catalog; deepseek-v4-pro stays text-only.
+    let reg = Registry::with_builtin();
+    let image_models: Vec<String> = reg
+        .chat()
+        .provider("deepseek")
+        .accepts([Modality::Image])
+        .list()
+        .iter()
+        .map(|e| e.descriptor.model.to_string())
+        .collect();
+    assert_eq!(image_models, ["deepseek-flash"]);
+    let picked = reg
+        .chat()
+        .id("deepseek/deepseek-v4-pro")
+        .select()
+        .expect("v4-pro is registered");
+    assert!(!picked
+        .descriptor
+        .input_modalities
+        .contains(&Modality::Image));
+}

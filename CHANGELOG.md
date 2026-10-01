@@ -14,6 +14,20 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+### Added
+
+- DeepSeek: `deepseek/deepseek-flash` accepts image input. `ContentBlock::Image`
+  in user messages is sent as OpenAI Chat `image_url` content parts (`Url`
+  as-is, `Base64` as a `data:` URL, `detail` forwarded), and the catalog row
+  declares `Modality::Image`, so `Registry::chat().accepts([Modality::Image])`
+  can select it. The legacy `deepseek-v4-flash*` names behave the same. For a
+  DeepSeek model without image input (`deepseek-v4-pro`), a
+  `CompatibilityPolicy::Strict` request carrying an image fails before it is
+  sent with the `ModelError` code `unsupported_image_input`; under `Coerce`
+  the image is dropped and recorded as a `content_block` `OptionAdjustment`.
+  Other Chat providers keep dropping images as before
+  ([#319](https://github.com/jianantian/orchest/issues/319)).
+
 ### Changed
 
 - DeepSeek: the static catalog now lists the two online models,
