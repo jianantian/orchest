@@ -69,11 +69,11 @@
 
 ### SDK 0.2 — 发布 Python / Node 包（规划）
 
-让用户在 Linux x86_64、Linux arm64、macOS arm64 上直接 `pip install orchest-py` / `npm install @orchest/sdk`，不需要本地 Rust 工具链。Python 每平台一个 `cp311-abi3` wheel 加 sdist；Node 为主包加三个平台子包；Linux 上把 OpenSSL 静态编译进绑定（已发布的 crate 不变）；两个 SDK 共用一个独立于 crate 的版本号，从 `0.2.0` 起步，由 `sdk-vX.Y.Z` tag 经 Trusted Publishing 发布，先发 `0.2.0-rc.1`。权威范围、决策与 issue 清单见 [`sdk_v0_2/prd.md`](./sdk_v0_2/prd.md)（[#324](https://github.com/jianantian/orchest/issues/324)–[#330](https://github.com/jianantian/orchest/issues/330)）。
+让用户在 Linux x86_64、Linux arm64、macOS arm64 上直接 `pip install orchest-py` / `npm install orchest-sdk`，不需要本地 Rust 工具链。Python 每平台一个 `cp311-abi3` wheel 加 sdist；Node 为主包加三个平台子包；Linux 上把 OpenSSL 静态编译进绑定（已发布的 crate 不变）；两个 SDK 共用一个独立于 crate 的版本号，从 `0.2.0` 起步，由 `sdk-vX.Y.Z` tag 经 Trusted Publishing 发布，先发 `0.2.0-rc.1`。权威范围、决策与 issue 清单见 [`sdk_v0_2/prd.md`](./sdk_v0_2/prd.md)（[#324](https://github.com/jianantian/orchest/issues/324)–[#330](https://github.com/jianantian/orchest/issues/330)）。
 
 **不在范围内**：Windows、Intel macOS、musl；SDK 的 API 冻结与 1.0；新的 Rust crate 发布。
 
-**前置**：owner 在 npm 上创建或确认 `orchest` 组织（否则 npm 包名退到 `orchest-sdk`）。
+**npm 包名**：`orchest` npm 组织不可用（2026-10-02），因此用不带 scope 的 `orchest-sdk`（[ADR-0004](../adr/0004-sdk-packaging.md) D2）。
 
 ### 依赖图
 
@@ -118,7 +118,7 @@
 ✅ v1.0: 首次公开发布（crates.io 1.0.0，2026-10-01）
             │
             ▼
-   SDK 0.2: 发布 Python / Node 包（PyPI orchest-py + npm @orchest/sdk，独立版本号）
+   SDK 0.2: 发布 Python / Node 包（PyPI orchest-py + npm orchest-sdk，独立版本号）
 
 ✅ v0.10: Briefing Desk
             │

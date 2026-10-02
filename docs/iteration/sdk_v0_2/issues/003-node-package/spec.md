@@ -17,10 +17,13 @@ together, and the loader picks the right native binary.
 ## Acceptance Criteria
 
 - [ ] `@napi-rs/cli` builds the addon as `orchest_node.<platform>.node` and
-  generates the sub-packages `@orchest/sdk-linux-x64-gnu`,
-  `@orchest/sdk-linux-arm64-gnu` and `@orchest/sdk-darwin-arm64` (or the
-  ADR-0004 fallback names).
-- [ ] `@orchest/sdk` lists the three sub-packages as `optionalDependencies`
+  generates the sub-packages `orchest-sdk-linux-x64-gnu`,
+  `orchest-sdk-linux-arm64-gnu` and `orchest-sdk-darwin-arm64`.
+- [ ] The package is renamed from `@orchest/sdk` to `orchest-sdk`
+  (ADR-0004 D2), and every `@orchest/sdk` reference in `js/`, the
+  declarations, `js/tests`, `examples/typescript` and the binding tests
+  uses the new name.
+- [ ] `orchest-sdk` lists the three sub-packages as `optionalDependencies`
   pinned to exactly its own version.
 - [ ] The loader uses a locally built addon when one is present, otherwise
   the sub-package for the current platform. `npm run build:native` and

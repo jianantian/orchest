@@ -17,22 +17,23 @@ confirm the npm scope, so 002–007 have one source of truth.
 
 ## Acceptance Criteria
 
-- [ ] ADR-0004 states the package names (`orchest-py` importing as
-  `orchest`; `@orchest/sdk` plus three platform sub-packages) and the
+- [x] ADR-0004 states the package names (`orchest-py` importing as
+  `orchest`; `orchest-sdk` plus three platform sub-packages) and the
   `orchest` import-name collision with orchest.io's package.
-- [ ] ADR-0004 lists the supported platforms (Linux x86_64 and arm64 on
+- [x] ADR-0004 lists the supported platforms (Linux x86_64 and arm64 on
   glibc with manylinux_2_28, macOS arm64) and the minimum Python (3.11) and
   Node (18) versions.
-- [ ] ADR-0004 states the versioning policy: one SDK version for both
+- [x] ADR-0004 states the versioning policy: one SDK version for both
   packages, independent of the crates, `sdk-vX.Y.Z` tags, and that 0.x
   makes no API stability promise. Each SDK release names the crate version
   it is built from.
-- [ ] ADR-0004 states the publishing policy: Trusted Publishing on PyPI
+- [x] ADR-0004 states the publishing policy: Trusted Publishing on PyPI
   and npm, a temporary npm token for the first publish only, and
   owner-approved publish environments.
-- [ ] The owner has confirmed the `@orchest` npm scope is available to
-  them, or ADR-0004 records the fallback name `orchest-sdk` as chosen.
-- [ ] ADR-0004 status is `Accepted` and names the decision owner.
+- [x] The owner has confirmed the `@orchest` npm scope is available to
+  them, or ADR-0004 records the fallback name `orchest-sdk` as chosen
+  (the scope was unavailable; `orchest-sdk` is chosen).
+- [x] ADR-0004 status is `Accepted` and names the decision owner.
 
 ## Blocked by
 

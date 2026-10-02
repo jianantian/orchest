@@ -22,13 +22,14 @@ State on 2026-10-02:
   only. `release.yml` publishes only the Rust crates.
 - **Names:** `orchest` is taken on PyPI and npm by an unrelated project
   (orchest.io), whose Python package also imports as `orchest`.
-  `orchest-py` is free on PyPI. `@orchest/sdk` is unpublished and the
-  `@orchest` scope shows no packages; its ownership is unconfirmed.
+  `orchest-py` is free on PyPI. The `orchest` npm organization is
+  unavailable (owner, 2026-10-02), so the npm package is the unscoped
+  `orchest-sdk`, which is free along with its platform package names.
 
 ## Goal
 
 A user on Linux x86_64, Linux arm64 or macOS arm64 runs
-`pip install orchest-py` or `npm install @orchest/sdk` and gets a working
+`pip install orchest-py` or `npm install orchest-sdk` and gets a working
 SDK without a Rust toolchain. Packages are built in CI and published
 through Trusted Publishing with provenance.
 
@@ -40,7 +41,7 @@ ADR-0004 (issue 001).
 | Topic | Decision |
 | --- | --- |
 | Python name | Distribution `orchest-py`, import `orchest`. It cannot be installed next to orchest.io's `orchest` package; the README says so. |
-| npm name | `@orchest/sdk`, provided the owner holds the `@orchest` scope. Fallback: unscoped `orchest-sdk`. |
+| npm name | Unscoped `orchest-sdk` plus `orchest-sdk-<platform>` packages. `@orchest/sdk` was the first choice, but the `orchest` npm organization is unavailable. |
 | Platforms | Linux x86_64 (glibc), Linux arm64 (glibc), macOS arm64. Linux wheels target manylinux_2_28. |
 | Versioning | One SDK version shared by both packages, independent of the crates, starting at `0.2.0`. Tags are `sdk-vX.Y.Z` / `sdk-vX.Y.Z-rc.N`. 0.x makes no API stability promise. |
 | Authentication | Trusted Publishing (OIDC) on PyPI and npm. npm's first publish uses a temporary token, because npm needs the package to exist before a trusted publisher can be configured. |
@@ -83,7 +84,7 @@ In dependency order:
 
 | Doc | Issue | Work | Type | Blocked by |
 | --- | --- | --- | --- | --- |
-| 001 | #324 | ADR-0004 and npm scope confirmation | HITL | — |
+| 001 | #324 | ADR-0004 and npm name | HITL | — |
 | 002 | #325 | Python package publishable | AFK | #324 |
 | 003 | #326 | Node package publishable | AFK | #324 |
 | 004 | #327 | Three-platform SDK CI | AFK | #325, #326 |
@@ -107,7 +108,7 @@ both Linux architectures.
 ## Acceptance Criteria
 
 - [ ] On a clean runner for each of the three platforms, installing
-  `orchest-py` 0.2.0 from PyPI and `@orchest/sdk` 0.2.0 from npm, with no
+  `orchest-py` 0.2.0 from PyPI and `orchest-sdk` 0.2.0 from npm, with no
   Rust toolchain, passes the existing SDK tests.
 - [ ] The repository holds no long-lived PyPI or npm token after the
   release.
@@ -120,7 +121,7 @@ both Linux architectures.
 
 | # | Step | When |
 | --- | --- | --- |
-| 1 | Create or confirm the `orchest` organization on npm | Before 003 |
+| 1 | ~~Create or confirm the `orchest` organization on npm~~ — unavailable; the unscoped `orchest-sdk` needs no organization | Done 2026-10-02 |
 | 2 | Register `orchest-py` on PyPI as a pending trusted publisher for `release-sdk.yml` | Before the RC |
 | 3 | Add a temporary npm token to the repository secrets | Before the RC |
 | 4 | Configure trusted publishers for the four npm packages, then delete the token | After the RC, before 0.2.0 |

@@ -18,7 +18,7 @@ the limits before hitting them.
 
 - [ ] `README.md`, `docs/guide/sdk-python.md` and
   `docs/guide/sdk-typescript.md` lead with `pip install orchest-py` and
-  `npm install @orchest/sdk` (or the ADR-0004 fallback name), and keep the
+  `npm install orchest-sdk`, and keep the
   build-from-source steps as a contributor path.
 - [ ] They list the supported platforms and the minimum Python and Node
   versions from ADR-0004, and say what happens on other platforms: Python
