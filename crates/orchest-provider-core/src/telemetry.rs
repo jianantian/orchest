@@ -52,12 +52,19 @@ impl LatencyTimer {
     }
 }
 
-/// Generate a fresh trace id (UUID-v4-shaped, no external uuid dep: 32 hex
-/// chars). Entropy = wall clock + stack-address salt + a process-global
-/// monotonic sequence. The sequence is what makes back-to-back calls on a
-/// coarse clock (e.g. macOS's µs granularity) collide-free: even when the
-/// nanos and the salt are identical, the sequence always differs. Stable
-/// enough for correlation, not cryptographic.
+/// Generate a fresh trace id: 32 hex chars (UUID-v4-shaped, no external uuid
+/// dep).
+///
+/// The id is two independent 64-bit halves:
+/// - high: wall-clock nanoseconds mixed with a stack-address salt, which
+///   separates processes and threads;
+/// - low: a process-global monotonic sequence.
+///
+/// The sequence has its own bits, so two ids from one process always differ,
+/// whatever the clock resolution. An earlier version added the sequence into
+/// the clock bits (`(nanos ^ salt) + seq`), which could collide: a later call
+/// can see `nanos ^ salt` drop by exactly the amount `seq` grew. Stable enough
+/// for correlation, not cryptographic.
 pub fn new_trace_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -68,9 +75,11 @@ pub fn new_trace_id() -> String {
         .unwrap_or(0);
     // mix in the address of a stack local for a little intra-process entropy
     let local = 0u8;
-    let salt = (&local as *const u8) as usize as u128;
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed) as u128;
-    format!("{:032x}", (nanos ^ salt).wrapping_add(seq))
+    let salt = (&local as *const u8) as usize as u64;
+    // Fold the 128-bit nanosecond count into 64 bits before mixing.
+    let high = ((nanos >> 64) as u64 ^ nanos as u64) ^ salt;
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("{high:016x}{seq:016x}")
 }
 
 #[cfg(test)]
@@ -95,12 +104,29 @@ mod tests {
         assert_ne!(a, b);
     }
 
-    /// The old nanos^salt generator could collide on back-to-back calls
-    /// (coarse clock + identical stack address). The monotonic sequence must
-    /// keep even a tight same-thread loop collision-free.
+    /// Earlier generators could collide on back-to-back calls: first
+    /// `nanos ^ salt` alone (coarse clock, same stack address), then
+    /// `(nanos ^ salt) + seq` (the sum can repeat). The sequence now has its
+    /// own bits, so a tight same-thread loop is collision-free by construction.
     #[test]
     fn trace_ids_are_unique_under_tight_loop() {
         let ids: std::collections::HashSet<String> = (0..10_000).map(|_| new_trace_id()).collect();
         assert_eq!(ids.len(), 10_000);
+    }
+
+    /// The sequence is process-global, so ids stay unique across threads too.
+    #[test]
+    fn trace_ids_are_unique_across_threads() {
+        let handles: Vec<_> = (0..8)
+            .map(|_| std::thread::spawn(|| (0..5_000).map(|_| new_trace_id()).collect::<Vec<_>>()))
+            .collect();
+        let mut ids = std::collections::HashSet::new();
+        for handle in handles {
+            for id in handle.join().expect("thread") {
+                assert_eq!(id.len(), 32);
+                assert!(ids.insert(id), "duplicate trace id across threads");
+            }
+        }
+        assert_eq!(ids.len(), 40_000);
     }
 }
