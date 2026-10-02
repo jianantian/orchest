@@ -61,7 +61,7 @@ The living iteration index is [`docs/iteration/roadmap.md`](./docs/iteration/roa
 
 The authoritative, up-to-date status lives in [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md) (已完成 / 规划中 tables + dependency graph). Do not duplicate it here.
 
-Snapshot (2026-10): v0.1–v0.17 and v1.0 shipped; the repository is public. `1.1.0` (hotfix 2026-10-01: DeepSeek model list and `deepseek-flash` image input) is the latest crates.io release. Nothing else is scheduled yet; candidate directions live in `docs/todo/`.
+Snapshot (2026-10): v0.1–v0.17 and v1.0 shipped; the repository is public. `1.1.0` (hotfix 2026-10-01: DeepSeek model list and `deepseek-flash` image input) is the latest crates.io release. Planned: **SDK 0.2**, publishing the Python and Node packages to PyPI and npm (`docs/iteration/sdk_v0_2/`). Other candidate directions live in `docs/todo/`.
 
 ---
 
