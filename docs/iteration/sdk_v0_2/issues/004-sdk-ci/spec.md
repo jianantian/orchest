@@ -39,3 +39,12 @@ same job.
 
 - #325 (Python package)
 - #326 (Node package)
+
+## Notes
+
+- Found in #325: the vendored OpenSSL build (OpenSSL 3.6 via
+  `openssl-src`) needs the Perl modules `IPC::Cmd` and `Time::Piece`,
+  which the `manylinux_2_28` images do not ship. Install
+  `perl-IPC-Cmd perl-Time-Piece` before building on Linux (for example in
+  `maturin-action`'s `before-script-linux`). The Node build on Linux needs
+  the same packages.

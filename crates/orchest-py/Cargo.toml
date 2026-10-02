@@ -1,7 +1,12 @@
 [package]
 name = "orchest-py"
+description = "Python bindings for Orchest (the orchest-py package on PyPI)"
+# The SDK version, shared with orchest-node and package.json (ADR-0004 D6);
+# pyproject.toml reads it from here.
 version = "0.1.0"
 edition = "2021"
+license.workspace = true
+repository.workspace = true
 # Binding packages are out of v1.0 scope (ADR-0003 D2).
 publish = false
 
@@ -13,12 +18,19 @@ orchest = { path = "../orchest" }
 orchest-protocol = { path = "../orchest-protocol" }
 orchest-provider = { path = "../orchest-provider", features = ["llm", "asr", "decision"] }
 bytes = "1"
-pyo3 = { version = "0.28", features = ["py-clone"] }
+pyo3 = { version = "0.28", features = ["py-clone", "abi3-py311"] }
 async-trait = "0.1"
 pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
+
+# Prebuilt Linux wheels must not depend on the host's libssl/libcrypto, so
+# OpenSSL is compiled in statically (ADR-0004 D5). native-tls still loads the
+# system CA store through openssl-probe. Binding-only: the published crates'
+# dependencies are unchanged.
+[target.'cfg(target_os = "linux")'.dependencies]
+native-tls = { version = "0.2", features = ["vendored"] }
 
 [lints]
 workspace = true
