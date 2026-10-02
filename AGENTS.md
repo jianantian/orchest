@@ -119,7 +119,7 @@ Non-negotiable invariants (the rest is in `CONVENTIONS.md`):
 - `unwrap()` / `expect()` are banned in library code outside `#[cfg(test)]` (or a documented invariant).
 - `thiserror` in library crates; `anyhow` only in application binaries; do not introduce actor frameworks.
 - Use `async-trait` for trait methods - not `-> impl Future` (PyO3/napi FFI incompatibility).
-- CI must pass: `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`, `cargo fmt --check`.
+- CI must pass: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`.
 
 ---
 

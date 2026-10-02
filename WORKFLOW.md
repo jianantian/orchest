@@ -113,7 +113,7 @@ added above it.
 
 ```bash
 cargo test --workspace
-cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 bash scripts/lint-check.sh
 ```
@@ -287,7 +287,7 @@ git worktree add .worktrees/v0_10 -b iteration/v0_10
 git commit -m "feat: <description> (closes #N)"
 
 # Pre-PR checks
-cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --check && bash scripts/lint-check.sh
+cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --check && bash scripts/lint-check.sh
 
 # Push and open PR
 git push -u origin iteration/v0_10
