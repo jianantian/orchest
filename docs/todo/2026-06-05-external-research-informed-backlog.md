@@ -7,6 +7,10 @@ metadata:
   originSessionId: orchest-external-research-review
 ---
 
+> 状态: **高/中杠杆项与 L1 全部完成** —— H1/H2/M3 由 v0.9.4、H3 由 v0.9.5、M1/M2/L1 由 v0.9.7 落地;
+> L2/L4 按本文结论不进 core(v0.9.9 提供了参考示例);L3 仍推迟、未排期 | 记录于 2026-06-05,
+> 状态核对于 2026-10-02(逐项对照代码与 roadmap「已完成」表;各项下的「现状」是 2026-06 的原始分析)
+
 基于 `docs/research/external-research-synthesis.md` 的五份外部研究，与 Orchest 现状做交叉分析后，提炼以下迭代建议。
 
 分三档：**高杠杆（改动小、收益大）**、**中等杠杆（需要设计但方向明确）**、**低优先级（有价值但可推迟）**。每项标注来源研究和涉及的 Orchest 模块。
@@ -16,6 +20,8 @@ metadata:
 ## 高杠杆
 
 ### H1. 工具重试策略：消费已有的 RetryHint
+
+**状态**: ✅ 已完成(v0.9.4 Runtime Failure Semantics)—— tool dispatch 按 `RetryHint` 决定重试(`Safe` + `Transient` 自动重试、`Caution` 走审批、`Unsafe` 不重试),并发出 `ToolCallRetry` 事件;结构化错误完整返回模型。
 
 **来源**: agents-best-practices (重试策略章节)
 **现状**: `ToolError` 已有 `RetryHint::Safe / Caution / Unsafe`，但 tool dispatch 层没有消费它——工具失败一律直接返回模型。
@@ -31,6 +37,8 @@ metadata:
 
 ### H2. ToolError 增加 Ambiguity 和 SpecGap 分类
 
+**状态**: ✅ 已完成(v0.9.4)—— `ErrorKind::Ambiguity` / `ErrorKind::SpecGap`。
+
 **来源**: meta-engineering-harness (四路失败仲裁器)
 **现状**: `ErrorKind` 有 `InvalidInput / NotSupported / Transient / Fatal`，覆盖了 Bug 和 Noise，但缺少 Ambiguity（规格允许多种行为，重试无意义）和 SpecGap（规格本身缺失，需要上报）。
 **建议**:
@@ -43,6 +51,8 @@ metadata:
 **预估范围**: 极小，只是枚举扩展 + 文档
 
 ### H3. Sub-agent 上下文模式显式化：fresh vs fork
+
+**状态**: ✅ 已完成(v0.9.5 Agent Control-Flow Hardening)—— `ContextMode::Fresh` / `Fork`。
 
 **来源**: pi-subagents (上下文模式章节)
 **现状**: `SubAgentBuilder` 通过 `inherit_context_count` 控制继承消息数量——0 等于 fresh，>0 等于部分 fork。语义隐含在数字里。
@@ -62,6 +72,8 @@ metadata:
 
 ### M1. Draft/Commit 工具分离模式
 
+**状态**: ✅ 已完成(v0.9.7 Tool Surface Extensions)—— `ToolExecutionMode::Draft { commit_tool }` / `Commit { draft_tool }`。
+
 **来源**: agents-best-practices (Draft/Commit 分离章节)
 **现状**: Approval 枚举有 `Never / WhenRisky / Always`，是对单个工具调用的审批。没有原生支持"预览 → 确认执行"的两步模式。
 **建议**:
@@ -75,6 +87,8 @@ metadata:
 
 ### M2. 工具动态发现（Deferred Tools / search_tools）
 
+**状态**: ✅ 已完成(v0.9.7)—— `SearchToolsTool` + `AgentConfigBuilder::enable_tool_search()`。
+
 **来源**: agents-best-practices (工具可见性分层第 5 层)
 **现状**: 所有工具启动时注册，运行中不变。对小型 agent 够用，但 Skill 库增长后，启动时全部注册会浪费 token（所有 tool schema 进 system prompt）。
 **建议**:
@@ -87,6 +101,8 @@ metadata:
 **预估范围**: 中等，需要考虑 schema 注入时机和 tool 生命周期
 
 ### M3. 失败模式 Hook 点（on_repeated_failure）
+
+**状态**: ✅ 已完成(v0.9.4)—— 重复失败 hook(`RepeatedFailureHookContext`、`repeated_failure_threshold`)。
 
 **来源**: agents-best-practices (反馈循环 + 熵管理), meta-engineering-harness (校准循环)
 **现状**: Hook 框架有 9 个生命周期点，但没有"模式检测"类 hook——重复失败只是一次次返回模型。
@@ -105,6 +121,8 @@ metadata:
 
 ### L1. 并行工具执行
 
+**状态**: ✅ 已完成(v0.9.7)—— 可选的并行 tool execution(`ToolExecutionPolicy`、`enable_parallel_tools()`),默认仍串行。
+
 **来源**: harness (Fan-out/Fan-in 模式), pi-subagents (并行委托)
 **现状**: 单线程 per run，工具串行执行。模型可能在一次回复中请求多个独立工具调用，但 runtime 依次执行。
 **Why 推迟**: 并行执行引入并发复杂性（共享状态、错误聚合、budget 竞争），且大多数 provider 的 tool_use 响应是串行的。等实际瓶颈出现再做。
@@ -112,17 +130,23 @@ metadata:
 
 ### L2. 完整权限策略引擎
 
+**状态**: 按下文结论不进 core。v0.9.9 提供了应用层参考示例 `examples/rust/guardrails/authority_policy.rs`。
+
 **来源**: agents-best-practices (8 级权威层级, 14 级风险分类, 7 种决策结果)
 **现状**: Guardrail trait + Approval enum，简洁但表达力有限。
 **Why 推迟**: Orchest 是最小核心 SDK。完整策略引擎是应用层关注点——上层可以通过 Guardrail trait 实现任意复杂的策略，不需要 runtime 内建。保持当前设计。
 
 ### L3. Agent 间直接通信
 
+**状态**: 未做,仍推迟、未排期(尚无需要 peer-to-peer 通信的产品场景)。
+
 **来源**: harness (Agent Teams 模式, SendMessage/TaskCreate)
 **现状**: Sub-agent 只和父通信，互不感知。
 **Why 推迟**: 直接通信适合紧耦合团队场景，但增加系统复杂度。Orchest 的 agent-as-tool + hooks 原语已足够组合出大部分模式。等出现明确需要 peer-to-peer 通信的产品场景再设计。
 
 ### L4. 预设团队架构模板
+
+**状态**: 按下文结论不进 core。v0.9.9 以 `examples/` 提供了 guardrail / team pattern 参考示例。
 
 **来源**: harness (6 种团队架构模式)
 **现状**: 无预设模板，用户用原语组合。
@@ -142,6 +166,8 @@ metadata:
 ---
 
 ## 建议实施顺序
+
+> 以下六项均已落地(见各项「状态」),顺序保留作记录。
 
 1. **H2** (ErrorKind 扩展) → 最小改动，立即可做
 2. **H1** (RetryHint 消费) → 依赖 H2 的错误分类，紧接着做
