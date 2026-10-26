@@ -158,6 +158,7 @@ See [`AGENTS.md`](./AGENTS.md) for conventions, [`WORKFLOW.md`](./WORKFLOW.md) f
 | [`docs/guide/sdk-python.md`](./docs/guide/sdk-python.md) | Python users — `orchest` package guide |
 | [`docs/guide/sdk-typescript.md`](./docs/guide/sdk-typescript.md) | TypeScript users — `@orchest/sdk` guide |
 | [`docs/polaris/`](./docs/polaris/) | Contributors — design principles, non-goals, observability contract |
+| [`docs/iteration/direction.md`](./docs/iteration/direction.md) | Contributors — forward direction, milestones, success metrics |
 | [`docs/iteration/`](./docs/iteration/) | Contributors — per-version PRDs and issue specs |
 | [`docs/review/`](./docs/review/) | Contributors — code review findings |
 | [`AGENTS.md`](./AGENTS.md) | AI agents and contributors — working conventions |
