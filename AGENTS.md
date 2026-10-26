@@ -34,6 +34,7 @@ docs/
 │                               #   design-principles, observability, non-goals
 ├── iteration/
 │   ├── roadmap.md             # Living iteration roadmap + dependency graph + capability-gap map (START HERE)
+│   ├── direction.md           # Forward direction, milestones, success metrics, open decisions
 │   └── <version>/             # Active/planned iterations — each: prd.md + issues/NNN-slug/{spec,plan}.md
 ├── hotfix/<date>/              # Active refactor/repair iterations (created when needed)
 ├── archive/                    # Completed iterations + hotfixes (v0_1 … v1_0, hotfix/<date>), moved here after closeout
