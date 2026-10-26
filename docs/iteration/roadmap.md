@@ -1,5 +1,7 @@
 # Orchest 迭代路线图
 
+> 前瞻方向、里程碑与成功指标见 [direction.md](./direction.md)。本文只记录版本状态与依赖关系。
+
 ## 迭代节奏
 
 功能迭代和重构迭代不固定交替。原则：**功能堆叠产生足够结构熵时，停下来重构降熵，然后继续**。
@@ -75,6 +77,16 @@
 
 **npm 包名**：`orchest` npm 组织不可用（2026-10-02），因此用不带 scope 的 `orchest-sdk`（[ADR-0004](../adr/0004-sdk-packaging.md) D2）。
 
+### v2.0 — Runtime 契约与可靠性（规划）
+
+把 Orchest 从"能跑 agent 的 runtime"变成"宿主可依赖的 runtime"：执行态以 append-only 事件日志为唯一真相，checkpoint 每 step 落盘（工具副作用派发前额外落标记），崩溃后用合成闭包事件交代进行中的副作用而不自动重跑；权限原语升到工具级 + 命令模式级 + 路径级并支持批准作用域与沙箱注入点；取消可抢占模型流、工具与审批等待；canonical 事件零丢失；提供能力探测面。
+
+这是 [方向与里程碑](./direction.md) 的 **M1**，决策依据 [ADR-0005](../adr/0005-host-integration-contract.md)。**破坏性变更，按 ADR-0003 走主版本号（2.0.0）；不提供兼容层、弃用期或迁移说明。**
+
+8 个 issue：会话事件日志 → checkpoint 与恢复 → in-flight 副作用账本 → 阻塞请求通道 → 原生权限模式表面 → 取消语义 → 事件模型与能力探测 → canonical 事件零丢失。权威范围与验收标准见 [`v2_0/prd.md`](./v2_0/prd.md)。
+
+**不在范围内**：产品语义（计划提案、任务计划、Task/Thread/Workspace）；宿主权限档映射与 UI；OS 级沙箱实现（M4）；持久委派与后台子 agent（M3）；SDK 控制面能力（M3）。
+
 ### 依赖图
 
 ```
@@ -119,6 +131,12 @@
             │
             ▼
    SDK 0.2: 发布 Python / Node 包（PyPI orchest-py + npm orchest-sdk，独立版本号）
+
+   v2.0: Runtime 契约与可靠性（会话事件日志 + checkpoint + 副作用账本 +
+        权限表面 + 取消 + 零丢失事件 + 能力探测；破坏性，Rust 2.0.0）
+        │
+        ├─► M2: Multivac 本地默认 runtime
+        └─► M3: 生态地基（SDK 控制面、provider 目录、包格式、委派层）
 
 ✅ v0.10: Briefing Desk
             │
