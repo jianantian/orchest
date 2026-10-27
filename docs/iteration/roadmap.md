@@ -87,6 +87,12 @@
 
 **不在范围内**：产品语义（计划提案、任务计划、Task/Thread/Workspace）；宿主权限档映射与 UI；OS 级沙箱实现（M4）；持久委派与后台子 agent（M3）；SDK 控制面能力（M3）。
 
+### 语音迭代线（卫星，规划）
+
+按 [ADR-0006](../adr/0006-voice-session-model.md) 的六个概念（Session / Stable / Draft / Turn / Finalize / Extras）统一语音接口，各厂商协议与聚合服务映射进来。五步：V1 契约补齐（`SessionInput::Finalize`、Turn 补齐、契约测试、SDK ASR 流式接口重设计）→ V2 能力目录与音频计量 → V3 聚合与网关 provider → V4 TTS 双工 → V5 全双工生命周期与第二个 provider。**V1 的 SDK 改动是 SDK 0.2 的前置条件**。范围与验收见 [`voice/plan.md`](./voice/plan.md)。
+
+**不在范围内**：中转站功能（鉴权、预算、请求日志）；端侧 VAD；附和词过滤与管线编排。
+
 ### 依赖图
 
 ```
