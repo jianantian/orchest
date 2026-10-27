@@ -30,10 +30,12 @@ use crate::tool::{
     ToolSource, PERMISSION_DENIED,
 };
 
+use super::cancel::{CancelToken, Cancellation};
 use super::compaction::maybe_compact_context;
 use super::config::{AgentConfig, RunId, SkillDisclosure, ToolExecutionPolicy};
 use super::handle::ChildRunRegistry;
 use super::helpers::{append_searched_tool_defs, connect_mcp_servers, truncate_output};
+use super::process::PROCESS_TERMINATION_TIMEOUT;
 use super::request::{
     ApprovalScope, PendingRequest, RequestBus, RequestDecision, RequestId, RequestKind,
     RequestResolution, RequestResponse, RequestTarget,
@@ -58,11 +60,6 @@ pub(crate) struct InjectCmd {
     pub message: String,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct CancelCmd {
-    pub reason: Option<String>,
-}
-
 pub(crate) enum AgentMsg {
     RunStep,
     Subscribe(mpsc::Sender<RuntimeEvent>),
@@ -74,7 +71,8 @@ pub(crate) enum AgentMsg {
     },
     Steer(SteerCmd),
     Inject(InjectCmd),
-    Cancel(CancelCmd),
+    /// Wakes the worker after its cancel token was set.
+    Cancel,
 }
 
 // ── Run state ─────────────────────────────────────────────────────────────────
@@ -94,7 +92,10 @@ pub(crate) struct AgentRunState {
     pub tool_defs: Vec<ToolDef>,
     pub budget: BudgetGuard,
     pub last_compaction_step: Option<u32>,
-    pub cancelled: bool,
+    pub cancel: CancelToken,
+    /// Set once the run emitted its terminal event (completed, failed or
+    /// aborted), so a racing cancellation cannot add a second one.
+    pub finished: bool,
     pub run_hook_ctx: crate::hook::RunHookContext,
     pub request_bus: RequestBus,
     pub child_registry: ChildRunRegistry,
@@ -177,6 +178,8 @@ pub(crate) struct AgentRunArgs {
     /// When set, each `initial_event_subs` entry is a watcher secondary that
     /// participates in multi-watcher action arbitration (SB-7).
     pub watcher_wave_bus: Option<std::sync::Arc<dyn FanoutWaveBus>>,
+    /// Shared by every worker of the run (across restarts) and its handle.
+    pub cancel: CancelToken,
 }
 
 // ── WorkerActor ───────────────────────────────────────────────────────────────
@@ -206,6 +209,7 @@ impl Actor for WorkerActor {
             initial_messages,
             initial_event_subs,
             watcher_wave_bus,
+            cancel,
         } = args;
         backfill_context_window_size(&mut config, model.as_ref());
         let event_subs = build_pre_start_event_subs(event_tx, initial_event_subs, watcher_wave_bus);
@@ -393,7 +397,8 @@ impl Actor for WorkerActor {
             tool_defs,
             budget,
             last_compaction_step: None,
-            cancelled: false,
+            cancel,
+            finished: false,
             run_hook_ctx,
             request_bus,
             child_registry,
@@ -412,7 +417,10 @@ impl Actor for WorkerActor {
     ) -> Result<(), ActorProcessingErr> {
         match msg {
             AgentMsg::RunStep => {
-                if state.cancelled {
+                if state.cancel.is_cancelled() {
+                    abort_run(state).await;
+                }
+                if state.finished {
                     myself.stop(run_failed_stop_reason(state.last_failure));
                     return Ok(());
                 }
@@ -463,21 +471,9 @@ impl Actor for WorkerActor {
                     content: vec![ContentBlock::Text(cmd.message)],
                 });
             }
-            AgentMsg::Cancel(cmd) => {
-                if !state.cancelled {
-                    state.cancelled = true;
-                    state.log.close_aborted_step();
-                    state.log.append(SessionEventKind::RunAborted {
-                        reason: cmd.reason.clone(),
-                    });
-                    persist_terminal(state).await;
-                    emit(
-                        &state.event_subs,
-                        RuntimeEvent::RunAborted { reason: cmd.reason },
-                    )
-                    .await;
-                }
-                myself.stop(None);
+            AgentMsg::Cancel => {
+                abort_run(state).await;
+                myself.stop(run_failed_stop_reason(state.last_failure));
             }
         }
         Ok(())
@@ -491,6 +487,68 @@ impl Actor for WorkerActor {
         state.request_bus.cancel_run(state.run_id).await;
         Ok(())
     }
+}
+
+/// The result of an async job a cancellation stopped waiting for: the job
+/// may still complete outside the run.
+fn abandoned_async_job_result() -> Value {
+    let error = ToolError::fatal(
+        "run cancelled while the async job was running; the job may still complete",
+    )
+    .with_code("ASYNC_JOB_ABANDONED");
+    tool_error_result(&error)
+}
+
+/// Ends the run as cancelled, unless it already ended: resolves its pending
+/// requests, asks the process terminator to stop its external processes,
+/// closes the open step, and records and emits `RunAborted`.
+async fn abort_run(state: &mut AgentRunState) {
+    if state.finished {
+        return;
+    }
+    state.finished = true;
+    let cancellation = state
+        .cancel
+        .cancellation()
+        .unwrap_or_else(Cancellation::user);
+    state.request_bus.cancel_run(state.run_id).await;
+    terminate_processes(state, &cancellation).await;
+    state.log.close_aborted_step();
+    state.log.append(SessionEventKind::RunAborted {
+        reason: cancellation.message.clone(),
+        cancel_reason: Some(cancellation.reason),
+    });
+    persist_terminal(state).await;
+    emit(
+        &state.event_subs,
+        RuntimeEvent::RunAborted {
+            reason: cancellation.message,
+            cancel_reason: Some(cancellation.reason),
+        },
+    )
+    .await;
+}
+
+/// Best effort: a terminator that fails or hangs is reported, not retried.
+async fn terminate_processes(state: &AgentRunState, cancellation: &Cancellation) {
+    let Some(terminator) = state.config.runtime.process_terminator.clone() else {
+        return;
+    };
+    let outcome = tokio::time::timeout(
+        PROCESS_TERMINATION_TIMEOUT,
+        terminator.terminate(state.run_id, cancellation),
+    )
+    .await
+    .unwrap_or_else(|_| Err("process termination timed out".into()));
+    let (terminated, error) = match outcome {
+        Ok(count) => (Some(count), None),
+        Err(error) => (None, Some(error)),
+    };
+    emit(
+        &state.event_subs,
+        RuntimeEvent::ProcessesTerminated { terminated, error },
+    )
+    .await;
 }
 
 fn prepare_initial_tool_defs(
@@ -868,13 +926,23 @@ async fn await_tool_approval(
     )
     .await;
 
-    let resolution = match tokio::time::timeout(state.config.runtime.request_timeout, rx).await {
-        Ok(Ok(resolution)) => resolution,
-        Ok(Err(_)) => RequestResolution::Cancelled,
-        Err(_) => {
-            state.request_bus.close(&id).await;
-            RequestResolution::TimedOut
+    let bus = state.request_bus.clone();
+    let cancel = state.cancel.clone();
+    let wait = tokio::time::timeout(state.config.runtime.request_timeout, rx);
+    let resolution = tokio::select! {
+        biased;
+        () = cancel.cancelled() => {
+            bus.close(&id).await;
+            RequestResolution::Cancelled
         }
+        waited = wait => match waited {
+            Ok(Ok(resolution)) => resolution,
+            Ok(Err(_)) => RequestResolution::Cancelled,
+            Err(_) => {
+                bus.close(&id).await;
+                RequestResolution::TimedOut
+            }
+        },
     };
     state.log.append(SessionEventKind::RequestResolved {
         request_id: id.clone(),
@@ -1076,7 +1144,16 @@ async fn call_model_phase(state: &mut AgentRunState, subs: &[EventSink]) -> Opti
             return None;
         }
 
-        let raw_response = dispatch_model_call(state, subs, &call_messages).await;
+        let cancel = state.cancel.clone();
+        let raw_response = tokio::select! {
+            biased;
+            () = cancel.cancelled() => None,
+            response = dispatch_model_call(state, subs, &call_messages) => Some(response),
+        };
+        let Some(raw_response) = raw_response else {
+            abort_run(state).await;
+            return None;
+        };
 
         match raw_response {
             Ok(response) => {
@@ -1248,7 +1325,11 @@ async fn handle_model_error_or_retry(
             },
         )
         .await;
-        tokio::time::sleep(delay).await;
+        // A cancellation ends the wait; the next attempt then aborts.
+        tokio::select! {
+            () = tokio::time::sleep(delay) => {}
+            () = state.cancel.cancelled() => {}
+        }
         return true;
     }
 
@@ -1299,6 +1380,7 @@ struct ParallelExecutionContext {
     child_registry: ChildRunRegistry,
     remaining_budget: BudgetConfig,
     parent_messages: Vec<Message>,
+    cancel: CancelToken,
 }
 
 /// Execute one outer-loop iteration. Returns true to continue, false to stop.
@@ -1332,17 +1414,25 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
     .await;
 
     let mut working_messages = state.log.messages().to_vec();
-    maybe_compact_context(
-        &state.config,
-        &state.model,
-        &mut working_messages,
-        primary(&subs),
-        &mut state.last_compaction_step,
-        step,
-        &response.usage,
-        run_id,
-    )
-    .await;
+    let cancel = state.cancel.clone();
+    let cancelled = tokio::select! {
+        biased;
+        () = cancel.cancelled() => true,
+        () = maybe_compact_context(
+            &state.config,
+            &state.model,
+            &mut working_messages,
+            primary(&subs),
+            &mut state.last_compaction_step,
+            step,
+            &response.usage,
+            run_id,
+        ) => false,
+    };
+    if cancelled {
+        abort_run(state).await;
+        return false;
+    }
     if working_messages.as_slice() != state.log.messages() {
         state.log.append(SessionEventKind::Compacted {
             messages: working_messages,
@@ -1383,6 +1473,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 primary(&subs),
             )
             .await;
+            state.finished = true;
             state.log.append(SessionEventKind::RunEnded {
                 output: output.clone(),
                 stop_reason: stop_reason.clone(),
@@ -1526,6 +1617,12 @@ async fn run_tool_and_handoff_phase(
         if log_landed_results(&mut state.log, &tool_results, &mut logged, held)
             && !checkpoint(state, subs, Checkpoint::AfterToolResult).await
         {
+            return false;
+        }
+        // No new dispatch after a cancellation; the remaining calls are
+        // closed as aborted before dispatch.
+        if state.cancel.is_cancelled() {
+            abort_run(state).await;
             return false;
         }
         if let Some(error) = deferred_tool_exposure_error(state, &tool_call.name) {
@@ -1759,20 +1856,40 @@ async fn run_tool_and_handoff_phase(
                 child_registry: state.child_registry.clone(),
                 remaining_budget: state.budget.remaining_config(),
                 parent_messages,
+                cancel: state.cancel.clone(),
             };
 
             let start_time = Instant::now();
-            let execute_fut = tool.execute(tool_input.clone(), &ctx);
-            let (attempt_result, timed_out) = if let Some(timeout) = metadata_timeout {
-                match tokio::time::timeout(timeout, execute_fut).await {
-                    Ok(result) => (result, false),
-                    Err(_) => (
-                        Err(ToolError::transient("tool execution timed out").with_code("TIMEOUT")),
-                        true,
-                    ),
+            let execute_fut = async {
+                let execute_fut = tool.execute(tool_input.clone(), &ctx);
+                if let Some(timeout) = metadata_timeout {
+                    match tokio::time::timeout(timeout, execute_fut).await {
+                        Ok(result) => (result, false),
+                        Err(_) => (
+                            Err(ToolError::transient("tool execution timed out")
+                                .with_code("TIMEOUT")),
+                            true,
+                        ),
+                    }
+                } else {
+                    (execute_fut.await, false)
+                }
+            };
+            // An interruptible call is dropped on cancellation (the ledger
+            // closes it); any other call runs to completion.
+            let outcome = if state.config.runtime.is_interruptible(tool.as_ref()) {
+                let cancel = state.cancel.clone();
+                tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => None,
+                    outcome = execute_fut => Some(outcome),
                 }
             } else {
-                (execute_fut.await, false)
+                Some(execute_fut.await)
+            };
+            let Some((attempt_result, timed_out)) = outcome else {
+                abort_run(state).await;
+                return false;
             };
 
             match attempt_result {
@@ -1793,7 +1910,7 @@ async fn run_tool_and_handoff_phase(
                         telemetry::record_tool_error(&tool_call.name, source_label, duration);
                     }
 
-                    if !should_retry_tool_error(&error, attempt) {
+                    if !should_retry_tool_error(&error, attempt) || state.cancel.is_cancelled() {
                         break Err(error);
                     }
 
@@ -1842,7 +1959,10 @@ async fn run_tool_and_handoff_phase(
                         },
                     )
                     .await;
-                    tokio::time::sleep(next_delay).await;
+                    tokio::select! {
+                        () = tokio::time::sleep(next_delay) => {}
+                        () = state.cancel.cancelled() => {}
+                    }
                     attempt = next_attempt;
                 }
             }
@@ -1980,14 +2100,18 @@ async fn run_tool_and_handoff_phase(
                 )
                 .await;
 
-                let async_result = poll_async_job(
-                    primary(subs),
-                    &tool_call.name,
-                    &handle,
-                    start_time,
-                    &state.webhook_runtime,
-                )
-                .await;
+                let cancel = state.cancel.clone();
+                let async_result = tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => abandoned_async_job_result(),
+                    value = poll_async_job(
+                        primary(subs),
+                        &tool_call.name,
+                        &handle,
+                        start_time,
+                        &state.webhook_runtime,
+                    ) => value,
+                };
 
                 let duration = start_time.elapsed();
                 if async_result.get("error").is_some() {
@@ -2243,6 +2367,10 @@ async fn emit_run_failed(
     error: impl Into<String>,
     kind: RunFailureKind,
 ) {
+    if state.finished {
+        return;
+    }
+    state.finished = true;
     let error = error.into();
     state.last_failure = Some(kind);
     state.log.append(SessionEventKind::RunFailed {
@@ -2429,6 +2557,9 @@ async fn run_parallel_tool_batch_if_allowed(
         return Some(None);
     }
 
+    let interruptible_batch = calls
+        .iter()
+        .all(|call| state.config.runtime.is_interruptible(call.tool.as_ref()));
     let mut pending = FuturesUnordered::new();
     for call in calls {
         let event_tx = primary(subs).clone();
@@ -2453,13 +2584,33 @@ async fn run_parallel_tool_batch_if_allowed(
                 child_registry,
                 remaining_budget,
                 parent_messages,
+                cancel: state.cancel.clone(),
             },
         ));
     }
 
     let mut ordered_results: Vec<Option<ContentBlock>> = vec![None; tool_uses.len()];
     let mut completion_order = 0;
-    while let Some(result) = pending.next().await {
+    let cancel = state.cancel.clone();
+    loop {
+        // The batch is dropped on cancellation only if every call in it is
+        // interruptible; otherwise it runs to completion.
+        let next = if interruptible_batch {
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => {
+                    drop(pending);
+                    abort_run(state).await;
+                    return Some(None);
+                }
+                next = pending.next() => next,
+            }
+        } else {
+            pending.next().await
+        };
+        let Some(result) = next else {
+            break;
+        };
         completion_order += 1;
         let requested_order = result.requested_order;
         let tool_name = result.tool_call.name.clone();
@@ -2500,6 +2651,7 @@ async fn execute_parallel_tool_call(
         child_registry: parallel_ctx.child_registry,
         remaining_budget: parallel_ctx.remaining_budget,
         parent_messages: parallel_ctx.parent_messages,
+        cancel: parallel_ctx.cancel,
     };
     let _ = parallel_ctx
         .event_tx
@@ -2598,14 +2750,18 @@ async fn finalize_parallel_tool_result(
                 },
             )
             .await;
-            let async_result = poll_async_job(
-                primary(subs),
-                &result.tool_call.name,
-                &handle,
-                start_time,
-                &state.webhook_runtime,
-            )
-            .await;
+            let cancel = state.cancel.clone();
+            let async_result = tokio::select! {
+                biased;
+                () = cancel.cancelled() => abandoned_async_job_result(),
+                value = poll_async_job(
+                    primary(subs),
+                    &result.tool_call.name,
+                    &handle,
+                    start_time,
+                    &state.webhook_runtime,
+                ) => value,
+            };
             let duration = start_time.elapsed();
             if async_result.get("error").is_some() {
                 telemetry::record_tool_error(&result.tool_call.name, result.source_label, duration);
@@ -2733,7 +2889,8 @@ fn failed_state(
             max_cost_usd: None,
         }),
         last_compaction_step: None,
-        cancelled: true,
+        cancel: CancelToken::new(),
+        finished: true,
         run_hook_ctx,
         request_bus,
         child_registry,

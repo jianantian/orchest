@@ -71,6 +71,15 @@ pub trait Tool: Send + Sync {
     fn permission_subject(&self, input: &Value) -> PermissionSubject {
         PermissionSubject::from_input(input)
     }
+    /// Whether a cancellation may drop a call of this tool mid-flight. The
+    /// default allows it for tools without side effects; a tool with side
+    /// effects runs to completion and its result is recorded. The host can
+    /// override it per tool ([`RuntimeConfig::interruptible`]).
+    ///
+    /// [`RuntimeConfig::interruptible`]: crate::run::RuntimeConfig::interruptible
+    fn interruptible(&self) -> bool {
+        !self.metadata().effects.has_side_effects()
+    }
 }
 
 #[derive(Debug)]
@@ -136,6 +145,9 @@ pub struct ToolContext {
     /// Empty when only [`Self::event_tx`] is set (oneshot / unit tests):
     /// [`Self::emit_event`] then falls back to `event_tx` alone.
     pub event_subs: Vec<crate::events::EventSink>,
+    /// The run's cancellation token. A tool that keeps working after it is
+    /// cancelled (a non-interruptible one) can watch it to stop early.
+    pub cancel: crate::run::CancelToken,
 }
 
 impl ToolContext {
@@ -173,6 +185,7 @@ impl ToolContext {
             remaining_budget: crate::budget::BudgetConfig::default(),
             parent_messages: vec![],
             event_subs: vec![],
+            cancel: crate::run::CancelToken::new(),
         }
     }
 

@@ -335,6 +335,7 @@ impl AgentAsTool {
             self.registry.clone(),
             ctx.request_bus.clone(),
             ctx.child_registry.clone(),
+            ctx.cancel.child(),
             vec![],
         );
         let child_run_id = handle.run_id;
@@ -346,6 +347,7 @@ impl AgentAsTool {
             .register(crate::run::handle::ChildRegistration {
                 run_id: child_run_id,
                 parent_run_id,
+                cancel: handle.cancel.clone(),
                 actor_ref: std::sync::Arc::clone(&handle.actor_ref),
                 ready: std::sync::Arc::clone(&handle.ready),
                 supervisor_ref: std::sync::Arc::clone(&handle.supervisor_ref),

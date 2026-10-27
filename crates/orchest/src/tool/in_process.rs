@@ -82,6 +82,7 @@ impl Tool for InProcessTool {
             child_registry: ctx.child_registry.clone(),
             remaining_budget: ctx.remaining_budget.clone(),
             parent_messages: ctx.parent_messages.clone(),
+            cancel: ctx.cancel.clone(),
         };
         (self.callback)(input, ctx_owned).await
     }

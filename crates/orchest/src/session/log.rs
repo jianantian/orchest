@@ -101,7 +101,11 @@ pub enum SessionEventKind {
     /// The run failed.
     RunFailed { error: String, kind: RunFailureKind },
     /// The run was aborted.
-    RunAborted { reason: Option<String> },
+    RunAborted {
+        reason: Option<String>,
+        #[serde(default)]
+        cancel_reason: Option<crate::run::CancelReason>,
+    },
 }
 
 /// A ledger entry: a tool call that was dispatched.

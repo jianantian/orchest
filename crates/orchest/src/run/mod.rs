@@ -2,11 +2,13 @@
 
 pub(crate) mod action_arbitration;
 pub(crate) mod actor;
+pub mod cancel;
 pub(crate) mod compaction;
 pub(crate) mod config;
 pub(crate) mod handle;
 pub(crate) mod helpers;
 pub mod llm_watcher;
+pub mod process;
 pub mod request;
 pub(crate) mod retry;
 pub(crate) mod skills;
@@ -16,6 +18,7 @@ pub mod watcher;
 pub(crate) mod webhook;
 
 pub use action_arbitration::{arbitrate_watcher_actions, ArbitratedActions};
+pub use cancel::{CancelReason, CancelToken, Cancellation};
 pub use config::{
     AgentConfig, AgentConfigBuilder, AgentRun, ApprovalMode, CompactionConfig, ConfigError,
     ModelConfig, RepeatedFailureConfig, RunId, RunInput, RunInputError, RunState, RunStatus,
@@ -26,6 +29,7 @@ pub use handle::{
     RunHandle,
 };
 pub use llm_watcher::LlmWatcher;
+pub use process::ProcessTerminator;
 pub use request::{
     ApprovalScope, PendingRequest, RequestBus, RequestDecision, RequestError, RequestId,
     RequestKind, RequestResolution, RequestResponse, RequestTarget,
@@ -139,6 +143,7 @@ impl AgentRun {
             registry,
             RequestBus::default(),
             ChildRunRegistry::default(),
+            CancelToken::new(),
             vec![],
         )
     }
@@ -167,6 +172,7 @@ impl AgentRun {
             registry,
             RequestBus::default(),
             ChildRunRegistry::default(),
+            CancelToken::new(),
             watchers,
         ))
     }
@@ -180,6 +186,7 @@ impl AgentRun {
         registry: ToolRegistry,
         request_bus: RequestBus,
         child_registry: ChildRunRegistry,
+        cancel: CancelToken,
         watchers: Vec<(Arc<dyn Watcher>, usize)>,
     ) -> (RunHandle, EventReceiver) {
         let run_id = RunId::new();
@@ -197,6 +204,7 @@ impl AgentRun {
             initial_messages,
             initial_event_subs: vec![],
             watcher_wave_bus: None,
+            cancel,
         };
         supervisor::spawn_supervised(supervisor::SpawnSupervised {
             run_id,
@@ -278,6 +286,7 @@ impl AgentRun {
             initial_messages: vec![],
             initial_event_subs: vec![],
             watcher_wave_bus: None,
+            cancel: CancelToken::new(),
         };
         Ok(supervisor::spawn_supervised(supervisor::SpawnSupervised {
             run_id,
@@ -300,6 +309,8 @@ pub(crate) async fn load_session_log(binding: &SessionBinding) -> Result<Session
     SessionLog::from_events(events)
 }
 
+#[cfg(test)]
+mod cancel_tests;
 #[cfg(test)]
 mod checkpoint_tests;
 #[cfg(test)]

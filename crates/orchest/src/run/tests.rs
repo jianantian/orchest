@@ -3628,7 +3628,7 @@ async fn parallel_batch_honors_abort_after_batch_boundary() {
     assert_eq!(max_seen.load(Ordering::SeqCst), 2);
     assert!(events
         .iter()
-        .any(|event| matches!(event, RuntimeEvent::RunAborted { reason: None })));
+        .any(|event| matches!(event, RuntimeEvent::RunAborted { reason: None, .. })));
 }
 
 #[tokio::test]
@@ -8302,7 +8302,7 @@ async fn manual_abort_has_no_reason() {
     // Either RunAborted with reason=None or RunCompleted (race) — just check that
     // if RunAborted fired, reason is None
     for event in &events {
-        if let RuntimeEvent::RunAborted { reason } = event {
+        if let RuntimeEvent::RunAborted { reason, .. } = event {
             assert!(reason.is_none(), "manual abort should have no reason");
         }
     }
@@ -8337,7 +8337,7 @@ async fn watcher_abort_terminates_run_with_reason() {
     // The run may complete before the watcher fires (race), OR fire RunAborted with reason.
     // We verify: if RunAborted fired, it has the correct reason.
     for event in &events {
-        if let RuntimeEvent::RunAborted { reason } = event {
+        if let RuntimeEvent::RunAborted { reason, .. } = event {
             let r = reason.as_deref().unwrap_or("");
             assert_eq!(r, "policy violation");
             return; // test passed
@@ -9045,7 +9045,7 @@ async fn watcher_arbitration_abort_wins_independent_of_completion_order() {
 
     for inject_submits_first in [true, false] {
         let actor_ref = Arc::new(Mutex::new(None));
-        let arb = ActionArbitrator::new(Arc::clone(&actor_ref));
+        let arb = ActionArbitrator::new(Arc::clone(&actor_ref), crate::run::CancelToken::new());
         arb.register_watcher(0);
         arb.register_watcher(1);
 
@@ -9105,7 +9105,7 @@ async fn watcher_arbitration_inject_steer_registration_order_independent_of_sche
 
     for steer_submits_first in [true, false] {
         let actor_ref = Arc::new(Mutex::new(None));
-        let arb = ActionArbitrator::new(Arc::clone(&actor_ref));
+        let arb = ActionArbitrator::new(Arc::clone(&actor_ref), crate::run::CancelToken::new());
         arb.register_watcher(0);
         arb.register_watcher(1);
 

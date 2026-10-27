@@ -184,7 +184,7 @@ pub fn format_event(event: &RuntimeEvent) -> String {
         RuntimeEvent::RunStarted { run_id } => format!("Run started: {run_id}"),
         RuntimeEvent::RunCompleted { .. } => "Run completed".to_string(),
         RuntimeEvent::RunFailed { error, .. } => format!("Run failed: {error}"),
-        RuntimeEvent::RunAborted { reason } => {
+        RuntimeEvent::RunAborted { reason, .. } => {
             format!("Run aborted: {}", reason.as_deref().unwrap_or("unknown"))
         }
         RuntimeEvent::RunRestarted { attempt } => format!("Run restarted: attempt {attempt}"),

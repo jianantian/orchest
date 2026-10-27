@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::model::{ModelStreamChunk, OptionAdjustment, StopReason, TokenUsage};
-use crate::run::{RequestId, RequestKind, RequestResolution, RunId};
+use crate::run::{CancelReason, RequestId, RequestKind, RequestResolution, RunId};
 use crate::tool::async_job::JobStatus;
 use crate::tool::{PermissionDecision, ToolCall, ToolError, ToolMetadata};
 
@@ -280,8 +280,20 @@ pub enum RuntimeEvent {
         #[serde(default)]
         kind: RunFailureKind,
     },
+    /// The run stopped before finishing. `cancel_reason` is set when it was
+    /// cancelled (through its handle, a watcher or its parent) and unset when
+    /// the supervisor gave up on a crashed worker.
     RunAborted {
         reason: Option<String>,
+        #[serde(default)]
+        cancel_reason: Option<CancelReason>,
+    },
+    /// The run's [`ProcessTerminator`](crate::run::ProcessTerminator) was
+    /// asked to stop the run's external processes on cancellation:
+    /// `terminated` processes were signalled, or `error` says why it failed.
+    ProcessesTerminated {
+        terminated: Option<usize>,
+        error: Option<String>,
     },
 }
 

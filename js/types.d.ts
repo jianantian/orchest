@@ -139,6 +139,9 @@ export interface ToolWithHandler {
   approval?: string;
 }
 
+/** Why a run was cancelled. */
+export type CancelReason = "user" | "timeout" | "upstream" | "host_disconnected" | "watcher";
+
 export type ToolEffect =
   | "read"
   | "write_workspace"
@@ -264,7 +267,8 @@ export type RuntimeEvent =
   | { type: "run_restarted"; attempt: number; run_depth: number; child_run_id: string | null }
   | { type: "run_completed"; output: unknown; stop_reason: StopReason; run_depth: number; child_run_id: string | null }
   | { type: "run_failed"; error: string; kind: RunFailureKind; run_depth: number; child_run_id: string | null }
-  | { type: "run_aborted"; reason: string | null; run_depth: number; child_run_id: string | null };
+  | { type: "run_aborted"; reason: string | null; cancel_reason: CancelReason | null; run_depth: number; child_run_id: string | null }
+  | { type: "processes_terminated"; terminated: number | null; error: string | null; run_depth: number; child_run_id: string | null };
 
 export interface HistoryMessage {
   /** "system" | "user" | "assistant" | "tool" (plus provider-specific roles). */

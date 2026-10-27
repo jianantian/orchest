@@ -68,6 +68,7 @@ pub(crate) struct SupervisorState {
     original_resume: Option<ResumeState>,
     worker_handle: Option<ractor::concurrency::JoinHandle<()>>,
     arbitrator: std::sync::Arc<ActionArbitrator>,
+    cancel: super::cancel::CancelToken,
 }
 
 pub(crate) struct SupervisorArgs {
@@ -103,6 +104,7 @@ impl Actor for SupervisorActor {
         let original_input = args.worker_args.input.clone();
         let original_initial_messages = args.worker_args.initial_messages.clone();
         let original_resume = args.worker_args.resume.clone();
+        let cancel = args.worker_args.cancel.clone();
 
         let (worker_ref, worker_handle) =
             Actor::spawn_linked(None, WorkerActor, args.worker_args, myself.get_cell()).await?;
@@ -132,6 +134,7 @@ impl Actor for SupervisorActor {
             original_resume,
             worker_handle: Some(worker_handle),
             arbitrator: args.arbitrator,
+            cancel,
         })
     }
 
@@ -211,9 +214,15 @@ async fn maybe_restart_worker(
                     .event_tx
                     .send(RuntimeEvent::RunAborted {
                         reason: Some("worker failed (strategy: Stop)".into()),
+                        cancel_reason: None,
                     })
                     .await;
             }
+            myself.stop(None);
+            Ok(())
+        }
+        // A cancelled run is never restarted.
+        SupervisionStrategy::Restart { .. } if state.cancel.is_cancelled() => {
             myself.stop(None);
             Ok(())
         }
@@ -226,6 +235,7 @@ async fn maybe_restart_worker(
                         .event_tx
                         .send(RuntimeEvent::RunAborted {
                             reason: Some(format!("max retries ({max_retries}) exceeded")),
+                            cancel_reason: None,
                         })
                         .await;
                 }
@@ -340,7 +350,7 @@ pub(crate) fn spawn_supervised(
     let supervisor_ref_for_handle = supervisor_ref_shared.clone();
     let ready_for_supervisor_ref = ready.clone();
 
-    let arbitrator = ActionArbitrator::new(Arc::clone(&actor_ref_shared));
+    let arbitrator = ActionArbitrator::new(Arc::clone(&actor_ref_shared), args.cancel.clone());
     let mut initial_event_subs = Vec::with_capacity(initial_watchers.len());
     for (index, (watcher, capacity)) in initial_watchers.iter().enumerate() {
         let (tx, rx) = mpsc::channel(*capacity);
@@ -349,6 +359,7 @@ pub(crate) fn spawn_supervised(
         spawn_watcher_processor(rx, Arc::clone(watcher), index, Arc::clone(&arbitrator));
     }
     args.initial_event_subs = initial_event_subs;
+    let args_cancel = args.cancel.clone();
     args.watcher_wave_bus = Some(Arc::clone(&arbitrator) as Arc<dyn FanoutWaveBus>);
 
     let sup_args = SupervisorArgs {
@@ -377,8 +388,10 @@ pub(crate) fn spawn_supervised(
         let _ = sup_handle.await;
     });
 
+    let cancel = args_cancel;
     let handle = super::handle::RunHandle {
         run_id,
+        cancel,
         actor_ref: actor_ref_shared,
         ready,
         actor_join,
@@ -422,5 +435,6 @@ async fn build_restart_args(state: &SupervisorState) -> AgentRunArgs {
         // Restart reattaches via `reattach_watcher` / Subscribe, not pre-wiring.
         initial_event_subs: vec![],
         watcher_wave_bus: None,
+        cancel: state.cancel.clone(),
     }
 }

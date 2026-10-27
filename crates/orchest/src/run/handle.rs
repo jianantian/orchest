@@ -11,7 +11,8 @@ use tokio::task::JoinHandle;
 
 use crate::events::{RunFailureKind, RuntimeEvent};
 
-use super::actor::{AgentMsg, CancelCmd, InjectCmd, SteerCmd};
+use super::actor::{AgentMsg, InjectCmd, SteerCmd};
+use super::cancel::{CancelToken, Cancellation};
 use super::config::RunId;
 use super::request::{PendingRequest, RequestBus, RequestError, RequestId, RequestResponse};
 use super::supervisor::SupervisorMsg;
@@ -48,8 +49,27 @@ impl std::fmt::Display for ChildCompletionError {
 
 impl std::error::Error for ChildCompletionError {}
 
+/// Sets `token` and, the first time, wakes the worker so a run between steps
+/// notices at once.
+fn cancel_run(
+    token: &CancelToken,
+    actor_ref: &Mutex<Option<ActorRef<AgentMsg>>>,
+    cancellation: Cancellation,
+) -> bool {
+    if !token.cancel(cancellation) {
+        return false;
+    }
+    if let Ok(guard) = actor_ref.lock() {
+        if let Some(ref aref) = *guard {
+            let _ = aref.cast(AgentMsg::Cancel);
+        }
+    }
+    true
+}
+
 struct RegisteredChild {
     parent_run_id: RunId,
+    cancel: CancelToken,
     actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
     ready: Arc<Notify>,
     supervisor_ref: Arc<Mutex<Option<ActorRef<SupervisorMsg>>>>,
@@ -79,6 +99,7 @@ impl std::fmt::Debug for ChildRunRegistry {
 pub(crate) struct ChildRegistration {
     pub run_id: RunId,
     pub parent_run_id: RunId,
+    pub cancel: CancelToken,
     pub actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
     pub ready: Arc<Notify>,
     pub supervisor_ref: Arc<Mutex<Option<ActorRef<SupervisorMsg>>>>,
@@ -94,6 +115,7 @@ impl ChildRunRegistry {
         let (outcome_tx, outcome_rx) = watch::channel(None);
         let entry = RegisteredChild {
             parent_run_id: reg.parent_run_id,
+            cancel: reg.cancel,
             actor_ref: reg.actor_ref,
             ready: reg.ready,
             supervisor_ref: reg.supervisor_ref,
@@ -111,6 +133,7 @@ impl ChildRunRegistry {
         Some(ChildRunHandle {
             run_id: child_run_id,
             parent_run_id: entry.parent_run_id,
+            cancel: entry.cancel.clone(),
             actor_ref: Arc::clone(&entry.actor_ref),
             ready: Arc::clone(&entry.ready),
             supervisor_ref: Arc::clone(&entry.supervisor_ref),
@@ -126,6 +149,7 @@ impl ChildRunRegistry {
             .map(|(run_id, entry)| ChildRunHandle {
                 run_id: *run_id,
                 parent_run_id: entry.parent_run_id,
+                cancel: entry.cancel.clone(),
                 actor_ref: Arc::clone(&entry.actor_ref),
                 ready: Arc::clone(&entry.ready),
                 supervisor_ref: Arc::clone(&entry.supervisor_ref),
@@ -145,6 +169,7 @@ impl ChildRunRegistry {
 pub struct ChildRunHandle {
     pub run_id: RunId,
     pub parent_run_id: RunId,
+    cancel: CancelToken,
     actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
     ready: Arc<Notify>,
     supervisor_ref: Arc<Mutex<Option<ActorRef<SupervisorMsg>>>>,
@@ -174,13 +199,16 @@ impl ChildRunHandle {
         }
     }
 
-    /// Request cancellation of the delegated child run.
+    /// Cancels the delegated child run as a user request. The parent's tool
+    /// call for the child then ends with the child's abort.
     pub fn abort(&self) {
-        if let Ok(guard) = self.actor_ref.lock() {
-            if let Some(ref aref) = *guard {
-                let _ = aref.cast(AgentMsg::Cancel(CancelCmd { reason: None }));
-            }
-        }
+        self.cancel(Cancellation::user());
+    }
+
+    /// Cancels the delegated child run. Returns `false` when it was already
+    /// cancelled; repeated calls have no further effect.
+    pub fn cancel(&self, cancellation: Cancellation) -> bool {
+        cancel_run(&self.cancel, &self.actor_ref, cancellation)
     }
 
     /// Subscribe to events emitted by the child after this call.
@@ -257,6 +285,7 @@ impl ChildRunHandle {
 #[non_exhaustive]
 pub struct RunHandle {
     pub run_id: RunId,
+    pub(crate) cancel: CancelToken,
     /// Current worker actor reference.
     ///
     /// The supervisor writes this after the initial worker spawn and rewrites it
@@ -280,12 +309,27 @@ impl RunHandle {
         let _ = self.actor_join.await;
     }
 
+    /// Cancels the run as a user request. See [`Self::cancel`].
     pub fn abort(&self) {
-        if let Ok(guard) = self.actor_ref.lock() {
-            if let Some(ref aref) = *guard {
-                let _ = aref.cast(AgentMsg::Cancel(CancelCmd { reason: None }));
-            }
-        }
+        self.cancel(Cancellation::user());
+    }
+
+    /// Cancels the run, its delegated children and its pending requests.
+    ///
+    /// Takes effect at once: an in-flight model call is dropped, pending
+    /// approvals resolve as cancelled, calls of interruptible tools are
+    /// dropped, and no further tool call is dispatched. A tool that is not
+    /// interruptible finishes and its result is recorded. The run then ends
+    /// with `RunAborted` carrying `cancellation.reason`, unless it had already
+    /// finished. Returns `false` when the run was already cancelled; repeated
+    /// calls have no further effect.
+    pub fn cancel(&self, cancellation: Cancellation) -> bool {
+        cancel_run(&self.cancel, &self.actor_ref, cancellation)
+    }
+
+    /// Why the run was cancelled, once it is.
+    pub fn cancellation(&self) -> Option<Cancellation> {
+        self.cancel.cancellation()
     }
 
     /// Inject a user-role message into the running agent's conversation.

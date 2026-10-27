@@ -588,7 +588,7 @@ pub fn sanitize_runtime_event(
                 RuntimeEvent::RunFailed { error, .. } => {
                     ("run_failed", json!({ "error": sanitize_free_text(error) }))
                 }
-                RuntimeEvent::RunAborted { reason } => (
+                RuntimeEvent::RunAborted { reason, .. } => (
                     "run_aborted",
                     json!({
                         "reason": reason.as_ref().map(|r| sanitize_free_text(r)),
@@ -1107,6 +1107,7 @@ mod tests {
             },
             RuntimeEvent::RunAborted {
                 reason: Some("interrupted: refresh_token: run-aborted-secret".into()),
+                cancel_reason: None,
             },
             RuntimeEvent::HookPanicked {
                 hook_name: "audit".into(),

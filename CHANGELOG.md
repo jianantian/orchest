@@ -71,6 +71,21 @@ except for the items `orchest-provider` re-exports.
   server's `annotations` (`readOnlyHint` → `Read`, plus `Network` with
   `openWorldHint`; otherwise unknown) instead of bypassing approval with
   `Approval::Never`. `McpToolDef` carries `annotations`.
+- **Breaking:** cancellation takes effect inside a step
+  ([#336](https://github.com/jianantian/orchest/issues/336)). A run shares a
+  `CancelToken` with its handle and its delegated children (as child tokens);
+  `RunHandle::cancel(Cancellation)` / `ChildRunHandle::cancel` set it at once
+  and are idempotent (the first reason wins, `RunHandle::cancellation()`
+  reports it). The in-flight model call, compaction call, retry waits and
+  async-job polling are dropped, a pending approval resolves as `Cancelled`
+  immediately, interruptible tool calls are dropped, and no tool call is
+  dispatched afterwards; a non-interruptible call finishes and its result is
+  recorded. Model calls are interrupted by dropping the `ChatModel::complete`
+  future, so the provider trait is unchanged. `RuntimeEvent::RunAborted` and
+  `SessionEventKind::RunAborted` carry `cancel_reason: Option<CancelReason>`
+  (`User`, `Timeout`, `Upstream`, `HostDisconnected`, `Watcher`; unset when
+  the supervisor gives up on a crashed worker). `ToolContext` carries
+  `cancel`. A cancelled run is never restarted by the supervisor.
 
 ### Added
 
@@ -129,6 +144,15 @@ except for the items `orchest-provider` re-exports.
   `EnforcementFacts` (`Hard` / `Soft` / `None` for isolation, the permission
   gate, code execution and read-only). Read-only is `Hard` only with a hard
   backend.
+- Tool interruptibility ([#336](https://github.com/jianantian/orchest/issues/336)):
+  `Tool::interruptible()` (default: true for tools without side effects),
+  overridable per tool with `AgentConfigBuilder::interruptible` /
+  `RuntimeConfig::interruptible`.
+- Process termination backend: `ProcessTerminator`
+  (`AgentConfigBuilder::process_terminator`) is called once on cancellation,
+  best effort with a 5 s limit, and its outcome is reported as
+  `RuntimeEvent::ProcessesTerminated { terminated, error }`. An async job
+  abandoned by a cancellation gets the result code `ASYNC_JOB_ABANDONED`.
 
 ### Removed
 

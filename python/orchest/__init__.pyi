@@ -403,6 +403,17 @@ class RunRestartedEvent(TypedDict):
 class RunAbortedEvent(TypedDict):
     type: Literal["run_aborted"]
     reason: str | None
+    # "user" | "timeout" | "upstream" | "host_disconnected" | "watcher";
+    # None when the supervisor gave up on a crashed worker.
+    cancel_reason: str | None
+    run_depth: int
+    child_run_id: str | None
+
+
+class ProcessesTerminatedEvent(TypedDict):
+    type: Literal["processes_terminated"]
+    terminated: int | None
+    error: str | None
     run_depth: int
     child_run_id: str | None
 
@@ -446,6 +457,7 @@ RuntimeEvent: TypeAlias = (
     | SubAgentFailedEvent
     | RunRestartedEvent
     | RunAbortedEvent
+    | ProcessesTerminatedEvent
     | EventsDroppedEvent
     | RunCompletedEvent
     | RunFailedEvent

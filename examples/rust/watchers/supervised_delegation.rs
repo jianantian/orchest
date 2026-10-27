@@ -153,7 +153,7 @@ async fn main() {
                     format!("ToolCallCompleted({}, {}ms)", tool, duration.as_millis())
                 }
                 RuntimeEvent::RunCompleted { .. } => "RunCompleted".to_string(),
-                RuntimeEvent::RunAborted { reason } => {
+                RuntimeEvent::RunAborted { reason, .. } => {
                     format!("RunAborted({reason:?})")
                 }
                 RuntimeEvent::RunRestarted { attempt } => {

@@ -767,7 +767,7 @@ async fn all_v08_features_combined() {
                     .unwrap();
             }
             RuntimeEvent::RunFailed { error, .. } => panic!("run failed: {error}"),
-            RuntimeEvent::RunAborted { reason } => {
+            RuntimeEvent::RunAborted { reason, .. } => {
                 panic!("run aborted: {reason:?}")
             }
             _ => {}

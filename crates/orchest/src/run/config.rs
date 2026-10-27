@@ -328,6 +328,14 @@ pub struct RuntimeConfig {
     /// report [`RuntimeConfig::enforcement`]. Not serialized.
     #[serde(skip)]
     pub execution_backend: Option<Arc<dyn ExecutionBackend>>,
+    /// Host overrides of tool interruptibility, by tool name: `true` lets a
+    /// cancellation drop the call mid-flight, `false` lets it run to
+    /// completion. Tools not listed use [`Tool::interruptible`].
+    #[serde(default)]
+    pub interruptible: std::collections::HashMap<String, bool>,
+    /// Stops the run's external processes on cancellation. Not serialized.
+    #[serde(skip)]
+    pub process_terminator: Option<Arc<dyn super::process::ProcessTerminator>>,
 }
 
 fn default_request_timeout() -> Duration {
@@ -414,6 +422,14 @@ impl RuntimeConfig {
         }
     }
 
+    /// Whether a cancellation may interrupt a call of `tool` mid-flight.
+    pub fn is_interruptible(&self, tool: &dyn Tool) -> bool {
+        self.interruptible
+            .get(tool.name())
+            .copied()
+            .unwrap_or_else(|| tool.interruptible())
+    }
+
     /// What this run's boundaries can be relied on for. See
     /// [`EnforcementFacts`].
     pub fn enforcement(&self) -> EnforcementFacts {
@@ -485,6 +501,8 @@ impl Default for RuntimeConfig {
             request_timeout: default_request_timeout(),
             permissions: PermissionPolicy::default(),
             execution_backend: None,
+            interruptible: std::collections::HashMap::new(),
+            process_terminator: None,
         }
     }
 }
@@ -792,6 +810,23 @@ impl AgentConfigBuilder {
     /// Host permission rules for the run's tool calls.
     pub fn permissions(mut self, policy: PermissionPolicy) -> Self {
         self.runtime.permissions = policy;
+        self
+    }
+
+    /// Overrides whether a cancellation may interrupt calls of `tool`.
+    pub fn interruptible(mut self, tool: impl Into<String>, interruptible: bool) -> Self {
+        self.runtime
+            .interruptible
+            .insert(tool.into(), interruptible);
+        self
+    }
+
+    /// Stops the run's external processes when the run is cancelled.
+    pub fn process_terminator(
+        mut self,
+        terminator: Arc<dyn super::process::ProcessTerminator>,
+    ) -> Self {
+        self.runtime.process_terminator = Some(terminator);
         self
     }
 

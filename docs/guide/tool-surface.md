@@ -74,6 +74,26 @@ read-only setting must not be presented as a hard guarantee. Skill capability
 declarations are hints, not an execution boundary, unless a backend the host
 injected enforces them.
 
+## Cancellation and Interruptibility
+
+`RunHandle::cancel(Cancellation)` (or `abort()` for a user cancellation) takes
+effect at once, not at the next step: the in-flight model call is dropped,
+pending approvals resolve as cancelled, and no tool call is dispatched after
+it. A tool call already running is dropped only if the tool is interruptible;
+otherwise it runs to completion and its result is recorded. By default
+`Tool::interruptible` is true for tools without side effects and false for the
+rest; a host overrides it per tool with `AgentConfigBuilder::interruptible`.
+Tools that keep running can watch `ToolContext::cancel` to stop early.
+
+The run ends with one `RunAborted` whose `cancel_reason` is `User`, `Timeout`,
+`Upstream` (the parent run was cancelled), `HostDisconnected` or `Watcher`;
+repeated cancels and a cancel racing a normal end add no second terminal event.
+Calls the cancellation left without a result are closed in the session ledger
+(`TOOL_ABORTED_BEFORE_DISPATCH` or `TOOL_OUTCOME_UNKNOWN`). A host that starts
+external processes can inject a `ProcessTerminator`; it is called once on
+cancellation and its outcome, failures included, is reported as
+`ProcessesTerminated`.
+
 ## Draft/Commit vs Normal Approval
 
 Use normal approval for a single action where the model already has enough

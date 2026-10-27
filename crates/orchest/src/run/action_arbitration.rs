@@ -32,7 +32,8 @@ use tokio::sync::Notify;
 
 use crate::events::FanoutWaveBus;
 
-use super::actor::{AgentMsg, CancelCmd, InjectCmd, SteerCmd};
+use super::actor::{AgentMsg, InjectCmd, SteerCmd};
+use super::cancel::{CancelReason, CancelToken, Cancellation};
 use super::watcher::WatcherAction;
 
 /// Ticket correlating a received channel message with its fan-out wave.
@@ -105,12 +106,16 @@ pub(crate) struct ActionArbitrator {
     inner: Mutex<ArbitratorInner>,
     notify: Notify,
     actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
+    cancel: CancelToken,
     /// Test/observation log of resolved waves (SB-7 adversarial proofs).
     applied_log: Mutex<Vec<ArbitratedActions>>,
 }
 
 impl ActionArbitrator {
-    pub(crate) fn new(actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>) -> Arc<Self> {
+    pub(crate) fn new(
+        actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
+        cancel: CancelToken,
+    ) -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(ArbitratorInner {
                 active: HashSet::new(),
@@ -120,6 +125,7 @@ impl ActionArbitrator {
             }),
             notify: Notify::new(),
             actor_ref,
+            cancel,
             applied_log: Mutex::new(Vec::new()),
         })
     }
@@ -254,9 +260,10 @@ impl ActionArbitrator {
         };
         match resolved {
             ArbitratedActions::Abort(reason) => {
-                let _ = aref.cast(AgentMsg::Cancel(CancelCmd {
-                    reason: Some(reason),
-                }));
+                let cancellation = Cancellation::new(CancelReason::Watcher).with_message(reason);
+                if self.cancel.cancel(cancellation) {
+                    let _ = aref.cast(AgentMsg::Cancel);
+                }
             }
             ArbitratedActions::Effects(effects) => {
                 for action in effects {
