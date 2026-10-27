@@ -120,6 +120,15 @@ bash scripts/lint-check.sh
 
 All four must pass. Fix any failures before merging.
 
+The **SDK packages** workflow (`.github/workflows/sdk.yml`) release-builds
+the Python wheel and the Node addon on Linux x86_64, Linux arm64 and macOS
+arm64, installs the built packages and runs `python/tests` and `js/tests`
+against them. It runs on pushes to `main` and on pull requests that touch
+the binding crates, `python/`, `js/`, `npm/`, `pyproject.toml`,
+`package.json`, the workspace manifests or the workflow itself. To check
+the same thing locally on one platform, run `npm run pack:local` and
+`maturin build --release`, then install the results outside the checkout.
+
 ### 6. Create a Pull Request
 
 Push the branch and open a PR:
