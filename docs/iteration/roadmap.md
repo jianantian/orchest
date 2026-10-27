@@ -73,7 +73,7 @@
 
 ### v1.2 — 语音契约补齐与新 provider（规划）
 
-两件增量的事，都赶在 SDK 0.2 之前：按 [ADR-0006](../adr/0006-voice-session-model.md) 补语音契约（`SessionInput::Finalize`、各方言补 Turn 与原生 finalize、方言无关的契约测试）并重设计 Python / Node 的 ASR 流式接口（语音线 V1）；接入 Vercel AI Gateway 与 Fireworks 的 chat 与 decision。发布 Rust `1.2.0`，作为 SDK 0.2 版本矩阵的 crate 版本。权威范围见 [`v1_2/prd.md`](./v1_2/prd.md)（[#342](https://github.com/jianantian/orchest/issues/342)–[#348](https://github.com/jianantian/orchest/issues/348)）。
+两件增量的事，都赶在 SDK 0.2 之前：按 [ADR-0006](../adr/0006-voice-session-model.md) 补语音契约（`SessionInput::Finalize`、各方言补 Turn 与原生 finalize、方言无关的契约测试）并重设计 Python / Node 的 ASR 流式接口（语音线 V1）；接入 Vercel AI Gateway 的 chat 与 decision、Fireworks 的 chat（Fireworks decision 延后，owner 2026-10-27）。发布 Rust `1.2.0`，作为 SDK 0.2 版本矩阵的 crate 版本。权威范围见 [`v1_2/prd.md`](./v1_2/prd.md)（[#342](https://github.com/jianantian/orchest/issues/342)–[#348](https://github.com/jianantian/orchest/issues/348)）。
 
 **不在范围内**：语音 V2–V5；Vercel / Fireworks 的语音、图像、embedding。
 

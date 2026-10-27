@@ -14,6 +14,8 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+## [1.2.0]
+
 ### Added
 
 - `SessionInput::Finalize`: asks a streaming session to finalize what it has
@@ -180,7 +182,8 @@ Release candidate for 1.0.0, with the same feature set as the 1.0.0 entry
 in [CHANGELOG.md](CHANGELOG.md#100). Published so crates.io users can try
 the lockstep crates before the final release.
 
-[Unreleased]: https://github.com/jianantian/orchest/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/jianantian/orchest/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/jianantian/orchest/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/jianantian/orchest/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/jianantian/orchest/releases/tag/v1.0.0
 [1.0.0-rc.1]: https://github.com/jianantian/orchest/releases/tag/v1.0.0-rc.1
