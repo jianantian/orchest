@@ -389,18 +389,21 @@ pub(crate) fn spawn_supervised(
 }
 
 async fn build_restart_args(state: &SupervisorState) -> AgentRunArgs {
-    let resume = if let (Some(store), Some(session_id)) = (&state.session_store, &state.session_id)
-    {
-        match store.load(session_id).await {
-            Ok(Some(snapshot)) => Some(ResumeState {
-                messages: snapshot.messages,
-                step: snapshot.step,
-                budget_used: snapshot.budget_used,
-            }),
-            _ => state.original_resume.clone(),
+    let stored = match (&state.session_store, &state.session_id) {
+        (Some(store), Some(session_id)) => {
+            let binding = super::actor::SessionBinding {
+                store: Arc::clone(store),
+                session_id: session_id.clone(),
+            };
+            super::load_session_log(&binding).await.ok()
         }
-    } else {
-        state.original_resume.clone()
+        _ => None,
+    };
+    // A stored log already holds the original input (and any resume input),
+    // so the restarted worker continues it without adding a turn.
+    let resume = match stored {
+        Some(log) => Some(ResumeState { log, input: None }),
+        None => state.original_resume.clone(),
     };
 
     AgentRunArgs {

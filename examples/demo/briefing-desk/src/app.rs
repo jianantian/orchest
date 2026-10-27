@@ -9,8 +9,9 @@ use std::sync::Arc;
 
 use orchest::events::RuntimeEvent;
 use orchest::model::ModelAdapter;
+use orchest::run::AgentConfig;
 use orchest::run::{AgentRun, EventReceiver, RunHandle};
-use orchest::session::{SessionSnapshot, SessionStore};
+use orchest::session::SessionStore;
 
 use crate::execution::{self, PreparedResume, PreparedRun, ResolvedExecutionEnvironment};
 
@@ -87,34 +88,34 @@ where
 
 pub async fn resume(args: ResumeArgs) -> Result<(), DemoError> {
     let store = execution::open_session_store(&args.session)?;
-    let mut snapshot = store
-        .load(&args.session)
+    let stored = store
+        .read(&args.session, 1)
         .await
-        .map_err(|e| format!("loading session '{}': {e}", args.session))?
-        .ok_or_else(|| {
-            format!(
-                "no persisted session found for '{}' at {}; run with --session {} first",
-                args.session,
-                execution::session_db_path(&args.session).display(),
-                args.session
-            )
-        })?;
+        .map_err(|e| format!("loading session '{}': {e}", args.session))?;
+    if stored.is_empty() {
+        return Err(format!(
+            "no persisted session found for '{}' at {}; run with --session {} first",
+            args.session,
+            execution::session_db_path(&args.session).display(),
+            args.session
+        )
+        .into());
+    }
 
     let env = ResolvedExecutionEnvironment::from_env()?;
     println!("[model] {}/{}", env.chat.provider, env.chat.model);
 
     let store: Arc<dyn SessionStore> = Arc::new(store);
-    snapshot.active_config = snapshot
-        .active_config
+    let config = execution::main_agent_config(&env.chat)?
         .with_session_store(Arc::clone(&store), args.session.clone());
 
-    let outcome = resume_with_environment(snapshot, args, env, |_| {}).await?;
+    let outcome = resume_with_environment(config, args, env, |_| {}).await?;
     println!("[done] follow-up answer: {}", outcome.final_text);
     Ok(())
 }
 
 pub async fn resume_with_environment<F>(
-    snapshot: SessionSnapshot,
+    config: AgentConfig,
     args: ResumeArgs,
     env: ResolvedExecutionEnvironment,
     observer: F,
@@ -123,7 +124,7 @@ where
     F: FnMut(&RuntimeEvent),
 {
     let model = Arc::clone(&env.chat.adapter);
-    let prepared = execution::prepare_resume(snapshot, args, env)?;
+    let prepared = execution::prepare_resume(config, args, env)?;
     execute_prepared_resume(prepared, model, observer).await
 }
 
@@ -135,9 +136,9 @@ async fn execute_prepared_resume<F>(
 where
     F: FnMut(&RuntimeEvent),
 {
-    prepared.snapshot.active_config = prepared.config;
     let (handle, rx) =
-        AgentRun::resume_with_input(prepared.snapshot, prepared.input, model, prepared.registry)?;
+        AgentRun::resume_with_input(prepared.config, prepared.input, model, prepared.registry)
+            .await?;
     let answer = drain_events(handle, rx, observer).await?;
 
     std::fs::write(&prepared.output, &answer)

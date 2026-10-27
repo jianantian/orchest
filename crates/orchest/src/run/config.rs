@@ -505,12 +505,11 @@ impl AgentConfig {
 
     /// Attach a session store (post-build chainable form; mirrors `AgentConfigBuilder::session_store`).
     ///
-    /// Required before `AgentRun::resume`/`resume_with_input` on any snapshot
-    /// whose `session_id` is set: `session_store` is `#[serde(skip)]`, so a
-    /// deserialized `AgentConfig` never carries a live store even if the
-    /// original run had one — resume calls it out with
-    /// `ConfigError::SessionStoreMissing` rather than silently dropping
-    /// persistence.
+    /// The run records its session log under `session_id` in `store`.
+    /// `session_store` is `#[serde(skip)]`, so a deserialized `AgentConfig`
+    /// never carries a live store: `AgentRun::resume`/`resume_with_input`
+    /// need it attached again and fail with `SessionError::NotConfigured`
+    /// otherwise.
     pub fn with_session_store(
         mut self,
         store: Arc<dyn crate::session::SessionStore>,
@@ -519,28 +518,6 @@ impl AgentConfig {
         self.session_store = Some(store);
         self.session_id = Some(session_id.into());
         self
-    }
-
-    /// If a session store is configured, push a `SessionPersistenceHook` onto `self.hooks`.
-    /// Called automatically by `AgentRun::start` and `AgentRun::resume`.
-    pub(crate) fn register_persistence_hook(&mut self) {
-        if let (Some(store), Some(session_id)) =
-            (self.session_store.clone(), self.session_id.clone())
-        {
-            if self
-                .hooks
-                .iter()
-                .any(|hook| hook.persistence_session_id() == Some(session_id.as_str()))
-            {
-                return;
-            }
-            self.hooks
-                .push(Arc::new(crate::session::SessionPersistenceHook::new(
-                    store,
-                    session_id,
-                    self.clone(),
-                )));
-        }
     }
 }
 
@@ -765,11 +742,6 @@ pub enum ConfigError {
     InvalidMaxToolCalls(u32),
     #[error("repeated_failure.threshold must be > 0, got {0}")]
     InvalidRepeatedFailureThreshold(usize),
-    #[error(
-        "session '{session_id}' was persisted but no session_store is attached to resume it; \
-         call `.with_session_store(store, \"{session_id}\")` on the snapshot's active_config before resuming"
-    )]
-    SessionStoreMissing { session_id: String },
     #[error("SubAgentBuilder requires .model() before .build()")]
     SubAgentMissingModel,
     #[error("SubAgentBuilder requires .registry() before .build()")]
@@ -1057,24 +1029,5 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(config.runtime.repeated_failure.threshold, 3);
-    }
-
-    #[test]
-    fn register_persistence_hook_deduplicates_same_session_id() {
-        let store = Arc::new(crate::session::InMemorySessionStore::default());
-        let mut config = AgentConfig::builder("test-agent", "anthropic/claude-sonnet-4-6")
-            .session_store(store, "session-1")
-            .build()
-            .unwrap();
-
-        config.register_persistence_hook();
-        config.register_persistence_hook();
-
-        let count = config
-            .hooks
-            .iter()
-            .filter(|hook| hook.persistence_session_id() == Some("session-1"))
-            .count();
-        assert_eq!(count, 1);
     }
 }

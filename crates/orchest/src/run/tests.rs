@@ -7795,39 +7795,60 @@ async fn restart_without_snapshot_reuses_original_input() {
     );
 }
 
+/// Seeds `store` with a finished one-turn session whose user input is `input`.
+async fn seed_session(
+    store: &Arc<crate::session::InMemorySessionStore>,
+    session_id: &str,
+    run_id: RunId,
+    input: &str,
+    last_step: u32,
+) {
+    use crate::session::{SessionEventKind, SessionLog, SessionMeta, SessionStore};
+    let mut log = SessionLog::new();
+    log.append(SessionEventKind::RunStarted {
+        run_id,
+        agent_name: "test".into(),
+    });
+    log.append(SessionEventKind::SystemMessage {
+        content: vec![ContentBlock::Text("stored system".into())],
+    });
+    log.append(SessionEventKind::UserMessage {
+        content: vec![ContentBlock::Text(input.into())],
+    });
+    log.append(SessionEventKind::StepEnded {
+        step: last_step,
+        budget_used: Default::default(),
+    });
+    store
+        .put_meta(&SessionMeta::new(session_id, "test"))
+        .await
+        .expect("put meta");
+    store
+        .append(session_id, log.events())
+        .await
+        .expect("append");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn restart_after_resume_reuses_original_snapshot_when_store_absent() {
-    use crate::session::SessionSnapshot;
+async fn restart_after_resume_continues_the_stored_log() {
+    use crate::session::{InMemorySessionStore, SessionStore};
 
     let user_inputs = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let model: Arc<dyn ModelAdapter> = Arc::new(RestartInputRecordingModel {
         calls: AtomicU32::new(0),
         user_inputs: Arc::clone(&user_inputs),
     });
+    let store = Arc::new(InMemorySessionStore::new());
+    let run_id = RunId::new();
+    seed_session(&store, "resume-restart", run_id, "snapshot input", 6).await;
     let mut config = test_config();
     config.supervision_strategy = SupervisionStrategy::Restart { max_retries: 1 };
-    let run_id = RunId::new();
-    let snapshot = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-        session_id: "resume-restart-no-store".into(),
-        run_id,
-        messages: vec![
-            Message {
-                role: Role::System,
-                content: vec![ContentBlock::Text("system".into())],
-            },
-            Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text("snapshot input".into())],
-            },
-        ],
-        step: 7,
-        budget_used: Default::default(),
-        active_config: config,
-    };
+    let config =
+        config.with_session_store(store.clone() as Arc<dyn SessionStore>, "resume-restart");
 
-    let (handle, mut rx) =
-        AgentRun::resume(snapshot, model, ToolRegistry::new()).expect("no session_store to miss");
+    let (handle, mut rx) = AgentRun::resume(config, model, ToolRegistry::new())
+        .await
+        .expect("session is stored");
     assert_eq!(handle.run_id, run_id);
 
     let mut saw_restart = false;
@@ -7843,13 +7864,13 @@ async fn restart_after_resume_reuses_original_snapshot_when_store_absent() {
     assert_eq!(
         inputs.as_slice(),
         &["snapshot input".to_string(), "snapshot input".to_string()],
-        "restart after resume should fall back to the original snapshot"
+        "restart after resume should continue the stored log"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn restart_replays_latest_session_store_snapshot() {
-    use crate::session::{InMemorySessionStore, SessionSnapshot, SessionStore};
+async fn restart_continues_the_persisted_session_log() {
+    use crate::session::{InMemorySessionStore, SessionEventKind, SessionStore};
 
     let user_inputs = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let model: Arc<dyn ModelAdapter> = Arc::new(RestartInputRecordingModel {
@@ -7862,29 +7883,6 @@ async fn restart_replays_latest_session_store_snapshot() {
     config.supervision_strategy = SupervisionStrategy::Restart { max_retries: 1 };
     config.session_store = Some(store.clone() as Arc<dyn SessionStore>);
     config.session_id = Some(session_id.into());
-
-    let snapshot = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-        session_id: session_id.into(),
-        run_id: RunId::new(),
-        messages: vec![
-            Message {
-                role: Role::System,
-                content: vec![ContentBlock::Text("stored system".into())],
-            },
-            Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text("stored input".into())],
-            },
-        ],
-        step: 4,
-        budget_used: Default::default(),
-        active_config: config.clone(),
-    };
-    store
-        .save(session_id, &snapshot)
-        .await
-        .expect("save snapshot");
 
     let (handle, mut rx) =
         AgentRun::start(config, "original input".into(), model, ToolRegistry::new());
@@ -7901,9 +7899,27 @@ async fn restart_replays_latest_session_store_snapshot() {
     assert!(saw_restart, "test must exercise supervisor restart");
     assert_eq!(
         inputs.as_slice(),
-        &["original input".to_string(), "stored input".to_string()],
-        "restart should replay the latest persisted session snapshot"
+        &["original input".to_string(), "original input".to_string()],
+        "restart should continue the persisted session log"
     );
+    let events = store.read(session_id, 1).await.expect("read");
+    let run_starts = events
+        .iter()
+        .filter(|e| matches!(e.kind, SessionEventKind::RunStarted { .. }))
+        .count();
+    assert_eq!(
+        run_starts, 2,
+        "the restarted worker appends to the same log"
+    );
+    let user_turns = events
+        .iter()
+        .filter(|e| matches!(e.kind, SessionEventKind::UserMessage { .. }))
+        .count();
+    assert_eq!(user_turns, 1, "the restart must not record the input twice");
+    assert!(matches!(
+        events.last().map(|e| &e.kind),
+        Some(SessionEventKind::RunEnded { .. })
+    ));
 }
 
 struct RunLevelRestartModel {
@@ -8364,89 +8380,9 @@ fn budget_guard_with_usage_seeds_prior_usage() {
     assert!((guard.usage().cost_usd - 0.05).abs() < 1e-10);
 }
 
-#[test]
-fn session_snapshot_round_trip() {
-    use crate::session::SessionSnapshot;
-    let snap = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-        session_id: "test-session".into(),
-        run_id: RunId::new(),
-        messages: vec![],
-        step: 5,
-        budget_used: crate::budget::BudgetUsage {
-            tokens_used: 100,
-            tool_calls_used: 2,
-            cost_usd: 0.01,
-        },
-        active_config: test_config(),
-    };
-    let json = serde_json::to_string(&snap).expect("serialize");
-    let back: SessionSnapshot = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(back.schema_version, SessionSnapshot::CURRENT_SCHEMA_VERSION);
-    assert_eq!(back.session_id, "test-session");
-    assert_eq!(back.step, 5);
-    assert_eq!(back.budget_used.tokens_used, 100);
-}
-
 #[tokio::test]
-async fn in_memory_store_save_and_load() {
-    use crate::session::{InMemorySessionStore, SessionSnapshot, SessionStore};
-    let store = InMemorySessionStore::new();
-    let snap = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-        session_id: "s1".into(),
-        run_id: RunId::new(),
-        messages: vec![],
-        step: 3,
-        budget_used: Default::default(),
-        active_config: test_config(),
-    };
-    store.save("s1", &snap).await.expect("save");
-    let loaded = store.load("s1").await.expect("load").expect("some");
-    assert_eq!(loaded.step, 3);
-    assert_eq!(loaded.session_id, "s1");
-}
-
-#[tokio::test]
-async fn in_memory_store_schema_mismatch() {
-    use crate::session::{InMemorySessionStore, SessionError, SessionSnapshot, SessionStore};
-    let store = InMemorySessionStore::new();
-    // Save a snapshot with wrong schema version by inserting directly via
-    // a save that we later check after mutating the stored value.
-    // We'll manually test by constructing a snapshot with a wrong version and
-    // bypassing the round-trip by saving a "version 0.0" snapshot.
-    let mut snap = SessionSnapshot {
-        schema_version: "0.0".into(), // Wrong version
-        session_id: "mismatch".into(),
-        run_id: RunId::new(),
-        messages: vec![],
-        step: 0,
-        budget_used: Default::default(),
-        active_config: test_config(),
-    };
-    // Override schema_version after JSON round-trip doesn't help since it's serialized.
-    // Use the store's internal mechanism: save "0.0" version directly.
-    // Since save does round-trip, we need to bypass it. Instead, let's test load
-    // rejects when loaded snapshot has wrong schema version.
-    // We test this by saving a version "0.1" (correct), loading it, verifying OK,
-    // then testing that the error type is correct via a direct schemamismatch construction.
-    snap.schema_version = SessionSnapshot::CURRENT_SCHEMA_VERSION.into();
-    store.save("mismatch", &snap).await.expect("save ok");
-    // Normal load succeeds
-    assert!(store.load("mismatch").await.expect("load").is_some());
-    // Test SchemaMismatch error construction
-    let err = SessionError::SchemaMismatch {
-        expected: "0.1".into(),
-        found: "0.0".into(),
-    };
-    assert!(err.to_string().contains("mismatch"));
-    // Delete is idempotent
-    store.delete("nonexistent").await.expect("delete ok");
-}
-
-#[tokio::test]
-async fn persistence_hook_saves_on_run_end() {
-    use crate::session::{InMemorySessionStore, SessionStore};
+async fn run_end_persists_session_log() {
+    use crate::session::{InMemorySessionStore, SessionEventKind, SessionStore};
     let store = Arc::new(InMemorySessionStore::new());
     let mut cfg = test_config();
     cfg.session_store = Some(store.clone() as Arc<dyn SessionStore>);
@@ -8458,14 +8394,45 @@ async fn persistence_hook_saves_on_run_end() {
     while rx.recv().await.is_some() {}
     handle.wait().await;
 
-    let snap = store.load("sess-end").await.expect("load").expect("some");
-    assert_eq!(snap.session_id, "sess-end");
-    assert!(snap.step > 0 || !snap.messages.is_empty());
+    let meta = store
+        .get_meta("sess-end")
+        .await
+        .expect("meta")
+        .expect("some");
+    assert_eq!(meta.session_id, "sess-end");
+    let kinds: Vec<&'static str> = store
+        .read("sess-end", 1)
+        .await
+        .expect("read")
+        .iter()
+        .map(|e| match e.kind {
+            SessionEventKind::RunStarted { .. } => "run_started",
+            SessionEventKind::SystemMessage { .. } => "system",
+            SessionEventKind::UserMessage { .. } => "user",
+            SessionEventKind::StepStarted { .. } => "step_started",
+            SessionEventKind::AssistantMessage { .. } => "assistant",
+            SessionEventKind::StepEnded { .. } => "step_ended",
+            SessionEventKind::RunEnded { .. } => "run_ended",
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            "run_started",
+            "system",
+            "user",
+            "step_started",
+            "assistant",
+            "step_ended",
+            "run_ended"
+        ]
+    );
 }
 
 #[tokio::test]
-async fn persistence_hook_saves_on_run_error() {
-    use crate::session::{InMemorySessionStore, SessionStore};
+async fn run_error_persists_session_log() {
+    use crate::session::{InMemorySessionStore, SessionEventKind, SessionStore};
     let store = Arc::new(InMemorySessionStore::new());
     let mut cfg = test_config();
     cfg.runtime.max_steps = 0; // forces immediate RunFailed
@@ -8478,14 +8445,36 @@ async fn persistence_hook_saves_on_run_error() {
     while rx.recv().await.is_some() {}
     handle.wait().await;
 
-    // Session should be saved even on error path
-    let result = store.load("sess-err").await.expect("load");
-    assert!(result.is_some(), "snapshot should be saved on run error");
+    let events = store.read("sess-err", 1).await.expect("read");
+    assert!(matches!(
+        events.last().map(|e| &e.kind),
+        Some(SessionEventKind::RunFailed { .. })
+    ));
 }
 
 #[tokio::test]
-async fn resume_continues_from_snapshot() {
+async fn fresh_start_refuses_an_existing_session() {
     use crate::session::{InMemorySessionStore, SessionStore};
+    let store = Arc::new(InMemorySessionStore::new());
+    seed_session(&store, "taken", RunId::new(), "earlier", 0).await;
+    let cfg = test_config().with_session_store(store.clone() as Arc<dyn SessionStore>, "taken");
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let (handle, mut rx) = AgentRun::start(cfg, "hi".into(), model, ToolRegistry::new());
+    let mut failure = None;
+    while let Some(event) = rx.recv().await {
+        if let RuntimeEvent::RunFailed { error, .. } = event {
+            failure = Some(error);
+        }
+    }
+    handle.wait().await;
+    assert!(failure.expect("run must fail").contains("already exists"));
+    assert_eq!(store.read("taken", 1).await.expect("read").len(), 4);
+}
+
+#[tokio::test]
+async fn resume_continues_session_log() {
+    use crate::session::{InMemorySessionStore, SessionLog, SessionStore};
     let store = Arc::new(InMemorySessionStore::new());
 
     // === Start phase ===
@@ -8500,28 +8489,20 @@ async fn resume_continues_from_snapshot() {
     while rx.recv().await.is_some() {}
     handle.wait().await;
 
-    // Load snapshot
-    let mut snap = store
-        .load("resume-test")
-        .await
-        .expect("load")
-        .expect("some");
-    assert!(!snap.messages.is_empty(), "snapshot should have messages");
-    let snap_step = snap.step;
-    let snap_tokens = snap.budget_used.tokens_used;
+    let before = SessionLog::from_events(store.read("resume-test", 1).await.expect("read"))
+        .expect("valid log");
+    assert!(!before.messages().is_empty(), "log should project messages");
+    let before_step = before.step();
+    let before_tokens = before.projection().budget_used.tokens_used;
 
-    // Re-attach session store to config for continued persistence
-    snap.active_config = snap
-        .active_config
-        .with_session_store(store.clone() as Arc<dyn SessionStore>, "resume-test");
-
-    // === Resume phase ===
+    // === Resume phase: the host supplies the config again ===
+    let cfg2 =
+        test_config().with_session_store(store.clone() as Arc<dyn SessionStore>, "resume-test");
     let model2 = Arc::new(FakeModelAdapter::final_answer());
-    let registry2 = ToolRegistry::new();
-    let (handle2, mut rx2) =
-        AgentRun::resume(snap, model2, registry2).expect("session_store was re-attached");
+    let (handle2, mut rx2) = AgentRun::resume(cfg2, model2, ToolRegistry::new())
+        .await
+        .expect("session is stored");
 
-    // run_id should be the same as original
     assert_eq!(
         handle2.run_id, original_run_id,
         "run_id must be consistent across resume"
@@ -8533,25 +8514,22 @@ async fn resume_continues_from_snapshot() {
     }
     handle2.wait().await;
 
-    // Resumed run should complete successfully
     assert!(events
         .iter()
         .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
 
-    // Snapshot should be updated with accumulated budget (>= original)
-    let snap2 = store
-        .load("resume-test")
-        .await
-        .expect("load")
-        .expect("some");
+    let after = SessionLog::from_events(store.read("resume-test", 1).await.expect("read"))
+        .expect("valid log");
+    assert_eq!(
+        &after.events()[..before.events().len()],
+        before.events(),
+        "resume only appends to the log"
+    );
     assert!(
-        snap2.budget_used.tokens_used >= snap_tokens,
+        after.projection().budget_used.tokens_used > before_tokens,
         "resumed run should accumulate budget from prior usage"
     );
-    assert!(
-        snap2.step >= snap_step,
-        "resumed run step should be >= snapshot step"
-    );
+    assert_eq!(after.step(), before_step + 1);
 }
 
 // ── Multi-watcher coordination tests (issue 008) ────────────────────────────
@@ -8892,7 +8870,7 @@ async fn start_matches_start_with_messages_with_empty_history() {
 
 #[tokio::test]
 async fn resume_with_input_appends_new_user_turn() {
-    use crate::session::{InMemorySessionStore, SessionStore};
+    use crate::session::{InMemorySessionStore, SessionLog, SessionStore};
 
     // === Start phase ===
     let store = Arc::new(InMemorySessionStore::new());
@@ -8906,15 +8884,13 @@ async fn resume_with_input_appends_new_user_turn() {
     while rx.recv().await.is_some() {}
     handle.wait().await;
 
-    let mut snap = store
-        .load("resume-with-input-test")
-        .await
-        .expect("load")
-        .expect("some");
-    let original_message_count = snap.messages.len();
-    snap.active_config = snap.active_config.with_session_store(
-        store.clone() as Arc<dyn SessionStore>,
-        "resume-with-input-test",
+    let log = SessionLog::from_events(store.read("resume-with-input-test", 1).await.expect("read"))
+        .expect("valid log");
+    let original_message_count = log.messages().len();
+    assert_eq!(
+        log.messages().last().map(|m| m.role),
+        Some(Role::Assistant),
+        "the final answer is part of the projected history"
     );
 
     // === Resume-with-input phase ===
@@ -8922,13 +8898,18 @@ async fn resume_with_input_appends_new_user_turn() {
     let model2: Arc<dyn ModelAdapter> = Arc::new(MessageCapturingModel {
         captured: captured.clone(),
     });
+    let cfg2 = test_config().with_session_store(
+        store.clone() as Arc<dyn SessionStore>,
+        "resume-with-input-test",
+    );
     let (handle2, mut rx2) = AgentRun::resume_with_input(
-        snap,
+        cfg2,
         RunInput::text("follow-up question"),
         model2,
         ToolRegistry::new(),
     )
-    .expect("session_store was re-attached");
+    .await
+    .expect("session is stored");
     while rx2.recv().await.is_some() {}
     handle2.wait().await;
 
@@ -8937,7 +8918,7 @@ async fn resume_with_input_appends_new_user_turn() {
     assert_eq!(
         first_call.len(),
         original_message_count + 1,
-        "resume_with_input should append exactly one new message to the snapshot history"
+        "resume_with_input should append exactly one new message to the projected history"
     );
     let last = first_call.last().expect("at least one message");
     assert_eq!(
@@ -8954,105 +8935,47 @@ async fn resume_with_input_appends_new_user_turn() {
 }
 
 #[tokio::test]
-async fn resume_fails_loudly_when_persisted_session_store_not_reattached() {
-    use crate::session::SessionSnapshot;
+async fn resume_without_session_store_is_not_configured() {
+    use crate::session::SessionError;
 
-    // Simulates a deserialized snapshot: session_store is `#[serde(skip)]`,
-    // so a real load never carries it forward even though session_id survives.
+    // A deserialized config keeps session_id but never the store.
     let mut cfg = test_config();
     cfg.session_id = Some("dropped-store-test".into());
     cfg.session_store = None;
 
-    let snapshot = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-        session_id: "dropped-store-test".into(),
-        run_id: RunId::new(),
-        messages: vec![Message {
-            role: Role::User,
-            content: vec![ContentBlock::Text("hi".into())],
-        }],
-        step: 1,
-        budget_used: Default::default(),
-        active_config: cfg,
-    };
-
     let model = Arc::new(FakeModelAdapter::final_answer());
-    let err = match AgentRun::resume(snapshot, model, ToolRegistry::new()) {
+    let err = match AgentRun::resume(cfg.clone(), model.clone(), ToolRegistry::new()).await {
         Err(e) => e,
-        Ok(_) => panic!("resume must fail loudly when session_store wasn't re-attached"),
+        Ok(_) => panic!("resume must fail without a session store"),
     };
-    assert!(matches!(
-        err,
-        ConfigError::SessionStoreMissing { session_id } if session_id == "dropped-store-test"
-    ));
-}
+    assert!(matches!(err, SessionError::NotConfigured));
 
-#[tokio::test]
-async fn resume_with_input_fails_loudly_when_persisted_session_store_not_reattached() {
-    use crate::session::SessionSnapshot;
-
-    let mut cfg = test_config();
-    cfg.session_id = Some("dropped-store-test-2".into());
-    cfg.session_store = None;
-
-    let snapshot = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-        session_id: "dropped-store-test-2".into(),
-        run_id: RunId::new(),
-        messages: vec![Message {
-            role: Role::User,
-            content: vec![ContentBlock::Text("hi".into())],
-        }],
-        step: 1,
-        budget_used: Default::default(),
-        active_config: cfg,
-    };
-
-    let model = Arc::new(FakeModelAdapter::final_answer());
     let err = match AgentRun::resume_with_input(
-        snapshot,
+        cfg,
         RunInput::text("follow-up"),
         model,
         ToolRegistry::new(),
-    ) {
+    )
+    .await
+    {
         Err(e) => e,
-        Ok(_) => panic!("resume_with_input must fail loudly when session_store wasn't re-attached"),
+        Ok(_) => panic!("resume_with_input must fail without a session store"),
     };
-    assert!(matches!(
-        err,
-        ConfigError::SessionStoreMissing { session_id } if session_id == "dropped-store-test-2"
-    ));
+    assert!(matches!(err, SessionError::NotConfigured));
 }
 
 #[tokio::test]
-async fn resume_without_session_id_is_unaffected_by_session_store_check() {
-    use crate::session::SessionSnapshot;
+async fn resume_of_unknown_session_is_not_found() {
+    use crate::session::{InMemorySessionStore, SessionError, SessionStore};
 
-    // A snapshot that never had persistence enabled (session_id: None) must
-    // resume normally — the loud-failure check only fires for snapshots that
-    // once had persistence turned on.
-    let cfg = test_config();
-    assert!(cfg.session_id.is_none());
-    assert!(cfg.session_store.is_none());
-
-    let snapshot = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-        session_id: "never-persisted".into(),
-        run_id: RunId::new(),
-        messages: vec![Message {
-            role: Role::User,
-            content: vec![ContentBlock::Text("hi".into())],
-        }],
-        step: 1,
-        budget_used: Default::default(),
-        active_config: cfg,
-    };
-
+    let store = Arc::new(InMemorySessionStore::new());
+    let cfg = test_config().with_session_store(store as Arc<dyn SessionStore>, "never-written");
     let model = Arc::new(FakeModelAdapter::final_answer());
-    let (handle, mut rx) = AgentRun::resume(snapshot, model, ToolRegistry::new())
-        .expect("no session_id on active_config means the check doesn't apply");
-    while rx.recv().await.is_some() {}
-    handle.wait().await;
+    let err = match AgentRun::resume(cfg, model, ToolRegistry::new()).await {
+        Err(e) => e,
+        Ok(_) => panic!("resume must fail for an unknown session"),
+    };
+    assert!(matches!(err, SessionError::NotFound(id) if id == "never-written"));
 }
 
 // ── Issue #254 / SB-7: deterministic multi-watcher action arbitration ────────

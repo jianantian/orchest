@@ -161,14 +161,13 @@ no materials tools (search/read/write/review); the follow-up is answered
 directly from the persisted conversation history, which already contains
 everything the original run read and wrote.
 
-Under the hood this CLI's `resume` command calls the public
-`AgentRun::resume_with_input(snapshot, RunInput::text(question), ..)`
-(added by [#197](https://github.com/jianantian/orchest/issues/197)) rather
-than hand-appending a message onto the loaded snapshot - see that function's
-rustdoc for how it differs from the input-free `AgentRun::resume`. It also
-re-attaches the session store before resuming; skipping that step now fails
-loudly with `ConfigError::SessionStoreMissing` instead of silently dropping
-persistence ([#198](https://github.com/jianantian/orchest/issues/198)).
+Under the hood this CLI's `resume` command builds the main agent's config
+again, attaches the session store, and calls the public
+`AgentRun::resume_with_input(config, RunInput::text(question), ..)`, which
+projects the stored session log and records the question as a new user turn -
+see that function's rustdoc for how it differs from the input-free
+`AgentRun::resume`. A config without a session store fails with
+`SessionError::NotConfigured` instead of silently dropping persistence.
 
 ### Live ASR and TTS
 

@@ -871,9 +871,7 @@ mod tests {
     use crate::execution::{
         prepare_resume, prepare_run, ResolvedChatModel, ResolvedExecutionEnvironment,
     };
-    use orchest::budget::BudgetUsage;
-    use orchest::run::{CompactionConfig, RunId};
-    use orchest::session::SessionSnapshot;
+    use orchest::run::CompactionConfig;
     use orchest::skill::executor::BareSubprocessExecutor;
     use orchest::tool::mcp::{McpAuth, McpServerConfig, McpTransport};
     use std::path::PathBuf;
@@ -950,17 +948,8 @@ mod tests {
             ResolvedExecutionEnvironment::offline(chat.clone()),
         )
         .unwrap();
-        let snapshot = SessionSnapshot {
-            schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-            session_id: "seed-session".into(),
-            run_id: RunId::new(),
-            messages: vec![],
-            step: 0,
-            budget_used: BudgetUsage::default(),
-            active_config: fresh.config.clone(),
-        };
         let followup = prepare_resume(
-            snapshot,
+            fresh.config.clone(),
             ResumeArgs {
                 session: "seed-session".into(),
                 question: "follow up".into(),

@@ -15,6 +15,7 @@ use crate::events::{ApprovalContext, EventSink, FanoutWaveBus, RunFailureKind, R
 use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelResponse, ModelStreamChunk, Role, StopReason,
 };
+use crate::session::{SessionError, SessionEventKind, SessionLog, SessionMeta, SessionStore};
 use crate::skill::disclosure::{with_disclosure_block, SkillSummary};
 use crate::telemetry;
 use crate::tool::code_exec::CodeExecutionMcpServer;
@@ -77,9 +78,13 @@ pub(crate) struct AgentRunState {
     pub model: Arc<dyn ModelAdapter>,
     pub unfiltered_registry: ToolRegistry,
     pub registry: ToolRegistry,
-    pub messages: Vec<Message>,
+    /// Execution state: the conversation and step counter are projections of
+    /// this log, and every change to them is recorded here first.
+    pub log: SessionLog,
+    /// Where `log` is persisted. Captured at start so a handoff to a config
+    /// without a store keeps writing to the same session.
+    pub session: Option<SessionBinding>,
     pub tool_defs: Vec<ToolDef>,
-    pub step: u32,
     pub budget: BudgetGuard,
     pub last_compaction_step: Option<u32>,
     pub cancelled: bool,
@@ -92,6 +97,25 @@ pub(crate) struct AgentRunState {
     pub repeated_failures: HashMap<(String, ErrorKind), Vec<ToolError>>,
     /// Set when this worker emits `RunFailed`; supervisor reads via stop reason.
     pub last_failure: Option<RunFailureKind>,
+}
+
+/// The store and id a run's session log is written to.
+#[derive(Clone)]
+pub(crate) struct SessionBinding {
+    pub store: Arc<dyn SessionStore>,
+    pub session_id: String,
+}
+
+impl SessionBinding {
+    pub(crate) fn from_config(config: &AgentConfig) -> Option<Self> {
+        match (&config.session_store, &config.session_id) {
+            (Some(store), Some(session_id)) => Some(Self {
+                store: Arc::clone(store),
+                session_id: session_id.clone(),
+            }),
+            _ => None,
+        }
+    }
 }
 
 struct PreparedHandoffTransition {
@@ -108,19 +132,19 @@ impl AgentRunState {
     fn refresh_terminal_hook_ctx(&mut self, step: u32) {
         self.run_hook_ctx.step = step;
         self.run_hook_ctx.budget_used = self.budget.usage().clone();
-        self.run_hook_ctx.final_messages = self.messages.clone();
+        self.run_hook_ctx.final_messages = self.log.messages().to_vec();
         self.run_hook_ctx.active_config = Some(self.config.clone());
     }
 }
 
 // ── Constructor args ──────────────────────────────────────────────────────────
 
-/// Resume payload: injected by `AgentRun::resume` to restore prior run state.
+/// Resume payload: the session log a resumed run continues, plus any new
+/// user turn to record before the first step.
 #[derive(Clone)]
 pub(crate) struct ResumeState {
-    pub messages: Vec<crate::model::Message>,
-    pub step: u32,
-    pub budget_used: crate::budget::BudgetUsage,
+    pub log: SessionLog,
+    pub input: Option<Vec<ContentBlock>>,
 }
 
 #[derive(Clone)]
@@ -133,7 +157,7 @@ pub(crate) struct AgentRunArgs {
     pub event_tx: mpsc::Sender<RuntimeEvent>,
     pub approval_bus: ApprovalBus,
     pub child_registry: ChildRunRegistry,
-    /// `None` on a fresh start; `Some` when resuming from a persisted snapshot.
+    /// `None` on a fresh start; `Some` when resuming a session log.
     pub resume: Option<ResumeState>,
     /// Extra messages to prepend (between system prompt and user input) on a fresh start.
     pub initial_messages: Vec<crate::model::Message>,
@@ -285,8 +309,36 @@ impl Actor for WorkerActor {
             .await);
         }
 
-        let (messages, initial_step, initial_budget_used) =
-            build_startup_conversation(resume, &config, &disclosed_skills, initial_messages, input);
+        let session = SessionBinding::from_config(&config);
+        let resuming = resume.is_some();
+        let run_started = SessionEventKind::RunStarted {
+            run_id,
+            agent_name: config.name.clone(),
+        };
+        let mut log = build_startup_log(
+            resume,
+            run_started,
+            startup_system_prompt(&config, &disclosed_skills),
+            initial_messages,
+            input,
+        );
+        if let Some(binding) = &session {
+            if let Err(error) = open_session_log(binding, resuming, &config.name, &mut log).await {
+                return Ok(fail_pre_start(
+                    &myself,
+                    &event_subs,
+                    run_id,
+                    config,
+                    model,
+                    registry,
+                    approval_bus,
+                    child_registry.clone(),
+                    run_hook_ctx,
+                    format!("session log: {error}"),
+                )
+                .await);
+            }
+        }
 
         let tool_defs = match prepare_initial_tool_defs(&config, &mut registry) {
             Ok(defs) => defs,
@@ -313,8 +365,8 @@ impl Actor for WorkerActor {
             }
         };
 
-        let budget = if let Some(used) = initial_budget_used {
-            BudgetGuard::with_usage(config.budget.clone(), used)
+        let budget = if resuming {
+            BudgetGuard::with_usage(config.budget.clone(), log.projection().budget_used.clone())
         } else {
             BudgetGuard::new(config.budget.clone())
         };
@@ -327,9 +379,9 @@ impl Actor for WorkerActor {
             model,
             unfiltered_registry,
             registry,
-            messages,
+            log,
+            session,
             tool_defs,
-            step: initial_step,
             budget,
             last_compaction_step: None,
             cancelled: false,
@@ -393,20 +445,22 @@ impl Actor for WorkerActor {
                 ));
             }
             AgentMsg::Steer(cmd) => {
-                state.messages.push(Message {
-                    role: Role::System,
+                state.log.append(SessionEventKind::SystemMessage {
                     content: vec![ContentBlock::Text(cmd.instruction)],
                 });
             }
             AgentMsg::Inject(cmd) => {
-                state.messages.push(Message {
-                    role: Role::User,
+                state.log.append(SessionEventKind::UserMessage {
                     content: vec![ContentBlock::Text(cmd.message)],
                 });
             }
             AgentMsg::Cancel(cmd) => {
                 if !state.cancelled {
                     state.cancelled = true;
+                    state.log.append(SessionEventKind::RunAborted {
+                        reason: cmd.reason.clone(),
+                    });
+                    persist_terminal(state).await;
                     emit(
                         &state.event_subs,
                         RuntimeEvent::RunAborted { reason: cmd.reason },
@@ -499,35 +553,123 @@ fn build_pre_start_event_subs(
     event_subs
 }
 
-/// Build the initial conversation for a fresh start or resume snapshot.
-fn build_startup_conversation(
-    resume: Option<ResumeState>,
-    config: &AgentConfig,
-    disclosed_skills: &[SkillSummary],
-    initial_messages: Vec<Message>,
-    input: Vec<ContentBlock>,
-) -> (Vec<Message>, u32, Option<crate::budget::BudgetUsage>) {
-    if let Some(rs) = resume {
-        return (rs.messages, rs.step, Some(rs.budget_used));
-    }
-    // Level-1 skill disclosure: scanned skill metadata rides at the
-    // tail of the system prompt (or forms the whole System message
-    // when no prompt was configured). `Off` injects nothing.
-    let system_prompt = if config.skills.disclosure == SkillDisclosure::Off {
+/// Level-1 skill disclosure: scanned skill metadata rides at the tail of the
+/// system prompt (or forms the whole System message when no prompt was
+/// configured). `Off` injects nothing.
+fn startup_system_prompt(config: &AgentConfig, disclosed_skills: &[SkillSummary]) -> String {
+    if config.skills.disclosure == SkillDisclosure::Off {
         config.system_prompt.clone()
     } else {
         with_disclosure_block(&config.system_prompt, disclosed_skills)
-    };
-    let mut msgs = vec![Message {
-        role: Role::System,
+    }
+}
+
+/// Build the session log for a fresh start, or continue a resumed one.
+fn build_startup_log(
+    resume: Option<ResumeState>,
+    run_started: SessionEventKind,
+    system_prompt: String,
+    initial_messages: Vec<Message>,
+    input: Vec<ContentBlock>,
+) -> SessionLog {
+    if let Some(rs) = resume {
+        let mut log = rs.log;
+        log.append(run_started);
+        if let Some(content) = rs.input {
+            log.append(SessionEventKind::UserMessage { content });
+        }
+        return log;
+    }
+    let mut log = SessionLog::new();
+    log.append(run_started);
+    log.append(SessionEventKind::SystemMessage {
         content: vec![ContentBlock::Text(system_prompt)],
-    }];
-    msgs.extend(initial_messages);
-    msgs.push(Message {
-        role: Role::User,
-        content: input,
     });
-    (msgs, 0, None)
+    for message in initial_messages {
+        log.append_message(message);
+    }
+    log.append(SessionEventKind::UserMessage { content: input });
+    log
+}
+
+/// Opens the session a run writes to and persists the startup events.
+async fn open_session_log(
+    binding: &SessionBinding,
+    resuming: bool,
+    agent_name: &str,
+    log: &mut SessionLog,
+) -> Result<(), SessionError> {
+    if !resuming {
+        open_fresh_session(binding, agent_name).await?;
+    }
+    persist_log(binding, log).await
+}
+
+/// A fresh run owns its session from the first event: it refuses a session
+/// that already holds events and records the session's metadata.
+async fn open_fresh_session(
+    binding: &SessionBinding,
+    agent_name: &str,
+) -> Result<(), SessionError> {
+    if !binding.store.read(&binding.session_id, 1).await?.is_empty() {
+        return Err(SessionError::AlreadyExists(binding.session_id.clone()));
+    }
+    binding
+        .store
+        .put_meta(&SessionMeta::new(&binding.session_id, agent_name))
+        .await
+}
+
+/// Hands the log's unpersisted events to the store.
+async fn persist_log(binding: &SessionBinding, log: &mut SessionLog) -> Result<(), SessionError> {
+    let pending = log.unpersisted();
+    if pending.is_empty() {
+        return Ok(());
+    }
+    binding.store.append(&binding.session_id, pending).await?;
+    log.mark_persisted();
+    Ok(())
+}
+
+/// Persists at a step boundary. A store that refuses the log fails the run:
+/// continuing would leave the host's execution state behind the run.
+async fn persist_step(state: &mut AgentRunState, subs: &[EventSink]) -> bool {
+    let Some(binding) = state.session.clone() else {
+        return true;
+    };
+    match persist_log(&binding, &mut state.log).await {
+        Ok(()) => true,
+        Err(error) => {
+            let error = format!("session log persistence failed: {error}");
+            state.last_failure = Some(RunFailureKind::Other);
+            emit(
+                subs,
+                RuntimeEvent::RunFailed {
+                    error,
+                    kind: RunFailureKind::Other,
+                },
+            )
+            .await;
+            false
+        }
+    }
+}
+
+/// Persists after a terminal event. The run is ending either way, so a store
+/// failure is reported as a warning.
+async fn persist_terminal(state: &mut AgentRunState) {
+    let Some(binding) = state.session.clone() else {
+        return;
+    };
+    if let Err(error) = persist_log(&binding, &mut state.log).await {
+        emit(
+            &state.event_subs,
+            RuntimeEvent::RuntimeWarning {
+                message: format!("session log persistence failed: {error}"),
+            },
+        )
+        .await;
+    }
 }
 
 async fn register_code_execution_tools(
@@ -711,7 +853,7 @@ async fn record_repeated_failure(
 }
 
 async fn check_step_limits(state: &mut AgentRunState, subs: &[EventSink]) -> bool {
-    let step = state.step;
+    let step = state.log.step();
 
     if step >= state.config.runtime.max_steps {
         state.refresh_terminal_hook_ctx(step);
@@ -759,7 +901,7 @@ async fn check_step_limits(state: &mut AgentRunState, subs: &[EventSink]) -> boo
 }
 
 async fn call_model_phase(state: &mut AgentRunState, subs: &[EventSink]) -> Option<ModelResponse> {
-    let step = state.step;
+    let step = state.log.step();
     let run_id = state.run_id;
 
     emit(subs, RuntimeEvent::ModelCallStarted { step }).await;
@@ -768,12 +910,12 @@ async fn call_model_phase(state: &mut AgentRunState, subs: &[EventSink]) -> Opti
     // Each before_model invocation (including retries) receives a fresh clone
     // of this snapshot, so hook injections are ephemeral: they are passed to
     // the model for this call but never accumulate in the durable conversation
-    // history stored in state.messages.
-    let pre_step_messages = state.messages.clone();
+    // history projected from the session log.
+    let pre_step_messages = state.log.messages().to_vec();
     let mut retry_attempt: u32 = 0;
     loop {
         // Build per-attempt call context from the clean pre-step snapshot.
-        // Hook mutations stay inside call_messages; state.messages is untouched.
+        // Hook mutations stay inside call_messages; the session log is untouched.
         let call_messages = {
             let mut model_ctx = crate::hook::ModelHookContext {
                 run_id,
@@ -861,7 +1003,7 @@ async fn validate_context_window(
     let error = format!(
         "context window exceeded: estimated {estimated_tokens} tokens, limit {context_window_size}"
     );
-    state.refresh_terminal_hook_ctx(state.step);
+    state.refresh_terminal_hook_ctx(state.log.step());
     crate::hook::runner::run_on_run_error(
         &state.config.hooks,
         &state.run_hook_ctx,
@@ -940,7 +1082,7 @@ async fn apply_after_model_hooks(
         crate::hook::runner::run_after_model(&state.config.hooks, &mut model_ctx, primary(subs))
             .await
     {
-        state.refresh_terminal_hook_ctx(state.step);
+        state.refresh_terminal_hook_ctx(state.log.step());
         crate::hook::runner::run_on_run_error(
             &state.config.hooks,
             &state.run_hook_ctx,
@@ -986,7 +1128,7 @@ async fn handle_model_error_or_retry(
     }
 
     let error = error.to_string();
-    state.refresh_terminal_hook_ctx(state.step);
+    state.refresh_terminal_hook_ctx(state.log.step());
     crate::hook::runner::run_on_run_error(
         &state.config.hooks,
         &state.run_hook_ctx,
@@ -1037,12 +1179,13 @@ struct ParallelExecutionContext {
 /// Execute one outer-loop iteration. Returns true to continue, false to stop.
 async fn run_one_step(state: &mut AgentRunState) -> bool {
     let subs = state.event_subs.clone();
-    let step = state.step;
+    let step = state.log.step();
     let run_id = state.run_id;
 
     if !check_step_limits(state, &subs).await {
         return false;
     }
+    state.log.append(SessionEventKind::StepStarted { step });
 
     let Some(response) = call_model_phase(state, &subs).await else {
         return false;
@@ -1060,10 +1203,11 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
     )
     .await;
 
+    let mut working_messages = state.log.messages().to_vec();
     maybe_compact_context(
         &state.config,
         &state.model,
-        &mut state.messages,
+        &mut working_messages,
         primary(&subs),
         &mut state.last_compaction_step,
         step,
@@ -1071,6 +1215,11 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         run_id,
     )
     .await;
+    if working_messages.as_slice() != state.log.messages() {
+        state.log.append(SessionEventKind::Compacted {
+            messages: working_messages,
+        });
+    }
 
     let mut tool_uses = Vec::new();
     let mut text_parts = Vec::new();
@@ -1092,8 +1241,13 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
     }
 
     match &response.stop_reason {
-        StopReason::EndTurn if tool_uses.is_empty() => {
+        StopReason::EndTurn | StopReason::MaxTokens if tool_uses.is_empty() => {
             let output = json!(text_parts.join(""));
+            let stop_reason = response.stop_reason.clone();
+            state.log.append(SessionEventKind::AssistantMessage {
+                content: response.content.clone(),
+            });
+            end_step(state);
             state.refresh_terminal_hook_ctx(step);
             crate::hook::runner::run_on_run_end(
                 &state.config.hooks,
@@ -1101,30 +1255,16 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 primary(&subs),
             )
             .await;
+            state.log.append(SessionEventKind::RunEnded {
+                output: output.clone(),
+                stop_reason: stop_reason.clone(),
+            });
+            persist_terminal(state).await;
             emit(
                 &subs,
                 RuntimeEvent::RunCompleted {
                     output,
-                    stop_reason: StopReason::EndTurn,
-                },
-            )
-            .await;
-            return false;
-        }
-        StopReason::MaxTokens if tool_uses.is_empty() => {
-            let output = json!(text_parts.join(""));
-            state.refresh_terminal_hook_ctx(step);
-            crate::hook::runner::run_on_run_end(
-                &state.config.hooks,
-                &state.run_hook_ctx,
-                primary(&subs),
-            )
-            .await;
-            emit(
-                &subs,
-                RuntimeEvent::RunCompleted {
-                    output,
-                    stop_reason: StopReason::MaxTokens,
+                    stop_reason,
                 },
             )
             .await;
@@ -1151,7 +1291,42 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         _ => {}
     }
 
-    run_tool_and_handoff_phase(state, &subs, run_id, &response, &tool_uses).await
+    if !run_tool_and_handoff_phase(state, &subs, run_id, &response, &tool_uses).await {
+        return false;
+    }
+    persist_step(state, &subs).await
+}
+
+/// Closes the current step in the log.
+fn end_step(state: &mut AgentRunState) {
+    let step = state.log.step();
+    state.log.append(SessionEventKind::StepEnded {
+        step,
+        budget_used: state.budget.usage().clone(),
+    });
+}
+
+/// Records tool-result blocks; consecutive results project into one user
+/// message after the assistant message that requested them.
+fn append_tool_results(log: &mut SessionLog, results: Vec<ContentBlock>) {
+    for block in results {
+        match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+            } => {
+                log.append(SessionEventKind::ToolResult {
+                    tool_use_id,
+                    content,
+                });
+            }
+            other => {
+                log.append(SessionEventKind::UserMessage {
+                    content: vec![other],
+                });
+            }
+        }
+    }
 }
 
 #[allow(clippy::too_many_lines)] // justified: mechanical extraction of existing tool dispatch flow; narrower helpers follow in later refactors
@@ -1162,8 +1337,7 @@ async fn run_tool_and_handoff_phase(
     response: &ModelResponse,
     tool_uses: &[ToolCall],
 ) -> bool {
-    state.messages.push(Message {
-        role: Role::Assistant,
+    state.log.append(SessionEventKind::AssistantMessage {
         content: response.content.clone(),
     });
 
@@ -1177,10 +1351,8 @@ async fn run_tool_and_handoff_phase(
         // Canonical tool-result message: `Role::User` + ToolResult blocks, same
         // as the serial/handoff paths (Anthropic convention; the OpenAI-dialect
         // chat adapter converts ToolResult blocks to wire `role:"tool"`).
-        state.messages.push(Message {
-            role: Role::User,
-            content: parallel_results,
-        });
+        append_tool_results(&mut state.log, parallel_results);
+        end_step(state);
         return true;
     }
 
@@ -1383,6 +1555,11 @@ async fn run_tool_and_handoff_phase(
                 state.budget.record_tool_call();
             }
 
+            if attempt == 1 {
+                state.log.append(SessionEventKind::ToolCall {
+                    call: effective_call.clone(),
+                });
+            }
             // ToolCallStarted fires for each committed execution attempt, after
             // before_tool, approval, and budget checks all pass.
             emit(
@@ -1398,7 +1575,7 @@ async fn run_tool_and_handoff_phase(
             let _tool_span = telemetry::tool_execute_span(&tool_call.name, source_label);
 
             let parent_messages = if tool.needs_parent_context() {
-                state.messages.clone()
+                state.log.messages().to_vec()
             } else {
                 vec![]
             };
@@ -1713,11 +1890,8 @@ async fn apply_tool_phase_results(
 ) {
     // Process pending handoff: prepare the next state first, then swap it in.
     let Some(pending_handoff) = pending_handoff else {
-        state.messages.push(Message {
-            role: Role::User,
-            content: tool_results,
-        });
-        state.step += 1;
+        append_tool_results(&mut state.log, tool_results);
+        end_step(state);
         return;
     };
 
@@ -1730,7 +1904,7 @@ async fn apply_tool_phase_results(
     let new_agent = handoff_result.target_agent.name.clone();
     let handoff_input = json!({"tool": tool_name});
 
-    let mut handoff_history = state.messages.clone();
+    let mut handoff_history = state.log.messages().to_vec();
     handoff_history.push(Message {
         role: Role::User,
         content: tool_results.clone(),
@@ -1756,11 +1930,8 @@ async fn apply_tool_phase_results(
             )
             .await;
             replace_tool_result(&mut tool_results, &tool_use_id, tool_error_result(&error));
-            state.messages.push(Message {
-                role: Role::User,
-                content: tool_results,
-            });
-            state.step += 1;
+            append_tool_results(&mut state.log, tool_results);
+            end_step(state);
             return;
         }
     };
@@ -1786,13 +1957,19 @@ async fn apply_tool_phase_results(
     )
     .await;
 
-    state.messages = transition.messages;
+    append_tool_results(&mut state.log, tool_results);
+    state.log.append(SessionEventKind::Handoff {
+        from_agent: state.config.name.clone(),
+        to_agent: new_agent.clone(),
+        messages: transition.messages,
+        budget_used: transition.budget.usage().clone(),
+    });
     state.registry = transition.registry;
     state.tool_defs = transition.tool_defs;
     state.budget = transition.budget;
     state.run_hook_ctx.agent_name = new_agent;
     state.config = transition.config;
-    state.step += 1;
+    end_step(state);
 }
 
 async fn prepare_handoff_transition(
@@ -1886,15 +2063,14 @@ async fn emit_run_failed(
     error: impl Into<String>,
     kind: RunFailureKind,
 ) {
+    let error = error.into();
     state.last_failure = Some(kind);
-    emit(
-        subs,
-        RuntimeEvent::RunFailed {
-            error: error.into(),
-            kind,
-        },
-    )
-    .await;
+    state.log.append(SessionEventKind::RunFailed {
+        error: error.clone(),
+        kind,
+    });
+    persist_terminal(state).await;
+    emit(subs, RuntimeEvent::RunFailed { error, kind }).await;
 }
 
 async fn emit(subs: &[EventSink], event: RuntimeEvent) {
@@ -1992,6 +2168,9 @@ async fn run_parallel_tool_batch_if_allowed(
     .await;
     for call in &calls {
         state.budget.record_tool_call();
+        state.log.append(SessionEventKind::ToolCall {
+            call: call.tool_call.clone(),
+        });
         emit(
             subs,
             RuntimeEvent::ToolCallBatchItemStarted {
@@ -2011,7 +2190,7 @@ async fn run_parallel_tool_batch_if_allowed(
         let child_registry = state.child_registry.clone();
         let remaining_budget = state.budget.remaining_config();
         let parent_messages = if call.tool.needs_parent_context() {
-            state.messages.clone()
+            state.log.messages().to_vec()
         } else {
             vec![]
         };
@@ -2297,9 +2476,9 @@ fn failed_state(
         model,
         unfiltered_registry: registry.clone(),
         registry,
-        messages: vec![],
+        log: SessionLog::new(),
+        session: None,
         tool_defs: vec![],
-        step: 0,
         budget: BudgetGuard::new(BudgetConfig {
             max_tokens: None,
             max_tool_calls: None,

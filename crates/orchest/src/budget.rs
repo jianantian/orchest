@@ -14,7 +14,7 @@ pub struct BudgetConfig {
     pub max_cost_usd: Option<f64>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BudgetUsage {
     pub tokens_used: u64,
     pub tool_calls_used: u32,

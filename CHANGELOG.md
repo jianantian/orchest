@@ -14,6 +14,34 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** session persistence is an append-only event log instead of a
+  snapshot ([#331](https://github.com/jianantian/orchest/issues/331)). A run
+  records every change to its state as a `SessionEvent` (consecutive `seq`,
+  timestamp, tagged `SessionEventKind`: `RunStarted`, `StepStarted`,
+  `StepEnded`, `SystemMessage`, `UserMessage`, `AssistantMessage`,
+  `ToolCall`, `ToolResult`, `Compacted`, `Handoff`, `RunEnded`, `RunFailed`,
+  `RunAborted`); the conversation, step and budget are a `SessionProjection`
+  of that log, and the projected history now ends with the final answer.
+  `SessionStore` is now `put_meta` / `get_meta` / `append` / `read(from_seq)`
+  / `flush` / `delete` / `list`, with session metadata (`SessionMeta`,
+  schema `"2"`) stored apart from the events. `InMemorySessionStore` and
+  `SqliteSessionStore` implement it; the SQLite tables are `session_meta` and
+  `session_events` keyed by `(session_id, seq)`. A fresh run on a session
+  that already holds events fails with `SessionError::AlreadyExists`.
+- **Breaking:** `AgentRun::resume(config, model, registry)` and
+  `AgentRun::resume_with_input(config, input, model, registry)` are `async`,
+  read the log named by `config.session_store` / `config.session_id`, and
+  return `SessionError` (`NotConfigured`, `NotFound`, store errors). The host
+  supplies the config again; nothing but the log is restored.
+
+### Removed
+
+- **Breaking:** `SessionSnapshot`, `SessionPersistenceHook`,
+  `Hook::persistence_session_id` and `ConfigError::SessionStoreMissing`
+  ([#331](https://github.com/jianantian/orchest/issues/331)).
+
 ## [1.1.0]
 
 ### Added
