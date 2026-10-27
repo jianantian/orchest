@@ -200,6 +200,11 @@ pub async fn run_soniox_stream<T: ByteDuplex>(
                     input_open = false;
                     let _ = transport.send(WsFrame::Binary(Vec::new())).await; // end-of-audio
                 }
+                Some(SessionInput::Finalize) => {
+                    if events.send(super::finalize_unsupported("soniox")).await.is_err() {
+                        return;
+                    }
+                }
                 Some(_) => {}
             },
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_text) {
@@ -516,5 +521,34 @@ mod tests {
     fn map_error_is_fatal() {
         let events = map_message(SonioxMessage::Error("boom".into()));
         assert!(matches!(events[0], StreamEvent::Error { fatal: true, .. }));
+    }
+
+    #[tokio::test]
+    async fn finalize_without_native_support_is_unsupported_option() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (_in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let _handle = tokio::spawn(run_soniox_stream(
+            transport,
+            "{}".to_string(),
+            input_rx,
+            events_tx,
+        ));
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Text(_)));
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        match events_rx.recv().await.unwrap() {
+            StreamEvent::Error { error, fatal } => {
+                assert_eq!(error.code, ErrorCode::UnsupportedOption);
+                assert!(!fatal);
+            }
+            other => panic!("expected UnsupportedOption, got {other:?}"),
+        }
+        assert!(out_rx.try_recv().is_err());
     }
 }

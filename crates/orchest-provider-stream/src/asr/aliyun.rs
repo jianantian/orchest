@@ -348,6 +348,11 @@ pub async fn run_aliyun_stream<T: ByteDuplex>(
                         break;
                     }
                 }
+                Some(SessionInput::Finalize) => {
+                    if events.send(super::finalize_unsupported("aliyun")).await.is_err() {
+                        return;
+                    }
+                }
                 Some(_) => {}
             },
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_text) {
@@ -829,5 +834,44 @@ mod tests {
             })
         ));
         handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_aliyun_stream_answers_finalize_with_unsupported_option() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let run = build_run_task("t", "m", &json!({})).unwrap();
+        let finish = build_finish_task("t").unwrap();
+        let _handle = tokio::spawn(run_aliyun_stream(
+            transport, run, finish, input_rx, events_tx, ready_tx,
+        ));
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Text(_)));
+        in_tx
+            .send(WsFrame::Text(event("task-started", None, false)))
+            .await
+            .unwrap();
+        ready_rx.await.unwrap().unwrap();
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        match events_rx.recv().await.unwrap() {
+            StreamEvent::Error { error, fatal } => {
+                assert_eq!(error.code, ErrorCode::UnsupportedOption);
+                assert!(!fatal);
+            }
+            other => panic!("expected UnsupportedOption, got {other:?}"),
+        }
+        // the session stays open: no finish-task was sent
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), out_rx.recv())
+                .await
+                .is_err()
+        );
     }
 }

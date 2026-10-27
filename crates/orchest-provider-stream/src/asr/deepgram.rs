@@ -180,6 +180,11 @@ pub async fn run_deepgram_stream<T: ByteDuplex>(
                         .send(WsFrame::Text(r#"{"type":"CloseStream"}"#.to_string()))
                         .await;
                 }
+                Some(SessionInput::Finalize) => {
+                    if events.send(super::finalize_unsupported("deepgram")).await.is_err() {
+                        return;
+                    }
+                }
                 Some(_) => {}
             },
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_text) {
@@ -576,5 +581,28 @@ mod tests {
             start: 0.0,
         })
         .is_empty());
+    }
+
+    #[tokio::test]
+    async fn finalize_without_native_support_is_unsupported_option() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (_in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let _handle = tokio::spawn(run_deepgram_stream(transport, input_rx, events_tx));
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        match events_rx.recv().await.unwrap() {
+            StreamEvent::Error { error, fatal } => {
+                assert_eq!(error.code, ErrorCode::UnsupportedOption);
+                assert!(!fatal);
+            }
+            other => panic!("expected UnsupportedOption, got {other:?}"),
+        }
+        assert!(out_rx.try_recv().is_err());
     }
 }

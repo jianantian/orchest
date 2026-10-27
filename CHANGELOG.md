@@ -14,6 +14,18 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+### Added
+
+- `SessionInput::Finalize`: asks a streaming session to finalize what it has
+  heard so far and, where it can, follow with a Turn
+  (`LifecycleEvent::EndOfSpeech`), without closing the session (ADR-0006).
+  A dialect without a native finalize answers with a non-fatal
+  `StreamEvent::Error` carrying `ErrorCode::UnsupportedOption`; the omni
+  `RealtimeSession::send` returns that error directly. The `SegmentRef` and
+  `EndOfSpeech` docs now state the Draft / Stable / Turn contract: Stable may be
+  `Append` or `Snapshot`, and a Turn carries the `segment_id` of the Stable it
+  ends ([#342](https://github.com/jianantian/orchest/issues/342)).
+
 ## [1.1.0]
 
 ### Added

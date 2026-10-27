@@ -157,6 +157,11 @@ pub async fn run_elevenlabs_stream<T: ByteDuplex>(
                         .send(WsFrame::Text(build_audio_message(&[], true, sample_rate)))
                         .await;
                 }
+                Some(SessionInput::Finalize) => {
+                    if events.send(super::finalize_unsupported("elevenlabs")).await.is_err() {
+                        return;
+                    }
+                }
                 Some(_) => {}
             },
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_text) {
@@ -475,5 +480,28 @@ mod tests {
 
         drop(in_tx); // server closes -> loop ends
         handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn finalize_without_native_support_is_unsupported_option() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (_in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let _handle = tokio::spawn(run_elevenlabs_stream(transport, 16000, input_rx, events_tx));
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        match events_rx.recv().await.unwrap() {
+            StreamEvent::Error { error, fatal } => {
+                assert_eq!(error.code, ErrorCode::UnsupportedOption);
+                assert!(!fatal);
+            }
+            other => panic!("expected UnsupportedOption, got {other:?}"),
+        }
+        assert!(out_rx.try_recv().is_err());
     }
 }

@@ -83,6 +83,14 @@ impl TryFrom<SessionInput> for ClientFrame {
                 content,
             },
             SessionInput::Interrupt => ClientFrame::Interrupt,
+            // The openspeech omni protocol has no client-side finalize: turns
+            // are cut by the server VAD (ADR-0006 D7.2).
+            SessionInput::Finalize => {
+                return Err(ProtocolError::new(
+                    ErrorCode::UnsupportedOption,
+                    "omni session does not support finalize",
+                ))
+            }
             _ => {
                 return Err(ProtocolError::new(
                     ErrorCode::InvalidRequest,
@@ -953,5 +961,11 @@ mod tests {
         }
         assert!(saw_fatal, "session failure must surface a fatal error");
         handle.await.unwrap(); // the run loop terminated (did not hang)
+    }
+
+    #[test]
+    fn finalize_is_an_unsupported_option_for_omni() {
+        let error = ClientFrame::try_from(SessionInput::Finalize).unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsupportedOption);
     }
 }

@@ -351,6 +351,11 @@ pub async fn run_asr_stream<T: ByteDuplex>(
                     let _ = transport.send(WsFrame::Binary(build_audio_frame(&[], true))).await;
                 }
                 // Text / tool-result are not part of the ASR send side.
+                Some(SessionInput::Finalize) => {
+                    if events.send(super::finalize_unsupported("volcengine")).await.is_err() {
+                        return;
+                    }
+                }
                 Some(_) => {}
             },
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_binary) {
@@ -938,5 +943,29 @@ mod tests {
         ));
 
         handle.await.unwrap(); // the loop terminated on the last server frame
+    }
+
+    #[tokio::test]
+    async fn run_asr_stream_answers_finalize_with_unsupported_option() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (_in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let _handle = tokio::spawn(run_asr_stream(transport, input_rx, events_tx));
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        match events_rx.recv().await.unwrap() {
+            StreamEvent::Error { error, fatal } => {
+                assert_eq!(error.code, ErrorCode::UnsupportedOption);
+                assert!(!fatal);
+            }
+            other => panic!("expected UnsupportedOption, got {other:?}"),
+        }
+        // the session stays open: no last audio frame was flushed
+        assert!(out_rx.try_recv().is_err());
     }
 }
