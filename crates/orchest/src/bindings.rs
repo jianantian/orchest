@@ -6,8 +6,8 @@ use serde_json::Value;
 
 use crate::budget::BudgetConfig;
 use crate::events::RuntimeEvent;
-use crate::run::ApprovalMode;
-use crate::tool::{Approval, ToolEffects};
+use crate::run::{ApprovalMode, CancelReason, Cancellation, RequestResponse};
+use crate::tool::{Approval, ToolEffect, ToolEffects};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -42,6 +42,61 @@ pub fn effects_from_side_effect_flag(side_effect: bool) -> ToolEffects {
     } else {
         ToolEffects::NONE
     }
+}
+
+/// Effects for a binding tool: the declared `effects` names (snake_case, as
+/// in [`ToolEffect`]) when given, otherwise the `side_effect` flag.
+pub fn parse_binding_effects(
+    effects: Option<&[String]>,
+    side_effect: bool,
+) -> Result<ToolEffects, String> {
+    let Some(names) = effects else {
+        return Ok(effects_from_side_effect_flag(side_effect));
+    };
+    names
+        .iter()
+        .map(|name| {
+            serde_json::from_value::<ToolEffect>(Value::String(name.clone())).map_err(|_| {
+                format!(
+                    "invalid effect '{name}'; expected read|write_workspace|write_outside|network|credential|destructive|process"
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(ToolEffects::of)
+}
+
+/// Parses a binding's answer to a request: the serde shape of
+/// [`RequestResponse`] (`{"decision": {"type": "approve"}, "scope": "session"}`),
+/// with `decision` also accepted as a bare string (`"approve"`, `"deny"`).
+pub fn parse_binding_response(mut payload: Value) -> Result<RequestResponse, String> {
+    if let Some(decision) = payload.get_mut("decision") {
+        if let Value::String(kind) = decision {
+            *decision = serde_json::json!({ "type": kind });
+        }
+    }
+    serde_json::from_value(payload).map_err(|e| format!("invalid request response: {e}"))
+}
+
+/// Builds a cancellation from a binding's optional reason name (snake_case,
+/// default `user`) and message.
+pub fn parse_binding_cancellation(
+    reason: Option<&str>,
+    message: Option<String>,
+) -> Result<Cancellation, String> {
+    let reason = match reason {
+        None => CancelReason::User,
+        Some(name) => serde_json::from_value(Value::String(name.to_string())).map_err(|_| {
+            format!(
+                "invalid cancel reason '{name}'; expected user|timeout|upstream|host_disconnected|watcher"
+            )
+        })?,
+    };
+    let cancellation = Cancellation::new(reason);
+    Ok(match message {
+        Some(message) => cancellation.with_message(message),
+        None => cancellation,
+    })
 }
 
 pub fn parse_binding_approval_mode(
@@ -129,13 +184,57 @@ pub fn to_snake_case(name: &str) -> String {
 mod tests {
     use super::{
         budget_config_from_binding, messages_from_wire_values, parse_binding_approval,
-        parse_binding_approval_mode, runtime_event_value_to_wire_value, to_snake_case,
+        parse_binding_approval_mode, parse_binding_cancellation, parse_binding_effects,
+        parse_binding_response, runtime_event_value_to_wire_value, to_snake_case,
         BindingBudgetConfig, BindingNameStyle,
     };
-    use crate::run::ApprovalMode;
-    use crate::tool::Approval;
+    use crate::run::{ApprovalMode, ApprovalScope, CancelReason, RequestDecision};
+    use crate::tool::{Approval, ToolEffect, ToolEffects};
     use serde_json::{json, Value};
     use std::time::Duration;
+
+    #[test]
+    fn effects_come_from_names_or_the_flag() {
+        assert_eq!(parse_binding_effects(None, true), Ok(ToolEffects::UNKNOWN));
+        assert_eq!(parse_binding_effects(None, false), Ok(ToolEffects::NONE));
+        let names = vec!["read".to_string(), "network".to_string()];
+        assert_eq!(
+            parse_binding_effects(Some(&names), true),
+            Ok(ToolEffects::of([ToolEffect::Read, ToolEffect::Network]))
+        );
+        assert!(parse_binding_effects(Some(&["fly".to_string()]), false).is_err());
+    }
+
+    #[test]
+    fn responses_accept_the_serde_shape_and_bare_decisions() {
+        let approve =
+            parse_binding_response(json!({"decision": "approve", "scope": "session"})).unwrap();
+        assert_eq!(approve.decision, RequestDecision::Approve);
+        assert_eq!(approve.scope, ApprovalScope::Session);
+        let answer = parse_binding_response(
+            json!({"decision": {"type": "answer", "payload": {"choice": 2}}}),
+        )
+        .unwrap();
+        assert_eq!(
+            answer.decision,
+            RequestDecision::Answer {
+                payload: json!({"choice": 2})
+            }
+        );
+        assert!(parse_binding_response(json!({"decision": "maybe"})).is_err());
+    }
+
+    #[test]
+    fn cancellations_default_to_user() {
+        assert_eq!(
+            parse_binding_cancellation(None, None).unwrap().reason,
+            CancelReason::User
+        );
+        let timeout = parse_binding_cancellation(Some("timeout"), Some("late".into())).unwrap();
+        assert_eq!(timeout.reason, CancelReason::Timeout);
+        assert_eq!(timeout.message.as_deref(), Some("late"));
+        assert!(parse_binding_cancellation(Some("bored"), None).is_err());
+    }
 
     #[test]
     fn approval_parser_covers_python_and_node_spellings() {

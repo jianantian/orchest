@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use serde_json::Value;
@@ -38,8 +38,8 @@ use orchest::tool::async_job::{JobHandle, JobStatus};
 use orchest::tool::builtin::WriteFileTool;
 use orchest::tool::registry::ToolRegistry;
 use orchest::tool::{
-    Approval, JsonSchema, Tool, ToolContext, ToolError, ToolExecutionMode, ToolMetadata,
-    ToolOutput, ToolSource,
+    Approval, JsonSchema, Tool, ToolContext, ToolEffects, ToolError, ToolExecutionMode,
+    ToolMetadata, ToolOutput, ToolSource,
 };
 use orchest_provider::{create_adapter_from_config, normalize_provider_model};
 
@@ -125,7 +125,7 @@ struct PyToolDef {
     description: String,
     input_schema: Value,
     approval: Approval,
-    side_effect: bool,
+    effects: ToolEffects,
     execution_mode: ToolExecutionMode,
     callback: Py<PyAny>,
 }
@@ -534,7 +534,7 @@ impl Agent {
             let tool = PyTool {
                 def: tool_def.clone(),
                 metadata: ToolMetadata {
-                    effects: orchest::bindings::effects_from_side_effect_flag(tool_def.side_effect),
+                    effects: tool_def.effects,
                     approval: tool_def.approval,
                     execution_mode: tool_def.execution_mode.clone(),
                     source: ToolSource::InProcess,
@@ -624,7 +624,7 @@ impl Agent {
     }
 
     /// Register a tool. Supports `@agent.tool` (bare decorator).
-    #[pyo3(signature = (func=None, side_effect=false, approval=None, execution_mode=None, commit_tool=None, draft_tool=None))]
+    #[pyo3(signature = (func=None, side_effect=false, approval=None, execution_mode=None, commit_tool=None, draft_tool=None, effects=None))]
     #[allow(clippy::too_many_arguments)] // justified: Python decorator metadata surface
     fn tool(
         &mut self,
@@ -635,6 +635,7 @@ impl Agent {
         execution_mode: Option<String>,
         commit_tool: Option<String>,
         draft_tool: Option<String>,
+        effects: Option<Vec<String>>,
     ) -> PyResult<Py<PyAny>> {
         if let Some(func) = func {
             let name: String = func.getattr(py, "__name__")?.extract(py)?;
@@ -646,13 +647,15 @@ impl Agent {
             let resolved = parse_binding_approval(approval.as_deref(), Approval::Never);
             let execution_mode =
                 parse_execution_mode(execution_mode.as_deref(), commit_tool, draft_tool)?;
+            let effects = orchest::bindings::parse_binding_effects(effects.as_deref(), side_effect)
+                .map_err(PyValueError::new_err)?;
 
             self.tools.push(PyToolDef {
                 name,
                 description,
                 input_schema,
                 approval: resolved,
-                side_effect,
+                effects,
                 execution_mode,
                 callback: func.clone_ref(py),
             });
@@ -666,7 +669,7 @@ impl Agent {
     }
 
     /// Explicitly register a tool with metadata options.
-    #[pyo3(signature = (func, side_effect=false, approval=None, execution_mode=None, commit_tool=None, draft_tool=None))]
+    #[pyo3(signature = (func, side_effect=false, approval=None, execution_mode=None, commit_tool=None, draft_tool=None, effects=None))]
     #[allow(clippy::too_many_arguments)] // justified: Python tool metadata surface
     fn register_tool(
         &mut self,
@@ -677,6 +680,7 @@ impl Agent {
         execution_mode: Option<String>,
         commit_tool: Option<String>,
         draft_tool: Option<String>,
+        effects: Option<Vec<String>>,
     ) -> PyResult<()> {
         let name: String = func.getattr(py, "__name__")?.extract(py)?;
         let description: String = func
@@ -687,13 +691,15 @@ impl Agent {
         let resolved = parse_binding_approval(approval.as_deref(), Approval::Never);
         let execution_mode =
             parse_execution_mode(execution_mode.as_deref(), commit_tool, draft_tool)?;
+        let effects = orchest::bindings::parse_binding_effects(effects.as_deref(), side_effect)
+            .map_err(PyValueError::new_err)?;
 
         self.tools.push(PyToolDef {
             name,
             description,
             input_schema,
             approval: resolved,
-            side_effect,
+            effects,
             execution_mode,
             callback: func,
         });
@@ -799,7 +805,7 @@ impl Agent {
                     registry,
                 );
 
-                // Store the handle for respond_approval
+                // Store the handle for respond / abort
                 {
                     let mut guard = run_handle_ref.lock().await;
                     *guard = Some(handle);
@@ -913,8 +919,19 @@ impl Agent {
         Ok(())
     }
 
-    /// Answer the approval request `request_id` of the active run.
-    fn respond_approval(&self, request_id: String, approved: bool) -> PyResult<()> {
+    /// Answer the request `request_id` of the active run. `payload` is the
+    /// response: `{"decision": "approve" | "deny"}` or
+    /// `{"decision": {"type": "answer", "payload": ...}}`, optionally with
+    /// `"scope": "session"` to remember an approval for the session.
+    fn respond(&self, py: Python<'_>, request_id: String, payload: Py<PyAny>) -> PyResult<()> {
+        let payload: String = py
+            .import("json")?
+            .call_method1("dumps", (payload.bind(py),))?
+            .extract()?;
+        let payload: Value = serde_json::from_str(&payload)
+            .map_err(|e| PyValueError::new_err(format!("invalid response payload: {e}")))?;
+        let response =
+            orchest::bindings::parse_binding_response(payload).map_err(PyValueError::new_err)?;
         let run_handle_ref = Arc::clone(&self.run_handle);
 
         let rt = tokio::runtime::Runtime::new()
@@ -924,11 +941,6 @@ impl Agent {
             let guard = run_handle_ref.lock().await;
             if let Some(ref handle) = *guard {
                 let request_id = orchest::run::RequestId::from(request_id);
-                let response = if approved {
-                    orchest::run::RequestResponse::approve()
-                } else {
-                    orchest::run::RequestResponse::deny(None)
-                };
                 handle
                     .respond(&request_id, response)
                     .await
@@ -940,6 +952,28 @@ impl Agent {
                 ))
             }
         })
+    }
+
+    /// Cancel the active run. `reason` is "user" (default), "timeout",
+    /// "upstream", "host_disconnected" or "watcher". Returns `True` when this
+    /// call cancelled the run, `False` when it was already cancelled or no run
+    /// is active.
+    #[pyo3(signature = (reason=None, message=None))]
+    fn abort(&self, reason: Option<String>, message: Option<String>) -> PyResult<bool> {
+        let cancellation =
+            orchest::bindings::parse_binding_cancellation(reason.as_deref(), message)
+                .map_err(PyValueError::new_err)?;
+        let guard = self.run_handle.blocking_lock();
+        Ok(guard
+            .as_ref()
+            .is_some_and(|handle| handle.cancel(cancellation)))
+    }
+
+    /// What a run of this agent supports, as a dict (see `Capabilities`).
+    fn capabilities<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let capabilities = serde_json::to_string(&self.build_config()?.capabilities())
+            .map_err(|e| PyRuntimeError::new_err(format!("failed to serialize: {e}")))?;
+        py.import("json")?.call_method1("loads", (capabilities,))
     }
 }
 

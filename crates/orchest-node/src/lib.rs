@@ -142,6 +142,10 @@ pub struct ToolRegistration {
     pub description: String,
     pub input_schema: serde_json::Value,
     pub side_effect: Option<bool>,
+    /// Declared effects ("read", "write_workspace", "write_outside",
+    /// "network", "credential", "destructive", "process"); overrides
+    /// `sideEffect` when given.
+    pub effects: Option<Vec<String>>,
     /// Approval level: "never" | "whenRisky" | "always".
     pub approval: Option<String>,
     /// Execution mode: "normal" | "draft" | "commit".
@@ -484,14 +488,17 @@ impl Agent {
             options.commit_tool,
             options.draft_tool,
         )?;
+        let effects = orchest::bindings::parse_binding_effects(
+            options.effects.as_deref(),
+            options.side_effect.unwrap_or(false),
+        )
+        .map_err(napi::Error::from_reason)?;
         let tool = StaticTool {
             name: options.name.clone(),
             description: options.description.clone(),
             input_schema: options.input_schema,
             metadata: ToolMetadata {
-                effects: orchest::bindings::effects_from_side_effect_flag(
-                    options.side_effect.unwrap_or(false),
-                ),
+                effects,
                 approval: resolved,
                 execution_mode,
                 source: ToolSource::InProcess,
@@ -507,7 +514,7 @@ impl Agent {
     /// The handler receives the parsed input object and should return a
     /// JSON-serializable value. Errors thrown become ToolCallFailed events.
     #[napi(
-        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => any, options?: { sideEffect?: boolean, approval?: string, executionMode?: 'normal' | 'draft' | 'commit', commitTool?: string, draftTool?: string }"
+        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => any, options?: { sideEffect?: boolean, effects?: string[], approval?: string, executionMode?: 'normal' | 'draft' | 'commit', commitTool?: string, draftTool?: string }"
     )]
     #[allow(clippy::too_many_arguments)] // justified: NAPI binding mirrors JS API surface
     pub fn register_tool_with_handler(
@@ -523,11 +530,7 @@ impl Agent {
             .and_then(|o| o.get("approval"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let side_effect = options
-            .as_ref()
-            .and_then(|o| o.get("sideEffect"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let effects = effects_from_options(options.as_ref())?;
         let resolved = parse_binding_approval(approval_str.as_deref(), Approval::Never);
         let execution_mode = execution_mode_from_options(options.as_ref())?;
 
@@ -542,7 +545,7 @@ impl Agent {
             description,
             input_schema,
             metadata: ToolMetadata {
-                effects: orchest::bindings::effects_from_side_effect_flag(side_effect),
+                effects,
                 approval: resolved,
                 execution_mode,
                 source: ToolSource::InProcess,
@@ -561,7 +564,7 @@ impl Agent {
     /// `pollHandler(jobId)` is called on each poll interval and should return
     /// `{ status: "pending"|"completed"|"failed", progress?: number, message?: string, result?: any, error?: string }`.
     #[napi(
-        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => { job_id: string; poll_interval_ms?: number }, pollHandler: (jobId: string) => { status: string; progress?: number; message?: string; result?: any; error?: string }, options?: { sideEffect?: boolean; approval?: string, executionMode?: 'normal' | 'draft' | 'commit', commitTool?: string, draftTool?: string }"
+        ts_args_type = "name: string, description: string, inputSchema: Record<string, unknown>, handler: (input: any) => { job_id: string; poll_interval_ms?: number }, pollHandler: (jobId: string) => { status: string; progress?: number; message?: string; result?: any; error?: string }, options?: { sideEffect?: boolean; effects?: string[]; approval?: string, executionMode?: 'normal' | 'draft' | 'commit', commitTool?: string, draftTool?: string }"
     )]
     #[allow(clippy::too_many_arguments)] // justified: napi-rs exposes the JavaScript registration API as positional arguments.
     pub fn register_async_tool_with_handler(
@@ -578,11 +581,7 @@ impl Agent {
             .and_then(|o| o.get("approval"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let side_effect = options
-            .as_ref()
-            .and_then(|o| o.get("sideEffect"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let effects = effects_from_options(options.as_ref())?;
         let resolved = parse_binding_approval(approval_str.as_deref(), Approval::Never);
         let execution_mode = execution_mode_from_options(options.as_ref())?;
 
@@ -603,7 +602,7 @@ impl Agent {
             description,
             input_schema,
             metadata: ToolMetadata {
-                effects: orchest::bindings::effects_from_side_effect_flag(side_effect),
+                effects,
                 approval: resolved,
                 execution_mode,
                 source: ToolSource::InProcess,
@@ -750,8 +749,14 @@ impl Agent {
         Ok(())
     }
 
-    #[napi]
-    pub fn respond_approval(&self, request_id: String, approved: bool) -> napi::Result<()> {
+    /// Answer the request `requestId` of the active run. `payload` is the
+    /// response: `{ decision: "approve" | "deny" }` or
+    /// `{ decision: { type: "answer", payload } }`, optionally with
+    /// `scope: "session"` to remember an approval for the session.
+    #[napi(ts_args_type = "requestId: string, payload: RequestResponse")]
+    pub fn respond(&self, request_id: String, payload: Value) -> napi::Result<()> {
+        let response =
+            orchest::bindings::parse_binding_response(payload).map_err(napi::Error::from_reason)?;
         let run_handle_ref = Arc::clone(&self.run_handle);
 
         let rt = shared_runtime();
@@ -760,11 +765,6 @@ impl Agent {
             let guard = run_handle_ref.lock().await;
             if let Some(ref handle) = *guard {
                 let request_id = orchest::run::RequestId::from(request_id);
-                let response = if approved {
-                    orchest::run::RequestResponse::approve()
-                } else {
-                    orchest::run::RequestResponse::deny(None)
-                };
                 handle
                     .respond(&request_id, response)
                     .await
@@ -777,6 +777,46 @@ impl Agent {
             }
         })
     }
+
+    /// Cancel the active run. `reason` is "user" (default), "timeout",
+    /// "upstream", "host_disconnected" or "watcher". Returns `true` when this
+    /// call cancelled the run, `false` when it was already cancelled or no
+    /// run is active.
+    #[napi(ts_args_type = "reason?: CancelReason, message?: string")]
+    pub fn abort(&self, reason: Option<String>, message: Option<String>) -> napi::Result<bool> {
+        let cancellation =
+            orchest::bindings::parse_binding_cancellation(reason.as_deref(), message)
+                .map_err(napi::Error::from_reason)?;
+        let guard = self.run_handle.blocking_lock();
+        Ok(guard
+            .as_ref()
+            .is_some_and(|handle| handle.cancel(cancellation)))
+    }
+
+    /// What a run of this agent supports.
+    #[napi(ts_return_type = "Capabilities")]
+    pub fn capabilities(&self) -> napi::Result<Value> {
+        serde_json::to_value(self.build_config()?.capabilities())
+            .map_err(|e| napi::Error::from_reason(format!("serialize error: {e}")))
+    }
+}
+
+/// Effects declared in a handler registration's options: `effects` names
+/// when given, otherwise the `sideEffect` flag.
+fn effects_from_options(options: Option<&Value>) -> napi::Result<orchest::tool::ToolEffects> {
+    let side_effect = options
+        .and_then(|o| o.get("sideEffect"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let names = match options.and_then(|o| o.get("effects")) {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            serde_json::from_value::<Vec<String>>(value.clone())
+                .map_err(|_| napi::Error::from_reason("`effects` must be an array of strings"))?,
+        ),
+    };
+    orchest::bindings::parse_binding_effects(names.as_deref(), side_effect)
+        .map_err(napi::Error::from_reason)
 }
 
 impl Agent {
@@ -899,6 +939,177 @@ fn parse_cache_policy(value: &str) -> Result<CachePolicy, String> {
 mod tests {
     use super::*;
     use orchest::bindings::{runtime_event_value_to_wire_value, to_snake_case};
+
+    mod contract {
+        use super::*;
+        use orchest::events::RuntimeEvent;
+        use orchest::model::{
+            ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
+            StopReason, StreamEvent, TokenUsage,
+        };
+        use orchest::run::{CancelReason, EventReceiver};
+        use orchest::tool::ToolDef;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::sync::mpsc;
+
+        /// Calls `probe` once, then answers; `hang` never answers.
+        struct Model {
+            hang: bool,
+            calls: AtomicUsize,
+        }
+
+        #[async_trait]
+        impl ModelAdapter for Model {
+            fn provider_name(&self) -> &str {
+                "mock"
+            }
+            fn model_name(&self) -> &str {
+                "mock"
+            }
+            fn capabilities(&self) -> ModelCapabilities {
+                ModelCapabilities::default()
+            }
+            async fn complete(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolDef],
+                _options: &RustRequestOptions,
+                _tx: Option<mpsc::Sender<StreamEvent>>,
+            ) -> Result<ModelResponse, ModelError> {
+                if self.hang {
+                    std::future::pending::<()>().await;
+                }
+                let content = if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    vec![ContentBlock::ToolUse {
+                        id: "t1".into(),
+                        name: "probe".into(),
+                        input: serde_json::json!({}),
+                    }]
+                } else {
+                    vec![ContentBlock::Text("done".into())]
+                };
+                Ok(ModelResponse {
+                    content,
+                    usage: TokenUsage::default(),
+                    stop_reason: StopReason::EndTurn,
+                    option_adjustments: vec![],
+                })
+            }
+        }
+
+        fn agent() -> Agent {
+            let mut agent = Agent::new(AgentOptions {
+                name: "test-agent".into(),
+                model: "claude-sonnet-4".into(),
+                system_prompt: "test".into(),
+                skills_dir: None,
+                skill_disclosure: None,
+                api_key: Some("key".into()),
+                api_key_env: None,
+                api_url: None,
+                max_tokens: None,
+                request_options: None,
+                budget: None,
+                approval_mode: None,
+                retry: None,
+            })
+            .expect("agent should construct");
+            agent
+                .register_tool(ToolRegistration {
+                    name: "probe".into(),
+                    description: "probe".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    side_effect: None,
+                    effects: Some(vec!["read".into()]),
+                    approval: Some("always".into()),
+                    execution_mode: None,
+                    commit_tool: None,
+                    draft_tool: None,
+                })
+                .expect("tool should register");
+            agent
+        }
+
+        /// Starts a run of `agent` with `model` and makes it the active run.
+        fn start(agent: &Agent, hang: bool) -> EventReceiver {
+            let config = agent.build_config().unwrap();
+            let mut registry = ToolRegistry::new();
+            for tool in &agent.tools {
+                registry.register(Arc::clone(tool)).unwrap();
+            }
+            let model = Arc::new(Model {
+                hang,
+                calls: AtomicUsize::new(0),
+            });
+            let rt = shared_runtime();
+            let (handle, rx) = rt
+                .block_on(async { AgentRun::start(config, RunInput::text("go"), model, registry) });
+            *agent.run_handle.blocking_lock() = Some(handle);
+            rx
+        }
+
+        #[test]
+        fn abort_cancels_the_active_run_once() {
+            let agent = agent();
+            assert!(!agent.abort(None, None).unwrap());
+            assert!(agent.abort(Some("bored".into()), None).is_err());
+
+            let mut rx = start(&agent, true);
+            assert!(agent.abort(None, Some("stop".into())).unwrap());
+            assert!(!agent.abort(None, None).unwrap());
+            let events: Vec<RuntimeEvent> = shared_runtime().block_on(async {
+                let mut events = Vec::new();
+                while let Some(event) = rx.recv().await {
+                    events.push(event);
+                }
+                events
+            });
+            assert!(events.iter().any(|e| matches!(
+                e,
+                RuntimeEvent::RunAborted {
+                    cancel_reason: Some(CancelReason::User),
+                    ..
+                }
+            )));
+        }
+
+        #[test]
+        fn respond_answers_requests_by_id() {
+            let agent = agent();
+            assert!(agent
+                .respond("r".into(), serde_json::json!({"decision": "approve"}))
+                .is_err());
+
+            let mut rx = start(&agent, false);
+            let rt = shared_runtime();
+            let mut approved = false;
+            let mut completed = false;
+            while let Some(event) = rt.block_on(rx.recv()) {
+                match event {
+                    RuntimeEvent::ApprovalRequested { request_id, .. } => {
+                        assert!(agent
+                            .respond(
+                                request_id.to_string(),
+                                serde_json::json!({"decision": "maybe"})
+                            )
+                            .is_err());
+                        agent
+                            .respond(
+                                request_id.to_string(),
+                                serde_json::json!({"decision": "approve"}),
+                            )
+                            .unwrap();
+                    }
+                    RuntimeEvent::ApprovalGranted { .. } => approved = true,
+                    RuntimeEvent::RunCompleted { .. } => completed = true,
+                    _ => {}
+                }
+            }
+            assert!(approved && completed);
+            let caps = agent.capabilities().unwrap();
+            assert_eq!(caps["lossless_events"], true);
+        }
+    }
 
     #[test]
     fn runtime_event_type_uses_snake_case_wire_format() {

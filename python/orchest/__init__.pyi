@@ -634,12 +634,23 @@ class Agent:
         func: Callable[..., Any] | None = None,
         side_effect: bool = False,
         approval: str | None = None,
+        execution_mode: str | None = None,
+        commit_tool: str | None = None,
+        draft_tool: str | None = None,
+        # Declared effects ("read", "write_workspace", "write_outside",
+        # "network", "credential", "destructive", "process"); overrides
+        # side_effect when given.
+        effects: list[str] | None = None,
     ) -> Callable[..., Any]: ...
     def register_tool(
         self,
         func: Callable[..., Any],
         side_effect: bool = False,
         approval: str | None = None,
+        execution_mode: str | None = None,
+        commit_tool: str | None = None,
+        draft_tool: str | None = None,
+        effects: list[str] | None = None,
     ) -> None: ...
     def register_agent_tool(
         self,
@@ -656,6 +667,18 @@ class Agent:
     def run_sync(self, input: str, messages: list[dict[str, Any]] | None = None) -> list[RuntimeEvent]: ...
     def run(self, input: str, messages: list[dict[str, Any]] | None = None) -> list[RuntimeEvent]: ...
     def run_stream(self, input: str, on_event: Callable[[RuntimeEvent], None], messages: list[dict[str, Any]] | None = None) -> None: ...
-    def respond_approval(self, request_id: str, approved: bool) -> None: ...
+    # Answer request `request_id` of the active run, e.g.
+    # {"decision": "approve"}, {"decision": "deny"},
+    # {"decision": {"type": "answer", "payload": ...}}, optionally with
+    # "scope": "session".
+    def respond(self, request_id: str, payload: dict[str, Any]) -> None: ...
+    # Cancel the active run; reason is "user" (default), "timeout",
+    # "upstream", "host_disconnected" or "watcher". True when this call
+    # cancelled it.
+    def abort(self, reason: str | None = None, message: str | None = None) -> bool: ...
+    # What a run of this agent supports (resume, preemptive_cancel,
+    # approval_scopes, request kinds, parallel_tools, delegation, effects,
+    # enforcement, lossless_events).
+    def capabilities(self) -> dict[str, Any]: ...
 
 __all__: list[str]

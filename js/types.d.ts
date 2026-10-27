@@ -222,6 +222,40 @@ export type StopReason =
  */
 export type RunFailureKind = "BudgetExceeded" | "MaxStepsReached" | "Other";
 
+/** The host's answer to a request (`Agent.respond`). */
+export interface RequestResponse {
+  /** A bare "approve" / "deny", or the tagged form (`answer` carries a payload). */
+  decision:
+    | "approve"
+    | "deny"
+    | { type: "approve" }
+    | { type: "deny"; reason?: string | null }
+    | { type: "answer"; payload: unknown };
+  /** "session" remembers an approval for the rest of the session. Default "once". */
+  scope?: "once" | "session";
+  session_rules?: unknown;
+}
+
+/** What a run supports (`Agent.capabilities`). */
+export interface Capabilities {
+  resume: boolean;
+  preemptive_cancel: boolean;
+  approval_scopes: Array<"once" | "session">;
+  builtin_request_kinds: string[];
+  host_request_kinds: boolean;
+  parallel_tools: boolean;
+  delegation: boolean;
+  effects: ToolEffect[];
+  enforcement: {
+    backend: string | null;
+    isolation: "none" | "soft" | "hard";
+    permission_gate: "none" | "soft" | "hard";
+    code_execution: "none" | "soft" | "hard" | null;
+    read_only: "none" | "soft" | "hard";
+  };
+  lossless_events: boolean;
+}
+
 /** One incremental piece of an assistant message (`message_updated`). */
 export type MessageDelta =
   | { type: "text"; text: string }
