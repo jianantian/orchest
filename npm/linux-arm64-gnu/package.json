@@ -1,0 +1,38 @@
+{
+  "name": "orchest-sdk-linux-arm64-gnu",
+  "version": "0.1.0",
+  "cpu": [
+    "arm64"
+  ],
+  "main": "orchest_node.linux-arm64-gnu.node",
+  "files": [
+    "orchest_node.linux-arm64-gnu.node",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "description": "The linux-arm64-gnu native addon of orchest-sdk",
+  "keywords": [
+    "agent",
+    "llm",
+    "ai",
+    "skills",
+    "runtime",
+    "napi-rs"
+  ],
+  "homepage": "https://github.com/jianantian/orchest/blob/main/docs/guide/sdk-typescript.md",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jianantian/orchest.git"
+  },
+  "bugs": "https://github.com/jianantian/orchest/issues",
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

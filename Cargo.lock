@@ -1427,6 +1427,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "native-tls",
  "orchest",
  "orchest-protocol",
  "orchest-provider",
