@@ -11,7 +11,9 @@ use tokio::sync::mpsc;
 use tracing::Instrument;
 
 use crate::budget::{BudgetConfig, BudgetGuard};
-use crate::events::{ApprovalContext, EventSink, FanoutWaveBus, RunFailureKind, RuntimeEvent};
+use crate::events::{
+    ApprovalContext, EventSink, FanoutWaveBus, MessageDelta, RunFailureKind, RuntimeEvent,
+};
 use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelResponse, ModelStreamChunk, Role, StopReason,
 };
@@ -714,6 +716,54 @@ async fn persist_durable(
     binding.store.flush(&binding.session_id).await
 }
 
+/// Reports the ledger events recorded since the last report (dispatch
+/// markers and settled results) on the event stream. Runs at every
+/// checkpoint and before every terminal event.
+async fn report_ledger(state: &mut AgentRunState, subs: &[EventSink]) {
+    let events: Vec<RuntimeEvent> = state
+        .log
+        .take_unobserved()
+        .iter()
+        .filter_map(|event| ledger_event(&event.kind))
+        .collect();
+    for event in events {
+        emit(subs, event).await;
+    }
+}
+
+fn ledger_event(kind: &SessionEventKind) -> Option<RuntimeEvent> {
+    match kind {
+        SessionEventKind::ToolDispatched {
+            tool_use_id,
+            tool_name,
+            ..
+        } => Some(RuntimeEvent::ToolDispatched {
+            tool_use_id: tool_use_id.clone(),
+            tool_name: tool_name.clone(),
+        }),
+        SessionEventKind::ToolResult {
+            tool_use_id,
+            content,
+        } => {
+            // Error results have the shape `tool_error_result` produces.
+            let error = content
+                .as_object()
+                .filter(|o| o.len() == 1)
+                .and_then(|o| o.get("error"))
+                .filter(|e| e.get("message").is_some());
+            Some(RuntimeEvent::ToolSettled {
+                tool_use_id: tool_use_id.clone(),
+                is_error: error.is_some(),
+                error_code: error
+                    .and_then(|e| e.get("code"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            })
+        }
+        _ => None,
+    }
+}
+
 /// A point in a run where the session log may be made durable.
 #[derive(Debug, Clone, Copy)]
 enum Checkpoint {
@@ -743,6 +793,7 @@ impl Checkpoint {
 /// A store that refuses the log fails the run: continuing would leave the
 /// host's execution state behind the run.
 async fn checkpoint(state: &mut AgentRunState, subs: &[EventSink], point: Checkpoint) -> bool {
+    report_ledger(state, subs).await;
     let Some(binding) = state.session.clone() else {
         return true;
     };
@@ -767,6 +818,8 @@ async fn checkpoint(state: &mut AgentRunState, subs: &[EventSink], point: Checkp
 /// Makes the log durable after a terminal event. The run is ending either
 /// way, so a store failure is reported as a warning.
 async fn persist_terminal(state: &mut AgentRunState) {
+    let subs = state.event_subs.clone();
+    report_ledger(state, &subs).await;
     let Some(binding) = state.session.clone() else {
         return;
     };
@@ -912,8 +965,9 @@ async fn await_tool_approval(
     state.log.append(SessionEventKind::RequestOpened {
         request: request.clone(),
     });
-    let rx = state.request_bus.open(request).await;
+    let rx = state.request_bus.open(request.clone()).await;
     let started = Instant::now();
+    emit(subs, RuntimeEvent::RequestOpened { request }).await;
     emit(
         subs,
         RuntimeEvent::ApprovalRequested {
@@ -1144,12 +1198,36 @@ async fn call_model_phase(state: &mut AgentRunState, subs: &[EventSink]) -> Opti
             return None;
         }
 
+        let message_id = format!("msg_{}", uuid::Uuid::new_v4());
+        emit(
+            subs,
+            RuntimeEvent::MessageStarted {
+                message_id: message_id.clone(),
+                step,
+            },
+        )
+        .await;
         let cancel = state.cancel.clone();
         let raw_response = tokio::select! {
             biased;
             () = cancel.cancelled() => None,
-            response = dispatch_model_call(state, subs, &call_messages) => Some(response),
+            response = dispatch_model_call(state, subs, &call_messages, &message_id) => {
+                Some(response)
+            }
         };
+        let (content, stop_reason) = match &raw_response {
+            Some(Ok(response)) => (response.content.clone(), Some(response.stop_reason.clone())),
+            _ => (Vec::new(), None),
+        };
+        emit(
+            subs,
+            RuntimeEvent::MessageEnded {
+                message_id,
+                content,
+                stop_reason,
+            },
+        )
+        .await;
         let Some(raw_response) = raw_response else {
             abort_run(state).await;
             return None;
@@ -1221,21 +1299,36 @@ async fn dispatch_model_call(
     state: &AgentRunState,
     subs: &[EventSink],
     call_messages: &[Message],
+    message_id: &str,
 ) -> Result<ModelResponse, crate::model::ModelError> {
     let (stream_tx, mut stream_rx) = mpsc::channel::<ModelStreamChunk>(64);
     let event_tx_clone = primary(subs).clone();
+    let message_id = message_id.to_string();
     let forward_task = tokio::spawn(async move {
+        // Once the primary receiver stops draining, stop waiting on it for
+        // the rest of the stream: each delta is two events now, and waiting
+        // out the timeout for every one of them would stall the run.
+        let mut stalled = false;
         while let Some(chunk) = stream_rx.recv().await {
-            if tokio::time::timeout(
-                EVENT_SEND_TIMEOUT,
-                event_tx_clone.send(RuntimeEvent::ModelStreamChunk { delta: chunk }),
-            )
-            .await
-            .is_err()
+            let update =
+                MessageDelta::from_stream(&chunk).map(|delta| RuntimeEvent::MessageUpdated {
+                    message_id: message_id.clone(),
+                    delta,
+                });
+            for event in
+                std::iter::once(RuntimeEvent::ModelStreamChunk { delta: chunk }).chain(update)
             {
-                tracing::warn!(
-                    "primary event subscriber timed out while forwarding model stream chunk"
-                );
+                if stalled {
+                    stalled = event_tx_clone.try_send(event).is_err();
+                } else if tokio::time::timeout(EVENT_SEND_TIMEOUT, event_tx_clone.send(event))
+                    .await
+                    .is_err()
+                {
+                    stalled = true;
+                    tracing::warn!(
+                        "primary event subscriber timed out while forwarding model stream chunk"
+                    );
+                }
             }
         }
     });

@@ -293,6 +293,58 @@ class ApprovalDeniedEvent(TypedDict):
     child_run_id: str | None
 
 
+class MessageStartedEvent(TypedDict):
+    type: Literal["message_started"]
+    message_id: str
+    step: int
+    run_depth: int
+    child_run_id: str | None
+
+
+class MessageUpdatedEvent(TypedDict):
+    type: Literal["message_updated"]
+    message_id: str
+    # {"type": "text" | "thinking", "text": str} or
+    # {"type": "tool_use_args", "tool_use_id": str, "delta": str}
+    delta: dict[str, JsonValue]
+    run_depth: int
+    child_run_id: str | None
+
+
+class MessageEndedEvent(TypedDict):
+    type: Literal["message_ended"]
+    message_id: str
+    content: list[JsonValue]
+    stop_reason: str | None
+    run_depth: int
+    child_run_id: str | None
+
+
+class RequestOpenedEvent(TypedDict):
+    type: Literal["request_opened"]
+    # {"id", "run_id", "kind", "payload", "target"}
+    request: dict[str, JsonValue]
+    run_depth: int
+    child_run_id: str | None
+
+
+class ToolDispatchedEvent(TypedDict):
+    type: Literal["tool_dispatched"]
+    tool_use_id: str
+    tool_name: str
+    run_depth: int
+    child_run_id: str | None
+
+
+class ToolSettledEvent(TypedDict):
+    type: Literal["tool_settled"]
+    tool_use_id: str
+    is_error: bool
+    error_code: str | None
+    run_depth: int
+    child_run_id: str | None
+
+
 class RequestResolvedEvent(TypedDict):
     type: Literal["request_resolved"]
     request_id: str
@@ -433,6 +485,11 @@ RuntimeEvent: TypeAlias = (
     | ModelCallStartedEvent
     | ModelStreamChunkEvent
     | ModelCallCompletedEvent
+    | MessageStartedEvent
+    | MessageUpdatedEvent
+    | MessageEndedEvent
+    | ToolDispatchedEvent
+    | ToolSettledEvent
     | ToolCallStartedEvent
     | ToolCallUpdateEvent
     | ToolCallCompletedEvent
@@ -445,6 +502,7 @@ RuntimeEvent: TypeAlias = (
     | ApprovalRequestedEvent
     | ApprovalGrantedEvent
     | ApprovalDeniedEvent
+    | RequestOpenedEvent
     | RequestResolvedEvent
     | BudgetWarningEvent
     | RuntimeWarningEvent

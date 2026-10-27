@@ -153,6 +153,26 @@ except for the items `orchest-provider` re-exports.
   best effort with a 5 s limit, and its outcome is reported as
   `RuntimeEvent::ProcessesTerminated { terminated, error }`. An async job
   abandoned by a cancellation gets the result code `ASYNC_JOB_ABANDONED`.
+- Message lifecycle events ([#337](https://github.com/jianantian/orchest/issues/337)):
+  each model call is an assistant message with an id, reported as
+  `RuntimeEvent::MessageStarted { message_id, step }`,
+  `MessageUpdated { message_id, delta }` and
+  `MessageEnded { message_id, content, stop_reason }`. `MessageDelta` keeps
+  `Text`, `Thinking` and `ToolUseArgs` apart. `ModelStreamChunk` stays.
+- Request and ledger events: `RuntimeEvent::RequestOpened { request }` for
+  every blocking request (approvals included), and `ToolDispatched` /
+  `ToolSettled { is_error, error_code }` mirroring the session log's tool
+  ledger.
+- Host-defined requests: `ToolContext::request(tool_name, kind, payload,
+  timeout)` lets a tool block on a question of its own kind, answered with the
+  same `RunHandle::respond` (`RequestResponse::answer(payload)`).
+- Capability probe: `RunHandle::capabilities()` / `AgentConfig::capabilities()`
+  return `Capabilities` derived from the config (resume, preemptive cancel,
+  approval scopes, request kinds, parallel tools, delegation, effects,
+  enforcement, lossless delivery); `Capabilities::require` returns a
+  `NotSupported` error for a missing `Capability`.
+- `docs/guide/events.md`: every event, and the split between the session log
+  (execution state) and the event stream (observation).
 
 ### Removed
 

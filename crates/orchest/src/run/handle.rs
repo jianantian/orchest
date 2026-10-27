@@ -286,6 +286,7 @@ impl ChildRunHandle {
 pub struct RunHandle {
     pub run_id: RunId,
     pub(crate) cancel: CancelToken,
+    pub(crate) capabilities: crate::capabilities::Capabilities,
     /// Current worker actor reference.
     ///
     /// The supervisor writes this after the initial worker spawn and rewrites it
@@ -330,6 +331,11 @@ impl RunHandle {
     /// Why the run was cancelled, once it is.
     pub fn cancellation(&self) -> Option<Cancellation> {
         self.cancel.cancellation()
+    }
+
+    /// What this run supports, as of its start.
+    pub fn capabilities(&self) -> &crate::capabilities::Capabilities {
+        &self.capabilities
     }
 
     /// Inject a user-role message into the running agent's conversation.

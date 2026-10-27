@@ -318,6 +318,8 @@ pub struct SessionLog {
     events: Vec<SessionEvent>,
     projection: SessionProjection,
     persisted: usize,
+    /// Events already reported on the run's event stream.
+    observed: usize,
 }
 
 impl SessionLog {
@@ -335,6 +337,7 @@ impl SessionLog {
             events,
             projection,
             persisted,
+            observed: persisted,
         })
     }
 
@@ -440,6 +443,14 @@ impl SessionLog {
     /// Marks every recorded event as accepted by a store.
     pub fn mark_persisted(&mut self) {
         self.persisted = self.events.len();
+    }
+
+    /// The events recorded since the last call, for reporting them on the
+    /// run's event stream.
+    pub(crate) fn take_unobserved(&mut self) -> &[SessionEvent] {
+        let from = self.observed;
+        self.observed = self.events.len();
+        &self.events[from..]
     }
 }
 

@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::model::{ModelStreamChunk, OptionAdjustment, StopReason, TokenUsage};
-use crate::run::{CancelReason, RequestId, RequestKind, RequestResolution, RunId};
+use crate::run::{CancelReason, PendingRequest, RequestId, RequestKind, RequestResolution, RunId};
 use crate::tool::async_job::JobStatus;
 use crate::tool::{PermissionDecision, ToolCall, ToolError, ToolMetadata};
 
@@ -44,6 +44,39 @@ pub enum RunFailureKind {
     Other,
 }
 
+/// One increment of an assistant message being streamed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum MessageDelta {
+    /// Visible text.
+    Text { text: String },
+    /// Model reasoning, kept apart from the visible text.
+    Thinking { text: String },
+    /// A chunk of a tool call's JSON arguments.
+    ToolUseArgs { tool_use_id: String, delta: String },
+}
+
+impl MessageDelta {
+    /// The message-level view of a raw stream chunk, for the chunks that
+    /// carry message content.
+    pub fn from_stream(chunk: &ModelStreamChunk) -> Option<Self> {
+        match chunk {
+            ModelStreamChunk::Text { delta } => Some(Self::Text {
+                text: delta.clone(),
+            }),
+            ModelStreamChunk::Thinking { delta } => Some(Self::Thinking {
+                text: delta.clone(),
+            }),
+            ModelStreamChunk::ToolUseArgsChunk { id, delta } => Some(Self::ToolUseArgs {
+                tool_use_id: id.clone(),
+                delta: delta.clone(),
+            }),
+            _ => None,
+        }
+    }
+}
+
 /// An event emitted on the run's event stream: run lifecycle, model calls,
 /// tool calls, approvals, budget, sub-agents, and steering. Consumers receive
 /// these from the `EventReceiver` returned by `AgentRun::start`.
@@ -56,6 +89,25 @@ pub enum RuntimeEvent {
 
     ModelCallStarted {
         step: u32,
+    },
+    /// The model started producing assistant message `message_id` (one per
+    /// model call; a `ModelRetry` restarts the same message, so drop its
+    /// buffered deltas).
+    MessageStarted {
+        message_id: String,
+        step: u32,
+    },
+    /// An increment of message `message_id`.
+    MessageUpdated {
+        message_id: String,
+        delta: MessageDelta,
+    },
+    /// Message `message_id` is complete. `stop_reason` is unset when the
+    /// model call failed or was cancelled; `content` is then empty.
+    MessageEnded {
+        message_id: String,
+        content: Vec<crate::model::ContentBlock>,
+        stop_reason: Option<StopReason>,
     },
     ModelStreamChunk {
         delta: ModelStreamChunk,
@@ -145,6 +197,25 @@ pub enum RuntimeEvent {
         tool_call_id: String,
         tool: String,
         decision: PermissionDecision,
+    },
+    /// The run opened a blocking request and waits for the host to answer
+    /// it with [`RunHandle::respond`](crate::run::RunHandle::respond).
+    RequestOpened {
+        request: PendingRequest,
+    },
+    /// Ledger: the tool call is about to be dispatched to its tool.
+    ToolDispatched {
+        tool_use_id: String,
+        tool_name: String,
+    },
+    /// Ledger: the tool call has a recorded result. `error_code` is the
+    /// result's error code when it is an error (including the closures
+    /// `TOOL_OUTCOME_UNKNOWN`, `TOOL_NOT_STARTED`,
+    /// `TOOL_ABORTED_BEFORE_DISPATCH`).
+    ToolSettled {
+        tool_use_id: String,
+        is_error: bool,
+        error_code: Option<String>,
     },
     /// A tool call waits for approval under request `request_id`. Answer it
     /// with [`RunHandle::respond`](crate::run::RunHandle::respond).

@@ -204,6 +204,64 @@ impl ToolContext {
             let _ = tx.send(event).await;
         }
     }
+
+    /// Asks the host a question of a host-defined `kind` (a plan to accept,
+    /// a choice to make, ...) on the run tree's request channel, and waits
+    /// for the answer, `timeout`, or the run's cancellation, whichever comes
+    /// first. The request is reported as `RequestOpened` / `RequestResolved`
+    /// and answered with [`RunHandle::respond`](crate::run::RunHandle::respond)
+    /// like any other; only an approving or answering response counts as
+    /// approved. The tool decides what the outcome means for its result.
+    pub async fn request(
+        &self,
+        tool_name: &str,
+        kind: crate::run::RequestKind,
+        payload: Value,
+        timeout: std::time::Duration,
+    ) -> crate::run::RequestResolution {
+        use crate::run::{PendingRequest, RequestId, RequestResolution, RequestTarget};
+        let id = RequestId::from(format!(
+            "{}/{}/{}",
+            self.run_id,
+            self.tool_call_id,
+            uuid::Uuid::new_v4()
+        ));
+        let request = PendingRequest {
+            id: id.clone(),
+            run_id: self.run_id,
+            kind: kind.clone(),
+            payload,
+            target: RequestTarget::ToolCall {
+                tool_use_id: self.tool_call_id.clone(),
+                tool_name: tool_name.to_string(),
+            },
+        };
+        let rx = self.request_bus.open(request.clone()).await;
+        self.emit_event(crate::events::RuntimeEvent::RequestOpened { request })
+            .await;
+        let resolution = tokio::select! {
+            biased;
+            () = self.cancel.cancelled() => {
+                self.request_bus.close(&id).await;
+                RequestResolution::Cancelled
+            }
+            waited = tokio::time::timeout(timeout, rx) => match waited {
+                Ok(Ok(resolution)) => resolution,
+                Ok(Err(_)) => RequestResolution::Cancelled,
+                Err(_) => {
+                    self.request_bus.close(&id).await;
+                    RequestResolution::TimedOut
+                }
+            },
+        };
+        self.emit_event(crate::events::RuntimeEvent::RequestResolved {
+            request_id: id,
+            kind,
+            resolution: resolution.clone(),
+        })
+        .await;
+        resolution
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

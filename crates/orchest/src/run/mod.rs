@@ -314,6 +314,8 @@ mod cancel_tests;
 #[cfg(test)]
 mod checkpoint_tests;
 #[cfg(test)]
+mod events_tests;
+#[cfg(test)]
 mod permission_tests;
 #[cfg(test)]
 mod tests;
