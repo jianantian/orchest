@@ -87,6 +87,14 @@ except for the items `orchest-provider` re-exports.
   the supervisor gives up on a crashed worker). `ToolContext` carries
   `cancel`. A cancelled run is never restarted by the supervisor.
 
+- **Breaking:** the primary event receiver is lossless
+  ([#338](https://github.com/jianantian/orchest/issues/338)). Delivery waits
+  for channel capacity instead of dropping an event after
+  `EVENT_DELIVERY_TIMEOUT` (removed), so a receiver that is not drained holds
+  the run back. The primary no longer gets `EventsDropped { subscriber_id: 0 }`;
+  secondary subscribers keep their lossy `try_send` semantics and
+  `EventsDropped` signals.
+
 ### Added
 
 - Session checkpoints and a resume boundary
@@ -171,6 +179,16 @@ except for the items `orchest-provider` re-exports.
   approval scopes, request kinds, parallel tools, delegation, effects,
   enforcement, lossless delivery); `Capabilities::require` returns a
   `NotSupported` error for a missing `Capability`.
+- Event delivery: `RuntimeConfig::event_channel_capacity` /
+  `AgentConfigBuilder::event_channel_capacity` (default
+  `DEFAULT_EVENT_CHANNEL_CAPACITY`, 1024), `RunHandle::event_delivery_stats()`
+  (`EventDeliveryStats`: waits, longest and total wait, high watermark, sink
+  errors) and the metrics `orchest_event_backpressure_waits_total`,
+  `orchest_event_backpressure_wait_seconds` and
+  `orchest_event_channel_occupancy`. `DurableEventSink`
+  (`AgentConfigBuilder::event_sink`) receives every primary event with its
+  sequence number before the host does and is flushed after ledger and
+  terminal events. `Capabilities::lossless_events` is now `true`.
 - `docs/guide/events.md`: every event, and the split between the session log
   (execution state) and the event stream (observation).
 

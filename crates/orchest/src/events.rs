@@ -375,9 +375,6 @@ fn default_run_completed_stop_reason() -> StopReason {
     StopReason::EndTurn
 }
 
-/// Timeout for primary (blocking) event delivery. Matches the run actor.
-pub const EVENT_DELIVERY_TIMEOUT: Duration = Duration::from_millis(500);
-
 /// Coalesced secondary loss awaiting delivery on that subscriber's channel.
 ///
 /// State is O(1) per subscriber: a count and inclusive sequence bounds. It
@@ -391,7 +388,7 @@ struct PendingLoss {
 
 /// One fan-out slot in a run's event subscriber list.
 ///
-/// Index `0` is always the primary receiver (awaited send with timeout).
+/// Index `0` is always the primary receiver (lossless: awaited send).
 /// Remaining slots are secondary watcher / `subscribe_events` channels that
 /// use non-blocking delivery with coalesced [`RuntimeEvent::EventsDropped`]
 /// recovery signals.
@@ -415,8 +412,8 @@ struct PendingLoss {
 ///    [`crate::run::RunHandle::attach_watcher`] for a fresh channel that sees
 ///    only future events.
 ///
-/// Primary backpressure semantics are unchanged: awaited send with
-/// [`EVENT_DELIVERY_TIMEOUT`]. Recovery state per secondary is a fixed-size
+/// The primary is lossless: delivery waits for capacity, so a slow primary
+/// receiver slows the run down (see [`crate::run::delivery`]). Recovery state per secondary is a fixed-size
 /// pending counter (cannot grow without bound).
 ///
 /// Flushing a pending `EventsDropped` consumes one channel slot before the
@@ -612,8 +609,7 @@ impl std::fmt::Debug for EventSink {
 
 /// Deliver a runtime event to a subscriber list using the public fan-out contract:
 ///
-/// - index `0` is the primary event receiver — awaited send with
-///   [`EVENT_DELIVERY_TIMEOUT`];
+/// - index `0` is the primary event receiver — awaited send, never dropped;
 /// - remaining subscribers are attached watcher channels — non-blocking
 ///   `try_send` with coalesced [`RuntimeEvent::EventsDropped`] recovery on
 ///   the affected secondary (see [`EventSink`] recovery contract).
@@ -626,26 +622,8 @@ pub async fn deliver_to_subscribers(subscribers: &[EventSink], event: RuntimeEve
     let seq = subscribers.first().map(EventSink::alloc_seq).unwrap_or(0);
 
     if let Some(primary) = subscribers.first() {
-        match tokio::time::timeout(EVENT_DELIVERY_TIMEOUT, primary.tx.send(event.clone())).await {
-            Ok(Ok(())) | Ok(Err(_)) => {}
-            Err(_) => {
-                crate::telemetry::record_event_drop("primary", 1);
-                if primary
-                    .tx
-                    .try_send(RuntimeEvent::EventsDropped {
-                        subscriber_id: 0,
-                        count: 1,
-                        from_seq: seq,
-                        to_seq: seq,
-                    })
-                    .is_err()
-                {
-                    tracing::warn!(
-                        "primary event subscriber timed out and EventsDropped notification channel is full"
-                    );
-                }
-            }
-        }
+        // Lossless: waits for capacity. A closed receiver is not an error.
+        let _ = primary.tx.send(event.clone()).await;
     }
 
     let mut wave_bus_to_seal: Option<std::sync::Arc<dyn FanoutWaveBus>> = None;
@@ -658,21 +636,15 @@ pub async fn deliver_to_subscribers(subscribers: &[EventSink], event: RuntimeEve
         } else {
             crate::telemetry::record_event_drop("secondary", 1);
             if let Some(primary) = subscribers.first() {
-                if primary
+                let _ = primary
                     .tx
-                    .try_send(RuntimeEvent::EventsDropped {
+                    .send(RuntimeEvent::EventsDropped {
                         subscriber_id: sink.subscriber_id,
                         count: 1,
                         from_seq: seq,
                         to_seq: seq,
                     })
-                    .is_err()
-                {
-                    tracing::warn!(
-                        subscriber_id = sink.subscriber_id,
-                        "secondary event subscriber dropped an event and primary notification channel is full"
-                    );
-                }
+                    .await;
             }
         }
     }

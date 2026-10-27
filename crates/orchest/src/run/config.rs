@@ -336,6 +336,18 @@ pub struct RuntimeConfig {
     /// Stops the run's external processes on cancellation. Not serialized.
     #[serde(skip)]
     pub process_terminator: Option<Arc<dyn super::process::ProcessTerminator>>,
+    /// Capacity of the host's event channel. A full channel makes the run
+    /// wait (backpressure); events are never dropped.
+    #[serde(default = "default_event_channel_capacity")]
+    pub event_channel_capacity: usize,
+    /// Host storage that receives every event before the host does. Not
+    /// serialized.
+    #[serde(skip)]
+    pub event_sink: Option<Arc<dyn super::delivery::DurableEventSink>>,
+}
+
+fn default_event_channel_capacity() -> usize {
+    super::delivery::DEFAULT_EVENT_CHANNEL_CAPACITY
 }
 
 fn default_request_timeout() -> Duration {
@@ -478,6 +490,8 @@ impl std::fmt::Debug for RuntimeConfig {
                     .as_ref()
                     .map(|b| b.name().to_string()),
             )
+            .field("event_channel_capacity", &self.event_channel_capacity)
+            .field("event_sink", &self.event_sink.is_some())
             .finish()
     }
 }
@@ -503,6 +517,8 @@ impl Default for RuntimeConfig {
             execution_backend: None,
             interruptible: std::collections::HashMap::new(),
             process_terminator: None,
+            event_channel_capacity: default_event_channel_capacity(),
+            event_sink: None,
         }
     }
 }
@@ -827,6 +843,18 @@ impl AgentConfigBuilder {
         terminator: Arc<dyn super::process::ProcessTerminator>,
     ) -> Self {
         self.runtime.process_terminator = Some(terminator);
+        self
+    }
+
+    /// Sets the capacity of the host's event channel (at least 1).
+    pub fn event_channel_capacity(mut self, capacity: usize) -> Self {
+        self.runtime.event_channel_capacity = capacity.max(1);
+        self
+    }
+
+    /// Writes every event to `sink` before delivering it to the host.
+    pub fn event_sink(mut self, sink: Arc<dyn super::delivery::DurableEventSink>) -> Self {
+        self.runtime.event_sink = Some(sink);
         self
     }
 

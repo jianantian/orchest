@@ -287,6 +287,7 @@ pub struct RunHandle {
     pub run_id: RunId,
     pub(crate) cancel: CancelToken,
     pub(crate) capabilities: crate::capabilities::Capabilities,
+    pub(crate) delivery_stats: super::delivery::SharedDeliveryStats,
     /// Current worker actor reference.
     ///
     /// The supervisor writes this after the initial worker spawn and rewrites it
@@ -336,6 +337,15 @@ impl RunHandle {
     /// What this run supports, as of its start.
     pub fn capabilities(&self) -> &crate::capabilities::Capabilities {
         &self.capabilities
+    }
+
+    /// How event delivery to this run's primary receiver has gone so far,
+    /// including how often and how long the run waited on a full channel.
+    pub fn event_delivery_stats(&self) -> super::delivery::EventDeliveryStats {
+        self.delivery_stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// Inject a user-role message into the running agent's conversation.

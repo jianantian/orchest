@@ -5,6 +5,7 @@ pub(crate) mod actor;
 pub mod cancel;
 pub(crate) mod compaction;
 pub(crate) mod config;
+pub mod delivery;
 pub(crate) mod handle;
 pub(crate) mod helpers;
 pub mod llm_watcher;
@@ -24,6 +25,7 @@ pub use config::{
     ModelConfig, RepeatedFailureConfig, RunId, RunInput, RunInputError, RunState, RunStatus,
     RuntimeConfig, SkillDisclosure, SkillsConfig, SubAgentRuntime, SupervisionStrategy,
 };
+pub use delivery::{DurableEventSink, EventDeliveryStats, DEFAULT_EVENT_CHANNEL_CAPACITY};
 pub use handle::{
     ChildCompletionError, ChildRunHandle, ChildRunOutcome, ChildRunRegistry, EventReceiver,
     RunHandle,
@@ -47,8 +49,6 @@ use crate::tool::registry::ToolRegistry;
 use crate::session::{SessionError, SessionLog};
 
 use actor::{AgentRunArgs, ResumeState, SessionBinding};
-
-pub(crate) const EVENT_CHANNEL_CAPACITY: usize = 256;
 
 impl AgentRun {
     /// Starts a fresh run with the given input as the first user turn.
@@ -190,7 +190,7 @@ impl AgentRun {
         watchers: Vec<(Arc<dyn Watcher>, usize)>,
     ) -> (RunHandle, EventReceiver) {
         let run_id = RunId::new();
-        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
+        let (event_tx, event_rx) = mpsc::channel(delivery::RELAY_CHANNEL_CAPACITY);
         let args = AgentRunArgs {
             run_id,
             config,
@@ -270,7 +270,7 @@ impl AgentRun {
         let binding = SessionBinding::from_config(&config).ok_or(SessionError::NotConfigured)?;
         let log = load_session_log(&binding).await?;
         let run_id = log.projection().run_id.unwrap_or_default();
-        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
+        let (event_tx, event_rx) = mpsc::channel(delivery::RELAY_CHANNEL_CAPACITY);
         let request_bus = RequestBus::default();
         let child_registry = ChildRunRegistry::default();
         let args = AgentRunArgs {
@@ -313,6 +313,8 @@ pub(crate) async fn load_session_log(binding: &SessionBinding) -> Result<Session
 mod cancel_tests;
 #[cfg(test)]
 mod checkpoint_tests;
+#[cfg(test)]
+mod delivery_tests;
 #[cfg(test)]
 mod events_tests;
 #[cfg(test)]

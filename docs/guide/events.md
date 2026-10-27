@@ -6,9 +6,9 @@ A run exposes two different records. Keep them apart:
 |---|---|---|
 | Purpose | Execution state: what the run did, enough to resume it | Observation: what a host shows, logs or reacts to |
 | Written by | The run, at checkpoints, into the `SessionStore` | The run, as things happen, to `EventReceiver` and subscribers |
-| Complete | Yes; the run cannot continue without it | Primary receiver: yes. Secondary subscribers may drop (`events_dropped`) |
+| Complete | Yes; the run cannot continue without it | Primary receiver and durable sink: yes (backpressure). Secondary subscribers may drop (`events_dropped`) |
 | Contains deltas | No | Yes (`message_updated`, `model_stream_chunk`) |
-| Replayable | `AgentRun::resume` rebuilds the run from it | No; missed events are not replayed |
+| Replayable | `AgentRun::resume` rebuilds the run from it | Only from a host `DurableEventSink` |
 
 A host that needs exact state reads the session log (or asks the handle:
 `RunHandle::pending_requests`, `RunHandle::cancellation`). A host that renders
@@ -17,6 +17,30 @@ progress reads the stream. Everything below is the stream.
 Every event in the binding wire shape also carries `type` (the snake_case name
 below), `run_depth` and `child_run_id`. `js/types.d.ts` and
 `python/orchest/__init__.pyi` list the fields of each.
+
+## Delivery
+
+The primary receiver (the `EventReceiver` from `AgentRun::start`) never loses
+an event and sees them in order. Its channel holds
+`RuntimeConfig::event_channel_capacity` events (default 1024,
+`AgentConfigBuilder::event_channel_capacity`); when it is full the run waits
+for the host to drain it. That wait is backpressure, not an error: a host that
+reads slowly slows the run down. `RunHandle::event_delivery_stats()` reports
+the capacity, how many deliveries waited, the longest and total wait and the
+highest occupancy, and the metrics `orchest_event_backpressure_waits_total`,
+`orchest_event_backpressure_wait_seconds` and `orchest_event_channel_occupancy`
+carry the same signal. A host that must never hold the run back subscribes a
+secondary receiver (`RunHandle::subscribe_events`) instead: it is lossy, and a
+loss arrives as `events_dropped` on that receiver (and as a mirror on the
+primary).
+
+A `DurableEventSink` (`AgentConfigBuilder::event_sink`) gets every primary
+event with its sequence number (from 1, no gaps) before the host does. The run
+flushes it after each `tool_dispatched` and terminal event and when the stream
+ends, so once the host has seen `run_completed`, `run_failed` or `run_aborted`
+the sink holds the whole stream. Sink errors are counted in
+`EventDeliveryStats::sink_errors` and do not stop delivery. The sink stores the
+observation stream; the session log stays the run's execution state.
 
 ## Run lifecycle
 

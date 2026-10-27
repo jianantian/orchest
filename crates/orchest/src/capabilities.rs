@@ -33,7 +33,8 @@ pub enum Capability {
     Effect { effect: ToolEffect },
     /// Isolation of at least this level.
     Isolation { level: Enforcement },
-    /// Every event reaches every subscriber (no lossy delivery).
+    /// The primary event stream and the durable sink never drop an event (a
+    /// slow receiver applies backpressure). Secondary subscribers stay lossy.
     LosslessEvents,
 }
 
@@ -88,7 +89,7 @@ impl Capabilities {
             delegation: true,
             effects: ToolEffect::ALL.to_vec(),
             enforcement: config.runtime.enforcement(),
-            lossless_events: false,
+            lossless_events: true,
         }
     }
 
@@ -127,7 +128,7 @@ impl Capabilities {
             Capability::Isolation { level } => (self.enforcement.isolation < *level)
                 .then_some("no execution backend provides this isolation"),
             Capability::LosslessEvents => {
-                (!self.lossless_events).then_some("secondary subscribers may drop events")
+                (!self.lossless_events).then_some("primary delivery may drop events")
             }
         }
     }
@@ -211,7 +212,7 @@ mod tests {
                 level: Enforcement::Hard
             }
         );
-        assert!(caps.require(Capability::LosslessEvents).is_err());
+        assert!(caps.require(Capability::LosslessEvents).is_ok());
         assert!(caps.require(Capability::Resume).is_err());
         assert!(caps.require(Capability::Delegation).is_ok());
     }

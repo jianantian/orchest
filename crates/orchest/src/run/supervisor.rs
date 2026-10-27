@@ -361,6 +361,11 @@ pub(crate) fn spawn_supervised(
     args.initial_event_subs = initial_event_subs;
     let args_cancel = args.cancel.clone();
     let capabilities = args.config.capabilities();
+    let (event_rx, delivery_stats) = super::delivery::spawn_relay(
+        event_rx,
+        args.config.runtime.event_channel_capacity,
+        args.config.runtime.event_sink.clone(),
+    );
     args.watcher_wave_bus = Some(Arc::clone(&arbitrator) as Arc<dyn FanoutWaveBus>);
 
     let sup_args = SupervisorArgs {
@@ -394,6 +399,7 @@ pub(crate) fn spawn_supervised(
         run_id,
         cancel,
         capabilities,
+        delivery_stats,
         actor_ref: actor_ref_shared,
         ready,
         actor_join,

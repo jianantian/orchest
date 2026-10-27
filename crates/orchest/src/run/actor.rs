@@ -46,7 +46,6 @@ use super::skills::register_skills;
 use super::tool_exec::{poll_async_job, tool_error_result, tool_skipped_by_hook_result};
 use super::webhook::{start_webhook_server, WebhookRuntime};
 
-const EVENT_SEND_TIMEOUT: Duration = Duration::from_millis(500);
 const TOOL_RETRY_MAX_ATTEMPTS: u32 = 3;
 const TOOL_RETRY_BASE_DELAY: Duration = Duration::from_millis(10);
 
@@ -1305,10 +1304,6 @@ async fn dispatch_model_call(
     let event_tx_clone = primary(subs).clone();
     let message_id = message_id.to_string();
     let forward_task = tokio::spawn(async move {
-        // Once the primary receiver stops draining, stop waiting on it for
-        // the rest of the stream: each delta is two events now, and waiting
-        // out the timeout for every one of them would stall the run.
-        let mut stalled = false;
         while let Some(chunk) = stream_rx.recv().await {
             let update =
                 MessageDelta::from_stream(&chunk).map(|delta| RuntimeEvent::MessageUpdated {
@@ -1318,17 +1313,8 @@ async fn dispatch_model_call(
             for event in
                 std::iter::once(RuntimeEvent::ModelStreamChunk { delta: chunk }).chain(update)
             {
-                if stalled {
-                    stalled = event_tx_clone.try_send(event).is_err();
-                } else if tokio::time::timeout(EVENT_SEND_TIMEOUT, event_tx_clone.send(event))
-                    .await
-                    .is_err()
-                {
-                    stalled = true;
-                    tracing::warn!(
-                        "primary event subscriber timed out while forwarding model stream chunk"
-                    );
-                }
+                // Lossless: a slow host makes the model stream wait.
+                let _ = event_tx_clone.send(event).await;
             }
         }
     });

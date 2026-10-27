@@ -565,57 +565,6 @@ async fn run_completed_marks_max_tokens_truncation() {
     );
 }
 
-struct ManyStreamChunksModel {
-    chunks: usize,
-}
-
-#[async_trait::async_trait]
-impl ModelAdapter for ManyStreamChunksModel {
-    fn provider_name(&self) -> &str {
-        "mock"
-    }
-
-    fn model_name(&self) -> &str {
-        "mock"
-    }
-
-    fn capabilities(&self) -> ModelCapabilities {
-        ModelCapabilities::default()
-    }
-
-    async fn complete(
-        &self,
-        _messages: &[Message],
-        _tools: &[ToolDef],
-        _options: &RequestOptions,
-        tx: Option<mpsc::Sender<StreamEvent>>,
-    ) -> Result<ModelResponse, ModelError> {
-        if let Some(tx) = tx {
-            for _ in 0..self.chunks {
-                let _ = tx.send(ModelStreamChunk::Text { delta: "x".into() }).await;
-            }
-        }
-        Ok(ModelResponse {
-            content: vec![ContentBlock::Text("done".into())],
-            usage: TokenUsage::default(),
-            stop_reason: StopReason::EndTurn,
-            option_adjustments: vec![],
-        })
-    }
-}
-
-#[tokio::test]
-async fn primary_event_backpressure_does_not_hang_run_loop() {
-    let model = Arc::new(ManyStreamChunksModel { chunks: 255 });
-    let registry = ToolRegistry::new();
-
-    let (handle, _rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
-
-    tokio::time::timeout(Duration::from_secs(4), handle.wait())
-        .await
-        .expect("run should finish even when primary event receiver is not drained");
-}
-
 struct ToolCallModelAdapter;
 
 #[async_trait::async_trait]
