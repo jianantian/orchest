@@ -573,7 +573,7 @@ impl Asr for AliyunAsr {
         let (events_tx, events) = EventStream::channel(64);
         let (ready_tx, ready_rx) = oneshot::channel();
         tokio::spawn(run_aliyun_stream(
-            WsDuplex::new(ws_stream),
+            crate::fixture::live(WsDuplex::new(ws_stream)),
             run_task,
             finish_task,
             input_rx,

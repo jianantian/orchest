@@ -449,7 +449,7 @@ impl Asr for SonioxAsr {
         let (input_tx, input_rx) = mpsc::channel(32);
         let (events_tx, events) = EventStream::channel(64);
         tokio::spawn(run_soniox_stream(
-            WsDuplex::new(ws_stream),
+            crate::fixture::live(WsDuplex::new(ws_stream)),
             config_frame,
             input_rx,
             events_tx,

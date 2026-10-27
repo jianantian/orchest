@@ -605,7 +605,11 @@ impl Asr for VolcengineAsr {
             }))
             .await;
 
-        tokio::spawn(run_asr_stream(duplex, input_rx, events_tx));
+        tokio::spawn(run_asr_stream(
+            crate::fixture::live(duplex),
+            input_rx,
+            events_tx,
+        ));
 
         Ok(RealtimeHandle {
             input: input_tx,

@@ -1,0 +1,17 @@
+{"meta":{"dialect":"elevenlabs","model":"scribe_v2_realtime","source":"hand-written","audio":"hello world / how are you, finalize before the end"}}
+{"recv":{"message_type":"session_started","session_id":"redacted","config":{"sample_rate":16000}}}
+{"input":{"kind":"audio","bytes":3200}}
+{"send":"text"}
+{"recv":{"message_type":"partial_transcript","text":"hello"}}
+{"input":{"kind":"audio","bytes":3200}}
+{"send":"text"}
+{"recv":{"message_type":"committed_transcript","text":"hello world"}}
+{"input":{"kind":"audio","bytes":3200}}
+{"send":"text"}
+{"recv":{"message_type":"partial_transcript","text":"how are"}}
+{"input":{"kind":"finalize"}}
+{"send":"text"}
+{"recv":{"message_type":"committed_transcript","text":"how are you"}}
+{"input":{"kind":"end"}}
+{"send":"text"}
+{"recv":{"message_type":"committed_transcript","text":""}}

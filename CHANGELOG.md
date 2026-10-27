@@ -44,6 +44,13 @@ except for the items `orchest-provider` re-exports.
   lowers to `reasoning_effort` (`low` / `medium` / `high`) and
   `reasoning_content` streams back as thinking; the key is read from
   `FIREWORKS_API_KEY` ([#347](https://github.com/jianantian/orchest/issues/347)).
+- Streaming ASR contract tests: every dialect's session loop replays a
+  WebSocket fixture (`orchest-provider-stream` `fixture` module, JSON Lines)
+  offline, and one assertion set checks Draft / Stable / Turn / Finalize
+  behaviour (ADR-0006). The `record-fixtures` feature and
+  `scripts/record-asr-fixture.sh` record a live session in the same format,
+  keeping frame kinds but no audio, keys or uplink payloads
+  ([#344](https://github.com/jianantian/orchest/issues/344)).
 
 ### Changed
 

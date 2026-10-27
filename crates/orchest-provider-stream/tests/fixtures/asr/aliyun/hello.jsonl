@@ -1,0 +1,17 @@
+{"meta":{"dialect":"aliyun","model":"paraformer-realtime-v2","source":"hand-written","audio":"hello world / how are you, finalize before the end"}}
+{"send":"text"}
+{"recv":{"header":{"event":"task-started","task_id":"redacted","attributes":{}},"payload":{}}}
+{"input":{"kind":"audio","bytes":3200}}
+{"send":"binary"}
+{"recv":{"header":{"event":"result-generated","task_id":"redacted","attributes":{}},"payload":{"output":{"sentence":{"begin_time":0,"end_time":null,"text":"hello","sentence_end":false}},"usage":null}}}
+{"input":{"kind":"audio","bytes":3200}}
+{"send":"binary"}
+{"recv":{"header":{"event":"result-generated","task_id":"redacted","attributes":{}},"payload":{"output":{"sentence":{"begin_time":0,"end_time":1100,"text":"hello world","sentence_end":true}},"usage":{"duration":2}}}}
+{"input":{"kind":"audio","bytes":3200}}
+{"send":"binary"}
+{"recv":{"header":{"event":"result-generated","task_id":"redacted","attributes":{}},"payload":{"output":{"sentence":{"begin_time":1500,"end_time":null,"text":"how are","sentence_end":false}},"usage":null}}}
+{"input":{"kind":"finalize"}}
+{"input":{"kind":"end"}}
+{"send":"text"}
+{"recv":{"header":{"event":"result-generated","task_id":"redacted","attributes":{}},"payload":{"output":{"sentence":{"begin_time":1500,"end_time":2400,"text":"how are you","sentence_end":true}},"usage":{"duration":3}}}}
+{"recv":{"header":{"event":"task-finished","task_id":"redacted","attributes":{}},"payload":{"output":{},"usage":null}}}

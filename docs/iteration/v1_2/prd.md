@@ -70,7 +70,7 @@
 6. [Fireworks](issues/006-fireworks/spec.md)
 7. [发布 1.2.0](issues/007-release-1-2-0/spec.md)
 
-主要风险在 003：录 fixture 需要五个方言的真实 key，缺 key 的方言会卡住验收。
+主要风险在 003：录 fixture 需要五个方言的真实 key，缺 key 的方言会卡住验收。当前五个方言都是手写 fixture（`meta.source = "hand-written"`），拿到 key 后用 `scripts/record-asr-fixture.sh` 逐个替换为录制版。
 
 ## Acceptance Criteria
 

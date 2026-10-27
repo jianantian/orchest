@@ -424,7 +424,7 @@ impl Asr for DeepgramAsr {
         let (input_tx, input_rx) = mpsc::channel(32);
         let (events_tx, events) = EventStream::channel(64);
         tokio::spawn(run_deepgram_stream(
-            WsDuplex::new(ws_stream),
+            crate::fixture::live(WsDuplex::new(ws_stream)),
             input_rx,
             events_tx,
         ));

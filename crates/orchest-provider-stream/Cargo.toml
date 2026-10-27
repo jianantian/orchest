@@ -17,6 +17,9 @@ repository.workspace = true
 
 [features]
 default = []
+# Record live streaming-ASR sessions as contract-test fixtures
+# (`examples/record_asr_fixture.rs`). Off in every published build.
+record-fixtures = []
 
 [dependencies]
 orchest-protocol = { workspace = true }
@@ -33,7 +36,11 @@ tokio = { version = "1", features = ["sync", "macros", "rt"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 
 [lints]
 workspace = true
+
+[[example]]
+name = "record_asr_fixture"
+required-features = ["record-fixtures"]
