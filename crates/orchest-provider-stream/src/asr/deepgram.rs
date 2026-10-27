@@ -25,12 +25,27 @@ use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 
 const DEFAULT_WS_URL: &str = "wss://api.deepgram.com/v1/listen";
 
+/// Whether this dialect honours `SessionInput::Finalize`: it sends Deepgram's
+/// native `Finalize` control frame, which flushes buffered audio without
+/// closing the stream (<https://developers.deepgram.com/docs/finalize>).
+pub const CLIENT_FINALIZE: bool = true;
+
+/// The `Finalize` control text frame.
+pub const FINALIZE_FRAME: &str = r#"{"type":"Finalize"}"#;
+
+/// The `CloseStream` control text frame.
+pub const CLOSE_STREAM_FRAME: &str = r#"{"type":"CloseStream"}"#;
+
 /// A decoded Deepgram inbound message.
 #[derive(Debug, PartialEq)]
 pub enum DeepgramMessage {
     Result(DeepgramResult),
+    /// `UtteranceEnd`: a gap after the last finalized word — a Turn signal
+    /// (<https://developers.deepgram.com/docs/utterance-end>).
+    UtteranceEnd,
     Error(String),
-    /// Metadata / UtteranceEnd / SpeechStarted / KeepAlive / unknown — no content.
+    /// Metadata / SpeechStarted / KeepAlive / unknown, or an `UtteranceEnd`
+    /// with `last_word_end == -1` (already finalized) — no content.
     Ignored,
 }
 
@@ -42,6 +57,8 @@ pub struct DeepgramResult {
     pub is_final: bool,
     /// Deepgram `speech_final`: an endpoint (end of utterance) was detected.
     pub speech_final: bool,
+    /// Deepgram `from_finalize`: this result answers a client `Finalize`.
+    pub from_finalize: bool,
     pub confidence: Option<f64>,
     /// Deepgram `start`: seconds offset of this speech segment in the stream.
     /// Interim updates of one utterance share the same `start`, so it doubles
@@ -49,8 +66,9 @@ pub struct DeepgramResult {
     pub start: f64,
 }
 
-/// Parse one Deepgram text message. `Results` → [`DeepgramResult`]; `Error` →
-/// its description; everything else is [`DeepgramMessage::Ignored`].
+/// Parse one Deepgram text message. `Results` → [`DeepgramResult`];
+/// `UtteranceEnd` → [`DeepgramMessage::UtteranceEnd`]; `Error` → its
+/// description; everything else is [`DeepgramMessage::Ignored`].
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn parse_message(text: &str) -> Result<DeepgramMessage, ProtocolError> {
     let value: serde_json::Value = serde_json::from_str(text).map_err(|e| {
@@ -61,6 +79,17 @@ pub fn parse_message(text: &str) -> Result<DeepgramMessage, ProtocolError> {
     })?;
     match value.get("type").and_then(|v| v.as_str()).unwrap_or("") {
         "Results" => Ok(DeepgramMessage::Result(parse_results(value)?)),
+        "UtteranceEnd" => {
+            let already_final = value
+                .get("last_word_end")
+                .and_then(serde_json::Value::as_f64)
+                .is_some_and(|end| end < 0.0);
+            Ok(if already_final {
+                DeepgramMessage::Ignored
+            } else {
+                DeepgramMessage::UtteranceEnd
+            })
+        }
         "Error" => Ok(DeepgramMessage::Error(
             value
                 .get("description")
@@ -89,41 +118,79 @@ fn parse_results(value: serde_json::Value) -> Result<DeepgramResult, ProtocolErr
             .unwrap_or_default(),
         is_final: message.is_final,
         speech_final: message.speech_final,
+        from_finalize: message.from_finalize,
         confidence: alternative.and_then(|a| a.confidence),
         start: message.start,
     })
 }
 
-/// Project a Deepgram result onto unified events: a non-empty transcript becomes
-/// a `Transcript` (`Committed` once `is_final`, else `Provisional`); a detected
-/// endpoint (`speech_final`) additionally emits `EndOfSpeech`. The segment
-/// identity comes from the native `start` offset (`seg{start_ms}`, `Snapshot`):
-/// interim updates and the final of one utterance share it.
-pub fn map_result(result: &DeepgramResult) -> Vec<StreamEvent> {
-    let segment = || {
-        Some(SegmentRef {
+/// Stateful projector of Deepgram messages onto unified events.
+///
+/// A non-empty transcript becomes a `Transcript` (`Committed` once `is_final`,
+/// else `Provisional`) on the segment named by its native `start` offset
+/// (`seg{start_ms}`, `Snapshot`). The Turn (`EndOfSpeech`) comes from
+/// `speech_final`, `UtteranceEnd` or a `from_finalize` result, and points at the
+/// latest Stable not yet ended by a Turn; the three signals are de-duplicated on
+/// that segment, so one Stable gets one Turn. A `from_finalize` result with
+/// nothing pending still answers the client's `Finalize` with a Turn whose
+/// segment is `None`.
+#[derive(Debug, Default)]
+pub struct DeepgramMapper {
+    /// The latest Stable segment that has not been ended by a Turn yet.
+    pending: Option<SegmentRef>,
+}
+
+impl DeepgramMapper {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn map(&mut self, message: DeepgramMessage) -> Vec<StreamEvent> {
+        match message {
+            DeepgramMessage::Result(result) => self.map_result(&result),
+            DeepgramMessage::UtteranceEnd => self.turn(false).into_iter().collect(),
+            DeepgramMessage::Error(message) => vec![StreamEvent::Error {
+                error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
+                fatal: true,
+            }],
+            DeepgramMessage::Ignored => Vec::new(),
+        }
+    }
+
+    fn map_result(&mut self, result: &DeepgramResult) -> Vec<StreamEvent> {
+        let segment = SegmentRef {
             segment_id: Some(format!("seg{}", (result.start * 1000.0) as u64)),
             update_kind: TranscriptUpdateKind::Snapshot,
-        })
-    };
-    let mut events = Vec::new();
-    if !result.transcript.is_empty() {
-        events.push(StreamEvent::Transcript {
-            text: result.transcript.clone(),
-            stability: if result.is_final {
-                TranscriptStability::Committed
-            } else {
-                TranscriptStability::Provisional
-            },
-            segment: segment(),
-        });
+        };
+        let mut events = Vec::new();
+        if !result.transcript.is_empty() {
+            events.push(StreamEvent::Transcript {
+                text: result.transcript.clone(),
+                stability: if result.is_final {
+                    TranscriptStability::Committed
+                } else {
+                    TranscriptStability::Provisional
+                },
+                segment: Some(segment.clone()),
+            });
+            if result.is_final {
+                self.pending = Some(segment);
+            }
+        }
+        if result.speech_final || result.from_finalize {
+            events.extend(self.turn(result.from_finalize));
+        }
+        events
     }
-    if result.speech_final {
-        events.push(StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
-            segment: segment(),
-        }));
+
+    /// The Turn ending the pending Stable, if any; `always` answers a
+    /// `Finalize` even when nothing is pending.
+    fn turn(&mut self, always: bool) -> Option<StreamEvent> {
+        let segment = self.pending.take();
+        (segment.is_some() || always).then_some(StreamEvent::Lifecycle(
+            LifecycleEvent::EndOfSpeech { segment },
+        ))
     }
-    events
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,6 +199,8 @@ struct ResultsMessage {
     is_final: bool,
     #[serde(default)]
     speech_final: bool,
+    #[serde(default)]
+    from_finalize: bool,
     /// Seconds offset of the segment start in the audio stream.
     #[serde(default)]
     start: f64,
@@ -157,14 +226,17 @@ struct Alternative {
 // ---------------------------------------------------------------------------
 
 /// Drive one deepgram streaming session over `transport`: client audio is sent as
-/// **binary** frames; on input end a `CloseStream` **text** control frame is sent;
-/// inbound **text** `Results` are projected via [`map_result`]. Ends on a fatal
-/// error or transport EOF (deepgram closes after `CloseStream`).
+/// **binary** frames; `Finalize` sends the `Finalize` **text** control frame and
+/// keeps the stream open; on input end a `CloseStream` control frame is sent.
+/// Inbound **text** messages project via [`DeepgramMapper`]. Ends on a fatal
+/// error, or on transport EOF (deepgram closes after `CloseStream`), which emits
+/// `SessionClosed`.
 pub async fn run_deepgram_stream<T: ByteDuplex>(
     mut transport: T,
     mut input: mpsc::Receiver<SessionInput>,
     events: mpsc::Sender<StreamEvent>,
 ) {
+    let mut mapper = DeepgramMapper::new();
     let mut input_open = true;
     loop {
         tokio::select! {
@@ -174,38 +246,32 @@ pub async fn run_deepgram_stream<T: ByteDuplex>(
                         break;
                     }
                 }
+                Some(SessionInput::Finalize) => {
+                    if transport.send(WsFrame::Text(FINALIZE_FRAME.to_string())).await.is_err() {
+                        break;
+                    }
+                }
                 None | Some(SessionInput::Interrupt) => {
                     input_open = false;
                     let _ = transport
-                        .send(WsFrame::Text(r#"{"type":"CloseStream"}"#.to_string()))
+                        .send(WsFrame::Text(CLOSE_STREAM_FRAME.to_string()))
                         .await;
-                }
-                Some(SessionInput::Finalize) => {
-                    if events.send(super::finalize_unsupported("deepgram")).await.is_err() {
-                        return;
-                    }
                 }
                 Some(_) => {}
             },
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_text) {
                 Some(text) => match parse_message(text) {
-                    Ok(DeepgramMessage::Result(result)) => {
-                        for event in map_result(&result) {
+                    Ok(message) => {
+                        let is_error = matches!(message, DeepgramMessage::Error(_));
+                        for event in mapper.map(message) {
                             if events.send(event).await.is_err() {
                                 return;
                             }
                         }
+                        if is_error {
+                            break;
+                        }
                     }
-                    Ok(DeepgramMessage::Error(message)) => {
-                        let _ = events
-                            .send(StreamEvent::Error {
-                                error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
-                                fatal: true,
-                            })
-                            .await;
-                        break;
-                    }
-                    Ok(DeepgramMessage::Ignored) => {}
                     Err(error) => {
                         let _ = events.send(StreamEvent::Error { error, fatal: true }).await;
                         break;
@@ -213,7 +279,12 @@ pub async fn run_deepgram_stream<T: ByteDuplex>(
                 },
                 None => match maybe_frame {
                     Some(_) => continue, // binary frame (unexpected) — ignore
-                    None => break,
+                    None => {
+                        let _ = events
+                            .send(StreamEvent::Lifecycle(LifecycleEvent::SessionClosed))
+                            .await;
+                        break;
+                    }
                 },
             },
         }
@@ -253,6 +324,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
         .duplex(true)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
+        .with_ext(super::asr_ext(CLIENT_FINALIZE))
 }
 
 /// Build a [`DeepgramAsr`] from a registry [`ProviderConfig`]: `api_url` is the
@@ -295,6 +367,7 @@ impl Asr for DeepgramAsr {
             .duplex(true)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
+            .with_ext(super::asr_ext(CLIENT_FINALIZE))
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -322,7 +395,7 @@ impl Asr for DeepgramAsr {
             ));
         }
         let url = format!(
-            "{}?model={}&encoding=linear16&sample_rate=16000&interim_results=true&smart_format=true",
+            "{}?model={}&encoding=linear16&sample_rate=16000&interim_results=true&utterance_end_ms=1000&smart_format=true",
             self.config.ws_url, self.config.model
         );
         let ws_request = tungstenite::http::Request::builder()
@@ -378,6 +451,36 @@ mod tests {
         .to_string()
     }
 
+    fn result(transcript: &str, is_final: bool, speech_final: bool, start: f64) -> DeepgramMessage {
+        parse_message(&results(transcript, is_final, speech_final, start)).unwrap()
+    }
+
+    fn finalize_result(transcript: &str, start: f64) -> DeepgramMessage {
+        parse_message(
+            &json!({
+                "type": "Results",
+                "is_final": true,
+                "speech_final": false,
+                "from_finalize": true,
+                "start": start,
+                "channel": {"alternatives": [{"transcript": transcript}]}
+            })
+            .to_string(),
+        )
+        .unwrap()
+    }
+
+    fn turn_segment(event: &StreamEvent) -> Option<Option<&str>> {
+        match event {
+            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment }) => Some(
+                segment
+                    .as_ref()
+                    .and_then(|segment| segment.segment_id.as_deref()),
+            ),
+            _ => None,
+        }
+    }
+
     struct ChannelDuplex {
         out: mpsc::Sender<WsFrame>,
         inbound: mpsc::Receiver<WsFrame>,
@@ -427,35 +530,88 @@ mod tests {
                 ..
             }
         ));
-        assert!(matches!(
-            events_rx.recv().await.unwrap(),
-            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
-        ));
+        assert_eq!(
+            turn_segment(&events_rx.recv().await.unwrap()),
+            Some(Some("seg1250"))
+        );
 
         // closing input flushes a CloseStream control text frame
         drop(input_tx);
         assert_eq!(
             out_rx.recv().await.unwrap(),
-            WsFrame::Text(r#"{"type":"CloseStream"}"#.to_string())
+            WsFrame::Text(CLOSE_STREAM_FRAME.to_string())
         );
-        drop(in_tx); // server closes -> loop ends
+        drop(in_tx); // server closes -> SessionClosed, loop ends
+        assert!(matches!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Lifecycle(LifecycleEvent::SessionClosed)
+        ));
         handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn finalize_sends_native_frame_and_keeps_the_stream_open() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let _handle = tokio::spawn(run_deepgram_stream(transport, input_rx, events_tx));
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        assert_eq!(
+            out_rx.recv().await.unwrap(),
+            WsFrame::Text(FINALIZE_FRAME.to_string())
+        );
+        in_tx
+            .send(WsFrame::Text(
+                json!({
+                    "type": "Results",
+                    "is_final": true,
+                    "from_finalize": true,
+                    "start": 0.5,
+                    "channel": {"alternatives": [{"transcript": "hi"}]}
+                })
+                .to_string(),
+            ))
+            .await
+            .unwrap();
+        assert!(matches!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Transcript {
+                stability: TranscriptStability::Committed,
+                ..
+            }
+        ));
+        assert_eq!(
+            turn_segment(&events_rx.recv().await.unwrap()),
+            Some(Some("seg500"))
+        );
+        // still open: more audio is accepted
+        input_tx
+            .send(SessionInput::Audio(bytes::Bytes::from_static(b"pcm")))
+            .await
+            .unwrap();
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Binary(_)));
     }
 
     #[test]
     fn parses_interim_and_final_results() {
-        let interim = parse_message(&results("hello", false, false, 0.5)).unwrap();
         assert_eq!(
-            interim,
+            result("hello", false, false, 0.5),
             DeepgramMessage::Result(DeepgramResult {
                 transcript: "hello".into(),
                 is_final: false,
                 speech_final: false,
+                from_finalize: false,
                 confidence: Some(0.9),
                 start: 0.5,
             })
         );
-        match parse_message(&results("hello world", true, true, 0.5)).unwrap() {
+        match result("hello world", true, true, 0.5) {
             DeepgramMessage::Result(r) => {
                 assert!(r.is_final && r.speech_final);
             }
@@ -471,17 +627,12 @@ mod tests {
             "channel": {"alternatives": [{"transcript": "hi"}]}
         })
         .to_string();
-        match parse_message(&raw).unwrap() {
+        let message = parse_message(&raw).unwrap();
+        match &message {
             DeepgramMessage::Result(r) => assert_eq!(r.start, 0.0),
             other => panic!("expected Result, got {other:?}"),
         }
-        let events = map_result(&DeepgramResult {
-            transcript: "hi".into(),
-            is_final: false,
-            speech_final: false,
-            confidence: None,
-            start: 0.0,
-        });
+        let events = DeepgramMapper::new().map(message);
         assert!(matches!(
             &events[0],
             StreamEvent::Transcript {
@@ -502,21 +653,29 @@ mod tests {
 
     #[test]
     fn lifecycle_messages_are_ignored() {
-        for ty in ["Metadata", "UtteranceEnd", "SpeechStarted", "KeepAlive"] {
+        for ty in ["Metadata", "SpeechStarted", "KeepAlive"] {
             let raw = json!({"type": ty}).to_string();
             assert_eq!(parse_message(&raw).unwrap(), DeepgramMessage::Ignored);
         }
     }
 
     #[test]
-    fn map_result_emits_transcript_with_stability() {
-        let events = map_result(&DeepgramResult {
-            transcript: "hi".into(),
-            is_final: false,
-            speech_final: false,
-            confidence: None,
-            start: 1.25,
-        });
+    fn utterance_end_parses_unless_already_final() {
+        let raw = json!({"type": "UtteranceEnd", "channel": [0, 1], "last_word_end": 2.395});
+        assert_eq!(
+            parse_message(&raw.to_string()).unwrap(),
+            DeepgramMessage::UtteranceEnd
+        );
+        let stale = json!({"type": "UtteranceEnd", "channel": [0, 1], "last_word_end": -1});
+        assert_eq!(
+            parse_message(&stale.to_string()).unwrap(),
+            DeepgramMessage::Ignored
+        );
+    }
+
+    #[test]
+    fn interim_is_a_provisional_snapshot() {
+        let events = DeepgramMapper::new().map(result("hi", false, false, 1.25));
         assert_eq!(events.len(), 1);
         assert!(matches!(
             &events[0],
@@ -532,21 +691,10 @@ mod tests {
     }
 
     #[test]
-    fn map_result_shares_segment_id_across_interim_final_and_endpoint() {
-        let interim = map_result(&DeepgramResult {
-            transcript: "do".into(),
-            is_final: false,
-            speech_final: false,
-            confidence: None,
-            start: 2.5,
-        });
-        let r#final = map_result(&DeepgramResult {
-            transcript: "done".into(),
-            is_final: true,
-            speech_final: true,
-            confidence: Some(0.8),
-            start: 2.5,
-        });
+    fn interim_final_and_turn_share_the_segment() {
+        let mut mapper = DeepgramMapper::new();
+        let interim = mapper.map(result("do", false, false, 2.5));
+        let r#final = mapper.map(result("done", true, true, 2.5));
         assert!(matches!(
             &interim[0],
             StreamEvent::Transcript {
@@ -563,46 +711,59 @@ mod tests {
                 ..
             } if segment_id.as_deref() == Some("seg2500")
         ));
-        assert!(matches!(
-            &r#final[1],
-            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
-                segment: Some(SegmentRef { segment_id, .. }),
-            }) if segment_id.as_deref() == Some("seg2500")
-        ));
+        assert_eq!(turn_segment(&r#final[1]), Some(Some("seg2500")));
+    }
+
+    #[test]
+    fn utterance_end_is_a_turn_for_the_latest_stable() {
+        let mut mapper = DeepgramMapper::new();
+        assert_eq!(mapper.map(result("one", true, false, 0.0)).len(), 1);
+        assert_eq!(mapper.map(result("two", true, false, 1.0)).len(), 1);
+        let turn = mapper.map(DeepgramMessage::UtteranceEnd);
+        assert_eq!(turn.len(), 1);
+        assert_eq!(turn_segment(&turn[0]), Some(Some("seg1000")));
+    }
+
+    #[test]
+    fn speech_final_and_utterance_end_give_one_turn() {
+        let mut mapper = DeepgramMapper::new();
+        let r#final = mapper.map(result("done", true, true, 3.0));
+        assert_eq!(r#final.len(), 2);
+        assert!(mapper.map(DeepgramMessage::UtteranceEnd).is_empty());
+    }
+
+    #[test]
+    fn utterance_end_without_a_pending_stable_is_ignored() {
+        let mut mapper = DeepgramMapper::new();
+        assert!(mapper.map(DeepgramMessage::UtteranceEnd).is_empty());
+        mapper.map(result("draft", false, false, 0.0));
+        assert!(mapper.map(DeepgramMessage::UtteranceEnd).is_empty());
+    }
+
+    #[test]
+    fn from_finalize_always_answers_with_a_turn() {
+        let mut mapper = DeepgramMapper::new();
+        let with_text = mapper.map(finalize_result("hi", 0.5));
+        assert_eq!(turn_segment(&with_text[1]), Some(Some("seg500")));
+        let empty = mapper.map(finalize_result("", 1.0));
+        assert_eq!(empty.len(), 1);
+        assert_eq!(turn_segment(&empty[0]), Some(None));
     }
 
     #[test]
     fn empty_transcript_emits_nothing() {
-        assert!(map_result(&DeepgramResult {
-            transcript: String::new(),
-            is_final: true,
-            speech_final: false,
-            confidence: None,
-            start: 0.0,
-        })
-        .is_empty());
+        assert!(DeepgramMapper::new()
+            .map(result("", true, false, 0.0))
+            .is_empty());
     }
 
-    #[tokio::test]
-    async fn finalize_without_native_support_is_unsupported_option() {
-        let (out_tx, mut out_rx) = mpsc::channel(8);
-        let (_in_tx, in_rx) = mpsc::channel(8);
-        let transport = ChannelDuplex {
-            out: out_tx,
-            inbound: in_rx,
-        };
-        let (input_tx, input_rx) = mpsc::channel(8);
-        let (events_tx, mut events_rx) = mpsc::channel(8);
-        let _handle = tokio::spawn(run_deepgram_stream(transport, input_rx, events_tx));
-
-        input_tx.send(SessionInput::Finalize).await.unwrap();
-        match events_rx.recv().await.unwrap() {
-            StreamEvent::Error { error, fatal } => {
-                assert_eq!(error.code, ErrorCode::UnsupportedOption);
-                assert!(!fatal);
+    #[test]
+    fn descriptor_declares_client_finalize() {
+        match entry_descriptor().ext {
+            orchest_protocol::CapabilityExt::Asr(value) => {
+                assert_eq!(value[crate::asr::CLIENT_FINALIZE_KEY], json!(true));
             }
-            other => panic!("expected UnsupportedOption, got {other:?}"),
+            other => panic!("expected Asr ext, got {other:?}"),
         }
-        assert!(out_rx.try_recv().is_err());
     }
 }

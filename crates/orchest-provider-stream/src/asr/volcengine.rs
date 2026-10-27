@@ -213,6 +213,13 @@ fn parse_server_response(
 // Frame → unified event mapping (the semantic core of the `Asr` reader loop)
 // ---------------------------------------------------------------------------
 
+/// Whether this dialect honours `SessionInput::Finalize`. The openspeech
+/// `sauc/bigmodel` protocol only ends recognition with the last (negative
+/// sequence) audio packet, which also ends the session; sentence cuts come from
+/// the server VAD (`end_window_size`). See `docs/external/volceengine/asr.md`
+/// and <https://www.volcengine.com/docs/6561/1354869>.
+pub const CLIENT_FINALIZE: bool = false;
+
 /// Fixed segment id for the rolling-text fallback branch: a response with no
 /// utterance list carries no native segment identity, so all of it maps to one
 /// synthetic segment.
@@ -228,15 +235,19 @@ const ROLLING_SEGMENT_ID: &str = "rolling";
 /// utterance maps to one segment (`utt{start_time}`, `Snapshot`), and its
 /// `Provisional` updates and final `Committed` share that segment id. A
 /// response with no utterances but a non-empty rolling `text` maps to the fixed
-/// `ROLLING_SEGMENT_ID` segment (committed iff the frame is last). The final
-/// frame additionally emits `EndOfSpeech`; an error frame becomes a single
-/// fatal `Error`. Both are unaffected by the diff.
+/// `ROLLING_SEGMENT_ID` segment (committed iff the frame is last). A
+/// `definite` utterance is a whole-sentence Stable, so the mapper synthesizes
+/// its Turn (`EndOfSpeech` on the same segment) once, right after it
+/// (ADR-0006 D6). The final frame additionally emits `SessionClosed`; an error
+/// frame becomes a single fatal `Error`. Both are unaffected by the diff.
 #[derive(Debug, Default)]
 pub struct VolcengineMapper {
     /// `start_time` → last emitted `(text, definite)`.
     emitted: std::collections::HashMap<i32, (String, bool)>,
     /// Last emitted rolling `(text, committed)`.
     rolling: Option<(String, bool)>,
+    /// `start_time`s whose Turn has been emitted.
+    turned: std::collections::HashSet<i32>,
 }
 
 impl VolcengineMapper {
@@ -264,6 +275,10 @@ impl VolcengineMapper {
                                 }
                                 self.emitted
                                     .insert(utt.start_time, (utt.text.clone(), utt.definite));
+                                let segment = Some(SegmentRef {
+                                    segment_id: Some(format!("utt{}", utt.start_time)),
+                                    update_kind: TranscriptUpdateKind::Snapshot,
+                                });
                                 events.push(StreamEvent::Transcript {
                                     text: utt.text,
                                     stability: if utt.definite {
@@ -271,17 +286,23 @@ impl VolcengineMapper {
                                     } else {
                                         TranscriptStability::Provisional
                                     },
-                                    segment: Some(SegmentRef {
-                                        segment_id: Some(format!("utt{}", utt.start_time)),
-                                        update_kind: TranscriptUpdateKind::Snapshot,
-                                    }),
+                                    segment: segment.clone(),
                                 });
+                                if utt.definite && self.turned.insert(utt.start_time) {
+                                    events.push(StreamEvent::Lifecycle(
+                                        LifecycleEvent::EndOfSpeech { segment },
+                                    ));
+                                }
                             }
                         }
                         _ if !result.text.is_empty()
                             && self.rolling.as_ref() != Some(&(result.text.clone(), is_last)) =>
                         {
                             self.rolling = Some((result.text.clone(), is_last));
+                            let segment = Some(SegmentRef {
+                                segment_id: Some(ROLLING_SEGMENT_ID.to_string()),
+                                update_kind: TranscriptUpdateKind::Snapshot,
+                            });
                             events.push(StreamEvent::Transcript {
                                 text: result.text,
                                 stability: if is_last {
@@ -289,19 +310,19 @@ impl VolcengineMapper {
                                 } else {
                                     TranscriptStability::Provisional
                                 },
-                                segment: Some(SegmentRef {
-                                    segment_id: Some(ROLLING_SEGMENT_ID.to_string()),
-                                    update_kind: TranscriptUpdateKind::Snapshot,
-                                }),
+                                segment: segment.clone(),
                             });
+                            if is_last {
+                                events.push(StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                                    segment,
+                                }));
+                            }
                         }
                         _ => {}
                     }
                 }
                 if is_last {
-                    events.push(StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
-                        segment: None,
-                    }));
+                    events.push(StreamEvent::Lifecycle(LifecycleEvent::SessionClosed));
                 }
                 events
             }
@@ -448,6 +469,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
         .duplex(true)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
+        .with_ext(super::asr_ext(CLIENT_FINALIZE))
 }
 
 /// Build a [`VolcengineAsr`] from a registry [`ProviderConfig`]: `api_url` is the
@@ -505,6 +527,7 @@ impl Asr for VolcengineAsr {
             .duplex(true)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
+            .with_ext(super::asr_ext(CLIENT_FINALIZE))
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -753,7 +776,7 @@ mod tests {
                 utterance("world", true, 500),
             ]),
         ));
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 3);
         assert!(matches!(
             &events[0],
             StreamEvent::Transcript {
@@ -773,6 +796,13 @@ mod tests {
                 ..
             } if segment_id.as_deref() == Some("utt500")
         ));
+        // the definite utterance is followed by its synthesized Turn
+        assert!(matches!(
+            &events[2],
+            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                segment: Some(SegmentRef { segment_id, .. }),
+            }) if segment_id.as_deref() == Some("utt500")
+        ));
     }
 
     #[test]
@@ -785,7 +815,7 @@ mod tests {
                 utterances_payload(vec![utterance("hello", true, 100)]),
             )
         };
-        assert_eq!(mapper.map(frame()).len(), 1);
+        assert_eq!(mapper.map(frame()).len(), 2); // Stable + its Turn
         assert!(mapper.map(frame()).is_empty());
     }
 
@@ -804,8 +834,8 @@ mod tests {
             false,
             utterances_payload(vec![utterance("hello", true, 450)]),
         ));
+        assert_eq!(third.len(), 2); // Stable + its Turn
         for events in [&first, &second, &third] {
-            assert_eq!(events.len(), 1);
             assert!(matches!(
                 &events[0],
                 StreamEvent::Transcript {
@@ -856,7 +886,7 @@ mod tests {
         assert!(mapper.map(server(false, rolling_payload("fin"))).is_empty());
         // Same text on the last frame still commits (the stability transition).
         let last = mapper.map(server(true, rolling_payload("fin")));
-        assert_eq!(last.len(), 2);
+        assert_eq!(last.len(), 3);
         assert!(matches!(
             &last[0],
             StreamEvent::Transcript {
@@ -866,7 +896,13 @@ mod tests {
         ));
         assert!(matches!(
             &last[1],
-            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment: None })
+            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                segment: Some(SegmentRef { segment_id, .. })
+            }) if segment_id.as_deref() == Some(ROLLING_SEGMENT_ID)
+        ));
+        assert!(matches!(
+            &last[2],
+            StreamEvent::Lifecycle(LifecycleEvent::SessionClosed)
         ));
     }
 

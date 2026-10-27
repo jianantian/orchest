@@ -10,8 +10,8 @@
 use async_trait::async_trait;
 use base64::Engine;
 use orchest_protocol::{
-    Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, Modality,
-    ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
+    Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
+    Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
     StreamingTranscribeRequest, TranscribeRequest, TranscribeResult, TranscriptStability,
     TranscriptUpdateKind,
 };
@@ -23,6 +23,12 @@ use tokio::sync::mpsc;
 use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 
 const DEFAULT_WS_URL: &str = "wss://api.elevenlabs.io/v1/speech-to-text/stream";
+
+/// Whether this dialect honours `SessionInput::Finalize`: it sends an empty
+/// `input_audio_chunk` with `commit: true`, the native manual commit, which
+/// yields a `committed_transcript` without closing the session
+/// (<https://elevenlabs.io/docs/eleven-api/guides/how-to/speech-to-text/realtime/event-reference>).
+pub const CLIENT_FINALIZE: bool = true;
 
 /// A decoded ElevenLabs inbound message.
 #[derive(Debug, PartialEq)]
@@ -75,14 +81,26 @@ pub fn parse_message(text: &str) -> Result<ElevenLabsMessage, ProtocolError> {
 /// Stateful projector of ElevenLabs messages onto unified events. The wire has
 /// no segment identity, so a synthesized `s{n}` id (`Snapshot`) is shared by a
 /// partial and its committed transcript; the counter advances on each commit.
+///
+/// A `committed_transcript` is a whole-segment Stable and ElevenLabs has no
+/// separate Turn signal, so the mapper synthesizes the Turn (`EndOfSpeech` on
+/// the same segment) right after it (ADR-0006 D6). An empty commit that answers
+/// a client `Finalize` still yields a Turn, with segment `None`.
 #[derive(Debug, Default)]
 pub struct ElevenLabsMapper {
     current: u64,
+    /// Client commits (`Finalize`) still waiting for their committed transcript.
+    pending_finalize: u32,
 }
 
 impl ElevenLabsMapper {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Record that a client `Finalize` (manual commit) was sent.
+    pub fn note_finalize(&mut self) {
+        self.pending_finalize += 1;
     }
 
     fn segment(&self) -> Option<SegmentRef> {
@@ -101,14 +119,28 @@ impl ElevenLabsMapper {
                     segment: self.segment(),
                 }]
             }
-            ElevenLabsMessage::Committed(text) if !text.is_empty() => {
-                let events = vec![StreamEvent::Transcript {
-                    text,
-                    stability: TranscriptStability::Committed,
-                    segment: self.segment(),
-                }];
+            ElevenLabsMessage::Committed(text) => {
+                let answers_finalize = self.pending_finalize > 0;
+                self.pending_finalize = self.pending_finalize.saturating_sub(1);
+                if text.is_empty() {
+                    return if answers_finalize {
+                        vec![StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                            segment: None,
+                        })]
+                    } else {
+                        Vec::new()
+                    };
+                }
+                let segment = self.segment();
                 self.current += 1;
-                events
+                vec![
+                    StreamEvent::Transcript {
+                        text,
+                        stability: TranscriptStability::Committed,
+                        segment: segment.clone(),
+                    },
+                    StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment }),
+                ]
             }
             ElevenLabsMessage::Error(message) => vec![StreamEvent::Error {
                 error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
@@ -132,8 +164,9 @@ pub fn build_audio_message(data: &[u8], commit: bool, sample_rate: u32) -> Strin
 }
 
 /// Drive one ElevenLabs session: client audio is sent as `input_audio_chunk`
-/// **text** frames (base64); input end sends a `commit` frame. Inbound **text**
-/// transcripts project via [`ElevenLabsMapper`]. Ends on a fatal error or EOF.
+/// **text** frames (base64); `Finalize` and input end send a `commit` frame.
+/// Inbound **text** transcripts project via [`ElevenLabsMapper`]. Ends on a
+/// fatal error, or on EOF, which emits `SessionClosed`.
 pub async fn run_elevenlabs_stream<T: ByteDuplex>(
     mut transport: T,
     sample_rate: u32,
@@ -158,8 +191,10 @@ pub async fn run_elevenlabs_stream<T: ByteDuplex>(
                         .await;
                 }
                 Some(SessionInput::Finalize) => {
-                    if events.send(super::finalize_unsupported("elevenlabs")).await.is_err() {
-                        return;
+                    mapper.note_finalize();
+                    let frame = build_audio_message(&[], true, sample_rate);
+                    if transport.send(WsFrame::Text(frame)).await.is_err() {
+                        break;
                     }
                 }
                 Some(_) => {}
@@ -184,7 +219,12 @@ pub async fn run_elevenlabs_stream<T: ByteDuplex>(
                 },
                 None => match maybe_frame {
                     Some(_) => continue,
-                    None => break,
+                    None => {
+                        let _ = events
+                            .send(StreamEvent::Lifecycle(LifecycleEvent::SessionClosed))
+                            .await;
+                        break;
+                    }
                 },
             },
         }
@@ -224,6 +264,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
         .duplex(true)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
+        .with_ext(super::asr_ext(CLIENT_FINALIZE))
 }
 
 /// Build an [`ElevenLabsAsr`] from a registry [`ProviderConfig`].
@@ -264,6 +305,7 @@ impl Asr for ElevenLabsAsr {
             .duplex(true)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
+            .with_ext(super::asr_ext(CLIENT_FINALIZE))
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -376,10 +418,13 @@ mod tests {
             mapper
                 .map(ElevenLabsMessage::Committed("x".into()))
                 .as_slice(),
-            [StreamEvent::Transcript {
-                stability: TranscriptStability::Committed,
-                ..
-            }]
+            [
+                StreamEvent::Transcript {
+                    stability: TranscriptStability::Committed,
+                    ..
+                },
+                StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
+            ]
         ));
         assert!(matches!(
             mapper.map(ElevenLabsMessage::Error("e".into())).as_slice(),
@@ -483,9 +528,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finalize_without_native_support_is_unsupported_option() {
+    async fn finalize_sends_a_commit_and_yields_a_turn() {
         let (out_tx, mut out_rx) = mpsc::channel(8);
-        let (_in_tx, in_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
         let transport = ChannelDuplex {
             out: out_tx,
             inbound: in_rx,
@@ -495,13 +540,52 @@ mod tests {
         let _handle = tokio::spawn(run_elevenlabs_stream(transport, 16000, input_rx, events_tx));
 
         input_tx.send(SessionInput::Finalize).await.unwrap();
-        match events_rx.recv().await.unwrap() {
-            StreamEvent::Error { error, fatal } => {
-                assert_eq!(error.code, ErrorCode::UnsupportedOption);
-                assert!(!fatal);
+        match out_rx.recv().await.unwrap() {
+            WsFrame::Text(t) => {
+                let value: serde_json::Value = serde_json::from_str(&t).unwrap();
+                assert_eq!(value["commit"], json!(true));
+                assert_eq!(value["audio_base_64"], json!(""));
             }
-            other => panic!("expected UnsupportedOption, got {other:?}"),
+            other => panic!("expected commit frame, got {other:?}"),
         }
-        assert!(out_rx.try_recv().is_err());
+        in_tx
+            .send(WsFrame::Text(
+                json!({"message_type": "committed_transcript", "text": ""}).to_string(),
+            ))
+            .await
+            .unwrap();
+        assert!(matches!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment: None })
+        ));
+        // still open: more audio is accepted
+        input_tx
+            .send(SessionInput::Audio(bytes::Bytes::from_static(b"pcm")))
+            .await
+            .unwrap();
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Text(_)));
+    }
+
+    #[test]
+    fn committed_is_followed_by_a_turn_on_the_same_segment() {
+        let mut mapper = ElevenLabsMapper::new();
+        let events = mapper.map(ElevenLabsMessage::Committed("hello".into()));
+        assert!(matches!(
+            events.as_slice(),
+            [
+                StreamEvent::Transcript {
+                    stability: TranscriptStability::Committed,
+                    segment: Some(SegmentRef { segment_id: Some(a), .. }),
+                    ..
+                },
+                StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                    segment: Some(SegmentRef { segment_id: Some(b), .. }),
+                }),
+            ] if a == "s0" && b == "s0"
+        ));
+        // an empty commit nobody asked for emits nothing
+        assert!(mapper
+            .map(ElevenLabsMessage::Committed(String::new()))
+            .is_empty());
     }
 }

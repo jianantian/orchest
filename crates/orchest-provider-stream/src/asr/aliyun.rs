@@ -27,6 +27,13 @@ use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 const DEFAULT_WS_URL: &str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/";
 const DEFAULT_MODEL: &str = "fun-asr-realtime";
 
+/// Whether this dialect honours `SessionInput::Finalize`. The DashScope
+/// realtime ASR protocol only has `run-task` / `continue-task` /
+/// `finish-task`, and `finish-task` ends the task, so there is no way to
+/// finalize mid-session. See `docs/external/aliyun/asr/realtime/client-event.md`
+/// and <https://help.aliyun.com/zh/model-studio/fun-asr-realtime-websocket-api>.
+pub const CLIENT_FINALIZE: bool = false;
+
 #[derive(Serialize)]
 struct ClientMessage {
     header: ClientHeader,
@@ -184,8 +191,10 @@ pub fn parse_server_event(text: &str) -> Result<ServerEvent, ProtocolError> {
 
 /// Stateful projector of DashScope events onto unified events:
 /// `result-generated` → `Transcript` (`Committed` once `sentence_end`, else
-/// `Provisional`); `task-finished` → `EndOfSpeech` (stream-level, no segment);
-/// `task-failed` → a fatal `Error`.
+/// `Provisional`); a committed sentence is a whole-sentence Stable, so the
+/// mapper synthesizes the Turn (`EndOfSpeech` on the same segment) right after
+/// it (ADR-0006 D6); `task-finished` → `SessionClosed`; `task-failed` → a
+/// fatal `Error`.
 ///
 /// Segment identity comes from the sentence's native `begin_time`
 /// (`seg{begin_time}`, `Snapshot`); when the wire omits it, a synthesized
@@ -220,25 +229,30 @@ impl AliyunMapper {
                                 id
                             }
                         };
-                        vec![StreamEvent::Transcript {
+                        let segment = Some(SegmentRef {
+                            segment_id: Some(segment_id),
+                            update_kind: TranscriptUpdateKind::Snapshot,
+                        });
+                        let mut events = vec![StreamEvent::Transcript {
                             text: s.text,
                             stability: if s.sentence_end {
                                 TranscriptStability::Committed
                             } else {
                                 TranscriptStability::Provisional
                             },
-                            segment: Some(SegmentRef {
-                                segment_id: Some(segment_id),
-                                update_kind: TranscriptUpdateKind::Snapshot,
-                            }),
-                        }]
+                            segment: segment.clone(),
+                        }];
+                        if s.sentence_end {
+                            events.push(StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                                segment,
+                            }));
+                        }
+                        events
                     }
                     _ => Vec::new(),
                 }
             }
-            "task-finished" => vec![StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
-                segment: None,
-            })],
+            "task-finished" => vec![StreamEvent::Lifecycle(LifecycleEvent::SessionClosed)],
             "task-failed" => {
                 let message = event
                     .header
@@ -442,6 +456,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
         .duplex(true)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
+        .with_ext(super::asr_ext(CLIENT_FINALIZE))
 }
 
 /// Build an [`AliyunAsr`] from a registry [`ProviderConfig`].
@@ -483,6 +498,7 @@ impl Asr for AliyunAsr {
             .duplex(true)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
+            .with_ext(super::asr_ext(CLIENT_FINALIZE))
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -640,10 +656,16 @@ mod tests {
         let committed = parse_server_event(&event("result-generated", Some("hi"), true)).unwrap();
         assert!(matches!(
             mapper.map(committed).as_slice(),
-            [StreamEvent::Transcript {
-                stability: TranscriptStability::Committed,
-                ..
-            }]
+            [
+                StreamEvent::Transcript {
+                    stability: TranscriptStability::Committed,
+                    segment: Some(SegmentRef { segment_id: Some(stable), .. }),
+                    ..
+                },
+                StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                    segment: Some(SegmentRef { segment_id: Some(turn), .. }),
+                }),
+            ] if stable == turn
         ));
     }
 
@@ -704,9 +726,7 @@ mod tests {
         let finished = parse_server_event(&event("task-finished", None, false)).unwrap();
         assert!(matches!(
             mapper.map(finished).as_slice(),
-            [StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
-                segment: None
-            })]
+            [StreamEvent::Lifecycle(LifecycleEvent::SessionClosed)]
         ));
         let failed = parse_server_event(
             &json!({"header": {"event": "task-failed", "error_message": "boom"}}).to_string(),
@@ -775,7 +795,7 @@ mod tests {
         ready_rx.await.unwrap().unwrap();
         assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Binary(_)));
 
-        // a committed result, then task-finished -> Transcript + EndOfSpeech, then ends
+        // a committed result, then task-finished -> Stable + Turn, then SessionClosed
         in_tx
             .send(WsFrame::Text(event("result-generated", Some("done"), true)))
             .await
