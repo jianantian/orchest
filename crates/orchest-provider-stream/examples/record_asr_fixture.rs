@@ -94,8 +94,10 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
-fn read_pcm(path: &str) -> Result<Vec<u8>, String> {
-    let data = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+async fn read_pcm(path: &str) -> Result<Vec<u8>, String> {
+    let data = tokio::fs::read(path)
+        .await
+        .map_err(|e| format!("{path}: {e}"))?;
     if !data.starts_with(b"RIFF") {
         return Ok(data);
     }
@@ -141,7 +143,7 @@ async fn main() -> Result<(), String> {
     config.api_url = args.api_url.clone();
     config.options = Value::Object(args.options.clone());
     let asr = build_asr(&args, &config)?;
-    let pcm = read_pcm(&args.audio)?;
+    let pcm = read_pcm(&args.audio).await?;
 
     let log = install_recorder();
     let mut handle = asr
@@ -192,7 +194,9 @@ async fn main() -> Result<(), String> {
         "finalize_at_ms": args.finalize_at_ms,
     }))];
     lines.extend(log.lock().expect("recorder lock").drain(..));
-    std::fs::write(&args.out, render_fixture(&lines)).map_err(|e| format!("{}: {e}", args.out))?;
+    tokio::fs::write(&args.out, render_fixture(&lines))
+        .await
+        .map_err(|e| format!("{}: {e}", args.out))?;
     eprintln!("wrote {} lines to {}", lines.len(), args.out);
     Ok(())
 }
