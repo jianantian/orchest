@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const native = require("../../orchest_node.node");
+const realStartAsrStream = native._startAsrStream;
 
 function loadSdkWithStart(start) {
   native._startAsrStream = start;
@@ -12,10 +13,20 @@ function loadSdkWithStart(start) {
   return require(entry);
 }
 
-function fakeSession() {
+function fakeSession(finalizeError) {
   return {
     finished: false,
-    async sendAudio() {},
+    finalized: 0,
+    chunks: [],
+    async sendAudio(audio) {
+      this.chunks.push(audio);
+    },
+    async finalize() {
+      if (finalizeError !== undefined) {
+        throw finalizeError;
+      }
+      this.finalized += 1;
+    },
     finish() {
       this.finished = true;
     },
@@ -56,7 +67,8 @@ test("transcribe preserves structured protocol errors", async () => {
   await assert.rejects(
     sdk.transcribe(Buffer.from("audio"), {
       format: "wav",
-      provider: "missing/model",
+      provider: "missing",
+      model: "model",
       apiKey: "test-key",
     }),
     (error) =>
@@ -98,4 +110,72 @@ test("wait rejects a Promise-returning callback", async () => {
     () => Promise.resolve(),
   );
   await assert.rejects(stream.wait(), /synchronous/);
+});
+
+test("transcribe rejects a combined provider/model", async () => {
+  const sdk = loadSdkWithStart(async () => fakeSession());
+  await assert.rejects(
+    sdk.transcribe(Buffer.from("audio"), {
+      format: "wav",
+      provider: "aliyun/qwen-audio-3.0-asr-flash",
+      apiKey: "test-key",
+    }),
+    /pass the model separately/,
+  );
+  await assert.rejects(
+    sdk.transcribe(Buffer.from("audio"), { format: "wav", model: "nova-3", apiKey: "k" }),
+    /model requires provider/,
+  );
+});
+
+test("native startAsrStream rejects a combined provider/model", async () => {
+  await assert.rejects(
+    realStartAsrStream(
+      { format: "pcm", sampleRate: 16_000, provider: "deepgram/nova-3", apiKey: "k" },
+      () => {},
+    ),
+    /pass the model separately/,
+  );
+});
+
+test("finalize keeps the session open", async () => {
+  const session = fakeSession();
+  const sdk = loadSdkWithStart(async () => session);
+  const stream = await sdk.startAsrStream(
+    { format: "pcm", sampleRate: 16_000, provider: "deepgram", model: "nova-3" },
+    () => {},
+  );
+  await stream.sendAudio(Buffer.from("a"));
+  await stream.finalize();
+  await stream.sendAudio(Buffer.from("b"));
+  assert.equal(session.finalized, 1);
+  assert.equal(session.chunks.length, 2);
+  assert.equal(session.finished, false);
+});
+
+test("finalize surfaces unsupported_option as a ProviderError", async () => {
+  const sdk = loadSdkWithStart(async () => fakeSession(new Error("unsupported")));
+  const stream = await sdk.startAsrStream({ format: "pcm", sampleRate: 16_000 }, () => {});
+  await assert.rejects(stream.finalize(), /unsupported/);
+});
+
+test("events are delivered with kind", async () => {
+  const events = [
+    { kind: "draft", text: "he", segment_id: "s0" },
+    { kind: "stable", text: "hello", segment_id: "s0", update: "snapshot" },
+    { kind: "turn", segment_id: "s0" },
+    { kind: "session_closed" },
+  ];
+  const received = [];
+  const sdk = loadSdkWithStart(async (_options, callback) => {
+    for (const event of events) {
+      callback(event);
+    }
+    return fakeSession();
+  });
+  const stream = await sdk.startAsrStream({ format: "pcm", sampleRate: 16_000 }, (event) => {
+    received.push(event.kind);
+  });
+  await stream.wait();
+  assert.deepEqual(received, ["draft", "stable", "turn", "session_closed"]);
 });

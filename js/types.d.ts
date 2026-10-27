@@ -73,7 +73,10 @@ export interface DecisionResponse {
 export interface TranscribeOptions {
   format: "m4a" | "aac" | "wav" | "mp3" | "pcm";
   language?: string;
+  /** Provider name such as `"deepgram"`; `provider/model` is rejected. */
   provider?: string;
+  /** Model id of `provider`; requires `provider`. */
+  model?: string;
   apiKey?: string;
   apiKeyEnv?: string;
   apiUrl?: string;
@@ -101,7 +104,57 @@ export interface AsrStreamOptions extends TranscribeOptions {
   context?: AsrContextMessage[];
 }
 
-export type AsrStreamEvent = Record<string, unknown>;
+/** Provisional text; the next draft of the same segment replaces it. */
+export interface AsrDraftEvent {
+  kind: "draft";
+  text: string;
+  segment_id: string | null;
+}
+/** Confirmed text; `update` says whether it appends to or replaces the segment. */
+export interface AsrStableEvent {
+  kind: "stable";
+  text: string;
+  segment_id: string | null;
+  update: "append" | "snapshot";
+}
+/** One round of speech ended; `segment_id` names the stable it ends. */
+export interface AsrTurnEvent {
+  kind: "turn";
+  segment_id: string | null;
+}
+export interface AsrSessionStartedEvent {
+  kind: "session_started";
+  session_id: string | null;
+}
+export interface AsrRouteSelectedEvent {
+  kind: "route_selected";
+  provider: string;
+  model: string;
+}
+export interface AsrSessionClosedEvent {
+  kind: "session_closed";
+}
+/** A provider error; fatal errors also end the stream and reject `wait()`. */
+export interface AsrErrorEvent {
+  kind: "error";
+  code: string | null;
+  message: string;
+  fatal: boolean;
+}
+/** Provider-specific detail outside the draft / stable / turn model. */
+export interface AsrExtrasEvent {
+  kind: "extras";
+  data: unknown;
+}
+export type AsrStreamEvent =
+  | AsrDraftEvent
+  | AsrStableEvent
+  | AsrTurnEvent
+  | AsrSessionStartedEvent
+  | AsrRouteSelectedEvent
+  | AsrSessionClosedEvent
+  | AsrErrorEvent
+  | AsrExtrasEvent;
 
 export interface RequestOptions {
   thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";

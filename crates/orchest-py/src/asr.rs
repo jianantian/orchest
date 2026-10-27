@@ -6,10 +6,11 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use serde_json::Value;
 
-const DEFAULT_ASR: &str = "aliyun/qwen-audio-3.0-asr-flash";
+const DEFAULT_PROVIDER: &str = "aliyun";
+const DEFAULT_MODEL: &str = "qwen-audio-3.0-asr-flash";
 
 #[pyfunction]
-#[pyo3(signature = (audio, format, language=None, provider=None, api_key=None, api_key_env=None, api_url=None, options=None))]
+#[pyo3(signature = (audio, format, language=None, provider=None, model=None, api_key=None, api_key_env=None, api_url=None, options=None))]
 #[allow(clippy::too_many_arguments)] // justified: pyo3 function maps Python kwargs 1:1
 pub fn transcribe(
     py: Python<'_>,
@@ -17,6 +18,7 @@ pub fn transcribe(
     format: &str,
     language: Option<String>,
     provider: Option<String>,
+    model: Option<String>,
     api_key: Option<String>,
     api_key_env: Option<String>,
     api_url: Option<String>,
@@ -25,21 +27,33 @@ pub fn transcribe(
     if audio.is_empty() {
         return Err(PyRuntimeError::new_err("audio cannot be empty"));
     }
-    let id = provider.unwrap_or_else(|| DEFAULT_ASR.to_string());
-    let key = resolve_key(api_key, api_key_env.as_deref(), default_key_env(&id), &id)?;
+    let (provider, model) = match (provider, model) {
+        (None, None) => (
+            DEFAULT_PROVIDER.to_string(),
+            Some(DEFAULT_MODEL.to_string()),
+        ),
+        (Some(provider), model) => (validate_provider(provider)?, model),
+        (None, Some(_)) => return Err(PyRuntimeError::new_err("model requires provider")),
+    };
+    let key = resolve_key(
+        api_key,
+        api_key_env.as_deref(),
+        default_key_env(&provider),
+        &provider,
+    )?;
     let registry = Registry::with_builtin();
-    let entry = registry
-        .asr()
-        .id(&id)
-        .select()
-        .map_err(super::error::protocol_error)?;
-    let (provider_name, model) = id
-        .split_once('/')
-        .ok_or_else(|| PyRuntimeError::new_err("provider must be provider/model"))?;
+    let query = registry.asr().provider(provider.clone());
+    let entry = match &model {
+        Some(model) => query.id(&format!("{provider}/{model}")),
+        None => query,
+    }
+    .select()
+    .map_err(super::error::protocol_error)?;
+    let model = model.unwrap_or_else(|| entry.descriptor.model.to_string());
     let handle = entry
         .instantiate(&ProviderConfig {
-            provider: provider_name.into(),
-            model: model.into(),
+            provider,
+            model,
             api_key: Some(key),
             api_url,
             max_tokens: None,
@@ -87,13 +101,25 @@ pub(crate) fn py_dict_value(value: Option<Bound<'_, PyDict>>) -> PyResult<Value>
     serde_json::from_str(&json).map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
-pub(crate) fn default_key_env(id: &str) -> &'static str {
-    if id.starts_with("assemblyai/") {
-        "ASSEMBLYAI_API_KEY"
-    } else if id.starts_with("speechmatics/") {
-        "SPEECHMATICS_API_KEY"
-    } else {
-        "DASHSCOPE_API_KEY"
+/// `provider` is a bare provider name; `provider/model` is rejected so the two
+/// stay separate parameters (ADR-0006, SDK 0.2).
+pub(crate) fn validate_provider(provider: String) -> PyResult<String> {
+    if provider.is_empty() || provider.contains('/') {
+        return Err(PyRuntimeError::new_err(format!(
+            "provider must be a provider name such as 'aliyun'; pass the model separately (got '{provider}')"
+        )));
+    }
+    Ok(provider)
+}
+
+pub(crate) fn default_key_env(provider: &str) -> &'static str {
+    match provider {
+        "assemblyai" => "ASSEMBLYAI_API_KEY",
+        "speechmatics" => "SPEECHMATICS_API_KEY",
+        "deepgram" => "DEEPGRAM_API_KEY",
+        "elevenlabs" => "ELEVENLABS_API_KEY",
+        "soniox" => "SONIOX_API_KEY",
+        _ => "DASHSCOPE_API_KEY",
     }
 }
 

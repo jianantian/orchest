@@ -113,13 +113,23 @@ transcript = transcribe(
     api_key_env="DASHSCOPE_API_KEY",
 )
 
+def on_event(event) -> None:
+    if event["kind"] == "draft":
+        print("…", event["text"])            # 临时结果，同段下一条会整段替换
+    elif event["kind"] == "stable":
+        print("✓", event["text"])            # 已确认文稿；update 为 append 或 snapshot
+    elif event["kind"] == "turn":
+        print("turn", event["segment_id"])   # 一轮说完，可交给业务或 Agent
+
 async def realtime() -> None:
     stream = await start_asr_stream(
         format="pcm",
         sample_rate=16_000,
+        provider="aliyun",
+        model="qwen-audio-3.0-asr-flash-streaming",
         context=[{"role": "user", "text": "Emile，Orchest，Murmur"}],
         api_key_env="DASHSCOPE_API_KEY",
-        on_event=lambda event: print(event),
+        on_event=on_event,
     )
     await stream.send_audio(Path("chunk.pcm").read_bytes())
     stream.finish()
@@ -132,8 +142,26 @@ asyncio.run(realtime())
 `score`；结果保持 snake_case。`confidence`、概率分布、usage 等可选字段未返回时不会补默认值。
 完整客服路由示例见 [`examples/python/providers/decisions.py`](../../examples/python/providers/decisions.py)。
 
-省略 ASR provider 时，一次性识别固定使用 `aliyun/qwen-audio-3.0-asr-flash`，realtime 固定使用
-`aliyun/qwen-audio-3.0-asr-flash-streaming`。`on_event` 必须是同步 callback；返回 coroutine 或抛出异常会终止输入，
+`provider` 只写厂商名（如 `"deepgram"`），模型用独立的 `model` 参数；`provider/model` 合写会被拒绝。
+两者都省略时，一次性识别使用 aliyun 的 `qwen-audio-3.0-asr-flash`，realtime 使用 aliyun 的
+`qwen-audio-3.0-asr-flash-streaming`；只给 `provider` 时使用该厂商的默认模型。
+
+realtime 事件按 [ADR-0006](../adr/0006-voice-session-model.md) 的语音模型带 `kind`：
+
+| `kind` | 含义 | 字段 |
+|---|---|---|
+| `draft` | 临时结果，同段下一条整段替换 | `text`、`segment_id` |
+| `stable` | 已确认文稿 | `text`、`segment_id`、`update`（`append` / `snapshot`） |
+| `turn` | 一轮说话结束 | `segment_id`（它结束的那段 stable） |
+| `session_started` / `route_selected` / `session_closed` | 会话生命周期 | — |
+| `error` | provider 错误；`fatal` 为真时 `wait()` 也会抛出 | `code`、`message`、`fatal` |
+| `extras` | 厂商特有数据 | `data` |
+
+端侧 VAD 检测到停顿后调用 `await stream.finalize()`：要求 provider 尽快定稿并给出 `turn`，会话保持打开，
+可以继续 `send_audio`。不支持的模型会抛出 `code == "unsupported_option"` 的 `ModelError`。
+`finish()` 关闭输入并结束会话。
+
+`on_event` 必须是同步 callback；返回 coroutine 或抛出异常会终止输入，
 并由 `wait()` 抛出原始异常。
 
 ## 5. 消费事件

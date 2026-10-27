@@ -103,9 +103,10 @@ async function transcribe(audio, options) {
 }
 
 /**
- * Realtime ASR session: audio in, events out. `finish()` closes the input
- * (idempotent); `wait()` resolves when the stream ends and rethrows the first
- * callback exception or a fatal provider error.
+ * Realtime ASR session: audio in, events out. `finalize()` asks the provider
+ * to finalize what it has heard and keeps the session open; `finish()` closes
+ * the input (idempotent); `wait()` resolves when the stream ends and rethrows
+ * the first callback exception or a fatal provider error.
  */
 class AsrStream {
   /** @type {import("./native").NativeAsrStream} */ #session;
@@ -123,6 +124,22 @@ class AsrStream {
   /** @param {Uint8Array} audio @returns {Promise<void>} */
   async sendAudio(audio) {
     await this.#session.sendAudio(audio);
+  }
+
+  /**
+   * Ask the provider to finalize what it has heard so far, keeping the session
+   * open; the resulting `stable` and `turn` events arrive through `onEvent`.
+   * Rejects with a `ProviderError` whose code is `unsupported_option` when the
+   * model does not support finalize.
+   *
+   * @returns {Promise<void>}
+   */
+  async finalize() {
+    try {
+      await this.#session.finalize();
+    } catch (error) {
+      throw normalizeProviderError(error);
+    }
   }
 
   /** @returns {void} */

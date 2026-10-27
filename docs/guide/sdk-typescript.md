@@ -131,10 +131,24 @@ const stream = await startAsrStream(
   {
     format: "pcm",
     sampleRate: 16_000,
+    provider: "aliyun",
+    model: "qwen-audio-3.0-asr-flash-streaming",
     context: [{ role: "user", text: "Emile，Orchest，Murmur" }],
     apiKeyEnv: "DASHSCOPE_API_KEY",
   },
-  (event) => console.log(event),
+  (event) => {
+    switch (event.kind) {
+      case "draft": // 临时结果，同段下一条会整段替换
+        console.log("…", event.text);
+        break;
+      case "stable": // 已确认文稿；update 为 append 或 snapshot
+        console.log("✓", event.text);
+        break;
+      case "turn": // 一轮说完，可交给业务或 Agent
+        console.log("turn", event.segment_id);
+        break;
+    }
+  },
 );
 await stream.sendAudio(await readFile("chunk.pcm"));
 stream.finish();
@@ -145,8 +159,20 @@ await stream.wait();
 响应字段保持 snake_case；`confidence`、概率分布和 usage 未返回时保持缺失。
 完整客服路由示例见 [`examples/typescript/providers/decisions.ts`](../../examples/typescript/providers/decisions.ts)。
 
-省略 ASR provider 时，一次性识别固定使用 `aliyun/qwen-audio-3.0-asr-flash`，realtime 固定使用
-`aliyun/qwen-audio-3.0-asr-flash-streaming`。event callback 必须同步返回；返回 Promise 或抛出异常会终止输入，
+`provider` 只写厂商名（如 `"deepgram"`），模型用独立的 `model` 选项；`provider/model` 合写会被拒绝。
+两者都省略时，一次性识别使用 aliyun 的 `qwen-audio-3.0-asr-flash`，realtime 使用 aliyun 的
+`qwen-audio-3.0-asr-flash-streaming`；只给 `provider` 时使用该厂商的默认模型。
+
+realtime 事件是按 `kind` 区分的联合类型 `AsrStreamEvent`（[ADR-0006](../adr/0006-voice-session-model.md)）：
+`draft`（临时结果）、`stable`（已确认文稿，带 `update: "append" | "snapshot"`）、`turn`（一轮说完，
+`segment_id` 指向它结束的 stable）、`session_started` / `route_selected` / `session_closed`、`error`
+（`code`、`message`、`fatal`）和 `extras`（厂商特有数据）。字段保持 snake_case。
+
+端侧 VAD 检测到停顿后调用 `await stream.finalize()`：要求 provider 尽快定稿并给出 `turn`，会话保持打开，
+可以继续 `sendAudio`。不支持的模型会以 `code === "unsupported_option"` 的 `ProviderError` 拒绝。
+`finish()` 关闭输入并结束会话。
+
+event callback 必须同步返回；返回 Promise 或抛出异常会终止输入，
 并由 `wait()` 抛出原始异常。
 
 ## 5. 消费事件
