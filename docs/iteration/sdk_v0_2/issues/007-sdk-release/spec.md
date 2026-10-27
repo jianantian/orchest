@@ -33,6 +33,8 @@ Publishing, then publish `0.2.0` and close the iteration.
 - [ ] The PRD's acceptance items are checked, the roadmap marks SDK 0.2
   completed, and `AGENTS.md` no longer says the binding packages are
   unpublished.
+- [ ] The "being published" notes in `README.md` and both SDK guides
+  are removed once `0.2.0` is on PyPI and npm.
 
 ## Blocked by
 
