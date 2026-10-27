@@ -1,4 +1,4 @@
-//! RunHandle, ApprovalBus, EventReceiver, and approval routing logic.
+//! RunHandle, EventReceiver, child-run registry, and request routing.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -13,6 +13,7 @@ use crate::events::{RunFailureKind, RuntimeEvent};
 
 use super::actor::{AgentMsg, CancelCmd, InjectCmd, SteerCmd};
 use super::config::RunId;
+use super::request::{PendingRequest, RequestBus, RequestError, RequestId, RequestResponse};
 use super::supervisor::SupervisorMsg;
 use super::watcher::Watcher;
 
@@ -60,7 +61,7 @@ struct RegisteredChild {
 
 /// Tree-scoped registry of active delegated children.
 ///
-/// Shared like [`ApprovalBus`]: the supervisor run and every nested
+/// Shared like [`RequestBus`]: the supervisor run and every nested
 /// `AgentAsTool` child share one instance so application code holding the
 /// supervisor [`RunHandle`] can resolve child control surfaces by run id.
 #[derive(Clone, Default)]
@@ -251,36 +252,8 @@ impl ChildRunHandle {
     }
 }
 
-/// Shared approval registry for an entire agent-run tree.
-/// All runs (root and sub-agents at any depth) share the same instance.
-#[derive(Clone, Default, Debug)]
-pub struct ApprovalBus {
-    pending: Arc<AsyncMutex<HashMap<RunId, oneshot::Sender<bool>>>>,
-}
-
-impl ApprovalBus {
-    pub async fn request(&self, run_id: RunId) -> oneshot::Receiver<bool> {
-        let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(run_id, tx);
-        rx
-    }
-
-    pub async fn respond(&self, run_id: RunId, approved: bool) -> Result<(), String> {
-        match self.pending.lock().await.remove(&run_id) {
-            Some(tx) => tx
-                .send(approved)
-                .map_err(|_| format!("run {run_id} is no longer waiting for approval")),
-            None => Err(format!("no pending approval for run {run_id}")),
-        }
-    }
-
-    pub async fn cancel(&self, run_id: RunId) {
-        self.pending.lock().await.remove(&run_id);
-    }
-}
-
 /// Handle to a running agent: wait for completion, abort, subscribe to events,
-/// attach watchers, respond to approvals, and steer the run mid-flight.
+/// attach watchers, answer blocking requests, and steer the run mid-flight.
 #[non_exhaustive]
 pub struct RunHandle {
     pub run_id: RunId,
@@ -296,7 +269,7 @@ pub struct RunHandle {
     pub(crate) ready: Arc<Notify>,
     /// Background task that owns the actor lifecycle.
     pub(crate) actor_join: JoinHandle<()>,
-    pub(crate) approval_bus: ApprovalBus,
+    pub(crate) request_bus: RequestBus,
     /// Shared delegated-child registry for this run tree.
     pub(crate) child_registry: ChildRunRegistry,
     pub(crate) supervisor_ref: Arc<Mutex<Option<ActorRef<SupervisorMsg>>>>,
@@ -395,9 +368,30 @@ impl RunHandle {
         }
     }
 
-    /// Route an approval response to any run in this run tree.
-    pub async fn respond_approval(&self, run_id: RunId, approved: bool) -> Result<(), String> {
-        self.approval_bus.respond(run_id, approved).await
+    /// Requests from this run tree (this run and its delegated children)
+    /// waiting for an answer, ordered by id.
+    pub async fn pending_requests(&self) -> Vec<PendingRequest> {
+        self.request_bus.pending().await
+    }
+
+    /// Looks up a pending request by id.
+    pub async fn request(&self, id: &RequestId) -> Option<PendingRequest> {
+        self.request_bus.get(id).await
+    }
+
+    /// Answers a pending request of any run in this run tree.
+    pub async fn respond(
+        &self,
+        id: &RequestId,
+        response: RequestResponse,
+    ) -> Result<(), RequestError> {
+        self.request_bus.respond(id, response).await
+    }
+
+    /// Withdraws a pending request; the run treats it as not approved and
+    /// continues.
+    pub async fn withdraw(&self, id: &RequestId) -> Result<(), RequestError> {
+        self.request_bus.withdraw(id).await
     }
 
     /// Resolve a public control surface for a delegated child started under
@@ -413,36 +407,5 @@ impl RunHandle {
     /// List delegated children currently registered in this run tree.
     pub async fn active_children(&self) -> Vec<ChildRunHandle> {
         self.child_registry.list().await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn approval_bus_round_trip() {
-        let bus = ApprovalBus::default();
-        let run_id = RunId::new();
-        let rx = bus.request(run_id).await;
-        bus.respond(run_id, true).await.unwrap();
-        assert!(rx.await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn approval_bus_unknown_run_id_returns_err() {
-        let bus = ApprovalBus::default();
-        let result = bus.respond(RunId::new(), true).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn approval_bus_cancel_clears_slot() {
-        let bus = ApprovalBus::default();
-        let run_id = RunId::new();
-        let _rx = bus.request(run_id).await;
-        bus.cancel(run_id).await;
-        let result = bus.respond(run_id, true).await;
-        assert!(result.is_err());
     }
 }

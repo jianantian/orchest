@@ -8,7 +8,7 @@ use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse, ModelSpec,
     OptionAdjustment, RequestOptions, StopReason, StreamEvent, ThinkingLevel, TokenUsage,
 };
-use orchest::run::{AgentConfig, AgentRun, ModelConfig};
+use orchest::run::{AgentConfig, AgentRun, ModelConfig, RequestResponse};
 use orchest::tool::async_job::{JobHandle, JobStatus};
 use orchest::tool::builtin::ReadFileTool;
 use orchest::tool::registry::ToolRegistry;
@@ -996,9 +996,9 @@ async fn e2e_approval_flow() {
     let mut events = Vec::new();
 
     while let Some(event) = rx.recv().await {
-        if matches!(event, RuntimeEvent::ApprovalRequested { .. }) {
+        if let RuntimeEvent::ApprovalRequested { request_id, .. } = &event {
             saw_approval_requested = true;
-            let _ = handle.respond_approval(handle.run_id, true).await;
+            let _ = handle.respond(request_id, RequestResponse::approve()).await;
         }
         events.push(event);
     }
@@ -1031,9 +1031,11 @@ async fn e2e_approval_denied_flow_completes_without_executing_tool() {
     let mut events = Vec::new();
 
     while let Some(event) = rx.recv().await {
-        if matches!(event, RuntimeEvent::ApprovalRequested { .. }) {
+        if let RuntimeEvent::ApprovalRequested { request_id, .. } = &event {
             saw_approval_requested = true;
-            let _ = handle.respond_approval(handle.run_id, false).await;
+            let _ = handle
+                .respond(request_id, RequestResponse::deny(None))
+                .await;
         }
         events.push(event);
     }

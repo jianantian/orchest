@@ -221,9 +221,14 @@ where
                 "[tool] {tool} failed: {} (kind={:?} retry={:?} code={:?} next_step={:?})",
                 error.message, error.kind, error.retry, error.code, error.next_step
             ),
-            RuntimeEvent::ApprovalRequested { tool_call, .. } => {
+            RuntimeEvent::ApprovalRequested {
+                request_id,
+                tool_call,
+                ..
+            } => {
                 println!("[approval] auto-approving {}", tool_call.name);
-                let _ = handle.respond_approval(handle.run_id, true).await;
+                let approve = orchest::run::RequestResponse::approve();
+                let _ = handle.respond(request_id, approve).await;
             }
             RuntimeEvent::ApprovalGranted { tool_call, .. } => {
                 println!("[approval] granted for {}", tool_call.name)

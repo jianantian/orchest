@@ -91,9 +91,9 @@ pub struct ToolContext {
     pub tool_call_id: String,
     pub event_tx: Option<mpsc::Sender<crate::events::RuntimeEvent>>,
     pub webhook_base_url: Option<String>,
-    /// Shared approval bus for the entire run tree; used by AgentAsTool to forward
-    /// child approval requests to the parent's RunHandle.
-    pub approval_bus: crate::run::handle::ApprovalBus,
+    /// Shared request bus for the entire run tree; delegated child runs raise
+    /// their requests on it, so the parent's RunHandle answers them by id.
+    pub request_bus: crate::run::RequestBus,
     /// Shared delegated-child registry for the run tree; AgentAsTool registers
     /// each child so the supervisor [`crate::run::RunHandle`] can resolve it.
     pub child_registry: crate::run::handle::ChildRunRegistry,
@@ -127,7 +127,7 @@ impl ToolContext {
     /// Build a throwaway context with trivial values for a one-shot tool call
     /// outside any run: a fresh [`RunId`](crate::run::RunId), `run_depth` 0, a
     /// synthesized unique `tool_call_id`, no event channel, no webhook base
-    /// URL, a default [`ApprovalBus`](crate::run::ApprovalBus), the default
+    /// URL, a default [`RequestBus`](crate::run::RequestBus), the default
     /// budget, and no parent messages.
     ///
     /// Intended for driving a tool's `execute` directly from code that is not
@@ -153,7 +153,7 @@ impl ToolContext {
             tool_call_id: format!("oneshot-{run_id}"),
             event_tx: None,
             webhook_base_url: None,
-            approval_bus: crate::run::ApprovalBus::default(),
+            request_bus: crate::run::RequestBus::default(),
             child_registry: crate::run::ChildRunRegistry::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
             parent_messages: vec![],

@@ -749,7 +749,7 @@ impl Agent {
     }
 
     #[napi]
-    pub fn respond_approval(&self, run_id: String, approved: bool) -> napi::Result<()> {
+    pub fn respond_approval(&self, request_id: String, approved: bool) -> napi::Result<()> {
         let run_handle_ref = Arc::clone(&self.run_handle);
 
         let rt = shared_runtime();
@@ -757,14 +757,16 @@ impl Agent {
         rt.block_on(async {
             let guard = run_handle_ref.lock().await;
             if let Some(ref handle) = *guard {
-                let run_id = orchest::run::RunId(
-                    uuid::Uuid::parse_str(&run_id)
-                        .map_err(|e| napi::Error::from_reason(format!("invalid run_id: {e}")))?,
-                );
+                let request_id = orchest::run::RequestId::from(request_id);
+                let response = if approved {
+                    orchest::run::RequestResponse::approve()
+                } else {
+                    orchest::run::RequestResponse::deny(None)
+                };
                 handle
-                    .respond_approval(run_id, approved)
+                    .respond(&request_id, response)
                     .await
-                    .map_err(napi::Error::from_reason)?;
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
                 Ok(())
             } else {
                 Err(napi::Error::from_reason(

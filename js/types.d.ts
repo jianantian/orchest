@@ -233,9 +233,10 @@ export type RuntimeEvent =
   | { type: "async_tool_progress"; tool: string; job_id: string; status: unknown; run_depth: number; child_run_id: string | null }
   | { type: "async_tool_completed"; tool: string; job_id: string; output: unknown; elapsed: unknown; run_depth: number; child_run_id: string | null }
   | { type: "skill_content_read"; skill_name: string; file: string; tokens: number; run_depth: number; child_run_id: string | null }
-  | { type: "approval_requested"; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
-  | { type: "approval_granted"; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
-  | { type: "approval_denied"; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "approval_requested"; request_id: string; kind: string; payload: unknown; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "approval_granted"; request_id: string; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "approval_denied"; request_id: string; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "request_resolved"; request_id: string; kind: string; resolution: unknown; run_depth: number; child_run_id: string | null }
   | { type: "budget_warning"; used: unknown; limit: unknown; run_depth: number; child_run_id: string | null }
   | { type: "runtime_warning"; message: string; run_depth: number; child_run_id: string | null }
   | { type: "skill_missing_capabilities"; skill_name: string; run_depth: number; child_run_id: string | null }

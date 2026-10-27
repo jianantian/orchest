@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::model::{ModelStreamChunk, OptionAdjustment, StopReason, TokenUsage};
-use crate::run::RunId;
+use crate::run::{RequestId, RequestKind, RequestResolution, RunId};
 use crate::tool::async_job::JobStatus;
 use crate::tool::{ToolCall, ToolError, ToolMetadata};
 
@@ -138,20 +138,35 @@ pub enum RuntimeEvent {
         tokens: u32,
     },
 
+    /// A tool call waits for approval under request `request_id`. Answer it
+    /// with [`RunHandle::respond`](crate::run::RunHandle::respond).
     ApprovalRequested {
+        request_id: RequestId,
+        kind: RequestKind,
+        payload: Value,
         tool_call: ToolCall,
         #[serde(default)]
         context: ApprovalContext,
     },
     ApprovalGranted {
+        request_id: RequestId,
         tool_call: ToolCall,
         #[serde(default)]
         context: ApprovalContext,
     },
+    /// The approval ended without being granted: denied, withdrawn, timed out
+    /// or cancelled (see the matching `RequestResolved`).
     ApprovalDenied {
+        request_id: RequestId,
         tool_call: ToolCall,
         #[serde(default)]
         context: ApprovalContext,
+    },
+    /// A blocking request ended.
+    RequestResolved {
+        request_id: RequestId,
+        kind: RequestKind,
+        resolution: RequestResolution,
     },
 
     BudgetWarning {

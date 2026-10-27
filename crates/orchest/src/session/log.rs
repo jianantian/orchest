@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::budget::BudgetUsage;
 use crate::events::RunFailureKind;
 use crate::model::{ContentBlock, Message, Role, StopReason};
-use crate::run::RunId;
+use crate::run::{PendingRequest, RequestId, RequestResolution, RunId};
 use crate::tool::ToolCall;
 
 use super::store::SessionError;
@@ -79,6 +79,13 @@ pub enum SessionEventKind {
         to_agent: String,
         messages: Vec<Message>,
         budget_used: BudgetUsage,
+    },
+    /// The run opened a blocking request and waits for the host.
+    RequestOpened { request: PendingRequest },
+    /// A blocking request ended.
+    RequestResolved {
+        request_id: RequestId,
+        resolution: RequestResolution,
     },
     /// The run produced its final answer.
     RunEnded {
@@ -146,6 +153,11 @@ pub struct SessionProjection {
     pub unanswered: Vec<ToolCall>,
     /// The step that started and has not ended, if any.
     pub open_step: Option<u32>,
+    /// Blocking requests opened and not yet resolved.
+    pub pending: Vec<PendingRequest>,
+    /// How many requests the session has opened (the next request's
+    /// sequence number is one more).
+    pub requests_opened: u64,
     /// The agent that owns the conversation (changes on handoff).
     pub agent_name: Option<String>,
     /// The run that last wrote to the session.
@@ -250,6 +262,13 @@ impl SessionProjection {
                 self.budget_used = budget_used.clone();
                 self.tool_results_open = false;
                 self.unanswered.clear();
+            }
+            SessionEventKind::RequestOpened { request } => {
+                self.pending.push(request.clone());
+                self.requests_opened += 1;
+            }
+            SessionEventKind::RequestResolved { request_id, .. } => {
+                self.pending.retain(|r| &r.id != request_id);
             }
             SessionEventKind::RunEnded { .. }
             | SessionEventKind::RunFailed { .. }
@@ -380,6 +399,13 @@ impl SessionLog {
             self.append(SessionEventKind::ToolResult {
                 tool_use_id: call.id.clone(),
                 content: closure_result(&call, dispatched, closure),
+            });
+        }
+        // Whoever waited on a pending request is gone with the step.
+        for request in self.projection.pending.clone() {
+            self.append(SessionEventKind::RequestResolved {
+                request_id: request.id,
+                resolution: RequestResolution::Cancelled,
             });
         }
         self.append(SessionEventKind::StepInterrupted { step });

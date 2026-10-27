@@ -17,6 +17,22 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, Notify};
 
+/// The request id an `ApprovalRequested` event waits on.
+fn approval_request_id(event: &RuntimeEvent) -> crate::run::RequestId {
+    match event {
+        RuntimeEvent::ApprovalRequested { request_id, .. } => request_id.clone(),
+        other => panic!("not an approval request: {other:?}"),
+    }
+}
+
+fn approval(approved: bool) -> crate::run::RequestResponse {
+    if approved {
+        crate::run::RequestResponse::approve()
+    } else {
+        crate::run::RequestResponse::deny(None)
+    }
+}
+
 struct FakeModelAdapter {
     call_count: AtomicU32,
 }
@@ -996,7 +1012,10 @@ async fn commit_tool_call_requests_approval_with_linked_draft_context() {
     let mut events = Vec::new();
     while let Some(event) = rx.recv().await {
         if matches!(event, RuntimeEvent::ApprovalRequested { .. }) {
-            handle.respond_approval(handle.run_id, true).await.unwrap();
+            handle
+                .respond(&approval_request_id(&event), approval(true))
+                .await
+                .unwrap();
         }
         events.push(event);
     }
@@ -1008,6 +1027,7 @@ async fn commit_tool_call_requests_approval_with_linked_draft_context() {
             RuntimeEvent::ApprovalRequested {
                 tool_call,
                 context: ApprovalContext::CommitToolCall { draft_tool },
+                ..
             } if tool_call.name == "commit_file" && draft_tool == "draft_file"
         )
     }));
@@ -1029,7 +1049,10 @@ async fn commit_approval_denial_prevents_execution() {
     let mut events = Vec::new();
     while let Some(event) = rx.recv().await {
         if matches!(event, RuntimeEvent::ApprovalRequested { .. }) {
-            handle.respond_approval(handle.run_id, false).await.unwrap();
+            handle
+                .respond(&approval_request_id(&event), approval(false))
+                .await
+                .unwrap();
         }
         events.push(event);
     }
@@ -1309,8 +1332,11 @@ async fn approval_gate_approved() {
     let mut events = Vec::new();
     loop {
         match rx.recv().await {
-            Some(RuntimeEvent::ApprovalRequested { .. }) => {
+            Some(RuntimeEvent::ApprovalRequested { request_id, .. }) => {
                 events.push(RuntimeEvent::ApprovalRequested {
+                    request_id: request_id.clone(),
+                    kind: crate::run::RequestKind::new(crate::run::RequestKind::TOOL_APPROVAL),
+                    payload: json!(null),
                     tool_call: ToolCall {
                         id: String::new(),
                         name: String::new(),
@@ -1318,7 +1344,7 @@ async fn approval_gate_approved() {
                     },
                     context: crate::events::ApprovalContext::InitialToolCall,
                 });
-                handle.respond_approval(handle.run_id, true).await.unwrap();
+                handle.respond(&request_id, approval(true)).await.unwrap();
             }
             Some(event) => events.push(event),
             None => break,
@@ -1350,8 +1376,11 @@ async fn approval_gate_denied() {
     let mut events = Vec::new();
     loop {
         match rx.recv().await {
-            Some(RuntimeEvent::ApprovalRequested { .. }) => {
+            Some(RuntimeEvent::ApprovalRequested { request_id, .. }) => {
                 events.push(RuntimeEvent::ApprovalRequested {
+                    request_id: request_id.clone(),
+                    kind: crate::run::RequestKind::new(crate::run::RequestKind::TOOL_APPROVAL),
+                    payload: json!(null),
                     tool_call: ToolCall {
                         id: String::new(),
                         name: String::new(),
@@ -1359,7 +1388,7 @@ async fn approval_gate_denied() {
                     },
                     context: crate::events::ApprovalContext::InitialToolCall,
                 });
-                handle.respond_approval(handle.run_id, false).await.unwrap();
+                handle.respond(&request_id, approval(false)).await.unwrap();
             }
             Some(event) => events.push(event),
             None => break,
@@ -1838,7 +1867,7 @@ async fn run_retry_hint_tool(
         ) {
             if let Some(approved) = approve_retry {
                 handle
-                    .respond_approval(handle.run_id, approved)
+                    .respond(&approval_request_id(&event), approval(approved))
                     .await
                     .unwrap();
             }
@@ -3507,7 +3536,10 @@ async fn approval_gated_tools_are_excluded_from_parallel_execution() {
     let mut events = Vec::new();
     while let Some(event) = rx.recv().await {
         if matches!(event, RuntimeEvent::ApprovalRequested { .. }) {
-            handle.respond_approval(handle.run_id, true).await.unwrap();
+            handle
+                .respond(&approval_request_id(&event), approval(true))
+                .await
+                .unwrap();
         }
         events.push(event);
     }
@@ -4002,7 +4034,7 @@ fn truncate_output_multibyte_utf8_safe() {
 }
 
 #[tokio::test]
-async fn respond_approval_without_pending_returns_error() {
+async fn respond_without_pending_returns_not_found() {
     let model = Arc::new(ToolCallModelAdapter);
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(FakeTool::echo())).unwrap();
@@ -4013,12 +4045,9 @@ async fn respond_approval_without_pending_returns_error() {
     while rx.recv().await.is_some() {}
 
     // Sending approval when nothing is pending should fail
-    let result = handle.respond_approval(handle.run_id, true).await;
-    assert!(result.is_err());
-    assert!(
-        result.unwrap_err().contains("no pending approval"),
-        "should report no pending approval"
-    );
+    let id = crate::run::RequestId::from(format!("{}/1", handle.run_id));
+    let result = handle.respond(&id, approval(true)).await;
+    assert_eq!(result, Err(crate::run::RequestError::NotFound(id)));
 
     handle.wait().await;
 }
@@ -5306,7 +5335,7 @@ async fn sub_agent_approval_routed_to_child() {
                 if matches!(event.as_ref(), RuntimeEvent::ApprovalRequested { .. }) {
                     // Route approval to the child run
                     handle
-                        .respond_approval(child_run_id, true)
+                        .respond(&approval_request_id(event.as_ref()), approval(true))
                         .await
                         .expect("approval routing to child should succeed");
                 }
@@ -5365,7 +5394,7 @@ async fn sub_agent_approval_denied_completes_child() {
                 if matches!(event.as_ref(), RuntimeEvent::ApprovalRequested { .. }) {
                     // Deny the approval
                     handle
-                        .respond_approval(child_run_id, false)
+                        .respond(&approval_request_id(event.as_ref()), approval(false))
                         .await
                         .expect("approval routing to child should succeed");
                 }
@@ -5400,7 +5429,7 @@ async fn sub_agent_approval_denied_completes_child() {
 }
 
 #[tokio::test]
-async fn respond_approval_unknown_run_id_returns_error() {
+async fn respond_unknown_request_id_returns_not_found() {
     let model = Arc::new(ToolCallModelAdapter);
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(FakeTool::echo())).unwrap();
@@ -5410,14 +5439,9 @@ async fn respond_approval_unknown_run_id_returns_error() {
     // Drain events so the run completes
     while rx.recv().await.is_some() {}
 
-    let unknown_id = RunId::new();
-    let result = handle.respond_approval(unknown_id, true).await;
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(
-        err.contains("no pending approval"),
-        "expected error about pending approval, got: {err}"
-    );
+    let unknown_id = crate::run::RequestId::from("unknown/1");
+    let result = handle.withdraw(&unknown_id).await;
+    assert_eq!(result, Err(crate::run::RequestError::NotFound(unknown_id)));
 
     handle.wait().await;
 }
@@ -5443,7 +5467,10 @@ async fn child_run_events_carry_run_depth_and_child_id() {
                 ..
             }) => {
                 if matches!(event.as_ref(), RuntimeEvent::ApprovalRequested { .. }) {
-                    handle.respond_approval(child_run_id, true).await.unwrap();
+                    handle
+                        .respond(&approval_request_id(event.as_ref()), approval(true))
+                        .await
+                        .unwrap();
                 }
                 child_run_ids.push(child_run_id);
                 child_depths.push(run_depth);
@@ -5454,7 +5481,10 @@ async fn child_run_events_carry_run_depth_and_child_id() {
                 ..
             }) => {
                 if matches!(event.as_ref(), RuntimeEvent::ApprovalRequested { .. }) {
-                    handle.respond_approval(child_run_id, true).await.unwrap();
+                    handle
+                        .respond(&approval_request_id(event.as_ref()), approval(true))
+                        .await
+                        .unwrap();
                 }
                 child_run_ids.push(child_run_id);
             }
@@ -6989,7 +7019,10 @@ async fn before_tool_runs_before_approval_with_modified_input() {
     while let Some(e) = rx.recv().await {
         if let RuntimeEvent::ApprovalRequested { tool_call, .. } = &e {
             approval_input = Some(tool_call.input.clone());
-            handle.respond_approval(handle.run_id, true).await.unwrap();
+            handle
+                .respond(&approval_request_id(&e), approval(true))
+                .await
+                .unwrap();
         }
     }
     handle.wait().await;
@@ -7214,7 +7247,10 @@ async fn approval_mode_all_forces_approval_for_unguarded_tool() {
     while let Some(e) = rx.recv().await {
         if matches!(e, RuntimeEvent::ApprovalRequested { .. }) {
             saw_approval = true;
-            handle.respond_approval(handle.run_id, true).await.unwrap();
+            handle
+                .respond(&approval_request_id(&e), approval(true))
+                .await
+                .unwrap();
         }
     }
     handle.wait().await;
@@ -9115,4 +9151,156 @@ fn public_arbitrate_watcher_actions_documents_precedence() {
         resolved,
         crate::run::ArbitratedActions::Abort(r) if r == "a"
     ));
+}
+
+// ── v2.0 issue 004: blocking request channel ────────────────────────────────
+
+fn resolution_of(events: &[RuntimeEvent]) -> crate::run::RequestResolution {
+    events
+        .iter()
+        .find_map(|e| match e {
+            RuntimeEvent::RequestResolved { resolution, .. } => Some(resolution.clone()),
+            _ => None,
+        })
+        .expect("a RequestResolved event")
+}
+
+fn guarded_echo_registry() -> ToolRegistry {
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(GuardedNamedTool { name: "echo" }))
+        .unwrap();
+    registry
+}
+
+#[tokio::test]
+async fn pending_request_is_listed_and_answered_by_id() {
+    let model = Arc::new(ToolCallModelAdapter);
+    let (handle, mut rx) =
+        AgentRun::start(test_config(), "hi".into(), model, guarded_echo_registry());
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        if let RuntimeEvent::ApprovalRequested {
+            request_id, kind, ..
+        } = &event
+        {
+            assert_eq!(kind.as_str(), crate::run::RequestKind::TOOL_APPROVAL);
+            let pending = handle.pending_requests().await;
+            assert_eq!(pending.len(), 1);
+            assert_eq!(&pending[0].id, request_id);
+            assert_eq!(pending[0].run_id, handle.run_id);
+            assert!(matches!(
+                &pending[0].target,
+                crate::run::RequestTarget::ToolCall { tool_name, .. } if tool_name == "echo"
+            ));
+            assert!(handle.request(request_id).await.is_some());
+            handle.respond(request_id, approval(true)).await.unwrap();
+            assert!(handle.request(request_id).await.is_none());
+        }
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert!(resolution_of(&events).is_approved());
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ApprovalGranted { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+}
+
+#[tokio::test]
+async fn withdrawn_request_fails_closed_and_run_continues() {
+    let model = Arc::new(ToolCallModelAdapter);
+    let (handle, mut rx) =
+        AgentRun::start(test_config(), "hi".into(), model, guarded_echo_registry());
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        if let RuntimeEvent::ApprovalRequested { request_id, .. } = &event {
+            handle.withdraw(request_id).await.unwrap();
+        }
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert_eq!(
+        resolution_of(&events),
+        crate::run::RequestResolution::Withdrawn
+    );
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ApprovalDenied { .. })));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ToolCallCompleted { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+}
+
+#[tokio::test]
+async fn unanswered_request_times_out_closed_without_failing_the_run() {
+    let model = Arc::new(ToolCallModelAdapter);
+    let mut config = test_config();
+    config.runtime.request_timeout = Duration::from_millis(30);
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, guarded_echo_registry());
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    assert!(handle.pending_requests().await.is_empty());
+    handle.wait().await;
+
+    assert_eq!(
+        resolution_of(&events),
+        crate::run::RequestResolution::TimedOut
+    );
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ToolCallCompleted { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+}
+
+#[tokio::test]
+async fn requests_are_recorded_in_the_session_log() {
+    use crate::session::{InMemorySessionStore, SessionEventKind, SessionStore};
+    let store = Arc::new(InMemorySessionStore::new());
+    let mut config = test_config();
+    config.session_store = Some(store.clone() as Arc<dyn SessionStore>);
+    config.session_id = Some("sess-request".into());
+
+    let model = Arc::new(ToolCallModelAdapter);
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, guarded_echo_registry());
+    while let Some(event) = rx.recv().await {
+        if let RuntimeEvent::ApprovalRequested { request_id, .. } = &event {
+            handle.respond(request_id, approval(false)).await.unwrap();
+        }
+    }
+    handle.wait().await;
+
+    let events = store.read("sess-request", 1).await.unwrap();
+    let opened = events.iter().find_map(|e| match &e.kind {
+        SessionEventKind::RequestOpened { request } => Some(request.clone()),
+        _ => None,
+    });
+    let resolved = events.iter().find_map(|e| match &e.kind {
+        SessionEventKind::RequestResolved {
+            request_id,
+            resolution,
+        } => Some((request_id.clone(), resolution.clone())),
+        _ => None,
+    });
+    let opened = opened.expect("RequestOpened logged");
+    let (resolved_id, resolution) = resolved.expect("RequestResolved logged");
+    assert_eq!(opened.id, resolved_id);
+    assert!(!resolution.is_approved());
+    let log = crate::session::SessionLog::from_events(events).unwrap();
+    assert!(log.projection().pending.is_empty());
+    assert_eq!(log.projection().requests_opened, 1);
 }

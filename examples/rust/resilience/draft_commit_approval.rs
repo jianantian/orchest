@@ -12,7 +12,7 @@ use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use orchest::run::{AgentConfig, AgentRun, ApprovalMode};
+use orchest::run::{AgentConfig, AgentRun, ApprovalMode, RequestResponse};
 use orchest::tool::{
     registry::ToolRegistry, Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError,
     ToolExecutionMode, ToolMetadata, ToolOutput, ToolSource,
@@ -184,14 +184,22 @@ async fn main() {
 
     while let Some(event) = rx.recv().await {
         match event {
-            RuntimeEvent::ApprovalRequested { tool_call, context } => {
+            RuntimeEvent::ApprovalRequested {
+                request_id,
+                tool_call,
+                context,
+                ..
+            } => {
                 if let ApprovalContext::CommitToolCall { draft_tool } = context {
                     println!(
                         "[approval] '{}' commits draft output from '{}'",
                         tool_call.name, draft_tool
                     );
                 }
-                handle.respond_approval(handle.run_id, true).await.unwrap();
+                handle
+                    .respond(&request_id, RequestResponse::approve())
+                    .await
+                    .unwrap();
             }
             RuntimeEvent::RunCompleted { output, .. } => println!("[run] completed: {output}"),
             RuntimeEvent::RunFailed { error, .. } => println!("[run] failed: {error}"),

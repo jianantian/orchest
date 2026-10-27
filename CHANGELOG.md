@@ -35,6 +35,25 @@ except for the items `orchest-provider` re-exports.
   read the log named by `config.session_store` / `config.session_id`, and
   return `SessionError` (`NotConfigured`, `NotFound`, store errors). The host
   supplies the config again; nothing but the log is restored.
+- **Breaking:** approvals go through a blocking request channel
+  ([#334](https://github.com/jianantian/orchest/issues/334)). Every request
+  has a `RequestId` (`"{run_id}/{n}"`), a host-defined `RequestKind`
+  (Orchest raises `tool_approval` and `retry_approval`), a JSON payload and a
+  `RequestTarget`. `RunHandle::respond_approval(run_id, bool)` is replaced by
+  `RunHandle::respond(&RequestId, RequestResponse)` (approve, deny, or answer
+  with a payload, plus optional session rules), `RunHandle::withdraw`,
+  `RunHandle::pending_requests` and `RunHandle::request`; one `RequestBus`
+  (formerly `ApprovalBus`, also `ToolContext::request_bus`) serves the whole
+  run tree, so child-run requests are answered by id from the root handle.
+  `ApprovalRequested` carries `request_id`, `kind` and `payload`;
+  `ApprovalGranted` / `ApprovalDenied` carry `request_id`. The Python and
+  Node `respond_approval` / `respondApproval` take the request id instead of
+  the run id.
+- **Breaking:** a request that is not answered within
+  `RuntimeConfig::request_timeout` (default one hour) fails closed: the tool
+  call gets an error result with code `APPROVAL_TIMEOUT` and the run goes on,
+  instead of the run failing. A withdrawn request gives `APPROVAL_WITHDRAWN`,
+  and requests still pending when the run stops resolve as cancelled.
 
 ### Added
 
@@ -43,7 +62,7 @@ except for the items `orchest-provider` re-exports.
   and `flush`es its session log at the start of each step (before the model
   request), at the end of each step, at run termination (completed, failed or
   aborted), and before dispatching a tool with side effects, after recording a
-  `ToolCall` marker. `CheckpointPolicy::EveryTool`
+  `ToolDispatched` marker. `CheckpointPolicy::EveryTool`
   (`AgentConfigBuilder::checkpoint_policy`, `AgentConfig::checkpoint_policy`)
   also flushes before every other dispatch and after every tool result; the
   policy is stored in `SessionMeta::checkpoint_policy`. On resume the store is
@@ -67,6 +86,11 @@ except for the items `orchest-provider` re-exports.
   `tool::TOOL_ABORTED_BEFORE_DISPATCH` (cancelled before dispatch), and a
   `next_step` telling the model to check external state before repeating a
   call that may have taken effect. Settled calls produce no closure.
+- `RuntimeEvent::RequestResolved { request_id, kind, resolution }` reports how
+  each request ended (`Responded`, `Withdrawn`, `TimedOut`, `Cancelled`), and
+  the session log records `RequestOpened` / `RequestResolved`, so
+  `SessionProjection::pending` lists the requests open at a crash
+  ([#334](https://github.com/jianantian/orchest/issues/334)).
 
 ### Removed
 

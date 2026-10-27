@@ -7,6 +7,7 @@ pub(crate) mod config;
 pub(crate) mod handle;
 pub(crate) mod helpers;
 pub mod llm_watcher;
+pub mod request;
 pub(crate) mod retry;
 pub(crate) mod skills;
 pub(crate) mod supervisor;
@@ -21,10 +22,14 @@ pub use config::{
     RuntimeConfig, SkillDisclosure, SkillsConfig, SubAgentRuntime, SupervisionStrategy,
 };
 pub use handle::{
-    ApprovalBus, ChildCompletionError, ChildRunHandle, ChildRunOutcome, ChildRunRegistry,
-    EventReceiver, RunHandle,
+    ChildCompletionError, ChildRunHandle, ChildRunOutcome, ChildRunRegistry, EventReceiver,
+    RunHandle,
 };
 pub use llm_watcher::LlmWatcher;
+pub use request::{
+    PendingRequest, RequestBus, RequestDecision, RequestError, RequestId, RequestKind,
+    RequestResolution, RequestResponse, RequestTarget,
+};
 pub use retry::{BackoffStrategy, RetryPolicy};
 pub use watcher::{Watcher, WatcherAction};
 
@@ -132,7 +137,7 @@ impl AgentRun {
             initial_messages,
             model,
             registry,
-            ApprovalBus::default(),
+            RequestBus::default(),
             ChildRunRegistry::default(),
             vec![],
         )
@@ -160,7 +165,7 @@ impl AgentRun {
             initial_messages,
             model,
             registry,
-            ApprovalBus::default(),
+            RequestBus::default(),
             ChildRunRegistry::default(),
             watchers,
         ))
@@ -173,7 +178,7 @@ impl AgentRun {
         initial_messages: Vec<crate::model::Message>,
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
-        approval_bus: ApprovalBus,
+        request_bus: RequestBus,
         child_registry: ChildRunRegistry,
         watchers: Vec<(Arc<dyn Watcher>, usize)>,
     ) -> (RunHandle, EventReceiver) {
@@ -186,7 +191,7 @@ impl AgentRun {
             model,
             registry,
             event_tx,
-            approval_bus: approval_bus.clone(),
+            request_bus: request_bus.clone(),
             child_registry: child_registry.clone(),
             resume: None,
             initial_messages,
@@ -196,7 +201,7 @@ impl AgentRun {
         supervisor::spawn_supervised(supervisor::SpawnSupervised {
             run_id,
             args,
-            approval_bus,
+            request_bus,
             child_registry,
             event_rx,
             initial_watchers: watchers,
@@ -258,7 +263,7 @@ impl AgentRun {
         let log = load_session_log(&binding).await?;
         let run_id = log.projection().run_id.unwrap_or_default();
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
-        let approval_bus = ApprovalBus::default();
+        let request_bus = RequestBus::default();
         let child_registry = ChildRunRegistry::default();
         let args = AgentRunArgs {
             run_id,
@@ -267,7 +272,7 @@ impl AgentRun {
             model,
             registry,
             event_tx,
-            approval_bus: approval_bus.clone(),
+            request_bus: request_bus.clone(),
             child_registry: child_registry.clone(),
             resume: Some(ResumeState { log, input }),
             initial_messages: vec![],
@@ -277,7 +282,7 @@ impl AgentRun {
         Ok(supervisor::spawn_supervised(supervisor::SpawnSupervised {
             run_id,
             args,
-            approval_bus,
+            request_bus,
             child_registry,
             event_rx,
             initial_watchers: vec![],

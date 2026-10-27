@@ -91,5 +91,5 @@ export class Agent {
   ): void;
 
   /** Respond to an approval request for an active run. */
-  respondApproval(runId: string, approved: boolean): void;
+  respondApproval(requestId: string, approved: boolean): void;
 }

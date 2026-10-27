@@ -31,13 +31,16 @@ use crate::tool::{
 
 use super::compaction::maybe_compact_context;
 use super::config::{AgentConfig, RunId, SkillDisclosure, ToolExecutionPolicy};
-use super::handle::{ApprovalBus, ChildRunRegistry};
+use super::handle::ChildRunRegistry;
 use super::helpers::{append_searched_tool_defs, connect_mcp_servers, truncate_output};
+use super::request::{
+    PendingRequest, RequestBus, RequestDecision, RequestId, RequestKind, RequestResolution,
+    RequestResponse, RequestTarget,
+};
 use super::skills::register_skills;
 use super::tool_exec::{poll_async_job, tool_error_result, tool_skipped_by_hook_result};
 use super::webhook::{start_webhook_server, WebhookRuntime};
 
-const APPROVAL_TIMEOUT: Duration = Duration::from_secs(3600);
 const EVENT_SEND_TIMEOUT: Duration = Duration::from_millis(500);
 const TOOL_RETRY_MAX_ATTEMPTS: u32 = 3;
 const TOOL_RETRY_BASE_DELAY: Duration = Duration::from_millis(10);
@@ -92,7 +95,7 @@ pub(crate) struct AgentRunState {
     pub last_compaction_step: Option<u32>,
     pub cancelled: bool,
     pub run_hook_ctx: crate::hook::RunHookContext,
-    pub approval_bus: ApprovalBus,
+    pub request_bus: RequestBus,
     pub child_registry: ChildRunRegistry,
     /// Subscriber list; index 0 is the primary (blocking send), rest use try_send.
     pub event_subs: Vec<EventSink>,
@@ -160,7 +163,7 @@ pub(crate) struct AgentRunArgs {
     pub model: Arc<dyn ModelAdapter>,
     pub registry: ToolRegistry,
     pub event_tx: mpsc::Sender<RuntimeEvent>,
-    pub approval_bus: ApprovalBus,
+    pub request_bus: RequestBus,
     pub child_registry: ChildRunRegistry,
     /// `None` on a fresh start; `Some` when resuming a session log.
     pub resume: Option<ResumeState>,
@@ -196,7 +199,7 @@ impl Actor for WorkerActor {
             model,
             mut registry,
             event_tx,
-            approval_bus,
+            request_bus,
             child_registry,
             resume,
             initial_messages,
@@ -244,7 +247,7 @@ impl Actor for WorkerActor {
                 config,
                 model,
                 registry,
-                approval_bus,
+                request_bus,
                 child_registry.clone(),
                 run_hook_ctx,
                 error.message,
@@ -263,7 +266,7 @@ impl Actor for WorkerActor {
                     config,
                     model,
                     registry,
-                    approval_bus,
+                    request_bus,
                     child_registry.clone(),
                     run_hook_ctx,
                     error.to_string(),
@@ -284,7 +287,7 @@ impl Actor for WorkerActor {
                         config,
                         model,
                         registry,
-                        approval_bus,
+                        request_bus,
                         child_registry.clone(),
                         run_hook_ctx,
                         format!("skill loading failed: {error}"),
@@ -306,7 +309,7 @@ impl Actor for WorkerActor {
                 config,
                 model,
                 registry,
-                approval_bus,
+                request_bus,
                 child_registry.clone(),
                 run_hook_ctx,
                 format!("tool metadata validation failed: {error}"),
@@ -336,7 +339,7 @@ impl Actor for WorkerActor {
                     config,
                     model,
                     registry,
-                    approval_bus,
+                    request_bus,
                     child_registry.clone(),
                     run_hook_ctx,
                     format!("session log: {error}"),
@@ -362,7 +365,7 @@ impl Actor for WorkerActor {
                     config,
                     model,
                     registry,
-                    approval_bus,
+                    request_bus,
                     child_registry,
                     event_subs,
                     run_hook_ctx,
@@ -391,7 +394,7 @@ impl Actor for WorkerActor {
             last_compaction_step: None,
             cancelled: false,
             run_hook_ctx,
-            approval_bus,
+            request_bus,
             child_registry,
             event_subs,
             webhook_runtime,
@@ -484,7 +487,7 @@ impl Actor for WorkerActor {
         _myself: ActorRef<AgentMsg>,
         state: &mut AgentRunState,
     ) -> Result<(), ActorProcessingErr> {
-        state.approval_bus.cancel(state.run_id).await;
+        state.request_bus.cancel_run(state.run_id).await;
         Ok(())
     }
 }
@@ -807,63 +810,122 @@ fn tool_retry_delay(next_attempt: u32) -> Duration {
     TOOL_RETRY_BASE_DELAY.saturating_mul(1 << exponent)
 }
 
-struct RetryApprovalRequest<'a> {
-    approval_bus: &'a ApprovalBus,
-    subs: &'a [EventSink],
-    run_id: RunId,
-    tool_call: &'a ToolCall,
-    attempt: u32,
-    previous_error: &'a ToolError,
-}
-
-async fn request_retry_approval(request: RetryApprovalRequest<'_>) -> bool {
-    let context = ApprovalContext::RetryAfterFailure {
-        attempt: request.attempt,
-        previous_error: request.previous_error.clone(),
+/// Raises a tool-approval request on the run tree's request bus, records its
+/// lifecycle in the session log, and waits for the host, the run's request
+/// timeout, or the run to stop. Anything but an approving response fails
+/// closed.
+async fn await_tool_approval(
+    state: &mut AgentRunState,
+    subs: &[EventSink],
+    tool_call: &ToolCall,
+    kind: &str,
+    context: ApprovalContext,
+) -> RequestResolution {
+    let run_id = state.run_id;
+    let id = RequestId::new(run_id, state.log.projection().requests_opened + 1);
+    let kind = RequestKind::new(kind);
+    let payload = json!({ "tool_call": tool_call, "context": context });
+    let request = PendingRequest {
+        id: id.clone(),
+        run_id,
+        kind: kind.clone(),
+        payload: payload.clone(),
+        target: RequestTarget::ToolCall {
+            tool_use_id: tool_call.id.clone(),
+            tool_name: tool_call.name.clone(),
+        },
     };
-    let approval_rx = request.approval_bus.request(request.run_id).await;
-    let approval_started = Instant::now();
+    state.log.append(SessionEventKind::RequestOpened {
+        request: request.clone(),
+    });
+    let rx = state.request_bus.open(request).await;
+    let started = Instant::now();
     emit(
-        request.subs,
+        subs,
         RuntimeEvent::ApprovalRequested {
-            tool_call: request.tool_call.clone(),
+            request_id: id.clone(),
+            kind: kind.clone(),
+            payload,
+            tool_call: tool_call.clone(),
             context: context.clone(),
         },
     )
     .await;
 
-    let (approved, approval_status) =
-        match tokio::time::timeout(APPROVAL_TIMEOUT, approval_rx).await {
-            Ok(result) => {
-                let approved = result.unwrap_or(false);
-                (approved, if approved { "granted" } else { "denied" })
-            }
-            Err(_) => (false, "timeout"),
-        };
-    request.approval_bus.cancel(request.run_id).await;
-    telemetry::record_approval(approval_status, approval_started.elapsed());
-
-    if approved {
-        emit(
-            request.subs,
-            RuntimeEvent::ApprovalGranted {
-                tool_call: request.tool_call.clone(),
-                context,
-            },
-        )
-        .await;
+    let resolution = match tokio::time::timeout(state.config.runtime.request_timeout, rx).await {
+        Ok(Ok(resolution)) => resolution,
+        Ok(Err(_)) => RequestResolution::Cancelled,
+        Err(_) => {
+            state.request_bus.close(&id).await;
+            RequestResolution::TimedOut
+        }
+    };
+    state.log.append(SessionEventKind::RequestResolved {
+        request_id: id.clone(),
+        resolution: resolution.clone(),
+    });
+    telemetry::record_approval(resolution_label(&resolution), started.elapsed());
+    emit(
+        subs,
+        RuntimeEvent::RequestResolved {
+            request_id: id.clone(),
+            kind,
+            resolution: resolution.clone(),
+        },
+    )
+    .await;
+    let event = if resolution.is_approved() {
+        RuntimeEvent::ApprovalGranted {
+            request_id: id,
+            tool_call: tool_call.clone(),
+            context,
+        }
     } else {
-        emit(
-            request.subs,
-            RuntimeEvent::ApprovalDenied {
-                tool_call: request.tool_call.clone(),
-                context,
-            },
-        )
-        .await;
-    }
+        RuntimeEvent::ApprovalDenied {
+            request_id: id,
+            tool_call: tool_call.clone(),
+            context,
+        }
+    };
+    emit(subs, event).await;
+    resolution
+}
 
-    approved
+fn resolution_label(resolution: &RequestResolution) -> &'static str {
+    match resolution {
+        RequestResolution::Responded { response } if response.is_approved() => "granted",
+        RequestResolution::Responded { .. } => "denied",
+        RequestResolution::Withdrawn => "withdrawn",
+        RequestResolution::TimedOut => "timeout",
+        _ => "cancelled",
+    }
+}
+
+/// The tool result for a call whose approval was not granted.
+fn approval_refused_error(resolution: &RequestResolution) -> ToolError {
+    match resolution {
+        RequestResolution::Withdrawn => {
+            ToolError::fatal("approval request withdrawn").with_code("APPROVAL_WITHDRAWN")
+        }
+        RequestResolution::TimedOut => {
+            ToolError::fatal("approval request timed out").with_code("APPROVAL_TIMEOUT")
+        }
+        RequestResolution::Responded {
+            response:
+                RequestResponse {
+                    decision:
+                        RequestDecision::Deny {
+                            reason: Some(reason),
+                        },
+                    ..
+                },
+        } => ToolError::fatal(format!("tool call denied by user: {reason}"))
+            .with_code("APPROVAL_DENIED"),
+        RequestResolution::Responded { .. } => {
+            ToolError::fatal("tool call denied by user").with_code("APPROVAL_DENIED")
+        }
+        _ => ToolError::fatal("approval request cancelled").with_code("APPROVAL_CANCELLED"),
+    }
 }
 
 async fn record_repeated_failure(
@@ -1217,7 +1279,7 @@ struct ParallelExecutionContext {
     event_tx: mpsc::Sender<RuntimeEvent>,
     event_subs: Vec<EventSink>,
     webhook_base_url: Option<String>,
-    approval_bus: ApprovalBus,
+    request_bus: RequestBus,
     child_registry: ChildRunRegistry,
     remaining_budget: BudgetConfig,
     parent_messages: Vec<Message>,
@@ -1549,54 +1611,18 @@ async fn run_tool_and_handoff_phase(
 
         if state.config.runtime.should_approve(tool.metadata()) {
             let approval_context = approval_context_for(tool.metadata());
-            let approval_rx = state.approval_bus.request(run_id).await;
-            let approval_started = Instant::now();
-            emit(
+            let resolution = await_tool_approval(
+                state,
                 subs,
-                RuntimeEvent::ApprovalRequested {
-                    tool_call: effective_call.clone(),
-                    context: approval_context.clone(),
-                },
+                &effective_call,
+                RequestKind::TOOL_APPROVAL,
+                approval_context,
             )
             .await;
-
-            let approved = match tokio::time::timeout(APPROVAL_TIMEOUT, approval_rx).await {
-                Ok(result) => result.unwrap_or(false),
-                Err(_) => {
-                    telemetry::record_approval("timeout", approval_started.elapsed());
-                    emit_run_failed(state, subs, "approval_timeout", RunFailureKind::Other).await;
-                    return false;
-                }
-            };
-            state.approval_bus.cancel(run_id).await;
-            telemetry::record_approval(
-                if approved { "granted" } else { "denied" },
-                approval_started.elapsed(),
-            );
-
-            if approved {
-                emit(
-                    subs,
-                    RuntimeEvent::ApprovalGranted {
-                        tool_call: effective_call.clone(),
-                        context: approval_context,
-                    },
-                )
-                .await;
-            } else {
-                let error =
-                    ToolError::fatal("tool call denied by user").with_code("APPROVAL_DENIED");
-                emit(
-                    subs,
-                    RuntimeEvent::ApprovalDenied {
-                        tool_call: effective_call.clone(),
-                        context: approval_context,
-                    },
-                )
-                .await;
+            if !resolution.is_approved() {
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: tool_call.id.clone(),
-                    content: tool_error_result(&error),
+                    content: tool_error_result(&approval_refused_error(&resolution)),
                 });
                 continue;
             }
@@ -1687,7 +1713,7 @@ async fn run_tool_and_handoff_phase(
                 event_tx: Some(primary(subs).clone()),
                 event_subs: subs.to_vec(),
                 webhook_base_url: state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone()),
-                approval_bus: state.approval_bus.clone(),
+                request_bus: state.request_bus.clone(),
                 child_registry: state.child_registry.clone(),
                 remaining_budget: state.budget.remaining_config(),
                 parent_messages,
@@ -1747,16 +1773,19 @@ async fn run_tool_and_handoff_phase(
                     }
 
                     if error.retry == RetryHint::Caution {
-                        let approved = request_retry_approval(RetryApprovalRequest {
-                            approval_bus: &state.approval_bus,
-                            subs,
-                            run_id,
-                            tool_call: &effective_call,
+                        let context = ApprovalContext::RetryAfterFailure {
                             attempt: next_attempt,
-                            previous_error: &error,
-                        })
+                            previous_error: error.clone(),
+                        };
+                        let resolution = await_tool_approval(
+                            state,
+                            subs,
+                            &effective_call,
+                            RequestKind::RETRY_APPROVAL,
+                            context,
+                        )
                         .await;
-                        if !approved {
+                        if !resolution.is_approved() {
                             break Err(error);
                         }
                     }
@@ -2311,7 +2340,7 @@ async fn run_parallel_tool_batch_if_allowed(
     for call in calls {
         let event_tx = primary(subs).clone();
         let webhook_base_url = state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone());
-        let approval_bus = state.approval_bus.clone();
+        let request_bus = state.request_bus.clone();
         let child_registry = state.child_registry.clone();
         let remaining_budget = state.budget.remaining_config();
         let parent_messages = if call.tool.needs_parent_context() {
@@ -2327,7 +2356,7 @@ async fn run_parallel_tool_batch_if_allowed(
                 event_tx,
                 event_subs: subs.to_vec(),
                 webhook_base_url,
-                approval_bus,
+                request_bus,
                 child_registry,
                 remaining_budget,
                 parent_messages,
@@ -2374,7 +2403,7 @@ async fn execute_parallel_tool_call(
         event_tx: Some(parallel_ctx.event_tx.clone()),
         event_subs: parallel_ctx.event_subs.clone(),
         webhook_base_url: parallel_ctx.webhook_base_url,
-        approval_bus: parallel_ctx.approval_bus,
+        request_bus: parallel_ctx.request_bus,
         child_registry: parallel_ctx.child_registry,
         remaining_budget: parallel_ctx.remaining_budget,
         parent_messages: parallel_ctx.parent_messages,
@@ -2558,7 +2587,7 @@ async fn fail_pre_start(
     config: AgentConfig,
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
-    approval_bus: ApprovalBus,
+    request_bus: RequestBus,
     child_registry: ChildRunRegistry,
     run_hook_ctx: crate::hook::RunHookContext,
     error: String,
@@ -2577,7 +2606,7 @@ async fn fail_pre_start(
         config,
         model,
         registry,
-        approval_bus,
+        request_bus,
         child_registry,
         event_subs.to_vec(),
         run_hook_ctx,
@@ -2590,7 +2619,7 @@ fn failed_state(
     config: AgentConfig,
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
-    approval_bus: ApprovalBus,
+    request_bus: RequestBus,
     child_registry: ChildRunRegistry,
     event_subs: Vec<EventSink>,
     run_hook_ctx: crate::hook::RunHookContext,
@@ -2613,7 +2642,7 @@ fn failed_state(
         last_compaction_step: None,
         cancelled: true,
         run_hook_ctx,
-        approval_bus,
+        request_bus,
         child_registry,
         event_subs,
         webhook_runtime: None,

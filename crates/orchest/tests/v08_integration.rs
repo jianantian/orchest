@@ -13,7 +13,7 @@ use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, Role, StopReason, StreamEvent, TokenUsage,
 };
-use orchest::run::{AgentConfig, AgentRun, RunId, Watcher, WatcherAction};
+use orchest::run::{AgentConfig, AgentRun, RequestResponse, RunId, Watcher, WatcherAction};
 use orchest::session::{
     InMemorySessionStore, SessionEventKind, SessionLog, SessionMeta, SessionStore,
 };
@@ -250,7 +250,11 @@ async fn guardrail_and_approval_coexist() {
     let mut saw_approval = false;
     while let Some(event) = rx.recv().await {
         match &event {
-            RuntimeEvent::ApprovalRequested { tool_call, .. } => {
+            RuntimeEvent::ApprovalRequested {
+                request_id,
+                tool_call,
+                ..
+            } => {
                 // Verify the approved call is the SAFE one (not the banned one)
                 let path = tool_call
                     .input
@@ -262,7 +266,10 @@ async fn guardrail_and_approval_coexist() {
                     "banned call must not reach approval"
                 );
                 saw_approval = true;
-                handle.respond_approval(handle.run_id, true).await.unwrap();
+                handle
+                    .respond(request_id, RequestResponse::approve())
+                    .await
+                    .unwrap();
             }
             RuntimeEvent::RunFailed { error, .. } => panic!("run failed: {error}"),
             _ => {}
@@ -752,9 +759,12 @@ async fn all_v08_features_combined() {
     let mut saw_approval = false;
     while let Some(event) = rx.recv().await {
         match &event {
-            RuntimeEvent::ApprovalRequested { .. } => {
+            RuntimeEvent::ApprovalRequested { request_id, .. } => {
                 saw_approval = true;
-                handle.respond_approval(handle.run_id, true).await.unwrap();
+                handle
+                    .respond(request_id, RequestResponse::approve())
+                    .await
+                    .unwrap();
             }
             RuntimeEvent::RunFailed { error, .. } => panic!("run failed: {error}"),
             RuntimeEvent::RunAborted { reason } => {

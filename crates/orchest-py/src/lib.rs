@@ -913,8 +913,8 @@ impl Agent {
         Ok(())
     }
 
-    /// Respond to an approval request for an active run.
-    fn respond_approval(&self, run_id_str: String, approved: bool) -> PyResult<()> {
+    /// Answer the approval request `request_id` of the active run.
+    fn respond_approval(&self, request_id: String, approved: bool) -> PyResult<()> {
         let run_handle_ref = Arc::clone(&self.run_handle);
 
         let rt = tokio::runtime::Runtime::new()
@@ -923,14 +923,16 @@ impl Agent {
         rt.block_on(async {
             let guard = run_handle_ref.lock().await;
             if let Some(ref handle) = *guard {
-                let run_id: orchest::run::RunId = orchest::run::RunId(
-                    uuid::Uuid::parse_str(&run_id_str)
-                        .map_err(|e| PyRuntimeError::new_err(format!("invalid run_id: {e}")))?,
-                );
+                let request_id = orchest::run::RequestId::from(request_id);
+                let response = if approved {
+                    orchest::run::RequestResponse::approve()
+                } else {
+                    orchest::run::RequestResponse::deny(None)
+                };
                 handle
-                    .respond_approval(run_id, approved)
+                    .respond(&request_id, response)
                     .await
-                    .map_err(PyRuntimeError::new_err)?;
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
                 Ok(())
             } else {
                 Err(PyRuntimeError::new_err(

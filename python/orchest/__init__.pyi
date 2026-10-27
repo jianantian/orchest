@@ -258,6 +258,9 @@ class SkillContentReadEvent(TypedDict):
 
 class ApprovalRequestedEvent(TypedDict):
     type: Literal["approval_requested"]
+    request_id: str
+    kind: str
+    payload: JsonValue
     tool_call: ToolCall
     run_depth: int
     child_run_id: str | None
@@ -265,6 +268,7 @@ class ApprovalRequestedEvent(TypedDict):
 
 class ApprovalGrantedEvent(TypedDict):
     type: Literal["approval_granted"]
+    request_id: str
     tool_call: ToolCall
     run_depth: int
     child_run_id: str | None
@@ -272,7 +276,17 @@ class ApprovalGrantedEvent(TypedDict):
 
 class ApprovalDeniedEvent(TypedDict):
     type: Literal["approval_denied"]
+    request_id: str
     tool_call: ToolCall
+    run_depth: int
+    child_run_id: str | None
+
+
+class RequestResolvedEvent(TypedDict):
+    type: Literal["request_resolved"]
+    request_id: str
+    kind: str
+    resolution: JsonValue
     run_depth: int
     child_run_id: str | None
 
@@ -408,6 +422,7 @@ RuntimeEvent: TypeAlias = (
     | ApprovalRequestedEvent
     | ApprovalGrantedEvent
     | ApprovalDeniedEvent
+    | RequestResolvedEvent
     | BudgetWarningEvent
     | RuntimeWarningEvent
     | SkillMissingCapabilitiesEvent
@@ -559,6 +574,6 @@ class Agent:
     def run_sync(self, input: str, messages: list[dict[str, Any]] | None = None) -> list[RuntimeEvent]: ...
     def run(self, input: str, messages: list[dict[str, Any]] | None = None) -> list[RuntimeEvent]: ...
     def run_stream(self, input: str, on_event: Callable[[RuntimeEvent], None], messages: list[dict[str, Any]] | None = None) -> None: ...
-    def respond_approval(self, run_id_str: str, approved: bool) -> None: ...
+    def respond_approval(self, request_id: str, approved: bool) -> None: ...
 
 __all__: list[str]

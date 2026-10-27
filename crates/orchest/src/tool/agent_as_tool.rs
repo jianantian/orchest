@@ -333,7 +333,7 @@ impl AgentAsTool {
             initial_messages,
             Arc::clone(&self.model),
             self.registry.clone(),
-            ctx.approval_bus.clone(),
+            ctx.request_bus.clone(),
             ctx.child_registry.clone(),
             vec![],
         );

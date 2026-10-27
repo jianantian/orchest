@@ -1,7 +1,7 @@
 //! Run configuration types: RunId, AgentConfig, RunState, RunStatus, SubAgentRuntime.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -313,6 +313,14 @@ pub struct RuntimeConfig {
     /// Not serialized (like hooks/retry_policy); only set via code.
     #[serde(skip)]
     pub custom_approval_fn: Option<CustomApprovalFn>,
+    /// How long a blocking request (such as a tool approval) waits for the
+    /// host. An unanswered request counts as not approved.
+    #[serde(default = "default_request_timeout")]
+    pub request_timeout: Duration,
+}
+
+fn default_request_timeout() -> Duration {
+    Duration::from_secs(3600)
 }
 
 impl RuntimeConfig {
@@ -360,6 +368,7 @@ impl std::fmt::Debug for RuntimeConfig {
             .field("tool_execution_policy", &self.tool_execution_policy)
             .field("repeated_failure", &self.repeated_failure)
             .field("custom_approval_fn", &self.custom_approval_fn.is_some())
+            .field("request_timeout", &self.request_timeout)
             .finish()
     }
 }
@@ -380,6 +389,7 @@ impl Default for RuntimeConfig {
             tool_execution_policy: ToolExecutionPolicy::Sequential,
             repeated_failure: RepeatedFailureConfig::default(),
             custom_approval_fn: None,
+            request_timeout: default_request_timeout(),
         }
     }
 }
@@ -677,6 +687,13 @@ impl AgentConfigBuilder {
         self.runtime.custom_approval_fn = Some(Arc::new(f));
         self
     }
+    /// How long a blocking request waits before it counts as not approved
+    /// (default one hour).
+    pub fn request_timeout(mut self, timeout: Duration) -> Self {
+        self.runtime.request_timeout = timeout;
+        self
+    }
+
     pub fn repeated_failure_threshold(mut self, threshold: usize) -> Self {
         self.runtime.repeated_failure.threshold = threshold;
         self
