@@ -6,7 +6,9 @@ pub mod log;
 pub mod sqlite;
 pub mod store;
 
-pub use log::{SessionEvent, SessionEventKind, SessionLog, SessionProjection};
+pub use log::{
+    summarize_args, DispatchRecord, SessionEvent, SessionEventKind, SessionLog, SessionProjection,
+};
 #[cfg(feature = "sqlite-session")]
 pub use sqlite::SqliteSessionStore;
 pub use store::{CheckpointPolicy, InMemorySessionStore, SessionError, SessionMeta, SessionStore};

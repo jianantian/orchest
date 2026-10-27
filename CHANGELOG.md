@@ -21,7 +21,7 @@ except for the items `orchest-provider` re-exports.
   records every change to its state as a `SessionEvent` (consecutive `seq`,
   timestamp, tagged `SessionEventKind`: `RunStarted`, `StepStarted`,
   `StepEnded`, `SystemMessage`, `UserMessage`, `AssistantMessage`,
-  `ToolCall`, `ToolResult`, `Compacted`, `Handoff`, `RunEnded`, `RunFailed`,
+  `ToolDispatched`, `ToolResult`, `Compacted`, `Handoff`, `RunEnded`, `RunFailed`,
   `RunAborted`); the conversation, step and budget are a `SessionProjection`
   of that log, and the projected history now ends with the final answer.
   `SessionStore` is now `put_meta` / `get_meta` / `append` / `read(from_seq)`
@@ -53,6 +53,20 @@ except for the items `orchest-provider` re-exports.
   is recorded as `SessionEventKind::StepInterrupted`, and it runs again under
   the same step number with the budget of the last completed step. No tool
   call is run again.
+- In-flight tool ledger
+  ([#333](https://github.com/jianantian/orchest/issues/333)). Before a tool
+  runs, the log records `SessionEventKind::ToolDispatched { tool_use_id,
+  tool_name, args_summary }`; `args_summary` (`session::summarize_args`)
+  keeps the input's keys and value types but no values, so credentials stay
+  out of the log. A `ToolResult` settles the call.
+  `SessionLog::dispatched_but_unsettled()` / `SessionProjection::unsettled`
+  list calls dispatched without a result. Calls a crash or cancellation left
+  without a result are closed with an error tool result carrying one of the
+  stable codes `tool::TOOL_OUTCOME_UNKNOWN` (dispatched, effect unknown),
+  `tool::TOOL_NOT_STARTED` (crash before dispatch) or
+  `tool::TOOL_ABORTED_BEFORE_DISPATCH` (cancelled before dispatch), and a
+  `next_step` telling the model to check external state before repeating a
+  call that may have taken effect. Settled calls produce no closure.
 
 ### Removed
 

@@ -55,11 +55,17 @@ pub enum SessionEventKind {
     UserMessage { content: Vec<ContentBlock> },
     /// A model response, including any `ToolUse` blocks it requested.
     AssistantMessage { content: Vec<ContentBlock> },
-    /// A tool call was dispatched to its tool.
-    ToolCall { call: ToolCall },
-    /// The result for one tool call. Consecutive results form the user
-    /// message that follows the assistant message holding the `ToolUse`
-    /// blocks.
+    /// Ledger: a tool call is about to be dispatched to its tool. Recorded
+    /// before the tool runs; `args_summary` keeps the shape of the input, not
+    /// its values, so credentials never reach the log.
+    ToolDispatched {
+        tool_use_id: String,
+        tool_name: String,
+        args_summary: serde_json::Value,
+    },
+    /// The result for one tool call, which settles it in the ledger.
+    /// Consecutive results form the user message that follows the assistant
+    /// message holding the `ToolUse` blocks.
     ToolResult {
         tool_use_id: String,
         content: serde_json::Value,
@@ -85,6 +91,45 @@ pub enum SessionEventKind {
     RunAborted { reason: Option<String> },
 }
 
+/// A ledger entry: a tool call that was dispatched.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DispatchRecord {
+    pub tool_use_id: String,
+    pub tool_name: String,
+    pub args_summary: serde_json::Value,
+}
+
+/// The shape of a tool input without its values: object keys are kept,
+/// every scalar becomes its type name and arrays their length.
+pub fn summarize_args(input: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    fn summarize(value: &Value, depth: usize) -> Value {
+        match value {
+            Value::Null => Value::from("null"),
+            Value::Bool(_) => Value::from("bool"),
+            Value::Number(_) => Value::from("number"),
+            Value::String(_) => Value::from("string"),
+            Value::Array(items) => Value::from(format!("array[{}]", items.len())),
+            Value::Object(_) if depth >= 3 => Value::from("object"),
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(key, v)| (key.clone(), summarize(v, depth + 1)))
+                    .collect(),
+            ),
+        }
+    }
+    summarize(input, 0)
+}
+
+/// Why a step is closed without having ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StepClosure {
+    /// The process stopped (crash, kill) and the run is being resumed.
+    Crashed,
+    /// The run was cancelled.
+    Aborted,
+}
+
 /// State derived from a session log.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SessionProjection {
@@ -94,8 +139,8 @@ pub struct SessionProjection {
     pub step: u32,
     /// Budget usage at the last step boundary.
     pub budget_used: BudgetUsage,
-    /// Tool calls dispatched without a recorded result.
-    pub pending: Vec<ToolCall>,
+    /// Ledger: tool calls dispatched without a recorded result.
+    pub unsettled: Vec<DispatchRecord>,
     /// Tool calls the last assistant message requested that have no recorded
     /// result yet, dispatched or not.
     pub unanswered: Vec<ToolCall>,
@@ -159,14 +204,22 @@ impl SessionProjection {
                     .collect();
                 self.push_message(Role::Assistant, content.clone());
             }
-            SessionEventKind::ToolCall { call } => {
-                self.pending.push(call.clone());
+            SessionEventKind::ToolDispatched {
+                tool_use_id,
+                tool_name,
+                args_summary,
+            } => {
+                self.unsettled.push(DispatchRecord {
+                    tool_use_id: tool_use_id.clone(),
+                    tool_name: tool_name.clone(),
+                    args_summary: args_summary.clone(),
+                });
             }
             SessionEventKind::ToolResult {
                 tool_use_id,
                 content,
             } => {
-                self.pending.retain(|call| &call.id != tool_use_id);
+                self.unsettled.retain(|r| &r.tool_use_id != tool_use_id);
                 self.unanswered.retain(|call| &call.id != tool_use_id);
                 let block = ContentBlock::ToolResult {
                     tool_use_id: tool_use_id.clone(),
@@ -295,26 +348,47 @@ impl SessionLog {
         self.events.len() as u64 + 1
     }
 
-    /// Closes a step left open by a crash, failure or abort so the log can be
+    /// Closes a step left open by a crash or failure so the log can be
     /// continued: every tool call the step requested without a result gets a
     /// synthesized error result (`TOOL_OUTCOME_UNKNOWN` when it was
     /// dispatched, `TOOL_NOT_STARTED` when it was not), then the step is
     /// marked `StepInterrupted`. No call is run again. Returns whether a step
     /// was open.
     pub fn close_interrupted_step(&mut self) -> bool {
+        self.close_open_step(StepClosure::Crashed)
+    }
+
+    /// Closes the open step of a cancelled run: calls that were dispatched
+    /// are `TOOL_OUTCOME_UNKNOWN` (they may still be running), calls that
+    /// were not are `TOOL_ABORTED_BEFORE_DISPATCH`. Returns whether a step was
+    /// open.
+    pub fn close_aborted_step(&mut self) -> bool {
+        self.close_open_step(StepClosure::Aborted)
+    }
+
+    fn close_open_step(&mut self, closure: StepClosure) -> bool {
         let Some(step) = self.projection.open_step else {
             return false;
         };
         let unanswered = self.projection.unanswered.clone();
         for call in unanswered {
-            let dispatched = self.projection.pending.iter().any(|p| p.id == call.id);
+            let dispatched = self
+                .projection
+                .unsettled
+                .iter()
+                .any(|r| r.tool_use_id == call.id);
             self.append(SessionEventKind::ToolResult {
                 tool_use_id: call.id.clone(),
-                content: closure_result(&call, dispatched),
+                content: closure_result(&call, dispatched, closure),
             });
         }
         self.append(SessionEventKind::StepInterrupted { step });
         true
+    }
+
+    /// Ledger: the tool calls dispatched without a recorded result.
+    pub fn dispatched_but_unsettled(&self) -> &[DispatchRecord] {
+        &self.projection.unsettled
     }
 
     /// Events not yet accepted by a store.
@@ -328,27 +402,35 @@ impl SessionLog {
     }
 }
 
-/// The tool result recorded for a call a crash left without one.
-fn closure_result(call: &ToolCall, dispatched: bool) -> serde_json::Value {
-    let (code, message) = if dispatched {
-        (
-            "TOOL_OUTCOME_UNKNOWN",
-            format!(
-                "the run stopped after `{}` was dispatched and before its result was recorded; \
-                 whether it took effect is unknown",
-                call.name
-            ),
-        )
-    } else {
-        (
-            "TOOL_NOT_STARTED",
-            format!(
-                "the run stopped before `{}` was dispatched; it did not run",
-                call.name
-            ),
-        )
+/// The tool result recorded for a call a closed step left without one. The
+/// text tells the model what it may assume, so it checks external state
+/// instead of blindly retrying a side effect.
+fn closure_result(call: &ToolCall, dispatched: bool, closure: StepClosure) -> serde_json::Value {
+    use crate::tool::{
+        ToolError, TOOL_ABORTED_BEFORE_DISPATCH, TOOL_NOT_STARTED, TOOL_OUTCOME_UNKNOWN,
     };
-    let error = crate::tool::ToolError::fatal(message).with_code(code);
+    let name = &call.name;
+    let error = match (dispatched, closure) {
+        (true, _) => ToolError::fatal(format!(
+            "`{name}` was dispatched, but the run stopped before its result was recorded; \
+             whether it took effect is unknown"
+        ))
+        .with_code(TOOL_OUTCOME_UNKNOWN)
+        .with_next_step(
+            "check the state this call affects before deciding to call it again; \
+             only repeat it without checking if it is read-only or idempotent",
+        ),
+        (false, StepClosure::Crashed) => ToolError::fatal(format!(
+            "the run stopped before `{name}` was dispatched; it did not run"
+        ))
+        .with_code(TOOL_NOT_STARTED)
+        .with_next_step("call it again if it is still needed"),
+        (false, StepClosure::Aborted) => ToolError::fatal(format!(
+            "the run was cancelled before `{name}` was dispatched; it did not run"
+        ))
+        .with_code(TOOL_ABORTED_BEFORE_DISPATCH)
+        .with_next_step("call it again only if the user still wants it"),
+    };
     serde_json::json!({ "error": error })
 }
 
@@ -369,6 +451,14 @@ mod tests {
             seq,
             timestamp_ms: 0,
             kind,
+        }
+    }
+
+    fn dispatched(id: &str) -> SessionEventKind {
+        SessionEventKind::ToolDispatched {
+            tool_use_id: id.into(),
+            tool_name: format!("tool_{id}"),
+            args_summary: json!({}),
         }
     }
 
@@ -435,25 +525,13 @@ mod tests {
                 },
             ],
         });
-        log.append(SessionEventKind::ToolCall {
-            call: ToolCall {
-                id: "t1".into(),
-                name: "a".into(),
-                input: json!({}),
-            },
-        });
+        log.append(dispatched("t1"));
         log.append(SessionEventKind::ToolResult {
             tool_use_id: "t1".into(),
             content: json!("one"),
         });
-        log.append(SessionEventKind::ToolCall {
-            call: ToolCall {
-                id: "t2".into(),
-                name: "b".into(),
-                input: json!({}),
-            },
-        });
-        assert_eq!(log.projection().pending.len(), 1);
+        log.append(dispatched("t2"));
+        assert_eq!(log.dispatched_but_unsettled().len(), 1);
         log.append(SessionEventKind::ToolResult {
             tool_use_id: "t2".into(),
             content: json!("two"),
@@ -480,7 +558,7 @@ mod tests {
             })
             .collect();
         assert_eq!(ids, vec!["t1", "t2"]);
-        assert!(projection.pending.is_empty());
+        assert!(projection.unsettled.is_empty());
         assert_eq!(projection.step, 1);
         assert_eq!(projection.budget_used.tool_calls_used, 2);
     }
@@ -513,14 +591,6 @@ mod tests {
         }
     }
 
-    fn call(id: &str) -> ToolCall {
-        ToolCall {
-            id: id.into(),
-            name: format!("tool_{id}"),
-            input: json!({}),
-        }
-    }
-
     fn error_code(content: &serde_json::Value) -> &str {
         content["error"]["code"].as_str().unwrap_or_default()
     }
@@ -541,12 +611,12 @@ mod tests {
         log.append(SessionEventKind::AssistantMessage {
             content: vec![tool_use("a"), tool_use("b"), tool_use("c")],
         });
-        log.append(SessionEventKind::ToolCall { call: call("a") });
+        log.append(dispatched("a"));
         log.append(SessionEventKind::ToolResult {
             tool_use_id: "a".into(),
             content: json!("done"),
         });
-        log.append(SessionEventKind::ToolCall { call: call("b") });
+        log.append(dispatched("b"));
         // crash: b dispatched without a result, c never dispatched
 
         let mut resumed = SessionLog::from_events(log.events().to_vec()).unwrap();
@@ -557,7 +627,7 @@ mod tests {
         assert_eq!(projection.step, 1, "the interrupted step runs again");
         assert_eq!(projection.budget_used.tokens_used, 5);
         assert!(projection.open_step.is_none());
-        assert!(projection.pending.is_empty());
+        assert!(projection.unsettled.is_empty());
         assert!(projection.unanswered.is_empty());
 
         let results = &projection.messages.last().unwrap().content;
@@ -574,6 +644,76 @@ mod tests {
             resumed.events().last().map(|e| &e.kind),
             Some(SessionEventKind::StepInterrupted { step: 1 })
         ));
+    }
+
+    #[test]
+    fn aborted_step_closes_undispatched_calls_as_aborted() {
+        let mut log = SessionLog::new();
+        log.append(SessionEventKind::StepStarted { step: 0 });
+        log.append(SessionEventKind::AssistantMessage {
+            content: vec![tool_use("a"), tool_use("b")],
+        });
+        log.append(dispatched("a"));
+        assert!(log.close_aborted_step());
+        let codes: Vec<&str> = log
+            .messages()
+            .last()
+            .unwrap()
+            .content
+            .iter()
+            .map(|b| match b {
+                ContentBlock::ToolResult { content, .. } => error_code(content),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(
+            codes,
+            vec!["TOOL_OUTCOME_UNKNOWN", "TOOL_ABORTED_BEFORE_DISPATCH"]
+        );
+        assert!(log.dispatched_but_unsettled().is_empty());
+    }
+
+    #[test]
+    fn settled_calls_produce_no_closure() {
+        let mut log = SessionLog::new();
+        log.append(SessionEventKind::StepStarted { step: 0 });
+        log.append(SessionEventKind::AssistantMessage {
+            content: vec![tool_use("a")],
+        });
+        log.append(dispatched("a"));
+        log.append(SessionEventKind::ToolResult {
+            tool_use_id: "a".into(),
+            content: json!("ok"),
+        });
+        assert!(log.close_interrupted_step());
+        let results = log
+            .events()
+            .iter()
+            .filter(|e| matches!(e.kind, SessionEventKind::ToolResult { .. }))
+            .count();
+        assert_eq!(results, 1, "a settled call gets no synthesized result");
+    }
+
+    #[test]
+    fn args_summary_keeps_shape_not_values() {
+        let summary = summarize_args(&json!({
+            "path": "/etc/secret",
+            "token": "sk-live-123",
+            "retries": 3,
+            "headers": {"authorization": "Bearer abc"},
+            "items": [1, 2],
+        }));
+        assert_eq!(
+            summary,
+            json!({
+                "path": "string",
+                "token": "string",
+                "retries": "number",
+                "headers": {"authorization": "string"},
+                "items": "array[2]",
+            })
+        );
+        assert!(!summary.to_string().contains("sk-live"));
     }
 
     #[test]

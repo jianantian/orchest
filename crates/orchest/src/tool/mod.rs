@@ -22,7 +22,10 @@ use async_job::JobHandle;
 
 pub use crate::model::{JsonSchema, ToolDef};
 pub use agent_as_tool::ContextMode;
-pub use error::{ErrorKind, RetryHint, ToolError};
+pub use error::{
+    ErrorKind, RetryHint, ToolError, TOOL_ABORTED_BEFORE_DISPATCH, TOOL_NOT_STARTED,
+    TOOL_OUTCOME_UNKNOWN,
+};
 pub use metadata::{CostHint, ToolExecutionMode, ToolMetadata, ToolParallelism, ToolSource};
 
 /// A capability the model can invoke: name, schemas, metadata, and an async

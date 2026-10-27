@@ -13,8 +13,8 @@ use crate::model::{
     RequestOptions, Role, StopReason, StreamEvent, TokenUsage,
 };
 use crate::session::{
-    CheckpointPolicy, InMemorySessionStore, SessionEvent, SessionEventKind, SessionLog,
-    SessionMeta, SessionStore,
+    summarize_args, CheckpointPolicy, InMemorySessionStore, SessionEvent, SessionEventKind,
+    SessionLog, SessionMeta, SessionStore,
 };
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{
@@ -155,7 +155,7 @@ impl Tool for ProbeTool {
         self.runs.fetch_add(1, Ordering::SeqCst);
         let stored = self.store.read(self.session_id, 1).await.unwrap();
         let durable = stored.iter().any(|e| {
-            matches!(&e.kind, SessionEventKind::ToolCall { call } if call.id == ctx.tool_call_id)
+            matches!(&e.kind, SessionEventKind::ToolDispatched { tool_use_id, .. } if *tool_use_id == ctx.tool_call_id)
         });
         self.marker_durable.lock().unwrap().push(durable);
         Ok(ToolOutput::Immediate(json!("ok")))
@@ -330,7 +330,11 @@ async fn seed_open_step(store: &InMemorySessionStore, session_id: &str, dispatch
         }],
     });
     if dispatched {
-        log.append(SessionEventKind::ToolCall { call });
+        log.append(SessionEventKind::ToolDispatched {
+            tool_use_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            args_summary: summarize_args(&call.input),
+        });
     }
     store
         .put_meta(&SessionMeta::new(session_id, "checkpoint-agent"))

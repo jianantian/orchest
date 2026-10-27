@@ -16,7 +16,8 @@ use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelResponse, ModelStreamChunk, Role, StopReason,
 };
 use crate::session::{
-    CheckpointPolicy, SessionError, SessionEventKind, SessionLog, SessionMeta, SessionStore,
+    summarize_args, CheckpointPolicy, SessionError, SessionEventKind, SessionLog, SessionMeta,
+    SessionStore,
 };
 use crate::skill::disclosure::{with_disclosure_block, SkillSummary};
 use crate::telemetry;
@@ -461,6 +462,7 @@ impl Actor for WorkerActor {
             AgentMsg::Cancel(cmd) => {
                 if !state.cancelled {
                     state.cancelled = true;
+                    state.log.close_aborted_step();
                     state.log.append(SessionEventKind::RunAborted {
                         reason: cmd.reason.clone(),
                     });
@@ -655,7 +657,7 @@ async fn persist_durable(
 enum Checkpoint {
     /// After `StepStarted`, before the model request.
     StepStart,
-    /// After a `ToolCall` marker, before the tool runs.
+    /// After a `ToolDispatched` marker, before the tool runs.
     BeforeDispatch { side_effect: bool },
     /// After a tool result was recorded.
     AfterToolResult,
@@ -1647,8 +1649,10 @@ async fn run_tool_and_handoff_phase(
             }
 
             if attempt == 1 {
-                state.log.append(SessionEventKind::ToolCall {
-                    call: effective_call.clone(),
+                state.log.append(SessionEventKind::ToolDispatched {
+                    tool_use_id: effective_call.id.clone(),
+                    tool_name: effective_call.name.clone(),
+                    args_summary: summarize_args(&effective_call.input),
                 });
                 let point = Checkpoint::BeforeDispatch {
                     side_effect: tool_meta.side_effect,
@@ -2277,8 +2281,10 @@ async fn run_parallel_tool_batch_if_allowed(
     .await;
     for call in &calls {
         state.budget.record_tool_call();
-        state.log.append(SessionEventKind::ToolCall {
-            call: call.tool_call.clone(),
+        state.log.append(SessionEventKind::ToolDispatched {
+            tool_use_id: call.tool_call.id.clone(),
+            tool_name: call.tool_call.name.clone(),
+            args_summary: summarize_args(&call.input),
         });
         emit(
             subs,
