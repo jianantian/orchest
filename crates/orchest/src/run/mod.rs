@@ -296,4 +296,6 @@ pub(crate) async fn load_session_log(binding: &SessionBinding) -> Result<Session
 }
 
 #[cfg(test)]
+mod checkpoint_tests;
+#[cfg(test)]
 mod tests;

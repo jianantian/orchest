@@ -36,6 +36,24 @@ except for the items `orchest-provider` re-exports.
   return `SessionError` (`NotConfigured`, `NotFound`, store errors). The host
   supplies the config again; nothing but the log is restored.
 
+### Added
+
+- Session checkpoints and a resume boundary
+  ([#332](https://github.com/jianantian/orchest/issues/332)). A run appends
+  and `flush`es its session log at the start of each step (before the model
+  request), at the end of each step, at run termination (completed, failed or
+  aborted), and before dispatching a tool with side effects, after recording a
+  `ToolCall` marker. `CheckpointPolicy::EveryTool`
+  (`AgentConfigBuilder::checkpoint_policy`, `AgentConfig::checkpoint_policy`)
+  also flushes before every other dispatch and after every tool result; the
+  policy is stored in `SessionMeta::checkpoint_policy`. On resume the store is
+  flushed before the first write, and a step left open is closed: each tool
+  call it requested without a result gets an error result
+  (`TOOL_OUTCOME_UNKNOWN` if dispatched, `TOOL_NOT_STARTED` if not), the step
+  is recorded as `SessionEventKind::StepInterrupted`, and it runs again under
+  the same step number with the budget of the last completed step. No tool
+  call is run again.
+
 ### Removed
 
 - **Breaking:** `SessionSnapshot`, `SessionPersistenceHook`,

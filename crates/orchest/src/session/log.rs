@@ -45,6 +45,10 @@ pub enum SessionEventKind {
     /// A step finished. `budget_used` is the run's budget usage at the step
     /// boundary.
     StepEnded { step: u32, budget_used: BudgetUsage },
+    /// A step that started but never ended was closed on resume. The step is
+    /// not counted as completed: the projection's step and budget stay at the
+    /// last `StepEnded`, and the step runs again under the same number.
+    StepInterrupted { step: u32 },
     /// A system message (the system prompt or a steer instruction).
     SystemMessage { content: Vec<ContentBlock> },
     /// A user turn.
@@ -92,6 +96,11 @@ pub struct SessionProjection {
     pub budget_used: BudgetUsage,
     /// Tool calls dispatched without a recorded result.
     pub pending: Vec<ToolCall>,
+    /// Tool calls the last assistant message requested that have no recorded
+    /// result yet, dispatched or not.
+    pub unanswered: Vec<ToolCall>,
+    /// The step that started and has not ended, if any.
+    pub open_step: Option<u32>,
     /// The agent that owns the conversation (changes on handoff).
     pub agent_name: Option<String>,
     /// The run that last wrote to the session.
@@ -118,10 +127,17 @@ impl SessionProjection {
                 self.run_id = Some(*run_id);
                 self.agent_name = Some(agent_name.clone());
             }
-            SessionEventKind::StepStarted { .. } => {}
+            SessionEventKind::StepStarted { step } => {
+                self.open_step = Some(*step);
+            }
             SessionEventKind::StepEnded { step, budget_used } => {
                 self.step = step + 1;
                 self.budget_used = budget_used.clone();
+                self.open_step = None;
+            }
+            SessionEventKind::StepInterrupted { step } => {
+                self.step = *step;
+                self.open_step = None;
             }
             SessionEventKind::SystemMessage { content } => {
                 self.push_message(Role::System, content.clone());
@@ -130,6 +146,17 @@ impl SessionProjection {
                 self.push_message(Role::User, content.clone());
             }
             SessionEventKind::AssistantMessage { content } => {
+                self.unanswered = content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::ToolUse { id, name, input } => Some(ToolCall {
+                            id: id.clone(),
+                            name: name.clone(),
+                            input: input.clone(),
+                        }),
+                        _ => None,
+                    })
+                    .collect();
                 self.push_message(Role::Assistant, content.clone());
             }
             SessionEventKind::ToolCall { call } => {
@@ -140,6 +167,7 @@ impl SessionProjection {
                 content,
             } => {
                 self.pending.retain(|call| &call.id != tool_use_id);
+                self.unanswered.retain(|call| &call.id != tool_use_id);
                 let block = ContentBlock::ToolResult {
                     tool_use_id: tool_use_id.clone(),
                     content: content.clone(),
@@ -156,6 +184,7 @@ impl SessionProjection {
             SessionEventKind::Compacted { messages } => {
                 self.messages = messages.clone();
                 self.tool_results_open = false;
+                self.unanswered.clear();
             }
             SessionEventKind::Handoff {
                 to_agent,
@@ -167,6 +196,7 @@ impl SessionProjection {
                 self.agent_name = Some(to_agent.clone());
                 self.budget_used = budget_used.clone();
                 self.tool_results_open = false;
+                self.unanswered.clear();
             }
             SessionEventKind::RunEnded { .. }
             | SessionEventKind::RunFailed { .. }
@@ -265,6 +295,28 @@ impl SessionLog {
         self.events.len() as u64 + 1
     }
 
+    /// Closes a step left open by a crash, failure or abort so the log can be
+    /// continued: every tool call the step requested without a result gets a
+    /// synthesized error result (`TOOL_OUTCOME_UNKNOWN` when it was
+    /// dispatched, `TOOL_NOT_STARTED` when it was not), then the step is
+    /// marked `StepInterrupted`. No call is run again. Returns whether a step
+    /// was open.
+    pub fn close_interrupted_step(&mut self) -> bool {
+        let Some(step) = self.projection.open_step else {
+            return false;
+        };
+        let unanswered = self.projection.unanswered.clone();
+        for call in unanswered {
+            let dispatched = self.projection.pending.iter().any(|p| p.id == call.id);
+            self.append(SessionEventKind::ToolResult {
+                tool_use_id: call.id.clone(),
+                content: closure_result(&call, dispatched),
+            });
+        }
+        self.append(SessionEventKind::StepInterrupted { step });
+        true
+    }
+
     /// Events not yet accepted by a store.
     pub fn unpersisted(&self) -> &[SessionEvent] {
         &self.events[self.persisted..]
@@ -274,6 +326,30 @@ impl SessionLog {
     pub fn mark_persisted(&mut self) {
         self.persisted = self.events.len();
     }
+}
+
+/// The tool result recorded for a call a crash left without one.
+fn closure_result(call: &ToolCall, dispatched: bool) -> serde_json::Value {
+    let (code, message) = if dispatched {
+        (
+            "TOOL_OUTCOME_UNKNOWN",
+            format!(
+                "the run stopped after `{}` was dispatched and before its result was recorded; \
+                 whether it took effect is unknown",
+                call.name
+            ),
+        )
+    } else {
+        (
+            "TOOL_NOT_STARTED",
+            format!(
+                "the run stopped before `{}` was dispatched; it did not run",
+                call.name
+            ),
+        )
+    };
+    let error = crate::tool::ToolError::fatal(message).with_code(code);
+    serde_json::json!({ "error": error })
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -427,6 +503,90 @@ mod tests {
         assert_eq!(replayed.projection(), log.projection());
         assert_eq!(replayed.messages().len(), 2);
         assert!(replayed.unpersisted().is_empty());
+    }
+
+    fn tool_use(id: &str) -> ContentBlock {
+        ContentBlock::ToolUse {
+            id: id.into(),
+            name: format!("tool_{id}"),
+            input: json!({}),
+        }
+    }
+
+    fn call(id: &str) -> ToolCall {
+        ToolCall {
+            id: id.into(),
+            name: format!("tool_{id}"),
+            input: json!({}),
+        }
+    }
+
+    fn error_code(content: &serde_json::Value) -> &str {
+        content["error"]["code"].as_str().unwrap_or_default()
+    }
+
+    #[test]
+    fn interrupted_step_is_closed_without_rerunning_calls() {
+        let mut log = SessionLog::new();
+        log.append(user("hi"));
+        log.append(SessionEventKind::StepStarted { step: 0 });
+        log.append(SessionEventKind::StepEnded {
+            step: 0,
+            budget_used: BudgetUsage {
+                tokens_used: 5,
+                ..Default::default()
+            },
+        });
+        log.append(SessionEventKind::StepStarted { step: 1 });
+        log.append(SessionEventKind::AssistantMessage {
+            content: vec![tool_use("a"), tool_use("b"), tool_use("c")],
+        });
+        log.append(SessionEventKind::ToolCall { call: call("a") });
+        log.append(SessionEventKind::ToolResult {
+            tool_use_id: "a".into(),
+            content: json!("done"),
+        });
+        log.append(SessionEventKind::ToolCall { call: call("b") });
+        // crash: b dispatched without a result, c never dispatched
+
+        let mut resumed = SessionLog::from_events(log.events().to_vec()).unwrap();
+        assert!(resumed.close_interrupted_step());
+        assert!(!resumed.close_interrupted_step(), "closing is idempotent");
+
+        let projection = resumed.projection();
+        assert_eq!(projection.step, 1, "the interrupted step runs again");
+        assert_eq!(projection.budget_used.tokens_used, 5);
+        assert!(projection.open_step.is_none());
+        assert!(projection.pending.is_empty());
+        assert!(projection.unanswered.is_empty());
+
+        let results = &projection.messages.last().unwrap().content;
+        assert_eq!(results.len(), 3, "all results share one user message");
+        let codes: Vec<&str> = results
+            .iter()
+            .map(|b| match b {
+                ContentBlock::ToolResult { content, .. } => error_code(content),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(codes, vec!["", "TOOL_OUTCOME_UNKNOWN", "TOOL_NOT_STARTED"]);
+        assert!(matches!(
+            resumed.events().last().map(|e| &e.kind),
+            Some(SessionEventKind::StepInterrupted { step: 1 })
+        ));
+    }
+
+    #[test]
+    fn closed_log_needs_no_repair() {
+        let mut log = SessionLog::new();
+        log.append(SessionEventKind::StepStarted { step: 0 });
+        log.append(SessionEventKind::StepEnded {
+            step: 0,
+            budget_used: BudgetUsage::default(),
+        });
+        let before = log.events().len();
+        assert!(!log.close_interrupted_step());
+        assert_eq!(log.events().len(), before);
     }
 
     #[test]

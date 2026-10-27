@@ -1,6 +1,6 @@
 //! WorkerActor: Ractor-based agent run actor (mode B: self-message step).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -15,7 +15,9 @@ use crate::events::{ApprovalContext, EventSink, FanoutWaveBus, RunFailureKind, R
 use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelResponse, ModelStreamChunk, Role, StopReason,
 };
-use crate::session::{SessionError, SessionEventKind, SessionLog, SessionMeta, SessionStore};
+use crate::session::{
+    CheckpointPolicy, SessionError, SessionEventKind, SessionLog, SessionMeta, SessionStore,
+};
 use crate::skill::disclosure::{with_disclosure_block, SkillSummary};
 use crate::telemetry;
 use crate::tool::code_exec::CodeExecutionMcpServer;
@@ -104,6 +106,7 @@ pub(crate) struct AgentRunState {
 pub(crate) struct SessionBinding {
     pub store: Arc<dyn SessionStore>,
     pub session_id: String,
+    pub policy: CheckpointPolicy,
 }
 
 impl SessionBinding {
@@ -112,6 +115,7 @@ impl SessionBinding {
             (Some(store), Some(session_id)) => Some(Self {
                 store: Arc::clone(store),
                 session_id: session_id.clone(),
+                policy: config.checkpoint_policy,
             }),
             _ => None,
         }
@@ -574,6 +578,7 @@ fn build_startup_log(
 ) -> SessionLog {
     if let Some(rs) = resume {
         let mut log = rs.log;
+        log.close_interrupted_step();
         log.append(run_started);
         if let Some(content) = rs.input {
             log.append(SessionEventKind::UserMessage { content });
@@ -592,17 +597,29 @@ fn build_startup_log(
     log
 }
 
-/// Opens the session a run writes to and persists the startup events.
+/// Opens the session a run writes to and makes the startup events durable.
+///
+/// A resumed run first flushes what the store already accepted, so a crash
+/// right after resuming cannot lose it, and records the policy it now writes
+/// under in the session metadata.
 async fn open_session_log(
     binding: &SessionBinding,
     resuming: bool,
     agent_name: &str,
     log: &mut SessionLog,
 ) -> Result<(), SessionError> {
-    if !resuming {
+    if resuming {
+        binding.store.flush(&binding.session_id).await?;
+        if let Some(meta) = binding.store.get_meta(&binding.session_id).await? {
+            if meta.checkpoint_policy != binding.policy {
+                let meta = meta.with_checkpoint_policy(binding.policy);
+                binding.store.put_meta(&meta).await?;
+            }
+        }
+    } else {
         open_fresh_session(binding, agent_name).await?;
     }
-    persist_log(binding, log).await
+    persist_durable(binding, log).await
 }
 
 /// A fresh run owns its session from the first event: it refuses a session
@@ -614,40 +631,68 @@ async fn open_fresh_session(
     if !binding.store.read(&binding.session_id, 1).await?.is_empty() {
         return Err(SessionError::AlreadyExists(binding.session_id.clone()));
     }
-    binding
-        .store
-        .put_meta(&SessionMeta::new(&binding.session_id, agent_name))
-        .await
+    let meta =
+        SessionMeta::new(&binding.session_id, agent_name).with_checkpoint_policy(binding.policy);
+    binding.store.put_meta(&meta).await
 }
 
-/// Hands the log's unpersisted events to the store.
-async fn persist_log(binding: &SessionBinding, log: &mut SessionLog) -> Result<(), SessionError> {
+/// Hands the log's unpersisted events to the store, then crosses the
+/// store's durability barrier.
+async fn persist_durable(
+    binding: &SessionBinding,
+    log: &mut SessionLog,
+) -> Result<(), SessionError> {
     let pending = log.unpersisted();
-    if pending.is_empty() {
-        return Ok(());
+    if !pending.is_empty() {
+        binding.store.append(&binding.session_id, pending).await?;
+        log.mark_persisted();
     }
-    binding.store.append(&binding.session_id, pending).await?;
-    log.mark_persisted();
-    Ok(())
+    binding.store.flush(&binding.session_id).await
 }
 
-/// Persists at a step boundary. A store that refuses the log fails the run:
-/// continuing would leave the host's execution state behind the run.
-async fn persist_step(state: &mut AgentRunState, subs: &[EventSink]) -> bool {
+/// A point in a run where the session log may be made durable.
+#[derive(Debug, Clone, Copy)]
+enum Checkpoint {
+    /// After `StepStarted`, before the model request.
+    StepStart,
+    /// After a `ToolCall` marker, before the tool runs.
+    BeforeDispatch { side_effect: bool },
+    /// After a tool result was recorded.
+    AfterToolResult,
+    /// After `StepEnded`.
+    StepEnd,
+}
+
+impl Checkpoint {
+    fn due(self, policy: CheckpointPolicy) -> bool {
+        match self {
+            Checkpoint::StepStart | Checkpoint::StepEnd => true,
+            Checkpoint::BeforeDispatch { side_effect: true } => true,
+            Checkpoint::BeforeDispatch { side_effect: false } | Checkpoint::AfterToolResult => {
+                policy == CheckpointPolicy::EveryTool
+            }
+        }
+    }
+}
+
+/// Makes the log durable when the session's policy asks for it at `point`.
+/// A store that refuses the log fails the run: continuing would leave the
+/// host's execution state behind the run.
+async fn checkpoint(state: &mut AgentRunState, subs: &[EventSink], point: Checkpoint) -> bool {
     let Some(binding) = state.session.clone() else {
         return true;
     };
-    match persist_log(&binding, &mut state.log).await {
+    if !point.due(binding.policy) {
+        return true;
+    }
+    match persist_durable(&binding, &mut state.log).await {
         Ok(()) => true,
         Err(error) => {
-            let error = format!("session log persistence failed: {error}");
-            state.last_failure = Some(RunFailureKind::Other);
-            emit(
+            emit_run_failed(
+                state,
                 subs,
-                RuntimeEvent::RunFailed {
-                    error,
-                    kind: RunFailureKind::Other,
-                },
+                format!("session checkpoint failed: {error}"),
+                RunFailureKind::Other,
             )
             .await;
             false
@@ -655,13 +700,13 @@ async fn persist_step(state: &mut AgentRunState, subs: &[EventSink]) -> bool {
     }
 }
 
-/// Persists after a terminal event. The run is ending either way, so a store
-/// failure is reported as a warning.
+/// Makes the log durable after a terminal event. The run is ending either
+/// way, so a store failure is reported as a warning.
 async fn persist_terminal(state: &mut AgentRunState) {
     let Some(binding) = state.session.clone() else {
         return;
     };
-    if let Err(error) = persist_log(&binding, &mut state.log).await {
+    if let Err(error) = persist_durable(&binding, &mut state.log).await {
         emit(
             &state.event_subs,
             RuntimeEvent::RuntimeWarning {
@@ -1186,6 +1231,9 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         return false;
     }
     state.log.append(SessionEventKind::StepStarted { step });
+    if !checkpoint(state, &subs, Checkpoint::StepStart).await {
+        return false;
+    }
 
     let Some(response) = call_model_phase(state, &subs).await else {
         return false;
@@ -1294,7 +1342,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
     if !run_tool_and_handoff_phase(state, &subs, run_id, &response, &tool_uses).await {
         return false;
     }
-    persist_step(state, &subs).await
+    checkpoint(state, &subs, Checkpoint::StepEnd).await
 }
 
 /// Closes the current step in the log.
@@ -1304,6 +1352,36 @@ fn end_step(state: &mut AgentRunState) {
         step,
         budget_used: state.budget.usage().clone(),
     });
+}
+
+/// Records the results in `tool_results` not yet in `logged`, except `held`.
+/// Returns whether any were recorded.
+fn log_landed_results(
+    log: &mut SessionLog,
+    tool_results: &[ContentBlock],
+    logged: &mut HashSet<String>,
+    held: Option<&str>,
+) -> bool {
+    let mut recorded = false;
+    for block in tool_results {
+        let ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+        } = block
+        else {
+            continue;
+        };
+        if Some(tool_use_id.as_str()) == held || logged.contains(tool_use_id) {
+            continue;
+        }
+        log.append(SessionEventKind::ToolResult {
+            tool_use_id: tool_use_id.clone(),
+            content: content.clone(),
+        });
+        logged.insert(tool_use_id.clone());
+        recorded = true;
+    }
+    recorded
 }
 
 /// Records tool-result blocks; consecutive results project into one user
@@ -1348,6 +1426,9 @@ async fn run_tool_and_handoff_phase(
     if let Some(parallel_results) =
         run_parallel_tool_batch_if_allowed(state, subs, run_id, tool_uses).await
     {
+        let Some(parallel_results) = parallel_results else {
+            return false;
+        };
         // Canonical tool-result message: `Role::User` + ToolResult blocks, same
         // as the serial/handoff paths (Anthropic convention; the OpenAI-dialect
         // chat adapter converts ToolResult blocks to wire `role:"tool"`).
@@ -1356,7 +1437,17 @@ async fn run_tool_and_handoff_phase(
         return true;
     }
 
+    // Results are recorded as they land, so a checkpoint before the next
+    // dispatch carries them. The handoff tool's result is held back: a failed
+    // transition replaces it in `apply_tool_phase_results`.
+    let mut logged: HashSet<String> = HashSet::new();
     for tool_call in tool_uses {
+        let held = pending_handoff.as_ref().map(|h| h.tool_use_id.as_str());
+        if log_landed_results(&mut state.log, &tool_results, &mut logged, held)
+            && !checkpoint(state, subs, Checkpoint::AfterToolResult).await
+        {
+            return false;
+        }
         if let Some(error) = deferred_tool_exposure_error(state, &tool_call.name) {
             emit(
                 subs,
@@ -1559,6 +1650,12 @@ async fn run_tool_and_handoff_phase(
                 state.log.append(SessionEventKind::ToolCall {
                     call: effective_call.clone(),
                 });
+                let point = Checkpoint::BeforeDispatch {
+                    side_effect: tool_meta.side_effect,
+                };
+                if !checkpoint(state, subs, point).await {
+                    return false;
+                }
             }
             // ToolCallStarted fires for each committed execution attempt, after
             // before_tool, approval, and budget checks all pass.
@@ -1876,7 +1973,17 @@ async fn run_tool_and_handoff_phase(
         }
     }
 
-    apply_tool_phase_results(state, subs, run_id, pending_handoff, tool_results).await;
+    let held = pending_handoff.as_ref().map(|h| h.tool_use_id.as_str());
+    if log_landed_results(&mut state.log, &tool_results, &mut logged, held)
+        && !checkpoint(state, subs, Checkpoint::AfterToolResult).await
+    {
+        return false;
+    }
+    let unlogged: Vec<ContentBlock> = tool_results
+        .into_iter()
+        .filter(|block| !matches!(block, ContentBlock::ToolResult { tool_use_id, .. } if logged.contains(tool_use_id)))
+        .collect();
+    apply_tool_phase_results(state, subs, run_id, pending_handoff, unlogged).await;
 
     true
 }
@@ -1904,11 +2011,10 @@ async fn apply_tool_phase_results(
     let new_agent = handoff_result.target_agent.name.clone();
     let handoff_input = json!({"tool": tool_name});
 
-    let mut handoff_history = state.log.messages().to_vec();
-    handoff_history.push(Message {
-        role: Role::User,
-        content: tool_results.clone(),
-    });
+    // The history the handoff filter sees includes the held-back results.
+    let mut preview = state.log.clone();
+    append_tool_results(&mut preview, tool_results.clone());
+    let handoff_history = preview.messages().to_vec();
 
     let transition = prepare_handoff_transition(
         state,
@@ -2113,12 +2219,15 @@ fn tool_source_label(source: &ToolSource) -> &'static str {
     }
 }
 
+/// Runs the step's tool calls as one parallel batch when every call is
+/// eligible. `None`: not eligible, run them serially. `Some(None)`: the run
+/// failed. `Some(Some(results))`: results in requested order.
 async fn run_parallel_tool_batch_if_allowed(
     state: &mut AgentRunState,
     subs: &[EventSink],
     run_id: RunId,
     tool_uses: &[ToolCall],
-) -> Option<Vec<ContentBlock>> {
+) -> Option<Option<Vec<ContentBlock>>> {
     if state.config.runtime.tool_execution_policy != ToolExecutionPolicy::ParallelSafe
         || tool_uses.len() < 2
         || !state.config.hooks.is_empty()
@@ -2182,6 +2291,16 @@ async fn run_parallel_tool_batch_if_allowed(
         .await;
     }
 
+    if !checkpoint(
+        state,
+        subs,
+        Checkpoint::BeforeDispatch { side_effect: false },
+    )
+    .await
+    {
+        return Some(None);
+    }
+
     let mut pending = FuturesUnordered::new();
     for call in calls {
         let event_tx = primary(subs).clone();
@@ -2230,12 +2349,12 @@ async fn run_parallel_tool_batch_if_allowed(
         ordered_results[requested_order] = Some(content);
     }
 
-    Some(
+    Some(Some(
         ordered_results
             .into_iter()
             .flatten()
             .collect::<Vec<ContentBlock>>(),
-    )
+    ))
 }
 
 async fn execute_parallel_tool_call(

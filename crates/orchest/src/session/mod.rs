@@ -9,4 +9,4 @@ pub mod store;
 pub use log::{SessionEvent, SessionEventKind, SessionLog, SessionProjection};
 #[cfg(feature = "sqlite-session")]
 pub use sqlite::SqliteSessionStore;
-pub use store::{InMemorySessionStore, SessionError, SessionMeta, SessionStore};
+pub use store::{CheckpointPolicy, InMemorySessionStore, SessionError, SessionMeta, SessionStore};

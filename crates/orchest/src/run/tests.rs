@@ -117,6 +117,7 @@ fn test_config() -> AgentConfig {
         handoffs: vec![],
         session_store: None,
         session_id: None,
+        checkpoint_policy: Default::default(),
         supervision_strategy: Default::default(),
     }
 }

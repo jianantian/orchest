@@ -32,6 +32,22 @@ pub enum SessionError {
     NotConfigured,
 }
 
+/// When a run makes its session log durable.
+///
+/// Every policy appends and flushes at the start of each step (before the
+/// model request), at the end of each step, at run termination, and before
+/// dispatching a tool that has side effects. `EveryTool` also flushes before
+/// every other tool dispatch and after every tool result, trading more writes
+/// for a smaller loss window.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CheckpointPolicy {
+    #[default]
+    EveryStep,
+    EveryTool,
+}
+
 /// Session metadata, stored apart from the event log.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionMeta {
@@ -41,6 +57,8 @@ pub struct SessionMeta {
     pub created_at_ms: u64,
     /// The agent the session was created for.
     pub agent_name: String,
+    /// The checkpoint policy the session is written under.
+    pub checkpoint_policy: CheckpointPolicy,
 }
 
 impl SessionMeta {
@@ -52,7 +70,13 @@ impl SessionMeta {
             session_id: session_id.into(),
             created_at_ms: super::log::now_ms(),
             agent_name: agent_name.into(),
+            checkpoint_policy: CheckpointPolicy::default(),
         }
+    }
+
+    pub fn with_checkpoint_policy(mut self, policy: CheckpointPolicy) -> Self {
+        self.checkpoint_policy = policy;
+        self
     }
 
     pub(crate) fn check_schema(&self) -> Result<(), SessionError> {

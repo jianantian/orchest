@@ -394,6 +394,7 @@ async fn build_restart_args(state: &SupervisorState) -> AgentRunArgs {
             let binding = super::actor::SessionBinding {
                 store: Arc::clone(store),
                 session_id: session_id.clone(),
+                policy: state.config.checkpoint_policy,
             };
             super::load_session_log(&binding).await.ok()
         }

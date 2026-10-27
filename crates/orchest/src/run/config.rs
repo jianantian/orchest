@@ -140,6 +140,10 @@ pub struct AgentConfig {
     #[serde(skip)]
     pub session_store: Option<Arc<dyn crate::session::SessionStore>>,
     pub session_id: Option<String>,
+    /// When the session log is made durable. Recorded in the session's
+    /// metadata.
+    #[serde(default)]
+    pub checkpoint_policy: crate::session::CheckpointPolicy,
     #[serde(default)]
     pub supervision_strategy: SupervisionStrategy,
 }
@@ -431,6 +435,7 @@ impl AgentConfig {
             handoffs: vec![],
             session_store: None,
             session_id: None,
+            checkpoint_policy: crate::session::CheckpointPolicy::default(),
             supervision_strategy: SupervisionStrategy::default(),
         }
     }
@@ -533,6 +538,7 @@ pub struct AgentConfigBuilder {
     handoffs: Vec<crate::handoff::Handoff>,
     session_store: Option<Arc<dyn crate::session::SessionStore>>,
     session_id: Option<String>,
+    checkpoint_policy: crate::session::CheckpointPolicy,
     supervision_strategy: SupervisionStrategy,
 }
 
@@ -566,6 +572,7 @@ impl AgentConfigBuilder {
             handoffs: vec![],
             session_store: None,
             session_id: None,
+            checkpoint_policy: crate::session::CheckpointPolicy::default(),
             supervision_strategy: SupervisionStrategy::default(),
         }
     }
@@ -683,6 +690,12 @@ impl AgentConfigBuilder {
         self.session_id = Some(session_id.into());
         self
     }
+    /// When the session log is made durable (default `EveryStep`).
+    pub fn checkpoint_policy(mut self, policy: crate::session::CheckpointPolicy) -> Self {
+        self.checkpoint_policy = policy;
+        self
+    }
+
     pub fn build(self) -> Result<AgentConfig, ConfigError> {
         if self.model.spec.model.is_empty() {
             return Err(ConfigError::MissingModel);
@@ -722,6 +735,7 @@ impl AgentConfigBuilder {
             handoffs: self.handoffs,
             session_store: self.session_store,
             session_id: self.session_id,
+            checkpoint_policy: self.checkpoint_policy,
             supervision_strategy: self.supervision_strategy,
         })
     }
