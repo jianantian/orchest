@@ -38,6 +38,12 @@ except for the items `orchest-provider` re-exports.
   on Vercel's TypeSafe-compatible Decisions API; the OpenRouter decision
   adapter now serves both deployments
   ([#346](https://github.com/jianantian/orchest/issues/346)).
+- Fireworks AI provider for chat. `fireworks/<name>` targets the
+  Fireworks-hosted `accounts/fireworks/models/<name>`, and a full
+  `fireworks/accounts/<account>/models/<name>` id is passed through. Thinking
+  lowers to `reasoning_effort` (`low` / `medium` / `high`) and
+  `reasoning_content` streams back as thinking; the key is read from
+  `FIREWORKS_API_KEY` ([#347](https://github.com/jianantian/orchest/issues/347)).
 
 ### Changed
 

@@ -7,6 +7,7 @@
 pub mod anthropic;
 pub mod deepseek;
 pub mod elss;
+pub mod fireworks;
 pub mod minimax;
 pub mod openai;
 pub mod openrouter;

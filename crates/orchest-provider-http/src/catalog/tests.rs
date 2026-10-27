@@ -3,8 +3,8 @@ use orchest_provider_core::catalog::ModelStatus;
 
 #[test]
 fn catalog_has_expected_provider_count() {
-    // 6 model providers + the Elss dual-protocol gateway (slice 010) + Vercel.
-    assert_eq!(list_providers().len(), 8);
+    // 6 model providers + the Elss dual-protocol gateway (slice 010) + Vercel + Fireworks.
+    assert_eq!(list_providers().len(), 9);
 }
 
 #[test]

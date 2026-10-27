@@ -806,6 +806,22 @@ static VERCEL_ENTRY: ProviderEntry = ProviderEntry {
     build_adapter: crate::providers::vercel::build_chat_adapter,
 };
 
+static FIREWORKS_ENTRY: ProviderEntry = ProviderEntry {
+    name: "fireworks",
+    default_base_url: crate::defaults::fireworks::API_URL,
+    default_api_key_env: crate::defaults::fireworks::API_KEY_ENV,
+    protocols: &[Protocol::Chat],
+    // No aliases: `fireworks/accounts/<account>/models/<name>` keeps the full path.
+    protocol_aliases: &[],
+    path_overrides: &[],
+    extra_headers: &[],
+    profiles: &[(
+        Protocol::Chat,
+        &crate::providers::fireworks::FIREWORKS_PROFILE,
+    )],
+    build_adapter: crate::providers::fireworks::build_chat_adapter,
+};
+
 static ANTHROPIC_ENTRY: ProviderEntry = ProviderEntry {
     name: "anthropic",
     default_base_url: "https://api.anthropic.com",
@@ -869,6 +885,7 @@ static ALL_ENTRIES: &[&ProviderEntry] = &[
     &VOLCENGINE_ENTRY,
     &OPENROUTER_ENTRY,
     &VERCEL_ENTRY,
+    &FIREWORKS_ENTRY,
     &ANTHROPIC_ENTRY,
     &MINIMAX_ENTRY,
     &ELSS_ENTRY,

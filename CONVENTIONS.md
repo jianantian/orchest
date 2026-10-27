@@ -10,7 +10,7 @@ crates/
   orchest/                # pure Rust core: run loop, tools, skills, sessions, guardrails, hooks - no FFI
   orchest-protocol/       # unified protocol spine: adapter traits, capability descriptor, streaming/error model
   orchest-provider-core/  # shared L0/L1 building blocks: HTTP client, auth strategies, OSS, SSE, WS, telemetry, pricing
-  orchest-provider-http/  # REST/SSE tier: LLM (anthropic, openai, deepseek, openrouter, vercel, volcengine, minimax) + one-shot ASR + music gen (minimax, mureka, aliyun, suno)
+  orchest-provider-http/  # REST/SSE tier: LLM (anthropic, openai, deepseek, openrouter, vercel, fireworks, volcengine, minimax) + one-shot ASR + music gen (minimax, mureka, aliyun, suno)
   orchest-provider-stream/# WebSocket tier: streaming ASR/TTS dialects + omni realtime (openspeech, minimax-ws)
   orchest-provider-visual/# signed/polled gen tier: image + video generation (aliyun, volcengine, crazyrouter, renderful)
   orchest-provider/       # umbrella facade + registry - the only provider surface consumers depend on
