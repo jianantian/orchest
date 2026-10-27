@@ -3,7 +3,7 @@ name = "orchest-py"
 description = "Python bindings for Orchest (the orchest-py package on PyPI)"
 # The SDK version, shared with orchest-node and package.json (ADR-0004 D6);
 # pyproject.toml reads it from here.
-version = "0.1.0"
+version = "0.2.0-rc.1"
 edition = "2021"
 license.workspace = true
 repository.workspace = true

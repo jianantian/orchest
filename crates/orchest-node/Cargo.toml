@@ -2,7 +2,7 @@
 name = "orchest-node"
 description = "Node.js bindings for Orchest (the orchest-sdk package on npm)"
 # The SDK version, shared with orchest-py and package.json (ADR-0004 D6).
-version = "0.1.0"
+version = "0.2.0-rc.1"
 edition = "2021"
 license.workspace = true
 repository.workspace = true
