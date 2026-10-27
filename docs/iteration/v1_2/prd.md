@@ -1,6 +1,6 @@
 # v1.2 PRD：语音契约补齐与新 provider
 
-> 状态：草稿（待 owner 确认）。
+> 状态：已确认（owner，2026-10-27）。GitHub issue 已建（#342–#348），编号已回填各 spec。
 > 决策依据：[ADR-0006](../../adr/0006-voice-session-model.md)（语音会话模型）、[语音迭代线计划](../voice/plan.md) 的 V1。
 > 版本：只做增量变更，按 ADR-0003 发 Rust `1.2.0`。
 
@@ -52,15 +52,13 @@
 
 | Doc | Issue | Work | Type | Blocked by |
 |---|---|---|---|---|
-| 001 | — | `SessionInput::Finalize` 与 Stable / Turn 契约 | AFK | — |
-| 002 | — | 方言补 Turn 与原生 finalize | AFK | 001 |
-| 003 | — | 方言无关的 ASR 契约测试 | AFK | 002 |
-| 004 | — | SDK ASR 流式接口重设计 | AFK | 001 |
-| 005 | — | Vercel AI Gateway：chat 与 decision | AFK | — |
-| 006 | — | Fireworks：chat 与 decision | AFK | — |
-| 007 | — | 发布 `1.2.0` | HITL | 001–006 |
-
-GitHub issue 在本 PRD 合入后创建，编号回填此表与各 spec。
+| 001 | [#342](https://github.com/jianantian/orchest/issues/342) | `SessionInput::Finalize` 与 Stable / Turn 契约 | AFK | — |
+| 002 | [#343](https://github.com/jianantian/orchest/issues/343) | 方言补 Turn 与原生 finalize | AFK | 001 |
+| 003 | [#344](https://github.com/jianantian/orchest/issues/344) | 方言无关的 ASR 契约测试 | AFK | 002 |
+| 004 | [#345](https://github.com/jianantian/orchest/issues/345) | SDK ASR 流式接口重设计 | AFK | 001 |
+| 005 | [#346](https://github.com/jianantian/orchest/issues/346) | Vercel AI Gateway：chat 与 decision | AFK | — |
+| 006 | [#347](https://github.com/jianantian/orchest/issues/347) | Fireworks：chat 与 decision | AFK | — |
+| 007 | [#348](https://github.com/jianantian/orchest/issues/348) | 发布 `1.2.0` | HITL | 001–006 |
 
 1. [`SessionInput::Finalize` 与 Stable / Turn 契约](issues/001-session-finalize-contract/spec.md)
 2. [方言补 Turn 与原生 finalize](issues/002-dialect-turn-and-finalize/spec.md)

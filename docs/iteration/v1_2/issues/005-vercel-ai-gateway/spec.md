@@ -1,6 +1,6 @@
 # 005 · Vercel AI Gateway：chat 与 decision
 
-GitHub issue: —
+GitHub issue: #346
 
 ## Background
 

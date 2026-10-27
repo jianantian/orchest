@@ -1,6 +1,6 @@
 # 003 · 方言无关的 ASR 契约测试
 
-GitHub issue: —
+GitHub issue: #344
 
 ## Background
 

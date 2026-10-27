@@ -1,6 +1,6 @@
 # 001 · `SessionInput::Finalize` 与 Stable / Turn 契约
 
-GitHub issue: —
+GitHub issue: #342
 
 ## Background
 

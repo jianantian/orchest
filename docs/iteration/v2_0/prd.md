@@ -2,7 +2,7 @@
 
 > 落地 [`../../iteration/direction.md`](../../iteration/direction.md) 的 **M1** 里程碑。
 > 决策依据：[ADR-0005](../../adr/0005-host-integration-contract.md)（宿主集成契约）、[Agent Runtime 全景调研](../../research/sdk-comparison/agent-runtime-landscape-2026-10.md)。
-> 状态：草稿（待 owner 确认）。GitHub issue 已建（#331–#338），编号已回填各 spec。
+> 状态：草稿（待 owner 确认）。GitHub issue 已建（#331–#338、#349），编号已回填各 spec。
 
 ## Background
 
@@ -72,7 +72,7 @@ Orchest 1.1.0 的运行循环、工具系统、技能、MCP、委派原语都已
 | 006 | [#336](https://github.com/jianantian/orchest/issues/336) | 取消语义与工具可中断性 | AFK | 003 |
 | 007 | [#337](https://github.com/jianantian/orchest/issues/337) | 事件模型补齐与能力探测面 | AFK | 001, 004 |
 | 008 | [#338](https://github.com/jianantian/orchest/issues/338) | canonical 事件零丢失 | AFK | 001 |
-| 009 | — | 绑定跟上新契约（最小透传） | AFK | 001, 004, 006 |
+| 009 | [#349](https://github.com/jianantian/orchest/issues/349) | 绑定跟上新契约（最小透传） | AFK | 001, 004, 006 |
 
 1. [会话事件日志与派生投影](issues/001-event-log-session/spec.md)
 2. [checkpoint、耐久屏障与恢复契约](issues/002-checkpoint-and-resume/spec.md)

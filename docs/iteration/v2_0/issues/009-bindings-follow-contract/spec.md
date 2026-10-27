@@ -1,6 +1,6 @@
 # 009 · 绑定跟上新契约（最小透传）
 
-GitHub issue: —
+GitHub issue: #349
 
 ## Background
 

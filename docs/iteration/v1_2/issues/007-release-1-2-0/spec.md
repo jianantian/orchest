@@ -1,6 +1,6 @@
 # 007 · 发布 1.2.0
 
-GitHub issue: —
+GitHub issue: #348
 
 ## Background
 

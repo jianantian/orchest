@@ -1,6 +1,6 @@
 # 006 · Fireworks：chat 与 decision
 
-GitHub issue: —
+GitHub issue: #347
 
 ## Background
 

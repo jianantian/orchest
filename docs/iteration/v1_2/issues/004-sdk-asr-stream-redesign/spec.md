@@ -1,6 +1,6 @@
 # 004 · SDK ASR 流式接口重设计
 
-GitHub issue: —
+GitHub issue: #345
 
 ## Background
 

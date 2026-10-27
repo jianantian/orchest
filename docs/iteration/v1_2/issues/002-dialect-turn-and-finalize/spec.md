@@ -1,6 +1,6 @@
 # 002 · 方言补 Turn 与原生 finalize
 
-GitHub issue: —
+GitHub issue: #343
 
 ## Background
 
