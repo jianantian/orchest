@@ -16,7 +16,7 @@ Orchest is the engine, not the product — it handles the agent loop, state mana
 
 - **Skill-first** — progressive disclosure via filesystem-organized `SKILL.md` packages
 - **MCP-native** — MCP is a transport protocol for tools, not a separate tool type
-- **Provider-agnostic** — Anthropic, OpenAI, DeepSeek, OpenRouter through a single `ModelAdapter` trait
+- **Provider-agnostic** — Anthropic, OpenAI, DeepSeek, OpenRouter, Vercel AI Gateway through a single `ModelAdapter` trait
 - **Streaming by default** — every model response chunk and tool result is an event
 - **Minimal core** — the runtime does loop + state + events; capabilities live in tools and skills
 
@@ -100,8 +100,9 @@ Model strings use `provider/model` syntax:
 | `openai/` | OpenAI (GPT, o-series) |
 | `deepseek/` | DeepSeek |
 | `openrouter/` | OpenRouter (any routed model) |
+| `vercel/` | Vercel AI Gateway (any routed model, e.g. `vercel/openai/gpt-5.4`) |
 
-API keys are read from the standard env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.) or passed explicitly.
+API keys are read from the standard env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AI_GATEWAY_API_KEY` for Vercel, etc.) or passed explicitly.
 
 ---
 
@@ -112,7 +113,7 @@ crates/
   orchest/                # Pure Rust — run loop, tool registry, skill loading, events
   orchest-protocol/       # Unified protocol spine (adapter traits, capabilities, streaming/error model)
   orchest-provider-core/  # Shared building blocks: HTTP client, auth, OSS, SSE, WS, telemetry, pricing
-  orchest-provider-http/  # LLM (Anthropic, OpenAI, DeepSeek, OpenRouter, Volcengine, Minimax) + one-shot ASR
+  orchest-provider-http/  # LLM (Anthropic, OpenAI, DeepSeek, OpenRouter, Vercel, Volcengine, Minimax) + one-shot ASR
   orchest-provider-stream/# Streaming ASR/TTS + omni realtime (WebSocket tier)
   orchest-provider-visual/# Image/video generation (signed/polled tier)
   orchest-provider/       # Umbrella facade + registry — the provider surface consumers depend on

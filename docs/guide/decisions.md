@@ -89,6 +89,16 @@ and upstream details. Python exposes `ModelError`; JavaScript exposes
 OpenRouter marks this endpoint alpha. Offline HTTP contract tests verify the
 adapter; they do not establish current service availability or model accuracy.
 
+## Vercel AI Gateway
+
+Vercel AI Gateway serves the same TypeSafe wire at
+`POST https://ai-gateway.vercel.sh/typesafe/v1/systemone` and registers
+`vercel/typesafe-ai/jev` (provider default). The same adapter handles both
+deployments; only the endpoint, key and error shape differ. Explicit `api_key`
+wins; otherwise the adapter reads `AI_GATEWAY_API_KEY`. Vercel's flat
+`{"message", "error_type"}` error bodies keep their message in the
+`ProtocolError`.
+
 ## Examples and language guides
 
 - [Rust ticket triage](../../examples/rust/providers/decisions.rs)

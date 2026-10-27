@@ -31,6 +31,13 @@ except for the items `orchest-provider` re-exports.
   volcengine answer `UnsupportedOption`. Each streaming ASR descriptor
   declares this as `CapabilityExt::Asr({"client_finalize": bool})`
   ([#343](https://github.com/jianantian/orchest/issues/343)).
+- Vercel AI Gateway provider (`vercel/<vendor>/<model>`, e.g.
+  `vercel/openai/gpt-5.4`) for chat, over the gateway's OpenAI-compatible
+  endpoint with the same `reasoning` dialect as OpenRouter; the key is read
+  from `AI_GATEWAY_API_KEY`. The decision catalog adds `vercel/typesafe-ai/jev`
+  on Vercel's TypeSafe-compatible Decisions API; the OpenRouter decision
+  adapter now serves both deployments
+  ([#346](https://github.com/jianantian/orchest/issues/346)).
 
 ### Changed
 

@@ -31,6 +31,27 @@ pub mod openrouter {
     pub const API_KEY_ENV: &str = "OPENROUTER_API_KEY";
 }
 
+pub mod vercel {
+    /// Vercel AI Gateway's OpenAI-compatible base URL
+    /// (<https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions>).
+    pub const API_URL: &str = "https://ai-gateway.vercel.sh/v1";
+    pub const API_KEY_ENV: &str = "AI_GATEWAY_API_KEY";
+    /// The TypeSafe-compatible Decisions endpoint, same request / response
+    /// shape as OpenRouter Decisions
+    /// (<https://vercel.com/docs/ai-gateway/sdks-and-apis/typesafe>).
+    pub const DECISION_URL: &str = "https://ai-gateway.vercel.sh/typesafe/v1/systemone";
+}
+
+pub mod fireworks {
+    /// Fireworks' OpenAI-compatible inference base URL
+    /// (<https://docs.fireworks.ai/tools-sdks/openai-compatibility>).
+    pub const API_URL: &str = "https://api.fireworks.ai/inference/v1";
+    pub const API_KEY_ENV: &str = "FIREWORKS_API_KEY";
+    /// Upstream prefix of Fireworks-hosted models: `fireworks/<name>` is sent as
+    /// `accounts/fireworks/models/<name>`.
+    pub const MODEL_PREFIX: &str = "accounts/fireworks/models/";
+}
+
 pub mod volcengine {
     /// Base URL for Volcengine Ark (火山方舟) OpenAI-compatible Chat API.
     pub const API_URL: &str = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
