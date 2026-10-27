@@ -139,8 +139,18 @@ export interface ToolWithHandler {
   approval?: string;
 }
 
+export type ToolEffect =
+  | "read"
+  | "write_workspace"
+  | "write_outside"
+  | "network"
+  | "credential"
+  | "destructive"
+  | "process";
+
 export interface ToolMetadata {
-  side_effect: boolean;
+  /** Declared effects; `null` when unknown (treated as having side effects). */
+  effects: ToolEffect[] | null;
   approval: string;
   cost_hint: unknown;
   timeout: unknown;
@@ -233,6 +243,7 @@ export type RuntimeEvent =
   | { type: "async_tool_progress"; tool: string; job_id: string; status: unknown; run_depth: number; child_run_id: string | null }
   | { type: "async_tool_completed"; tool: string; job_id: string; output: unknown; elapsed: unknown; run_depth: number; child_run_id: string | null }
   | { type: "skill_content_read"; skill_name: string; file: string; tokens: number; run_depth: number; child_run_id: string | null }
+  | { type: "permission_decided"; tool_call_id: string; tool: string; decision: unknown; run_depth: number; child_run_id: string | null }
   | { type: "approval_requested"; request_id: string; kind: string; payload: unknown; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
   | { type: "approval_granted"; request_id: string; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
   | { type: "approval_denied"; request_id: string; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }

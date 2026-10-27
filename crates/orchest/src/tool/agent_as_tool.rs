@@ -753,7 +753,8 @@ impl SubAgentBuilder {
             tool_description: self.tool_description,
             input_schema,
             metadata: ToolMetadata {
-                side_effect: false,
+                // The child run decides on its own tool calls.
+                effects: crate::tool::ToolEffects::NONE,
                 approval: crate::tool::Approval::Never,
                 source: ToolSource::InProcess,
                 ..ToolMetadata::default()
@@ -1712,7 +1713,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 metadata: ToolMetadata {
-                    side_effect: false,
+                    effects: crate::tool::ToolEffects::NONE,
                     approval: crate::tool::Approval::Never,
                     source: ToolSource::InProcess,
                     ..ToolMetadata::default()

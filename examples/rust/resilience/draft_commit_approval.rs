@@ -150,7 +150,7 @@ async fn main() {
         .register(Arc::new(FileTool {
             name: "draft_file_write",
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: orchest::tool::ToolEffects::NONE,
                 approval: Approval::Always,
                 execution_mode: ToolExecutionMode::Draft {
                     commit_tool: "commit_file_write".into(),
@@ -164,7 +164,7 @@ async fn main() {
         .register(Arc::new(FileTool {
             name: "commit_file_write",
             metadata: ToolMetadata {
-                side_effect: true,
+                effects: orchest::tool::ToolEffects::UNKNOWN,
                 approval: Approval::Never,
                 execution_mode: ToolExecutionMode::Commit {
                     draft_tool: "draft_file_write".into(),

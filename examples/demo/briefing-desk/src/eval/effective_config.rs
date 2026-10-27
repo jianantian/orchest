@@ -415,7 +415,7 @@ pub fn fingerprint_registry(
             description_surface_id: surface_id_for_tool(&def.name),
             input_schema_sha256,
             output_schema_sha256,
-            side_effect: meta.side_effect,
+            side_effect: meta.effects.has_side_effects(),
             approval: approval_label(meta.approval),
             execution_mode: execution_mode_label(meta),
             parallelism: format!("{:?}", meta.parallelism).to_ascii_lowercase(),

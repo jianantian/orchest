@@ -962,7 +962,7 @@ mod tests {
     #[test]
     fn retains_tool_name_order_approval_usage_and_terminal() {
         let meta = ToolMetadata {
-            side_effect: true,
+            effects: orchest::tool::ToolEffects::UNKNOWN,
             approval: Approval::Always,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,

@@ -26,7 +26,7 @@ impl SearchToolsTool {
                 "required": ["query"]
             }),
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: crate::tool::ToolEffects::NONE,
                 approval: crate::tool::Approval::Never,
                 source: ToolSource::Builtin,
                 ..ToolMetadata::default()

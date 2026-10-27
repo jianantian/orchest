@@ -9,6 +9,8 @@
 //! folded into a [`SessionProjection`] by the same function a reader uses to
 //! replay the log, so a run's live view and a reloaded log never disagree.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::budget::BudgetUsage;
@@ -87,6 +89,10 @@ pub enum SessionEventKind {
         request_id: RequestId,
         resolution: RequestResolution,
     },
+    /// The host approved a call for the rest of the session; later calls
+    /// with the same [`grant_key`](crate::tool::grant_key) are allowed
+    /// without asking.
+    PermissionGranted { tool_name: String, key: String },
     /// The run produced its final answer.
     RunEnded {
         output: serde_json::Value,
@@ -158,6 +164,8 @@ pub struct SessionProjection {
     /// How many requests the session has opened (the next request's
     /// sequence number is one more).
     pub requests_opened: u64,
+    /// Session-scoped permission grants, by grant key.
+    pub session_grants: BTreeSet<String>,
     /// The agent that owns the conversation (changes on handoff).
     pub agent_name: Option<String>,
     /// The run that last wrote to the session.
@@ -269,6 +277,9 @@ impl SessionProjection {
             }
             SessionEventKind::RequestResolved { request_id, .. } => {
                 self.pending.retain(|r| &r.id != request_id);
+            }
+            SessionEventKind::PermissionGranted { key, .. } => {
+                self.session_grants.insert(key.clone());
             }
             SessionEventKind::RunEnded { .. }
             | SessionEventKind::RunFailed { .. }

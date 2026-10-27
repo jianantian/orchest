@@ -54,6 +54,23 @@ except for the items `orchest-provider` re-exports.
   call gets an error result with code `APPROVAL_TIMEOUT` and the run goes on,
   instead of the run failing. A withdrawn request gives `APPROVAL_WITHDRAWN`,
   and requests still pending when the run stops resolve as cancelled.
+- **Breaking:** `ToolMetadata::side_effect: bool` is replaced by
+  `ToolMetadata::effects: ToolEffects`, a set of `ToolEffect`s (`Read`,
+  `WriteWorkspace`, `WriteOutside`, `Network`, `Credential`, `Destructive`,
+  `Process`) or unknown ([#335](https://github.com/jianantian/orchest/issues/335)).
+  Unknown is the default and counts as having side effects, so an undeclared
+  tool asks under `Approval::WhenRisky`. Serialized as a list, or `null` when
+  unknown. Built-in tools declare their effects (skill script tools
+  `Process`, `write_file` `WriteWorkspace` + `WriteOutside`, code execution
+  unknown, `read_file` and `load_skill` `Read`).
+- **Breaking:** `RuntimeConfig::should_approve` is replaced by the single
+  permission decision point `RuntimeConfig::decide(call, metadata, grants)`,
+  which returns `PermissionDecision::{Allow, Ask, Deny}` with its
+  `DecisionBasis`; every tool call goes through it.
+- **Breaking:** MCP tools use `Approval::WhenRisky` with effects from the
+  server's `annotations` (`readOnlyHint` → `Read`, plus `Network` with
+  `openWorldHint`; otherwise unknown) instead of bypassing approval with
+  `Approval::Never`. `McpToolDef` carries `annotations`.
 
 ### Added
 
@@ -91,6 +108,27 @@ except for the items `orchest-provider` re-exports.
   the session log records `RequestOpened` / `RequestResolved`, so
   `SessionProjection::pending` lists the requests open at a crash
   ([#334](https://github.com/jianantian/orchest/issues/334)).
+- Host permission rules ([#335](https://github.com/jianantian/orchest/issues/335)):
+  `PermissionPolicy` (`AgentConfigBuilder::permissions`,
+  `RuntimeConfig::permissions`) holds `PermissionRule`s that allow, ask or deny
+  by tool-name, command and path globs and by effects; the last matching rule
+  wins, `PermissionPolicy::unmatched` sets the action for unmatched calls, and
+  relative paths resolve against `PermissionPolicy::workspace`. Allow rules
+  require every command of a chain and every path to match. Denied calls get a
+  `PERMISSION_DENIED` tool result. `Tool::permission_subject` lets a tool name
+  its commands and paths. `RuntimeEvent::PermissionDecided` reports each
+  decision.
+- Approval scope: `RequestResponse::for_session()` (`ApprovalScope::Session`)
+  remembers an approval for the same tool and input (`tool::grant_key`) for
+  the rest of the session, recorded as `SessionEventKind::PermissionGranted`
+  and projected into `SessionProjection::session_grants`. One-time approvals
+  (the default) are not remembered; a session grant never overrides a deny.
+- Enforcement facts: `ExecutionBackend` (`AgentConfigBuilder::execution_backend`)
+  lets a host declare the isolation it runs tools in, `ScriptExecutor::enforcement`
+  reports code-execution isolation, and `RuntimeConfig::enforcement()` returns
+  `EnforcementFacts` (`Hard` / `Soft` / `None` for isolation, the permission
+  gate, code execution and read-only). Read-only is `Hard` only with a hard
+  backend.
 
 ### Removed
 

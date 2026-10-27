@@ -90,7 +90,7 @@ impl Tool for LongTask {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             source: ToolSource::Builtin,
-            side_effect: false,
+            effects: orchest::tool::ToolEffects::NONE,
             timeout: None,
             max_output_tokens: None,
             approval: Approval::Never,

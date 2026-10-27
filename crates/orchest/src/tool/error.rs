@@ -35,6 +35,9 @@ pub const TOOL_NOT_STARTED: &str = "TOOL_NOT_STARTED";
 /// Stable code of the result recorded for a tool call a cancellation stopped
 /// before it was dispatched. It did not run.
 pub const TOOL_ABORTED_BEFORE_DISPATCH: &str = "TOOL_ABORTED_BEFORE_DISPATCH";
+/// Stable code of the result for a tool call the permission policy denied.
+/// It did not run.
+pub const PERMISSION_DENIED: &str = "PERMISSION_DENIED";
 
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
 #[error("{message}")]

@@ -49,6 +49,13 @@ pub trait ScriptExecutor: Send + Sync {
         input_json: &[u8],
         ctx: &ExecutionContext,
     ) -> Result<ScriptOutput, ScriptError>;
+
+    /// How strongly this executor isolates the scripts it runs. Report
+    /// [`Enforcement::Hard`](crate::tool::Enforcement::Hard) only for real
+    /// isolation (OS sandbox, container, remote machine).
+    fn enforcement(&self) -> crate::tool::Enforcement {
+        crate::tool::Enforcement::None
+    }
 }
 
 #[derive(Debug, Default)]

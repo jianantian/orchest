@@ -9,7 +9,9 @@ pub mod handoff_tool;
 pub mod in_process;
 pub mod mcp;
 pub mod metadata;
+pub mod policy;
 pub mod registry;
+pub mod sandbox;
 pub mod search;
 
 use async_trait::async_trait;
@@ -23,10 +25,17 @@ use async_job::JobHandle;
 pub use crate::model::{JsonSchema, ToolDef};
 pub use agent_as_tool::ContextMode;
 pub use error::{
-    ErrorKind, RetryHint, ToolError, TOOL_ABORTED_BEFORE_DISPATCH, TOOL_NOT_STARTED,
-    TOOL_OUTCOME_UNKNOWN,
+    ErrorKind, RetryHint, ToolError, PERMISSION_DENIED, TOOL_ABORTED_BEFORE_DISPATCH,
+    TOOL_NOT_STARTED, TOOL_OUTCOME_UNKNOWN,
 };
-pub use metadata::{CostHint, ToolExecutionMode, ToolMetadata, ToolParallelism, ToolSource};
+pub use metadata::{
+    CostHint, ToolEffect, ToolEffects, ToolExecutionMode, ToolMetadata, ToolParallelism, ToolSource,
+};
+pub use policy::{
+    grant_key, DecisionBasis, PermissionAction, PermissionCall, PermissionDecision,
+    PermissionPolicy, PermissionRule, PermissionSubject,
+};
+pub use sandbox::{Enforcement, EnforcementFacts, ExecutionBackend};
 
 /// A capability the model can invoke: name, schemas, metadata, and an async
 /// `execute`. Implement this trait (or use `InProcessTool`) and register the
@@ -55,6 +64,12 @@ pub trait Tool: Send + Sync {
     }
     fn needs_parent_context(&self) -> bool {
         false
+    }
+    /// The commands and paths `input` acts on, for permission rules. The
+    /// default reads well-known keys ([`PermissionSubject::from_input`]);
+    /// override it when the tool's input names them differently.
+    fn permission_subject(&self, input: &Value) -> PermissionSubject {
+        PermissionSubject::from_input(input)
     }
 }
 

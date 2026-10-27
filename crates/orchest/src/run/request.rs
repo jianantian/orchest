@@ -122,10 +122,27 @@ pub enum RequestDecision {
     },
 }
 
+/// How long an approval holds.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ApprovalScope {
+    /// This call only.
+    #[default]
+    Once,
+    /// This call and every later call of the same tool with the same input
+    /// in the session (see [`grant_key`](crate::tool::grant_key)).
+    Session,
+}
+
 /// The host's reply to a request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RequestResponse {
     pub decision: RequestDecision,
+    /// How long an approving decision holds. Only explicit session grants
+    /// are remembered.
+    #[serde(default)]
+    pub scope: ApprovalScope,
     /// Rules the host wants applied for the rest of the session (for
     /// example "always allow this command"). Carried to whoever raised the
     /// request; the runtime does not interpret them here.
@@ -137,6 +154,7 @@ impl RequestResponse {
     pub fn approve() -> Self {
         Self {
             decision: RequestDecision::Approve,
+            scope: ApprovalScope::Once,
             session_rules: None,
         }
     }
@@ -144,6 +162,7 @@ impl RequestResponse {
     pub fn deny(reason: Option<String>) -> Self {
         Self {
             decision: RequestDecision::Deny { reason },
+            scope: ApprovalScope::Once,
             session_rules: None,
         }
     }
@@ -151,8 +170,15 @@ impl RequestResponse {
     pub fn answer(payload: Value) -> Self {
         Self {
             decision: RequestDecision::Answer { payload },
+            scope: ApprovalScope::Once,
             session_rules: None,
         }
+    }
+
+    /// Makes an approval hold for the rest of the session.
+    pub fn for_session(mut self) -> Self {
+        self.scope = ApprovalScope::Session;
+        self
     }
 
     pub fn with_session_rules(mut self, rules: Value) -> Self {

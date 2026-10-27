@@ -200,7 +200,7 @@ impl Tool for WriteFileTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: true,
+            effects: orchest::tool::ToolEffects::UNKNOWN,
             approval: Approval::WhenRisky,
             execution_mode: orchest::tool::ToolExecutionMode::Normal,
             parallelism: orchest::tool::ToolParallelism::Serial,
@@ -547,7 +547,7 @@ impl Tool for PingTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: orchest::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: orchest::tool::ToolExecutionMode::Normal,
             parallelism: orchest::tool::ToolParallelism::Serial,

@@ -179,7 +179,7 @@ impl Tool for RecordingEcho {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: crate::tool::Approval::Never,
             execution_mode: crate::tool::ToolExecutionMode::Normal,
             parallelism: crate::tool::ToolParallelism::Serial,

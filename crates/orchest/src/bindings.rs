@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::budget::BudgetConfig;
 use crate::events::RuntimeEvent;
 use crate::run::ApprovalMode;
-use crate::tool::Approval;
+use crate::tool::{Approval, ToolEffects};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -31,6 +31,16 @@ pub fn parse_binding_approval(value: Option<&str>, default: Approval) -> Approva
         Some("always") => Approval::Always,
         Some(_) => Approval::WhenRisky,
         None => default,
+    }
+}
+
+/// Effects for a binding tool declared with the boolean `side_effect` flag:
+/// unknown when set (so the default approval asks), none otherwise.
+pub fn effects_from_side_effect_flag(side_effect: bool) -> ToolEffects {
+    if side_effect {
+        ToolEffects::UNKNOWN
+    } else {
+        ToolEffects::NONE
     }
 }
 

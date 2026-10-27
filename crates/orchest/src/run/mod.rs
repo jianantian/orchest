@@ -27,8 +27,8 @@ pub use handle::{
 };
 pub use llm_watcher::LlmWatcher;
 pub use request::{
-    PendingRequest, RequestBus, RequestDecision, RequestError, RequestId, RequestKind,
-    RequestResolution, RequestResponse, RequestTarget,
+    ApprovalScope, PendingRequest, RequestBus, RequestDecision, RequestError, RequestId,
+    RequestKind, RequestResolution, RequestResponse, RequestTarget,
 };
 pub use retry::{BackoffStrategy, RetryPolicy};
 pub use watcher::{Watcher, WatcherAction};
@@ -302,5 +302,7 @@ pub(crate) async fn load_session_log(binding: &SessionBinding) -> Result<Session
 
 #[cfg(test)]
 mod checkpoint_tests;
+#[cfg(test)]
+mod permission_tests;
 #[cfg(test)]
 mod tests;

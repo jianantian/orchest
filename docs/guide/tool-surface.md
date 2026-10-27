@@ -1,15 +1,85 @@
 # Tool Surface Patterns
 
-This guide covers three runtime patterns for larger or higher-risk tool
-surfaces: Draft/Commit tools, deferred tool discovery, and opt-in parallel tool
-execution.
+This guide covers the permission surface and three runtime patterns for larger
+or higher-risk tool surfaces: Draft/Commit tools, deferred tool discovery, and
+opt-in parallel tool execution.
+
+## Effects and the Permission Decision
+
+Every tool declares what a call may do as `ToolMetadata::effects`, a set of
+`ToolEffect`s: `Read`, `WriteWorkspace`, `WriteOutside`, `Network`,
+`Credential`, `Destructive`, `Process`. `ToolEffects::NONE` is a pure
+computation; `ToolEffects::UNKNOWN` (the default) counts as having side
+effects, so a tool that declares nothing asks before it runs under the default
+`Approval::WhenRisky`.
+
+```rust
+ToolMetadata {
+    effects: ToolEffects::NONE.with(ToolEffect::WriteWorkspace),
+    approval: Approval::WhenRisky,
+    ..ToolMetadata::default()
+}
+```
+
+Before every tool call (in-process, MCP, skill, or a delegated child run) the
+runtime asks one decision point, `RuntimeConfig::decide`, which answers allow,
+ask, or deny and reports it as `RuntimeEvent::PermissionDecided`:
+
+1. The host's `PermissionPolicy` rules, last match wins. A rule selects calls by
+   tool name, command pattern, path pattern and effects (globs). Allow rules are
+   strict: every command of a chain (`&&`, `||`, `;`, `|`) and every path must
+   match, and a command using `$(...)` or backticks never matches an allow rule.
+   Ask and deny rules match if any command or path does. Relative paths are
+   resolved against `PermissionPolicy::workspace`.
+2. With no matching rule, `PermissionPolicy::unmatched` if set.
+3. Otherwise the run's custom approval predicate, Draft/Commit defaults,
+   `ApprovalMode`, and the tool's `Approval` with its effects.
+
+```rust
+let policy = PermissionPolicy::new()
+    .workspace("/work")
+    .rule(PermissionRule::allow("*").effects([ToolEffect::Read]))
+    .rule(PermissionRule::allow("shell").command("git status*"))
+    .rule(PermissionRule::allow("write_file").path("/work/**"))
+    .rule(PermissionRule::deny("*").path("/etc/**").reason("system files"));
+let config = AgentConfig::builder("assistant", "mock/mock")
+    .permissions(policy)
+    .build()
+    .unwrap();
+```
+
+The policy content belongs to the host: it maps its own permission levels to
+rules over effects, commands and paths. A denied call gets a tool result with
+code `PERMISSION_DENIED` and does not run. An ask goes through the request
+channel (`ApprovalRequested`, answered with `RunHandle::respond`); answering
+with `RequestResponse::approve().for_session()` remembers the approval for the
+same tool and input (`grant_key`) for the rest of the session, recorded in the
+session log. One-time approvals are not remembered, and a session grant never
+overrides a deny rule.
+
+MCP tools take the same path: their effects come from the server's
+`annotations` (`readOnlyHint` gives `Read`, plus `Network` with
+`openWorldHint`; anything else is unknown) and their approval is
+`Approval::WhenRisky`.
+
+### What is enforced
+
+The decision point runs inside the process, so it is a soft guarantee.
+`RuntimeConfig::enforcement()` returns `EnforcementFacts` a host can show as
+they are: `permission_gate` is `Soft` (or `None` when every call is allowed),
+`isolation` is what an injected `ExecutionBackend` reports, `code_execution` is
+what the code-execution `ScriptExecutor` reports, and `read_only` is `Hard`
+only when an injected backend reports `Hard`. Without such a backend a
+read-only setting must not be presented as a hard guarantee. Skill capability
+declarations are hints, not an execution boundary, unless a backend the host
+injected enforces them.
 
 ## Draft/Commit vs Normal Approval
 
 Use normal approval for a single action where the model already has enough
 information to decide the final call and the user only needs to allow or deny
-execution. A typical example is a `write_file` or `send_email` tool with
-`side_effect: true` and `approval: Approval::Always` or `Approval::WhenRisky`.
+execution. A typical example is a `write_file` or `send_email` tool with write or network
+effects and `approval: Approval::Always` or `Approval::WhenRisky`.
 
 Use Draft/Commit when a high-risk action needs an inspectable preview before it
 is applied. The draft tool must be side-effect-free and should return the exact
@@ -21,7 +91,7 @@ Draft and commit tools are linked through metadata:
 
 ```rust
 ToolMetadata {
-    side_effect: false,
+    effects: ToolEffects::NONE,
     approval: Approval::Never,
     execution_mode: ToolExecutionMode::Draft {
         commit_tool: "commit_file_write".into(),
@@ -32,7 +102,7 @@ ToolMetadata {
 
 ```rust
 ToolMetadata {
-    side_effect: true,
+    effects: ToolEffects::NONE.with(ToolEffect::WriteWorkspace),
     approval: Approval::Never,
     execution_mode: ToolExecutionMode::Commit {
         draft_tool: "draft_file_write".into(),
@@ -115,9 +185,9 @@ sequence.
 
 Complex authority policy should stay outside the runtime core. The runtime
 provides the enforcement hooks: tool input guardrails can allow, modify, reject,
-or abort a call before execution, while `ToolMetadata` still controls coarse
-side-effect approval with `Approval::Never`, `Approval::WhenRisky`, or
-`Approval::Always`.
+or abort a call before execution, `PermissionPolicy` rules match tools,
+commands and paths, and `ToolMetadata` still controls the default approval with
+`Approval::Never`, `Approval::WhenRisky`, or `Approval::Always`.
 
 Keep multi-level policy in application code when the decision depends on product
 state such as the actor role, workspace, resource owner, risk tier, tenant plan,

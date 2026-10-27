@@ -157,8 +157,10 @@ pub fn format_event(event: &RuntimeEvent) -> String {
                 .take(200)
                 .collect::<String>();
             format!(
-                "Tool called: {} (side_effect: {}), input: {}",
-                tool, metadata.side_effect, input_summary
+                "Tool called: {} (effects: {}), input: {}",
+                tool,
+                serde_json::to_string(&metadata.effects).unwrap_or_default(),
+                input_summary
             )
         }
         RuntimeEvent::ToolCallCompleted { tool, duration, .. } => format!(
@@ -428,7 +430,7 @@ mod tests {
             tool: "test_tool".to_string(),
             metadata: ToolMetadata {
                 source: ToolSource::Builtin,
-                side_effect: false,
+                effects: crate::tool::ToolEffects::NONE,
                 timeout: None,
                 max_output_tokens: None,
                 approval: crate::tool::Approval::Never,
@@ -541,7 +543,7 @@ mod tests {
     fn format_event_tool_started() {
         let s = format_event(&tool_started());
         assert!(s.contains("test_tool"));
-        assert!(s.contains("side_effect: false"));
+        assert!(s.contains("effects: []"));
     }
 
     #[test]

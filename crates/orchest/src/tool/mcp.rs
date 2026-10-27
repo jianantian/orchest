@@ -14,7 +14,10 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{oneshot, Mutex};
 
-use super::{JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource};
+use super::{
+    JsonSchema, Tool, ToolContext, ToolEffect, ToolEffects, ToolError, ToolMetadata, ToolOutput,
+    ToolSource,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
@@ -41,6 +44,34 @@ pub struct McpToolDef {
     pub name: String,
     pub description: String,
     pub input_schema: JsonSchema,
+    /// The server's `annotations` for the tool (`readOnlyHint`,
+    /// `openWorldHint`, ...), if it sent any.
+    #[serde(default)]
+    pub annotations: Option<Value>,
+}
+
+impl McpToolDef {
+    /// Effects from the server's annotations: `readOnlyHint` gives
+    /// [`ToolEffect::Read`] (plus [`ToolEffect::Network`] with
+    /// `openWorldHint`); anything else is unknown, so the call asks under the
+    /// default approval.
+    pub fn effects(&self) -> ToolEffects {
+        let hint = |key: &str| {
+            self.annotations
+                .as_ref()
+                .and_then(|a| a.get(key))
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        };
+        if !hint("readOnlyHint") {
+            return ToolEffects::UNKNOWN;
+        }
+        if hint("openWorldHint") {
+            ToolEffects::of([ToolEffect::Read, ToolEffect::Network])
+        } else {
+            ToolEffects::READ_ONLY
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
@@ -184,6 +215,7 @@ impl McpStdioClient {
                 name: name.to_string(),
                 description: description.to_string(),
                 input_schema,
+                annotations: tool.get("annotations").cloned(),
             });
         }
         Ok(defs)
@@ -290,6 +322,7 @@ impl McpHttpClient {
                         .or_else(|| tool.get("input_schema"))
                         .cloned()
                         .unwrap_or_else(|| json!({"type": "object"})),
+                    annotations: tool.get("annotations").cloned(),
                 })
             })
             .collect())
@@ -452,6 +485,15 @@ pub enum McpClient {
     Http(Arc<McpHttpClient>),
 }
 
+fn mcp_tool_metadata(server_id: String, def: &McpToolDef) -> ToolMetadata {
+    ToolMetadata {
+        effects: def.effects(),
+        approval: crate::tool::Approval::WhenRisky,
+        source: ToolSource::McpServer { server_id },
+        ..ToolMetadata::default()
+    }
+}
+
 pub struct McpTool {
     name: String,
     description: String,
@@ -461,17 +503,14 @@ pub struct McpTool {
 }
 
 impl McpTool {
+    /// MCP tools go through the same permission decision as any other tool:
+    /// the default approval with the effects the server's annotations give.
     pub fn new(server_id: String, def: McpToolDef, client: McpClient) -> Self {
         Self {
+            metadata: mcp_tool_metadata(server_id, &def),
             name: def.name,
             description: def.description,
             input_schema: def.input_schema,
-            metadata: ToolMetadata {
-                side_effect: true,
-                approval: crate::tool::Approval::Never,
-                source: ToolSource::McpServer { server_id },
-                ..ToolMetadata::default()
-            },
             client,
         }
     }
@@ -520,6 +559,39 @@ mod tests {
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    #[test]
+    fn mcp_tools_go_through_the_default_approval() {
+        use crate::run::RuntimeConfig;
+        use crate::tool::{PermissionCall, PermissionDecision, PermissionSubject};
+        let def = |annotations: Option<Value>| McpToolDef {
+            name: "remote".into(),
+            description: String::new(),
+            input_schema: json!({"type": "object"}),
+            annotations,
+        };
+        let decide = |def: &McpToolDef| {
+            let metadata = mcp_tool_metadata("srv".into(), def);
+            let input = json!({});
+            let call = PermissionCall {
+                tool_name: "remote",
+                input: &input,
+                effects: &metadata.effects,
+                subject: PermissionSubject::default(),
+            };
+            RuntimeConfig::default().decide(&call, &metadata, &Default::default())
+        };
+        assert!(matches!(decide(&def(None)), PermissionDecision::Ask { .. }));
+        assert!(matches!(
+            decide(&def(Some(json!({"destructiveHint": true})))),
+            PermissionDecision::Ask { .. }
+        ));
+        assert!(decide(&def(Some(json!({"readOnlyHint": true})))).is_allow());
+        assert_eq!(
+            def(Some(json!({"readOnlyHint": true, "openWorldHint": true}))).effects(),
+            ToolEffects::of([ToolEffect::Read, ToolEffect::Network])
+        );
+    }
 
     #[tokio::test]
     async fn pending_map_routes_responses_by_id() {

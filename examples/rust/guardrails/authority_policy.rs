@@ -190,7 +190,7 @@ impl Tool for ChangeAccountLimitTool {
 
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: true,
+            effects: orchest::tool::ToolEffects::UNKNOWN,
             approval: Approval::WhenRisky,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,

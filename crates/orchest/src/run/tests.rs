@@ -826,7 +826,7 @@ impl Tool for CountingMetadataTool {
 
 fn draft_metadata() -> ToolMetadata {
     ToolMetadata {
-        side_effect: false,
+        effects: crate::tool::ToolEffects::NONE,
         approval: Approval::Always,
         execution_mode: ToolExecutionMode::Draft {
             commit_tool: "commit_file".into(),
@@ -838,7 +838,7 @@ fn draft_metadata() -> ToolMetadata {
 
 fn commit_metadata() -> ToolMetadata {
     ToolMetadata {
-        side_effect: false,
+        effects: crate::tool::ToolEffects::NONE,
         approval: Approval::Never,
         execution_mode: ToolExecutionMode::Commit {
             draft_tool: "draft_file".into(),
@@ -891,7 +891,7 @@ impl Tool for FakeTool {
     fn metadata(&self) -> &ToolMetadata {
         match self.approval {
             Approval::Always => &ToolMetadata {
-                side_effect: true,
+                effects: crate::tool::ToolEffects::UNKNOWN,
                 approval: Approval::Always,
                 execution_mode: ToolExecutionMode::Normal,
                 parallelism: ToolParallelism::Serial,
@@ -901,7 +901,7 @@ impl Tool for FakeTool {
                 source: ToolSource::InProcess,
             },
             _ => &ToolMetadata {
-                side_effect: false,
+                effects: crate::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 execution_mode: ToolExecutionMode::Normal,
                 parallelism: ToolParallelism::Serial,
@@ -929,7 +929,7 @@ async fn invalid_tool_metadata_links_fail_run_before_model_call() {
         .register(Arc::new(MetadataTool {
             name: "draft",
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: crate::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 execution_mode: ToolExecutionMode::Draft {
                     commit_tool: "missing_commit".into(),
@@ -989,7 +989,7 @@ async fn draft_tool_call_runs_without_approval_or_side_effect() {
                 metadata,
                 ..
             } if tool == "draft_file"
-                && !metadata.side_effect
+                && !metadata.effects.has_side_effects()
                 && matches!(metadata.execution_mode, ToolExecutionMode::Draft { .. })
         )
     }));
@@ -1206,7 +1206,7 @@ impl Tool for StructuredTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -1424,7 +1424,7 @@ impl Tool for AsyncTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -1645,7 +1645,7 @@ impl Tool for SpecGapTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -1798,7 +1798,7 @@ impl Tool for RetryHintTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -2491,7 +2491,7 @@ impl Tool for WebhookTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -2805,7 +2805,7 @@ impl SlowTool {
     fn new() -> Self {
         Self {
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: crate::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 execution_mode: ToolExecutionMode::Normal,
                 parallelism: ToolParallelism::Serial,
@@ -2940,7 +2940,7 @@ impl BigOutputTool {
     fn new() -> Self {
         Self {
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: crate::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 execution_mode: ToolExecutionMode::Normal,
                 parallelism: ToolParallelism::Serial,
@@ -3186,7 +3186,7 @@ fn update_max_seen(max_seen: &AtomicU32, observed: u32) {
 
 fn concurrency_metadata(parallelism: ToolParallelism, approval: Approval) -> ToolMetadata {
     ToolMetadata {
-        side_effect: false,
+        effects: crate::tool::ToolEffects::NONE,
         approval,
         parallelism,
         execution_mode: ToolExecutionMode::Normal,
@@ -3687,7 +3687,7 @@ impl Tool for UsageBombTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         static SERIAL: ToolMetadata = ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -3697,7 +3697,7 @@ impl Tool for UsageBombTool {
             source: ToolSource::InProcess,
         };
         static PARALLEL: ToolMetadata = ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::ParallelSafe,
@@ -5694,7 +5694,7 @@ impl Tool for RepeatedFailureTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -5973,7 +5973,7 @@ impl Tool for MustNotRunTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -7144,7 +7144,7 @@ impl Tool for GuardedNamedTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: true,
+            effects: crate::tool::ToolEffects::UNKNOWN,
             approval: Approval::Always,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -7167,9 +7167,28 @@ impl Tool for GuardedNamedTool {
 
 use crate::run::ApprovalMode;
 
+/// Whether `rc` asks before a call of a tool with `meta`, absent host rules.
+fn should_approve(rc: &config::RuntimeConfig, meta: &ToolMetadata) -> bool {
+    let input = json!({});
+    let call = crate::tool::PermissionCall {
+        tool_name: "t",
+        input: &input,
+        effects: &meta.effects,
+        subject: crate::tool::PermissionSubject::default(),
+    };
+    matches!(
+        rc.decide(&call, meta, &Default::default()),
+        crate::tool::PermissionDecision::Ask { .. }
+    )
+}
+
 fn meta(approval: Approval, side_effect: bool) -> ToolMetadata {
     ToolMetadata {
-        side_effect,
+        effects: if side_effect {
+            crate::tool::ToolEffects::UNKNOWN
+        } else {
+            crate::tool::ToolEffects::NONE
+        },
         approval,
         execution_mode: ToolExecutionMode::Normal,
         parallelism: ToolParallelism::Serial,
@@ -7186,10 +7205,10 @@ fn approval_mode_per_tool_uses_enum() {
         approval_mode: ApprovalMode::PerTool,
         ..Default::default()
     };
-    assert!(rc.should_approve(&meta(Approval::Always, false)));
-    assert!(!rc.should_approve(&meta(Approval::Never, false)));
-    assert!(rc.should_approve(&meta(Approval::WhenRisky, true)));
-    assert!(!rc.should_approve(&meta(Approval::WhenRisky, false)));
+    assert!(should_approve(&rc, &meta(Approval::Always, false)));
+    assert!(!should_approve(&rc, &meta(Approval::Never, false)));
+    assert!(should_approve(&rc, &meta(Approval::WhenRisky, true)));
+    assert!(!should_approve(&rc, &meta(Approval::WhenRisky, false)));
 }
 
 #[test]
@@ -7198,7 +7217,7 @@ fn approval_mode_none_never_approves() {
         approval_mode: ApprovalMode::None,
         ..Default::default()
     };
-    assert!(!rc.should_approve(&meta(Approval::Always, true)));
+    assert!(!should_approve(&rc, &meta(Approval::Always, true)));
 }
 
 #[test]
@@ -7207,18 +7226,18 @@ fn approval_mode_all_always_approves() {
         approval_mode: ApprovalMode::All,
         ..Default::default()
     };
-    assert!(rc.should_approve(&meta(Approval::Never, false)));
+    assert!(should_approve(&rc, &meta(Approval::Never, false)));
 }
 
 #[test]
 fn custom_approval_fn_takes_priority() {
     let rc = config::RuntimeConfig {
         approval_mode: ApprovalMode::None,
-        custom_approval_fn: Some(Arc::new(|m: &ToolMetadata| m.side_effect)),
+        custom_approval_fn: Some(Arc::new(|m: &ToolMetadata| m.effects.has_side_effects())),
         ..Default::default()
     };
-    assert!(rc.should_approve(&meta(Approval::Never, true)));
-    assert!(!rc.should_approve(&meta(Approval::Never, false)));
+    assert!(should_approve(&rc, &meta(Approval::Never, true)));
+    assert!(!should_approve(&rc, &meta(Approval::Never, false)));
 }
 
 #[test]

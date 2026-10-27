@@ -489,7 +489,9 @@ impl Agent {
             description: options.description.clone(),
             input_schema: options.input_schema,
             metadata: ToolMetadata {
-                side_effect: options.side_effect.unwrap_or(false),
+                effects: orchest::bindings::effects_from_side_effect_flag(
+                    options.side_effect.unwrap_or(false),
+                ),
                 approval: resolved,
                 execution_mode,
                 source: ToolSource::InProcess,
@@ -540,7 +542,7 @@ impl Agent {
             description,
             input_schema,
             metadata: ToolMetadata {
-                side_effect,
+                effects: orchest::bindings::effects_from_side_effect_flag(side_effect),
                 approval: resolved,
                 execution_mode,
                 source: ToolSource::InProcess,
@@ -601,7 +603,7 @@ impl Agent {
             description,
             input_schema,
             metadata: ToolMetadata {
-                side_effect,
+                effects: orchest::bindings::effects_from_side_effect_flag(side_effect),
                 approval: resolved,
                 execution_mode,
                 source: ToolSource::InProcess,

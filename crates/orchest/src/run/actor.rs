@@ -25,8 +25,9 @@ use crate::tool::code_exec::CodeExecutionMcpServer;
 use crate::tool::registry::ToolRegistry;
 use crate::tool::search::SearchToolsTool;
 use crate::tool::{
-    ErrorKind, RetryHint, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolExecutionMode,
-    ToolMetadata, ToolOutput, ToolParallelism, ToolSource,
+    grant_key, ErrorKind, PermissionCall, PermissionDecision, RetryHint, Tool, ToolCall,
+    ToolContext, ToolDef, ToolError, ToolExecutionMode, ToolMetadata, ToolOutput, ToolParallelism,
+    ToolSource, PERMISSION_DENIED,
 };
 
 use super::compaction::maybe_compact_context;
@@ -34,8 +35,8 @@ use super::config::{AgentConfig, RunId, SkillDisclosure, ToolExecutionPolicy};
 use super::handle::ChildRunRegistry;
 use super::helpers::{append_searched_tool_defs, connect_mcp_servers, truncate_output};
 use super::request::{
-    PendingRequest, RequestBus, RequestDecision, RequestId, RequestKind, RequestResolution,
-    RequestResponse, RequestTarget,
+    ApprovalScope, PendingRequest, RequestBus, RequestDecision, RequestId, RequestKind,
+    RequestResolution, RequestResponse, RequestTarget,
 };
 use super::skills::register_skills;
 use super::tool_exec::{poll_async_job, tool_error_result, tool_skipped_by_hook_result};
@@ -810,6 +811,14 @@ fn tool_retry_delay(next_attempt: u32) -> Duration {
     TOOL_RETRY_BASE_DELAY.saturating_mul(1 << exponent)
 }
 
+/// What an approval request asks.
+struct ApprovalAsk {
+    kind: &'static str,
+    context: ApprovalContext,
+    /// The permission decision behind the ask, for the request payload.
+    permission: Option<Value>,
+}
+
 /// Raises a tool-approval request on the run tree's request bus, records its
 /// lifecycle in the session log, and waits for the host, the run's request
 /// timeout, or the run to stop. Anything but an approving response fails
@@ -818,13 +827,20 @@ async fn await_tool_approval(
     state: &mut AgentRunState,
     subs: &[EventSink],
     tool_call: &ToolCall,
-    kind: &str,
-    context: ApprovalContext,
+    ask: ApprovalAsk,
 ) -> RequestResolution {
+    let ApprovalAsk {
+        kind,
+        context,
+        permission,
+    } = ask;
     let run_id = state.run_id;
     let id = RequestId::new(run_id, state.log.projection().requests_opened + 1);
     let kind = RequestKind::new(kind);
-    let payload = json!({ "tool_call": tool_call, "context": context });
+    let mut payload = json!({ "tool_call": tool_call, "context": context });
+    if let Some(permission) = permission {
+        payload["permission"] = permission;
+    }
     let request = PendingRequest {
         id: id.clone(),
         run_id,
@@ -1609,23 +1625,49 @@ async fn run_tool_and_handoff_phase(
             input: tool_input.clone(),
         };
 
-        if state.config.runtime.should_approve(tool.metadata()) {
-            let approval_context = approval_context_for(tool.metadata());
-            let resolution = await_tool_approval(
-                state,
-                subs,
-                &effective_call,
-                RequestKind::TOOL_APPROVAL,
-                approval_context,
-            )
-            .await;
-            if !resolution.is_approved() {
+        let decision = decide_permission(state, tool.as_ref(), &effective_call);
+        emit(
+            subs,
+            RuntimeEvent::PermissionDecided {
+                tool_call_id: effective_call.id.clone(),
+                tool: effective_call.name.clone(),
+                decision: decision.clone(),
+            },
+        )
+        .await;
+        match decision {
+            PermissionDecision::Deny { reason, .. } => {
+                let error =
+                    ToolError::fatal(format!("tool call denied by permission policy: {reason}"))
+                        .with_code(PERMISSION_DENIED);
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: tool_call.id.clone(),
-                    content: tool_error_result(&approval_refused_error(&resolution)),
+                    content: tool_error_result(&error),
                 });
                 continue;
             }
+            PermissionDecision::Ask { basis } => {
+                let approval_context = approval_context_for(tool.metadata());
+                let permission = json!({
+                    "effects": tool.metadata().effects,
+                    "basis": basis,
+                });
+                let ask = ApprovalAsk {
+                    kind: RequestKind::TOOL_APPROVAL,
+                    context: approval_context,
+                    permission: Some(permission),
+                };
+                let resolution = await_tool_approval(state, subs, &effective_call, ask).await;
+                if !resolution.is_approved() {
+                    tool_results.push(ContentBlock::ToolResult {
+                        tool_use_id: tool_call.id.clone(),
+                        content: tool_error_result(&approval_refused_error(&resolution)),
+                    });
+                    continue;
+                }
+                remember_session_grant(state, &effective_call, &resolution);
+            }
+            _ => {}
         }
 
         if let Some(max) = state.config.budget.max_tool_calls {
@@ -1681,7 +1723,7 @@ async fn run_tool_and_handoff_phase(
                     args_summary: summarize_args(&effective_call.input),
                 });
                 let point = Checkpoint::BeforeDispatch {
-                    side_effect: tool_meta.side_effect,
+                    side_effect: tool_meta.effects.has_side_effects(),
                 };
                 if !checkpoint(state, subs, point).await {
                     return false;
@@ -1777,14 +1819,13 @@ async fn run_tool_and_handoff_phase(
                             attempt: next_attempt,
                             previous_error: error.clone(),
                         };
-                        let resolution = await_tool_approval(
-                            state,
-                            subs,
-                            &effective_call,
-                            RequestKind::RETRY_APPROVAL,
+                        let ask = ApprovalAsk {
+                            kind: RequestKind::RETRY_APPROVAL,
                             context,
-                        )
-                        .await;
+                            permission: None,
+                        };
+                        let resolution =
+                            await_tool_approval(state, subs, &effective_call, ask).await;
                         if !resolution.is_approved() {
                             break Err(error);
                         }
@@ -2232,6 +2273,42 @@ fn primary(subs: &[EventSink]) -> &mpsc::Sender<RuntimeEvent> {
         .sender()
 }
 
+/// Runs the permission decision point for `call`.
+fn decide_permission(
+    state: &AgentRunState,
+    tool: &dyn Tool,
+    call: &ToolCall,
+) -> PermissionDecision {
+    let metadata = tool.metadata();
+    let permission_call = PermissionCall {
+        tool_name: &call.name,
+        input: &call.input,
+        effects: &metadata.effects,
+        subject: tool.permission_subject(&call.input),
+    };
+    state.config.runtime.decide(
+        &permission_call,
+        metadata,
+        &state.log.projection().session_grants,
+    )
+}
+
+/// Records a session-scoped approval so later identical calls are allowed.
+fn remember_session_grant(
+    state: &mut AgentRunState,
+    call: &ToolCall,
+    resolution: &RequestResolution,
+) {
+    if let RequestResolution::Responded { response } = resolution {
+        if response.scope == ApprovalScope::Session {
+            state.log.append(SessionEventKind::PermissionGranted {
+                tool_name: call.name.clone(),
+                key: grant_key(&call.name, &call.input),
+            });
+        }
+    }
+}
+
 fn approval_context_for(meta: &ToolMetadata) -> ApprovalContext {
     match &meta.execution_mode {
         ToolExecutionMode::Commit { draft_tool } => ApprovalContext::CommitToolCall {
@@ -2275,18 +2352,23 @@ async fn run_parallel_tool_batch_if_allowed(
     }
 
     let mut calls = Vec::with_capacity(tool_uses.len());
+    let mut decisions = Vec::with_capacity(tool_uses.len());
     for (idx, tool_call) in tool_uses.iter().enumerate() {
         if deferred_tool_exposure_error(state, &tool_call.name).is_some() {
             return None;
         }
         let tool = state.registry.get(&tool_call.name)?;
         let metadata = tool.metadata().clone();
-        if metadata.side_effect
+        if metadata.effects.has_side_effects()
             || metadata.parallelism != ToolParallelism::ParallelSafe
-            || state.config.runtime.should_approve(&metadata)
         {
             return None;
         }
+        let decision = decide_permission(state, tool.as_ref(), tool_call);
+        if !decision.is_allow() {
+            return None;
+        }
+        decisions.push(decision);
         let source_label = tool_source_label(&metadata.source);
         calls.push(ParallelToolCall {
             requested_order: idx,
@@ -2299,6 +2381,17 @@ async fn run_parallel_tool_batch_if_allowed(
         });
     }
 
+    for (call, decision) in calls.iter().zip(decisions) {
+        emit(
+            subs,
+            RuntimeEvent::PermissionDecided {
+                tool_call_id: call.tool_call.id.clone(),
+                tool: call.tool_call.name.clone(),
+                decision,
+            },
+        )
+        .await;
+    }
     let batch_id = format!("tool_batch_{}", uuid::Uuid::new_v4());
     emit(
         subs,

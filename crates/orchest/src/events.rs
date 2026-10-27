@@ -10,7 +10,7 @@ use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::model::{ModelStreamChunk, OptionAdjustment, StopReason, TokenUsage};
 use crate::run::{RequestId, RequestKind, RequestResolution, RunId};
 use crate::tool::async_job::JobStatus;
-use crate::tool::{ToolCall, ToolError, ToolMetadata};
+use crate::tool::{PermissionDecision, ToolCall, ToolError, ToolMetadata};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[non_exhaustive]
@@ -138,6 +138,14 @@ pub enum RuntimeEvent {
         tokens: u32,
     },
 
+    /// The permission decision point ruled on a tool call: allowed, asked
+    /// (an `ApprovalRequested` follows) or denied (the call gets a
+    /// `PERMISSION_DENIED` result).
+    PermissionDecided {
+        tool_call_id: String,
+        tool: String,
+        decision: PermissionDecision,
+    },
     /// A tool call waits for approval under request `request_id`. Answer it
     /// with [`RunHandle::respond`](crate::run::RunHandle::respond).
     ApprovalRequested {

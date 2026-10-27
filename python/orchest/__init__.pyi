@@ -140,7 +140,9 @@ class ToolRegistration(TypedDict):
 
 
 class ToolMetadata(TypedDict):
-    side_effect: bool
+    # Declared effects ("read", "write_workspace", "write_outside", "network",
+    # "credential", "destructive", "process"); None when unknown.
+    effects: list[str] | None
     approval: str
     cost_hint: JsonValue
     timeout: JsonValue
@@ -252,6 +254,15 @@ class SkillContentReadEvent(TypedDict):
     skill_name: str
     file: str
     tokens: int
+    run_depth: int
+    child_run_id: str | None
+
+
+class PermissionDecidedEvent(TypedDict):
+    type: Literal["permission_decided"]
+    tool_call_id: str
+    tool: str
+    decision: JsonValue
     run_depth: int
     child_run_id: str | None
 
@@ -419,6 +430,7 @@ RuntimeEvent: TypeAlias = (
     | AsyncToolProgressEvent
     | AsyncToolCompletedEvent
     | SkillContentReadEvent
+    | PermissionDecidedEvent
     | ApprovalRequestedEvent
     | ApprovalGrantedEvent
     | ApprovalDeniedEvent

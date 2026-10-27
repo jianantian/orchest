@@ -187,7 +187,7 @@ mod tests {
             tool_name: tool_name.to_string(),
             tool_input: input,
             tool_metadata: ToolMetadata {
-                side_effect: false,
+                effects: crate::tool::ToolEffects::NONE,
                 approval: crate::tool::Approval::Never,
                 execution_mode: crate::tool::ToolExecutionMode::Normal,
                 parallelism: crate::tool::ToolParallelism::Serial,

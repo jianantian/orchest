@@ -1,5 +1,6 @@
 //! Run configuration types: RunId, AgentConfig, RunState, RunStatus, SubAgentRuntime.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -10,7 +11,10 @@ use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::model::{ContentBlock, MediaSource, Message, ModelSpec, RequestOptions};
 use crate::skill::executor::ScriptExecutor;
 use crate::tool::mcp::McpServerConfig;
-use crate::tool::Tool;
+use crate::tool::{
+    grant_key, DecisionBasis, Enforcement, EnforcementFacts, ExecutionBackend, PermissionAction,
+    PermissionCall, PermissionDecision, PermissionPolicy, Tool,
+};
 
 use super::helpers::{min_option, min_option_f64};
 
@@ -317,6 +321,13 @@ pub struct RuntimeConfig {
     /// host. An unanswered request counts as not approved.
     #[serde(default = "default_request_timeout")]
     pub request_timeout: Duration,
+    /// Host permission rules, evaluated by [`RuntimeConfig::decide`].
+    #[serde(default)]
+    pub permissions: PermissionPolicy,
+    /// The isolated environment the host runs tools in, if any; only used to
+    /// report [`RuntimeConfig::enforcement`]. Not serialized.
+    #[serde(skip)]
+    pub execution_backend: Option<Arc<dyn ExecutionBackend>>,
 }
 
 fn default_request_timeout() -> Duration {
@@ -324,28 +335,102 @@ fn default_request_timeout() -> Duration {
 }
 
 impl RuntimeConfig {
-    /// Resolves whether a tool call requires approval under this run's policy.
-    /// `custom_approval_fn` takes priority; otherwise Draft/Commit defaults and
-    /// then `approval_mode` decide.
-    pub fn should_approve(&self, meta: &crate::tool::ToolMetadata) -> bool {
+    /// The single permission decision point for a tool call: allow, ask the
+    /// host, or deny.
+    ///
+    /// The last matching host rule decides. With no matching rule,
+    /// [`PermissionPolicy::unmatched`] decides when set; otherwise the custom
+    /// approval predicate, then Draft/Commit defaults, then `approval_mode`
+    /// and the tool's [`Approval`](crate::tool::Approval) — under which a tool
+    /// with unknown effects asks. An `Ask` becomes `Allow` when `grants`
+    /// holds a session-scoped approval of the same call
+    /// ([`grant_key`](crate::tool::grant_key)); a `Deny` never does.
+    pub fn decide(
+        &self,
+        call: &PermissionCall<'_>,
+        metadata: &crate::tool::ToolMetadata,
+        grants: &BTreeSet<String>,
+    ) -> PermissionDecision {
+        let rule = self.permissions.evaluate(call);
+        let (action, basis) = match rule {
+            Some((index, rule)) => (rule.action, DecisionBasis::Rule { index }),
+            None => match self.permissions.unmatched {
+                Some(action) => (action, DecisionBasis::Unmatched),
+                None => self.declared_action(metadata),
+            },
+        };
+        match action {
+            PermissionAction::Allow => PermissionDecision::Allow { basis },
+            PermissionAction::Deny => PermissionDecision::Deny {
+                basis,
+                reason: rule
+                    .and_then(|(_, rule)| rule.reason.clone())
+                    .unwrap_or_else(|| "denied by permission policy".into()),
+            },
+            _ if grants.contains(&grant_key(call.tool_name, call.input)) => {
+                PermissionDecision::Allow {
+                    basis: DecisionBasis::SessionGrant,
+                }
+            }
+            _ => PermissionDecision::Ask { basis },
+        }
+    }
+
+    fn declared_action(
+        &self,
+        meta: &crate::tool::ToolMetadata,
+    ) -> (PermissionAction, DecisionBasis) {
         use crate::tool::{Approval, ToolExecutionMode};
+        let ask = |yes: bool| {
+            if yes {
+                PermissionAction::Ask
+            } else {
+                PermissionAction::Allow
+            }
+        };
         if let Some(f) = &self.custom_approval_fn {
-            return f(meta);
+            return (ask(f(meta)), DecisionBasis::CustomPredicate);
         }
         match &meta.execution_mode {
-            ToolExecutionMode::Draft { .. } => return false,
-            ToolExecutionMode::Commit { .. } => return true,
+            ToolExecutionMode::Draft { .. } => {
+                return (PermissionAction::Allow, DecisionBasis::ToolDeclaration)
+            }
+            ToolExecutionMode::Commit { .. } => {
+                return (PermissionAction::Ask, DecisionBasis::ToolDeclaration)
+            }
             ToolExecutionMode::Normal => {}
         }
         match self.approval_mode {
-            ApprovalMode::PerTool => match meta.approval {
-                Approval::Never => false,
-                Approval::WhenRisky => meta.side_effect,
-                Approval::Always => true,
-            },
-            ApprovalMode::None => false,
-            ApprovalMode::All => true,
+            ApprovalMode::PerTool => {
+                let asks = match meta.approval {
+                    Approval::Never => false,
+                    Approval::WhenRisky => meta.effects.has_side_effects(),
+                    Approval::Always => true,
+                };
+                (ask(asks), DecisionBasis::ToolDeclaration)
+            }
+            ApprovalMode::None => (PermissionAction::Allow, DecisionBasis::ApprovalMode),
+            ApprovalMode::All => (PermissionAction::Ask, DecisionBasis::ApprovalMode),
         }
+    }
+
+    /// What this run's boundaries can be relied on for. See
+    /// [`EnforcementFacts`].
+    pub fn enforcement(&self) -> EnforcementFacts {
+        let gate_open = self.permissions.is_empty()
+            && self.custom_approval_fn.is_none()
+            && self.approval_mode == ApprovalMode::None;
+        let gate = if gate_open {
+            Enforcement::None
+        } else {
+            Enforcement::Soft
+        };
+        let code_execution = self.code_execution_enabled.then(|| {
+            self.code_execution_executor
+                .as_ref()
+                .map_or(Enforcement::None, |e| e.enforcement())
+        });
+        EnforcementFacts::new(self.execution_backend.as_deref(), gate, code_execution)
     }
 }
 
@@ -369,6 +454,14 @@ impl std::fmt::Debug for RuntimeConfig {
             .field("repeated_failure", &self.repeated_failure)
             .field("custom_approval_fn", &self.custom_approval_fn.is_some())
             .field("request_timeout", &self.request_timeout)
+            .field("permissions", &self.permissions)
+            .field(
+                "execution_backend",
+                &self
+                    .execution_backend
+                    .as_ref()
+                    .map(|b| b.name().to_string()),
+            )
             .finish()
     }
 }
@@ -390,6 +483,8 @@ impl Default for RuntimeConfig {
             repeated_failure: RepeatedFailureConfig::default(),
             custom_approval_fn: None,
             request_timeout: default_request_timeout(),
+            permissions: PermissionPolicy::default(),
+            execution_backend: None,
         }
     }
 }
@@ -691,6 +786,18 @@ impl AgentConfigBuilder {
     /// (default one hour).
     pub fn request_timeout(mut self, timeout: Duration) -> Self {
         self.runtime.request_timeout = timeout;
+        self
+    }
+
+    /// Host permission rules for the run's tool calls.
+    pub fn permissions(mut self, policy: PermissionPolicy) -> Self {
+        self.runtime.permissions = policy;
+        self
+    }
+
+    /// Declares the isolated environment the run's tools execute in.
+    pub fn execution_backend(mut self, backend: Arc<dyn ExecutionBackend>) -> Self {
+        self.runtime.execution_backend = Some(backend);
         self
     }
 

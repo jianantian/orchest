@@ -341,7 +341,7 @@ impl WriteDraftTool {
         Self {
             output_path,
             metadata: ToolMetadata {
-                side_effect: true,
+                effects: orchest::tool::ToolEffects::UNKNOWN,
                 approval: Approval::Always,
                 source: ToolSource::InProcess,
                 ..ToolMetadata::default()
@@ -408,7 +408,7 @@ impl Tool for WriteDraftTool {
 
 fn read_only_metadata() -> ToolMetadata {
     ToolMetadata {
-        side_effect: false,
+        effects: orchest::tool::ToolEffects::NONE,
         approval: Approval::Never,
         source: ToolSource::InProcess,
         ..ToolMetadata::default()

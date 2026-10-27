@@ -18,12 +18,13 @@ use crate::session::{
 };
 use crate::tool::registry::ToolRegistry;
 use crate::tool::{
-    Approval, JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput,
+    Approval, JsonSchema, Tool, ToolCall, ToolContext, ToolDef, ToolEffect, ToolEffects, ToolError,
+    ToolMetadata, ToolOutput,
 };
 
 /// What the scripted model does on one call.
 #[derive(Clone)]
-enum Turn {
+pub(super) enum Turn {
     CallTool {
         id: &'static str,
         name: &'static str,
@@ -34,14 +35,14 @@ enum Turn {
 
 /// A model that plays `turns` in order and records the messages of every
 /// call.
-struct ScriptedModel {
+pub(super) struct ScriptedModel {
     turns: Vec<Turn>,
     calls: AtomicUsize,
     seen: Mutex<Vec<Vec<Message>>>,
 }
 
 impl ScriptedModel {
-    fn new(turns: Vec<Turn>) -> Arc<Self> {
+    pub(super) fn new(turns: Vec<Turn>) -> Arc<Self> {
         Arc::new(Self {
             turns,
             calls: AtomicUsize::new(0),
@@ -49,7 +50,7 @@ impl ScriptedModel {
         })
     }
 
-    fn seen(&self) -> Vec<Vec<Message>> {
+    pub(super) fn seen(&self) -> Vec<Vec<Message>> {
         self.seen.lock().unwrap().clone()
     }
 }
@@ -122,7 +123,11 @@ impl ProbeTool {
         Arc::new(Self {
             name,
             metadata: ToolMetadata {
-                side_effect,
+                effects: if side_effect {
+                    ToolEffects::of([ToolEffect::WriteWorkspace])
+                } else {
+                    ToolEffects::READ_ONLY
+                },
                 approval: Approval::Never,
                 ..ToolMetadata::default()
             },
@@ -186,7 +191,7 @@ async fn stored(store: &InMemorySessionStore, session_id: &str) -> Vec<SessionEv
     store.read(session_id, 1).await.unwrap()
 }
 
-fn tool_result_code(messages: &[Message], tool_use_id: &str) -> Option<String> {
+pub(super) fn tool_result_code(messages: &[Message], tool_use_id: &str) -> Option<String> {
     messages
         .iter()
         .flat_map(|m| &m.content)

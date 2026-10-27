@@ -534,7 +534,7 @@ impl Agent {
             let tool = PyTool {
                 def: tool_def.clone(),
                 metadata: ToolMetadata {
-                    side_effect: tool_def.side_effect,
+                    effects: orchest::bindings::effects_from_side_effect_flag(tool_def.side_effect),
                     approval: tool_def.approval,
                     execution_mode: tool_def.execution_mode.clone(),
                     source: ToolSource::InProcess,
