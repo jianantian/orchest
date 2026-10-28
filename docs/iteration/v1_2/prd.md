@@ -22,7 +22,7 @@
 
 | 主题 | 决定 | 来源 |
 |---|---|---|
-| Finalize | `SessionInput::Finalize`；不支持的方言返回 `UnsupportedOption`，不静默降级、不本地合成 Turn | ADR-0006 D2、D7.2 |
+| Finalize | `SessionInput::Finalize`；方言在 `descriptor()` 声明 `client_finalize`，调用方发送前检查；发送后方言在事件流上恰好回一个结果：Turn，或 `operation = "finalize"` 的非致命错误（不支持时为 `UnsupportedOption`）；不静默降级、不本地合成 Turn，不改 `RealtimeHandle` | ADR-0006 D2、D7.2；PR #341 评审 |
 | Stable | Append 与 Snapshot 都合法，由能力目录声明；删除 `SegmentRef` 注释里的 Append 限制 | ADR-0006 D3 |
 | Turn | `EndOfSpeech.segment` 携带它结束的 Stable 的 `segment_id`；没有原生 Turn 的方言由映射层在定稿后合成 | ADR-0006 D6、D7.1 |
 | SDK 接口 | 硬切换：`model` 独立参数、`finalize()`、带 `kind` 的事件类型；不留兼容层 | owner 2026-10-27 |
@@ -43,7 +43,7 @@
 ## Out of Scope
 
 - 语音 V2–V5（能力目录与计量、网关语音、TTS 双工、全双工）。
-- `AsrCatalogExt` 的能力项（V2）；本迭代用代码常量判断方言是否支持 Finalize。
+- `AsrCatalogExt` 的能力项（V2）；本迭代用 `descriptor()` 中 `CapabilityExt::Asr` 的 `client_finalize` 判断方言是否支持 Finalize。
 - Vercel / Fireworks 的语音、图像、embedding 能力。
 - Fireworks 的 decision。
 - 任何 v2.0 的 runtime 契约改动。

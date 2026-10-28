@@ -12,7 +12,7 @@ GitHub issue: #344
 
 ## Acceptance Criteria
 
-- [ ] 断言集：同段 Draft 全是 Snapshot；Stable 之后不再有同段 Draft；每个 Turn 指向一个已出现的 Stable；每个 Stable 都被某个 Turn 结束；Finalize 之后必有 Turn 或明确的 `UnsupportedOption`。
+- [ ] 断言集：同段 Draft 全是 Snapshot；Stable 之后不再有同段 Draft；每个 Turn 指向一个已出现的 Stable；每个 Stable 都被某个 Turn 结束；Finalize 之后恰好一个结果：一个 Turn，或一个 `operation = "finalize"` 的非致命错误，且会话仍可继续收发；`client_finalize = false` 的方言只能是 `UnsupportedOption`，`true` 的方言在正常 fixture 下必须是 Turn。
 - [ ] 五个方言各有至少一份录制 fixture（同一段录音），测试在无网络下通过。（未完成：五份 fixture 目前是手写的，`meta.source = "hand-written"`，等 owner 提供 key 后录制替换。）
 - [ ] 有录制脚本：给定 key 与录音，重新生成 fixture；fixture 中不含 key 与可识别的个人信息。
 - [ ] CI 跑契约测试。
