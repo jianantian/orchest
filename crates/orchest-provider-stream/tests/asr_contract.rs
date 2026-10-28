@@ -10,6 +10,8 @@
 //! - every Stable has a segment id;
 //! - every Turn points at a Stable already seen, once per segment, or is
 //!   segment-less only when it answers a `Finalize`;
+//! - every Stable segment is ended by a Turn before the session closes, so
+//!   no confirmed text is left without the Turn that hands it on;
 //! - every `Finalize` is answered by a Turn (`client_finalize = true`) or by a
 //!   non-fatal `UnsupportedOption` error (`client_finalize = false`);
 //! - the session ends with `SessionClosed`, and nothing follows it.
@@ -191,6 +193,11 @@ fn contract_breaches(client_finalize: bool, observed: &[Observed]) -> Vec<String
             _ => {}
         }
     }
+    let mut unended: Vec<_> = stable.difference(&turned).cloned().collect();
+    unended.sort();
+    for id in unended {
+        breaches.push(format!("Stable {id} was never ended by a Turn"));
+    }
     if pending_finalize > 0 {
         breaches.push(format!(
             "{pending_finalize} Finalize(s) got neither a Turn nor UnsupportedOption"
@@ -343,6 +350,10 @@ fn contract_breaches_are_detected() {
         turn(segment("b", TranscriptUpdateKind::Snapshot)),
         turn(segment("b", TranscriptUpdateKind::Snapshot)),
         turn(None),
+        transcript(
+            TranscriptStability::Committed,
+            segment("d", TranscriptUpdateKind::Append),
+        ),
         Observed::Finalize,
     ];
     let breaches = contract_breaches(true, &observed);
@@ -352,6 +363,7 @@ fn contract_breaches_are_detected() {
         "Turn points at c",
         "second Turn for b",
         "segment-less Turn",
+        "Stable d was never ended by a Turn",
         "got neither a Turn nor UnsupportedOption",
         "did not end with SessionClosed",
     ] {

@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
+use orchest::bindings::asr::{select_asr_model, AsrMode};
 use orchest_protocol::{AudioFormat, ErrorCode, Language, ProtocolError, TranscribeRequest};
 use orchest_provider::{ProviderConfig, Registry};
 
@@ -39,12 +40,16 @@ pub async fn transcribe(audio: Buffer, input: TranscribeOptions) -> napi::Result
         &provider,
     )?;
     let registry = Registry::with_builtin();
-    let query = registry.asr().provider(provider.clone());
-    let entry = match &model {
-        Some(model) => query.id(&format!("{provider}/{model}")),
-        None => query,
-    }
-    .select()
+    let rows = registry.asr().provider(provider.clone()).list();
+    let descriptors: Vec<_> = rows.iter().map(|entry| &entry.descriptor).collect();
+    let entry = select_asr_model(
+        &descriptors,
+        &provider,
+        model.as_deref(),
+        AsrMode::Batch,
+        (provider == DEFAULT_PROVIDER).then_some(DEFAULT_MODEL),
+    )
+    .map(|index| rows[index])
     .map_err(super::error::protocol_error)?;
     let model = model.unwrap_or_else(|| entry.descriptor.model.to_string());
     let handle = entry
@@ -93,14 +98,7 @@ pub(crate) fn validate_provider(provider: String) -> napi::Result<String> {
 }
 
 pub(crate) fn default_key_env(provider: &str) -> &'static str {
-    match provider {
-        "assemblyai" => "ASSEMBLYAI_API_KEY",
-        "speechmatics" => "SPEECHMATICS_API_KEY",
-        "deepgram" => "DEEPGRAM_API_KEY",
-        "elevenlabs" => "ELEVENLABS_API_KEY",
-        "soniox" => "SONIOX_API_KEY",
-        _ => "DASHSCOPE_API_KEY",
-    }
+    orchest::bindings::asr::default_asr_key_env(provider)
 }
 
 pub(crate) fn resolve_key(

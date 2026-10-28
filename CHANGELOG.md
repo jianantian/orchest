@@ -58,14 +58,22 @@ except for the items `orchest-provider` re-exports.
 
 - Streaming ASR: every dialect now emits a Turn (`EndOfSpeech`) that carries
   the `segment_id` of the Stable it ends. ElevenLabs, aliyun and volcengine
-  synthesize it after each committed segment; Deepgram maps `UtteranceEnd`
-  (now requested with `utterance_end_ms=1000`) and de-duplicates it with
-  `speech_final` per segment; Soniox maps its `<end>` / `<fin>` tokens (endpoint
+  synthesize it after each committed segment; Deepgram appends every
+  `is_final` piece of an utterance to one `final{n}` segment (interims go to
+  `tail{n}`, replacing the per-`start` `seg{ms}` ids) and ends it with the
+  first of `speech_final`, `UtteranceEnd` (now requested with
+  `utterance_end_ms=1000`) or a `from_finalize` result; Soniox maps its `<end>` / `<fin>` tokens (endpoint
   detection is now on by default) and numbers segments per Turn
   (`final{n}` / `tail{n}`) instead of the fixed `final` / `tail`. The marker
   tokens no longer leak into the transcript text. The end of a session is now
   `LifecycleEvent::SessionClosed` instead of a segment-less `EndOfSpeech`
   ([#343](https://github.com/jianantian/orchest/issues/343)).
+- Python / Node `transcribe` with only `provider` picks that provider's
+  default one-shot model and never a streaming one; `start_asr_stream` picks
+  only streaming models. A provider with only the other kind fails with
+  `UnsupportedOperation` naming the API to use. Volcengine's default key
+  variable is `VOLCENGINE_ASR_API_KEY`
+  ([#345](https://github.com/jianantian/orchest/issues/345)).
 
 ## [1.1.0]
 

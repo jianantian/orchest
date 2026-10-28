@@ -14,7 +14,7 @@
 //! same format (see `examples/record_asr_fixture.rs`).
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use orchest_protocol::{ErrorCode, ProtocolError};
@@ -106,6 +106,7 @@ impl OpenspeechFrame {
             (None, false) => FLAG_NO_SEQUENCE,
             (None, true) => FLAG_LAST_NO_SEQUENCE,
         };
+        // Invariant: gzip into an in-memory Vec has no I/O to fail.
         let body = compress_gzip(self.payload.to_string().as_bytes())
             .expect("gzip into a Vec cannot fail");
         let mut frame = build_header(MSG_FULL_SERVER_RESPONSE, flags, SER_JSON, COMP_GZIP).to_vec();
@@ -189,6 +190,8 @@ pub fn parse_fixture(text: &str) -> Result<Vec<FixtureLine>, ProtocolError> {
 pub fn render_fixture(lines: &[FixtureLine]) -> String {
     lines
         .iter()
+        // Invariant: a line holds only JSON values, strings and integers, which
+        // always serialize.
         .map(|line| serde_json::to_string(line).expect("fixture lines serialize") + "\n")
         .collect()
 }
@@ -218,7 +221,7 @@ impl Shared {
             tokio::pin!(notified);
             notified.as_mut().enable();
             {
-                let mut script = self.script.lock().expect("replay lock");
+                let mut script = self.script.lock().unwrap_or_else(PoisonError::into_inner);
                 if script.steps.is_empty() {
                     return None;
                 }
@@ -236,7 +239,11 @@ impl Shared {
 /// Build the two halves of a replay from a fixture. `meta` lines are dropped.
 pub fn replay(lines: Vec<FixtureLine>) -> (ReplayDuplex, ReplayInputs) {
     let shared = Shared::default();
-    shared.script.lock().expect("replay lock").steps = lines
+    shared
+        .script
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .steps = lines
         .into_iter()
         .filter(|line| !matches!(line, FixtureLine::Meta(_)))
         .collect();
@@ -272,7 +279,11 @@ pub struct ReplayViolations {
 
 impl ReplayViolations {
     pub fn take(&self) -> Vec<String> {
-        let mut script = self.shared.script.lock().expect("replay lock");
+        let mut script = self
+            .shared
+            .script
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let mut violations = std::mem::take(&mut script.violations);
         if !script.steps.is_empty() {
             violations.push(format!(
@@ -291,7 +302,11 @@ impl ByteDuplex for ReplayDuplex {
     /// `recv` lines not yet read: the server can answer later than recorded.
     async fn send(&mut self, frame: WsFrame) -> Result<(), ProtocolError> {
         let kind = FrameKind::of(&frame);
-        let mut script = self.shared.script.lock().expect("replay lock");
+        let mut script = self
+            .shared
+            .script
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let next = script.steps.iter().position(|line| {
             !matches!(line, FixtureLine::Recv(_) | FixtureLine::RecvOpenspeech(_))
         });
@@ -365,7 +380,7 @@ pub fn live<T: ByteDuplex>(inner: T) -> T {
 
 #[cfg(feature = "record-fixtures")]
 mod recording {
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
     use async_trait::async_trait;
     use orchest_protocol::ProtocolError;
@@ -385,7 +400,9 @@ mod recording {
 
     fn push(line: FixtureLine) {
         if let Some(sink) = SINK.get() {
-            sink.lock().expect("recorder lock").push(line);
+            sink.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(line);
         }
     }
 

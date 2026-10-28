@@ -77,6 +77,9 @@ fn model_id_keeps_the_vendor_segment() {
     assert_eq!(normalized.protocol, None);
     let anthropic = normalize_provider_model("vercel/anthropic/claude-sonnet-5").unwrap();
     assert_eq!(anthropic.model, "anthropic/claude-sonnet-5");
+    let explicit = normalize_provider_model("vercel/chat/openai/gpt-5.4").unwrap();
+    assert_eq!(explicit.protocol, Some(crate::protocol::Protocol::Chat));
+    assert_eq!(explicit.model, "openai/gpt-5.4");
 }
 
 #[test]

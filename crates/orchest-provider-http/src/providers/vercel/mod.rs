@@ -4,6 +4,11 @@
 //! `reasoning` / `reasoning_details` stream match OpenRouter's, so it reuses
 //! that profile under its own name
 //! (<https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions/reasoning>).
+//!
+//! Like every provider id (ADR-0002), the segment after `vercel/` is read as a
+//! protocol when it is a canonical protocol name (`chat`, `messages`,
+//! `responses`); no Vercel vendor uses one of those names, and
+//! `vercel/chat/<vendor>/<model>` spells the protocol out when needed.
 
 use orchest_protocol::{ChatModel, ProtocolError};
 use orchest_provider_core::registry::ProviderConfig;

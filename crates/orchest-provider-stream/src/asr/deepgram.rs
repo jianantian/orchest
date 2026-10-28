@@ -124,25 +124,43 @@ fn parse_results(value: serde_json::Value) -> Result<DeepgramResult, ProtocolErr
     })
 }
 
+/// Prefix of the committed segment of each Turn (`final{n}`): a long
+/// utterance can arrive as several `is_final` results before `speech_final`
+/// (<https://developers.deepgram.com/docs/understand-endpointing-interim-results>),
+/// so they `Append` to one segment.
+pub const FINAL_SEGMENT_PREFIX: &str = "final";
+
+/// Prefix of the revisable interim of each Turn (`tail{n}`): each interim is a
+/// full snapshot of the not-yet-final part, replacing the previous one.
+pub const TAIL_SEGMENT_PREFIX: &str = "tail";
+
 /// Stateful projector of Deepgram messages onto unified events.
 ///
-/// A non-empty transcript becomes a `Transcript` (`Committed` once `is_final`,
-/// else `Provisional`) on the segment named by its native `start` offset
-/// (`seg{start_ms}`, `Snapshot`). The Turn (`EndOfSpeech`) comes from
-/// `speech_final`, `UtteranceEnd` or a `from_finalize` result, and points at the
-/// latest Stable not yet ended by a Turn; the three signals are de-duplicated on
-/// that segment, so one Stable gets one Turn. A `from_finalize` result with
-/// nothing pending still answers the client's `Finalize` with a Turn whose
-/// segment is `None`.
+/// Interim results → a `Snapshot` `Provisional` `Transcript` on `tail{n}`;
+/// `is_final` results → an `Append` `Committed` `Transcript` on `final{n}`,
+/// space-separated, so every `is_final` piece of an utterance lands in the
+/// segment its Turn ends. The Turn (`EndOfSpeech` on `final{n}`) comes from
+/// `speech_final`, `UtteranceEnd` or a `from_finalize` result, whichever is
+/// first, and starts Turn `n + 1`. A `from_finalize` result with nothing
+/// committed still answers the client's `Finalize` with a Turn whose segment
+/// is `None`.
 #[derive(Debug, Default)]
 pub struct DeepgramMapper {
-    /// The latest Stable segment that has not been ended by a Turn yet.
-    pending: Option<SegmentRef>,
+    turn: u64,
+    /// Whether `final{turn}` has received any Stable text.
+    has_stable: bool,
 }
 
 impl DeepgramMapper {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn segment(&self, prefix: &str, update_kind: TranscriptUpdateKind) -> Option<SegmentRef> {
+        Some(SegmentRef {
+            segment_id: Some(format!("{prefix}{}", self.turn)),
+            update_kind,
+        })
     }
 
     pub fn map(&mut self, message: DeepgramMessage) -> Vec<StreamEvent> {
@@ -158,23 +176,26 @@ impl DeepgramMapper {
     }
 
     fn map_result(&mut self, result: &DeepgramResult) -> Vec<StreamEvent> {
-        let segment = SegmentRef {
-            segment_id: Some(format!("seg{}", (result.start * 1000.0) as u64)),
-            update_kind: TranscriptUpdateKind::Snapshot,
-        };
         let mut events = Vec::new();
         if !result.transcript.is_empty() {
-            events.push(StreamEvent::Transcript {
-                text: result.transcript.clone(),
-                stability: if result.is_final {
-                    TranscriptStability::Committed
-                } else {
-                    TranscriptStability::Provisional
-                },
-                segment: Some(segment.clone()),
-            });
             if result.is_final {
-                self.pending = Some(segment);
+                let text = if self.has_stable {
+                    format!(" {}", result.transcript)
+                } else {
+                    result.transcript.clone()
+                };
+                events.push(StreamEvent::Transcript {
+                    text,
+                    stability: TranscriptStability::Committed,
+                    segment: self.segment(FINAL_SEGMENT_PREFIX, TranscriptUpdateKind::Append),
+                });
+                self.has_stable = true;
+            } else {
+                events.push(StreamEvent::Transcript {
+                    text: result.transcript.clone(),
+                    stability: TranscriptStability::Provisional,
+                    segment: self.segment(TAIL_SEGMENT_PREFIX, TranscriptUpdateKind::Snapshot),
+                });
             }
         }
         if result.speech_final || result.from_finalize {
@@ -183,13 +204,23 @@ impl DeepgramMapper {
         events
     }
 
-    /// The Turn ending the pending Stable, if any; `always` answers a
-    /// `Finalize` even when nothing is pending.
+    /// The Turn ending `final{turn}`, if it has Stable text; `always` answers
+    /// a `Finalize` even when nothing was committed.
     fn turn(&mut self, always: bool) -> Option<StreamEvent> {
-        let segment = self.pending.take();
-        (segment.is_some() || always).then_some(StreamEvent::Lifecycle(
-            LifecycleEvent::EndOfSpeech { segment },
-        ))
+        if !self.has_stable && !always {
+            return None;
+        }
+        let segment = self
+            .has_stable
+            .then(|| self.segment(FINAL_SEGMENT_PREFIX, TranscriptUpdateKind::Append))
+            .flatten();
+        if self.has_stable {
+            self.turn += 1;
+            self.has_stable = false;
+        }
+        Some(StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+            segment,
+        }))
     }
 }
 
@@ -532,7 +563,7 @@ mod tests {
         ));
         assert_eq!(
             turn_segment(&events_rx.recv().await.unwrap()),
-            Some(Some("seg1250"))
+            Some(Some("final0"))
         );
 
         // closing input flushes a CloseStream control text frame
@@ -588,7 +619,7 @@ mod tests {
         ));
         assert_eq!(
             turn_segment(&events_rx.recv().await.unwrap()),
-            Some(Some("seg500"))
+            Some(Some("final0"))
         );
         // still open: more audio is accepted
         input_tx
@@ -638,7 +669,7 @@ mod tests {
             StreamEvent::Transcript {
                 segment: Some(SegmentRef { segment_id, .. }),
                 ..
-            } if segment_id.as_deref() == Some("seg0")
+            } if segment_id.as_deref() == Some("tail0")
         ));
     }
 
@@ -686,42 +717,94 @@ mod tests {
                     update_kind: TranscriptUpdateKind::Snapshot,
                 }),
                 ..
-            } if segment_id.as_deref() == Some("seg1250")
+            } if segment_id.as_deref() == Some("tail0")
         ));
     }
 
+    fn transcript(event: &StreamEvent) -> (&str, TranscriptStability, Option<&str>) {
+        match event {
+            StreamEvent::Transcript {
+                text,
+                stability,
+                segment,
+            } => (
+                text.as_str(),
+                *stability,
+                segment.as_ref().and_then(|s| s.segment_id.as_deref()),
+            ),
+            other => panic!("expected Transcript, got {other:?}"),
+        }
+    }
+
     #[test]
-    fn interim_final_and_turn_share_the_segment() {
+    fn interim_final_and_turn_follow_the_turn_segments() {
         let mut mapper = DeepgramMapper::new();
         let interim = mapper.map(result("do", false, false, 2.5));
         let r#final = mapper.map(result("done", true, true, 2.5));
-        assert!(matches!(
-            &interim[0],
-            StreamEvent::Transcript {
-                stability: TranscriptStability::Provisional,
-                segment: Some(SegmentRef { segment_id, .. }),
-                ..
-            } if segment_id.as_deref() == Some("seg2500")
+        assert_eq!(
+            transcript(&interim[0]),
+            ("do", TranscriptStability::Provisional, Some("tail0"))
+        );
+        assert_eq!(
+            transcript(&r#final[0]),
+            ("done", TranscriptStability::Committed, Some("final0"))
+        );
+        assert_eq!(turn_segment(&r#final[1]), Some(Some("final0")));
+        let next = mapper.map(result("again", false, false, 4.0));
+        assert_eq!(transcript(&next[0]).2, Some("tail1"));
+    }
+
+    /// Deepgram's own endpointing example: one utterance in two `is_final`
+    /// results with different `start`s, then `speech_final`. Both pieces
+    /// append to the segment the single Turn ends.
+    #[test]
+    fn a_long_utterance_appends_every_final_to_one_turn() {
+        let mut mapper = DeepgramMapper::new();
+        let first = mapper.map(result(
+            "yeah so my credit card number is two two",
+            true,
+            false,
+            0.0,
         ));
+        let second = mapper.map(result("two two three three three three", true, true, 3.26));
+        assert_eq!(first.len(), 1);
+        assert_eq!(
+            transcript(&first[0]),
+            (
+                "yeah so my credit card number is two two",
+                TranscriptStability::Committed,
+                Some("final0")
+            )
+        );
         assert!(matches!(
-            &r#final[0],
+            &first[0],
             StreamEvent::Transcript {
-                stability: TranscriptStability::Committed,
-                segment: Some(SegmentRef { segment_id, .. }),
+                segment: Some(SegmentRef {
+                    update_kind: TranscriptUpdateKind::Append,
+                    ..
+                }),
                 ..
-            } if segment_id.as_deref() == Some("seg2500")
+            }
         ));
-        assert_eq!(turn_segment(&r#final[1]), Some(Some("seg2500")));
+        assert_eq!(
+            transcript(&second[0]),
+            (
+                " two two three three three three",
+                TranscriptStability::Committed,
+                Some("final0")
+            )
+        );
+        assert_eq!(turn_segment(&second[1]), Some(Some("final0")));
     }
 
     #[test]
-    fn utterance_end_is_a_turn_for_the_latest_stable() {
+    fn utterance_end_is_a_turn_for_the_pending_stable() {
         let mut mapper = DeepgramMapper::new();
         assert_eq!(mapper.map(result("one", true, false, 0.0)).len(), 1);
         assert_eq!(mapper.map(result("two", true, false, 1.0)).len(), 1);
         let turn = mapper.map(DeepgramMessage::UtteranceEnd);
         assert_eq!(turn.len(), 1);
-        assert_eq!(turn_segment(&turn[0]), Some(Some("seg1000")));
+        assert_eq!(turn_segment(&turn[0]), Some(Some("final0")));
     }
 
     #[test]
@@ -744,7 +827,7 @@ mod tests {
     fn from_finalize_always_answers_with_a_turn() {
         let mut mapper = DeepgramMapper::new();
         let with_text = mapper.map(finalize_result("hi", 0.5));
-        assert_eq!(turn_segment(&with_text[1]), Some(Some("seg500")));
+        assert_eq!(turn_segment(&with_text[1]), Some(Some("final0")));
         let empty = mapper.map(finalize_result("", 1.0));
         assert_eq!(empty.len(), 1);
         assert_eq!(turn_segment(&empty[0]), Some(None));

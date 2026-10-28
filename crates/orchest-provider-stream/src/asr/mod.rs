@@ -14,9 +14,9 @@ pub mod volcengine;
 use orchest_protocol::{CapabilityExt, ErrorCode, ProtocolError, StreamEvent};
 
 /// Key of the `CapabilityExt::Asr` object that says whether the dialect honours
-/// `SessionInput::Finalize` (ADR-0006 D8 `client_finalize`). A plain flag until
-/// voice V2 lifts it into the typed ASR catalog row.
-pub const CLIENT_FINALIZE_KEY: &str = "client_finalize";
+/// `SessionInput::Finalize` (ADR-0006 D8 `client_finalize`); read it back with
+/// `CapabilityDescriptor::client_finalize`.
+pub const CLIENT_FINALIZE_KEY: &str = CapabilityExt::ASR_CLIENT_FINALIZE;
 
 /// The ASR descriptor extension every streaming dialect declares.
 pub(crate) fn asr_ext(client_finalize: bool) -> CapabilityExt {
@@ -50,11 +50,12 @@ mod tests {
             (volcengine::entry_descriptor(), volcengine::CLIENT_FINALIZE),
         ] {
             match descriptor.ext {
-                CapabilityExt::Asr(value) => {
+                CapabilityExt::Asr(ref value) => {
                     assert_eq!(value[CLIENT_FINALIZE_KEY], serde_json::json!(expected));
                 }
-                other => panic!("{}: expected Asr ext, got {other:?}", descriptor.provider),
+                ref other => panic!("{}: expected Asr ext, got {other:?}", descriptor.provider),
             }
+            assert_eq!(descriptor.client_finalize(), expected);
         }
         const {
             assert!(!aliyun::CLIENT_FINALIZE && !volcengine::CLIENT_FINALIZE);

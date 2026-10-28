@@ -35,6 +35,8 @@ pub fn decision_entries() -> Vec<Entry<Box<dyn Decision>>> {
         .iter()
         .map(|record| {
             let descriptor = record.to_descriptor();
+            // Invariant: every row of the static MODELS table names a provider
+            // in `typesafe::deployment` (pinned by the decision catalog tests).
             let deployment =
                 deployment(record.provider).expect("every decision row has a deployment");
             Entry::new(descriptor.clone(), move |config| {

@@ -5,10 +5,9 @@ use napi::bindgen_prelude::Buffer;
 use napi::threadsafe_function::{ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction};
 use napi::{Env, JsFunction, JsObject};
 use napi_derive::napi;
+use orchest::bindings::asr::{sdk_asr_event, select_asr_model, AsrMode};
 use orchest_protocol::{
-    CapabilityDescriptor, CapabilityExt, ErrorCode, Language, LifecycleEvent, ProtocolError,
-    SessionInput, StreamEvent, StreamingTranscribeRequest, TranscriptStability,
-    TranscriptUpdateKind,
+    ErrorCode, Language, ProtocolError, SessionInput, StreamEvent, StreamingTranscribeRequest,
 };
 use orchest_provider::{ProviderConfig, Registry};
 use tokio::sync::Notify;
@@ -152,12 +151,16 @@ async fn start(
         &provider,
     )?;
     let registry = Registry::with_builtin();
-    let query = registry.asr().provider(provider.clone());
-    let entry = match &model {
-        Some(model) => query.id(&format!("{provider}/{model}")),
-        None => query.bidirectional(),
-    }
-    .select()
+    let rows = registry.asr().provider(provider.clone()).list();
+    let descriptors: Vec<_> = rows.iter().map(|entry| &entry.descriptor).collect();
+    let entry = select_asr_model(
+        &descriptors,
+        &provider,
+        model.as_deref(),
+        AsrMode::Streaming,
+        None,
+    )
+    .map(|index| rows[index])
     .map_err(super::error::protocol_error)?;
     let model = model.unwrap_or_else(|| entry.descriptor.model.to_string());
     let handle = entry
@@ -170,7 +173,7 @@ async fn start(
             options: serde_json::Value::Null,
         })
         .map_err(super::error::protocol_error)?;
-    let client_finalize = client_finalize(&handle.descriptor());
+    let client_finalize = handle.descriptor().client_finalize();
     let mut options = input.options.unwrap_or_else(|| serde_json::json!({}));
     if !options.is_object() {
         return Err(napi::Error::from_reason("options must be an object"));
@@ -205,7 +208,7 @@ async fn start(
                 } => Some(super::error::ProviderErrorData::from(error.clone()).encoded()),
                 _ => None,
             };
-            if let Some(value) = sdk_event(&event) {
+            if let Some(value) = sdk_asr_event(&event) {
                 if let Err(error) = tsfn.call_async::<()>(value).await {
                     result = Err(error.to_string());
                     break;
@@ -243,73 +246,6 @@ async fn start(
     })
 }
 
-/// Whether the descriptor declares `client_finalize` (ADR-0006 D8). Models
-/// that do not declare it are treated as not supporting Finalize.
-fn client_finalize(descriptor: &CapabilityDescriptor) -> bool {
-    match &descriptor.ext {
-        CapabilityExt::Asr(value) => value
-            .get("client_finalize")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false),
-        _ => false,
-    }
-}
-
-/// Project a protocol event onto the SDK ASR event shape (ADR-0006 D2): a
-/// `kind` discriminant plus snake_case fields. Events with no ASR meaning
-/// (text deltas, usage, …) are dropped.
-fn sdk_event(event: &StreamEvent) -> Option<serde_json::Value> {
-    use serde_json::json;
-    let segment_id = |segment: &Option<orchest_protocol::SegmentRef>| {
-        segment
-            .as_ref()
-            .and_then(|segment| segment.segment_id.clone())
-    };
-    Some(match event {
-        StreamEvent::Transcript {
-            text,
-            stability: TranscriptStability::Provisional,
-            segment,
-        } => json!({"kind": "draft", "text": text, "segment_id": segment_id(segment)}),
-        StreamEvent::Transcript {
-            text,
-            stability: TranscriptStability::Committed,
-            segment,
-        } => {
-            let update = match segment.as_ref().map(|segment| segment.update_kind) {
-                Some(TranscriptUpdateKind::Append) => "append",
-                _ => "snapshot",
-            };
-            json!({
-                "kind": "stable",
-                "text": text,
-                "segment_id": segment_id(segment),
-                "update": update,
-            })
-        }
-        StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment }) => {
-            json!({"kind": "turn", "segment_id": segment_id(segment)})
-        }
-        StreamEvent::Lifecycle(LifecycleEvent::SessionStarted { session_id }) => {
-            json!({"kind": "session_started", "session_id": session_id})
-        }
-        StreamEvent::Lifecycle(LifecycleEvent::RouteSelected {
-            provider, model, ..
-        }) => json!({"kind": "route_selected", "provider": provider, "model": model}),
-        StreamEvent::Lifecycle(LifecycleEvent::SessionClosed) => json!({"kind": "session_closed"}),
-        StreamEvent::Error { error, fatal } => json!({
-            "kind": "error",
-            "code": serde_json::to_value(error.code).ok(),
-            "message": error.message,
-            "fatal": fatal,
-        }),
-        StreamEvent::Extension(orchest_protocol::CapabilityEventExt::Asr(data)) => {
-            json!({"kind": "extras", "data": data})
-        }
-        _ => return None,
-    })
-}
-
 fn validate_context(context: &serde_json::Value) -> napi::Result<()> {
     let valid = context.as_array().is_some_and(|messages| {
         messages.iter().all(|message| {
@@ -324,86 +260,5 @@ fn validate_context(context: &serde_json::Value) -> napi::Result<()> {
         Err(napi::Error::from_reason(
             "context must be an array of { role: 'user' | 'assistant', text: string } objects",
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use orchest_protocol::SegmentRef;
-    use serde_json::json;
-
-    fn segment(id: &str, update_kind: TranscriptUpdateKind) -> Option<SegmentRef> {
-        Some(SegmentRef {
-            segment_id: Some(id.into()),
-            update_kind,
-        })
-    }
-
-    #[test]
-    fn transcript_events_carry_kind_and_segment() {
-        let draft = StreamEvent::Transcript {
-            text: "he".into(),
-            stability: TranscriptStability::Provisional,
-            segment: segment("s0", TranscriptUpdateKind::Snapshot),
-        };
-        assert_eq!(
-            sdk_event(&draft),
-            Some(json!({"kind": "draft", "text": "he", "segment_id": "s0"}))
-        );
-        let stable = StreamEvent::Transcript {
-            text: "hello".into(),
-            stability: TranscriptStability::Committed,
-            segment: segment("final0", TranscriptUpdateKind::Append),
-        };
-        assert_eq!(
-            sdk_event(&stable),
-            Some(
-                json!({"kind": "stable", "text": "hello", "segment_id": "final0", "update": "append"})
-            )
-        );
-        let turn = StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
-            segment: segment("final0", TranscriptUpdateKind::Append),
-        });
-        assert_eq!(
-            sdk_event(&turn),
-            Some(json!({"kind": "turn", "segment_id": "final0"}))
-        );
-    }
-
-    #[test]
-    fn lifecycle_error_and_extras_events() {
-        assert_eq!(
-            sdk_event(&StreamEvent::Lifecycle(LifecycleEvent::SessionClosed)),
-            Some(json!({"kind": "session_closed"}))
-        );
-        let error = StreamEvent::Error {
-            error: ProtocolError::new(ErrorCode::UnsupportedOption, "no finalize"),
-            fatal: false,
-        };
-        assert_eq!(
-            sdk_event(&error),
-            Some(
-                json!({"kind": "error", "code": "unsupported_option", "message": "no finalize", "fatal": false})
-            )
-        );
-        let extras = StreamEvent::Extension(orchest_protocol::CapabilityEventExt::Asr(
-            json!({"words": []}),
-        ));
-        assert_eq!(
-            sdk_event(&extras),
-            Some(json!({"kind": "extras", "data": {"words": []}}))
-        );
-        assert_eq!(sdk_event(&StreamEvent::Text { delta: "x".into() }), None);
-    }
-
-    #[test]
-    fn client_finalize_reads_the_asr_ext() {
-        let base = CapabilityDescriptor::new("p", "m", orchest_protocol::Capability::Asr);
-        assert!(!client_finalize(&base));
-        let declared = base
-            .clone()
-            .with_ext(CapabilityExt::Asr(json!({"client_finalize": true})));
-        assert!(client_finalize(&declared));
     }
 }
