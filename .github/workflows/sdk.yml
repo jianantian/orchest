@@ -1,0 +1,268 @@
+name: SDK packages
+
+# Release-builds the Python wheel and the Node addon on every ADR-0004 D3
+# platform, installs the built packages and runs the SDK tests against them.
+# The SDK release workflow (release-sdk.yml) calls this workflow and
+# publishes its artifacts:
+#
+# - wheel-<platform>: the cp311-abi3 wheel
+# - npm-<platform>: the orchest-sdk-<platform> package tarball
+# - npm-main: the orchest-sdk package tarball
+# - sdist: the orchest-py source distribution
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/orchest-py/**"
+      - "crates/orchest-node/**"
+      - "python/**"
+      - "js/**"
+      - "npm/**"
+      - "pyproject.toml"
+      - "package.json"
+      - "package-lock.json"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/pack-node-sdk.sh"
+      - "scripts/check-static-openssl.sh"
+      - "scripts/prune-sdist-lock.sh"
+      - ".github/workflows/sdk.yml"
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Linux packages are built in the manylinux_2_28 image, so the wheel and the
+  # addon only need glibc 2.28 (ADR-0004 D3).
+  build-linux:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    container: quay.io/pypa/manylinux_2_28_${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64-gnu
+            runner: ubuntu-latest
+            arch: x86_64
+          - platform: linux-arm64-gnu
+            runner: ubuntu-24.04-arm
+            arch: aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      # The vendored OpenSSL build (openssl-src) needs these Perl modules,
+      # which the manylinux image does not ship.
+      # AlmaLinux mirrors occasionally serve empty metadata; retry with
+      # fresh metadata before giving up.
+      - name: Install build dependencies
+        run: |
+          for attempt in 1 2 3 4; do
+            dnf install -y perl-IPC-Cmd perl-Time-Piece && exit 0
+            dnf clean metadata
+            sleep $((attempt * 10))
+          done
+          exit 1
+
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          key: sdk-${{ matrix.platform }}
+
+      - name: Build the wheel
+        run: |
+          /opt/python/cp311-cp311/bin/python -m pip install "maturin>=1.9,<2.0"
+          /opt/python/cp311-cp311/bin/maturin build --release --out dist \
+            --compatibility manylinux_2_28 \
+            --interpreter /opt/python/cp311-cp311/bin/python
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build and pack the npm packages
+        run: |
+          # Node 22 bundles npm 10, whose `npm ci` accepts a lockfile without the
+          # unpublished platform packages; npm 11 does not (WORKFLOW.md
+          # "Releasing the SDKs").
+          npm ci
+          npm run build:native
+          scripts/pack-node-sdk.sh target/npm-pack
+
+      # The vendored OpenSSL reaches openssl-sys only through Cargo feature
+      # unification (crates/orchest-py/Cargo.toml); fail loudly if a
+      # dependency change ever leaves the host's OpenSSL linked instead.
+      - name: Packages do not link OpenSSL dynamically
+        env:
+          PYTHON: /opt/python/cp311-cp311/bin/python
+        run: scripts/check-static-openssl.sh dist/*.whl orchest_node.${{ matrix.platform }}.node
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.platform }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-${{ matrix.platform }}
+          path: target/npm-pack/orchest-sdk-${{ matrix.platform }}-*.tgz
+          if-no-files-found: error
+
+      # The main package is platform-independent; one copy is enough.
+      - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'linux-x64-gnu'
+        with:
+          name: npm-main
+          path: target/npm-pack/orchest-sdk-[0-9]*.tgz
+          if-no-files-found: error
+
+  build-macos:
+    name: Build (darwin-arm64)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          key: sdk-darwin-arm64
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the wheel
+        run: |
+          python -m pip install "maturin>=1.9,<2.0"
+          maturin build --release --out dist --interpreter python
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Build and pack the npm packages
+        run: |
+          # Node 22 bundles npm 10, whose `npm ci` accepts a lockfile without the
+          # unpublished platform packages; npm 11 does not (WORKFLOW.md
+          # "Releasing the SDKs").
+          npm ci
+          npm run build:native
+          scripts/pack-node-sdk.sh target/npm-pack
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-darwin-arm64
+          path: dist/*.whl
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-darwin-arm64
+          path: target/npm-pack/orchest-sdk-darwin-arm64-*.tgz
+          if-no-files-found: error
+
+  sdist:
+    name: Build the sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the sdist
+        run: |
+          python -m pip install "maturin>=1.9,<2.0"
+          maturin sdist --out dist
+          scripts/prune-sdist-lock.sh dist/*.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  # Installs the built packages, not the source tree: the tests run from a
+  # directory outside the checkout against the installed wheel and the
+  # installed npm packages.
+  test:
+    name: Test (${{ matrix.platform }}, Python ${{ matrix.python }}, Node ${{ matrix.node }})
+    needs: [build-linux, build-macos]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x64-gnu, runner: ubuntu-latest, python: "3.11", node: "18" }
+          - { platform: linux-x64-gnu, runner: ubuntu-latest, python: "3.14", node: "22" }
+          - { platform: linux-arm64-gnu, runner: ubuntu-24.04-arm, python: "3.14", node: "22" }
+          - { platform: darwin-arm64, runner: macos-14, python: "3.14", node: "22" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-${{ matrix.platform }}
+          path: packages
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-${{ matrix.platform }}
+          path: packages
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-main
+          path: packages
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Python SDK tests against the installed wheel
+        run: |
+          work="$RUNNER_TEMP/python-sdk"
+          python -m venv "$work/venv"
+          "$work/venv/bin/python" -m pip install packages/*.whl pytest
+          cp -R python/tests "$work/tests"
+          cd "$work"
+          venv/bin/python -m pytest tests -v
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Node SDK tests against the installed packages
+        run: |
+          work="$RUNNER_TEMP/node-sdk"
+          mkdir -p "$work"
+          cd "$work"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund "$GITHUB_WORKSPACE"/packages/*.tgz
+          sdk=node_modules/orchest-sdk
+          test -d "node_modules/orchest-sdk-${{ matrix.platform }}"
+          mkdir -p "$sdk/js/tests"
+          cp "$GITHUB_WORKSPACE"/js/tests/*.test.cjs "$sdk/js/tests/"
+          cd "$sdk"
+          node --test js/tests/*.test.cjs

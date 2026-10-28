@@ -76,17 +76,21 @@ jobs:
 
       - name: TypeScript typecheck
         run: |
+          # Node 22 bundles npm 10, whose `npm ci` accepts a lockfile without the
+          # unpublished platform packages; npm 11 does not (WORKFLOW.md
+          # "Releasing the SDKs").
           npm ci
           npm run typecheck
 
-      # js/index.d.ts is generated from the JSDoc in js/index.js; a runtime
-      # signature change must be accompanied by the regenerated declarations.
+      # js/index.d.ts and js/load-native.d.ts are generated from the JSDoc in
+      # js/*.js; a runtime signature change must be accompanied by the
+      # regenerated declarations.
       - name: Generated declarations are current
         run: |
           npm run build:types
-          git diff --exit-code -- js/index.d.ts
+          git diff --exit-code -- js/index.d.ts js/load-native.d.ts
 
-      # Builds the same addon `npm run pack:local` ships, then runs the JS SDK
+      # Builds the same addon the platform package ships, then runs the JS SDK
       # suites against the real native module (js/tests/*.test.cjs) — the only
       # execution path for those tests.
       - name: Node SDK tests (native addon)

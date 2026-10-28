@@ -1,5 +1,5 @@
 /**
- * Hand-written public types for `@orchest/sdk`.
+ * Hand-written public types for `orchest-sdk`.
  *
  * Layout: `index.js` is the runtime and — through the JSDoc annotations on its
  * functions and classes — the source of the declarations in the generated

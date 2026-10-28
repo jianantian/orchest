@@ -15,3 +15,6 @@ node_modules/
 .DS_Store
 rust_out
 .playwright-cli/
+
+# Copied in by scripts/pack-node-sdk.sh
+npm/*/LICENSE-*
