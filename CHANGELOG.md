@@ -21,16 +21,21 @@ except for the items `orchest-provider` re-exports.
 - `SessionInput::Finalize`: asks a streaming session to finalize what it has
   heard so far and, where it can, follow with a Turn
   (`LifecycleEvent::EndOfSpeech`), without closing the session (ADR-0006).
-  A dialect without a native finalize answers with a non-fatal
-  `StreamEvent::Error` carrying `ErrorCode::UnsupportedOption`; the omni
+  Each `Finalize` gets exactly one result on the event stream: a Turn, or a
+  non-fatal `StreamEvent::Error` whose `diagnostic_metadata.operation` is
+  `"finalize"` (`ErrorCode::UnsupportedOption` from a dialect without a native
+  finalize); sending it only means it was queued. The omni
   `RealtimeSession::send` returns that error directly. The `SegmentRef` and
   `EndOfSpeech` docs now state the Draft / Stable / Turn contract: Stable may be
   `Append` or `Snapshot`, and a Turn carries the `segment_id` of the Stable it
   ends ([#342](https://github.com/jianantian/orchest/issues/342)).
 - Streaming ASR: Deepgram, ElevenLabs and Soniox honour `SessionInput::Finalize`
   with their native control (Deepgram `Finalize`, ElevenLabs manual commit,
-  Soniox manual finalization) and keep the session open; aliyun and
-  volcengine answer `UnsupportedOption`. Each streaming ASR descriptor
+  Soniox manual finalization) and keep the session open, answering a
+  `Finalize` left without a Turn for 10 s with a non-fatal finalize `Timeout`
+  error; aliyun and volcengine answer `UnsupportedOption`. ElevenLabs now
+  recognizes every documented error message type (`commit_throttled`,
+  `rate_limited`, …) instead of ignoring the ones it did not list. Each streaming ASR descriptor
   declares this as `CapabilityExt::Asr({"client_finalize": bool})`
   ([#343](https://github.com/jianantian/orchest/issues/343)).
 - Vercel AI Gateway provider (`vercel/<vendor>/<model>`, e.g.
@@ -71,7 +76,11 @@ except for the items `orchest-provider` re-exports.
 - Python / Node `transcribe` with only `provider` picks that provider's
   default one-shot model and never a streaming one; `start_asr_stream` picks
   only streaming models. A provider with only the other kind fails with
-  `UnsupportedOperation` naming the API to use. Volcengine's default key
+  `UnsupportedOperation` naming the API to use. The ASR stream's `finalize()`
+  raises `unsupported_option` without sending when the model does not support
+  it and raises once the session is finishing or closed; otherwise it returns
+  on submission, and a later rejection arrives as a non-fatal `error` event
+  with `operation: "finalize"`. Volcengine's default key
   variable is `VOLCENGINE_ASR_API_KEY`
   ([#345](https://github.com/jianantian/orchest/issues/345)).
 

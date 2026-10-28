@@ -880,18 +880,20 @@ mod tests {
         ready_rx.await.unwrap().unwrap();
 
         input_tx.send(SessionInput::Finalize).await.unwrap();
-        match events_rx.recv().await.unwrap() {
-            StreamEvent::Error { error, fatal } => {
-                assert_eq!(error.code, ErrorCode::UnsupportedOption);
-                assert!(!fatal);
-            }
-            other => panic!("expected UnsupportedOption, got {other:?}"),
-        }
-        // the session stays open: no finish-task was sent
+        crate::asr::assert_finalize_error(
+            &events_rx.recv().await.unwrap(),
+            ErrorCode::UnsupportedOption,
+        );
+        // the session stays open: no finish-task was sent, and audio still flows
         assert!(
             tokio::time::timeout(Duration::from_millis(20), out_rx.recv())
                 .await
                 .is_err()
         );
+        input_tx
+            .send(SessionInput::Audio(bytes::Bytes::from_static(b"pcm")))
+            .await
+            .unwrap();
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Binary(_)));
     }
 }

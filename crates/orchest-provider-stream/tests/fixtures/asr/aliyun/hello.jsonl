@@ -1,4 +1,4 @@
-{"meta":{"dialect":"aliyun","model":"paraformer-realtime-v2","source":"hand-written","audio":"hello world / how are you, finalize before the end"}}
+{"meta":{"dialect":"aliyun","model":"paraformer-realtime-v2","source":"hand-written","audio":"hello world / how are you, finalize, more audio, then the end"}}
 {"send":"text"}
 {"recv":{"header":{"event":"task-started","task_id":"redacted","attributes":{}},"payload":{}}}
 {"input":{"kind":"audio","bytes":3200}}
@@ -11,6 +11,8 @@
 {"send":"binary"}
 {"recv":{"header":{"event":"result-generated","task_id":"redacted","attributes":{}},"payload":{"output":{"sentence":{"begin_time":1500,"end_time":null,"text":"how are","sentence_end":false}},"usage":null}}}
 {"input":{"kind":"finalize"}}
+{"input":{"kind":"audio","bytes":3200}}
+{"send":"binary"}
 {"input":{"kind":"end"}}
 {"send":"text"}
 {"recv":{"header":{"event":"result-generated","task_id":"redacted","attributes":{}},"payload":{"output":{"sentence":{"begin_time":1500,"end_time":2400,"text":"how are you","sentence_end":true}},"usage":{"duration":3}}}}

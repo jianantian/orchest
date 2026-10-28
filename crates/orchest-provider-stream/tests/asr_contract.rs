@@ -12,8 +12,10 @@
 //!   segment-less only when it answers a `Finalize`;
 //! - every Stable segment is ended by a Turn before the session closes, so
 //!   no confirmed text is left without the Turn that hands it on;
-//! - every `Finalize` is answered by a Turn (`client_finalize = true`) or by a
-//!   non-fatal `UnsupportedOption` error (`client_finalize = false`);
+//! - every `Finalize` gets exactly one result: a Turn (`client_finalize =
+//!   true`, under a normal fixture) or a non-fatal `UnsupportedOption` error
+//!   tagged `operation = "finalize"` (`client_finalize = false`), and the
+//!   session keeps taking audio afterwards;
 //! - the session ends with `SessionClosed`, and nothing follows it.
 //!
 //! The fixtures replay the same utterances, so the Stable text per Turn must
@@ -29,13 +31,16 @@ use orchest_protocol::{
     ErrorCode, LifecycleEvent, SegmentRef, SessionInput, StreamEvent, TranscriptStability,
     TranscriptUpdateKind,
 };
-use orchest_provider_stream::asr::{aliyun, deepgram, elevenlabs, soniox, volcengine};
+use orchest_provider_stream::asr::{
+    aliyun, deepgram, elevenlabs, soniox, volcengine, FINALIZE_OPERATION,
+};
 use orchest_provider_stream::fixture::{parse_fixture, replay, FixtureInput, ReplayDuplex};
 use tokio::sync::{mpsc, oneshot};
 
 /// What the client did and what the session emitted, in order.
 #[derive(Debug)]
 enum Observed {
+    Audio,
     Finalize,
     Event(StreamEvent),
 }
@@ -78,6 +83,7 @@ where
                 let Some(tx) = input.as_ref() else { break };
                 let message = match next {
                     FixtureInput::Audio { bytes } => {
+                        log.lock().unwrap().push(Observed::Audio);
                         SessionInput::Audio(Bytes::from(vec![0; bytes]))
                     }
                     FixtureInput::Finalize => {
@@ -117,11 +123,18 @@ fn contract_breaches(client_finalize: bool, observed: &[Observed]) -> Vec<String
     let mut stable: HashSet<String> = HashSet::new();
     let mut turned: HashSet<String> = HashSet::new();
     let mut pending_finalize = 0usize;
+    // Finalizes not yet followed by more client audio.
+    let mut awaiting_audio = 0usize;
     let mut closed = false;
     for (index, item) in observed.iter().enumerate() {
         let event = match item {
+            Observed::Audio => {
+                awaiting_audio = 0;
+                continue;
+            }
             Observed::Finalize => {
                 pending_finalize += 1;
+                awaiting_audio += 1;
                 continue;
             }
             Observed::Event(event) => event,
@@ -178,15 +191,27 @@ fn contract_breaches(client_finalize: bool, observed: &[Observed]) -> Vec<String
                 }
             }
             StreamEvent::Error { error, fatal } => {
+                let answers_finalize = error.diagnostic_metadata["operation"] == FINALIZE_OPERATION;
                 if *fatal {
                     breaches.push(format!("#{index}: fatal error {error:?}"));
-                } else if error.code == ErrorCode::UnsupportedOption
-                    && !client_finalize
-                    && pending_finalize > 0
-                {
-                    pending_finalize -= 1;
-                } else {
+                } else if !answers_finalize {
                     breaches.push(format!("#{index}: unexpected error {error:?}"));
+                } else if pending_finalize == 0 {
+                    breaches.push(format!(
+                        "#{index}: finalize error that answers no Finalize: {error:?}"
+                    ));
+                } else {
+                    pending_finalize -= 1;
+                    if client_finalize {
+                        breaches.push(format!(
+                            "#{index}: Finalize answered with an error, not a Turn: {error:?}"
+                        ));
+                    } else if error.code != ErrorCode::UnsupportedOption {
+                        breaches.push(format!(
+                            "#{index}: unsupported Finalize must answer UnsupportedOption, \
+                             got {error:?}"
+                        ));
+                    }
                 }
             }
             StreamEvent::Lifecycle(LifecycleEvent::SessionClosed) => closed = true,
@@ -200,8 +225,11 @@ fn contract_breaches(client_finalize: bool, observed: &[Observed]) -> Vec<String
     }
     if pending_finalize > 0 {
         breaches.push(format!(
-            "{pending_finalize} Finalize(s) got neither a Turn nor UnsupportedOption"
+            "{pending_finalize} Finalize(s) got neither a Turn nor a finalize error"
         ));
+    }
+    if awaiting_audio > 0 {
+        breaches.push("no audio after the last Finalize: the session did not continue".into());
     }
     if !closed {
         breaches.push("session did not end with SessionClosed".into());
@@ -312,6 +340,72 @@ async fn volcengine_meets_the_contract() {
     assert_contract("volcengine", volcengine::CLIENT_FINALIZE, result);
 }
 
+/// The Finalize receipt rules: one tagged answer per Finalize, of the right
+/// kind for the dialect's `client_finalize`.
+#[test]
+fn finalize_receipt_breaches_are_detected() {
+    let finalize_error = |code| {
+        Observed::Event(StreamEvent::Error {
+            error: orchest_protocol::ProtocolError {
+                diagnostic_metadata: serde_json::json!({ "operation": FINALIZE_OPERATION }),
+                ..orchest_protocol::ProtocolError::new(code, "x")
+            },
+            fatal: false,
+        })
+    };
+    let untagged = Observed::Event(StreamEvent::Error {
+        error: orchest_protocol::ProtocolError::new(ErrorCode::UnsupportedOption, "x"),
+        fatal: false,
+    });
+    let closed = || Observed::Event(StreamEvent::Lifecycle(LifecycleEvent::SessionClosed));
+    let cases: Vec<(bool, Vec<Observed>, &str)> = vec![
+        (
+            true,
+            vec![
+                Observed::Finalize,
+                finalize_error(ErrorCode::Timeout),
+                Observed::Audio,
+                closed(),
+            ],
+            "answered with an error, not a Turn",
+        ),
+        (
+            false,
+            vec![
+                Observed::Finalize,
+                finalize_error(ErrorCode::Timeout),
+                Observed::Audio,
+                closed(),
+            ],
+            "must answer UnsupportedOption",
+        ),
+        (
+            false,
+            vec![Observed::Finalize, untagged, Observed::Audio, closed()],
+            "unexpected error",
+        ),
+        (
+            false,
+            vec![finalize_error(ErrorCode::UnsupportedOption), closed()],
+            "answers no Finalize",
+        ),
+    ];
+    for (client_finalize, observed, needle) in cases {
+        let breaches = contract_breaches(client_finalize, &observed);
+        assert!(
+            breaches.iter().any(|b| b.contains(needle)),
+            "missing {needle:?} in {breaches:#?}"
+        );
+    }
+    let ok = vec![
+        Observed::Finalize,
+        finalize_error(ErrorCode::UnsupportedOption),
+        Observed::Audio,
+        closed(),
+    ];
+    assert!(contract_breaches(false, &ok).is_empty());
+}
+
 /// The assertion set itself catches the breaches it names.
 #[test]
 fn contract_breaches_are_detected() {
@@ -364,7 +458,8 @@ fn contract_breaches_are_detected() {
         "second Turn for b",
         "segment-less Turn",
         "Stable d was never ended by a Turn",
-        "got neither a Turn nor UnsupportedOption",
+        "got neither a Turn nor a finalize error",
+        "no audio after the last Finalize",
         "did not end with SessionClosed",
     ] {
         assert!(

@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
-use orchest::bindings::asr::{sdk_asr_event, select_asr_model, AsrMode};
+use orchest::bindings::asr::{
+    enqueue_finalize, finalize_unsupported, sdk_asr_event, select_asr_model, AsrMode,
+};
 use orchest_protocol::{
     ErrorCode, Language, ProtocolError, SessionInput, StreamEvent, StreamingTranscribeRequest,
 };
@@ -65,27 +67,19 @@ impl NativeAsrStream {
     }
 
     fn finalize<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        if !self.client_finalize {
-            return Err(super::error::protocol_error(
-                ProtocolError::new(
-                    ErrorCode::UnsupportedOption,
-                    format!("{}/{} does not support finalize", self.provider, self.model),
-                )
-                .with_provider(self.provider.clone())
-                .with_model(self.model.clone()),
-            ));
+        if let Some(error) = finalize_unsupported(self.client_finalize, &self.provider, &self.model)
+        {
+            return Err(super::error::protocol_error(error));
         }
         let input = Arc::clone(&self.input);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let sender = input
                 .lock()
                 .map_err(|_| PyRuntimeError::new_err("ASR session lock poisoned"))?
-                .clone()
-                .ok_or_else(|| PyRuntimeError::new_err("ASR session is finishing or closed"))?;
-            sender
-                .send(SessionInput::Finalize)
+                .clone();
+            enqueue_finalize(sender)
                 .await
-                .map_err(|_| PyRuntimeError::new_err("ASR session input is closed"))
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))
         })
     }
 

@@ -186,9 +186,13 @@ class AsrStream:
 
     async def finalize(self) -> None:
         """Ask the provider to finalize what it has heard so far, keeping the
-        session open. The resulting ``stable`` and ``turn`` events arrive
-        through ``on_event``. Raises :class:`ModelError` with code
-        ``unsupported_option`` when the model does not support finalize."""
+        session open. Returning only means the request was submitted: the
+        provider answers through ``on_event`` with a ``turn`` (after any
+        ``stable``), or with a non-fatal ``error`` whose ``operation`` is
+        ``"finalize"``, after which the stream stays usable. Raises
+        :class:`ModelError` with code ``unsupported_option`` when the model
+        does not support finalize (nothing is sent), and raises when the
+        session is already finishing or closed."""
         await self._native.finalize()
 
     def finish(self) -> None:

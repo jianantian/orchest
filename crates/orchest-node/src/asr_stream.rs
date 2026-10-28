@@ -5,7 +5,9 @@ use napi::bindgen_prelude::Buffer;
 use napi::threadsafe_function::{ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction};
 use napi::{Env, JsFunction, JsObject};
 use napi_derive::napi;
-use orchest::bindings::asr::{sdk_asr_event, select_asr_model, AsrMode};
+use orchest::bindings::asr::{
+    enqueue_finalize, finalize_unsupported, sdk_asr_event, select_asr_model, AsrMode,
+};
 use orchest_protocol::{
     ErrorCode, Language, ProtocolError, SessionInput, StreamEvent, StreamingTranscribeRequest,
 };
@@ -62,26 +64,18 @@ impl NativeAsrStream {
 
     #[napi]
     pub async fn finalize(&self) -> napi::Result<()> {
-        if !self.client_finalize {
-            return Err(super::error::protocol_error(
-                ProtocolError::new(
-                    ErrorCode::UnsupportedOption,
-                    format!("{}/{} does not support finalize", self.provider, self.model),
-                )
-                .with_provider(self.provider.clone())
-                .with_model(self.model.clone()),
-            ));
+        if let Some(error) = finalize_unsupported(self.client_finalize, &self.provider, &self.model)
+        {
+            return Err(super::error::protocol_error(error));
         }
         let sender = self
             .input
             .lock()
             .map_err(|_| napi::Error::from_reason("ASR session lock poisoned"))?
-            .clone()
-            .ok_or_else(|| napi::Error::from_reason("ASR session is finishing or closed"))?;
-        sender
-            .send(SessionInput::Finalize)
+            .clone();
+        enqueue_finalize(sender)
             .await
-            .map_err(|_| napi::Error::from_reason("ASR session input is closed"))
+            .map_err(|error| napi::Error::from_reason(error.to_string()))
     }
 
     #[napi]

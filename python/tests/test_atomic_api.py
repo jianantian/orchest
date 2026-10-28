@@ -15,6 +15,8 @@ class FakeNativeStream:
     async def finalize(self) -> None:
         if self.finalize_error is not None:
             raise self.finalize_error
+        if self.finished:
+            raise RuntimeError("ASR session is finishing or closed")
         self.finalized += 1
 
     async def send_audio(self, audio: bytes) -> None:
@@ -224,6 +226,55 @@ def test_finalize_unsupported_raises_model_error(monkeypatch) -> None:
     with pytest.raises(orchest.ModelError) as caught:
         asyncio.run(run())
     assert caught.value.code == "unsupported_option"
+
+
+def test_finalize_after_finish_raises(monkeypatch) -> None:
+    async def fake_start(*args):
+        return FakeNativeStream()
+
+    monkeypatch.setattr(orchest, "_start_asr_stream", fake_start)
+
+    async def run() -> None:
+        stream = await orchest.start_asr_stream(
+            format="pcm", sample_rate=16_000, on_event=lambda event: None
+        )
+        stream.finish()
+        await stream.finalize()
+
+    with pytest.raises(RuntimeError, match="finishing or closed"):
+        asyncio.run(run())
+
+
+def test_runtime_finalize_rejection_is_a_non_fatal_event(monkeypatch) -> None:
+    rejection: orchest.AsrStreamEvent = {
+        "kind": "error",
+        "code": "timeout",
+        "message": "no answer",
+        "fatal": False,
+        "operation": "finalize",
+    }
+    received: list[orchest.AsrStreamEvent] = []
+    native = FakeNativeStream()
+    emit: list = []
+
+    async def fake_start(*args):
+        emit.append(args[2])
+        return native
+
+    monkeypatch.setattr(orchest, "_start_asr_stream", fake_start)
+
+    async def run() -> None:
+        stream = await orchest.start_asr_stream(
+            format="pcm", sample_rate=16_000, on_event=received.append
+        )
+        await stream.finalize()  # returns on submission
+        emit[0](rejection)
+        await stream.send_audio(b"a")  # still usable
+        await stream.wait()
+
+    asyncio.run(run())
+    assert received == [rejection]
+    assert native.chunks == [b"a"]
 
 
 def test_events_are_delivered_with_kind(monkeypatch) -> None:

@@ -134,12 +134,17 @@ export interface AsrRouteSelectedEvent {
 export interface AsrSessionClosedEvent {
   kind: "session_closed";
 }
-/** A provider error; fatal errors also end the stream and reject `wait()`. */
+/**
+ * A provider error; fatal errors also end the stream and reject `wait()`.
+ * `operation` is `"finalize"` when the error answers a `finalize()` call; such
+ * an error is never fatal and the stream stays usable.
+ */
 export interface AsrErrorEvent {
   kind: "error";
   code: string | null;
   message: string;
   fatal: boolean;
+  operation: string | null;
 }
 /** Provider-specific detail outside the draft / stable / turn model. */
 export interface AsrExtrasEvent {

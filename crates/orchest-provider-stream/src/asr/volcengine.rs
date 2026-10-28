@@ -998,14 +998,17 @@ mod tests {
         let _handle = tokio::spawn(run_asr_stream(transport, input_rx, events_tx));
 
         input_tx.send(SessionInput::Finalize).await.unwrap();
-        match events_rx.recv().await.unwrap() {
-            StreamEvent::Error { error, fatal } => {
-                assert_eq!(error.code, ErrorCode::UnsupportedOption);
-                assert!(!fatal);
-            }
-            other => panic!("expected UnsupportedOption, got {other:?}"),
-        }
-        // the session stays open: no last audio frame was flushed
+        crate::asr::assert_finalize_error(
+            &events_rx.recv().await.unwrap(),
+            ErrorCode::UnsupportedOption,
+        );
+        // the session stays open: no last audio frame was flushed, and audio
+        // still flows
         assert!(out_rx.try_recv().is_err());
+        input_tx
+            .send(SessionInput::Audio(bytes::Bytes::from_static(b"mic")))
+            .await
+            .unwrap();
+        assert!(out_rx.recv().await.is_some());
     }
 }

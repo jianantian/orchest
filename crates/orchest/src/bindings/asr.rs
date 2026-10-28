@@ -1,12 +1,13 @@
 //! ASR helpers shared by the Python and Node bindings: model selection for
-//! `transcribe` / `start_asr_stream`, default key variables, and the SDK
-//! event shape of a streaming session (ADR-0006).
+//! `transcribe` / `start_asr_stream`, default key variables, `finalize()`,
+//! and the SDK event shape of a streaming session (ADR-0006).
 
 use orchest_protocol::{
     CapabilityDescriptor, CapabilityEventExt, ErrorCode, LifecycleEvent, ProtocolError, SegmentRef,
-    StreamEvent, TranscriptStability, TranscriptUpdateKind,
+    SessionInput, StreamEvent, TranscriptStability, TranscriptUpdateKind,
 };
 use serde_json::{json, Value};
+use tokio::sync::mpsc;
 
 /// Which ASR surface a selection is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +132,56 @@ pub fn default_asr_key_env(provider: &str) -> &'static str {
     }
 }
 
+/// The static check of the SDK `finalize()`: the error to raise, without
+/// sending anything, when the stream's model does not honour
+/// `SessionInput::Finalize` (its descriptor's `client_finalize` is false).
+pub fn finalize_unsupported(
+    client_finalize: bool,
+    provider: &str,
+    model: &str,
+) -> Option<ProtocolError> {
+    (!client_finalize).then(|| {
+        ProtocolError::new(
+            ErrorCode::UnsupportedOption,
+            format!("{provider}/{model} does not support finalize"),
+        )
+        .with_provider(provider)
+        .with_model(model)
+    })
+}
+
+/// Why the SDK `finalize()` could not submit its request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FinalizeEnqueueError {
+    /// `finish()` was called; the input is closing.
+    Finishing,
+    /// The session ended and no longer reads input.
+    Closed,
+}
+
+impl std::fmt::Display for FinalizeEnqueueError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Finishing => "ASR session is finishing or closed",
+            Self::Closed => "ASR session input is closed",
+        })
+    }
+}
+
+/// The enqueue step of the SDK `finalize()`: returning `Ok` only means the
+/// request was submitted. The dialect's answer arrives later on the event
+/// stream, as a Turn or a non-fatal error whose `operation` is `"finalize"`.
+pub async fn enqueue_finalize(
+    sender: Option<mpsc::Sender<SessionInput>>,
+) -> Result<(), FinalizeEnqueueError> {
+    sender
+        .ok_or(FinalizeEnqueueError::Finishing)?
+        .send(SessionInput::Finalize)
+        .await
+        .map_err(|_| FinalizeEnqueueError::Closed)
+}
+
 /// Every `kind` [`sdk_asr_event`] emits. `js/types.d.ts` and
 /// `python/orchest/__init__.pyi` declare one event type per kind; a test
 /// keeps the three in step.
@@ -188,6 +239,8 @@ pub fn sdk_asr_event(event: &StreamEvent) -> Option<Value> {
             "code": serde_json::to_value(error.code).ok(),
             "message": error.message,
             "fatal": fatal,
+            // `"finalize"` when the error answers a `finalize()` (ADR-0006 D7.2)
+            "operation": error.diagnostic_metadata.get("operation").and_then(Value::as_str),
         }),
         StreamEvent::Extension(CapabilityEventExt::Asr(data)) => {
             json!({"kind": "extras", "data": data})
@@ -236,11 +289,63 @@ mod tests {
             }),
             StreamEvent::Lifecycle(LifecycleEvent::SessionClosed),
             StreamEvent::Error {
-                error: ProtocolError::new(ErrorCode::UnsupportedOption, "no finalize"),
+                error: ProtocolError {
+                    diagnostic_metadata: json!({"operation": "finalize"}),
+                    ..ProtocolError::new(ErrorCode::UnsupportedOption, "no finalize")
+                },
                 fatal: false,
             },
             StreamEvent::Extension(CapabilityEventExt::Asr(json!({"words": []}))),
         ]
+    }
+
+    #[test]
+    fn finalize_is_refused_statically_when_unsupported() {
+        let error = finalize_unsupported(false, "aliyun", "paraformer").unwrap();
+        assert_eq!(error.code, ErrorCode::UnsupportedOption);
+        assert_eq!(error.provider.as_deref(), Some("aliyun"));
+        assert_eq!(error.model.as_deref(), Some("paraformer"));
+        assert!(finalize_unsupported(true, "deepgram", "nova-3").is_none());
+    }
+
+    #[tokio::test]
+    async fn finalize_enqueue_fails_once_the_session_input_is_gone() {
+        assert_eq!(
+            enqueue_finalize(None).await,
+            Err(FinalizeEnqueueError::Finishing)
+        );
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        assert_eq!(
+            enqueue_finalize(Some(tx)).await,
+            Err(FinalizeEnqueueError::Closed)
+        );
+    }
+
+    #[tokio::test]
+    async fn finalize_enqueue_only_submits_and_the_answer_is_an_event() {
+        let (tx, mut rx) = mpsc::channel(1);
+        assert_eq!(enqueue_finalize(Some(tx)).await, Ok(()));
+        assert_eq!(rx.recv().await, Some(SessionInput::Finalize));
+        // a runtime rejection reaches the SDK as a non-fatal tagged error event
+        let rejection = StreamEvent::Error {
+            error: ProtocolError {
+                diagnostic_metadata: json!({"operation": "finalize"}),
+                ..ProtocolError::new(ErrorCode::Timeout, "no answer")
+            },
+            fatal: false,
+        };
+        let event = sdk_asr_event(&rejection).unwrap();
+        assert_eq!(event["kind"], "error");
+        assert_eq!(event["code"], "timeout");
+        assert_eq!(event["operation"], "finalize");
+        assert_eq!(event["fatal"], false);
+        // an ordinary error carries no operation
+        let other = StreamEvent::Error {
+            error: ProtocolError::new(ErrorCode::ProviderStreamError, "x"),
+            fatal: true,
+        };
+        assert_eq!(sdk_asr_event(&other).unwrap()["operation"], Value::Null);
     }
 
     #[test]
@@ -257,7 +362,13 @@ mod tests {
         assert_eq!(events[2], json!({"kind": "turn", "segment_id": "s0"}));
         assert_eq!(
             events[6],
-            json!({"kind": "error", "code": "unsupported_option", "message": "no finalize", "fatal": false})
+            json!({
+                "kind": "error",
+                "code": "unsupported_option",
+                "message": "no finalize",
+                "fatal": false,
+                "operation": "finalize",
+            })
         );
         assert_eq!(events[7], json!({"kind": "extras", "data": {"words": []}}));
         assert_eq!(

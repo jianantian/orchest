@@ -1,4 +1,4 @@
-{"meta":{"dialect":"soniox","model":"stt-rt-preview","source":"hand-written","audio":"hello world / how are you, finalize before the end"}}
+{"meta":{"dialect":"soniox","model":"stt-rt-preview","source":"hand-written","audio":"hello world / how are you, finalize, more audio, then the end"}}
 {"send":"text"}
 {"input":{"kind":"audio","bytes":3200}}
 {"send":"binary"}
@@ -12,6 +12,8 @@
 {"input":{"kind":"finalize"}}
 {"send":"text"}
 {"recv":{"tokens":[{"text":" are","start_ms":1760,"end_ms":2000,"confidence":0.93,"is_final":true},{"text":" you","start_ms":2040,"end_ms":2400,"confidence":0.94,"is_final":true},{"text":"<fin>","is_final":true}],"final_audio_proc_ms":2400,"total_audio_proc_ms":2400}}
+{"input":{"kind":"audio","bytes":3200}}
+{"send":"binary"}
 {"input":{"kind":"end"}}
 {"send":"binary"}
 {"recv":{"tokens":[],"final_audio_proc_ms":2400,"total_audio_proc_ms":2400,"finished":true}}

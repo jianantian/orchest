@@ -154,11 +154,13 @@ realtime 事件按 [ADR-0006](../adr/0006-voice-session-model.md) 的语音模�
 | `stable` | 已确认文稿 | `text`、`segment_id`、`update`（`append` / `snapshot`） |
 | `turn` | 一轮说话结束 | `segment_id`（它结束的那段 stable） |
 | `session_started` / `route_selected` / `session_closed` | 会话生命周期 | — |
-| `error` | provider 错误；`fatal` 为真时 `wait()` 也会抛出 | `code`、`message`、`fatal` |
+| `error` | provider 错误；`fatal` 为真时 `wait()` 也会抛出 | `code`、`message`、`fatal`、`operation`（回应 `finalize()` 时为 `"finalize"`） |
 | `extras` | 厂商特有数据 | `data` |
 
 端侧 VAD 检测到停顿后调用 `await stream.finalize()`：要求 provider 尽快定稿并给出 `turn`，会话保持打开，
-可以继续 `send_audio`。不支持的模型会抛出 `code == "unsupported_option"` 的 `ModelError`。
+可以继续 `send_audio`。`finalize()` 返回只表示请求已提交，结果看随后的事件：一个 `turn`，或一个
+`operation == "finalize"`、`fatal` 为假的 `error`（例如上游超时），之后流仍可用。不支持的模型会同步抛出
+`code == "unsupported_option"` 的 `ModelError`，不发送；会话已结束时调用也会抛出。
 `finish()` 关闭输入并结束会话。
 
 `on_event` 必须是同步 callback；返回 coroutine 或抛出异常会终止输入，

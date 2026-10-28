@@ -70,7 +70,22 @@ pub fn parse_message(text: &str) -> Result<ElevenLabsMessage, ProtocolError> {
                 first_string(&value, &["text", "transcript"]).unwrap_or_default(),
             )
         }
-        "error" | "auth_error" | "quota_exceeded" => ElevenLabsMessage::Error(
+        // Every documented error type; ElevenLabs closes the socket after each,
+        // so they stay fatal (a throttled commit included).
+        "error"
+        | "auth_error"
+        | "quota_exceeded"
+        | "transcriber_error"
+        | "input_error"
+        | "invalid_request"
+        | "commit_throttled"
+        | "unaccepted_terms"
+        | "rate_limited"
+        | "queue_overflow"
+        | "resource_exhausted"
+        | "session_time_limit_exceeded"
+        | "chunk_size_exceeded"
+        | "insufficient_audio_activity" => ElevenLabsMessage::Error(
             first_string(&value, &["message", "error", "detail"])
                 .unwrap_or_else(|| "ElevenLabs stream error".into()),
         ),
@@ -175,6 +190,7 @@ pub async fn run_elevenlabs_stream<T: ByteDuplex>(
 ) {
     let mut mapper = ElevenLabsMapper::new();
     let mut input_open = true;
+    let mut finalize = super::FinalizeWatch::default();
     loop {
         tokio::select! {
             maybe_input = input.recv(), if input_open => match maybe_input {
@@ -196,14 +212,21 @@ pub async fn run_elevenlabs_stream<T: ByteDuplex>(
                     if transport.send(WsFrame::Text(frame)).await.is_err() {
                         break;
                     }
+                    finalize.sent();
                 }
                 Some(_) => {}
             },
+            () = finalize.expired(), if finalize.is_pending() => {
+                if events.send(finalize.expire("elevenlabs")).await.is_err() {
+                    return;
+                }
+            }
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_text) {
                 Some(text) => match parse_message(text) {
                     Ok(message) => {
                         let is_error = matches!(message, ElevenLabsMessage::Error(_));
                         for unified in mapper.map(message) {
+                            finalize.observe(&unified);
                             if events.send(unified).await.is_err() {
                                 return;
                             }
@@ -587,5 +610,27 @@ mod tests {
         assert!(mapper
             .map(ElevenLabsMessage::Committed(String::new()))
             .is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unanswered_finalize_times_out_and_keeps_the_stream_open() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (_in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let _handle = tokio::spawn(run_elevenlabs_stream(transport, 16000, input_rx, events_tx));
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Text(_)));
+        crate::asr::assert_finalize_error(&events_rx.recv().await.unwrap(), ErrorCode::Timeout);
+        input_tx
+            .send(SessionInput::Audio(bytes::Bytes::from_static(b"pcm")))
+            .await
+            .unwrap();
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Text(_)));
     }
 }

@@ -128,9 +128,12 @@ class AsrStream {
 
   /**
    * Ask the provider to finalize what it has heard so far, keeping the session
-   * open; the resulting `stable` and `turn` events arrive through `onEvent`.
-   * Rejects with a `ProviderError` whose code is `unsupported_option` when the
-   * model does not support finalize.
+   * open. Resolving only means the request was submitted: the provider answers
+   * through `onEvent` with a `turn` (after any `stable`), or with a non-fatal
+   * `error` whose `operation` is `"finalize"`, after which the stream stays
+   * usable. Rejects with a `ProviderError` whose code is `unsupported_option`
+   * when the model does not support finalize (nothing is sent), and rejects
+   * when the session is already finishing or closed.
    *
    * @returns {Promise<void>}
    */

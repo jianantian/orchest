@@ -1,4 +1,4 @@
-{"meta":{"dialect":"deepgram","model":"nova-3","source":"hand-written","audio":"hello world / how are you, finalize before the end","note":"the first utterance arrives as two is_final results before speech_final, as Deepgram does for long utterances"}}
+{"meta":{"dialect":"deepgram","model":"nova-3","source":"hand-written","audio":"hello world / how are you, finalize, more audio, then the end","note":"the first utterance arrives as two is_final results before speech_final, as Deepgram does for long utterances"}}
 {"input":{"kind":"audio","bytes":3200}}
 {"send":"binary"}
 {"recv":{"type":"Results","channel_index":[0,1],"duration":0.6,"start":0.0,"is_final":false,"speech_final":false,"channel":{"alternatives":[{"transcript":"hello","confidence":0.91,"words":[]}]},"metadata":{"request_id":"redacted"}}}
@@ -13,6 +13,8 @@
 {"input":{"kind":"finalize"}}
 {"send":"text"}
 {"recv":{"type":"Results","channel_index":[0,1],"duration":0.9,"start":1.5,"is_final":true,"speech_final":false,"from_finalize":true,"channel":{"alternatives":[{"transcript":"how are you","confidence":0.95,"words":[]}]},"metadata":{"request_id":"redacted"}}}
+{"input":{"kind":"audio","bytes":3200}}
+{"send":"binary"}
 {"input":{"kind":"end"}}
 {"send":"text"}
 {"recv":{"type":"Metadata","request_id":"redacted","duration":2.4,"channels":1}}

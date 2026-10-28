@@ -25,6 +25,9 @@ function fakeSession(finalizeError) {
       if (finalizeError !== undefined) {
         throw finalizeError;
       }
+      if (this.finished) {
+        throw new Error("ASR session is finishing or closed");
+      }
       this.finalized += 1;
     },
     finish() {
@@ -157,6 +160,39 @@ test("finalize surfaces unsupported_option as a ProviderError", async () => {
   const sdk = loadSdkWithStart(async () => fakeSession(new Error("unsupported")));
   const stream = await sdk.startAsrStream({ format: "pcm", sampleRate: 16_000 }, () => {});
   await assert.rejects(stream.finalize(), /unsupported/);
+});
+
+test("finalize after finish rejects", async () => {
+  const sdk = loadSdkWithStart(async () => fakeSession());
+  const stream = await sdk.startAsrStream({ format: "pcm", sampleRate: 16_000 }, () => {});
+  stream.finish();
+  await assert.rejects(stream.finalize(), /finishing or closed/);
+});
+
+test("a runtime finalize rejection is a non-fatal error event", async () => {
+  const rejection = {
+    kind: "error",
+    code: "timeout",
+    message: "no answer",
+    fatal: false,
+    operation: "finalize",
+  };
+  const received = [];
+  let emit;
+  const session = fakeSession();
+  const sdk = loadSdkWithStart(async (_options, callback) => {
+    emit = callback;
+    return session;
+  });
+  const stream = await sdk.startAsrStream({ format: "pcm", sampleRate: 16_000 }, (event) => {
+    received.push(event);
+  });
+  await stream.finalize(); // resolves on submission
+  emit(rejection);
+  await stream.sendAudio(Buffer.from("a")); // still usable
+  await stream.wait();
+  assert.deepEqual(received, [rejection]);
+  assert.equal(session.chunks.length, 1);
 });
 
 test("events are delivered with kind", async () => {

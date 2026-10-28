@@ -271,6 +271,7 @@ pub async fn run_soniox_stream<T: ByteDuplex>(
     }
     let mut mapper = SonioxMapper::new();
     let mut input_open = true;
+    let mut finalize = super::FinalizeWatch::default();
     loop {
         tokio::select! {
             maybe_input = input.recv(), if input_open => match maybe_input {
@@ -287,9 +288,15 @@ pub async fn run_soniox_stream<T: ByteDuplex>(
                     if transport.send(WsFrame::Text(FINALIZE_FRAME.to_string())).await.is_err() {
                         break;
                     }
+                    finalize.sent();
                 }
                 Some(_) => {}
             },
+            () = finalize.expired(), if finalize.is_pending() => {
+                if events.send(finalize.expire("soniox")).await.is_err() {
+                    return;
+                }
+            }
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_text) {
                 Some(text) => match parse_message(text) {
                     Ok(message) => {
@@ -298,6 +305,7 @@ pub async fn run_soniox_stream<T: ByteDuplex>(
                             SonioxMessage::Tokens { finished: true, .. } | SonioxMessage::Error(_)
                         );
                         for event in mapper.map(message) {
+                            finalize.observe(&event);
                             if events.send(event).await.is_err() {
                                 return;
                             }
@@ -730,6 +738,37 @@ mod tests {
             StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
         ));
         assert_eq!(segment_id(&turn), Some("final0"));
+        input_tx
+            .send(SessionInput::Audio(bytes::Bytes::from_static(b"pcm")))
+            .await
+            .unwrap();
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Binary(_)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unanswered_finalize_times_out_and_keeps_the_stream_open() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (_in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let _handle = tokio::spawn(run_soniox_stream(
+            transport,
+            "{}".to_string(),
+            input_rx,
+            events_tx,
+        ));
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Text(_)));
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        assert_eq!(
+            out_rx.recv().await.unwrap(),
+            WsFrame::Text(FINALIZE_FRAME.to_string())
+        );
+        crate::asr::assert_finalize_error(&events_rx.recv().await.unwrap(), ErrorCode::Timeout);
         input_tx
             .send(SessionInput::Audio(bytes::Bytes::from_static(b"pcm")))
             .await

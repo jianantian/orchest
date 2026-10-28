@@ -166,10 +166,12 @@ await stream.wait();
 realtime 事件是按 `kind` 区分的联合类型 `AsrStreamEvent`（[ADR-0006](../adr/0006-voice-session-model.md)）：
 `draft`（临时结果）、`stable`（已确认文稿，带 `update: "append" | "snapshot"`）、`turn`（一轮说完，
 `segment_id` 指向它结束的 stable）、`session_started` / `route_selected` / `session_closed`、`error`
-（`code`、`message`、`fatal`）和 `extras`（厂商特有数据）。字段保持 snake_case。
+（`code`、`message`、`fatal`、`operation`，回应 `finalize()` 时 `operation` 为 `"finalize"`）和 `extras`（厂商特有数据）。字段保持 snake_case。
 
 端侧 VAD 检测到停顿后调用 `await stream.finalize()`：要求 provider 尽快定稿并给出 `turn`，会话保持打开，
-可以继续 `sendAudio`。不支持的模型会以 `code === "unsupported_option"` 的 `ProviderError` 拒绝。
+可以继续 `sendAudio`。`finalize()` resolve 只表示请求已提交，结果看随后的事件：一个 `turn`，或一个
+`operation === "finalize"`、`fatal` 为假的 `error`（例如上游超时），之后流仍可用。不支持的模型会以
+`code === "unsupported_option"` 的 `ProviderError` 拒绝，不发送；会话已结束时调用也会拒绝。
 `finish()` 关闭输入并结束会话。
 
 event callback 必须同步返回；返回 Promise 或抛出异常会终止输入，

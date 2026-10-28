@@ -524,6 +524,8 @@ class AsrErrorEvent(TypedDict):
     code: str | None
     message: str
     fatal: bool
+    # "finalize" when the error answers finalize(); such an error is non-fatal
+    operation: str | None
 
 class AsrExtrasEvent(TypedDict):
     kind: Literal["extras"]
