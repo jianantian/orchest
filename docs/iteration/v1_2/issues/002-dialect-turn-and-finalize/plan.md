@@ -19,4 +19,5 @@
 2. Deepgram：解析 `UtteranceEnd`；按 segment 记录已发 Turn，`speech_final` 与 `UtteranceEnd` 只发一次；`Finalize` 发 `{"type":"Finalize"}`。
 3. Soniox：`Finalize` 发 manual finalization；endpoint token 映射 Turn。
 4. aliyun、volcengine：查官方协议，有就接，没有就返回 `UnsupportedOption` 并注释依据。
-5. 每个方言补解析级单元测试；跑 workspace 检查。
+5. 接通的方言把 `client_finalize` 置为 `true`，并把上游对 finalize 的拒绝映射为 `operation = "finalize"` 的非致命错误。
+6. 每个方言补解析级单元测试（含拒绝路径）；跑 workspace 检查。

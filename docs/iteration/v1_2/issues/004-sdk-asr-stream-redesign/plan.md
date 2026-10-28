@@ -17,7 +17,7 @@
 ## Steps
 
 1. 在绑定层把 `provider` / `model` 拆开构造 `ProviderConfig`；删除合写解析。
-2. 加 `finalize()`，映射到 `SessionInput::Finalize`，错误转成 SDK 异常。
+2. 流启动时保存 `descriptor()`；加 `finalize()`：`client_finalize` 为 `false` 时同步抛 `UnsupportedOption`，否则发送 `SessionInput::Finalize`，通道关闭时抛异常；非致命错误事件转换时保留 `operation` 与 `fatal`。
 3. 重写 `StreamEvent` → SDK 事件的转换，产出带 `kind` 的结构。
 4. 更新 `.pyi` / `.d.ts`，跑类型检查与事件变体脚本。
 5. 用 `testing` fake 写双端测试；更新指南；跑全部 SDK 测试与 workspace 检查。

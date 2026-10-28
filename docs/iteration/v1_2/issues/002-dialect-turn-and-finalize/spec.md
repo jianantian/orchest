@@ -21,6 +21,7 @@ GitHub issue: #343
 - [ ] Soniox：`Finalize` 发 manual finalization 请求；endpoint token 映射为 Turn。
 - [ ] aliyun、volcengine：有原生手段的接上，没有的返回 `UnsupportedOption`，并在代码里写明依据（官方文档链接）。
 - [ ] 每个方言的 `EndOfSpeech.segment` 都指向它结束的 Stable。
+- [ ] 接通原生 finalize 的方言把 `descriptor()` 的 `client_finalize` 改为 `true`；上游拒绝或超时时，按 001 的回执发出 `operation = "finalize"` 的非致命错误（上游错误码映射进 `ProtocolError`），会话不关。
 - [ ] 每条映射规则有单元测试（基于消息解析，不依赖网络）。
 
 ## Blocked by
@@ -29,5 +30,5 @@ GitHub issue: #343
 
 ## Notes
 
-- 是否支持 Finalize 先用方言内常量表达；能力目录字段 `client_finalize` 在语音 V2 补。
+- 是否支持 Finalize 用 `descriptor()` 里的 `client_finalize` 表达（001 定义）；有类型的能力目录字段在语音 V2 补。
 - Deepgram 的去重以 segment 为键，不按时间窗。
