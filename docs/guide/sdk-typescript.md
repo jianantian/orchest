@@ -1,29 +1,48 @@
 # SDK · TypeScript
 
-Orchest 的 TypeScript SDK 是 `@orchest/sdk` 包（napi-rs 绑定到 Rust 核心）。Rust 核心概念见 [quickstart](./quickstart.md)；本文聚焦 TS/Node 用法。
+Orchest 的 TypeScript SDK 是 npm 上的 `orchest-sdk` 包（napi-rs 绑定到 Rust 核心）。Rust 核心概念见 [quickstart](./quickstart.md)；本文聚焦 TS/Node 用法。
 
 ## 1. 安装
 
-需要 Node ≥ 18。开发模式从源码构建原生插件：
+```bash
+npm install orchest-sdk
+```
+
+> 首个版本 SDK 0.2 正在发布（[#330](https://github.com/jianantian/orchest/issues/330)）。在它上线 npm 之前，请按下面「从源码构建」安装。
+
+需要 Node ≥ 18。`orchest-sdk` 只含 JavaScript 和类型声明；原生插件在按平台拆分的包里（`orchest-sdk-linux-x64-gnu`、`orchest-sdk-linux-arm64-gnu`、`orchest-sdk-darwin-arm64`），作为 `optionalDependencies` 由 npm 只下载当前平台那一个，不需要 Rust 工具链：
+
+| 平台 | 支持 |
+| --- | --- |
+| Linux x86_64（glibc ≥ 2.28） | 预编译插件 |
+| Linux arm64（glibc ≥ 2.28） | 预编译插件 |
+| macOS arm64 | 预编译插件 |
+| 其他平台（Windows、Intel macOS、musl/Alpine） | 不支持：加载时报错，错误信息给出当前平台和支持的平台列表 |
+
+用 `--omit=optional`（或 `--no-optional`）安装会跳过平台包，加载时报错提示重新安装。Linux 插件静态链接 OpenSSL，不依赖系统的 `libssl` / `libcrypto`，证书仍从系统 CA 库读取。
+
+### 版本
+
+SDK 当前是 0.x，`orchest-sdk` 和 PyPI 上的 `orchest-py` 共用一个 SDK 版本，独立于 Rust crate 版本（[ADR-0004](../adr/0004-sdk-packaging.md) D6）。0.x 的 minor 版本可能改动 TypeScript API，改动在 [`CHANGELOG-SDK.md`](../../CHANGELOG-SDK.md) 里以 **Breaking:** 标出。预发布版本在 `next` dist-tag 下（`npm install orchest-sdk@next`）。
+
+### 从源码构建（贡献者）
+
+开发 Orchest 本身时从源码构建原生插件：
 
 ```bash
 npm install
-npm run build:native     # cargo build -p orchest-node + 复制 .node 插件
+npm run build:native     # napi build，生成仓库根目录的 orchest_node.<platform>.node
+npm test
 ```
 
-> npm 发布计划于 v1.0。在那之前用 `npm run build:native` 从源码构建。
-
-要在另一个本地项目里使用，先构建并打包 native addon，再安装生成的 tarball：
+加载器优先使用仓库根目录里本地构建的插件，其次才找平台包。要在另一个本地项目里试未发布的改动，打包后安装两个 tarball：
 
 ```bash
 cd /absolute/path/to/orchest
-npm run build:native
-npm pack
+npm run pack:local       # 构建插件，打包到 target/npm-pack/
 cd /absolute/path/to/downstream
-npm install /absolute/path/to/orchest/orchest-sdk-0.1.0.tgz
+npm install /absolute/path/to/orchest/target/npm-pack/*.tgz
 ```
-
-不要只复制 `js/`；运行时同时需要与当前平台和 Node ABI 匹配的 `orchest_node.node`。
 
 ### 运行示例
 
@@ -38,12 +57,12 @@ OPENROUTER_API_KEY=sk-or-... node examples/typescript/providers/decisions.ts
 `examples/typescript/agents|streaming|basic.ts` 直接从 `target/debug` 取原生插件，先跑 `cargo build -p orchest-node`。
 Node < 22.18 需要自备 TS runner，例如 `npx tsx examples/typescript/providers/decisions.ts`（tsx 也能直接跑这些示例）。
 
-`import { decide } from "@orchest/sdk"` 在 ESM/TS 工程里同样可用（具名导出已声明），示例用 `require` 只是为了能在本仓库零依赖直接执行。
+`import { decide } from "orchest-sdk"` 在 ESM/TS 工程里同样可用（具名导出已声明），示例用 `require` 只是为了能在本仓库零依赖直接执行。
 
 ## 2. 基础用法
 
 ```typescript
-import { Agent } from "@orchest/sdk";
+import { Agent } from "orchest-sdk";
 
 const agent = new Agent({
   name: "assistant",
@@ -97,7 +116,7 @@ completion、结构化判断、一次性 ASR 和 realtime ASR 都可绕过 agent
 
 ```typescript
 import { readFile } from "node:fs/promises";
-import { complete, decide, startAsrStream, transcribe } from "@orchest/sdk";
+import { complete, decide, startAsrStream, transcribe } from "orchest-sdk";
 
 const text = await complete({
   model: "deepseek/deepseek-flash",

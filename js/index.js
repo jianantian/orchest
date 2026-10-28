@@ -1,10 +1,8 @@
 "use strict";
 
-// The addon is a build artifact (`npm run build:native`); js/native.d.ts
-// declares it, so the require below fails resolution by design.
-/** @type {typeof import("./native")} */
-// @ts-expect-error - resolved at runtime, not through TypeScript module resolution
-const native = require("../orchest_node.node");
+// The addon comes from the platform package or a local `npm run build:native`;
+// js/native.d.ts declares its surface.
+const native = /** @type {typeof import("./native")} */ (require("./load-native.js").loadNative());
 const PROVIDER_ERROR_PREFIX = "__ORCHEST_PROVIDER_ERROR__:";
 
 /**
@@ -191,7 +189,7 @@ async function startAsrStream(options, onEvent) {
 }
 
 // Explicit `exports.X = ...` assignments: cjs-module-lexer only detects these
-// for ESM consumers, so `import { decide } from "@orchest/sdk"` works.
+// for ESM consumers, so `import { decide } from "orchest-sdk"` works.
 /** @type {typeof import("./native").Agent} */
 exports.Agent = native.Agent;
 exports.complete = complete;

@@ -1,27 +1,47 @@
 # SDK · Python
 
-Orchest 的 Python SDK 是 `orchest` 包（PyO3 绑定到 Rust 核心）。Rust 核心概念见 [quickstart](./quickstart.md)；本文聚焦 Python 用法。
+Orchest 的 Python SDK 是 PyPI 上的 `orchest-py` 包，导入名 `orchest`（PyO3 绑定到 Rust 核心）。Rust 核心概念见 [quickstart](./quickstart.md)；本文聚焦 Python 用法。
 
 ## 1. 安装
 
-开发模式用 [maturin](https://www.maturin.rs/) 在本地构建扩展：
+```bash
+pip install orchest-py      # 或：uv add orchest-py
+```
+
+> 首个版本 SDK 0.2 正在发布（[#330](https://github.com/jianantian/orchest/issues/330)）。在它上线 PyPI 之前，请按下面「从源码构建」安装。
+
+需要 Python ≥ 3.11。每个平台一个 stable-ABI（`cp311-abi3`）wheel，覆盖 3.11 及以后所有 CPython 版本，不需要 Rust 工具链：
+
+| 平台 | 安装方式 |
+| --- | --- |
+| Linux x86_64（glibc ≥ 2.28） | 预编译 wheel |
+| Linux arm64（glibc ≥ 2.28） | 预编译 wheel |
+| macOS arm64 | 预编译 wheel |
+| 其他平台（Windows、Intel macOS、musl/Alpine） | pip 回退到 sdist 从源码构建，需要 Rust 工具链 |
+
+Linux wheel 静态链接 OpenSSL，不依赖系统的 `libssl` / `libcrypto`，证书仍从系统 CA 库读取。
+
+> **导入名冲突**：orchest.io 的无关项目 `orchest` 包也导入为 `orchest`。`orchest-py` 不能和它装在同一个环境里，两者会互相覆盖文件。
+
+### 版本
+
+SDK 当前是 0.x，`orchest-py` 和 npm 上的 `orchest-sdk` 共用一个 SDK 版本，独立于 Rust crate 版本（[ADR-0004](../adr/0004-sdk-packaging.md) D6）。0.x 的 minor 版本可能改动 Python API，改动在 [`CHANGELOG-SDK.md`](../../CHANGELOG-SDK.md) 里以 **Breaking:** 标出。预发布版本（如 `0.2.0rc1`）需要显式指定版本或加 `--pre`。
+
+### 从源码构建（贡献者）
+
+开发 Orchest 本身时用 [maturin](https://www.maturin.rs/) 在本地构建扩展：
 
 ```bash
 pip install maturin
 maturin develop          # 或：uvx maturin develop
 ```
 
-> PyPI 发布计划于 v1.0。在那之前用 `maturin develop` 从源码构建。
-
-下游项目使用 uv 时，可直接从 Orchest checkout 构建 editable 包：
+下游项目要跟随未发布的改动时，可直接从 Orchest checkout 构建 editable 包：
 
 ```bash
 uv add --editable /absolute/path/to/orchest
 uv run maturin develop --manifest-path /absolute/path/to/orchest/crates/orchest-py/Cargo.toml
 ```
-
-原生扩展绑定 CPython ABI；切换到 CPython 3.12 或重建虚拟环境后，需要在该解释器环境中重新执行
-`uv run maturin develop`，不能复用其他 Python 小版本构建的扩展。
 
 ## 2. 基础用法
 

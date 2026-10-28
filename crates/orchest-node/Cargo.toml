@@ -1,7 +1,11 @@
 [package]
 name = "orchest-node"
-version = "0.1.0"
+description = "Node.js bindings for Orchest (the orchest-sdk package on npm)"
+# The SDK version, shared with orchest-py and package.json (ADR-0004 D6).
+version = "0.2.0-rc.1"
 edition = "2021"
+license.workspace = true
+repository.workspace = true
 # Binding packages are out of v1.0 scope (ADR-0003 D2).
 publish = false
 
@@ -21,6 +25,18 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
+
+# Prebuilt Linux addons must not depend on the host's libssl/libcrypto, so
+# OpenSSL is compiled in statically (ADR-0004 D5). No code uses this
+# dependency: it exists so that Cargo's feature unification turns on
+# `openssl-sys/vendored` for the `reqwest -> native-tls -> openssl-sys`
+# chain the binding actually links. That only works while the graph has a
+# single `openssl-sys`; `scripts/check-static-openssl.sh` (run by sdk.yml)
+# fails the build if the result links OpenSSL dynamically. native-tls still
+# loads the system CA store through openssl-probe. Binding-only: the
+# published crates' dependencies are unchanged.
+[target.'cfg(target_os = "linux")'.dependencies]
+native-tls = { version = "0.2", features = ["vendored"] }
 
 [build-dependencies]
 napi-build = "2"

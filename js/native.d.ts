@@ -1,5 +1,5 @@
 /**
- * Native addon surface (`orchest_node.node`) plus the wire types it returns.
+ * Native addon surface (`orchest_node.<platform>.node`) plus the wire types it returns.
  *
  * Shared option and wire types live in `index.d.ts`; this file declares only
  * the napi classes and functions, typed in terms of them.

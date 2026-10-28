@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const native = require("../../orchest_node.node");
+const native = require("../load-native.js").loadNative();
 
 function loadSdkWithStart(start) {
   native._startAsrStream = start;
