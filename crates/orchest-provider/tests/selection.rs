@@ -321,7 +321,10 @@ fn with_builtin_registers_aliyun_asr_dialect() {
         .provider("aliyun")
         .select()
         .expect("aliyun streaming ASR is registered under the stream feature");
-    assert_eq!(picked.descriptor.model.as_ref(), "fun-asr-realtime");
+    assert_eq!(
+        picked.descriptor.model.as_ref(),
+        "qwen-audio-3.0-asr-flash-streaming"
+    );
 }
 
 #[cfg(feature = "stream")]
@@ -400,7 +403,10 @@ fn with_builtin_registers_aliyun_one_shot_asr_without_replacing_stream_default()
     #[cfg(feature = "stream")]
     {
         let default = reg.asr().provider("aliyun").select().unwrap();
-        assert_eq!(default.descriptor.model.as_ref(), "fun-asr-realtime");
+        assert_eq!(
+            default.descriptor.model.as_ref(),
+            "qwen-audio-3.0-asr-flash-streaming"
+        );
         assert!(default.descriptor.default_for_provider);
     }
 }
@@ -540,11 +546,17 @@ fn aliyun_asr_lists_multiple_catalog_models() {
 
 #[cfg(feature = "stream")]
 #[test]
-fn aliyun_asr_provider_select_returns_fun_asr_default() {
+fn aliyun_asr_provider_select_returns_qwen_streaming_default() {
     let reg = Registry::with_builtin();
     let picked = reg.asr().provider("aliyun").select().unwrap();
-    assert_eq!(picked.descriptor.model.as_ref(), "fun-asr-realtime");
+    assert_eq!(
+        picked.descriptor.model.as_ref(),
+        "qwen-audio-3.0-asr-flash-streaming"
+    );
     assert!(picked.descriptor.default_for_provider);
+    // the retiring Fun-ASR Realtime row still resolves by id
+    let legacy = reg.asr().id("aliyun/fun-asr-realtime").select().unwrap();
+    assert!(!legacy.descriptor.default_for_provider);
 }
 
 #[cfg(feature = "stream")]

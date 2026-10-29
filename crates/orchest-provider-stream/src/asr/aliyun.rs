@@ -25,7 +25,7 @@ use tokio::sync::oneshot;
 use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 
 const DEFAULT_WS_URL: &str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/";
-const DEFAULT_MODEL: &str = "fun-asr-realtime";
+const DEFAULT_MODEL: &str = "qwen-audio-3.0-asr-flash-streaming";
 
 /// Whether this dialect honours `SessionInput::Finalize`. The DashScope
 /// realtime ASR protocol only has `run-task` / `continue-task` /

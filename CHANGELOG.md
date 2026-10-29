@@ -88,7 +88,8 @@ version; they ship in 1.2.0 under a one-off exception
   only streaming models. A provider with only the other kind fails with
   `UnsupportedOperation` naming the API to use. With neither `provider` nor
   `model`, `start_asr_stream` now uses aliyun's catalog default streaming
-  model (`fun-asr-realtime`), the same as `provider="aliyun"` alone. The ASR
+  model (`qwen-audio-3.0-asr-flash-streaming`), the same as
+  `provider="aliyun"` alone. The ASR
   stream's `finalize()`
   raises `unsupported_option` without sending when the model does not support
   it and raises once the session is finishing or closed; otherwise it returns
@@ -96,6 +97,15 @@ version; they ship in 1.2.0 under a one-off exception
   with `operation: "finalize"`. Volcengine's default key
   variable is `VOLCENGINE_ASR_API_KEY`
   ([#345](https://github.com/jianantian/orchest/issues/345)).
+
+### Deprecated
+
+- aliyun: the `aliyun/fun-asr-realtime` streaming ASR row, which aliyun is
+  retiring. It stays resolvable by id for 1.x but is now
+  `ModelStatus::Deprecated`, hidden from default discovery, and no longer
+  aliyun's default streaming model:
+  `Registry::asr().provider("aliyun")` and the aliyun dialect's empty-model
+  fallback now pick `qwen-audio-3.0-asr-flash-streaming`.
 
 ## [1.1.0]
 
