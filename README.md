@@ -44,12 +44,27 @@ tokio = { version = "1", features = ["full"] }
 
 `orchest-provider` features select which providers are compiled in (`llm` pulls only the REST tier). The [Rust quickstart](./docs/guide/quickstart.md) walks from zero to a running agent with a tool and the event stream; API docs are on [docs.rs](https://docs.rs/orchest).
 
+### Python and TypeScript
+
+The SDKs are published as [`orchest-py`](https://pypi.org/project/orchest-py/) on PyPI and [`orchest-sdk`](https://www.npmjs.com/package/orchest-sdk) on npm, with prebuilt binaries, so no Rust toolchain is needed:
+
+> The first release, SDK 0.2, is being published ([#330](https://github.com/jianantian/orchest/issues/330)). Until it is on PyPI and npm, build from source as shown under [Development](#development).
+
+| Platform | Python (3.11+) | Node.js (18+) |
+|----------|----------------|---------------|
+| Linux x86_64 (glibc 2.28+) | prebuilt wheel | prebuilt addon |
+| Linux arm64 (glibc 2.28+) | prebuilt wheel | prebuilt addon |
+| macOS arm64 | prebuilt wheel | prebuilt addon |
+| Anything else (Windows, Intel macOS, musl/Alpine) | pip builds the sdist; needs a Rust toolchain | not supported; loading fails with an error naming the platform |
+
+The SDKs are 0.x and versioned independently of the crates: minor releases may change the Python or TypeScript API. See [`CHANGELOG-SDK.md`](./CHANGELOG-SDK.md).
+
+`orchest-py` imports as `orchest`, like the unrelated `orchest` package from orchest.io; the two cannot be installed in the same environment.
+
 ### Python
 
-> The Python and TypeScript SDKs are not published to PyPI / npm yet; build them from this repository.
-
 ```bash
-uvx maturin develop
+pip install orchest-py
 ```
 
 ```python
@@ -70,11 +85,11 @@ for event in agent.run("What is 2 + 2?"):
 ### TypeScript
 
 ```bash
-npm install && npm run build:native
+npm install orchest-sdk
 ```
 
 ```typescript
-import { Agent } from "@orchest/sdk";
+import { Agent } from "orchest-sdk";
 
 const agent = new Agent({
   name: "assistant",
@@ -139,12 +154,13 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 
-# Python
+# Python SDK from source
 uvx maturin develop
 .venv/bin/python -m pytest python/tests/ -v
 
-# Node.js
-npm run build:native
+# Node.js SDK from source
+npm install && npm run build:native
+npm test
 ```
 
 See [`AGENTS.md`](./AGENTS.md) for conventions, [`WORKFLOW.md`](./WORKFLOW.md) for the development workflow.
@@ -157,8 +173,8 @@ See [`AGENTS.md`](./AGENTS.md) for conventions, [`WORKFLOW.md`](./WORKFLOW.md) f
 |----------|----------|
 | [`docs/polaris/overview.md`](./docs/polaris/overview.md) | Everyone — concepts and philosophy |
 | [`docs/guide/quickstart.md`](./docs/guide/quickstart.md) | New users — zero to a running Rust agent |
-| [`docs/guide/sdk-python.md`](./docs/guide/sdk-python.md) | Python users — `orchest` package guide |
-| [`docs/guide/sdk-typescript.md`](./docs/guide/sdk-typescript.md) | TypeScript users — `@orchest/sdk` guide |
+| [`docs/guide/sdk-python.md`](./docs/guide/sdk-python.md) | Python users — `orchest-py` package guide |
+| [`docs/guide/sdk-typescript.md`](./docs/guide/sdk-typescript.md) | TypeScript users — `orchest-sdk` guide |
 | [`docs/polaris/`](./docs/polaris/) | Contributors — design principles, non-goals, observability contract |
 | [`docs/iteration/direction.md`](./docs/iteration/direction.md) | Contributors — forward direction, milestones, success metrics |
 | [`docs/iteration/`](./docs/iteration/) | Contributors — per-version PRDs and issue specs |

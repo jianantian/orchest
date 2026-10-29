@@ -1,7 +1,22 @@
 {
-  "name": "@orchest/sdk",
-  "version": "0.1.0",
-  "description": "TypeScript SDK for Orchest Agent Runtime",
+  "name": "orchest-sdk",
+  "version": "0.2.0-rc.1",
+  "description": "TypeScript SDK for Orchest, a skill-first agent runtime with a Rust core",
+  "keywords": [
+    "agent",
+    "llm",
+    "ai",
+    "skills",
+    "runtime",
+    "napi-rs"
+  ],
+  "homepage": "https://github.com/jianantian/orchest/blob/main/docs/guide/sdk-typescript.md",
+  "bugs": "https://github.com/jianantian/orchest/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jianantian/orchest.git"
+  },
+  "license": "MIT OR Apache-2.0",
   "type": "commonjs",
   "main": "js/index.js",
   "types": "js/public.d.ts",
@@ -20,16 +35,28 @@
     }
   },
   "files": [
-    "orchest_node.node",
     "js/index.js",
     "js/index.d.ts",
+    "js/load-native.js",
+    "js/load-native.d.ts",
     "js/public.d.ts",
     "js/types.d.ts",
-    "js/native.d.ts"
+    "js/native.d.ts",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
   ],
+  "napi": {
+    "binaryName": "orchest_node",
+    "packageName": "orchest-sdk",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-apple-darwin"
+    ]
+  },
   "scripts": {
-    "build:native": "cargo build -p orchest-node --release && node scripts/copy-node-addon.mjs",
-    "pack:local": "npm run build:native && npm pack",
+    "build:native": "napi build --platform --release --manifest-path crates/orchest-node/Cargo.toml --output-dir . --no-js --dts target/napi/index.d.ts",
+    "pack:local": "npm run build:native && scripts/pack-node-sdk.sh target/npm-pack",
     "test": "node --test js/tests/*.test.cjs",
     "typecheck": "tsc --noEmit",
     "build:types": "tsc -p tsconfig.types.json"
@@ -37,8 +64,13 @@
   "engines": {
     "node": ">=18"
   },
-  "license": "UNLICENSED",
+  "optionalDependencies": {
+    "orchest-sdk-darwin-arm64": "0.2.0-rc.1",
+    "orchest-sdk-linux-arm64-gnu": "0.2.0-rc.1",
+    "orchest-sdk-linux-x64-gnu": "0.2.0-rc.1"
+  },
   "devDependencies": {
+    "@napi-rs/cli": "^3.10.9",
     "@types/node": "^26.6.2",
     "typescript": "^7.0.2"
   }

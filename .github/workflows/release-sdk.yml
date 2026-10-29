@@ -1,0 +1,274 @@
+name: Release SDK
+
+# Publishes orchest-py (PyPI) and orchest-sdk (npm) from one SDK version
+# (ADR-0004 D6/D7). See WORKFLOW.md "Releasing the SDKs".
+#
+# - Push an `sdk-vX.Y.Z` / `sdk-vX.Y.Z-rc.N` tag: version check, SDK build
+#   and tests on all platforms, owner approval, publish, GitHub Release,
+#   then install the published packages on all platforms and test them.
+# - Run manually with `dry_run: true` (the default) from any ref: version
+#   check, SDK build and tests. Nothing is uploaded.
+# - Run manually with `dry_run: false` from a tag: re-runs a failed release.
+#   Files already on PyPI and npm are skipped.
+
+on:
+  push:
+    tags: ["sdk-v[0-9]+.[0-9]+.[0-9]+", "sdk-v[0-9]+.[0-9]+.[0-9]+-*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and test only; upload nothing
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-sdk-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+
+jobs:
+  guard:
+    name: Version and changelog guards
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      pypi_version: ${{ steps.check.outputs.pypi_version }}
+      npm_tag: ${{ steps.check.outputs.npm_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: A real release must run from a tag
+        if: env.DRY_RUN != 'true' && github.ref_type != 'tag'
+        run: |
+          echo "error: publishing requires an sdk-vX.Y.Z tag ref; use dry_run for other refs" >&2
+          exit 1
+
+      - name: Check versions, platform pins, tag and changelog
+        id: check
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            version=$(scripts/sdk-release-check.sh "${{ github.ref_name }}")
+          else
+            version=$(scripts/sdk-release-check.sh --skip-changelog)
+          fi
+          # maturin's Cargo -> PEP 440 mapping: 0.2.0-rc.1 -> 0.2.0rc1.
+          pypi_version=$(sed -E 's/-rc\.([0-9]+)$/rc\1/' <<<"$version")
+          npm_tag=latest
+          if [[ "$version" == *-* ]]; then
+            npm_tag=next
+          fi
+          {
+            echo "version=$version"
+            echo "pypi_version=$pypi_version"
+            echo "npm_tag=$npm_tag"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: SDK build and tests
+    needs: guard
+    uses: ./.github/workflows/sdk.yml
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [guard, build]
+    if: github.event_name == 'push' || !inputs.dry_run
+    runs-on: ubuntu-latest
+    # Requires owner approval (environment protection rule).
+    environment:
+      name: pypi
+      url: https://pypi.org/project/orchest-py/${{ needs.guard.outputs.pypi_version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+      - name: Check the files carry the expected version
+        env:
+          PYPI_VERSION: ${{ needs.guard.outputs.pypi_version }}
+        run: |
+          ls -l dist
+          for file in dist/*; do
+            case "$(basename "$file")" in
+              "orchest_py-$PYPI_VERSION-"*|"orchest_py-$PYPI_VERSION.tar.gz") ;;
+              *) echo "error: $file is not version $PYPI_VERSION" >&2; exit 1 ;;
+            esac
+          done
+
+      # Trusted Publishing (OIDC) with attestations; files already on PyPI
+      # are skipped so a rerun completes a partial upload.
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+  publish-npm:
+    name: Publish to npm
+    needs: [guard, build]
+    if: github.event_name == 'push' || !inputs.dry_run
+    runs-on: ubuntu-latest
+    # Requires owner approval (environment protection rule).
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/orchest-sdk/v/${{ needs.guard.outputs.version }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "npm-*"
+          path: packages
+          merge-multiple: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          # No registry-url: setup-node would write an `_authToken` line that
+          # expands to an empty token once NPM_TOKEN is deleted, and npm would
+          # use it instead of the OIDC exchange. The public registry is npm's
+          # default.
+
+      # Trusted Publishing needs npm 11.5.1 or newer.
+      - name: Update npm
+        run: npm install -g npm@11
+
+      # The first publish (the release candidate) uses the temporary NPM_TOKEN
+      # secret, because npm only accepts a trusted publisher for a package
+      # that exists. Once the secret is deleted, npm authenticates through
+      # OIDC (ADR-0004 D7); the token is only configured when the secret is
+      # set. Platform packages go first, so the main package never points at
+      # a missing optional dependency.
+      - name: Publish the platform packages, then the main package
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          NPM_TAG: ${{ needs.guard.outputs.npm_tag }}
+        run: |
+          if [[ -n "$NPM_TOKEN" ]]; then
+            echo "auth: NPM_TOKEN"
+            npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+          else
+            echo "auth: Trusted Publishing (OIDC)"
+          fi
+          unset NPM_TOKEN
+          ls -l packages
+          main="packages/orchest-sdk-$VERSION.tgz"
+          test -f "$main"
+          for platform in linux-x64-gnu linux-arm64-gnu darwin-arm64; do
+            test -f "packages/orchest-sdk-$platform-$VERSION.tgz"
+          done
+          for tarball in packages/orchest-sdk-*-"$VERSION".tgz "$main"; do
+            name=$(tar -xzOf "$tarball" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0)).name')
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "skip: $name@$VERSION is already on npm"
+              continue
+            fi
+            npm publish "$tarball" --provenance --access public --tag "$NPM_TAG"
+          done
+
+  github-release:
+    name: GitHub Release
+    needs: [guard, publish-pypi, publish-npm]
+    if: github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry_run)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create the release from the changelog section
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "skip: release $TAG already exists"
+            exit 0
+          fi
+          crates=$(awk '
+            /^\[workspace\.package\]/ { in_pkg = 1; next }
+            /^\[/ { in_pkg = 0 }
+            in_pkg && /^version *=/ { gsub(/.*= *"|".*/, ""); print; exit }
+          ' Cargo.toml)
+          {
+            scripts/release-notes.sh "$VERSION" CHANGELOG-SDK.md "$TAG"
+            echo
+            echo "Built from the Orchest crates at $crates."
+            echo
+            echo "- PyPI: \`pip install orchest-py==${{ needs.guard.outputs.pypi_version }}\`"
+            echo "- npm: \`npm install orchest-sdk@$VERSION\`"
+          } > notes.md
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$TAG" --verify-tag --title "$TAG" \
+            --notes-file notes.md "${prerelease[@]}"
+
+  verify:
+    name: Verify published packages (${{ matrix.platform }})
+    needs: [guard, publish-pypi, publish-npm]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x64-gnu, runner: ubuntu-latest }
+          - { platform: linux-arm64-gnu, runner: ubuntu-24.04-arm }
+          - { platform: darwin-arm64, runner: macos-14 }
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+      PYPI_VERSION: ${{ needs.guard.outputs.pypi_version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # The registries can take a few minutes to serve a new version.
+      - name: Python SDK tests against PyPI
+        run: |
+          work="$RUNNER_TEMP/python-sdk"
+          python -m venv "$work/venv"
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            "$work/venv/bin/python" -m pip install --no-cache-dir "orchest-py==$PYPI_VERSION" pytest && break
+            [[ $attempt -eq 10 ]] && exit 1
+            sleep 30
+          done
+          cp -R python/tests "$work/tests"
+          cd "$work"
+          venv/bin/python -m pytest tests -v
+
+      - name: Node SDK tests against npm
+        run: |
+          work="$RUNNER_TEMP/node-sdk"
+          mkdir -p "$work"
+          cd "$work"
+          npm init -y >/dev/null
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            npm install --no-audit --no-fund "orchest-sdk@$VERSION" && break
+            [[ $attempt -eq 10 ]] && exit 1
+            sleep 30
+          done
+          sdk=node_modules/orchest-sdk
+          test -d "node_modules/orchest-sdk-${{ matrix.platform }}"
+          mkdir -p "$sdk/js/tests"
+          cp "$GITHUB_WORKSPACE"/js/tests/*.test.cjs "$sdk/js/tests/"
+          cd "$sdk"
+          node --test js/tests/*.test.cjs

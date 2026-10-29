@@ -109,6 +109,15 @@ no entry. At release time the `Unreleased` section is renamed to the new
 version (ADR-0003 D7 tag format) and a fresh empty `Unreleased` section is
 added above it.
 
+`CHANGELOG-SDK.md` records the Python and Node SDK packages
+([ADR-0004](docs/adr/0004-sdk-packaging.md) D6) in the same format. A
+commit adds an entry there when it changes anything a user of `orchest-py`
+or `orchest-sdk` can observe: the Python or TypeScript API and types,
+supported platforms or minimum runtimes, package names or dependencies,
+or Rust behavior that reaches the SDKs. In 0.x a breaking SDK change is
+allowed in a minor release and starts with **Breaking:**. A change can
+need an entry in both changelogs.
+
 ### 5. Run Checks Before Merging
 
 ```bash
@@ -119,6 +128,15 @@ bash scripts/lint-check.sh
 ```
 
 All four must pass. Fix any failures before merging.
+
+The **SDK packages** workflow (`.github/workflows/sdk.yml`) release-builds
+the Python wheel and the Node addon on Linux x86_64, Linux arm64 and macOS
+arm64, installs the built packages and runs `python/tests` and `js/tests`
+against them. It runs on pushes to `main` and on pull requests that touch
+the binding crates, `python/`, `js/`, `npm/`, `pyproject.toml`,
+`package.json`, the workspace manifests or the workflow itself. To check
+the same thing locally on one platform, run `npm run pack:local` and
+`maturin build --release`, then install the results outside the checkout.
 
 ### 6. Create a Pull Request
 
@@ -201,6 +219,79 @@ Re-run the **Release** workflow manually from the same tag with `dry_run`
 unchecked. Crates already on crates.io at that version are skipped, and an
 existing GitHub Release is left alone. A version that was published with a
 defect cannot be replaced: yank it with `cargo yank` and release a patch.
+
+## Releasing the SDKs
+
+`orchest-py` (PyPI) and `orchest-sdk` with its platform packages (npm)
+share one SDK version, independent of the crate version, and are released
+from an `sdk-vX.Y.Z` tag through `.github/workflows/release-sdk.yml`
+([ADR-0004](docs/adr/0004-sdk-packaging.md) D6/D7).
+
+### One-time setup
+
+- On PyPI, add a pending trusted publisher for the project `orchest-py`:
+  repository `jianantian/orchest`, workflow `release-sdk.yml`, environment
+  `pypi`.
+- In the repository settings, create the environments `pypi` and `npm`,
+  each with the owner as a required reviewer.
+- npm only accepts a trusted publisher for a package that exists. Before
+  the first release, add a granular npm token that can publish new
+  packages as the repository secret `NPM_TOKEN`. After the first release,
+  configure a trusted publisher (repository `jianantian/orchest`, workflow
+  `release-sdk.yml`, environment `npm`) for `orchest-sdk`,
+  `orchest-sdk-linux-x64-gnu`, `orchest-sdk-linux-arm64-gnu` and
+  `orchest-sdk-darwin-arm64`, then delete the secret. Without the secret
+  the workflow publishes through OIDC.
+
+### Cutting an SDK release
+
+1. On `main`, set the same version in `package.json` (`version` and the
+   three `optionalDependencies` pins), `npm/*/package.json`,
+   `crates/orchest-py/Cargo.toml` and `crates/orchest-node/Cargo.toml`.
+   Then run `cargo update -p orchest-py -p orchest-node` and
+   `npm install`, and commit the refreshed `Cargo.lock` and
+   `package-lock.json` (the MSRV job runs `cargo check --locked`). A
+   release candidate is `X.Y.Z-rc.N`; PyPI receives it as `X.Y.ZrcN`. The
+   check script refuses versions below `0.2.0`.
+2. Rename `## [Unreleased]` in `CHANGELOG-SDK.md` to a heading with the
+   version exactly as `package.json` spells it (`## [0.2.0-rc.1]` for a
+   release candidate, `## [0.2.0]` for a release), add a fresh empty
+   `## [Unreleased]` above it, and name the crate version the release is
+   built from.
+3. Check locally: `scripts/sdk-release-check.sh sdk-v<version>`.
+4. Optionally run the **Release SDK** workflow manually with `dry_run`
+   checked (the default). It runs the version check and the SDK build and
+   tests on all platforms, and uploads nothing.
+5. Commit, then tag and push:
+
+   ```bash
+   git tag sdk-vX.Y.Z
+   git push origin main sdk-vX.Y.Z
+   ```
+
+The tag push runs the version check and the SDK build and tests. The PyPI
+and npm jobs then wait for the owner's approval in their environments.
+npm receives the platform packages before the main package, with
+provenance, under the `next` dist-tag for a pre-release and `latest`
+otherwise. The workflow creates the GitHub Release from the changelog
+section (a prerelease for `-rc.N`), then installs the published version
+from PyPI and npm on each platform and runs the SDK tests.
+
+The platform packages in `optionalDependencies` only enter
+`package-lock.json` once that version is on npm, so right after a version
+bump the lockfile cannot list them. npm 10 (bundled with Node 22, which
+the workflows use) accepts such a lockfile in `npm ci`; npm 11 rejects it,
+so on Node 24 run `npm install` instead. Moving the workflows to npm 11
+means replacing their `npm ci` with `npm install` plus a lockfile check
+(`npm install --package-lock-only && git diff --exit-code package-lock.json`).
+
+### Recovering a failed SDK release
+
+Re-run the **Release SDK** workflow manually from the same tag with
+`dry_run` unchecked. Files already on PyPI and package versions already on
+npm are skipped, and an existing GitHub Release is left alone. A published
+version cannot be replaced: fix the defect in a new version (on npm, also
+`npm deprecate` the broken one).
 
 ---
 
