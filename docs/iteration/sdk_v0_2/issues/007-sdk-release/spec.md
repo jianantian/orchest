@@ -28,6 +28,10 @@ Publishing, then publish `0.2.0` and close the iteration.
 - [ ] After owner sign-off, the `sdk-v0.2.0` tag publishes `0.2.0` to PyPI
   and npm (`latest`) through Trusted Publishing only, and the post-publish
   verification passes on all three platforms.
+- [ ] Murmur installs the release candidate from PyPI instead of its git
+  tag, and its existing calls run.
+- [ ] The release notes give the SDK↔crate version matrix (`0.2.0` ↔
+  crates `1.2.0`, ADR-0005 D6).
 - [ ] The repository holds no long-lived PyPI or npm token.
 - [ ] The PyPI and npm pages for 0.2.0 show provenance.
 - [ ] The PRD's acceptance items are checked, the roadmap marks SDK 0.2
@@ -39,6 +43,8 @@ Publishing, then publish `0.2.0` and close the iteration.
 ## Blocked by
 
 - #324, #325, #326, #327, #328, #329
+- [v1.2](../../../v1_2/prd.md): the ASR streaming redesign (004) and the
+  `1.2.0` crate release (007)
 
 ## Notes
 
