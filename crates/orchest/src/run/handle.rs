@@ -1,4 +1,4 @@
-//! RunHandle, ApprovalBus, EventReceiver, and approval routing logic.
+//! RunHandle, EventReceiver, child-run registry, and request routing.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -11,8 +11,10 @@ use tokio::task::JoinHandle;
 
 use crate::events::{RunFailureKind, RuntimeEvent};
 
-use super::actor::{AgentMsg, CancelCmd, InjectCmd, SteerCmd};
+use super::actor::{AgentMsg, InjectCmd, SteerCmd};
+use super::cancel::{CancelToken, Cancellation};
 use super::config::RunId;
+use super::request::{PendingRequest, RequestBus, RequestError, RequestId, RequestResponse};
 use super::supervisor::SupervisorMsg;
 use super::watcher::Watcher;
 
@@ -47,8 +49,27 @@ impl std::fmt::Display for ChildCompletionError {
 
 impl std::error::Error for ChildCompletionError {}
 
+/// Sets `token` and, the first time, wakes the worker so a run between steps
+/// notices at once.
+fn cancel_run(
+    token: &CancelToken,
+    actor_ref: &Mutex<Option<ActorRef<AgentMsg>>>,
+    cancellation: Cancellation,
+) -> bool {
+    if !token.cancel(cancellation) {
+        return false;
+    }
+    if let Ok(guard) = actor_ref.lock() {
+        if let Some(ref aref) = *guard {
+            let _ = aref.cast(AgentMsg::Cancel);
+        }
+    }
+    true
+}
+
 struct RegisteredChild {
     parent_run_id: RunId,
+    cancel: CancelToken,
     actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
     ready: Arc<Notify>,
     supervisor_ref: Arc<Mutex<Option<ActorRef<SupervisorMsg>>>>,
@@ -60,7 +81,7 @@ struct RegisteredChild {
 
 /// Tree-scoped registry of active delegated children.
 ///
-/// Shared like [`ApprovalBus`]: the supervisor run and every nested
+/// Shared like [`RequestBus`]: the supervisor run and every nested
 /// `AgentAsTool` child share one instance so application code holding the
 /// supervisor [`RunHandle`] can resolve child control surfaces by run id.
 #[derive(Clone, Default)]
@@ -78,6 +99,7 @@ impl std::fmt::Debug for ChildRunRegistry {
 pub(crate) struct ChildRegistration {
     pub run_id: RunId,
     pub parent_run_id: RunId,
+    pub cancel: CancelToken,
     pub actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
     pub ready: Arc<Notify>,
     pub supervisor_ref: Arc<Mutex<Option<ActorRef<SupervisorMsg>>>>,
@@ -93,6 +115,7 @@ impl ChildRunRegistry {
         let (outcome_tx, outcome_rx) = watch::channel(None);
         let entry = RegisteredChild {
             parent_run_id: reg.parent_run_id,
+            cancel: reg.cancel,
             actor_ref: reg.actor_ref,
             ready: reg.ready,
             supervisor_ref: reg.supervisor_ref,
@@ -110,6 +133,7 @@ impl ChildRunRegistry {
         Some(ChildRunHandle {
             run_id: child_run_id,
             parent_run_id: entry.parent_run_id,
+            cancel: entry.cancel.clone(),
             actor_ref: Arc::clone(&entry.actor_ref),
             ready: Arc::clone(&entry.ready),
             supervisor_ref: Arc::clone(&entry.supervisor_ref),
@@ -125,6 +149,7 @@ impl ChildRunRegistry {
             .map(|(run_id, entry)| ChildRunHandle {
                 run_id: *run_id,
                 parent_run_id: entry.parent_run_id,
+                cancel: entry.cancel.clone(),
                 actor_ref: Arc::clone(&entry.actor_ref),
                 ready: Arc::clone(&entry.ready),
                 supervisor_ref: Arc::clone(&entry.supervisor_ref),
@@ -144,6 +169,7 @@ impl ChildRunRegistry {
 pub struct ChildRunHandle {
     pub run_id: RunId,
     pub parent_run_id: RunId,
+    cancel: CancelToken,
     actor_ref: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
     ready: Arc<Notify>,
     supervisor_ref: Arc<Mutex<Option<ActorRef<SupervisorMsg>>>>,
@@ -173,13 +199,16 @@ impl ChildRunHandle {
         }
     }
 
-    /// Request cancellation of the delegated child run.
+    /// Cancels the delegated child run as a user request. The parent's tool
+    /// call for the child then ends with the child's abort.
     pub fn abort(&self) {
-        if let Ok(guard) = self.actor_ref.lock() {
-            if let Some(ref aref) = *guard {
-                let _ = aref.cast(AgentMsg::Cancel(CancelCmd { reason: None }));
-            }
-        }
+        self.cancel(Cancellation::user());
+    }
+
+    /// Cancels the delegated child run. Returns `false` when it was already
+    /// cancelled; repeated calls have no further effect.
+    pub fn cancel(&self, cancellation: Cancellation) -> bool {
+        cancel_run(&self.cancel, &self.actor_ref, cancellation)
     }
 
     /// Subscribe to events emitted by the child after this call.
@@ -251,39 +280,14 @@ impl ChildRunHandle {
     }
 }
 
-/// Shared approval registry for an entire agent-run tree.
-/// All runs (root and sub-agents at any depth) share the same instance.
-#[derive(Clone, Default, Debug)]
-pub struct ApprovalBus {
-    pending: Arc<AsyncMutex<HashMap<RunId, oneshot::Sender<bool>>>>,
-}
-
-impl ApprovalBus {
-    pub async fn request(&self, run_id: RunId) -> oneshot::Receiver<bool> {
-        let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(run_id, tx);
-        rx
-    }
-
-    pub async fn respond(&self, run_id: RunId, approved: bool) -> Result<(), String> {
-        match self.pending.lock().await.remove(&run_id) {
-            Some(tx) => tx
-                .send(approved)
-                .map_err(|_| format!("run {run_id} is no longer waiting for approval")),
-            None => Err(format!("no pending approval for run {run_id}")),
-        }
-    }
-
-    pub async fn cancel(&self, run_id: RunId) {
-        self.pending.lock().await.remove(&run_id);
-    }
-}
-
 /// Handle to a running agent: wait for completion, abort, subscribe to events,
-/// attach watchers, respond to approvals, and steer the run mid-flight.
+/// attach watchers, answer blocking requests, and steer the run mid-flight.
 #[non_exhaustive]
 pub struct RunHandle {
     pub run_id: RunId,
+    pub(crate) cancel: CancelToken,
+    pub(crate) capabilities: crate::capabilities::Capabilities,
+    pub(crate) delivery_stats: super::delivery::SharedDeliveryStats,
     /// Current worker actor reference.
     ///
     /// The supervisor writes this after the initial worker spawn and rewrites it
@@ -296,7 +300,7 @@ pub struct RunHandle {
     pub(crate) ready: Arc<Notify>,
     /// Background task that owns the actor lifecycle.
     pub(crate) actor_join: JoinHandle<()>,
-    pub(crate) approval_bus: ApprovalBus,
+    pub(crate) request_bus: RequestBus,
     /// Shared delegated-child registry for this run tree.
     pub(crate) child_registry: ChildRunRegistry,
     pub(crate) supervisor_ref: Arc<Mutex<Option<ActorRef<SupervisorMsg>>>>,
@@ -307,12 +311,41 @@ impl RunHandle {
         let _ = self.actor_join.await;
     }
 
+    /// Cancels the run as a user request. See [`Self::cancel`].
     pub fn abort(&self) {
-        if let Ok(guard) = self.actor_ref.lock() {
-            if let Some(ref aref) = *guard {
-                let _ = aref.cast(AgentMsg::Cancel(CancelCmd { reason: None }));
-            }
-        }
+        self.cancel(Cancellation::user());
+    }
+
+    /// Cancels the run, its delegated children and its pending requests.
+    ///
+    /// Takes effect at once: an in-flight model call is dropped, pending
+    /// approvals resolve as cancelled, calls of interruptible tools are
+    /// dropped, and no further tool call is dispatched. A tool that is not
+    /// interruptible finishes and its result is recorded. The run then ends
+    /// with `RunAborted` carrying `cancellation.reason`, unless it had already
+    /// finished. Returns `false` when the run was already cancelled; repeated
+    /// calls have no further effect.
+    pub fn cancel(&self, cancellation: Cancellation) -> bool {
+        cancel_run(&self.cancel, &self.actor_ref, cancellation)
+    }
+
+    /// Why the run was cancelled, once it is.
+    pub fn cancellation(&self) -> Option<Cancellation> {
+        self.cancel.cancellation()
+    }
+
+    /// What this run supports, as of its start.
+    pub fn capabilities(&self) -> &crate::capabilities::Capabilities {
+        &self.capabilities
+    }
+
+    /// How event delivery to this run's primary receiver has gone so far,
+    /// including how often and how long the run waited on a full channel.
+    pub fn event_delivery_stats(&self) -> super::delivery::EventDeliveryStats {
+        self.delivery_stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// Inject a user-role message into the running agent's conversation.
@@ -395,9 +428,30 @@ impl RunHandle {
         }
     }
 
-    /// Route an approval response to any run in this run tree.
-    pub async fn respond_approval(&self, run_id: RunId, approved: bool) -> Result<(), String> {
-        self.approval_bus.respond(run_id, approved).await
+    /// Requests from this run tree (this run and its delegated children)
+    /// waiting for an answer, ordered by id.
+    pub async fn pending_requests(&self) -> Vec<PendingRequest> {
+        self.request_bus.pending().await
+    }
+
+    /// Looks up a pending request by id.
+    pub async fn request(&self, id: &RequestId) -> Option<PendingRequest> {
+        self.request_bus.get(id).await
+    }
+
+    /// Answers a pending request of any run in this run tree.
+    pub async fn respond(
+        &self,
+        id: &RequestId,
+        response: RequestResponse,
+    ) -> Result<(), RequestError> {
+        self.request_bus.respond(id, response).await
+    }
+
+    /// Withdraws a pending request; the run treats it as not approved and
+    /// continues.
+    pub async fn withdraw(&self, id: &RequestId) -> Result<(), RequestError> {
+        self.request_bus.withdraw(id).await
     }
 
     /// Resolve a public control surface for a delegated child started under
@@ -413,36 +467,5 @@ impl RunHandle {
     /// List delegated children currently registered in this run tree.
     pub async fn active_children(&self) -> Vec<ChildRunHandle> {
         self.child_registry.list().await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn approval_bus_round_trip() {
-        let bus = ApprovalBus::default();
-        let run_id = RunId::new();
-        let rx = bus.request(run_id).await;
-        bus.respond(run_id, true).await.unwrap();
-        assert!(rx.await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn approval_bus_unknown_run_id_returns_err() {
-        let bus = ApprovalBus::default();
-        let result = bus.respond(RunId::new(), true).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn approval_bus_cancel_clears_slot() {
-        let bus = ApprovalBus::default();
-        let run_id = RunId::new();
-        let _rx = bus.request(run_id).await;
-        bus.cancel(run_id).await;
-        let result = bus.respond(run_id, true).await;
-        assert!(result.is_err());
     }
 }

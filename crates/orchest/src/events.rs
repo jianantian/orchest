@@ -8,9 +8,9 @@ use tokio::sync::mpsc;
 
 use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::model::{ModelStreamChunk, OptionAdjustment, StopReason, TokenUsage};
-use crate::run::RunId;
+use crate::run::{CancelReason, PendingRequest, RequestId, RequestKind, RequestResolution, RunId};
 use crate::tool::async_job::JobStatus;
-use crate::tool::{ToolCall, ToolError, ToolMetadata};
+use crate::tool::{PermissionDecision, ToolCall, ToolError, ToolMetadata};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[non_exhaustive]
@@ -44,6 +44,39 @@ pub enum RunFailureKind {
     Other,
 }
 
+/// One increment of an assistant message being streamed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum MessageDelta {
+    /// Visible text.
+    Text { text: String },
+    /// Model reasoning, kept apart from the visible text.
+    Thinking { text: String },
+    /// A chunk of a tool call's JSON arguments.
+    ToolUseArgs { tool_use_id: String, delta: String },
+}
+
+impl MessageDelta {
+    /// The message-level view of a raw stream chunk, for the chunks that
+    /// carry message content.
+    pub fn from_stream(chunk: &ModelStreamChunk) -> Option<Self> {
+        match chunk {
+            ModelStreamChunk::Text { delta } => Some(Self::Text {
+                text: delta.clone(),
+            }),
+            ModelStreamChunk::Thinking { delta } => Some(Self::Thinking {
+                text: delta.clone(),
+            }),
+            ModelStreamChunk::ToolUseArgsChunk { id, delta } => Some(Self::ToolUseArgs {
+                tool_use_id: id.clone(),
+                delta: delta.clone(),
+            }),
+            _ => None,
+        }
+    }
+}
+
 /// An event emitted on the run's event stream: run lifecycle, model calls,
 /// tool calls, approvals, budget, sub-agents, and steering. Consumers receive
 /// these from the `EventReceiver` returned by `AgentRun::start`.
@@ -56,6 +89,25 @@ pub enum RuntimeEvent {
 
     ModelCallStarted {
         step: u32,
+    },
+    /// The model started producing assistant message `message_id` (one per
+    /// model call; a `ModelRetry` restarts the same message, so drop its
+    /// buffered deltas).
+    MessageStarted {
+        message_id: String,
+        step: u32,
+    },
+    /// An increment of message `message_id`.
+    MessageUpdated {
+        message_id: String,
+        delta: MessageDelta,
+    },
+    /// Message `message_id` is complete. `stop_reason` is unset when the
+    /// model call failed or was cancelled; `content` is then empty.
+    MessageEnded {
+        message_id: String,
+        content: Vec<crate::model::ContentBlock>,
+        stop_reason: Option<StopReason>,
     },
     ModelStreamChunk {
         delta: ModelStreamChunk,
@@ -138,20 +190,62 @@ pub enum RuntimeEvent {
         tokens: u32,
     },
 
+    /// The permission decision point ruled on a tool call: allowed, asked
+    /// (an `ApprovalRequested` follows) or denied (the call gets a
+    /// `PERMISSION_DENIED` result).
+    PermissionDecided {
+        tool_call_id: String,
+        tool: String,
+        decision: PermissionDecision,
+    },
+    /// The run opened a blocking request and waits for the host to answer
+    /// it with [`RunHandle::respond`](crate::run::RunHandle::respond).
+    RequestOpened {
+        request: PendingRequest,
+    },
+    /// Ledger: the tool call is about to be dispatched to its tool.
+    ToolDispatched {
+        tool_use_id: String,
+        tool_name: String,
+    },
+    /// Ledger: the tool call has a recorded result. `error_code` is the
+    /// result's error code when it is an error (including the closures
+    /// `TOOL_OUTCOME_UNKNOWN`, `TOOL_NOT_STARTED`,
+    /// `TOOL_ABORTED_BEFORE_DISPATCH`).
+    ToolSettled {
+        tool_use_id: String,
+        is_error: bool,
+        error_code: Option<String>,
+    },
+    /// A tool call waits for approval under request `request_id`. Answer it
+    /// with [`RunHandle::respond`](crate::run::RunHandle::respond).
     ApprovalRequested {
+        request_id: RequestId,
+        kind: RequestKind,
+        payload: Value,
         tool_call: ToolCall,
         #[serde(default)]
         context: ApprovalContext,
     },
     ApprovalGranted {
+        request_id: RequestId,
         tool_call: ToolCall,
         #[serde(default)]
         context: ApprovalContext,
     },
+    /// The approval ended without being granted: denied, withdrawn, timed out
+    /// or cancelled (see the matching `RequestResolved`).
     ApprovalDenied {
+        request_id: RequestId,
         tool_call: ToolCall,
         #[serde(default)]
         context: ApprovalContext,
+    },
+    /// A blocking request ended.
+    RequestResolved {
+        request_id: RequestId,
+        kind: RequestKind,
+        resolution: RequestResolution,
     },
 
     BudgetWarning {
@@ -257,8 +351,20 @@ pub enum RuntimeEvent {
         #[serde(default)]
         kind: RunFailureKind,
     },
+    /// The run stopped before finishing. `cancel_reason` is set when it was
+    /// cancelled (through its handle, a watcher or its parent) and unset when
+    /// the supervisor gave up on a crashed worker.
     RunAborted {
         reason: Option<String>,
+        #[serde(default)]
+        cancel_reason: Option<CancelReason>,
+    },
+    /// The run's [`ProcessTerminator`](crate::run::ProcessTerminator) was
+    /// asked to stop the run's external processes on cancellation:
+    /// `terminated` processes were signalled, or `error` says why it failed.
+    ProcessesTerminated {
+        terminated: Option<usize>,
+        error: Option<String>,
     },
 }
 
@@ -268,9 +374,6 @@ pub enum RuntimeEvent {
 fn default_run_completed_stop_reason() -> StopReason {
     StopReason::EndTurn
 }
-
-/// Timeout for primary (blocking) event delivery. Matches the run actor.
-pub const EVENT_DELIVERY_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Coalesced secondary loss awaiting delivery on that subscriber's channel.
 ///
@@ -285,7 +388,7 @@ struct PendingLoss {
 
 /// One fan-out slot in a run's event subscriber list.
 ///
-/// Index `0` is always the primary receiver (awaited send with timeout).
+/// Index `0` is always the primary receiver (lossless: awaited send).
 /// Remaining slots are secondary watcher / `subscribe_events` channels that
 /// use non-blocking delivery with coalesced [`RuntimeEvent::EventsDropped`]
 /// recovery signals.
@@ -309,8 +412,8 @@ struct PendingLoss {
 ///    [`crate::run::RunHandle::attach_watcher`] for a fresh channel that sees
 ///    only future events.
 ///
-/// Primary backpressure semantics are unchanged: awaited send with
-/// [`EVENT_DELIVERY_TIMEOUT`]. Recovery state per secondary is a fixed-size
+/// The primary is lossless: delivery waits for capacity, so a slow primary
+/// receiver slows the run down (see [`crate::run::delivery`]). Recovery state per secondary is a fixed-size
 /// pending counter (cannot grow without bound).
 ///
 /// Flushing a pending `EventsDropped` consumes one channel slot before the
@@ -506,8 +609,7 @@ impl std::fmt::Debug for EventSink {
 
 /// Deliver a runtime event to a subscriber list using the public fan-out contract:
 ///
-/// - index `0` is the primary event receiver — awaited send with
-///   [`EVENT_DELIVERY_TIMEOUT`];
+/// - index `0` is the primary event receiver — awaited send, never dropped;
 /// - remaining subscribers are attached watcher channels — non-blocking
 ///   `try_send` with coalesced [`RuntimeEvent::EventsDropped`] recovery on
 ///   the affected secondary (see [`EventSink`] recovery contract).
@@ -520,26 +622,8 @@ pub async fn deliver_to_subscribers(subscribers: &[EventSink], event: RuntimeEve
     let seq = subscribers.first().map(EventSink::alloc_seq).unwrap_or(0);
 
     if let Some(primary) = subscribers.first() {
-        match tokio::time::timeout(EVENT_DELIVERY_TIMEOUT, primary.tx.send(event.clone())).await {
-            Ok(Ok(())) | Ok(Err(_)) => {}
-            Err(_) => {
-                crate::telemetry::record_event_drop("primary", 1);
-                if primary
-                    .tx
-                    .try_send(RuntimeEvent::EventsDropped {
-                        subscriber_id: 0,
-                        count: 1,
-                        from_seq: seq,
-                        to_seq: seq,
-                    })
-                    .is_err()
-                {
-                    tracing::warn!(
-                        "primary event subscriber timed out and EventsDropped notification channel is full"
-                    );
-                }
-            }
-        }
+        // Lossless: waits for capacity. A closed receiver is not an error.
+        let _ = primary.tx.send(event.clone()).await;
     }
 
     let mut wave_bus_to_seal: Option<std::sync::Arc<dyn FanoutWaveBus>> = None;
@@ -552,21 +636,15 @@ pub async fn deliver_to_subscribers(subscribers: &[EventSink], event: RuntimeEve
         } else {
             crate::telemetry::record_event_drop("secondary", 1);
             if let Some(primary) = subscribers.first() {
-                if primary
+                let _ = primary
                     .tx
-                    .try_send(RuntimeEvent::EventsDropped {
+                    .send(RuntimeEvent::EventsDropped {
                         subscriber_id: sink.subscriber_id,
                         count: 1,
                         from_seq: seq,
                         to_seq: seq,
                     })
-                    .is_err()
-                {
-                    tracing::warn!(
-                        subscriber_id = sink.subscriber_id,
-                        "secondary event subscriber dropped an event and primary notification channel is full"
-                    );
-                }
+                    .await;
             }
         }
     }

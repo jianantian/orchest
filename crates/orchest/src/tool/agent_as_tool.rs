@@ -333,8 +333,9 @@ impl AgentAsTool {
             initial_messages,
             Arc::clone(&self.model),
             self.registry.clone(),
-            ctx.approval_bus.clone(),
+            ctx.request_bus.clone(),
             ctx.child_registry.clone(),
+            ctx.cancel.child(),
             vec![],
         );
         let child_run_id = handle.run_id;
@@ -346,6 +347,7 @@ impl AgentAsTool {
             .register(crate::run::handle::ChildRegistration {
                 run_id: child_run_id,
                 parent_run_id,
+                cancel: handle.cancel.clone(),
                 actor_ref: std::sync::Arc::clone(&handle.actor_ref),
                 ready: std::sync::Arc::clone(&handle.ready),
                 supervisor_ref: std::sync::Arc::clone(&handle.supervisor_ref),
@@ -753,7 +755,8 @@ impl SubAgentBuilder {
             tool_description: self.tool_description,
             input_schema,
             metadata: ToolMetadata {
-                side_effect: false,
+                // The child run decides on its own tool calls.
+                effects: crate::tool::ToolEffects::NONE,
                 approval: crate::tool::Approval::Never,
                 source: ToolSource::InProcess,
                 ..ToolMetadata::default()
@@ -1712,7 +1715,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 metadata: ToolMetadata {
-                    side_effect: false,
+                    effects: crate::tool::ToolEffects::NONE,
                     approval: crate::tool::Approval::Never,
                     source: ToolSource::InProcess,
                     ..ToolMetadata::default()

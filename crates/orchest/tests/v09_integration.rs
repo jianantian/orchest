@@ -55,7 +55,7 @@ impl Tool for PingTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: orchest::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: orchest::tool::ToolExecutionMode::Normal,
             parallelism: orchest::tool::ToolParallelism::Serial,

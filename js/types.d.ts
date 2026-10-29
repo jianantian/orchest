@@ -139,8 +139,21 @@ export interface ToolWithHandler {
   approval?: string;
 }
 
+/** Why a run was cancelled. */
+export type CancelReason = "user" | "timeout" | "upstream" | "host_disconnected" | "watcher";
+
+export type ToolEffect =
+  | "read"
+  | "write_workspace"
+  | "write_outside"
+  | "network"
+  | "credential"
+  | "destructive"
+  | "process";
+
 export interface ToolMetadata {
-  side_effect: boolean;
+  /** Declared effects; `null` when unknown (treated as having side effects). */
+  effects: ToolEffect[] | null;
   approval: string;
   cost_hint: unknown;
   timeout: unknown;
@@ -209,6 +222,57 @@ export type StopReason =
  */
 export type RunFailureKind = "BudgetExceeded" | "MaxStepsReached" | "Other";
 
+/** The host's answer to a request (`Agent.respond`). */
+export interface RequestResponse {
+  /** A bare "approve" / "deny", or the tagged form (`answer` carries a payload). */
+  decision:
+    | "approve"
+    | "deny"
+    | { type: "approve" }
+    | { type: "deny"; reason?: string | null }
+    | { type: "answer"; payload: unknown };
+  /** "session" remembers an approval for the rest of the session. Default "once". */
+  scope?: "once" | "session";
+  session_rules?: unknown;
+}
+
+/** What a run supports (`Agent.capabilities`). */
+export interface Capabilities {
+  resume: boolean;
+  preemptive_cancel: boolean;
+  approval_scopes: Array<"once" | "session">;
+  builtin_request_kinds: string[];
+  host_request_kinds: boolean;
+  parallel_tools: boolean;
+  delegation: boolean;
+  effects: ToolEffect[];
+  enforcement: {
+    backend: string | null;
+    isolation: "none" | "soft" | "hard";
+    permission_gate: "none" | "soft" | "hard";
+    code_execution: "none" | "soft" | "hard" | null;
+    read_only: "none" | "soft" | "hard";
+  };
+  lossless_events: boolean;
+}
+
+/** One incremental piece of an assistant message (`message_updated`). */
+export type MessageDelta =
+  | { type: "text"; text: string }
+  | { type: "thinking"; text: string }
+  | { type: "tool_use_args"; tool_use_id: string; delta: string };
+
+/** A blocking request waiting for the host (`request_opened`). */
+export interface PendingRequest {
+  id: string;
+  /** The run that raised it (a child run for delegated work). */
+  run_id: string;
+  /** "tool_approval", "retry_approval", or a host-defined kind. */
+  kind: string;
+  payload: unknown;
+  target: unknown;
+}
+
 /**
  * Events on the run stream, in the binding wire shape: serde's externally
  * tagged form plus `type` (snake_case discriminant) and an injected
@@ -219,6 +283,9 @@ export type RuntimeEvent =
   | { type: "run_started"; run_id: string; run_depth: number; child_run_id: string | null }
   | { type: "model_call_started"; step: number; run_depth: number; child_run_id: string | null }
   | { type: "model_stream_chunk"; delta: StreamEvent; run_depth: number; child_run_id: string | null }
+  | { type: "message_started"; message_id: string; step: number; run_depth: number; child_run_id: string | null }
+  | { type: "message_updated"; message_id: string; delta: MessageDelta; run_depth: number; child_run_id: string | null }
+  | { type: "message_ended"; message_id: string; content: unknown[]; stop_reason: string | null; run_depth: number; child_run_id: string | null }
   | { type: "model_call_completed"; tokens: TokenUsage; option_adjustments?: OptionAdjustment[]; run_depth: number; child_run_id: string | null }
   | { type: "model_retry"; attempt: number; error: string; next_delay: unknown; run_depth: number; child_run_id: string | null }
   | { type: "tool_call_started"; tool: string; metadata: ToolMetadata; input: unknown; run_depth: number; child_run_id: string | null }
@@ -233,9 +300,14 @@ export type RuntimeEvent =
   | { type: "async_tool_progress"; tool: string; job_id: string; status: unknown; run_depth: number; child_run_id: string | null }
   | { type: "async_tool_completed"; tool: string; job_id: string; output: unknown; elapsed: unknown; run_depth: number; child_run_id: string | null }
   | { type: "skill_content_read"; skill_name: string; file: string; tokens: number; run_depth: number; child_run_id: string | null }
-  | { type: "approval_requested"; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
-  | { type: "approval_granted"; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
-  | { type: "approval_denied"; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "tool_dispatched"; tool_use_id: string; tool_name: string; run_depth: number; child_run_id: string | null }
+  | { type: "tool_settled"; tool_use_id: string; is_error: boolean; error_code: string | null; run_depth: number; child_run_id: string | null }
+  | { type: "permission_decided"; tool_call_id: string; tool: string; decision: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "approval_requested"; request_id: string; kind: string; payload: unknown; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "approval_granted"; request_id: string; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "approval_denied"; request_id: string; tool_call: unknown; context?: unknown; run_depth: number; child_run_id: string | null }
+  | { type: "request_opened"; request: PendingRequest; run_depth: number; child_run_id: string | null }
+  | { type: "request_resolved"; request_id: string; kind: string; resolution: unknown; run_depth: number; child_run_id: string | null }
   | { type: "budget_warning"; used: unknown; limit: unknown; run_depth: number; child_run_id: string | null }
   | { type: "runtime_warning"; message: string; run_depth: number; child_run_id: string | null }
   | { type: "skill_missing_capabilities"; skill_name: string; run_depth: number; child_run_id: string | null }
@@ -252,7 +324,8 @@ export type RuntimeEvent =
   | { type: "run_restarted"; attempt: number; run_depth: number; child_run_id: string | null }
   | { type: "run_completed"; output: unknown; stop_reason: StopReason; run_depth: number; child_run_id: string | null }
   | { type: "run_failed"; error: string; kind: RunFailureKind; run_depth: number; child_run_id: string | null }
-  | { type: "run_aborted"; reason: string | null; run_depth: number; child_run_id: string | null };
+  | { type: "run_aborted"; reason: string | null; cancel_reason: CancelReason | null; run_depth: number; child_run_id: string | null }
+  | { type: "processes_terminated"; terminated: number | null; error: string | null; run_depth: number; child_run_id: string | null };
 
 export interface HistoryMessage {
   /** "system" | "user" | "assistant" | "tool" (plus provider-specific roles). */

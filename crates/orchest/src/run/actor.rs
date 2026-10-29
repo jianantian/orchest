@@ -1,6 +1,6 @@
 //! WorkerActor: Ractor-based agent run actor (mode B: self-message step).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -11,9 +11,15 @@ use tokio::sync::mpsc;
 use tracing::Instrument;
 
 use crate::budget::{BudgetConfig, BudgetGuard};
-use crate::events::{ApprovalContext, EventSink, FanoutWaveBus, RunFailureKind, RuntimeEvent};
+use crate::events::{
+    ApprovalContext, EventSink, FanoutWaveBus, MessageDelta, RunFailureKind, RuntimeEvent,
+};
 use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelResponse, ModelStreamChunk, Role, StopReason,
+};
+use crate::session::{
+    summarize_args, CheckpointPolicy, SessionError, SessionEventKind, SessionLog, SessionMeta,
+    SessionStore,
 };
 use crate::skill::disclosure::{with_disclosure_block, SkillSummary};
 use crate::telemetry;
@@ -21,20 +27,25 @@ use crate::tool::code_exec::CodeExecutionMcpServer;
 use crate::tool::registry::ToolRegistry;
 use crate::tool::search::SearchToolsTool;
 use crate::tool::{
-    ErrorKind, RetryHint, Tool, ToolCall, ToolContext, ToolDef, ToolError, ToolExecutionMode,
-    ToolMetadata, ToolOutput, ToolParallelism, ToolSource,
+    grant_key, ErrorKind, PermissionCall, PermissionDecision, RetryHint, Tool, ToolCall,
+    ToolContext, ToolDef, ToolError, ToolExecutionMode, ToolMetadata, ToolOutput, ToolParallelism,
+    ToolSource, PERMISSION_DENIED,
 };
 
+use super::cancel::{CancelToken, Cancellation};
 use super::compaction::maybe_compact_context;
 use super::config::{AgentConfig, RunId, SkillDisclosure, ToolExecutionPolicy};
-use super::handle::{ApprovalBus, ChildRunRegistry};
+use super::handle::ChildRunRegistry;
 use super::helpers::{append_searched_tool_defs, connect_mcp_servers, truncate_output};
+use super::process::PROCESS_TERMINATION_TIMEOUT;
+use super::request::{
+    ApprovalScope, PendingRequest, RequestBus, RequestDecision, RequestId, RequestKind,
+    RequestResolution, RequestResponse, RequestTarget,
+};
 use super::skills::register_skills;
 use super::tool_exec::{poll_async_job, tool_error_result, tool_skipped_by_hook_result};
 use super::webhook::{start_webhook_server, WebhookRuntime};
 
-const APPROVAL_TIMEOUT: Duration = Duration::from_secs(3600);
-const EVENT_SEND_TIMEOUT: Duration = Duration::from_millis(500);
 const TOOL_RETRY_MAX_ATTEMPTS: u32 = 3;
 const TOOL_RETRY_BASE_DELAY: Duration = Duration::from_millis(10);
 
@@ -50,11 +61,6 @@ pub(crate) struct InjectCmd {
     pub message: String,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct CancelCmd {
-    pub reason: Option<String>,
-}
-
 pub(crate) enum AgentMsg {
     RunStep,
     Subscribe(mpsc::Sender<RuntimeEvent>),
@@ -66,7 +72,8 @@ pub(crate) enum AgentMsg {
     },
     Steer(SteerCmd),
     Inject(InjectCmd),
-    Cancel(CancelCmd),
+    /// Wakes the worker after its cancel token was set.
+    Cancel,
 }
 
 // ── Run state ─────────────────────────────────────────────────────────────────
@@ -77,14 +84,21 @@ pub(crate) struct AgentRunState {
     pub model: Arc<dyn ModelAdapter>,
     pub unfiltered_registry: ToolRegistry,
     pub registry: ToolRegistry,
-    pub messages: Vec<Message>,
+    /// Execution state: the conversation and step counter are projections of
+    /// this log, and every change to them is recorded here first.
+    pub log: SessionLog,
+    /// Where `log` is persisted. Captured at start so a handoff to a config
+    /// without a store keeps writing to the same session.
+    pub session: Option<SessionBinding>,
     pub tool_defs: Vec<ToolDef>,
-    pub step: u32,
     pub budget: BudgetGuard,
     pub last_compaction_step: Option<u32>,
-    pub cancelled: bool,
+    pub cancel: CancelToken,
+    /// Set once the run emitted its terminal event (completed, failed or
+    /// aborted), so a racing cancellation cannot add a second one.
+    pub finished: bool,
     pub run_hook_ctx: crate::hook::RunHookContext,
-    pub approval_bus: ApprovalBus,
+    pub request_bus: RequestBus,
     pub child_registry: ChildRunRegistry,
     /// Subscriber list; index 0 is the primary (blocking send), rest use try_send.
     pub event_subs: Vec<EventSink>,
@@ -92,6 +106,27 @@ pub(crate) struct AgentRunState {
     pub repeated_failures: HashMap<(String, ErrorKind), Vec<ToolError>>,
     /// Set when this worker emits `RunFailed`; supervisor reads via stop reason.
     pub last_failure: Option<RunFailureKind>,
+}
+
+/// The store and id a run's session log is written to.
+#[derive(Clone)]
+pub(crate) struct SessionBinding {
+    pub store: Arc<dyn SessionStore>,
+    pub session_id: String,
+    pub policy: CheckpointPolicy,
+}
+
+impl SessionBinding {
+    pub(crate) fn from_config(config: &AgentConfig) -> Option<Self> {
+        match (&config.session_store, &config.session_id) {
+            (Some(store), Some(session_id)) => Some(Self {
+                store: Arc::clone(store),
+                session_id: session_id.clone(),
+                policy: config.checkpoint_policy,
+            }),
+            _ => None,
+        }
+    }
 }
 
 struct PreparedHandoffTransition {
@@ -108,19 +143,19 @@ impl AgentRunState {
     fn refresh_terminal_hook_ctx(&mut self, step: u32) {
         self.run_hook_ctx.step = step;
         self.run_hook_ctx.budget_used = self.budget.usage().clone();
-        self.run_hook_ctx.final_messages = self.messages.clone();
+        self.run_hook_ctx.final_messages = self.log.messages().to_vec();
         self.run_hook_ctx.active_config = Some(self.config.clone());
     }
 }
 
 // ── Constructor args ──────────────────────────────────────────────────────────
 
-/// Resume payload: injected by `AgentRun::resume` to restore prior run state.
+/// Resume payload: the session log a resumed run continues, plus any new
+/// user turn to record before the first step.
 #[derive(Clone)]
 pub(crate) struct ResumeState {
-    pub messages: Vec<crate::model::Message>,
-    pub step: u32,
-    pub budget_used: crate::budget::BudgetUsage,
+    pub log: SessionLog,
+    pub input: Option<Vec<ContentBlock>>,
 }
 
 #[derive(Clone)]
@@ -131,9 +166,9 @@ pub(crate) struct AgentRunArgs {
     pub model: Arc<dyn ModelAdapter>,
     pub registry: ToolRegistry,
     pub event_tx: mpsc::Sender<RuntimeEvent>,
-    pub approval_bus: ApprovalBus,
+    pub request_bus: RequestBus,
     pub child_registry: ChildRunRegistry,
-    /// `None` on a fresh start; `Some` when resuming from a persisted snapshot.
+    /// `None` on a fresh start; `Some` when resuming a session log.
     pub resume: Option<ResumeState>,
     /// Extra messages to prepend (between system prompt and user input) on a fresh start.
     pub initial_messages: Vec<crate::model::Message>,
@@ -144,6 +179,8 @@ pub(crate) struct AgentRunArgs {
     /// When set, each `initial_event_subs` entry is a watcher secondary that
     /// participates in multi-watcher action arbitration (SB-7).
     pub watcher_wave_bus: Option<std::sync::Arc<dyn FanoutWaveBus>>,
+    /// Shared by every worker of the run (across restarts) and its handle.
+    pub cancel: CancelToken,
 }
 
 // ── WorkerActor ───────────────────────────────────────────────────────────────
@@ -167,12 +204,13 @@ impl Actor for WorkerActor {
             model,
             mut registry,
             event_tx,
-            approval_bus,
+            request_bus,
             child_registry,
             resume,
             initial_messages,
             initial_event_subs,
             watcher_wave_bus,
+            cancel,
         } = args;
         backfill_context_window_size(&mut config, model.as_ref());
         let event_subs = build_pre_start_event_subs(event_tx, initial_event_subs, watcher_wave_bus);
@@ -215,7 +253,7 @@ impl Actor for WorkerActor {
                 config,
                 model,
                 registry,
-                approval_bus,
+                request_bus,
                 child_registry.clone(),
                 run_hook_ctx,
                 error.message,
@@ -234,7 +272,7 @@ impl Actor for WorkerActor {
                     config,
                     model,
                     registry,
-                    approval_bus,
+                    request_bus,
                     child_registry.clone(),
                     run_hook_ctx,
                     error.to_string(),
@@ -255,7 +293,7 @@ impl Actor for WorkerActor {
                         config,
                         model,
                         registry,
-                        approval_bus,
+                        request_bus,
                         child_registry.clone(),
                         run_hook_ctx,
                         format!("skill loading failed: {error}"),
@@ -277,7 +315,7 @@ impl Actor for WorkerActor {
                 config,
                 model,
                 registry,
-                approval_bus,
+                request_bus,
                 child_registry.clone(),
                 run_hook_ctx,
                 format!("tool metadata validation failed: {error}"),
@@ -285,8 +323,36 @@ impl Actor for WorkerActor {
             .await);
         }
 
-        let (messages, initial_step, initial_budget_used) =
-            build_startup_conversation(resume, &config, &disclosed_skills, initial_messages, input);
+        let session = SessionBinding::from_config(&config);
+        let resuming = resume.is_some();
+        let run_started = SessionEventKind::RunStarted {
+            run_id,
+            agent_name: config.name.clone(),
+        };
+        let mut log = build_startup_log(
+            resume,
+            run_started,
+            startup_system_prompt(&config, &disclosed_skills),
+            initial_messages,
+            input,
+        );
+        if let Some(binding) = &session {
+            if let Err(error) = open_session_log(binding, resuming, &config.name, &mut log).await {
+                return Ok(fail_pre_start(
+                    &myself,
+                    &event_subs,
+                    run_id,
+                    config,
+                    model,
+                    registry,
+                    request_bus,
+                    child_registry.clone(),
+                    run_hook_ctx,
+                    format!("session log: {error}"),
+                )
+                .await);
+            }
+        }
 
         let tool_defs = match prepare_initial_tool_defs(&config, &mut registry) {
             Ok(defs) => defs,
@@ -305,7 +371,7 @@ impl Actor for WorkerActor {
                     config,
                     model,
                     registry,
-                    approval_bus,
+                    request_bus,
                     child_registry,
                     event_subs,
                     run_hook_ctx,
@@ -313,8 +379,8 @@ impl Actor for WorkerActor {
             }
         };
 
-        let budget = if let Some(used) = initial_budget_used {
-            BudgetGuard::with_usage(config.budget.clone(), used)
+        let budget = if resuming {
+            BudgetGuard::with_usage(config.budget.clone(), log.projection().budget_used.clone())
         } else {
             BudgetGuard::new(config.budget.clone())
         };
@@ -327,14 +393,15 @@ impl Actor for WorkerActor {
             model,
             unfiltered_registry,
             registry,
-            messages,
+            log,
+            session,
             tool_defs,
-            step: initial_step,
             budget,
             last_compaction_step: None,
-            cancelled: false,
+            cancel,
+            finished: false,
             run_hook_ctx,
-            approval_bus,
+            request_bus,
             child_registry,
             event_subs,
             webhook_runtime,
@@ -351,7 +418,10 @@ impl Actor for WorkerActor {
     ) -> Result<(), ActorProcessingErr> {
         match msg {
             AgentMsg::RunStep => {
-                if state.cancelled {
+                if state.cancel.is_cancelled() {
+                    abort_run(state).await;
+                }
+                if state.finished {
                     myself.stop(run_failed_stop_reason(state.last_failure));
                     return Ok(());
                 }
@@ -393,27 +463,18 @@ impl Actor for WorkerActor {
                 ));
             }
             AgentMsg::Steer(cmd) => {
-                state.messages.push(Message {
-                    role: Role::System,
+                state.log.append(SessionEventKind::SystemMessage {
                     content: vec![ContentBlock::Text(cmd.instruction)],
                 });
             }
             AgentMsg::Inject(cmd) => {
-                state.messages.push(Message {
-                    role: Role::User,
+                state.log.append(SessionEventKind::UserMessage {
                     content: vec![ContentBlock::Text(cmd.message)],
                 });
             }
-            AgentMsg::Cancel(cmd) => {
-                if !state.cancelled {
-                    state.cancelled = true;
-                    emit(
-                        &state.event_subs,
-                        RuntimeEvent::RunAborted { reason: cmd.reason },
-                    )
-                    .await;
-                }
-                myself.stop(None);
+            AgentMsg::Cancel => {
+                abort_run(state).await;
+                myself.stop(run_failed_stop_reason(state.last_failure));
             }
         }
         Ok(())
@@ -424,9 +485,71 @@ impl Actor for WorkerActor {
         _myself: ActorRef<AgentMsg>,
         state: &mut AgentRunState,
     ) -> Result<(), ActorProcessingErr> {
-        state.approval_bus.cancel(state.run_id).await;
+        state.request_bus.cancel_run(state.run_id).await;
         Ok(())
     }
+}
+
+/// The result of an async job a cancellation stopped waiting for: the job
+/// may still complete outside the run.
+fn abandoned_async_job_result() -> Value {
+    let error = ToolError::fatal(
+        "run cancelled while the async job was running; the job may still complete",
+    )
+    .with_code("ASYNC_JOB_ABANDONED");
+    tool_error_result(&error)
+}
+
+/// Ends the run as cancelled, unless it already ended: resolves its pending
+/// requests, asks the process terminator to stop its external processes,
+/// closes the open step, and records and emits `RunAborted`.
+async fn abort_run(state: &mut AgentRunState) {
+    if state.finished {
+        return;
+    }
+    state.finished = true;
+    let cancellation = state
+        .cancel
+        .cancellation()
+        .unwrap_or_else(Cancellation::user);
+    state.request_bus.cancel_run(state.run_id).await;
+    terminate_processes(state, &cancellation).await;
+    state.log.close_aborted_step();
+    state.log.append(SessionEventKind::RunAborted {
+        reason: cancellation.message.clone(),
+        cancel_reason: Some(cancellation.reason),
+    });
+    persist_terminal(state).await;
+    emit(
+        &state.event_subs,
+        RuntimeEvent::RunAborted {
+            reason: cancellation.message,
+            cancel_reason: Some(cancellation.reason),
+        },
+    )
+    .await;
+}
+
+/// Best effort: a terminator that fails or hangs is reported, not retried.
+async fn terminate_processes(state: &AgentRunState, cancellation: &Cancellation) {
+    let Some(terminator) = state.config.runtime.process_terminator.clone() else {
+        return;
+    };
+    let outcome = tokio::time::timeout(
+        PROCESS_TERMINATION_TIMEOUT,
+        terminator.terminate(state.run_id, cancellation),
+    )
+    .await
+    .unwrap_or_else(|_| Err("process termination timed out".into()));
+    let (terminated, error) = match outcome {
+        Ok(count) => (Some(count), None),
+        Err(error) => (None, Some(error)),
+    };
+    emit(
+        &state.event_subs,
+        RuntimeEvent::ProcessesTerminated { terminated, error },
+    )
+    .await;
 }
 
 fn prepare_initial_tool_defs(
@@ -499,35 +622,215 @@ fn build_pre_start_event_subs(
     event_subs
 }
 
-/// Build the initial conversation for a fresh start or resume snapshot.
-fn build_startup_conversation(
-    resume: Option<ResumeState>,
-    config: &AgentConfig,
-    disclosed_skills: &[SkillSummary],
-    initial_messages: Vec<Message>,
-    input: Vec<ContentBlock>,
-) -> (Vec<Message>, u32, Option<crate::budget::BudgetUsage>) {
-    if let Some(rs) = resume {
-        return (rs.messages, rs.step, Some(rs.budget_used));
-    }
-    // Level-1 skill disclosure: scanned skill metadata rides at the
-    // tail of the system prompt (or forms the whole System message
-    // when no prompt was configured). `Off` injects nothing.
-    let system_prompt = if config.skills.disclosure == SkillDisclosure::Off {
+/// Level-1 skill disclosure: scanned skill metadata rides at the tail of the
+/// system prompt (or forms the whole System message when no prompt was
+/// configured). `Off` injects nothing.
+fn startup_system_prompt(config: &AgentConfig, disclosed_skills: &[SkillSummary]) -> String {
+    if config.skills.disclosure == SkillDisclosure::Off {
         config.system_prompt.clone()
     } else {
         with_disclosure_block(&config.system_prompt, disclosed_skills)
-    };
-    let mut msgs = vec![Message {
-        role: Role::System,
+    }
+}
+
+/// Build the session log for a fresh start, or continue a resumed one.
+fn build_startup_log(
+    resume: Option<ResumeState>,
+    run_started: SessionEventKind,
+    system_prompt: String,
+    initial_messages: Vec<Message>,
+    input: Vec<ContentBlock>,
+) -> SessionLog {
+    if let Some(rs) = resume {
+        let mut log = rs.log;
+        log.close_interrupted_step();
+        log.append(run_started);
+        if let Some(content) = rs.input {
+            log.append(SessionEventKind::UserMessage { content });
+        }
+        return log;
+    }
+    let mut log = SessionLog::new();
+    log.append(run_started);
+    log.append(SessionEventKind::SystemMessage {
         content: vec![ContentBlock::Text(system_prompt)],
-    }];
-    msgs.extend(initial_messages);
-    msgs.push(Message {
-        role: Role::User,
-        content: input,
     });
-    (msgs, 0, None)
+    for message in initial_messages {
+        log.append_message(message);
+    }
+    log.append(SessionEventKind::UserMessage { content: input });
+    log
+}
+
+/// Opens the session a run writes to and makes the startup events durable.
+///
+/// A resumed run first flushes what the store already accepted, so a crash
+/// right after resuming cannot lose it, and records the policy it now writes
+/// under in the session metadata.
+async fn open_session_log(
+    binding: &SessionBinding,
+    resuming: bool,
+    agent_name: &str,
+    log: &mut SessionLog,
+) -> Result<(), SessionError> {
+    if resuming {
+        binding.store.flush(&binding.session_id).await?;
+        if let Some(meta) = binding.store.get_meta(&binding.session_id).await? {
+            if meta.checkpoint_policy != binding.policy {
+                let meta = meta.with_checkpoint_policy(binding.policy);
+                binding.store.put_meta(&meta).await?;
+            }
+        }
+    } else {
+        open_fresh_session(binding, agent_name).await?;
+    }
+    persist_durable(binding, log).await
+}
+
+/// A fresh run owns its session from the first event: it refuses a session
+/// that already holds events and records the session's metadata.
+async fn open_fresh_session(
+    binding: &SessionBinding,
+    agent_name: &str,
+) -> Result<(), SessionError> {
+    if !binding.store.read(&binding.session_id, 1).await?.is_empty() {
+        return Err(SessionError::AlreadyExists(binding.session_id.clone()));
+    }
+    let meta =
+        SessionMeta::new(&binding.session_id, agent_name).with_checkpoint_policy(binding.policy);
+    binding.store.put_meta(&meta).await
+}
+
+/// Hands the log's unpersisted events to the store, then crosses the
+/// store's durability barrier.
+async fn persist_durable(
+    binding: &SessionBinding,
+    log: &mut SessionLog,
+) -> Result<(), SessionError> {
+    let pending = log.unpersisted();
+    if !pending.is_empty() {
+        binding.store.append(&binding.session_id, pending).await?;
+        log.mark_persisted();
+    }
+    binding.store.flush(&binding.session_id).await
+}
+
+/// Reports the ledger events recorded since the last report (dispatch
+/// markers and settled results) on the event stream. Runs at every
+/// checkpoint and before every terminal event.
+async fn report_ledger(state: &mut AgentRunState, subs: &[EventSink]) {
+    let events: Vec<RuntimeEvent> = state
+        .log
+        .take_unobserved()
+        .iter()
+        .filter_map(|event| ledger_event(&event.kind))
+        .collect();
+    for event in events {
+        emit(subs, event).await;
+    }
+}
+
+fn ledger_event(kind: &SessionEventKind) -> Option<RuntimeEvent> {
+    match kind {
+        SessionEventKind::ToolDispatched {
+            tool_use_id,
+            tool_name,
+            ..
+        } => Some(RuntimeEvent::ToolDispatched {
+            tool_use_id: tool_use_id.clone(),
+            tool_name: tool_name.clone(),
+        }),
+        SessionEventKind::ToolResult {
+            tool_use_id,
+            content,
+        } => {
+            // Error results have the shape `tool_error_result` produces.
+            let error = content
+                .as_object()
+                .filter(|o| o.len() == 1)
+                .and_then(|o| o.get("error"))
+                .filter(|e| e.get("message").is_some());
+            Some(RuntimeEvent::ToolSettled {
+                tool_use_id: tool_use_id.clone(),
+                is_error: error.is_some(),
+                error_code: error
+                    .and_then(|e| e.get("code"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// A point in a run where the session log may be made durable.
+#[derive(Debug, Clone, Copy)]
+enum Checkpoint {
+    /// After `StepStarted`, before the model request.
+    StepStart,
+    /// After a `ToolDispatched` marker, before the tool runs.
+    BeforeDispatch { side_effect: bool },
+    /// After a tool result was recorded.
+    AfterToolResult,
+    /// After `StepEnded`.
+    StepEnd,
+}
+
+impl Checkpoint {
+    fn due(self, policy: CheckpointPolicy) -> bool {
+        match self {
+            Checkpoint::StepStart | Checkpoint::StepEnd => true,
+            Checkpoint::BeforeDispatch { side_effect: true } => true,
+            Checkpoint::BeforeDispatch { side_effect: false } | Checkpoint::AfterToolResult => {
+                policy == CheckpointPolicy::EveryTool
+            }
+        }
+    }
+}
+
+/// Makes the log durable when the session's policy asks for it at `point`.
+/// A store that refuses the log fails the run: continuing would leave the
+/// host's execution state behind the run.
+async fn checkpoint(state: &mut AgentRunState, subs: &[EventSink], point: Checkpoint) -> bool {
+    report_ledger(state, subs).await;
+    let Some(binding) = state.session.clone() else {
+        return true;
+    };
+    if !point.due(binding.policy) {
+        return true;
+    }
+    match persist_durable(&binding, &mut state.log).await {
+        Ok(()) => true,
+        Err(error) => {
+            emit_run_failed(
+                state,
+                subs,
+                format!("session checkpoint failed: {error}"),
+                RunFailureKind::Other,
+            )
+            .await;
+            false
+        }
+    }
+}
+
+/// Makes the log durable after a terminal event. The run is ending either
+/// way, so a store failure is reported as a warning.
+async fn persist_terminal(state: &mut AgentRunState) {
+    let subs = state.event_subs.clone();
+    report_ledger(state, &subs).await;
+    let Some(binding) = state.session.clone() else {
+        return;
+    };
+    if let Err(error) = persist_durable(&binding, &mut state.log).await {
+        emit(
+            &state.event_subs,
+            RuntimeEvent::RuntimeWarning {
+                message: format!("session log persistence failed: {error}"),
+            },
+        )
+        .await;
+    }
 }
 
 async fn register_code_execution_tools(
@@ -618,63 +921,148 @@ fn tool_retry_delay(next_attempt: u32) -> Duration {
     TOOL_RETRY_BASE_DELAY.saturating_mul(1 << exponent)
 }
 
-struct RetryApprovalRequest<'a> {
-    approval_bus: &'a ApprovalBus,
-    subs: &'a [EventSink],
-    run_id: RunId,
-    tool_call: &'a ToolCall,
-    attempt: u32,
-    previous_error: &'a ToolError,
+/// What an approval request asks.
+struct ApprovalAsk {
+    kind: &'static str,
+    context: ApprovalContext,
+    /// The permission decision behind the ask, for the request payload.
+    permission: Option<Value>,
 }
 
-async fn request_retry_approval(request: RetryApprovalRequest<'_>) -> bool {
-    let context = ApprovalContext::RetryAfterFailure {
-        attempt: request.attempt,
-        previous_error: request.previous_error.clone(),
+/// Raises a tool-approval request on the run tree's request bus, records its
+/// lifecycle in the session log, and waits for the host, the run's request
+/// timeout, or the run to stop. Anything but an approving response fails
+/// closed.
+async fn await_tool_approval(
+    state: &mut AgentRunState,
+    subs: &[EventSink],
+    tool_call: &ToolCall,
+    ask: ApprovalAsk,
+) -> RequestResolution {
+    let ApprovalAsk {
+        kind,
+        context,
+        permission,
+    } = ask;
+    let run_id = state.run_id;
+    let id = RequestId::new(run_id, state.log.projection().requests_opened + 1);
+    let kind = RequestKind::new(kind);
+    let mut payload = json!({ "tool_call": tool_call, "context": context });
+    if let Some(permission) = permission {
+        payload["permission"] = permission;
+    }
+    let request = PendingRequest {
+        id: id.clone(),
+        run_id,
+        kind: kind.clone(),
+        payload: payload.clone(),
+        target: RequestTarget::ToolCall {
+            tool_use_id: tool_call.id.clone(),
+            tool_name: tool_call.name.clone(),
+        },
     };
-    let approval_rx = request.approval_bus.request(request.run_id).await;
-    let approval_started = Instant::now();
+    state.log.append(SessionEventKind::RequestOpened {
+        request: request.clone(),
+    });
+    let rx = state.request_bus.open(request.clone()).await;
+    let started = Instant::now();
+    emit(subs, RuntimeEvent::RequestOpened { request }).await;
     emit(
-        request.subs,
+        subs,
         RuntimeEvent::ApprovalRequested {
-            tool_call: request.tool_call.clone(),
+            request_id: id.clone(),
+            kind: kind.clone(),
+            payload,
+            tool_call: tool_call.clone(),
             context: context.clone(),
         },
     )
     .await;
 
-    let (approved, approval_status) =
-        match tokio::time::timeout(APPROVAL_TIMEOUT, approval_rx).await {
-            Ok(result) => {
-                let approved = result.unwrap_or(false);
-                (approved, if approved { "granted" } else { "denied" })
+    let bus = state.request_bus.clone();
+    let cancel = state.cancel.clone();
+    let wait = tokio::time::timeout(state.config.runtime.request_timeout, rx);
+    let resolution = tokio::select! {
+        biased;
+        () = cancel.cancelled() => {
+            bus.close(&id).await;
+            RequestResolution::Cancelled
+        }
+        waited = wait => match waited {
+            Ok(Ok(resolution)) => resolution,
+            Ok(Err(_)) => RequestResolution::Cancelled,
+            Err(_) => {
+                bus.close(&id).await;
+                RequestResolution::TimedOut
             }
-            Err(_) => (false, "timeout"),
-        };
-    request.approval_bus.cancel(request.run_id).await;
-    telemetry::record_approval(approval_status, approval_started.elapsed());
-
-    if approved {
-        emit(
-            request.subs,
-            RuntimeEvent::ApprovalGranted {
-                tool_call: request.tool_call.clone(),
-                context,
-            },
-        )
-        .await;
+        },
+    };
+    state.log.append(SessionEventKind::RequestResolved {
+        request_id: id.clone(),
+        resolution: resolution.clone(),
+    });
+    telemetry::record_approval(resolution_label(&resolution), started.elapsed());
+    emit(
+        subs,
+        RuntimeEvent::RequestResolved {
+            request_id: id.clone(),
+            kind,
+            resolution: resolution.clone(),
+        },
+    )
+    .await;
+    let event = if resolution.is_approved() {
+        RuntimeEvent::ApprovalGranted {
+            request_id: id,
+            tool_call: tool_call.clone(),
+            context,
+        }
     } else {
-        emit(
-            request.subs,
-            RuntimeEvent::ApprovalDenied {
-                tool_call: request.tool_call.clone(),
-                context,
-            },
-        )
-        .await;
-    }
+        RuntimeEvent::ApprovalDenied {
+            request_id: id,
+            tool_call: tool_call.clone(),
+            context,
+        }
+    };
+    emit(subs, event).await;
+    resolution
+}
 
-    approved
+fn resolution_label(resolution: &RequestResolution) -> &'static str {
+    match resolution {
+        RequestResolution::Responded { response } if response.is_approved() => "granted",
+        RequestResolution::Responded { .. } => "denied",
+        RequestResolution::Withdrawn => "withdrawn",
+        RequestResolution::TimedOut => "timeout",
+        _ => "cancelled",
+    }
+}
+
+/// The tool result for a call whose approval was not granted.
+fn approval_refused_error(resolution: &RequestResolution) -> ToolError {
+    match resolution {
+        RequestResolution::Withdrawn => {
+            ToolError::fatal("approval request withdrawn").with_code("APPROVAL_WITHDRAWN")
+        }
+        RequestResolution::TimedOut => {
+            ToolError::fatal("approval request timed out").with_code("APPROVAL_TIMEOUT")
+        }
+        RequestResolution::Responded {
+            response:
+                RequestResponse {
+                    decision:
+                        RequestDecision::Deny {
+                            reason: Some(reason),
+                        },
+                    ..
+                },
+        } => ToolError::fatal(format!("tool call denied by user: {reason}"))
+            .with_code("APPROVAL_DENIED"),
+        RequestResolution::Responded { .. } => {
+            ToolError::fatal("tool call denied by user").with_code("APPROVAL_DENIED")
+        }
+        _ => ToolError::fatal("approval request cancelled").with_code("APPROVAL_CANCELLED"),
+    }
 }
 
 async fn record_repeated_failure(
@@ -711,7 +1099,7 @@ async fn record_repeated_failure(
 }
 
 async fn check_step_limits(state: &mut AgentRunState, subs: &[EventSink]) -> bool {
-    let step = state.step;
+    let step = state.log.step();
 
     if step >= state.config.runtime.max_steps {
         state.refresh_terminal_hook_ctx(step);
@@ -759,7 +1147,7 @@ async fn check_step_limits(state: &mut AgentRunState, subs: &[EventSink]) -> boo
 }
 
 async fn call_model_phase(state: &mut AgentRunState, subs: &[EventSink]) -> Option<ModelResponse> {
-    let step = state.step;
+    let step = state.log.step();
     let run_id = state.run_id;
 
     emit(subs, RuntimeEvent::ModelCallStarted { step }).await;
@@ -768,12 +1156,12 @@ async fn call_model_phase(state: &mut AgentRunState, subs: &[EventSink]) -> Opti
     // Each before_model invocation (including retries) receives a fresh clone
     // of this snapshot, so hook injections are ephemeral: they are passed to
     // the model for this call but never accumulate in the durable conversation
-    // history stored in state.messages.
-    let pre_step_messages = state.messages.clone();
+    // history projected from the session log.
+    let pre_step_messages = state.log.messages().to_vec();
     let mut retry_attempt: u32 = 0;
     loop {
         // Build per-attempt call context from the clean pre-step snapshot.
-        // Hook mutations stay inside call_messages; state.messages is untouched.
+        // Hook mutations stay inside call_messages; the session log is untouched.
         let call_messages = {
             let mut model_ctx = crate::hook::ModelHookContext {
                 run_id,
@@ -809,7 +1197,40 @@ async fn call_model_phase(state: &mut AgentRunState, subs: &[EventSink]) -> Opti
             return None;
         }
 
-        let raw_response = dispatch_model_call(state, subs, &call_messages).await;
+        let message_id = format!("msg_{}", uuid::Uuid::new_v4());
+        emit(
+            subs,
+            RuntimeEvent::MessageStarted {
+                message_id: message_id.clone(),
+                step,
+            },
+        )
+        .await;
+        let cancel = state.cancel.clone();
+        let raw_response = tokio::select! {
+            biased;
+            () = cancel.cancelled() => None,
+            response = dispatch_model_call(state, subs, &call_messages, &message_id) => {
+                Some(response)
+            }
+        };
+        let (content, stop_reason) = match &raw_response {
+            Some(Ok(response)) => (response.content.clone(), Some(response.stop_reason.clone())),
+            _ => (Vec::new(), None),
+        };
+        emit(
+            subs,
+            RuntimeEvent::MessageEnded {
+                message_id,
+                content,
+                stop_reason,
+            },
+        )
+        .await;
+        let Some(raw_response) = raw_response else {
+            abort_run(state).await;
+            return None;
+        };
 
         match raw_response {
             Ok(response) => {
@@ -861,7 +1282,7 @@ async fn validate_context_window(
     let error = format!(
         "context window exceeded: estimated {estimated_tokens} tokens, limit {context_window_size}"
     );
-    state.refresh_terminal_hook_ctx(state.step);
+    state.refresh_terminal_hook_ctx(state.log.step());
     crate::hook::runner::run_on_run_error(
         &state.config.hooks,
         &state.run_hook_ctx,
@@ -877,21 +1298,23 @@ async fn dispatch_model_call(
     state: &AgentRunState,
     subs: &[EventSink],
     call_messages: &[Message],
+    message_id: &str,
 ) -> Result<ModelResponse, crate::model::ModelError> {
     let (stream_tx, mut stream_rx) = mpsc::channel::<ModelStreamChunk>(64);
     let event_tx_clone = primary(subs).clone();
+    let message_id = message_id.to_string();
     let forward_task = tokio::spawn(async move {
         while let Some(chunk) = stream_rx.recv().await {
-            if tokio::time::timeout(
-                EVENT_SEND_TIMEOUT,
-                event_tx_clone.send(RuntimeEvent::ModelStreamChunk { delta: chunk }),
-            )
-            .await
-            .is_err()
+            let update =
+                MessageDelta::from_stream(&chunk).map(|delta| RuntimeEvent::MessageUpdated {
+                    message_id: message_id.clone(),
+                    delta,
+                });
+            for event in
+                std::iter::once(RuntimeEvent::ModelStreamChunk { delta: chunk }).chain(update)
             {
-                tracing::warn!(
-                    "primary event subscriber timed out while forwarding model stream chunk"
-                );
+                // Lossless: a slow host makes the model stream wait.
+                let _ = event_tx_clone.send(event).await;
             }
         }
     });
@@ -940,7 +1363,7 @@ async fn apply_after_model_hooks(
         crate::hook::runner::run_after_model(&state.config.hooks, &mut model_ctx, primary(subs))
             .await
     {
-        state.refresh_terminal_hook_ctx(state.step);
+        state.refresh_terminal_hook_ctx(state.log.step());
         crate::hook::runner::run_on_run_error(
             &state.config.hooks,
             &state.run_hook_ctx,
@@ -981,12 +1404,16 @@ async fn handle_model_error_or_retry(
             },
         )
         .await;
-        tokio::time::sleep(delay).await;
+        // A cancellation ends the wait; the next attempt then aborts.
+        tokio::select! {
+            () = tokio::time::sleep(delay) => {}
+            () = state.cancel.cancelled() => {}
+        }
         return true;
     }
 
     let error = error.to_string();
-    state.refresh_terminal_hook_ctx(state.step);
+    state.refresh_terminal_hook_ctx(state.log.step());
     crate::hook::runner::run_on_run_error(
         &state.config.hooks,
         &state.run_hook_ctx,
@@ -1028,19 +1455,24 @@ struct ParallelExecutionContext {
     event_tx: mpsc::Sender<RuntimeEvent>,
     event_subs: Vec<EventSink>,
     webhook_base_url: Option<String>,
-    approval_bus: ApprovalBus,
+    request_bus: RequestBus,
     child_registry: ChildRunRegistry,
     remaining_budget: BudgetConfig,
     parent_messages: Vec<Message>,
+    cancel: CancelToken,
 }
 
 /// Execute one outer-loop iteration. Returns true to continue, false to stop.
 async fn run_one_step(state: &mut AgentRunState) -> bool {
     let subs = state.event_subs.clone();
-    let step = state.step;
+    let step = state.log.step();
     let run_id = state.run_id;
 
     if !check_step_limits(state, &subs).await {
+        return false;
+    }
+    state.log.append(SessionEventKind::StepStarted { step });
+    if !checkpoint(state, &subs, Checkpoint::StepStart).await {
         return false;
     }
 
@@ -1060,17 +1492,31 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
     )
     .await;
 
-    maybe_compact_context(
-        &state.config,
-        &state.model,
-        &mut state.messages,
-        primary(&subs),
-        &mut state.last_compaction_step,
-        step,
-        &response.usage,
-        run_id,
-    )
-    .await;
+    let mut working_messages = state.log.messages().to_vec();
+    let cancel = state.cancel.clone();
+    let cancelled = tokio::select! {
+        biased;
+        () = cancel.cancelled() => true,
+        () = maybe_compact_context(
+            &state.config,
+            &state.model,
+            &mut working_messages,
+            primary(&subs),
+            &mut state.last_compaction_step,
+            step,
+            &response.usage,
+            run_id,
+        ) => false,
+    };
+    if cancelled {
+        abort_run(state).await;
+        return false;
+    }
+    if working_messages.as_slice() != state.log.messages() {
+        state.log.append(SessionEventKind::Compacted {
+            messages: working_messages,
+        });
+    }
 
     let mut tool_uses = Vec::new();
     let mut text_parts = Vec::new();
@@ -1092,8 +1538,13 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
     }
 
     match &response.stop_reason {
-        StopReason::EndTurn if tool_uses.is_empty() => {
+        StopReason::EndTurn | StopReason::MaxTokens if tool_uses.is_empty() => {
             let output = json!(text_parts.join(""));
+            let stop_reason = response.stop_reason.clone();
+            state.log.append(SessionEventKind::AssistantMessage {
+                content: response.content.clone(),
+            });
+            end_step(state);
             state.refresh_terminal_hook_ctx(step);
             crate::hook::runner::run_on_run_end(
                 &state.config.hooks,
@@ -1101,30 +1552,17 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
                 primary(&subs),
             )
             .await;
+            state.finished = true;
+            state.log.append(SessionEventKind::RunEnded {
+                output: output.clone(),
+                stop_reason: stop_reason.clone(),
+            });
+            persist_terminal(state).await;
             emit(
                 &subs,
                 RuntimeEvent::RunCompleted {
                     output,
-                    stop_reason: StopReason::EndTurn,
-                },
-            )
-            .await;
-            return false;
-        }
-        StopReason::MaxTokens if tool_uses.is_empty() => {
-            let output = json!(text_parts.join(""));
-            state.refresh_terminal_hook_ctx(step);
-            crate::hook::runner::run_on_run_end(
-                &state.config.hooks,
-                &state.run_hook_ctx,
-                primary(&subs),
-            )
-            .await;
-            emit(
-                &subs,
-                RuntimeEvent::RunCompleted {
-                    output,
-                    stop_reason: StopReason::MaxTokens,
+                    stop_reason,
                 },
             )
             .await;
@@ -1151,7 +1589,72 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         _ => {}
     }
 
-    run_tool_and_handoff_phase(state, &subs, run_id, &response, &tool_uses).await
+    if !run_tool_and_handoff_phase(state, &subs, run_id, &response, &tool_uses).await {
+        return false;
+    }
+    checkpoint(state, &subs, Checkpoint::StepEnd).await
+}
+
+/// Closes the current step in the log.
+fn end_step(state: &mut AgentRunState) {
+    let step = state.log.step();
+    state.log.append(SessionEventKind::StepEnded {
+        step,
+        budget_used: state.budget.usage().clone(),
+    });
+}
+
+/// Records the results in `tool_results` not yet in `logged`, except `held`.
+/// Returns whether any were recorded.
+fn log_landed_results(
+    log: &mut SessionLog,
+    tool_results: &[ContentBlock],
+    logged: &mut HashSet<String>,
+    held: Option<&str>,
+) -> bool {
+    let mut recorded = false;
+    for block in tool_results {
+        let ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+        } = block
+        else {
+            continue;
+        };
+        if Some(tool_use_id.as_str()) == held || logged.contains(tool_use_id) {
+            continue;
+        }
+        log.append(SessionEventKind::ToolResult {
+            tool_use_id: tool_use_id.clone(),
+            content: content.clone(),
+        });
+        logged.insert(tool_use_id.clone());
+        recorded = true;
+    }
+    recorded
+}
+
+/// Records tool-result blocks; consecutive results project into one user
+/// message after the assistant message that requested them.
+fn append_tool_results(log: &mut SessionLog, results: Vec<ContentBlock>) {
+    for block in results {
+        match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+            } => {
+                log.append(SessionEventKind::ToolResult {
+                    tool_use_id,
+                    content,
+                });
+            }
+            other => {
+                log.append(SessionEventKind::UserMessage {
+                    content: vec![other],
+                });
+            }
+        }
+    }
 }
 
 #[allow(clippy::too_many_lines)] // justified: mechanical extraction of existing tool dispatch flow; narrower helpers follow in later refactors
@@ -1162,8 +1665,7 @@ async fn run_tool_and_handoff_phase(
     response: &ModelResponse,
     tool_uses: &[ToolCall],
 ) -> bool {
-    state.messages.push(Message {
-        role: Role::Assistant,
+    state.log.append(SessionEventKind::AssistantMessage {
         content: response.content.clone(),
     });
 
@@ -1174,17 +1676,34 @@ async fn run_tool_and_handoff_phase(
     if let Some(parallel_results) =
         run_parallel_tool_batch_if_allowed(state, subs, run_id, tool_uses).await
     {
+        let Some(parallel_results) = parallel_results else {
+            return false;
+        };
         // Canonical tool-result message: `Role::User` + ToolResult blocks, same
         // as the serial/handoff paths (Anthropic convention; the OpenAI-dialect
         // chat adapter converts ToolResult blocks to wire `role:"tool"`).
-        state.messages.push(Message {
-            role: Role::User,
-            content: parallel_results,
-        });
+        append_tool_results(&mut state.log, parallel_results);
+        end_step(state);
         return true;
     }
 
+    // Results are recorded as they land, so a checkpoint before the next
+    // dispatch carries them. The handoff tool's result is held back: a failed
+    // transition replaces it in `apply_tool_phase_results`.
+    let mut logged: HashSet<String> = HashSet::new();
     for tool_call in tool_uses {
+        let held = pending_handoff.as_ref().map(|h| h.tool_use_id.as_str());
+        if log_landed_results(&mut state.log, &tool_results, &mut logged, held)
+            && !checkpoint(state, subs, Checkpoint::AfterToolResult).await
+        {
+            return false;
+        }
+        // No new dispatch after a cancellation; the remaining calls are
+        // closed as aborted before dispatch.
+        if state.cancel.is_cancelled() {
+            abort_run(state).await;
+            return false;
+        }
         if let Some(error) = deferred_tool_exposure_error(state, &tool_call.name) {
             emit(
                 subs,
@@ -1282,59 +1801,49 @@ async fn run_tool_and_handoff_phase(
             input: tool_input.clone(),
         };
 
-        if state.config.runtime.should_approve(tool.metadata()) {
-            let approval_context = approval_context_for(tool.metadata());
-            let approval_rx = state.approval_bus.request(run_id).await;
-            let approval_started = Instant::now();
-            emit(
-                subs,
-                RuntimeEvent::ApprovalRequested {
-                    tool_call: effective_call.clone(),
-                    context: approval_context.clone(),
-                },
-            )
-            .await;
-
-            let approved = match tokio::time::timeout(APPROVAL_TIMEOUT, approval_rx).await {
-                Ok(result) => result.unwrap_or(false),
-                Err(_) => {
-                    telemetry::record_approval("timeout", approval_started.elapsed());
-                    emit_run_failed(state, subs, "approval_timeout", RunFailureKind::Other).await;
-                    return false;
-                }
-            };
-            state.approval_bus.cancel(run_id).await;
-            telemetry::record_approval(
-                if approved { "granted" } else { "denied" },
-                approval_started.elapsed(),
-            );
-
-            if approved {
-                emit(
-                    subs,
-                    RuntimeEvent::ApprovalGranted {
-                        tool_call: effective_call.clone(),
-                        context: approval_context,
-                    },
-                )
-                .await;
-            } else {
+        let decision = decide_permission(state, tool.as_ref(), &effective_call);
+        emit(
+            subs,
+            RuntimeEvent::PermissionDecided {
+                tool_call_id: effective_call.id.clone(),
+                tool: effective_call.name.clone(),
+                decision: decision.clone(),
+            },
+        )
+        .await;
+        match decision {
+            PermissionDecision::Deny { reason, .. } => {
                 let error =
-                    ToolError::fatal("tool call denied by user").with_code("APPROVAL_DENIED");
-                emit(
-                    subs,
-                    RuntimeEvent::ApprovalDenied {
-                        tool_call: effective_call.clone(),
-                        context: approval_context,
-                    },
-                )
-                .await;
+                    ToolError::fatal(format!("tool call denied by permission policy: {reason}"))
+                        .with_code(PERMISSION_DENIED);
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: tool_call.id.clone(),
                     content: tool_error_result(&error),
                 });
                 continue;
             }
+            PermissionDecision::Ask { basis } => {
+                let approval_context = approval_context_for(tool.metadata());
+                let permission = json!({
+                    "effects": tool.metadata().effects,
+                    "basis": basis,
+                });
+                let ask = ApprovalAsk {
+                    kind: RequestKind::TOOL_APPROVAL,
+                    context: approval_context,
+                    permission: Some(permission),
+                };
+                let resolution = await_tool_approval(state, subs, &effective_call, ask).await;
+                if !resolution.is_approved() {
+                    tool_results.push(ContentBlock::ToolResult {
+                        tool_use_id: tool_call.id.clone(),
+                        content: tool_error_result(&approval_refused_error(&resolution)),
+                    });
+                    continue;
+                }
+                remember_session_grant(state, &effective_call, &resolution);
+            }
+            _ => {}
         }
 
         if let Some(max) = state.config.budget.max_tool_calls {
@@ -1383,6 +1892,19 @@ async fn run_tool_and_handoff_phase(
                 state.budget.record_tool_call();
             }
 
+            if attempt == 1 {
+                state.log.append(SessionEventKind::ToolDispatched {
+                    tool_use_id: effective_call.id.clone(),
+                    tool_name: effective_call.name.clone(),
+                    args_summary: summarize_args(&effective_call.input),
+                });
+                let point = Checkpoint::BeforeDispatch {
+                    side_effect: tool_meta.effects.has_side_effects(),
+                };
+                if !checkpoint(state, subs, point).await {
+                    return false;
+                }
+            }
             // ToolCallStarted fires for each committed execution attempt, after
             // before_tool, approval, and budget checks all pass.
             emit(
@@ -1398,7 +1920,7 @@ async fn run_tool_and_handoff_phase(
             let _tool_span = telemetry::tool_execute_span(&tool_call.name, source_label);
 
             let parent_messages = if tool.needs_parent_context() {
-                state.messages.clone()
+                state.log.messages().to_vec()
             } else {
                 vec![]
             };
@@ -1409,24 +1931,44 @@ async fn run_tool_and_handoff_phase(
                 event_tx: Some(primary(subs).clone()),
                 event_subs: subs.to_vec(),
                 webhook_base_url: state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone()),
-                approval_bus: state.approval_bus.clone(),
+                request_bus: state.request_bus.clone(),
                 child_registry: state.child_registry.clone(),
                 remaining_budget: state.budget.remaining_config(),
                 parent_messages,
+                cancel: state.cancel.clone(),
             };
 
             let start_time = Instant::now();
-            let execute_fut = tool.execute(tool_input.clone(), &ctx);
-            let (attempt_result, timed_out) = if let Some(timeout) = metadata_timeout {
-                match tokio::time::timeout(timeout, execute_fut).await {
-                    Ok(result) => (result, false),
-                    Err(_) => (
-                        Err(ToolError::transient("tool execution timed out").with_code("TIMEOUT")),
-                        true,
-                    ),
+            let execute_fut = async {
+                let execute_fut = tool.execute(tool_input.clone(), &ctx);
+                if let Some(timeout) = metadata_timeout {
+                    match tokio::time::timeout(timeout, execute_fut).await {
+                        Ok(result) => (result, false),
+                        Err(_) => (
+                            Err(ToolError::transient("tool execution timed out")
+                                .with_code("TIMEOUT")),
+                            true,
+                        ),
+                    }
+                } else {
+                    (execute_fut.await, false)
+                }
+            };
+            // An interruptible call is dropped on cancellation (the ledger
+            // closes it); any other call runs to completion.
+            let outcome = if state.config.runtime.is_interruptible(tool.as_ref()) {
+                let cancel = state.cancel.clone();
+                tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => None,
+                    outcome = execute_fut => Some(outcome),
                 }
             } else {
-                (execute_fut.await, false)
+                Some(execute_fut.await)
+            };
+            let Some((attempt_result, timed_out)) = outcome else {
+                abort_run(state).await;
+                return false;
             };
 
             match attempt_result {
@@ -1447,7 +1989,7 @@ async fn run_tool_and_handoff_phase(
                         telemetry::record_tool_error(&tool_call.name, source_label, duration);
                     }
 
-                    if !should_retry_tool_error(&error, attempt) {
+                    if !should_retry_tool_error(&error, attempt) || state.cancel.is_cancelled() {
                         break Err(error);
                     }
 
@@ -1469,16 +2011,18 @@ async fn run_tool_and_handoff_phase(
                     }
 
                     if error.retry == RetryHint::Caution {
-                        let approved = request_retry_approval(RetryApprovalRequest {
-                            approval_bus: &state.approval_bus,
-                            subs,
-                            run_id,
-                            tool_call: &effective_call,
+                        let context = ApprovalContext::RetryAfterFailure {
                             attempt: next_attempt,
-                            previous_error: &error,
-                        })
-                        .await;
-                        if !approved {
+                            previous_error: error.clone(),
+                        };
+                        let ask = ApprovalAsk {
+                            kind: RequestKind::RETRY_APPROVAL,
+                            context,
+                            permission: None,
+                        };
+                        let resolution =
+                            await_tool_approval(state, subs, &effective_call, ask).await;
+                        if !resolution.is_approved() {
                             break Err(error);
                         }
                     }
@@ -1494,7 +2038,10 @@ async fn run_tool_and_handoff_phase(
                         },
                     )
                     .await;
-                    tokio::time::sleep(next_delay).await;
+                    tokio::select! {
+                        () = tokio::time::sleep(next_delay) => {}
+                        () = state.cancel.cancelled() => {}
+                    }
                     attempt = next_attempt;
                 }
             }
@@ -1632,14 +2179,18 @@ async fn run_tool_and_handoff_phase(
                 )
                 .await;
 
-                let async_result = poll_async_job(
-                    primary(subs),
-                    &tool_call.name,
-                    &handle,
-                    start_time,
-                    &state.webhook_runtime,
-                )
-                .await;
+                let cancel = state.cancel.clone();
+                let async_result = tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => abandoned_async_job_result(),
+                    value = poll_async_job(
+                        primary(subs),
+                        &tool_call.name,
+                        &handle,
+                        start_time,
+                        &state.webhook_runtime,
+                    ) => value,
+                };
 
                 let duration = start_time.elapsed();
                 if async_result.get("error").is_some() {
@@ -1699,7 +2250,17 @@ async fn run_tool_and_handoff_phase(
         }
     }
 
-    apply_tool_phase_results(state, subs, run_id, pending_handoff, tool_results).await;
+    let held = pending_handoff.as_ref().map(|h| h.tool_use_id.as_str());
+    if log_landed_results(&mut state.log, &tool_results, &mut logged, held)
+        && !checkpoint(state, subs, Checkpoint::AfterToolResult).await
+    {
+        return false;
+    }
+    let unlogged: Vec<ContentBlock> = tool_results
+        .into_iter()
+        .filter(|block| !matches!(block, ContentBlock::ToolResult { tool_use_id, .. } if logged.contains(tool_use_id)))
+        .collect();
+    apply_tool_phase_results(state, subs, run_id, pending_handoff, unlogged).await;
 
     true
 }
@@ -1713,11 +2274,8 @@ async fn apply_tool_phase_results(
 ) {
     // Process pending handoff: prepare the next state first, then swap it in.
     let Some(pending_handoff) = pending_handoff else {
-        state.messages.push(Message {
-            role: Role::User,
-            content: tool_results,
-        });
-        state.step += 1;
+        append_tool_results(&mut state.log, tool_results);
+        end_step(state);
         return;
     };
 
@@ -1730,11 +2288,10 @@ async fn apply_tool_phase_results(
     let new_agent = handoff_result.target_agent.name.clone();
     let handoff_input = json!({"tool": tool_name});
 
-    let mut handoff_history = state.messages.clone();
-    handoff_history.push(Message {
-        role: Role::User,
-        content: tool_results.clone(),
-    });
+    // The history the handoff filter sees includes the held-back results.
+    let mut preview = state.log.clone();
+    append_tool_results(&mut preview, tool_results.clone());
+    let handoff_history = preview.messages().to_vec();
 
     let transition = prepare_handoff_transition(
         state,
@@ -1756,11 +2313,8 @@ async fn apply_tool_phase_results(
             )
             .await;
             replace_tool_result(&mut tool_results, &tool_use_id, tool_error_result(&error));
-            state.messages.push(Message {
-                role: Role::User,
-                content: tool_results,
-            });
-            state.step += 1;
+            append_tool_results(&mut state.log, tool_results);
+            end_step(state);
             return;
         }
     };
@@ -1786,13 +2340,19 @@ async fn apply_tool_phase_results(
     )
     .await;
 
-    state.messages = transition.messages;
+    append_tool_results(&mut state.log, tool_results);
+    state.log.append(SessionEventKind::Handoff {
+        from_agent: state.config.name.clone(),
+        to_agent: new_agent.clone(),
+        messages: transition.messages,
+        budget_used: transition.budget.usage().clone(),
+    });
     state.registry = transition.registry;
     state.tool_defs = transition.tool_defs;
     state.budget = transition.budget;
     state.run_hook_ctx.agent_name = new_agent;
     state.config = transition.config;
-    state.step += 1;
+    end_step(state);
 }
 
 async fn prepare_handoff_transition(
@@ -1886,15 +2446,18 @@ async fn emit_run_failed(
     error: impl Into<String>,
     kind: RunFailureKind,
 ) {
+    if state.finished {
+        return;
+    }
+    state.finished = true;
+    let error = error.into();
     state.last_failure = Some(kind);
-    emit(
-        subs,
-        RuntimeEvent::RunFailed {
-            error: error.into(),
-            kind,
-        },
-    )
-    .await;
+    state.log.append(SessionEventKind::RunFailed {
+        error: error.clone(),
+        kind,
+    });
+    persist_terminal(state).await;
+    emit(subs, RuntimeEvent::RunFailed { error, kind }).await;
 }
 
 async fn emit(subs: &[EventSink], event: RuntimeEvent) {
@@ -1917,6 +2480,42 @@ fn primary(subs: &[EventSink]) -> &mpsc::Sender<RuntimeEvent> {
         .sender()
 }
 
+/// Runs the permission decision point for `call`.
+fn decide_permission(
+    state: &AgentRunState,
+    tool: &dyn Tool,
+    call: &ToolCall,
+) -> PermissionDecision {
+    let metadata = tool.metadata();
+    let permission_call = PermissionCall {
+        tool_name: &call.name,
+        input: &call.input,
+        effects: &metadata.effects,
+        subject: tool.permission_subject(&call.input),
+    };
+    state.config.runtime.decide(
+        &permission_call,
+        metadata,
+        &state.log.projection().session_grants,
+    )
+}
+
+/// Records a session-scoped approval so later identical calls are allowed.
+fn remember_session_grant(
+    state: &mut AgentRunState,
+    call: &ToolCall,
+    resolution: &RequestResolution,
+) {
+    if let RequestResolution::Responded { response } = resolution {
+        if response.scope == ApprovalScope::Session {
+            state.log.append(SessionEventKind::PermissionGranted {
+                tool_name: call.name.clone(),
+                key: grant_key(&call.name, &call.input),
+            });
+        }
+    }
+}
+
 fn approval_context_for(meta: &ToolMetadata) -> ApprovalContext {
     match &meta.execution_mode {
         ToolExecutionMode::Commit { draft_tool } => ApprovalContext::CommitToolCall {
@@ -1937,12 +2536,15 @@ fn tool_source_label(source: &ToolSource) -> &'static str {
     }
 }
 
+/// Runs the step's tool calls as one parallel batch when every call is
+/// eligible. `None`: not eligible, run them serially. `Some(None)`: the run
+/// failed. `Some(Some(results))`: results in requested order.
 async fn run_parallel_tool_batch_if_allowed(
     state: &mut AgentRunState,
     subs: &[EventSink],
     run_id: RunId,
     tool_uses: &[ToolCall],
-) -> Option<Vec<ContentBlock>> {
+) -> Option<Option<Vec<ContentBlock>>> {
     if state.config.runtime.tool_execution_policy != ToolExecutionPolicy::ParallelSafe
         || tool_uses.len() < 2
         || !state.config.hooks.is_empty()
@@ -1957,18 +2559,23 @@ async fn run_parallel_tool_batch_if_allowed(
     }
 
     let mut calls = Vec::with_capacity(tool_uses.len());
+    let mut decisions = Vec::with_capacity(tool_uses.len());
     for (idx, tool_call) in tool_uses.iter().enumerate() {
         if deferred_tool_exposure_error(state, &tool_call.name).is_some() {
             return None;
         }
         let tool = state.registry.get(&tool_call.name)?;
         let metadata = tool.metadata().clone();
-        if metadata.side_effect
+        if metadata.effects.has_side_effects()
             || metadata.parallelism != ToolParallelism::ParallelSafe
-            || state.config.runtime.should_approve(&metadata)
         {
             return None;
         }
+        let decision = decide_permission(state, tool.as_ref(), tool_call);
+        if !decision.is_allow() {
+            return None;
+        }
+        decisions.push(decision);
         let source_label = tool_source_label(&metadata.source);
         calls.push(ParallelToolCall {
             requested_order: idx,
@@ -1981,6 +2588,17 @@ async fn run_parallel_tool_batch_if_allowed(
         });
     }
 
+    for (call, decision) in calls.iter().zip(decisions) {
+        emit(
+            subs,
+            RuntimeEvent::PermissionDecided {
+                tool_call_id: call.tool_call.id.clone(),
+                tool: call.tool_call.name.clone(),
+                decision,
+            },
+        )
+        .await;
+    }
     let batch_id = format!("tool_batch_{}", uuid::Uuid::new_v4());
     emit(
         subs,
@@ -1992,6 +2610,11 @@ async fn run_parallel_tool_batch_if_allowed(
     .await;
     for call in &calls {
         state.budget.record_tool_call();
+        state.log.append(SessionEventKind::ToolDispatched {
+            tool_use_id: call.tool_call.id.clone(),
+            tool_name: call.tool_call.name.clone(),
+            args_summary: summarize_args(&call.input),
+        });
         emit(
             subs,
             RuntimeEvent::ToolCallBatchItemStarted {
@@ -2003,15 +2626,28 @@ async fn run_parallel_tool_batch_if_allowed(
         .await;
     }
 
+    if !checkpoint(
+        state,
+        subs,
+        Checkpoint::BeforeDispatch { side_effect: false },
+    )
+    .await
+    {
+        return Some(None);
+    }
+
+    let interruptible_batch = calls
+        .iter()
+        .all(|call| state.config.runtime.is_interruptible(call.tool.as_ref()));
     let mut pending = FuturesUnordered::new();
     for call in calls {
         let event_tx = primary(subs).clone();
         let webhook_base_url = state.webhook_runtime.as_ref().map(|rt| rt.base_url.clone());
-        let approval_bus = state.approval_bus.clone();
+        let request_bus = state.request_bus.clone();
         let child_registry = state.child_registry.clone();
         let remaining_budget = state.budget.remaining_config();
         let parent_messages = if call.tool.needs_parent_context() {
-            state.messages.clone()
+            state.log.messages().to_vec()
         } else {
             vec![]
         };
@@ -2023,17 +2659,37 @@ async fn run_parallel_tool_batch_if_allowed(
                 event_tx,
                 event_subs: subs.to_vec(),
                 webhook_base_url,
-                approval_bus,
+                request_bus,
                 child_registry,
                 remaining_budget,
                 parent_messages,
+                cancel: state.cancel.clone(),
             },
         ));
     }
 
     let mut ordered_results: Vec<Option<ContentBlock>> = vec![None; tool_uses.len()];
     let mut completion_order = 0;
-    while let Some(result) = pending.next().await {
+    let cancel = state.cancel.clone();
+    loop {
+        // The batch is dropped on cancellation only if every call in it is
+        // interruptible; otherwise it runs to completion.
+        let next = if interruptible_batch {
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => {
+                    drop(pending);
+                    abort_run(state).await;
+                    return Some(None);
+                }
+                next = pending.next() => next,
+            }
+        } else {
+            pending.next().await
+        };
+        let Some(result) = next else {
+            break;
+        };
         completion_order += 1;
         let requested_order = result.requested_order;
         let tool_name = result.tool_call.name.clone();
@@ -2051,12 +2707,12 @@ async fn run_parallel_tool_batch_if_allowed(
         ordered_results[requested_order] = Some(content);
     }
 
-    Some(
+    Some(Some(
         ordered_results
             .into_iter()
             .flatten()
             .collect::<Vec<ContentBlock>>(),
-    )
+    ))
 }
 
 async fn execute_parallel_tool_call(
@@ -2070,10 +2726,11 @@ async fn execute_parallel_tool_call(
         event_tx: Some(parallel_ctx.event_tx.clone()),
         event_subs: parallel_ctx.event_subs.clone(),
         webhook_base_url: parallel_ctx.webhook_base_url,
-        approval_bus: parallel_ctx.approval_bus,
+        request_bus: parallel_ctx.request_bus,
         child_registry: parallel_ctx.child_registry,
         remaining_budget: parallel_ctx.remaining_budget,
         parent_messages: parallel_ctx.parent_messages,
+        cancel: parallel_ctx.cancel,
     };
     let _ = parallel_ctx
         .event_tx
@@ -2172,14 +2829,18 @@ async fn finalize_parallel_tool_result(
                 },
             )
             .await;
-            let async_result = poll_async_job(
-                primary(subs),
-                &result.tool_call.name,
-                &handle,
-                start_time,
-                &state.webhook_runtime,
-            )
-            .await;
+            let cancel = state.cancel.clone();
+            let async_result = tokio::select! {
+                biased;
+                () = cancel.cancelled() => abandoned_async_job_result(),
+                value = poll_async_job(
+                    primary(subs),
+                    &result.tool_call.name,
+                    &handle,
+                    start_time,
+                    &state.webhook_runtime,
+                ) => value,
+            };
             let duration = start_time.elapsed();
             if async_result.get("error").is_some() {
                 telemetry::record_tool_error(&result.tool_call.name, result.source_label, duration);
@@ -2254,7 +2915,7 @@ async fn fail_pre_start(
     config: AgentConfig,
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
-    approval_bus: ApprovalBus,
+    request_bus: RequestBus,
     child_registry: ChildRunRegistry,
     run_hook_ctx: crate::hook::RunHookContext,
     error: String,
@@ -2273,7 +2934,7 @@ async fn fail_pre_start(
         config,
         model,
         registry,
-        approval_bus,
+        request_bus,
         child_registry,
         event_subs.to_vec(),
         run_hook_ctx,
@@ -2286,7 +2947,7 @@ fn failed_state(
     config: AgentConfig,
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
-    approval_bus: ApprovalBus,
+    request_bus: RequestBus,
     child_registry: ChildRunRegistry,
     event_subs: Vec<EventSink>,
     run_hook_ctx: crate::hook::RunHookContext,
@@ -2297,9 +2958,9 @@ fn failed_state(
         model,
         unfiltered_registry: registry.clone(),
         registry,
-        messages: vec![],
+        log: SessionLog::new(),
+        session: None,
         tool_defs: vec![],
-        step: 0,
         budget: BudgetGuard::new(BudgetConfig {
             max_tokens: None,
             max_tool_calls: None,
@@ -2307,9 +2968,10 @@ fn failed_state(
             max_cost_usd: None,
         }),
         last_compaction_step: None,
-        cancelled: true,
+        cancel: CancelToken::new(),
+        finished: true,
         run_hook_ctx,
-        approval_bus,
+        request_bus,
         child_registry,
         event_subs,
         webhook_runtime: None,

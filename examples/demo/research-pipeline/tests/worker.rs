@@ -81,7 +81,7 @@ async fn deterministic_research_tools_search_read_and_write_owned_paths() {
 
     let draft_path = temp.path().join("drafts").join("brief.md");
     let write = WriteDraftTool::new(draft_path.clone());
-    assert!(write.metadata().side_effect);
+    assert!(write.metadata().effects.has_side_effects());
     assert!(matches!(write.metadata().approval, Approval::Always));
     let write_output = immediate(
         write

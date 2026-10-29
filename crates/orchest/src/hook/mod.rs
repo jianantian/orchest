@@ -87,10 +87,6 @@ pub struct CompactHookContext {
 /// by the runner and emitted as `HookPanicked` events — the run continues.
 #[async_trait]
 pub trait Hook: Send + Sync {
-    fn persistence_session_id(&self) -> Option<&str> {
-        None
-    }
-
     async fn on_run_start(&self, _ctx: &mut RunHookContext) {}
     async fn on_run_end(&self, _ctx: &RunHookContext) {}
     async fn on_run_error(&self, _ctx: &RunHookContext, _error: &str) {}

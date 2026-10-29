@@ -39,7 +39,7 @@ fn empty_object_schema() -> &'static JsonSchema {
 
 fn time_tool_metadata() -> &'static ToolMetadata {
     static META: LazyLock<ToolMetadata> = LazyLock::new(|| ToolMetadata {
-        side_effect: false,
+        effects: orchest::tool::ToolEffects::NONE,
         approval: Approval::Never,
         execution_mode: orchest::tool::ToolExecutionMode::Normal,
         parallelism: orchest::tool::ToolParallelism::Serial,

@@ -140,7 +140,9 @@ class ToolRegistration(TypedDict):
 
 
 class ToolMetadata(TypedDict):
-    side_effect: bool
+    # Declared effects ("read", "write_workspace", "write_outside", "network",
+    # "credential", "destructive", "process"); None when unknown.
+    effects: list[str] | None
     approval: str
     cost_hint: JsonValue
     timeout: JsonValue
@@ -256,8 +258,20 @@ class SkillContentReadEvent(TypedDict):
     child_run_id: str | None
 
 
+class PermissionDecidedEvent(TypedDict):
+    type: Literal["permission_decided"]
+    tool_call_id: str
+    tool: str
+    decision: JsonValue
+    run_depth: int
+    child_run_id: str | None
+
+
 class ApprovalRequestedEvent(TypedDict):
     type: Literal["approval_requested"]
+    request_id: str
+    kind: str
+    payload: JsonValue
     tool_call: ToolCall
     run_depth: int
     child_run_id: str | None
@@ -265,6 +279,7 @@ class ApprovalRequestedEvent(TypedDict):
 
 class ApprovalGrantedEvent(TypedDict):
     type: Literal["approval_granted"]
+    request_id: str
     tool_call: ToolCall
     run_depth: int
     child_run_id: str | None
@@ -272,7 +287,69 @@ class ApprovalGrantedEvent(TypedDict):
 
 class ApprovalDeniedEvent(TypedDict):
     type: Literal["approval_denied"]
+    request_id: str
     tool_call: ToolCall
+    run_depth: int
+    child_run_id: str | None
+
+
+class MessageStartedEvent(TypedDict):
+    type: Literal["message_started"]
+    message_id: str
+    step: int
+    run_depth: int
+    child_run_id: str | None
+
+
+class MessageUpdatedEvent(TypedDict):
+    type: Literal["message_updated"]
+    message_id: str
+    # {"type": "text" | "thinking", "text": str} or
+    # {"type": "tool_use_args", "tool_use_id": str, "delta": str}
+    delta: dict[str, JsonValue]
+    run_depth: int
+    child_run_id: str | None
+
+
+class MessageEndedEvent(TypedDict):
+    type: Literal["message_ended"]
+    message_id: str
+    content: list[JsonValue]
+    stop_reason: str | None
+    run_depth: int
+    child_run_id: str | None
+
+
+class RequestOpenedEvent(TypedDict):
+    type: Literal["request_opened"]
+    # {"id", "run_id", "kind", "payload", "target"}
+    request: dict[str, JsonValue]
+    run_depth: int
+    child_run_id: str | None
+
+
+class ToolDispatchedEvent(TypedDict):
+    type: Literal["tool_dispatched"]
+    tool_use_id: str
+    tool_name: str
+    run_depth: int
+    child_run_id: str | None
+
+
+class ToolSettledEvent(TypedDict):
+    type: Literal["tool_settled"]
+    tool_use_id: str
+    is_error: bool
+    error_code: str | None
+    run_depth: int
+    child_run_id: str | None
+
+
+class RequestResolvedEvent(TypedDict):
+    type: Literal["request_resolved"]
+    request_id: str
+    kind: str
+    resolution: JsonValue
     run_depth: int
     child_run_id: str | None
 
@@ -378,6 +455,17 @@ class RunRestartedEvent(TypedDict):
 class RunAbortedEvent(TypedDict):
     type: Literal["run_aborted"]
     reason: str | None
+    # "user" | "timeout" | "upstream" | "host_disconnected" | "watcher";
+    # None when the supervisor gave up on a crashed worker.
+    cancel_reason: str | None
+    run_depth: int
+    child_run_id: str | None
+
+
+class ProcessesTerminatedEvent(TypedDict):
+    type: Literal["processes_terminated"]
+    terminated: int | None
+    error: str | None
     run_depth: int
     child_run_id: str | None
 
@@ -397,6 +485,11 @@ RuntimeEvent: TypeAlias = (
     | ModelCallStartedEvent
     | ModelStreamChunkEvent
     | ModelCallCompletedEvent
+    | MessageStartedEvent
+    | MessageUpdatedEvent
+    | MessageEndedEvent
+    | ToolDispatchedEvent
+    | ToolSettledEvent
     | ToolCallStartedEvent
     | ToolCallUpdateEvent
     | ToolCallCompletedEvent
@@ -405,9 +498,12 @@ RuntimeEvent: TypeAlias = (
     | AsyncToolProgressEvent
     | AsyncToolCompletedEvent
     | SkillContentReadEvent
+    | PermissionDecidedEvent
     | ApprovalRequestedEvent
     | ApprovalGrantedEvent
     | ApprovalDeniedEvent
+    | RequestOpenedEvent
+    | RequestResolvedEvent
     | BudgetWarningEvent
     | RuntimeWarningEvent
     | SkillMissingCapabilitiesEvent
@@ -419,6 +515,7 @@ RuntimeEvent: TypeAlias = (
     | SubAgentFailedEvent
     | RunRestartedEvent
     | RunAbortedEvent
+    | ProcessesTerminatedEvent
     | EventsDroppedEvent
     | RunCompletedEvent
     | RunFailedEvent
@@ -537,12 +634,23 @@ class Agent:
         func: Callable[..., Any] | None = None,
         side_effect: bool = False,
         approval: str | None = None,
+        execution_mode: str | None = None,
+        commit_tool: str | None = None,
+        draft_tool: str | None = None,
+        # Declared effects ("read", "write_workspace", "write_outside",
+        # "network", "credential", "destructive", "process"); overrides
+        # side_effect when given.
+        effects: list[str] | None = None,
     ) -> Callable[..., Any]: ...
     def register_tool(
         self,
         func: Callable[..., Any],
         side_effect: bool = False,
         approval: str | None = None,
+        execution_mode: str | None = None,
+        commit_tool: str | None = None,
+        draft_tool: str | None = None,
+        effects: list[str] | None = None,
     ) -> None: ...
     def register_agent_tool(
         self,
@@ -559,6 +667,18 @@ class Agent:
     def run_sync(self, input: str, messages: list[dict[str, Any]] | None = None) -> list[RuntimeEvent]: ...
     def run(self, input: str, messages: list[dict[str, Any]] | None = None) -> list[RuntimeEvent]: ...
     def run_stream(self, input: str, on_event: Callable[[RuntimeEvent], None], messages: list[dict[str, Any]] | None = None) -> None: ...
-    def respond_approval(self, run_id_str: str, approved: bool) -> None: ...
+    # Answer request `request_id` of the active run, e.g.
+    # {"decision": "approve"}, {"decision": "deny"},
+    # {"decision": {"type": "answer", "payload": ...}}, optionally with
+    # "scope": "session".
+    def respond(self, request_id: str, payload: dict[str, Any]) -> None: ...
+    # Cancel the active run; reason is "user" (default), "timeout",
+    # "upstream", "host_disconnected" or "watcher". True when this call
+    # cancelled it.
+    def abort(self, reason: str | None = None, message: str | None = None) -> bool: ...
+    # What a run of this agent supports (resume, preemptive_cancel,
+    # approval_scopes, request kinds, parallel_tools, delegation, effects,
+    # enforcement, lossless_events).
+    def capabilities(self) -> dict[str, Any]: ...
 
 __all__: list[str]

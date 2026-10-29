@@ -9,7 +9,9 @@ pub mod handoff_tool;
 pub mod in_process;
 pub mod mcp;
 pub mod metadata;
+pub mod policy;
 pub mod registry;
+pub mod sandbox;
 pub mod search;
 
 use async_trait::async_trait;
@@ -22,8 +24,18 @@ use async_job::JobHandle;
 
 pub use crate::model::{JsonSchema, ToolDef};
 pub use agent_as_tool::ContextMode;
-pub use error::{ErrorKind, RetryHint, ToolError};
-pub use metadata::{CostHint, ToolExecutionMode, ToolMetadata, ToolParallelism, ToolSource};
+pub use error::{
+    ErrorKind, RetryHint, ToolError, PERMISSION_DENIED, TOOL_ABORTED_BEFORE_DISPATCH,
+    TOOL_NOT_STARTED, TOOL_OUTCOME_UNKNOWN,
+};
+pub use metadata::{
+    CostHint, ToolEffect, ToolEffects, ToolExecutionMode, ToolMetadata, ToolParallelism, ToolSource,
+};
+pub use policy::{
+    grant_key, DecisionBasis, PermissionAction, PermissionCall, PermissionDecision,
+    PermissionPolicy, PermissionRule, PermissionSubject,
+};
+pub use sandbox::{Enforcement, EnforcementFacts, ExecutionBackend};
 
 /// A capability the model can invoke: name, schemas, metadata, and an async
 /// `execute`. Implement this trait (or use `InProcessTool`) and register the
@@ -52,6 +64,21 @@ pub trait Tool: Send + Sync {
     }
     fn needs_parent_context(&self) -> bool {
         false
+    }
+    /// The commands and paths `input` acts on, for permission rules. The
+    /// default reads well-known keys ([`PermissionSubject::from_input`]);
+    /// override it when the tool's input names them differently.
+    fn permission_subject(&self, input: &Value) -> PermissionSubject {
+        PermissionSubject::from_input(input)
+    }
+    /// Whether a cancellation may drop a call of this tool mid-flight. The
+    /// default allows it for tools without side effects; a tool with side
+    /// effects runs to completion and its result is recorded. The host can
+    /// override it per tool ([`RuntimeConfig::interruptible`]).
+    ///
+    /// [`RuntimeConfig::interruptible`]: crate::run::RuntimeConfig::interruptible
+    fn interruptible(&self) -> bool {
+        !self.metadata().effects.has_side_effects()
     }
 }
 
@@ -88,9 +115,9 @@ pub struct ToolContext {
     pub tool_call_id: String,
     pub event_tx: Option<mpsc::Sender<crate::events::RuntimeEvent>>,
     pub webhook_base_url: Option<String>,
-    /// Shared approval bus for the entire run tree; used by AgentAsTool to forward
-    /// child approval requests to the parent's RunHandle.
-    pub approval_bus: crate::run::handle::ApprovalBus,
+    /// Shared request bus for the entire run tree; delegated child runs raise
+    /// their requests on it, so the parent's RunHandle answers them by id.
+    pub request_bus: crate::run::RequestBus,
     /// Shared delegated-child registry for the run tree; AgentAsTool registers
     /// each child so the supervisor [`crate::run::RunHandle`] can resolve it.
     pub child_registry: crate::run::handle::ChildRunRegistry,
@@ -118,13 +145,16 @@ pub struct ToolContext {
     /// Empty when only [`Self::event_tx`] is set (oneshot / unit tests):
     /// [`Self::emit_event`] then falls back to `event_tx` alone.
     pub event_subs: Vec<crate::events::EventSink>,
+    /// The run's cancellation token. A tool that keeps working after it is
+    /// cancelled (a non-interruptible one) can watch it to stop early.
+    pub cancel: crate::run::CancelToken,
 }
 
 impl ToolContext {
     /// Build a throwaway context with trivial values for a one-shot tool call
     /// outside any run: a fresh [`RunId`](crate::run::RunId), `run_depth` 0, a
     /// synthesized unique `tool_call_id`, no event channel, no webhook base
-    /// URL, a default [`ApprovalBus`](crate::run::ApprovalBus), the default
+    /// URL, a default [`RequestBus`](crate::run::RequestBus), the default
     /// budget, and no parent messages.
     ///
     /// Intended for driving a tool's `execute` directly from code that is not
@@ -150,11 +180,12 @@ impl ToolContext {
             tool_call_id: format!("oneshot-{run_id}"),
             event_tx: None,
             webhook_base_url: None,
-            approval_bus: crate::run::ApprovalBus::default(),
+            request_bus: crate::run::RequestBus::default(),
             child_registry: crate::run::ChildRunRegistry::default(),
             remaining_budget: crate::budget::BudgetConfig::default(),
             parent_messages: vec![],
             event_subs: vec![],
+            cancel: crate::run::CancelToken::new(),
         }
     }
 
@@ -173,9 +204,67 @@ impl ToolContext {
             let _ = tx.send(event).await;
         }
     }
+
+    /// Asks the host a question of a host-defined `kind` (a plan to accept,
+    /// a choice to make, ...) on the run tree's request channel, and waits
+    /// for the answer, `timeout`, or the run's cancellation, whichever comes
+    /// first. The request is reported as `RequestOpened` / `RequestResolved`
+    /// and answered with [`RunHandle::respond`](crate::run::RunHandle::respond)
+    /// like any other; only an approving or answering response counts as
+    /// approved. The tool decides what the outcome means for its result.
+    pub async fn request(
+        &self,
+        tool_name: &str,
+        kind: crate::run::RequestKind,
+        payload: Value,
+        timeout: std::time::Duration,
+    ) -> crate::run::RequestResolution {
+        use crate::run::{PendingRequest, RequestId, RequestResolution, RequestTarget};
+        let id = RequestId::from(format!(
+            "{}/{}/{}",
+            self.run_id,
+            self.tool_call_id,
+            uuid::Uuid::new_v4()
+        ));
+        let request = PendingRequest {
+            id: id.clone(),
+            run_id: self.run_id,
+            kind: kind.clone(),
+            payload,
+            target: RequestTarget::ToolCall {
+                tool_use_id: self.tool_call_id.clone(),
+                tool_name: tool_name.to_string(),
+            },
+        };
+        let rx = self.request_bus.open(request.clone()).await;
+        self.emit_event(crate::events::RuntimeEvent::RequestOpened { request })
+            .await;
+        let resolution = tokio::select! {
+            biased;
+            () = self.cancel.cancelled() => {
+                self.request_bus.close(&id).await;
+                RequestResolution::Cancelled
+            }
+            waited = tokio::time::timeout(timeout, rx) => match waited {
+                Ok(Ok(resolution)) => resolution,
+                Ok(Err(_)) => RequestResolution::Cancelled,
+                Err(_) => {
+                    self.request_bus.close(&id).await;
+                    RequestResolution::TimedOut
+                }
+            },
+        };
+        self.emit_event(crate::events::RuntimeEvent::RequestResolved {
+            request_id: id,
+            kind,
+            resolution: resolution.clone(),
+        })
+        .await;
+        resolution
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,

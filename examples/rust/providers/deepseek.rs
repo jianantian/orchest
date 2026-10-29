@@ -31,7 +31,7 @@ fn weather_schema() -> &'static JsonSchema {
 
 fn weather_meta() -> &'static ToolMetadata {
     static M: LazyLock<ToolMetadata> = LazyLock::new(|| ToolMetadata {
-        side_effect: false,
+        effects: orchest::tool::ToolEffects::NONE,
         approval: Approval::Never,
         execution_mode: orchest::tool::ToolExecutionMode::Normal,
         parallelism: orchest::tool::ToolParallelism::Serial,

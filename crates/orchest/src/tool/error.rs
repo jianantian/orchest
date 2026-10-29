@@ -25,6 +25,20 @@ pub enum RetryHint {
     Unsafe,
 }
 
+/// Stable code of the result recorded for a tool call that was dispatched
+/// but whose result a crash left unrecorded. Whether it took effect is
+/// unknown.
+pub const TOOL_OUTCOME_UNKNOWN: &str = "TOOL_OUTCOME_UNKNOWN";
+/// Stable code of the result recorded for a tool call a crash stopped before
+/// it was dispatched. It did not run.
+pub const TOOL_NOT_STARTED: &str = "TOOL_NOT_STARTED";
+/// Stable code of the result recorded for a tool call a cancellation stopped
+/// before it was dispatched. It did not run.
+pub const TOOL_ABORTED_BEFORE_DISPATCH: &str = "TOOL_ABORTED_BEFORE_DISPATCH";
+/// Stable code of the result for a tool call the permission policy denied.
+/// It did not run.
+pub const PERMISSION_DENIED: &str = "PERMISSION_DENIED";
+
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
 #[error("{message}")]
 #[non_exhaustive]

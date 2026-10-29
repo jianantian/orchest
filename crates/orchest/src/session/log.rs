@@ -1,0 +1,791 @@
+//! Session event log: the append-only execution-state record of a run, and
+//! the projection that derives the conversation, step and budget from it.
+//!
+//! The log is **execution state**. It is not the runtime event stream
+//! ([`RuntimeEvent`](crate::events::RuntimeEvent)), which is an observation
+//! stream for watchers and hosts; the two are kept separate on purpose.
+//!
+//! Every mutation of run state is recorded as a [`SessionEvent`] first and
+//! folded into a [`SessionProjection`] by the same function a reader uses to
+//! replay the log, so a run's live view and a reloaded log never disagree.
+
+use std::collections::BTreeSet;
+
+use serde::{Deserialize, Serialize};
+
+use crate::budget::BudgetUsage;
+use crate::events::RunFailureKind;
+use crate::model::{ContentBlock, Message, Role, StopReason};
+use crate::run::{PendingRequest, RequestId, RequestResolution, RunId};
+use crate::tool::ToolCall;
+
+use super::store::SessionError;
+
+/// One entry of a session log. `seq` starts at 1 and increases by exactly one
+/// per event; a log with a gap, a repeat or a step back is rejected.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionEvent {
+    pub seq: u64,
+    /// Milliseconds since the Unix epoch when the event was recorded.
+    pub timestamp_ms: u64,
+    pub kind: SessionEventKind,
+}
+
+/// What a session event records.
+///
+/// Message-producing kinds (`SystemMessage`, `UserMessage`,
+/// `AssistantMessage`, `ToolResult`, `Compacted`, `Handoff`) change the
+/// projected conversation; the rest mark run and step boundaries.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SessionEventKind {
+    /// A run began writing to this session.
+    RunStarted { run_id: RunId, agent_name: String },
+    /// A step began; the model request for `step` follows.
+    StepStarted { step: u32 },
+    /// A step finished. `budget_used` is the run's budget usage at the step
+    /// boundary.
+    StepEnded { step: u32, budget_used: BudgetUsage },
+    /// A step that started but never ended was closed on resume. The step is
+    /// not counted as completed: the projection's step and budget stay at the
+    /// last `StepEnded`, and the step runs again under the same number.
+    StepInterrupted { step: u32 },
+    /// A system message (the system prompt or a steer instruction).
+    SystemMessage { content: Vec<ContentBlock> },
+    /// A user turn.
+    UserMessage { content: Vec<ContentBlock> },
+    /// A model response, including any `ToolUse` blocks it requested.
+    AssistantMessage { content: Vec<ContentBlock> },
+    /// Ledger: a tool call is about to be dispatched to its tool. Recorded
+    /// before the tool runs; `args_summary` keeps the shape of the input, not
+    /// its values, so credentials never reach the log.
+    ToolDispatched {
+        tool_use_id: String,
+        tool_name: String,
+        args_summary: serde_json::Value,
+    },
+    /// The result for one tool call, which settles it in the ledger.
+    /// Consecutive results form the user message that follows the assistant
+    /// message holding the `ToolUse` blocks.
+    ToolResult {
+        tool_use_id: String,
+        content: serde_json::Value,
+    },
+    /// Context compaction replaced the conversation with `messages`.
+    Compacted { messages: Vec<Message> },
+    /// A handoff moved the run to `to_agent`, whose conversation is
+    /// `messages`.
+    Handoff {
+        from_agent: String,
+        to_agent: String,
+        messages: Vec<Message>,
+        budget_used: BudgetUsage,
+    },
+    /// The run opened a blocking request and waits for the host.
+    RequestOpened { request: PendingRequest },
+    /// A blocking request ended.
+    RequestResolved {
+        request_id: RequestId,
+        resolution: RequestResolution,
+    },
+    /// The host approved a call for the rest of the session; later calls
+    /// with the same [`grant_key`](crate::tool::grant_key) are allowed
+    /// without asking.
+    PermissionGranted { tool_name: String, key: String },
+    /// The run produced its final answer.
+    RunEnded {
+        output: serde_json::Value,
+        stop_reason: StopReason,
+    },
+    /// The run failed.
+    RunFailed { error: String, kind: RunFailureKind },
+    /// The run was aborted.
+    RunAborted {
+        reason: Option<String>,
+        #[serde(default)]
+        cancel_reason: Option<crate::run::CancelReason>,
+    },
+}
+
+/// A ledger entry: a tool call that was dispatched.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DispatchRecord {
+    pub tool_use_id: String,
+    pub tool_name: String,
+    pub args_summary: serde_json::Value,
+}
+
+/// The shape of a tool input without its values: object keys are kept,
+/// every scalar becomes its type name and arrays their length.
+pub fn summarize_args(input: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    fn summarize(value: &Value, depth: usize) -> Value {
+        match value {
+            Value::Null => Value::from("null"),
+            Value::Bool(_) => Value::from("bool"),
+            Value::Number(_) => Value::from("number"),
+            Value::String(_) => Value::from("string"),
+            Value::Array(items) => Value::from(format!("array[{}]", items.len())),
+            Value::Object(_) if depth >= 3 => Value::from("object"),
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(key, v)| (key.clone(), summarize(v, depth + 1)))
+                    .collect(),
+            ),
+        }
+    }
+    summarize(input, 0)
+}
+
+/// Why a step is closed without having ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StepClosure {
+    /// The process stopped (crash, kill) and the run is being resumed.
+    Crashed,
+    /// The run was cancelled.
+    Aborted,
+}
+
+/// State derived from a session log.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SessionProjection {
+    /// The conversation as the model sees it.
+    pub messages: Vec<Message>,
+    /// The next step to run.
+    pub step: u32,
+    /// Budget usage at the last step boundary.
+    pub budget_used: BudgetUsage,
+    /// Ledger: tool calls dispatched without a recorded result.
+    pub unsettled: Vec<DispatchRecord>,
+    /// Tool calls the last assistant message requested that have no recorded
+    /// result yet, dispatched or not.
+    pub unanswered: Vec<ToolCall>,
+    /// The step that started and has not ended, if any.
+    pub open_step: Option<u32>,
+    /// Blocking requests opened and not yet resolved.
+    pub pending: Vec<PendingRequest>,
+    /// How many requests the session has opened (the next request's
+    /// sequence number is one more).
+    pub requests_opened: u64,
+    /// Session-scoped permission grants, by grant key.
+    pub session_grants: BTreeSet<String>,
+    /// The agent that owns the conversation (changes on handoff).
+    pub agent_name: Option<String>,
+    /// The run that last wrote to the session.
+    pub run_id: Option<RunId>,
+    /// Whether the last message-producing event was a `ToolResult`, so the
+    /// next result joins the same user message.
+    tool_results_open: bool,
+}
+
+impl SessionProjection {
+    /// Projects a whole log.
+    pub fn from_events(events: &[SessionEvent]) -> Self {
+        let mut projection = Self::default();
+        for event in events {
+            projection.apply(event);
+        }
+        projection
+    }
+
+    /// Folds one event into the projection.
+    pub fn apply(&mut self, event: &SessionEvent) {
+        match &event.kind {
+            SessionEventKind::RunStarted { run_id, agent_name } => {
+                self.run_id = Some(*run_id);
+                self.agent_name = Some(agent_name.clone());
+            }
+            SessionEventKind::StepStarted { step } => {
+                self.open_step = Some(*step);
+            }
+            SessionEventKind::StepEnded { step, budget_used } => {
+                self.step = step + 1;
+                self.budget_used = budget_used.clone();
+                self.open_step = None;
+            }
+            SessionEventKind::StepInterrupted { step } => {
+                self.step = *step;
+                self.open_step = None;
+            }
+            SessionEventKind::SystemMessage { content } => {
+                self.push_message(Role::System, content.clone());
+            }
+            SessionEventKind::UserMessage { content } => {
+                self.push_message(Role::User, content.clone());
+            }
+            SessionEventKind::AssistantMessage { content } => {
+                self.unanswered = content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::ToolUse { id, name, input } => Some(ToolCall {
+                            id: id.clone(),
+                            name: name.clone(),
+                            input: input.clone(),
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+                self.push_message(Role::Assistant, content.clone());
+            }
+            SessionEventKind::ToolDispatched {
+                tool_use_id,
+                tool_name,
+                args_summary,
+            } => {
+                self.unsettled.push(DispatchRecord {
+                    tool_use_id: tool_use_id.clone(),
+                    tool_name: tool_name.clone(),
+                    args_summary: args_summary.clone(),
+                });
+            }
+            SessionEventKind::ToolResult {
+                tool_use_id,
+                content,
+            } => {
+                self.unsettled.retain(|r| &r.tool_use_id != tool_use_id);
+                self.unanswered.retain(|call| &call.id != tool_use_id);
+                let block = ContentBlock::ToolResult {
+                    tool_use_id: tool_use_id.clone(),
+                    content: content.clone(),
+                };
+                match self.messages.last_mut() {
+                    Some(last) if self.tool_results_open => last.content.push(block),
+                    _ => self.messages.push(Message {
+                        role: Role::User,
+                        content: vec![block],
+                    }),
+                }
+                self.tool_results_open = true;
+            }
+            SessionEventKind::Compacted { messages } => {
+                self.messages = messages.clone();
+                self.tool_results_open = false;
+                self.unanswered.clear();
+            }
+            SessionEventKind::Handoff {
+                to_agent,
+                messages,
+                budget_used,
+                ..
+            } => {
+                self.messages = messages.clone();
+                self.agent_name = Some(to_agent.clone());
+                self.budget_used = budget_used.clone();
+                self.tool_results_open = false;
+                self.unanswered.clear();
+            }
+            SessionEventKind::RequestOpened { request } => {
+                self.pending.push(request.clone());
+                self.requests_opened += 1;
+            }
+            SessionEventKind::RequestResolved { request_id, .. } => {
+                self.pending.retain(|r| &r.id != request_id);
+            }
+            SessionEventKind::PermissionGranted { key, .. } => {
+                self.session_grants.insert(key.clone());
+            }
+            SessionEventKind::RunEnded { .. }
+            | SessionEventKind::RunFailed { .. }
+            | SessionEventKind::RunAborted { .. } => {}
+        }
+    }
+
+    fn push_message(&mut self, role: Role, content: Vec<ContentBlock>) {
+        self.messages.push(Message { role, content });
+        self.tool_results_open = false;
+    }
+}
+
+/// Checks that `events` continue a log whose next sequence number is
+/// `next_seq`: strictly consecutive, starting at `next_seq`.
+pub fn check_sequence(next_seq: u64, events: &[SessionEvent]) -> Result<(), SessionError> {
+    for (expected, event) in (next_seq..).zip(events) {
+        if event.seq != expected {
+            return Err(SessionError::SequenceConflict {
+                expected,
+                found: event.seq,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// A session log held by a run: the events recorded so far, their
+/// projection, and how many of them a store has accepted.
+#[derive(Debug, Clone, Default)]
+pub struct SessionLog {
+    events: Vec<SessionEvent>,
+    projection: SessionProjection,
+    persisted: usize,
+    /// Events already reported on the run's event stream.
+    observed: usize,
+}
+
+impl SessionLog {
+    /// An empty log.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Rebuilds a log from stored events (all of them already persisted).
+    pub fn from_events(events: Vec<SessionEvent>) -> Result<Self, SessionError> {
+        check_sequence(1, &events)?;
+        let projection = SessionProjection::from_events(&events);
+        let persisted = events.len();
+        Ok(Self {
+            events,
+            projection,
+            persisted,
+            observed: persisted,
+        })
+    }
+
+    /// Records `kind` as the next event and folds it into the projection.
+    pub fn append(&mut self, kind: SessionEventKind) -> &SessionEvent {
+        let event = SessionEvent {
+            seq: self.next_seq(),
+            timestamp_ms: now_ms(),
+            kind,
+        };
+        self.projection.apply(&event);
+        self.events.push(event);
+        self.events.last().expect("just pushed")
+    }
+
+    /// Records a message under the event kind matching its role.
+    pub fn append_message(&mut self, message: Message) {
+        let Message { role, content } = message;
+        let kind = match role {
+            Role::System => SessionEventKind::SystemMessage { content },
+            Role::Assistant => SessionEventKind::AssistantMessage { content },
+            _ => SessionEventKind::UserMessage { content },
+        };
+        self.append(kind);
+    }
+
+    pub fn events(&self) -> &[SessionEvent] {
+        &self.events
+    }
+
+    pub fn projection(&self) -> &SessionProjection {
+        &self.projection
+    }
+
+    pub fn messages(&self) -> &[Message] {
+        &self.projection.messages
+    }
+
+    pub fn step(&self) -> u32 {
+        self.projection.step
+    }
+
+    /// The sequence number the next event will get.
+    pub fn next_seq(&self) -> u64 {
+        self.events.len() as u64 + 1
+    }
+
+    /// Closes a step left open by a crash or failure so the log can be
+    /// continued: every tool call the step requested without a result gets a
+    /// synthesized error result (`TOOL_OUTCOME_UNKNOWN` when it was
+    /// dispatched, `TOOL_NOT_STARTED` when it was not), then the step is
+    /// marked `StepInterrupted`. No call is run again. Returns whether a step
+    /// was open.
+    pub fn close_interrupted_step(&mut self) -> bool {
+        self.close_open_step(StepClosure::Crashed)
+    }
+
+    /// Closes the open step of a cancelled run: calls that were dispatched
+    /// are `TOOL_OUTCOME_UNKNOWN` (they may still be running), calls that
+    /// were not are `TOOL_ABORTED_BEFORE_DISPATCH`. Returns whether a step was
+    /// open.
+    pub fn close_aborted_step(&mut self) -> bool {
+        self.close_open_step(StepClosure::Aborted)
+    }
+
+    fn close_open_step(&mut self, closure: StepClosure) -> bool {
+        let Some(step) = self.projection.open_step else {
+            return false;
+        };
+        let unanswered = self.projection.unanswered.clone();
+        for call in unanswered {
+            let dispatched = self
+                .projection
+                .unsettled
+                .iter()
+                .any(|r| r.tool_use_id == call.id);
+            self.append(SessionEventKind::ToolResult {
+                tool_use_id: call.id.clone(),
+                content: closure_result(&call, dispatched, closure),
+            });
+        }
+        // Whoever waited on a pending request is gone with the step.
+        for request in self.projection.pending.clone() {
+            self.append(SessionEventKind::RequestResolved {
+                request_id: request.id,
+                resolution: RequestResolution::Cancelled,
+            });
+        }
+        self.append(SessionEventKind::StepInterrupted { step });
+        true
+    }
+
+    /// Ledger: the tool calls dispatched without a recorded result.
+    pub fn dispatched_but_unsettled(&self) -> &[DispatchRecord] {
+        &self.projection.unsettled
+    }
+
+    /// Events not yet accepted by a store.
+    pub fn unpersisted(&self) -> &[SessionEvent] {
+        &self.events[self.persisted..]
+    }
+
+    /// Marks every recorded event as accepted by a store.
+    pub fn mark_persisted(&mut self) {
+        self.persisted = self.events.len();
+    }
+
+    /// The events recorded since the last call, for reporting them on the
+    /// run's event stream.
+    pub(crate) fn take_unobserved(&mut self) -> &[SessionEvent] {
+        let from = self.observed;
+        self.observed = self.events.len();
+        &self.events[from..]
+    }
+}
+
+/// The tool result recorded for a call a closed step left without one. The
+/// text tells the model what it may assume, so it checks external state
+/// instead of blindly retrying a side effect.
+fn closure_result(call: &ToolCall, dispatched: bool, closure: StepClosure) -> serde_json::Value {
+    use crate::tool::{
+        ToolError, TOOL_ABORTED_BEFORE_DISPATCH, TOOL_NOT_STARTED, TOOL_OUTCOME_UNKNOWN,
+    };
+    let name = &call.name;
+    let error = match (dispatched, closure) {
+        (true, _) => ToolError::fatal(format!(
+            "`{name}` was dispatched, but the run stopped before its result was recorded; \
+             whether it took effect is unknown"
+        ))
+        .with_code(TOOL_OUTCOME_UNKNOWN)
+        .with_next_step(
+            "check the state this call affects before deciding to call it again; \
+             only repeat it without checking if it is read-only or idempotent",
+        ),
+        (false, StepClosure::Crashed) => ToolError::fatal(format!(
+            "the run stopped before `{name}` was dispatched; it did not run"
+        ))
+        .with_code(TOOL_NOT_STARTED)
+        .with_next_step("call it again if it is still needed"),
+        (false, StepClosure::Aborted) => ToolError::fatal(format!(
+            "the run was cancelled before `{name}` was dispatched; it did not run"
+        ))
+        .with_code(TOOL_ABORTED_BEFORE_DISPATCH)
+        .with_next_step("call it again only if the user still wants it"),
+    };
+    serde_json::json!({ "error": error })
+}
+
+pub(crate) fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn event(seq: u64, kind: SessionEventKind) -> SessionEvent {
+        SessionEvent {
+            seq,
+            timestamp_ms: 0,
+            kind,
+        }
+    }
+
+    fn dispatched(id: &str) -> SessionEventKind {
+        SessionEventKind::ToolDispatched {
+            tool_use_id: id.into(),
+            tool_name: format!("tool_{id}"),
+            args_summary: json!({}),
+        }
+    }
+
+    fn user(text: &str) -> SessionEventKind {
+        SessionEventKind::UserMessage {
+            content: vec![ContentBlock::Text(text.into())],
+        }
+    }
+
+    #[test]
+    fn sequence_must_be_consecutive() {
+        let ok = vec![event(1, user("a")), event(2, user("b"))];
+        assert!(check_sequence(1, &ok).is_ok());
+
+        let gap = vec![event(1, user("a")), event(3, user("b"))];
+        assert!(matches!(
+            check_sequence(1, &gap),
+            Err(SessionError::SequenceConflict {
+                expected: 2,
+                found: 3
+            })
+        ));
+
+        let repeat = vec![event(1, user("a")), event(1, user("b"))];
+        assert!(check_sequence(1, &repeat).is_err());
+
+        let back = vec![event(2, user("a")), event(1, user("b"))];
+        assert!(check_sequence(2, &back).is_err());
+        assert!(SessionLog::from_events(back).is_err());
+    }
+
+    #[test]
+    fn append_assigns_consecutive_seq() {
+        let mut log = SessionLog::new();
+        log.append(user("a"));
+        log.append(user("b"));
+        let seqs: Vec<u64> = log.events().iter().map(|e| e.seq).collect();
+        assert_eq!(seqs, vec![1, 2]);
+        assert_eq!(log.next_seq(), 3);
+        assert_eq!(log.unpersisted().len(), 2);
+        log.mark_persisted();
+        assert!(log.unpersisted().is_empty());
+    }
+
+    #[test]
+    fn projection_pairs_tool_use_and_results() {
+        let mut log = SessionLog::new();
+        log.append(SessionEventKind::SystemMessage {
+            content: vec![ContentBlock::Text("sys".into())],
+        });
+        log.append(user("hi"));
+        log.append(SessionEventKind::StepStarted { step: 0 });
+        log.append(SessionEventKind::AssistantMessage {
+            content: vec![
+                ContentBlock::ToolUse {
+                    id: "t1".into(),
+                    name: "a".into(),
+                    input: json!({}),
+                },
+                ContentBlock::ToolUse {
+                    id: "t2".into(),
+                    name: "b".into(),
+                    input: json!({}),
+                },
+            ],
+        });
+        log.append(dispatched("t1"));
+        log.append(SessionEventKind::ToolResult {
+            tool_use_id: "t1".into(),
+            content: json!("one"),
+        });
+        log.append(dispatched("t2"));
+        assert_eq!(log.dispatched_but_unsettled().len(), 1);
+        log.append(SessionEventKind::ToolResult {
+            tool_use_id: "t2".into(),
+            content: json!("two"),
+        });
+        log.append(SessionEventKind::StepEnded {
+            step: 0,
+            budget_used: BudgetUsage {
+                tokens_used: 10,
+                tool_calls_used: 2,
+                cost_usd: 0.0,
+            },
+        });
+
+        let projection = log.projection();
+        assert_eq!(projection.messages.len(), 4);
+        assert_eq!(projection.messages[2].role, Role::Assistant);
+        assert_eq!(projection.messages[3].role, Role::User);
+        let ids: Vec<&str> = projection.messages[3]
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::ToolResult { tool_use_id, .. } => Some(tool_use_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids, vec!["t1", "t2"]);
+        assert!(projection.unsettled.is_empty());
+        assert_eq!(projection.step, 1);
+        assert_eq!(projection.budget_used.tool_calls_used, 2);
+    }
+
+    #[test]
+    fn replayed_log_projects_like_the_live_log() {
+        let mut log = SessionLog::new();
+        log.append(user("hi"));
+        log.append(SessionEventKind::AssistantMessage {
+            content: vec![ContentBlock::Text("hello".into())],
+        });
+        log.append(SessionEventKind::Compacted {
+            messages: vec![Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text("summary".into())],
+            }],
+        });
+        log.append(user("next"));
+        let replayed = SessionLog::from_events(log.events().to_vec()).unwrap();
+        assert_eq!(replayed.projection(), log.projection());
+        assert_eq!(replayed.messages().len(), 2);
+        assert!(replayed.unpersisted().is_empty());
+    }
+
+    fn tool_use(id: &str) -> ContentBlock {
+        ContentBlock::ToolUse {
+            id: id.into(),
+            name: format!("tool_{id}"),
+            input: json!({}),
+        }
+    }
+
+    fn error_code(content: &serde_json::Value) -> &str {
+        content["error"]["code"].as_str().unwrap_or_default()
+    }
+
+    #[test]
+    fn interrupted_step_is_closed_without_rerunning_calls() {
+        let mut log = SessionLog::new();
+        log.append(user("hi"));
+        log.append(SessionEventKind::StepStarted { step: 0 });
+        log.append(SessionEventKind::StepEnded {
+            step: 0,
+            budget_used: BudgetUsage {
+                tokens_used: 5,
+                ..Default::default()
+            },
+        });
+        log.append(SessionEventKind::StepStarted { step: 1 });
+        log.append(SessionEventKind::AssistantMessage {
+            content: vec![tool_use("a"), tool_use("b"), tool_use("c")],
+        });
+        log.append(dispatched("a"));
+        log.append(SessionEventKind::ToolResult {
+            tool_use_id: "a".into(),
+            content: json!("done"),
+        });
+        log.append(dispatched("b"));
+        // crash: b dispatched without a result, c never dispatched
+
+        let mut resumed = SessionLog::from_events(log.events().to_vec()).unwrap();
+        assert!(resumed.close_interrupted_step());
+        assert!(!resumed.close_interrupted_step(), "closing is idempotent");
+
+        let projection = resumed.projection();
+        assert_eq!(projection.step, 1, "the interrupted step runs again");
+        assert_eq!(projection.budget_used.tokens_used, 5);
+        assert!(projection.open_step.is_none());
+        assert!(projection.unsettled.is_empty());
+        assert!(projection.unanswered.is_empty());
+
+        let results = &projection.messages.last().unwrap().content;
+        assert_eq!(results.len(), 3, "all results share one user message");
+        let codes: Vec<&str> = results
+            .iter()
+            .map(|b| match b {
+                ContentBlock::ToolResult { content, .. } => error_code(content),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(codes, vec!["", "TOOL_OUTCOME_UNKNOWN", "TOOL_NOT_STARTED"]);
+        assert!(matches!(
+            resumed.events().last().map(|e| &e.kind),
+            Some(SessionEventKind::StepInterrupted { step: 1 })
+        ));
+    }
+
+    #[test]
+    fn aborted_step_closes_undispatched_calls_as_aborted() {
+        let mut log = SessionLog::new();
+        log.append(SessionEventKind::StepStarted { step: 0 });
+        log.append(SessionEventKind::AssistantMessage {
+            content: vec![tool_use("a"), tool_use("b")],
+        });
+        log.append(dispatched("a"));
+        assert!(log.close_aborted_step());
+        let codes: Vec<&str> = log
+            .messages()
+            .last()
+            .unwrap()
+            .content
+            .iter()
+            .map(|b| match b {
+                ContentBlock::ToolResult { content, .. } => error_code(content),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(
+            codes,
+            vec!["TOOL_OUTCOME_UNKNOWN", "TOOL_ABORTED_BEFORE_DISPATCH"]
+        );
+        assert!(log.dispatched_but_unsettled().is_empty());
+    }
+
+    #[test]
+    fn settled_calls_produce_no_closure() {
+        let mut log = SessionLog::new();
+        log.append(SessionEventKind::StepStarted { step: 0 });
+        log.append(SessionEventKind::AssistantMessage {
+            content: vec![tool_use("a")],
+        });
+        log.append(dispatched("a"));
+        log.append(SessionEventKind::ToolResult {
+            tool_use_id: "a".into(),
+            content: json!("ok"),
+        });
+        assert!(log.close_interrupted_step());
+        let results = log
+            .events()
+            .iter()
+            .filter(|e| matches!(e.kind, SessionEventKind::ToolResult { .. }))
+            .count();
+        assert_eq!(results, 1, "a settled call gets no synthesized result");
+    }
+
+    #[test]
+    fn args_summary_keeps_shape_not_values() {
+        let summary = summarize_args(&json!({
+            "path": "/etc/secret",
+            "token": "sk-live-123",
+            "retries": 3,
+            "headers": {"authorization": "Bearer abc"},
+            "items": [1, 2],
+        }));
+        assert_eq!(
+            summary,
+            json!({
+                "path": "string",
+                "token": "string",
+                "retries": "number",
+                "headers": {"authorization": "string"},
+                "items": "array[2]",
+            })
+        );
+        assert!(!summary.to_string().contains("sk-live"));
+    }
+
+    #[test]
+    fn closed_log_needs_no_repair() {
+        let mut log = SessionLog::new();
+        log.append(SessionEventKind::StepStarted { step: 0 });
+        log.append(SessionEventKind::StepEnded {
+            step: 0,
+            budget_used: BudgetUsage::default(),
+        });
+        let before = log.events().len();
+        assert!(!log.close_interrupted_step());
+        assert_eq!(log.events().len(), before);
+    }
+
+    #[test]
+    fn event_kind_is_tagged_on_the_wire() {
+        let json = serde_json::to_value(event(1, user("a"))).unwrap();
+        assert_eq!(json["kind"]["type"], "user_message");
+        let back: SessionEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(back, event(1, user("a")));
+    }
+}

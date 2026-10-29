@@ -90,7 +90,7 @@ impl Tool for LongTask {
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
             source: ToolSource::Builtin,
-            side_effect: false,
+            effects: orchest::tool::ToolEffects::NONE,
             timeout: None,
             max_output_tokens: None,
             approval: Approval::Never,
@@ -153,7 +153,7 @@ async fn main() {
                     format!("ToolCallCompleted({}, {}ms)", tool, duration.as_millis())
                 }
                 RuntimeEvent::RunCompleted { .. } => "RunCompleted".to_string(),
-                RuntimeEvent::RunAborted { reason } => {
+                RuntimeEvent::RunAborted { reason, .. } => {
                     format!("RunAborted({reason:?})")
                 }
                 RuntimeEvent::RunRestarted { attempt } => {

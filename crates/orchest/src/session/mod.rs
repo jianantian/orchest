@@ -1,13 +1,14 @@
-//! Session persistence: store, snapshot, and auto-save hook.
+//! Session persistence: the append-only event log, its projection, and the
+//! stores that hold it.
 
-pub mod persistence_hook;
-pub mod snapshot;
+pub mod log;
 #[cfg(feature = "sqlite-session")]
 pub mod sqlite;
 pub mod store;
 
-pub use persistence_hook::SessionPersistenceHook;
-pub use snapshot::SessionSnapshot;
+pub use log::{
+    summarize_args, DispatchRecord, SessionEvent, SessionEventKind, SessionLog, SessionProjection,
+};
 #[cfg(feature = "sqlite-session")]
 pub use sqlite::SqliteSessionStore;
-pub use store::{InMemorySessionStore, SessionError, SessionStore};
+pub use store::{CheckpointPolicy, InMemorySessionStore, SessionError, SessionMeta, SessionStore};

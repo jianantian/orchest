@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use orchest::model::{ModelAdapter, RequestOptions};
 use orchest::run::{AgentConfig, RunInput};
-use orchest::session::{SessionSnapshot, SessionStore, SqliteSessionStore};
+use orchest::session::{SessionStore, SqliteSessionStore};
 use orchest::tool::registry::ToolRegistry;
 use orchest::tool::ContextMode;
 use orchest::tool::ToolError;
@@ -206,8 +206,8 @@ pub struct PreparedRun {
 }
 
 pub struct PreparedResume {
+    /// The main agent config with the session store attached.
     pub config: AgentConfig,
-    pub snapshot: SessionSnapshot,
     pub input: RunInput,
     pub registry: ToolRegistry,
     pub profile: ExecutionProfile,
@@ -308,13 +308,24 @@ pub fn prepare_run(
     })
 }
 
+/// The main agent's config for `chat`. A resumed session is continued with a
+/// freshly built config: only the session log is restored from the store.
+pub fn main_agent_config(chat: &ResolvedChatModel) -> Result<AgentConfig, DemoError> {
+    build_agent_config(
+        "briefing-agent",
+        harness::MAIN_SYSTEM_PROMPT,
+        MAIN_MAX_STEPS,
+        chat,
+    )
+}
+
+/// `config` must carry the session store and id of the session to continue.
 pub fn prepare_resume(
-    mut snapshot: SessionSnapshot,
+    mut config: AgentConfig,
     args: ResumeArgs,
     env: ResolvedExecutionEnvironment,
 ) -> Result<PreparedResume, DemoError> {
-    apply_chat_config(&mut snapshot.active_config, &env.chat)?;
-    let config = snapshot.active_config.clone();
+    apply_chat_config(&mut config, &env.chat)?;
     let reviewer_config = build_agent_config(
         "briefing-reviewer",
         harness::REVIEWER_SYSTEM_PROMPT,
@@ -340,7 +351,6 @@ pub fn prepare_resume(
     )?;
     Ok(PreparedResume {
         config,
-        snapshot,
         input: RunInput::text(args.question),
         registry,
         profile,

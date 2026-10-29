@@ -52,14 +52,10 @@ fn live_chat_model() -> Result<Arc<dyn ModelAdapter>> {
 }
 
 async fn approve_worker_request(handle: &orchest::run::RunHandle, event: &RuntimeEvent) {
-    if let RuntimeEvent::SubAgentEvent {
-        child_run_id,
-        event,
-        ..
-    } = event
-    {
-        if matches!(event.as_ref(), RuntimeEvent::ApprovalRequested { .. }) {
-            if let Err(error) = handle.respond_approval(*child_run_id, true).await {
+    if let RuntimeEvent::SubAgentEvent { event, .. } = event {
+        if let RuntimeEvent::ApprovalRequested { request_id, .. } = event.as_ref() {
+            let approve = orchest::run::RequestResponse::approve();
+            if let Err(error) = handle.respond(request_id, approve).await {
                 eprintln!("[approval] {error}");
             }
         }

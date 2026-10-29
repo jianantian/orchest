@@ -21,6 +21,9 @@ pub const METRIC_CONTEXT_COMPACTIONS_TOTAL: &str = "orchest_context_compactions_
 pub const METRIC_CONTEXT_COMPACTION_TOKEN_SAVINGS: &str =
     "orchest_context_compaction_token_savings";
 pub const METRIC_EVENT_DROPS_TOTAL: &str = "orchest_event_drops_total";
+pub const METRIC_EVENT_BACKPRESSURE_WAITS_TOTAL: &str = "orchest_event_backpressure_waits_total";
+pub const METRIC_EVENT_BACKPRESSURE_WAIT_SECONDS: &str = "orchest_event_backpressure_wait_seconds";
+pub const METRIC_EVENT_CHANNEL_OCCUPANCY: &str = "orchest_event_channel_occupancy";
 
 pub(crate) fn tool_execute_span(tool: &str, source: &str) -> Span {
     tracing::info_span!(
@@ -140,6 +143,15 @@ pub(crate) fn record_context_compaction(removed_messages: usize, token_savings: 
 pub(crate) fn record_event_drop(subscriber: &str, count: u64) {
     metrics::counter!(METRIC_EVENT_DROPS_TOTAL, "subscriber" => subscriber.to_string())
         .increment(count);
+}
+
+pub(crate) fn record_event_backpressure(waited: Duration) {
+    metrics::counter!(METRIC_EVENT_BACKPRESSURE_WAITS_TOTAL).increment(1);
+    metrics::histogram!(METRIC_EVENT_BACKPRESSURE_WAIT_SECONDS).record(waited.as_secs_f64());
+}
+
+pub(crate) fn record_event_channel_occupancy(occupancy: usize) {
+    metrics::gauge!(METRIC_EVENT_CHANNEL_OCCUPANCY).set(occupancy as f64);
 }
 
 fn record_model_request(provider: &str, model: &str, status: &str, duration: Duration) {
