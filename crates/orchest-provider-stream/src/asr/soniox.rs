@@ -134,6 +134,9 @@ pub struct SonioxMapper {
     turn: u64,
     /// Whether `final{turn}` has received any Stable text.
     has_stable: bool,
+    /// Whether the last mapped message carried `<fin>`, the answer to a
+    /// client `Finalize`.
+    answered_finalize: bool,
 }
 
 impl SonioxMapper {
@@ -167,7 +170,14 @@ impl SonioxMapper {
         }
     }
 
+    /// Whether the message mapped last answered a client `Finalize`; reading
+    /// it clears it.
+    pub fn take_finalize_answer(&mut self) -> bool {
+        std::mem::take(&mut self.answered_finalize)
+    }
+
     pub fn map(&mut self, message: SonioxMessage) -> Vec<StreamEvent> {
+        self.answered_finalize = false;
         match message {
             SonioxMessage::Tokens {
                 finals,
@@ -188,7 +198,10 @@ impl SonioxMapper {
                         }
                         FinalPiece::Text(_) => {}
                         FinalPiece::Endpoint => self.end_turn(false, &mut events),
-                        FinalPiece::Finalized => self.end_turn(true, &mut events),
+                        FinalPiece::Finalized => {
+                            self.answered_finalize = true;
+                            self.end_turn(true, &mut events);
+                        }
                     }
                 }
                 if !provisional_text.is_empty() {
@@ -304,8 +317,9 @@ pub async fn run_soniox_stream<T: ByteDuplex>(
                             &message,
                             SonioxMessage::Tokens { finished: true, .. } | SonioxMessage::Error(_)
                         );
-                        for event in mapper.map(message) {
-                            finalize.observe(&event);
+                        let mapped = mapper.map(message);
+                        let mapped = finalize.settle(mapper.take_finalize_answer(), mapped);
+                        for event in mapped {
                             if events.send(event).await.is_err() {
                                 return;
                             }

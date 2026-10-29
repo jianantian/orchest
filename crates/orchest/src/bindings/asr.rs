@@ -20,8 +20,8 @@ pub enum AsrMode {
 }
 
 impl AsrMode {
-    fn matches(self, duplex: bool) -> bool {
-        duplex == matches!(self, Self::Streaming)
+    fn matches(self, streaming: bool) -> bool {
+        streaming == matches!(self, Self::Streaming)
     }
 
     fn describe(self) -> &'static str {
@@ -74,13 +74,13 @@ pub fn select_asr_model(
             )
             .with_provider(provider.to_string())
         })?;
-        if !mode.matches(rows[index].duplex) {
+        if !mode.matches(rows[index].streaming) {
             return Err(wrong_surface(format!("{provider}/{model}")));
         }
         return Ok(index);
     }
     let candidates: Vec<usize> = (0..rows.len())
-        .filter(|&index| mode.matches(rows[index].duplex))
+        .filter(|&index| mode.matches(rows[index].streaming))
         .collect();
     if candidates.is_empty() {
         return Err(if rows.is_empty() {
@@ -251,7 +251,7 @@ pub fn sdk_asr_event(event: &StreamEvent) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use orchest_protocol::{Capability, CapabilityDescriptor};
 
@@ -378,40 +378,97 @@ mod tests {
     }
 
     /// Kinds that appear as `kind: "…"` / `kind: Literal["…"]` in a declaration file.
-    fn declared_kinds(source: &str, open: &str, close: &str) -> BTreeSet<String> {
-        source
-            .lines()
-            .filter_map(|line| line.trim().strip_prefix(open)?.strip_suffix(close))
-            .map(str::to_string)
-            .collect()
+    /// A repository file outside this crate, or `None` when it is not there
+    /// (as in the published package), so the guard below skips instead of
+    /// failing to build.
+    fn repo_file(path: &str) -> Option<String> {
+        let full = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(path);
+        // allow-blocking-io: a synchronous test reading a repository file
+        let text = std::fs::read_to_string(&full).ok();
+        if text.is_none() {
+            eprintln!("skipping: {} is not available", full.display());
+        }
+        text
+    }
+
+    /// The fields each declared ASR event type has, keyed by its `kind`. A
+    /// declaration is a TS `interface` or a Python `TypedDict` class whose
+    /// body holds `kind: "<k>"` / `kind: Literal["<k>"]`.
+    fn declared_events(source: &str) -> BTreeMap<String, BTreeSet<String>> {
+        let mut events = BTreeMap::new();
+        let mut fields: Option<BTreeSet<String>> = None;
+        let mut kind: Option<String> = None;
+        let mut flush = |fields: &mut Option<BTreeSet<String>>, kind: &mut Option<String>| {
+            if let (Some(f), Some(k)) = (fields.take(), kind.take()) {
+                events.insert(k, f);
+            }
+        };
+        for line in source.lines() {
+            let opens_block = (line.starts_with("export interface Asr")
+                || line.starts_with("class Asr"))
+                && (line.ends_with('{') || line.ends_with("(TypedDict):"));
+            if opens_block {
+                flush(&mut fields, &mut kind);
+                fields = Some(BTreeSet::new());
+                continue;
+            }
+            let Some(current) = fields.as_mut() else {
+                continue;
+            };
+            if line == "}" || (!line.is_empty() && !line.starts_with(' ')) {
+                flush(&mut fields, &mut kind);
+                continue;
+            }
+            let Some((name, value)) = line.trim().split_once(':') else {
+                continue;
+            };
+            let name = name.trim_end_matches('?');
+            if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                continue;
+            }
+            if name == "kind" {
+                kind = value.split('"').nth(1).map(str::to_string);
+            }
+            current.insert(name.to_string());
+        }
+        flush(&mut fields, &mut kind);
+        events
     }
 
     #[test]
-    fn sdk_kinds_match_the_declarations() {
-        let emitted: BTreeSet<String> = sample_events()
-            .iter()
-            .filter_map(sdk_asr_event)
-            .map(|event| event["kind"].as_str().unwrap_or_default().to_string())
-            .collect();
+    fn sdk_events_match_the_declarations() {
+        let mut emitted: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for event in sample_events().iter().filter_map(sdk_asr_event) {
+            let kind = event["kind"].as_str().unwrap_or_default().to_string();
+            let keys = event
+                .as_object()
+                .map(|o| o.keys().cloned().collect())
+                .unwrap_or_default();
+            emitted.insert(kind, keys);
+        }
         let listed: BTreeSet<String> = ASR_EVENT_KINDS.iter().map(|k| k.to_string()).collect();
-        assert_eq!(emitted, listed, "ASR_EVENT_KINDS vs sdk_asr_event");
-        let typescript =
-            declared_kinds(include_str!("../../../../js/types.d.ts"), "kind: \"", "\";");
-        assert_eq!(typescript, listed, "js/types.d.ts AsrStreamEvent kinds");
-        let python = declared_kinds(
-            include_str!("../../../../python/orchest/__init__.pyi"),
-            "kind: Literal[\"",
-            "\"]",
-        );
         assert_eq!(
-            python, listed,
-            "python/orchest/__init__.pyi AsrStreamEvent kinds"
+            emitted.keys().cloned().collect::<BTreeSet<_>>(),
+            listed,
+            "ASR_EVENT_KINDS vs sdk_asr_event"
         );
+        for path in [
+            "js/types.d.ts",
+            "python/orchest/__init__.pyi",
+            "python/orchest/__init__.py",
+        ] {
+            let Some(source) = repo_file(path) else {
+                continue;
+            };
+            assert_eq!(declared_events(&source), emitted, "{path} ASR event types");
+        }
     }
 
-    fn row(model: &'static str, duplex: bool, default: bool) -> CapabilityDescriptor {
+    fn row(model: &'static str, streaming: bool, default: bool) -> CapabilityDescriptor {
         let mut descriptor =
-            CapabilityDescriptor::new("acme", model, Capability::Asr).duplex(duplex);
+            CapabilityDescriptor::new("acme", model, Capability::Asr).streaming(streaming);
         descriptor.default_for_provider = default;
         descriptor
     }

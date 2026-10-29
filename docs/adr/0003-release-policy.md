@@ -212,6 +212,12 @@ exception. The exception covers only the following changes:
 - **Segment ids:** Deepgram uses `final{n}` / `tail{n}` instead of
   `seg{ms}`. Soniox numbers its segments per Turn instead of using the fixed
   `final` / `tail`.
+- **Deepgram Stable updates:** Deepgram's Stable is an `Append` on
+  `final{n}` instead of a `Snapshot`, so Soniox is no longer the only dialect
+  that sends `Append`.
+- **Deepgram endpointing:** the session requests `vad_events=true` and
+  `endpointing=300` (300 ms instead of Deepgram's 10 ms default), so Turns
+  come at sentence pauses rather than at every short gap.
 - **Soniox:** endpoint detection is on by default, and the `<end>` / `<fin>`
   marker tokens are no longer in transcript text.
 

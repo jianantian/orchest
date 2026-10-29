@@ -106,6 +106,8 @@ pub struct ElevenLabsMapper {
     current: u64,
     /// Client commits (`Finalize`) still waiting for their committed transcript.
     pending_finalize: u32,
+    /// Whether the last mapped message answered a client `Finalize`.
+    answered_finalize: bool,
 }
 
 impl ElevenLabsMapper {
@@ -125,7 +127,14 @@ impl ElevenLabsMapper {
         })
     }
 
+    /// Whether the message mapped last was the committed transcript answering
+    /// a client commit; reading it clears it.
+    pub fn take_finalize_answer(&mut self) -> bool {
+        std::mem::take(&mut self.answered_finalize)
+    }
+
     pub fn map(&mut self, message: ElevenLabsMessage) -> Vec<StreamEvent> {
+        self.answered_finalize = false;
         match message {
             ElevenLabsMessage::Partial(text) if !text.is_empty() => {
                 vec![StreamEvent::Transcript {
@@ -137,6 +146,7 @@ impl ElevenLabsMapper {
             ElevenLabsMessage::Committed(text) => {
                 let answers_finalize = self.pending_finalize > 0;
                 self.pending_finalize = self.pending_finalize.saturating_sub(1);
+                self.answered_finalize = answers_finalize;
                 if text.is_empty() {
                     return if answers_finalize {
                         vec![StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
@@ -225,8 +235,9 @@ pub async fn run_elevenlabs_stream<T: ByteDuplex>(
                 Some(text) => match parse_message(text) {
                     Ok(message) => {
                         let is_error = matches!(message, ElevenLabsMessage::Error(_));
-                        for unified in mapper.map(message) {
-                            finalize.observe(&unified);
+                        let mapped = mapper.map(message);
+                        let mapped = finalize.settle(mapper.take_finalize_answer(), mapped);
+                        for unified in mapped {
                             if events.send(unified).await.is_err() {
                                 return;
                             }

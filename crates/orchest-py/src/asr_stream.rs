@@ -14,7 +14,6 @@ use pyo3::types::PyDict;
 use tokio::sync::Notify;
 
 const DEFAULT_STREAMING_PROVIDER: &str = "aliyun";
-const DEFAULT_STREAMING_MODEL: &str = "qwen-audio-3.0-asr-flash-streaming";
 
 struct Completion {
     result: Mutex<Option<Result<(), StreamFailure>>>,
@@ -155,10 +154,8 @@ pub fn start_asr_stream<'py>(
         options["context"] = context;
     }
     let (provider_name, model) = match (provider, model) {
-        (None, None) => (
-            DEFAULT_STREAMING_PROVIDER.to_string(),
-            Some(DEFAULT_STREAMING_MODEL.to_string()),
-        ),
+        // the model then comes from the catalog's `default_for_provider`
+        (None, None) => (DEFAULT_STREAMING_PROVIDER.to_string(), None),
         (Some(provider), model) => (super::asr::validate_provider(provider)?, model),
         (None, Some(_)) => {
             return Err(PyRuntimeError::new_err("model requires provider"));

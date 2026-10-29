@@ -60,9 +60,14 @@ pub(crate) fn finalize_unsupported(dialect: &str) -> StreamEvent {
 }
 
 /// The `Finalize` requests a dialect has sent upstream and not yet answered.
-/// The first Turn after a `Finalize` answers it; a request left unanswered for
-/// [`FINALIZE_TIMEOUT`] is answered with a non-fatal `Timeout` instead, so
-/// every `Finalize` gets exactly one result.
+///
+/// Only the dialect can tell which upstream message answers a `Finalize`
+/// (Deepgram `from_finalize`, Soniox `<fin>`, the ElevenLabs commit), so a
+/// VAD Turn never counts as the answer. A request left unanswered for
+/// [`FINALIZE_TIMEOUT`] is answered with a non-fatal `Timeout` instead. If
+/// the upstream answer arrives after that, it is not a second result: its
+/// segment-less Turn is dropped, and a Turn that ends Stable text is kept as an
+/// ordinary Turn, since every Stable must be ended by one.
 #[derive(Debug, Default)]
 pub(crate) struct FinalizeWatch {
     deadlines: VecDeque<Instant>,
@@ -77,14 +82,24 @@ impl FinalizeWatch {
         !self.deadlines.is_empty()
     }
 
-    /// Note an event the dialect emitted; a Turn answers the oldest request.
-    pub(crate) fn observe(&mut self, event: &StreamEvent) {
-        if matches!(
-            event,
-            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
-        ) {
-            self.deadlines.pop_front();
+    /// Pass on the events the dialect mapped from one upstream message;
+    /// `answers_finalize` says whether that message is the upstream answer to
+    /// a `Finalize`. It settles the oldest request, or, when none is left
+    /// (it timed out), the segment-less Turn it carries is dropped.
+    pub(crate) fn settle(
+        &mut self,
+        answers_finalize: bool,
+        mut events: Vec<StreamEvent>,
+    ) -> Vec<StreamEvent> {
+        if answers_finalize && self.deadlines.pop_front().is_none() {
+            events.retain(|event| {
+                !matches!(
+                    event,
+                    StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment: None })
+                )
+            });
         }
+        events
     }
 
     /// Resolves when the oldest request times out; never while none is pending.
@@ -132,20 +147,26 @@ mod tests {
     async fn finalize_watch_answers_each_request_once() {
         let mut watch = FinalizeWatch::default();
         assert!(!watch.is_pending());
+        let bare_turn = || StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment: None });
         watch.sent();
         watch.sent();
-        watch.observe(&StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
-            segment: None,
-        }));
+        // a VAD Turn is passed on and answers nothing
+        assert_eq!(watch.settle(false, vec![bare_turn()]).len(), 1);
+        assert!(watch.is_pending());
+        assert_eq!(watch.settle(true, vec![bare_turn()]).len(), 1);
         assert!(watch.is_pending());
         watch.expired().await;
         assert_finalize_error(&watch.expire("d"), ErrorCode::Timeout);
         assert!(!watch.is_pending());
-        // a Turn with nothing pending is an ordinary VAD Turn
-        watch.observe(&StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
-            segment: None,
-        }));
-        assert!(!watch.is_pending());
+        // the late upstream answer is not a second result
+        assert!(watch.settle(true, vec![bare_turn()]).is_empty());
+        let ending_stable = StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+            segment: Some(orchest_protocol::SegmentRef {
+                segment_id: Some("final0".into()),
+                update_kind: orchest_protocol::TranscriptUpdateKind::Append,
+            }),
+        });
+        assert_eq!(watch.settle(true, vec![ending_stable]).len(), 1);
     }
 
     #[test]

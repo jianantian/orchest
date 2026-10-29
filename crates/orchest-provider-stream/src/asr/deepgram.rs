@@ -43,6 +43,10 @@ pub enum DeepgramMessage {
     /// `UtteranceEnd`: a gap after the last finalized word — a Turn signal
     /// (<https://developers.deepgram.com/docs/utterance-end>).
     UtteranceEnd,
+    /// A message without `type` that carries `from_finalize: true`: the
+    /// documented acknowledgement of a client `Finalize`
+    /// (<https://developers.deepgram.com/docs/finalize>).
+    FinalizeAck,
     Error(String),
     /// Metadata / SpeechStarted / KeepAlive / unknown, or an `UtteranceEnd`
     /// with `last_word_end == -1` (already finalized) — no content.
@@ -61,14 +65,16 @@ pub struct DeepgramResult {
     pub from_finalize: bool,
     pub confidence: Option<f64>,
     /// Deepgram `start`: seconds offset of this speech segment in the stream.
-    /// Interim updates of one utterance share the same `start`, so it doubles
-    /// as the segment identity (`seg{start_ms}`).
+    /// Parsed for diagnostics only; segment identity is the Turn counter
+    /// (`final{n}` / `tail{n}`).
     pub start: f64,
 }
 
 /// Parse one Deepgram text message. `Results` → [`DeepgramResult`];
 /// `UtteranceEnd` → [`DeepgramMessage::UtteranceEnd`]; `Error` → its
-/// description; everything else is [`DeepgramMessage::Ignored`].
+/// description; an untyped `{"from_finalize": true}` →
+/// [`DeepgramMessage::FinalizeAck`]; everything else is
+/// [`DeepgramMessage::Ignored`].
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn parse_message(text: &str) -> Result<DeepgramMessage, ProtocolError> {
     let value: serde_json::Value = serde_json::from_str(text).map_err(|e| {
@@ -98,6 +104,13 @@ pub fn parse_message(text: &str) -> Result<DeepgramMessage, ProtocolError> {
                 .unwrap_or("Deepgram stream error")
                 .to_string(),
         )),
+        "" if value
+            .get("from_finalize")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true) =>
+        {
+            Ok(DeepgramMessage::FinalizeAck)
+        }
         _ => Ok(DeepgramMessage::Ignored),
     }
 }
@@ -141,14 +154,17 @@ pub const TAIL_SEGMENT_PREFIX: &str = "tail";
 /// space-separated, so every `is_final` piece of an utterance lands in the
 /// segment its Turn ends. The Turn (`EndOfSpeech` on `final{n}`) comes from
 /// `speech_final`, `UtteranceEnd` or a `from_finalize` result, whichever is
-/// first, and starts Turn `n + 1`. A `from_finalize` result with nothing
-/// committed still answers the client's `Finalize` with a Turn whose segment
-/// is `None`.
+/// first, and starts Turn `n + 1`. Only a `from_finalize` result (or the
+/// untyped finalize acknowledgement) answers the client's `Finalize`; with
+/// nothing committed its Turn has segment `None`. A `speech_final` /
+/// `UtteranceEnd` Turn is a VAD Turn and answers nothing.
 #[derive(Debug, Default)]
 pub struct DeepgramMapper {
     turn: u64,
     /// Whether `final{turn}` has received any Stable text.
     has_stable: bool,
+    /// Whether the last mapped message answered a client `Finalize`.
+    answered_finalize: bool,
 }
 
 impl DeepgramMapper {
@@ -163,10 +179,24 @@ impl DeepgramMapper {
         })
     }
 
+    /// Whether the message mapped last was the upstream answer to a client
+    /// `Finalize`; reading it clears it.
+    pub fn take_finalize_answer(&mut self) -> bool {
+        std::mem::take(&mut self.answered_finalize)
+    }
+
     pub fn map(&mut self, message: DeepgramMessage) -> Vec<StreamEvent> {
+        self.answered_finalize = false;
         match message {
-            DeepgramMessage::Result(result) => self.map_result(&result),
+            DeepgramMessage::Result(result) => {
+                self.answered_finalize = result.from_finalize;
+                self.map_result(&result)
+            }
             DeepgramMessage::UtteranceEnd => self.turn(false).into_iter().collect(),
+            DeepgramMessage::FinalizeAck => {
+                self.answered_finalize = true;
+                self.turn(true).into_iter().collect()
+            }
             DeepgramMessage::Error(message) => vec![StreamEvent::Error {
                 error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
                 fatal: true,
@@ -301,8 +331,9 @@ pub async fn run_deepgram_stream<T: ByteDuplex>(
                 Some(text) => match parse_message(text) {
                     Ok(message) => {
                         let is_error = matches!(message, DeepgramMessage::Error(_));
-                        for event in mapper.map(message) {
-                            finalize.observe(&event);
+                        let mapped = mapper.map(message);
+                        let mapped = finalize.settle(mapper.take_finalize_answer(), mapped);
+                        for event in mapped {
                             if events.send(event).await.is_err() {
                                 return;
                             }
@@ -434,7 +465,7 @@ impl Asr for DeepgramAsr {
             ));
         }
         let url = format!(
-            "{}?model={}&encoding=linear16&sample_rate=16000&interim_results=true&utterance_end_ms=1000&smart_format=true",
+            "{}?model={}&encoding=linear16&sample_rate=16000&interim_results=true&vad_events=true&utterance_end_ms=1000&endpointing=300&smart_format=true",
             self.config.ws_url, self.config.model
         );
         let ws_request = tungstenite::http::Request::builder()
@@ -881,5 +912,108 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Binary(_)));
+    }
+
+    fn results_frame(transcript: &str, speech_final: bool, from_finalize: bool) -> WsFrame {
+        WsFrame::Text(
+            json!({
+                "type": "Results",
+                "is_final": true,
+                "speech_final": speech_final,
+                "from_finalize": from_finalize,
+                "start": 0.0,
+                "channel": {"alternatives": [{"transcript": transcript}]}
+            })
+            .to_string(),
+        )
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_vad_turn_does_not_answer_finalize() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(16);
+        let _handle = tokio::spawn(run_deepgram_stream(transport, input_rx, events_tx));
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        out_rx.recv().await.unwrap();
+        // an ordinary endpoint arrives first, then the real finalize answer
+        in_tx
+            .send(results_frame("hello world", true, false))
+            .await
+            .unwrap();
+        in_tx
+            .send(results_frame("how are you", false, true))
+            .await
+            .unwrap();
+        let mut turns = Vec::new();
+        for _ in 0..4 {
+            let event = events_rx.recv().await.unwrap();
+            if let Some(segment) = turn_segment(&event) {
+                turns.push(segment.map(str::to_string));
+            }
+        }
+        assert_eq!(
+            turns,
+            [Some("final0".to_string()), Some("final1".to_string())]
+        );
+        // the Finalize was answered by final1, so it never times out
+        tokio::time::sleep(crate::asr::FINALIZE_TIMEOUT * 2).await;
+        assert!(events_rx.try_recv().is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_late_answer_after_the_timeout_is_not_a_second_result() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(16);
+        let _handle = tokio::spawn(run_deepgram_stream(transport, input_rx, events_tx));
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        out_rx.recv().await.unwrap();
+        crate::asr::assert_finalize_error(&events_rx.recv().await.unwrap(), ErrorCode::Timeout);
+        // a late, empty answer adds nothing
+        in_tx
+            .send(WsFrame::Text(json!({"from_finalize": true}).to_string()))
+            .await
+            .unwrap();
+        // a late answer with text still ends its Stable, as an ordinary Turn
+        in_tx.send(results_frame("hi", false, true)).await.unwrap();
+        assert!(matches!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Transcript {
+                stability: TranscriptStability::Committed,
+                ..
+            }
+        ));
+        assert_eq!(
+            turn_segment(&events_rx.recv().await.unwrap()),
+            Some(Some("final0"))
+        );
+    }
+
+    #[test]
+    fn the_untyped_finalize_ack_is_recognized_and_answers_finalize() {
+        assert_eq!(
+            parse_message(r#"{"from_finalize": true}"#).unwrap(),
+            DeepgramMessage::FinalizeAck
+        );
+        let mut mapper = DeepgramMapper::new();
+        let events = mapper.map(DeepgramMessage::FinalizeAck);
+        assert!(mapper.take_finalize_answer());
+        assert_eq!(turn_segment(&events[0]), Some(None));
+        // a VAD Turn is not an answer
+        mapper.map(result("hi", true, true, 0.0));
+        assert!(!mapper.take_finalize_answer());
     }
 }

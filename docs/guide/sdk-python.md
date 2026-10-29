@@ -163,8 +163,8 @@ asyncio.run(realtime())
 完整客服路由示例见 [`examples/python/providers/decisions.py`](../../examples/python/providers/decisions.py)。
 
 `provider` 只写厂商名（如 `"deepgram"`），模型用独立的 `model` 参数；`provider/model` 合写会被拒绝。
-两者都省略时，一次性识别使用 aliyun 的 `qwen-audio-3.0-asr-flash`，realtime 使用 aliyun 的
-`qwen-audio-3.0-asr-flash-streaming`；只给 `provider` 时，一次性识别只在该厂商的一次性模型里选默认，realtime 只在流式模型里选。厂商只有另一类模型时报 `UnsupportedOperation` 并指明该用哪个接口；有多个候选且没有默认时，报错列出可选的 `model`。
+两者都省略时，一次性识别使用 aliyun 的 `qwen-audio-3.0-asr-flash`，realtime 使用 aliyun 在目录里的默认流式模型
+（目前是 `fun-asr-realtime`，与只给 `provider="aliyun"` 时相同）；只给 `provider` 时，一次性识别只在该厂商的一次性模型里选默认，realtime 只在流式模型里选。厂商只有另一类模型时报 `UnsupportedOperation` 并指明该用哪个接口；有多个候选且没有默认时，报错列出可选的 `model`。
 
 realtime 事件按 [ADR-0006](../adr/0006-voice-session-model.md) 的语音模型带 `kind`：
 

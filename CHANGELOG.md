@@ -36,8 +36,12 @@ version; they ship in 1.2.0 under a one-off exception
 - Streaming ASR: Deepgram, ElevenLabs and Soniox honour `SessionInput::Finalize`
   with their native control (Deepgram `Finalize`, ElevenLabs manual commit,
   Soniox manual finalization) and keep the session open, answering a
-  `Finalize` left without a Turn for 10 s with a non-fatal finalize `Timeout`
-  error; aliyun and volcengine answer `UnsupportedOption`. ElevenLabs now
+  `Finalize` left unanswered for 10 s with a non-fatal finalize `Timeout`
+  error. Only the dialect's own finalize answer settles a `Finalize`
+  (Deepgram `from_finalize`, including its untyped acknowledgement; Soniox
+  `<fin>`; the ElevenLabs commit), so an ordinary endpoint Turn never does,
+  and an answer arriving after the timeout adds no second segment-less Turn.
+  aliyun and volcengine answer `UnsupportedOption`. ElevenLabs now
   recognizes every documented error message type (`commit_throttled`,
   `rate_limited`, …) instead of ignoring the ones it did not list. Each streaming ASR descriptor
   declares this as `CapabilityExt::Asr({"client_finalize": bool})`
@@ -68,10 +72,12 @@ version; they ship in 1.2.0 under a one-off exception
 - Streaming ASR: every dialect now emits a Turn (`EndOfSpeech`) that carries
   the `segment_id` of the Stable it ends. ElevenLabs, aliyun and volcengine
   synthesize it after each committed segment; Deepgram appends every
-  `is_final` piece of an utterance to one `final{n}` segment (interims go to
-  `tail{n}`, replacing the per-`start` `seg{ms}` ids) and ends it with the
-  first of `speech_final`, `UtteranceEnd` (now requested with
-  `utterance_end_ms=1000`) or a `from_finalize` result; Soniox maps its `<end>` / `<fin>` tokens (endpoint
+  `is_final` piece of an utterance to one `final{n}` segment (an `Append`
+  Stable instead of a `Snapshot`; interims go to `tail{n}`, replacing the
+  per-`start` `seg{ms}` ids) and ends it with the first of `speech_final`,
+  `UtteranceEnd` or a `from_finalize` result. Deepgram sessions now request
+  `vad_events=true` and `utterance_end_ms=1000`, which `UtteranceEnd` needs,
+  and `endpointing=300` instead of the 10 ms default; Soniox maps its `<end>` / `<fin>` tokens (endpoint
   detection is now on by default) and numbers segments per Turn
   (`final{n}` / `tail{n}`) instead of the fixed `final` / `tail`. The marker
   tokens no longer leak into the transcript text. The end of a session is now
@@ -80,7 +86,10 @@ version; they ship in 1.2.0 under a one-off exception
 - Python / Node `transcribe` with only `provider` picks that provider's
   default one-shot model and never a streaming one; `start_asr_stream` picks
   only streaming models. A provider with only the other kind fails with
-  `UnsupportedOperation` naming the API to use. The ASR stream's `finalize()`
+  `UnsupportedOperation` naming the API to use. With neither `provider` nor
+  `model`, `start_asr_stream` now uses aliyun's catalog default streaming
+  model (`fun-asr-realtime`), the same as `provider="aliyun"` alone. The ASR
+  stream's `finalize()`
   raises `unsupported_option` without sending when the model does not support
   it and raises once the session is finishing or closed; otherwise it returns
   on submission, and a later rejection arrives as a non-fatal `error` event

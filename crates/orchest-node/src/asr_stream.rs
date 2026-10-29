@@ -131,10 +131,8 @@ async fn start(
     tsfn: ThreadsafeFunction<serde_json::Value, ErrorStrategy::Fatal>,
 ) -> napi::Result<NativeAsrStream> {
     let (provider, model) = match (input.provider, input.model) {
-        (None, None) => (
-            "aliyun".to_string(),
-            Some("qwen-audio-3.0-asr-flash-streaming".to_string()),
-        ),
+        // the model then comes from the catalog's `default_for_provider`
+        (None, None) => ("aliyun".to_string(), None),
         (Some(provider), model) => (super::asr::validate_provider(provider)?, model),
         (None, Some(_)) => return Err(napi::Error::from_reason("model requires provider")),
     };
