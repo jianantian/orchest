@@ -69,6 +69,14 @@
 
 ## 规划中
 
+执行顺序（2026-10-27 起，按 agent 开发节奏排）：v1.2 与 SDK 0.2 打包并行 → 发布 `1.2.0` 与 SDK `0.2.0` → v2.0 合入 main → SDK 0.3 与 v2.1 并行 → v2.2 与 M2 → 发布 `2.0.0` 与 SDK `0.3.0`。v2.0 在 `iteration/v2_0` 分支上与前两步并行开发，SDK 0.2.0 发布后再合入。
+
+### v1.2 — 语音契约补齐与新 provider（规划）
+
+两件增量的事，都赶在 SDK 0.2 之前：按 [ADR-0006](../adr/0006-voice-session-model.md) 补语音契约（`SessionInput::Finalize`、各方言补 Turn 与原生 finalize、方言无关的契约测试）并重设计 Python / Node 的 ASR 流式接口（语音线 V1）；接入 Vercel AI Gateway 与 Fireworks 的 chat 与 decision。发布 Rust `1.2.0`，作为 SDK 0.2 版本矩阵的 crate 版本。权威范围见 [`v1_2/prd.md`](./v1_2/prd.md)（[#342](https://github.com/jianantian/orchest/issues/342)–[#348](https://github.com/jianantian/orchest/issues/348)）。
+
+**不在范围内**：语音 V2–V5；Vercel / Fireworks 的语音、图像、embedding。
+
 ### SDK 0.2 — 发布 Python / Node 包（规划）
 
 让用户在 Linux x86_64、Linux arm64、macOS arm64 上直接 `pip install orchest-py` / `npm install orchest-sdk`，不需要本地 Rust 工具链。Python 每平台一个 `cp311-abi3` wheel 加 sdist；Node 为主包加三个平台子包；Linux 上把 OpenSSL 静态编译进绑定（已发布的 crate 不变）；两个 SDK 共用一个独立于 crate 的版本号，从 `0.2.0` 起步，由 `sdk-vX.Y.Z` tag 经 Trusted Publishing 发布，先发 `0.2.0-rc.1`。权威范围、决策与 issue 清单见 [`sdk_v0_2/prd.md`](./sdk_v0_2/prd.md)（[#324](https://github.com/jianantian/orchest/issues/324)–[#330](https://github.com/jianantian/orchest/issues/330)）。
@@ -76,6 +84,8 @@
 **不在范围内**：Windows、Intel macOS、musl；SDK 的 API 冻结与 1.0；新的 Rust crate 发布。
 
 **npm 包名**：`orchest` npm 组织不可用（2026-10-02），因此用不带 scope 的 `orchest-sdk`（[ADR-0004](../adr/0004-sdk-packaging.md) D2）。
+
+**前置**：v1.2 的 ASR 流式接口重设计与 `1.2.0` 发布；rc.1 由 Murmur 从 PyPI 安装试跑。
 
 ### v2.0 — Runtime 契约与可靠性（规划）
 
@@ -85,11 +95,25 @@
 
 8 个 issue：会话事件日志 → checkpoint 与恢复 → in-flight 副作用账本 → 阻塞请求通道 → 原生权限模式表面 → 取消语义 → 事件模型与能力探测 → canonical 事件零丢失。权威范围与验收标准见 [`v2_0/prd.md`](./v2_0/prd.md)。
 
-**不在范围内**：产品语义（计划提案、任务计划、Task/Thread/Workspace）；宿主权限档映射与 UI；OS 级沙箱实现（M4）；持久委派与后台子 agent（M3）；SDK 控制面能力（M3）。
+9 个 issue 的第 9 个让 Python / Node 绑定跟上新契约并透传 `abort` 与按 request id 的回复；完整控制面在 SDK 0.3。
+
+**不在范围内**：产品语义（计划提案、任务计划、Task/Thread/Workspace）；宿主权限档映射与 UI；OS 级沙箱实现（M4）；持久委派与后台子 agent（M3）；SDK 控制面的完整重设计（SDK 0.3）。
+
+### SDK 0.3 — SDK 控制面（规划，v2.0 合入后写 PRD）
+
+把 [方向文档](./direction.md) M3 的 SDK 控制面提前做：真异步 `run` 与事件迭代器、`abort`、按 request id 的 `respond`、session 与 `resume`、能力探测、运行时事件类型；Node 补齐 Python 已有的工具注册方法。对标 v2.0 的新契约，所以 PRD 与 issue spec 在 v2.0 合入后再写。
+
+### v2.1 — 语音能力目录、计量与 TTS 双工（规划，v2.0 合入后写 PRD）
+
+语音线的 V2 与 V4：`AsrCatalogExt` / `TtsCatalogExt` 能力项、便携选项校验、音频秒数与字符计量；三个 TTS 方言的双工输入（追加文本 / Flush / 取消 / 关闭），SDK 暴露 `synthesize()` 与流式、双工合成。
+
+### v2.2 — 全双工补齐（规划）
+
+语音线的 V5：omni 输出侧生命周期、`Interrupt` 带已播放位置、轮次检测便携选项、第二个全双工 provider；SDK 暴露 `RealtimeSession`。与 M2（Multivac 适配，在 Multivac 仓库）同期。
 
 ### 语音迭代线（卫星，规划）
 
-按 [ADR-0006](../adr/0006-voice-session-model.md) 的六个概念（Session / Stable / Draft / Turn / Finalize / Extras）统一语音接口，各厂商协议与聚合服务映射进来。五步：V1 契约补齐（`SessionInput::Finalize`、Turn 补齐、契约测试、SDK ASR 流式接口重设计）→ V2 能力目录与音频计量 → V3 聚合与网关 provider → V4 TTS 双工 → V5 全双工生命周期与第二个 provider。**V1 的 SDK 改动是 SDK 0.2 的前置条件**。范围与验收见 [`voice/plan.md`](./voice/plan.md)。
+按 [ADR-0006](../adr/0006-voice-session-model.md) 的六个概念（Session / Stable / Draft / Turn / Finalize / Extras）统一语音接口，各厂商协议与聚合服务映射进来。五步：V1 契约补齐（`SessionInput::Finalize`、Turn 补齐、契约测试、SDK ASR 流式接口重设计）→ V2 能力目录与音频计量 → V3 聚合与网关 provider → V4 TTS 双工 → V5 全双工生命周期与第二个 provider。**V1 的 SDK 改动是 SDK 0.2 的前置条件**。V1 落在 v1.2，V2 与 V4 落在 v2.1，V5 落在 v2.2，V3 未排期。范围与验收见 [`voice/plan.md`](./voice/plan.md)。
 
 **不在范围内**：中转站功能（鉴权、预算、请求日志）；端侧 VAD；附和词过滤与管线编排。
 
@@ -136,13 +160,20 @@
 ✅ v1.0: 首次公开发布（crates.io 1.0.0，2026-10-01）
             │
             ▼
+   v1.2: 语音契约补齐（语音线 V1）+ Vercel AI Gateway / Fireworks（Rust 1.2.0）
+            │
+            ▼
    SDK 0.2: 发布 Python / Node 包（PyPI orchest-py + npm orchest-sdk，独立版本号）
 
    v2.0: Runtime 契约与可靠性（会话事件日志 + checkpoint + 副作用账本 +
-        权限表面 + 取消 + 零丢失事件 + 能力探测；破坏性，Rust 2.0.0）
+        权限表面 + 取消 + 零丢失事件 + 能力探测 + 绑定跟上；破坏性，Rust 2.0.0）
+        （分支上与 v1.2 / SDK 0.2 并行，SDK 0.2.0 发布后合入）
         │
+        ├─► SDK 0.3: SDK 控制面（M3 的 SDK 部分提前）
+        ├─► v2.1: 语音能力目录 + 计量 + TTS 双工（语音线 V2 + V4）
+        ├─► v2.2: 全双工补齐（语音线 V5）
         ├─► M2: Multivac 本地默认 runtime
-        └─► M3: 生态地基（SDK 控制面、provider 目录、包格式、委派层）
+        └─► M3: 生态地基（provider 目录、包格式、委派层）
 
 ✅ v0.10: Briefing Desk
             │

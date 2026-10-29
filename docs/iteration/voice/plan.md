@@ -85,6 +85,8 @@ Vercel 的 Speech 接口（`generateSpeech` / `transcribe`）是一次请求一�
 
 ### V1 契约补齐（P0，SDK 0.2 前置）
 
+落地迭代：[v1.2](../v1_2/prd.md)（issue 001–004）。
+
 目标：现有五个流式 ASR 方言在 Draft / Stable / Turn / Finalize 上行为一致，并有契约测试护住。
 
 - `orchest-protocol`：加 `SessionInput::Finalize`；改 `SegmentRef` 注释，Append 与 Snapshot 都是合法 Stable；写明 Turn 必须携带它结束的 `segment_id`。
@@ -95,12 +97,16 @@ Vercel 的 Speech 接口（`generateSpeech` / `transcribe`）是一次请求一�
 
 ### V2 能力目录与音频计量（P1）
 
+计划落地迭代：v2.1（与 V4 同一迭代，见 [roadmap](../roadmap.md)）。
+
 - `AsrCatalogExt` 填上 ADR-0006 D8 的能力项；五个方言的目录行逐一填写，并在 V1 的契约测试里校验「声明与行为一致」。
 - 便携选项校验：调用方请求目录未声明的能力（如 speaker）时，在开 Session 前返回 `UnsupportedOption`。
 - 音频计量：流事件结束时上报音频秒数（ASR）和字符数（TTS），并带上实际服务的 provider / model；复用 `pricing.rs` 已有的 `Pricing::Duration` 给 ASR 目录行填上价格（现在全是 `None`），TTS 补按字符计价。
 - 验收：`list_models` 能按能力项筛出模型；一次流式转写结束后能拿到秒数和估算成本。
 
 ### V3 聚合与网关 provider（P1）
+
+未排期：先回答下方两个开放问题。Vercel AI Gateway 与 Fireworks 的 chat 已在 [v1.2](../v1_2/prd.md) 接入，V3 只补它们的语音接口。
 
 - 先接一个批量型网关：Vercel AI Gateway 的 transcribe / speech（形状和现有一次性接口一致，风险最小），验证 `source = gateway`、实际上游透传、计量。
 - 再接一个流式聚合：SpeechRouter 或 LiveKit Inference 二选一，验证会话内 failover 和 `RouteSelected`。
@@ -109,12 +115,16 @@ Vercel 的 Speech 接口（`generateSpeech` / `transcribe`）是一次请求一�
 
 ### V4 TTS 双工与对齐（可与 V2 并行）
 
+计划落地迭代：v2.1。
+
 - 接通三个方言的 `start_duplex_stream`（目前全部返回 `UnsupportedOperation`）。输入按业界形态定为「追加文本 / Flush / 取消 / 关闭」，输出音频分片带 `context_id` 与 `flush_id`。
 - 按 ADR-0006 D7.5 的 TTS 对照落实事件。
 - Python / Node 暴露 `synthesize()`、流式合成与双工合成，沿用 V1 的事件结构和 V2 的字符计量。
 - 验收：用 LLM 逐字输出驱动双工合成，三个方言都能边输入边出音频；中途取消后不再收到旧上下文的音频。
 
 ### V5 全双工补齐（在 V1 之后）
+
+计划落地迭代：v2.2。
 
 - omni 补输出侧生命周期：用户开始说话、模型本轮生成完、被打断、本轮结束，并写进契约顺序（生成完或被打断，之后必有本轮结束）。
 - `SessionInput::Interrupt` 增加可选 `played_ms`，截断到已播放位置。

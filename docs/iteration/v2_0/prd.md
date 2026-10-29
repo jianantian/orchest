@@ -2,7 +2,7 @@
 
 > 落地 [`../../iteration/direction.md`](../../iteration/direction.md) 的 **M1** 里程碑。
 > 决策依据：[ADR-0005](../../adr/0005-host-integration-contract.md)（宿主集成契约）、[Agent Runtime 全景调研](../../research/sdk-comparison/agent-runtime-landscape-2026-10.md)。
-> 状态：草稿（待 owner 确认）。GitHub issue 已建（#331–#338），编号已回填各 spec。
+> 状态：草稿（待 owner 确认）。GitHub issue 已建（#331–#338、#349），编号已回填各 spec。
 
 ## Background
 
@@ -34,6 +34,8 @@ Orchest 1.1.0 的运行循环、工具系统、技能、MCP、委派原语都已
 | 取消 | 令牌贯穿模型流 / 工具 / 审批；明确"安全工具可中断、危险工具跑完" | ADR-0005 §4.1 |
 | 事件 | canonical 路径零丢失；产品事件不进 Orchest | ADR-0005 §4.1 |
 | 向后兼容 | **不维护**。公开面变更一律硬切换，按 ADR-0003 走主版本号（2.0.0） | owner 2026-10-24 |
+| 合入时机 | 在 `iteration/v2_0` 分支开发，SDK 0.2.0 发布后再合入 main，避免 0.2 构建在半成品 runtime 上 | 月度计划 2026-10-27 |
+| 绑定 | 本迭代让 Python / Node 绑定跟上新契约并透传取消与按 id 回复（009）；完整控制面重设计属 SDK 0.3 | 月度计划 2026-10-27 |
 
 ## Scope
 
@@ -45,6 +47,7 @@ Orchest 1.1.0 的运行循环、工具系统、技能、MCP、委派原语都已
 - **取消语义**：取消令牌贯穿模型流、工具执行、审批等待；工具可中断性分类；进程组终止作为宿主可注入后端。
 - **事件模型补齐**：message 生命周期、通用请求事件、效果账本事件；能力探测面。
 - **零丢失事件**：主通道不再丢事件；次要订阅者维持有损但可观测。
+- **绑定跟上**：`orchest-py` / `orchest-node` 在新契约下编译通过，现有 SDK 测试全绿，并透传 `abort` 与按 request id 的回复。
 
 ## Out of Scope
 
@@ -52,7 +55,7 @@ Orchest 1.1.0 的运行循环、工具系统、技能、MCP、委派原语都已
 - 宿主的权限档映射表、UI、Attempt/Unknown 语义、远端执行节点部署。
 - OS 级沙箱实现与平台覆盖矩阵（属 M4；本迭代只提供注入点与 hard/soft 事实）。
 - 持久委派与后台子 agent（属 M3 的生态包）。
-- SDK（Python/Node）控制面能力补齐（属 M3；本迭代只保证 Rust 侧契约，bindings 的破坏性变更在 M3 一并处理）。
+- SDK（Python/Node）控制面的完整重设计（真异步 run、session / resume、能力探测、事件类型等，属 [SDK 0.3](../roadmap.md)）。本迭代只做 009 的最小跟进。
 - 向后兼容层、弃用期、迁移说明。
 
 ## Issues
@@ -69,6 +72,7 @@ Orchest 1.1.0 的运行循环、工具系统、技能、MCP、委派原语都已
 | 006 | [#336](https://github.com/jianantian/orchest/issues/336) | 取消语义与工具可中断性 | AFK | 003 |
 | 007 | [#337](https://github.com/jianantian/orchest/issues/337) | 事件模型补齐与能力探测面 | AFK | 001, 004 |
 | 008 | [#338](https://github.com/jianantian/orchest/issues/338) | canonical 事件零丢失 | AFK | 001 |
+| 009 | [#349](https://github.com/jianantian/orchest/issues/349) | 绑定跟上新契约（最小透传） | AFK | 001, 004, 006 |
 
 1. [会话事件日志与派生投影](issues/001-event-log-session/spec.md)
 2. [checkpoint、耐久屏障与恢复契约](issues/002-checkpoint-and-resume/spec.md)
@@ -78,6 +82,7 @@ Orchest 1.1.0 的运行循环、工具系统、技能、MCP、委派原语都已
 6. [取消语义与工具可中断性](issues/006-cancellation-semantics/spec.md)
 7. [事件模型补齐与能力探测面](issues/007-event-model-and-capabilities/spec.md)
 8. [canonical 事件零丢失](issues/008-lossless-event-delivery/spec.md)
+9. [绑定跟上新契约](issues/009-bindings-follow-contract/spec.md)
 
 主要风险在 001：它改的是公开面（`SessionStore` trait、快照类型），牵动 run 生命周期、bindings 与示例。002/003 的语义正确性依赖 001 的日志模型定死之后才能测。
 
