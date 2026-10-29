@@ -2,7 +2,7 @@
 
 > 状态：已确认（owner，2026-10-27）。GitHub issue 已建（#342–#348），编号已回填各 spec。
 > 决策依据：[ADR-0006](../../adr/0006-voice-session-model.md)（语音会话模型）、[语音迭代线计划](../voice/plan.md) 的 V1。
-> 版本：只做增量变更，按 ADR-0003 发 Rust `1.2.0`。
+> 版本：发 Rust `1.2.0`；流式 ASR 事件行为的变化按 ADR-0003 D4 的 1.2.0 例外处理。
 
 ## Background
 
@@ -29,7 +29,7 @@
 | 新 provider 接法 | 沿用 OpenRouter 的动态网关路径（`create_adapter` + profile），不写静态模型目录 | 现有 OpenRouter 先例 |
 | 新 provider 范围 | 只接 chat 与 decision；Vercel 的 transcribe / speech 与 Fireworks 的 ASR 留到语音 V3 | 语音线计划 V3 |
 | Fireworks decision | 延后：Fireworks 没有 Decisions API，本迭代只接 chat | owner 2026-10-27 |
-| 版本 | 全部增量变更（`SessionInput` 是 `#[non_exhaustive]`），发 `1.2.0` | ADR-0003 D4 |
+| 版本 | 发 `1.2.0`：API 全部增量（`SessionInput` 是 `#[non_exhaustive]`）；流式 ASR 事件行为的变化（Turn、`SessionClosed`、segment id）作为 ADR-0003 D4 的一次性例外，记在 CHANGELOG 的 Changed | ADR-0003 D4 例外；owner 2026-10-29 |
 
 ## Scope
 

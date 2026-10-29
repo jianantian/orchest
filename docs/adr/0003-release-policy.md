@@ -1,7 +1,7 @@
 # ADR-0003: Release Policy for v1.0
 
 **Status:** Accepted
-**Date:** 2026-09-23 (accepted 2026-09-23; D4 amended 2026-10-01 with the provider catalog rules)
+**Date:** 2026-09-23 (accepted 2026-09-23; D4 amended 2026-10-01 with the provider catalog rules and 2026-10-29 with the 1.2.0 streaming ASR exception)
 **Deciders:** Orchest maintainer (emile) — decision owner
 **Related:** [v1.0 PRD](../archive/iteration/v1_0/prd.md), [#306](https://github.com/jianantian/orchest/issues/306),
 [ADR-0001](./0001-provider-unification.md)
@@ -196,6 +196,40 @@ Precedent: hotfix 2026-10-01 (#318–#320, released in 1.1.0) kept
 `deepseek/deepseek-v4-flash` as a deprecated row in its 1.0.0 text-only
 shape. The new `deepseek/deepseek-flash` row is the one that accepts
 images, so `accepts([Image])` stays unambiguous.
+
+#### Exception: streaming ASR events in 1.2.0 (amended 2026-10-29)
+
+1.2.0 changes the streaming ASR event behaviour that `orchest-provider`
+exposes, so under the last major rule above it would need 2.0.0. The
+decision owner accepted it as a minor release on 2026-10-29, as a one-off
+exception. The exception covers only the following changes:
+
+- **Turn:** every dialect emits `LifecycleEvent::EndOfSpeech` carrying the
+  `segment_id` of the Stable it ends. ElevenLabs, aliyun and volcengine
+  start emitting it.
+- **Session end:** the end of a session is `LifecycleEvent::SessionClosed`
+  instead of a segment-less `EndOfSpeech`.
+- **Segment ids:** Deepgram uses `final{n}` / `tail{n}` instead of
+  `seg{ms}`. Soniox numbers its segments per Turn instead of using the fixed
+  `final` / `tail`.
+- **Soniox:** endpoint detection is on by default, and the `<end>` / `<fin>`
+  marker tokens are no longer in transcript text.
+
+Reasons:
+
+- The 1.x behaviour broke the voice session model that
+  [ADR-0006](./0006-voice-session-model.md) froze. There was no Turn on
+  ElevenLabs, and session end looked like a Turn. Callers could not build on
+  it as a contract.
+- Streaming ASR's main consumers are the Python and Node SDKs. They are not
+  published yet, and SDK 0.2 ships the new shape with no compatibility
+  layer.
+- SDK 0.2's SDK↔crate version matrix (ADR-0005 D6) needs a published 1.x
+  release. A 2.0.0 would collide with the v2.0 runtime iteration.
+
+The changes are listed under *Changed* in `CHANGELOG.md`'s `[1.2.0]`
+section. This is not a precedent: any other behaviour change still follows
+the major rule above.
 
 ### D5. MSRV
 

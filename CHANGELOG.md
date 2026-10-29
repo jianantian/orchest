@@ -16,6 +16,10 @@ except for the items `orchest-provider` re-exports.
 
 ## [1.2.0]
 
+The streaming ASR event changes under *Changed* would normally need a major
+version; they ship in 1.2.0 under a one-off exception
+([ADR-0003 D4](docs/adr/0003-release-policy.md#exception-streaming-asr-events-in-120-amended-2026-10-29)).
+
 ### Added
 
 - `SessionInput::Finalize`: asks a streaming session to finalize what it has
