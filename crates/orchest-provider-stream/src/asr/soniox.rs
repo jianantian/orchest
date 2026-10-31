@@ -62,7 +62,7 @@ pub enum SonioxMessage {
         /// End of stream.
         finished: bool,
     },
-    Error(String),
+    Error(super::UpstreamError),
     /// No tokens and not finished — nothing to surface.
     Ignored,
 }
@@ -78,11 +78,12 @@ pub fn parse_message(text: &str) -> Result<SonioxMessage, ProtocolError> {
         )
     })?;
     if let Some(error_code) = message.error_code {
-        return Ok(SonioxMessage::Error(format!(
-            "soniox error {error_code}: {}",
-            message
-                .error_message
-                .unwrap_or_else(|| "stream error".into())
+        let detail = message
+            .error_message
+            .unwrap_or_else(|| "stream error".into());
+        return Ok(SonioxMessage::Error(super::UpstreamError::new(
+            Some(error_code.clone()),
+            format!("soniox error {error_code}: {detail}"),
         )));
     }
     if message.tokens.is_empty() && !message.finished {
@@ -217,10 +218,7 @@ impl SonioxMapper {
                 }
                 events
             }
-            SonioxMessage::Error(message) => vec![StreamEvent::Error {
-                error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
-                fatal: true,
-            }],
+            SonioxMessage::Error(error) => vec![error.into_event("soniox")],
             SonioxMessage::Ignored => Vec::new(),
         }
     }
@@ -313,12 +311,16 @@ pub async fn run_soniox_stream<T: ByteDuplex>(
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_text) {
                 Some(text) => match parse_message(text) {
                     Ok(message) => {
+                        let is_error = matches!(&message, SonioxMessage::Error(_));
                         let terminal = matches!(
                             &message,
                             SonioxMessage::Tokens { finished: true, .. } | SonioxMessage::Error(_)
                         );
                         let mapped = mapper.map(message);
-                        let mapped = finalize.settle(mapper.take_finalize_answer(), mapped);
+                        let mut mapped = finalize.settle(mapper.take_finalize_answer(), mapped);
+                        if is_error {
+                            mapped = finalize.upstream_failed(mapped);
+                        }
                         for event in mapped {
                             if events.send(event).await.is_err() {
                                 return;
@@ -611,7 +613,10 @@ mod tests {
     fn error_code_becomes_error() {
         let raw = json!({"error_code": "401", "error_message": "bad key"}).to_string();
         match parse_message(&raw).unwrap() {
-            SonioxMessage::Error(m) => assert!(m.contains("401") && m.contains("bad key")),
+            SonioxMessage::Error(e) => {
+                assert!(e.message.contains("401") && e.message.contains("bad key"));
+                assert_eq!(e.code.as_deref(), Some("401"));
+            }
             other => panic!("expected Error, got {other:?}"),
         }
     }
@@ -705,7 +710,9 @@ mod tests {
 
     #[test]
     fn map_error_is_fatal() {
-        let events = SonioxMapper::new().map(SonioxMessage::Error("boom".into()));
+        let events = SonioxMapper::new().map(SonioxMessage::Error(
+            super::super::UpstreamError::new(None, "boom"),
+        ));
         assert!(matches!(events[0], StreamEvent::Error { fatal: true, .. }));
     }
 

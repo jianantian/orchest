@@ -35,7 +35,7 @@ pub const CLIENT_FINALIZE: bool = true;
 pub enum ElevenLabsMessage {
     Partial(String),
     Committed(String),
-    Error(String),
+    Error(super::UpstreamError),
     /// `session_started` / unknown — no content.
     Ignored,
 }
@@ -85,10 +85,11 @@ pub fn parse_message(text: &str) -> Result<ElevenLabsMessage, ProtocolError> {
         | "resource_exhausted"
         | "session_time_limit_exceeded"
         | "chunk_size_exceeded"
-        | "insufficient_audio_activity" => ElevenLabsMessage::Error(
+        | "insufficient_audio_activity" => ElevenLabsMessage::Error(super::UpstreamError::new(
+            Some(message_type.to_string()),
             first_string(&value, &["message", "error", "detail"])
-                .unwrap_or_else(|| "ElevenLabs stream error".into()),
-        ),
+                .unwrap_or_else(|| format!("ElevenLabs stream error: {message_type}")),
+        )),
         _ => ElevenLabsMessage::Ignored,
     })
 }
@@ -167,10 +168,7 @@ impl ElevenLabsMapper {
                     StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment }),
                 ]
             }
-            ElevenLabsMessage::Error(message) => vec![StreamEvent::Error {
-                error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
-                fatal: true,
-            }],
+            ElevenLabsMessage::Error(error) => vec![error.into_event("elevenlabs")],
             _ => Vec::new(),
         }
     }
@@ -236,7 +234,10 @@ pub async fn run_elevenlabs_stream<T: ByteDuplex>(
                     Ok(message) => {
                         let is_error = matches!(message, ElevenLabsMessage::Error(_));
                         let mapped = mapper.map(message);
-                        let mapped = finalize.settle(mapper.take_finalize_answer(), mapped);
+                        let mut mapped = finalize.settle(mapper.take_finalize_answer(), mapped);
+                        if is_error {
+                            mapped = finalize.upstream_failed(mapped);
+                        }
                         for unified in mapped {
                             if events.send(unified).await.is_err() {
                                 return;
@@ -427,7 +428,10 @@ mod tests {
         )
         .unwrap()
         {
-            ElevenLabsMessage::Error(m) => assert!(m.contains("bad key")),
+            ElevenLabsMessage::Error(e) => {
+                assert!(e.message.contains("bad key"));
+                assert_eq!(e.code.as_deref(), Some("auth_error"));
+            }
             other => panic!("expected Error, got {other:?}"),
         }
         assert_eq!(
@@ -461,7 +465,11 @@ mod tests {
             ]
         ));
         assert!(matches!(
-            mapper.map(ElevenLabsMessage::Error("e".into())).as_slice(),
+            mapper
+                .map(ElevenLabsMessage::Error(super::super::UpstreamError::new(
+                    None, "e"
+                )))
+                .as_slice(),
             [StreamEvent::Error { fatal: true, .. }]
         ));
     }
@@ -643,5 +651,37 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Text(_)));
+    }
+
+    #[tokio::test]
+    async fn a_commit_rejection_answers_the_finalize_then_ends_the_session() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let _handle = tokio::spawn(run_elevenlabs_stream(transport, 16000, input_rx, events_tx));
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        out_rx.recv().await.unwrap();
+        in_tx
+            .send(WsFrame::Text(
+                json!({"message_type": "commit_throttled"}).to_string(),
+            ))
+            .await
+            .unwrap();
+        let answer = events_rx.recv().await.unwrap();
+        crate::asr::assert_finalize_error(&answer, ErrorCode::ProviderTaskFailed);
+        match events_rx.recv().await.unwrap() {
+            StreamEvent::Error { error, fatal } => {
+                assert!(fatal);
+                let upstream = error.upstream.expect("upstream detail");
+                assert_eq!(upstream.code.as_deref(), Some("commit_throttled"));
+            }
+            other => panic!("expected the fatal error, got {other:?}"),
+        }
     }
 }

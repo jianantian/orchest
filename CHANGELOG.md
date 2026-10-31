@@ -41,9 +41,13 @@ version; they ship in 1.2.0 under a one-off exception
   (Deepgram `from_finalize`, including its untyped acknowledgement; Soniox
   `<fin>`; the ElevenLabs commit), so an ordinary endpoint Turn never does,
   and an answer arriving after the timeout adds no second segment-less Turn.
-  aliyun and volcengine answer `UnsupportedOption`. ElevenLabs now
-  recognizes every documented error message type (`commit_throttled`,
-  `rate_limited`, …) instead of ignoring the ones it did not list. Each streaming ASR descriptor
+  An upstream error while a `Finalize` is pending answers it with a non-fatal
+  finalize error first, then ends the session with the fatal error (the
+  upstreams close the socket). aliyun and volcengine answer
+  `UnsupportedOption`. ElevenLabs now recognizes every documented error
+  message type (`commit_throttled`, `rate_limited`, …) instead of ignoring
+  the ones it did not list, and Deepgram, ElevenLabs and Soniox errors keep
+  the upstream error code in `ProtocolError.upstream`. Each streaming ASR descriptor
   declares this as `CapabilityExt::Asr({"client_finalize": bool})`
   ([#343](https://github.com/jianantian/orchest/issues/343)).
 - Vercel AI Gateway provider (`vercel/<vendor>/<model>`, e.g.
@@ -101,7 +105,7 @@ version; they ship in 1.2.0 under a one-off exception
 ### Deprecated
 
 - aliyun: the `aliyun/fun-asr-realtime` streaming ASR row, which aliyun is
-  retiring. It stays resolvable by id for 1.x but is now
+  retiring (maintainer notice, 2026-10-29). It stays resolvable by id for 1.x but is now
   `ModelStatus::Deprecated`, hidden from default discovery, and no longer
   aliyun's default streaming model:
   `Registry::asr().provider("aliyun")` and the aliyun dialect's empty-model

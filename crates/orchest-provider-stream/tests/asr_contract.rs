@@ -123,6 +123,9 @@ fn contract_breaches(client_finalize: bool, observed: &[Observed]) -> Vec<String
     let mut stable: HashSet<String> = HashSet::new();
     let mut turned: HashSet<String> = HashSet::new();
     let mut pending_finalize = 0usize;
+    let mut finalizes_sent = 0usize;
+    let mut segment_less_turns = 0usize;
+    let mut finalize_errors = 0usize;
     // Finalizes not yet followed by more client audio.
     let mut awaiting_audio = 0usize;
     let mut closed = false;
@@ -134,6 +137,7 @@ fn contract_breaches(client_finalize: bool, observed: &[Observed]) -> Vec<String
             }
             Observed::Finalize => {
                 pending_finalize += 1;
+                finalizes_sent += 1;
                 awaiting_audio += 1;
                 continue;
             }
@@ -181,10 +185,17 @@ fn contract_breaches(client_finalize: bool, observed: &[Observed]) -> Vec<String
                         breaches.push(format!("#{index}: second Turn for {id}"))
                     }
                     Some(_) => {}
-                    None if client_finalize && pending_finalize > 0 => {}
-                    None => breaches.push(format!(
-                        "#{index}: segment-less Turn that answers no Finalize"
-                    )),
+                    // Only a dialect's Finalize answer is segment-less, and at
+                    // most once per Finalize. The stream does not say which
+                    // Turn answered, so a Turn ending Stable text may too.
+                    None => {
+                        segment_less_turns += 1;
+                        if !client_finalize || segment_less_turns > finalizes_sent {
+                            breaches.push(format!(
+                                "#{index}: segment-less Turn that answers no Finalize"
+                            ));
+                        }
+                    }
                 }
                 if client_finalize && pending_finalize > 0 {
                     pending_finalize -= 1;
@@ -196,17 +207,24 @@ fn contract_breaches(client_finalize: bool, observed: &[Observed]) -> Vec<String
                     breaches.push(format!("#{index}: fatal error {error:?}"));
                 } else if !answers_finalize {
                     breaches.push(format!("#{index}: unexpected error {error:?}"));
-                } else if pending_finalize == 0 {
-                    breaches.push(format!(
-                        "#{index}: finalize error that answers no Finalize: {error:?}"
-                    ));
                 } else {
-                    pending_finalize -= 1;
-                    if client_finalize {
+                    finalize_errors += 1;
+                    // A supported dialect's Finalize may be answered after an
+                    // ordinary Turn (by a timeout or an upstream rejection),
+                    // so only the count is checked; an unsupported one answers
+                    // each Finalize with this error alone.
+                    let unanswered = if client_finalize {
+                        finalize_errors > finalizes_sent
+                    } else {
+                        pending_finalize == 0
+                    };
+                    if unanswered {
                         breaches.push(format!(
-                            "#{index}: Finalize answered with an error, not a Turn: {error:?}"
+                            "#{index}: finalize error that answers no Finalize: {error:?}"
                         ));
-                    } else if error.code != ErrorCode::UnsupportedOption {
+                    }
+                    pending_finalize = pending_finalize.saturating_sub(1);
+                    if !client_finalize && error.code != ErrorCode::UnsupportedOption {
                         breaches.push(format!(
                             "#{index}: unsupported Finalize must answer UnsupportedOption, \
                              got {error:?}"
@@ -235,6 +253,27 @@ fn contract_breaches(client_finalize: bool, observed: &[Observed]) -> Vec<String
         breaches.push("session did not end with SessionClosed".into());
     }
     breaches
+}
+
+/// Under a normal fixture (the upstream answers every `Finalize` in time), a
+/// `client_finalize = true` dialect answers with a Turn: a finalize error
+/// (a timeout or an upstream rejection) is a breach there, though the
+/// contract allows it in general.
+fn normal_fixture_breaches(observed: &[Observed]) -> Vec<String> {
+    observed
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| match item {
+            Observed::Event(StreamEvent::Error { error, .. })
+                if error.diagnostic_metadata["operation"] == FINALIZE_OPERATION =>
+            {
+                Some(format!(
+                    "#{index}: Finalize answered with an error under a normal fixture: {error:?}"
+                ))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// The Stable text each Turn ended, applying `Append` / `Snapshot` updates.
@@ -281,7 +320,10 @@ fn assert_contract(
     (observed, violations): (Vec<Observed>, Vec<String>),
 ) {
     assert!(violations.is_empty(), "{dialect}: replay: {violations:#?}");
-    let breaches = contract_breaches(client_finalize, &observed);
+    let mut breaches = contract_breaches(client_finalize, &observed);
+    if client_finalize {
+        breaches.extend(normal_fixture_breaches(&observed));
+    }
     assert!(
         breaches.is_empty(),
         "{dialect}: {breaches:#?}\nobserved: {observed:#?}"
@@ -358,16 +400,33 @@ fn finalize_receipt_breaches_are_detected() {
         fatal: false,
     });
     let closed = || Observed::Event(StreamEvent::Lifecycle(LifecycleEvent::SessionClosed));
+    let bare_turn = || {
+        Observed::Event(StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+            segment: None,
+        }))
+    };
     let cases: Vec<(bool, Vec<Observed>, &str)> = vec![
         (
             true,
             vec![
                 Observed::Finalize,
                 finalize_error(ErrorCode::Timeout),
+                finalize_error(ErrorCode::Timeout),
                 Observed::Audio,
                 closed(),
             ],
-            "answered with an error, not a Turn",
+            "answers no Finalize",
+        ),
+        (
+            true,
+            vec![
+                Observed::Finalize,
+                Observed::Audio,
+                bare_turn(),
+                bare_turn(),
+                closed(),
+            ],
+            "segment-less Turn that answers no Finalize",
         ),
         (
             false,
@@ -404,6 +463,40 @@ fn finalize_receipt_breaches_are_detected() {
         closed(),
     ];
     assert!(contract_breaches(false, &ok).is_empty());
+
+    let stable_turn = |id: &str| {
+        let segment = Some(SegmentRef {
+            segment_id: Some(id.into()),
+            update_kind: TranscriptUpdateKind::Append,
+        });
+        [
+            Observed::Event(StreamEvent::Transcript {
+                text: "x".into(),
+                stability: TranscriptStability::Committed,
+                segment: segment.clone(),
+            }),
+            Observed::Event(StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                segment,
+            })),
+        ]
+    };
+    // A supported dialect: an ordinary Turn, then the timeout that answers
+    // the Finalize, is within the contract but not a normal fixture.
+    let mut timed_out = vec![Observed::Finalize];
+    timed_out.extend(stable_turn("final0"));
+    timed_out.extend([
+        finalize_error(ErrorCode::Timeout),
+        Observed::Audio,
+        closed(),
+    ]);
+    assert!(contract_breaches(true, &timed_out).is_empty());
+    assert!(normal_fixture_breaches(&timed_out)[0].contains("under a normal fixture"));
+    // An ordinary Turn, then the segment-less Turn that answers the Finalize.
+    let mut answered = vec![Observed::Finalize];
+    answered.extend(stable_turn("final0"));
+    answered.extend([bare_turn(), Observed::Audio, closed()]);
+    assert!(contract_breaches(true, &answered).is_empty());
+    assert!(normal_fixture_breaches(&answered).is_empty());
 }
 
 /// The assertion set itself catches the breaches it names.

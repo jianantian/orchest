@@ -47,7 +47,7 @@ pub enum DeepgramMessage {
     /// documented acknowledgement of a client `Finalize`
     /// (<https://developers.deepgram.com/docs/finalize>).
     FinalizeAck,
-    Error(String),
+    Error(super::UpstreamError),
     /// Metadata / SpeechStarted / KeepAlive / unknown, or an `UtteranceEnd`
     /// with `last_word_end == -1` (already finalized) — no content.
     Ignored,
@@ -96,14 +96,18 @@ pub fn parse_message(text: &str) -> Result<DeepgramMessage, ProtocolError> {
                 DeepgramMessage::UtteranceEnd
             })
         }
-        "Error" => Ok(DeepgramMessage::Error(
+        "Error" => Ok(DeepgramMessage::Error(super::UpstreamError::new(
+            value
+                .get("variant")
+                .or_else(|| value.get("err_code"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
             value
                 .get("description")
                 .or_else(|| value.get("message"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("Deepgram stream error")
-                .to_string(),
-        )),
+                .unwrap_or("Deepgram stream error"),
+        ))),
         "" if value
             .get("from_finalize")
             .and_then(serde_json::Value::as_bool)
@@ -197,10 +201,7 @@ impl DeepgramMapper {
                 self.answered_finalize = true;
                 self.turn(true).into_iter().collect()
             }
-            DeepgramMessage::Error(message) => vec![StreamEvent::Error {
-                error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
-                fatal: true,
-            }],
+            DeepgramMessage::Error(error) => vec![error.into_event("deepgram")],
             DeepgramMessage::Ignored => Vec::new(),
         }
     }
@@ -332,7 +333,10 @@ pub async fn run_deepgram_stream<T: ByteDuplex>(
                     Ok(message) => {
                         let is_error = matches!(message, DeepgramMessage::Error(_));
                         let mapped = mapper.map(message);
-                        let mapped = finalize.settle(mapper.take_finalize_answer(), mapped);
+                        let mut mapped = finalize.settle(mapper.take_finalize_answer(), mapped);
+                        if is_error {
+                            mapped = finalize.upstream_failed(mapped);
+                        }
                         for event in mapped {
                             if events.send(event).await.is_err() {
                                 return;
@@ -717,7 +721,7 @@ mod tests {
         let raw = json!({"type": "Error", "description": "bad audio"}).to_string();
         assert_eq!(
             parse_message(&raw).unwrap(),
-            DeepgramMessage::Error("bad audio".into())
+            DeepgramMessage::Error(super::super::UpstreamError::new(None, "bad audio"))
         );
     }
 
@@ -1015,5 +1019,41 @@ mod tests {
         // a VAD Turn is not an answer
         mapper.map(result("hi", true, true, 0.0));
         assert!(!mapper.take_finalize_answer());
+    }
+
+    #[test]
+    fn either_order_of_finalize_ack_and_results_gives_one_answer() {
+        let ack = || DeepgramMessage::FinalizeAck;
+        let run = |messages: Vec<DeepgramMessage>| {
+            let mut mapper = DeepgramMapper::new();
+            let mut watch = crate::asr::FinalizeWatch::default();
+            watch.sent();
+            let mut events = Vec::new();
+            for message in messages {
+                let mapped = mapper.map(message);
+                events.extend(watch.settle(mapper.take_finalize_answer(), mapped));
+            }
+            assert!(!watch.is_pending(), "the Finalize was answered");
+            events
+                .iter()
+                .filter_map(|event| turn_segment(event).map(|s| s.map(str::to_string)))
+                .collect::<Vec<_>>()
+        };
+        // an endpoint Turn first, then the ack: the ack's segment-less Turn answers
+        assert_eq!(
+            run(vec![result("hello world", true, true, 0.0), ack()]),
+            [Some("final0".to_string()), None]
+        );
+        // the ack first, then the flushed text: the ack answers, and the text
+        // still gets its own Turn
+        assert_eq!(
+            run(vec![ack(), finalize_result("how are you", 1.5)]),
+            [None, Some("final0".to_string())]
+        );
+        // the flushed text first, then the ack: one Turn, no empty second one
+        assert_eq!(
+            run(vec![finalize_result("how are you", 1.5), ack()]),
+            [Some("final0".to_string())]
+        );
     }
 }

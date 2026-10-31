@@ -13,7 +13,9 @@ use orchest_provider_core::catalog::{AsrCatalogExt, CatalogExt, ModelRecord, Mod
 pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
     vec![
         // Source: docs/external/aliyun/asr/realtime/base.md
-        // Deprecated: aliyun is retiring Fun-ASR Realtime. The row stays
+        // Deprecated 2026-10-29 on the maintainer's notice that aliyun is
+        // retiring Fun-ASR Realtime (the docs/external mirror predates it).
+        // The row stays
         // resolvable by id for 1.x (ADR-0003 D4 catalog rules) but is no
         // longer the provider default.
         ModelRecord {

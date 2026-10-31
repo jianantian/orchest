@@ -14,7 +14,11 @@ pub mod volcengine;
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use orchest_protocol::{CapabilityExt, ErrorCode, LifecycleEvent, ProtocolError, StreamEvent};
+use std::sync::Arc;
+
+use orchest_protocol::{
+    CapabilityExt, ErrorCode, LifecycleEvent, ProtocolError, StreamEvent, UpstreamErrorDetail,
+};
 use serde_json::json;
 use tokio::time::Instant;
 
@@ -38,12 +42,48 @@ pub const FINALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Tag `error` as the answer to a `Finalize` and wrap it as the non-fatal
 /// event the Finalize receipt requires (ADR-0006 D7.2): the session stays open.
+/// Metadata already on the error is kept.
 pub(crate) fn finalize_error(error: ProtocolError) -> StreamEvent {
     let mut error = error;
-    error.diagnostic_metadata = json!({ "operation": FINALIZE_OPERATION });
+    match error.diagnostic_metadata.as_object_mut() {
+        Some(metadata) => {
+            metadata.insert("operation".into(), json!(FINALIZE_OPERATION));
+        }
+        None => error.diagnostic_metadata = json!({ "operation": FINALIZE_OPERATION }),
+    }
     StreamEvent::Error {
         error,
         fatal: false,
+    }
+}
+
+/// An error message a streaming ASR upstream sent: its own error code, when it
+/// has one, and its text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpstreamError {
+    pub code: Option<String>,
+    pub message: String,
+}
+
+impl UpstreamError {
+    pub fn new(code: Option<String>, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    /// The fatal event for this error: the upstreams close the socket after
+    /// sending one. The upstream code is kept in `ProtocolError.upstream`.
+    pub(crate) fn into_event(self, dialect: &str) -> StreamEvent {
+        let mut error = ProtocolError::new(ErrorCode::ProviderTaskFailed, self.message.clone())
+            .with_provider(dialect);
+        error.upstream = Some(Arc::new(UpstreamErrorDetail {
+            code: self.code,
+            message: Some(self.message),
+            body: None,
+        }));
+        StreamEvent::Error { error, fatal: true }
     }
 }
 
@@ -98,6 +138,25 @@ impl FinalizeWatch {
                     StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment: None })
                 )
             });
+        }
+        events
+    }
+
+    /// Pass on the events of an upstream error message. With a `Finalize`
+    /// pending, the error is also its answer: a non-fatal copy tagged
+    /// `operation = "finalize"` goes first, then the fatal error that ends
+    /// the session (the upstreams close the socket after an error).
+    pub(crate) fn upstream_failed(&mut self, mut events: Vec<StreamEvent>) -> Vec<StreamEvent> {
+        if !self.is_pending() {
+            return events;
+        }
+        let answer = events.iter().find_map(|event| match event {
+            StreamEvent::Error { error, .. } => Some(finalize_error(error.clone())),
+            _ => None,
+        });
+        if let Some(answer) = answer {
+            self.deadlines.pop_front();
+            events.insert(0, answer);
         }
         events
     }
@@ -167,6 +226,40 @@ mod tests {
             }),
         });
         assert_eq!(watch.settle(true, vec![ending_stable]).len(), 1);
+    }
+
+    #[test]
+    fn an_upstream_error_answers_a_pending_finalize_before_ending_the_session() {
+        let mut watch = FinalizeWatch::default();
+        let fatal = || {
+            UpstreamError::new(Some("commit_throttled".into()), "too many commits")
+                .into_event("elevenlabs")
+        };
+        // nothing pending: only the fatal error
+        assert_eq!(watch.upstream_failed(vec![fatal()]).len(), 1);
+        watch.sent();
+        let events = watch.upstream_failed(vec![fatal()]);
+        assert!(!watch.is_pending());
+        assert_eq!(events.len(), 2);
+        assert_finalize_error(&events[0], ErrorCode::ProviderTaskFailed);
+        let StreamEvent::Error { error, fatal } = &events[1] else {
+            panic!("expected the fatal error, got {:?}", events[1]);
+        };
+        assert!(fatal);
+        let upstream = error.upstream.as_ref().expect("upstream detail");
+        assert_eq!(upstream.code.as_deref(), Some("commit_throttled"));
+        assert_eq!(error.provider.as_deref(), Some("elevenlabs"));
+    }
+
+    #[test]
+    fn finalize_error_keeps_existing_metadata() {
+        let mut error = ProtocolError::new(ErrorCode::Timeout, "x");
+        error.diagnostic_metadata = json!({ "attempt": 2 });
+        let StreamEvent::Error { error, .. } = finalize_error(error) else {
+            unreachable!()
+        };
+        assert_eq!(error.diagnostic_metadata["attempt"], 2);
+        assert_eq!(error.diagnostic_metadata["operation"], FINALIZE_OPERATION);
     }
 
     #[test]
