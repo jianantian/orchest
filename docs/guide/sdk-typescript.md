@@ -150,10 +150,24 @@ const stream = await startAsrStream(
   {
     format: "pcm",
     sampleRate: 16_000,
+    provider: "aliyun",
+    model: "qwen-audio-3.0-asr-flash-streaming",
     context: [{ role: "user", text: "Emile，Orchest，Murmur" }],
     apiKeyEnv: "DASHSCOPE_API_KEY",
   },
-  (event) => console.log(event),
+  (event) => {
+    switch (event.kind) {
+      case "draft": // 临时结果，同段下一条会整段替换
+        console.log("…", event.text);
+        break;
+      case "stable": // 已确认文稿；update 为 append 或 snapshot
+        console.log("✓", event.text);
+        break;
+      case "turn": // 一轮说完，可交给业务或 Agent
+        console.log("turn", event.segment_id);
+        break;
+    }
+  },
 );
 await stream.sendAudio(await readFile("chunk.pcm"));
 stream.finish();
@@ -164,8 +178,22 @@ await stream.wait();
 响应字段保持 snake_case；`confidence`、概率分布和 usage 未返回时保持缺失。
 完整客服路由示例见 [`examples/typescript/providers/decisions.ts`](../../examples/typescript/providers/decisions.ts)。
 
-省略 ASR provider 时，一次性识别固定使用 `aliyun/qwen-audio-3.0-asr-flash`，realtime 固定使用
-`aliyun/qwen-audio-3.0-asr-flash-streaming`。event callback 必须同步返回；返回 Promise 或抛出异常会终止输入，
+`provider` 只写厂商名（如 `"deepgram"`），模型用独立的 `model` 选项；`provider/model` 合写会被拒绝。
+两者都省略时，一次性识别使用 aliyun 的 `qwen-audio-3.0-asr-flash`，realtime 使用 aliyun 在目录里的默认流式模型
+（目前是 `qwen-audio-3.0-asr-flash-streaming`，与只给 `provider="aliyun"` 时相同）；只给 `provider` 时，一次性识别只在该厂商的一次性模型里选默认，realtime 只在流式模型里选。厂商只有另一类模型时报 `UnsupportedOperation` 并指明该用哪个接口；有多个候选且没有默认时，报错列出可选的 `model`。
+
+realtime 事件是按 `kind` 区分的联合类型 `AsrStreamEvent`（[ADR-0006](../adr/0006-voice-session-model.md)）：
+`draft`（临时结果）、`stable`（已确认文稿，带 `update: "append" | "snapshot"`）、`turn`（一轮说完，
+`segment_id` 指向它结束的 stable）、`session_started` / `route_selected` / `session_closed`、`error`
+（`code`、`message`、`fatal`、`operation`，回应 `finalize()` 时 `operation` 为 `"finalize"`）和 `extras`（厂商特有数据）。字段保持 snake_case。
+
+端侧 VAD 检测到停顿后调用 `await stream.finalize()`：要求 provider 尽快定稿并给出 `turn`，会话保持打开，
+可以继续 `sendAudio`。`finalize()` resolve 只表示请求已提交，结果看随后的事件：一个 `turn`，或一个
+`operation === "finalize"`、`fatal` 为假的 `error`（例如上游超时），之后流仍可用。不支持的模型会以
+`code === "unsupported_option"` 的 `ProviderError` 拒绝，不发送；会话已结束时调用也会拒绝。
+`finish()` 关闭输入并结束会话。
+
+event callback 必须同步返回；返回 Promise 或抛出异常会终止输入，
 并由 `wait()` 抛出原始异常。
 
 ## 5. 消费事件

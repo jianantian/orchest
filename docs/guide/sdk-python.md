@@ -133,13 +133,23 @@ transcript = transcribe(
     api_key_env="DASHSCOPE_API_KEY",
 )
 
+def on_event(event) -> None:
+    if event["kind"] == "draft":
+        print("…", event["text"])            # 临时结果，同段下一条会整段替换
+    elif event["kind"] == "stable":
+        print("✓", event["text"])            # 已确认文稿；update 为 append 或 snapshot
+    elif event["kind"] == "turn":
+        print("turn", event["segment_id"])   # 一轮说完，可交给业务或 Agent
+
 async def realtime() -> None:
     stream = await start_asr_stream(
         format="pcm",
         sample_rate=16_000,
+        provider="aliyun",
+        model="qwen-audio-3.0-asr-flash-streaming",
         context=[{"role": "user", "text": "Emile，Orchest，Murmur"}],
         api_key_env="DASHSCOPE_API_KEY",
-        on_event=lambda event: print(event),
+        on_event=on_event,
     )
     await stream.send_audio(Path("chunk.pcm").read_bytes())
     stream.finish()
@@ -152,8 +162,28 @@ asyncio.run(realtime())
 `score`；结果保持 snake_case。`confidence`、概率分布、usage 等可选字段未返回时不会补默认值。
 完整客服路由示例见 [`examples/python/providers/decisions.py`](../../examples/python/providers/decisions.py)。
 
-省略 ASR provider 时，一次性识别固定使用 `aliyun/qwen-audio-3.0-asr-flash`，realtime 固定使用
-`aliyun/qwen-audio-3.0-asr-flash-streaming`。`on_event` 必须是同步 callback；返回 coroutine 或抛出异常会终止输入，
+`provider` 只写厂商名（如 `"deepgram"`），模型用独立的 `model` 参数；`provider/model` 合写会被拒绝。
+两者都省略时，一次性识别使用 aliyun 的 `qwen-audio-3.0-asr-flash`，realtime 使用 aliyun 在目录里的默认流式模型
+（目前是 `qwen-audio-3.0-asr-flash-streaming`，与只给 `provider="aliyun"` 时相同）；只给 `provider` 时，一次性识别只在该厂商的一次性模型里选默认，realtime 只在流式模型里选。厂商只有另一类模型时报 `UnsupportedOperation` 并指明该用哪个接口；有多个候选且没有默认时，报错列出可选的 `model`。
+
+realtime 事件按 [ADR-0006](../adr/0006-voice-session-model.md) 的语音模型带 `kind`：
+
+| `kind` | 含义 | 字段 |
+|---|---|---|
+| `draft` | 临时结果，同段下一条整段替换 | `text`、`segment_id` |
+| `stable` | 已确认文稿 | `text`、`segment_id`、`update`（`append` / `snapshot`） |
+| `turn` | 一轮说话结束 | `segment_id`（它结束的那段 stable） |
+| `session_started` / `route_selected` / `session_closed` | 会话生命周期 | — |
+| `error` | provider 错误；`fatal` 为真时 `wait()` 也会抛出 | `code`、`message`、`fatal`、`operation`（回应 `finalize()` 时为 `"finalize"`） |
+| `extras` | 厂商特有数据 | `data` |
+
+端侧 VAD 检测到停顿后调用 `await stream.finalize()`：要求 provider 尽快定稿并给出 `turn`，会话保持打开，
+可以继续 `send_audio`。`finalize()` 返回只表示请求已提交，结果看随后的事件：一个 `turn`，或一个
+`operation == "finalize"`、`fatal` 为假的 `error`（例如上游超时），之后流仍可用。不支持的模型会同步抛出
+`code == "unsupported_option"` 的 `ModelError`，不发送；会话已结束时调用也会抛出。
+`finish()` 关闭输入并结束会话。
+
+`on_event` 必须是同步 callback；返回 coroutine 或抛出异常会终止输入，
 并由 `wait()` 抛出原始异常。
 
 ## 5. 消费事件

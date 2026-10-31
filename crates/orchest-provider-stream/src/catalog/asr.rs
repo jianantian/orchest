@@ -13,6 +13,11 @@ use orchest_provider_core::catalog::{AsrCatalogExt, CatalogExt, ModelRecord, Mod
 pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
     vec![
         // Source: docs/external/aliyun/asr/realtime/base.md
+        // Deprecated 2026-10-29 on the maintainer's notice that aliyun is
+        // retiring Fun-ASR Realtime (the docs/external mirror predates it).
+        // The row stays
+        // resolvable by id for 1.x (ADR-0003 D4 catalog rules) but is no
+        // longer the provider default.
         ModelRecord {
             id: "aliyun/fun-asr-realtime",
             provider: "aliyun",
@@ -27,8 +32,8 @@ pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             interruptible: false,
             tools: false,
             thinking: false,
-            status: ModelStatus::Stable,
-            default_for_provider: true,
+            status: ModelStatus::Deprecated,
+            default_for_provider: false,
             pricing: None,
             ext: CatalogExt::Asr(AsrCatalogExt {}),
         },
@@ -42,7 +47,7 @@ pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             capability: Capability::Asr,
             display_name: "Qwen-Audio 3.0 ASR Flash Streaming",
             description:
-                "阿里云 DashScope Qwen-Audio 3.0 流式语音识别，与 Fun-ASR Realtime 共用 inference WebSocket（run-task）方言",
+                "阿里云 DashScope Qwen-Audio 3.0 流式语音识别，inference WebSocket（run-task）方言",
             input_modalities: vec![Modality::Audio],
             output_modalities: vec![Modality::Text],
             streaming: true,
@@ -51,7 +56,7 @@ pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             tools: false,
             thinking: false,
             status: ModelStatus::Stable,
-            default_for_provider: false,
+            default_for_provider: true,
             pricing: None,
             ext: CatalogExt::Asr(AsrCatalogExt {}),
         },

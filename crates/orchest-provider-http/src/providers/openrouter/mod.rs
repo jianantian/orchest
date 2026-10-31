@@ -15,6 +15,7 @@ use crate::defaults;
 use crate::protocol::ResolvedModel;
 use crate::ModelError;
 
+pub(crate) use profile::OpenRouterProfile;
 pub use profile::OPENROUTER_PROFILE;
 
 fn resolve_api_key(config: &ProviderConfig) -> Result<String, ModelError> {

@@ -60,14 +60,21 @@ pub enum TranscriptUpdateKind {
 
 /// Identifies which transcript segment an event refers to.
 ///
-/// Cross-dialect contract: the `Provisional` updates of one segment are always
-/// [`TranscriptUpdateKind::Snapshot`] — each carries the segment's full current
-/// text and replaces the previous one — and the `Committed` that finalizes the
-/// segment shares the same `segment_id`. `Append` is reserved for natively
-/// incremental token streams (e.g. soniox final tokens), where each event
-/// carries only the new suffix. Segment ids are derived from each provider's
-/// native protocol (utterance start times, sentence begin times, …) or
-/// synthesized by the dialect mapper when the wire carries no segment identity.
+/// Cross-dialect contract (ADR-0006 D2, D3):
+///
+/// - **Draft** — the `Provisional` updates of one segment are always
+///   [`TranscriptUpdateKind::Snapshot`]: each carries the segment's full current
+///   text and replaces the previous one.
+/// - **Stable** — a `Committed` update is either [`TranscriptUpdateKind::Append`]
+///   (appends to the segment's confirmed text) or
+///   [`TranscriptUpdateKind::Snapshot`] (the segment's confirmed text is exactly
+///   this). Both are legal; which one a model produces is declared by the
+///   dialect (and, from voice V2 on, by the capability catalog). Once a segment
+///   has a Stable, no further Draft arrives for that `segment_id`.
+///
+/// Segment ids are derived from each provider's native protocol (utterance
+/// start times, sentence begin times, …) or synthesized by the dialect mapper
+/// when the wire carries no segment identity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SegmentRef {
     pub segment_id: Option<String>,
@@ -91,6 +98,14 @@ pub enum LifecycleEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
     },
+    /// A Turn: the speaker finished one round of speech, so the application
+    /// may hand the confirmed text to the business logic or an agent
+    /// (ADR-0006 D2). It is not the same as "more text was committed".
+    ///
+    /// `segment` carries the `segment_id` of the Stable this Turn ends
+    /// (ADR-0006 D7.1). It is `None` only when no Stable is pending, e.g. a
+    /// Finalize that found nothing to finalize. Dialects without a native Turn
+    /// signal synthesize one after the Stable is committed (ADR-0006 D6).
     EndOfSpeech {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         segment: Option<SegmentRef>,

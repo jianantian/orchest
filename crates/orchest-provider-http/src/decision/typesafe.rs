@@ -11,44 +11,81 @@ use serde_json::Value;
 
 use super::wire;
 
-const ENDPOINT: &str = "https://openrouter.ai/api/alpha/decisions";
+/// One deployment of the TypeSafe Decisions wire: the same request / response
+/// shape served by OpenRouter Decisions and Vercel AI Gateway's
+/// TypeSafe-compatible API.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Deployment {
+    pub provider: &'static str,
+    /// Human-readable name used in error messages.
+    pub display_name: &'static str,
+    pub endpoint: &'static str,
+    pub api_key_env: &'static str,
+}
 
-pub(super) struct OpenRouterDecision {
+/// OpenRouter Decisions (alpha).
+pub(super) const OPENROUTER: Deployment = Deployment {
+    provider: "openrouter",
+    display_name: "OpenRouter Decisions",
+    endpoint: "https://openrouter.ai/api/alpha/decisions",
+    api_key_env: "OPENROUTER_API_KEY",
+};
+
+/// Vercel AI Gateway's TypeSafe-compatible Decisions API.
+pub(super) const VERCEL: Deployment = Deployment {
+    provider: "vercel",
+    display_name: "Vercel AI Gateway Decisions",
+    endpoint: crate::defaults::vercel::DECISION_URL,
+    api_key_env: crate::defaults::vercel::API_KEY_ENV,
+};
+
+/// The deployment serving `provider`'s decision rows.
+pub(super) fn deployment(provider: &str) -> Option<Deployment> {
+    [OPENROUTER, VERCEL]
+        .into_iter()
+        .find(|deployment| deployment.provider == provider)
+}
+
+pub(super) struct TypeSafeDecision {
+    deployment: Deployment,
     descriptor: CapabilityDescriptor,
     api_key: String,
     endpoint: reqwest::Url,
     timeout: Option<Duration>,
 }
 
-impl OpenRouterDecision {
+impl TypeSafeDecision {
     #[allow(clippy::result_large_err)] // justified: shared ProtocolError carries structured diagnostics
     pub fn new(
+        deployment: Deployment,
         config: &ProviderConfig,
         descriptor: CapabilityDescriptor,
     ) -> Result<Self, ProtocolError> {
-        let error = |code, message| {
+        let error = |code, message: String| {
             ProtocolError::new(code, message)
-                .with_provider("openrouter")
+                .with_provider(deployment.provider)
                 .with_model(descriptor.model.to_string())
         };
         let api_key = config
             .api_key
             .clone()
-            .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+            .or_else(|| std::env::var(deployment.api_key_env).ok())
             .filter(|key| !key.trim().is_empty())
             .ok_or_else(|| {
                 error(
                     ErrorCode::MissingApiKey,
-                    "OpenRouter Decisions requires an API key",
+                    format!("{} requires an API key", deployment.display_name),
                 )
             })?;
-        let endpoint =
-            reqwest::Url::parse(config.api_url.as_deref().unwrap_or(ENDPOINT)).map_err(|_| {
-                error(
-                    ErrorCode::InvalidRequest,
-                    "decision api_url must be an absolute HTTP(S) endpoint",
-                )
-            })?;
+        let endpoint = reqwest::Url::parse(
+            config.api_url.as_deref().unwrap_or(deployment.endpoint),
+        )
+        .map_err(|_| {
+            error(
+                ErrorCode::InvalidRequest,
+                "decision api_url must be an absolute HTTP(S) endpoint".into(),
+            )
+        })?;
         if !matches!(endpoint.scheme(), "http" | "https")
             || endpoint.host_str().is_none()
             || !endpoint.username().is_empty()
@@ -57,20 +94,21 @@ impl OpenRouterDecision {
         {
             return Err(error(
                 ErrorCode::InvalidRequest,
-                "invalid decision endpoint",
+                "invalid decision endpoint".into(),
             ));
         }
         let timeout = parse_options(&config.options).map_err(|e| {
-            e.with_provider("openrouter")
+            e.with_provider(deployment.provider)
                 .with_model(descriptor.model.to_string())
         })?;
         if config.max_tokens.is_some() {
             return Err(error(
                 ErrorCode::UnsupportedOption,
-                "max_tokens is not supported for Decisions",
+                "max_tokens is not supported for Decisions".into(),
             ));
         }
         Ok(Self {
+            deployment,
             descriptor,
             api_key,
             endpoint,
@@ -132,9 +170,9 @@ fn parse_options(value: &Value) -> Result<Option<Duration>, ProtocolError> {
 }
 
 #[async_trait]
-impl Decision for OpenRouterDecision {
+impl Decision for TypeSafeDecision {
     fn provider_name(&self) -> &str {
-        "openrouter"
+        self.deployment.provider
     }
     fn model_name(&self) -> &str {
         &self.descriptor.model
@@ -151,7 +189,10 @@ impl Decision for OpenRouterDecision {
         ) {
             return Err(self.contextualize(ProtocolError::new(
                 ErrorCode::InvalidRequest,
-                "OpenRouter Decisions state must be a string, object, or array",
+                format!(
+                    "{} state must be a string, object, or array",
+                    self.deployment.display_name
+                ),
             )));
         }
         let body =
@@ -176,7 +217,11 @@ impl Decision for OpenRouterDecision {
             error
         })?;
         if !status.is_success() {
-            let mut error = self.contextualize(http_error(status.as_u16(), &bytes));
+            let mut error = self.contextualize(http_error(
+                self.deployment.display_name,
+                status.as_u16(),
+                &bytes,
+            ));
             error.retry_after_secs = retry_after;
             return Err(error);
         }
@@ -184,7 +229,10 @@ impl Decision for OpenRouterDecision {
             .map_err(|_| {
                 self.contextualize(ProtocolError::new(
                     ErrorCode::InvalidResponse,
-                    "OpenRouter Decisions response does not match the expected schema",
+                    format!(
+                        "{} response does not match the expected schema",
+                        self.deployment.display_name
+                    ),
                 ))
                 .with_status(status.as_u16())
             })?
@@ -196,18 +244,24 @@ impl Decision for OpenRouterDecision {
     }
 }
 
-fn http_error(status: u16, bytes: &[u8]) -> ProtocolError {
+/// Map an error response. OpenRouter nests it as `{"error": {message, code}}`;
+/// the TypeSafe shape Vercel serves is flat `{message, error_type}`.
+fn http_error(display_name: &str, status: u16, bytes: &[u8]) -> ProtocolError {
     let body = serde_json::from_slice::<Value>(bytes).ok();
-    let detail = body.as_ref().and_then(|v| v.get("error"));
+    let detail = body
+        .as_ref()
+        .map(|v| v.get("error").filter(|e| e.is_object()).unwrap_or(v));
     let message = detail
         .and_then(|v| v.get("message"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let code = detail.and_then(|v| v.get("code")).map(|v| {
-        v.as_str()
-            .map(str::to_owned)
-            .unwrap_or_else(|| v.to_string())
-    });
+    let code = detail
+        .and_then(|v| v.get("code").or_else(|| v.get("error_type")))
+        .map(|v| {
+            v.as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| v.to_string())
+        });
     let mut error = ProtocolError::new(
         if status == 401 {
             ErrorCode::InvalidApiKey
@@ -216,7 +270,7 @@ fn http_error(status: u16, bytes: &[u8]) -> ProtocolError {
         },
         message
             .clone()
-            .unwrap_or_else(|| format!("OpenRouter Decisions HTTP {status}")),
+            .unwrap_or_else(|| format!("{display_name} HTTP {status}")),
     )
     .with_status(status);
     error.upstream = Some(Arc::new(UpstreamErrorDetail {

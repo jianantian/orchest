@@ -14,6 +14,103 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+## [1.2.0]
+
+The streaming ASR event changes under *Changed* would normally need a major
+version; they ship in 1.2.0 under a one-off exception
+([ADR-0003 D4](docs/adr/0003-release-policy.md#exception-streaming-asr-events-in-120-amended-2026-10-29)).
+
+### Added
+
+- `SessionInput::Finalize`: asks a streaming session to finalize what it has
+  heard so far and, where it can, follow with a Turn
+  (`LifecycleEvent::EndOfSpeech`), without closing the session (ADR-0006).
+  Each `Finalize` gets exactly one result on the event stream: a Turn, or a
+  non-fatal `StreamEvent::Error` whose `diagnostic_metadata.operation` is
+  `"finalize"` (`ErrorCode::UnsupportedOption` from a dialect without a native
+  finalize); sending it only means it was queued. The omni
+  `RealtimeSession::send` returns that error directly. The `SegmentRef` and
+  `EndOfSpeech` docs now state the Draft / Stable / Turn contract: Stable may be
+  `Append` or `Snapshot`, and a Turn carries the `segment_id` of the Stable it
+  ends ([#342](https://github.com/jianantian/orchest/issues/342)).
+- Streaming ASR: Deepgram, ElevenLabs and Soniox honour `SessionInput::Finalize`
+  with their native control (Deepgram `Finalize`, ElevenLabs manual commit,
+  Soniox manual finalization) and keep the session open, answering a
+  `Finalize` left unanswered for 10 s with a non-fatal finalize `Timeout`
+  error. Only the dialect's own finalize answer settles a `Finalize`
+  (Deepgram `from_finalize`, including its untyped acknowledgement; Soniox
+  `<fin>`; the ElevenLabs commit), so an ordinary endpoint Turn never does,
+  and an answer arriving after the timeout adds no second segment-less Turn.
+  An upstream error while a `Finalize` is pending answers it with a non-fatal
+  finalize error first, then ends the session with the fatal error (the
+  upstreams close the socket). aliyun and volcengine answer
+  `UnsupportedOption`. ElevenLabs now recognizes every documented error
+  message type (`commit_throttled`, `rate_limited`, …) instead of ignoring
+  the ones it did not list, and Deepgram, ElevenLabs and Soniox errors keep
+  the upstream error code in `ProtocolError.upstream`. Each streaming ASR descriptor
+  declares this as `CapabilityExt::Asr({"client_finalize": bool})`
+  ([#343](https://github.com/jianantian/orchest/issues/343)).
+- Vercel AI Gateway provider (`vercel/<vendor>/<model>`, e.g.
+  `vercel/openai/gpt-5.4`) for chat, over the gateway's OpenAI-compatible
+  endpoint with the same `reasoning` dialect as OpenRouter; the key is read
+  from `AI_GATEWAY_API_KEY`. The decision catalog adds `vercel/typesafe-ai/jev`
+  on Vercel's TypeSafe-compatible Decisions API; the OpenRouter decision
+  adapter now serves both deployments
+  ([#346](https://github.com/jianantian/orchest/issues/346)).
+- Fireworks AI provider for chat. `fireworks/<name>` targets the
+  Fireworks-hosted `accounts/fireworks/models/<name>`, and a full
+  `fireworks/accounts/<account>/models/<name>` id is passed through. Thinking
+  lowers to `reasoning_effort` (`low` / `medium` / `high`) and
+  `reasoning_content` streams back as thinking; the key is read from
+  `FIREWORKS_API_KEY` ([#347](https://github.com/jianantian/orchest/issues/347)).
+- Streaming ASR contract tests: every dialect's session loop replays a
+  WebSocket fixture (`orchest-provider-stream` `fixture` module, JSON Lines)
+  offline, and one assertion set checks Draft / Stable / Turn / Finalize
+  behaviour (ADR-0006). The `record-fixtures` feature and
+  `scripts/record-asr-fixture.sh` record a live session in the same format,
+  keeping frame kinds but no audio, keys or uplink payloads
+  ([#344](https://github.com/jianantian/orchest/issues/344)).
+
+### Changed
+
+- Streaming ASR: every dialect now emits a Turn (`EndOfSpeech`) that carries
+  the `segment_id` of the Stable it ends. ElevenLabs, aliyun and volcengine
+  synthesize it after each committed segment; Deepgram appends every
+  `is_final` piece of an utterance to one `final{n}` segment (an `Append`
+  Stable instead of a `Snapshot`; interims go to `tail{n}`, replacing the
+  per-`start` `seg{ms}` ids) and ends it with the first of `speech_final`,
+  `UtteranceEnd` or a `from_finalize` result. Deepgram sessions now request
+  `vad_events=true` and `utterance_end_ms=1000`, which `UtteranceEnd` needs,
+  and `endpointing=300` instead of the 10 ms default; Soniox maps its `<end>` / `<fin>` tokens (endpoint
+  detection is now on by default) and numbers segments per Turn
+  (`final{n}` / `tail{n}`) instead of the fixed `final` / `tail`. The marker
+  tokens no longer leak into the transcript text. The end of a session is now
+  `LifecycleEvent::SessionClosed` instead of a segment-less `EndOfSpeech`
+  ([#343](https://github.com/jianantian/orchest/issues/343)).
+- Python / Node `transcribe` with only `provider` picks that provider's
+  default one-shot model and never a streaming one; `start_asr_stream` picks
+  only streaming models. A provider with only the other kind fails with
+  `UnsupportedOperation` naming the API to use. With neither `provider` nor
+  `model`, `start_asr_stream` now uses aliyun's catalog default streaming
+  model (`qwen-audio-3.0-asr-flash-streaming`), the same as
+  `provider="aliyun"` alone. The ASR
+  stream's `finalize()`
+  raises `unsupported_option` without sending when the model does not support
+  it and raises once the session is finishing or closed; otherwise it returns
+  on submission, and a later rejection arrives as a non-fatal `error` event
+  with `operation: "finalize"`. Volcengine's default key
+  variable is `VOLCENGINE_ASR_API_KEY`
+  ([#345](https://github.com/jianantian/orchest/issues/345)).
+
+### Deprecated
+
+- aliyun: the `aliyun/fun-asr-realtime` streaming ASR row, which aliyun is
+  retiring (maintainer notice, 2026-10-29). It stays resolvable by id for 1.x but is now
+  `ModelStatus::Deprecated`, hidden from default discovery, and no longer
+  aliyun's default streaming model:
+  `Registry::asr().provider("aliyun")` and the aliyun dialect's empty-model
+  fallback now pick `qwen-audio-3.0-asr-flash-streaming`.
+
 ## [1.1.0]
 
 ### Added
@@ -129,7 +226,8 @@ Release candidate for 1.0.0, with the same feature set as the 1.0.0 entry
 in [CHANGELOG.md](CHANGELOG.md#100). Published so crates.io users can try
 the lockstep crates before the final release.
 
-[Unreleased]: https://github.com/jianantian/orchest/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/jianantian/orchest/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/jianantian/orchest/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/jianantian/orchest/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/jianantian/orchest/releases/tag/v1.0.0
 [1.0.0-rc.1]: https://github.com/jianantian/orchest/releases/tag/v1.0.0-rc.1

@@ -794,6 +794,37 @@ fn openrouter_provider() -> LlmProviderInfo {
     }
 }
 
+fn vercel_provider() -> LlmProviderInfo {
+    LlmProviderInfo {
+        provider_id: "vercel",
+        display_name: "Vercel AI Gateway",
+        models: LlmModelList::Dynamic {
+            description:
+                "Vercel AI Gateway (https://vercel.com/docs/ai-gateway) routes one key to \
+                models from many providers over an OpenAI-compatible API. It does not have a fixed \
+                model list. Pass any model id listed by the gateway, prefixed with vercel/.",
+            model_id_format: "vercel/<upstream-provider>/<model-name>",
+            model_id_example: "vercel/openai/gpt-5.4",
+        },
+    }
+}
+
+fn fireworks_provider() -> LlmProviderInfo {
+    LlmProviderInfo {
+        provider_id: "fireworks",
+        display_name: "Fireworks AI",
+        models: LlmModelList::Dynamic {
+            description:
+                "Fireworks AI (https://app.fireworks.ai/models) serves open-weight models over an \
+                OpenAI-compatible API. Its model list changes often. Pass a Fireworks-hosted model \
+                name, prefixed with fireworks/, or a full accounts/<account>/models/<name> path.",
+            model_id_format:
+                "fireworks/<model-name> | fireworks/accounts/<account>/models/<model-name>",
+            model_id_example: "fireworks/kimi-k2-instruct",
+        },
+    }
+}
+
 fn elss_provider() -> LlmProviderInfo {
     // Elss is a dual-protocol gateway (ADR-0002 slice 010): the same model can be
     // reached over either wire protocol, selected in the model string.
@@ -820,6 +851,8 @@ fn build_catalog() -> Vec<LlmProviderInfo> {
         volcengine_models(),
         minimax_models(),
         openrouter_provider(),
+        vercel_provider(),
+        fireworks_provider(),
         elss_provider(),
     ]
 }

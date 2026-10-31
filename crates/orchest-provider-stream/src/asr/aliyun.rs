@@ -25,7 +25,14 @@ use tokio::sync::oneshot;
 use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 
 const DEFAULT_WS_URL: &str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/";
-const DEFAULT_MODEL: &str = "fun-asr-realtime";
+const DEFAULT_MODEL: &str = "qwen-audio-3.0-asr-flash-streaming";
+
+/// Whether this dialect honours `SessionInput::Finalize`. The DashScope
+/// realtime ASR protocol only has `run-task` / `continue-task` /
+/// `finish-task`, and `finish-task` ends the task, so there is no way to
+/// finalize mid-session. See `docs/external/aliyun/asr/realtime/client-event.md`
+/// and <https://help.aliyun.com/zh/model-studio/fun-asr-realtime-websocket-api>.
+pub const CLIENT_FINALIZE: bool = false;
 
 #[derive(Serialize)]
 struct ClientMessage {
@@ -184,8 +191,10 @@ pub fn parse_server_event(text: &str) -> Result<ServerEvent, ProtocolError> {
 
 /// Stateful projector of DashScope events onto unified events:
 /// `result-generated` → `Transcript` (`Committed` once `sentence_end`, else
-/// `Provisional`); `task-finished` → `EndOfSpeech` (stream-level, no segment);
-/// `task-failed` → a fatal `Error`.
+/// `Provisional`); a committed sentence is a whole-sentence Stable, so the
+/// mapper synthesizes the Turn (`EndOfSpeech` on the same segment) right after
+/// it (ADR-0006 D6); `task-finished` → `SessionClosed`; `task-failed` → a
+/// fatal `Error`.
 ///
 /// Segment identity comes from the sentence's native `begin_time`
 /// (`seg{begin_time}`, `Snapshot`); when the wire omits it, a synthesized
@@ -220,25 +229,30 @@ impl AliyunMapper {
                                 id
                             }
                         };
-                        vec![StreamEvent::Transcript {
+                        let segment = Some(SegmentRef {
+                            segment_id: Some(segment_id),
+                            update_kind: TranscriptUpdateKind::Snapshot,
+                        });
+                        let mut events = vec![StreamEvent::Transcript {
                             text: s.text,
                             stability: if s.sentence_end {
                                 TranscriptStability::Committed
                             } else {
                                 TranscriptStability::Provisional
                             },
-                            segment: Some(SegmentRef {
-                                segment_id: Some(segment_id),
-                                update_kind: TranscriptUpdateKind::Snapshot,
-                            }),
-                        }]
+                            segment: segment.clone(),
+                        }];
+                        if s.sentence_end {
+                            events.push(StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                                segment,
+                            }));
+                        }
+                        events
                     }
                     _ => Vec::new(),
                 }
             }
-            "task-finished" => vec![StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
-                segment: None,
-            })],
+            "task-finished" => vec![StreamEvent::Lifecycle(LifecycleEvent::SessionClosed)],
             "task-failed" => {
                 let message = event
                     .header
@@ -348,6 +362,11 @@ pub async fn run_aliyun_stream<T: ByteDuplex>(
                         break;
                     }
                 }
+                Some(SessionInput::Finalize) => {
+                    if events.send(super::finalize_unsupported("aliyun")).await.is_err() {
+                        return;
+                    }
+                }
                 Some(_) => {}
             },
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_text) {
@@ -437,6 +456,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
         .duplex(true)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
+        .with_ext(super::asr_ext(CLIENT_FINALIZE))
 }
 
 /// Build an [`AliyunAsr`] from a registry [`ProviderConfig`].
@@ -478,6 +498,7 @@ impl Asr for AliyunAsr {
             .duplex(true)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
+            .with_ext(super::asr_ext(CLIENT_FINALIZE))
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -552,7 +573,7 @@ impl Asr for AliyunAsr {
         let (events_tx, events) = EventStream::channel(64);
         let (ready_tx, ready_rx) = oneshot::channel();
         tokio::spawn(run_aliyun_stream(
-            WsDuplex::new(ws_stream),
+            crate::fixture::live(WsDuplex::new(ws_stream)),
             run_task,
             finish_task,
             input_rx,
@@ -635,10 +656,16 @@ mod tests {
         let committed = parse_server_event(&event("result-generated", Some("hi"), true)).unwrap();
         assert!(matches!(
             mapper.map(committed).as_slice(),
-            [StreamEvent::Transcript {
-                stability: TranscriptStability::Committed,
-                ..
-            }]
+            [
+                StreamEvent::Transcript {
+                    stability: TranscriptStability::Committed,
+                    segment: Some(SegmentRef { segment_id: Some(stable), .. }),
+                    ..
+                },
+                StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                    segment: Some(SegmentRef { segment_id: Some(turn), .. }),
+                }),
+            ] if stable == turn
         ));
     }
 
@@ -699,9 +726,7 @@ mod tests {
         let finished = parse_server_event(&event("task-finished", None, false)).unwrap();
         assert!(matches!(
             mapper.map(finished).as_slice(),
-            [StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
-                segment: None
-            })]
+            [StreamEvent::Lifecycle(LifecycleEvent::SessionClosed)]
         ));
         let failed = parse_server_event(
             &json!({"header": {"event": "task-failed", "error_message": "boom"}}).to_string(),
@@ -770,7 +795,7 @@ mod tests {
         ready_rx.await.unwrap().unwrap();
         assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Binary(_)));
 
-        // a committed result, then task-finished -> Transcript + EndOfSpeech, then ends
+        // a committed result, then task-finished -> Stable + Turn, then SessionClosed
         in_tx
             .send(WsFrame::Text(event("result-generated", Some("done"), true)))
             .await
@@ -829,5 +854,46 @@ mod tests {
             })
         ));
         handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_aliyun_stream_answers_finalize_with_unsupported_option() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let run = build_run_task("t", "m", &json!({})).unwrap();
+        let finish = build_finish_task("t").unwrap();
+        let _handle = tokio::spawn(run_aliyun_stream(
+            transport, run, finish, input_rx, events_tx, ready_tx,
+        ));
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Text(_)));
+        in_tx
+            .send(WsFrame::Text(event("task-started", None, false)))
+            .await
+            .unwrap();
+        ready_rx.await.unwrap().unwrap();
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        crate::asr::assert_finalize_error(
+            &events_rx.recv().await.unwrap(),
+            ErrorCode::UnsupportedOption,
+        );
+        // the session stays open: no finish-task was sent, and audio still flows
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), out_rx.recv())
+                .await
+                .is_err()
+        );
+        input_tx
+            .send(SessionInput::Audio(bytes::Bytes::from_static(b"pcm")))
+            .await
+            .unwrap();
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Binary(_)));
     }
 }

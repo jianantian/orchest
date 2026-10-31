@@ -6,9 +6,18 @@ import pytest
 
 
 class FakeNativeStream:
-    def __init__(self) -> None:
+    def __init__(self, finalize_error: BaseException | None = None) -> None:
         self.finished = False
+        self.finalized = 0
+        self.finalize_error = finalize_error
         self.chunks: list[bytes] = []
+
+    async def finalize(self) -> None:
+        if self.finalize_error is not None:
+            raise self.finalize_error
+        if self.finished:
+            raise RuntimeError("ASR session is finishing or closed")
+        self.finalized += 1
 
     async def send_audio(self, audio: bytes) -> None:
         if self.finished:
@@ -51,7 +60,8 @@ def test_transcribe_preserves_structured_protocol_error() -> None:
         orchest.transcribe(
             b"audio",
             format="wav",
-            provider="missing/model",
+            provider="missing",
+            model="model",
             api_key="test-key",
         )
 
@@ -121,3 +131,178 @@ def test_realtime_rejects_coroutine_callback(monkeypatch) -> None:
             raise AssertionError("wait should reject a coroutine callback")
 
     asyncio.run(run())
+
+
+def test_transcribe_rejects_combined_provider_model() -> None:
+    with pytest.raises(RuntimeError, match="pass the model separately"):
+        orchest.transcribe(
+            b"audio",
+            format="wav",
+            provider="aliyun/qwen-audio-3.0-asr-flash",
+            api_key="test-key",
+        )
+
+
+def test_transcribe_rejects_model_without_provider() -> None:
+    with pytest.raises(RuntimeError, match="model requires provider"):
+        orchest.transcribe(b"audio", format="wav", model="nova-3", api_key="k")
+
+
+def test_start_asr_stream_rejects_combined_provider_model() -> None:
+    async def run() -> None:
+        await orchest.start_asr_stream(
+            format="pcm",
+            sample_rate=16_000,
+            on_event=lambda event: None,
+            provider="deepgram/nova-3",
+            api_key="test-key",
+        )
+
+    with pytest.raises(RuntimeError, match="pass the model separately"):
+        asyncio.run(run())
+
+
+def test_start_asr_stream_passes_provider_and_model_separately(monkeypatch) -> None:
+    seen: list[tuple] = []
+
+    async def fake_start(*args):
+        seen.append(args)
+        return FakeNativeStream()
+
+    monkeypatch.setattr(orchest, "_start_asr_stream", fake_start)
+
+    async def run() -> None:
+        await orchest.start_asr_stream(
+            format="pcm",
+            sample_rate=16_000,
+            on_event=lambda event: None,
+            provider="deepgram",
+            model="nova-3",
+        )
+
+    asyncio.run(run())
+    (args,) = seen
+    assert args[4:6] == ("deepgram", "nova-3")
+
+
+def test_finalize_keeps_the_session_open(monkeypatch) -> None:
+    native = FakeNativeStream()
+
+    async def fake_start(*args):
+        return native
+
+    monkeypatch.setattr(orchest, "_start_asr_stream", fake_start)
+
+    async def run() -> None:
+        stream = await orchest.start_asr_stream(
+            format="pcm", sample_rate=16_000, on_event=lambda event: None
+        )
+        await stream.send_audio(b"a")
+        await stream.finalize()
+        await stream.send_audio(b"b")
+
+    asyncio.run(run())
+    assert native.finalized == 1
+    assert native.chunks == [b"a", b"b"]
+    assert not native.finished
+
+
+def test_finalize_unsupported_raises_model_error(monkeypatch) -> None:
+    native = FakeNativeStream(
+        finalize_error=orchest.ModelError("no finalize", "unsupported_option")
+    )
+
+    async def fake_start(*args):
+        return native
+
+    monkeypatch.setattr(orchest, "_start_asr_stream", fake_start)
+
+    async def run() -> None:
+        stream = await orchest.start_asr_stream(
+            format="pcm", sample_rate=16_000, on_event=lambda event: None
+        )
+        await stream.finalize()
+
+    with pytest.raises(orchest.ModelError) as caught:
+        asyncio.run(run())
+    assert caught.value.code == "unsupported_option"
+
+
+def test_finalize_after_finish_raises(monkeypatch) -> None:
+    async def fake_start(*args):
+        return FakeNativeStream()
+
+    monkeypatch.setattr(orchest, "_start_asr_stream", fake_start)
+
+    async def run() -> None:
+        stream = await orchest.start_asr_stream(
+            format="pcm", sample_rate=16_000, on_event=lambda event: None
+        )
+        stream.finish()
+        await stream.finalize()
+
+    with pytest.raises(RuntimeError, match="finishing or closed"):
+        asyncio.run(run())
+
+
+def test_runtime_finalize_rejection_is_a_non_fatal_event(monkeypatch) -> None:
+    rejection: orchest.AsrStreamEvent = {
+        "kind": "error",
+        "code": "timeout",
+        "message": "no answer",
+        "fatal": False,
+        "operation": "finalize",
+    }
+    received: list[orchest.AsrStreamEvent] = []
+    native = FakeNativeStream()
+    emit: list = []
+
+    async def fake_start(*args):
+        emit.append(args[2])
+        return native
+
+    monkeypatch.setattr(orchest, "_start_asr_stream", fake_start)
+
+    async def run() -> None:
+        stream = await orchest.start_asr_stream(
+            format="pcm", sample_rate=16_000, on_event=received.append
+        )
+        await stream.finalize()  # returns on submission
+        emit[0](rejection)
+        await stream.send_audio(b"a")  # still usable
+        await stream.wait()
+
+    asyncio.run(run())
+    assert received == [rejection]
+    assert native.chunks == [b"a"]
+
+
+def test_events_are_delivered_with_kind(monkeypatch) -> None:
+    events: list[orchest.AsrStreamEvent] = [
+        {"kind": "draft", "text": "he", "segment_id": "s0"},
+        {"kind": "stable", "text": "hello", "segment_id": "s0", "update": "snapshot"},
+        {"kind": "turn", "segment_id": "s0"},
+        {"kind": "session_closed"},
+    ]
+    received: list[orchest.AsrStreamEvent] = []
+
+    async def fake_start(*args):
+        for event in events:
+            args[2](event)
+        return FakeNativeStream()
+
+    monkeypatch.setattr(orchest, "_start_asr_stream", fake_start)
+
+    async def run() -> None:
+        stream = await orchest.start_asr_stream(
+            format="pcm", sample_rate=16_000, on_event=received.append
+        )
+        await stream.wait()
+
+    asyncio.run(run())
+    assert [event["kind"] for event in received] == [
+        "draft",
+        "stable",
+        "turn",
+        "session_closed",
+    ]

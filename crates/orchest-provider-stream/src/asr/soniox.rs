@@ -25,18 +25,44 @@ use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 
 const DEFAULT_WS_URL: &str = "wss://stt-rt.soniox.com/transcribe-websocket";
 
+/// Whether this dialect honours `SessionInput::Finalize`: it sends Soniox's
+/// manual finalization request, answered by a final `<fin>` token, without
+/// closing the stream (<https://soniox.com/docs/stt/rt/manual-finalization>).
+pub const CLIENT_FINALIZE: bool = true;
+
+/// The manual-finalization control text frame.
+pub const FINALIZE_FRAME: &str = r#"{"type":"finalize"}"#;
+
+/// Final marker token: the end of an utterance found by endpoint detection
+/// (<https://soniox.com/docs/stt/rt/endpoint-detection>).
+pub const END_TOKEN: &str = "<end>";
+
+/// Final marker token: a manual finalization is complete.
+pub const FIN_TOKEN: &str = "<fin>";
+
+/// One run of the committed side of a Soniox message, in wire order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FinalPiece {
+    /// Concatenated consecutive `is_final` text tokens.
+    Text(String),
+    /// An `<end>` token (endpoint detection).
+    Endpoint,
+    /// A `<fin>` token (manual finalization complete).
+    Finalized,
+}
+
 /// A decoded Soniox inbound message.
 #[derive(Debug, PartialEq)]
 pub enum SonioxMessage {
     Tokens {
-        /// Concatenated `is_final` tokens (committed).
-        final_text: String,
+        /// The `is_final` tokens (committed text and markers), in order.
+        finals: Vec<FinalPiece>,
         /// Concatenated non-final tokens (revisable).
         provisional_text: String,
         /// End of stream.
         finished: bool,
     },
-    Error(String),
+    Error(super::UpstreamError),
     /// No tokens and not finished — nothing to surface.
     Ignored,
 }
@@ -52,84 +78,149 @@ pub fn parse_message(text: &str) -> Result<SonioxMessage, ProtocolError> {
         )
     })?;
     if let Some(error_code) = message.error_code {
-        return Ok(SonioxMessage::Error(format!(
-            "soniox error {error_code}: {}",
-            message
-                .error_message
-                .unwrap_or_else(|| "stream error".into())
+        let detail = message
+            .error_message
+            .unwrap_or_else(|| "stream error".into());
+        return Ok(SonioxMessage::Error(super::UpstreamError::new(
+            Some(error_code.clone()),
+            format!("soniox error {error_code}: {detail}"),
         )));
     }
     if message.tokens.is_empty() && !message.finished {
         return Ok(SonioxMessage::Ignored);
     }
-    let mut final_text = String::new();
+    let mut finals: Vec<FinalPiece> = Vec::new();
     let mut provisional_text = String::new();
     for token in message.tokens {
-        if token.is_final {
-            final_text.push_str(&token.text);
-        } else {
+        if !token.is_final {
             provisional_text.push_str(&token.text);
+            continue;
+        }
+        match token.text.as_str() {
+            END_TOKEN => finals.push(FinalPiece::Endpoint),
+            FIN_TOKEN => finals.push(FinalPiece::Finalized),
+            text => match finals.last_mut() {
+                Some(FinalPiece::Text(run)) => run.push_str(text),
+                _ => finals.push(FinalPiece::Text(text.to_string())),
+            },
         }
     }
     Ok(SonioxMessage::Tokens {
-        final_text,
+        finals,
         provisional_text,
         finished: message.finished,
     })
 }
 
-/// Segment id of the ever-growing committed token stream: final tokens arrive
-/// as increments, so they all `Append` to this one segment.
-pub const FINAL_SEGMENT_ID: &str = "final";
+/// Prefix of the committed segment of each Turn (`final{n}`): final tokens
+/// arrive as increments, so they `Append` to it.
+pub const FINAL_SEGMENT_PREFIX: &str = "final";
 
-/// Segment id of the revisable non-final tail: each message's tail is a full
-/// snapshot of the current hypothesis, replacing the previous one.
-pub const TAIL_SEGMENT_ID: &str = "tail";
+/// Prefix of the revisable non-final tail of each Turn (`tail{n}`): each
+/// message's tail is a full snapshot of the current hypothesis, replacing the
+/// previous one.
+pub const TAIL_SEGMENT_PREFIX: &str = "tail";
 
-/// Project a Soniox message onto unified events: committed tokens → an `Append`
-/// `Committed` `Transcript` on [`FINAL_SEGMENT_ID`], the revisable tail → a
-/// `Snapshot` `Provisional` `Transcript` on [`TAIL_SEGMENT_ID`], and `finished`
-/// → `EndOfSpeech`. An `Error` becomes a single fatal `Error`.
-pub fn map_message(message: SonioxMessage) -> Vec<StreamEvent> {
-    match message {
-        SonioxMessage::Tokens {
-            final_text,
-            provisional_text,
-            finished,
-        } => {
-            let mut events = Vec::new();
-            if !final_text.is_empty() {
-                events.push(StreamEvent::Transcript {
-                    text: final_text,
-                    stability: TranscriptStability::Committed,
-                    segment: Some(SegmentRef {
-                        segment_id: Some(FINAL_SEGMENT_ID.to_string()),
-                        update_kind: TranscriptUpdateKind::Append,
-                    }),
-                });
-            }
-            if !provisional_text.is_empty() {
-                events.push(StreamEvent::Transcript {
-                    text: provisional_text,
-                    stability: TranscriptStability::Provisional,
-                    segment: Some(SegmentRef {
-                        segment_id: Some(TAIL_SEGMENT_ID.to_string()),
-                        update_kind: TranscriptUpdateKind::Snapshot,
-                    }),
-                });
-            }
-            if finished {
-                events.push(StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
-                    segment: None,
-                }));
-            }
-            events
+/// Stateful projector of Soniox messages onto unified events.
+///
+/// Committed tokens → an `Append` `Committed` `Transcript` on `final{n}`; the
+/// revisable tail → a `Snapshot` `Provisional` `Transcript` on `tail{n}`. An
+/// `<end>` token is the Turn (`EndOfSpeech` on `final{n}`) and starts Turn
+/// `n + 1`; a `<fin>` token does the same and always answers the client's
+/// `Finalize`, with segment `None` when nothing was committed. `finished` ends
+/// any pending Turn, then emits `SessionClosed`. An `Error` becomes a single
+/// fatal `Error`.
+#[derive(Debug, Default)]
+pub struct SonioxMapper {
+    turn: u64,
+    /// Whether `final{turn}` has received any Stable text.
+    has_stable: bool,
+    /// Whether the last mapped message carried `<fin>`, the answer to a
+    /// client `Finalize`.
+    answered_finalize: bool,
+}
+
+impl SonioxMapper {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn segment(&self, prefix: &str, update_kind: TranscriptUpdateKind) -> Option<SegmentRef> {
+        Some(SegmentRef {
+            segment_id: Some(format!("{prefix}{}", self.turn)),
+            update_kind,
+        })
+    }
+
+    /// End the current Turn; `always` answers a `Finalize` even when nothing
+    /// was committed.
+    fn end_turn(&mut self, always: bool, events: &mut Vec<StreamEvent>) {
+        if !self.has_stable && !always {
+            return;
         }
-        SonioxMessage::Error(message) => vec![StreamEvent::Error {
-            error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
-            fatal: true,
-        }],
-        SonioxMessage::Ignored => Vec::new(),
+        let segment = self
+            .has_stable
+            .then(|| self.segment(FINAL_SEGMENT_PREFIX, TranscriptUpdateKind::Append))
+            .flatten();
+        events.push(StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+            segment,
+        }));
+        if self.has_stable {
+            self.turn += 1;
+            self.has_stable = false;
+        }
+    }
+
+    /// Whether the message mapped last answered a client `Finalize`; reading
+    /// it clears it.
+    pub fn take_finalize_answer(&mut self) -> bool {
+        std::mem::take(&mut self.answered_finalize)
+    }
+
+    pub fn map(&mut self, message: SonioxMessage) -> Vec<StreamEvent> {
+        self.answered_finalize = false;
+        match message {
+            SonioxMessage::Tokens {
+                finals,
+                provisional_text,
+                finished,
+            } => {
+                let mut events = Vec::new();
+                for piece in finals {
+                    match piece {
+                        FinalPiece::Text(text) if !text.is_empty() => {
+                            events.push(StreamEvent::Transcript {
+                                text,
+                                stability: TranscriptStability::Committed,
+                                segment: self
+                                    .segment(FINAL_SEGMENT_PREFIX, TranscriptUpdateKind::Append),
+                            });
+                            self.has_stable = true;
+                        }
+                        FinalPiece::Text(_) => {}
+                        FinalPiece::Endpoint => self.end_turn(false, &mut events),
+                        FinalPiece::Finalized => {
+                            self.answered_finalize = true;
+                            self.end_turn(true, &mut events);
+                        }
+                    }
+                }
+                if !provisional_text.is_empty() {
+                    events.push(StreamEvent::Transcript {
+                        text: provisional_text,
+                        stability: TranscriptStability::Provisional,
+                        segment: self.segment(TAIL_SEGMENT_PREFIX, TranscriptUpdateKind::Snapshot),
+                    });
+                }
+                if finished {
+                    self.end_turn(false, &mut events);
+                    events.push(StreamEvent::Lifecycle(LifecycleEvent::SessionClosed));
+                }
+                events
+            }
+            SonioxMessage::Error(error) => vec![error.into_event("soniox")],
+            SonioxMessage::Ignored => Vec::new(),
+        }
     }
 }
 
@@ -165,6 +256,7 @@ fn build_config_frame(api_key: &str, model: &str, options: &Value) -> String {
         "audio_format": "pcm_s16le",
         "sample_rate": 16000,
         "num_channels": 1,
+        "enable_endpoint_detection": true,
     });
     if let Some(overrides) = options.as_object() {
         for (key, v) in overrides {
@@ -175,8 +267,9 @@ fn build_config_frame(api_key: &str, model: &str, options: &Value) -> String {
 }
 
 /// Drive one soniox streaming session over `transport`: send the `config_frame`
-/// (text) first, then client audio as **binary**; an empty binary frame signals
-/// end of audio. Inbound **text** token messages project via [`map_message`].
+/// (text) first, then client audio as **binary**; `Finalize` sends the manual
+/// finalization request; an empty binary frame signals end of audio. Inbound
+/// **text** token messages project via [`SonioxMapper`].
 /// Ends on `finished`, a fatal error, or transport EOF.
 pub async fn run_soniox_stream<T: ByteDuplex>(
     mut transport: T,
@@ -187,7 +280,9 @@ pub async fn run_soniox_stream<T: ByteDuplex>(
     if transport.send(WsFrame::Text(config_frame)).await.is_err() {
         return;
     }
+    let mut mapper = SonioxMapper::new();
     let mut input_open = true;
+    let mut finalize = super::FinalizeWatch::default();
     loop {
         tokio::select! {
             maybe_input = input.recv(), if input_open => match maybe_input {
@@ -200,16 +295,33 @@ pub async fn run_soniox_stream<T: ByteDuplex>(
                     input_open = false;
                     let _ = transport.send(WsFrame::Binary(Vec::new())).await; // end-of-audio
                 }
+                Some(SessionInput::Finalize) => {
+                    if transport.send(WsFrame::Text(FINALIZE_FRAME.to_string())).await.is_err() {
+                        break;
+                    }
+                    finalize.sent();
+                }
                 Some(_) => {}
             },
+            () = finalize.expired(), if finalize.is_pending() => {
+                if events.send(finalize.expire("soniox")).await.is_err() {
+                    return;
+                }
+            }
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_text) {
                 Some(text) => match parse_message(text) {
                     Ok(message) => {
+                        let is_error = matches!(&message, SonioxMessage::Error(_));
                         let terminal = matches!(
                             &message,
                             SonioxMessage::Tokens { finished: true, .. } | SonioxMessage::Error(_)
                         );
-                        for event in map_message(message) {
+                        let mapped = mapper.map(message);
+                        let mut mapped = finalize.settle(mapper.take_finalize_answer(), mapped);
+                        if is_error {
+                            mapped = finalize.upstream_failed(mapped);
+                        }
+                        for event in mapped {
                             if events.send(event).await.is_err() {
                                 return;
                             }
@@ -265,6 +377,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
         .duplex(true)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
+        .with_ext(super::asr_ext(CLIENT_FINALIZE))
 }
 
 /// Build a [`SonioxAsr`] from a registry [`ProviderConfig`].
@@ -306,6 +419,7 @@ impl Asr for SonioxAsr {
             .duplex(true)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
+            .with_ext(super::asr_ext(CLIENT_FINALIZE))
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -359,7 +473,7 @@ impl Asr for SonioxAsr {
         let (input_tx, input_rx) = mpsc::channel(32);
         let (events_tx, events) = EventStream::channel(64);
         tokio::spawn(run_soniox_stream(
-            WsDuplex::new(ws_stream),
+            crate::fixture::live(WsDuplex::new(ws_stream)),
             config_frame,
             input_rx,
             events_tx,
@@ -453,8 +567,35 @@ mod tests {
         assert_eq!(
             parse_message(&raw).unwrap(),
             SonioxMessage::Tokens {
-                final_text: "hello ".into(),
+                finals: vec![FinalPiece::Text("hello ".into())],
                 provisional_text: "wor".into(),
+                finished: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_marker_tokens_in_order() {
+        let raw = tokens_msg(
+            &[
+                ("a", true),
+                ("b", true),
+                ("<end>", true),
+                ("c", true),
+                ("<fin>", true),
+            ],
+            false,
+        );
+        assert_eq!(
+            parse_message(&raw).unwrap(),
+            SonioxMessage::Tokens {
+                finals: vec![
+                    FinalPiece::Text("ab".into()),
+                    FinalPiece::Endpoint,
+                    FinalPiece::Text("c".into()),
+                    FinalPiece::Finalized,
+                ],
+                provisional_text: String::new(),
                 finished: false,
             }
         );
@@ -472,49 +613,187 @@ mod tests {
     fn error_code_becomes_error() {
         let raw = json!({"error_code": "401", "error_message": "bad key"}).to_string();
         match parse_message(&raw).unwrap() {
-            SonioxMessage::Error(m) => assert!(m.contains("401") && m.contains("bad key")),
+            SonioxMessage::Error(e) => {
+                assert!(e.message.contains("401") && e.message.contains("bad key"));
+                assert_eq!(e.code.as_deref(), Some("401"));
+            }
             other => panic!("expected Error, got {other:?}"),
         }
     }
 
+    fn segment_id(event: &StreamEvent) -> Option<&str> {
+        match event {
+            StreamEvent::Transcript { segment, .. }
+            | StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment }) => segment
+                .as_ref()
+                .and_then(|segment| segment.segment_id.as_deref()),
+            _ => None,
+        }
+    }
+
     #[test]
-    fn map_emits_committed_provisional_and_end_of_speech() {
-        let events = map_message(SonioxMessage::Tokens {
-            final_text: "hello".into(),
-            provisional_text: "world".into(),
-            finished: true,
-        });
+    fn map_emits_committed_provisional_turn_and_close() {
+        let mut mapper = SonioxMapper::new();
+        let events = mapper
+            .map(parse_message(&tokens_msg(&[("hello", true), ("world", false)], true)).unwrap());
         assert!(matches!(
             &events[0],
             StreamEvent::Transcript {
                 stability: TranscriptStability::Committed,
                 segment: Some(SegmentRef {
-                    segment_id,
                     update_kind: TranscriptUpdateKind::Append,
+                    ..
                 }),
                 ..
-            } if segment_id.as_deref() == Some(FINAL_SEGMENT_ID)
+            }
         ));
+        assert_eq!(segment_id(&events[0]), Some("final0"));
         assert!(matches!(
             &events[1],
             StreamEvent::Transcript {
                 stability: TranscriptStability::Provisional,
                 segment: Some(SegmentRef {
-                    segment_id,
                     update_kind: TranscriptUpdateKind::Snapshot,
+                    ..
                 }),
                 ..
-            } if segment_id.as_deref() == Some(TAIL_SEGMENT_ID)
+            }
         ));
+        assert_eq!(segment_id(&events[1]), Some("tail0"));
         assert!(matches!(
             &events[2],
-            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment: None })
+            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
+        ));
+        assert_eq!(segment_id(&events[2]), Some("final0"));
+        assert!(matches!(
+            &events[3],
+            StreamEvent::Lifecycle(LifecycleEvent::SessionClosed)
+        ));
+    }
+
+    #[test]
+    fn endpoint_ends_the_turn_and_starts_the_next() {
+        let mut mapper = SonioxMapper::new();
+        let events = mapper.map(
+            parse_message(&tokens_msg(
+                &[("hi", true), ("<end>", true), ("ne", false)],
+                false,
+            ))
+            .unwrap(),
+        );
+        assert_eq!(events.len(), 3);
+        assert_eq!(segment_id(&events[0]), Some("final0"));
+        assert!(matches!(
+            &events[1],
+            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
+        ));
+        assert_eq!(segment_id(&events[1]), Some("final0"));
+        // the tail after the endpoint belongs to the next turn
+        assert_eq!(segment_id(&events[2]), Some("tail1"));
+        // an endpoint with nothing committed is not a Turn
+        assert!(mapper
+            .map(parse_message(&tokens_msg(&[("<end>", true)], false)).unwrap())
+            .is_empty());
+    }
+
+    #[test]
+    fn fin_always_answers_finalize() {
+        let mut mapper = SonioxMapper::new();
+        let events = mapper.map(parse_message(&tokens_msg(&[("<fin>", true)], false)).unwrap());
+        assert!(matches!(
+            events.as_slice(),
+            [StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech {
+                segment: None
+            })]
         ));
     }
 
     #[test]
     fn map_error_is_fatal() {
-        let events = map_message(SonioxMessage::Error("boom".into()));
+        let events = SonioxMapper::new().map(SonioxMessage::Error(
+            super::super::UpstreamError::new(None, "boom"),
+        ));
         assert!(matches!(events[0], StreamEvent::Error { fatal: true, .. }));
+    }
+
+    #[tokio::test]
+    async fn finalize_sends_manual_finalization_and_keeps_the_stream_open() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let _handle = tokio::spawn(run_soniox_stream(
+            transport,
+            "{}".to_string(),
+            input_rx,
+            events_tx,
+        ));
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Text(_)));
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        assert_eq!(
+            out_rx.recv().await.unwrap(),
+            WsFrame::Text(FINALIZE_FRAME.to_string())
+        );
+        in_tx
+            .send(WsFrame::Text(tokens_msg(
+                &[("hi", true), ("<fin>", true)],
+                false,
+            )))
+            .await
+            .unwrap();
+        assert!(matches!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Transcript {
+                stability: TranscriptStability::Committed,
+                ..
+            }
+        ));
+        let turn = events_rx.recv().await.unwrap();
+        assert!(matches!(
+            turn,
+            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
+        ));
+        assert_eq!(segment_id(&turn), Some("final0"));
+        input_tx
+            .send(SessionInput::Audio(bytes::Bytes::from_static(b"pcm")))
+            .await
+            .unwrap();
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Binary(_)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unanswered_finalize_times_out_and_keeps_the_stream_open() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (_in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let _handle = tokio::spawn(run_soniox_stream(
+            transport,
+            "{}".to_string(),
+            input_rx,
+            events_tx,
+        ));
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Text(_)));
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        assert_eq!(
+            out_rx.recv().await.unwrap(),
+            WsFrame::Text(FINALIZE_FRAME.to_string())
+        );
+        crate::asr::assert_finalize_error(&events_rx.recv().await.unwrap(), ErrorCode::Timeout);
+        input_tx
+            .send(SessionInput::Audio(bytes::Bytes::from_static(b"pcm")))
+            .await
+            .unwrap();
+        assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Binary(_)));
     }
 }

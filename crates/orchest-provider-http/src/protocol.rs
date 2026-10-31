@@ -792,6 +792,36 @@ static OPENROUTER_ENTRY: ProviderEntry = ProviderEntry {
     build_adapter: crate::providers::openrouter::build_chat_adapter,
 };
 
+static VERCEL_ENTRY: ProviderEntry = ProviderEntry {
+    name: "vercel",
+    default_base_url: crate::defaults::vercel::API_URL,
+    default_api_key_env: crate::defaults::vercel::API_KEY_ENV,
+    protocols: &[Protocol::Chat],
+    // No aliases: `vercel/openai/<model>` keeps `openai/<model>` as the model id.
+    protocol_aliases: &[],
+    path_overrides: &[],
+    extra_headers: &[],
+    // Vercel AI Gateway speaks OpenRouter's reasoning dialect.
+    profiles: &[(Protocol::Chat, &crate::providers::vercel::VERCEL_PROFILE)],
+    build_adapter: crate::providers::vercel::build_chat_adapter,
+};
+
+static FIREWORKS_ENTRY: ProviderEntry = ProviderEntry {
+    name: "fireworks",
+    default_base_url: crate::defaults::fireworks::API_URL,
+    default_api_key_env: crate::defaults::fireworks::API_KEY_ENV,
+    protocols: &[Protocol::Chat],
+    // No aliases: `fireworks/accounts/<account>/models/<name>` keeps the full path.
+    protocol_aliases: &[],
+    path_overrides: &[],
+    extra_headers: &[],
+    profiles: &[(
+        Protocol::Chat,
+        &crate::providers::fireworks::FIREWORKS_PROFILE,
+    )],
+    build_adapter: crate::providers::fireworks::build_chat_adapter,
+};
+
 static ANTHROPIC_ENTRY: ProviderEntry = ProviderEntry {
     name: "anthropic",
     default_base_url: "https://api.anthropic.com",
@@ -854,6 +884,8 @@ static ALL_ENTRIES: &[&ProviderEntry] = &[
     &DEEPSEEK_ENTRY,
     &VOLCENGINE_ENTRY,
     &OPENROUTER_ENTRY,
+    &VERCEL_ENTRY,
+    &FIREWORKS_ENTRY,
     &ANTHROPIC_ENTRY,
     &MINIMAX_ENTRY,
     &ELSS_ENTRY,

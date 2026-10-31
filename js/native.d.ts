@@ -7,6 +7,7 @@
 
 import type {
   AgentOptions,
+  AsrStreamEvent,
   AsrStreamOptions,
   CompletionOptions,
   DecisionOptions,
@@ -18,13 +19,14 @@ import type {
 
 export class NativeAsrStream {
   sendAudio(audio: Uint8Array): Promise<void>;
+  finalize(): Promise<void>;
   finish(): void;
   wait(): Promise<void>;
 }
 
 export function _startAsrStream(
   options: AsrStreamOptions,
-  onEvent: (event: Record<string, unknown>) => void,
+  onEvent: (event: AsrStreamEvent) => void,
 ): Promise<NativeAsrStream>;
 
 export function _complete(options: CompletionOptions): Promise<string>;

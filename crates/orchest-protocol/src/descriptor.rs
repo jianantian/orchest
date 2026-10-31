@@ -120,6 +120,20 @@ impl CapabilityDescriptor {
             .all(|m| self.output_modalities.contains(m))
     }
 
+    /// Does this streaming ASR model honour `SessionInput::Finalize`
+    /// (ADR-0006 D8 `client_finalize`)? Read from the
+    /// [`CapabilityExt::ASR_CLIENT_FINALIZE`] flag of the `Asr` extension; a
+    /// model that does not declare it does not support Finalize.
+    pub fn client_finalize(&self) -> bool {
+        match &self.ext {
+            CapabilityExt::Asr(value) => value
+                .get(CapabilityExt::ASR_CLIENT_FINALIZE)
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
     #[must_use]
     pub fn with_input_modalities(mut self, modalities: impl Into<Vec<Modality>>) -> Self {
         self.input_modalities = modalities.into();
@@ -200,6 +214,13 @@ pub enum CapabilityExt {
     GenTask(Value),
 }
 
+impl CapabilityExt {
+    /// Key of the `Asr` extension object that declares whether the model
+    /// honours `SessionInput::Finalize` (ADR-0006 D8). A plain flag until the
+    /// ASR catalog row is typed.
+    pub const ASR_CLIENT_FINALIZE: &'static str = "client_finalize";
+}
+
 /// Chat-capability detail the spine owns today: reasoning efforts, prompt cache,
 /// parallel tool use, pricing, context window. (The queryable booleans are in the
 /// core; this is the preserved detail behind them.)
@@ -220,4 +241,23 @@ pub struct ChatCapabilityExt {
 /// `CatalogEntry` in Issue 005.
 pub trait CatalogEntry {
     fn descriptor(&self) -> CapabilityDescriptor;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_finalize_reads_the_asr_ext() {
+        let base = CapabilityDescriptor::new("p", "m", Capability::Asr);
+        assert!(!base.client_finalize());
+        let declared = base.clone().with_ext(CapabilityExt::Asr(
+            serde_json::json!({CapabilityExt::ASR_CLIENT_FINALIZE: true}),
+        ));
+        assert!(declared.client_finalize());
+        let other = base.with_ext(CapabilityExt::Tts(
+            serde_json::json!({CapabilityExt::ASR_CLIENT_FINALIZE: true}),
+        ));
+        assert!(!other.client_finalize());
+    }
 }

@@ -43,9 +43,10 @@ declare function decide(options: import("./types").DecisionOptions): Promise<imp
  */
 declare function transcribe(audio: Uint8Array, options: import("./types").TranscribeOptions): Promise<string>;
 /**
- * Realtime ASR session: audio in, events out. `finish()` closes the input
- * (idempotent); `wait()` resolves when the stream ends and rethrows the first
- * callback exception or a fatal provider error.
+ * Realtime ASR session: audio in, events out. `finalize()` asks the provider
+ * to finalize what it has heard and keeps the session open; `finish()` closes
+ * the input (idempotent); `wait()` resolves when the stream ends and rethrows
+ * the first callback exception or a fatal provider error.
  */
 declare class AsrStream {
     #private;
@@ -56,6 +57,18 @@ declare class AsrStream {
     constructor(session: import("./native").NativeAsrStream, callbackError: unknown[]);
     /** @param {Uint8Array} audio @returns {Promise<void>} */
     sendAudio(audio: Uint8Array): Promise<void>;
+    /**
+     * Ask the provider to finalize what it has heard so far, keeping the session
+     * open. Resolving only means the request was submitted: the provider answers
+     * through `onEvent` with a `turn` (after any `stable`), or with a non-fatal
+     * `error` whose `operation` is `"finalize"`, after which the stream stays
+     * usable. Rejects with a `ProviderError` whose code is `unsupported_option`
+     * when the model does not support finalize (nothing is sent), and rejects
+     * when the session is already finishing or closed.
+     *
+     * @returns {Promise<void>}
+     */
+    finalize(): Promise<void>;
     /** @returns {void} */
     finish(): void;
     /** @returns {Promise<void>} */

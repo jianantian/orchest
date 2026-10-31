@@ -1,0 +1,17 @@
+{"meta":{"dialect":"volcengine","model":"bigmodel","source":"hand-written","audio":"hello world / how are you, finalize, more audio, then the end"}}
+{"recv_openspeech":{"sequence":1,"payload":{"audio_info":{"duration":0},"result":{"text":"","additions":{"log_id":"redacted"}}}}}
+{"input":{"kind":"audio","bytes":3200}}
+{"send":"binary"}
+{"recv_openspeech":{"sequence":2,"payload":{"audio_info":{"duration":600},"result":{"text":"hello","utterances":[{"text":"hello","definite":false,"start_time":0,"end_time":600}]}}}}
+{"input":{"kind":"audio","bytes":3200}}
+{"send":"binary"}
+{"recv_openspeech":{"sequence":3,"payload":{"audio_info":{"duration":1300},"result":{"text":"hello world","utterances":[{"text":"hello world","definite":true,"start_time":0,"end_time":1100}]}}}}
+{"input":{"kind":"audio","bytes":3200}}
+{"send":"binary"}
+{"recv_openspeech":{"sequence":4,"payload":{"audio_info":{"duration":2100},"result":{"text":"hello world how are","utterances":[{"text":"hello world","definite":true,"start_time":0,"end_time":1100},{"text":"how are","definite":false,"start_time":1500,"end_time":2000}]}}}}
+{"input":{"kind":"finalize"}}
+{"input":{"kind":"audio","bytes":3200}}
+{"send":"binary"}
+{"input":{"kind":"end"}}
+{"send":"binary"}
+{"recv_openspeech":{"sequence":-5,"last":true,"payload":{"audio_info":{"duration":2400},"result":{"text":"hello world how are you","utterances":[{"text":"hello world","definite":true,"start_time":0,"end_time":1100},{"text":"how are you","definite":true,"start_time":1500,"end_time":2400}]}}}}

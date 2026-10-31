@@ -480,20 +480,71 @@ def transcribe(
     format: str,
     language: str | None = None,
     provider: str | None = None,
+    model: str | None = None,
     api_key: str | None = None,
     api_key_env: str | None = None,
     api_url: str | None = None,
     options: dict[str, Any] | None = None,
 ) -> str: ...
 
-AsrStreamEvent: TypeAlias = dict[str, Any]
-
 class AsrContextMessage(TypedDict):
     role: Literal["user", "assistant"]
     text: str
 
+
+class AsrDraftEvent(TypedDict):
+    kind: Literal["draft"]
+    text: str
+    segment_id: str | None
+
+class AsrStableEvent(TypedDict):
+    kind: Literal["stable"]
+    text: str
+    segment_id: str | None
+    update: Literal["append", "snapshot"]
+
+class AsrTurnEvent(TypedDict):
+    kind: Literal["turn"]
+    segment_id: str | None
+
+class AsrSessionStartedEvent(TypedDict):
+    kind: Literal["session_started"]
+    session_id: str | None
+
+class AsrRouteSelectedEvent(TypedDict):
+    kind: Literal["route_selected"]
+    provider: str
+    model: str
+
+class AsrSessionClosedEvent(TypedDict):
+    kind: Literal["session_closed"]
+
+class AsrErrorEvent(TypedDict):
+    kind: Literal["error"]
+    code: str | None
+    message: str
+    fatal: bool
+    # "finalize" when the error answers finalize(); such an error is non-fatal
+    operation: str | None
+
+class AsrExtrasEvent(TypedDict):
+    kind: Literal["extras"]
+    data: JsonValue
+
+AsrStreamEvent: TypeAlias = (
+    AsrDraftEvent
+    | AsrStableEvent
+    | AsrTurnEvent
+    | AsrSessionStartedEvent
+    | AsrRouteSelectedEvent
+    | AsrSessionClosedEvent
+    | AsrErrorEvent
+    | AsrExtrasEvent
+)
+
 class AsrStream:
     async def send_audio(self, audio: bytes) -> None: ...
+    async def finalize(self) -> None: ...
     def finish(self) -> None: ...
     async def wait(self) -> None: ...
 
@@ -504,6 +555,7 @@ async def start_asr_stream(
     on_event: Callable[[AsrStreamEvent], None],
     language: str | None = None,
     provider: str | None = None,
+    model: str | None = None,
     api_key: str | None = None,
     api_key_env: str | None = None,
     api_url: str | None = None,

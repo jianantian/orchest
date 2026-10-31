@@ -29,7 +29,6 @@ TokenUsage: TypeAlias = dict[str, int | dict[str, int]]
 ToolCall: TypeAlias = dict[str, Any]
 ToolRegistration: TypeAlias = dict[str, Any]
 RuntimeEvent: TypeAlias = dict[str, Any]
-AsrStreamEvent: TypeAlias = dict[str, Any]
 
 DecisionDescription: TypeAlias = str | list[JsonValue] | dict[str, JsonValue]
 BooleanCriteria = TypedDict(
@@ -101,6 +100,77 @@ class AsrContextMessage(TypedDict):
     text: str
 
 
+class AsrDraftEvent(TypedDict):
+    """Provisional text; the next draft of the same segment replaces it."""
+
+    kind: Literal["draft"]
+    text: str
+    segment_id: str | None
+
+
+class AsrStableEvent(TypedDict):
+    """Confirmed text. ``update`` says whether it appends to the segment or
+    replaces the segment's confirmed text."""
+
+    kind: Literal["stable"]
+    text: str
+    segment_id: str | None
+    update: Literal["append", "snapshot"]
+
+
+class AsrTurnEvent(TypedDict):
+    """One round of speech ended; ``segment_id`` names the stable it ends."""
+
+    kind: Literal["turn"]
+    segment_id: str | None
+
+
+class AsrSessionStartedEvent(TypedDict):
+    kind: Literal["session_started"]
+    session_id: str | None
+
+
+class AsrRouteSelectedEvent(TypedDict):
+    kind: Literal["route_selected"]
+    provider: str
+    model: str
+
+
+class AsrSessionClosedEvent(TypedDict):
+    kind: Literal["session_closed"]
+
+
+class AsrErrorEvent(TypedDict):
+    """A provider error. Fatal errors also end the stream and are raised by
+    :meth:`AsrStream.wait`."""
+
+    kind: Literal["error"]
+    code: str | None
+    message: str
+    fatal: bool
+    # "finalize" when the error answers finalize(); such an error is non-fatal
+    operation: str | None
+
+
+class AsrExtrasEvent(TypedDict):
+    """Provider-specific detail outside the draft / stable / turn model."""
+
+    kind: Literal["extras"]
+    data: JsonValue
+
+
+AsrStreamEvent: TypeAlias = (
+    AsrDraftEvent
+    | AsrStableEvent
+    | AsrTurnEvent
+    | AsrSessionStartedEvent
+    | AsrRouteSelectedEvent
+    | AsrSessionClosedEvent
+    | AsrErrorEvent
+    | AsrExtrasEvent
+)
+
+
 class AsrStream:
     """A live ASR session returned by :func:`start_asr_stream`."""
 
@@ -115,6 +185,17 @@ class AsrStream:
     async def send_audio(self, audio: bytes) -> None:
         """Send one audio chunk, waiting for input-channel capacity."""
         await self._native.send_audio(audio)
+
+    async def finalize(self) -> None:
+        """Ask the provider to finalize what it has heard so far, keeping the
+        session open. Returning only means the request was submitted: the
+        provider answers through ``on_event`` with a ``turn`` (after any
+        ``stable``), or with a non-fatal ``error`` whose ``operation`` is
+        ``"finalize"``, after which the stream stays usable. Raises
+        :class:`ModelError` with code ``unsupported_option`` when the model
+        does not support finalize (nothing is sent), and raises when the
+        session is already finishing or closed."""
+        await self._native.finalize()
 
     def finish(self) -> None:
         """Close the input side. Calling this more than once is safe."""
@@ -140,13 +221,18 @@ async def start_asr_stream(
     on_event: Callable[[AsrStreamEvent], None],
     language: str | None = None,
     provider: str | None = None,
+    model: str | None = None,
     api_key: str | None = None,
     api_key_env: str | None = None,
     api_url: str | None = None,
     context: list[AsrContextMessage] | None = None,
     options: dict[str, Any] | None = None,
 ) -> AsrStream:
-    """Start realtime ASR after the provider acknowledges ``task-started``."""
+    """Start a realtime ASR session once the provider has accepted it.
+
+    ``provider`` is a provider name such as ``"deepgram"`` and ``model`` its
+    model id; with neither, the default Aliyun streaming model is used, and
+    with only ``provider``, that provider's streaming model."""
     callback_error: list[BaseException] = []
     native_holder: list[_NativeAsrStream] = []
 
@@ -170,6 +256,7 @@ async def start_asr_stream(
         guarded_on_event,
         language,
         provider,
+        model,
         api_key,
         api_key_env,
         api_url,
@@ -186,6 +273,14 @@ __all__ = [
     "AsrStream",
     "AsrStreamEvent",
     "AsrContextMessage",
+    "AsrDraftEvent",
+    "AsrStableEvent",
+    "AsrTurnEvent",
+    "AsrSessionStartedEvent",
+    "AsrRouteSelectedEvent",
+    "AsrSessionClosedEvent",
+    "AsrErrorEvent",
+    "AsrExtrasEvent",
     "complete",
     "decide",
     "BooleanCriteria",

@@ -2,7 +2,7 @@
 
 > 状态：已确认（owner，2026-10-27）。GitHub issue 已建（#342–#348），编号已回填各 spec。
 > 决策依据：[ADR-0006](../../adr/0006-voice-session-model.md)（语音会话模型）、[语音迭代线计划](../voice/plan.md) 的 V1。
-> 版本：只做增量变更，按 ADR-0003 发 Rust `1.2.0`。
+> 版本：发 Rust `1.2.0`；流式 ASR 事件行为的变化按 ADR-0003 D4 的 1.2.0 例外处理。
 
 ## Background
 
@@ -15,7 +15,7 @@
 
 - 五个流式 ASR 方言在 Draft / Stable / Turn / Finalize 上行为一致，并有方言无关的契约测试护住。
 - SDK 0.2 发出去的 ASR 流式接口就是 ADR-0006 的形状。
-- `vercel/<vendor>/<model>`、`fireworks/<model>` 可直接用于 chat 与 decision。
+- `vercel/<vendor>/<model>` 可直接用于 chat 与 decision，`fireworks/<model>` 可直接用于 chat。
 - 发布 Rust `1.2.0`，让 SDK 0.2 的 SDK↔crate 版本矩阵对应一个已发布版本（ADR-0005 D6）。
 
 ## Decisions
@@ -28,7 +28,8 @@
 | SDK 接口 | 硬切换：`model` 独立参数、`finalize()`、带 `kind` 的事件类型；不留兼容层 | owner 2026-10-27 |
 | 新 provider 接法 | 沿用 OpenRouter 的动态网关路径（`create_adapter` + profile），不写静态模型目录 | 现有 OpenRouter 先例 |
 | 新 provider 范围 | 只接 chat 与 decision；Vercel 的 transcribe / speech 与 Fireworks 的 ASR 留到语音 V3 | 语音线计划 V3 |
-| 版本 | 全部增量变更（`SessionInput` 是 `#[non_exhaustive]`），发 `1.2.0` | ADR-0003 D4 |
+| Fireworks decision | 延后：Fireworks 没有 Decisions API，本迭代只接 chat | owner 2026-10-27 |
+| 版本 | 发 `1.2.0`：API 全部增量（`SessionInput` 是 `#[non_exhaustive]`）；流式 ASR 事件行为的变化（Turn、`SessionClosed`、segment id）作为 ADR-0003 D4 的一次性例外，记在 CHANGELOG 的 Changed | ADR-0003 D4 例外；owner 2026-10-29 |
 
 ## Scope
 
@@ -36,7 +37,7 @@
 - `orchest-provider-stream`：ElevenLabs 合成 Turn；Deepgram `UtteranceEnd` 映射为 Turn 并与 `speech_final` 去重；各方言接原生 finalize（Deepgram `Finalize`、Soniox manual finalization、ElevenLabs commit），不支持的返回 `UnsupportedOption`。
 - 方言无关的 ASR 契约测试，用录制的 WebSocket fixture 对五个方言各跑一遍。
 - `orchest-py` / `orchest-node`：`start_asr_stream` 重设计与类型化事件。
-- `orchest-provider-http`：Vercel AI Gateway 与 Fireworks 的 chat 与 decision。
+- `orchest-provider-http`：Vercel AI Gateway 的 chat 与 decision，Fireworks 的 chat。
 - `1.2.0` 发布。
 
 ## Out of Scope
@@ -44,6 +45,7 @@
 - 语音 V2–V5（能力目录与计量、网关语音、TTS 双工、全双工）。
 - `AsrCatalogExt` 的能力项（V2）；本迭代用 `descriptor()` 中 `CapabilityExt::Asr` 的 `client_finalize` 判断方言是否支持 Finalize。
 - Vercel / Fireworks 的语音、图像、embedding 能力。
+- Fireworks 的 decision。
 - 任何 v2.0 的 runtime 契约改动。
 
 ## Issues
@@ -57,7 +59,7 @@
 | 003 | [#344](https://github.com/jianantian/orchest/issues/344) | 方言无关的 ASR 契约测试 | AFK | 002 |
 | 004 | [#345](https://github.com/jianantian/orchest/issues/345) | SDK ASR 流式接口重设计 | AFK | 001 |
 | 005 | [#346](https://github.com/jianantian/orchest/issues/346) | Vercel AI Gateway：chat 与 decision | AFK | — |
-| 006 | [#347](https://github.com/jianantian/orchest/issues/347) | Fireworks：chat 与 decision | AFK | — |
+| 006 | [#347](https://github.com/jianantian/orchest/issues/347) | Fireworks：chat | AFK | — |
 | 007 | [#348](https://github.com/jianantian/orchest/issues/348) | 发布 `1.2.0` | HITL | 001–006 |
 
 1. [`SessionInput::Finalize` 与 Stable / Turn 契约](issues/001-session-finalize-contract/spec.md)
@@ -68,13 +70,13 @@
 6. [Fireworks](issues/006-fireworks/spec.md)
 7. [发布 1.2.0](issues/007-release-1-2-0/spec.md)
 
-主要风险在 003：录 fixture 需要五个方言的真实 key，缺 key 的方言会卡住验收。
+主要风险在 003：录 fixture 需要五个方言的真实 key，缺 key 的方言会卡住验收。当前五个方言都是手写 fixture（`meta.source = "hand-written"`），拿到 key 后用 `scripts/record-asr-fixture.sh` 逐个替换为录制版。
 
 ## Acceptance Criteria
 
 - [ ] 同一段录音在五个流式 ASR 方言上都产出 Draft → Stable → Turn，且 Turn 携带它结束的 `segment_id`。
 - [ ] 端侧 VAD 场景下调 `finalize()` 不断开连接；不支持的方言返回 `UnsupportedOption`。
 - [ ] Python 与 Node 的 `start_asr_stream` 接受独立的 `provider` 与 `model`，事件带 `kind`（draft / stable / turn），类型声明覆盖每种事件。
-- [ ] `vercel/openai/gpt-5.4` 一类的 id 与 `fireworks/<model>` 能跑通 `complete` 与 `decide`，并有不依赖网络的单元测试。
+- [ ] `vercel/openai/gpt-5.4` 一类的 id 能跑通 `complete` 与 `decide`，`fireworks/<model>` 能跑通 `complete`，并有不依赖网络的单元测试。
 - [ ] `cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --check` 全绿；SDK 测试全绿。
 - [ ] `1.2.0` 发布到 crates.io，`CHANGELOG.md` 记录新增项。
