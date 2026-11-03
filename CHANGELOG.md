@@ -105,7 +105,8 @@ version; they ship in 1.2.0 under a one-off exception
 ### Deprecated
 
 - aliyun: the `aliyun/fun-asr-realtime` streaming ASR row, which aliyun is
-  retiring (maintainer notice, 2026-10-29). It stays resolvable by id for 1.x but is now
+  retiring (aliyun support, relayed by the maintainer on 2026-10-29; no
+  public announcement yet). It stays resolvable by id for 1.x but is now
   `ModelStatus::Deprecated`, hidden from default discovery, and no longer
   aliyun's default streaming model:
   `Registry::asr().provider("aliyun")` and the aliyun dialect's empty-model
