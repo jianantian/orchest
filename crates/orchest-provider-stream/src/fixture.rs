@@ -46,7 +46,9 @@ pub const REDACTED_KEYS: &[&str] = &[
 #[serde(rename_all = "snake_case")]
 pub enum FixtureLine {
     /// Free-form provenance (dialect, model, whether the file was recorded or
-    /// hand-written, the source audio).
+    /// hand-written, the source audio). The contract test also reads
+    /// `"finalize_receipt": "error"`, set on a recording where a `Finalize`
+    /// was answered by an error rather than a Turn.
     Meta(Value),
     /// A client input given to the session.
     Input(FixtureInput),

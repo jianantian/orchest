@@ -150,6 +150,8 @@ class AsrErrorEvent(TypedDict):
     fatal: bool
     # "finalize" when the error answers finalize(); such an error is non-fatal
     operation: str | None
+    # the upstream's own error detail ({"code", "message", ...}), when it sent one
+    upstream: dict[str, object] | None
 
 
 class AsrExtrasEvent(TypedDict):

@@ -40,14 +40,19 @@ version; they ship in 1.2.0 under a one-off exception
   error. Only the dialect's own finalize answer settles a `Finalize`
   (Deepgram `from_finalize`, including its untyped acknowledgement; Soniox
   `<fin>`; the ElevenLabs commit), so an ordinary endpoint Turn never does,
-  and an answer arriving after the timeout adds no second segment-less Turn.
-  An upstream error while a `Finalize` is pending answers it with a non-fatal
-  finalize error first, then ends the session with the fatal error (the
-  upstreams close the socket). aliyun and volcengine answer
+  and an answer arriving after the timeout adds no second segment-less Turn
+  and never settles a later `Finalize`. An upstream error while a `Finalize`
+  is pending answers it with a non-fatal finalize error first, then ends the
+  session with the fatal error (the upstreams close the socket); a session
+  the upstream closes first answers it with a non-fatal finalize
+  `ProviderStreamError` before `SessionClosed`. Deepgram and Soniox also end
+  Stable text still waiting for a Turn when the upstream closes, and Soniox
+  now emits `SessionClosed` on a close without `finished`. aliyun and volcengine answer
   `UnsupportedOption`. ElevenLabs now recognizes every documented error
   message type (`commit_throttled`, `rate_limited`, …) instead of ignoring
   the ones it did not list, and Deepgram, ElevenLabs and Soniox errors keep
-  the upstream error code in `ProtocolError.upstream`. Each streaming ASR descriptor
+  the upstream error code in `ProtocolError.upstream` (the SDK `error` event
+  carries it as `upstream`). Each streaming ASR descriptor
   declares this as `CapabilityExt::Asr({"client_finalize": bool})`
   ([#343](https://github.com/jianantian/orchest/issues/343)).
 - Vercel AI Gateway provider (`vercel/<vendor>/<model>`, e.g.

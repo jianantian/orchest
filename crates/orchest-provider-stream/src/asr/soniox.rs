@@ -171,6 +171,14 @@ impl SonioxMapper {
         }
     }
 
+    /// The events that end a session the upstream closed without
+    /// `finished`: the Turn for Stable text still waiting for one.
+    pub fn close(&mut self) -> Vec<StreamEvent> {
+        let mut events = Vec::new();
+        self.end_turn(false, &mut events);
+        events
+    }
+
     /// Whether the message mapped last answered a client `Finalize`; reading
     /// it clears it.
     pub fn take_finalize_answer(&mut self) -> bool {
@@ -320,6 +328,11 @@ pub async fn run_soniox_stream<T: ByteDuplex>(
                         let mut mapped = finalize.settle(mapper.take_finalize_answer(), mapped);
                         if is_error {
                             mapped = finalize.upstream_failed(mapped);
+                        } else if terminal {
+                            // `finished`: answer what is still pending
+                            // before the mapper's `SessionClosed`.
+                            let at = mapped.len().saturating_sub(1);
+                            mapped.splice(at..at, finalize.closed("soniox"));
                         }
                         for event in mapped {
                             if events.send(event).await.is_err() {
@@ -331,13 +344,30 @@ pub async fn run_soniox_stream<T: ByteDuplex>(
                         }
                     }
                     Err(error) => {
-                        let _ = events.send(StreamEvent::Error { error, fatal: true }).await;
+                        let mut closing = finalize.closed("soniox");
+                        closing.push(StreamEvent::Error { error, fatal: true });
+                        for event in closing {
+                            if events.send(event).await.is_err() {
+                                return;
+                            }
+                        }
                         break;
                     }
                 },
                 None => match maybe_frame {
                     Some(_) => continue, // binary frame (unexpected) — ignore
-                    None => break,
+                    None => {
+                        // EOF without `finished`: end the session the same way.
+                        let mut closing = mapper.close();
+                        closing.extend(finalize.closed("soniox"));
+                        closing.push(StreamEvent::Lifecycle(LifecycleEvent::SessionClosed));
+                        for event in closing {
+                            if events.send(event).await.is_err() {
+                                return;
+                            }
+                        }
+                        break;
+                    }
                 },
             },
         }
@@ -559,6 +589,81 @@ mod tests {
             StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
         ));
         handle.await.unwrap(); // terminated on `finished`
+    }
+
+    #[tokio::test]
+    async fn eof_answers_a_pending_finalize_and_closes_the_session() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let config = build_config_frame("k", "stt-rt-v5", &json!({}));
+        let handle = tokio::spawn(run_soniox_stream(transport, config, input_rx, events_tx));
+        out_rx.recv().await.unwrap(); // config
+
+        in_tx
+            .send(WsFrame::Text(tokens_msg(&[("hello", true)], false)))
+            .await
+            .unwrap();
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        out_rx.recv().await.unwrap();
+        drop(in_tx); // the upstream closes without `<fin>` or `finished`
+
+        assert!(matches!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Transcript {
+                stability: TranscriptStability::Committed,
+                ..
+            }
+        ));
+        assert!(matches!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment: Some(_) })
+        ));
+        crate::asr::assert_finalize_error(
+            &events_rx.recv().await.unwrap(),
+            ErrorCode::ProviderStreamError,
+        );
+        assert_eq!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Lifecycle(LifecycleEvent::SessionClosed)
+        );
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn finished_answers_a_pending_finalize_before_session_closed() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let config = build_config_frame("k", "stt-rt-v5", &json!({}));
+        let handle = tokio::spawn(run_soniox_stream(transport, config, input_rx, events_tx));
+        out_rx.recv().await.unwrap(); // config
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        out_rx.recv().await.unwrap();
+        in_tx
+            .send(WsFrame::Text(tokens_msg(&[], true)))
+            .await
+            .unwrap();
+        crate::asr::assert_finalize_error(
+            &events_rx.recv().await.unwrap(),
+            ErrorCode::ProviderStreamError,
+        );
+        assert_eq!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Lifecycle(LifecycleEvent::SessionClosed)
+        );
+        handle.await.unwrap();
     }
 
     #[test]

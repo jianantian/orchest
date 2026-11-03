@@ -103,35 +103,62 @@ pub(crate) fn finalize_unsupported(dialect: &str) -> StreamEvent {
 ///
 /// Only the dialect can tell which upstream message answers a `Finalize`
 /// (Deepgram `from_finalize`, Soniox `<fin>`, the ElevenLabs commit), so a
-/// VAD Turn never counts as the answer. A request left unanswered for
-/// [`FINALIZE_TIMEOUT`] is answered with a non-fatal `Timeout` instead. If
-/// the upstream answer arrives after that, it is not a second result: its
-/// segment-less Turn is dropped, and a Turn that ends Stable text is kept as an
-/// ordinary Turn, since every Stable must be ended by one.
+/// VAD Turn never counts as the answer. The upstreams answer in the order the
+/// requests were sent, so each upstream answer belongs to the oldest request
+/// it has not answered yet.
+///
+/// Each request gets exactly one result:
+/// - the Turn of its upstream answer;
+/// - a non-fatal `Timeout` when it is left unanswered for
+///   [`FINALIZE_TIMEOUT`]. If its upstream answer arrives after that, it is
+///   not a second result: its segment-less Turn is dropped, and a Turn that
+///   ends Stable text is kept as an ordinary Turn, since every Stable must be
+///   ended by one. A late answer never settles a later request;
+/// - a non-fatal copy of the upstream error, when the upstream fails;
+/// - a non-fatal `ProviderStreamError`, when the session closes first.
 #[derive(Debug, Default)]
 pub(crate) struct FinalizeWatch {
-    deadlines: VecDeque<Instant>,
+    requests: VecDeque<Request>,
+}
+
+#[derive(Debug)]
+struct Request {
+    deadline: Instant,
+    /// Already answered with a timeout; still waiting for its upstream answer.
+    timed_out: bool,
 }
 
 impl FinalizeWatch {
     pub(crate) fn sent(&mut self) {
-        self.deadlines.push_back(Instant::now() + FINALIZE_TIMEOUT);
+        self.requests.push_back(Request {
+            deadline: Instant::now() + FINALIZE_TIMEOUT,
+            timed_out: false,
+        });
     }
 
+    /// Whether some request still has no result.
     pub(crate) fn is_pending(&self) -> bool {
-        !self.deadlines.is_empty()
+        self.requests.iter().any(|request| !request.timed_out)
     }
 
     /// Pass on the events the dialect mapped from one upstream message;
     /// `answers_finalize` says whether that message is the upstream answer to
-    /// a `Finalize`. It settles the oldest request, or, when none is left
-    /// (it timed out), the segment-less Turn it carries is dropped.
+    /// a `Finalize`. It settles the oldest request it has not answered; when
+    /// that request already timed out, or none is left, the segment-less Turn
+    /// it carries is dropped.
     pub(crate) fn settle(
         &mut self,
         answers_finalize: bool,
         mut events: Vec<StreamEvent>,
     ) -> Vec<StreamEvent> {
-        if answers_finalize && self.deadlines.pop_front().is_none() {
+        if !answers_finalize {
+            return events;
+        }
+        let late = self
+            .requests
+            .pop_front()
+            .is_none_or(|request| request.timed_out);
+        if late {
             events.retain(|event| {
                 !matches!(
                     event,
@@ -142,36 +169,59 @@ impl FinalizeWatch {
         events
     }
 
-    /// Pass on the events of an upstream error message. With a `Finalize`
-    /// pending, the error is also its answer: a non-fatal copy tagged
-    /// `operation = "finalize"` goes first, then the fatal error that ends
-    /// the session (the upstreams close the socket after an error).
+    /// Pass on the events of an upstream error message. Every request still
+    /// without a result is answered by the error: a non-fatal copy tagged
+    /// `operation = "finalize"` each, then the fatal error that ends the
+    /// session (the upstreams close the socket after an error).
     pub(crate) fn upstream_failed(&mut self, mut events: Vec<StreamEvent>) -> Vec<StreamEvent> {
-        if !self.is_pending() {
-            return events;
-        }
         let answer = events.iter().find_map(|event| match event {
-            StreamEvent::Error { error, .. } => Some(finalize_error(error.clone())),
+            StreamEvent::Error { error, .. } => Some(error.clone()),
             _ => None,
         });
         if let Some(answer) = answer {
-            self.deadlines.pop_front();
-            events.insert(0, answer);
+            let pending = self.drain_pending();
+            events.splice(0..0, std::iter::repeat_n(finalize_error(answer), pending));
         }
         events
     }
 
-    /// Resolves when the oldest request times out; never while none is pending.
+    /// The answers to every request still without a result when the session
+    /// ends before the upstream answered: a non-fatal `ProviderStreamError`
+    /// each. Send them before `SessionClosed` or the fatal error.
+    pub(crate) fn closed(&mut self, dialect: &str) -> Vec<StreamEvent> {
+        let answer = finalize_error(
+            ProtocolError::new(
+                ErrorCode::ProviderStreamError,
+                format!("{dialect} session ended before it answered finalize"),
+            )
+            .with_provider(dialect),
+        );
+        vec![answer; self.drain_pending()]
+    }
+
+    /// Drop every request; returns how many had no result.
+    fn drain_pending(&mut self) -> usize {
+        self.requests
+            .drain(..)
+            .filter(|request| !request.timed_out)
+            .count()
+    }
+
+    /// Resolves when the oldest request without a result times out; never
+    /// while none is pending.
     pub(crate) async fn expired(&self) {
-        match self.deadlines.front() {
-            Some(deadline) => tokio::time::sleep_until(*deadline).await,
+        match self.requests.iter().find(|request| !request.timed_out) {
+            Some(request) => tokio::time::sleep_until(request.deadline).await,
             None => std::future::pending().await,
         }
     }
 
-    /// Answer the oldest request with a timeout.
+    /// Answer the oldest request without a result with a timeout. It stays
+    /// queued, so its late upstream answer is recognized as late.
     pub(crate) fn expire(&mut self, dialect: &str) -> StreamEvent {
-        self.deadlines.pop_front();
+        if let Some(request) = self.requests.iter_mut().find(|request| !request.timed_out) {
+            request.timed_out = true;
+        }
         finalize_error(
             ProtocolError::new(
                 ErrorCode::Timeout,
@@ -226,6 +276,45 @@ mod tests {
             }),
         });
         assert_eq!(watch.settle(true, vec![ending_stable]).len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_late_answer_never_settles_a_later_request() {
+        let mut watch = FinalizeWatch::default();
+        let bare_turn = || StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { segment: None });
+        watch.sent();
+        tokio::time::advance(FINALIZE_TIMEOUT / 2).await;
+        watch.sent();
+        watch.expired().await;
+        assert_finalize_error(&watch.expire("d"), ErrorCode::Timeout);
+        assert!(watch.is_pending(), "the second request is still pending");
+        // the first request's late answer is dropped ...
+        assert!(watch.settle(true, vec![bare_turn()]).is_empty());
+        assert!(watch.is_pending());
+        // ... and the second request's own answer is its result
+        assert_eq!(watch.settle(true, vec![bare_turn()]).len(), 1);
+        assert!(!watch.is_pending());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn closing_answers_every_request_still_without_a_result() {
+        let mut watch = FinalizeWatch::default();
+        assert!(watch.closed("d").is_empty());
+        watch.sent();
+        watch.expired().await;
+        watch.expire("d");
+        watch.sent();
+        watch.sent();
+        let answers = watch.closed("d");
+        assert_eq!(
+            answers.len(),
+            2,
+            "the timed-out request already has its result"
+        );
+        for answer in &answers {
+            assert_finalize_error(answer, ErrorCode::ProviderStreamError);
+        }
+        assert!(!watch.is_pending());
     }
 
     #[test]

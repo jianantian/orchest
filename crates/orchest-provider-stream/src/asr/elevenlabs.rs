@@ -86,7 +86,13 @@ pub fn parse_message(text: &str) -> Result<ElevenLabsMessage, ProtocolError> {
         | "session_time_limit_exceeded"
         | "chunk_size_exceeded"
         | "insufficient_audio_activity" => ElevenLabsMessage::Error(super::UpstreamError::new(
-            Some(message_type.to_string()),
+            // The generic `error` frame names its code in `error`
+            // (`{"message_type":"error","error":"input_error"}`); every other
+            // type is its own code.
+            match message_type {
+                "error" => first_string(&value, &["error"]).or_else(|| Some("error".into())),
+                code => Some(code.to_string()),
+            },
             first_string(&value, &["message", "error", "detail"])
                 .unwrap_or_else(|| format!("ElevenLabs stream error: {message_type}")),
         )),
@@ -248,16 +254,26 @@ pub async fn run_elevenlabs_stream<T: ByteDuplex>(
                         }
                     }
                     Err(error) => {
-                        let _ = events.send(StreamEvent::Error { error, fatal: true }).await;
+                        let mut closing = finalize.closed("elevenlabs");
+                        closing.push(StreamEvent::Error { error, fatal: true });
+                        for event in closing {
+                            if events.send(event).await.is_err() {
+                                return;
+                            }
+                        }
                         break;
                     }
                 },
                 None => match maybe_frame {
                     Some(_) => continue,
                     None => {
-                        let _ = events
-                            .send(StreamEvent::Lifecycle(LifecycleEvent::SessionClosed))
-                            .await;
+                        let mut closing = finalize.closed("elevenlabs");
+                        closing.push(StreamEvent::Lifecycle(LifecycleEvent::SessionClosed));
+                        for event in closing {
+                            if events.send(event).await.is_err() {
+                                return;
+                            }
+                        }
                         break;
                     }
                 },
@@ -438,6 +454,16 @@ mod tests {
             parse_message(&json!({"message_type": "session_started"}).to_string()).unwrap(),
             ElevenLabsMessage::Ignored
         );
+        // the generic error frame names its code in `error`
+        match parse_message(&json!({"message_type": "error", "error": "rate_limited"}).to_string())
+            .unwrap()
+        {
+            ElevenLabsMessage::Error(e) => {
+                assert_eq!(e.code.as_deref(), Some("rate_limited"));
+                assert_eq!(e.message, "rate_limited");
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
     }
 
     #[test]
@@ -683,5 +709,30 @@ mod tests {
             }
             other => panic!("expected the fatal error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn eof_answers_a_pending_finalize_before_session_closed() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let _handle = tokio::spawn(run_elevenlabs_stream(transport, 16000, input_rx, events_tx));
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        out_rx.recv().await.unwrap();
+        drop(in_tx);
+        crate::asr::assert_finalize_error(
+            &events_rx.recv().await.unwrap(),
+            ErrorCode::ProviderStreamError,
+        );
+        assert_eq!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Lifecycle(LifecycleEvent::SessionClosed)
+        );
     }
 }

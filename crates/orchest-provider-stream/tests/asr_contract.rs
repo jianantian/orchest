@@ -15,7 +15,9 @@
 //! - every `Finalize` gets exactly one result: a Turn (`client_finalize =
 //!   true`, under a normal fixture) or a non-fatal `UnsupportedOption` error
 //!   tagged `operation = "finalize"` (`client_finalize = false`), and the
-//!   session keeps taking audio afterwards;
+//!   session keeps taking audio afterwards. A fixture where the upstream was
+//!   slow, rejected a `Finalize` or closed early is not a normal fixture and
+//!   says so with `"finalize_receipt": "error"` in its meta line;
 //! - the session ends with `SessionClosed`, and nothing follows it.
 //!
 //! The fixtures replay the same utterances, so the Stable text per Turn must
@@ -34,7 +36,9 @@ use orchest_protocol::{
 use orchest_provider_stream::asr::{
     aliyun, deepgram, elevenlabs, soniox, volcengine, FINALIZE_OPERATION,
 };
-use orchest_provider_stream::fixture::{parse_fixture, replay, FixtureInput, ReplayDuplex};
+use orchest_provider_stream::fixture::{
+    parse_fixture, replay, FixtureInput, FixtureLine, ReplayDuplex,
+};
 use tokio::sync::{mpsc, oneshot};
 
 /// What the client did and what the session emitted, in order.
@@ -48,9 +52,12 @@ enum Observed {
 /// The Stable text of each Turn every fixture records.
 const EXPECTED_TURNS: [&str; 2] = ["hello world", "how are you"];
 
-/// Replay `fixture` through `run` and return what was observed plus any uplink
-/// frames the fixture did not expect.
-async fn replay_session<F, Fut>(fixture: &str, run: F) -> (Vec<Observed>, Vec<String>)
+/// One replayed session: what was observed, any uplink frames the fixture did
+/// not expect, and the fixture's `meta` line (`Null` without one).
+type Replayed = (Vec<Observed>, Vec<String>, serde_json::Value);
+
+/// Replay `fixture` through `run` and return what happened.
+async fn replay_session<F, Fut>(fixture: &str, run: F) -> Replayed
 where
     F: FnOnce(ReplayDuplex, mpsc::Receiver<SessionInput>, mpsc::Sender<StreamEvent>) -> Fut,
     Fut: Future<Output = ()> + Send + 'static,
@@ -60,7 +67,15 @@ where
         env!("CARGO_MANIFEST_DIR")
     );
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
-    let (duplex, mut inputs) = replay(parse_fixture(&text).expect("fixture parses"));
+    let lines = parse_fixture(&text).expect("fixture parses");
+    let meta = lines
+        .iter()
+        .find_map(|line| match line {
+            FixtureLine::Meta(meta) => Some(meta.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let (duplex, mut inputs) = replay(lines);
     let violations = duplex.violations();
     let (input_tx, input_rx) = mpsc::channel(32);
     let (events_tx, mut events_rx) = mpsc::channel(64);
@@ -110,7 +125,7 @@ where
     .unwrap_or_else(|_| panic!("{fixture}: replay stalled; {:?}", violations.take()));
 
     let observed = std::mem::take(&mut *log.lock().unwrap());
-    (observed, violations.take())
+    (observed, violations.take(), meta)
 }
 
 fn segment_id(segment: &Option<SegmentRef>) -> Option<&str> {
@@ -257,8 +272,14 @@ fn contract_breaches(client_finalize: bool, observed: &[Observed]) -> Vec<String
 
 /// Under a normal fixture (the upstream answers every `Finalize` in time), a
 /// `client_finalize = true` dialect answers with a Turn: a finalize error
-/// (a timeout or an upstream rejection) is a breach there, though the
-/// contract allows it in general.
+/// (a timeout, an upstream rejection, or the session closing first) is a
+/// breach there, though the contract allows it in general.
+///
+/// The event stream does not say which Turn answered a `Finalize`, so
+/// [`contract_breaches`] lets any Turn after it count. This rule closes that
+/// gap for normal fixtures: a `Finalize` whose upstream answer never came
+/// still ends in a finalize error when the session closes, and that error is
+/// a breach here.
 fn normal_fixture_breaches(observed: &[Observed]) -> Vec<String> {
     observed
         .iter()
@@ -314,14 +335,19 @@ fn turn_texts(observed: &[Observed]) -> Vec<String> {
     turns
 }
 
-fn assert_contract(
-    dialect: &str,
-    client_finalize: bool,
-    (observed, violations): (Vec<Observed>, Vec<String>),
-) {
+/// Whether the fixture is a normal one. A recording where the upstream was
+/// slow, rejected a `Finalize` or closed early says so in its meta line with
+/// `"finalize_receipt": "error"`; finalize errors are then allowed.
+fn is_normal_fixture(meta: &serde_json::Value) -> bool {
+    meta.get("finalize_receipt")
+        .and_then(serde_json::Value::as_str)
+        != Some("error")
+}
+
+fn assert_contract(dialect: &str, client_finalize: bool, (observed, violations, meta): Replayed) {
     assert!(violations.is_empty(), "{dialect}: replay: {violations:#?}");
     let mut breaches = contract_breaches(client_finalize, &observed);
-    if client_finalize {
+    if client_finalize && is_normal_fixture(&meta) {
         breaches.extend(normal_fixture_breaches(&observed));
     }
     assert!(
@@ -497,6 +523,14 @@ fn finalize_receipt_breaches_are_detected() {
     answered.extend([bare_turn(), Observed::Audio, closed()]);
     assert!(contract_breaches(true, &answered).is_empty());
     assert!(normal_fixture_breaches(&answered).is_empty());
+    // A fixture opts out of the normal-fixture rule in its meta line.
+    assert!(is_normal_fixture(&serde_json::Value::Null));
+    assert!(is_normal_fixture(
+        &serde_json::json!({ "source": "recorded" })
+    ));
+    assert!(!is_normal_fixture(
+        &serde_json::json!({ "finalize_receipt": "error" })
+    ));
 }
 
 /// The assertion set itself catches the breaches it names.

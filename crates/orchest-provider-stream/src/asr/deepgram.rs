@@ -97,9 +97,11 @@ pub fn parse_message(text: &str) -> Result<DeepgramMessage, ProtocolError> {
             })
         }
         "Error" => Ok(DeepgramMessage::Error(super::UpstreamError::new(
+            // `variant` on current error frames; older frames carry the
+            // (deprecated) `code` instead.
             value
                 .get("variant")
-                .or_else(|| value.get("err_code"))
+                .or_else(|| value.get("code"))
                 .and_then(|v| v.as_str())
                 .map(str::to_string),
             value
@@ -235,6 +237,13 @@ impl DeepgramMapper {
         events
     }
 
+    /// The events that end the session: the Turn ending `final{turn}`, if
+    /// Stable text is still waiting for one (e.g. an `is_final` result that
+    /// arrived after the finalize acknowledgement, with no endpoint since).
+    pub fn close(&mut self) -> Vec<StreamEvent> {
+        self.turn(false).into_iter().collect()
+    }
+
     /// The Turn ending `final{turn}`, if it has Stable text; `always` answers
     /// a `Finalize` even when nothing was committed.
     fn turn(&mut self, always: bool) -> Option<StreamEvent> {
@@ -347,16 +356,27 @@ pub async fn run_deepgram_stream<T: ByteDuplex>(
                         }
                     }
                     Err(error) => {
-                        let _ = events.send(StreamEvent::Error { error, fatal: true }).await;
+                        let mut closing = finalize.closed("deepgram");
+                        closing.push(StreamEvent::Error { error, fatal: true });
+                        for event in closing {
+                            if events.send(event).await.is_err() {
+                                return;
+                            }
+                        }
                         break;
                     }
                 },
                 None => match maybe_frame {
                     Some(_) => continue, // binary frame (unexpected) — ignore
                     None => {
-                        let _ = events
-                            .send(StreamEvent::Lifecycle(LifecycleEvent::SessionClosed))
-                            .await;
+                        let mut closing = mapper.close();
+                        closing.extend(finalize.closed("deepgram"));
+                        closing.push(StreamEvent::Lifecycle(LifecycleEvent::SessionClosed));
+                        for event in closing {
+                            if events.send(event).await.is_err() {
+                                return;
+                            }
+                        }
                         break;
                     }
                 },
@@ -1055,5 +1075,73 @@ mod tests {
             run(vec![finalize_result("how are you", 1.5), ack()]),
             [Some("final0".to_string())]
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn eof_with_a_finalize_pending_answers_it_and_ends_the_last_stable() {
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+        let (in_tx, in_rx) = mpsc::channel(8);
+        let transport = ChannelDuplex {
+            out: out_tx,
+            inbound: in_rx,
+        };
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (events_tx, mut events_rx) = mpsc::channel(16);
+        let _handle = tokio::spawn(run_deepgram_stream(transport, input_rx, events_tx));
+
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        out_rx.recv().await.unwrap();
+        // the ack answers the first Finalize; a plain is_final follows, with
+        // no endpoint before the upstream closes
+        in_tx
+            .send(WsFrame::Text(json!({"from_finalize": true}).to_string()))
+            .await
+            .unwrap();
+        in_tx
+            .send(WsFrame::Text(results("how are you", true, false, 1.5)))
+            .await
+            .unwrap();
+        input_tx.send(SessionInput::Finalize).await.unwrap();
+        out_rx.recv().await.unwrap();
+        drop(in_tx);
+
+        assert_eq!(turn_segment(&events_rx.recv().await.unwrap()), Some(None));
+        assert!(matches!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Transcript {
+                stability: TranscriptStability::Committed,
+                ..
+            }
+        ));
+        assert_eq!(
+            turn_segment(&events_rx.recv().await.unwrap()),
+            Some(Some("final0"))
+        );
+        crate::asr::assert_finalize_error(
+            &events_rx.recv().await.unwrap(),
+            ErrorCode::ProviderStreamError,
+        );
+        assert_eq!(
+            events_rx.recv().await.unwrap(),
+            StreamEvent::Lifecycle(LifecycleEvent::SessionClosed)
+        );
+        assert!(events_rx.recv().await.is_none());
+    }
+
+    #[test]
+    fn the_legacy_error_code_is_kept() {
+        let raw = json!({"type": "Error", "description": "bad", "code": "INVALID_AUTH"});
+        assert_eq!(
+            parse_message(&raw.to_string()).unwrap(),
+            DeepgramMessage::Error(super::super::UpstreamError::new(
+                Some("INVALID_AUTH".into()),
+                "bad"
+            ))
+        );
+        let raw = json!({"type": "Error", "variant": "DATA-0000", "code": "x", "description": "d"});
+        assert!(matches!(
+            parse_message(&raw.to_string()).unwrap(),
+            DeepgramMessage::Error(error) if error.code.as_deref() == Some("DATA-0000")
+        ));
     }
 }

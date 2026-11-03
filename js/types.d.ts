@@ -137,7 +137,8 @@ export interface AsrSessionClosedEvent {
 /**
  * A provider error; fatal errors also end the stream and reject `wait()`.
  * `operation` is `"finalize"` when the error answers a `finalize()` call; such
- * an error is never fatal and the stream stays usable.
+ * an error is never fatal, though an upstream failure or the session closing
+ * still ends the stream right after it.
  */
 export interface AsrErrorEvent {
   kind: "error";
@@ -145,6 +146,8 @@ export interface AsrErrorEvent {
   message: string;
   fatal: boolean;
   operation: string | null;
+  /** The upstream's own error detail (`code`, `message`, …), when it sent one. */
+  upstream: { code: string | null; message: string | null; body: unknown } | null;
 }
 /** Provider-specific detail outside the draft / stable / turn model. */
 export interface AsrExtrasEvent {

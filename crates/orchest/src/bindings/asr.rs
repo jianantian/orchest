@@ -241,6 +241,11 @@ pub fn sdk_asr_event(event: &StreamEvent) -> Option<Value> {
             "fatal": fatal,
             // `"finalize"` when the error answers a `finalize()` (ADR-0006 D7.2)
             "operation": error.diagnostic_metadata.get("operation").and_then(Value::as_str),
+            // the upstream's own error code and text, when it sent one
+            "upstream": error
+                .upstream
+                .as_deref()
+                .and_then(|upstream| serde_json::to_value(upstream).ok()),
         }),
         StreamEvent::Extension(CapabilityEventExt::Asr(data)) => {
             json!({"kind": "extras", "data": data})
@@ -346,6 +351,19 @@ mod tests {
             fatal: true,
         };
         assert_eq!(sdk_asr_event(&other).unwrap()["operation"], Value::Null);
+        // the upstream's own code reaches the SDK on the event too
+        let mut throttled = ProtocolError::new(ErrorCode::ProviderTaskFailed, "too many commits");
+        throttled.upstream = Some(std::sync::Arc::new(orchest_protocol::UpstreamErrorDetail {
+            code: Some("commit_throttled".into()),
+            message: Some("too many commits".into()),
+            body: None,
+        }));
+        let event = sdk_asr_event(&StreamEvent::Error {
+            error: throttled,
+            fatal: false,
+        })
+        .unwrap();
+        assert_eq!(event["upstream"]["code"], "commit_throttled");
     }
 
     #[test]
@@ -368,6 +386,7 @@ mod tests {
                 "message": "no finalize",
                 "fatal": false,
                 "operation": "finalize",
+                "upstream": null,
             })
         );
         assert_eq!(events[7], json!({"kind": "extras", "data": {"words": []}}));
