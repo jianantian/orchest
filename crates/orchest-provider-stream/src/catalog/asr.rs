@@ -15,7 +15,9 @@ pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
         // Source: docs/external/aliyun/asr/realtime/base.md
         // Deprecated 2026-10-29: aliyun support told the maintainer that
         // Fun-ASR Realtime is being retired. There is no public announcement
-        // yet, so the docs/external mirror still lists it.
+        // yet, so the docs/external mirror still lists it. The maintainer
+        // also reports poor recognition quality on the Singapore
+        // (dashscope-intl) endpoint, so it is not recommended there either.
         // The row stays
         // resolvable by id for 1.x (ADR-0003 D4 catalog rules) but is no
         // longer the provider default.
