@@ -115,7 +115,7 @@ impl NoopTool {
             schema: json!({"type": "object"}),
             metadata: ToolMetadata {
                 source: ToolSource::InProcess,
-                side_effect: false,
+                effects: orchest::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 ..ToolMetadata::default()
             },

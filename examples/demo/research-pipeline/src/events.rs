@@ -36,7 +36,7 @@ fn render_scoped_event(scope: &str, event: &RuntimeEvent) -> String {
         RuntimeEvent::RunFailed { error, .. } => {
             format!("[{scope}] terminal status: failed ({error})")
         }
-        RuntimeEvent::RunAborted { reason } => match reason {
+        RuntimeEvent::RunAborted { reason, .. } => match reason {
             Some(reason) => format!("[{scope}] terminal status: aborted ({reason})"),
             None => format!("[{scope}] terminal status: aborted"),
         },

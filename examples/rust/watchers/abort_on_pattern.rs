@@ -115,7 +115,7 @@ impl Tool for FlakyTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: orchest::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: orchest::tool::ToolExecutionMode::Normal,
             parallelism: orchest::tool::ToolParallelism::Serial,
@@ -197,7 +197,7 @@ async fn main() {
         match event {
             RuntimeEvent::RunCompleted { output, .. } => println!("[run] completed: {output}"),
             RuntimeEvent::RunFailed { error, .. } => println!("[run] failed: {error}"),
-            RuntimeEvent::RunAborted { reason } => {
+            RuntimeEvent::RunAborted { reason, .. } => {
                 println!(
                     "[run] aborted: {}",
                     reason.as_deref().unwrap_or("no reason")

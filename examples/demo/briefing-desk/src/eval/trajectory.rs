@@ -462,21 +462,27 @@ pub fn sanitize_runtime_event(
                         "tokens": tokens,
                     }),
                 ),
-                RuntimeEvent::ApprovalRequested { tool_call, context } => (
+                RuntimeEvent::ApprovalRequested {
+                    tool_call, context, ..
+                } => (
                     "approval_requested",
                     json!({
                         "tool_call": sanitize_tool_call(tool_call),
                         "context": sanitize_approval_context(context),
                     }),
                 ),
-                RuntimeEvent::ApprovalGranted { tool_call, context } => (
+                RuntimeEvent::ApprovalGranted {
+                    tool_call, context, ..
+                } => (
                     "approval_granted",
                     json!({
                         "tool_call": sanitize_tool_call(tool_call),
                         "context": sanitize_approval_context(context),
                     }),
                 ),
-                RuntimeEvent::ApprovalDenied { tool_call, context } => (
+                RuntimeEvent::ApprovalDenied {
+                    tool_call, context, ..
+                } => (
                     "approval_denied",
                     json!({
                         "tool_call": sanitize_tool_call(tool_call),
@@ -582,7 +588,7 @@ pub fn sanitize_runtime_event(
                 RuntimeEvent::RunFailed { error, .. } => {
                     ("run_failed", json!({ "error": sanitize_free_text(error) }))
                 }
-                RuntimeEvent::RunAborted { reason } => (
+                RuntimeEvent::RunAborted { reason, .. } => (
                     "run_aborted",
                     json!({
                         "reason": reason.as_ref().map(|r| sanitize_free_text(r)),
@@ -956,7 +962,7 @@ mod tests {
     #[test]
     fn retains_tool_name_order_approval_usage_and_terminal() {
         let meta = ToolMetadata {
-            side_effect: true,
+            effects: orchest::tool::ToolEffects::UNKNOWN,
             approval: Approval::Always,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -976,6 +982,9 @@ mod tests {
             duration: Duration::from_millis(42),
         };
         let approval = RuntimeEvent::ApprovalRequested {
+            request_id: "run/1".into(),
+            kind: orchest::run::RequestKind::new(orchest::run::RequestKind::TOOL_APPROVAL),
+            payload: json!(null),
             tool_call: ToolCall {
                 id: "c1".into(),
                 name: "write_report".into(),
@@ -1098,6 +1107,7 @@ mod tests {
             },
             RuntimeEvent::RunAborted {
                 reason: Some("interrupted: refresh_token: run-aborted-secret".into()),
+                cancel_reason: None,
             },
             RuntimeEvent::HookPanicked {
                 hook_name: "audit".into(),

@@ -2,11 +2,15 @@
 
 pub(crate) mod action_arbitration;
 pub(crate) mod actor;
+pub mod cancel;
 pub(crate) mod compaction;
 pub(crate) mod config;
+pub mod delivery;
 pub(crate) mod handle;
 pub(crate) mod helpers;
 pub mod llm_watcher;
+pub mod process;
+pub mod request;
 pub(crate) mod retry;
 pub(crate) mod skills;
 pub(crate) mod supervisor;
@@ -15,16 +19,23 @@ pub mod watcher;
 pub(crate) mod webhook;
 
 pub use action_arbitration::{arbitrate_watcher_actions, ArbitratedActions};
+pub use cancel::{CancelReason, CancelToken, Cancellation};
 pub use config::{
     AgentConfig, AgentConfigBuilder, AgentRun, ApprovalMode, CompactionConfig, ConfigError,
     ModelConfig, RepeatedFailureConfig, RunId, RunInput, RunInputError, RunState, RunStatus,
     RuntimeConfig, SkillDisclosure, SkillsConfig, SubAgentRuntime, SupervisionStrategy,
 };
+pub use delivery::{DurableEventSink, EventDeliveryStats, DEFAULT_EVENT_CHANNEL_CAPACITY};
 pub use handle::{
-    ApprovalBus, ChildCompletionError, ChildRunHandle, ChildRunOutcome, ChildRunRegistry,
-    EventReceiver, RunHandle,
+    ChildCompletionError, ChildRunHandle, ChildRunOutcome, ChildRunRegistry, EventReceiver,
+    RunHandle,
 };
 pub use llm_watcher::LlmWatcher;
+pub use process::ProcessTerminator;
+pub use request::{
+    ApprovalScope, PendingRequest, RequestBus, RequestDecision, RequestError, RequestId,
+    RequestKind, RequestResolution, RequestResponse, RequestTarget,
+};
 pub use retry::{BackoffStrategy, RetryPolicy};
 pub use watcher::{Watcher, WatcherAction};
 
@@ -35,9 +46,9 @@ use tokio::sync::mpsc;
 use crate::model::ModelAdapter;
 use crate::tool::registry::ToolRegistry;
 
-use actor::{AgentRunArgs, ResumeState};
+use crate::session::{SessionError, SessionLog};
 
-pub(crate) const EVENT_CHANNEL_CAPACITY: usize = 256;
+use actor::{AgentRunArgs, ResumeState, SessionBinding};
 
 impl AgentRun {
     /// Starts a fresh run with the given input as the first user turn.
@@ -112,11 +123,11 @@ impl AgentRun {
     /// # Division of labor with `resume_with_input`
     ///
     /// This entry point starts a **new** run — fresh [`RunId`], step 0,
-    /// fresh budget — and does not touch any `SessionStore`.
+    /// fresh budget. With a session store configured it opens a new session
+    /// log and fails the run if the session already holds events.
     /// [`AgentRun::resume_with_input`] is the complementary path for
-    /// continuing a persisted run: it replays the snapshot's message
-    /// history unchanged (same `RunId`, restored step and budget) and
-    /// appends the new input on top.
+    /// continuing a persisted session: it projects the stored log (same
+    /// `RunId`, restored step and budget) and appends the new input on top.
     pub fn start_with_messages(
         config: AgentConfig,
         initial_messages: Vec<crate::model::Message>,
@@ -130,8 +141,9 @@ impl AgentRun {
             initial_messages,
             model,
             registry,
-            ApprovalBus::default(),
+            RequestBus::default(),
             ChildRunRegistry::default(),
+            CancelToken::new(),
             vec![],
         )
     }
@@ -158,26 +170,27 @@ impl AgentRun {
             initial_messages,
             model,
             registry,
-            ApprovalBus::default(),
+            RequestBus::default(),
             ChildRunRegistry::default(),
+            CancelToken::new(),
             watchers,
         ))
     }
 
     #[allow(clippy::too_many_arguments)] // justified: internal API collecting all run params
     pub(crate) fn start_with_bus(
-        mut config: AgentConfig,
+        config: AgentConfig,
         input: Vec<crate::model::ContentBlock>,
         initial_messages: Vec<crate::model::Message>,
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
-        approval_bus: ApprovalBus,
+        request_bus: RequestBus,
         child_registry: ChildRunRegistry,
+        cancel: CancelToken,
         watchers: Vec<(Arc<dyn Watcher>, usize)>,
     ) -> (RunHandle, EventReceiver) {
-        config.register_persistence_hook();
         let run_id = RunId::new();
-        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
+        let (event_tx, event_rx) = mpsc::channel(delivery::RELAY_CHANNEL_CAPACITY);
         let args = AgentRunArgs {
             run_id,
             config,
@@ -185,112 +198,81 @@ impl AgentRun {
             model,
             registry,
             event_tx,
-            approval_bus: approval_bus.clone(),
+            request_bus: request_bus.clone(),
             child_registry: child_registry.clone(),
             resume: None,
             initial_messages,
             initial_event_subs: vec![],
             watcher_wave_bus: None,
+            cancel,
         };
         supervisor::spawn_supervised(supervisor::SpawnSupervised {
             run_id,
             args,
-            approval_bus,
+            request_bus,
             child_registry,
             event_rx,
             initial_watchers: watchers,
         })
     }
 
-    /// Resumes a previous run from a persisted snapshot exactly as it left
-    /// off — the message history is replayed unchanged.
+    /// Resumes the run recorded in `config`'s session log exactly as it left
+    /// off: the log is read from `config.session_store` under
+    /// `config.session_id`, projected into the conversation, step and budget,
+    /// and the run continues appending to the same log under the same
+    /// [`RunId`].
     ///
     /// This is for continuing an interrupted run (crash, process restart),
     /// not for asking a follow-up question: it does **not** append any new
-    /// input. Calling it on a snapshot whose last turn already produced a
-    /// final answer just re-invokes the model against unchanged history,
-    /// producing a stale or duplicate response. For a follow-up turn, use
-    /// [`AgentRun::resume_with_input`] instead.
+    /// input. Calling it on a session whose last turn already produced a
+    /// final answer just re-invokes the model against unchanged history. For
+    /// a follow-up turn, use [`AgentRun::resume_with_input`] instead.
     ///
-    /// Returns `ConfigError::SessionStoreMissing` if the snapshot's
-    /// `active_config.session_id` is set (persistence was enabled) but no
-    /// `session_store` is attached — deserializing a snapshot always drops
-    /// the store (`#[serde(skip)]`), so re-attach it first via
-    /// `active_config.with_session_store(store, session_id)`.
-    pub fn resume(
-        snapshot: crate::session::SessionSnapshot,
+    /// Nothing but the log is restored. The host supplies the config (hooks,
+    /// retry policy, handoffs, store), the model and the tool registry again,
+    /// and the runtime does not assume they match the ones the log was
+    /// written under.
+    ///
+    /// Returns [`SessionError::NotConfigured`] when `config` has no session
+    /// store or session id, and [`SessionError::NotFound`] when the store
+    /// holds no events for the session.
+    pub async fn resume(
+        config: AgentConfig,
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
-    ) -> Result<(RunHandle, EventReceiver), ConfigError> {
-        let mut config = snapshot.active_config.clone();
-        check_session_store_attached(&config)?;
-        config.register_persistence_hook();
-        let run_id = snapshot.run_id;
-        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
-        let approval_bus = ApprovalBus::default();
-        let child_registry = ChildRunRegistry::default();
-        let resume = ResumeState {
-            messages: snapshot.messages,
-            step: snapshot.step,
-            budget_used: snapshot.budget_used,
-        };
-        let args = AgentRunArgs {
-            run_id,
-            config,
-            input: vec![],
-            model,
-            registry,
-            event_tx,
-            approval_bus: approval_bus.clone(),
-            child_registry: child_registry.clone(),
-            resume: Some(resume),
-            initial_messages: vec![],
-            initial_event_subs: vec![],
-            watcher_wave_bus: None,
-        };
-        Ok(supervisor::spawn_supervised(supervisor::SpawnSupervised {
-            run_id,
-            args,
-            approval_bus,
-            child_registry,
-            event_rx,
-            initial_watchers: vec![],
-        }))
+    ) -> Result<(RunHandle, EventReceiver), SessionError> {
+        Self::resume_inner(config, None, model, registry).await
     }
 
-    /// Resumes a previous run from a persisted snapshot and appends `input`
+    /// Resumes the run recorded in `config`'s session log and records `input`
     /// as a new user turn — the follow-up-question path (e.g. "continue this
     /// session with a new question").
     ///
-    /// Unlike [`AgentRun::resume`], which replays the snapshot unchanged,
-    /// this pushes `input` onto the snapshot's message history before
-    /// resuming, so the model is invoked against history plus the new turn.
-    ///
-    /// Returns `ConfigError::SessionStoreMissing` under the same condition as
-    /// `resume` — see its rustdoc.
-    pub fn resume_with_input(
-        snapshot: crate::session::SessionSnapshot,
+    /// Unlike [`AgentRun::resume`], which continues the log unchanged, this
+    /// appends `input` to the log before the first step, so the model is
+    /// invoked against the history plus the new turn. Errors are the same as
+    /// for `resume`.
+    pub async fn resume_with_input(
+        config: AgentConfig,
         input: RunInput,
         model: Arc<dyn ModelAdapter>,
         registry: ToolRegistry,
-    ) -> Result<(RunHandle, EventReceiver), ConfigError> {
-        let mut config = snapshot.active_config.clone();
-        check_session_store_attached(&config)?;
-        config.register_persistence_hook();
-        let run_id = snapshot.run_id;
-        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
-        let approval_bus = ApprovalBus::default();
+    ) -> Result<(RunHandle, EventReceiver), SessionError> {
+        Self::resume_inner(config, Some(input.into_blocks()), model, registry).await
+    }
+
+    async fn resume_inner(
+        config: AgentConfig,
+        input: Option<Vec<crate::model::ContentBlock>>,
+        model: Arc<dyn ModelAdapter>,
+        registry: ToolRegistry,
+    ) -> Result<(RunHandle, EventReceiver), SessionError> {
+        let binding = SessionBinding::from_config(&config).ok_or(SessionError::NotConfigured)?;
+        let log = load_session_log(&binding).await?;
+        let run_id = log.projection().run_id.unwrap_or_default();
+        let (event_tx, event_rx) = mpsc::channel(delivery::RELAY_CHANNEL_CAPACITY);
+        let request_bus = RequestBus::default();
         let child_registry = ChildRunRegistry::default();
-        let mut messages = snapshot.messages;
-        messages.push(crate::model::Message {
-            role: crate::model::Role::User,
-            content: input.into_blocks(),
-        });
-        let resume = ResumeState {
-            messages,
-            step: snapshot.step,
-            budget_used: snapshot.budget_used,
-        };
         let args = AgentRunArgs {
             run_id,
             config,
@@ -298,17 +280,18 @@ impl AgentRun {
             model,
             registry,
             event_tx,
-            approval_bus: approval_bus.clone(),
+            request_bus: request_bus.clone(),
             child_registry: child_registry.clone(),
-            resume: Some(resume),
+            resume: Some(ResumeState { log, input }),
             initial_messages: vec![],
             initial_event_subs: vec![],
             watcher_wave_bus: None,
+            cancel: CancelToken::new(),
         };
         Ok(supervisor::spawn_supervised(supervisor::SpawnSupervised {
             run_id,
             args,
-            approval_bus,
+            request_bus,
             child_registry,
             event_rx,
             initial_watchers: vec![],
@@ -316,18 +299,25 @@ impl AgentRun {
     }
 }
 
-/// A snapshot with `session_id` set had persistence enabled at snapshot time;
-/// deserializing always drops `session_store` (`#[serde(skip)]`), so resuming
-/// without re-attaching it would silently stop persisting. Snapshots that
-/// never had persistence (`session_id: None`) are unaffected.
-fn check_session_store_attached(config: &AgentConfig) -> Result<(), ConfigError> {
-    match (&config.session_id, &config.session_store) {
-        (Some(session_id), None) => Err(ConfigError::SessionStoreMissing {
-            session_id: session_id.clone(),
-        }),
-        _ => Ok(()),
+/// Reads a session's whole log from its store.
+pub(crate) async fn load_session_log(binding: &SessionBinding) -> Result<SessionLog, SessionError> {
+    binding.store.get_meta(&binding.session_id).await?;
+    let events = binding.store.read(&binding.session_id, 1).await?;
+    if events.is_empty() {
+        return Err(SessionError::NotFound(binding.session_id.clone()));
     }
+    SessionLog::from_events(events)
 }
 
+#[cfg(test)]
+mod cancel_tests;
+#[cfg(test)]
+mod checkpoint_tests;
+#[cfg(test)]
+mod delivery_tests;
+#[cfg(test)]
+mod events_tests;
+#[cfg(test)]
+mod permission_tests;
 #[cfg(test)]
 mod tests;

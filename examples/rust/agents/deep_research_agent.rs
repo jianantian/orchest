@@ -130,7 +130,7 @@ impl ExaSearchTool {
     fn new() -> Self {
         Self {
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: orchest::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 timeout: Some(Duration::from_secs(30)),
                 source: ToolSource::InProcess,

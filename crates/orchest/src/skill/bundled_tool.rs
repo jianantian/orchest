@@ -115,7 +115,7 @@ impl SkillBundledTool {
             skill_dir: skill_dir_resolved,
             input_schema: def.input_schema.clone(),
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: crate::tool::ToolEffects::of([crate::tool::ToolEffect::Process]),
                 approval: crate::tool::Approval::Never,
                 source: ToolSource::Skill { skill_name },
                 ..ToolMetadata::default()

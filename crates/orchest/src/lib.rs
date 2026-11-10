@@ -6,6 +6,7 @@ pub mod atomic;
 #[doc(hidden)]
 pub mod bindings;
 pub mod budget;
+pub mod capabilities;
 pub mod events;
 pub mod guardrail;
 pub mod handoff;

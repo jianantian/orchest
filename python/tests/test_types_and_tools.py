@@ -62,9 +62,11 @@ def test_agent_exposes_run_stream() -> None:
     assert callable(getattr(Agent, "run_stream", None))
 
 
-def test_agent_exposes_respond_approval() -> None:
-    """Agent.respond_approval should be available."""
-    assert callable(getattr(Agent, "respond_approval", None))
+def test_agent_exposes_respond_and_abort() -> None:
+    """Agent.respond and Agent.abort replace respond_approval."""
+    assert callable(getattr(Agent, "respond", None))
+    assert callable(getattr(Agent, "abort", None))
+    assert getattr(Agent, "respond_approval", None) is None
 
 
 # --- JsonValue type ---

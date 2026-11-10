@@ -1,7 +1,8 @@
 //! Run configuration types: RunId, AgentConfig, RunState, RunStatus, SubAgentRuntime.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -10,7 +11,10 @@ use crate::budget::{BudgetConfig, BudgetUsage};
 use crate::model::{ContentBlock, MediaSource, Message, ModelSpec, RequestOptions};
 use crate::skill::executor::ScriptExecutor;
 use crate::tool::mcp::McpServerConfig;
-use crate::tool::Tool;
+use crate::tool::{
+    grant_key, DecisionBasis, Enforcement, EnforcementFacts, ExecutionBackend, PermissionAction,
+    PermissionCall, PermissionDecision, PermissionPolicy, Tool,
+};
 
 use super::helpers::{min_option, min_option_f64};
 
@@ -140,6 +144,10 @@ pub struct AgentConfig {
     #[serde(skip)]
     pub session_store: Option<Arc<dyn crate::session::SessionStore>>,
     pub session_id: Option<String>,
+    /// When the session log is made durable. Recorded in the session's
+    /// metadata.
+    #[serde(default)]
+    pub checkpoint_policy: crate::session::CheckpointPolicy,
     #[serde(default)]
     pub supervision_strategy: SupervisionStrategy,
 }
@@ -309,31 +317,148 @@ pub struct RuntimeConfig {
     /// Not serialized (like hooks/retry_policy); only set via code.
     #[serde(skip)]
     pub custom_approval_fn: Option<CustomApprovalFn>,
+    /// How long a blocking request (such as a tool approval) waits for the
+    /// host. An unanswered request counts as not approved.
+    #[serde(default = "default_request_timeout")]
+    pub request_timeout: Duration,
+    /// Host permission rules, evaluated by [`RuntimeConfig::decide`].
+    #[serde(default)]
+    pub permissions: PermissionPolicy,
+    /// The isolated environment the host runs tools in, if any; only used to
+    /// report [`RuntimeConfig::enforcement`]. Not serialized.
+    #[serde(skip)]
+    pub execution_backend: Option<Arc<dyn ExecutionBackend>>,
+    /// Host overrides of tool interruptibility, by tool name: `true` lets a
+    /// cancellation drop the call mid-flight, `false` lets it run to
+    /// completion. Tools not listed use [`Tool::interruptible`].
+    #[serde(default)]
+    pub interruptible: std::collections::HashMap<String, bool>,
+    /// Stops the run's external processes on cancellation. Not serialized.
+    #[serde(skip)]
+    pub process_terminator: Option<Arc<dyn super::process::ProcessTerminator>>,
+    /// Capacity of the host's event channel. A full channel makes the run
+    /// wait (backpressure); events are never dropped.
+    #[serde(default = "default_event_channel_capacity")]
+    pub event_channel_capacity: usize,
+    /// Host storage that receives every event before the host does. Not
+    /// serialized.
+    #[serde(skip)]
+    pub event_sink: Option<Arc<dyn super::delivery::DurableEventSink>>,
+}
+
+fn default_event_channel_capacity() -> usize {
+    super::delivery::DEFAULT_EVENT_CHANNEL_CAPACITY
+}
+
+fn default_request_timeout() -> Duration {
+    Duration::from_secs(3600)
 }
 
 impl RuntimeConfig {
-    /// Resolves whether a tool call requires approval under this run's policy.
-    /// `custom_approval_fn` takes priority; otherwise Draft/Commit defaults and
-    /// then `approval_mode` decide.
-    pub fn should_approve(&self, meta: &crate::tool::ToolMetadata) -> bool {
+    /// The single permission decision point for a tool call: allow, ask the
+    /// host, or deny.
+    ///
+    /// The last matching host rule decides. With no matching rule,
+    /// [`PermissionPolicy::unmatched`] decides when set; otherwise the custom
+    /// approval predicate, then Draft/Commit defaults, then `approval_mode`
+    /// and the tool's [`Approval`](crate::tool::Approval) — under which a tool
+    /// with unknown effects asks. An `Ask` becomes `Allow` when `grants`
+    /// holds a session-scoped approval of the same call
+    /// ([`grant_key`](crate::tool::grant_key)); a `Deny` never does.
+    pub fn decide(
+        &self,
+        call: &PermissionCall<'_>,
+        metadata: &crate::tool::ToolMetadata,
+        grants: &BTreeSet<String>,
+    ) -> PermissionDecision {
+        let rule = self.permissions.evaluate(call);
+        let (action, basis) = match rule {
+            Some((index, rule)) => (rule.action, DecisionBasis::Rule { index }),
+            None => match self.permissions.unmatched {
+                Some(action) => (action, DecisionBasis::Unmatched),
+                None => self.declared_action(metadata),
+            },
+        };
+        match action {
+            PermissionAction::Allow => PermissionDecision::Allow { basis },
+            PermissionAction::Deny => PermissionDecision::Deny {
+                basis,
+                reason: rule
+                    .and_then(|(_, rule)| rule.reason.clone())
+                    .unwrap_or_else(|| "denied by permission policy".into()),
+            },
+            _ if grants.contains(&grant_key(call.tool_name, call.input)) => {
+                PermissionDecision::Allow {
+                    basis: DecisionBasis::SessionGrant,
+                }
+            }
+            _ => PermissionDecision::Ask { basis },
+        }
+    }
+
+    fn declared_action(
+        &self,
+        meta: &crate::tool::ToolMetadata,
+    ) -> (PermissionAction, DecisionBasis) {
         use crate::tool::{Approval, ToolExecutionMode};
+        let ask = |yes: bool| {
+            if yes {
+                PermissionAction::Ask
+            } else {
+                PermissionAction::Allow
+            }
+        };
         if let Some(f) = &self.custom_approval_fn {
-            return f(meta);
+            return (ask(f(meta)), DecisionBasis::CustomPredicate);
         }
         match &meta.execution_mode {
-            ToolExecutionMode::Draft { .. } => return false,
-            ToolExecutionMode::Commit { .. } => return true,
+            ToolExecutionMode::Draft { .. } => {
+                return (PermissionAction::Allow, DecisionBasis::ToolDeclaration)
+            }
+            ToolExecutionMode::Commit { .. } => {
+                return (PermissionAction::Ask, DecisionBasis::ToolDeclaration)
+            }
             ToolExecutionMode::Normal => {}
         }
         match self.approval_mode {
-            ApprovalMode::PerTool => match meta.approval {
-                Approval::Never => false,
-                Approval::WhenRisky => meta.side_effect,
-                Approval::Always => true,
-            },
-            ApprovalMode::None => false,
-            ApprovalMode::All => true,
+            ApprovalMode::PerTool => {
+                let asks = match meta.approval {
+                    Approval::Never => false,
+                    Approval::WhenRisky => meta.effects.has_side_effects(),
+                    Approval::Always => true,
+                };
+                (ask(asks), DecisionBasis::ToolDeclaration)
+            }
+            ApprovalMode::None => (PermissionAction::Allow, DecisionBasis::ApprovalMode),
+            ApprovalMode::All => (PermissionAction::Ask, DecisionBasis::ApprovalMode),
         }
+    }
+
+    /// Whether a cancellation may interrupt a call of `tool` mid-flight.
+    pub fn is_interruptible(&self, tool: &dyn Tool) -> bool {
+        self.interruptible
+            .get(tool.name())
+            .copied()
+            .unwrap_or_else(|| tool.interruptible())
+    }
+
+    /// What this run's boundaries can be relied on for. See
+    /// [`EnforcementFacts`].
+    pub fn enforcement(&self) -> EnforcementFacts {
+        let gate_open = self.permissions.is_empty()
+            && self.custom_approval_fn.is_none()
+            && self.approval_mode == ApprovalMode::None;
+        let gate = if gate_open {
+            Enforcement::None
+        } else {
+            Enforcement::Soft
+        };
+        let code_execution = self.code_execution_enabled.then(|| {
+            self.code_execution_executor
+                .as_ref()
+                .map_or(Enforcement::None, |e| e.enforcement())
+        });
+        EnforcementFacts::new(self.execution_backend.as_deref(), gate, code_execution)
     }
 }
 
@@ -356,6 +481,17 @@ impl std::fmt::Debug for RuntimeConfig {
             .field("tool_execution_policy", &self.tool_execution_policy)
             .field("repeated_failure", &self.repeated_failure)
             .field("custom_approval_fn", &self.custom_approval_fn.is_some())
+            .field("request_timeout", &self.request_timeout)
+            .field("permissions", &self.permissions)
+            .field(
+                "execution_backend",
+                &self
+                    .execution_backend
+                    .as_ref()
+                    .map(|b| b.name().to_string()),
+            )
+            .field("event_channel_capacity", &self.event_channel_capacity)
+            .field("event_sink", &self.event_sink.is_some())
             .finish()
     }
 }
@@ -376,6 +512,13 @@ impl Default for RuntimeConfig {
             tool_execution_policy: ToolExecutionPolicy::Sequential,
             repeated_failure: RepeatedFailureConfig::default(),
             custom_approval_fn: None,
+            request_timeout: default_request_timeout(),
+            permissions: PermissionPolicy::default(),
+            execution_backend: None,
+            interruptible: std::collections::HashMap::new(),
+            process_terminator: None,
+            event_channel_capacity: default_event_channel_capacity(),
+            event_sink: None,
         }
     }
 }
@@ -431,6 +574,7 @@ impl AgentConfig {
             handoffs: vec![],
             session_store: None,
             session_id: None,
+            checkpoint_policy: crate::session::CheckpointPolicy::default(),
             supervision_strategy: SupervisionStrategy::default(),
         }
     }
@@ -505,12 +649,11 @@ impl AgentConfig {
 
     /// Attach a session store (post-build chainable form; mirrors `AgentConfigBuilder::session_store`).
     ///
-    /// Required before `AgentRun::resume`/`resume_with_input` on any snapshot
-    /// whose `session_id` is set: `session_store` is `#[serde(skip)]`, so a
-    /// deserialized `AgentConfig` never carries a live store even if the
-    /// original run had one — resume calls it out with
-    /// `ConfigError::SessionStoreMissing` rather than silently dropping
-    /// persistence.
+    /// The run records its session log under `session_id` in `store`.
+    /// `session_store` is `#[serde(skip)]`, so a deserialized `AgentConfig`
+    /// never carries a live store: `AgentRun::resume`/`resume_with_input`
+    /// need it attached again and fail with `SessionError::NotConfigured`
+    /// otherwise.
     pub fn with_session_store(
         mut self,
         store: Arc<dyn crate::session::SessionStore>,
@@ -519,28 +662,6 @@ impl AgentConfig {
         self.session_store = Some(store);
         self.session_id = Some(session_id.into());
         self
-    }
-
-    /// If a session store is configured, push a `SessionPersistenceHook` onto `self.hooks`.
-    /// Called automatically by `AgentRun::start` and `AgentRun::resume`.
-    pub(crate) fn register_persistence_hook(&mut self) {
-        if let (Some(store), Some(session_id)) =
-            (self.session_store.clone(), self.session_id.clone())
-        {
-            if self
-                .hooks
-                .iter()
-                .any(|hook| hook.persistence_session_id() == Some(session_id.as_str()))
-            {
-                return;
-            }
-            self.hooks
-                .push(Arc::new(crate::session::SessionPersistenceHook::new(
-                    store,
-                    session_id,
-                    self.clone(),
-                )));
-        }
     }
 }
 
@@ -556,6 +677,7 @@ pub struct AgentConfigBuilder {
     handoffs: Vec<crate::handoff::Handoff>,
     session_store: Option<Arc<dyn crate::session::SessionStore>>,
     session_id: Option<String>,
+    checkpoint_policy: crate::session::CheckpointPolicy,
     supervision_strategy: SupervisionStrategy,
 }
 
@@ -589,6 +711,7 @@ impl AgentConfigBuilder {
             handoffs: vec![],
             session_store: None,
             session_id: None,
+            checkpoint_policy: crate::session::CheckpointPolicy::default(),
             supervision_strategy: SupervisionStrategy::default(),
         }
     }
@@ -693,6 +816,54 @@ impl AgentConfigBuilder {
         self.runtime.custom_approval_fn = Some(Arc::new(f));
         self
     }
+    /// How long a blocking request waits before it counts as not approved
+    /// (default one hour).
+    pub fn request_timeout(mut self, timeout: Duration) -> Self {
+        self.runtime.request_timeout = timeout;
+        self
+    }
+
+    /// Host permission rules for the run's tool calls.
+    pub fn permissions(mut self, policy: PermissionPolicy) -> Self {
+        self.runtime.permissions = policy;
+        self
+    }
+
+    /// Overrides whether a cancellation may interrupt calls of `tool`.
+    pub fn interruptible(mut self, tool: impl Into<String>, interruptible: bool) -> Self {
+        self.runtime
+            .interruptible
+            .insert(tool.into(), interruptible);
+        self
+    }
+
+    /// Stops the run's external processes when the run is cancelled.
+    pub fn process_terminator(
+        mut self,
+        terminator: Arc<dyn super::process::ProcessTerminator>,
+    ) -> Self {
+        self.runtime.process_terminator = Some(terminator);
+        self
+    }
+
+    /// Sets the capacity of the host's event channel (at least 1).
+    pub fn event_channel_capacity(mut self, capacity: usize) -> Self {
+        self.runtime.event_channel_capacity = capacity.max(1);
+        self
+    }
+
+    /// Writes every event to `sink` before delivering it to the host.
+    pub fn event_sink(mut self, sink: Arc<dyn super::delivery::DurableEventSink>) -> Self {
+        self.runtime.event_sink = Some(sink);
+        self
+    }
+
+    /// Declares the isolated environment the run's tools execute in.
+    pub fn execution_backend(mut self, backend: Arc<dyn ExecutionBackend>) -> Self {
+        self.runtime.execution_backend = Some(backend);
+        self
+    }
+
     pub fn repeated_failure_threshold(mut self, threshold: usize) -> Self {
         self.runtime.repeated_failure.threshold = threshold;
         self
@@ -706,6 +877,12 @@ impl AgentConfigBuilder {
         self.session_id = Some(session_id.into());
         self
     }
+    /// When the session log is made durable (default `EveryStep`).
+    pub fn checkpoint_policy(mut self, policy: crate::session::CheckpointPolicy) -> Self {
+        self.checkpoint_policy = policy;
+        self
+    }
+
     pub fn build(self) -> Result<AgentConfig, ConfigError> {
         if self.model.spec.model.is_empty() {
             return Err(ConfigError::MissingModel);
@@ -745,6 +922,7 @@ impl AgentConfigBuilder {
             handoffs: self.handoffs,
             session_store: self.session_store,
             session_id: self.session_id,
+            checkpoint_policy: self.checkpoint_policy,
             supervision_strategy: self.supervision_strategy,
         })
     }
@@ -765,11 +943,6 @@ pub enum ConfigError {
     InvalidMaxToolCalls(u32),
     #[error("repeated_failure.threshold must be > 0, got {0}")]
     InvalidRepeatedFailureThreshold(usize),
-    #[error(
-        "session '{session_id}' was persisted but no session_store is attached to resume it; \
-         call `.with_session_store(store, \"{session_id}\")` on the snapshot's active_config before resuming"
-    )]
-    SessionStoreMissing { session_id: String },
     #[error("SubAgentBuilder requires .model() before .build()")]
     SubAgentMissingModel,
     #[error("SubAgentBuilder requires .registry() before .build()")]
@@ -1057,24 +1230,5 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(config.runtime.repeated_failure.threshold, 3);
-    }
-
-    #[test]
-    fn register_persistence_hook_deduplicates_same_session_id() {
-        let store = Arc::new(crate::session::InMemorySessionStore::default());
-        let mut config = AgentConfig::builder("test-agent", "anthropic/claude-sonnet-4-6")
-            .session_store(store, "session-1")
-            .build()
-            .unwrap();
-
-        config.register_persistence_hook();
-        config.register_persistence_hook();
-
-        let count = config
-            .hooks
-            .iter()
-            .filter(|hook| hook.persistence_session_id() == Some("session-1"))
-            .count();
-        assert_eq!(count, 1);
     }
 }

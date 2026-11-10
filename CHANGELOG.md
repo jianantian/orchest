@@ -14,6 +14,190 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** session persistence is an append-only event log instead of a
+  snapshot ([#331](https://github.com/jianantian/orchest/issues/331)). A run
+  records every change to its state as a `SessionEvent` (consecutive `seq`,
+  timestamp, tagged `SessionEventKind`: `RunStarted`, `StepStarted`,
+  `StepEnded`, `SystemMessage`, `UserMessage`, `AssistantMessage`,
+  `ToolDispatched`, `ToolResult`, `Compacted`, `Handoff`, `RunEnded`, `RunFailed`,
+  `RunAborted`); the conversation, step and budget are a `SessionProjection`
+  of that log, and the projected history now ends with the final answer.
+  `SessionStore` is now `put_meta` / `get_meta` / `append` / `read(from_seq)`
+  / `flush` / `delete` / `list`, with session metadata (`SessionMeta`,
+  schema `"2"`) stored apart from the events. `InMemorySessionStore` and
+  `SqliteSessionStore` implement it; the SQLite tables are `session_meta` and
+  `session_events` keyed by `(session_id, seq)`. A fresh run on a session
+  that already holds events fails with `SessionError::AlreadyExists`.
+- **Breaking:** `AgentRun::resume(config, model, registry)` and
+  `AgentRun::resume_with_input(config, input, model, registry)` are `async`,
+  read the log named by `config.session_store` / `config.session_id`, and
+  return `SessionError` (`NotConfigured`, `NotFound`, store errors). The host
+  supplies the config again; nothing but the log is restored.
+- **Breaking:** approvals go through a blocking request channel
+  ([#334](https://github.com/jianantian/orchest/issues/334)). Every request
+  has a `RequestId` (`"{run_id}/{n}"`), a host-defined `RequestKind`
+  (Orchest raises `tool_approval` and `retry_approval`), a JSON payload and a
+  `RequestTarget`. `RunHandle::respond_approval(run_id, bool)` is replaced by
+  `RunHandle::respond(&RequestId, RequestResponse)` (approve, deny, or answer
+  with a payload, plus optional session rules), `RunHandle::withdraw`,
+  `RunHandle::pending_requests` and `RunHandle::request`; one `RequestBus`
+  (formerly `ApprovalBus`, also `ToolContext::request_bus`) serves the whole
+  run tree, so child-run requests are answered by id from the root handle.
+  `ApprovalRequested` carries `request_id`, `kind` and `payload`;
+  `ApprovalGranted` / `ApprovalDenied` carry `request_id`. The Python and
+  Node `respond_approval` / `respondApproval` take the request id instead of
+  the run id.
+- **Breaking:** a request that is not answered within
+  `RuntimeConfig::request_timeout` (default one hour) fails closed: the tool
+  call gets an error result with code `APPROVAL_TIMEOUT` and the run goes on,
+  instead of the run failing. A withdrawn request gives `APPROVAL_WITHDRAWN`,
+  and requests still pending when the run stops resolve as cancelled.
+- **Breaking:** `ToolMetadata::side_effect: bool` is replaced by
+  `ToolMetadata::effects: ToolEffects`, a set of `ToolEffect`s (`Read`,
+  `WriteWorkspace`, `WriteOutside`, `Network`, `Credential`, `Destructive`,
+  `Process`) or unknown ([#335](https://github.com/jianantian/orchest/issues/335)).
+  Unknown is the default and counts as having side effects, so an undeclared
+  tool asks under `Approval::WhenRisky`. Serialized as a list, or `null` when
+  unknown. Built-in tools declare their effects (skill script tools
+  `Process`, `write_file` `WriteWorkspace` + `WriteOutside`, code execution
+  unknown, `read_file` and `load_skill` `Read`).
+- **Breaking:** `RuntimeConfig::should_approve` is replaced by the single
+  permission decision point `RuntimeConfig::decide(call, metadata, grants)`,
+  which returns `PermissionDecision::{Allow, Ask, Deny}` with its
+  `DecisionBasis`; every tool call goes through it.
+- **Breaking:** MCP tools use `Approval::WhenRisky` with effects from the
+  server's `annotations` (`readOnlyHint` → `Read`, plus `Network` with
+  `openWorldHint`; otherwise unknown) instead of bypassing approval with
+  `Approval::Never`. `McpToolDef` carries `annotations`.
+- **Breaking:** cancellation takes effect inside a step
+  ([#336](https://github.com/jianantian/orchest/issues/336)). A run shares a
+  `CancelToken` with its handle and its delegated children (as child tokens);
+  `RunHandle::cancel(Cancellation)` / `ChildRunHandle::cancel` set it at once
+  and are idempotent (the first reason wins, `RunHandle::cancellation()`
+  reports it). The in-flight model call, compaction call, retry waits and
+  async-job polling are dropped, a pending approval resolves as `Cancelled`
+  immediately, interruptible tool calls are dropped, and no tool call is
+  dispatched afterwards; a non-interruptible call finishes and its result is
+  recorded. Model calls are interrupted by dropping the `ChatModel::complete`
+  future, so the provider trait is unchanged. `RuntimeEvent::RunAborted` and
+  `SessionEventKind::RunAborted` carry `cancel_reason: Option<CancelReason>`
+  (`User`, `Timeout`, `Upstream`, `HostDisconnected`, `Watcher`; unset when
+  the supervisor gives up on a crashed worker). `ToolContext` carries
+  `cancel`. A cancelled run is never restarted by the supervisor.
+
+- **Breaking:** the primary event receiver is lossless
+  ([#338](https://github.com/jianantian/orchest/issues/338)). Delivery waits
+  for channel capacity instead of dropping an event after
+  `EVENT_DELIVERY_TIMEOUT` (removed), so a receiver that is not drained holds
+  the run back. The primary no longer gets `EventsDropped { subscriber_id: 0 }`;
+  secondary subscribers keep their lossy `try_send` semantics and
+  `EventsDropped` signals.
+
+### Added
+
+- Session checkpoints and a resume boundary
+  ([#332](https://github.com/jianantian/orchest/issues/332)). A run appends
+  and `flush`es its session log at the start of each step (before the model
+  request), at the end of each step, at run termination (completed, failed or
+  aborted), and before dispatching a tool with side effects, after recording a
+  `ToolDispatched` marker. `CheckpointPolicy::EveryTool`
+  (`AgentConfigBuilder::checkpoint_policy`, `AgentConfig::checkpoint_policy`)
+  also flushes before every other dispatch and after every tool result; the
+  policy is stored in `SessionMeta::checkpoint_policy`. On resume the store is
+  flushed before the first write, and a step left open is closed: each tool
+  call it requested without a result gets an error result
+  (`TOOL_OUTCOME_UNKNOWN` if dispatched, `TOOL_NOT_STARTED` if not), the step
+  is recorded as `SessionEventKind::StepInterrupted`, and it runs again under
+  the same step number with the budget of the last completed step. No tool
+  call is run again.
+- In-flight tool ledger
+  ([#333](https://github.com/jianantian/orchest/issues/333)). Before a tool
+  runs, the log records `SessionEventKind::ToolDispatched { tool_use_id,
+  tool_name, args_summary }`; `args_summary` (`session::summarize_args`)
+  keeps the input's keys and value types but no values, so credentials stay
+  out of the log. A `ToolResult` settles the call.
+  `SessionLog::dispatched_but_unsettled()` / `SessionProjection::unsettled`
+  list calls dispatched without a result. Calls a crash or cancellation left
+  without a result are closed with an error tool result carrying one of the
+  stable codes `tool::TOOL_OUTCOME_UNKNOWN` (dispatched, effect unknown),
+  `tool::TOOL_NOT_STARTED` (crash before dispatch) or
+  `tool::TOOL_ABORTED_BEFORE_DISPATCH` (cancelled before dispatch), and a
+  `next_step` telling the model to check external state before repeating a
+  call that may have taken effect. Settled calls produce no closure.
+- `RuntimeEvent::RequestResolved { request_id, kind, resolution }` reports how
+  each request ended (`Responded`, `Withdrawn`, `TimedOut`, `Cancelled`), and
+  the session log records `RequestOpened` / `RequestResolved`, so
+  `SessionProjection::pending` lists the requests open at a crash
+  ([#334](https://github.com/jianantian/orchest/issues/334)).
+- Host permission rules ([#335](https://github.com/jianantian/orchest/issues/335)):
+  `PermissionPolicy` (`AgentConfigBuilder::permissions`,
+  `RuntimeConfig::permissions`) holds `PermissionRule`s that allow, ask or deny
+  by tool-name, command and path globs and by effects; the last matching rule
+  wins, `PermissionPolicy::unmatched` sets the action for unmatched calls, and
+  relative paths resolve against `PermissionPolicy::workspace`. Allow rules
+  require every command of a chain and every path to match. Denied calls get a
+  `PERMISSION_DENIED` tool result. `Tool::permission_subject` lets a tool name
+  its commands and paths. `RuntimeEvent::PermissionDecided` reports each
+  decision.
+- Approval scope: `RequestResponse::for_session()` (`ApprovalScope::Session`)
+  remembers an approval for the same tool and input (`tool::grant_key`) for
+  the rest of the session, recorded as `SessionEventKind::PermissionGranted`
+  and projected into `SessionProjection::session_grants`. One-time approvals
+  (the default) are not remembered; a session grant never overrides a deny.
+- Enforcement facts: `ExecutionBackend` (`AgentConfigBuilder::execution_backend`)
+  lets a host declare the isolation it runs tools in, `ScriptExecutor::enforcement`
+  reports code-execution isolation, and `RuntimeConfig::enforcement()` returns
+  `EnforcementFacts` (`Hard` / `Soft` / `None` for isolation, the permission
+  gate, code execution and read-only). Read-only is `Hard` only with a hard
+  backend.
+- Tool interruptibility ([#336](https://github.com/jianantian/orchest/issues/336)):
+  `Tool::interruptible()` (default: true for tools without side effects),
+  overridable per tool with `AgentConfigBuilder::interruptible` /
+  `RuntimeConfig::interruptible`.
+- Process termination backend: `ProcessTerminator`
+  (`AgentConfigBuilder::process_terminator`) is called once on cancellation,
+  best effort with a 5 s limit, and its outcome is reported as
+  `RuntimeEvent::ProcessesTerminated { terminated, error }`. An async job
+  abandoned by a cancellation gets the result code `ASYNC_JOB_ABANDONED`.
+- Message lifecycle events ([#337](https://github.com/jianantian/orchest/issues/337)):
+  each model call is an assistant message with an id, reported as
+  `RuntimeEvent::MessageStarted { message_id, step }`,
+  `MessageUpdated { message_id, delta }` and
+  `MessageEnded { message_id, content, stop_reason }`. `MessageDelta` keeps
+  `Text`, `Thinking` and `ToolUseArgs` apart. `ModelStreamChunk` stays.
+- Request and ledger events: `RuntimeEvent::RequestOpened { request }` for
+  every blocking request (approvals included), and `ToolDispatched` /
+  `ToolSettled { is_error, error_code }` mirroring the session log's tool
+  ledger.
+- Host-defined requests: `ToolContext::request(tool_name, kind, payload,
+  timeout)` lets a tool block on a question of its own kind, answered with the
+  same `RunHandle::respond` (`RequestResponse::answer(payload)`).
+- Capability probe: `RunHandle::capabilities()` / `AgentConfig::capabilities()`
+  return `Capabilities` derived from the config (resume, preemptive cancel,
+  approval scopes, request kinds, parallel tools, delegation, effects,
+  enforcement, lossless delivery); `Capabilities::require` returns a
+  `NotSupported` error for a missing `Capability`.
+- Event delivery: `RuntimeConfig::event_channel_capacity` /
+  `AgentConfigBuilder::event_channel_capacity` (default
+  `DEFAULT_EVENT_CHANNEL_CAPACITY`, 1024), `RunHandle::event_delivery_stats()`
+  (`EventDeliveryStats`: waits, longest and total wait, high watermark, sink
+  errors) and the metrics `orchest_event_backpressure_waits_total`,
+  `orchest_event_backpressure_wait_seconds` and
+  `orchest_event_channel_occupancy`. `DurableEventSink`
+  (`AgentConfigBuilder::event_sink`) receives every primary event with its
+  sequence number before the host does and is flushed after ledger and
+  terminal events. `Capabilities::lossless_events` is now `true`.
+- `docs/guide/events.md`: every event, and the split between the session log
+  (execution state) and the event stream (observation).
+
+### Removed
+
+- **Breaking:** `SessionSnapshot`, `SessionPersistenceHook`,
+  `Hook::persistence_session_id` and `ConfigError::SessionStoreMissing`
+  ([#331](https://github.com/jianantian/orchest/issues/331)).
+
 ## [1.1.0]
 
 ### Added

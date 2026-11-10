@@ -148,7 +148,7 @@ impl TranscribeAudioTool {
             allowed,
             asr,
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: orchest::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 ..ToolMetadata::default()
             },
@@ -246,7 +246,7 @@ impl DescribeImageTool {
             allowed,
             model,
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: orchest::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 ..ToolMetadata::default()
             },
@@ -403,7 +403,7 @@ impl SynthesizeBriefTool {
             tts,
             voice,
             metadata: ToolMetadata {
-                side_effect: true,
+                effects: orchest::tool::ToolEffects::UNKNOWN,
                 approval: Approval::Always,
                 ..ToolMetadata::default()
             },
@@ -641,7 +641,7 @@ mod tests {
 
         assert!(output_path.exists());
         assert!(
-            tool.metadata().side_effect,
+            tool.metadata().effects.has_side_effects(),
             "TTS tool must mark side_effect"
         );
         assert_eq!(tool.metadata().approval, Approval::Always);

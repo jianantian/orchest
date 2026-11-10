@@ -140,7 +140,7 @@ async fn main() {
         .unwrap();
 
     let metadata = ToolMetadata {
-        side_effect: false,
+        effects: orchest::tool::ToolEffects::NONE,
         approval: Approval::Never,
         parallelism: ToolParallelism::ParallelSafe,
         source: ToolSource::InProcess,

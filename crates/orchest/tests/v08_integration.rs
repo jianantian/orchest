@@ -13,8 +13,10 @@ use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, Role, StopReason, StreamEvent, TokenUsage,
 };
-use orchest::run::{AgentConfig, AgentRun, RunId, Watcher, WatcherAction};
-use orchest::session::{InMemorySessionStore, SessionSnapshot, SessionStore};
+use orchest::run::{AgentConfig, AgentRun, RequestResponse, RunId, Watcher, WatcherAction};
+use orchest::session::{
+    InMemorySessionStore, SessionEventKind, SessionLog, SessionMeta, SessionStore,
+};
 use orchest::tool::registry::ToolRegistry;
 use orchest::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError, ToolMetadata, ToolOutput,
@@ -36,6 +38,13 @@ fn end_response() -> ModelResponse {
         stop_reason: StopReason::EndTurn,
         option_adjustments: vec![],
     }
+}
+
+/// Reads and projects a session's whole log.
+async fn load_log(store: &dyn SessionStore, session_id: &str) -> SessionLog {
+    let events = store.read(session_id, 1).await.expect("read session log");
+    assert!(!events.is_empty(), "session log must be persisted");
+    SessionLog::from_events(events).expect("valid session log")
 }
 
 async fn collect(mut rx: mpsc::Receiver<RuntimeEvent>) -> Vec<RuntimeEvent> {
@@ -191,7 +200,7 @@ impl Tool for WriteFileTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: true,
+            effects: orchest::tool::ToolEffects::UNKNOWN,
             approval: Approval::WhenRisky,
             execution_mode: orchest::tool::ToolExecutionMode::Normal,
             parallelism: orchest::tool::ToolParallelism::Serial,
@@ -241,7 +250,11 @@ async fn guardrail_and_approval_coexist() {
     let mut saw_approval = false;
     while let Some(event) = rx.recv().await {
         match &event {
-            RuntimeEvent::ApprovalRequested { tool_call, .. } => {
+            RuntimeEvent::ApprovalRequested {
+                request_id,
+                tool_call,
+                ..
+            } => {
                 // Verify the approved call is the SAFE one (not the banned one)
                 let path = tool_call
                     .input
@@ -253,7 +266,10 @@ async fn guardrail_and_approval_coexist() {
                     "banned call must not reach approval"
                 );
                 saw_approval = true;
-                handle.respond_approval(handle.run_id, true).await.unwrap();
+                handle
+                    .respond(request_id, RequestResponse::approve())
+                    .await
+                    .unwrap();
             }
             RuntimeEvent::RunFailed { error, .. } => panic!("run failed: {error}"),
             _ => {}
@@ -312,26 +328,24 @@ async fn session_resume_with_hooks() {
         "hook should fire once after first run"
     );
 
-    let snap = store
-        .load(SID)
-        .await
-        .unwrap()
-        .expect("snapshot must be saved");
-    assert!(!snap.messages.is_empty(), "snapshot must have messages");
-    let tokens_after_first = snap.budget_used.tokens_used;
+    let log = load_log(store.as_ref(), SID).await;
+    assert!(!log.messages().is_empty(), "log must project messages");
+    let tokens_after_first = log.projection().budget_used.tokens_used;
 
-    // ── Resume ──
-    let mut snap = snap;
-    // Re-attach session store (serde(skip)) and re-attach the hook (also serde(skip))
-    snap.active_config = snap
-        .active_config
-        .with_session_store(store.clone() as Arc<dyn SessionStore>, SID)
+    // ── Resume: the host supplies the config, store and hooks again ──
+    let config = AgentConfig::builder("test-agent", "mock/mock")
+        .system_prompt("assistant")
+        .max_steps(2)
+        .session_store(store.clone() as Arc<dyn SessionStore>, SID)
+        .build()
+        .unwrap()
         .with_hook(Arc::new(RunEndCounterHook {
             count: Arc::clone(&hook_count),
         }));
 
-    let (handle2, rx2) =
-        AgentRun::resume(snap, Arc::new(SimpleEndModel), ToolRegistry::new()).unwrap();
+    let (handle2, rx2) = AgentRun::resume(config, Arc::new(SimpleEndModel), ToolRegistry::new())
+        .await
+        .unwrap();
     collect(rx2).await;
     handle2.wait().await;
 
@@ -341,28 +355,65 @@ async fn session_resume_with_hooks() {
         "hook should fire again on resumed run"
     );
 
-    let snap2 = store
-        .load(SID)
-        .await
-        .unwrap()
-        .expect("snapshot must be updated after resume");
+    let log2 = load_log(store.as_ref(), SID).await;
     assert!(
-        snap2.budget_used.tokens_used >= tokens_after_first,
-        "resumed snapshot must accumulate token usage"
+        log2.projection().budget_used.tokens_used > tokens_after_first,
+        "resumed log must accumulate token usage"
     );
 }
 
 // ── Test 3: session_resume_after_handoff ──────────────────────────────────────
 
-/// Simulate what happens when resuming from a snapshot whose active_config is
-/// the post-handoff agent (i.e. the snapshot was captured after a handoff swap).
-/// AgentRun::resume must use that config's system_prompt and preserve run_id.
+/// Resume a log written after a handoff: the projection carries the
+/// post-handoff conversation, the host supplies the post-handoff agent's
+/// config, and the run keeps its run_id.
 #[tokio::test]
 async fn session_resume_after_handoff() {
     let store = Arc::new(InMemorySessionStore::new());
     const SID: &str = "handoff-session";
 
-    // Post-handoff config: represents Agent B that took over via handoff
+    let run_id = RunId::new();
+    let mut log = SessionLog::new();
+    log.append(SessionEventKind::RunStarted {
+        run_id,
+        agent_name: "agent-a".into(),
+    });
+    log.append(SessionEventKind::SystemMessage {
+        content: vec![ContentBlock::Text("I am Agent A (original)".into())],
+    });
+    log.append(SessionEventKind::UserMessage {
+        content: vec![ContentBlock::Text("help me".into())],
+    });
+    log.append(SessionEventKind::AssistantMessage {
+        content: vec![ContentBlock::Text("handing off to specialist".into())],
+    });
+    log.append(SessionEventKind::Handoff {
+        from_agent: "agent-a".into(),
+        to_agent: "post-handoff".into(),
+        messages: vec![
+            Message {
+                role: Role::System,
+                content: vec![ContentBlock::Text(
+                    "I am Agent B (post-handoff specialist)".into(),
+                )],
+            },
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text("help me".into())],
+            },
+        ],
+        budget_used: BudgetUsage::default(),
+    });
+    log.append(SessionEventKind::StepEnded {
+        step: 0,
+        budget_used: BudgetUsage::default(),
+    });
+    store
+        .put_meta(&SessionMeta::new(SID, "agent-a"))
+        .await
+        .unwrap();
+    store.append(SID, log.events()).await.unwrap();
+
     let post_handoff_config = AgentConfig::builder("post-handoff", "mock/mock")
         .system_prompt("I am Agent B (post-handoff specialist)")
         .max_steps(2)
@@ -370,39 +421,14 @@ async fn session_resume_after_handoff() {
         .build()
         .unwrap();
 
-    let run_id = RunId::new();
-
-    // Snapshot representing state after handoff: messages include prior context
-    let snapshot = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.to_string(),
-        session_id: SID.to_string(),
-        run_id,
-        messages: vec![
-            Message {
-                role: Role::System,
-                content: vec![ContentBlock::Text("I am Agent A (original)".into())],
-            },
-            Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text("help me".into())],
-            },
-            Message {
-                role: Role::Assistant,
-                content: vec![ContentBlock::Text("handing off to specialist".into())],
-            },
-        ],
-        step: 1,
-        budget_used: BudgetUsage::default(),
-        active_config: post_handoff_config,
-    };
-
-    // Resume from the post-handoff snapshot
-    let (handle, rx) =
-        AgentRun::resume(snapshot, Arc::new(SimpleEndModel), ToolRegistry::new()).unwrap();
-    assert_eq!(
-        handle.run_id, run_id,
-        "resumed run_id must match snapshot run_id"
-    );
+    let (handle, rx) = AgentRun::resume(
+        post_handoff_config,
+        Arc::new(SimpleEndModel),
+        ToolRegistry::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(handle.run_id, run_id, "resumed run_id must match the log");
 
     let events = collect(rx).await;
     handle.wait().await;
@@ -414,19 +440,16 @@ async fn session_resume_after_handoff() {
         "resumed run must complete"
     );
 
-    // Session was updated during resumed run
-    let snap2 = store
-        .load(SID)
-        .await
-        .unwrap()
-        .expect("snapshot must exist after resume");
-    assert_eq!(
-        snap2.run_id, run_id,
-        "persisted snapshot must retain run_id"
-    );
+    let log2 = load_log(store.as_ref(), SID).await;
+    let projection = log2.projection();
+    assert_eq!(projection.run_id, Some(run_id), "log must retain run_id");
+    assert_eq!(projection.agent_name.as_deref(), Some("post-handoff"));
     assert!(
-        snap2.active_config.system_prompt.contains("Agent B"),
-        "persisted snapshot must reflect post-handoff config"
+        matches!(
+            &projection.messages[0].content[0],
+            ContentBlock::Text(t) if t.contains("Agent B")
+        ),
+        "projected conversation must be the post-handoff one"
     );
 }
 
@@ -524,7 +547,7 @@ impl Tool for PingTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: orchest::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: orchest::tool::ToolExecutionMode::Normal,
             parallelism: orchest::tool::ToolParallelism::Serial,
@@ -736,12 +759,15 @@ async fn all_v08_features_combined() {
     let mut saw_approval = false;
     while let Some(event) = rx.recv().await {
         match &event {
-            RuntimeEvent::ApprovalRequested { .. } => {
+            RuntimeEvent::ApprovalRequested { request_id, .. } => {
                 saw_approval = true;
-                handle.respond_approval(handle.run_id, true).await.unwrap();
+                handle
+                    .respond(request_id, RequestResponse::approve())
+                    .await
+                    .unwrap();
             }
             RuntimeEvent::RunFailed { error, .. } => panic!("run failed: {error}"),
-            RuntimeEvent::RunAborted { reason } => {
+            RuntimeEvent::RunAborted { reason, .. } => {
                 panic!("run aborted: {reason:?}")
             }
             _ => {}
@@ -753,16 +779,12 @@ async fn all_v08_features_combined() {
     // Approval: the safe write required and received approval
     assert!(saw_approval, "side_effect write_file must require approval");
 
-    // Session: snapshot was persisted
-    let snap = store
-        .load(SID)
-        .await
-        .unwrap()
-        .expect("snapshot must be saved");
-    assert!(!snap.messages.is_empty(), "snapshot must have messages");
+    // Session: the log was persisted
+    let log = load_log(store.as_ref(), SID).await;
+    assert!(!log.messages().is_empty(), "log must project messages");
     assert!(
-        snap.budget_used.tokens_used > 0,
-        "snapshot must record token usage"
+        log.projection().budget_used.tokens_used > 0,
+        "log must record token usage"
     );
 
     // Watcher: the safe write_file's ToolCallCompleted should have fired the watcher
@@ -805,9 +827,10 @@ mod sqlite_tests {
         collect(rx).await;
         handle.wait().await;
 
-        let snap = store.load(SID).await.expect("load").expect("snapshot");
-        assert!(!snap.messages.is_empty());
-        assert_eq!(snap.session_id, SID);
+        let log = load_log(store.as_ref(), SID).await;
+        assert!(!log.messages().is_empty());
+        let meta = store.get_meta(SID).await.expect("meta").expect("some");
+        assert_eq!(meta.session_id, SID);
 
         // Listing should include this session
         let sessions = store.list().await.expect("list");
@@ -815,8 +838,8 @@ mod sqlite_tests {
 
         // Delete and verify gone
         store.delete(SID).await.expect("delete");
-        let gone = store.load(SID).await.expect("load after delete");
-        assert!(gone.is_none(), "snapshot should be gone after delete");
+        assert!(store.read(SID, 1).await.expect("read").is_empty());
+        assert!(store.get_meta(SID).await.expect("meta").is_none());
     }
 
     #[tokio::test]
@@ -844,27 +867,28 @@ mod sqlite_tests {
         collect(rx).await;
         handle.wait().await;
 
-        let mut snap = store.load(SID).await.expect("load").expect("snapshot");
-        assert_eq!(snap.run_id, first_run_id);
+        let log = load_log(store.as_ref(), SID).await;
+        assert_eq!(log.projection().run_id, Some(first_run_id));
 
-        snap.active_config = snap
-            .active_config
-            .with_session_store(store.clone() as Arc<dyn SessionStore>, SID);
+        let config = AgentConfig::builder("test-agent", "mock/mock")
+            .system_prompt("resumable")
+            .max_steps(2)
+            .session_store(store.clone() as Arc<dyn SessionStore>, SID)
+            .build()
+            .unwrap();
 
         let (handle2, rx2) =
-            AgentRun::resume(snap, Arc::new(SimpleEndModel), ToolRegistry::new()).unwrap();
+            AgentRun::resume(config, Arc::new(SimpleEndModel), ToolRegistry::new())
+                .await
+                .unwrap();
         assert_eq!(handle2.run_id, first_run_id, "resumed run_id must match");
         collect(rx2).await;
         handle2.wait().await;
 
-        let snap2 = store
-            .load(SID)
-            .await
-            .expect("load")
-            .expect("snapshot after resume");
-        assert_eq!(snap2.run_id, first_run_id);
+        let log2 = load_log(store.as_ref(), SID).await;
+        assert_eq!(log2.projection().run_id, Some(first_run_id));
         assert!(
-            snap2.budget_used.tokens_used > 0,
+            log2.projection().budget_used.tokens_used > log.projection().budget_used.tokens_used,
             "tokens must be recorded after resumed run"
         );
     }
