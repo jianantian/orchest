@@ -16,7 +16,7 @@ types live in [`orchest-protocol`](https://crates.io/crates/orchest-protocol).
 
 ```toml
 [dependencies]
-orchest = "1"
+orchest = "2"
 orchest-provider = { version = "1", features = ["llm"] }
 ```
 
