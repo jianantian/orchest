@@ -14,6 +14,12 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+## [2.0.0]
+
+The v2.0 runtime contract ([ADR-0005](docs/adr/0005-host-integration-contract.md)).
+Every change marked **Breaking** below is a breaking change to the Supported
+crates; there is no compatibility layer or deprecation period.
+
 ### Changed
 
 - **Breaking:** session persistence is an append-only event log instead of a
@@ -418,7 +424,8 @@ Release candidate for 1.0.0, with the same feature set as the 1.0.0 entry
 in [CHANGELOG.md](CHANGELOG.md#100). Published so crates.io users can try
 the lockstep crates before the final release.
 
-[Unreleased]: https://github.com/jianantian/orchest/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/jianantian/orchest/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/jianantian/orchest/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/jianantian/orchest/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/jianantian/orchest/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/jianantian/orchest/releases/tag/v1.0.0

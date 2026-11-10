@@ -20,7 +20,7 @@
 
 ```toml
 [dependencies]
-orchest = "1"
+orchest = "2"
 orchest-provider = { version = "1", features = ["llm"] }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
