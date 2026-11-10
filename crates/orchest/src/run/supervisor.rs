@@ -14,7 +14,8 @@ use crate::tool::registry::ToolRegistry;
 use super::action_arbitration::{ActionArbitrator, DeliveryTicket};
 use super::actor::{AgentMsg, AgentRunArgs, ResumeState, WorkerActor};
 use super::config::{RunId, SupervisionStrategy};
-use super::handle::{ApprovalBus, ChildRunRegistry};
+use super::handle::ChildRunRegistry;
+use super::request::RequestBus;
 use super::watcher::Watcher;
 
 /// Stop-reason token WorkerActor uses after emitting `RunFailed`.
@@ -58,7 +59,7 @@ pub(crate) struct SupervisorState {
     model: Arc<dyn ModelAdapter>,
     registry: ToolRegistry,
     config: crate::run::AgentConfig,
-    approval_bus: ApprovalBus,
+    request_bus: RequestBus,
     child_registry: ChildRunRegistry,
     session_store: Option<Arc<dyn SessionStore>>,
     session_id: Option<String>,
@@ -67,6 +68,7 @@ pub(crate) struct SupervisorState {
     original_resume: Option<ResumeState>,
     worker_handle: Option<ractor::concurrency::JoinHandle<()>>,
     arbitrator: std::sync::Arc<ActionArbitrator>,
+    cancel: super::cancel::CancelToken,
 }
 
 pub(crate) struct SupervisorArgs {
@@ -75,7 +77,7 @@ pub(crate) struct SupervisorArgs {
     pub model: Arc<dyn ModelAdapter>,
     pub registry: ToolRegistry,
     pub event_tx: mpsc::Sender<RuntimeEvent>,
-    pub approval_bus: ApprovalBus,
+    pub request_bus: RequestBus,
     pub child_registry: ChildRunRegistry,
     pub actor_ref_shared: Arc<Mutex<Option<ActorRef<AgentMsg>>>>,
     pub ready: Arc<tokio::sync::Notify>,
@@ -102,6 +104,7 @@ impl Actor for SupervisorActor {
         let original_input = args.worker_args.input.clone();
         let original_initial_messages = args.worker_args.initial_messages.clone();
         let original_resume = args.worker_args.resume.clone();
+        let cancel = args.worker_args.cancel.clone();
 
         let (worker_ref, worker_handle) =
             Actor::spawn_linked(None, WorkerActor, args.worker_args, myself.get_cell()).await?;
@@ -122,7 +125,7 @@ impl Actor for SupervisorActor {
             model: args.model,
             registry: args.registry,
             config: args.config,
-            approval_bus: args.approval_bus,
+            request_bus: args.request_bus,
             child_registry: args.child_registry,
             session_store,
             session_id,
@@ -131,6 +134,7 @@ impl Actor for SupervisorActor {
             original_resume,
             worker_handle: Some(worker_handle),
             arbitrator: args.arbitrator,
+            cancel,
         })
     }
 
@@ -210,9 +214,15 @@ async fn maybe_restart_worker(
                     .event_tx
                     .send(RuntimeEvent::RunAborted {
                         reason: Some("worker failed (strategy: Stop)".into()),
+                        cancel_reason: None,
                     })
                     .await;
             }
+            myself.stop(None);
+            Ok(())
+        }
+        // A cancelled run is never restarted.
+        SupervisionStrategy::Restart { .. } if state.cancel.is_cancelled() => {
             myself.stop(None);
             Ok(())
         }
@@ -225,6 +235,7 @@ async fn maybe_restart_worker(
                         .event_tx
                         .send(RuntimeEvent::RunAborted {
                             reason: Some(format!("max retries ({max_retries}) exceeded")),
+                            cancel_reason: None,
                         })
                         .await;
                 }
@@ -310,7 +321,7 @@ fn spawn_watcher_processor(
 pub(crate) struct SpawnSupervised {
     pub run_id: RunId,
     pub args: AgentRunArgs,
-    pub approval_bus: ApprovalBus,
+    pub request_bus: RequestBus,
     pub child_registry: ChildRunRegistry,
     pub event_rx: mpsc::Receiver<RuntimeEvent>,
     pub initial_watchers: Vec<(Arc<dyn Watcher>, usize)>,
@@ -326,7 +337,7 @@ pub(crate) fn spawn_supervised(
     let SpawnSupervised {
         run_id,
         mut args,
-        approval_bus,
+        request_bus,
         child_registry,
         event_rx,
         initial_watchers,
@@ -339,7 +350,7 @@ pub(crate) fn spawn_supervised(
     let supervisor_ref_for_handle = supervisor_ref_shared.clone();
     let ready_for_supervisor_ref = ready.clone();
 
-    let arbitrator = ActionArbitrator::new(Arc::clone(&actor_ref_shared));
+    let arbitrator = ActionArbitrator::new(Arc::clone(&actor_ref_shared), args.cancel.clone());
     let mut initial_event_subs = Vec::with_capacity(initial_watchers.len());
     for (index, (watcher, capacity)) in initial_watchers.iter().enumerate() {
         let (tx, rx) = mpsc::channel(*capacity);
@@ -348,6 +359,13 @@ pub(crate) fn spawn_supervised(
         spawn_watcher_processor(rx, Arc::clone(watcher), index, Arc::clone(&arbitrator));
     }
     args.initial_event_subs = initial_event_subs;
+    let args_cancel = args.cancel.clone();
+    let capabilities = args.config.capabilities();
+    let (event_rx, delivery_stats) = super::delivery::spawn_relay(
+        event_rx,
+        args.config.runtime.event_channel_capacity,
+        args.config.runtime.event_sink.clone(),
+    );
     args.watcher_wave_bus = Some(Arc::clone(&arbitrator) as Arc<dyn FanoutWaveBus>);
 
     let sup_args = SupervisorArgs {
@@ -356,7 +374,7 @@ pub(crate) fn spawn_supervised(
         model: args.model.clone(),
         registry: args.registry.clone(),
         event_tx: args.event_tx.clone(),
-        approval_bus: approval_bus.clone(),
+        request_bus: request_bus.clone(),
         child_registry: child_registry.clone(),
         actor_ref_shared: actor_ref_shared.clone(),
         ready: ready.clone(),
@@ -376,12 +394,16 @@ pub(crate) fn spawn_supervised(
         let _ = sup_handle.await;
     });
 
+    let cancel = args_cancel;
     let handle = super::handle::RunHandle {
         run_id,
+        cancel,
+        capabilities,
+        delivery_stats,
         actor_ref: actor_ref_shared,
         ready,
         actor_join,
-        approval_bus,
+        request_bus,
         child_registry,
         supervisor_ref: supervisor_ref_for_handle,
     };
@@ -389,18 +411,22 @@ pub(crate) fn spawn_supervised(
 }
 
 async fn build_restart_args(state: &SupervisorState) -> AgentRunArgs {
-    let resume = if let (Some(store), Some(session_id)) = (&state.session_store, &state.session_id)
-    {
-        match store.load(session_id).await {
-            Ok(Some(snapshot)) => Some(ResumeState {
-                messages: snapshot.messages,
-                step: snapshot.step,
-                budget_used: snapshot.budget_used,
-            }),
-            _ => state.original_resume.clone(),
+    let stored = match (&state.session_store, &state.session_id) {
+        (Some(store), Some(session_id)) => {
+            let binding = super::actor::SessionBinding {
+                store: Arc::clone(store),
+                session_id: session_id.clone(),
+                policy: state.config.checkpoint_policy,
+            };
+            super::load_session_log(&binding).await.ok()
         }
-    } else {
-        state.original_resume.clone()
+        _ => None,
+    };
+    // A stored log already holds the original input (and any resume input),
+    // so the restarted worker continues it without adding a turn.
+    let resume = match stored {
+        Some(log) => Some(ResumeState { log, input: None }),
+        None => state.original_resume.clone(),
     };
 
     AgentRunArgs {
@@ -410,12 +436,13 @@ async fn build_restart_args(state: &SupervisorState) -> AgentRunArgs {
         model: state.model.clone(),
         registry: state.registry.clone(),
         event_tx: state.event_tx.clone(),
-        approval_bus: state.approval_bus.clone(),
+        request_bus: state.request_bus.clone(),
         child_registry: state.child_registry.clone(),
         resume,
         initial_messages: state.original_initial_messages.clone(),
         // Restart reattaches via `reattach_watcher` / Subscribe, not pre-wiring.
         initial_event_subs: vec![],
         watcher_wave_bus: None,
+        cancel: state.cancel.clone(),
     }
 }

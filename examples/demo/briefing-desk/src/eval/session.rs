@@ -1,14 +1,16 @@
 //! Follow-up session seed materialization with per-attempt isolation.
 //!
-//! Each attempt materializes a `SessionSnapshot` with unique session/run IDs
-//! into its own temporary SQLite store. Cleanup results are recorded for
-//! `attempt.json`.
+//! Each attempt materializes the seed as a session log with unique
+//! session/run IDs in its own temporary SQLite store. Cleanup results are
+//! recorded for `attempt.json`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use orchest::run::{AgentConfig, RunId};
-use orchest::session::{SessionSnapshot, SessionStore, SqliteSessionStore};
+use orchest::session::{
+    SessionEventKind, SessionLog, SessionMeta, SessionStore, SqliteSessionStore,
+};
 use tempfile::TempDir;
 
 use super::artifact::{ArtifactError, StoreCleanupRecord};
@@ -20,117 +22,135 @@ pub struct AttemptSession {
     pub run_id: RunId,
     pub seed_id: String,
     pub seed_hash: String,
-    pub snapshot: SessionSnapshot,
+    /// The seed as a session log, as stored.
+    pub log: SessionLog,
     pub store: Arc<dyn SessionStore>,
     pub store_path: PathBuf,
+    config: AgentConfig,
     tempdir: Option<TempDir>,
     cleaned: bool,
 }
 
+/// The session log a seed stands for: its messages, and a closed step
+/// boundary carrying its step count and budget.
+fn seed_log(seed: &SessionSeed, run_id: RunId, agent_name: &str) -> SessionLog {
+    let mut log = SessionLog::new();
+    log.append(SessionEventKind::RunStarted {
+        run_id,
+        agent_name: agent_name.to_string(),
+    });
+    for message in seed.messages.iter().cloned() {
+        log.append_message(message);
+    }
+    if seed.step > 0 {
+        log.append(SessionEventKind::StepEnded {
+            step: seed.step - 1,
+            budget_used: seed.budget_used.clone(),
+        });
+    }
+    log
+}
+
+struct Prepared {
+    session_id: String,
+    run_id: RunId,
+    seed_hash: String,
+    log: SessionLog,
+    store: Arc<dyn SessionStore>,
+    store_path: PathBuf,
+    config: AgentConfig,
+    tempdir: TempDir,
+}
+
+fn prepare(seed: &SessionSeed, base_config: AgentConfig) -> Result<Prepared, ArtifactError> {
+    let seed_hash = seed
+        .content_hash()
+        .map_err(|e| ArtifactError::new(e.to_string()))?;
+    let session_id = format!("eval-{}-{}", seed.seed_id, unique_suffix());
+    let run_id = RunId::new();
+
+    let tempdir =
+        TempDir::new().map_err(|e| ArtifactError::io(format!("creating temp session dir: {e}")))?;
+    let store_path = tempdir.path().join("session.sqlite3");
+    let store = SqliteSessionStore::open(&store_path)
+        .map_err(|e| ArtifactError::io(format!("opening temp session store: {e}")))?;
+    let store: Arc<dyn SessionStore> = Arc::new(store);
+
+    let log = seed_log(seed, run_id, &base_config.name);
+    let config = base_config.with_session_store(Arc::clone(&store), session_id.clone());
+    Ok(Prepared {
+        session_id,
+        run_id,
+        seed_hash,
+        log,
+        store,
+        store_path,
+        config,
+        tempdir,
+    })
+}
+
+async fn write_seed(prepared: &Prepared) -> Result<(), ArtifactError> {
+    let save = |e| ArtifactError::io(format!("saving materialized seed: {e}"));
+    prepared
+        .store
+        .put_meta(&SessionMeta::new(
+            &prepared.session_id,
+            &prepared.config.name,
+        ))
+        .await
+        .map_err(save)?;
+    prepared
+        .store
+        .append(&prepared.session_id, prepared.log.events())
+        .await
+        .map_err(save)?;
+    prepared
+        .store
+        .flush(&prepared.session_id)
+        .await
+        .map_err(save)
+}
+
 impl AttemptSession {
-    /// Materialize a validated seed into a unique snapshot + temp SQLite store.
+    /// Materialize a validated seed into a unique session log + temp SQLite store.
     pub fn materialize(
         seed: &SessionSeed,
         base_config: AgentConfig,
     ) -> Result<Self, ArtifactError> {
-        let seed_hash = seed
-            .content_hash()
-            .map_err(|e| ArtifactError::new(e.to_string()))?;
-        let session_id = format!("eval-{}-{}", seed.seed_id, unique_suffix());
-        let run_id = RunId::new();
-
-        let tempdir = TempDir::new()
-            .map_err(|e| ArtifactError::io(format!("creating temp session dir: {e}")))?;
-        let store_path = tempdir.path().join("session.sqlite3");
-        let store = SqliteSessionStore::open(&store_path)
-            .map_err(|e| ArtifactError::io(format!("opening temp session store: {e}")))?;
-        let store: Arc<dyn SessionStore> = Arc::new(store);
-
-        let active_config = base_config.with_session_store(Arc::clone(&store), session_id.clone());
-
-        let snapshot = SessionSnapshot {
-            schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.to_string(),
-            session_id: session_id.clone(),
-            run_id,
-            messages: seed.messages.clone(),
-            step: seed.step,
-            budget_used: seed.budget_used.clone(),
-            active_config,
-        };
-
-        // Persist so resume paths can re-load if needed.
-        // Use block_on-friendly async: callers in async tests use the async helper.
-        // For sync materialize we save via a tiny runtime if needed.
-        save_snapshot_blocking(&store, &session_id, &snapshot)?;
-
-        Ok(Self {
-            session_id,
-            run_id,
-            seed_id: seed.seed_id.clone(),
-            seed_hash,
-            snapshot,
-            store,
-            store_path,
-            tempdir: Some(tempdir),
-            cleaned: false,
-        })
+        let prepared = prepare(seed, base_config)?;
+        block_on_store(write_seed(&prepared))?;
+        Ok(Self::from_prepared(seed, prepared))
     }
 
-    /// Async materialize that saves via the store's async API.
+    /// Async materialize that writes via the store's async API.
     pub async fn materialize_async(
         seed: &SessionSeed,
         base_config: AgentConfig,
     ) -> Result<Self, ArtifactError> {
-        let seed_hash = seed
-            .content_hash()
-            .map_err(|e| ArtifactError::new(e.to_string()))?;
-        let session_id = format!("eval-{}-{}", seed.seed_id, unique_suffix());
-        let run_id = RunId::new();
-
-        let tempdir = TempDir::new()
-            .map_err(|e| ArtifactError::io(format!("creating temp session dir: {e}")))?;
-        let store_path = tempdir.path().join("session.sqlite3");
-        let store = SqliteSessionStore::open(&store_path)
-            .map_err(|e| ArtifactError::io(format!("opening temp session store: {e}")))?;
-        let store: Arc<dyn SessionStore> = Arc::new(store);
-
-        let active_config = base_config.with_session_store(Arc::clone(&store), session_id.clone());
-
-        let snapshot = SessionSnapshot {
-            schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.to_string(),
-            session_id: session_id.clone(),
-            run_id,
-            messages: seed.messages.clone(),
-            step: seed.step,
-            budget_used: seed.budget_used.clone(),
-            active_config,
-        };
-
-        store
-            .save(&session_id, &snapshot)
-            .await
-            .map_err(|e| ArtifactError::io(format!("saving materialized seed: {e}")))?;
-
-        Ok(Self {
-            session_id,
-            run_id,
-            seed_id: seed.seed_id.clone(),
-            seed_hash,
-            snapshot,
-            store,
-            store_path,
-            tempdir: Some(tempdir),
-            cleaned: false,
-        })
+        let prepared = prepare(seed, base_config)?;
+        write_seed(&prepared).await?;
+        Ok(Self::from_prepared(seed, prepared))
     }
 
-    /// Detach a clone of the snapshot with store re-attached (for resume).
-    pub fn resume_snapshot(&self) -> SessionSnapshot {
-        let mut snap = self.snapshot.clone();
-        snap.active_config = snap
-            .active_config
-            .with_session_store(Arc::clone(&self.store), self.session_id.clone());
-        snap
+    fn from_prepared(seed: &SessionSeed, prepared: Prepared) -> Self {
+        Self {
+            session_id: prepared.session_id,
+            run_id: prepared.run_id,
+            seed_id: seed.seed_id.clone(),
+            seed_hash: prepared.seed_hash,
+            log: prepared.log,
+            store: prepared.store,
+            store_path: prepared.store_path,
+            config: prepared.config,
+            tempdir: Some(prepared.tempdir),
+            cleaned: false,
+        }
+    }
+
+    /// The config to resume the session with (store attached).
+    pub fn resume_config(&self) -> AgentConfig {
+        self.config.clone()
     }
 
     /// Delete the session from the store and drop the temp directory.
@@ -212,36 +232,21 @@ fn unique_suffix() -> String {
     RunId::new().to_string()
 }
 
-fn save_snapshot_blocking(
-    store: &Arc<dyn SessionStore>,
-    session_id: &str,
-    snapshot: &SessionSnapshot,
-) -> Result<(), ArtifactError> {
+fn block_on_store<F>(fut: F) -> Result<(), ArtifactError>
+where
+    F: std::future::Future<Output = Result<(), ArtifactError>>,
+{
     // Create a tiny current-thread runtime if none is running.
     match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            // Safety: must not block in-place on the same runtime; use spawn_blocking path
-            // via block_in_place when inside a runtime.
-            tokio::task::block_in_place(|| {
-                handle.block_on(async {
-                    store
-                        .save(session_id, snapshot)
-                        .await
-                        .map_err(|e| ArtifactError::io(format!("saving materialized seed: {e}")))
-                })
-            })
-        }
+        // Must not block in-place on the same runtime; use block_in_place
+        // when inside a runtime.
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
         Err(_) => {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .map_err(|e| ArtifactError::io(format!("tokio runtime: {e}")))?;
-            rt.block_on(async {
-                store
-                    .save(session_id, snapshot)
-                    .await
-                    .map_err(|e| ArtifactError::io(format!("saving materialized seed: {e}")))
-            })
+            rt.block_on(fut)
         }
     }
 }
@@ -312,14 +317,27 @@ mod tests {
         assert_eq!(a.seed_hash, b.seed_hash);
         assert_ne!(a.store_path, b.store_path);
 
-        // Mutate store A; B must not see it.
-        let mut snap_a = a.store.load(&a.session_id).await.unwrap().unwrap();
-        snap_a.step = 99;
-        a.store.save(&a.session_id, &snap_a).await.unwrap();
+        // Append to store A; B must not see it.
+        let next = SessionLog::from_events(a.store.read(&a.session_id, 1).await.unwrap())
+            .unwrap()
+            .next_seq();
+        let mut extra = SessionLog::new();
+        for _ in 1..next {
+            extra.append(SessionEventKind::StepStarted { step: 0 });
+        }
+        extra.append(SessionEventKind::StepEnded {
+            step: 98,
+            budget_used: Default::default(),
+        });
+        a.store
+            .append(&a.session_id, &extra.events()[(next - 1) as usize..])
+            .await
+            .unwrap();
+        let log_a = SessionLog::from_events(a.store.read(&a.session_id, 1).await.unwrap()).unwrap();
+        assert_eq!(log_a.step(), 99);
 
-        let snap_b = b.store.load(&b.session_id).await.unwrap().unwrap();
-        assert_eq!(snap_b.step, seed.step);
-        assert_ne!(snap_b.step, 99);
+        let log_b = SessionLog::from_events(b.store.read(&b.session_id, 1).await.unwrap()).unwrap();
+        assert_eq!(log_b.step(), seed.step);
 
         // Same seed hash across attempts
         assert_eq!(a.seed_id, seed.seed_id);
@@ -353,16 +371,26 @@ mod tests {
         let mut session = AttemptSession::materialize_async(&seed, base_config())
             .await
             .unwrap();
-        assert_eq!(session.snapshot.messages.len(), 2);
-        assert_eq!(session.snapshot.step, 3);
-        assert_eq!(session.snapshot.budget_used.tokens_used, 100);
+        let stored =
+            SessionLog::from_events(session.store.read(&session.session_id, 1).await.unwrap())
+                .unwrap();
+        assert_eq!(stored.messages().len(), 2);
+        assert_eq!(stored.step(), 3);
+        assert_eq!(stored.projection().budget_used.tokens_used, 100);
+        assert_eq!(stored.projection().run_id, Some(session.run_id));
+        let meta = session
+            .store
+            .get_meta(&session.session_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(meta.schema_version, SessionMeta::CURRENT_SCHEMA_VERSION);
+        // resume config carries the store
+        let resume = session.resume_config();
         assert_eq!(
-            session.snapshot.schema_version,
-            SessionSnapshot::CURRENT_SCHEMA_VERSION
+            resume.session_id.as_deref(),
+            Some(session.session_id.as_str())
         );
-        // resume snapshot re-attaches store
-        let resume = session.resume_snapshot();
-        assert_eq!(resume.session_id, session.session_id);
         let _ = session.cleanup().await;
     }
 

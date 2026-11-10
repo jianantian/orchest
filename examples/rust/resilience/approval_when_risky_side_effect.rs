@@ -10,7 +10,7 @@ use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
-use orchest::run::{AgentConfig, AgentRun};
+use orchest::run::{AgentConfig, AgentRun, RequestResponse};
 use orchest::tool::{
     registry::ToolRegistry, Approval, JsonSchema, Tool, ToolContext, ToolDef, ToolError,
     ToolMetadata, ToolOutput, ToolSource,
@@ -126,7 +126,7 @@ impl Tool for ReadFileTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: orchest::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: orchest::tool::ToolExecutionMode::Normal,
             parallelism: orchest::tool::ToolParallelism::Serial,
@@ -164,7 +164,7 @@ impl Tool for WriteFileTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: true,
+            effects: orchest::tool::ToolEffects::UNKNOWN,
             approval: Approval::WhenRisky,
             execution_mode: orchest::tool::ToolExecutionMode::Normal,
             parallelism: orchest::tool::ToolParallelism::Serial,
@@ -208,13 +208,21 @@ async fn main() {
     let mut saw_approval = false;
     while let Some(event) = rx.recv().await {
         match &event {
-            RuntimeEvent::ApprovalRequested { tool_call, context } => {
+            RuntimeEvent::ApprovalRequested {
+                request_id,
+                tool_call,
+                context,
+                ..
+            } => {
                 println!(
                     "[approval] requested for tool '{}' ({context:?})",
                     tool_call.name
                 );
                 saw_approval = true;
-                handle.respond_approval(handle.run_id, true).await.unwrap();
+                handle
+                    .respond(request_id, RequestResponse::approve())
+                    .await
+                    .unwrap();
             }
             RuntimeEvent::RunCompleted { output, .. } => println!("[run] completed: {output}"),
             RuntimeEvent::RunFailed { error, .. } => println!("[run] failed: {error}"),

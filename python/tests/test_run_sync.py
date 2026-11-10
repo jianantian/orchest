@@ -36,3 +36,26 @@ def test_agent_requires_explicit_name() -> None:
         Agent(model="anthropic/test", system_prompt="test")
 
     Agent(name="test-agent", model="anthropic/test", system_prompt="test")
+
+
+def test_abort_without_active_run_returns_false() -> None:
+    agent = Agent(name="test-agent", model="anthropic/test", system_prompt="test")
+    assert agent.abort() is False
+    with pytest.raises(ValueError):
+        agent.abort(reason="bored")
+
+
+def test_respond_requires_an_active_run_and_a_valid_payload() -> None:
+    agent = Agent(name="test-agent", model="anthropic/test", system_prompt="test")
+    with pytest.raises(ValueError):
+        agent.respond("run/1", {"decision": "maybe"})
+    with pytest.raises(RuntimeError):
+        agent.respond("run/1", {"decision": "approve"})
+
+
+def test_capabilities_report_the_runtime_contract() -> None:
+    agent = Agent(name="test-agent", model="anthropic/test", system_prompt="test")
+    caps = agent.capabilities()
+    assert caps["preemptive_cancel"] is True
+    assert caps["lossless_events"] is True
+    assert "session" in caps["approval_scopes"]

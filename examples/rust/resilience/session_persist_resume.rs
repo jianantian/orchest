@@ -1,5 +1,5 @@
-//! Session persistence + resume example: save a snapshot with InMemorySessionStore,
-//! then resume the run and continue from the saved state.
+//! Session persistence + resume example: a run records its session log in an
+//! InMemorySessionStore, then a follow-up turn resumes the log.
 //!
 //! Run with: cargo run --example session_persist_resume
 
@@ -11,8 +11,9 @@ use orchest::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, StopReason, StreamEvent, TokenUsage,
 };
+use orchest::run::RunInput;
 use orchest::run::{AgentConfig, AgentRun};
-use orchest::session::{InMemorySessionStore, SessionStore};
+use orchest::session::{InMemorySessionStore, SessionLog, SessionStore};
 use orchest::tool::{registry::ToolRegistry, ToolDef};
 use tokio::sync::mpsc;
 
@@ -93,41 +94,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     handle.wait().await;
 
-    // ── Phase 2: Load snapshot ────────────────────────────────────────────────
+    // ── Phase 2: Read the session log ─────────────────────────────────────────
 
-    println!("\n=== Phase 2: Loading snapshot ===");
-    let snapshot = store
-        .load(SESSION_ID)
-        .await?
-        .expect("snapshot should exist after run");
+    println!("\n=== Phase 2: Reading the session log ===");
+    let log = SessionLog::from_events(store.read(SESSION_ID, 1).await?)?;
+    let projection = log.projection();
 
-    println!("[snapshot] run_id: {}", snapshot.run_id);
-    println!("[snapshot] step: {}", snapshot.step);
-    println!("[snapshot] messages: {}", snapshot.messages.len());
-    println!(
-        "[snapshot] tokens used: {}",
-        snapshot.budget_used.tokens_used
-    );
+    println!("[log] events: {}", log.events().len());
+    println!("[log] run_id: {:?}", projection.run_id);
+    println!("[log] next step: {}", projection.step);
+    println!("[log] messages: {}", projection.messages.len());
+    println!("[log] tokens used: {}", projection.budget_used.tokens_used);
 
     assert_eq!(
-        snapshot.run_id, first_run_id,
-        "snapshot run_id should match"
+        projection.run_id,
+        Some(first_run_id),
+        "log run_id should match"
     );
     assert!(
-        !snapshot.messages.is_empty(),
-        "snapshot should have messages"
+        !projection.messages.is_empty(),
+        "log should project messages"
     );
 
-    // ── Phase 3: Resume ───────────────────────────────────────────────────────
+    // ── Phase 3: Resume with a follow-up turn ─────────────────────────────────
 
-    println!("\n=== Phase 3: Resuming run ===");
-    // Re-attach session store so persistence continues on resume
-    let mut snap = snapshot;
-    snap.active_config = snap
-        .active_config
-        .with_session_store(store.clone() as Arc<dyn SessionStore>, SESSION_ID);
+    println!("\n=== Phase 3: Resuming with a follow-up ===");
+    // The host supplies the config again; only the log is restored.
+    let config = AgentConfig::builder("persistent-agent", "mock/mock")
+        .system_prompt("You are a helpful assistant.")
+        .max_steps(3)
+        .session_store(store.clone() as Arc<dyn SessionStore>, SESSION_ID)
+        .build()?;
 
-    let (handle2, mut rx2) = AgentRun::resume(snap, Arc::new(EndModel), ToolRegistry::new())?;
+    let (handle2, mut rx2) = AgentRun::resume_with_input(
+        config,
+        RunInput::text("And what else?"),
+        Arc::new(EndModel),
+        ToolRegistry::new(),
+    )
+    .await?;
 
     println!(
         "[resume] run_id: {} (same as original: {})",
@@ -147,11 +152,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     handle2.wait().await;
 
-    // Verify snapshot was updated by the resumed run
-    let snap2 = store.load(SESSION_ID).await?.unwrap();
+    let log2 = SessionLog::from_events(store.read(SESSION_ID, 1).await?)?;
     println!(
-        "\n[final snapshot] tokens used: {}",
-        snap2.budget_used.tokens_used
+        "\n[final log] events: {}, tokens used: {}",
+        log2.events().len(),
+        log2.projection().budget_used.tokens_used
     );
 
     println!("\nDone. Session persisted and resumed successfully.");

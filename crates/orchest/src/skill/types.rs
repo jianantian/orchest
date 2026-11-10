@@ -40,7 +40,8 @@ pub struct SkillManifest {
 impl SkillManifest {
     pub fn build_tool_metadata(&self, _tool: &BundledToolDef) -> ToolMetadata {
         ToolMetadata {
-            side_effect: false,
+            // Bundled tools run a script in a subprocess.
+            effects: crate::tool::ToolEffects::of([crate::tool::ToolEffect::Process]),
             approval: crate::tool::Approval::Never,
             source: ToolSource::Skill {
                 skill_name: self.name.clone(),

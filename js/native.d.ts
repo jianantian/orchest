@@ -9,11 +9,15 @@ import type {
   AgentOptions,
   AsrStreamEvent,
   AsrStreamOptions,
+  CancelReason,
+  Capabilities,
   CompletionOptions,
   DecisionOptions,
   DecisionResponse,
   HistoryMessage,
+  RequestResponse,
   RuntimeEvent,
+  ToolEffect,
   TranscribeOptions,
 } from "./types";
 
@@ -42,6 +46,8 @@ export class Agent {
     description: string;
     inputSchema: Record<string, unknown>;
     sideEffect?: boolean;
+    /** Declared effects; overrides `sideEffect` when given. */
+    effects?: ToolEffect[];
     /** "never" | "whenRisky" | "always". */
     approval?: string;
   }): void;
@@ -52,7 +58,7 @@ export class Agent {
     description: string,
     inputSchema: Record<string, unknown>,
     handler: (input: TInput) => TOutput,
-    options?: { sideEffect?: boolean; approval?: string },
+    options?: { sideEffect?: boolean; effects?: ToolEffect[]; approval?: string },
   ): void;
 
   /**
@@ -70,7 +76,7 @@ export class Agent {
     inputSchema: Record<string, unknown>,
     handler: (input: TInput) => TJob,
     pollHandler: (jobId: string) => TPoll,
-    options?: { sideEffect?: boolean; approval?: string },
+    options?: { sideEffect?: boolean; effects?: ToolEffect[]; approval?: string },
   ): void;
 
   /**
@@ -92,6 +98,18 @@ export class Agent {
     messages?: HistoryMessage[],
   ): void;
 
-  /** Respond to an approval request for an active run. */
-  respondApproval(runId: string, approved: boolean): void;
+  /**
+   * Answer request `requestId` of the active run (the `request_id` of an
+   * `approval_requested` event, or `request.id` of a `request_opened` one).
+   */
+  respond(requestId: string, payload: RequestResponse): void;
+
+  /**
+   * Cancel the active run. Returns `true` when this call cancelled it,
+   * `false` when it was already cancelled or no run is active.
+   */
+  abort(reason?: CancelReason, message?: string): boolean;
+
+  /** What a run of this agent supports. */
+  capabilities(): Capabilities;
 }

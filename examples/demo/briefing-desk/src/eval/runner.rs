@@ -746,7 +746,7 @@ async fn materialize_and_resume(
     let mut session = AttemptSession::materialize_async(seed, base)
         .await
         .map_err(|e| e.to_string())?;
-    let snapshot = session.resume_snapshot();
+    let config = session.resume_config();
     let args = ResumeArgs {
         session: session.session_id.clone(),
         question: question.to_string(),
@@ -756,7 +756,7 @@ async fn materialize_and_resume(
     let wall_start = Instant::now();
     let mut local = TrajectoryRecorder::new();
     local.record_followup_session_resumed(&session.seed_id, &session.seed_hash);
-    let result = app::resume_with_environment(snapshot, args, env, |ev| local.observe(ev)).await;
+    let result = app::resume_with_environment(config, args, env, |ev| local.observe(ev)).await;
     let wall_ms = wall_start.elapsed().as_millis() as u64;
     *traj = local;
     *store_cleanup = session.cleanup().await;
@@ -1047,7 +1047,7 @@ async fn build_effective_config(
                     .await
                     .map_err(EvalRunError::from)?;
                 let prepared = execution::prepare_resume(
-                    session.resume_snapshot(),
+                    session.resume_config(),
                     ResumeArgs {
                         session: session.session_id.clone(),
                         question: question.clone(),

@@ -20,7 +20,7 @@ impl FaultTriggerTool {
     pub fn new() -> Self {
         Self {
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: orchest::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 source: ToolSource::InProcess,
                 ..ToolMetadata::default()

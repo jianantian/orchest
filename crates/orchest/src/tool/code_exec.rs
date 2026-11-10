@@ -267,7 +267,8 @@ fn code_input_schema() -> JsonSchema {
 
 fn code_tool_metadata() -> ToolMetadata {
     ToolMetadata {
-        side_effect: true,
+        // Arbitrary code: effects cannot be declared.
+        effects: crate::tool::ToolEffects::UNKNOWN,
         approval: crate::tool::Approval::Never,
         timeout: Some(Duration::from_secs(DEFAULT_TIMEOUT_SECONDS)),
         source: ToolSource::Builtin,

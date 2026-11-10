@@ -9,7 +9,8 @@ use tokio::sync::RwLock;
 
 use crate::events::RuntimeEvent;
 use crate::tool::{
-    Approval, JsonSchema, Tool, ToolContext, ToolError, ToolMetadata, ToolOutput, ToolSource,
+    Approval, JsonSchema, Tool, ToolContext, ToolEffect, ToolEffects, ToolError, ToolMetadata,
+    ToolOutput, ToolSource,
 };
 
 #[derive(Debug)]
@@ -42,7 +43,7 @@ impl ReadFileTool {
     pub fn new() -> Self {
         Self {
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: ToolEffects::READ_ONLY,
                 approval: Approval::Never,
                 source: ToolSource::Builtin,
                 ..ToolMetadata::default()
@@ -88,7 +89,7 @@ impl WriteFileTool {
     pub fn new_with_approval(approval: Approval) -> Self {
         Self {
             metadata: ToolMetadata {
-                side_effect: true,
+                effects: ToolEffects::of([ToolEffect::WriteWorkspace, ToolEffect::WriteOutside]),
                 approval,
                 source: ToolSource::Builtin,
                 ..ToolMetadata::default()

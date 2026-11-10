@@ -18,7 +18,7 @@ pub struct HandoffTool {
 impl HandoffTool {
     pub fn new(handoff: Handoff) -> Self {
         let metadata = ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: crate::tool::Approval::Never,
             cost_hint: Some(CostHint::Free),
             timeout: Some(Duration::from_secs(30)),

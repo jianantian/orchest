@@ -274,6 +274,7 @@ mod tests {
             handoffs: vec![],
             session_store: None,
             session_id: None,
+            checkpoint_policy: Default::default(),
             supervision_strategy: Default::default(),
         }
     }
@@ -352,6 +353,7 @@ mod tests {
             handoffs: vec![],
             session_store: None,
             session_id: None,
+            checkpoint_policy: Default::default(),
             supervision_strategy: Default::default(),
         };
         let call_count = Arc::new(AtomicU32::new(0));

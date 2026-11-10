@@ -163,7 +163,7 @@ async fn main() {
                 },
                 schema: json!({"type": "object"}),
                 metadata: ToolMetadata {
-                    side_effect: false,
+                    effects: orchest::tool::ToolEffects::NONE,
                     approval: Approval::Never,
                     source: ToolSource::InProcess,
                     ..ToolMetadata::default()

@@ -20,7 +20,7 @@ impl SearchFixturesTool {
         Self {
             entries,
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: orchest::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 ..ToolMetadata::default()
             },
@@ -123,7 +123,7 @@ impl ReadFixtureTool {
         Self {
             allowed,
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: orchest::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 ..ToolMetadata::default()
             },
@@ -196,7 +196,7 @@ impl WriteReportTool {
         Self {
             output_path,
             metadata: ToolMetadata {
-                side_effect: true,
+                effects: orchest::tool::ToolEffects::UNKNOWN,
                 approval: Approval::Always,
                 ..ToolMetadata::default()
             },
@@ -354,7 +354,7 @@ mod tests {
 
         assert_eq!(std::fs::read_to_string(&output_path).unwrap(), "# Brief");
         assert!(
-            tool.metadata().side_effect,
+            tool.metadata().effects.has_side_effects(),
             "write tool must mark side_effect"
         );
         assert_eq!(tool.metadata().approval, Approval::Always);

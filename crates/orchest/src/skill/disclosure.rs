@@ -85,7 +85,7 @@ impl LoadSkillTool {
     pub(crate) fn new(skills: Vec<SkillSummary>) -> Self {
         Self {
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: crate::tool::ToolEffects::READ_ONLY,
                 approval: Approval::Never,
                 source: ToolSource::Builtin,
                 ..ToolMetadata::default()

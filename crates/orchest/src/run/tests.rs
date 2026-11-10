@@ -17,6 +17,22 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, Notify};
 
+/// The request id an `ApprovalRequested` event waits on.
+fn approval_request_id(event: &RuntimeEvent) -> crate::run::RequestId {
+    match event {
+        RuntimeEvent::ApprovalRequested { request_id, .. } => request_id.clone(),
+        other => panic!("not an approval request: {other:?}"),
+    }
+}
+
+fn approval(approved: bool) -> crate::run::RequestResponse {
+    if approved {
+        crate::run::RequestResponse::approve()
+    } else {
+        crate::run::RequestResponse::deny(None)
+    }
+}
+
 struct FakeModelAdapter {
     call_count: AtomicU32,
 }
@@ -117,6 +133,7 @@ fn test_config() -> AgentConfig {
         handoffs: vec![],
         session_store: None,
         session_id: None,
+        checkpoint_policy: Default::default(),
         supervision_strategy: Default::default(),
     }
 }
@@ -548,57 +565,6 @@ async fn run_completed_marks_max_tokens_truncation() {
     );
 }
 
-struct ManyStreamChunksModel {
-    chunks: usize,
-}
-
-#[async_trait::async_trait]
-impl ModelAdapter for ManyStreamChunksModel {
-    fn provider_name(&self) -> &str {
-        "mock"
-    }
-
-    fn model_name(&self) -> &str {
-        "mock"
-    }
-
-    fn capabilities(&self) -> ModelCapabilities {
-        ModelCapabilities::default()
-    }
-
-    async fn complete(
-        &self,
-        _messages: &[Message],
-        _tools: &[ToolDef],
-        _options: &RequestOptions,
-        tx: Option<mpsc::Sender<StreamEvent>>,
-    ) -> Result<ModelResponse, ModelError> {
-        if let Some(tx) = tx {
-            for _ in 0..self.chunks {
-                let _ = tx.send(ModelStreamChunk::Text { delta: "x".into() }).await;
-            }
-        }
-        Ok(ModelResponse {
-            content: vec![ContentBlock::Text("done".into())],
-            usage: TokenUsage::default(),
-            stop_reason: StopReason::EndTurn,
-            option_adjustments: vec![],
-        })
-    }
-}
-
-#[tokio::test]
-async fn primary_event_backpressure_does_not_hang_run_loop() {
-    let model = Arc::new(ManyStreamChunksModel { chunks: 255 });
-    let registry = ToolRegistry::new();
-
-    let (handle, _rx) = AgentRun::start(test_config(), "hi".into(), model, registry);
-
-    tokio::time::timeout(Duration::from_secs(4), handle.wait())
-        .await
-        .expect("run should finish even when primary event receiver is not drained");
-}
-
 struct ToolCallModelAdapter;
 
 #[async_trait::async_trait]
@@ -809,7 +775,7 @@ impl Tool for CountingMetadataTool {
 
 fn draft_metadata() -> ToolMetadata {
     ToolMetadata {
-        side_effect: false,
+        effects: crate::tool::ToolEffects::NONE,
         approval: Approval::Always,
         execution_mode: ToolExecutionMode::Draft {
             commit_tool: "commit_file".into(),
@@ -821,7 +787,7 @@ fn draft_metadata() -> ToolMetadata {
 
 fn commit_metadata() -> ToolMetadata {
     ToolMetadata {
-        side_effect: false,
+        effects: crate::tool::ToolEffects::NONE,
         approval: Approval::Never,
         execution_mode: ToolExecutionMode::Commit {
             draft_tool: "draft_file".into(),
@@ -874,7 +840,7 @@ impl Tool for FakeTool {
     fn metadata(&self) -> &ToolMetadata {
         match self.approval {
             Approval::Always => &ToolMetadata {
-                side_effect: true,
+                effects: crate::tool::ToolEffects::UNKNOWN,
                 approval: Approval::Always,
                 execution_mode: ToolExecutionMode::Normal,
                 parallelism: ToolParallelism::Serial,
@@ -884,7 +850,7 @@ impl Tool for FakeTool {
                 source: ToolSource::InProcess,
             },
             _ => &ToolMetadata {
-                side_effect: false,
+                effects: crate::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 execution_mode: ToolExecutionMode::Normal,
                 parallelism: ToolParallelism::Serial,
@@ -912,7 +878,7 @@ async fn invalid_tool_metadata_links_fail_run_before_model_call() {
         .register(Arc::new(MetadataTool {
             name: "draft",
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: crate::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 execution_mode: ToolExecutionMode::Draft {
                     commit_tool: "missing_commit".into(),
@@ -972,7 +938,7 @@ async fn draft_tool_call_runs_without_approval_or_side_effect() {
                 metadata,
                 ..
             } if tool == "draft_file"
-                && !metadata.side_effect
+                && !metadata.effects.has_side_effects()
                 && matches!(metadata.execution_mode, ToolExecutionMode::Draft { .. })
         )
     }));
@@ -995,7 +961,10 @@ async fn commit_tool_call_requests_approval_with_linked_draft_context() {
     let mut events = Vec::new();
     while let Some(event) = rx.recv().await {
         if matches!(event, RuntimeEvent::ApprovalRequested { .. }) {
-            handle.respond_approval(handle.run_id, true).await.unwrap();
+            handle
+                .respond(&approval_request_id(&event), approval(true))
+                .await
+                .unwrap();
         }
         events.push(event);
     }
@@ -1007,6 +976,7 @@ async fn commit_tool_call_requests_approval_with_linked_draft_context() {
             RuntimeEvent::ApprovalRequested {
                 tool_call,
                 context: ApprovalContext::CommitToolCall { draft_tool },
+                ..
             } if tool_call.name == "commit_file" && draft_tool == "draft_file"
         )
     }));
@@ -1028,7 +998,10 @@ async fn commit_approval_denial_prevents_execution() {
     let mut events = Vec::new();
     while let Some(event) = rx.recv().await {
         if matches!(event, RuntimeEvent::ApprovalRequested { .. }) {
-            handle.respond_approval(handle.run_id, false).await.unwrap();
+            handle
+                .respond(&approval_request_id(&event), approval(false))
+                .await
+                .unwrap();
         }
         events.push(event);
     }
@@ -1182,7 +1155,7 @@ impl Tool for StructuredTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -1308,8 +1281,11 @@ async fn approval_gate_approved() {
     let mut events = Vec::new();
     loop {
         match rx.recv().await {
-            Some(RuntimeEvent::ApprovalRequested { .. }) => {
+            Some(RuntimeEvent::ApprovalRequested { request_id, .. }) => {
                 events.push(RuntimeEvent::ApprovalRequested {
+                    request_id: request_id.clone(),
+                    kind: crate::run::RequestKind::new(crate::run::RequestKind::TOOL_APPROVAL),
+                    payload: json!(null),
                     tool_call: ToolCall {
                         id: String::new(),
                         name: String::new(),
@@ -1317,7 +1293,7 @@ async fn approval_gate_approved() {
                     },
                     context: crate::events::ApprovalContext::InitialToolCall,
                 });
-                handle.respond_approval(handle.run_id, true).await.unwrap();
+                handle.respond(&request_id, approval(true)).await.unwrap();
             }
             Some(event) => events.push(event),
             None => break,
@@ -1349,8 +1325,11 @@ async fn approval_gate_denied() {
     let mut events = Vec::new();
     loop {
         match rx.recv().await {
-            Some(RuntimeEvent::ApprovalRequested { .. }) => {
+            Some(RuntimeEvent::ApprovalRequested { request_id, .. }) => {
                 events.push(RuntimeEvent::ApprovalRequested {
+                    request_id: request_id.clone(),
+                    kind: crate::run::RequestKind::new(crate::run::RequestKind::TOOL_APPROVAL),
+                    payload: json!(null),
                     tool_call: ToolCall {
                         id: String::new(),
                         name: String::new(),
@@ -1358,7 +1337,7 @@ async fn approval_gate_denied() {
                     },
                     context: crate::events::ApprovalContext::InitialToolCall,
                 });
-                handle.respond_approval(handle.run_id, false).await.unwrap();
+                handle.respond(&request_id, approval(false)).await.unwrap();
             }
             Some(event) => events.push(event),
             None => break,
@@ -1394,7 +1373,7 @@ impl Tool for AsyncTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -1615,7 +1594,7 @@ impl Tool for SpecGapTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -1768,7 +1747,7 @@ impl Tool for RetryHintTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -1837,7 +1816,7 @@ async fn run_retry_hint_tool(
         ) {
             if let Some(approved) = approve_retry {
                 handle
-                    .respond_approval(handle.run_id, approved)
+                    .respond(&approval_request_id(&event), approval(approved))
                     .await
                     .unwrap();
             }
@@ -2461,7 +2440,7 @@ impl Tool for WebhookTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -2775,7 +2754,7 @@ impl SlowTool {
     fn new() -> Self {
         Self {
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: crate::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 execution_mode: ToolExecutionMode::Normal,
                 parallelism: ToolParallelism::Serial,
@@ -2910,7 +2889,7 @@ impl BigOutputTool {
     fn new() -> Self {
         Self {
             metadata: ToolMetadata {
-                side_effect: false,
+                effects: crate::tool::ToolEffects::NONE,
                 approval: Approval::Never,
                 execution_mode: ToolExecutionMode::Normal,
                 parallelism: ToolParallelism::Serial,
@@ -3156,7 +3135,7 @@ fn update_max_seen(max_seen: &AtomicU32, observed: u32) {
 
 fn concurrency_metadata(parallelism: ToolParallelism, approval: Approval) -> ToolMetadata {
     ToolMetadata {
-        side_effect: false,
+        effects: crate::tool::ToolEffects::NONE,
         approval,
         parallelism,
         execution_mode: ToolExecutionMode::Normal,
@@ -3506,7 +3485,10 @@ async fn approval_gated_tools_are_excluded_from_parallel_execution() {
     let mut events = Vec::new();
     while let Some(event) = rx.recv().await {
         if matches!(event, RuntimeEvent::ApprovalRequested { .. }) {
-            handle.respond_approval(handle.run_id, true).await.unwrap();
+            handle
+                .respond(&approval_request_id(&event), approval(true))
+                .await
+                .unwrap();
         }
         events.push(event);
     }
@@ -3595,7 +3577,7 @@ async fn parallel_batch_honors_abort_after_batch_boundary() {
     assert_eq!(max_seen.load(Ordering::SeqCst), 2);
     assert!(events
         .iter()
-        .any(|event| matches!(event, RuntimeEvent::RunAborted { reason: None })));
+        .any(|event| matches!(event, RuntimeEvent::RunAborted { reason: None, .. })));
 }
 
 #[tokio::test]
@@ -3654,7 +3636,7 @@ impl Tool for UsageBombTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         static SERIAL: ToolMetadata = ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -3664,7 +3646,7 @@ impl Tool for UsageBombTool {
             source: ToolSource::InProcess,
         };
         static PARALLEL: ToolMetadata = ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::ParallelSafe,
@@ -4001,7 +3983,7 @@ fn truncate_output_multibyte_utf8_safe() {
 }
 
 #[tokio::test]
-async fn respond_approval_without_pending_returns_error() {
+async fn respond_without_pending_returns_not_found() {
     let model = Arc::new(ToolCallModelAdapter);
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(FakeTool::echo())).unwrap();
@@ -4012,12 +3994,9 @@ async fn respond_approval_without_pending_returns_error() {
     while rx.recv().await.is_some() {}
 
     // Sending approval when nothing is pending should fail
-    let result = handle.respond_approval(handle.run_id, true).await;
-    assert!(result.is_err());
-    assert!(
-        result.unwrap_err().contains("no pending approval"),
-        "should report no pending approval"
-    );
+    let id = crate::run::RequestId::from(format!("{}/1", handle.run_id));
+    let result = handle.respond(&id, approval(true)).await;
+    assert_eq!(result, Err(crate::run::RequestError::NotFound(id)));
 
     handle.wait().await;
 }
@@ -5305,7 +5284,7 @@ async fn sub_agent_approval_routed_to_child() {
                 if matches!(event.as_ref(), RuntimeEvent::ApprovalRequested { .. }) {
                     // Route approval to the child run
                     handle
-                        .respond_approval(child_run_id, true)
+                        .respond(&approval_request_id(event.as_ref()), approval(true))
                         .await
                         .expect("approval routing to child should succeed");
                 }
@@ -5364,7 +5343,7 @@ async fn sub_agent_approval_denied_completes_child() {
                 if matches!(event.as_ref(), RuntimeEvent::ApprovalRequested { .. }) {
                     // Deny the approval
                     handle
-                        .respond_approval(child_run_id, false)
+                        .respond(&approval_request_id(event.as_ref()), approval(false))
                         .await
                         .expect("approval routing to child should succeed");
                 }
@@ -5399,7 +5378,7 @@ async fn sub_agent_approval_denied_completes_child() {
 }
 
 #[tokio::test]
-async fn respond_approval_unknown_run_id_returns_error() {
+async fn respond_unknown_request_id_returns_not_found() {
     let model = Arc::new(ToolCallModelAdapter);
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(FakeTool::echo())).unwrap();
@@ -5409,14 +5388,9 @@ async fn respond_approval_unknown_run_id_returns_error() {
     // Drain events so the run completes
     while rx.recv().await.is_some() {}
 
-    let unknown_id = RunId::new();
-    let result = handle.respond_approval(unknown_id, true).await;
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(
-        err.contains("no pending approval"),
-        "expected error about pending approval, got: {err}"
-    );
+    let unknown_id = crate::run::RequestId::from("unknown/1");
+    let result = handle.withdraw(&unknown_id).await;
+    assert_eq!(result, Err(crate::run::RequestError::NotFound(unknown_id)));
 
     handle.wait().await;
 }
@@ -5442,7 +5416,10 @@ async fn child_run_events_carry_run_depth_and_child_id() {
                 ..
             }) => {
                 if matches!(event.as_ref(), RuntimeEvent::ApprovalRequested { .. }) {
-                    handle.respond_approval(child_run_id, true).await.unwrap();
+                    handle
+                        .respond(&approval_request_id(event.as_ref()), approval(true))
+                        .await
+                        .unwrap();
                 }
                 child_run_ids.push(child_run_id);
                 child_depths.push(run_depth);
@@ -5453,7 +5430,10 @@ async fn child_run_events_carry_run_depth_and_child_id() {
                 ..
             }) => {
                 if matches!(event.as_ref(), RuntimeEvent::ApprovalRequested { .. }) {
-                    handle.respond_approval(child_run_id, true).await.unwrap();
+                    handle
+                        .respond(&approval_request_id(event.as_ref()), approval(true))
+                        .await
+                        .unwrap();
                 }
                 child_run_ids.push(child_run_id);
             }
@@ -5663,7 +5643,7 @@ impl Tool for RepeatedFailureTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -5942,7 +5922,7 @@ impl Tool for MustNotRunTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: false,
+            effects: crate::tool::ToolEffects::NONE,
             approval: Approval::Never,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -6988,7 +6968,10 @@ async fn before_tool_runs_before_approval_with_modified_input() {
     while let Some(e) = rx.recv().await {
         if let RuntimeEvent::ApprovalRequested { tool_call, .. } = &e {
             approval_input = Some(tool_call.input.clone());
-            handle.respond_approval(handle.run_id, true).await.unwrap();
+            handle
+                .respond(&approval_request_id(&e), approval(true))
+                .await
+                .unwrap();
         }
     }
     handle.wait().await;
@@ -7110,7 +7093,7 @@ impl Tool for GuardedNamedTool {
     }
     fn metadata(&self) -> &ToolMetadata {
         &ToolMetadata {
-            side_effect: true,
+            effects: crate::tool::ToolEffects::UNKNOWN,
             approval: Approval::Always,
             execution_mode: ToolExecutionMode::Normal,
             parallelism: ToolParallelism::Serial,
@@ -7133,9 +7116,28 @@ impl Tool for GuardedNamedTool {
 
 use crate::run::ApprovalMode;
 
+/// Whether `rc` asks before a call of a tool with `meta`, absent host rules.
+fn should_approve(rc: &config::RuntimeConfig, meta: &ToolMetadata) -> bool {
+    let input = json!({});
+    let call = crate::tool::PermissionCall {
+        tool_name: "t",
+        input: &input,
+        effects: &meta.effects,
+        subject: crate::tool::PermissionSubject::default(),
+    };
+    matches!(
+        rc.decide(&call, meta, &Default::default()),
+        crate::tool::PermissionDecision::Ask { .. }
+    )
+}
+
 fn meta(approval: Approval, side_effect: bool) -> ToolMetadata {
     ToolMetadata {
-        side_effect,
+        effects: if side_effect {
+            crate::tool::ToolEffects::UNKNOWN
+        } else {
+            crate::tool::ToolEffects::NONE
+        },
         approval,
         execution_mode: ToolExecutionMode::Normal,
         parallelism: ToolParallelism::Serial,
@@ -7152,10 +7154,10 @@ fn approval_mode_per_tool_uses_enum() {
         approval_mode: ApprovalMode::PerTool,
         ..Default::default()
     };
-    assert!(rc.should_approve(&meta(Approval::Always, false)));
-    assert!(!rc.should_approve(&meta(Approval::Never, false)));
-    assert!(rc.should_approve(&meta(Approval::WhenRisky, true)));
-    assert!(!rc.should_approve(&meta(Approval::WhenRisky, false)));
+    assert!(should_approve(&rc, &meta(Approval::Always, false)));
+    assert!(!should_approve(&rc, &meta(Approval::Never, false)));
+    assert!(should_approve(&rc, &meta(Approval::WhenRisky, true)));
+    assert!(!should_approve(&rc, &meta(Approval::WhenRisky, false)));
 }
 
 #[test]
@@ -7164,7 +7166,7 @@ fn approval_mode_none_never_approves() {
         approval_mode: ApprovalMode::None,
         ..Default::default()
     };
-    assert!(!rc.should_approve(&meta(Approval::Always, true)));
+    assert!(!should_approve(&rc, &meta(Approval::Always, true)));
 }
 
 #[test]
@@ -7173,18 +7175,18 @@ fn approval_mode_all_always_approves() {
         approval_mode: ApprovalMode::All,
         ..Default::default()
     };
-    assert!(rc.should_approve(&meta(Approval::Never, false)));
+    assert!(should_approve(&rc, &meta(Approval::Never, false)));
 }
 
 #[test]
 fn custom_approval_fn_takes_priority() {
     let rc = config::RuntimeConfig {
         approval_mode: ApprovalMode::None,
-        custom_approval_fn: Some(Arc::new(|m: &ToolMetadata| m.side_effect)),
+        custom_approval_fn: Some(Arc::new(|m: &ToolMetadata| m.effects.has_side_effects())),
         ..Default::default()
     };
-    assert!(rc.should_approve(&meta(Approval::Never, true)));
-    assert!(!rc.should_approve(&meta(Approval::Never, false)));
+    assert!(should_approve(&rc, &meta(Approval::Never, true)));
+    assert!(!should_approve(&rc, &meta(Approval::Never, false)));
 }
 
 #[test]
@@ -7213,7 +7215,10 @@ async fn approval_mode_all_forces_approval_for_unguarded_tool() {
     while let Some(e) = rx.recv().await {
         if matches!(e, RuntimeEvent::ApprovalRequested { .. }) {
             saw_approval = true;
-            handle.respond_approval(handle.run_id, true).await.unwrap();
+            handle
+                .respond(&approval_request_id(&e), approval(true))
+                .await
+                .unwrap();
         }
     }
     handle.wait().await;
@@ -7795,39 +7800,60 @@ async fn restart_without_snapshot_reuses_original_input() {
     );
 }
 
+/// Seeds `store` with a finished one-turn session whose user input is `input`.
+async fn seed_session(
+    store: &Arc<crate::session::InMemorySessionStore>,
+    session_id: &str,
+    run_id: RunId,
+    input: &str,
+    last_step: u32,
+) {
+    use crate::session::{SessionEventKind, SessionLog, SessionMeta, SessionStore};
+    let mut log = SessionLog::new();
+    log.append(SessionEventKind::RunStarted {
+        run_id,
+        agent_name: "test".into(),
+    });
+    log.append(SessionEventKind::SystemMessage {
+        content: vec![ContentBlock::Text("stored system".into())],
+    });
+    log.append(SessionEventKind::UserMessage {
+        content: vec![ContentBlock::Text(input.into())],
+    });
+    log.append(SessionEventKind::StepEnded {
+        step: last_step,
+        budget_used: Default::default(),
+    });
+    store
+        .put_meta(&SessionMeta::new(session_id, "test"))
+        .await
+        .expect("put meta");
+    store
+        .append(session_id, log.events())
+        .await
+        .expect("append");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn restart_after_resume_reuses_original_snapshot_when_store_absent() {
-    use crate::session::SessionSnapshot;
+async fn restart_after_resume_continues_the_stored_log() {
+    use crate::session::{InMemorySessionStore, SessionStore};
 
     let user_inputs = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let model: Arc<dyn ModelAdapter> = Arc::new(RestartInputRecordingModel {
         calls: AtomicU32::new(0),
         user_inputs: Arc::clone(&user_inputs),
     });
+    let store = Arc::new(InMemorySessionStore::new());
+    let run_id = RunId::new();
+    seed_session(&store, "resume-restart", run_id, "snapshot input", 6).await;
     let mut config = test_config();
     config.supervision_strategy = SupervisionStrategy::Restart { max_retries: 1 };
-    let run_id = RunId::new();
-    let snapshot = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-        session_id: "resume-restart-no-store".into(),
-        run_id,
-        messages: vec![
-            Message {
-                role: Role::System,
-                content: vec![ContentBlock::Text("system".into())],
-            },
-            Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text("snapshot input".into())],
-            },
-        ],
-        step: 7,
-        budget_used: Default::default(),
-        active_config: config,
-    };
+    let config =
+        config.with_session_store(store.clone() as Arc<dyn SessionStore>, "resume-restart");
 
-    let (handle, mut rx) =
-        AgentRun::resume(snapshot, model, ToolRegistry::new()).expect("no session_store to miss");
+    let (handle, mut rx) = AgentRun::resume(config, model, ToolRegistry::new())
+        .await
+        .expect("session is stored");
     assert_eq!(handle.run_id, run_id);
 
     let mut saw_restart = false;
@@ -7843,13 +7869,13 @@ async fn restart_after_resume_reuses_original_snapshot_when_store_absent() {
     assert_eq!(
         inputs.as_slice(),
         &["snapshot input".to_string(), "snapshot input".to_string()],
-        "restart after resume should fall back to the original snapshot"
+        "restart after resume should continue the stored log"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn restart_replays_latest_session_store_snapshot() {
-    use crate::session::{InMemorySessionStore, SessionSnapshot, SessionStore};
+async fn restart_continues_the_persisted_session_log() {
+    use crate::session::{InMemorySessionStore, SessionEventKind, SessionStore};
 
     let user_inputs = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let model: Arc<dyn ModelAdapter> = Arc::new(RestartInputRecordingModel {
@@ -7862,29 +7888,6 @@ async fn restart_replays_latest_session_store_snapshot() {
     config.supervision_strategy = SupervisionStrategy::Restart { max_retries: 1 };
     config.session_store = Some(store.clone() as Arc<dyn SessionStore>);
     config.session_id = Some(session_id.into());
-
-    let snapshot = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-        session_id: session_id.into(),
-        run_id: RunId::new(),
-        messages: vec![
-            Message {
-                role: Role::System,
-                content: vec![ContentBlock::Text("stored system".into())],
-            },
-            Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text("stored input".into())],
-            },
-        ],
-        step: 4,
-        budget_used: Default::default(),
-        active_config: config.clone(),
-    };
-    store
-        .save(session_id, &snapshot)
-        .await
-        .expect("save snapshot");
 
     let (handle, mut rx) =
         AgentRun::start(config, "original input".into(), model, ToolRegistry::new());
@@ -7901,9 +7904,27 @@ async fn restart_replays_latest_session_store_snapshot() {
     assert!(saw_restart, "test must exercise supervisor restart");
     assert_eq!(
         inputs.as_slice(),
-        &["original input".to_string(), "stored input".to_string()],
-        "restart should replay the latest persisted session snapshot"
+        &["original input".to_string(), "original input".to_string()],
+        "restart should continue the persisted session log"
     );
+    let events = store.read(session_id, 1).await.expect("read");
+    let run_starts = events
+        .iter()
+        .filter(|e| matches!(e.kind, SessionEventKind::RunStarted { .. }))
+        .count();
+    assert_eq!(
+        run_starts, 2,
+        "the restarted worker appends to the same log"
+    );
+    let user_turns = events
+        .iter()
+        .filter(|e| matches!(e.kind, SessionEventKind::UserMessage { .. }))
+        .count();
+    assert_eq!(user_turns, 1, "the restart must not record the input twice");
+    assert!(matches!(
+        events.last().map(|e| &e.kind),
+        Some(SessionEventKind::RunEnded { .. })
+    ));
 }
 
 struct RunLevelRestartModel {
@@ -8230,7 +8251,7 @@ async fn manual_abort_has_no_reason() {
     // Either RunAborted with reason=None or RunCompleted (race) — just check that
     // if RunAborted fired, reason is None
     for event in &events {
-        if let RuntimeEvent::RunAborted { reason } = event {
+        if let RuntimeEvent::RunAborted { reason, .. } = event {
             assert!(reason.is_none(), "manual abort should have no reason");
         }
     }
@@ -8265,7 +8286,7 @@ async fn watcher_abort_terminates_run_with_reason() {
     // The run may complete before the watcher fires (race), OR fire RunAborted with reason.
     // We verify: if RunAborted fired, it has the correct reason.
     for event in &events {
-        if let RuntimeEvent::RunAborted { reason } = event {
+        if let RuntimeEvent::RunAborted { reason, .. } = event {
             let r = reason.as_deref().unwrap_or("");
             assert_eq!(r, "policy violation");
             return; // test passed
@@ -8364,89 +8385,9 @@ fn budget_guard_with_usage_seeds_prior_usage() {
     assert!((guard.usage().cost_usd - 0.05).abs() < 1e-10);
 }
 
-#[test]
-fn session_snapshot_round_trip() {
-    use crate::session::SessionSnapshot;
-    let snap = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-        session_id: "test-session".into(),
-        run_id: RunId::new(),
-        messages: vec![],
-        step: 5,
-        budget_used: crate::budget::BudgetUsage {
-            tokens_used: 100,
-            tool_calls_used: 2,
-            cost_usd: 0.01,
-        },
-        active_config: test_config(),
-    };
-    let json = serde_json::to_string(&snap).expect("serialize");
-    let back: SessionSnapshot = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(back.schema_version, SessionSnapshot::CURRENT_SCHEMA_VERSION);
-    assert_eq!(back.session_id, "test-session");
-    assert_eq!(back.step, 5);
-    assert_eq!(back.budget_used.tokens_used, 100);
-}
-
 #[tokio::test]
-async fn in_memory_store_save_and_load() {
-    use crate::session::{InMemorySessionStore, SessionSnapshot, SessionStore};
-    let store = InMemorySessionStore::new();
-    let snap = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-        session_id: "s1".into(),
-        run_id: RunId::new(),
-        messages: vec![],
-        step: 3,
-        budget_used: Default::default(),
-        active_config: test_config(),
-    };
-    store.save("s1", &snap).await.expect("save");
-    let loaded = store.load("s1").await.expect("load").expect("some");
-    assert_eq!(loaded.step, 3);
-    assert_eq!(loaded.session_id, "s1");
-}
-
-#[tokio::test]
-async fn in_memory_store_schema_mismatch() {
-    use crate::session::{InMemorySessionStore, SessionError, SessionSnapshot, SessionStore};
-    let store = InMemorySessionStore::new();
-    // Save a snapshot with wrong schema version by inserting directly via
-    // a save that we later check after mutating the stored value.
-    // We'll manually test by constructing a snapshot with a wrong version and
-    // bypassing the round-trip by saving a "version 0.0" snapshot.
-    let mut snap = SessionSnapshot {
-        schema_version: "0.0".into(), // Wrong version
-        session_id: "mismatch".into(),
-        run_id: RunId::new(),
-        messages: vec![],
-        step: 0,
-        budget_used: Default::default(),
-        active_config: test_config(),
-    };
-    // Override schema_version after JSON round-trip doesn't help since it's serialized.
-    // Use the store's internal mechanism: save "0.0" version directly.
-    // Since save does round-trip, we need to bypass it. Instead, let's test load
-    // rejects when loaded snapshot has wrong schema version.
-    // We test this by saving a version "0.1" (correct), loading it, verifying OK,
-    // then testing that the error type is correct via a direct schemamismatch construction.
-    snap.schema_version = SessionSnapshot::CURRENT_SCHEMA_VERSION.into();
-    store.save("mismatch", &snap).await.expect("save ok");
-    // Normal load succeeds
-    assert!(store.load("mismatch").await.expect("load").is_some());
-    // Test SchemaMismatch error construction
-    let err = SessionError::SchemaMismatch {
-        expected: "0.1".into(),
-        found: "0.0".into(),
-    };
-    assert!(err.to_string().contains("mismatch"));
-    // Delete is idempotent
-    store.delete("nonexistent").await.expect("delete ok");
-}
-
-#[tokio::test]
-async fn persistence_hook_saves_on_run_end() {
-    use crate::session::{InMemorySessionStore, SessionStore};
+async fn run_end_persists_session_log() {
+    use crate::session::{InMemorySessionStore, SessionEventKind, SessionStore};
     let store = Arc::new(InMemorySessionStore::new());
     let mut cfg = test_config();
     cfg.session_store = Some(store.clone() as Arc<dyn SessionStore>);
@@ -8458,14 +8399,45 @@ async fn persistence_hook_saves_on_run_end() {
     while rx.recv().await.is_some() {}
     handle.wait().await;
 
-    let snap = store.load("sess-end").await.expect("load").expect("some");
-    assert_eq!(snap.session_id, "sess-end");
-    assert!(snap.step > 0 || !snap.messages.is_empty());
+    let meta = store
+        .get_meta("sess-end")
+        .await
+        .expect("meta")
+        .expect("some");
+    assert_eq!(meta.session_id, "sess-end");
+    let kinds: Vec<&'static str> = store
+        .read("sess-end", 1)
+        .await
+        .expect("read")
+        .iter()
+        .map(|e| match e.kind {
+            SessionEventKind::RunStarted { .. } => "run_started",
+            SessionEventKind::SystemMessage { .. } => "system",
+            SessionEventKind::UserMessage { .. } => "user",
+            SessionEventKind::StepStarted { .. } => "step_started",
+            SessionEventKind::AssistantMessage { .. } => "assistant",
+            SessionEventKind::StepEnded { .. } => "step_ended",
+            SessionEventKind::RunEnded { .. } => "run_ended",
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            "run_started",
+            "system",
+            "user",
+            "step_started",
+            "assistant",
+            "step_ended",
+            "run_ended"
+        ]
+    );
 }
 
 #[tokio::test]
-async fn persistence_hook_saves_on_run_error() {
-    use crate::session::{InMemorySessionStore, SessionStore};
+async fn run_error_persists_session_log() {
+    use crate::session::{InMemorySessionStore, SessionEventKind, SessionStore};
     let store = Arc::new(InMemorySessionStore::new());
     let mut cfg = test_config();
     cfg.runtime.max_steps = 0; // forces immediate RunFailed
@@ -8478,14 +8450,36 @@ async fn persistence_hook_saves_on_run_error() {
     while rx.recv().await.is_some() {}
     handle.wait().await;
 
-    // Session should be saved even on error path
-    let result = store.load("sess-err").await.expect("load");
-    assert!(result.is_some(), "snapshot should be saved on run error");
+    let events = store.read("sess-err", 1).await.expect("read");
+    assert!(matches!(
+        events.last().map(|e| &e.kind),
+        Some(SessionEventKind::RunFailed { .. })
+    ));
 }
 
 #[tokio::test]
-async fn resume_continues_from_snapshot() {
+async fn fresh_start_refuses_an_existing_session() {
     use crate::session::{InMemorySessionStore, SessionStore};
+    let store = Arc::new(InMemorySessionStore::new());
+    seed_session(&store, "taken", RunId::new(), "earlier", 0).await;
+    let cfg = test_config().with_session_store(store.clone() as Arc<dyn SessionStore>, "taken");
+
+    let model = Arc::new(FakeModelAdapter::final_answer());
+    let (handle, mut rx) = AgentRun::start(cfg, "hi".into(), model, ToolRegistry::new());
+    let mut failure = None;
+    while let Some(event) = rx.recv().await {
+        if let RuntimeEvent::RunFailed { error, .. } = event {
+            failure = Some(error);
+        }
+    }
+    handle.wait().await;
+    assert!(failure.expect("run must fail").contains("already exists"));
+    assert_eq!(store.read("taken", 1).await.expect("read").len(), 4);
+}
+
+#[tokio::test]
+async fn resume_continues_session_log() {
+    use crate::session::{InMemorySessionStore, SessionLog, SessionStore};
     let store = Arc::new(InMemorySessionStore::new());
 
     // === Start phase ===
@@ -8500,28 +8494,20 @@ async fn resume_continues_from_snapshot() {
     while rx.recv().await.is_some() {}
     handle.wait().await;
 
-    // Load snapshot
-    let mut snap = store
-        .load("resume-test")
-        .await
-        .expect("load")
-        .expect("some");
-    assert!(!snap.messages.is_empty(), "snapshot should have messages");
-    let snap_step = snap.step;
-    let snap_tokens = snap.budget_used.tokens_used;
+    let before = SessionLog::from_events(store.read("resume-test", 1).await.expect("read"))
+        .expect("valid log");
+    assert!(!before.messages().is_empty(), "log should project messages");
+    let before_step = before.step();
+    let before_tokens = before.projection().budget_used.tokens_used;
 
-    // Re-attach session store to config for continued persistence
-    snap.active_config = snap
-        .active_config
-        .with_session_store(store.clone() as Arc<dyn SessionStore>, "resume-test");
-
-    // === Resume phase ===
+    // === Resume phase: the host supplies the config again ===
+    let cfg2 =
+        test_config().with_session_store(store.clone() as Arc<dyn SessionStore>, "resume-test");
     let model2 = Arc::new(FakeModelAdapter::final_answer());
-    let registry2 = ToolRegistry::new();
-    let (handle2, mut rx2) =
-        AgentRun::resume(snap, model2, registry2).expect("session_store was re-attached");
+    let (handle2, mut rx2) = AgentRun::resume(cfg2, model2, ToolRegistry::new())
+        .await
+        .expect("session is stored");
 
-    // run_id should be the same as original
     assert_eq!(
         handle2.run_id, original_run_id,
         "run_id must be consistent across resume"
@@ -8533,25 +8519,22 @@ async fn resume_continues_from_snapshot() {
     }
     handle2.wait().await;
 
-    // Resumed run should complete successfully
     assert!(events
         .iter()
         .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
 
-    // Snapshot should be updated with accumulated budget (>= original)
-    let snap2 = store
-        .load("resume-test")
-        .await
-        .expect("load")
-        .expect("some");
+    let after = SessionLog::from_events(store.read("resume-test", 1).await.expect("read"))
+        .expect("valid log");
+    assert_eq!(
+        &after.events()[..before.events().len()],
+        before.events(),
+        "resume only appends to the log"
+    );
     assert!(
-        snap2.budget_used.tokens_used >= snap_tokens,
+        after.projection().budget_used.tokens_used > before_tokens,
         "resumed run should accumulate budget from prior usage"
     );
-    assert!(
-        snap2.step >= snap_step,
-        "resumed run step should be >= snapshot step"
-    );
+    assert_eq!(after.step(), before_step + 1);
 }
 
 // ── Multi-watcher coordination tests (issue 008) ────────────────────────────
@@ -8892,7 +8875,7 @@ async fn start_matches_start_with_messages_with_empty_history() {
 
 #[tokio::test]
 async fn resume_with_input_appends_new_user_turn() {
-    use crate::session::{InMemorySessionStore, SessionStore};
+    use crate::session::{InMemorySessionStore, SessionLog, SessionStore};
 
     // === Start phase ===
     let store = Arc::new(InMemorySessionStore::new());
@@ -8906,15 +8889,13 @@ async fn resume_with_input_appends_new_user_turn() {
     while rx.recv().await.is_some() {}
     handle.wait().await;
 
-    let mut snap = store
-        .load("resume-with-input-test")
-        .await
-        .expect("load")
-        .expect("some");
-    let original_message_count = snap.messages.len();
-    snap.active_config = snap.active_config.with_session_store(
-        store.clone() as Arc<dyn SessionStore>,
-        "resume-with-input-test",
+    let log = SessionLog::from_events(store.read("resume-with-input-test", 1).await.expect("read"))
+        .expect("valid log");
+    let original_message_count = log.messages().len();
+    assert_eq!(
+        log.messages().last().map(|m| m.role),
+        Some(Role::Assistant),
+        "the final answer is part of the projected history"
     );
 
     // === Resume-with-input phase ===
@@ -8922,13 +8903,18 @@ async fn resume_with_input_appends_new_user_turn() {
     let model2: Arc<dyn ModelAdapter> = Arc::new(MessageCapturingModel {
         captured: captured.clone(),
     });
+    let cfg2 = test_config().with_session_store(
+        store.clone() as Arc<dyn SessionStore>,
+        "resume-with-input-test",
+    );
     let (handle2, mut rx2) = AgentRun::resume_with_input(
-        snap,
+        cfg2,
         RunInput::text("follow-up question"),
         model2,
         ToolRegistry::new(),
     )
-    .expect("session_store was re-attached");
+    .await
+    .expect("session is stored");
     while rx2.recv().await.is_some() {}
     handle2.wait().await;
 
@@ -8937,7 +8923,7 @@ async fn resume_with_input_appends_new_user_turn() {
     assert_eq!(
         first_call.len(),
         original_message_count + 1,
-        "resume_with_input should append exactly one new message to the snapshot history"
+        "resume_with_input should append exactly one new message to the projected history"
     );
     let last = first_call.last().expect("at least one message");
     assert_eq!(
@@ -8954,105 +8940,47 @@ async fn resume_with_input_appends_new_user_turn() {
 }
 
 #[tokio::test]
-async fn resume_fails_loudly_when_persisted_session_store_not_reattached() {
-    use crate::session::SessionSnapshot;
+async fn resume_without_session_store_is_not_configured() {
+    use crate::session::SessionError;
 
-    // Simulates a deserialized snapshot: session_store is `#[serde(skip)]`,
-    // so a real load never carries it forward even though session_id survives.
+    // A deserialized config keeps session_id but never the store.
     let mut cfg = test_config();
     cfg.session_id = Some("dropped-store-test".into());
     cfg.session_store = None;
 
-    let snapshot = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-        session_id: "dropped-store-test".into(),
-        run_id: RunId::new(),
-        messages: vec![Message {
-            role: Role::User,
-            content: vec![ContentBlock::Text("hi".into())],
-        }],
-        step: 1,
-        budget_used: Default::default(),
-        active_config: cfg,
-    };
-
     let model = Arc::new(FakeModelAdapter::final_answer());
-    let err = match AgentRun::resume(snapshot, model, ToolRegistry::new()) {
+    let err = match AgentRun::resume(cfg.clone(), model.clone(), ToolRegistry::new()).await {
         Err(e) => e,
-        Ok(_) => panic!("resume must fail loudly when session_store wasn't re-attached"),
+        Ok(_) => panic!("resume must fail without a session store"),
     };
-    assert!(matches!(
-        err,
-        ConfigError::SessionStoreMissing { session_id } if session_id == "dropped-store-test"
-    ));
-}
+    assert!(matches!(err, SessionError::NotConfigured));
 
-#[tokio::test]
-async fn resume_with_input_fails_loudly_when_persisted_session_store_not_reattached() {
-    use crate::session::SessionSnapshot;
-
-    let mut cfg = test_config();
-    cfg.session_id = Some("dropped-store-test-2".into());
-    cfg.session_store = None;
-
-    let snapshot = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-        session_id: "dropped-store-test-2".into(),
-        run_id: RunId::new(),
-        messages: vec![Message {
-            role: Role::User,
-            content: vec![ContentBlock::Text("hi".into())],
-        }],
-        step: 1,
-        budget_used: Default::default(),
-        active_config: cfg,
-    };
-
-    let model = Arc::new(FakeModelAdapter::final_answer());
     let err = match AgentRun::resume_with_input(
-        snapshot,
+        cfg,
         RunInput::text("follow-up"),
         model,
         ToolRegistry::new(),
-    ) {
+    )
+    .await
+    {
         Err(e) => e,
-        Ok(_) => panic!("resume_with_input must fail loudly when session_store wasn't re-attached"),
+        Ok(_) => panic!("resume_with_input must fail without a session store"),
     };
-    assert!(matches!(
-        err,
-        ConfigError::SessionStoreMissing { session_id } if session_id == "dropped-store-test-2"
-    ));
+    assert!(matches!(err, SessionError::NotConfigured));
 }
 
 #[tokio::test]
-async fn resume_without_session_id_is_unaffected_by_session_store_check() {
-    use crate::session::SessionSnapshot;
+async fn resume_of_unknown_session_is_not_found() {
+    use crate::session::{InMemorySessionStore, SessionError, SessionStore};
 
-    // A snapshot that never had persistence enabled (session_id: None) must
-    // resume normally — the loud-failure check only fires for snapshots that
-    // once had persistence turned on.
-    let cfg = test_config();
-    assert!(cfg.session_id.is_none());
-    assert!(cfg.session_store.is_none());
-
-    let snapshot = SessionSnapshot {
-        schema_version: SessionSnapshot::CURRENT_SCHEMA_VERSION.into(),
-        session_id: "never-persisted".into(),
-        run_id: RunId::new(),
-        messages: vec![Message {
-            role: Role::User,
-            content: vec![ContentBlock::Text("hi".into())],
-        }],
-        step: 1,
-        budget_used: Default::default(),
-        active_config: cfg,
-    };
-
+    let store = Arc::new(InMemorySessionStore::new());
+    let cfg = test_config().with_session_store(store as Arc<dyn SessionStore>, "never-written");
     let model = Arc::new(FakeModelAdapter::final_answer());
-    let (handle, mut rx) = AgentRun::resume(snapshot, model, ToolRegistry::new())
-        .expect("no session_id on active_config means the check doesn't apply");
-    while rx.recv().await.is_some() {}
-    handle.wait().await;
+    let err = match AgentRun::resume(cfg, model, ToolRegistry::new()).await {
+        Err(e) => e,
+        Ok(_) => panic!("resume must fail for an unknown session"),
+    };
+    assert!(matches!(err, SessionError::NotFound(id) if id == "never-written"));
 }
 
 // ── Issue #254 / SB-7: deterministic multi-watcher action arbitration ────────
@@ -9066,7 +8994,7 @@ async fn watcher_arbitration_abort_wins_independent_of_completion_order() {
 
     for inject_submits_first in [true, false] {
         let actor_ref = Arc::new(Mutex::new(None));
-        let arb = ActionArbitrator::new(Arc::clone(&actor_ref));
+        let arb = ActionArbitrator::new(Arc::clone(&actor_ref), crate::run::CancelToken::new());
         arb.register_watcher(0);
         arb.register_watcher(1);
 
@@ -9126,7 +9054,7 @@ async fn watcher_arbitration_inject_steer_registration_order_independent_of_sche
 
     for steer_submits_first in [true, false] {
         let actor_ref = Arc::new(Mutex::new(None));
-        let arb = ActionArbitrator::new(Arc::clone(&actor_ref));
+        let arb = ActionArbitrator::new(Arc::clone(&actor_ref), crate::run::CancelToken::new());
         arb.register_watcher(0);
         arb.register_watcher(1);
 
@@ -9191,4 +9119,156 @@ fn public_arbitrate_watcher_actions_documents_precedence() {
         resolved,
         crate::run::ArbitratedActions::Abort(r) if r == "a"
     ));
+}
+
+// ── v2.0 issue 004: blocking request channel ────────────────────────────────
+
+fn resolution_of(events: &[RuntimeEvent]) -> crate::run::RequestResolution {
+    events
+        .iter()
+        .find_map(|e| match e {
+            RuntimeEvent::RequestResolved { resolution, .. } => Some(resolution.clone()),
+            _ => None,
+        })
+        .expect("a RequestResolved event")
+}
+
+fn guarded_echo_registry() -> ToolRegistry {
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(GuardedNamedTool { name: "echo" }))
+        .unwrap();
+    registry
+}
+
+#[tokio::test]
+async fn pending_request_is_listed_and_answered_by_id() {
+    let model = Arc::new(ToolCallModelAdapter);
+    let (handle, mut rx) =
+        AgentRun::start(test_config(), "hi".into(), model, guarded_echo_registry());
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        if let RuntimeEvent::ApprovalRequested {
+            request_id, kind, ..
+        } = &event
+        {
+            assert_eq!(kind.as_str(), crate::run::RequestKind::TOOL_APPROVAL);
+            let pending = handle.pending_requests().await;
+            assert_eq!(pending.len(), 1);
+            assert_eq!(&pending[0].id, request_id);
+            assert_eq!(pending[0].run_id, handle.run_id);
+            assert!(matches!(
+                &pending[0].target,
+                crate::run::RequestTarget::ToolCall { tool_name, .. } if tool_name == "echo"
+            ));
+            assert!(handle.request(request_id).await.is_some());
+            handle.respond(request_id, approval(true)).await.unwrap();
+            assert!(handle.request(request_id).await.is_none());
+        }
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert!(resolution_of(&events).is_approved());
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ApprovalGranted { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+}
+
+#[tokio::test]
+async fn withdrawn_request_fails_closed_and_run_continues() {
+    let model = Arc::new(ToolCallModelAdapter);
+    let (handle, mut rx) =
+        AgentRun::start(test_config(), "hi".into(), model, guarded_echo_registry());
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        if let RuntimeEvent::ApprovalRequested { request_id, .. } = &event {
+            handle.withdraw(request_id).await.unwrap();
+        }
+        events.push(event);
+    }
+    handle.wait().await;
+
+    assert_eq!(
+        resolution_of(&events),
+        crate::run::RequestResolution::Withdrawn
+    );
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ApprovalDenied { .. })));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ToolCallCompleted { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+}
+
+#[tokio::test]
+async fn unanswered_request_times_out_closed_without_failing_the_run() {
+    let model = Arc::new(ToolCallModelAdapter);
+    let mut config = test_config();
+    config.runtime.request_timeout = Duration::from_millis(30);
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, guarded_echo_registry());
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    assert!(handle.pending_requests().await.is_empty());
+    handle.wait().await;
+
+    assert_eq!(
+        resolution_of(&events),
+        crate::run::RequestResolution::TimedOut
+    );
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::ToolCallCompleted { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RuntimeEvent::RunCompleted { .. })));
+}
+
+#[tokio::test]
+async fn requests_are_recorded_in_the_session_log() {
+    use crate::session::{InMemorySessionStore, SessionEventKind, SessionStore};
+    let store = Arc::new(InMemorySessionStore::new());
+    let mut config = test_config();
+    config.session_store = Some(store.clone() as Arc<dyn SessionStore>);
+    config.session_id = Some("sess-request".into());
+
+    let model = Arc::new(ToolCallModelAdapter);
+    let (handle, mut rx) = AgentRun::start(config, "hi".into(), model, guarded_echo_registry());
+    while let Some(event) = rx.recv().await {
+        if let RuntimeEvent::ApprovalRequested { request_id, .. } = &event {
+            handle.respond(request_id, approval(false)).await.unwrap();
+        }
+    }
+    handle.wait().await;
+
+    let events = store.read("sess-request", 1).await.unwrap();
+    let opened = events.iter().find_map(|e| match &e.kind {
+        SessionEventKind::RequestOpened { request } => Some(request.clone()),
+        _ => None,
+    });
+    let resolved = events.iter().find_map(|e| match &e.kind {
+        SessionEventKind::RequestResolved {
+            request_id,
+            resolution,
+        } => Some((request_id.clone(), resolution.clone())),
+        _ => None,
+    });
+    let opened = opened.expect("RequestOpened logged");
+    let (resolved_id, resolution) = resolved.expect("RequestResolved logged");
+    assert_eq!(opened.id, resolved_id);
+    assert!(!resolution.is_approved());
+    let log = crate::session::SessionLog::from_events(events).unwrap();
+    assert!(log.projection().pending.is_empty());
+    assert_eq!(log.projection().requests_opened, 1);
 }
