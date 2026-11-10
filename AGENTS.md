@@ -62,7 +62,7 @@ The living iteration index is [`docs/iteration/roadmap.md`](./docs/iteration/roa
 
 The authoritative, up-to-date status lives in [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md) (已完成 / 规划中 tables + dependency graph). Do not duplicate it here.
 
-Snapshot (2026-11): v0.1–v0.17, v1.0 and v1.2 shipped; the repository is public. `1.2.0` (2026-11-10: voice contract V1 + Vercel AI Gateway / Fireworks, `docs/iteration/v1_2/`) is the latest crates.io release; it was tagged from the v1.2 branch head, before the v2.0 merge. **v2.0** (runtime contract, `docs/iteration/v2_0/`) is merged into `main` but unreleased (`CHANGELOG.md` `[Unreleased]`; ships as `2.0.0`). Next: **SDK 0.2** (publishing the Python and Node packages, `docs/iteration/sdk_v0_2/`), then SDK 0.3, v2.1 and v2.2 (see the roadmap). Other candidate directions live in `docs/todo/`.
+Snapshot (2026-11): v0.1–v0.17, v1.0, v1.2 and v2.0 shipped; the repository is public. `2.0.0` (2026-11-10: the breaking v2.0 runtime contract, `docs/iteration/v2_0/`) is the latest crates.io release; `1.2.0` (voice contract V1 + Vercel AI Gateway / Fireworks, `docs/iteration/v1_2/`) was released the same day from the v1.2 branch head, before the v2.0 merge. Next: **SDK 0.2** (publishing the Python and Node packages, `docs/iteration/sdk_v0_2/`, built on `2.0.0`), then SDK 0.3, v2.1 and v2.2 (see the roadmap). Other candidate directions live in `docs/todo/`.
 
 ---
 
