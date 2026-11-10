@@ -16,13 +16,28 @@ use crate::{
     OptionAdjustment, ReasoningCapability, RequestOptions, ThinkingLevel, UpstreamErrorDetail,
 };
 
-/// The OpenRouter Chat profile.
-pub struct OpenRouterProfile;
+/// The OpenRouter Chat profile. Vercel AI Gateway speaks the same `reasoning`
+/// object / `reasoning_details` dialect and reuses it under its own name.
+pub struct OpenRouterProfile {
+    /// Provider name reported on replay errors.
+    provider: &'static str,
+}
+
+impl OpenRouterProfile {
+    /// The OpenRouter reasoning dialect, attributed to `provider`.
+    pub(crate) const fn for_provider(provider: &'static str) -> Self {
+        Self { provider }
+    }
+}
 
 /// The singleton attached to the OpenRouter `ProviderEntry`.
-pub static OPENROUTER_PROFILE: OpenRouterProfile = OpenRouterProfile;
+pub static OPENROUTER_PROFILE: OpenRouterProfile = OpenRouterProfile::for_provider("openrouter");
 
-fn append_reasoning_details(target: &mut Vec<Value>, details: &Value) -> Result<(), ModelError> {
+fn append_reasoning_details(
+    provider: &str,
+    target: &mut Vec<Value>,
+    details: &Value,
+) -> Result<(), ModelError> {
     match details {
         Value::Array(items) => {
             target.extend(items.iter().cloned());
@@ -34,10 +49,10 @@ fn append_reasoning_details(target: &mut Vec<Value>, details: &Value) -> Result<
         }
         other => Err(ModelError {
             message: format!(
-                "OpenRouter reasoning replay details must be object or array, got {other}"
+                "{provider} reasoning replay details must be object or array, got {other}"
             ),
             code: Some("invalid_reasoning_replay".into()),
-            provider: Some("openrouter".into()),
+            provider: Some(provider.into()),
             status: None,
             retry_after_secs: None,
             upstream: Some(Arc::new(UpstreamErrorDetail {
@@ -111,7 +126,7 @@ impl ProviderProfile for OpenRouterProfile {
             } = block
             {
                 if let Some(details) = provider_details {
-                    append_reasoning_details(&mut reasoning_details, details)?;
+                    append_reasoning_details(self.provider, &mut reasoning_details, details)?;
                 } else if reasoning_details.is_empty() {
                     if let Some(t) = text {
                         reasoning_text = Some(match reasoning_text {

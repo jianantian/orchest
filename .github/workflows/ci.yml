@@ -60,6 +60,13 @@ jobs:
       - name: cargo test provider selection (all weight features)
         run: cargo test -p orchest-provider --features "http,stream,visual" --test selection --test catalog_discovery
 
+      # `cargo test --workspace` already runs these; the named step makes a
+      # contract break visible on its own, and keeps the recorder compiling.
+      - name: ASR contract tests (fixture replay) and fixture recorder
+        run: |
+          cargo test -p orchest-provider-stream --test asr_contract
+          cargo clippy -p orchest-provider-stream --features record-fixtures --examples -- -D warnings
+
       - name: Python binding package tests
         run: |
           python -m venv .venv

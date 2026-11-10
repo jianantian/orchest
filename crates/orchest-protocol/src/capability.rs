@@ -35,6 +35,18 @@ pub enum SessionInput {
     ToolResult { tool_use_id: String, content: Value },
     /// Client-initiated barge-in. ← `interrupt`.
     Interrupt,
+    /// Ask the upstream to finalize what it has heard so far as soon as
+    /// possible, and to follow up with a Turn
+    /// ([`LifecycleEvent::EndOfSpeech`](crate::LifecycleEvent::EndOfSpeech)) where
+    /// it can. The Session stays open: more `Audio` may follow, and closing the
+    /// input remains the only way to end it. This is what an on-device VAD sends
+    /// after detecting a pause (ADR-0006 D2, D4).
+    ///
+    /// A dialect without a native finalize answers with a non-fatal
+    /// [`StreamEvent::Error`](crate::StreamEvent::Error) carrying
+    /// [`ErrorCode::UnsupportedOption`](crate::ErrorCode::UnsupportedOption); it
+    /// never degrades silently or synthesizes a Turn locally (ADR-0006 D7.2).
+    Finalize,
 }
 
 /// A live full-duplex session: send [`SessionInput`], pull the unified

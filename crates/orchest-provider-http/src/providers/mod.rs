@@ -7,9 +7,11 @@
 pub mod anthropic;
 pub mod deepseek;
 pub mod elss;
+pub mod fireworks;
 pub mod minimax;
 pub mod openai;
 pub mod openrouter;
+pub mod vercel;
 pub mod volcengine;
 
 // Every provider is now pure entry + profile over a shared protocol core (Chat via

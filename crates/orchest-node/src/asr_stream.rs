@@ -5,8 +5,11 @@ use napi::bindgen_prelude::Buffer;
 use napi::threadsafe_function::{ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction};
 use napi::{Env, JsFunction, JsObject};
 use napi_derive::napi;
+use orchest::bindings::asr::{
+    enqueue_finalize, finalize_unsupported, sdk_asr_event, select_asr_model, AsrMode,
+};
 use orchest_protocol::{
-    ErrorCode, Language, ProtocolError, SessionInput, StreamingTranscribeRequest,
+    ErrorCode, Language, ProtocolError, SessionInput, StreamEvent, StreamingTranscribeRequest,
 };
 use orchest_provider::{ProviderConfig, Registry};
 use tokio::sync::Notify;
@@ -17,6 +20,7 @@ pub struct AsrStreamOptions {
     pub sample_rate: u32,
     pub language: Option<String>,
     pub provider: Option<String>,
+    pub model: Option<String>,
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
     pub api_url: Option<String>,
@@ -33,6 +37,10 @@ struct Completion {
 pub struct NativeAsrStream {
     input: Arc<Mutex<Option<tokio::sync::mpsc::Sender<SessionInput>>>>,
     completion: Arc<Completion>,
+    /// Whether the selected model honours `SessionInput::Finalize`.
+    client_finalize: bool,
+    provider: String,
+    model: String,
 }
 
 #[napi]
@@ -52,6 +60,22 @@ impl NativeAsrStream {
             .send(SessionInput::Audio(Bytes::copy_from_slice(&audio)))
             .await
             .map_err(|_| napi::Error::from_reason("ASR session input is closed"))
+    }
+
+    #[napi]
+    pub async fn finalize(&self) -> napi::Result<()> {
+        if let Some(error) = finalize_unsupported(self.client_finalize, &self.provider, &self.model)
+        {
+            return Err(super::error::protocol_error(error));
+        }
+        let sender = self
+            .input
+            .lock()
+            .map_err(|_| napi::Error::from_reason("ASR session lock poisoned"))?
+            .clone();
+        enqueue_finalize(sender)
+            .await
+            .map_err(|error| napi::Error::from_reason(error.to_string()))
     }
 
     #[napi]
@@ -106,34 +130,42 @@ async fn start(
     input: AsrStreamOptions,
     tsfn: ThreadsafeFunction<serde_json::Value, ErrorStrategy::Fatal>,
 ) -> napi::Result<NativeAsrStream> {
-    let id = input
-        .provider
-        .unwrap_or_else(|| "aliyun/qwen-audio-3.0-asr-flash-streaming".into());
+    let (provider, model) = match (input.provider, input.model) {
+        // the model then comes from the catalog's `default_for_provider`
+        (None, None) => ("aliyun".to_string(), None),
+        (Some(provider), model) => (super::asr::validate_provider(provider)?, model),
+        (None, Some(_)) => return Err(napi::Error::from_reason("model requires provider")),
+    };
     let key = super::asr::resolve_key(
         input.api_key,
         input.api_key_env.as_deref(),
-        super::asr::default_key_env(&id),
-        &id,
+        super::asr::default_key_env(&provider),
+        &provider,
     )?;
     let registry = Registry::with_builtin();
-    let entry = registry
-        .asr()
-        .id(&id)
-        .select()
-        .map_err(super::error::protocol_error)?;
-    let (provider, model) = id
-        .split_once('/')
-        .ok_or_else(|| napi::Error::from_reason("provider must be provider/model"))?;
+    let rows = registry.asr().provider(provider.clone()).list();
+    let descriptors: Vec<_> = rows.iter().map(|entry| &entry.descriptor).collect();
+    let entry = select_asr_model(
+        &descriptors,
+        &provider,
+        model.as_deref(),
+        AsrMode::Streaming,
+        None,
+    )
+    .map(|index| rows[index])
+    .map_err(super::error::protocol_error)?;
+    let model = model.unwrap_or_else(|| entry.descriptor.model.to_string());
     let handle = entry
         .instantiate(&ProviderConfig {
-            provider: provider.into(),
-            model: model.into(),
+            provider: provider.clone(),
+            model: model.clone(),
             api_key: Some(key),
             api_url: input.api_url,
             max_tokens: None,
             options: serde_json::Value::Null,
         })
         .map_err(super::error::protocol_error)?;
+    let client_finalize = handle.descriptor().client_finalize();
     let mut options = input.options.unwrap_or_else(|| serde_json::json!({}));
     if !options.is_object() {
         return Err(napi::Error::from_reason("options must be an object"));
@@ -163,19 +195,13 @@ async fn start(
         let mut result = Ok(());
         while let Some(event) = events.next().await {
             let fatal_error = match &event {
-                orchest_protocol::StreamEvent::Error {
+                StreamEvent::Error {
                     error, fatal: true, ..
                 } => Some(super::error::ProviderErrorData::from(error.clone()).encoded()),
                 _ => None,
             };
-            match serde_json::to_value(&event) {
-                Ok(value) => {
-                    if let Err(error) = tsfn.call_async::<()>(value).await {
-                        result = Err(error.to_string());
-                        break;
-                    }
-                }
-                Err(error) => {
+            if let Some(value) = sdk_asr_event(&event) {
+                if let Err(error) = tsfn.call_async::<()>(value).await {
                     result = Err(error.to_string());
                     break;
                 }
@@ -206,6 +232,9 @@ async fn start(
     Ok(NativeAsrStream {
         input: input_sender,
         completion,
+        client_finalize,
+        provider,
+        model,
     })
 }
 

@@ -1,7 +1,8 @@
-//! Decisions HTTP dialect and its initial OpenRouter deployment.
+//! Decisions HTTP dialect (the TypeSafe wire) and its deployments: OpenRouter
+//! Decisions and Vercel AI Gateway.
 
 mod catalog;
-mod openrouter;
+mod typesafe;
 mod wire;
 
 pub use catalog::{decision_entries, decision_models};

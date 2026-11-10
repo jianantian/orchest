@@ -4,7 +4,7 @@ GitHub issue: #348
 
 ## Background
 
-001–006 都是增量变更。SDK 0.2 要给出 SDK↔crate 版本矩阵（ADR-0005 D6），矩阵里的 crate 版本应当是已发布版本，而不是 main 上的某个提交。
+001–006 的 API 都是增量变更；流式 ASR 事件行为的变化按 ADR-0003 D4 的 1.2.0 例外处理。SDK 0.2 要给出 SDK↔crate 版本矩阵（ADR-0005 D6），矩阵里的 crate 版本应当是已发布版本，而不是 main 上的某个提交。
 
 ## Goal
 
@@ -13,7 +13,7 @@ GitHub issue: #348
 ## Acceptance Criteria
 
 - [ ] workspace 版本与内部依赖要求升到 `1.2.0`（ADR-0003 lockstep）。
-- [ ] `CHANGELOG.md` 的 `## [1.2.0]` 列出 001–006 的新增项，无 Breaking Changes。
+- [ ] `CHANGELOG.md` 的 `## [1.2.0]` 列出 001–006 的新增项；流式 ASR 事件行为的变化记在 Changed，并引用 ADR-0003 D4 的例外。
 - [ ] `v1.2.0` tag 触发 release workflow，八个 crate 发布成功。
 - [ ] `docs/iteration/roadmap.md` 把 v1.2 移到「已完成」。
 

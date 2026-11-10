@@ -4,7 +4,7 @@
 
 - `crates/orchest-provider-http/src/providers/openrouter/{mod.rs,profile.rs,request.rs,tests.rs}`
 - `crates/orchest-provider-http/src/{defaults.rs,registry.rs,lib.rs}`（`normalize_provider_model`、provider 注册）
-- `crates/orchest-provider-http/src/decision/{mod.rs,openrouter.rs}`
+- `crates/orchest-provider-http/src/decision/{mod.rs,typesafe.rs}`（原 `openrouter.rs`）
 - Vercel AI Gateway 官方文档（OpenAI 兼容接口、鉴权、模型 id）
 
 ## Files to change

@@ -185,7 +185,39 @@ mod http {
             ..Default::default()
         })
         .collect();
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn vercel_serves_the_same_wire_and_reads_flat_errors() {
+        let reg = Registry::with_builtin();
+        let default = reg.decision().provider("vercel").select().unwrap();
+        assert_eq!(default.descriptor.model, "typesafe-ai/jev");
+
+        let (url, ok) = server(response().to_string(), "200 OK", "", Duration::ZERO);
+        let mut cfg = DecisionConfig::new("vercel/typesafe-ai/jev");
+        cfg.api_key = Some("test-key".into());
+        cfg.api_url = Some(url);
+        let result = decide(&cfg, request()).await.unwrap();
+        let raw = ok.join().unwrap();
+        let wire: Value = serde_json::from_str(raw.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(wire["model"], "typesafe-ai/jev");
+        assert_eq!(wire["questions"]["urgent"]["type"], "noul");
+        let result = serde_json::to_value(result).unwrap();
+        assert_eq!(result["answers"]["urgent"]["probability"], 0.95);
+
+        let (url, failing) = server(
+            json!({"message":"invalid key","error_type":"authentication_error"}).to_string(),
+            "401 Unauthorized",
+            "",
+            Duration::ZERO,
+        );
+        cfg.api_url = Some(url);
+        let error = decide(&cfg, request()).await.unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidApiKey);
+        assert_eq!(error.provider.as_deref(), Some("vercel"));
+        assert!(error.message.contains("invalid key"), "{}", error.message);
+        failing.join().unwrap();
     }
 
     #[tokio::test]

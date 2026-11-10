@@ -1,8 +1,11 @@
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
+use orchest::bindings::asr::{
+    enqueue_finalize, finalize_unsupported, sdk_asr_event, select_asr_model, AsrMode,
+};
 use orchest_protocol::{
-    ErrorCode, Language, ProtocolError, SessionInput, StreamingTranscribeRequest,
+    ErrorCode, Language, ProtocolError, SessionInput, StreamEvent, StreamingTranscribeRequest,
 };
 use orchest_provider::{ProviderConfig, Registry};
 use pyo3::exceptions::PyRuntimeError;
@@ -10,7 +13,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use tokio::sync::Notify;
 
-const DEFAULT_STREAMING_ASR: &str = "aliyun/qwen-audio-3.0-asr-flash-streaming";
+const DEFAULT_STREAMING_PROVIDER: &str = "aliyun";
 
 struct Completion {
     result: Mutex<Option<Result<(), StreamFailure>>>,
@@ -36,6 +39,10 @@ impl StreamFailure {
 pub struct NativeAsrStream {
     input: Arc<Mutex<Option<tokio::sync::mpsc::Sender<SessionInput>>>>,
     completion: Arc<Completion>,
+    /// Whether the selected model honours `SessionInput::Finalize`.
+    client_finalize: bool,
+    provider: String,
+    model: String,
 }
 
 #[pymethods]
@@ -55,6 +62,23 @@ impl NativeAsrStream {
                 .send(SessionInput::Audio(Bytes::from(audio)))
                 .await
                 .map_err(|_| PyRuntimeError::new_err("ASR session input is closed"))
+        })
+    }
+
+    fn finalize<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        if let Some(error) = finalize_unsupported(self.client_finalize, &self.provider, &self.model)
+        {
+            return Err(super::error::protocol_error(error));
+        }
+        let input = Arc::clone(&self.input);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let sender = input
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("ASR session lock poisoned"))?
+                .clone();
+            enqueue_finalize(sender)
+                .await
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))
         })
     }
 
@@ -94,7 +118,7 @@ impl Drop for NativeAsrStream {
 }
 
 #[pyfunction(name = "_start_asr_stream")]
-#[pyo3(signature = (format, sample_rate, on_event, language=None, provider=None, api_key=None, api_key_env=None, api_url=None, context=None, options=None))]
+#[pyo3(signature = (format, sample_rate, on_event, language=None, provider=None, model=None, api_key=None, api_key_env=None, api_url=None, context=None, options=None))]
 #[allow(clippy::too_many_arguments)] // justified: pyo3 function maps Python kwargs 1:1
 pub fn start_asr_stream<'py>(
     py: Python<'py>,
@@ -103,6 +127,7 @@ pub fn start_asr_stream<'py>(
     on_event: Py<PyAny>,
     language: Option<String>,
     provider: Option<String>,
+    model: Option<String>,
     api_key: Option<String>,
     api_key_env: Option<String>,
     api_url: Option<String>,
@@ -128,34 +153,46 @@ pub fn start_asr_stream<'py>(
         validate_context(&context)?;
         options["context"] = context;
     }
-    let id = provider.unwrap_or_else(|| DEFAULT_STREAMING_ASR.to_string());
+    let (provider_name, model) = match (provider, model) {
+        // the model then comes from the catalog's `default_for_provider`
+        (None, None) => (DEFAULT_STREAMING_PROVIDER.to_string(), None),
+        (Some(provider), model) => (super::asr::validate_provider(provider)?, model),
+        (None, Some(_)) => {
+            return Err(PyRuntimeError::new_err("model requires provider"));
+        }
+    };
     let key = super::asr::resolve_key(
         api_key,
         api_key_env.as_deref(),
-        super::asr::default_key_env(&id),
-        &id,
+        super::asr::default_key_env(&provider_name),
+        &provider_name,
     )?;
 
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let registry = Registry::with_builtin();
-        let entry = registry
-            .asr()
-            .id(&id)
-            .select()
-            .map_err(super::error::protocol_error)?;
-        let (provider_name, model) = id
-            .split_once('/')
-            .ok_or_else(|| PyRuntimeError::new_err("provider must be provider/model"))?;
+        let rows = registry.asr().provider(provider_name.clone()).list();
+        let descriptors: Vec<_> = rows.iter().map(|entry| &entry.descriptor).collect();
+        let entry = select_asr_model(
+            &descriptors,
+            &provider_name,
+            model.as_deref(),
+            AsrMode::Streaming,
+            None,
+        )
+        .map(|index| rows[index])
+        .map_err(super::error::protocol_error)?;
+        let model = model.unwrap_or_else(|| entry.descriptor.model.to_string());
         let handle = entry
             .instantiate(&ProviderConfig {
-                provider: provider_name.into(),
-                model: model.into(),
+                provider: provider_name.clone(),
+                model: model.clone(),
                 api_key: Some(key),
                 api_url,
                 max_tokens: None,
                 options: serde_json::Value::Null,
             })
             .map_err(super::error::protocol_error)?;
+        let client_finalize = handle.descriptor().client_finalize();
         let realtime = handle
             .start_stream(StreamingTranscribeRequest {
                 format,
@@ -176,26 +213,28 @@ pub fn start_asr_stream<'py>(
             let mut result = Ok(());
             while let Some(event) = events.next().await {
                 let fatal_error = match &event {
-                    orchest_protocol::StreamEvent::Error {
+                    StreamEvent::Error {
                         error, fatal: true, ..
                     } => Some(super::error::ProviderErrorData::from(error.clone())),
                     _ => None,
                 };
-                let event_json = match serde_json::to_string(&event) {
-                    Ok(value) => value,
-                    Err(error) => {
+                if let Some(event) = sdk_asr_event(&event) {
+                    let event_json = match serde_json::to_string(&event) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            result = Err(StreamFailure::Runtime(error.to_string()));
+                            break;
+                        }
+                    };
+                    let callback_result = Python::attach(|py| -> PyResult<()> {
+                        let value = py.import("json")?.call_method1("loads", (event_json,))?;
+                        on_event.call1(py, (value,))?;
+                        Ok(())
+                    });
+                    if let Err(error) = callback_result {
                         result = Err(StreamFailure::Runtime(error.to_string()));
                         break;
                     }
-                };
-                let callback_result = Python::attach(|py| -> PyResult<()> {
-                    let value = py.import("json")?.call_method1("loads", (event_json,))?;
-                    on_event.call1(py, (value,))?;
-                    Ok(())
-                });
-                if let Err(error) = callback_result {
-                    result = Err(StreamFailure::Runtime(error.to_string()));
-                    break;
                 }
                 if let Some(error) = fatal_error {
                     result = Err(StreamFailure::Provider(error));
@@ -226,7 +265,13 @@ pub fn start_asr_stream<'py>(
             }
             completion_task.notify.notify_waiters();
         });
-        Ok(NativeAsrStream { input, completion })
+        Ok(NativeAsrStream {
+            input,
+            completion,
+            client_finalize,
+            provider: provider_name,
+            model,
+        })
     })
 }
 

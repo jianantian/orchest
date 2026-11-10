@@ -1,5 +1,7 @@
 //! Shared FFI-independent helpers used by language bindings.
 
+pub mod asr;
+
 use std::time::Duration;
 
 use serde_json::Value;

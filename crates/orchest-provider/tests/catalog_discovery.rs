@@ -63,8 +63,21 @@ fn discovery_lists_aliyun_streaming_asr_with_descriptions() {
         ..Default::default()
     })
     .collect();
-    assert!(rows.len() >= 2);
-    for r in &rows {
+    // the deprecated Fun-ASR Realtime row is hidden from default discovery
+    assert!(rows.iter().all(|r| r.model != "fun-asr-realtime"));
+    assert!(rows
+        .iter()
+        .any(|r| r.model == "qwen-audio-3.0-asr-flash-streaming"));
+    let all: Vec<_> = list_models(ModelFilter {
+        capability: Some(Capability::Asr),
+        provider: Some("aliyun"),
+        streaming: Some(true),
+        include_deprecated: true,
+        ..Default::default()
+    })
+    .collect();
+    assert!(all.len() >= 2);
+    for r in rows.iter().chain(&all) {
         assert!(!r.description.trim().is_empty());
     }
 }
