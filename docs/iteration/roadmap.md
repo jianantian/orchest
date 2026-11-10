@@ -71,7 +71,7 @@
 
 执行顺序（2026-10-27 起，按 agent 开发节奏排）：v1.2 与 SDK 0.2 打包并行 → 发布 `1.2.0` 与 SDK `0.2.0` → v2.0 合入 main → SDK 0.3 与 v2.1 并行 → v2.2 与 M2 → 发布 `2.0.0` 与 SDK `0.3.0`。v2.0 在 `iteration/v2_0` 分支上与前两步并行开发，SDK 0.2.0 发布后再合入。
 
-### v1.2 — 语音契约补齐与新 provider（规划）
+### v1.2 — 语音契约补齐与新 provider（✅ 已发布：crates.io `1.2.0`，2026-11-10）
 
 两件增量的事，都赶在 SDK 0.2 之前：按 [ADR-0006](../adr/0006-voice-session-model.md) 补语音契约（`SessionInput::Finalize`、各方言补 Turn 与原生 finalize、方言无关的契约测试）并重设计 Python / Node 的 ASR 流式接口（语音线 V1）；接入 Vercel AI Gateway 的 chat 与 decision、Fireworks 的 chat（Fireworks decision 延后，owner 2026-10-27）。发布 Rust `1.2.0`，作为 SDK 0.2 版本矩阵的 crate 版本。权威范围见 [`v1_2/prd.md`](./v1_2/prd.md)（[#342](https://github.com/jianantian/orchest/issues/342)–[#348](https://github.com/jianantian/orchest/issues/348)）。
 
@@ -160,14 +160,14 @@
 ✅ v1.0: 首次公开发布（crates.io 1.0.0，2026-10-01）
             │
             ▼
-   v1.2: 语音契约补齐（语音线 V1）+ Vercel AI Gateway / Fireworks（Rust 1.2.0）
+✅ v1.2: 语音契约补齐（语音线 V1）+ Vercel AI Gateway / Fireworks（crates.io 1.2.0，2026-11-10）
             │
             ▼
    SDK 0.2: 发布 Python / Node 包（PyPI orchest-py + npm orchest-sdk，独立版本号）
 
    v2.0: Runtime 契约与可靠性（会话事件日志 + checkpoint + 副作用账本 +
         权限表面 + 取消 + 零丢失事件 + 能力探测 + 绑定跟上；破坏性，Rust 2.0.0）
-        （分支上与 v1.2 / SDK 0.2 并行，SDK 0.2.0 发布后合入）
+        （分支上与 v1.2 / SDK 0.2 并行开发，2026-11 已先于 SDK 0.2.0 合入 main，尚未发布）
         │
         ├─► SDK 0.3: SDK 控制面（M3 的 SDK 部分提前）
         ├─► v2.1: 语音能力目录 + 计量 + TTS 双工（语音线 V2 + V4）
