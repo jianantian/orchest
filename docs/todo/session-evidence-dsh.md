@@ -15,7 +15,7 @@
 | 某次调用的模型与工具是什么？ | actor 将当前 `tool_defs` 和模型 options 传给 adapter；响应可上报 `option_adjustments`。 | 不能从当前配置倒推历史。对每次尝试绑定实际 provider/model、发送的有效 options、当时传入的有序工具定义；适配层进一步转换的部分单独标记来源和完整度。 |
 | 模型实际看到了什么？ | `before_model` 每次从干净的会话投影重新构造输入；单次插入不回写原会话。[actor](https://github.com/jianantian/orchest/blob/eedf05d42646b8a2de3bc0605b57a03ce1c98fa2/crates/orchest/src/run/actor.rs#L1086-L1178) | 区分已提交对话、这次调用可见的上下文、用户作者身份，不把相同 role 当相同来源。 |
 | 模型回了什么、最终接受了什么？ | 原始结构化响应先用于实时消息，随后可能被 `after_model` 改写或拒绝；错误可以重试，不会为每次尝试生成持久 `AssistantMessage`。[adapter 调用与 hook](https://github.com/jianantian/orchest/blob/eedf05d42646b8a2de3bc0605b57a03ce1c98fa2/crates/orchest/src/run/actor.rs#L1226-L1350) | 能对齐原始 adapter 响应、尝试结果、最终进入投影的事件。部分输出可被看到但不一定进入会话。 |
-| 压缩怎么改变了上下文？ | `Compacted { messages }` 已保存压缩后的有效替换，足以推进 replay。[Session log](https://github.com/jianantian/orchest/blob/eedf05d42646b8a2de3bc0605b57a03ce1c98fa2/crates/orchest/src/session/log.rs#L21-L105) · [压缩调用](https://github.com/jianantian/orchest/blob/eedf05d42646b8a2de3bc0605b57a03ce1c98fa2/crates/orchest/src/run/actor.rs#L1400-L1464) | 标定被替换的上下文版本、执行方式与结果、保留/替换来源；只对确实生效的压缩推进上下文版本。 |
+| 压缩怎么改变了上下文？ | `Compacted { messages }` 已保存压缩后的有效替换，足以推进 replay。[Session log](https://github.com/jianantian/orchest/blob/eedf05d42646b8a2de3bc0605b57a03ce1c98fa2/crates/orchest/src/session/log.rs#L21-L105) · [压缩调用](https://github.com/jianantian/orchest/blob/eedf05d42646b8a2de3bc0605b57a03ce1c98fa2/crates/orchest/src/run/actor.rs#L1495-L1519) | 标定被替换的上下文版本、执行方式与结果、保留/替换来源；只对确实生效的压缩推进上下文版本。 |
 
 ## 具体对照：DSH 保存了什么
 
@@ -37,7 +37,7 @@
 
 ## 建议设计
 
-### 1. 为每一次尝试记录有效输入
+### 1. 以实际尝试为单位记录有效输入
 
 以 `(session_id, run_id, step, attempt_ordinal)` 定位运行时尝试；已分配且可用稳定的内部 `attempt_id` 则一并贯穿请求、响应和投影提交。不能只用 step：恢复会重新执行未完成的同位置，重试也共用 step。adapter 内部若透明重试，须有可观测的 transport attempt 才另记，不把不可见内部次数写为 1。
 
@@ -59,7 +59,9 @@
 
 ## 存储、隐私和兼容
 
-首选**独立版本、按 Session 派生的可选证据记录**，与 Session v2 已提交序号关联；不增加 v2 枚举类型去试探旧 reader 对未知事件的容忍度。原 `SessionMeta` 明确拒绝不匹配 schema；原 `SessionEvent` 要求连续序号。[store](https://github.com/jianantian/orchest/blob/eedf05d42646b8a2de3bc0605b57a03ce1c98fa2/crates/orchest/src/session/store.rs#L32-L84) · [log](https://github.com/jianantian/orchest/blob/eedf05d42646b8a2de3bc0605b57a03ce1c98fa2/crates/orchest/src/session/log.rs#L21-L39)。如未来要让某类新证据参与恢复，另行设计 schema 迁移，不在本案混入。现有 store 对步骤边界及有副作用工具的 checkpoint 次序不变；证据写入独立限界、可重试，不能阻塞模型流或工具安全闸。未捕获、捕获失败、进程中断、已裁剪均对读者可辨；不会为了日志完整度重发模型或工具调用。
+首选**独立版本、按 Session 派生的可选证据记录**，与 Session v2 已提交序号关联；不增加 v2 枚举类型去试探旧 reader 对未知事件的容忍度。原 `SessionMeta` 明确拒绝不匹配 schema；原 `SessionEvent` 要求连续序号。[store](https://github.com/jianantian/orchest/blob/eedf05d42646b8a2de3bc0605b57a03ce1c98fa2/crates/orchest/src/session/store.rs#L32-L84) · [log](https://github.com/jianantian/orchest/blob/eedf05d42646b8a2de3bc0605b57a03ce1c98fa2/crates/orchest/src/session/log.rs#L21-L39)。如未来要让某类新证据参与恢复，另行设计 schema 迁移，不在本案混入。现有 store 对步骤边界及有副作用工具的 checkpoint 次序不变；证据写入独立限界、可重试，不能阻塞模型流或工具安全闸。未捕获、捕获失败、进程中断、已裁剪等原因能确认时分别标记，无法确定时明确写未知；不会为了日志完整度重发模型或工具调用。
+
+逐次记录是采集目标，不是崩溃后无缺口的保证。「准备调用 adapter」只证明走到了本地边界，不证明请求已发送或被 provider 接收。只有明确的本地拦截或取消证据才标为**未发出**；有 transport 发送或响应证据而无终态时标为**已发出、结果未知**；捕获关闭、丢失或进程崩溃后无充分证据时标为**是否发出未知**。缺失不是未发出，不用现有 v2 步骤 checkpoint 推断网络发送，也不为证据额外加同步写入。
 
 默认不保存原始请求／响应、完整私有推理、认证材料、未授权的附件或 hook 输入；是否开启结构化精确采集由显式策略控制。记录允许的非敏感形状和覆盖状态；工具描述、参数默认值、错误字符串和模型流也可能含敏感信息，应用相同的字段白名单与脱敏规则。富内容仅以权限继承的引用保留，限定体积、留存期及读取者；不得把原始 token 序列、凭证 URL、系统私有路径混进日志、遥测或导出。删除同时撤销由其派生的引用／索引；不能靠 hash 或可猜测的稳定摘要识别已删敏感内容。明确区分精确、已脱敏、仅元数据和未知，不能宣传默认完整。证据仅存于受控的会话存储：不自动上传，不随模型请求附带，不进入第三方诊断或遥测。
 
@@ -67,7 +69,7 @@
 
 - [ ] 老 Session v2 fixture 可用旧路径恢复；加、删、损坏证据记录都不改变旧日志投影、权限、未完成工具的处理和预算。重读只报可辨识的证据缺口。
 - [ ] 一个 step 出现 retry、adapter options 调整与 `after_model` 改写：每次实际 dispatch 可分别找到当时有效请求，只有真正入账的消息进入投影。
-- [ ] 流输出部分内容后取消或失败，以及进程在 dispatch 后、入账前中断：不虚构最终消息，也不把可见前缀或缺失状态误当成功。
+- [ ] 对照明确在 dispatch 前拦截、transport 已发送后崩溃、仅看到本地准备记录或证据写入丢失三类 fixture，分别显示未发出、已发出但结果未知、是否发出未知；流中出现可见前缀也不虚构已入账消息。
 - [ ] 两次压缩夹一次失败压缩；可以按来源定位前后上下文，失败不生效。人工消息、工具反馈与一次性 hook 注入即使同 role 或同正文也不会串来源。
 - [ ] 工具集改变、默认值由 adapter 调整、托管端不暴露 wire 信息时，分别显示确知差异与未知；配置同值快照可复用，使用不同 capture 策略的记录不得误称物理同一份。
 - [ ] 在假 adapter 中用精确输入对照验证受控捕获与请求一致；用含密钥/私有内容的 fixture 验证默认不留原文、权限撤回和过期有效；故障/慢写场景验证正常流与原 checkpoint 语义不变。
