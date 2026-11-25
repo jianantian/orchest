@@ -69,11 +69,11 @@
 
 ## 规划中
 
-执行顺序（2026-10-27 起，按 agent 开发节奏排）：v1.2 与 SDK 0.2 打包并行 → 发布 `1.2.0` 与 SDK `0.2.0` → v2.0 合入 main → SDK 0.3 与 v2.1 并行 → v2.2 与 M2 → 发布 `2.0.0` 与 SDK `0.3.0`。v2.0 在 `iteration/v2_0` 分支上与前两步并行开发，SDK 0.2.0 发布后再合入。实际执行中 v2.0 先于 SDK 0.2.0 合入 main，`1.2.0` 与 `2.0.0` 都在 2026-11-10 发布，SDK `0.2.0` 改为基于 `2.0.0`。
+Rust `1.2.0` 与 `2.0.0` 已于 2026-11-10 先后发布。接下来的执行顺序为 SDK `0.2.0`（基于 Rust `2.0.0`）→ SDK 0.3 与 v2.1 并行 → v2.2 与 M2 同期推进。
 
 ### v1.2 — 语音契约补齐与新 provider（✅ 已发布：crates.io `1.2.0`，2026-11-10）
 
-两件增量的事，都赶在 SDK 0.2 之前：按 [ADR-0006](../adr/0006-voice-session-model.md) 补语音契约（`SessionInput::Finalize`、各方言补 Turn 与原生 finalize、方言无关的契约测试）并重设计 Python / Node 的 ASR 流式接口（语音线 V1）；接入 Vercel AI Gateway 的 chat 与 decision、Fireworks 的 chat（Fireworks decision 延后，owner 2026-10-27）。发布 Rust `1.2.0`，作为 SDK 0.2 版本矩阵的 crate 版本。权威范围见 [`v1_2/prd.md`](./v1_2/prd.md)（[#342](https://github.com/jianantian/orchest/issues/342)–[#348](https://github.com/jianantian/orchest/issues/348)）。
+两件增量的事，都赶在 SDK 0.2 之前：按 [ADR-0006](../adr/0006-voice-session-model.md) 补语音契约（`SessionInput::Finalize`、各方言补 Turn 与原生 finalize、方言无关的契约测试）并重设计 Python / Node 的 ASR 流式接口（语音线 V1）；接入 Vercel AI Gateway 的 chat 与 decision、Fireworks 的 chat（Fireworks decision 延后，owner 2026-10-27）。权威范围见 [`v1_2/prd.md`](./v1_2/prd.md)（[#342](https://github.com/jianantian/orchest/issues/342)–[#348](https://github.com/jianantian/orchest/issues/348)）。
 
 **不在范围内**：语音 V2–V5；Vercel / Fireworks 的语音、图像、embedding。
 
@@ -85,7 +85,7 @@
 
 **npm 包名**：`orchest` npm 组织不可用（2026-10-02），因此用不带 scope 的 `orchest-sdk`（[ADR-0004](../adr/0004-sdk-packaging.md) D2）。
 
-**前置**：v1.2 的 ASR 流式接口重设计与 `1.2.0` 发布；rc.1 由 Murmur 从 PyPI 安装试跑。
+**前置**：v1.2 的 ASR 流式接口重设计与 Rust `2.0.0` 发布；rc.1 由 Murmur 从 PyPI 安装试跑。
 
 ### v2.0 — Runtime 契约与可靠性（✅ 已发布：crates.io `2.0.0`，2026-11-10）
 
@@ -163,12 +163,11 @@
 ✅ v1.2: 语音契约补齐（语音线 V1）+ Vercel AI Gateway / Fireworks（crates.io 1.2.0，2026-11-10）
             │
             ▼
-   SDK 0.2: 发布 Python / Node 包（PyPI orchest-py + npm orchest-sdk，独立版本号）
-
 ✅ v2.0: Runtime 契约与可靠性（会话事件日志 + checkpoint + 副作用账本 +
         权限表面 + 取消 + 零丢失事件 + 能力探测 + 绑定跟上；破坏性，Rust 2.0.0）
         （crates.io 2.0.0，2026-11-10，先于 SDK 0.2.0 发布）
         │
+        ├─► SDK 0.2: 发布 Python / Node 包（PyPI orchest-py + npm orchest-sdk，独立版本号）
         ├─► SDK 0.3: SDK 控制面（M3 的 SDK 部分提前）
         ├─► v2.1: 语音能力目录 + 计量 + TTS 双工（语音线 V2 + V4）
         ├─► v2.2: 全双工补齐（语音线 V5）

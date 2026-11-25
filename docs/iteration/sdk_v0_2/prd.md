@@ -77,8 +77,8 @@ ADR-0004 (issue 001).
   [v1.2](../v1_2/prd.md) issue 004 lands before the release (owner
   decision, 2026-10-27).
 - A new Rust crate release from this iteration. The crates the SDK is
-  built against are released as `1.2.0` by [v1.2](../v1_2/prd.md). `orchest-py` and `orchest-node` stay
-  `publish = false` on crates.io.
+  built against are already available as [`2.0.0`](../v2_0/prd.md).
+  `orchest-py` and `orchest-node` stay `publish = false` on crates.io.
 - Switching the published crates from `native-tls` to rustls.
 
 ## Issues
@@ -93,7 +93,7 @@ In dependency order:
 | 004 | #327 | Three-platform SDK CI | AFK | #325, #326 |
 | 005 | #328 | SDK release workflow | AFK | #327 |
 | 006 | #329 | Install documentation | AFK | #325, #326 |
-| 007 | #330 | Release candidate and 0.2.0 | HITL | #324–#329, v1.2 |
+| 007 | #330 | Release candidate and 0.2.0 | HITL | #324–#329, v1.2 ASR redesign, v2.0 crate release |
 
 002 and 003 are independent of each other. 006 can run alongside 004 and
 005. The main risks are in 002 and 003: whether the stable ABI is
