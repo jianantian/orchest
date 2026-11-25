@@ -2,8 +2,8 @@
 
 #[cfg(feature = "session-evidence")]
 use crate::session::evidence::{
-    AttemptObservation, AttemptOutcome, AttemptPurpose, EvidenceField, EvidenceKind,
-    HookDisposition, LocalDecision, RunEvidence,
+    AttemptObservation, AttemptOutcome, AttemptPurpose, CompactionObservation, EvidenceField,
+    EvidenceKind, HookDisposition, LocalDecision, RunEvidence,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -202,6 +202,7 @@ impl Actor for WorkerActor {
     type State = AgentRunState;
     type Arguments = AgentRunArgs;
 
+    #[allow(clippy::too_many_lines)] // justified: Preserve startup ordering across hooks, session binding and tools.
     async fn pre_start(
         &self,
         myself: ActorRef<AgentMsg>,
@@ -858,20 +859,19 @@ async fn persist_terminal(state: &mut AgentRunState) {
     let Some(binding) = state.session.clone() else {
         return;
     };
-    match persist_durable(&binding, &mut state.log).await {
-        Ok(()) => {
-            #[cfg(feature = "session-evidence")]
-            record_durable_through(state);
-        }
-        Err(error) => {
-            emit(
-                &state.event_subs,
-                RuntimeEvent::RuntimeWarning {
-                    message: format!("session log persistence failed: {error}"),
-                },
-            )
-            .await;
-        }
+    let result = persist_durable(&binding, &mut state.log).await;
+    #[cfg(feature = "session-evidence")]
+    if result.is_ok() {
+        record_durable_through(state);
+    }
+    if let Err(error) = result {
+        emit(
+            &state.event_subs,
+            RuntimeEvent::RuntimeWarning {
+                message: format!("session log persistence failed: {error}"),
+            },
+        )
+        .await;
     }
 }
 
@@ -1393,13 +1393,12 @@ async fn dispatch_model_call(
 ) -> Result<ModelResponse, crate::model::ModelError> {
     #[cfg(feature = "session-evidence")]
     let attempt = start_evidence_attempt(state, call_messages, capture);
-    let stream_tx = model_stream_channel(
+    let (stream_tx, forward_task) = model_stream_channel(
         subs,
         message_id,
         #[cfg(feature = "session-evidence")]
         attempt.cloned(),
     );
-    let (stream_tx, forward_task) = stream_tx;
     let provider = state.model.provider_name().to_string();
     let model = state.model.model_name().to_string();
     let start = Instant::now();
@@ -1438,12 +1437,20 @@ fn start_evidence_attempt<'a>(
     let step = state.log.step();
     let attempt = slot.insert(AttemptObservation::start(
         evidence,
-        state.run_id,
-        step,
+        (state.run_id, step),
         retry,
         AttemptPurpose::AgentStep,
         state.model.as_ref(),
     ));
+    evidence.record(
+        state.run_id,
+        step,
+        EvidenceKind::ContextBasis {
+            attempt_id: attempt.id,
+            through_seq: state.log.next_seq() - 1,
+            projection_order: state.config.hooks.is_empty(),
+        },
+    );
     evidence.input(
         state.run_id,
         step,
@@ -1451,6 +1458,7 @@ fn start_evidence_attempt<'a>(
         call_messages,
         &state.tool_defs,
         &state.config.model.options,
+        None,
     );
     Some(attempt)
 }
@@ -1529,11 +1537,15 @@ async fn apply_after_model_hooks(
     }
     #[cfg(feature = "session-evidence")]
     if let Some(attempt) = &state.evidence_attempt {
-        let disposition = match &model_ctx.response {
-            Some(modified) if modified != &response.content => HookDisposition::Rewritten,
-            _ => HookDisposition::Accepted,
-        };
-        attempt.hook(disposition);
+        if let Some(modified) = model_ctx
+            .response
+            .as_deref()
+            .filter(|_| !state.config.hooks.is_empty())
+        {
+            attempt.hook_result(&response.content, modified);
+        } else {
+            attempt.hook(HookDisposition::Accepted);
+        }
     }
     // Read back any rewrite the hook applied to the response.
     if let Some(modified) = model_ctx.response.take() {
@@ -1657,30 +1669,8 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
     )
     .await;
 
-    let mut working_messages = state.log.messages().to_vec();
-    let cancel = state.cancel.clone();
-    let cancelled = tokio::select! {
-        biased;
-        () = cancel.cancelled() => true,
-        () = maybe_compact_context(
-            &state.config,
-            &state.model,
-            &mut working_messages,
-            primary(&subs),
-            &mut state.last_compaction_step,
-            step,
-            &response.usage,
-            run_id,
-        ) => false,
-    };
-    if cancelled {
-        abort_run(state).await;
+    if !compact_after_model(state, &subs, step, &response.usage).await {
         return false;
-    }
-    if working_messages.as_slice() != state.log.messages() {
-        state.log.append(SessionEventKind::Compacted {
-            messages: working_messages,
-        });
     }
 
     let mut tool_uses = Vec::new();
@@ -1818,6 +1808,56 @@ fn append_tool_results(log: &mut SessionLog, results: Vec<ContentBlock>) {
             }
         }
     }
+}
+
+async fn compact_after_model(
+    state: &mut AgentRunState,
+    subs: &[EventSink],
+    step: u32,
+    usage: &crate::model::TokenUsage,
+) -> bool {
+    let run_id = state.run_id;
+    let mut working_messages = state.log.messages().to_vec();
+    #[cfg(feature = "session-evidence")]
+    let mut compaction = state.evidence.clone().map(|evidence| {
+        CompactionObservation::new(evidence, run_id, step, state.log.next_seq() - 1)
+    });
+    let cancel = state.cancel.clone();
+    let cancelled = tokio::select! {
+        biased;
+        () = cancel.cancelled() => true,
+        () = maybe_compact_context(
+            &state.config,
+            &state.model,
+            &mut working_messages,
+            primary(subs),
+            &mut state.last_compaction_step,
+            step,
+            usage,
+            run_id,
+            #[cfg(feature = "session-evidence")]
+            compaction.as_mut(),
+        ) => false,
+    };
+    #[cfg(feature = "session-evidence")]
+    if let Some(compaction) = &compaction {
+        compaction.finish(cancelled);
+    }
+    if cancelled {
+        abort_run(state).await;
+        return false;
+    }
+    if working_messages.as_slice() != state.log.messages() {
+        let _event = state.log.append(SessionEventKind::Compacted {
+            messages: working_messages,
+        });
+        #[cfg(feature = "session-evidence")]
+        if let Some(compaction) = compaction {
+            compaction.applied(_event);
+        }
+    }
+
+    true
 }
 
 fn append_assistant_message(state: &mut AgentRunState, content: &[ContentBlock]) {

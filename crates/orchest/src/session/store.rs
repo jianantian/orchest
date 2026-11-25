@@ -114,6 +114,20 @@ pub trait SessionStore: Send + Sync {
         session_id: &str,
         from_seq: u64,
     ) -> Result<Vec<SessionEvent>, SessionError>;
+    /// Read one sequence number. Backends can override this to avoid loading
+    /// the remainder of the session for point queries.
+    async fn read_event(
+        &self,
+        session_id: &str,
+        seq: u64,
+    ) -> Result<Option<SessionEvent>, SessionError> {
+        Ok(self
+            .read(session_id, seq)
+            .await?
+            .into_iter()
+            .next()
+            .filter(|event| event.seq == seq))
+    }
     /// Durability barrier for everything accepted so far.
     async fn flush(&self, session_id: &str) -> Result<(), SessionError>;
     /// Removes a session's metadata and events. Deleting an unknown session
@@ -190,6 +204,26 @@ impl SessionStore for InMemorySessionStore {
             .unwrap_or_default())
     }
 
+    async fn read_event(
+        &self,
+        session_id: &str,
+        seq: u64,
+    ) -> Result<Option<SessionEvent>, SessionError> {
+        let Some(index) = seq
+            .checked_sub(1)
+            .and_then(|index| usize::try_from(index).ok())
+        else {
+            return Ok(None);
+        };
+        Ok(self
+            .sessions
+            .lock()
+            .await
+            .get(session_id)
+            .and_then(|session| session.events.get(index))
+            .cloned())
+    }
+
     async fn flush(&self, _session_id: &str) -> Result<(), SessionError> {
         Ok(())
     }
@@ -233,6 +267,9 @@ mod tests {
         let tail = store.read("s", 3).await.unwrap();
         assert_eq!(tail.len(), 1);
         assert_eq!(tail[0].seq, 3);
+        assert_eq!(store.read_event("s", 2).await.unwrap(), Some(user_event(2)));
+        assert_eq!(store.read_event("s", 0).await.unwrap(), None);
+        assert_eq!(store.read_event("s", 4).await.unwrap(), None);
         assert!(store.read("missing", 1).await.unwrap().is_empty());
     }
 

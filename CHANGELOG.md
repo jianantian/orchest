@@ -21,6 +21,8 @@ except for the items `orchest-provider` re-exports.
 - Adapter outcomes, bounded stream observations and confirmed Session event
   references in local model attempt evidence.
 - Host-authorized structured adapter input capture and offline reconstruction.
+- Compaction summary attempts and provenance for applied context replacements.
+- SessionStore point reads, with indexed built-in implementations.
 
 ## [2.0.0]
 

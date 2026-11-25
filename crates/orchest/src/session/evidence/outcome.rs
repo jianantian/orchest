@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{
-    identity, AttemptOutcome, CapturedField, EvidenceError, EvidenceField, EvidenceKind,
-    EvidenceRecord, EvidenceSession, RunEvidence,
+    AttemptOutcome, CapturedField, EvidenceError, EvidenceField, EvidenceKind, EvidenceRecord,
+    EvidenceSession, RunEvidence,
 };
 use crate::model::{
     ContentBlock, ModelAdapter, ModelError, ModelResponse, ModelStreamChunk, StopReason,
@@ -21,6 +21,7 @@ pub enum HookDisposition {
     Accepted,
     Rewritten,
     Rejected,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -86,8 +87,10 @@ impl EvidenceSession {
         reference: &EvidenceRecord,
         watermark: &EvidenceRecord,
     ) -> Result<bool, EvidenceError> {
-        let EvidenceKind::SessionEvent { event, .. } = reference.kind else {
-            return Ok(false);
+        let event = match reference.kind {
+            EvidenceKind::SessionEvent { event, .. }
+            | EvidenceKind::CompactionApplied { event, .. } => event,
+            _ => return Ok(false),
         };
         let EvidenceKind::SessionDurableThrough { seq } = watermark.kind else {
             return Ok(false);
@@ -100,12 +103,12 @@ impl EvidenceSession {
         {
             return Ok(false);
         }
-        let events = self
+        let stored = self
             .store
-            .read(&self.session_id, event.seq)
+            .read_event(&self.session_id, event.seq)
             .await
             .map_err(|_| EvidenceError::SessionUnavailable)?;
-        if events.first().and_then(EvidenceEventRef::from_event) != Some(event) {
+        if stored.as_ref().and_then(EvidenceEventRef::from_event) != Some(event) {
             return Ok(false);
         }
         self.database
@@ -120,13 +123,13 @@ pub(crate) struct AttemptObservation {
     pub(crate) evidence: RunEvidence,
     pub(crate) run_id: RunId,
     pub(crate) step: u32,
+    purpose: AttemptPurpose,
 }
 
 impl AttemptObservation {
     pub(crate) fn start(
         evidence: &RunEvidence,
-        run_id: RunId,
-        step: u32,
+        (run_id, step): (RunId, u32),
         ordinal: u32,
         purpose: AttemptPurpose,
         model: &dyn ModelAdapter,
@@ -148,6 +151,7 @@ impl AttemptObservation {
             evidence: evidence.clone(),
             run_id,
             step,
+            purpose,
         }
     }
 
@@ -188,6 +192,10 @@ impl AttemptObservation {
             output_tokens: response.usage.output_tokens,
             option_adjustments: response.option_adjustments.len(),
         });
+        // The summarizer may echo serialized content excluded by its source policy.
+        if self.purpose == AttemptPurpose::CompactionSummary {
+            return;
+        }
         self.content(EvidenceField::Response, &response.content);
         self.evidence.capture_field(
             self.run_id,
@@ -212,6 +220,24 @@ impl AttemptObservation {
             attempt_id: self.id,
             disposition,
         });
+    }
+
+    pub(crate) fn hook_result(&self, before: &[ContentBlock], after: &[ContentBlock]) {
+        let mut budget = super::content::CaptureBudget::new(self.evidence.database.record_bytes());
+        let disposition = if before.len() != after.len() {
+            HookDisposition::Rewritten
+        } else if budget
+            .blocks(before)
+            .and_then(|()| budget.blocks(after))
+            .is_err()
+        {
+            HookDisposition::Unknown
+        } else if before == after {
+            HookDisposition::Accepted
+        } else {
+            HookDisposition::Rewritten
+        };
+        self.hook(disposition);
     }
 
     pub(crate) fn content(&self, field: EvidenceField, content: &[ContentBlock]) {
@@ -293,4 +319,15 @@ pub fn mark_request_sent() {
             }
         }
     });
+}
+
+fn identity(value: &str) -> Option<String> {
+    (value.len() <= 128
+        && !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_./:".contains(&b))
+        && !value.contains("://")
+        && !super::content::restricted_text(value))
+    .then(|| value.to_owned())
 }

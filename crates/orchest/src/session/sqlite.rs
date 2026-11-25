@@ -177,6 +177,33 @@ impl SessionStore for SqliteSessionStore {
             .collect()
     }
 
+    async fn read_event(
+        &self,
+        session_id: &str,
+        seq: u64,
+    ) -> Result<Option<SessionEvent>, SessionError> {
+        let Ok(seq) = i64::try_from(seq) else {
+            return Ok(None);
+        };
+        let id = session_id.to_owned();
+        let payload: Option<String> = self
+            .with_conn(move |conn| {
+                conn.query_row(
+                    "SELECT event_json FROM session_events WHERE session_id = ?1 AND seq = ?2",
+                    params![id, seq],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(storage)
+            })
+            .await?;
+        payload
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(SessionError::from)
+    }
+
     /// Each `append` commits its own transaction, which SQLite makes durable
     /// at commit under its default `synchronous` setting, so there is nothing
     /// left to force here.
@@ -249,6 +276,11 @@ mod tests {
         store.flush("s").await.unwrap();
         let events = store.read("s", 1).await.unwrap();
         assert_eq!(events, vec![user_event(1, "a"), user_event(2, "b")]);
+        assert_eq!(
+            store.read_event("s", 2).await.unwrap(),
+            Some(user_event(2, "b"))
+        );
+        assert_eq!(store.read_event("s", 3).await.unwrap(), None);
     }
 
     #[tokio::test]

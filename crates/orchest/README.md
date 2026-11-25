@@ -23,6 +23,36 @@ orchest-provider = { version = "1", features = ["llm"] }
 See the [quickstart](https://github.com/jianantian/orchest/blob/main/docs/guide/quickstart.md) and the
 [Rust examples](https://github.com/jianantian/orchest/tree/main/examples/rust).
 
+## Local Session evidence
+
+Enable the Rust `session-evidence` feature to inspect model attempts for a run
+that uses a SessionStore. Use a dedicated evidence database in a host-controlled
+directory for each SessionStore. For a config and store you already use:
+
+```rust,ignore
+use orchest::session::evidence::{EvidenceLimits, EvidenceStore};
+
+let database = EvidenceStore::open("private/session-evidence.sqlite", EvidenceLimits::default()).await?;
+let capture = database.bind(session_store.clone(), "my-session");
+let config = config
+    .with_session_store(session_store, "my-session")
+    .with_session_evidence(capture.clone());
+// Start or resume the run with config, then:
+let page = capture.read(None, 64).await?;
+```
+
+Capture is off until attached and defaults to metadata when attached. Use
+`EvidenceSession::with_content_policy` to authorize specific bounded fields,
+then pass relevant pages to `reconstruct_input`. A missing or withheld field
+produces an incomplete-input error. Call `revoke` before deleting the Session
+if local evidence must be removed immediately. Revocation removes records from
+this store, including their indexes. The host controls any copies already read.
+
+Evidence capture is best effort. A lost process, a slow disk or a full database
+can leave gaps. Evidence reads and revocation operate independently of
+Session checkpoints. Inspect the Session event reference and its matching
+worker watermark with `verify_event` to confirm a durable association.
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or

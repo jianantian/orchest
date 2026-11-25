@@ -6,6 +6,10 @@ use tokio::sync::mpsc;
 
 use crate::events::RuntimeEvent;
 use crate::model::{ContentBlock, Message, ModelAdapter, Role, TokenUsage};
+#[cfg(feature = "session-evidence")]
+use crate::session::evidence::{
+    AttemptObservation, AttemptOutcome, CompactionObservation, CompactionOutcome,
+};
 use crate::telemetry;
 
 use super::config::{AgentConfig, RunId};
@@ -24,6 +28,7 @@ pub(crate) async fn maybe_compact_context(
     step: u32,
     usage: &TokenUsage,
     run_id: RunId,
+    #[cfg(feature = "session-evidence")] mut evidence: Option<&mut CompactionObservation>,
 ) {
     let Some(ref compaction) = config.runtime.compaction else {
         return;
@@ -49,6 +54,10 @@ pub(crate) async fn maybe_compact_context(
         return;
     }
 
+    #[cfg(feature = "session-evidence")]
+    if let Some(evidence) = &mut evidence {
+        evidence.start();
+    }
     let mut compact_ctx = crate::hook::CompactHookContext {
         run_id,
         messages: messages.clone(),
@@ -57,7 +66,14 @@ pub(crate) async fn maybe_compact_context(
     match crate::hook::runner::run_before_compact(&config.hooks, &mut compact_ctx, tx).await {
         crate::hook::HookAction::Skip
         | crate::hook::HookAction::Abort(_)
-        | crate::hook::HookAction::Reject(_) => return,
+        | crate::hook::HookAction::Reject(_) => {
+            #[cfg(feature = "session-evidence")]
+            if let Some(evidence) = &mut evidence {
+                evidence.outcome(CompactionOutcome::HookBlocked);
+            }
+            return;
+        }
+
         crate::hook::HookAction::Continue => {}
     }
     *messages = compact_ctx.messages;
@@ -72,12 +88,20 @@ pub(crate) async fn maybe_compact_context(
         .cloned()
         .collect();
     if non_system.len() <= recent_count {
+        #[cfg(feature = "session-evidence")]
+        if let Some(evidence) = &mut evidence {
+            evidence.outcome(CompactionOutcome::NoSafeBoundary);
+        }
         return;
     }
     let split_at = align_split_to_tool_boundary(&non_system, non_system.len() - recent_count);
     if split_at == 0 {
         // Every candidate cut straddles a tool_use/tool_result pair — there is
         // nothing safe to summarize this turn.
+        #[cfg(feature = "session-evidence")]
+        if let Some(evidence) = &mut evidence {
+            evidence.outcome(CompactionOutcome::NoSafeBoundary);
+        }
         return;
     }
     let old_messages = &non_system[..split_at];
@@ -88,17 +112,36 @@ pub(crate) async fn maybe_compact_context(
         .collect::<Vec<_>>()
         .join("\n");
     let prompt = crate::prompts::COMPACTION_SUMMARY_PROMPT.replace("{history}", &history);
-    let summary_response = model
-        .complete(
-            &[Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text(prompt)],
-            }],
-            &[],
-            &config.model.options,
-            None,
-        )
-        .await;
+    let input = [Message {
+        role: Role::User,
+        content: vec![ContentBlock::Text(prompt)],
+    }];
+    #[cfg(feature = "session-evidence")]
+    let attempt = evidence.as_mut().map(|evidence| {
+        evidence.start_summary(model.as_ref(), &input, &config.model.options, old_messages)
+    });
+    let complete = model.complete(&input, &[], &config.model.options, None);
+    #[cfg(feature = "session-evidence")]
+    let complete = AttemptObservation::adapter_scope(attempt, complete);
+    let summary_response = complete.await;
+    #[cfg(feature = "session-evidence")]
+    if let Some(attempt) = attempt {
+        attempt.returned(&summary_response);
+        attempt.finish(if summary_response.is_ok() {
+            AttemptOutcome::Returned
+        } else {
+            AttemptOutcome::AdapterError
+        });
+    }
+    #[cfg(feature = "session-evidence")]
+    if let Some(evidence) = &mut evidence {
+        if summary_response.is_ok() {
+            evidence.outcome(CompactionOutcome::SummaryReturned);
+            evidence.record_selection(messages, split_at, !config.hooks.is_empty());
+        } else {
+            evidence.outcome(CompactionOutcome::SummaryFailed);
+        }
+    }
 
     let response = match summary_response {
         Ok(response) => response,
@@ -382,6 +425,8 @@ mod tests {
             10,
             &usage,
             crate::run::RunId::new(),
+            #[cfg(feature = "session-evidence")]
+            None,
         )
         .await;
 
@@ -424,6 +469,8 @@ mod tests {
             10,
             &usage,
             crate::run::RunId::new(),
+            #[cfg(feature = "session-evidence")]
+            None,
         )
         .await;
 
@@ -467,6 +514,8 @@ mod tests {
             10,
             &usage,
             crate::run::RunId::new(),
+            #[cfg(feature = "session-evidence")]
+            None,
         )
         .await;
 
@@ -520,6 +569,8 @@ mod tests {
             10,
             &usage,
             crate::run::RunId::new(),
+            #[cfg(feature = "session-evidence")]
+            None,
         )
         .await;
 
@@ -558,6 +609,8 @@ mod tests {
             10,
             &usage,
             crate::run::RunId::new(),
+            #[cfg(feature = "session-evidence")]
+            None,
         )
         .await;
 
@@ -590,6 +643,8 @@ mod tests {
             10,
             &usage,
             crate::run::RunId::new(),
+            #[cfg(feature = "session-evidence")]
+            None,
         )
         .await;
 
@@ -630,6 +685,8 @@ mod tests {
             10,
             &usage,
             crate::run::RunId::new(),
+            #[cfg(feature = "session-evidence")]
+            None,
         )
         .await;
 
@@ -673,6 +730,8 @@ mod tests {
             10,
             &usage,
             crate::run::RunId::new(),
+            #[cfg(feature = "session-evidence")]
+            None,
         )
         .await;
 

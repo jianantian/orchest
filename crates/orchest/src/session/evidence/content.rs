@@ -74,7 +74,7 @@ impl EvidenceContentPolicy {
     ) -> Result<Value, Omission> {
         // Leave room for the attempt, scope and evidence envelope.
         let limit = max_bytes.saturating_sub(512);
-        check(&mut CaptureBudget(limit))?;
+        check(&mut CaptureBudget::new(limit))?;
         let bytes = encode(input, limit).map_err(|_| Omission::Limit)?;
         let value = serde_json::from_slice(&bytes).map_err(|_| Omission::Unsupported)?;
         // A host callback failure cannot change the outcome of a model call.
@@ -132,6 +132,7 @@ fn exact_field<T: serde::de::DeserializeOwned>(
 }
 
 impl RunEvidence {
+    #[allow(clippy::too_many_arguments)] // justified: Summary prompts also need source-policy validation.
     pub(crate) fn input(
         &self,
         run_id: RunId,
@@ -140,6 +141,7 @@ impl RunEvidence {
         messages: &[Message],
         tools: &[ToolDef],
         options: &RequestOptions,
+        source_messages: Option<&[Message]>,
     ) {
         self.capture_field(
             run_id,
@@ -148,6 +150,12 @@ impl RunEvidence {
             EvidenceField::Messages,
             &messages,
             |budget| {
+                if let Some(source) = source_messages {
+                    for message in source {
+                        budget.charge(8)?;
+                        budget.blocks(&message.content)?;
+                    }
+                }
                 for message in messages {
                     budget.charge(8)?;
                     budget.blocks(&message.content)?;
@@ -190,7 +198,7 @@ impl RunEvidence {
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // justified: Capture accepts a borrowed field with its own validation budget.
     pub(super) fn capture_field(
         &self,
         run_id: RunId,
@@ -219,6 +227,10 @@ impl RunEvidence {
 pub(super) struct CaptureBudget(usize);
 
 impl CaptureBudget {
+    pub(super) fn new(limit: usize) -> Self {
+        Self(limit)
+    }
+
     pub(super) fn charge(&mut self, bytes: usize) -> Result<(), Omission> {
         self.0 = self.0.checked_sub(bytes).ok_or(Omission::Limit)?;
         Ok(())
@@ -226,17 +238,7 @@ impl CaptureBudget {
 
     pub(super) fn text(&mut self, text: &str) -> Result<(), Omission> {
         self.charge(text.len().saturating_add(4))?;
-        if [
-            "-----BEGIN ",
-            "Bearer ",
-            "sk-proj-",
-            "sk-ant-",
-            "ghp_",
-            "github_pat_",
-        ]
-        .iter()
-        .any(|marker| text.contains(marker))
-        {
+        if restricted_text(text) {
             return Err(Omission::Restricted);
         }
         Ok(())
@@ -303,4 +305,14 @@ impl CaptureBudget {
         }
         Ok(())
     }
+}
+
+pub(super) fn restricted_text(text: &str) -> bool {
+    ["-----BEGIN ", "sk-proj-", "sk-ant-", "ghp_", "github_pat_"]
+        .iter()
+        .any(|marker| text.contains(marker))
+        || text
+            .as_bytes()
+            .windows(7)
+            .any(|prefix| prefix.eq_ignore_ascii_case(b"bearer "))
 }

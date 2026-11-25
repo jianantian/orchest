@@ -25,6 +25,7 @@ struct FakeEvidenceModel {
     seen: Mutex<Vec<Value>>,
     fail_first: bool,
     transport: bool,
+    fail_summary: bool,
 }
 
 #[async_trait::async_trait]
@@ -51,6 +52,9 @@ impl ModelAdapter for FakeEvidenceModel {
             seen.push(json!([messages, tools, options]));
             seen.len()
         };
+        if self.fail_summary && tx.is_none() {
+            return Err(ModelError::internal("summary failed", "summary_error"));
+        }
         if self.transport {
             crate::session::evidence::mark_request_sent();
             if let Some(tx) = tx {
@@ -66,7 +70,10 @@ impl ModelAdapter for FakeEvidenceModel {
         }
         Ok(ModelResponse {
             content: vec![ContentBlock::Text("answer".into())],
-            usage: TokenUsage::default(),
+            usage: TokenUsage {
+                input_tokens: 1500,
+                ..Default::default()
+            },
             stop_reason: StopReason::EndTurn,
             option_adjustments: vec![],
         })
@@ -142,6 +149,10 @@ async fn evidence_rebuilds_actual_adapter_input_after_retry() {
             _ => None,
         })
         .collect();
+    assert!(!page
+        .records
+        .iter()
+        .any(|record| matches!(record.kind, EvidenceKind::TransportSent { .. })));
     assert_eq!(reconstructed.len(), 2);
     assert_eq!(reconstructed, *model.seen.lock().unwrap());
     assert_ne!(reconstructed[0][0], reconstructed[1][0]);
@@ -296,4 +307,199 @@ async fn evidence_distinguishes_retry_stream_and_confirmed_assistant_event() {
         .verify_event(reference, &wrong_worker)
         .await
         .unwrap());
+}
+
+struct RewriteBeforeCompaction;
+
+#[async_trait::async_trait]
+impl Hook for RewriteBeforeCompaction {
+    async fn before_compact(&self, ctx: &mut crate::hook::CompactHookContext) -> HookAction {
+        ctx.messages.push(user_message("hook replacement"));
+        HookAction::Continue
+    }
+}
+
+fn user_message(text: &str) -> Message {
+    Message {
+        role: Role::User,
+        content: vec![ContentBlock::Text(text.to_owned())],
+    }
+}
+
+#[tokio::test]
+async fn evidence_correlates_summary_input_and_applied_compaction() {
+    use crate::session::evidence::{
+        projection_origin, AttemptPurpose, CompactionOutcome, MessageOrigin, ProjectionOrigin,
+    };
+
+    let folder = tempfile::tempdir().unwrap();
+    let store = EvidenceStore::open(
+        folder.path().join("evidence.sqlite"),
+        EvidenceLimits::default(),
+    )
+    .await
+    .unwrap();
+    let session = Arc::new(InMemorySessionStore::new());
+    let capture = store.bind(session.clone(), "local");
+    let mut cfg = config(session.clone(), capture.clone());
+    cfg.model.spec.context_window_size = Some(4096);
+    cfg.runtime.compaction = Some(crate::run::CompactionConfig {
+        threshold: 0.1,
+        recent_messages: 1,
+    });
+    let model = Arc::new(FakeEvidenceModel::default());
+    let (run, events) = AgentRun::start_with_messages(
+        cfg.clone(),
+        vec![user_message("same text"), user_message("same text")],
+        "recent".into(),
+        model.clone(),
+        ToolRegistry::new(),
+    );
+    drain(run, events).await;
+    let page = capture.read(None, 64).await.unwrap();
+    let summary = page
+        .records
+        .iter()
+        .find_map(|record| match record.kind {
+            EvidenceKind::AttemptStarted {
+                attempt_id,
+                purpose: AttemptPurpose::CompactionSummary,
+                ..
+            } => Some(attempt_id),
+            _ => None,
+        })
+        .unwrap();
+    let input = reconstruct_input(&page.records, summary).unwrap();
+    assert_eq!(
+        json!([input.messages, input.tools, input.options]),
+        model.seen.lock().unwrap()[1]
+    );
+    assert!(page.records.iter().any(
+        |record| matches!(record.kind, EvidenceKind::CompactionFinished {
+        outcome: CompactionOutcome::SummaryReturned, summary_attempt: Some(id), ..
+    } if id == summary)
+    ));
+
+    let applied = page
+        .records
+        .iter()
+        .find(|record| matches!(record.kind, EvidenceKind::CompactionApplied { .. }))
+        .unwrap();
+    let EvidenceKind::CompactionApplied {
+        event,
+        previous_through_seq,
+        mapping: Some(mapping),
+        summarized: Some(summarized),
+        ..
+    } = &applied.kind
+    else {
+        panic!("missing compaction provenance")
+    };
+    let barrier = page
+        .records
+        .iter()
+        .rev()
+        .find(|record| matches!(record.kind, EvidenceKind::SessionDurableThrough { .. }))
+        .unwrap();
+    assert!(capture.verify_event(applied, barrier).await.unwrap());
+    assert_eq!(mapping[1], MessageOrigin::SummaryAttempt(summary));
+    assert_eq!(summarized, &[1, 2]);
+    let v2 = session.read("local", 1).await.unwrap();
+    let first_origin = projection_origin(&v2, *previous_through_seq, 1).unwrap();
+    let second_origin = projection_origin(&v2, *previous_through_seq, 2).unwrap();
+    assert_ne!(first_origin, second_origin);
+    assert_eq!(
+        projection_origin(&v2, event.seq, 1),
+        Some(ProjectionOrigin::Replacement {
+            seq: event.seq,
+            position: 1
+        })
+    );
+
+    let next = Arc::new(FakeEvidenceModel::default());
+    cfg.runtime.compaction = None;
+    let (run, events) =
+        AgentRun::resume_with_input(cfg, "follow up".into(), next.clone(), ToolRegistry::new())
+            .await
+            .unwrap();
+    drain(run, events).await;
+    let page = capture.read(None, 64).await.unwrap();
+    let (next_id, through_seq) = page
+        .records
+        .iter()
+        .rev()
+        .find_map(|record| match record.kind {
+            EvidenceKind::ContextBasis {
+                attempt_id,
+                through_seq,
+                projection_order: true,
+            } => Some((attempt_id, through_seq)),
+            _ => None,
+        })
+        .unwrap();
+    let input = reconstruct_input(&page.records, next_id).unwrap();
+    assert_eq!(
+        json!([input.messages, input.tools, input.options]),
+        next.seen.lock().unwrap()[0]
+    );
+    let v2 = session.read("local", 1).await.unwrap();
+    assert_eq!(
+        projection_origin(&v2, through_seq, 1),
+        Some(ProjectionOrigin::Replacement {
+            seq: event.seq,
+            position: 1
+        })
+    );
+}
+
+#[tokio::test]
+async fn evidence_keeps_summary_failure_separate_from_hook_replacement() {
+    use crate::session::evidence::CompactionOutcome;
+
+    for hook_rewrites in [false, true] {
+        let folder = tempfile::tempdir().unwrap();
+        let store = EvidenceStore::open(
+            folder.path().join("evidence.sqlite"),
+            EvidenceLimits::default(),
+        )
+        .await
+        .unwrap();
+        let session = Arc::new(InMemorySessionStore::new());
+        let capture = store.bind(session.clone(), "local");
+        let mut cfg = config(session, capture.clone());
+        cfg.model.spec.context_window_size = Some(4096);
+        cfg.runtime.compaction = Some(crate::run::CompactionConfig {
+            threshold: 0.1,
+            recent_messages: 1,
+        });
+        if hook_rewrites {
+            cfg = cfg.with_hook(Arc::new(RewriteBeforeCompaction));
+        }
+        let (run, events) = AgentRun::start_with_messages(
+            cfg,
+            vec![user_message("old"), user_message("older")],
+            "recent".into(),
+            Arc::new(FakeEvidenceModel {
+                fail_summary: true,
+                ..Default::default()
+            }),
+            ToolRegistry::new(),
+        );
+        drain(run, events).await;
+        let page = capture.read(None, 64).await.unwrap();
+        assert!(page.records.iter().any(|r| matches!(
+            r.kind,
+            EvidenceKind::CompactionFinished {
+                outcome: CompactionOutcome::SummaryFailed,
+                ..
+            }
+        )));
+        assert_eq!(
+            page.records.iter().any(|r| matches!(
+                r.kind,
+                EvidenceKind::CompactionApplied { mapping: None, .. }
+            )),
+            hook_rewrites
+        );
+    }
 }

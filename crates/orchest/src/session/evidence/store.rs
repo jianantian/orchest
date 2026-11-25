@@ -1,3 +1,4 @@
+use crate::session::SessionStore;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -6,13 +7,12 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use rusqlite::{params, Connection, ErrorCode, TransactionBehavior};
+use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
+use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
-use super::{
-    EvidenceError, EvidenceLimits, EvidencePage, EvidenceRecord, EvidenceSession, SessionStore,
-};
+use super::{EvidenceError, EvidenceLimits, EvidencePage, EvidenceRecord, EvidenceSession};
 use crate::run::RunId;
 
 const APPLICATION_ID: i32 = 0x4f45_5644;
@@ -203,6 +203,8 @@ async fn run_writer(
 
 impl Database {
     fn open(path: PathBuf, limits: EvidenceLimits) -> Result<Self, EvidenceError> {
+        #[cfg(unix)]
+        prepare_private_file(&path)?;
         let mut conn = Connection::open(path).map_err(storage)?;
         conn.busy_timeout(Duration::from_millis(250))
             .map_err(storage)?;
@@ -235,7 +237,10 @@ impl Database {
                     );
                     CREATE INDEX evidence_instance ON evidence(instance, cursor);
                     CREATE INDEX evidence_expiry ON evidence(expires);
-                    CREATE TABLE revoked (instance TEXT PRIMARY KEY);",
+                    CREATE TABLE captures (
+                        instance TEXT PRIMARY KEY, revoked INTEGER NOT NULL DEFAULT 0,
+                        expired_records INTEGER NOT NULL DEFAULT 0
+                    );",
                 )
                 .map_err(storage)?;
                 tx.pragma_update(None, "application_id", APPLICATION_ID)
@@ -247,6 +252,8 @@ impl Database {
             _ => return Err(EvidenceError::Schema),
         }
         tx.commit().map_err(storage)?;
+        conn.pragma_update(None, "synchronous", "FULL")
+            .map_err(storage)?;
         conn.pragma_update(None, "secure_delete", "ON")
             .map_err(storage)?;
         let page_bytes: usize = conn
@@ -261,7 +268,7 @@ impl Database {
         if cap > max_pages {
             return Err(EvidenceError::InvalidLimits);
         }
-        let database = Self { conn, limits };
+        let mut database = Self { conn, limits };
         database.purge()?;
         Ok(database)
     }
@@ -304,7 +311,7 @@ impl Database {
     }
 
     fn insert(
-        &self,
+        &mut self,
         instance: RunId,
         id: Uuid,
         record: &EvidenceRecord,
@@ -314,23 +321,44 @@ impl Database {
             return Ok(());
         }
         let payload = encode(record, self.limits.record_bytes)?;
-        self.conn
-            .execute(
-                "INSERT OR IGNORE INTO evidence (instance, id, expires, payload)
-             SELECT ?1, ?2, ?3, ?4 WHERE NOT EXISTS (SELECT 1 FROM revoked WHERE instance = ?1)",
-                params![instance.0.to_string(), id.to_string(), expires, payload],
-            )
+        let instance = instance.0.to_string();
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO captures (instance) VALUES (?1)",
+            [&instance],
+        )
+        .map_err(storage)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO evidence (instance, id, expires, payload)
+             SELECT ?1, ?2, ?3, ?4 WHERE EXISTS
+                (SELECT 1 FROM captures WHERE instance = ?1 AND revoked = 0)",
+            params![instance, id.to_string(), expires, payload],
+        )
+        .map_err(storage)?;
+        tx.commit().map_err(storage)?;
         Ok(())
     }
 
     fn read(
-        &self,
+        &mut self,
         instance: RunId,
         cursor: i64,
         limit: usize,
     ) -> Result<EvidencePage, EvidenceError> {
         self.purge()?;
+        let (revoked, expired_records) = self
+            .conn
+            .query_row(
+                "SELECT revoked, expired_records FROM captures WHERE instance = ?1",
+                [instance.0.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(storage)?
+            .unwrap_or_default();
         let mut query = self
             .conn
             .prepare(
@@ -352,6 +380,8 @@ impl Database {
             records: Vec::new(),
             next_cursor: None,
             invalid_records: 0,
+            expired_records,
+            revoked,
             observed_drops: 0,
         };
         let mut last = cursor;
@@ -374,11 +404,21 @@ impl Database {
         Ok(page)
     }
 
-    fn purge(&self) -> Result<(), EvidenceError> {
-        self.conn
-            .execute("DELETE FROM evidence WHERE expires <= ?1", [now()])
+    fn purge(&mut self) -> Result<(), EvidenceError> {
+        let now = now();
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage)?;
-        Ok(())
+        tx.execute(
+            "INSERT INTO captures (instance, expired_records)
+             SELECT instance, count(*) FROM evidence WHERE expires <= ?1 GROUP BY instance
+             ON CONFLICT(instance) DO UPDATE SET expired_records = captures.expired_records + excluded.expired_records",
+            [now],
+        ).map_err(storage)?;
+        tx.execute("DELETE FROM evidence WHERE expires <= ?1", [now])
+            .map_err(storage)?;
+        tx.commit().map_err(storage)
     }
 
     fn revoke(&mut self, instance: RunId) -> Result<(), EvidenceError> {
@@ -389,10 +429,33 @@ impl Database {
             .map_err(storage)?;
         tx.execute("DELETE FROM evidence WHERE instance = ?1", [&instance])
             .map_err(storage)?;
-        tx.execute("INSERT OR IGNORE INTO revoked VALUES (?1)", [&instance])
-            .map_err(storage)?;
+        tx.execute(
+            "INSERT INTO captures (instance, revoked) VALUES (?1, 1)
+                    ON CONFLICT(instance) DO UPDATE SET revoked = 1, expired_records = 0",
+            [&instance],
+        )
+        .map_err(storage)?;
         tx.commit().map_err(storage)
     }
+}
+
+#[cfg(unix)]
+fn prepare_private_file(path: &Path) -> Result<(), EvidenceError> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    // allow-blocking-io: Database::open runs on the blocking pool.
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+        .map_err(|_| EvidenceError::Storage)?;
+    let metadata = file.metadata().map_err(|_| EvidenceError::Storage)?;
+    if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 {
+        return Err(EvidenceError::UnsafeFilePermissions);
+    }
+    Ok(())
 }
 
 fn now() -> i64 {
@@ -429,4 +492,6 @@ pub(super) fn encode(value: &impl Serialize, limit: usize) -> Result<Vec<u8>, Ev
     Ok(out.0)
 }
 
-use serde::Serialize;
+#[cfg(test)]
+#[path = "store_test.rs"]
+mod tests;

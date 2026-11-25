@@ -1,6 +1,6 @@
 # Session 证据迭代
 
-状态：规划草案，发布版本待定。依赖已发布的 [Session v2](../v2_0/prd.md)。
+状态：迭代分支已实现，发布版本待定。依赖已发布的 [Session v2](../v2_0/prd.md)。
 
 ## 背景与目标
 
@@ -22,7 +22,7 @@ DSH 从已写入 Session 的消息和请求配置构造冻结请求，并用 moc
 - 读取由宿主在受控本地存储内授权，作用域绑定到所属 SessionStore、Session id 和会话实例。不同存储或删除后重建的同名 Session 各自隔离。无有效权限时禁止返回正文、可解引用的引用或用于辨识内容的摘要。
 - 每次实际进入 adapter 调用分配独立的 `attempt_id`。run、step、尝试序号用于展示和定位。Supervisor 重启 worker 会沿用 run id，允许重新执行相同 step。主循环调用和独立摘要调用各有自己的尝试标识和用途。
 - 查询分别展示 adapter 调用边界、发送证据、结算和会话提交。证据关联 `SessionEvent.seq` 时，必须能验证会话实例和目标事件属于原调用。内存 append 与现有 checkpoint 的耐久确认分开表示，掉电前未确认的引用不得被后来复用的序号误绑定。SDK 观察流、Session schema、checkpoint、副作用账本、工具审批和恢复规则沿用 v2 契约。
-- 使用独立版本的可选证据存储。首版随 Rust SDK 提供一个本地持久化实现，由 001 选择容器并约束队列、单条记录、持久总量及读取窗口。优先使用有界且增量的采集成本，证据写入与 Session checkpoint 不组成事务。读端区分可确认的丢弃、裁剪、过期、损坏和缺口原因未知；空记录不能证明没有发生调用。
+- 使用独立版本的可选证据存储。首版随 Rust SDK 通过可选的 `session-evidence` feature 提供独立 SQLite 数据库。限制队列、单条记录、数据库文件大小及读取窗口。优先使用有界且增量的采集成本，证据写入与 Session checkpoint 不组成事务。读端区分可确认的丢弃、裁剪、过期、损坏和缺口原因未知；空记录不能证明没有发生调用。
 - 重建范围以 `ModelAdapter::complete()` 收到的消息、工具和 options 为准。精确表示结构化值相等，且范围内每个字段均有授权和完整证据。adapter 报告的调整另记来源。发送或 provider 响应状态需要 transport 或上游证据；普通 adapter 返回值、流片段或泛化错误本身仅证明 adapter 边界处观察到的结果。首版通过可控 adapter 验证状态，兼容无 transport 证据的现有实现。
 - 内容来源以有证据的事件、hook 或摘要引用为准。任意 hook 改写和旧会话历史可能缺少逐条来源，无法证明的关联标为未知。`Compacted` 的实际 append 决定替换是否生效，既有 checkpoint 决定耐久状态，摘要调用单独结算。压缩后的 Session 投影仍可被下一次请求的临时 hook 改写，两处各保留自己的上下文引用。
 

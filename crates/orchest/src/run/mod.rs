@@ -314,6 +314,7 @@ mod cancel_tests;
 #[cfg(test)]
 mod checkpoint_tests;
 #[cfg(all(test, feature = "session-evidence"))]
+#[path = "evidence_test.rs"]
 mod evidence_tests;
 
 #[cfg(test)]
