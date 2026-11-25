@@ -277,13 +277,10 @@ otherwise. The workflow creates the GitHub Release from the changelog
 section (a prerelease for `-rc.N`), then installs the published version
 from PyPI and npm on each platform and runs the SDK tests.
 
-The platform packages in `optionalDependencies` only enter
-`package-lock.json` once that version is on npm, so right after a version
-bump the lockfile cannot list them. npm 10 (bundled with Node 22, which
-the workflows use) accepts such a lockfile in `npm ci`; npm 11 rejects it,
-so on Node 24 run `npm install` instead. Moving the workflows to npm 11
-means replacing their `npm ci` with `npm install` plus a lockfile check
-(`npm install --package-lock-only && git diff --exit-code package-lock.json`).
+The platform packages in `optionalDependencies` may be missing for a version
+that has not yet been published. The SDK build jobs use `npm install` with
+the committed lockfile so that missing optional packages do not block the
+build. The test jobs install and test the newly built tarballs together.
 
 ### Recovering a failed SDK release
 

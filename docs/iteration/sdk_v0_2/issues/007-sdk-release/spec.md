@@ -11,20 +11,26 @@ lets the owner switch npm to Trusted Publishing before the final release.
 
 ## Goal
 
-Publish `0.2.0-rc.1`, verify it from PyPI and npm, move npm to Trusted
-Publishing, then publish `0.2.0` and close the iteration.
+Publish a release candidate on both PyPI and npm through Trusted Publishing,
+verify it on all supported platforms, then publish `0.2.0` and close the
+iteration.
+
+The `sdk-v0.2.0-rc.1` workflow stopped before upload because `npm ci` rejected
+the lockfile after npm's platform packages were created. npm already has the
+four RC1 versions, while PyPI has no RC1. Keep that tag and use
+`0.2.0-rc.2` for the first candidate verified from both registries.
 
 ## Acceptance Criteria
 
-- [ ] The owner has registered `orchest-py` as a pending trusted publisher
-  on PyPI and added a temporary `NPM_TOKEN` secret.
-- [ ] The SDK version is `0.2.0-rc.1`, `CHANGELOG-SDK.md` has its section,
-  and the `sdk-v0.2.0-rc.1` tag publishes `orchest-py` `0.2.0rc1` to PyPI
-  and the four npm packages `0.2.0-rc.1` under the `next` dist-tag.
+- [x] The owner registered `orchest-py` as a pending trusted publisher on PyPI
+  and configured Trusted Publishing for the four npm packages.
+- [ ] The SDK packaging build can install its Node build dependencies before
+  the target versions of the platform packages are available on npm.
+- [ ] The SDK version is `0.2.0-rc.2`, `CHANGELOG-SDK.md` has its section,
+  and the `sdk-v0.2.0-rc.2` tag publishes `orchest-py` `0.2.0rc2` to PyPI
+  and the four npm packages `0.2.0-rc.2` under the `next` dist-tag.
 - [ ] The post-publish verification passes on all three platforms for the
   release candidate.
-- [ ] The owner has configured trusted publishers for the four npm
-  packages and deleted the `NPM_TOKEN` secret.
 - [ ] After owner sign-off, the `sdk-v0.2.0` tag publishes `0.2.0` to PyPI
   and npm (`latest`) through Trusted Publishing only, and the post-publish
   verification passes on all three platforms.
@@ -48,5 +54,4 @@ Publishing, then publish `0.2.0` and close the iteration.
 
 ## Notes
 
-HITL: the PyPI and npm setup, each publish approval and the 0.2.0 sign-off
-belong to the owner.
+HITL: each publish approval and the 0.2.0 sign-off belong to the owner.

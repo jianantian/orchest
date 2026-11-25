@@ -93,10 +93,10 @@ jobs:
 
       - name: Build and pack the npm packages
         run: |
-          # Node 22 bundles npm 10, whose `npm ci` accepts a lockfile without the
-          # unpublished platform packages; npm 11 does not (WORKFLOW.md
-          # "Releasing the SDKs").
-          npm ci
+          # The platform packages for this version can be missing from npm
+          # while we are building them. npm ci can reject this lockfile once
+          # the package names exist, even when the version is still absent.
+          npm install --no-audit --no-fund
           npm run build:native
           scripts/pack-node-sdk.sh target/npm-pack
 
@@ -160,10 +160,10 @@ jobs:
 
       - name: Build and pack the npm packages
         run: |
-          # Node 22 bundles npm 10, whose `npm ci` accepts a lockfile without the
-          # unpublished platform packages; npm 11 does not (WORKFLOW.md
-          # "Releasing the SDKs").
-          npm ci
+          # The platform packages for this version can be missing from npm
+          # while we are building them. npm ci can reject this lockfile once
+          # the package names exist, even when the version is still absent.
+          npm install --no-audit --no-fund
           npm run build:native
           scripts/pack-node-sdk.sh target/npm-pack
 

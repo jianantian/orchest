@@ -67,7 +67,7 @@ ADR-0004 (issue 001).
   `CHANGELOG-SDK.md`.
 - Documentation: install instructions, supported platforms, minimum
   versions and the `orchest` import-name collision.
-- Release candidate `0.2.0-rc.1`, then `0.2.0`.
+- Release candidate `0.2.0-rc.2` on both registries, then `0.2.0`. npm has RC1; its GitHub release workflow stopped before the PyPI upload.
 
 ## Out of Scope
 
@@ -125,6 +125,5 @@ both Linux architectures.
 | # | Step | When |
 | --- | --- | --- |
 | 1 | ~~Create or confirm the `orchest` organization on npm~~ — unavailable; the unscoped `orchest-sdk` needs no organization | Done 2026-10-02 |
-| 2 | Register `orchest-py` on PyPI as a pending trusted publisher for `release-sdk.yml` | Before the RC |
-| 3 | Add a temporary npm token to the repository secrets | Before the RC |
-| 4 | Configure trusted publishers for the four npm packages, then delete the token | After the RC, before 0.2.0 |
+| 2 | Register `orchest-py` on PyPI as a pending trusted publisher for `release-sdk.yml` | Done |
+| 3 | Create the four npm packages and configure their trusted publishers | Done. The new candidate uses OIDC without an `NPM_TOKEN` |

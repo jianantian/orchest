@@ -13,6 +13,14 @@ from.
 
 ## [Unreleased]
 
+## [0.2.0-rc.2]
+
+Built from Orchest Rust crates version `2.0.0`.
+
+- Build and test the SDK packages when the target versions of the optional
+  npm platform packages have yet to be published.
+- Carries forward the SDK changes listed in the [RC1 changelog](https://github.com/jianantian/orchest/blob/sdk-v0.2.0-rc.1/CHANGELOG-SDK.md#020-rc1).
+
 ## [0.2.0-rc.1]
 
 Built from Orchest Rust crates version `2.0.0`.
