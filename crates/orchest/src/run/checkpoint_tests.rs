@@ -481,3 +481,75 @@ async fn abort_records_a_terminal_event() {
         Some(SessionEventKind::RunAborted { .. })
     ));
 }
+
+#[cfg(feature = "session-evidence")]
+#[tokio::test]
+async fn local_evidence_survives_resume_without_reusing_attempt_identity() {
+    use crate::session::evidence::{EvidenceKind, EvidenceLimits, EvidenceStore};
+
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("evidence.sqlite");
+    let storage = Arc::new(InMemorySessionStore::new());
+    let database = EvidenceStore::open(&path, EvidenceLimits::default())
+        .await
+        .unwrap();
+    let capture = database.bind(storage.clone(), "observed");
+    let cfg = config(&storage, "observed").with_session_evidence(capture.clone());
+    let (handle, rx) = AgentRun::start(
+        cfg.clone(),
+        "private prompt".into(),
+        ScriptedModel::new(vec![Turn::Crash]),
+        ToolRegistry::new(),
+    );
+    drain(handle, rx).await;
+    let (handle, rx) = AgentRun::resume(
+        cfg,
+        ScriptedModel::new(vec![Turn::Answer]),
+        ToolRegistry::new(),
+    )
+    .await
+    .unwrap();
+    drain(handle, rx).await;
+
+    capture.read(None, 64).await.unwrap();
+    let reopened = EvidenceStore::open(&path, EvidenceLimits::default())
+        .await
+        .unwrap();
+    let page = reopened
+        .bind(storage.clone(), "observed")
+        .read(None, 64)
+        .await
+        .unwrap();
+    let starts: Vec<_> = page
+        .records
+        .iter()
+        .filter_map(|record| match record.kind {
+            EvidenceKind::AttemptStarted { attempt_id, .. } => {
+                Some((record.run_id, record.step, attempt_id))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(starts.len(), 2);
+    assert_ne!(starts[0].0, starts[1].0);
+    assert_eq!(starts[0].1, starts[1].1);
+    assert_ne!(starts[0].2, starts[1].2);
+    assert!(!serde_json::to_string(&page.records)
+        .unwrap()
+        .contains("private prompt"));
+
+    let (handle, rx) = AgentRun::start(
+        config(&storage, "default-off"),
+        "another prompt".into(),
+        ScriptedModel::new(vec![Turn::Answer]),
+        ToolRegistry::new(),
+    );
+    drain(handle, rx).await;
+    assert!(reopened
+        .bind(storage, "default-off")
+        .read(None, 64)
+        .await
+        .unwrap()
+        .records
+        .is_empty());
+}

@@ -1,6 +1,11 @@
 //! WorkerActor: Ractor-based agent run actor (mode B: self-message step).
 
+#[cfg(feature = "session-evidence")]
+use crate::session::evidence::{
+    identity, AttemptOutcome, EvidenceKind, LocalDecision, RunEvidence,
+};
 use std::collections::{HashMap, HashSet};
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -90,6 +95,8 @@ pub(crate) struct AgentRunState {
     /// Where `log` is persisted. Captured at start so a handoff to a config
     /// without a store keeps writing to the same session.
     pub session: Option<SessionBinding>,
+    #[cfg(feature = "session-evidence")]
+    evidence: Option<RunEvidence>,
     pub tool_defs: Vec<ToolDef>,
     pub budget: BudgetGuard,
     pub last_compaction_step: Option<u32>,
@@ -354,6 +361,15 @@ impl Actor for WorkerActor {
             }
         }
 
+        #[cfg(feature = "session-evidence")]
+        let evidence = config
+            .session_evidence
+            .as_ref()
+            .zip(session.as_ref())
+            .and_then(|(capture, binding)| {
+                capture.bind_run(&binding.store, &binding.session_id, log.events().first())
+            });
+
         let tool_defs = match prepare_initial_tool_defs(&config, &mut registry) {
             Ok(defs) => defs,
             Err(error) => {
@@ -395,6 +411,8 @@ impl Actor for WorkerActor {
             registry,
             log,
             session,
+            #[cfg(feature = "session-evidence")]
+            evidence,
             tool_defs,
             budget,
             last_compaction_step: None,
@@ -800,7 +818,11 @@ async fn checkpoint(state: &mut AgentRunState, subs: &[EventSink], point: Checkp
         return true;
     }
     match persist_durable(&binding, &mut state.log).await {
-        Ok(()) => true,
+        Ok(()) => {
+            #[cfg(feature = "session-evidence")]
+            record_durable_through(state);
+            true
+        }
         Err(error) => {
             emit_run_failed(
                 state,
@@ -822,14 +844,44 @@ async fn persist_terminal(state: &mut AgentRunState) {
     let Some(binding) = state.session.clone() else {
         return;
     };
-    if let Err(error) = persist_durable(&binding, &mut state.log).await {
-        emit(
-            &state.event_subs,
-            RuntimeEvent::RuntimeWarning {
-                message: format!("session log persistence failed: {error}"),
+    match persist_durable(&binding, &mut state.log).await {
+        Ok(()) => {
+            #[cfg(feature = "session-evidence")]
+            record_durable_through(state);
+        }
+        Err(error) => {
+            emit(
+                &state.event_subs,
+                RuntimeEvent::RuntimeWarning {
+                    message: format!("session log persistence failed: {error}"),
+                },
+            )
+            .await;
+        }
+    }
+}
+
+#[cfg(feature = "session-evidence")]
+fn record_durable_through(state: &AgentRunState) {
+    if let Some(evidence) = &state.evidence {
+        evidence.record(
+            state.run_id,
+            state.log.step(),
+            EvidenceKind::SessionDurableThrough {
+                seq: state.log.next_seq().saturating_sub(1),
             },
-        )
-        .await;
+        );
+    }
+}
+
+#[cfg(feature = "session-evidence")]
+fn record_local_decision(state: &AgentRunState, decision: LocalDecision) {
+    if let Some(evidence) = &state.evidence {
+        evidence.record(
+            state.run_id,
+            state.log.step(),
+            EvidenceKind::LocalDecision { decision },
+        );
     }
 }
 
@@ -1177,6 +1229,8 @@ async fn call_model_phase(state: &mut AgentRunState, subs: &[EventSink]) -> Opti
             .await
             {
                 crate::hook::ModelHookAction::Abort(reason) => {
+                    #[cfg(feature = "session-evidence")]
+                    record_local_decision(state, LocalDecision::HookBlocked);
                     state.refresh_terminal_hook_ctx(step);
                     crate::hook::runner::run_on_run_error(
                         &state.config.hooks,
@@ -1194,6 +1248,8 @@ async fn call_model_phase(state: &mut AgentRunState, subs: &[EventSink]) -> Opti
         };
 
         if !validate_context_window(state, subs, &call_messages).await {
+            #[cfg(feature = "session-evidence")]
+            record_local_decision(state, LocalDecision::ContextRejected);
             return None;
         }
 
@@ -1207,13 +1263,26 @@ async fn call_model_phase(state: &mut AgentRunState, subs: &[EventSink]) -> Opti
         )
         .await;
         let cancel = state.cancel.clone();
+        #[cfg(feature = "session-evidence")]
+        let mut evidence_attempt = state.evidence.as_ref().map(|evidence| EvidenceAttempt {
+            evidence,
+            ordinal: retry_attempt,
+            id: None,
+        });
         let raw_response = tokio::select! {
             biased;
             () = cancel.cancelled() => None,
-            response = dispatch_model_call(state, subs, &call_messages, &message_id) => {
+            response = dispatch_model_call(
+                state, subs, &call_messages, &message_id,
+                #[cfg(feature = "session-evidence")]
+                evidence_attempt.as_mut(),
+            ) => {
                 Some(response)
             }
         };
+        #[cfg(feature = "session-evidence")]
+        settle_evidence_attempt(state, evidence_attempt.as_ref(), &raw_response);
+
         let (content, stop_reason) = match &raw_response {
             Some(Ok(response)) => (response.content.clone(), Some(response.stop_reason.clone())),
             _ => (Vec::new(), None),
@@ -1294,11 +1363,63 @@ async fn validate_context_window(
     false
 }
 
+#[cfg(feature = "session-evidence")]
+struct EvidenceAttempt<'a> {
+    evidence: &'a RunEvidence,
+    ordinal: u32,
+    id: Option<uuid::Uuid>,
+}
+
+#[cfg(feature = "session-evidence")]
+impl EvidenceAttempt<'_> {
+    fn start(&mut self, state: &AgentRunState, provider: &str, model: &str) {
+        let attempt_id = uuid::Uuid::new_v4();
+        self.id = Some(attempt_id);
+        self.evidence.record(
+            state.run_id,
+            state.log.step(),
+            EvidenceKind::AttemptStarted {
+                attempt_id,
+                ordinal: self.ordinal,
+                provider: identity(provider),
+                model: identity(model),
+            },
+        );
+    }
+}
+
+#[cfg(feature = "session-evidence")]
+fn settle_evidence_attempt(
+    state: &AgentRunState,
+    attempt: Option<&EvidenceAttempt<'_>>,
+    result: &Option<Result<ModelResponse, crate::model::ModelError>>,
+) {
+    let Some(attempt) = attempt else { return };
+    let Some(attempt_id) = attempt.id else {
+        record_local_decision(state, LocalDecision::CancelledBeforeAdapter);
+        return;
+    };
+    let outcome = match result {
+        Some(Ok(_)) => AttemptOutcome::Returned,
+        Some(Err(_)) => AttemptOutcome::AdapterError,
+        None => AttemptOutcome::Cancelled,
+    };
+    attempt.evidence.record(
+        state.run_id,
+        state.log.step(),
+        EvidenceKind::AttemptFinished {
+            attempt_id,
+            outcome,
+        },
+    );
+}
+
 async fn dispatch_model_call(
     state: &AgentRunState,
     subs: &[EventSink],
     call_messages: &[Message],
     message_id: &str,
+    #[cfg(feature = "session-evidence")] mut evidence_attempt: Option<&mut EvidenceAttempt<'_>>,
 ) -> Result<ModelResponse, crate::model::ModelError> {
     let (stream_tx, mut stream_rx) = mpsc::channel::<ModelStreamChunk>(64);
     let event_tx_clone = primary(subs).clone();
@@ -1324,6 +1445,10 @@ async fn dispatch_model_call(
     let start = Instant::now();
     let span = telemetry::model_complete_span(&provider, &model, true);
     let raw_response = async {
+        #[cfg(feature = "session-evidence")]
+        if let Some(attempt) = &mut evidence_attempt {
+            attempt.start(state, &provider, &model);
+        }
         state
             .model
             .complete(
@@ -2960,6 +3085,8 @@ fn failed_state(
         registry,
         log: SessionLog::new(),
         session: None,
+        #[cfg(feature = "session-evidence")]
+        evidence: None,
         tool_defs: vec![],
         budget: BudgetGuard::new(BudgetConfig {
             max_tokens: None,

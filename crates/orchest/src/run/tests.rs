@@ -133,6 +133,8 @@ fn test_config() -> AgentConfig {
         handoffs: vec![],
         session_store: None,
         session_id: None,
+        #[cfg(feature = "session-evidence")]
+        session_evidence: None,
         checkpoint_policy: Default::default(),
         supervision_strategy: Default::default(),
     }

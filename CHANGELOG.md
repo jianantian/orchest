@@ -14,6 +14,11 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+### Added
+
+- Optional Rust `session-evidence` support for local model attempt metadata,
+  with a separate SQLite database and bounded, non-blocking capture.
+
 ## [2.0.0]
 
 The v2.0 runtime contract ([ADR-0005](docs/adr/0005-host-integration-contract.md)).
