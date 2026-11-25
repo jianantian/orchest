@@ -2,7 +2,8 @@
 
 #[cfg(feature = "session-evidence")]
 use crate::session::evidence::{
-    identity, AttemptOutcome, EvidenceKind, LocalDecision, RunEvidence,
+    AttemptObservation, AttemptOutcome, AttemptPurpose, EvidenceField, EvidenceKind,
+    HookDisposition, LocalDecision, RunEvidence,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -97,6 +98,8 @@ pub(crate) struct AgentRunState {
     pub session: Option<SessionBinding>,
     #[cfg(feature = "session-evidence")]
     evidence: Option<RunEvidence>,
+    #[cfg(feature = "session-evidence")]
+    evidence_attempt: Option<AttemptObservation>,
     pub tool_defs: Vec<ToolDef>,
     pub budget: BudgetGuard,
     pub last_compaction_step: Option<u32>,
@@ -413,6 +416,8 @@ impl Actor for WorkerActor {
             session,
             #[cfg(feature = "session-evidence")]
             evidence,
+            #[cfg(feature = "session-evidence")]
+            evidence_attempt: None,
             tool_defs,
             budget,
             last_compaction_step: None,
@@ -741,7 +746,16 @@ async fn report_ledger(state: &mut AgentRunState, subs: &[EventSink]) {
         .log
         .take_unobserved()
         .iter()
-        .filter_map(|event| ledger_event(&event.kind))
+        .filter_map(|event| {
+            let observed = ledger_event(&event.kind);
+            #[cfg(feature = "session-evidence")]
+            if observed.is_some() {
+                if let Some(attempt) = &state.evidence_attempt {
+                    attempt.event(event);
+                }
+            }
+            observed
+        })
         .collect();
     for event in events {
         emit(subs, event).await;
@@ -1264,24 +1278,31 @@ async fn call_model_phase(state: &mut AgentRunState, subs: &[EventSink]) -> Opti
         .await;
         let cancel = state.cancel.clone();
         #[cfg(feature = "session-evidence")]
-        let mut evidence_attempt = state.evidence.as_ref().map(|evidence| EvidenceAttempt {
-            evidence,
-            ordinal: retry_attempt,
-            id: None,
-        });
+        let mut evidence_attempt = None;
         let raw_response = tokio::select! {
             biased;
             () = cancel.cancelled() => None,
             response = dispatch_model_call(
                 state, subs, &call_messages, &message_id,
                 #[cfg(feature = "session-evidence")]
-                evidence_attempt.as_mut(),
+                (&mut evidence_attempt, retry_attempt),
             ) => {
                 Some(response)
             }
         };
         #[cfg(feature = "session-evidence")]
-        settle_evidence_attempt(state, evidence_attempt.as_ref(), &raw_response);
+        {
+            if let Some(attempt) = &evidence_attempt {
+                attempt.finish(match &raw_response {
+                    Some(Ok(_)) => AttemptOutcome::Returned,
+                    Some(Err(_)) => AttemptOutcome::AdapterError,
+                    None => AttemptOutcome::Cancelled,
+                });
+            } else if raw_response.is_none() {
+                record_local_decision(state, LocalDecision::CancelledBeforeAdapter);
+            }
+            state.evidence_attempt = evidence_attempt;
+        }
 
         let (content, stop_reason) = match &raw_response {
             Some(Ok(response)) => (response.content.clone(), Some(response.stop_reason.clone())),
@@ -1363,69 +1384,98 @@ async fn validate_context_window(
     false
 }
 
-#[cfg(feature = "session-evidence")]
-struct EvidenceAttempt<'a> {
-    evidence: &'a RunEvidence,
-    ordinal: u32,
-    id: Option<uuid::Uuid>,
-}
-
-#[cfg(feature = "session-evidence")]
-impl EvidenceAttempt<'_> {
-    fn start(&mut self, state: &AgentRunState, provider: &str, model: &str) {
-        let attempt_id = uuid::Uuid::new_v4();
-        self.id = Some(attempt_id);
-        self.evidence.record(
-            state.run_id,
-            state.log.step(),
-            EvidenceKind::AttemptStarted {
-                attempt_id,
-                ordinal: self.ordinal,
-                provider: identity(provider),
-                model: identity(model),
-            },
-        );
-    }
-}
-
-#[cfg(feature = "session-evidence")]
-fn settle_evidence_attempt(
-    state: &AgentRunState,
-    attempt: Option<&EvidenceAttempt<'_>>,
-    result: &Option<Result<ModelResponse, crate::model::ModelError>>,
-) {
-    let Some(attempt) = attempt else { return };
-    let Some(attempt_id) = attempt.id else {
-        record_local_decision(state, LocalDecision::CancelledBeforeAdapter);
-        return;
-    };
-    let outcome = match result {
-        Some(Ok(_)) => AttemptOutcome::Returned,
-        Some(Err(_)) => AttemptOutcome::AdapterError,
-        None => AttemptOutcome::Cancelled,
-    };
-    attempt.evidence.record(
-        state.run_id,
-        state.log.step(),
-        EvidenceKind::AttemptFinished {
-            attempt_id,
-            outcome,
-        },
-    );
-}
-
 async fn dispatch_model_call(
     state: &AgentRunState,
     subs: &[EventSink],
     call_messages: &[Message],
     message_id: &str,
-    #[cfg(feature = "session-evidence")] mut evidence_attempt: Option<&mut EvidenceAttempt<'_>>,
+    #[cfg(feature = "session-evidence")] capture: (&mut Option<AttemptObservation>, u32),
 ) -> Result<ModelResponse, crate::model::ModelError> {
+    #[cfg(feature = "session-evidence")]
+    let attempt = start_evidence_attempt(state, call_messages, capture);
+    let stream_tx = model_stream_channel(
+        subs,
+        message_id,
+        #[cfg(feature = "session-evidence")]
+        attempt.cloned(),
+    );
+    let (stream_tx, forward_task) = stream_tx;
+    let provider = state.model.provider_name().to_string();
+    let model = state.model.model_name().to_string();
+    let start = Instant::now();
+    let span = telemetry::model_complete_span(&provider, &model, true);
+    let complete = state.model.complete(
+        call_messages,
+        &state.tool_defs,
+        &state.config.model.options,
+        Some(stream_tx),
+    );
+    #[cfg(feature = "session-evidence")]
+    let complete = AttemptObservation::adapter_scope(attempt, complete);
+    let raw_response = complete.instrument(span).await;
+    #[cfg(feature = "session-evidence")]
+    if let Some(attempt) = attempt {
+        attempt.returned(&raw_response);
+    }
+    let duration = start.elapsed();
+    match &raw_response {
+        Ok(response) => {
+            telemetry::record_model_success(&provider, &model, duration, &response.usage)
+        }
+        Err(_) => telemetry::record_model_error(&provider, &model, duration),
+    }
+    let _ = forward_task.await;
+    raw_response
+}
+
+#[cfg(feature = "session-evidence")]
+fn start_evidence_attempt<'a>(
+    state: &AgentRunState,
+    call_messages: &[Message],
+    (slot, retry): (&'a mut Option<AttemptObservation>, u32),
+) -> Option<&'a AttemptObservation> {
+    let evidence = state.evidence.as_ref()?;
+    let step = state.log.step();
+    let attempt = slot.insert(AttemptObservation::start(
+        evidence,
+        state.run_id,
+        step,
+        retry,
+        AttemptPurpose::AgentStep,
+        state.model.as_ref(),
+    ));
+    evidence.input(
+        state.run_id,
+        step,
+        attempt.id,
+        call_messages,
+        &state.tool_defs,
+        &state.config.model.options,
+    );
+    Some(attempt)
+}
+
+fn model_stream_channel(
+    subs: &[EventSink],
+    message_id: &str,
+    #[cfg(feature = "session-evidence")] attempt: Option<AttemptObservation>,
+) -> (mpsc::Sender<ModelStreamChunk>, tokio::task::JoinHandle<()>) {
     let (stream_tx, mut stream_rx) = mpsc::channel::<ModelStreamChunk>(64);
     let event_tx_clone = primary(subs).clone();
     let message_id = message_id.to_string();
     let forward_task = tokio::spawn(async move {
+        #[cfg(feature = "session-evidence")]
+        let (mut chunks, mut text_chunks, mut in_band_error) = (0_u64, 0_u64, false);
         while let Some(chunk) = stream_rx.recv().await {
+            #[cfg(feature = "session-evidence")]
+            if let Some(attempt) = &attempt {
+                chunks = chunks.saturating_add(1);
+                if matches!(chunk, ModelStreamChunk::Text { .. }) {
+                    text_chunks = text_chunks.saturating_add(1);
+                }
+                in_band_error |= matches!(chunk, ModelStreamChunk::Error { .. });
+                attempt.observe_stream(&chunk, chunks, text_chunks);
+            }
             let update =
                 MessageDelta::from_stream(&chunk).map(|delta| RuntimeEvent::MessageUpdated {
                     message_id: message_id.clone(),
@@ -1438,48 +1488,12 @@ async fn dispatch_model_call(
                 let _ = event_tx_clone.send(event).await;
             }
         }
-    });
-
-    let provider = state.model.provider_name().to_string();
-    let model = state.model.model_name().to_string();
-    let start = Instant::now();
-    let span = telemetry::model_complete_span(&provider, &model, true);
-    let raw_response = async {
         #[cfg(feature = "session-evidence")]
-        if let Some(attempt) = &mut evidence_attempt {
-            attempt.start(state, &provider, &model);
-            if let Some(id) = attempt.id {
-                attempt.evidence.input(
-                    state.run_id,
-                    state.log.step(),
-                    id,
-                    call_messages,
-                    &state.tool_defs,
-                    &state.config.model.options,
-                );
-            }
+        if let Some(attempt) = &attempt {
+            attempt.stream_closed(chunks, text_chunks, in_band_error);
         }
-        state
-            .model
-            .complete(
-                call_messages,
-                &state.tool_defs,
-                &state.config.model.options,
-                Some(stream_tx),
-            )
-            .await
-    }
-    .instrument(span)
-    .await;
-    let duration = start.elapsed();
-    match &raw_response {
-        Ok(response) => {
-            telemetry::record_model_success(&provider, &model, duration, &response.usage)
-        }
-        Err(_) => telemetry::record_model_error(&provider, &model, duration),
-    }
-    let _ = forward_task.await;
-    raw_response
+    });
+    (stream_tx, forward_task)
 }
 
 async fn apply_after_model_hooks(
@@ -1498,6 +1512,10 @@ async fn apply_after_model_hooks(
         crate::hook::runner::run_after_model(&state.config.hooks, &mut model_ctx, primary(subs))
             .await
     {
+        #[cfg(feature = "session-evidence")]
+        if let Some(attempt) = &state.evidence_attempt {
+            attempt.hook(HookDisposition::Rejected);
+        }
         state.refresh_terminal_hook_ctx(state.log.step());
         crate::hook::runner::run_on_run_error(
             &state.config.hooks,
@@ -1508,6 +1526,14 @@ async fn apply_after_model_hooks(
         .await;
         emit_run_failed(state, subs, reason, RunFailureKind::Other).await;
         return None;
+    }
+    #[cfg(feature = "session-evidence")]
+    if let Some(attempt) = &state.evidence_attempt {
+        let disposition = match &model_ctx.response {
+            Some(modified) if modified != &response.content => HookDisposition::Rewritten,
+            _ => HookDisposition::Accepted,
+        };
+        attempt.hook(disposition);
     }
     // Read back any rewrite the hook applied to the response.
     if let Some(modified) = model_ctx.response.take() {
@@ -1607,6 +1633,10 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         return false;
     }
     state.log.append(SessionEventKind::StepStarted { step });
+    #[cfg(feature = "session-evidence")]
+    {
+        state.evidence_attempt = None;
+    }
     if !checkpoint(state, &subs, Checkpoint::StepStart).await {
         return false;
     }
@@ -1676,9 +1706,7 @@ async fn run_one_step(state: &mut AgentRunState) -> bool {
         StopReason::EndTurn | StopReason::MaxTokens if tool_uses.is_empty() => {
             let output = json!(text_parts.join(""));
             let stop_reason = response.stop_reason.clone();
-            state.log.append(SessionEventKind::AssistantMessage {
-                content: response.content.clone(),
-            });
+            append_assistant_message(state, &response.content);
             end_step(state);
             state.refresh_terminal_hook_ctx(step);
             crate::hook::runner::run_on_run_end(
@@ -1792,6 +1820,17 @@ fn append_tool_results(log: &mut SessionLog, results: Vec<ContentBlock>) {
     }
 }
 
+fn append_assistant_message(state: &mut AgentRunState, content: &[ContentBlock]) {
+    let _event = state.log.append(SessionEventKind::AssistantMessage {
+        content: content.to_vec(),
+    });
+    #[cfg(feature = "session-evidence")]
+    if let Some(attempt) = &state.evidence_attempt {
+        attempt.event(_event);
+        attempt.content(EvidenceField::CommittedResponse, content);
+    }
+}
+
 #[allow(clippy::too_many_lines)] // justified: mechanical extraction of existing tool dispatch flow; narrower helpers follow in later refactors
 async fn run_tool_and_handoff_phase(
     state: &mut AgentRunState,
@@ -1800,9 +1839,7 @@ async fn run_tool_and_handoff_phase(
     response: &ModelResponse,
     tool_uses: &[ToolCall],
 ) -> bool {
-    state.log.append(SessionEventKind::AssistantMessage {
-        content: response.content.clone(),
-    });
+    append_assistant_message(state, &response.content);
 
     let mut tool_results = Vec::new();
     let mut handoff_triggered = false;
@@ -3097,6 +3134,8 @@ fn failed_state(
         session: None,
         #[cfg(feature = "session-evidence")]
         evidence: None,
+        #[cfg(feature = "session-evidence")]
+        evidence_attempt: None,
         tool_defs: vec![],
         budget: BudgetGuard::new(BudgetConfig {
             max_tokens: None,

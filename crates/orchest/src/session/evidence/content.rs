@@ -15,6 +15,10 @@ pub enum EvidenceField {
     Messages,
     Tools,
     Options,
+    Response,
+    OptionAdjustments,
+    CommittedResponse,
+    StreamText,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

@@ -38,6 +38,11 @@ enum Command {
         limit: usize,
         reply: oneshot::Sender<Result<EvidencePage, EvidenceError>>,
     },
+    Contains {
+        instance: RunId,
+        payloads: [Vec<u8>; 2],
+        reply: oneshot::Sender<Result<bool, EvidenceError>>,
+    },
     Revoke {
         instance: RunId,
         reply: oneshot::Sender<Result<(), EvidenceError>>,
@@ -122,6 +127,27 @@ impl EvidenceStore {
         let mut page = response.await.map_err(|_| EvidenceError::Unavailable)??;
         page.observed_drops = self.drops.load(Ordering::Relaxed);
         Ok(page)
+    }
+
+    pub(super) async fn contains(
+        &self,
+        instance: RunId,
+        records: [&EvidenceRecord; 2],
+    ) -> Result<bool, EvidenceError> {
+        let payloads = [
+            encode(records[0], self.limits.record_bytes)?,
+            encode(records[1], self.limits.record_bytes)?,
+        ];
+        let (reply, response) = oneshot::channel();
+        self.queue
+            .send(Command::Contains {
+                instance,
+                payloads,
+                reply,
+            })
+            .await
+            .map_err(|_| EvidenceError::Unavailable)?;
+        response.await.map_err(|_| EvidenceError::Unavailable)?
     }
 
     pub(super) async fn revoke(&self, instance: RunId) -> Result<(), EvidenceError> {
@@ -258,6 +284,18 @@ impl Database {
                 reply,
             } => {
                 let _ = reply.send(self.read(instance, cursor, limit));
+            }
+            Command::Contains {
+                instance,
+                payloads,
+                reply,
+            } => {
+                let _ = reply.send(self.conn.query_row(
+                    "SELECT EXISTS (SELECT 1 FROM evidence WHERE instance = ?1 AND expires > ?2 AND payload = ?3)
+                      AND EXISTS (SELECT 1 FROM evidence WHERE instance = ?1 AND expires > ?2 AND payload = ?4)",
+                    params![instance.0.to_string(), now(), payloads[0], payloads[1]],
+                    |row| row.get(0),
+                ).map_err(storage));
             }
             Command::Revoke { instance, reply } => {
                 let _ = reply.send(self.revoke(instance));

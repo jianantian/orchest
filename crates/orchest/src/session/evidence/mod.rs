@@ -4,6 +4,7 @@
 //! resume. The host controls access to the database and the SessionStore.
 
 mod content;
+mod outcome;
 mod store;
 
 use std::sync::Arc;
@@ -17,6 +18,11 @@ use crate::run::RunId;
 
 pub use content::{
     reconstruct_input, AdapterInput, CapturedField, EvidenceContentPolicy, EvidenceField, Omission,
+};
+pub(crate) use outcome::AttemptObservation;
+pub use outcome::{
+    mark_request_sent, AdapterFailure, AttemptPurpose, EvidenceEventKind, EvidenceEventRef,
+    HookDisposition,
 };
 pub use store::EvidenceStore;
 
@@ -80,6 +86,7 @@ pub enum EvidenceKind {
     AttemptStarted {
         attempt_id: Uuid,
         ordinal: u32,
+        purpose: AttemptPurpose,
         provider: Option<String>,
         model: Option<String>,
     },
@@ -94,6 +101,40 @@ pub enum EvidenceKind {
     },
     LocalDecision {
         decision: LocalDecision,
+    },
+    TransportSent {
+        attempt_id: Uuid,
+    },
+    AdapterReturned {
+        attempt_id: Uuid,
+        stop_reason: Option<crate::model::StopReason>,
+        input_tokens: u64,
+        output_tokens: u64,
+        option_adjustments: usize,
+    },
+    AdapterFailed {
+        attempt_id: Uuid,
+        failure: AdapterFailure,
+    },
+    AfterModel {
+        attempt_id: Uuid,
+        disposition: HookDisposition,
+    },
+    SessionEvent {
+        attempt_id: Uuid,
+        event: EvidenceEventRef,
+    },
+    StreamText {
+        attempt_id: Uuid,
+        index: u64,
+        capture: CapturedField,
+    },
+    StreamObserved {
+        attempt_id: Uuid,
+        chunks: u64,
+        text_chunks: u64,
+        in_band_error: bool,
+        prefix_limited: bool,
     },
     /// The original append crossed an existing SessionStore flush barrier.
     SessionDurableThrough {
@@ -211,6 +252,11 @@ impl RunEvidence {
     pub(crate) fn record(&self, run_id: RunId, step: u32, kind: EvidenceKind) {
         self.database
             .record_with(self.instance, || self.make_record(run_id, step, kind));
+    }
+
+    fn record_with(&self, run_id: RunId, step: u32, kind: impl FnOnce() -> EvidenceKind) {
+        self.database
+            .record_with(self.instance, || self.make_record(run_id, step, kind()));
     }
 
     fn make_record(&self, run_id: RunId, step: u32, kind: EvidenceKind) -> EvidenceRecord {

@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use super::{AgentConfig, AgentRun, BackoffStrategy, EventReceiver, RetryPolicy, RunHandle};
-use crate::hook::{Hook, ModelHookAction, ModelHookContext};
+use crate::hook::{Hook, HookAction, ModelHookAction, ModelHookContext};
 use crate::model::{
     ContentBlock, Message, ModelAdapter, ModelCapabilities, ModelError, ModelResponse,
     RequestOptions, Role, StopReason, StreamEvent, TokenUsage, ToolDef,
@@ -24,6 +24,7 @@ use crate::tool::registry::ToolRegistry;
 struct FakeEvidenceModel {
     seen: Mutex<Vec<Value>>,
     fail_first: bool,
+    transport: bool,
 }
 
 #[async_trait::async_trait]
@@ -43,11 +44,24 @@ impl ModelAdapter for FakeEvidenceModel {
         messages: &[Message],
         tools: &[ToolDef],
         options: &RequestOptions,
-        _tx: Option<mpsc::Sender<StreamEvent>>,
+        tx: Option<mpsc::Sender<StreamEvent>>,
     ) -> Result<ModelResponse, ModelError> {
-        let mut seen = self.seen.lock().unwrap();
-        seen.push(json!([messages, tools, options]));
-        if self.fail_first && seen.len() == 1 {
+        let call = {
+            let mut seen = self.seen.lock().unwrap();
+            seen.push(json!([messages, tools, options]));
+            seen.len()
+        };
+        if self.transport {
+            crate::session::evidence::mark_request_sent();
+            if let Some(tx) = tx {
+                tx.send(StreamEvent::Text {
+                    delta: "visible prefix".into(),
+                })
+                .await
+                .unwrap();
+            }
+        }
+        if self.fail_first && call == 1 {
             return Err(ModelError::internal("retry this call", "timeout"));
         }
         Ok(ModelResponse {
@@ -180,4 +194,106 @@ async fn evidence_withholds_restricted_input_and_revocation_survives_reopen() {
         .unwrap()
         .records
         .is_empty());
+}
+
+struct RewriteResponse;
+
+#[async_trait::async_trait]
+impl Hook for RewriteResponse {
+    async fn after_model(&self, ctx: &mut ModelHookContext) -> HookAction {
+        ctx.response = Some(vec![ContentBlock::Text("accepted answer".into())]);
+        HookAction::Continue
+    }
+}
+
+#[tokio::test]
+async fn evidence_distinguishes_retry_stream_and_confirmed_assistant_event() {
+    use crate::session::evidence::{
+        CapturedField, EvidenceEventKind, EvidenceField, HookDisposition,
+    };
+
+    let folder = tempfile::tempdir().unwrap();
+    let database = EvidenceStore::open(
+        folder.path().join("evidence.sqlite"),
+        EvidenceLimits::default(),
+    )
+    .await
+    .unwrap();
+    let storage = Arc::new(InMemorySessionStore::new());
+    let capture = database.bind(storage.clone(), "local");
+    let cfg = config(storage, capture.clone()).with_hook(Arc::new(RewriteResponse));
+    let (handle, events) = AgentRun::start(
+        cfg,
+        "prompt".into(),
+        Arc::new(FakeEvidenceModel {
+            fail_first: true,
+            transport: true,
+            ..Default::default()
+        }),
+        ToolRegistry::new(),
+    );
+    drain(handle, events).await;
+
+    let records = capture.read(None, 64).await.unwrap().records;
+    let failed = records
+        .iter()
+        .find_map(|record| match record.kind {
+            EvidenceKind::AdapterFailed { attempt_id, .. } => Some(attempt_id),
+            _ => None,
+        })
+        .unwrap();
+    assert!(records.iter().any(
+        |r| matches!(r.kind, EvidenceKind::TransportSent { attempt_id } if attempt_id == failed)
+    ));
+    assert!(records
+        .iter()
+        .any(|r| matches!(&r.kind, EvidenceKind::StreamText {
+        attempt_id, capture: CapturedField::Exact(delta), ..
+    } if *attempt_id == failed && delta == "visible prefix")));
+    assert!(!records.iter().any(
+        |r| matches!(r.kind, EvidenceKind::SessionEvent { attempt_id, .. } if attempt_id == failed)
+    ));
+
+    let reference = records
+        .iter()
+        .find(|r| {
+            matches!(r.kind, EvidenceKind::SessionEvent { event, .. }
+        if event.kind == EvidenceEventKind::AssistantMessage)
+        })
+        .unwrap();
+    let watermark = records
+        .iter()
+        .rev()
+        .find(|r| matches!(r.kind, EvidenceKind::SessionDurableThrough { .. }))
+        .unwrap();
+    assert!(capture.verify_event(reference, watermark).await.unwrap());
+    let EvidenceKind::SessionEvent {
+        attempt_id: accepted,
+        ..
+    } = reference.kind
+    else {
+        unreachable!()
+    };
+    assert!(records
+        .iter()
+        .any(|r| matches!(r.kind, EvidenceKind::AfterModel {
+        attempt_id, disposition: HookDisposition::Rewritten,
+    } if attempt_id == accepted)));
+    for (field, expected) in [
+        (EvidenceField::Response, "answer"),
+        (EvidenceField::CommittedResponse, "accepted answer"),
+    ] {
+        assert!(records
+            .iter()
+            .any(|r| matches!(&r.kind, EvidenceKind::Field {
+            attempt_id, field: actual, capture: CapturedField::Exact(content),
+        } if *attempt_id == accepted && *actual == field
+            && *content == json!([ContentBlock::Text(expected.into())]))));
+    }
+    let mut wrong_worker = watermark.clone();
+    wrong_worker.worker_id = uuid::Uuid::new_v4();
+    assert!(!capture
+        .verify_event(reference, &wrong_worker)
+        .await
+        .unwrap());
 }
