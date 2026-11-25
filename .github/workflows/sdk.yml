@@ -130,7 +130,7 @@ jobs:
 
   build-macos:
     name: Build (darwin-arm64)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -217,7 +217,7 @@ jobs:
           - { platform: linux-x64-gnu, runner: ubuntu-latest, python: "3.11", node: "18" }
           - { platform: linux-x64-gnu, runner: ubuntu-latest, python: "3.14", node: "22" }
           - { platform: linux-arm64-gnu, runner: ubuntu-24.04-arm, python: "3.14", node: "22" }
-          - { platform: darwin-arm64, runner: macos-14, python: "3.14", node: "22" }
+          - { platform: darwin-arm64, runner: macos-15, python: "3.14", node: "22" }
     steps:
       - uses: actions/checkout@v4
 
