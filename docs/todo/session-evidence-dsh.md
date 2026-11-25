@@ -2,6 +2,8 @@
 
 状态：设计草案，未排期。基线：[Orchest 源码 `eedf05d`](https://github.com/jianantian/orchest/tree/eedf05d42646b8a2de3bc0605b57a03ce1c98fa2)。
 
+本文保留 DSH 调研与最初设计。迭代范围、尝试身份、耐久确认和验收见 [Session 证据迭代 PRD](../iteration/session_evidence/prd.md)。
+
 ## 为什么要做
 
 今天重读一个 Session，可以恢复对话和执行状态，但不一定能回答：**某次请求实际给了模型什么、模型实际回了什么、哪些内容最终进入了会话。** 这三个答案在 hook 修改、重试和上下文压缩时会分开。把它们区分开，才能定位同一段输入为何在不同配置下表现不同，或者一次失败究竟发生在模型请求、流中断，还是运行时筛选输出之后。
