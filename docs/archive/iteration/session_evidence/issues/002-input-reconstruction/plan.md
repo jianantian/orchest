@@ -3,7 +3,7 @@
 ## 阅读
 
 - [001 规格](../001-attempt-record/spec.md)
-- [原设计的存储、隐私和兼容约束](../../../../todo/session-evidence-dsh.md#存储隐私和兼容)
+- [原设计的存储、隐私和兼容约束](../../../../../todo/session-evidence-dsh.md#存储隐私和兼容)
 - `crates/orchest/src/run/actor.rs`、模型消息、工具定义和 options 的协议类型
 
 ## 预计修改

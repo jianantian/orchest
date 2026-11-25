@@ -3,7 +3,7 @@
 ## 阅读
 
 - [迭代 PRD](../../prd.md)
-- [Session v2 checkpoint 契约](../../../v2_0/issues/002-checkpoint-and-resume/spec.md)
+- [Session v2 checkpoint 契约](../../../../../iteration/v2_0/issues/002-checkpoint-and-resume/spec.md)
 - `crates/orchest/src/run/actor.rs`、`crates/orchest/src/session/{store,log}.rs`
 
 ## 预计修改

@@ -1,8 +1,8 @@
 # Orchest Session：补齐模型调用证据
 
-状态：设计草案，未排期。基线：[Orchest 源码 `eedf05d`](https://github.com/jianantian/orchest/tree/eedf05d42646b8a2de3bc0605b57a03ce1c98fa2)。
+状态：原始设计调研。Session 证据迭代已合入主线，发布版本待定。基线：[Orchest 源码 `eedf05d`](https://github.com/jianantian/orchest/tree/eedf05d42646b8a2de3bc0605b57a03ce1c98fa2)。
 
-本文保留 DSH 调研与最初设计。迭代范围、尝试身份、耐久确认和验收见 [Session 证据迭代 PRD](../iteration/session_evidence/prd.md)。
+本文保留 DSH 调研与最初设计。迭代范围、尝试身份、耐久确认和验收见 [Session 证据迭代 PRD](../archive/iteration/session_evidence/prd.md)。
 
 ## 为什么要做
 

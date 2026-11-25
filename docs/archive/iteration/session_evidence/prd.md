@@ -1,12 +1,12 @@
 # Session 证据迭代
 
-状态：迭代分支已实现，发布版本待定。依赖已发布的 [Session v2](../v2_0/prd.md)。
+状态：2026-11-25 合入主线并收尾，发布版本待定。依赖已发布的 [Session v2](../../../iteration/v2_0/prd.md)。
 
 ## 背景与目标
 
 SDK 使用者排查一次 run 时，需要知道某次尝试传给 adapter 的输入、adapter 返回的结果，以及实际提交到会话的消息。Session v2 保存恢复所需的事实。重试、一次性 hook 改写和上下文压缩会让会话历史与实际调用输入产生差异。
 
-DSH 从已写入 Session 的消息和请求配置构造冻结请求，并用 mock adapter 实收对象对照历史重建结果。Orchest 采用同样的对照方法，在每次 adapter 调用边界采集证据。证据按 Session 关联和查询，原有 Session v2 日志继续驱动恢复。背景见 [PR #357 设计草案](../../todo/session-evidence-dsh.md) 和 [DSH 重建测试](https://github.com/deepseek-ai/deepseek-harness/blob/4b399c39a6d1479cd84ca591b4d7c88e24d38a96/packages/core/agent-loop/tests/request-reconstruction.spec.ts#L848-L895)。
+DSH 从已写入 Session 的消息和请求配置构造冻结请求，并用 mock adapter 实收对象对照历史重建结果。Orchest 采用同样的对照方法，在每次 adapter 调用边界采集证据。证据按 Session 关联和查询，原有 Session v2 日志继续驱动恢复。背景见 [PR #357 设计草案](../../../todo/session-evidence-dsh.md) 和 [DSH 重建测试](https://github.com/deepseek-ai/deepseek-harness/blob/4b399c39a6d1479cd84ca591b4d7c88e24d38a96/packages/core/agent-loop/tests/request-reconstruction.spec.ts#L848-L895)。
 
 ## 使用场景
 
@@ -38,7 +38,7 @@ DSH 从已写入 Session 的消息和请求配置构造冻结请求，并用 moc
 
 工具重放、再次请求模型复现输出、provider 请求的通用字节级重建、provider 隐藏状态、全量 transport 插桩、完整流归档、附件仓库、无 Session 绑定的 run、跨进程查询服务、Python/Node 绑定、UI、远程上传，以及 Session schema 迁移。
 
-按 [ADR-0003](../../adr/0003-release-policy.md) 走增量 Rust API。保留现有 `SessionStore` 与 `ModelAdapter` 的必实现方法和既有配置的序列化行为。发布版本由路线图另行分配。
+按 [ADR-0003](../../../adr/0003-release-policy.md) 走增量 Rust API。保留现有 `SessionStore` 与 `ModelAdapter` 的必实现方法和既有配置的序列化行为。发布版本由路线图另行分配。
 
 ## Issue 顺序
 
@@ -48,3 +48,9 @@ DSH 从已写入 Session 的消息和请求配置构造冻结请求，并用 moc
 | [002](issues/002-input-reconstruction/spec.md) | [#359](https://github.com/jianantian/orchest/issues/359) | 受控采集及重建 adapter 输入 | 001 |
 | [003](issues/003-response-settlement/spec.md) | [#360](https://github.com/jianantian/orchest/issues/360) | 对齐返回、hook 和会话提交 | 002 |
 | [004](issues/004-compaction-lineage/spec.md) | [#361](https://github.com/jianantian/orchest/issues/361) | 关联压缩尝试、提交与上下文来源 | 002 |
+
+## 收尾记录
+
+- [PR #362](https://github.com/jianantian/orchest/pull/362) 已合并，合并提交为 `8f2dc40`，四个关联 issue 均已关闭。
+- [PR CI](https://github.com/jianantian/orchest/actions/runs/45636048616) 和 [合并后主线 CI](https://github.com/jianantian/orchest/actions/runs/45639684722) 均通过。核心 crate 的全 feature 本地测试通过 518 项，覆盖重试、恢复、序号复用、写入背压、撤销和压缩来源。
+- 同一提交触发的 [SDK 打包工作流](https://github.com/jianantian/orchest/actions/runs/45639684555) 已取消。此次交付为 Rust 库的可选功能，发布版本沿用待定状态。
