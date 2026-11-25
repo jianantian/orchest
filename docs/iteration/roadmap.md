@@ -61,6 +61,7 @@
 | hotfix 2026-07-27 | 重构 | v0.15 评审跟进：`new_trace_id` 混入进程级单调序列（macOS µs 时钟下同调用点 id 碰撞，flake + 生产关联断裂）；`RuntimeEvent::RunFailed` 新增结构化 `RunFailureKind`（BudgetExceeded/MaxStepsReached/Other，serde 向后兼容，agent-as-tool 分类器删除字符串匹配，Py/Node wire 声明同步）；`ToolError.external_usage` + actor 串/并行工具 Err 路径折算失败子代理 budget 回父 BudgetGuard（修复 v0.15 #236 引入的核算回退）；[#240](https://github.com/jianantian/orchest/issues/240)–[#242](https://github.com/jianantian/orchest/issues/242) 关闭（[#266](https://github.com/jianantian/orchest/pull/266)） |
 | v1.0 | 功能 | 首次公开发布：8 个 crate 以 `1.0.0` 统一版本发布到 crates.io（`orchest` / `orchest-protocol` / `orchest-provider` / `orchest-storage` 受 SemVer 约束，`orchest-provider-core/http/stream/visual` 为 `=` 锁定的内部档）；[ADR-0003](../adr/0003-release-policy.md) 发布策略（MIT OR Apache-2.0、MSRV 1.87、`vX.Y.Z` tag）；publish 元数据 + license、CHANGELOG、tag 触发的 release workflow、[公开 API 冻结审查](../review/v1_0_public_api.md)（全部公开 enum `#[non_exhaustive]`、冻结 struct 清单）；`1.0.0-rc.1` 经 crates.io 冒烟验证后发布 `1.0.0`，仓库转公开；[#306](https://github.com/jianantian/orchest/issues/306)–[#311](https://github.com/jianantian/orchest/issues/311)（[#312](https://github.com/jianantian/orchest/pull/312)、[#314](https://github.com/jianantian/orchest/pull/314)–[#316](https://github.com/jianantian/orchest/pull/316)；[release v1.0.0](https://github.com/jianantian/orchest/releases/tag/v1.0.0)） |
 | hotfix 2026-10-01 | 功能 | DeepSeek 模型清单与 `deepseek-flash` 图像输入：catalog 在线模型为 `deepseek/deepseek-flash`（V4.1 Flash，`[Text, Image]`）与 `deepseek/deepseek-v4-pro`（1M 上下文 / 384K 输出、高峰 CNY 价），1.0.0 的 `deepseek/deepseek-v4-flash` 行保留为 `ModelStatus::Deprecated`（身份选择仍可解析、默认发现隐藏）；思考强度映射为官方 `low`/`high`/`max`；`deepseek-flash` 的 user `Image` 编码为 Chat `image_url` part，`deepseek-v4-pro` + 图像在 `Strict` 下发请求前报 `unsupported_image_input`；无破坏性变更，随 [1.1.0](https://github.com/jianantian/orchest/releases/tag/v1.1.0) 发布（2026-10-01）；[#318](https://github.com/jianantian/orchest/issues/318)–[#319](https://github.com/jianantian/orchest/issues/319) 关闭（[#320](https://github.com/jianantian/orchest/pull/320)） |
+| Session 证据 | 功能 | 2026-11-25 合入主线。Rust 可选 `session-evidence` feature 记录模型尝试、受控 adapter 输入重建、会话入账与压缩来源。Session v2 恢复契约沿用现有语义。发布版本待定。[PR #362](https://github.com/jianantian/orchest/pull/362) · [PRD](./session_evidence/prd.md) |
 
 ## 迭代编号约定
 
@@ -110,10 +111,6 @@ Rust `1.2.0` 与 `2.0.0` 已于 2026-11-10 先后发布。接下来的执行顺�
 ### v2.2 — 全双工补齐（规划）
 
 语音线的 V5：omni 输出侧生命周期、`Interrupt` 带已播放位置、轮次检测便携选项、第二个全双工 provider；SDK 暴露 `RealtimeSession`。与 M2（Multivac 适配，在 Multivac 仓库）同期。
-
-### Session 证据（迭代分支已实现，版本待定）
-
-基于 Session v2，为 Rust 宿主提供可选的本地模型调用证据，覆盖逐次尝试、有效输入重建、返回与入账、压缩来源。保留现有恢复契约。范围与依赖见 [PRD](./session_evidence/prd.md)。
 
 ### 语音迭代线（卫星，规划）
 
@@ -175,7 +172,7 @@ Rust `1.2.0` 与 `2.0.0` 已于 2026-11-10 先后发布。接下来的执行顺�
         ├─► SDK 0.3: SDK 控制面（M3 的 SDK 部分提前）
         ├─► v2.1: 语音能力目录 + 计量 + TTS 双工（语音线 V2 + V4）
         ├─► v2.2: 全双工补齐（语音线 V5）
-        ├─► Session 证据（版本待定）
+        ├─► ✅ Session 证据（已合入主线，发布版本待定）
         ├─► M2: Multivac 本地默认 runtime
         └─► M3: 生态地基（provider 目录、包格式、委派层）
 
@@ -216,6 +213,7 @@ Rust `1.2.0` 与 `2.0.0` 已于 2026-11-10 先后发布。接下来的执行顺�
 | LLM Retry / 容错 | ~~失败直接 return~~ → RetryPolicy（指数退避） | ✅ v0.7 |
 | Loop Detection | ~~无~~ → LoopDetectionHook（warn + abort） | ✅ v0.7 |
 | Session 持久化 | ~~无~~ → SessionStore trait + InMemory + SQLite | ✅ v0.8 |
+| 模型调用证据 | Rust 宿主可启用本地采集，查询逐次尝试、重建已授权的 adapter 输入、核对实际入账和压缩来源 | ✅ Session 证据，发布版本待定 |
 | Guardrails | ~~无~~ → 四层 Guardrail 框架（Input/Output/ToolInput/ToolOutput） | ✅ v0.8 |
 | 权限模型扩展 | ~~`requires_approval: bool`~~ → run 级 ApprovalMode 策略 | ✅ v0.8 |
 | 双向通信 + 多方事件订阅 | ~~RunHandle 只有 wait + approval~~ → Multi-subscriber + Watcher + InjectCmd | ✅ v0.8 |
