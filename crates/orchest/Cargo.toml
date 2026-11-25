@@ -34,6 +34,7 @@ rusqlite = { version = "0.31", features = ["bundled"], optional = true }
 
 [features]
 sqlite-session = ["dep:rusqlite"]
+session-evidence = ["dep:rusqlite"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

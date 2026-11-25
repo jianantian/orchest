@@ -144,6 +144,9 @@ pub struct AgentConfig {
     #[serde(skip)]
     pub session_store: Option<Arc<dyn crate::session::SessionStore>>,
     pub session_id: Option<String>,
+    #[cfg(feature = "session-evidence")]
+    #[serde(skip)]
+    pub(crate) session_evidence: Option<crate::session::evidence::EvidenceSession>,
     /// When the session log is made durable. Recorded in the session's
     /// metadata.
     #[serde(default)]
@@ -169,6 +172,16 @@ impl std::fmt::Debug for AgentConfig {
 }
 
 impl AgentConfig {
+    /// Opt in to local evidence for the configured SessionStore and session id.
+    #[cfg(feature = "session-evidence")]
+    pub fn with_session_evidence(
+        mut self,
+        capture: crate::session::evidence::EvidenceSession,
+    ) -> Self {
+        self.session_evidence = Some(capture);
+        self
+    }
+
     /// Returns a `SubAgentBuilder` to wrap this config as a callable tool.
     pub fn as_tool(
         &self,
@@ -574,6 +587,8 @@ impl AgentConfig {
             handoffs: vec![],
             session_store: None,
             session_id: None,
+            #[cfg(feature = "session-evidence")]
+            session_evidence: None,
             checkpoint_policy: crate::session::CheckpointPolicy::default(),
             supervision_strategy: SupervisionStrategy::default(),
         }
@@ -922,6 +937,8 @@ impl AgentConfigBuilder {
             handoffs: self.handoffs,
             session_store: self.session_store,
             session_id: self.session_id,
+            #[cfg(feature = "session-evidence")]
+            session_evidence: None,
             checkpoint_policy: self.checkpoint_policy,
             supervision_strategy: self.supervision_strategy,
         })

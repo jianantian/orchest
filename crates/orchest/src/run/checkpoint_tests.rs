@@ -481,3 +481,162 @@ async fn abort_records_a_terminal_event() {
         Some(SessionEventKind::RunAborted { .. })
     ));
 }
+
+#[cfg(feature = "session-evidence")]
+#[tokio::test]
+async fn local_evidence_survives_resume_without_reusing_attempt_identity() {
+    use crate::session::evidence::{EvidenceKind, EvidenceLimits, EvidenceStore};
+
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("evidence.sqlite");
+    let storage = Arc::new(InMemorySessionStore::new());
+    let database = EvidenceStore::open(&path, EvidenceLimits::default())
+        .await
+        .unwrap();
+    let capture = database.bind(storage.clone(), "observed");
+    let cfg = config(&storage, "observed").with_session_evidence(capture.clone());
+    let (handle, rx) = AgentRun::start(
+        cfg.clone(),
+        "private prompt".into(),
+        ScriptedModel::new(vec![Turn::Crash]),
+        ToolRegistry::new(),
+    );
+    drain(handle, rx).await;
+    let (handle, rx) = AgentRun::resume(
+        cfg,
+        ScriptedModel::new(vec![Turn::Answer]),
+        ToolRegistry::new(),
+    )
+    .await
+    .unwrap();
+    drain(handle, rx).await;
+
+    capture.read(None, 64).await.unwrap();
+    let reopened = EvidenceStore::open(&path, EvidenceLimits::default())
+        .await
+        .unwrap();
+    let page = reopened
+        .bind(storage.clone(), "observed")
+        .read(None, 64)
+        .await
+        .unwrap();
+    let starts: Vec<_> = page
+        .records
+        .iter()
+        .filter_map(|record| match record.kind {
+            EvidenceKind::AttemptStarted { attempt_id, .. } => {
+                Some((record.worker_id, record.step, attempt_id))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(starts.len(), 2);
+    assert_ne!(starts[0].0, starts[1].0);
+    assert_eq!(starts[0].1, starts[1].1);
+    assert_ne!(starts[0].2, starts[1].2);
+    assert!(!serde_json::to_string(&page.records)
+        .unwrap()
+        .contains("private prompt"));
+
+    let (handle, rx) = AgentRun::start(
+        config(&storage, "default-off"),
+        "another prompt".into(),
+        ScriptedModel::new(vec![Turn::Answer]),
+        ToolRegistry::new(),
+    );
+    drain(handle, rx).await;
+    assert!(reopened
+        .bind(storage, "default-off")
+        .read(None, 64)
+        .await
+        .unwrap()
+        .records
+        .is_empty());
+}
+
+#[cfg(feature = "session-evidence")]
+#[tokio::test]
+async fn evidence_attempt_identity_survives_supervisor_restart() {
+    use crate::session::evidence::{EvidenceKind, EvidenceLimits, EvidenceStore};
+
+    let folder = tempfile::tempdir().unwrap();
+    let database = EvidenceStore::open(
+        folder.path().join("evidence.sqlite"),
+        EvidenceLimits::default(),
+    )
+    .await
+    .unwrap();
+    let storage = Arc::new(InMemorySessionStore::new());
+    let capture = database.bind(storage.clone(), "restart");
+    let mut cfg = config(&storage, "restart").with_session_evidence(capture.clone());
+    cfg.supervision_strategy = SupervisionStrategy::Restart { max_retries: 1 };
+    let model = ScriptedModel::new(vec![Turn::Crash, Turn::Answer]);
+    let (run, events) = AgentRun::start(cfg, "prompt".into(), model, ToolRegistry::new());
+    let live = drain(run, events).await;
+    assert!(live
+        .iter()
+        .any(|event| matches!(event, RuntimeEvent::RunRestarted { .. })));
+
+    let page = capture.read(None, 64).await.unwrap();
+    let starts: Vec<_> = page
+        .records
+        .iter()
+        .filter_map(|record| match record.kind {
+            EvidenceKind::AttemptStarted {
+                attempt_id,
+                ordinal,
+                ..
+            } => Some((
+                record.run_id,
+                record.step,
+                ordinal,
+                record.worker_id,
+                attempt_id,
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(starts.len(), 2);
+    assert_eq!(
+        (starts[0].0, starts[0].1, starts[0].2),
+        (starts[1].0, starts[1].1, starts[1].2)
+    );
+    assert_ne!(starts[0].3, starts[1].3);
+    assert_ne!(starts[0].4, starts[1].4);
+}
+
+#[cfg(feature = "session-evidence")]
+#[tokio::test]
+async fn evidence_writer_contention_does_not_block_session_checkpoint_or_tool() {
+    use crate::session::evidence::{EvidenceLimits, EvidenceStore};
+
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("evidence.sqlite");
+    let limits = EvidenceLimits {
+        queue_records: 1,
+        ..EvidenceLimits::default()
+    };
+    let database = EvidenceStore::open(&path, limits).await.unwrap();
+    let lock = rusqlite::Connection::open(&path).unwrap();
+    lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let storage = Arc::new(InMemorySessionStore::new());
+    let capture = database.bind(storage.clone(), "busy");
+    let tool = ProbeTool::new("write", true, &storage, "busy");
+    let mut registry = ToolRegistry::new();
+    registry.register(tool.clone()).unwrap();
+    let cfg = config(&storage, "busy").with_session_evidence(capture.clone());
+    let model = ScriptedModel::new(vec![
+        Turn::CallTool {
+            id: "call",
+            name: "write",
+        },
+        Turn::Answer,
+    ]);
+    let (run, events) = AgentRun::start(cfg, "prompt".into(), model, registry);
+    tokio::time::timeout(std::time::Duration::from_secs(2), drain(run, events))
+        .await
+        .unwrap();
+    assert_eq!(*tool.marker_durable.lock().unwrap(), vec![true]);
+    lock.execute_batch("ROLLBACK").unwrap();
+    assert!(capture.read(None, 64).await.unwrap().observed_drops > 0);
+}

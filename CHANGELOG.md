@@ -14,6 +14,16 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+### Added
+
+- Optional Rust `session-evidence` support for local model attempt metadata,
+  with a separate SQLite database and bounded, non-blocking capture.
+- Adapter outcomes, bounded stream observations and confirmed Session event
+  references in local model attempt evidence.
+- Host-authorized structured adapter input capture and offline reconstruction.
+- Compaction summary attempts and provenance for applied context replacements.
+- SessionStore point reads, with indexed built-in implementations.
+
 ## [2.0.0]
 
 The v2.0 runtime contract ([ADR-0005](docs/adr/0005-host-integration-contract.md)).

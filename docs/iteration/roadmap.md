@@ -111,6 +111,10 @@ Rust `1.2.0` 与 `2.0.0` 已于 2026-11-10 先后发布。接下来的执行顺�
 
 语音线的 V5：omni 输出侧生命周期、`Interrupt` 带已播放位置、轮次检测便携选项、第二个全双工 provider；SDK 暴露 `RealtimeSession`。与 M2（Multivac 适配，在 Multivac 仓库）同期。
 
+### Session 证据（迭代分支已实现，版本待定）
+
+基于 Session v2，为 Rust 宿主提供可选的本地模型调用证据，覆盖逐次尝试、有效输入重建、返回与入账、压缩来源。保留现有恢复契约。范围与依赖见 [PRD](./session_evidence/prd.md)。
+
 ### 语音迭代线（卫星，规划）
 
 按 [ADR-0006](../adr/0006-voice-session-model.md) 的六个概念（Session / Stable / Draft / Turn / Finalize / Extras）统一语音接口，各厂商协议与聚合服务映射进来。五步：V1 契约补齐（`SessionInput::Finalize`、Turn 补齐、契约测试、SDK ASR 流式接口重设计）→ V2 能力目录与音频计量 → V3 聚合与网关 provider → V4 TTS 双工 → V5 全双工生命周期与第二个 provider。**V1 的 SDK 改动是 SDK 0.2 的前置条件**。V1 落在 v1.2，V2 与 V4 落在 v2.1，V5 落在 v2.2，V3 未排期。范围与验收见 [`voice/plan.md`](./voice/plan.md)。
@@ -171,6 +175,7 @@ Rust `1.2.0` 与 `2.0.0` 已于 2026-11-10 先后发布。接下来的执行顺�
         ├─► SDK 0.3: SDK 控制面（M3 的 SDK 部分提前）
         ├─► v2.1: 语音能力目录 + 计量 + TTS 双工（语音线 V2 + V4）
         ├─► v2.2: 全双工补齐（语音线 V5）
+        ├─► Session 证据（版本待定）
         ├─► M2: Multivac 本地默认 runtime
         └─► M3: 生态地基（provider 目录、包格式、委派层）
 

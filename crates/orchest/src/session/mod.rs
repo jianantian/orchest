@@ -1,6 +1,8 @@
 //! Session persistence: the append-only event log, its projection, and the
 //! stores that hold it.
 
+#[cfg(feature = "session-evidence")]
+pub mod evidence;
 pub mod log;
 #[cfg(feature = "sqlite-session")]
 pub mod sqlite;

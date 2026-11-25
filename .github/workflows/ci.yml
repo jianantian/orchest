@@ -57,6 +57,11 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
+      - name: Check optional Session evidence
+        run: |
+          cargo clippy -p orchest --features session-evidence --all-targets -- -D warnings
+          cargo test -p orchest --features session-evidence
+
       - name: cargo test provider selection (all weight features)
         run: cargo test -p orchest-provider --features "http,stream,visual" --test selection --test catalog_discovery
 
