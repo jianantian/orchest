@@ -13,6 +13,10 @@ from.
 
 ## [Unreleased]
 
+## [0.2.0-rc.1]
+
+Built from Orchest Rust crates version `2.0.0`.
+
 The bindings follow the v2.0 runtime contract
 ([#349](https://github.com/jianantian/orchest/issues/349)).
 
@@ -35,6 +39,12 @@ The bindings follow the v2.0 runtime contract
 
 ### Changed
 
+- **Breaking:** ASR accepts separate `provider` and `model` options in both
+  one-shot and streaming calls. Streaming callbacks receive typed events
+  such as `draft`, `stable` and `turn` distinguished by `kind`.
+  On supported models, `finalize()` requests a turn result while keeping the
+  stream open. The outcome arrives in a `turn` or `error` event.
+  ([#345](https://github.com/jianantian/orchest/issues/345)).
 - **Breaking:** the npm package is `orchest-sdk`; it was `@orchest/sdk`
   when built from source.
 - **Breaking:** `respond_approval(request_id, approved)` (Python) and
