@@ -3,6 +3,7 @@
 //! Use a dedicated database per SessionStore and reattach capture explicitly on
 //! resume. The host controls access to the database and the SessionStore.
 
+mod content;
 mod store;
 
 use std::sync::Arc;
@@ -14,6 +15,9 @@ use uuid::Uuid;
 use super::{SessionEvent, SessionEventKind, SessionStore};
 use crate::run::RunId;
 
+pub use content::{
+    reconstruct_input, AdapterInput, CapturedField, EvidenceContentPolicy, EvidenceField, Omission,
+};
 pub use store::EvidenceStore;
 
 #[derive(Debug, Clone, Copy)]
@@ -54,6 +58,8 @@ pub enum EvidenceError {
     Full,
     #[error("evidence record failed validation")]
     InvalidRecord,
+    #[error("incomplete adapter input: {field:?}")]
+    IncompleteInput { field: EvidenceField },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -80,6 +86,11 @@ pub enum EvidenceKind {
     AttemptFinished {
         attempt_id: Uuid,
         outcome: AttemptOutcome,
+    },
+    Field {
+        attempt_id: Uuid,
+        field: EvidenceField,
+        capture: CapturedField,
     },
     LocalDecision {
         decision: LocalDecision,
@@ -126,9 +137,16 @@ pub struct EvidenceSession {
     database: EvidenceStore,
     store: Arc<dyn SessionStore>,
     session_id: String,
+    content: Option<EvidenceContentPolicy>,
 }
 
 impl EvidenceSession {
+    /// Opt in to content for this run binding. Metadata capture is the default.
+    pub fn with_content_policy(mut self, policy: EvidenceContentPolicy) -> Self {
+        self.content = Some(policy);
+        self
+    }
+
     pub(crate) fn bind_run(
         &self,
         store: &Arc<dyn SessionStore>,
@@ -142,6 +160,7 @@ impl EvidenceSession {
             database: self.database.clone(),
             instance: session_instance(first)?,
             worker_id: Uuid::new_v4(),
+            content: self.content.clone(),
         })
     }
 
@@ -185,21 +204,24 @@ pub(crate) struct RunEvidence {
     database: EvidenceStore,
     instance: RunId,
     worker_id: Uuid,
+    content: Option<EvidenceContentPolicy>,
 }
 
 impl RunEvidence {
     pub(crate) fn record(&self, run_id: RunId, step: u32, kind: EvidenceKind) {
-        self.database.record(
-            self.instance,
-            EvidenceRecord {
-                session_instance: self.instance,
-                worker_id: self.worker_id,
-                run_id,
-                step,
-                at_ms: super::log::now_ms(),
-                kind,
-            },
-        );
+        self.database
+            .record_with(self.instance, || self.make_record(run_id, step, kind));
+    }
+
+    fn make_record(&self, run_id: RunId, step: u32, kind: EvidenceKind) -> EvidenceRecord {
+        EvidenceRecord {
+            session_instance: self.instance,
+            worker_id: self.worker_id,
+            run_id,
+            step,
+            at_ms: super::log::now_ms(),
+            kind,
+        }
     }
 }
 

@@ -1448,6 +1448,16 @@ async fn dispatch_model_call(
         #[cfg(feature = "session-evidence")]
         if let Some(attempt) = &mut evidence_attempt {
             attempt.start(state, &provider, &model);
+            if let Some(id) = attempt.id {
+                attempt.evidence.input(
+                    state.run_id,
+                    state.log.step(),
+                    id,
+                    call_messages,
+                    &state.tool_defs,
+                    &state.config.model.options,
+                );
+            }
         }
         state
             .model

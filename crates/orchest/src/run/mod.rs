@@ -313,6 +313,9 @@ pub(crate) async fn load_session_log(binding: &SessionBinding) -> Result<Session
 mod cancel_tests;
 #[cfg(test)]
 mod checkpoint_tests;
+#[cfg(all(test, feature = "session-evidence"))]
+mod evidence_tests;
+
 #[cfg(test)]
 mod delivery_tests;
 #[cfg(test)]

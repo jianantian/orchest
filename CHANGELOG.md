@@ -18,6 +18,7 @@ except for the items `orchest-provider` re-exports.
 
 - Optional Rust `session-evidence` support for local model attempt metadata,
   with a separate SQLite database and bounded, non-blocking capture.
+- Host-authorized structured adapter input capture and offline reconstruction.
 
 ## [2.0.0]
 

@@ -22,6 +22,7 @@ const MAX_PAGE_RECORDS: usize = 64;
 #[derive(Clone)]
 pub struct EvidenceStore {
     queue: mpsc::Sender<Command>,
+    limits: EvidenceLimits,
     drops: Arc<AtomicU64>,
 }
 
@@ -64,7 +65,11 @@ impl EvidenceStore {
         let (queue, receiver) = mpsc::channel(limits.queue_records);
         let drops = Arc::new(AtomicU64::new(0));
         tokio::spawn(run_writer(database, receiver, Arc::clone(&drops)));
-        Ok(Self { queue, drops })
+        Ok(Self {
+            queue,
+            limits,
+            drops,
+        })
     }
 
     /// Bind this capability to the exact SessionStore used by AgentConfig.
@@ -77,21 +82,25 @@ impl EvidenceStore {
             database: self.clone(),
             store,
             session_id: session_id.into(),
+            content: None,
         }
     }
 
-    pub(crate) fn record(&self, instance: RunId, record: EvidenceRecord) {
-        if self
-            .queue
-            .try_send(Command::Record {
+    pub(super) fn record_with(&self, instance: RunId, record: impl FnOnce() -> EvidenceRecord) {
+        match self.queue.try_reserve() {
+            Ok(permit) => permit.send(Command::Record {
                 instance,
                 id: Uuid::new_v4(),
-                record,
-            })
-            .is_err()
-        {
-            self.drops.fetch_add(1, Ordering::Relaxed);
+                record: record(),
+            }),
+            Err(_) => {
+                self.drops.fetch_add(1, Ordering::Relaxed);
+            }
         }
+    }
+
+    pub(super) fn record_bytes(&self) -> usize {
+        self.limits.record_bytes
     }
 
     pub(super) async fn read(

@@ -525,7 +525,7 @@ async fn local_evidence_survives_resume_without_reusing_attempt_identity() {
         .iter()
         .filter_map(|record| match record.kind {
             EvidenceKind::AttemptStarted { attempt_id, .. } => {
-                Some((record.run_id, record.step, attempt_id))
+                Some((record.worker_id, record.step, attempt_id))
             }
             _ => None,
         })
