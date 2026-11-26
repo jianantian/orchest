@@ -14,6 +14,13 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+## [0.2.0]
+
+This Rust-only release packages the Rust source used by the published
+[Python and Node SDK 0.2.0](https://github.com/jianantian/orchest/releases/tag/sdk-v0.2.0).
+The eight Rust crates now share the same `0.2.0` version as those SDKs.
+The runtime contract is described in the historical [2.0.0](#200) notes.
+
 ### Added
 
 - Optional Rust `session-evidence` support for local model attempt metadata,

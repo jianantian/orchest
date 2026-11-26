@@ -37,8 +37,8 @@ The Rust crates are published on [crates.io](https://crates.io/crates/orchest):
 
 ```toml
 [dependencies]
-orchest = "2"
-orchest-provider = { version = "1", features = ["llm"] }
+orchest = "0.2"
+orchest-provider = { version = "0.2", features = ["llm"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
