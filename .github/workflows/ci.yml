@@ -88,9 +88,6 @@ jobs:
 
       - name: TypeScript typecheck
         run: |
-          # Node 22 bundles npm 10, whose `npm ci` accepts a lockfile without the
-          # unpublished platform packages; npm 11 does not (WORKFLOW.md
-          # "Releasing the SDKs").
           npm ci
           npm run typecheck
 
