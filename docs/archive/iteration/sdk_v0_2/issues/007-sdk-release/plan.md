@@ -2,7 +2,7 @@
 
 ## Files to read
 
-- `docs/iteration/sdk_v0_2/prd.md` (Owner Setup)
+- `docs/archive/iteration/sdk_v0_2/prd.md` (Owner Setup)
 - `WORKFLOW.md` (SDK release procedure)
 - `docs/adr/0004-sdk-packaging.md`
 
@@ -11,7 +11,7 @@
 - `package.json`, `npm/*/package.json`, `crates/orchest-py/Cargo.toml`,
   `crates/orchest-node/Cargo.toml` (version)
 - `CHANGELOG-SDK.md` and `.github/workflows/release-sdk.yml`
-- `docs/iteration/sdk_v0_2/prd.md`, `docs/iteration/roadmap.md`,
+- `docs/archive/iteration/sdk_v0_2/prd.md`, `docs/iteration/roadmap.md`,
   `AGENTS.md`
 
 ## Steps

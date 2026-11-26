@@ -8,8 +8,6 @@ Orchest 的 TypeScript SDK 是 npm 上的 `orchest-sdk` 包（napi-rs 绑定到 
 npm install orchest-sdk
 ```
 
-> 首个版本 SDK 0.2 正在发布（[#330](https://github.com/jianantian/orchest/issues/330)）。在它上线 npm 之前，请按下面「从源码构建」安装。
-
 需要 Node ≥ 18。`orchest-sdk` 只含 JavaScript 和类型声明；原生插件在按平台拆分的包里（`orchest-sdk-linux-x64-gnu`、`orchest-sdk-linux-arm64-gnu`、`orchest-sdk-darwin-arm64`），作为 `optionalDependencies` 由 npm 只下载当前平台那一个，不需要 Rust 工具链：
 
 | 平台 | 支持 |

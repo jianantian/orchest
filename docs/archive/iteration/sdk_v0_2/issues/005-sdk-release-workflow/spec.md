@@ -43,8 +43,8 @@ then verifies the published packages.
   from PyPI and npm on each of the three platforms and runs the SDK tests.
   The npm installation retries for up to ten minutes if either the
   main package or the runner's platform package is unavailable.
-- [ ] A `dry_run` run stops after the build and tests, uploads nothing,
-  succeeds, and is linked from this issue.
+- [x] A `dry_run` run stops after the build and tests and uploads nothing.
+  [Successful dry run](https://github.com/jianantian/orchest/actions/runs/40712682127).
 
 ## Blocked by
 

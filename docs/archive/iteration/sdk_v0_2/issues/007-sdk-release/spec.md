@@ -33,26 +33,26 @@ Use explicit local paths and cut RC3 for verification from both registries.
   and the four npm packages `0.2.0-rc.3` under the `next` dist-tag.
 - [x] The post-publish verification passes on all three platforms for the
   release candidate.
-- [ ] After owner sign-off, the `sdk-v0.2.0` tag publishes `0.2.0` to PyPI
+- [x] After owner sign-off, the `sdk-v0.2.0` tag publishes `0.2.0` to PyPI
   and npm (`latest`) through Trusted Publishing only, and the post-publish
   verification passes on all three platforms.
 - [x] Murmur installs the release candidate from PyPI instead of its git
   tag, and its existing calls run.
-- [ ] The release notes give the SDK↔crate version matrix (`0.2.0` ↔
+- [x] The release notes give the SDK↔crate version matrix (`0.2.0` ↔
   crates `2.0.0`, ADR-0004 D6).
-- [ ] The repository holds no long-lived PyPI or npm token.
-- [ ] The PyPI and npm pages for 0.2.0 show provenance.
-- [ ] The PRD's acceptance items are checked, the roadmap marks SDK 0.2
+- [x] The repository holds no long-lived PyPI or npm token.
+- [x] The PyPI and npm pages for 0.2.0 show provenance.
+- [x] The PRD's acceptance items are checked, the roadmap marks SDK 0.2
   completed, and `AGENTS.md` no longer says the binding packages are
   unpublished.
-- [ ] The "being published" notes in `README.md` and both SDK guides
+- [x] The "being published" notes in `README.md` and both SDK guides
   are removed once `0.2.0` is on PyPI and npm.
 
 ## Blocked by
 
 - #324, #325, #326, #327, #328, #329
-- [v1.2](../../../v1_2/prd.md): the ASR streaming redesign (004)
-- [v2.0](../../../v2_0/prd.md): the `2.0.0` crate release
+- [v1.2](../../../../../iteration/v1_2/prd.md): the ASR streaming redesign (004)
+- [v2.0](../../../../../iteration/v2_0/prd.md): the `2.0.0` crate release
 
 ## Notes
 
@@ -62,5 +62,9 @@ passed public installation on all three platforms. The Linux jobs
 passed on retry after npm served the new versions. A temporary copy
 of Murmur using RC3 from PyPI passed 187 server tests.
 
-The owner signed off on 0.2.0 on 2026-11-26. Each publish deployment
-requires its own approval.
+The owner signed off on 0.2.0 on 2026-11-26 and approved both deployments.
+The [stable release run](https://github.com/jianantian/orchest/actions/runs/45839094460)
+passed public installation on Linux x86_64, Linux arm64, and macOS arm64.
+All four PyPI files and all four npm packages carry attestations. The npm
+packages expose 0.2.0 under `latest`. A temporary copy of Murmur using
+`orchest-py==0.2.0` from PyPI passed 187 server tests.

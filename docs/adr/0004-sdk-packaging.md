@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-10-02 (accepted 2026-10-02)
 **Deciders:** Orchest maintainer (emile) — decision owner
-**Related:** [SDK 0.2 PRD](../iteration/sdk_v0_2/prd.md),
+**Related:** [SDK 0.2 PRD](../archive/iteration/sdk_v0_2/prd.md),
 [#324](https://github.com/jianantian/orchest/issues/324),
 [ADR-0003](./0003-release-policy.md)
 

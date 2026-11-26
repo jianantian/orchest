@@ -62,6 +62,7 @@
 | v1.0 | 功能 | 首次公开发布：8 个 crate 以 `1.0.0` 统一版本发布到 crates.io（`orchest` / `orchest-protocol` / `orchest-provider` / `orchest-storage` 受 SemVer 约束，`orchest-provider-core/http/stream/visual` 为 `=` 锁定的内部档）；[ADR-0003](../adr/0003-release-policy.md) 发布策略（MIT OR Apache-2.0、MSRV 1.87、`vX.Y.Z` tag）；publish 元数据 + license、CHANGELOG、tag 触发的 release workflow、[公开 API 冻结审查](../review/v1_0_public_api.md)（全部公开 enum `#[non_exhaustive]`、冻结 struct 清单）；`1.0.0-rc.1` 经 crates.io 冒烟验证后发布 `1.0.0`，仓库转公开；[#306](https://github.com/jianantian/orchest/issues/306)–[#311](https://github.com/jianantian/orchest/issues/311)（[#312](https://github.com/jianantian/orchest/pull/312)、[#314](https://github.com/jianantian/orchest/pull/314)–[#316](https://github.com/jianantian/orchest/pull/316)；[release v1.0.0](https://github.com/jianantian/orchest/releases/tag/v1.0.0)） |
 | hotfix 2026-10-01 | 功能 | DeepSeek 模型清单与 `deepseek-flash` 图像输入：catalog 在线模型为 `deepseek/deepseek-flash`（V4.1 Flash，`[Text, Image]`）与 `deepseek/deepseek-v4-pro`（1M 上下文 / 384K 输出、高峰 CNY 价），1.0.0 的 `deepseek/deepseek-v4-flash` 行保留为 `ModelStatus::Deprecated`（身份选择仍可解析、默认发现隐藏）；思考强度映射为官方 `low`/`high`/`max`；`deepseek-flash` 的 user `Image` 编码为 Chat `image_url` part，`deepseek-v4-pro` + 图像在 `Strict` 下发请求前报 `unsupported_image_input`；无破坏性变更，随 [1.1.0](https://github.com/jianantian/orchest/releases/tag/v1.1.0) 发布（2026-10-01）；[#318](https://github.com/jianantian/orchest/issues/318)–[#319](https://github.com/jianantian/orchest/issues/319) 关闭（[#320](https://github.com/jianantian/orchest/pull/320)） |
 | Session 证据 | 功能 | 2026-11-25 合入主线。Rust 可选 `session-evidence` feature 记录模型尝试、受控 adapter 输入重建、会话入账与压缩来源。Session v2 恢复契约沿用现有语义。发布版本待定。[PR #362](https://github.com/jianantian/orchest/pull/362) · [PRD](../archive/iteration/session_evidence/prd.md) |
+| SDK 0.2 | 发布 | 2026-11-26 发布 Python `orchest-py` 与 Node `orchest-sdk` `0.2.0`，基于 Rust crates `2.0.0`。Linux x86_64、Linux arm64、macOS arm64 提供预构建包，通过 Trusted Publishing 发布并附来源证明。[正式版](https://github.com/jianantian/orchest/releases/tag/sdk-v0.2.0) · [PRD](../archive/iteration/sdk_v0_2/prd.md) · [#330](https://github.com/jianantian/orchest/issues/330) |
 
 ## 迭代编号约定
 
@@ -70,23 +71,13 @@
 
 ## 规划中
 
-Rust `1.2.0` 与 `2.0.0` 已于 2026-11-10 先后发布。接下来的执行顺序为 SDK `0.2.0`（基于 Rust `2.0.0`）→ SDK 0.3 与 v2.1 并行 → v2.2 与 M2 同期推进。
+SDK `0.2.0` 已基于 Rust `2.0.0` 发布。接下来 SDK 0.3 与 v2.1 并行，随后 v2.2 与 M2 同期推进。
 
 ### v1.2 — 语音契约补齐与新 provider（✅ 已发布：crates.io `1.2.0`，2026-11-10）
 
 两件增量的事，都赶在 SDK 0.2 之前：按 [ADR-0006](../adr/0006-voice-session-model.md) 补语音契约（`SessionInput::Finalize`、各方言补 Turn 与原生 finalize、方言无关的契约测试）并重设计 Python / Node 的 ASR 流式接口（语音线 V1）；接入 Vercel AI Gateway 的 chat 与 decision、Fireworks 的 chat（Fireworks decision 延后，owner 2026-10-27）。权威范围见 [`v1_2/prd.md`](./v1_2/prd.md)（[#342](https://github.com/jianantian/orchest/issues/342)–[#348](https://github.com/jianantian/orchest/issues/348)）。
 
 **不在范围内**：语音 V2–V5；Vercel / Fireworks 的语音、图像、embedding。
-
-### SDK 0.2 — 发布 Python / Node 包（规划）
-
-让用户在 Linux x86_64、Linux arm64、macOS arm64 上直接 `pip install orchest-py` / `npm install orchest-sdk`，不需要本地 Rust 工具链。Python 每平台一个 `cp311-abi3` wheel 加 sdist；Node 为主包加三个平台子包；Linux 上把 OpenSSL 静态编译进绑定（已发布的 crate 不变）；两个 SDK 共用一个独立于 crate 的版本号，从 `0.2.0` 起步，由 `sdk-vX.Y.Z` tag 经 Trusted Publishing 发布，用 `0.2.0-rc.3` 完成 PyPI 和 npm 的联合首发验收。npm 已有 RC1，PyPI 已有 RC2。权威范围、决策与 issue 清单见 [`sdk_v0_2/prd.md`](./sdk_v0_2/prd.md)（[#324](https://github.com/jianantian/orchest/issues/324)–[#330](https://github.com/jianantian/orchest/issues/330)）。
-
-**不在范围内**：Windows、Intel macOS、musl；SDK 的 API 冻结与 1.0；新的 Rust crate 发布。
-
-**npm 包名**：`orchest` npm 组织不可用（2026-10-02），因此用不带 scope 的 `orchest-sdk`（[ADR-0004](../adr/0004-sdk-packaging.md) D2）。
-
-**前置**：v1.2 的 ASR 流式接口重设计与 Rust `2.0.0` 发布；候选版由 Murmur 从 PyPI 安装试跑。
 
 ### v2.0 — Runtime 契约与可靠性（✅ 已发布：crates.io `2.0.0`，2026-11-10）
 
@@ -168,7 +159,7 @@ Rust `1.2.0` 与 `2.0.0` 已于 2026-11-10 先后发布。接下来的执行顺�
         权限表面 + 取消 + 零丢失事件 + 能力探测 + 绑定跟上；破坏性，Rust 2.0.0）
         （crates.io 2.0.0，2026-11-10，先于 SDK 0.2.0 发布）
         │
-        ├─► SDK 0.2: 发布 Python / Node 包（PyPI orchest-py + npm orchest-sdk，独立版本号）
+        ├─► ✅ SDK 0.2: 发布 Python / Node 包（PyPI orchest-py + npm orchest-sdk，独立版本号）
         ├─► SDK 0.3: SDK 控制面（M3 的 SDK 部分提前）
         ├─► v2.1: 语音能力目录 + 计量 + TTS 双工（语音线 V2 + V4）
         ├─► v2.2: 全双工补齐（语音线 V5）
@@ -207,6 +198,7 @@ Rust `1.2.0` 与 `2.0.0` 已于 2026-11-10 先后发布。接下来的执行顺�
 
 | 能力 | 当前状态 | 规划版本 |
 |------|---------|---------|
+| Python / Node SDK 安装 | 从 PyPI 和 npm 安装三个支持平台的预构建包 | ✅ SDK 0.2 |
 | Actor Model（Ractor）PoC | ~~proto-actor~~ → WorkerActor (Ractor) | ✅ v0.7 |
 | Hook / 中间件框架 | ~~零扩展点~~ → Hook trait（9 hook 点） | ✅ v0.7 |
 | Sub-agent 语义统一（Agent-as-Tool + Handoff） | ~~双路径并行~~ → Agent-as-Tool + Handoff 统一 | ✅ v0.7 |

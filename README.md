@@ -48,8 +48,6 @@ tokio = { version = "1", features = ["full"] }
 
 The SDKs are published as [`orchest-py`](https://pypi.org/project/orchest-py/) on PyPI and [`orchest-sdk`](https://www.npmjs.com/package/orchest-sdk) on npm, with prebuilt binaries, so no Rust toolchain is needed:
 
-> The first release, SDK 0.2, is being published ([#330](https://github.com/jianantian/orchest/issues/330)). Until it is on PyPI and npm, build from source as shown under [Development](#development).
-
 | Platform | Python (3.11+) | Node.js (18+) |
 |----------|----------------|---------------|
 | Linux x86_64 (glibc 2.28+) | prebuilt wheel | prebuilt addon |

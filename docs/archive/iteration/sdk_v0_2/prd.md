@@ -67,18 +67,17 @@ ADR-0004 (issue 001).
   `CHANGELOG-SDK.md`.
 - Documentation: install instructions, supported platforms, minimum
   versions and the `orchest` import-name collision.
-- Release candidate `0.2.0-rc.3` on both registries, then `0.2.0`.
-  npm has RC1 and PyPI has RC2.
+- Release candidate `0.2.0-rc.3` and [stable `0.2.0`](https://github.com/jianantian/orchest/releases/tag/sdk-v0.2.0) on both registries.
 
 ## Out of Scope
 
 - Windows, Intel macOS and musl (Alpine) builds.
 - An API freeze review or a 1.0 for the SDKs.
 - New SDK features, except the ASR streaming redesign that
-  [v1.2](../v1_2/prd.md) issue 004 lands before the release (owner
+  [v1.2](../../../iteration/v1_2/prd.md) issue 004 lands before the release (owner
   decision, 2026-10-27).
 - A new Rust crate release from this iteration. The crates the SDK is
-  built against are already available as [`2.0.0`](../v2_0/prd.md).
+  built against are already available as [`2.0.0`](../../../iteration/v2_0/prd.md).
   `orchest-py` and `orchest-node` stay `publish = false` on crates.io.
 - Switching the published crates from `native-tls` to rustls.
 
@@ -111,14 +110,14 @@ both Linux architectures.
 
 ## Acceptance Criteria
 
-- [ ] On a clean runner for each of the three platforms, installing
+- [x] On a clean runner for each of the three platforms, installing
   `orchest-py` 0.2.0 from PyPI and `orchest-sdk` 0.2.0 from npm, with no
   Rust toolchain, passes the existing SDK tests.
-- [ ] The repository holds no long-lived PyPI or npm token after the
+- [x] The repository holds no long-lived PyPI or npm token after the
   release.
-- [ ] The PyPI and npm pages for 0.2.0 show provenance for the published
+- [x] The PyPI and npm pages for 0.2.0 show provenance for the published
   files.
-- [ ] ADR-0004 is `Accepted`, and the README and SDK guides describe
+- [x] ADR-0004 is `Accepted`, and the README and SDK guides describe
   installation from PyPI and npm.
 
 ## Owner Setup

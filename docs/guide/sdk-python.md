@@ -8,8 +8,6 @@ Orchest 的 Python SDK 是 PyPI 上的 `orchest-py` 包，导入名 `orchest`（
 pip install orchest-py      # 或：uv add orchest-py
 ```
 
-> 首个版本 SDK 0.2 正在发布（[#330](https://github.com/jianantian/orchest/issues/330)）。在它上线 PyPI 之前，请按下面「从源码构建」安装。
-
 需要 Python ≥ 3.11。每个平台一个 stable-ABI（`cp311-abi3`）wheel，覆盖 3.11 及以后所有 CPython 版本，不需要 Rust 工具链：
 
 | 平台 | 安装方式 |
@@ -93,7 +91,7 @@ agent.register_tool(get_weather, approval="never")   # "never" | "when_risky" | 
 
 `requires_approval` 参数已移除；使用 `approval="always"` 表达必须审批，使用 `approval="never"` 表达不审批。`approval_mode="side_effect_only"` 也已移除；用默认 `approval_mode="per_tool"`，并在有副作用的 tool metadata 上设置 `approval="when_risky"` 与 `side_effect=True`。
 
-异步 tool（长任务轮询）返回 `{"async_job": {...}}` 形状，见 [`examples/python/async_tool.py`](../../examples/python/async_tool.py)。
+异步 tool（长任务轮询）返回 `{"async_job": {...}}` 形状，见 [`examples/python/agents/async_tool.py`](../../examples/python/agents/async_tool.py)。
 
 ## 4. 原子下游 API
 

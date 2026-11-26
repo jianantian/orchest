@@ -16,7 +16,7 @@ Orchest 的方向是成为**可嵌入、可治理、可作为默认执行层的 
 | 维度 | 当前状态 |
 |---|---|
 | Rust crates | 1.1.0 已发布到 crates.io（8 个 crate；`orchest-py` / `orchest-node` 不发布，SemVer 策略见 [ADR-0003](../adr/0003-release-policy.md)） |
-| Python / Node SDK | SDK 0.2 规划中，尚未发布到 PyPI / npm（[PRD](./sdk_v0_2/prd.md)）；0.2 只做打包，控制面能力对齐是后续 SDK 版本 |
+| Python / Node SDK | SDK `0.2.0` 已发布到 PyPI 和 npm（[PRD](../archive/iteration/sdk_v0_2/prd.md)）；SDK 0.3 扩展控制面 |
 | 第一个生产宿主 | Multivac 计划把 Orchest 作为默认 runtime；目前 **没有代码依赖** |
 | Runtime 能力 | loop、tools、skills、MCP、subagents、approval、session store 已有；取消的可抢占性、恢复、沙箱、可观测性有明确缺口 |
 | 执行态持久化 | `SessionStore`（内存 + SQLite）已有，但是全量快照形态：只在 run 结束/错误时保存，hooks/retry/handoffs 被 `serde(skip)` 而无法随快照恢复。决策 1 = SessionStore 为准 + 每 step 写 checkpoint；M1 需把会话改为 append-only 事件日志 + 派生投影（业界主流，见 [调研](../research/sdk-comparison/agent-runtime-landscape-2026-10.md) §1） |
@@ -180,7 +180,7 @@ Orchest 的方向是成为**可嵌入、可治理、可作为默认执行层的 
 
 目标：外部开发者能安装、构建、扩展；出现第一个独立宿主和第一个外部包。
 
-范围：SDK 0.2 打包发布（若尚未完成）、后续 SDK 版本控制面能力对齐（abort/steer/subscribe/session/MCP/approval）、provider 目录扩展、skills/tools/provider 包与安装、一等委派 crate、参考 CLI/示例、evals/telemetry 基础。
+范围：后续 SDK 版本控制面能力对齐（abort/steer/subscribe/session/MCP/approval）、provider 目录扩展、skills/tools/provider 包与安装、一等委派 crate、参考 CLI/示例、evals/telemetry 基础。
 
 退出标准：
 
@@ -231,7 +231,7 @@ SDK 0.2 只承担打包与发布；abort/steer/subscribe/session/MCP/approval �
 |---|---|---|
 | Runtime core | 取消、事件、请求模型、恢复、工具效果 | M1 |
 | Host integration | Multivac adapter、工具桥、事件/权限映射 | M2、M4 |
-| SDK & bindings | SDK 0.2 打包发布；后续版本控制面能力对齐、异步/事件 | M3 |
+| SDK & bindings | SDK 0.2 已发布；后续版本控制面能力对齐、异步/事件 | M3 |
 | Providers & catalog | provider 覆盖、动态目录、推理档 | M3 |
 | Ecosystem packaging | skills/tools/provider 包、安装、发现 | M3、M5 |
 | Delegation | 后台运行、监督、调度、worktree、证据 | M3、M4 |
