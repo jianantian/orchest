@@ -67,7 +67,8 @@ ADR-0004 (issue 001).
   `CHANGELOG-SDK.md`.
 - Documentation: install instructions, supported platforms, minimum
   versions and the `orchest` import-name collision.
-- Release candidate `0.2.0-rc.2` on both registries, then `0.2.0`. npm has RC1; its GitHub release workflow stopped before the PyPI upload.
+- Release candidate `0.2.0-rc.3` on both registries, then `0.2.0`.
+  npm has RC1 and PyPI has RC2.
 
 ## Out of Scope
 

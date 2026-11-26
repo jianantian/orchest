@@ -80,7 +80,7 @@ Rust `1.2.0` 与 `2.0.0` 已于 2026-11-10 先后发布。接下来的执行顺�
 
 ### SDK 0.2 — 发布 Python / Node 包（规划）
 
-让用户在 Linux x86_64、Linux arm64、macOS arm64 上直接 `pip install orchest-py` / `npm install orchest-sdk`，不需要本地 Rust 工具链。Python 每平台一个 `cp311-abi3` wheel 加 sdist；Node 为主包加三个平台子包；Linux 上把 OpenSSL 静态编译进绑定（已发布的 crate 不变）；两个 SDK 共用一个独立于 crate 的版本号，从 `0.2.0` 起步，由 `sdk-vX.Y.Z` tag 经 Trusted Publishing 发布，用 `0.2.0-rc.2` 完成 PyPI 和 npm 的联合首发验收；npm 已有 RC1。权威范围、决策与 issue 清单见 [`sdk_v0_2/prd.md`](./sdk_v0_2/prd.md)（[#324](https://github.com/jianantian/orchest/issues/324)–[#330](https://github.com/jianantian/orchest/issues/330)）。
+让用户在 Linux x86_64、Linux arm64、macOS arm64 上直接 `pip install orchest-py` / `npm install orchest-sdk`，不需要本地 Rust 工具链。Python 每平台一个 `cp311-abi3` wheel 加 sdist；Node 为主包加三个平台子包；Linux 上把 OpenSSL 静态编译进绑定（已发布的 crate 不变）；两个 SDK 共用一个独立于 crate 的版本号，从 `0.2.0` 起步，由 `sdk-vX.Y.Z` tag 经 Trusted Publishing 发布，用 `0.2.0-rc.3` 完成 PyPI 和 npm 的联合首发验收。npm 已有 RC1，PyPI 已有 RC2。权威范围、决策与 issue 清单见 [`sdk_v0_2/prd.md`](./sdk_v0_2/prd.md)（[#324](https://github.com/jianantian/orchest/issues/324)–[#330](https://github.com/jianantian/orchest/issues/330)）。
 
 **不在范围内**：Windows、Intel macOS、musl；SDK 的 API 冻结与 1.0；新的 Rust crate 发布。
 

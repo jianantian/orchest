@@ -17,8 +17,10 @@ iteration.
 
 The `sdk-v0.2.0-rc.1` workflow stopped before upload because `npm ci` rejected
 the lockfile after npm's platform packages were created. npm already has the
-four RC1 versions, while PyPI has no RC1. Keep that tag and use
-`0.2.0-rc.2` for the first candidate verified from both registries.
+four RC1 versions, while PyPI has no RC1. RC2 passed the SDK builds and
+published its wheel set and sdist to PyPI. npm interpreted the relative
+tarball paths as GitHub repository shorthand and stopped before uploading.
+Use explicit local paths and cut RC3 for verification from both registries.
 
 ## Acceptance Criteria
 
@@ -26,9 +28,9 @@ four RC1 versions, while PyPI has no RC1. Keep that tag and use
   and configured Trusted Publishing for the four npm packages.
 - [ ] The SDK packaging build can install its Node build dependencies before
   the target versions of the platform packages are available on npm.
-- [ ] The SDK version is `0.2.0-rc.2`, `CHANGELOG-SDK.md` has its section,
-  and the `sdk-v0.2.0-rc.2` tag publishes `orchest-py` `0.2.0rc2` to PyPI
-  and the four npm packages `0.2.0-rc.2` under the `next` dist-tag.
+- [ ] The SDK version is `0.2.0-rc.3`, `CHANGELOG-SDK.md` has its section,
+  and the `sdk-v0.2.0-rc.3` tag publishes `orchest-py` `0.2.0rc3` to PyPI
+  and the four npm packages `0.2.0-rc.3` under the `next` dist-tag.
 - [ ] The post-publish verification passes on all three platforms for the
   release candidate.
 - [ ] After owner sign-off, the `sdk-v0.2.0` tag publishes `0.2.0` to PyPI

@@ -13,6 +13,13 @@ from.
 
 ## [Unreleased]
 
+## [0.2.0-rc.3]
+
+Built from Orchest Rust crates version `2.0.0`.
+
+- Publish the main npm package and its platform packages from local tarballs.
+- Carries forward the SDK changes listed in the [RC2 changelog](https://github.com/jianantian/orchest/blob/sdk-v0.2.0-rc.2/CHANGELOG-SDK.md#020-rc2).
+
 ## [0.2.0-rc.2]
 
 Built from Orchest Rust crates version `2.0.0`.

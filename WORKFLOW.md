@@ -286,9 +286,9 @@ build. The test jobs install and test the newly built tarballs together.
 
 Re-run the **Release SDK** workflow manually from the same tag with
 `dry_run` unchecked. Files already on PyPI and package versions already on
-npm are skipped, and an existing GitHub Release is left alone. A published
-version cannot be replaced: fix the defect in a new version (on npm, also
-`npm deprecate` the broken one).
+npm are skipped, and an existing GitHub Release is left alone. If the
+tagged workflow or a published artifact needs a fix, cut a new version
+from the corrected commit. Use `npm deprecate` for broken npm versions.
 
 ---
 

@@ -162,12 +162,13 @@ jobs:
           fi
           unset NPM_TOKEN
           ls -l packages
-          main="packages/orchest-sdk-$VERSION.tgz"
+          main="./packages/orchest-sdk-$VERSION.tgz"
           test -f "$main"
           for platform in linux-x64-gnu linux-arm64-gnu darwin-arm64; do
             test -f "packages/orchest-sdk-$platform-$VERSION.tgz"
           done
-          for tarball in packages/orchest-sdk-*-"$VERSION".tgz "$main"; do
+          # npm requires ./ for relative tarball paths.
+          for tarball in ./packages/orchest-sdk-*-"$VERSION".tgz "$main"; do
             name=$(tar -xzOf "$tarball" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0)).name')
             if npm view "$name@$VERSION" version >/dev/null 2>&1; then
               echo "skip: $name@$VERSION is already on npm"
