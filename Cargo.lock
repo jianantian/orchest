@@ -1420,7 +1420,7 @@ dependencies = [
 
 [[package]]
 name = "orchest-node"
-version = "0.2.0-rc.3"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1542,7 +1542,7 @@ dependencies = [
 
 [[package]]
 name = "orchest-py"
-version = "0.2.0-rc.3"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "bytes",

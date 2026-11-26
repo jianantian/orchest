@@ -41,6 +41,8 @@ then verifies the published packages.
   `CHANGELOG-SDK.md` section, marked prerelease for pre-release versions.
 - [x] After publishing, a verification job installs the published version
   from PyPI and npm on each of the three platforms and runs the SDK tests.
+  The npm installation retries for up to ten minutes if either the
+  main package or the runner's platform package is unavailable.
 - [ ] A `dry_run` run stops after the build and tests, uploads nothing,
   succeeds, and is linked from this issue.
 

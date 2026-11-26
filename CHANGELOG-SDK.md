@@ -13,6 +13,18 @@ from.
 
 ## [Unreleased]
 
+## [0.2.0]
+
+Built from Orchest Rust crates version `2.0.0`.
+
+- First stable release of `orchest-py` on PyPI and `orchest-sdk` on npm.
+  Prebuilt packages support Linux x86_64 (glibc), Linux arm64 (glibc), and
+  macOS arm64. Python requires 3.11 or later and Node.js requires 18 or later.
+- Includes the v2.0 runtime contract, with run cancellation, capability
+  discovery, per-request responses, and declared tool effects.
+- Breaking changes to ASR options, approval responses, and event delivery
+  are documented in the [0.2.0 release candidate notes](https://github.com/jianantian/orchest/blob/sdk-v0.2.0-rc.3/CHANGELOG-SDK.md#020-rc1).
+
 ## [0.2.0-rc.3]
 
 Built from Orchest Rust crates version `2.0.0`.

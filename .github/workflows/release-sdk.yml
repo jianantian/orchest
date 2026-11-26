@@ -262,13 +262,21 @@ jobs:
           mkdir -p "$work"
           cd "$work"
           npm init -y >/dev/null
-          for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            npm install --no-audit --no-fund "orchest-sdk@$VERSION" && break
-            [[ $attempt -eq 10 ]] && exit 1
+          platform_package="node_modules/orchest-sdk-${{ matrix.platform }}"
+          # npm can install the main package while its optional platform
+          # package is still propagating through the registry.
+          for ((attempt=1; attempt<=21; attempt++)); do
+            if npm install --no-audit --no-fund --no-package-lock --prefer-online "orchest-sdk@$VERSION" &&
+               [[ -d "$platform_package" ]]; then
+              break
+            fi
+            if [[ $attempt -eq 21 ]]; then
+              echo "error: unable to install orchest-sdk@$VERSION with $platform_package" >&2
+              exit 1
+            fi
             sleep 30
           done
           sdk=node_modules/orchest-sdk
-          test -d "node_modules/orchest-sdk-${{ matrix.platform }}"
           mkdir -p "$sdk/js/tests"
           cp "$GITHUB_WORKSPACE"/js/tests/*.test.cjs "$sdk/js/tests/"
           cd "$sdk"

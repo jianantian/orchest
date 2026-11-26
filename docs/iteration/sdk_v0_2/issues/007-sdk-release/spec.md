@@ -26,20 +26,20 @@ Use explicit local paths and cut RC3 for verification from both registries.
 
 - [x] The owner registered `orchest-py` as a pending trusted publisher on PyPI
   and configured Trusted Publishing for the four npm packages.
-- [ ] The SDK packaging build can install its Node build dependencies before
+- [x] The SDK packaging build can install its Node build dependencies before
   the target versions of the platform packages are available on npm.
-- [ ] The SDK version is `0.2.0-rc.3`, `CHANGELOG-SDK.md` has its section,
+- [x] The SDK version is `0.2.0-rc.3`, `CHANGELOG-SDK.md` has its section,
   and the `sdk-v0.2.0-rc.3` tag publishes `orchest-py` `0.2.0rc3` to PyPI
   and the four npm packages `0.2.0-rc.3` under the `next` dist-tag.
-- [ ] The post-publish verification passes on all three platforms for the
+- [x] The post-publish verification passes on all three platforms for the
   release candidate.
 - [ ] After owner sign-off, the `sdk-v0.2.0` tag publishes `0.2.0` to PyPI
   and npm (`latest`) through Trusted Publishing only, and the post-publish
   verification passes on all three platforms.
-- [ ] Murmur installs the release candidate from PyPI instead of its git
+- [x] Murmur installs the release candidate from PyPI instead of its git
   tag, and its existing calls run.
 - [ ] The release notes give the SDK↔crate version matrix (`0.2.0` ↔
-  crates `2.0.0`, ADR-0005 D6).
+  crates `2.0.0`, ADR-0004 D6).
 - [ ] The repository holds no long-lived PyPI or npm token.
 - [ ] The PyPI and npm pages for 0.2.0 show provenance.
 - [ ] The PRD's acceptance items are checked, the roadmap marks SDK 0.2
@@ -56,4 +56,11 @@ Use explicit local paths and cut RC3 for verification from both registries.
 
 ## Notes
 
-HITL: each publish approval and the 0.2.0 sign-off belong to the owner.
+RC3 published to both registries through Trusted Publishing. The
+[release run](https://github.com/jianantian/orchest/actions/runs/45735782744)
+passed public installation on all three platforms. The Linux jobs
+passed on retry after npm served the new versions. A temporary copy
+of Murmur using RC3 from PyPI passed 187 server tests.
+
+The owner signed off on 0.2.0 on 2026-11-26. Each publish deployment
+requires its own approval.
