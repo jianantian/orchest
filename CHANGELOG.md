@@ -14,6 +14,16 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+### Changed
+
+- Align the Rust workspace and both SDKs on release version `0.3.0`.
+
+## [0.2.0]
+
+Rust release built from the same Rust source as the published Python and
+Node SDKs at `0.2.0`. It includes the runtime contract documented in the
+historical `2.0.0` notes below.
+
 ### Added
 
 - Optional Rust `session-evidence` support for local model attempt metadata,
@@ -434,7 +444,8 @@ Release candidate for 1.0.0, with the same feature set as the 1.0.0 entry
 in [CHANGELOG.md](CHANGELOG.md#100). Published so crates.io users can try
 the lockstep crates before the final release.
 
-[Unreleased]: https://github.com/jianantian/orchest/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/jianantian/orchest/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jianantian/orchest/releases/tag/v0.2.0
 [2.0.0]: https://github.com/jianantian/orchest/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/jianantian/orchest/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/jianantian/orchest/compare/v1.0.0...v1.1.0

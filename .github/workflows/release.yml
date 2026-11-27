@@ -35,6 +35,9 @@ jobs:
       version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       - name: A real release must run from a tag
         if: env.DRY_RUN != 'true' && github.ref_type != 'tag'
@@ -42,14 +45,15 @@ jobs:
           echo "error: publishing requires a vX.Y.Z tag ref; use dry_run for other refs" >&2
           exit 1
 
-      - name: Check tag, workspace version, internal pins and changelog
+      - name: Check tag, unified version, platform pins and changelog
         id: check
         run: |
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             version=$(scripts/release-check.sh "${{ github.ref_name }}")
           else
-            version=$(scripts/release-check.sh)
+            version=$(scripts/release-check.sh --skip-changelog)
           fi
+          scripts/sdk-release-check.sh --skip-changelog >/dev/null
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   ci:

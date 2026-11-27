@@ -53,6 +53,13 @@ jobs:
           else
             version=$(scripts/sdk-release-check.sh --skip-changelog)
           fi
+          if [[ "$DRY_RUN" != 'true' ]]; then
+            git fetch --no-tags origin "refs/tags/v$version"
+            if [[ "$(git rev-parse 'FETCH_HEAD^{commit}')" != "$(git rev-parse HEAD)" ]]; then
+              echo "error: SDK and Rust release tags must point to the same commit" >&2
+              exit 1
+            fi
+          fi
           # maturin's Cargo -> PEP 440 mapping: 0.2.0-rc.1 -> 0.2.0rc1.
           pypi_version=$(sed -E 's/-rc\.([0-9]+)$/rc\1/' <<<"$version")
           npm_tag=latest

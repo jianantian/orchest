@@ -133,6 +133,10 @@ that is `orchest::bindings`, which only the binding crates use.
 | **Lockstep** (chosen) | All published crates share one version from `[workspace.package]`, released together under one tag. This includes the standalone `orchest-storage`. The `=` pins in D2 are simple and one changelog covers everything. Downside: a crate can get a version bump with no changes. |
 | Per-crate | Each crate is versioned independently. Needs per-crate tags, changelogs and release tooling (e.g. release-plz), which is not worth it for one maintainer. |
 
+Starting with `0.3.0`, the lockstep Rust version is also the version of the
+Python and Node packages. Both release tags point to the same source commit.
+See [ADR-0004 D6](./0004-sdk-packaging.md#d6-versioning).
+
 ### D4. SemVer policy for Supported crates
 
 The **public API** of a Supported crate is everything nameable from the

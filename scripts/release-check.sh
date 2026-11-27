@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 # Pre-publish guards for a lockstep release (ADR-0003 D3/D7).
 #
-#   scripts/release-check.sh [TAG]
+#   scripts/release-check.sh [--skip-changelog] [TAG]
 #
 # Prints the workspace version on success. Fails when:
 # - TAG is given and differs from v<workspace version>;
 # - an internal [workspace.dependencies] requirement does not match the
 #   workspace version (caret for Supported crates, `=` for Internal ones);
-# - CHANGELOG.md has no `## [<version>]` section.
+# - CHANGELOG.md has no `## [<version>]` section (unless skipped for a dry run).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+
+check_changelog=1
+if [[ "${1:-}" == "--skip-changelog" ]]; then
+  check_changelog=0
+  shift
+fi
 
 version=$(awk '
   /^\[workspace\.package\]/ { in_pkg = 1; next }
@@ -49,7 +55,7 @@ done < <(awk '
 ' Cargo.toml)
 [[ $status -eq 0 ]] || exit 1
 
-if ! grep -qF "## [$version]" CHANGELOG.md; then
+if [[ $check_changelog -eq 1 ]] && ! grep -qF "## [$version]" CHANGELOG.md; then
   echo "error: CHANGELOG.md has no \"## [$version]\" section" >&2
   exit 1
 fi

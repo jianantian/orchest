@@ -5,13 +5,15 @@ All notable changes to the Python package `orchest-py` and the npm package
 [CHANGELOG.md](CHANGELOG.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-The SDKs share one version, independent of the crate version
+Starting with 0.3.0, the SDKs share the Rust workspace version
 ([ADR-0004](docs/adr/0004-sdk-packaging.md) D6). While the version is 0.x,
 minor releases may break the Python or TypeScript API; such changes are
 marked **Breaking:**. Each release names the crate version it is built
 from.
 
 ## [Unreleased]
+
+- Align the Python and Node package versions with the Rust workspace.
 
 ## [0.2.0]
 

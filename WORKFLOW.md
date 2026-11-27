@@ -187,14 +187,16 @@ Published crates are released in lockstep from a version tag through
 ### Cutting a release
 
 1. On `main`, set `[workspace.package] version` and every internal
-   requirement in `[workspace.dependencies]` to the new version: a caret for
-   Supported crates, `=` for Internal crates.
+   requirement in `[workspace.dependencies]` to the new version. Use a caret
+   for Supported crates and `=` for Internal crates. Apply the same version
+   to the SDK manifests and refresh both lockfiles as described below.
 2. Rename `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z]`, add a fresh
    empty `## [Unreleased]` above it, and update the compare links.
 3. Check locally:
 
    ```bash
    scripts/release-check.sh vX.Y.Z
+   scripts/sdk-release-check.sh sdk-vX.Y.Z
    scripts/release-publish.sh X.Y.Z --dry-run
    ```
 
@@ -223,8 +225,9 @@ defect cannot be replaced: yank it with `cargo yank` and release a patch.
 ## Releasing the SDKs
 
 `orchest-py` (PyPI) and `orchest-sdk` with its platform packages (npm)
-share one SDK version, independent of the crate version, and are released
-from an `sdk-vX.Y.Z` tag through `.github/workflows/release-sdk.yml`
+share the Rust workspace version starting with `0.3.0`. Their
+`sdk-vX.Y.Z` tag points to the same commit as the Rust `vX.Y.Z` tag and
+runs `.github/workflows/release-sdk.yml` after the crate release
 ([ADR-0004](docs/adr/0004-sdk-packaging.md) D6/D7).
 
 ### One-time setup
@@ -254,8 +257,8 @@ from an `sdk-vX.Y.Z` tag through `.github/workflows/release-sdk.yml`
    release candidate is `X.Y.Z-rc.N`; PyPI receives it as `X.Y.ZrcN`. The
    check script refuses versions below `0.2.0`.
 2. Rename `## [Unreleased]` in `CHANGELOG-SDK.md` to a heading with the
-   version exactly as `package.json` spells it (`## [0.2.0-rc.1]` for a
-   release candidate, `## [0.2.0]` for a release), add a fresh empty
+   version exactly as `package.json` spells it (`## [X.Y.Z-rc.N]` for a
+   release candidate, `## [X.Y.Z]` for a release), add a fresh empty
    `## [Unreleased]` above it, and name the crate version the release is
    built from.
 3. Check locally: `scripts/sdk-release-check.sh sdk-v<version>`.

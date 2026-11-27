@@ -54,7 +54,7 @@ Orchest 要同时满足两个身份：可脱离任何宿主独立使用的 runti
 ### D6 — SDK 1.0 冻结：M3 控制面补齐后，且至少 1 个独立宿主跨两个 minor（D6）
 
 - 冻结范围：**API 形状 + 事件 payload 结构 + 错误分类 + 工具/技能发现方式**（事件 payload 是 Rust 与 SDK 共享的耦合点，必须一起冻）。
-- 每次 SDK 发布给出 **SDK ↔ crate 版本矩阵与兼容性声明**（两条版本线独立，必须显式绑定）。
+- 自 `0.3.0` 起，Rust、Python 和 Node 共用版本号并从同一提交发布。发布说明列出各包、内置 Rust 版本与兼容性变化。[ADR-0004 D6](./0004-sdk-packaging.md#d6-versioning)
 - 0.x 期间直接演进，不保留兼容层与弃用期；1.0 时一次性冻结。
 - 现状的绑定面很薄（`run` / `run_sync` / `run_stream` / `respond_approval`，Node 另有 `register_tool`），此刻冻结会在 M3 补控制面能力时必然破坏。
 

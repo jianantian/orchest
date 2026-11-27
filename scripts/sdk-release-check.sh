@@ -4,7 +4,7 @@
 #   scripts/sdk-release-check.sh [--skip-changelog] [TAG]
 #
 # Prints the SDK version on success. Fails when:
-# - package.json, crates/orchest-py/Cargo.toml and
+# - the Rust workspace, package.json, crates/orchest-py/Cargo.toml and
 #   crates/orchest-node/Cargo.toml carry different versions;
 # - a platform package under npm/ has another version, or package.json's
 #   optionalDependencies do not pin exactly the npm/ packages at the SDK
@@ -26,9 +26,9 @@ if [[ "${1:-}" == "--skip-changelog" ]]; then
 fi
 tag=${1:-}
 
-crate_version() {
-  awk '
-    /^\[package\]/ { in_pkg = 1; next }
+manifest_version() {
+  awk -v section="$2" '
+    $0 == section { in_pkg = 1; next }
     /^\[/ { in_pkg = 0 }
     in_pkg && /^version *=/ { gsub(/.*= *"|".*/, ""); print; exit }
   ' "$1"
@@ -36,8 +36,14 @@ crate_version() {
 
 version=$(node -p 'require("./package.json").version')
 status=0
+workspace_version=$(manifest_version Cargo.toml '[workspace.package]')
+if [[ "$workspace_version" != "$version" ]]; then
+  echo "error: Cargo workspace has version \"$workspace_version\", package.json has \"$version\"" >&2
+  status=1
+fi
+
 for manifest in crates/orchest-py/Cargo.toml crates/orchest-node/Cargo.toml; do
-  got=$(crate_version "$manifest")
+  got=$(manifest_version "$manifest" '[package]')
   if [[ "$got" != "$version" ]]; then
     echo "error: $manifest has version \"$got\", package.json has \"$version\"" >&2
     status=1

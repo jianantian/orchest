@@ -93,9 +93,10 @@ decision.
 
 ### D6. Versioning
 
-- `orchest-py` and `orchest-sdk`, with its platform sub-packages, share
-  **one SDK version**, independent of the crate version. It starts at
-  `0.2.0`.
+- The initial Python and Node release used SDK version `0.2.0` with
+  Rust crate version `2.0.0`. Starting with `0.3.0`, the Rust crates,
+  `orchest-py`, `orchest-sdk`, and its platform packages share one
+  version and use the same source commit for a release.
 - **0.x makes no API stability promise.** Breaking changes to the Python
   or TypeScript API are allowed in minor releases and are marked
   **Breaking:** in the changelog. A 1.0 for the SDKs needs its own API
@@ -108,8 +109,7 @@ decision.
 - Tags are `sdk-vX.Y.Z` and `sdk-vX.Y.Z-rc.N`. SDK releases are recorded
   in `CHANGELOG-SDK.md`, and each release names the crate version it is
   built from.
-- An SDK release does not require a crate release, and a crate release
-  does not force an SDK release.
+- Release the crates first, then publish the SDKs from the same commit.
 
 ### D7. Publishing
 
