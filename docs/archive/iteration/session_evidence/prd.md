@@ -1,6 +1,6 @@
 # Session 证据迭代
 
-状态：2026-11-25 合入主线并收尾，发布版本待定。依赖已发布的 [Session v2](../../../iteration/v2_0/prd.md)。
+状态：2026-11-25 合入主线并收尾，2026-11-28 随 [Rust 0.2.0](https://github.com/jianantian/orchest/releases/tag/v0.2.0) 发布。依赖 [Session v2](../../../iteration/v2_0/prd.md)。
 
 ## 背景与目标
 
@@ -53,4 +53,4 @@ DSH 从已写入 Session 的消息和请求配置构造冻结请求，并用 moc
 
 - [PR #362](https://github.com/jianantian/orchest/pull/362) 已合并，合并提交为 `8f2dc40`，四个关联 issue 均已关闭。
 - [PR CI](https://github.com/jianantian/orchest/actions/runs/45636048616) 和 [合并后主线 CI](https://github.com/jianantian/orchest/actions/runs/45639684722) 均通过。核心 crate 的全 feature 本地测试通过 518 项，覆盖重试、恢复、序号复用、写入背压、撤销和压缩来源。
-- 同一提交触发的 [SDK 打包工作流](https://github.com/jianantian/orchest/actions/runs/45639684555) 已取消。此次交付为 Rust 库的可选功能，发布版本沿用待定状态。
+- 同一提交触发的 [SDK 打包工作流](https://github.com/jianantian/orchest/actions/runs/45639684555) 已取消。Rust 的可选 `session-evidence` 功能之后随 `0.2.0` 上线。

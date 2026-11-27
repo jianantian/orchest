@@ -4,7 +4,7 @@
 
 Orchest is a **low-level Rust SDK** that provides the agent runtime core for building AI agent applications. It is not a complete agent product — it is the engine that other agent products run on: responsible for the agent loop, state management, event streaming, tool dispatch, and skill loading.
 
-Current stage: **2.x, released** — `2.0.0` of the eight lockstep crates is on crates.io (2026-11-10; versioning and SemVer policy in [ADR-0003](./docs/adr/0003-release-policy.md)). SDK `0.2.0` is available as `orchest-py` on PyPI and `orchest-sdk` on npm. The Rust core (`orchest`) and the shared protocol spine (`orchest-protocol`) are built out, alongside weight-tier provider crates (`orchest-provider-http`/`-stream`/`-visual`, covering LLM, ASR, TTS, and image/video AIGC) behind the `orchest-provider` registry wall. Design docs under `docs/` remain the authoritative implementation contract; code lives in `crates/`, `examples/`, and `skills/` per the Rust Project Conventions below. The living roadmap is [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md).
+Current stage: preparing unified release `0.3.0` for Rust, Python, and Node. The former crate releases were removed from crates.io on 2026-11-26. Rust `0.2.0` is available on crates.io as of 2026-11-28. SDK `0.2.0` is available as `orchest-py` on PyPI and `orchest-sdk` on npm. The Rust core (`orchest`) and the shared protocol spine (`orchest-protocol`) are built out, alongside weight-tier provider crates (`orchest-provider-http`/`-stream`/`-visual`, covering LLM, ASR, TTS, and image/video AIGC) behind the `orchest-provider` registry wall. Design docs under `docs/` remain the authoritative implementation contract; code lives in `crates/`, `examples/`, and `skills/` per the Rust Project Conventions below. The living roadmap is [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md).
 
 ---
 
@@ -62,7 +62,7 @@ The living iteration index is [`docs/iteration/roadmap.md`](./docs/iteration/roa
 
 The authoritative, up-to-date status lives in [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md) (已完成 / 规划中 tables + dependency graph). Do not duplicate it here.
 
-Snapshot (2026-11): v0.1–v0.17, v1.0, v1.2 and v2.0 shipped; the repository is public. `2.0.0` (2026-11-10: the breaking v2.0 runtime contract, `docs/iteration/v2_0/`) is the latest crates.io release; `1.2.0` (voice contract V1 + Vercel AI Gateway / Fireworks, `docs/iteration/v1_2/`) was released the same day from the v1.2 branch head, before the v2.0 merge. SDK `0.2.0` shipped on 2026-11-26, built on Rust crates `2.0.0` ([archived PRD](./docs/archive/iteration/sdk_v0_2/prd.md)). Next: SDK 0.3 and v2.1 in parallel, followed by v2.2 (see the roadmap). Other candidate directions live in `docs/todo/`.
+Snapshot (2026-11): the Git tags for Rust `1.2.0` (voice contract V1 and new providers) and `2.0.0` (the runtime contract in `docs/iteration/v2_0/`) preserve those historical builds. SDK `0.2.0` shipped on 2026-11-26, built on Rust crates `2.0.0` ([archived PRD](./docs/archive/iteration/sdk_v0_2/prd.md)). The [next-release plan](./docs/iteration/next/release-plan.md) covers runtime controls, voice, and Session evidence. Other candidate directions live in `docs/todo/`.
 
 ---
 

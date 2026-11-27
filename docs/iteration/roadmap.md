@@ -61,8 +61,8 @@
 | hotfix 2026-07-27 | 重构 | v0.15 评审跟进：`new_trace_id` 混入进程级单调序列（macOS µs 时钟下同调用点 id 碰撞，flake + 生产关联断裂）；`RuntimeEvent::RunFailed` 新增结构化 `RunFailureKind`（BudgetExceeded/MaxStepsReached/Other，serde 向后兼容，agent-as-tool 分类器删除字符串匹配，Py/Node wire 声明同步）；`ToolError.external_usage` + actor 串/并行工具 Err 路径折算失败子代理 budget 回父 BudgetGuard（修复 v0.15 #236 引入的核算回退）；[#240](https://github.com/jianantian/orchest/issues/240)–[#242](https://github.com/jianantian/orchest/issues/242) 关闭（[#266](https://github.com/jianantian/orchest/pull/266)） |
 | v1.0 | 功能 | 首次公开发布：8 个 crate 以 `1.0.0` 统一版本发布到 crates.io（`orchest` / `orchest-protocol` / `orchest-provider` / `orchest-storage` 受 SemVer 约束，`orchest-provider-core/http/stream/visual` 为 `=` 锁定的内部档）；[ADR-0003](../adr/0003-release-policy.md) 发布策略（MIT OR Apache-2.0、MSRV 1.87、`vX.Y.Z` tag）；publish 元数据 + license、CHANGELOG、tag 触发的 release workflow、[公开 API 冻结审查](../review/v1_0_public_api.md)（全部公开 enum `#[non_exhaustive]`、冻结 struct 清单）；`1.0.0-rc.1` 经 crates.io 冒烟验证后发布 `1.0.0`，仓库转公开；[#306](https://github.com/jianantian/orchest/issues/306)–[#311](https://github.com/jianantian/orchest/issues/311)（[#312](https://github.com/jianantian/orchest/pull/312)、[#314](https://github.com/jianantian/orchest/pull/314)–[#316](https://github.com/jianantian/orchest/pull/316)；[release v1.0.0](https://github.com/jianantian/orchest/releases/tag/v1.0.0)） |
 | hotfix 2026-10-01 | 功能 | DeepSeek 模型清单与 `deepseek-flash` 图像输入：catalog 在线模型为 `deepseek/deepseek-flash`（V4.1 Flash，`[Text, Image]`）与 `deepseek/deepseek-v4-pro`（1M 上下文 / 384K 输出、高峰 CNY 价），1.0.0 的 `deepseek/deepseek-v4-flash` 行保留为 `ModelStatus::Deprecated`（身份选择仍可解析、默认发现隐藏）；思考强度映射为官方 `low`/`high`/`max`；`deepseek-flash` 的 user `Image` 编码为 Chat `image_url` part，`deepseek-v4-pro` + 图像在 `Strict` 下发请求前报 `unsupported_image_input`；无破坏性变更，随 [1.1.0](https://github.com/jianantian/orchest/releases/tag/v1.1.0) 发布（2026-10-01）；[#318](https://github.com/jianantian/orchest/issues/318)–[#319](https://github.com/jianantian/orchest/issues/319) 关闭（[#320](https://github.com/jianantian/orchest/pull/320)） |
-| Session 证据 | 功能 | 2026-11-25 合入主线。Rust 可选 `session-evidence` feature 记录模型尝试、受控 adapter 输入重建、会话入账与压缩来源。Session v2 恢复契约沿用现有语义。发布版本待定。[PR #362](https://github.com/jianantian/orchest/pull/362) · [PRD](../archive/iteration/session_evidence/prd.md) |
-| SDK 0.2 | 发布 | 2026-11-26 发布 Python `orchest-py` 与 Node `orchest-sdk` `0.2.0`，基于 Rust crates `2.0.0`。Linux x86_64、Linux arm64、macOS arm64 提供预构建包，通过 Trusted Publishing 发布并附来源证明。[正式版](https://github.com/jianantian/orchest/releases/tag/sdk-v0.2.0) · [PRD](../archive/iteration/sdk_v0_2/prd.md) · [#330](https://github.com/jianantian/orchest/issues/330) |
+| Session 证据 | 功能 | 2026-11-25 合入主线。Rust 可选 `session-evidence` feature 记录模型尝试、受控 adapter 输入重建、会话入账与压缩来源。Session v2 恢复契约沿用现有语义。Rust 可选功能已随 [0.2.0](https://github.com/jianantian/orchest/releases/tag/v0.2.0) 发布。[PR #362](https://github.com/jianantian/orchest/pull/362) · [PRD](../archive/iteration/session_evidence/prd.md) |
+| Orchest 0.2.0 | 发布 | Python `orchest-py` 与 Node `orchest-sdk` 于 2026-11-26 发布。八个 Rust crate 于 2026-11-28 按同一 SDK 源码补发 `0.2.0`，沿用原包名。[Rust](https://github.com/jianantian/orchest/releases/tag/v0.2.0) · [Python / Node](https://github.com/jianantian/orchest/releases/tag/sdk-v0.2.0) · [归档 PRD](../archive/iteration/sdk_v0_2/prd.md) · [#330](https://github.com/jianantian/orchest/issues/330) |
 
 ## 迭代编号约定
 
@@ -71,41 +71,33 @@
 
 ## 规划中
 
-SDK `0.2.0` 已基于 Rust `2.0.0` 发布。接下来 SDK 0.3 与 v2.1 并行，随后 v2.2 与 M2 同期推进。
+下一轮按运行控制、语音能力和 Session 证据推进。Rust、Python 和 JS 当前均为 `0.2.0`，下一版统一为 `0.3.0`。三端发包顺序见 [Orchest 下一版](./next/release-plan.md)。
 
-### v1.2 — 语音契约补齐与新 provider（✅ 已发布：crates.io `1.2.0`，2026-11-10）
+### v1.2 — 语音契约补齐与新 provider（历史发行，Git 标签 `v1.2.0`）
 
 两件增量的事，都赶在 SDK 0.2 之前：按 [ADR-0006](../adr/0006-voice-session-model.md) 补语音契约（`SessionInput::Finalize`、各方言补 Turn 与原生 finalize、方言无关的契约测试）并重设计 Python / Node 的 ASR 流式接口（语音线 V1）；接入 Vercel AI Gateway 的 chat 与 decision、Fireworks 的 chat（Fireworks decision 延后，owner 2026-10-27）。权威范围见 [`v1_2/prd.md`](./v1_2/prd.md)（[#342](https://github.com/jianantian/orchest/issues/342)–[#348](https://github.com/jianantian/orchest/issues/348)）。
 
 **不在范围内**：语音 V2–V5；Vercel / Fireworks 的语音、图像、embedding。
 
-### v2.0 — Runtime 契约与可靠性（✅ 已发布：crates.io `2.0.0`，2026-11-10）
+### v2.0 — Runtime 契约与可靠性（历史契约发行，Git 标签 `v2.0.0`）
 
 把 Orchest 从"能跑 agent 的 runtime"变成"宿主可依赖的 runtime"：执行态以 append-only 事件日志为唯一真相，checkpoint 每 step 落盘（工具副作用派发前额外落标记），崩溃后用合成闭包事件交代进行中的副作用而不自动重跑；权限原语升到工具级 + 命令模式级 + 路径级并支持批准作用域与沙箱注入点；取消可抢占模型流、工具与审批等待；canonical 事件零丢失；提供能力探测面。
 
-这是 [方向与里程碑](./direction.md) 的 **M1**，决策依据 [ADR-0005](../adr/0005-host-integration-contract.md)。**破坏性变更，按 ADR-0003 走主版本号（2.0.0）；不提供兼容层、弃用期或迁移说明。**
+这是 [方向与里程碑](./direction.md) 的 **M1**，决策依据 [ADR-0005](../adr/0005-host-integration-contract.md)。该契约最初通过 Git 标签 `v2.0.0` 发布。当前 crates.io 的 Rust `0.2.0` 沿用该契约。
 
 8 个 issue：会话事件日志 → checkpoint 与恢复 → in-flight 副作用账本 → 阻塞请求通道 → 原生权限模式表面 → 取消语义 → 事件模型与能力探测 → canonical 事件零丢失。权威范围与验收标准见 [`v2_0/prd.md`](./v2_0/prd.md)。
 
-9 个 issue 的第 9 个让 Python / Node 绑定跟上新契约并透传 `abort` 与按 request id 的回复；完整控制面在 SDK 0.3。
+9 个 issue 的第 9 个让 Python / Node 绑定跟上新契约并透传 `abort` 与按 request id 的回复；完整控制面纳入 [Orchest 0.3.0](./next/release-plan.md)。
 
-**不在范围内**：产品语义（计划提案、任务计划、Task/Thread/Workspace）；宿主权限档映射与 UI；OS 级沙箱实现（M4）；持久委派与后台子 agent（M3）；SDK 控制面的完整重设计（SDK 0.3）。
+**不在范围内**：产品语义（计划提案、任务计划、Task/Thread/Workspace）；宿主权限档映射与 UI；OS 级沙箱实现（M4）；持久委派与后台子 agent（M3）；SDK 控制面的完整重设计（Orchest 0.3.0）。
 
-### SDK 0.3 — SDK 控制面（规划，v2.0 合入后写 PRD）
-
-把 [方向文档](./direction.md) M3 的 SDK 控制面提前做：真异步 `run` 与事件迭代器、`abort`、按 request id 的 `respond`、session 与 `resume`、能力探测、运行时事件类型；Node 补齐 Python 已有的工具注册方法。对标 v2.0 的新契约，所以 PRD 与 issue spec 在 v2.0 合入后再写。
-
-### v2.1 — 语音能力目录、计量与 TTS 双工（规划，v2.0 合入后写 PRD）
-
-语音线的 V2 与 V4：`AsrCatalogExt` / `TtsCatalogExt` 能力项、便携选项校验、音频秒数与字符计量；三个 TTS 方言的双工输入（追加文本 / Flush / 取消 / 关闭），SDK 暴露 `synthesize()` 与流式、双工合成。
-
-### v2.2 — 全双工补齐（规划）
+### 全双工语音补齐（后续规划）
 
 语音线的 V5：omni 输出侧生命周期、`Interrupt` 带已播放位置、轮次检测便携选项、第二个全双工 provider；SDK 暴露 `RealtimeSession`。与 M2（Multivac 适配，在 Multivac 仓库）同期。
 
 ### 语音迭代线（卫星，规划）
 
-按 [ADR-0006](../adr/0006-voice-session-model.md) 的六个概念（Session / Stable / Draft / Turn / Finalize / Extras）统一语音接口，各厂商协议与聚合服务映射进来。五步：V1 契约补齐（`SessionInput::Finalize`、Turn 补齐、契约测试、SDK ASR 流式接口重设计）→ V2 能力目录与音频计量 → V3 聚合与网关 provider → V4 TTS 双工 → V5 全双工生命周期与第二个 provider。**V1 的 SDK 改动是 SDK 0.2 的前置条件**。V1 落在 v1.2，V2 与 V4 落在 v2.1，V5 落在 v2.2，V3 未排期。范围与验收见 [`voice/plan.md`](./voice/plan.md)。
+按 [ADR-0006](../adr/0006-voice-session-model.md) 的六个概念（Session / Stable / Draft / Turn / Finalize / Extras）统一语音接口，各厂商协议与聚合服务映射进来。五步：V1 契约补齐（`SessionInput::Finalize`、Turn 补齐、契约测试、SDK ASR 流式接口重设计）→ V2 能力目录与音频计量 → V3 聚合与网关 provider → V4 TTS 双工 → V5 全双工生命周期与第二个 provider。V1 已随 v1.2 和 SDK 0.2 交付。下一轮计划推进 V2 和 V4，V5 随 Multivac M2 同期推进，V3 尚未排期。范围与验收见 [`voice/plan.md`](./voice/plan.md)。
 
 **不在范围内**：中转站功能（鉴权、预算、请求日志）；端侧 VAD；附和词过滤与管线编排。
 
@@ -149,21 +141,20 @@ SDK `0.2.0` 已基于 Rust `2.0.0` 发布。接下来 SDK 0.3 与 v2.1 并行，
 ✅ v0.12: ADR-0002 Phase 3 — legacy adapter/factory 移除（重构，v1.0 冻结前）
             │
             ▼
-✅ v1.0: 首次公开发布（crates.io 1.0.0，2026-10-01）
+✅ v1.0: 首次公开发布（历史标签 v1.0.0，2026-10-01）
             │
             ▼
-✅ v1.2: 语音契约补齐（语音线 V1）+ Vercel AI Gateway / Fireworks（crates.io 1.2.0，2026-11-10）
+✅ v1.2: 语音契约补齐（语音线 V1）+ Vercel AI Gateway / Fireworks（历史标签 v1.2.0，2026-11-10）
             │
             ▼
 ✅ v2.0: Runtime 契约与可靠性（会话事件日志 + checkpoint + 副作用账本 +
         权限表面 + 取消 + 零丢失事件 + 能力探测 + 绑定跟上；破坏性，Rust 2.0.0）
-        （crates.io 2.0.0，2026-11-10，先于 SDK 0.2.0 发布）
+        （历史标签 v2.0.0，2026-11-10）
         │
-        ├─► ✅ SDK 0.2: 发布 Python / Node 包（PyPI orchest-py + npm orchest-sdk，独立版本号）
-        ├─► SDK 0.3: SDK 控制面（M3 的 SDK 部分提前）
-        ├─► v2.1: 语音能力目录 + 计量 + TTS 双工（语音线 V2 + V4）
-        ├─► v2.2: 全双工补齐（语音线 V5）
-        ├─► ✅ Session 证据（已合入主线，发布版本待定）
+        ├─► ✅ Orchest 0.2.0: Rust / Python / Node 已发布
+        ├─► Orchest 0.3.0：运行控制面、语音 V2 + V4、Session 证据
+        ├─► 后续：全双工补齐（语音线 V5）
+        ├─► ✅ Session 证据（Rust 0.2.0 已发布）
         ├─► M2: Multivac 本地默认 runtime
         └─► M3: 生态地基（provider 目录、包格式、委派层）
 
@@ -205,7 +196,7 @@ SDK `0.2.0` 已基于 Rust `2.0.0` 发布。接下来 SDK 0.3 与 v2.1 并行，
 | LLM Retry / 容错 | ~~失败直接 return~~ → RetryPolicy（指数退避） | ✅ v0.7 |
 | Loop Detection | ~~无~~ → LoopDetectionHook（warn + abort） | ✅ v0.7 |
 | Session 持久化 | ~~无~~ → SessionStore trait + InMemory + SQLite | ✅ v0.8 |
-| 模型调用证据 | Rust 宿主可启用本地采集，查询逐次尝试、重建已授权的 adapter 输入、核对实际入账和压缩来源 | ✅ Session 证据，发布版本待定 |
+| 模型调用证据 | Rust 宿主可启用本地采集，查询逐次尝试、重建已授权的 adapter 输入、核对实际入账和压缩来源 | ✅ Session 证据，Rust 0.2.0 已发布 |
 | Guardrails | ~~无~~ → 四层 Guardrail 框架（Input/Output/ToolInput/ToolOutput） | ✅ v0.8 |
 | 权限模型扩展 | ~~`requires_approval: bool`~~ → run 级 ApprovalMode 策略 | ✅ v0.8 |
 | 双向通信 + 多方事件订阅 | ~~RunHandle 只有 wait + approval~~ → Multi-subscriber + Watcher + InjectCmd | ✅ v0.8 |

@@ -23,7 +23,9 @@ Linux wheel 静态链接 OpenSSL，不依赖系统的 `libssl` / `libcrypto`，�
 
 ### 版本
 
-SDK 当前是 0.x，`orchest-py` 和 npm 上的 `orchest-sdk` 共用一个 SDK 版本，独立于 Rust crate 版本（[ADR-0004](../adr/0004-sdk-packaging.md) D6）。0.x 的 minor 版本可能改动 Python API，改动在 [`CHANGELOG-SDK.md`](../../CHANGELOG-SDK.md) 里以 **Breaking:** 标出。预发布版本（如 `0.2.0rc1`）需要显式指定版本或加 `--pre`。
+当前发布的 Python SDK 是 PyPI 上的 `orchest-py 0.2.0`。从下一版 `0.3.0` 起，Rust、Python 和 Node 使用同一个发布版本号。[版本对照](../../README.md#choose-your-package-version)
+
+SDK 0.x 的 minor 版本可能改动 Python API。兼容性变化在 [SDK 更新日志](../../CHANGELOG-SDK.md) 中标为 **Breaking**。预发布版本（如 `0.2.0rc1`）需要显式指定版本或加 `--pre`。
 
 ### 从源码构建（贡献者）
 

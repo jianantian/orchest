@@ -20,14 +20,14 @@
 
 ```toml
 [dependencies]
-orchest = "2"
-orchest-provider = { version = "1", features = ["llm"] }
+orchest = "0.2"
+orchest-provider = { version = "0.2", features = ["llm"] }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 serde_json = "1"
 ```
 
-> Orchest 自 1.0 起发布在 crates.io。`orchest-provider` 的 feature 决定编进哪些 provider，`llm` 只拉 REST 层。
+> Rust `0.2.0` 已发布到 [crates.io](https://crates.io/crates/orchest/0.2.0)。`orchest-provider` 的 feature 决定编进哪些 provider，`llm` 只拉 REST 层。
 
 ## 3. 配置 provider
 

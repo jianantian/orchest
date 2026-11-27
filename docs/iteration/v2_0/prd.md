@@ -2,7 +2,7 @@
 
 > 落地 [`../../iteration/direction.md`](../../iteration/direction.md) 的 **M1** 里程碑。
 > 决策依据：[ADR-0005](../../adr/0005-host-integration-contract.md)（宿主集成契约）、[Agent Runtime 全景调研](../../research/sdk-comparison/agent-runtime-landscape-2026-10.md)。
-> 状态：已发布（crates.io `2.0.0`，2026-11-10）。GitHub issue 已建（#331–#338、#349），编号已回填各 spec。
+> 历史发行对应 Git 标签 `v2.0.0`（2026-11-10）。当前 crates.io 的 Rust `0.2.0` 包含本 PRD 的运行时契约。GitHub issue #331–#338 与 #349 见各 spec。
 
 ## Background
 

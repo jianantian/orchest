@@ -2,7 +2,7 @@
 
 > 状态：已确认（owner，2026-10-27）。GitHub issue 已建（#342–#348），编号已回填各 spec。
 > 决策依据：[ADR-0006](../../adr/0006-voice-session-model.md)（语音会话模型）、[语音迭代线计划](../voice/plan.md) 的 V1。
-> 版本：发 Rust `1.2.0`；流式 ASR 事件行为的变化按 ADR-0003 D4 的 1.2.0 例外处理。
+> 历史发行对应 Git 标签 `v1.2.0`。流式 ASR 事件行为按 ADR-0003 D4 的 1.2.0 例外处理。当前安装版本见 [路线图](../roadmap.md)。
 
 ## Background
 

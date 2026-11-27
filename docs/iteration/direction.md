@@ -15,8 +15,8 @@ Orchest 的方向是成为**可嵌入、可治理、可作为默认执行层的 
 
 | 维度 | 当前状态 |
 |---|---|
-| Rust crates | 1.1.0 已发布到 crates.io（8 个 crate；`orchest-py` / `orchest-node` 不发布，SemVer 策略见 [ADR-0003](../adr/0003-release-policy.md)） |
-| Python / Node SDK | SDK `0.2.0` 已发布到 PyPI 和 npm（[PRD](../archive/iteration/sdk_v0_2/prd.md)）；SDK 0.3 扩展控制面 |
+| Rust crates | 八个 crate 的 `0.2.0` 已发布到 crates.io。[Rust 发布](https://github.com/jianantian/orchest/releases/tag/v0.2.0) |
+| Python / Node SDK | `0.2.0` 已发布到 PyPI 和 npm。下一版与 Rust 统一为 `0.3.0`。[下一版计划](./next/release-plan.md) |
 | 第一个生产宿主 | Multivac 计划把 Orchest 作为默认 runtime；目前 **没有代码依赖** |
 | Runtime 能力 | loop、tools、skills、MCP、subagents、approval、session store 已有；取消的可抢占性、恢复、沙箱、可观测性有明确缺口 |
 | 执行态持久化 | `SessionStore`（内存 + SQLite）已有，但是全量快照形态：只在 run 结束/错误时保存，hooks/retry/handoffs 被 `serde(skip)` 而无法随快照恢复。决策 1 = SessionStore 为准 + 每 step 写 checkpoint；M1 需把会话改为 append-only 事件日志 + 派生投影（业界主流，见 [调研](../research/sdk-comparison/agent-runtime-landscape-2026-10.md) §1） |
@@ -139,7 +139,7 @@ Orchest 的方向是成为**可嵌入、可治理、可作为默认执行层的 
 
 目标：Orchest 具备成为“可靠宿主 runtime”的最低契约。
 
-范围：§5 中标记为 M1 的 runtime P0 缺口；宿主集成契约见 [ADR-0005](../adr/0005-host-integration-contract.md)；一致性测试。取证见 [调研：Agent Runtime 全景](../research/sdk-comparison/agent-runtime-landscape-2026-10.md)。落地迭代：[v2.0 PRD](v2_0/prd.md)（8 个 issue，硬切换，Rust 2.0.0）。
+范围：§5 中标记为 M1 的 runtime P0 缺口；宿主集成契约见 [ADR-0005](../adr/0005-host-integration-contract.md)；一致性测试。取证见 [调研：Agent Runtime 全景](../research/sdk-comparison/agent-runtime-landscape-2026-10.md)。契约见 [v2.0 PRD](v2_0/prd.md)，当前 Rust `0.2.0` 包含该契约。
 
 退出标准：
 

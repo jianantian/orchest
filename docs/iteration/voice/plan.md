@@ -97,7 +97,7 @@ Vercel 的 Speech 接口（`generateSpeech` / `transcribe`）是一次请求一�
 
 ### V2 能力目录与音频计量（P1）
 
-计划落地迭代：v2.1（与 V4 同一迭代，见 [roadmap](../roadmap.md)）。
+落地范围和验收见 [语音 PRD](../next/voice/prd.md) 的 001 与 002。
 
 - `AsrCatalogExt` 填上 ADR-0006 D8 的能力项；五个方言的目录行逐一填写，并在 V1 的契约测试里校验「声明与行为一致」。
 - 便携选项校验：调用方请求目录未声明的能力（如 speaker）时，在开 Session 前返回 `UnsupportedOption`。
@@ -115,7 +115,7 @@ Vercel 的 Speech 接口（`generateSpeech` / `transcribe`）是一次请求一�
 
 ### V4 TTS 双工与对齐（可与 V2 并行）
 
-计划落地迭代：v2.1。
+落地范围和验收见 [语音 PRD](../next/voice/prd.md) 的 003 与 004。
 
 - 接通三个方言的 `start_duplex_stream`（目前全部返回 `UnsupportedOperation`）。输入按业界形态定为「追加文本 / Flush / 取消 / 关闭」，输出音频分片带 `context_id` 与 `flush_id`。
 - 按 ADR-0006 D7.5 的 TTS 对照落实事件。
@@ -124,7 +124,7 @@ Vercel 的 Speech 接口（`generateSpeech` / `transcribe`）是一次请求一�
 
 ### V5 全双工补齐（在 V1 之后）
 
-计划落地迭代：v2.2。
+计划在后续全双工语音迭代交付，与 Multivac M2 同期推进。
 
 - omni 补输出侧生命周期：用户开始说话、模型本轮生成完、被打断、本轮结束，并写进契约顺序（生成完或被打断，之后必有本轮结束）。
 - `SessionInput::Interrupt` 增加可选 `played_ms`，截断到已播放位置。

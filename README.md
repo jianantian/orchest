@@ -1,9 +1,6 @@
 # Orchest
 
-[![crates.io](https://img.shields.io/crates/v/orchest.svg)](https://crates.io/crates/orchest)
-[![docs.rs](https://img.shields.io/docsrs/orchest)](https://docs.rs/orchest)
 [![CI](https://github.com/jianantian/orchest/actions/workflows/ci.yml/badge.svg)](https://github.com/jianantian/orchest/actions/workflows/ci.yml)
-[![license](https://img.shields.io/crates/l/orchest.svg)](#license)
 
 **Skill-first agent runtime.** Rust core, Python/TypeScript SDKs.  
 Aligns with the [Anthropic Agent Skills](https://agentskills.io) open standard.
@@ -31,18 +28,27 @@ Tool / MCP / Skill are distinct layers:
 
 ## Quick start
 
+### Choose your package version
+
+| You use | Packages | Availability |
+|---------|----------|----------------|
+| Rust | `orchest`, `orchest-provider`, and the other Rust crates | [Rust 0.2.0](https://github.com/jianantian/orchest/releases/tag/v0.2.0) |
+| Python or Node.js | `orchest-py` (PyPI), `orchest-sdk` (npm) | [Python and Node SDK 0.2.0](https://github.com/jianantian/orchest/releases/tag/sdk-v0.2.0) |
+
+Starting with `0.3.0`, Rust, Python, and Node.js use the same release version. The [SDK changelog](./CHANGELOG-SDK.md) lists the Rust version used for each released SDK.
+
 ### Rust
 
-The Rust crates are published on [crates.io](https://crates.io/crates/orchest):
+Install the Rust crates from [crates.io](https://crates.io/crates/orchest/0.2.0).
 
 ```toml
 [dependencies]
-orchest = "2"
-orchest-provider = { version = "1", features = ["llm"] }
+orchest = "0.2"
+orchest-provider = { version = "0.2", features = ["llm"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
-`orchest-provider` features select which providers are compiled in (`llm` pulls only the REST tier). The [Rust quickstart](./docs/guide/quickstart.md) walks from zero to a running agent with a tool and the event stream; API docs are on [docs.rs](https://docs.rs/orchest).
+`orchest-provider` features select which providers are compiled in (`llm` pulls only the REST tier). The [Rust quickstart](./docs/guide/quickstart.md) walks from zero to a running agent with a tool and the event stream.
 
 ### Python and TypeScript
 
@@ -55,7 +61,7 @@ The SDKs are published as [`orchest-py`](https://pypi.org/project/orchest-py/) o
 | macOS arm64 | prebuilt wheel | prebuilt addon |
 | Anything else (Windows, Intel macOS, musl/Alpine) | pip builds the sdist; needs a Rust toolchain | not supported; loading fails with an error naming the platform |
 
-The SDKs are 0.x and versioned independently of the crates: minor releases may change the Python or TypeScript API. See [`CHANGELOG-SDK.md`](./CHANGELOG-SDK.md).
+Orchest is at version 0.x. A minor release may change the Python or TypeScript API. See [`CHANGELOG-SDK.md`](./CHANGELOG-SDK.md).
 
 `orchest-py` imports as `orchest`, like the unrelated `orchest` package from orchest.io; the two cannot be installed in the same environment.
 

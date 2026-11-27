@@ -39,8 +39,8 @@ PyPI (orchest.io's SDK), which uses the same import name.
 
 ## Versioning
 
-The SDK is 0.x and versioned independently of the Rust crates; minor
-releases may change the Python API. See the
+Starting with 0.3.0, the Python SDK shares the release version with Rust
+and Node.js. During 0.x, minor releases may change the Python API. See the
 [SDK changelog](https://github.com/jianantian/orchest/blob/main/CHANGELOG-SDK.md)
 and the [Python guide](https://github.com/jianantian/orchest/blob/main/docs/guide/sdk-python.md).
 
