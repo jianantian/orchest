@@ -20,7 +20,7 @@ use orchest_protocol::{
 };
 use orchest_provider_core::catalog::TtsCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
-use orchest_provider_core::ws::{connect_async, tungstenite};
+use orchest_provider_core::ws::{tungstenite, WsConnector};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -385,11 +385,15 @@ pub struct VolcengineTtsConfig {
 /// synthesize calls.
 pub struct VolcengineTts {
     config: VolcengineTtsConfig,
+    connector: WsConnector,
 }
 
 impl VolcengineTts {
     pub fn new(config: VolcengineTtsConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            connector: WsConnector::default(),
+        }
     }
 
     /// Connect, send the unidirectional request frame, and spawn the synthesis
@@ -447,7 +451,9 @@ impl VolcengineTts {
 
         let ws_request = self.websocket_request(&self.config.ws_url, &self.config.resource_id)?;
 
-        let (ws_stream, _response) = connect_async(ws_request)
+        let ws_stream = self
+            .connector
+            .connect(ws_request)
             .await
             .map_err(|e| stream_err(format!("WebSocket connection failed: {e}")))?;
 
@@ -524,13 +530,15 @@ pub fn from_provider_config(cfg: &ProviderConfig) -> Result<VolcengineTts, Proto
         .and_then(Value::as_str)
         .map(String::from)
         .unwrap_or_else(|| model.clone());
-    Ok(VolcengineTts::new(VolcengineTtsConfig {
+    let mut adapter = VolcengineTts::new(VolcengineTtsConfig {
         model,
         ws_url,
         api_key,
         access_key,
         resource_id,
-    }))
+    });
+    adapter.connector = WsConnector::from_options(&cfg.options)?;
+    Ok(adapter)
 }
 
 #[async_trait]

@@ -252,6 +252,11 @@ impl EventStream {
         result
     }
 
+    /// Number of events currently queued for this consumer.
+    pub fn queued_events(&self) -> usize {
+        self.inner.len()
+    }
+
     /// Pull the next event, or `None` when the producer is done.
     pub async fn next(&mut self) -> Option<StreamEvent> {
         self.inner.recv().await

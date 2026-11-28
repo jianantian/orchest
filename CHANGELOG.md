@@ -24,6 +24,7 @@ except for the items `orchest-provider` re-exports.
 
 - Add Rust duplex TTS with incremental text, contextual audio, Flush,
   cancellation, and orderly closure through the Aliyun, Volcengine, and MiniMax adapters.
+- Accept an additional trusted CA for TTS WebSocket endpoints through provider options.
 
 - Add a session-instance-bound, paginated reader for model attempt metadata.
 

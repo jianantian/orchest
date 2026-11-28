@@ -17,6 +17,7 @@ mod decision;
 mod error;
 mod evidence;
 mod run_stream;
+mod tts;
 
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;

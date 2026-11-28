@@ -8,6 +8,11 @@ export { transcribe };
 export { ProviderError };
 export { AsrStream };
 export { startAsrStream };
+export { synthesize };
+export { streamSynthesize };
+export { startTtsDuplex };
+export { TtsStream };
+export { TtsDuplexStream };
 declare const native: typeof import("./native");
 /**
  * Structured provider failure, normalized across the atomic APIs.
@@ -46,6 +51,45 @@ declare function decide(options: import("./types").DecisionOptions): Promise<imp
  * @returns {Promise<string>}
  */
 declare function transcribe(audio: Uint8Array, options: import("./types").TranscribeOptions): Promise<string>;
+/**
+ * Synthesize one complete text into audio bytes and usage metadata.
+ * @param {string} text
+ * @param {import("./types").TtsOptions} options
+ * @returns {Promise<import("./types").TtsResult>}
+ */
+declare function synthesize(text: string, options: import("./types").TtsOptions): Promise<import("./types").TtsResult>;
+declare class TtsStream {
+    #private;
+    /** @param {import("./native").NativeTtsStream} stream */
+    constructor(stream: import("./native").NativeTtsStream);
+    /** @returns {AsyncGenerator<import("./types").TtsStreamEvent, void, unknown>} */
+    [Symbol.asyncIterator](): AsyncGenerator<import("./types").TtsStreamEvent, void, unknown>;
+    /** Read the settlement after draining the stream. */
+    usage(): Promise<import("./types").VoiceUsage | null>;
+    /** Release the stream immediately without waiting for more audio. */
+    abort(): Promise<void>;
+}
+declare class TtsDuplexStream extends TtsStream {
+    #private;
+    /** @param {import("./native").NativeTtsStream} stream */
+    constructor(stream: import("./native").NativeTtsStream);
+    /** @param {string} text */
+    append(text: string): Promise<void>;
+    /** Queue a Flush. Completion arrives as an event. */
+    flush(): Promise<void>;
+    /** Queue cancellation of the current synthesis context. */
+    cancel(): Promise<void>;
+    /** Close input and let remaining audio drain. Safe to call twice. */
+    close(): Promise<void>;
+}
+/**
+ * Stream audio for a complete text.
+ * @param {string} text
+ * @param {import("./types").TtsOptions} options
+ */
+declare function streamSynthesize(text: string, options: import("./types").TtsOptions): Promise<TtsStream>;
+/** @param {import("./types").TtsOptions} options */
+declare function startTtsDuplex(options: import("./types").TtsOptions): Promise<TtsDuplexStream>;
 /**
  * Realtime ASR session: audio in, events out. `finalize()` asks the provider
  * to finalize what it has heard and keeps the session open; `finish()` closes

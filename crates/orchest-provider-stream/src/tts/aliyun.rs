@@ -18,7 +18,7 @@ use orchest_protocol::{
 };
 use orchest_provider_core::catalog::TtsCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
-use orchest_provider_core::ws::{connect_async, tungstenite};
+use orchest_provider_core::ws::{tungstenite, WsConnector};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
@@ -226,11 +226,15 @@ pub struct AliyunTtsConfig {
 /// The aliyun DashScope streaming TTS provider as the spine [`Tts`].
 pub struct AliyunTts {
     config: AliyunTtsConfig,
+    connector: WsConnector,
 }
 
 impl AliyunTts {
     pub fn new(config: AliyunTtsConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            connector: WsConnector::default(),
+        }
     }
 
     #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
@@ -280,7 +284,7 @@ impl AliyunTts {
 
         let ws_request = self.websocket_request(&self.config.ws_url)?;
 
-        let (ws_stream, _response) = connect_async(ws_request).await.map_err(|e| {
+        let ws_stream = self.connector.connect(ws_request).await.map_err(|e| {
             ProtocolError::new(
                 ErrorCode::ProviderStreamError,
                 format!("Aliyun WebSocket connection failed: {e}"),
@@ -352,11 +356,13 @@ pub fn from_provider_config(cfg: &ProviderConfig) -> Result<AliyunTts, ProtocolE
         .api_url
         .clone()
         .unwrap_or_else(|| DEFAULT_WS_URL.to_string());
-    Ok(AliyunTts::new(AliyunTtsConfig {
+    let mut adapter = AliyunTts::new(AliyunTtsConfig {
         model,
         ws_url,
         api_key,
-    }))
+    });
+    adapter.connector = WsConnector::from_options(&cfg.options)?;
+    Ok(adapter)
 }
 
 #[async_trait]

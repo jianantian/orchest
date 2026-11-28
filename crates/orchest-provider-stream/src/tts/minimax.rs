@@ -22,7 +22,7 @@ use orchest_protocol::{
 };
 use orchest_provider_core::catalog::TtsCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
-use orchest_provider_core::ws::{connect_async, tungstenite};
+use orchest_provider_core::ws::{tungstenite, WsConnector};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -345,11 +345,15 @@ pub struct MinimaxTtsConfig {
 /// The minimax streaming TTS provider as the spine [`Tts`].
 pub struct MinimaxTts {
     config: MinimaxTtsConfig,
+    connector: WsConnector,
 }
 
 impl MinimaxTts {
     pub fn new(config: MinimaxTtsConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            connector: WsConnector::default(),
+        }
     }
 
     #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
@@ -395,7 +399,7 @@ impl MinimaxTts {
         );
         let ws_request = self.websocket_request(&self.config.ws_url)?;
 
-        let (ws_stream, _response) = connect_async(ws_request).await.map_err(|e| {
+        let ws_stream = self.connector.connect(ws_request).await.map_err(|e| {
             ProtocolError::new(
                 ErrorCode::ProviderStreamError,
                 format!("Minimax WebSocket connection failed: {e}"),
@@ -464,11 +468,13 @@ pub fn from_provider_config(cfg: &ProviderConfig) -> Result<MinimaxTts, Protocol
         .api_url
         .clone()
         .unwrap_or_else(|| DEFAULT_WSS_URL.to_string());
-    Ok(MinimaxTts::new(MinimaxTtsConfig {
+    let mut adapter = MinimaxTts::new(MinimaxTtsConfig {
         model,
         ws_url,
         api_key,
-    }))
+    });
+    adapter.connector = WsConnector::from_options(&cfg.options)?;
+    Ok(adapter)
 }
 
 #[async_trait]

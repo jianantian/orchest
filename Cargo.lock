@@ -1403,6 +1403,7 @@ name = "orchest"
 version = "0.3.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "fs2",
  "futures-util",
  "httparse",
@@ -1472,6 +1473,7 @@ dependencies = [
  "orchest-provider-http",
  "orchest-provider-stream",
  "orchest-provider-visual",
+ "serde",
  "serde_json",
  "tokio",
 ]
@@ -1485,6 +1487,7 @@ dependencies = [
  "futures-util",
  "hex",
  "hmac",
+ "native-tls",
  "orchest-protocol",
  "reqwest",
  "serde",

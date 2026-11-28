@@ -34,6 +34,7 @@ mod facade;
 #[cfg(feature = "testing")]
 pub mod fakes;
 pub mod registry;
+pub mod tts;
 
 pub use decision::{create_decision, decide, DecisionConfig};
 pub use registry::{Query, Registry};

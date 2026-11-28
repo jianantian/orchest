@@ -171,7 +171,9 @@ impl MinimaxTts {
             &request.options,
         );
         setup["voice_setting"]["voice_id"] = json!(request.voice);
-        let (socket, _) = connect_async(self.websocket_request(url)?)
+        let socket = self
+            .connector
+            .connect(self.websocket_request(url)?)
             .await
             .map_err(connection_error)?;
         duplex::open(

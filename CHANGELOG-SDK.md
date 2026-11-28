@@ -13,6 +13,12 @@ from.
 
 ## [Unreleased]
 
+### Added
+
+- Synthesize speech once, stream a complete text, or append text in a duplex
+  TTS session. Python returns `bytes` and Node returns `Uint8Array`. Both SDKs
+  expose audio context boundaries and voice usage settlement.
+
 - Opt in to local Session evidence per run and page through model-attempt
   metadata from Python and Node.
 

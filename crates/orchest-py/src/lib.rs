@@ -11,6 +11,7 @@ mod decision;
 mod error;
 mod evidence;
 mod run_stream;
+mod tts;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -970,6 +971,9 @@ fn orchest_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(atomic::complete, m)?)?;
     m.add_function(wrap_pyfunction!(decision::decide, m)?)?;
     m.add_function(wrap_pyfunction!(asr::transcribe, m)?)?;
+    m.add_class::<tts::NativeTtsStream>()?;
+    m.add_function(wrap_pyfunction!(tts::synthesize, m)?)?;
+    m.add_function(wrap_pyfunction!(tts::open_stream, m)?)?;
     m.add_class::<asr_stream::NativeAsrStream>()?;
     m.add_function(wrap_pyfunction!(asr_stream::start_asr_stream, m)?)?;
     Ok(())

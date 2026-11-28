@@ -101,6 +101,107 @@ async function transcribe(audio, options) {
 }
 
 /**
+ * Synthesize one complete text into audio bytes and usage metadata.
+ * @param {string} text
+ * @param {import("./types").TtsOptions} options
+ * @returns {Promise<import("./types").TtsResult>}
+ */
+async function synthesize(text, options) {
+  try {
+    return await native._synthesize(text, options);
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
+}
+
+class TtsStream {
+  /** @type {import("./native").NativeTtsStream} */ #stream;
+
+  /** @param {import("./native").NativeTtsStream} stream */
+  constructor(stream) {
+    this.#stream = stream;
+  }
+
+  /** @returns {AsyncGenerator<import("./types").TtsStreamEvent, void, unknown>} */
+  async *[Symbol.asyncIterator]() {
+    try {
+      for (;;) {
+        const event = await this.#stream.nextEvent();
+        if (event === null) return;
+        yield event;
+      }
+    } catch (error) {
+      throw normalizeProviderError(error);
+    } finally {
+      await this.abort();
+    }
+  }
+
+  /** Read the settlement after draining the stream. */
+  async usage() {
+    return this.#stream.usage();
+  }
+
+  /** Release the stream immediately without waiting for more audio. */
+  async abort() {
+    await this.#stream.abort();
+  }
+}
+
+class TtsDuplexStream extends TtsStream {
+  /** @type {import("./native").NativeTtsStream} */ #input;
+
+  /** @param {import("./native").NativeTtsStream} stream */
+  constructor(stream) {
+    super(stream);
+    this.#input = stream;
+  }
+
+  /** @param {string} action @param {string} [text] */
+  async #command(action, text) {
+    try {
+      await this.#input.command(action, text);
+    } catch (error) {
+      throw normalizeProviderError(error);
+    }
+  }
+
+  /** @param {string} text */
+  async append(text) { await this.#command("append", text); }
+
+  /** Queue a Flush. Completion arrives as an event. */
+  async flush() { await this.#command("flush"); }
+
+  /** Queue cancellation of the current synthesis context. */
+  async cancel() { await this.#command("cancel"); }
+
+  /** Close input and let remaining audio drain. Safe to call twice. */
+  async close() { await this.#command("close"); }
+}
+
+/**
+ * Stream audio for a complete text.
+ * @param {string} text
+ * @param {import("./types").TtsOptions} options
+ */
+async function streamSynthesize(text, options) {
+  try {
+    return new TtsStream(await native._openTtsStream(options, text));
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
+}
+
+/** @param {import("./types").TtsOptions} options */
+async function startTtsDuplex(options) {
+  try {
+    return new TtsDuplexStream(await native._openTtsStream(options));
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
+}
+
+/**
  * Realtime ASR session: audio in, events out. `finalize()` asks the provider
  * to finalize what it has heard and keeps the session open; `finish()` closes
  * the input (idempotent); `wait()` resolves when the stream ends and rethrows
@@ -429,3 +530,8 @@ exports.transcribe = transcribe;
 exports.ProviderError = ProviderError;
 exports.AsrStream = AsrStream;
 exports.startAsrStream = startAsrStream;
+exports.synthesize = synthesize;
+exports.streamSynthesize = streamSynthesize;
+exports.startTtsDuplex = startTtsDuplex;
+exports.TtsStream = TtsStream;
+exports.TtsDuplexStream = TtsDuplexStream;

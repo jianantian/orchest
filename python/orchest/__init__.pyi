@@ -1,3 +1,24 @@
+from ._tts import (
+    TtsAudioEvent as TtsAudioEvent,
+    TtsAudioFormat as TtsAudioFormat,
+    TtsContextEvent as TtsContextEvent,
+    TtsDuplexStream as TtsDuplexStream,
+    TtsEndEvent as TtsEndEvent,
+    TtsErrorEvent as TtsErrorEvent,
+    TtsFlushEvent as TtsFlushEvent,
+    TtsOptions as TtsOptions,
+    TtsResult as TtsResult,
+    TtsStream as TtsStream,
+    TtsStreamEvent as TtsStreamEvent,
+    VoiceCostEstimate as VoiceCostEstimate,
+    VoiceQuantity as VoiceQuantity,
+    VoiceRate as VoiceRate,
+    VoiceUsage as VoiceUsage,
+    start_tts_duplex as start_tts_duplex,
+    stream_synthesize as stream_synthesize,
+    synthesize as synthesize,
+)
+
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 

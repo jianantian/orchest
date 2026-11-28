@@ -431,3 +431,60 @@ export interface HistoryMessage {
    */
   content: Array<Record<string, unknown>>;
 }
+
+export type TtsAudioFormat =
+  | "pcm" | "pcm16_le" | "wav" | "wav_pcm16_le" | "opus" | "ogg_opus"
+  | "mp3" | "m4a" | "aac" | "ogg" | "flac";
+
+export interface TtsOptions {
+  provider: string;
+  voice: string;
+  format: TtsAudioFormat;
+  model?: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  apiUrl?: string;
+  providerOptions?: Record<string, unknown>;
+  options?: Record<string, unknown>;
+}
+
+export interface VoiceQuantity {
+  value: number;
+  source: "provider_reported" | "provider_billed" | "input_estimate";
+}
+
+export interface VoiceRate {
+  currency: string;
+  unit: "audio_second" | "billed_character";
+  price_per_unit: number;
+  scope: string;
+  source_url: string;
+}
+
+export interface VoiceCostEstimate {
+  amount: number;
+  rate: VoiceRate;
+}
+
+export interface VoiceUsage {
+  provider: string;
+  model: string;
+  outcome: "completed" | "cancelled" | "failed";
+  audio_duration_ms: VoiceQuantity | null;
+  input_characters: number | null;
+  billed_characters: number | null;
+  cost_estimate: VoiceCostEstimate | null;
+}
+
+export interface TtsResult {
+  audio: Uint8Array;
+  format: TtsAudioFormat;
+  usage: VoiceUsage | null;
+}
+
+export type TtsStreamEvent =
+  | { kind: "audio"; audio: Uint8Array; format: TtsAudioFormat; sequence: number; context_id: number | null; flush_id: number | null }
+  | { kind: "flush_accepted" | "flushed"; context_id: number; flush_id: number }
+  | { kind: "cancelled" | "context_ended"; context_id: number }
+  | { kind: "done" | "session_closed" }
+  | { kind: "error"; code: string; message: string; fatal: false };

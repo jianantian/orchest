@@ -39,6 +39,53 @@ impl BinaryFrameCodec {
 /// so impl crates depend on one websocket stack through core.
 pub use tokio_tungstenite::{connect_async, tungstenite};
 
+/// A WebSocket connector with the system roots and an optional additional CA.
+#[derive(Default)]
+pub struct WsConnector(Option<native_tls::TlsConnector>);
+
+impl WsConnector {
+    #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
+    pub fn from_options(
+        options: &serde_json::Value,
+    ) -> Result<Self, orchest_protocol::ProtocolError> {
+        use orchest_protocol::{ErrorCode, ProtocolError};
+        let Some(pem) = options.get("ca_cert_pem") else {
+            return Ok(Self::default());
+        };
+        let pem = pem.as_str().ok_or_else(|| {
+            ProtocolError::new(
+                ErrorCode::InvalidRequest,
+                "ca_cert_pem must be a PEM certificate string",
+            )
+        })?;
+        let certificate = native_tls::Certificate::from_pem(pem.as_bytes()).map_err(|_| {
+            ProtocolError::new(ErrorCode::InvalidRequest, "invalid ca_cert_pem certificate")
+        })?;
+        let connector = native_tls::TlsConnector::builder()
+            .add_root_certificate(certificate)
+            .build()
+            .map_err(|error| {
+                ProtocolError::new(ErrorCode::InvalidRequest, format!("configure TLS: {error}"))
+            })?;
+        Ok(Self(Some(connector)))
+    }
+
+    pub async fn connect(
+        &self,
+        request: tungstenite::http::Request<()>,
+    ) -> Result<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        tungstenite::Error,
+    > {
+        let connector = self.0.clone().map(tokio_tungstenite::Connector::NativeTls);
+        tokio_tungstenite::connect_async_tls_with_config(request, None, false, connector)
+            .await
+            .map(|(socket, _)| socket)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

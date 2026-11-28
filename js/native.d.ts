@@ -145,3 +145,20 @@ export class Agent {
   /** What a run of this agent supports. */
   capabilities(): Capabilities;
 }
+
+export class NativeTtsStream {
+  nextEvent(): Promise<import("./types").TtsStreamEvent | null>;
+  command(action: string, text?: string): Promise<void>;
+  usage(): Promise<import("./types").VoiceUsage | null>;
+  abort(): Promise<void>;
+}
+
+export function _synthesize(
+  text: string,
+  options: import("./types").TtsOptions,
+): Promise<import("./types").TtsResult>;
+
+export function _openTtsStream(
+  options: import("./types").TtsOptions,
+  text?: string,
+): Promise<NativeTtsStream>;

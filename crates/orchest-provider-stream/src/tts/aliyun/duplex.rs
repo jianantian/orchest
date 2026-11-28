@@ -116,7 +116,9 @@ impl AliyunTts {
         setup["payload"]["parameters"]["voice"] = json!(request.voice);
         setup["payload"]["parameters"]["format"] = json!(format_name(&request.format));
         let wire = AliyunWire::new(setup);
-        let (socket, _) = connect_async(self.websocket_request(&self.config.ws_url)?)
+        let socket = self
+            .connector
+            .connect(self.websocket_request(&self.config.ws_url)?)
             .await
             .map_err(|error| duplex::stream_error(format!("CosyVoice connect: {error}")))?;
         duplex::open(

@@ -179,7 +179,9 @@ impl VolcengineTts {
             })?;
         audio.insert("format".into(), json!(audio_format_name(&format)));
 
-        let (socket, _) = connect_async(self.websocket_request(url, resource_id)?)
+        let socket = self
+            .connector
+            .connect(self.websocket_request(url, resource_id)?)
             .await
             .map_err(|error| duplex::stream_error(format!("Volcengine duplex connect: {error}")))?;
         duplex::open(

@@ -303,3 +303,53 @@ run_aborted
 | `js/public.d.ts` | 包的 `types` 入口：re-export 上述三份 |
 
 本仓库验证：`npm install` 后 `npm run typecheck`（`tsc --noEmit`，含 `js/index.js` 的 `checkJs` 与 `examples/typescript/**`）；改动 `index.js` 签名后跑 `npm run build:types` 重新生成声明。CI 里对应 `npm ci` + typecheck + 生成后 `git diff --exit-code`。
+
+## Speech synthesis
+
+`orchest-sdk` 0.3.0 uses Rust Orchest 0.3.0 for TTS. Pass a provider,
+its voice ID, and an audio format. The provider's only catalog model is
+selected when `model` is omitted. For Volcengine, use
+`providerOptions: { resource_id: "seed-tts-2.0" }` with a compatible voice.
+
+```ts
+import { startTtsDuplex, streamSynthesize, synthesize, type TtsOptions } from "orchest-sdk";
+
+const config: TtsOptions = {
+  provider: "minimax",
+  voice: "English_expressive_narrator",
+  format: "mp3",
+};
+const result = await synthesize("Hello.", config); // result.audio is a Uint8Array
+const stream = await streamSynthesize("Hello again.", config);
+for await (const event of stream) {
+  if (event.kind === "audio") play(event.audio);
+}
+const usage = await stream.usage();
+```
+
+For duplex TTS, call `startTtsDuplex(config)` and consume events with
+`for await` while submitting `append(text)`, `flush()`, `cancel()` or
+`close()` calls. The `flush_accepted` and `flushed` events share their
+`context_id` and `flush_id`. Closing drains remaining audio. Returning or
+throwing from a `for await` loop releases the stream. Fatal errors reject with
+`ProviderError`, including its provider error code.
+
+| Provider | One-shot | Stream complete text | Duplex, Flush, cancel |
+| --- | --- | --- | --- |
+| Aliyun CosyVoice | Yes | Yes | Yes |
+| Volcengine | Yes | Yes | Yes |
+| MiniMax | Yes | Yes | Yes |
+
+The table reflects the protocol and offline contract tests. See the
+[Rust acceptance matrix](../iteration/voice-capabilities/issues/003-tts-duplex/plan.md)
+for live coverage and alignment limitations.
+
+Read `usage` on the result or call `await stream.usage()` after draining.
+Provider-reported amounts take precedence. Locally counted characters are
+Unicode scalar values, listed separately from provider billable characters.
+Cost is an estimate when a matching published rate is available. Unknown
+values are `null`.
+
+For private WSS endpoints, `providerOptions.ca_cert_pem` accepts an
+additional CA certificate in PEM format. The connection still verifies TLS
+and the endpoint hostname.
