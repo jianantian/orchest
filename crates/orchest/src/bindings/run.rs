@@ -39,6 +39,9 @@ pub enum BindingRunError {
     #[cfg(feature = "sqlite-session")]
     #[error(transparent)]
     Session(#[from] crate::session::SessionError),
+    #[cfg(feature = "session-evidence")]
+    #[error(transparent)]
+    Evidence(#[from] crate::session::evidence::EvidenceError),
 }
 
 impl BindingRunError {
@@ -50,6 +53,17 @@ impl BindingRunError {
             Self::MissingResult => "run_missing_result",
             Self::InvalidResponse(_) => "invalid_response",
             Self::RequestNotFound(_) => "request_not_found",
+            #[cfg(feature = "session-evidence")]
+            Self::Evidence(error) => match error {
+                crate::session::evidence::EvidenceError::InvalidPageSize => {
+                    "evidence_invalid_page_size"
+                }
+                crate::session::evidence::EvidenceError::InvalidCursor => "evidence_invalid_cursor",
+                crate::session::evidence::EvidenceError::SessionUnavailable => {
+                    "evidence_session_unavailable"
+                }
+                _ => "evidence_storage_error",
+            },
             #[cfg(feature = "sqlite-session")]
             Self::Session(error) => match error {
                 crate::session::SessionError::NotConfigured => "session_not_configured",

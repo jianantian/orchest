@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -8,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from orchest import Agent, AgentError
+from orchest import Agent, AgentError, EvidenceStore
 
 
 def load_fixture() -> dict:
@@ -29,11 +30,19 @@ def test_async_run_streams_and_releases_its_agent(tmp_path: Path) -> None:
     release_model = threading.Event()
     fixture = load_fixture()
     requests = []
+    evidence_attempts = 0
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            nonlocal evidence_attempts
             requests.append(body)
+            if body["messages"][-1]["content"][0].get("text") == "retry evidence":
+                evidence_attempts += 1
+                if evidence_attempts == 1:
+                    self.send_response(500)
+                    self.end_headers()
+                    return
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
@@ -59,13 +68,14 @@ def test_async_run_streams_and_releases_its_agent(tmp_path: Path) -> None:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
-    def agent() -> Agent:
+    def agent(*, retry=False) -> Agent:
         return Agent(
             name="async-run-test",
             model="anthropic/claude-sonnet-4-6",
             system_prompt="Answer briefly.",
             api_url=f"http://127.0.0.1:{server.server_port}",
             api_key="local-test",
+            retry=retry,
         )
 
     async def request_for(run):
@@ -225,7 +235,8 @@ def test_async_run_streams_and_releases_its_agent(tmp_path: Path) -> None:
             # transaction in the SDK's own process shares that process's OS locks.
             gate = await asyncio.create_subprocess_exec(
                 sys.executable, "-u", "-c", """
-import sqlite3, sys
+import sqlite3
+import subprocess, sys
 
 with sqlite3.connect(sys.argv[1]) as conn:
     conn.execute("BEGIN EXCLUSIVE")
@@ -325,9 +336,111 @@ asyncio.run(main())
             assert (await run.wait())["type"] == "run_completed"
             assert calls == ["probe"]
 
+    async def evidence_scenario() -> None:
+        path = str(tmp_path / "evidence.sqlite")
+        session = {"sqlite_path": str(tmp_path / "logs.sqlite"), "session_id": "evidence"}
+        store = await EvidenceStore.open(path)
+
+        async def drain(run):
+            async with run:
+                run_id = (await anext(run))["run_id"]
+                async for _ in run:
+                    pass
+                result = await run.wait()
+                assert result["type"] == "run_completed", result
+                return run_id
+
+        async def expect_error(code, operation):
+            with pytest.raises(AgentError) as error:
+                await operation()
+            assert error.value.code == code
+
+        def change_fixture(operation, database, *args):
+            script = Path(__file__).with_name("sdk-session-evidence.py")
+            if not script.exists():
+                script = Path(__file__).parents[2] / "crates/orchest/tests/fixtures/sdk-session-evidence.py"
+            subprocess.run([sys.executable, str(script), operation, database, *args], check=True)
+
+        await drain(await agent().start_run("default off", session=session))
+        reader = await store.authorize(**session)
+        assert (await reader.read())["records"] == []
+        enabled = {**session, "evidence": store}
+        await expect_error("session_storage_error", lambda: agent().start_run(
+            "shared database", session={**enabled, "sqlite_path": path}
+        ))
+        captured_id = await drain(await agent(retry=True).resume_session(enabled, "retry evidence"))
+        await drain(await agent().resume_session(session, "off again"))
+        page = await reader.read(limit=1)
+        cursor = page["next_cursor"]
+        assert cursor is not None
+        await expect_error("evidence_invalid_page_size", lambda: reader.read(limit=65))
+        await expect_error("evidence_invalid_cursor", lambda: reader.read(cursor + "x"))
+
+        other = {**session, "sqlite_path": str(tmp_path / "other-logs.sqlite")}
+        await drain(await agent().start_run("different store", session=other))
+        other_reader = await store.authorize(**other)
+        await expect_error("evidence_invalid_cursor", lambda: other_reader.read(cursor))
+        assert (await other_reader.read())["records"] == []
+
+        change_fixture("seed", path)
+        cursor = None
+        rows = []
+        empty_with_cursor = False
+        invalid = 0
+        while True:
+            page = await reader.read(cursor, limit=1)
+            rows.extend(page["records"])
+            invalid += page["invalid_records"]
+            next_cursor = page["next_cursor"]
+            if next_cursor is None:
+                break
+            assert next_cursor != cursor
+            empty_with_cursor |= not page["records"]
+            cursor = next_cursor
+        assert empty_with_cursor and invalid == 1
+        starts = {row["attempt_id"]: row for row in rows if row["kind"] == "attempt_started"}
+        finishes = {row["attempt_id"]: row for row in rows if row["kind"] == "attempt_finished"}
+        assert len(starts) == 3 and len(finishes) == 2
+        assert {row["outcome"] for row in finishes.values()} == {"returned", "adapter_error"}
+        assert {row["run_id"] for row in finishes.values()} == {captured_id}
+        assert {starts[attempt_id]["step"] for attempt_id in finishes} == {next(iter(finishes.values()))["step"]}
+        assert {row["ordinal"] for attempt_id, row in starts.items() if attempt_id not in finishes} == {99}
+        for row in starts.values():
+            assert set(row) == {"kind", "attempt_id", "run_id", "step", "ordinal", "purpose", "provider", "model"}
+        for row in finishes.values():
+            assert set(row) == {"kind", "attempt_id", "run_id", "step", "outcome"}
+
+        change_fixture("delete", session["sqlite_path"], session["session_id"])
+        await expect_error("evidence_session_unavailable", reader.read)
+        await drain(await agent().start_run("replacement", session=enabled))
+        await expect_error("evidence_session_unavailable", reader.read)
+        replacement = await store.authorize(**session)
+        assert len((await replacement.read())["records"]) == 2
+        await replacement.revoke()
+        await expect_error("evidence_session_unavailable", replacement.read)
+        await expect_error("evidence_session_unavailable", lambda: store.authorize(**session))
+
+        replaced_session = {**session, "sqlite_path": str(tmp_path / "replaceable.sqlite")}
+        setup = {**replaced_session, "evidence": store}
+        await drain(await agent().start_run("before file replacement", session=setup))
+        old_reader = await store.authorize(**replaced_session)
+        assert len((await old_reader.read())["records"]) == 2
+        Path(replaced_session["sqlite_path"]).replace(tmp_path / "previous.sqlite")
+        await expect_error("evidence_session_unavailable", old_reader.read)
+        await drain(await agent().start_run("after file replacement", session=setup))
+        await expect_error("evidence_session_unavailable", old_reader.read)
+        new_reader = await store.authorize(**replaced_session)
+        assert len((await new_reader.read())["records"]) == 2
+
+        await drain(await agent().resume_session({**other, "evidence": store}, "before evidence fault"))
+        change_fixture("break", path)
+        await expect_error("evidence_storage_error", other_reader.read)
+        await drain(await agent().resume_session({**other, "evidence": store}, "after evidence fault"))
+
     async def verify() -> None:
         await scenario()
         await session_scenario()
+        await evidence_scenario()
 
     try:
         asyncio.run(asyncio.wait_for(verify(), timeout=25))

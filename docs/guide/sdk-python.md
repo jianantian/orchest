@@ -72,6 +72,36 @@ events = agent.run("What's the weather in Tokyo?")
 
 原有 `run`、`run_sync`、`run_stream` 的成功调用和返回形状沿用 0.2。单个 Agent 的全部运行入口共用一个占用槽，重叠启动返回 `run_active`。完整流程见 [异步审批与恢复示例](../../examples/python/agents/async_run.py)。
 
+### 本地 Session 证据
+
+在宿主管理的独立 SQLite 文件中记录模型尝试的元数据。新建或恢复运行时，用 `session["evidence"]` 显式开启。默认关闭，每次恢复都需要重新选择。
+
+```python
+from orchest import EvidenceStore
+
+store = await EvidenceStore.open("/path/to/evidence.sqlite")
+session = {"sqlite_path": "/path/to/sessions.sqlite", "session_id": "example"}
+
+async with await agent.start_run("Summarize this session", session={**session, "evidence": store}) as run:
+    async for event in run:
+        pass
+    await run.wait()
+
+reader = await store.authorize(**session)
+cursor = None
+while True:
+    page = await reader.read(cursor, limit=16)
+    for record in page["records"]:
+        print(record["attempt_id"], record["kind"])
+    cursor = page["next_cursor"]
+    if cursor is None:
+        break
+```
+
+开始记录包含尝试 ID、运行 ID、步骤、尝试序号、用途、provider 和 model。结束记录包含同一尝试 ID、运行 ID、步骤和结果（`returned`、`adapter_error` 或 `cancelled`）。用 `attempt_id` 跨页关联，尚无结束记录时结果为未知。分页按原始记录推进，筛选后可以返回空页，直到 `next_cursor` 为 `None` 才结束。
+
+`invalid_records`、`expired_records` 和 `observed_drops` 描述可观测的证据缺口。丢弃数来自当前打开的证据库对象，重启后无法补计之前的丢弃。删除会话、同名重建、替换 Session 数据库文件或撤销后，已有句柄返回 `evidence_session_unavailable`。页大小超过 1–64 返回 `evidence_invalid_page_size`，无效或来自其他句柄的游标返回 `evidence_invalid_cursor`。
+
 ### GIL 行为
 
 `run()` / `run_sync()` 在 Rust run loop 执行期间使用 `py.detach()` 释放 Python GIL；长时间 model call、Rust tool、MCP tool、skill tool 不会因为 Python 调用线程持有 GIL 而阻塞其它 Python 线程。返回事件列表转换成 Python dict/list 时会短暂重新持有 GIL。

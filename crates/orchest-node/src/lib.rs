@@ -15,6 +15,7 @@ mod asr_stream;
 mod atomic;
 mod decision;
 mod error;
+mod evidence;
 mod run_stream;
 
 use std::sync::{Arc, Mutex, OnceLock};
@@ -636,12 +637,14 @@ impl Agent {
         input: String,
         messages: Option<Vec<Value>>,
         session: Option<SessionOptions>,
+        evidence: Option<napi::bindgen_prelude::Reference<evidence::NativeEvidenceStore>>,
     ) -> napi::Result<NativeRun> {
         let reservation = self.run_slot.reserve().map_err(run_error)?;
         let session = session
             .map(SessionOptions::into_binding)
             .transpose()
-            .map_err(run_error)?;
+            .map_err(run_error)?
+            .map(|options| options.with_evidence(evidence.as_ref().map(|store| store.0.clone())));
         let agent = self.prepare_agent()?;
         let initial_messages = parse_messages(messages)?;
         let stream = reservation
@@ -658,11 +661,15 @@ impl Agent {
         &self,
         session: Option<SessionOptions>,
         input: Option<String>,
+        evidence: Option<napi::bindgen_prelude::Reference<evidence::NativeEvidenceStore>>,
     ) -> napi::Result<NativeRun> {
         let reservation = self.run_slot.reserve().map_err(run_error)?;
         let session = session
             .ok_or_else(|| run_error(orchest::session::SessionError::NotConfigured.into()))?;
-        let session = session.into_binding().map_err(run_error)?;
+        let session = session
+            .into_binding()
+            .map_err(run_error)?
+            .with_evidence(evidence.as_ref().map(|store| store.0.clone()));
         let agent = self.prepare_agent()?;
         let stream = reservation
             .resume(agent, session, input.map(RunInput::text))

@@ -13,6 +13,9 @@ from.
 
 ## [Unreleased]
 
+- Opt in to local Session evidence per run and page through model-attempt
+  metadata from Python and Node.
+
 - Align the Python and Node package versions with the Rust workspace.
 - Add pull-based asynchronous agent runs with a bounded event stream, explicit
   cancellation and cleanup, and a final result after event consumption. Each

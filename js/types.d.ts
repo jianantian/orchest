@@ -388,8 +388,34 @@ export type RuntimeEvent =
   | { type: "run_aborted"; reason: string | null; cancel_reason: CancelReason | null; run_depth: number; child_run_id: string | null }
   | { type: "processes_terminated"; terminated: number | null; error: string | null; run_depth: number; child_run_id: string | null };
 
+/** One recorded boundary of a model attempt. */
+export type AttemptMetadata = {
+  kind: "attempt_started";
+  attempt_id: string;
+  run_id: string;
+  step: number;
+  ordinal: number;
+  purpose: "agent_step" | "compaction_summary";
+  provider: string | null;
+  model: string | null;
+} | {
+  kind: "attempt_finished";
+  attempt_id: string;
+  run_id: string;
+  step: number;
+  outcome: "returned" | "adapter_error" | "cancelled";
+};
+
+export interface AttemptPage {
+  records: AttemptMetadata[];
+  next_cursor: string | null;
+  invalid_records: number;
+  expired_records: number;
+  observed_drops: number;
+}
+
 /** File-backed Session v2 storage selected by the host. */
-export interface SessionOptions {
+export interface LocalSession {
   sqlitePath: string;
   sessionId: string;
 }

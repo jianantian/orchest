@@ -33,6 +33,10 @@ impl Default for EvidenceLimits {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum EvidenceError {
+    #[error("evidence page size must be from 1 to 64")]
+    InvalidPageSize,
+    #[error("invalid or foreign evidence cursor")]
+    InvalidCursor,
     #[error("invalid evidence limits")]
     InvalidLimits,
     #[error("unsupported evidence database schema")]

@@ -246,7 +246,7 @@ jobs:
           python -m venv "$work/venv"
           "$work/venv/bin/python" -m pip install packages/*.whl pytest
           cp -R python/tests "$work/tests"
-          cp crates/orchest/tests/fixtures/sdk-runtime-events.json "$work/tests/"
+          cp crates/orchest/tests/fixtures/{sdk-runtime-events.json,sdk-session-evidence.py} "$work/tests/"
           cd "$work"
           venv/bin/python -m pytest tests -v
 
@@ -266,6 +266,6 @@ jobs:
           test -d "node_modules/orchest-sdk-${{ matrix.platform }}"
           mkdir -p "$sdk/js/tests"
           cp "$GITHUB_WORKSPACE"/js/tests/*.test.cjs "$sdk/js/tests/"
-          cp "$GITHUB_WORKSPACE"/crates/orchest/tests/fixtures/sdk-runtime-events.json "$sdk/js/tests/"
+          cp "$GITHUB_WORKSPACE"/crates/orchest/tests/fixtures/{sdk-runtime-events.json,sdk-session-evidence.py} "$sdk/js/tests/"
           cd "$sdk"
           node --test js/tests/*.test.cjs

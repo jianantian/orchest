@@ -36,7 +36,19 @@ pub fn session_options(session: &Bound<'_, PyDict>) -> PyResult<BindingSessionOp
             .transpose()
             .map_err(|_| run_error(SessionError::NotConfigured.into()))
     };
-    BindingSessionOptions::new(string("sqlite_path")?, string("session_id")?).map_err(run_error)
+    let options = BindingSessionOptions::new(string("sqlite_path")?, string("session_id")?)
+        .map_err(run_error)?;
+    let evidence = session
+        .get_item("evidence")?
+        .as_ref()
+        .filter(|value| !value.is_none())
+        .map(|value| {
+            value
+                .extract::<PyRef<crate::evidence::PyEvidenceStore>>()
+                .map(|store| store.0.clone())
+        })
+        .transpose()?;
+    Ok(options.with_evidence(evidence))
 }
 
 pub fn wrap_run(stream: BindingRunStream) -> PyResult<Py<PyAny>> {

@@ -6,6 +6,7 @@
 mod binding;
 mod content;
 mod lineage;
+mod metadata;
 mod outcome;
 mod records;
 mod store;
@@ -17,6 +18,7 @@ pub use content::{
 };
 pub(crate) use lineage::CompactionObservation;
 pub use lineage::{projection_origin, CompactionOutcome, MessageOrigin, ProjectionOrigin};
+pub use metadata::{AttemptMetadata, AttemptPage, AttemptReader};
 pub(crate) use outcome::AttemptObservation;
 pub use outcome::{
     mark_request_sent, AdapterFailure, AttemptPurpose, EvidenceEventKind, EvidenceEventRef,
@@ -27,6 +29,8 @@ pub use records::{
     LocalDecision,
 };
 pub use store::EvidenceStore;
+#[cfg(feature = "sqlite-session")]
+pub(crate) use store::EVIDENCE_APPLICATION_ID;
 
 #[cfg(test)]
 mod tests;

@@ -15,9 +15,9 @@ use uuid::Uuid;
 use super::{EvidenceError, EvidenceLimits, EvidencePage, EvidenceRecord, EvidenceSession};
 use crate::run::RunId;
 
-const APPLICATION_ID: i32 = 0x4f45_5644;
+pub(crate) const EVIDENCE_APPLICATION_ID: i32 = 0x4f45_5644;
 const SCHEMA: i32 = 1;
-const MAX_PAGE_RECORDS: usize = 64;
+pub(super) const MAX_PAGE_RECORDS: usize = 64;
 
 #[derive(Clone)]
 pub struct EvidenceStore {
@@ -36,6 +36,7 @@ enum Command {
         instance: RunId,
         cursor: i64,
         limit: usize,
+        purge: bool,
         reply: oneshot::Sender<Result<EvidencePage, EvidenceError>>,
     },
     Contains {
@@ -114,12 +115,33 @@ impl EvidenceStore {
         cursor: Option<i64>,
         limit: usize,
     ) -> Result<EvidencePage, EvidenceError> {
+        self.read_page(instance, cursor, limit.clamp(1, MAX_PAGE_RECORDS), true)
+            .await
+    }
+
+    pub(super) async fn read_bounded(
+        &self,
+        instance: RunId,
+        cursor: Option<i64>,
+        limit: usize,
+    ) -> Result<EvidencePage, EvidenceError> {
+        self.read_page(instance, cursor, limit, false).await
+    }
+
+    async fn read_page(
+        &self,
+        instance: RunId,
+        cursor: Option<i64>,
+        limit: usize,
+        purge: bool,
+    ) -> Result<EvidencePage, EvidenceError> {
         let (reply, response) = oneshot::channel();
         self.queue
             .send(Command::Read {
                 instance,
                 cursor: cursor.unwrap_or(0).max(0),
-                limit: limit.clamp(1, MAX_PAGE_RECORDS),
+                limit,
+                purge,
                 reply,
             })
             .await
@@ -243,12 +265,12 @@ impl Database {
                     );",
                 )
                 .map_err(storage)?;
-                tx.pragma_update(None, "application_id", APPLICATION_ID)
+                tx.pragma_update(None, "application_id", EVIDENCE_APPLICATION_ID)
                     .map_err(storage)?;
                 tx.pragma_update(None, "user_version", SCHEMA)
                     .map_err(storage)?;
             }
-            (APPLICATION_ID, SCHEMA) => {}
+            (EVIDENCE_APPLICATION_ID, SCHEMA) => {}
             _ => return Err(EvidenceError::Schema),
         }
         tx.commit().map_err(storage)?;
@@ -288,9 +310,11 @@ impl Database {
                 instance,
                 cursor,
                 limit,
+                purge,
                 reply,
             } => {
-                let _ = reply.send(self.read(instance, cursor, limit));
+                let maintenance = if purge { self.purge() } else { Ok(()) };
+                let _ = reply.send(maintenance.and_then(|()| self.read(instance, cursor, limit)));
             }
             Command::Contains {
                 instance,
@@ -348,9 +372,9 @@ impl Database {
         cursor: i64,
         limit: usize,
     ) -> Result<EvidencePage, EvidenceError> {
-        self.purge()?;
-        let (revoked, expired_records) = self
-            .conn
+        // Use one snapshot for revocation and the page, including across store handles.
+        let tx = self.conn.transaction().map_err(storage)?;
+        let (revoked, expired_records) = tx
             .query_row(
                 "SELECT revoked, expired_records FROM captures WHERE instance = ?1",
                 [instance.0.to_string()],
@@ -359,19 +383,18 @@ impl Database {
             .optional()
             .map_err(storage)?
             .unwrap_or_default();
-        let mut query = self
-            .conn
-            .prepare(
-                "SELECT cursor, CASE WHEN length(payload) <= ?5 THEN payload END
-             FROM evidence WHERE instance = ?1 AND cursor > ?2 AND expires > ?3
+        let mut query = tx.prepare(
+                "SELECT cursor, expires, CASE WHEN expires > ?3 AND length(payload) <= ?5 THEN payload END
+             FROM evidence INDEXED BY evidence_instance WHERE instance = ?1 AND cursor > ?2
              ORDER BY cursor LIMIT ?4",
             )
             .map_err(storage)?;
+        let cutoff = now();
         let mut rows = query
             .query(params![
                 instance.0.to_string(),
                 cursor,
-                now(),
+                cutoff,
                 (limit + 1) as i64,
                 self.limits.record_bytes as i64
             ])
@@ -385,20 +408,26 @@ impl Database {
             observed_drops: 0,
         };
         let mut last = cursor;
+        let mut scanned = 0;
         while let Some(row) = rows.next().map_err(storage)? {
-            if page.records.len() + page.invalid_records == limit {
+            if scanned == limit {
                 page.next_cursor = Some(last);
                 break;
             }
+            scanned += 1;
             last = row.get(0).map_err(storage)?;
+            if row.get::<_, i64>(1).map_err(storage)? <= cutoff {
+                page.expired_records = page.expired_records.saturating_add(1);
+                continue;
+            }
             match row
-                .get_ref(1)
+                .get_ref(2)
                 .ok()
                 .and_then(|value| value.as_blob().ok())
-                .and_then(|payload| serde_json::from_slice(payload).ok())
+                .and_then(|payload| serde_json::from_slice::<EvidenceRecord>(payload).ok())
             {
-                Some(record) => page.records.push(record),
-                None => page.invalid_records += 1,
+                Some(record) if record.session_instance == instance => page.records.push(record),
+                _ => page.invalid_records += 1,
             }
         }
         Ok(page)

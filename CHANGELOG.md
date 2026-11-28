@@ -16,6 +16,8 @@ except for the items `orchest-provider` re-exports.
 
 ### Added
 
+- Add a session-instance-bound, paginated reader for model attempt metadata.
+
 - Add a structured SQLite session writer conflict error for the local SDK
   session lifecycle.
 
