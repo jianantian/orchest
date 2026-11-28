@@ -1,8 +1,8 @@
 # SDK Session 证据 · DSH 轨迹
 
-## 合入记录
+## 完成记录
 
-2026-11-28 合入 `main`，对应 [PR #370](https://github.com/jianantian/orchest/pull/370) 和 [Issue #369](https://github.com/jianantian/orchest/issues/369)。[Rust CI](https://github.com/jianantian/orchest/actions/runs/46148139577) 和[三平台 SDK 安装验收](https://github.com/jianantian/orchest/actions/runs/46148139532)均通过。分页和运行延迟已有本地基线，SDK 稳态队列峰值待补测。
+2026-11-28 合入 `main`，对应 [PR #370](https://github.com/jianantian/orchest/pull/370) 和 [Issue #369](https://github.com/jianantian/orchest/issues/369)。[Rust CI](https://github.com/jianantian/orchest/actions/runs/46148139577) 和[三平台 SDK 安装验收](https://github.com/jianantian/orchest/actions/runs/46148139532)均通过。本地验收已记录运行延迟、分页开销和证据队列峰值。连续启动时两端都达到 64 项队列上限，查询页可见丢弃统计。每次运行结束后等待 20 ms 的复测中，两端均未观测到丢弃。[性能记录](./issues/001-sdk-session-evidence/plan.md#性能基线)
 
 ## 目标
 
@@ -11,7 +11,7 @@
 ## 范围与依赖
 
 - 两端公开尝试元数据与记录缺失状态，沿用现有 Rust 证据层的会话隔离与保留规则。授权的完整输入重建继续由 Rust 提供。界面与远程上传留待后续规划。
-- 接入依赖[运行控制的本地会话恢复](../../archive/iteration/runtime-controls/issues/003-session-resume/spec.md)。在共享存储与会话身份的契约确定后，可继续推进轨迹绑定。
+- 接入依赖[运行控制的本地会话恢复](../runtime-controls/issues/003-session-resume/spec.md)。在共享存储与会话身份的契约确定后，可继续推进轨迹绑定。
 - 读取句柄固定到授权时的会话实例。删除、同名重建或撤销后，旧句柄返回明确的失效状态。查阅示例展示如何按尝试 ID 关联记录、如何用下一页游标继续，以及如何解释未知结果。
 
 ## 架构与性能
@@ -23,6 +23,6 @@
 - [x] Python / Node 均通过默认关闭、恢复后显式重新启用、重试分页、会话隔离与元数据白名单验证。
 - [x] 证据故障下 Session 仍可恢复和继续运行，Rust 的采集、查询与授权重建通过回归。
 - [x] 两端的本地构建产物能运行最小示例，指南记录公开字段和未知状态的含义。
-- [ ] 使用同一模型 fixture 对比采集关闭与开启时的运行延迟和队列峰值。用含大量不可公开记录的固定证据库记录分页延迟、扫描量和峰值内存；页大小固定时，单次查询的工作量受限。
+- [x] 使用同一模型 fixture 对比采集关闭与开启时的运行延迟和队列峰值。用含大量不可公开记录的固定证据库记录分页延迟、扫描量和峰值内存；页大小固定时，单次查询的工作量受限。
 
 详细验收与实现步骤见 [001 规格](./issues/001-sdk-session-evidence/spec.md)和[实施计划](./issues/001-sdk-session-evidence/plan.md)。

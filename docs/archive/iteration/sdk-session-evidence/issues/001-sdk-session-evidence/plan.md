@@ -2,14 +2,14 @@
 
 ## 先读
 
-- [Session 证据 PRD](../../../../archive/iteration/session_evidence/prd.md)与[运行控制 003](../../../../archive/iteration/runtime-controls/issues/003-session-resume/spec.md)。
+- [Session 证据 PRD](../../../session_evidence/prd.md)与[运行控制 003](../../../runtime-controls/issues/003-session-resume/spec.md)。
 - `crates/orchest/src/session/evidence/{binding,records}.rs`、`crates/orchest/src/run/config.rs` 及现有证据回归。
 - `crates/orchest-py/`、`crates/orchest-node/` 中的绑定入口、Cargo feature、类型声明和测试，以及 `.github/workflows/{sdk,release-sdk}.yml`。
 
 ## 修改范围
 
 - 两个绑定 crate 的 feature、运行配置、读取入口及公开类型。共用元数据投影由 Rust 证据层提供。
-- 两端合约测试、SDK 安装验证，以及 [Python 指南](../../../../guide/sdk-python.md)和 [TypeScript 指南](../../../../guide/sdk-typescript.md)。
+- 两端合约测试、SDK 安装验证，以及 [Python 指南](../../../../../guide/sdk-python.md)和 [TypeScript 指南](../../../../../guide/sdk-typescript.md)。
 
 ## 步骤
 
@@ -20,7 +20,7 @@
 
 ## 本地验收
 
-macOS arm64，Rust 1.99.1、CPython 3.14.8、Node 22.22.2。Rust 工作区 1,384 项通过。已安装同一工作树构建的 Python wheel 和 npm 包，Python 35 项、Node 24 项通过。三平台安装验收由 SDK 工作流执行。
+macOS arm64，Rust 1.99.1、CPython 3.14.8、Node 22.22.2。Rust 工作区 1,385 项通过。已安装同一工作树构建的 Python wheel 和 npm 包，Python 35 项、Node 24 项通过。三平台安装验收由 SDK 工作流执行。
 
 ### 性能基线
 
@@ -35,6 +35,18 @@ macOS arm64，Rust 1.99.1、CPython 3.14.8、Node 22.22.2。Rust 工作区 1,384
 | 进程峰值 RSS，64 条 | 85.3–86.2 MiB | 99.4–99.8 MiB |
 | 进程峰值 RSS，16,384 条 | 87.6–88.5 MiB | 99.7–100.1 MiB |
 
-运行延迟包含 SQLite、调度和本地 HTTP，数据用于记录本机基线。峰值 RSS 包含宿主、预热和 SQLite 缓存。单页 SQL 按实例和游标索引最多取 17 行，其中最多 16 行投影，第 17 行只用于判断是否还有下一页。Rust 回归用 16,384 条过期记录验证固定大小的页仍会推进，并用容量为 1 的队列和持锁数据库验证丢弃可见、Session checkpoint 和工具仍能完成。默认队列容量为 64 项，SDK 稳态队列峰值尚未实测。
+运行延迟包含 SQLite、调度和本地 HTTP，数据用于记录本机基线。峰值 RSS 包含宿主、预热和 SQLite 缓存。单页 SQL 按实例和游标索引最多取 17 行，其中最多 16 行投影，第 17 行只用于判断是否还有下一页。Rust 回归用 16,384 条过期记录验证固定大小的页仍会推进，并用容量为 1 的队列和持锁数据库验证丢弃可见、Session checkpoint 和工具仍能完成。
 
 复核补充了两个安装包回归。替换 Session SQLite 文件后，旧授权句柄立即失效。把证据库路径用作 Session 库会返回 `session_storage_error`。Rust 另验证了不同会话仍可并发初始化同一个新库。
+
+### SDK 证据队列峰值
+
+从合入提交 `9669b83` 构建带本地计数的两端 SDK，继续使用同一 SSE fixture 和本机环境。每次测量使用新进程、一个 Agent 和一个证据库。先关闭采集预热一次，然后串行执行 120 次独立会话，每次消费完事件并等待完成。每组测三轮。生产端在取得队列容量后记录占用峰值，写入因队列已满失败时计为 64 项。测量运行期间不发起证据查询，结束后读取证据页以排空写入队列并取得 `observed_drops`。
+
+| 每轮 120 次运行 | Python 峰值 / 丢弃 | Node 峰值 / 丢弃 |
+| --- | ---: | ---: |
+| 关闭采集，无额外间隔 | 0 / 0 | 0 / 0 |
+| 开启采集，无额外间隔 | 64 / 379–432 | 64 / 451–486 |
+| 开启采集，运行结束后等待 20 ms | 8–11 / 0 | 9 / 0 |
+
+每轮 120 次运行均完成。开启采集且留出 20 ms 的六轮中，每轮写入 1,200 条原始证据记录。无额外间隔时，Node 有一轮只有 118 个会话留下证据。采集使用有界队列，生产端遇到队列已满会丢弃并计数，Session 完成与恢复沿用原契约。20 ms 是本机对照负载的测量参数。测量使用的计数代码仅存在于本地构建产物中。

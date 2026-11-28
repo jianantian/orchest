@@ -25,7 +25,7 @@
 
 [Session 证据](../session_evidence/prd.md)已经作为 Rust 可选功能合入主线。它记录逐次模型调用、受控的 adapter 输入重建、会话入账与压缩来源。证据采集显式开启，查询沿用原有会话身份与授权。
 
-控制面沿用核心的会话和运行标识。运行事件供宿主实时处理，Session v2 日志用于恢复，独立证据存储用于事后查询。Python / Node 的显式采集和受控查询范围见 [Session 证据规格](../../../iteration/sdk-session-evidence/prd.md)。
+控制面沿用核心的会话和运行标识。运行事件供宿主实时处理，Session v2 日志用于恢复，独立证据存储用于事后查询。Python / Node 的显式采集和受控查询范围见 [Session 证据规格](../sdk-session-evidence/prd.md)。
 
 ## 架构与性能
 

@@ -64,6 +64,7 @@
 | Session 证据 | 功能 | 2026-11-25 合入主线。Rust 可选 `session-evidence` feature 记录模型尝试、受控 adapter 输入重建、会话入账与压缩来源。Session v2 恢复契约沿用现有语义。Rust 可选功能已随 [0.2.0](https://github.com/jianantian/orchest/releases/tag/v0.2.0) 发布。[PR #362](https://github.com/jianantian/orchest/pull/362) · [PRD](../archive/iteration/session_evidence/prd.md) |
 | Orchest 0.2.0 | 发布 | Python `orchest-py` 与 Node `orchest-sdk` 于 2026-11-26 发布。八个 Rust crate 于 2026-11-28 按同一 SDK 源码补发 `0.2.0`，沿用原包名。[Rust](https://github.com/jianantian/orchest/releases/tag/v0.2.0) · [Python / Node](https://github.com/jianantian/orchest/releases/tag/sdk-v0.2.0) · [归档 PRD](../archive/iteration/sdk_v0_2/prd.md) · [#330](https://github.com/jianantian/orchest/issues/330) |
 | SDK 运行控制 | 功能 | 2026-11-28 合入主线。Python 和 Node 支持异步运行、按运行取消和按 ID 回复、SQLite Session v2 单写者与恢复。Node 补齐 Agent-as-Tool 和内建写文件工具。Rust CI 与三平台 SDK 安装验收通过。 [PR #368](https://github.com/jianantian/orchest/pull/368) · [归档 PRD](../archive/iteration/runtime-controls/prd.md) |
+| SDK Session 证据 | 功能 | 2026-11-28 合入主线。Python 和 Node 支持按运行启用本地证据采集，并按会话分页查询模型尝试元数据。Rust CI 与三平台 SDK 安装验收通过。[PR #370](https://github.com/jianantian/orchest/pull/370) · [归档 PRD](../archive/iteration/sdk-session-evidence/prd.md) |
 
 ## 迭代编号约定
 
@@ -78,7 +79,6 @@
 | 内部迭代 | 依赖 |
 | --- | --- |
 | [语音能力](./voice-capabilities/prd.md) | 沿用语音 V1 契约 |
-| [SDK Session 证据](./sdk-session-evidence/prd.md) | 功能已通过三平台验收并合入主线。待补测 SDK 稳态证据队列峰值后归档。 |
 
 Rust、Python 和 Node 的下一公开版本统一为 `0.3.0`。候选范围、标签和安装验证见[发布计划](../releases/0.3.0.md)。
 
@@ -161,7 +161,7 @@ Rust、Python 和 Node 的下一公开版本统一为 `0.3.0`。候选范围、�
         （历史标签 v2.0.0，2026-11-10）
         │
         ├─► ✅ Orchest 0.2.0: Rust / Python / Node 已发布
-        ├─► ✅ SDK 运行控制 ── 本地会话恢复 ──► SDK Session 证据（已合入）
+        ├─► ✅ SDK 运行控制 ── 本地会话恢复 ──► ✅ SDK Session 证据
         ├─► 语音 V2 + V4（依赖语音 V1）
         ├─► 后续：全双工补齐（语音线 V5）
         ├─► ✅ Session 证据（Rust 0.2.0 已发布）
@@ -207,7 +207,7 @@ Rust、Python 和 Node 的下一公开版本统一为 `0.3.0`。候选范围、�
 | LLM Retry / 容错 | ~~失败直接 return~~ → RetryPolicy（指数退避） | ✅ v0.7 |
 | Loop Detection | ~~无~~ → LoopDetectionHook（warn + abort） | ✅ v0.7 |
 | Session 持久化 | ~~无~~ → SessionStore trait + InMemory + SQLite | ✅ v0.8 |
-| 模型调用证据 | Rust 宿主可启用本地采集、查询和重建已授权的 adapter 输入。Python / Node 已接入按运行启用与分页查询尝试元数据。 | ✅ Rust 0.2.0 已发布。[SDK Session 证据](./sdk-session-evidence/prd.md)已合入主线。 |
+| 模型调用证据 | Rust 宿主可启用本地采集、查询和重建已授权的 adapter 输入。Python / Node 已接入按运行启用与分页查询尝试元数据。 | ✅ Rust 0.2.0 已发布。[SDK Session 证据](../archive/iteration/sdk-session-evidence/prd.md)已合入主线。 |
 | Guardrails | ~~无~~ → 四层 Guardrail 框架（Input/Output/ToolInput/ToolOutput） | ✅ v0.8 |
 | 权限模型扩展 | ~~`requires_approval: bool`~~ → run 级 ApprovalMode 策略 | ✅ v0.8 |
 | 双向通信 + 多方事件订阅 | ~~RunHandle 只有 wait + approval~~ → Multi-subscriber + Watcher + InjectCmd | ✅ v0.8 |
