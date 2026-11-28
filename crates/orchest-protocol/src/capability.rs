@@ -458,7 +458,15 @@ pub trait Tts: Send + Sync {
     async fn synthesize(&self, req: SynthesizeRequest) -> Result<SynthesizeResult, ProtocolError>;
     async fn stream_synthesize(&self, req: SynthesizeRequest)
         -> Result<EventStream, ProtocolError>;
-    async fn start_duplex_stream(&self) -> Result<RealtimeHandle, ProtocolError>;
+    async fn start_duplex_stream(
+        &self,
+        _request: crate::TtsDuplexRequest,
+    ) -> Result<crate::TtsDuplexHandle, ProtocolError> {
+        Err(ProtocolError::new(
+            crate::ErrorCode::UnsupportedOperation,
+            "TTS duplex streaming is unavailable for this adapter",
+        ))
+    }
 }
 
 /// Optional voice clone/design management, parallel to [`Tts`] (← the existing

@@ -11,12 +11,14 @@
 //! §base_resp (error-code union).
 
 use crate::metering::VoiceMeter;
+pub(super) mod duplex;
+
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use orchest_protocol::VoiceSource;
 use orchest_protocol::{
     AudioFormat, Capability, CapabilityDescriptor, ErrorCode, EventStream, Modality, ProtocolError,
-    RealtimeHandle, StreamEvent, SynthesizeRequest, SynthesizeResult, TokenUsage, Tts,
+    StreamEvent, SynthesizeRequest, SynthesizeResult, TokenUsage, Tts,
 };
 use orchest_provider_core::catalog::TtsCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
@@ -129,7 +131,7 @@ pub fn map_base_resp(resp: &BaseResp) -> Option<ProtocolError> {
         1001 | 2201 => (ErrorCode::Timeout, None),
         // Rate-limit family — surface as HTTP 429, raw code preserved.
         1002 | 1039 | 2205 => (ErrorCode::ProviderHttpError, Some(429u16)),
-        1004 => (ErrorCode::InvalidApiKey, None),
+        1004 | 2049 => (ErrorCode::InvalidApiKey, None),
         1042 | 2203 | 2204 | 2013 => (ErrorCode::InvalidRequest, None),
         2202 => (ErrorCode::ProviderStreamError, None),
         _ => (ErrorCode::ProviderTaskFailed, None),
@@ -297,6 +299,7 @@ pub async fn run_minimax_synthesis<T: ByteDuplex>(
                         data: bytes,
                         format: request.format,
                         sequence: 0,
+                        tts: None,
                     })
                     .await
                     .is_err()
@@ -349,29 +352,21 @@ impl MinimaxTts {
         Self { config }
     }
 
-    async fn open_stream(
+    #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
+    fn websocket_request(
         &self,
-        mut request: SynthesizeRequest,
-    ) -> Result<EventStream, ProtocolError> {
-        CATALOG_EXT.validate_options(&mut request.options)?;
-        if !self.config.ws_url.starts_with("wss://") {
+        url: &str,
+    ) -> Result<tungstenite::http::Request<()>, ProtocolError> {
+        if !url.starts_with("wss://") {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,
                 "WebSocket URL must use wss:// for secure credential transport",
             ));
         }
-        let voice = require_explicit_voice(&request)?;
-        let start_body = build_task_start_body(
-            &self.config.model,
-            voice,
-            &request.format,
-            None,
-            &request.options,
-        );
-        let ws_request = tungstenite::http::Request::builder()
-            .uri(&self.config.ws_url)
+        tungstenite::http::Request::builder()
+            .uri(url)
             .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Host", host_of(&self.config.ws_url))
+            .header("Host", host_of(url))
             .header("Connection", "Upgrade")
             .header("Upgrade", "websocket")
             .header("Sec-WebSocket-Version", "13")
@@ -382,7 +377,23 @@ impl MinimaxTts {
             .body(())
             .map_err(|e| {
                 ProtocolError::new(ErrorCode::InvalidRequest, format!("build ws request: {e}"))
-            })?;
+            })
+    }
+
+    async fn open_stream(
+        &self,
+        mut request: SynthesizeRequest,
+    ) -> Result<EventStream, ProtocolError> {
+        CATALOG_EXT.validate_options(&mut request.options)?;
+        let voice = require_explicit_voice(&request)?;
+        let start_body = build_task_start_body(
+            &self.config.model,
+            voice,
+            &request.format,
+            None,
+            &request.options,
+        );
+        let ws_request = self.websocket_request(&self.config.ws_url)?;
 
         let (ws_stream, _response) = connect_async(ws_request).await.map_err(|e| {
             ProtocolError::new(
@@ -422,12 +433,16 @@ pub(crate) const CATALOG_EXT: TtsCatalogExt = TtsCatalogExt {
     source: VoiceSource::Direct,
     protocol: "minimax_tts_ws",
     words: false,
+    duplex: true,
+    flush: true,
+    cancel: true,
 };
 
 /// The static descriptor the registry filters on for the minimax TTS dialect.
 pub fn entry_descriptor() -> CapabilityDescriptor {
     CapabilityDescriptor::new("minimax", "speech-2.8-hd", Capability::Tts)
         .streaming(true)
+        .duplex(CATALOG_EXT.duplex)
         .with_input_modalities([Modality::Text])
         .with_output_modalities([Modality::Audio])
         .with_ext(CATALOG_EXT.to_descriptor_ext())
@@ -488,11 +503,11 @@ impl Tts for MinimaxTts {
         self.open_stream(request).await
     }
 
-    async fn start_duplex_stream(&self) -> Result<RealtimeHandle, ProtocolError> {
-        Err(ProtocolError::new(
-            ErrorCode::UnsupportedOperation,
-            "minimax TTS duplex stream is not wired on the spine",
-        ))
+    async fn start_duplex_stream(
+        &self,
+        request: orchest_protocol::TtsDuplexRequest,
+    ) -> Result<orchest_protocol::TtsDuplexHandle, ProtocolError> {
+        self.open_duplex(request).await
     }
 }
 

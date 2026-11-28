@@ -15,6 +15,7 @@ pub mod error;
 pub mod options;
 pub mod response;
 pub mod stream;
+mod tts;
 pub mod types;
 mod voice;
 
@@ -71,3 +72,5 @@ pub use voice::{
     VoiceCostEstimate, VoiceOutcome, VoiceQuantity, VoiceRate, VoiceRateUnit, VoiceUsage,
     VoiceUsageSource,
 };
+
+pub use tts::{TtsAudioContext, TtsDuplexHandle, TtsDuplexRequest, TtsEvent, TtsInput};

@@ -7,12 +7,14 @@
 //! **binary** frames; `task-finished` / `task-failed` are text lifecycle events.
 
 use crate::metering::VoiceMeter;
+pub(super) mod duplex;
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use orchest_protocol::VoiceSource;
 use orchest_protocol::{
     AudioFormat, Capability, CapabilityDescriptor, ErrorCode, EventStream, Modality, ProtocolError,
-    RealtimeHandle, StreamEvent, SynthesizeRequest, SynthesizeResult, TokenUsage, Tts,
+    StreamEvent, SynthesizeRequest, SynthesizeResult, TokenUsage, Tts,
 };
 use orchest_provider_core::catalog::TtsCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
@@ -173,6 +175,7 @@ pub async fn run_aliyun_synthesis<T: ByteDuplex>(
                         data: Bytes::from(data),
                         format,
                         sequence,
+                        tts: None,
                     })
                     .await
                     .is_err()
@@ -230,17 +233,39 @@ impl AliyunTts {
         Self { config }
     }
 
-    async fn open_stream(
+    #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
+    fn websocket_request(
         &self,
-        mut request: SynthesizeRequest,
-    ) -> Result<EventStream, ProtocolError> {
-        CATALOG_EXT.validate_options(&mut request.options)?;
-        if !self.config.ws_url.starts_with("wss://") {
+        url: &str,
+    ) -> Result<tungstenite::http::Request<()>, ProtocolError> {
+        if !url.starts_with("wss://") {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,
                 "WebSocket URL must use wss:// for secure credential transport",
             ));
         }
+        tungstenite::http::Request::builder()
+            .uri(url)
+            .header("Authorization", format!("bearer {}", self.config.api_key))
+            .header("Host", host_of(url))
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header(
+                "Sec-WebSocket-Key",
+                tungstenite::handshake::client::generate_key(),
+            )
+            .body(())
+            .map_err(|e| {
+                ProtocolError::new(ErrorCode::InvalidRequest, format!("build ws request: {e}"))
+            })
+    }
+
+    async fn open_stream(
+        &self,
+        mut request: SynthesizeRequest,
+    ) -> Result<EventStream, ProtocolError> {
+        CATALOG_EXT.validate_options(&mut request.options)?;
         let voice = require_explicit_voice(&request)?;
         let task_id = uuid::Uuid::new_v4().simple().to_string();
         let run_task = build_run_task(
@@ -253,21 +278,7 @@ impl AliyunTts {
         let continue_task = build_continue_task(&task_id, &request.text);
         let finish_task = build_finish_task(&task_id);
 
-        let ws_request = tungstenite::http::Request::builder()
-            .uri(&self.config.ws_url)
-            .header("Authorization", format!("bearer {}", self.config.api_key))
-            .header("Host", host_of(&self.config.ws_url))
-            .header("Connection", "Upgrade")
-            .header("Upgrade", "websocket")
-            .header("Sec-WebSocket-Version", "13")
-            .header(
-                "Sec-WebSocket-Key",
-                tungstenite::handshake::client::generate_key(),
-            )
-            .body(())
-            .map_err(|e| {
-                ProtocolError::new(ErrorCode::InvalidRequest, format!("build ws request: {e}"))
-            })?;
+        let ws_request = self.websocket_request(&self.config.ws_url)?;
 
         let (ws_stream, _response) = connect_async(ws_request).await.map_err(|e| {
             ProtocolError::new(
@@ -310,12 +321,16 @@ pub(crate) const CATALOG_EXT: TtsCatalogExt = TtsCatalogExt {
     source: VoiceSource::Direct,
     protocol: "dashscope_tts_ws",
     words: false,
+    duplex: true,
+    flush: true,
+    cancel: true,
 };
 
 /// The static descriptor the registry filters on for the aliyun TTS dialect.
 pub fn entry_descriptor() -> CapabilityDescriptor {
     CapabilityDescriptor::new("aliyun", "cosyvoice-v2", Capability::Tts)
         .streaming(true)
+        .duplex(CATALOG_EXT.duplex)
         .with_input_modalities([Modality::Text])
         .with_output_modalities([Modality::Audio])
         .with_ext(CATALOG_EXT.to_descriptor_ext())
@@ -376,11 +391,11 @@ impl Tts for AliyunTts {
         self.open_stream(request).await
     }
 
-    async fn start_duplex_stream(&self) -> Result<RealtimeHandle, ProtocolError> {
-        Err(ProtocolError::new(
-            ErrorCode::UnsupportedOperation,
-            "aliyun TTS duplex stream is not wired on the spine",
-        ))
+    async fn start_duplex_stream(
+        &self,
+        request: orchest_protocol::TtsDuplexRequest,
+    ) -> Result<orchest_protocol::TtsDuplexHandle, ProtocolError> {
+        self.open_duplex(request).await
     }
 }
 

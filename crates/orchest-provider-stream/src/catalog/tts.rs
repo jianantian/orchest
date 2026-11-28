@@ -47,7 +47,7 @@ pub static STREAM_TTS_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             input_modalities: vec![Modality::Text],
             output_modalities: vec![Modality::Audio],
             streaming: true,
-            duplex: false,
+            duplex: tts.duplex,
             interruptible: false,
             tools: false,
             thinking: false,

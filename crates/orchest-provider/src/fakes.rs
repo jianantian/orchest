@@ -141,13 +141,6 @@ impl Tts for FakeTts {
             "FakeTts does not support streaming",
         ))
     }
-
-    async fn start_duplex_stream(&self) -> Result<RealtimeHandle, ProtocolError> {
-        Err(ProtocolError::new(
-            ErrorCode::UnsupportedOperation,
-            "FakeTts does not support duplex",
-        ))
-    }
 }
 
 #[cfg(test)]
@@ -230,7 +223,14 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.code, ErrorCode::UnsupportedOperation);
 
-        let err = tts.start_duplex_stream().await.unwrap_err();
+        let err = tts
+            .start_duplex_stream(orchest_protocol::TtsDuplexRequest {
+                voice: "fake".into(),
+                format: AudioFormat::Pcm16Le,
+                options: serde_json::Value::Null,
+            })
+            .await
+            .unwrap_err();
         assert_eq!(err.code, ErrorCode::UnsupportedOperation);
     }
 }

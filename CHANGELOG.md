@@ -22,6 +22,9 @@ except for the items `orchest-provider` re-exports.
 - Record typed ASR/TTS usage on Rust results and voice streams, with published
   list-price estimates where the model, route and units match.
 
+- Add Rust duplex TTS with incremental text, contextual audio, Flush,
+  cancellation, and orderly closure through the Aliyun, Volcengine, and MiniMax adapters.
+
 - Add a session-instance-bound, paginated reader for model attempt metadata.
 
 - Add a structured SQLite session writer conflict error for the local SDK
@@ -30,6 +33,10 @@ except for the items `orchest-provider` re-exports.
 ### Changed
 
 - Align the Rust workspace and both SDKs on release version `0.3.0`.
+
+- **Breaking:** Rust TTS duplex startup takes a voice and audio format and
+  returns a typed input handle. Rust constructions of `StreamEvent::AudioDelta`
+  supply the optional duplex context.
 
 ### Fixed
 

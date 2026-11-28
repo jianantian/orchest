@@ -126,17 +126,19 @@ fn voice_catalog_and_registry_offer_the_same_capabilities() {
 
     let tts = registry.tts().streaming().list();
     assert_eq!(tts.len(), 3);
-    assert!(registry.tts().bidirectional().list().is_empty());
+    assert_eq!(registry.tts().bidirectional().list().len(), 3);
     for entry in tts {
         let descriptor = &entry.descriptor;
         let id = format!("{}/{}", descriptor.provider, descriptor.model);
         let row = find_model_for(&id, Capability::Tts).unwrap();
         assert!(row.streaming);
-        assert!(!row.duplex);
+        assert!(row.duplex);
         let CapabilityExt::Tts(ext) = &descriptor.ext else {
             panic!("missing TTS capability details for {id}");
         };
         assert_eq!(ext["source"], "direct");
+        assert_eq!(ext["flush"], true);
+        assert_eq!(ext["cancel"], true);
         assert!(ext["protocol"]
             .as_str()
             .is_some_and(|name| !name.is_empty()));
@@ -214,4 +216,29 @@ async fn voice_capabilities_are_checked_before_connecting() {
         supported.await.unwrap().unwrap_err().code,
         ErrorCode::ProviderStreamError
     );
+}
+
+#[cfg(feature = "stream")]
+#[tokio::test]
+async fn duplex_tts_rejects_unverified_alignment_before_connecting() {
+    use orchest_protocol::{AudioFormat, ErrorCode, TtsDuplexRequest};
+    use orchest_provider::{ProviderConfig, Registry};
+    use serde_json::json;
+
+    let registry = Registry::with_builtin();
+    let config = ProviderConfig::default()
+        .with_api_key("test-key")
+        .with_api_url("invalid-transport");
+    for entry in registry.tts().bidirectional().list() {
+        let adapter = entry.instantiate(&config).unwrap();
+        let request = TtsDuplexRequest {
+            voice: "test".into(),
+            format: AudioFormat::Mp3,
+            options: json!({"require_capabilities": ["words"]}),
+        };
+        assert_eq!(
+            adapter.start_duplex_stream(request).await.unwrap_err().code,
+            ErrorCode::UnsupportedOption,
+        );
+    }
 }

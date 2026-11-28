@@ -9,12 +9,14 @@
 //! `session_id`, then the length-prefixed payload (or raw audio).
 
 use crate::metering::VoiceMeter;
+pub(super) mod duplex;
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use orchest_protocol::VoiceSource;
 use orchest_protocol::{
     AudioFormat, Capability, CapabilityDescriptor, ErrorCode, EventStream, Modality, ProtocolError,
-    RealtimeHandle, StreamEvent, SynthesizeRequest, SynthesizeResult, TokenUsage, Tts,
+    StreamEvent, SynthesizeRequest, SynthesizeResult, TokenUsage, Tts,
 };
 use orchest_provider_core::catalog::TtsCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
@@ -231,6 +233,7 @@ pub fn map_frame(frame: VolcengineFrame) -> Option<StreamEvent> {
             data: Bytes::from(data),
             format: AudioFormat::Pcm16Le,
             sequence: 0,
+            tts: None,
         }),
         VolcengineFrame::Error { code, message } => Some(StreamEvent::Error {
             error: ProtocolError::new(
@@ -391,38 +394,32 @@ impl VolcengineTts {
 
     /// Connect, send the unidirectional request frame, and spawn the synthesis
     /// loop, returning the pulled [`EventStream`] of audio/lifecycle events.
-    async fn open_stream(
+    #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
+    fn websocket_request(
         &self,
-        mut request: SynthesizeRequest,
-    ) -> Result<EventStream, ProtocolError> {
-        CATALOG_EXT.validate_options(&mut request.options)?;
-        if !self.config.ws_url.starts_with("wss://") {
+        url: &str,
+        resource_id: &str,
+    ) -> Result<tungstenite::http::Request<()>, ProtocolError> {
+        if !url.starts_with("wss://") {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,
                 "WebSocket URL must use wss:// for secure credential transport",
             ));
         }
-        let voice = require_explicit_voice(&request)?;
-        let synthesis = build_synthesis_payload(&request, voice);
-        let payload = serde_json::to_vec(&synthesis).map_err(|e| {
-            ProtocolError::new(ErrorCode::InvalidRequest, format!("serialize: {e}"))
-        })?;
-        let request_frame = build_send_frame(&payload);
-
         let connect_id = uuid::Uuid::new_v4().to_string();
         let request_id = uuid::Uuid::new_v4().to_string();
         let mut builder = tungstenite::http::Request::builder()
-            .uri(&self.config.ws_url)
+            .uri(url)
             .header("X-Api-Key", &self.config.api_key);
         if let Some(access_key) = &self.config.access_key {
             builder = builder.header("X-Api-Access-Key", access_key);
         }
-        let ws_request = builder
-            .header("X-Api-Resource-Id", &self.config.resource_id)
+        builder
+            .header("X-Api-Resource-Id", resource_id)
             .header("X-Control-Require-Usage-Tokens-Return", "text_words")
             .header("X-Api-Connect-Id", &connect_id)
             .header("X-Api-Request-Id", &request_id)
-            .header("Host", host_of(&self.config.ws_url))
+            .header("Host", host_of(url))
             .header("Connection", "Upgrade")
             .header("Upgrade", "websocket")
             .header("Sec-WebSocket-Version", "13")
@@ -433,7 +430,22 @@ impl VolcengineTts {
             .body(())
             .map_err(|e| {
                 ProtocolError::new(ErrorCode::InvalidRequest, format!("build ws request: {e}"))
-            })?;
+            })
+    }
+
+    async fn open_stream(
+        &self,
+        mut request: SynthesizeRequest,
+    ) -> Result<EventStream, ProtocolError> {
+        CATALOG_EXT.validate_options(&mut request.options)?;
+        let voice = require_explicit_voice(&request)?;
+        let synthesis = build_synthesis_payload(&request, voice);
+        let payload = serde_json::to_vec(&synthesis).map_err(|e| {
+            ProtocolError::new(ErrorCode::InvalidRequest, format!("serialize: {e}"))
+        })?;
+        let request_frame = build_send_frame(&payload);
+
+        let ws_request = self.websocket_request(&self.config.ws_url, &self.config.resource_id)?;
 
         let (ws_stream, _response) = connect_async(ws_request)
             .await
@@ -468,12 +480,16 @@ pub(crate) const CATALOG_EXT: TtsCatalogExt = TtsCatalogExt {
     source: VoiceSource::Direct,
     protocol: "openspeech_tts_ws",
     words: false,
+    duplex: true,
+    flush: true,
+    cancel: true,
 };
 
 /// The static descriptor the registry filters on for the Volcengine TTS dialect.
 pub fn entry_descriptor() -> CapabilityDescriptor {
     CapabilityDescriptor::new("volcengine", "tts", Capability::Tts)
         .streaming(true)
+        .duplex(CATALOG_EXT.duplex)
         .with_input_modalities([Modality::Text])
         .with_output_modalities([Modality::Audio])
         .with_ext(CATALOG_EXT.to_descriptor_ext())
@@ -549,14 +565,11 @@ impl Tts for VolcengineTts {
         self.open_stream(request).await
     }
 
-    async fn start_duplex_stream(&self) -> Result<RealtimeHandle, ProtocolError> {
-        // The bidirectional event-framing handshake (build_connect_frame /
-        // build_meta_frame) lands in a later slice; one-shot synthesis is the
-        // primary path and is fully wired above.
-        Err(ProtocolError::new(
-            ErrorCode::UnsupportedOperation,
-            "volcengine TTS duplex stream is not yet wired on the spine",
-        ))
+    async fn start_duplex_stream(
+        &self,
+        request: orchest_protocol::TtsDuplexRequest,
+    ) -> Result<orchest_protocol::TtsDuplexHandle, ProtocolError> {
+        self.open_duplex(request).await
     }
 }
 

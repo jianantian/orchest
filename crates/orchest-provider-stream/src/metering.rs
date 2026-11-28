@@ -86,6 +86,12 @@ impl VoiceMeter {
         }
     }
 
+    pub(crate) fn billed_characters_if_known(&mut self, characters: Option<u64>) {
+        if let Some(settlement) = &mut self.settlement {
+            settlement.usage.billed_characters = characters;
+        }
+    }
+
     pub(crate) fn cancel(&mut self) {
         self.cancelled = true;
     }

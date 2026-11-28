@@ -165,7 +165,11 @@ pub enum StreamEvent {
         data: Bytes,
         format: AudioFormat,
         sequence: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tts: Option<crate::TtsAudioContext>,
     },
+
+    Tts(crate::TtsEvent),
 
     // --- transcript (asr / omni) ---
     /// A transcript fragment. `segment` identifies the sentence/segment this

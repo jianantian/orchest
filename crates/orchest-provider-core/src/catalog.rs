@@ -97,6 +97,9 @@ pub struct TtsCatalogExt {
     pub source: VoiceSource,
     pub protocol: &'static str,
     pub words: bool,
+    pub duplex: bool,
+    pub flush: bool,
+    pub cancel: bool,
 }
 
 impl TtsCatalogExt {
@@ -105,11 +108,32 @@ impl TtsCatalogExt {
         take_required_capabilities(options, |name| name == "words" && self.words).map(|_| ())
     }
 
+    #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
+    pub fn validate_duplex_options(&self, options: &mut Value) -> Result<(), ProtocolError> {
+        if !options.is_null() && !options.is_object() {
+            return Err(ProtocolError::new(
+                ErrorCode::InvalidRequest,
+                "TTS duplex options must be an object",
+            ));
+        }
+        take_required_capabilities(options, |name| match name {
+            "duplex" | "close" => self.duplex,
+            "flush" => self.flush,
+            "cancel" => self.cancel,
+            "words" => self.words,
+            _ => false,
+        })
+        .map(|_| ())
+    }
+
     pub fn to_descriptor_ext(&self) -> CapabilityExt {
         CapabilityExt::Tts(serde_json::json!({
             "source": self.source,
             "protocol": self.protocol,
             "words": self.words,
+            "flush": self.flush,
+            "cancel": self.cancel,
+            "close": self.duplex,
         }))
     }
 }

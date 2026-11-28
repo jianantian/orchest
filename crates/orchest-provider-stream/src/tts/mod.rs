@@ -7,6 +7,7 @@
 //! live transport; minimax-ws TTS follows.
 
 pub mod aliyun;
+mod duplex;
 pub mod minimax;
 pub mod volcengine;
 
