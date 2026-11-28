@@ -57,6 +57,8 @@ struct TranscriptResponse {
     error: Option<String>,
     #[serde(default)]
     utterances: Option<Vec<Value>>,
+    audio_duration: Option<f64>,
+    speech_model_used: Option<String>,
 }
 
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
@@ -123,6 +125,7 @@ fn map_response(response: TranscriptResponse) -> TranscribeResult {
         diagnostic_metadata["utterances"] = json!(utterances);
     }
     TranscribeResult {
+        voice_usage: None,
         text: response.text.unwrap_or_default(),
         language,
         diagnostic_metadata,
@@ -291,7 +294,27 @@ impl Asr for AssemblyAiAsr {
         let audio_url = self.upload_audio(request.audio.clone()).await?;
         let id = self.submit(&request, &audio_url).await?;
         let response = self.poll(&id).await?;
-        Ok(map_response(response))
+        let reported = response.audio_duration.and_then(|seconds| {
+            orchest_provider_core::voice::duration_from_seconds(
+                seconds,
+                orchest_protocol::VoiceUsageSource::ProviderReported,
+            )
+        });
+        let model = response
+            .speech_model_used
+            .as_deref()
+            .or_else(|| request.options.get("speech_model").and_then(Value::as_str))
+            .unwrap_or(&self.config.model);
+        let usage = orchest_provider_core::voice::batch_audio_usage(
+            "assemblyai",
+            model,
+            request.format,
+            &request.audio,
+            reported,
+        );
+        let mut result = map_response(response);
+        result.voice_usage = Some(usage);
+        Ok(result)
     }
 
     async fn start_stream(
@@ -357,6 +380,8 @@ mod tests {
             text: Some("hello world".to_string()),
             language_code: Some("en".to_string()),
             error: None,
+            audio_duration: None,
+            speech_model_used: None,
             utterances: Some(vec![json!({"speaker": "A", "text": "hello world"})]),
         };
         let result = map_response(response);

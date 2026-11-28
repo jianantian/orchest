@@ -213,17 +213,39 @@ pub enum StreamEvent {
 #[derive(Debug)]
 pub struct EventStream {
     inner: mpsc::Receiver<StreamEvent>,
+    voice_usage: Option<tokio::sync::oneshot::Receiver<crate::VoiceUsage>>,
 }
 
 impl EventStream {
     pub fn new(inner: mpsc::Receiver<StreamEvent>) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            voice_usage: None,
+        }
     }
 
     /// Build a connected sink/stream pair for an in-process producer.
     pub fn channel(capacity: usize) -> (mpsc::Sender<StreamEvent>, Self) {
         let (tx, rx) = mpsc::channel(capacity);
         (tx, Self::new(rx))
+    }
+
+    /// Attach a producer's one-time speech settlement to the stream.
+    #[must_use]
+    pub fn with_voice_usage(
+        mut self,
+        receiver: tokio::sync::oneshot::Receiver<crate::VoiceUsage>,
+    ) -> Self {
+        self.voice_usage = Some(receiver);
+        self
+    }
+
+    /// Read speech usage once after the terminal event or EOF.
+    /// Drain the events first so the producer can finish under backpressure.
+    pub async fn take_voice_usage(&mut self) -> Option<crate::VoiceUsage> {
+        let result = self.voice_usage.as_mut()?.await.ok();
+        self.voice_usage = None;
+        result
     }
 
     /// Pull the next event, or `None` when the producer is done.

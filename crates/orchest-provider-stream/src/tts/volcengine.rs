@@ -8,6 +8,7 @@
 //! `event` (i32), then — for session/task frames — a length-prefixed
 //! `session_id`, then the length-prefixed payload (or raw audio).
 
+use crate::metering::VoiceMeter;
 use async_trait::async_trait;
 use bytes::Bytes;
 use orchest_protocol::VoiceSource;
@@ -256,6 +257,7 @@ pub async fn run_tts_synthesis<T: ByteDuplex>(
     mut transport: T,
     request_frame: Vec<u8>,
     events: mpsc::Sender<StreamEvent>,
+    mut meter: VoiceMeter,
 ) {
     if transport
         .send(WsFrame::Binary(request_frame))
@@ -264,6 +266,7 @@ pub async fn run_tts_synthesis<T: ByteDuplex>(
     {
         return;
     }
+    meter.text_sent();
     while let Some(frame) = transport.recv().await {
         let Some(bytes) = frame.as_binary() else {
             continue; // openspeech TTS server frames are binary
@@ -276,6 +279,9 @@ pub async fn run_tts_synthesis<T: ByteDuplex>(
                 // it (map_frame yields None for Meta) and reporting the truncated
                 // stream as a *successful* synthesis.
                 if let VolcengineFrame::Meta { event, payload, .. } = &frame {
+                    meter.billed_characters(
+                        payload.pointer("/usage/text_words").and_then(Value::as_u64),
+                    );
                     if *event == EVENT_SESSION_FAILED || *event == EVENT_CONNECTION_FAILED {
                         let message = payload
                             .get("message")
@@ -301,6 +307,7 @@ pub async fn run_tts_synthesis<T: ByteDuplex>(
                     }
                 }
                 if finished {
+                    meter.complete();
                     let _ = events
                         .send(StreamEvent::Done {
                             usage: TokenUsage::default(),
@@ -396,10 +403,10 @@ impl VolcengineTts {
             ));
         }
         let voice = require_explicit_voice(&request)?;
-        let payload =
-            serde_json::to_vec(&build_synthesis_payload(&request, voice)).map_err(|e| {
-                ProtocolError::new(ErrorCode::InvalidRequest, format!("serialize: {e}"))
-            })?;
+        let synthesis = build_synthesis_payload(&request, voice);
+        let payload = serde_json::to_vec(&synthesis).map_err(|e| {
+            ProtocolError::new(ErrorCode::InvalidRequest, format!("serialize: {e}"))
+        })?;
         let request_frame = build_send_frame(&payload);
 
         let connect_id = uuid::Uuid::new_v4().to_string();
@@ -412,6 +419,7 @@ impl VolcengineTts {
         }
         let ws_request = builder
             .header("X-Api-Resource-Id", &self.config.resource_id)
+            .header("X-Control-Require-Usage-Tokens-Return", "text_words")
             .header("X-Api-Connect-Id", &connect_id)
             .header("X-Api-Request-Id", &request_id)
             .header("Host", host_of(&self.config.ws_url))
@@ -432,10 +440,18 @@ impl VolcengineTts {
             .map_err(|e| stream_err(format!("WebSocket connection failed: {e}")))?;
 
         let (events_tx, events) = EventStream::channel(64);
+        let (meter, events) =
+            VoiceMeter::attach(events, "volcengine", &self.config.resource_id, None, None);
+        let meter = meter.with_text(
+            synthesis
+                .pointer("/req_params/text")
+                .and_then(Value::as_str),
+        );
         tokio::spawn(run_tts_synthesis(
             WsDuplex::new(ws_stream),
             request_frame,
             events_tx,
+            meter,
         ));
         Ok(events)
     }
@@ -522,21 +538,8 @@ impl Tts for VolcengineTts {
         request: SynthesizeRequest,
     ) -> Result<SynthesizeResult, ProtocolError> {
         let format = request.format;
-        let mut stream = self.open_stream(request).await?;
-        let mut audio = Vec::new();
-        while let Some(event) = stream.next().await {
-            match event {
-                StreamEvent::AudioDelta { data, .. } => audio.extend_from_slice(&data),
-                StreamEvent::Error { error, .. } => return Err(error),
-                StreamEvent::Done { .. } => break,
-                _ => {}
-            }
-        }
-        Ok(SynthesizeResult {
-            audio: Bytes::from(audio),
-            format,
-            diagnostic_metadata: Value::Null,
-        })
+        let stream = self.open_stream(request).await?;
+        super::collect_synthesis(stream, format, self.provider_name(), self.model_name()).await
     }
 
     async fn stream_synthesize(
@@ -711,7 +714,12 @@ mod tests {
         };
         let (events_tx, mut events_rx) = mpsc::channel(8);
 
-        let handle = tokio::spawn(run_tts_synthesis(transport, vec![0u8; 8], events_tx));
+        let handle = tokio::spawn(run_tts_synthesis(
+            transport,
+            vec![0u8; 8],
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         // The synthesis sends the request frame, which the server observes.
         assert!(out_rx.recv().await.is_some());
@@ -754,7 +762,12 @@ mod tests {
         };
         let (events_tx, mut events_rx) = mpsc::channel(8);
 
-        let handle = tokio::spawn(run_tts_synthesis(transport, vec![0u8; 8], events_tx));
+        let handle = tokio::spawn(run_tts_synthesis(
+            transport,
+            vec![0u8; 8],
+            events_tx,
+            VoiceMeter::default(),
+        ));
         assert!(out_rx.recv().await.is_some()); // request frame sent
 
         // The server rejects the session mid-stream via a meta frame (event 153).

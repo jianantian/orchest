@@ -8,6 +8,7 @@
 //! module owns the inbound JSON → unified-event projection (the live `Asr` impl
 //! wraps it once the transport carries both binary audio and text frames).
 
+use crate::metering::VoiceMeter;
 use async_trait::async_trait;
 use orchest_protocol::AsrCapability;
 use orchest_protocol::{
@@ -82,6 +83,11 @@ pub enum SonioxMessage {
 /// `Error`; a message with no tokens that is not `finished` is `Ignored`.
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn parse_message(text: &str) -> Result<SonioxMessage, ProtocolError> {
+    parse_message_with_usage(text).map(|(message, _)| message)
+}
+
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
+fn parse_message_with_usage(text: &str) -> Result<(SonioxMessage, Option<u64>), ProtocolError> {
     let message: RawMessage = serde_json::from_str(text).map_err(|e| {
         ProtocolError::new(
             ErrorCode::ProviderStreamError,
@@ -92,13 +98,16 @@ pub fn parse_message(text: &str) -> Result<SonioxMessage, ProtocolError> {
         let detail = message
             .error_message
             .unwrap_or_else(|| "stream error".into());
-        return Ok(SonioxMessage::Error(super::UpstreamError::new(
-            Some(error_code.clone()),
-            format!("soniox error {error_code}: {detail}"),
-        )));
+        return Ok((
+            SonioxMessage::Error(super::UpstreamError::new(
+                Some(error_code.clone()),
+                format!("soniox error {error_code}: {detail}"),
+            )),
+            message.total_audio_proc_ms,
+        ));
     }
     if message.tokens.is_empty() && !message.finished {
-        return Ok(SonioxMessage::Ignored);
+        return Ok((SonioxMessage::Ignored, message.total_audio_proc_ms));
     }
     let mut finals: Vec<FinalPiece> = Vec::new();
     let mut provisional_text = String::new();
@@ -116,11 +125,14 @@ pub fn parse_message(text: &str) -> Result<SonioxMessage, ProtocolError> {
             },
         }
     }
-    Ok(SonioxMessage::Tokens {
-        finals,
-        provisional_text,
-        finished: message.finished,
-    })
+    Ok((
+        SonioxMessage::Tokens {
+            finals,
+            provisional_text,
+            finished: message.finished,
+        },
+        message.total_audio_proc_ms,
+    ))
 }
 
 /// Prefix of the committed segment of each Turn (`final{n}`): final tokens
@@ -245,6 +257,7 @@ impl SonioxMapper {
 
 #[derive(Debug, Deserialize)]
 struct RawMessage {
+    total_audio_proc_ms: Option<u64>,
     #[serde(default)]
     tokens: Vec<Token>,
     #[serde(default)]
@@ -295,6 +308,7 @@ pub async fn run_soniox_stream<T: ByteDuplex>(
     config_frame: String,
     mut input: mpsc::Receiver<SessionInput>,
     events: mpsc::Sender<StreamEvent>,
+    mut meter: VoiceMeter,
 ) {
     if transport.send(WsFrame::Text(config_frame)).await.is_err() {
         return;
@@ -309,8 +323,12 @@ pub async fn run_soniox_stream<T: ByteDuplex>(
                     if transport.send(WsFrame::Binary(bytes.to_vec())).await.is_err() {
                         break;
                     }
+                    meter.audio_sent(bytes.len());
                 }
-                None | Some(SessionInput::Interrupt) => {
+                end @ (None | Some(SessionInput::Interrupt)) => {
+                    if end.is_some() {
+                        meter.cancel();
+                    }
                     input_open = false;
                     let _ = transport.send(WsFrame::Binary(Vec::new())).await; // end-of-audio
                 }
@@ -328,8 +346,11 @@ pub async fn run_soniox_stream<T: ByteDuplex>(
                 }
             }
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_text) {
-                Some(text) => match parse_message(text) {
-                    Ok(message) => {
+                Some(text) => match parse_message_with_usage(text) {
+                    Ok((message, reported_ms)) => {
+                        meter.reported_audio(reported_ms.map(|value| orchest_protocol::VoiceQuantity {
+                            value, source: orchest_protocol::VoiceUsageSource::ProviderReported,
+                        }));
                         let is_error = matches!(&message, SonioxMessage::Error(_));
                         let terminal = matches!(
                             &message,
@@ -340,6 +361,7 @@ pub async fn run_soniox_stream<T: ByteDuplex>(
                         if is_error {
                             mapped = finalize.upstream_failed(mapped);
                         } else if terminal {
+                            meter.complete();
                             // `finished`: answer what is still pending
                             // before the mapper's `SessionClosed`.
                             let at = mapped.len().saturating_sub(1);
@@ -512,13 +534,36 @@ impl Asr for SonioxAsr {
             )
         })?;
 
+        let model = request
+            .options
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or(&self.config.model);
+        let wire_pcm = request
+            .options
+            .get("audio_format")
+            .is_none_or(|format| format.as_str() == Some("pcm_s16le"));
+        let rate = request
+            .options
+            .get("sample_rate")
+            .map_or(Some(16_000), Value::as_u64);
+        let channels = request
+            .options
+            .get("num_channels")
+            .map_or(Some(1), Value::as_u64);
+        let pcm = rate
+            .zip(channels)
+            .filter(|_| wire_pcm)
+            .and_then(|(rate, channels)| crate::metering::pcm16(request.format, rate, channels));
         let (input_tx, input_rx) = mpsc::channel(32);
         let (events_tx, events) = EventStream::channel(64);
+        let (meter, events) = VoiceMeter::attach(events, "soniox", model, pcm, None);
         tokio::spawn(run_soniox_stream(
             crate::fixture::live(WsDuplex::new(ws_stream)),
             config_frame,
             input_rx,
             events_tx,
+            meter,
         ));
         Ok(RealtimeHandle {
             input: input_tx,
@@ -569,7 +614,13 @@ mod tests {
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(8);
         let config = build_config_frame("k", "stt-rt-v5", &json!({}));
-        let handle = tokio::spawn(run_soniox_stream(transport, config, input_rx, events_tx));
+        let handle = tokio::spawn(run_soniox_stream(
+            transport,
+            config,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         // first frame is the text config carrying the api_key
         match out_rx.recv().await.unwrap() {
@@ -614,7 +665,13 @@ mod tests {
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(8);
         let config = build_config_frame("k", "stt-rt-v5", &json!({}));
-        let handle = tokio::spawn(run_soniox_stream(transport, config, input_rx, events_tx));
+        let handle = tokio::spawn(run_soniox_stream(
+            transport,
+            config,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
         out_rx.recv().await.unwrap(); // config
 
         in_tx
@@ -658,7 +715,13 @@ mod tests {
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(8);
         let config = build_config_frame("k", "stt-rt-v5", &json!({}));
-        let handle = tokio::spawn(run_soniox_stream(transport, config, input_rx, events_tx));
+        let handle = tokio::spawn(run_soniox_stream(
+            transport,
+            config,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
         out_rx.recv().await.unwrap(); // config
 
         input_tx.send(SessionInput::Finalize).await.unwrap();
@@ -848,6 +911,7 @@ mod tests {
             "{}".to_string(),
             input_rx,
             events_tx,
+            VoiceMeter::default(),
         ));
         assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Text(_)));
 
@@ -898,6 +962,7 @@ mod tests {
             "{}".to_string(),
             input_rx,
             events_tx,
+            VoiceMeter::default(),
         ));
         assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Text(_)));
 

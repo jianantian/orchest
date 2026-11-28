@@ -356,6 +356,8 @@ pub struct TranscribeRequest {
 pub struct TranscribeResult {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_usage: Option<crate::VoiceUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub diagnostic_metadata: Value,
@@ -439,6 +441,8 @@ pub struct SynthesizeRequest {
 pub struct SynthesizeResult {
     pub audio: Bytes,
     pub format: AudioFormat,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_usage: Option<crate::VoiceUsage>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub diagnostic_metadata: Value,
 }

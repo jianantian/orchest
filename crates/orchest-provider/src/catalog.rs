@@ -16,6 +16,8 @@ pub use orchest_provider_core::catalog::{
     AsrCatalogExt, CatalogExt, ModelFilter, ModelRecord, ModelStatus, TtsCatalogExt,
 };
 
+pub use orchest_provider_core::voice::VoicePrice;
+
 static CATALOG: LazyLock<Vec<ModelRecord>> = LazyLock::new(build_catalog);
 
 fn build_catalog() -> Vec<ModelRecord> {
@@ -79,6 +81,7 @@ fn project_llm(m: &orchest_provider_http::catalog::LlmModelEntry) -> ModelRecord
         // No Chat defaults until Batch 4.
         default_for_provider: false,
         pricing: m.pricing.clone(),
+        voice_pricing: None,
         ext: CatalogExt::Chat(ChatCatalogExt {
             context_window: m.context_window,
             max_output_tokens: m.max_output_tokens,

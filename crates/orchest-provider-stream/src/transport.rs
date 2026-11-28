@@ -44,6 +44,11 @@ impl WsFrame {
 pub trait ByteDuplex: Send {
     async fn send(&mut self, frame: WsFrame) -> Result<(), ProtocolError>;
     async fn recv(&mut self) -> Option<WsFrame>;
+
+    /// Whether the last EOF represented a transport error.
+    fn receive_failed(&self) -> bool {
+        false
+    }
 }
 
 /// A [`ByteDuplex`] over any `tungstenite` WebSocket sink/stream — the live
@@ -52,11 +57,15 @@ pub trait ByteDuplex: Send {
 /// `orchest-provider-core`.
 pub struct WsDuplex<S> {
     inner: S,
+    receive_failed: bool,
 }
 
 impl<S> WsDuplex<S> {
     pub fn new(inner: S) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            receive_failed: false,
+        }
     }
 }
 
@@ -85,9 +94,16 @@ where
                 Ok(tungstenite::Message::Binary(bytes)) => return Some(WsFrame::Binary(bytes)),
                 Ok(tungstenite::Message::Text(text)) => return Some(WsFrame::Text(text)),
                 Ok(_) => continue, // ping/pong/close/frame control — skip
-                Err(_) => return None,
+                Err(_) => {
+                    self.receive_failed = true;
+                    return None;
+                }
             }
         }
         None
+    }
+
+    fn receive_failed(&self) -> bool {
+        self.receive_failed
     }
 }

@@ -19,7 +19,7 @@ static MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
         display_name, description,
         input_modalities: vec![Modality::Text], output_modalities: vec![Modality::Text],
         streaming: false, duplex: false, interruptible: false, tools: false, thinking: false,
-        status: ModelStatus::Preview, default_for_provider, pricing: None, ext: CatalogExt::None,
+        status: ModelStatus::Preview, default_for_provider, pricing: None, voice_pricing: None, ext: CatalogExt::None,
     }).collect()
 });
 

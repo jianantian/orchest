@@ -14,6 +14,15 @@ use serde_json::{json, Map, Value};
 
 pub(crate) const CATALOG_EXT: AsrCatalogExt = AsrCatalogExt::direct("dashscope_asr_http", &[]);
 
+pub(crate) const QWEN_BATCH_PRICE: orchest_provider_core::voice::VoicePrice =
+    orchest_provider_core::voice::VoicePrice {
+        currency: "USD",
+        unit: orchest_protocol::VoiceRateUnit::AudioSecond,
+        price_per_unit: 0.00003,
+        scope: "Qwen Audio 3.0 ASR Flash, Beijing",
+        source_url: "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
+    };
+
 const DEFAULT_API_URL: &str =
     "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
 const DEFAULT_MODEL: &str = "qwen-audio-3.0-asr-flash";
@@ -115,6 +124,7 @@ pub fn parse_response(value: Value) -> Result<TranscribeResult, ProtocolError> {
         })?
         .to_string();
     Ok(TranscribeResult {
+        voice_usage: None,
         text,
         language: None,
         diagnostic_metadata: json!({
@@ -219,7 +229,32 @@ impl Asr for AliyunAsr {
             .with_provider("aliyun")
             .with_model(self.config.model.clone())
         })?;
-        parse_response(value)
+        let reported = value
+            .pointer("/usage/duration")
+            .and_then(Value::as_f64)
+            .and_then(|seconds| {
+                orchest_provider_core::voice::duration_from_seconds(
+                    seconds,
+                    if self.config.model == DEFAULT_MODEL {
+                        orchest_protocol::VoiceUsageSource::ProviderBilled
+                    } else {
+                        orchest_protocol::VoiceUsageSource::ProviderReported
+                    },
+                )
+            });
+        let mut result = parse_response(value)?;
+        let mut usage = orchest_provider_core::voice::batch_audio_usage(
+            "aliyun",
+            &self.config.model,
+            request.format,
+            &request.audio,
+            reported,
+        );
+        if self.config.model == DEFAULT_MODEL && self.config.api_url == DEFAULT_API_URL {
+            usage.cost_estimate = QWEN_BATCH_PRICE.estimate(&usage);
+        }
+        result.voice_usage = Some(usage);
+        Ok(result)
     }
 
     async fn start_stream(

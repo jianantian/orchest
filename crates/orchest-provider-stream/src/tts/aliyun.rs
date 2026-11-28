@@ -6,6 +6,7 @@
 //! (`run-task` → `continue-task` → `finish-task`) and synthesized audio arrives as
 //! **binary** frames; `task-finished` / `task-failed` are text lifecycle events.
 
+use crate::metering::VoiceMeter;
 use async_trait::async_trait;
 use bytes::Bytes;
 use orchest_protocol::VoiceSource;
@@ -21,6 +22,15 @@ use tokio::sync::mpsc;
 
 use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 use crate::tts::require_explicit_voice;
+
+pub(crate) const COSYVOICE_V2_PRICE: orchest_provider_core::voice::VoicePrice =
+    orchest_provider_core::voice::VoicePrice {
+        currency: "USD",
+        unit: orchest_protocol::VoiceRateUnit::BilledCharacter,
+        price_per_unit: 0.286706 / 10_000.0,
+        scope: "CosyVoice v2, Beijing",
+        source_url: "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
+    };
 
 const DEFAULT_WS_URL: &str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/";
 
@@ -92,6 +102,13 @@ pub enum AliyunTtsEvent {
 /// Parse a DashScope server **text** event (`task-finished` / `task-failed`).
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn parse_server_event(text: &str) -> Result<AliyunTtsEvent, ProtocolError> {
+    parse_server_event_with_usage(text).map(|(event, _)| event)
+}
+
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
+fn parse_server_event_with_usage(
+    text: &str,
+) -> Result<(AliyunTtsEvent, Option<u64>), ProtocolError> {
     let value: Value = serde_json::from_str(text).map_err(|e| {
         ProtocolError::new(
             ErrorCode::ProviderStreamError,
@@ -100,7 +117,7 @@ pub fn parse_server_event(text: &str) -> Result<AliyunTtsEvent, ProtocolError> {
     })?;
     let header = value.get("header");
     let event = header.and_then(|h| h.get("event")).and_then(Value::as_str);
-    Ok(match event {
+    let event = match event {
         Some("task-finished") => AliyunTtsEvent::Finished,
         Some("task-failed") => AliyunTtsEvent::Failed(
             header
@@ -110,7 +127,13 @@ pub fn parse_server_event(text: &str) -> Result<AliyunTtsEvent, ProtocolError> {
                 .to_owned(),
         ),
         _ => AliyunTtsEvent::Other,
-    })
+    };
+    Ok((
+        event,
+        value
+            .pointer("/payload/usage/characters")
+            .and_then(Value::as_u64),
+    ))
 }
 
 /// Drive one DashScope synthesis: send `run-task` / `continue-task(text)` /
@@ -124,14 +147,21 @@ pub async fn run_aliyun_synthesis<T: ByteDuplex>(
     finish_task: Value,
     format: AudioFormat,
     events: mpsc::Sender<StreamEvent>,
+    mut meter: VoiceMeter,
 ) {
-    for command in [run_task, continue_task, finish_task] {
+    for (index, command) in [run_task, continue_task, finish_task]
+        .into_iter()
+        .enumerate()
+    {
         if transport
             .send(WsFrame::Text(command.to_string()))
             .await
             .is_err()
         {
             return;
+        }
+        if index == 1 {
+            meter.text_sent();
         }
     }
     let mut sequence = 0u64;
@@ -152,8 +182,10 @@ pub async fn run_aliyun_synthesis<T: ByteDuplex>(
                 sequence += 1;
             }
             WsFrame::Binary(_) => {}
-            WsFrame::Text(text) => match parse_server_event(&text) {
-                Ok(AliyunTtsEvent::Finished) => {
+            WsFrame::Text(text) => match parse_server_event_with_usage(&text) {
+                Ok((AliyunTtsEvent::Finished, characters)) => {
+                    meter.billed_characters(characters);
+                    meter.complete();
                     let _ = events
                         .send(StreamEvent::Done {
                             usage: TokenUsage::default(),
@@ -161,7 +193,7 @@ pub async fn run_aliyun_synthesis<T: ByteDuplex>(
                         .await;
                     break;
                 }
-                Ok(AliyunTtsEvent::Failed(message)) => {
+                Ok((AliyunTtsEvent::Failed(message), _)) => {
                     let _ = events
                         .send(StreamEvent::Error {
                             error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
@@ -170,7 +202,7 @@ pub async fn run_aliyun_synthesis<T: ByteDuplex>(
                         .await;
                     break;
                 }
-                Ok(AliyunTtsEvent::Other) => {}
+                Ok((AliyunTtsEvent::Other, characters)) => meter.billed_characters(characters),
                 Err(error) => {
                     let _ = events.send(StreamEvent::Error { error, fatal: true }).await;
                     break;
@@ -245,6 +277,15 @@ impl AliyunTts {
         })?;
 
         let (events_tx, events) = EventStream::channel(64);
+        let (meter, events) = VoiceMeter::attach(
+            events,
+            "aliyun",
+            &self.config.model,
+            None,
+            (self.config.model == "cosyvoice-v2" && self.config.ws_url == DEFAULT_WS_URL)
+                .then_some(COSYVOICE_V2_PRICE),
+        );
+        let meter = meter.with_text(Some(&request.text));
         tokio::spawn(run_aliyun_synthesis(
             WsDuplex::new(ws_stream),
             run_task,
@@ -252,6 +293,7 @@ impl AliyunTts {
             finish_task,
             request.format,
             events_tx,
+            meter,
         ));
         Ok(events)
     }
@@ -323,21 +365,8 @@ impl Tts for AliyunTts {
         request: SynthesizeRequest,
     ) -> Result<SynthesizeResult, ProtocolError> {
         let format = request.format;
-        let mut stream = self.open_stream(request).await?;
-        let mut audio = Vec::new();
-        while let Some(event) = stream.next().await {
-            match event {
-                StreamEvent::AudioDelta { data, .. } => audio.extend_from_slice(&data),
-                StreamEvent::Error { error, .. } => return Err(error),
-                StreamEvent::Done { .. } => break,
-                _ => {}
-            }
-        }
-        Ok(SynthesizeResult {
-            audio: Bytes::from(audio),
-            format,
-            diagnostic_metadata: Value::Null,
-        })
+        let stream = self.open_stream(request).await?;
+        super::collect_synthesis(stream, format, self.provider_name(), self.model_name()).await
     }
 
     async fn stream_synthesize(
@@ -435,6 +464,7 @@ mod tests {
             build_finish_task("t"),
             AudioFormat::Mp3,
             events_tx,
+            VoiceMeter::default(),
         ));
 
         // the loop sends run-task / continue-task / finish-task as text frames

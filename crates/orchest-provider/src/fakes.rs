@@ -61,6 +61,7 @@ impl Asr for FakeAsr {
 
     async fn transcribe(&self, req: TranscribeRequest) -> Result<TranscribeResult, ProtocolError> {
         Ok(TranscribeResult {
+            voice_usage: None,
             text: self.transcript.clone(),
             language: None,
             diagnostic_metadata: serde_json::json!({"fake": true, "input_bytes": req.audio.len()}),
@@ -124,6 +125,7 @@ impl Tts for FakeTts {
     async fn synthesize(&self, req: SynthesizeRequest) -> Result<SynthesizeResult, ProtocolError> {
         let marker = format!("{}\ntext_len={}\n", self.marker_prefix, req.text.len());
         Ok(SynthesizeResult {
+            voice_usage: None,
             audio: bytes::Bytes::from(marker.into_bytes()),
             format: req.format,
             diagnostic_metadata: serde_json::json!({"fake": true}),

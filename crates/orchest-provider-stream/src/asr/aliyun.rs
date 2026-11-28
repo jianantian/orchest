@@ -7,6 +7,7 @@
 //! `result-generated` carries a `sentence` whose `sentence_end` flags whether it
 //! is committed.
 
+use crate::metering::VoiceMeter;
 use async_trait::async_trait;
 use orchest_protocol::AsrCapability;
 use orchest_protocol::{
@@ -25,6 +26,15 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
+
+pub(crate) const QWEN_STREAM_PRICE: orchest_provider_core::voice::VoicePrice =
+    orchest_provider_core::voice::VoicePrice {
+        currency: "USD",
+        unit: orchest_protocol::VoiceRateUnit::AudioSecond,
+        price_per_unit: 0.000047,
+        scope: "Qwen Audio 3.0 ASR Flash Streaming, Beijing",
+        source_url: "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
+    };
 
 const DEFAULT_WS_URL: &str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/";
 const DEFAULT_MODEL: &str = "qwen-audio-3.0-asr-flash-streaming";
@@ -74,6 +84,13 @@ pub struct ServerHeader {
 pub struct ServerPayload {
     #[serde(default)]
     pub output: Option<Output>,
+    #[serde(default)]
+    pub usage: Option<ServerUsage>,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct ServerUsage {
+    pub duration: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -287,6 +304,7 @@ pub async fn run_aliyun_stream<T: ByteDuplex>(
     mut input: mpsc::Receiver<SessionInput>,
     events: mpsc::Sender<StreamEvent>,
     ready: oneshot::Sender<Result<(), ProtocolError>>,
+    mut meter: VoiceMeter,
 ) {
     if transport.send(WsFrame::Text(run_task)).await.is_err() {
         let _ = ready.send(Err(ProtocolError::new(
@@ -355,8 +373,12 @@ pub async fn run_aliyun_stream<T: ByteDuplex>(
                         }).await;
                         break;
                     }
+                    meter.audio_sent(bytes.len());
                 }
-                None | Some(SessionInput::Interrupt) => {
+                end @ (None | Some(SessionInput::Interrupt)) => {
+                    if end.is_some() {
+                        meter.cancel();
+                    }
                     input_open = false;
                     if transport.send(WsFrame::Text(finish_task.clone())).await.is_err() {
                         let _ = events.send(StreamEvent::Error {
@@ -379,6 +401,19 @@ pub async fn run_aliyun_stream<T: ByteDuplex>(
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_text) {
                 Some(text) => match parse_server_event(text) {
                     Ok(event) => {
+                        if let Some(seconds) = event.payload.as_ref().and_then(|payload| payload.usage.as_ref()).and_then(|usage| usage.duration) {
+                            let source = match meter.model() {
+                                Some("qwen-audio-3.0-asr-flash-streaming" | "fun-asr-realtime") =>
+                                    orchest_protocol::VoiceUsageSource::ProviderBilled,
+                                _ => orchest_protocol::VoiceUsageSource::ProviderReported,
+                            };
+                            meter.reported_audio(orchest_provider_core::voice::duration_from_seconds(
+                                seconds, source,
+                            ));
+                        }
+                        if event.header.event == "task-finished" {
+                            meter.complete();
+                        }
                         let terminal = matches!(
                             event.header.event.as_str(),
                             "task-finished" | "task-failed"
@@ -551,6 +586,9 @@ impl Asr for AliyunAsr {
         if let Some(language) = request.language {
             options.insert("language_hints".into(), json!([language.0]));
         }
+        let sample_rate = options.get("sample_rate").map_or(Some(16_000), |value| {
+            value.as_u64().or_else(|| value.as_str()?.parse().ok())
+        });
         let run_task = build_run_task(&task_id, &self.config.model, &Value::Object(options))?;
         let finish_task = build_finish_task(&task_id)?;
 
@@ -579,6 +617,15 @@ impl Asr for AliyunAsr {
 
         let (input_tx, input_rx) = mpsc::channel(32);
         let (events_tx, events) = EventStream::channel(64);
+        let (meter, events) = VoiceMeter::attach(
+            events,
+            "aliyun",
+            &self.config.model,
+            sample_rate.and_then(|rate| crate::metering::pcm16(request.format, rate, 1)),
+            (self.config.model == "qwen-audio-3.0-asr-flash-streaming"
+                && self.config.ws_url == DEFAULT_WS_URL)
+                .then_some(QWEN_STREAM_PRICE),
+        );
         let (ready_tx, ready_rx) = oneshot::channel();
         tokio::spawn(run_aliyun_stream(
             crate::fixture::live(WsDuplex::new(ws_stream)),
@@ -587,6 +634,7 @@ impl Asr for AliyunAsr {
             input_rx,
             events_tx,
             ready_tx,
+            meter,
         ));
         ready_rx.await.map_err(|_| {
             ProtocolError::new(
@@ -773,12 +821,19 @@ mod tests {
             inbound: in_rx,
         };
         let (input_tx, input_rx) = mpsc::channel(8);
-        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let (events_tx, events) = EventStream::channel(8);
+        let (meter, mut events_rx) = VoiceMeter::attach(
+            events,
+            "aliyun",
+            "qwen-audio-3.0-asr-flash-streaming",
+            Some((16_000, 2)),
+            Some(QWEN_STREAM_PRICE),
+        );
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let run = build_run_task("t", "m", &json!({})).unwrap();
         let finish = build_finish_task("t").unwrap();
         let handle = tokio::spawn(run_aliyun_stream(
-            transport, run, finish, input_rx, events_tx, ready_tx,
+            transport, run, finish, input_rx, events_tx, ready_tx, meter,
         ));
 
         // first frame is the run-task text
@@ -788,7 +843,7 @@ mod tests {
         }
         // audio in -> binary
         input_tx
-            .send(SessionInput::Audio(bytes::Bytes::from_static(b"pcm")))
+            .send(SessionInput::Audio(bytes::Bytes::from(vec![0; 3_200])))
             .await
             .unwrap();
         assert!(
@@ -808,22 +863,40 @@ mod tests {
             .send(WsFrame::Text(event("result-generated", Some("done"), true)))
             .await
             .unwrap();
+        for seconds in [1, 2] {
+            let mut result: Value =
+                serde_json::from_str(&event("result-generated", None, false)).unwrap();
+            result["payload"]["usage"] = json!({"duration": seconds});
+            in_tx.send(WsFrame::Text(result.to_string())).await.unwrap();
+        }
         in_tx
             .send(WsFrame::Text(event("task-finished", None, false)))
             .await
             .unwrap();
         assert!(matches!(
-            events_rx.recv().await.unwrap(),
+            events_rx.next().await.unwrap(),
             StreamEvent::Transcript {
                 stability: TranscriptStability::Committed,
                 ..
             }
         ));
         assert!(matches!(
-            events_rx.recv().await.unwrap(),
+            events_rx.next().await.unwrap(),
             StreamEvent::Lifecycle(LifecycleEvent::EndOfSpeech { .. })
         ));
+        while events_rx.next().await.is_some() {}
         handle.await.unwrap();
+        let usage = events_rx.take_voice_usage().await.unwrap();
+        assert_eq!(usage.outcome, orchest_protocol::VoiceOutcome::Completed);
+        assert_eq!(
+            usage.audio_duration_ms,
+            Some(orchest_protocol::VoiceQuantity {
+                value: 2_000,
+                source: orchest_protocol::VoiceUsageSource::ProviderBilled,
+            })
+        );
+        assert!(usage.cost_estimate.is_some());
+        assert!(events_rx.take_voice_usage().await.is_none());
     }
 
     #[tokio::test]
@@ -835,12 +908,19 @@ mod tests {
             inbound: in_rx,
         };
         let (_input_tx, input_rx) = mpsc::channel(8);
-        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let (events_tx, events) = EventStream::channel(8);
+        let (meter, mut events_rx) = VoiceMeter::attach(
+            events,
+            "aliyun",
+            "qwen-audio-3.0-asr-flash-streaming",
+            Some((16_000, 2)),
+            Some(QWEN_STREAM_PRICE),
+        );
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let run = build_run_task("t", "m", &json!({})).unwrap();
         let finish = build_finish_task("t").unwrap();
         let handle = tokio::spawn(run_aliyun_stream(
-            transport, run, finish, input_rx, events_tx, ready_tx,
+            transport, run, finish, input_rx, events_tx, ready_tx, meter,
         ));
 
         assert!(matches!(out_rx.recv().await, Some(WsFrame::Text(_))));
@@ -852,7 +932,7 @@ mod tests {
         drop(in_tx);
 
         assert!(matches!(
-            events_rx.recv().await,
+            events_rx.next().await,
             Some(StreamEvent::Error {
                 fatal: true,
                 error: ProtocolError {
@@ -862,6 +942,10 @@ mod tests {
             })
         ));
         handle.await.unwrap();
+        let usage = events_rx.take_voice_usage().await.unwrap();
+        assert_eq!(usage.outcome, orchest_protocol::VoiceOutcome::Failed);
+        assert_eq!(usage.audio_duration_ms, None);
+        assert!(usage.cost_estimate.is_none());
     }
 
     #[tokio::test]
@@ -878,7 +962,13 @@ mod tests {
         let run = build_run_task("t", "m", &json!({})).unwrap();
         let finish = build_finish_task("t").unwrap();
         let _handle = tokio::spawn(run_aliyun_stream(
-            transport, run, finish, input_rx, events_tx, ready_tx,
+            transport,
+            run,
+            finish,
+            input_rx,
+            events_tx,
+            ready_tx,
+            VoiceMeter::default(),
         ));
         assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Text(_)));
         in_tx

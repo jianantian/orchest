@@ -16,6 +16,7 @@
 pub mod asr;
 pub mod catalog;
 pub mod fixture;
+pub mod metering;
 pub mod omni;
 pub mod openspeech;
 pub mod transport;

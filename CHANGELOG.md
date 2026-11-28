@@ -19,6 +19,9 @@ except for the items `orchest-provider` re-exports.
 - Discover ASR and TTS models with provider route and adapter capability details.
   Voice requests can require cataloged capabilities before provider I/O.
 
+- Record typed ASR/TTS usage on Rust results and voice streams, with published
+  list-price estimates where the model, route and units match.
+
 - Add a session-instance-bound, paginated reader for model attempt metadata.
 
 - Add a structured SQLite session writer conflict error for the local SDK

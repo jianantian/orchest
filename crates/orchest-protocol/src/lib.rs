@@ -16,6 +16,7 @@ pub mod options;
 pub mod response;
 pub mod stream;
 pub mod types;
+mod voice;
 
 // --- chat ---
 pub use adapter::ChatModel;
@@ -64,4 +65,9 @@ pub use stream::{
 // --- content model ---
 pub use types::{
     ContentBlock, JsonSchema, MediaSource, Message, ModelSpec, ProviderRuntimeConfig, Role, ToolDef,
+};
+
+pub use voice::{
+    VoiceCostEstimate, VoiceOutcome, VoiceQuantity, VoiceRate, VoiceRateUnit, VoiceUsage,
+    VoiceUsageSource,
 };

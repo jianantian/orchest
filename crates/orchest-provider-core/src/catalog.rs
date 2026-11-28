@@ -171,6 +171,8 @@ pub struct ModelRecord {
     /// At most one default per (capability, provider) across enabled features.
     pub default_for_provider: bool,
     pub pricing: Option<ModelPricing>,
+    /// A public voice list rate, where applicable to this model and route.
+    pub voice_pricing: Option<crate::voice::VoicePrice>,
     pub ext: CatalogExt,
 }
 
@@ -346,6 +348,7 @@ mod tests {
             status: ModelStatus::Stable,
             default_for_provider: true,
             pricing: None,
+            voice_pricing: None,
             ext: CatalogExt::Asr(AsrCatalogExt::direct("test", &[])),
         }
     }
@@ -386,6 +389,7 @@ mod tests {
             status: ModelStatus::Stable,
             default_for_provider: true,
             pricing: Some(pricing.clone()),
+            voice_pricing: None,
             ext: CatalogExt::Chat(ChatCatalogExt {
                 context_window: 128_000,
                 max_output_tokens: Some(16_384),

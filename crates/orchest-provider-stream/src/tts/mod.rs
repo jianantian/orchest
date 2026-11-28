@@ -10,7 +10,11 @@ pub mod aliyun;
 pub mod minimax;
 pub mod volcengine;
 
-use orchest_protocol::{ErrorCode, ProtocolError, SynthesizeRequest};
+use bytes::Bytes;
+use orchest_protocol::{
+    AudioFormat, ErrorCode, EventStream, ProtocolError, StreamEvent, SynthesizeRequest,
+    SynthesizeResult, VoiceOutcome,
+};
 
 /// Resolve a required non-empty voice from [`SynthesizeRequest`].
 ///
@@ -26,6 +30,41 @@ pub(crate) fn require_explicit_voice(request: &SynthesizeRequest) -> Result<&str
             "SynthesizeRequest.voice is required for this TTS dialect; None/empty is not a provider default — supply an explicit voice id",
         )),
     }
+}
+
+pub(crate) async fn collect_synthesis(
+    mut stream: EventStream,
+    format: AudioFormat,
+    provider: &str,
+    model: &str,
+) -> Result<SynthesizeResult, ProtocolError> {
+    let mut audio = Vec::new();
+    while let Some(event) = stream.next().await {
+        match event {
+            StreamEvent::AudioDelta { data, .. } => audio.extend_from_slice(&data),
+            StreamEvent::Error { error, .. } => return Err(error),
+            StreamEvent::Done { .. } => break,
+            _ => {}
+        }
+    }
+    let voice_usage = stream.take_voice_usage().await;
+    if voice_usage
+        .as_ref()
+        .is_some_and(|usage| usage.outcome == VoiceOutcome::Failed)
+    {
+        return Err(ProtocolError::new(
+            ErrorCode::ProviderStreamError,
+            "speech synthesis ended without a completion event",
+        )
+        .with_provider(provider)
+        .with_model(model));
+    }
+    Ok(SynthesizeResult {
+        voice_usage,
+        audio: Bytes::from(audio),
+        format,
+        diagnostic_metadata: serde_json::Value::Null,
+    })
 }
 
 #[cfg(test)]

@@ -14,6 +14,7 @@ pub static STREAM_TTS_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             "Volcengine TTS",
             "Volcengine OpenSpeech unidirectional WebSocket synthesis",
             crate::tts::volcengine::CATALOG_EXT,
+            None,
         ),
         (
             "minimax",
@@ -22,6 +23,7 @@ pub static STREAM_TTS_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             "MiniMax Speech 2.8 HD",
             "MiniMax WebSocket speech synthesis",
             crate::tts::minimax::CATALOG_EXT,
+            Some(crate::tts::minimax::SPEECH_HD_PRICE),
         ),
         (
             "aliyun",
@@ -30,11 +32,12 @@ pub static STREAM_TTS_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             "Aliyun CosyVoice v2",
             "DashScope CosyVoice WebSocket speech synthesis",
             crate::tts::aliyun::CATALOG_EXT,
+            Some(crate::tts::aliyun::COSYVOICE_V2_PRICE),
         ),
     ]
     .into_iter()
     .map(
-        |(provider, model, id, display_name, description, tts)| ModelRecord {
+        |(provider, model, id, display_name, description, tts, voice_pricing)| ModelRecord {
             id,
             provider,
             model,
@@ -51,6 +54,7 @@ pub static STREAM_TTS_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Stable,
             default_for_provider: false,
             pricing: None,
+            voice_pricing,
             ext: CatalogExt::Tts(tts),
         },
     )

@@ -38,6 +38,7 @@ pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Deprecated,
             default_for_provider: false,
             pricing: None,
+            voice_pricing: None,
             ext: CatalogExt::Asr(crate::asr::aliyun::CATALOG_EXT),
         },
         // Source: https://help.aliyun.com/zh/model-studio/fun-asr-client-events
@@ -61,6 +62,7 @@ pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Stable,
             default_for_provider: true,
             pricing: None,
+            voice_pricing: Some(crate::asr::aliyun::QWEN_STREAM_PRICE),
             ext: CatalogExt::Asr(crate::asr::aliyun::CATALOG_EXT),
         },
         // Source: docs/external/volceengine/asr.md
@@ -81,6 +83,7 @@ pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Stable,
             default_for_provider: true,
             pricing: None,
+            voice_pricing: None,
             ext: CatalogExt::Asr(crate::asr::volcengine::CATALOG_EXT),
         },
         // Source: docs/archive/iteration/v0_9_6/asr-provider-guide.md
@@ -101,6 +104,7 @@ pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Stable,
             default_for_provider: true,
             pricing: None,
+            voice_pricing: Some(crate::asr::deepgram::NOVA_3_PRICE),
             ext: CatalogExt::Asr(crate::asr::deepgram::CATALOG_EXT),
         },
         // Source: docs/archive/iteration/v0_9_6/asr-provider-guide.md
@@ -121,6 +125,7 @@ pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Stable,
             default_for_provider: true,
             pricing: None,
+            voice_pricing: None,
             ext: CatalogExt::Asr(crate::asr::soniox::CATALOG_EXT),
         },
         // Source: docs/archive/iteration/v0_9_6/asr-provider-guide.md
@@ -141,6 +146,7 @@ pub static STREAM_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Stable,
             default_for_provider: true,
             pricing: None,
+            voice_pricing: None,
             ext: CatalogExt::Asr(crate::asr::elevenlabs::CATALOG_EXT),
         },
     ]

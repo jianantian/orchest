@@ -29,6 +29,7 @@ pub static HTTP_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Stable,
             default_for_provider: false,
             pricing: None,
+            voice_pricing: Some(crate::asr::aliyun::QWEN_BATCH_PRICE),
             ext: CatalogExt::Asr(crate::asr::aliyun::CATALOG_EXT),
         },
         ModelRecord {
@@ -48,6 +49,7 @@ pub static HTTP_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Stable,
             default_for_provider: false,
             pricing: None,
+            voice_pricing: None,
             ext: CatalogExt::Asr(crate::asr::aliyun::CATALOG_EXT),
         },
         // Source: docs/archive/iteration/v0_9_6/asr-provider-guide.md
@@ -68,6 +70,7 @@ pub static HTTP_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Stable,
             default_for_provider: true,
             pricing: None,
+            voice_pricing: None,
             ext: CatalogExt::Asr(crate::asr::assemblyai::CATALOG_EXT),
         },
         // Source: docs/archive/iteration/v0_9_6/asr-provider-guide.md
@@ -89,6 +92,7 @@ pub static HTTP_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Stable,
             default_for_provider: true,
             pricing: None,
+            voice_pricing: None,
             ext: CatalogExt::Asr(crate::asr::speechmatics::CATALOG_EXT),
         },
     ]

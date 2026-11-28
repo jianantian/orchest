@@ -36,8 +36,14 @@ pub struct SpeechmaticsConfig {
 
 #[derive(Debug, Deserialize)]
 struct Transcript {
+    job: Option<TranscriptJob>,
     #[serde(default)]
     results: Vec<ResultItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TranscriptJob {
+    duration: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -324,8 +330,30 @@ impl Asr for SpeechmaticsAsr {
         let id = self.submit_job(config, request.audio.to_vec()).await?;
         self.poll_job(&id).await?;
         let transcript = self.fetch_transcript(&id).await?;
+        let reported = transcript
+            .job
+            .and_then(|job| job.duration)
+            .and_then(|seconds| {
+                orchest_provider_core::voice::duration_from_seconds(
+                    seconds,
+                    orchest_protocol::VoiceUsageSource::ProviderReported,
+                )
+            });
+        let model = request
+            .options
+            .get("operating_point")
+            .and_then(Value::as_str)
+            .unwrap_or(&self.config.model);
+        let usage = orchest_provider_core::voice::batch_audio_usage(
+            "speechmatics",
+            model,
+            request.format,
+            &request.audio,
+            reported,
+        );
         let (text, language) = assemble_transcript(transcript.results);
         Ok(TranscribeResult {
+            voice_usage: Some(usage),
             text,
             language: language.map(Language),
             diagnostic_metadata: json!({ "provider": "speechmatics" }),
