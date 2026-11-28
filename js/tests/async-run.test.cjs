@@ -3,7 +3,8 @@
 const assert = require("node:assert/strict");
 const http = require("node:http");
 const { once } = require("node:events");
-const { existsSync, readFileSync } = require("node:fs");
+const { existsSync, mkdtempSync, readFileSync, rmSync } = require("node:fs");
+const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const test = require("node:test");
 
@@ -149,6 +150,41 @@ test("async run streams without blocking Node and shares agent occupancy", { tim
     }
 
     assert.equal((await first.runSync("legacy")).at(-1).type, "run_completed");
+    const directory = mkdtempSync(join(tmpdir(), "orchest-session-"));
+    const session = { sqlitePath: join(directory, "session.sqlite"), sessionId: "shared" };
+    const drain = async (run) => {
+      try {
+        for await (const event of run) {
+          if (event.type === "run_failed") assert.fail(event.error);
+        }
+        assert.equal((await run.wait()).type, "run_completed");
+      } finally {
+        await run.close();
+      }
+    };
+    try {
+      await assert.rejects(first.resumeSession(), { code: "session_not_configured" });
+      await assert.rejects(first.resumeSession(session), { code: "session_not_found" });
+      const activeAgent = makeAgent();
+      activeAgent.registerToolWithHandler("probe", "fixture", { type: "object" }, () => "ok", { approval: "always" });
+      const stored = await activeAgent.startRun("stored", undefined, session);
+      try {
+        const id = await requestFor(stored);
+        assert.equal(stored.capabilities().resume, true);
+        await assert.rejects(first.resumeSession(session), { code: "session_writer_conflict" });
+        await assert.rejects(first.startRun("duplicate", undefined, session), { code: "session_writer_conflict" });
+        await drain(await first.startRun("parallel", undefined, { ...session, sessionId: "parallel" }));
+        await stored.respond(id, { decision: "approve" });
+        await drain(stored);
+      } finally {
+        await stored.close();
+      }
+      await assert.rejects(first.startRun("existing", undefined, session), { code: "session_already_exists" });
+      await drain(await makeAgent().resumeSession(session));
+      await drain(await makeAgent().resumeSession(session, "follow-up"));
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   } finally {
     releaseModel();
     server.closeAllConnections();

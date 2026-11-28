@@ -15,11 +15,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use orchest::bindings::run::{BindingRunSlot, BindingRunStream};
+use orchest::bindings::run::BindingRunSlot;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use run_stream::{run_error, NativeRun};
+use run_stream::{run_error, session_options, wrap_run, NativeRun};
 use serde_json::Value;
 
 use orchest::bindings::{
@@ -775,32 +775,57 @@ impl Agent {
     }
 
     /// Start a run for asynchronous, pull-based event consumption.
-    #[pyo3(signature = (input, messages=None))]
+    #[pyo3(signature = (input, messages=None, *, session=None))]
     fn start_run<'py>(
         &self,
         py: Python<'py>,
         input: String,
         messages: Option<Vec<Py<PyAny>>>,
+        session: Option<&Bound<'py, PyDict>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let reservation = self.run_slot.reserve().map_err(run_error)?;
+        let session = session.map(session_options).transpose()?;
         let config = self.build_config()?;
         let registry = self.build_registry()?;
         let model = self.build_model()?;
         let messages = py_messages_to_core(py, messages)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let (handle, events) = AgentRun::start_with_messages(
-                config,
-                messages,
-                RunInput::text(input),
-                model,
-                registry,
-            );
-            let stream = BindingRunStream::new(reservation.attach(handle), events);
-            Python::attach(|py| {
-                let native = Py::new(py, NativeRun(Arc::new(stream)))?;
-                let value = py.import("orchest")?.getattr("Run")?.call1((native,))?;
-                Ok(value.unbind())
-            })
+            let stream = reservation
+                .start(
+                    config,
+                    model,
+                    registry,
+                    RunInput::text(input),
+                    messages,
+                    session,
+                )
+                .await
+                .map_err(run_error)?;
+            wrap_run(stream)
+        })
+    }
+
+    /// Resume a local session, optionally appending a new user turn.
+    #[pyo3(signature = (session=None, input=None))]
+    fn resume_session<'py>(
+        &self,
+        py: Python<'py>,
+        session: Option<&Bound<'py, PyDict>>,
+        input: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let reservation = self.run_slot.reserve().map_err(run_error)?;
+        let session = session
+            .ok_or_else(|| run_error(orchest::session::SessionError::NotConfigured.into()))?;
+        let session = session_options(session)?;
+        let config = self.build_config()?;
+        let registry = self.build_registry()?;
+        let model = self.build_model()?;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let stream = reservation
+                .resume(config, model, registry, session, input.map(RunInput::text))
+                .await
+                .map_err(run_error)?;
+            wrap_run(stream)
         })
     }
 

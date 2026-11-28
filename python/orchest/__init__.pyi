@@ -791,6 +791,11 @@ class Capabilities(TypedDict):
     lossless_events: bool
 
 
+class SessionOptions(TypedDict):
+    sqlite_path: str
+    session_id: str
+
+
 class Run:
     def __aiter__(self) -> Run: ...
     async def __anext__(self) -> RuntimeEvent: ...
@@ -859,7 +864,11 @@ class Agent:
     # {"role": "user", "content": [{"Text": "..."}]}); forwarded to
     # AgentRun.start_with_messages as the run's initial history.
     def start_run(
-        self, input: str, messages: list[dict[str, Any]] | None = None
+        self, input: str, messages: list[dict[str, Any]] | None = None,
+        *, session: SessionOptions | None = None,
+    ) -> Awaitable[Run]: ...
+    def resume_session(
+        self, session: SessionOptions, input: str | None = None
     ) -> Awaitable[Run]: ...
     def run_sync(self, input: str, messages: list[dict[str, Any]] | None = None) -> list[RuntimeEvent]: ...
     def run(self, input: str, messages: list[dict[str, Any]] | None = None) -> list[RuntimeEvent]: ...

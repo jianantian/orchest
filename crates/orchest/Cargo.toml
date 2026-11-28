@@ -30,10 +30,11 @@ metrics = "0.24"
 tiktoken-rs = "0.6"
 httparse = "1"
 ractor = { version = "0.15", features = ["message_span_propogation"] }
+fs2 = { version = "0.4.3", optional = true }
 rusqlite = { version = "0.31", features = ["bundled"], optional = true }
 
 [features]
-sqlite-session = ["dep:rusqlite"]
+sqlite-session = ["dep:rusqlite", "dep:fs2"]
 session-evidence = ["dep:rusqlite"]
 
 [target.'cfg(unix)'.dependencies]

@@ -25,8 +25,8 @@ use napi::threadsafe_function::{
     ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 };
 use napi_derive::napi;
-use orchest::bindings::run::{BindingRunSlot, BindingRunStream};
-use run_stream::{run_error, NativeRun};
+use orchest::bindings::run::BindingRunSlot;
+use run_stream::{run_error, NativeRun, SessionOptions};
 use serde_json::Value;
 
 use orchest::bindings::{
@@ -618,23 +618,51 @@ impl Agent {
     }
 
     #[napi(js_name = "_startRun")]
-    pub fn start_run(
+    pub async fn start_run(
         &self,
         input: String,
         messages: Option<Vec<Value>>,
+        session: Option<SessionOptions>,
     ) -> napi::Result<NativeRun> {
         let reservation = self.run_slot.reserve().map_err(run_error)?;
+        let session = session
+            .map(SessionOptions::into_binding)
+            .transpose()
+            .map_err(run_error)?;
         let (config, registry, model, initial_messages) = self.prepare_run(messages)?;
-        let _runtime = shared_runtime().enter();
-        let (handle, events) = AgentRun::start_with_messages(
-            config,
-            initial_messages,
-            RunInput::text(input),
-            model,
-            registry,
-        );
+        let stream = reservation
+            .start(
+                config,
+                model,
+                registry,
+                RunInput::text(input),
+                initial_messages,
+                session,
+            )
+            .await
+            .map_err(run_error)?;
         Ok(NativeRun {
-            stream: Arc::new(BindingRunStream::new(reservation.attach(handle), events)),
+            stream: Arc::new(stream),
+        })
+    }
+
+    #[napi(js_name = "_resumeSession")]
+    pub async fn resume_session(
+        &self,
+        session: Option<SessionOptions>,
+        input: Option<String>,
+    ) -> napi::Result<NativeRun> {
+        let reservation = self.run_slot.reserve().map_err(run_error)?;
+        let session = session
+            .ok_or_else(|| run_error(orchest::session::SessionError::NotConfigured.into()))?;
+        let session = session.into_binding().map_err(run_error)?;
+        let (config, registry, model, _) = self.prepare_run(None)?;
+        let stream = reservation
+            .resume(config, model, registry, session, input.map(RunInput::text))
+            .await
+            .map_err(run_error)?;
+        Ok(NativeRun {
+            stream: Arc::new(stream),
         })
     }
 

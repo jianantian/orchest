@@ -139,6 +139,13 @@ declare class Agent extends native.Agent {
      * Start a run for asynchronous, pull-based event consumption.
      * @param {string} input
      * @param {import("./types").HistoryMessage[]} [messages]
+     * @param {import("./types").SessionOptions} [session]
      */
-    startRun(input: string, messages?: import("./types").HistoryMessage[]): Promise<Run>;
+    startRun(input: string, messages?: import("./types").HistoryMessage[], session?: import("./types").SessionOptions): Promise<Run>;
+    /**
+     * Resume a local session, optionally appending a new user turn.
+     * @param {import("./types").SessionOptions} session
+     * @param {string} [input]
+     */
+    resumeSession(session: import("./types").SessionOptions, input?: string): Promise<Run>;
 }

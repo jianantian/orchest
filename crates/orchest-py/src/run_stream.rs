@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
 use orchest::bindings::run::{BindingRunError, BindingRunStream};
+use orchest::bindings::session::BindingSessionOptions;
+use orchest::session::SessionError;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use super::runtime_event_to_dict;
 
@@ -15,6 +18,25 @@ pub fn run_error(error: BindingRunError) -> PyErr {
         Ok(PyErr::from_value(instance))
     })
     .unwrap_or_else(|_| PyRuntimeError::new_err(error.to_string()))
+}
+
+pub fn session_options(session: &Bound<'_, PyDict>) -> PyResult<BindingSessionOptions> {
+    let string = |key| {
+        session
+            .get_item(key)?
+            .map(|value| value.extract::<String>())
+            .transpose()
+            .map_err(|_| run_error(SessionError::NotConfigured.into()))
+    };
+    BindingSessionOptions::new(string("sqlite_path")?, string("session_id")?).map_err(run_error)
+}
+
+pub fn wrap_run(stream: BindingRunStream) -> PyResult<Py<PyAny>> {
+    Python::attach(|py| {
+        let native = Py::new(py, NativeRun(Arc::new(stream)))?;
+        let value = py.import("orchest")?.getattr("Run")?.call1((native,))?;
+        Ok(value.unbind())
+    })
 }
 
 #[pyclass(name = "_NativeRun")]

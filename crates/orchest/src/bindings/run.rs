@@ -27,6 +27,9 @@ pub enum BindingRunError {
     InvalidResponse(String),
     #[error(transparent)]
     RequestNotFound(#[from] RequestError),
+    #[cfg(feature = "sqlite-session")]
+    #[error(transparent)]
+    Session(#[from] crate::session::SessionError),
 }
 
 impl BindingRunError {
@@ -38,6 +41,14 @@ impl BindingRunError {
             Self::MissingResult => "run_missing_result",
             Self::InvalidResponse(_) => "invalid_response",
             Self::RequestNotFound(_) => "request_not_found",
+            #[cfg(feature = "sqlite-session")]
+            Self::Session(error) => match error {
+                crate::session::SessionError::NotConfigured => "session_not_configured",
+                crate::session::SessionError::NotFound(_) => "session_not_found",
+                crate::session::SessionError::AlreadyExists(_) => "session_already_exists",
+                crate::session::SessionError::WriterConflict(_) => "session_writer_conflict",
+                _ => "session_storage_error",
+            },
         }
     }
 }
@@ -82,12 +93,21 @@ pub struct BindingRunReservation(BindingRunSlot);
 impl BindingRunReservation {
     /// Call on the runtime that owns the new run.
     pub fn attach(self, handle: RunHandle) -> BindingRun {
+        self.attach_with_writer(handle, ())
+    }
+
+    pub(crate) fn attach_with_writer(
+        self,
+        handle: RunHandle,
+        writer: impl Send + 'static,
+    ) -> BindingRun {
         let handle = Arc::new(handle);
         *self.0.state() = SlotState::Running(Arc::clone(&handle));
         let (done, completion) = watch::channel(());
         let active = Arc::clone(&handle);
         tokio::spawn(async move {
             active.wait_for_task().await;
+            drop(writer);
             drop(self);
             drop(done);
         });

@@ -717,12 +717,18 @@ async fn open_fresh_session(
     binding: &SessionBinding,
     agent_name: &str,
 ) -> Result<(), SessionError> {
-    if !binding.store.read(&binding.session_id, 1).await?.is_empty() {
-        return Err(SessionError::AlreadyExists(binding.session_id.clone()));
-    }
+    ensure_fresh_session(binding).await?;
     let meta =
         SessionMeta::new(&binding.session_id, agent_name).with_checkpoint_policy(binding.policy);
     binding.store.put_meta(&meta).await
+}
+
+pub(crate) async fn ensure_fresh_session(binding: &SessionBinding) -> Result<(), SessionError> {
+    if binding.store.read(&binding.session_id, 1).await?.is_empty() {
+        Ok(())
+    } else {
+        Err(SessionError::AlreadyExists(binding.session_id.clone()))
+    }
 }
 
 /// Hands the log's unpersisted events to the store, then crosses the

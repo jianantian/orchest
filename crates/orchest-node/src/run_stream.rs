@@ -3,10 +3,23 @@ use std::sync::Arc;
 use napi_derive::napi;
 use orchest::bindings::run::{BindingRunError, BindingRunStream};
 use orchest::bindings::runtime_event_to_wire_value;
+use orchest::bindings::session::BindingSessionOptions;
 use serde_json::Value;
 
 pub fn run_error(error: BindingRunError) -> napi::Error {
     napi::Error::from_reason(format!("__ORCHEST_RUN_ERROR__:{}:{error}", error.code()))
+}
+
+#[napi(object)]
+pub struct SessionOptions {
+    pub sqlite_path: Option<String>,
+    pub session_id: Option<String>,
+}
+
+impl SessionOptions {
+    pub fn into_binding(self) -> Result<BindingSessionOptions, BindingRunError> {
+        BindingSessionOptions::new(self.sqlite_path, self.session_id)
+    }
 }
 
 #[napi]

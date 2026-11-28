@@ -17,6 +17,7 @@ import type {
   HistoryMessage,
   RequestResponse,
   RuntimeEvent,
+  SessionOptions,
   ToolEffect,
   TranscribeOptions,
 } from "./types";
@@ -49,7 +50,9 @@ export class NativeRun {
 export class Agent {
   constructor(options: AgentOptions);
   /** @internal */
-  _startRun(input: string, messages?: HistoryMessage[]): NativeRun;
+  _startRun(input: string, messages?: HistoryMessage[], session?: SessionOptions): Promise<NativeRun>;
+  /** @internal */
+  _resumeSession(session?: SessionOptions, input?: string): Promise<NativeRun>;
 
   /** Register a tool with schema only (no handler — tool calls will error). */
   registerTool(options: {

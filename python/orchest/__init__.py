@@ -81,6 +81,11 @@ class Capabilities(TypedDict):
     lossless_events: bool
 
 
+class SessionOptions(TypedDict):
+    sqlite_path: str
+    session_id: str
+
+
 class Run:
     """An active agent run and its single, pull-based event iterator."""
 
@@ -418,6 +423,7 @@ __all__ = [
     "RuntimeEvent",
     "CancelReason",
     "RequestResponse",
+    "SessionOptions",
     "Capabilities",
     "ToolEffect",
     "ApprovalScope",

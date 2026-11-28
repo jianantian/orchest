@@ -388,6 +388,12 @@ export type RuntimeEvent =
   | { type: "run_aborted"; reason: string | null; cancel_reason: CancelReason | null; run_depth: number; child_run_id: string | null }
   | { type: "processes_terminated"; terminated: number | null; error: string | null; run_depth: number; child_run_id: string | null };
 
+/** File-backed Session v2 storage selected by the host. */
+export interface SessionOptions {
+  sqlitePath: string;
+  sessionId: string;
+}
+
 export interface HistoryMessage {
   /** "system" | "user" | "assistant" | "tool" (plus provider-specific roles). */
   role: string;

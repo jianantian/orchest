@@ -298,10 +298,24 @@ class Agent extends native.Agent {
    * Start a run for asynchronous, pull-based event consumption.
    * @param {string} input
    * @param {import("./types").HistoryMessage[]} [messages]
+   * @param {import("./types").SessionOptions} [session]
    */
-  async startRun(input, messages) {
+  async startRun(input, messages, session) {
     try {
-      return new Run(this._startRun(input, messages));
+      return new Run(await this._startRun(input, messages, session));
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+
+  /**
+   * Resume a local session, optionally appending a new user turn.
+   * @param {import("./types").SessionOptions} session
+   * @param {string} [input]
+   */
+  async resumeSession(session, input) {
+    try {
+      return new Run(await this._resumeSession(session, input));
     } catch (error) {
       throw normalizeRunError(error);
     }

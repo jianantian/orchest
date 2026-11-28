@@ -3,17 +3,24 @@
 //! Metadata lives in `session_meta`; events live in `session_events` keyed by
 //! `(session_id, seq)`, so a reader can resume from any sequence number.
 
+use std::fs::{File, OpenOptions}; // allow-blocking-io: used by open_for_sdk's blocking worker.
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use rusqlite::{params, Connection, OptionalExtension};
+use sha2::{Digest, Sha256};
 
 use super::log::{check_sequence, SessionEvent};
 use super::store::{SessionError, SessionMeta, SessionStore};
 
 pub struct SqliteSessionStore {
     conn: Arc<Mutex<Connection>>,
+}
+
+/// An exclusive OS lock for one SDK session writer.
+pub(crate) struct SqliteSessionWriter {
+    _lock: File,
 }
 
 fn storage(e: impl std::fmt::Display) -> SessionError {
@@ -29,6 +36,21 @@ impl SqliteSessionStore {
     pub fn open_in_memory() -> Result<Self, SessionError> {
         let conn = Connection::open_in_memory().map_err(storage)?;
         Self::init(conn)
+    }
+
+    pub(crate) async fn open_for_sdk(
+        path: std::path::PathBuf,
+        session_id: String,
+    ) -> Result<(Self, SqliteSessionWriter), SessionError> {
+        tokio::task::spawn_blocking(move || {
+            let connection = Connection::open(&path).map_err(storage)?;
+            let canonical_path = path.canonicalize().map_err(storage)?;
+            let writer = lock_session_writer(&canonical_path, &session_id)?;
+            let store = Self::init(connection)?;
+            Ok((store, writer))
+        })
+        .await
+        .map_err(storage)?
     }
 
     fn init(conn: Connection) -> Result<Self, SessionError> {
@@ -65,6 +87,47 @@ impl SqliteSessionStore {
         .await
         .map_err(storage)?
     }
+}
+
+/// Use a separate OS lock per session. The database itself stays available
+/// to other sessions while this lease is held. Keep the lock file in place
+/// so concurrent readers never lock different inodes for the same session.
+fn lock_session_writer(path: &Path, session_id: &str) -> Result<SqliteSessionWriter, SessionError> {
+    let mut key = Sha256::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = path.metadata().map_err(storage)?;
+        // Hard links can make SQLite clients use different journal files for
+        // the same database. A canonical path handles symbolic links instead.
+        if metadata.nlink() != 1 {
+            return Err(storage("SDK SQLite databases require a single hard link"));
+        }
+        key.update(metadata.dev().to_le_bytes());
+        key.update(metadata.ino().to_le_bytes());
+    }
+    #[cfg(not(unix))]
+    key.update(path.as_os_str().as_encoded_bytes());
+    key.update(session_id.as_bytes());
+    let directory = path.with_file_name(".orchest-session-locks");
+    // allow-blocking-io: the lock and path setup run in open_for_sdk's blocking worker.
+    std::fs::create_dir_all(&directory).map_err(storage)?;
+    let lock_path = directory.join(format!("{:x}.lock", key.finalize()));
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path)
+        .map_err(storage)?;
+    fs2::FileExt::try_lock_exclusive(&lock).map_err(|error| {
+        if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() {
+            SessionError::WriterConflict(session_id.to_owned())
+        } else {
+            storage(error)
+        }
+    })?;
+    Ok(SqliteSessionWriter { _lock: lock })
 }
 
 #[async_trait]

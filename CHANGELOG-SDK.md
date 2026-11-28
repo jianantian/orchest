@@ -19,6 +19,8 @@ from.
   Agent instance accepts one active run across its run entry points.
 - Answer blocking requests and query capabilities on a specific run. Run calls
   expose machine-readable errors and a complete event union in both SDKs.
+- Explicit SQLite Session v2 storage with local single-writer coordination,
+  session resume, and the option to append a new user turn on resume.
 
 ## [0.2.0]
 
