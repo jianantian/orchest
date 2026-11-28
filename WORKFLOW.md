@@ -8,6 +8,8 @@ Plan iteration/hotfix → Create all GitHub issues → One branch+worktree → O
 
 One iteration (or hotfix) = one branch = one worktree. All issues in the iteration are developed sequentially on that branch, each as a single focused commit. The GitHub Project board updates automatically via commit messages.
 
+Track internal work by iteration in `docs/iteration/`. An iteration can use a topic name and closes when its own acceptance criteria are met. Track public package releases in `docs/releases/`. Each release selects the verified capabilities from its candidate commit and records the version, tags, and installation checks.
+
 ---
 
 ## Step-by-Step
@@ -330,7 +332,7 @@ Do not use parallel worktrees for iterations that share modified files — confl
 
 Before writing any code:
 
-1. Verify the previous iteration's milestone is 100% closed
+1. Verify that any prerequisite milestone is complete
 2. Re-read the new iteration's `prd.md` to refresh scope and dependency order
 3. Create all GitHub issues (Step 2 above)
 4. Start with issue `001` — it sets up scaffolding everything else depends on

@@ -36,6 +36,7 @@ docs/
 │   ├── roadmap.md             # Living iteration roadmap + dependency graph + capability-gap map (START HERE)
 │   ├── direction.md           # Forward direction, milestones, success metrics, open decisions
 │   └── <version>/             # Active/planned iterations — each: prd.md + issues/NNN-slug/{spec,plan}.md
+├── releases/                  # Public release scope, version tags and registry verification
 ├── hotfix/<date>/              # Active refactor/repair iterations (created when needed)
 ├── archive/                    # Completed iterations + hotfixes (v0_1 … v1_0, hotfix/<date>), moved here after closeout
 ├── adr/                        # Architecture decision records (0001 provider unification … 0003 release policy)
@@ -62,7 +63,7 @@ The living iteration index is [`docs/iteration/roadmap.md`](./docs/iteration/roa
 
 The authoritative, up-to-date status lives in [`docs/iteration/roadmap.md`](./docs/iteration/roadmap.md) (已完成 / 规划中 tables + dependency graph). Do not duplicate it here.
 
-Snapshot (2026-11): the Git tags for Rust `1.2.0` (voice contract V1 and new providers) and `2.0.0` (the runtime contract in `docs/iteration/v2_0/`) preserve those historical builds. SDK `0.2.0` shipped on 2026-11-26, built on Rust crates `2.0.0` ([archived PRD](./docs/archive/iteration/sdk_v0_2/prd.md)). The [next-release plan](./docs/iteration/next/release-plan.md) covers runtime controls, voice, and Session evidence. Other candidate directions live in `docs/todo/`.
+Snapshot (2026-11): the Git tags for Rust `1.2.0` (voice contract V1 and new providers) and `2.0.0` (the runtime contract in `docs/iteration/v2_0/`) preserve those historical builds. SDK `0.2.0` shipped on 2026-11-26, built on Rust crates `2.0.0` ([archived PRD](./docs/archive/iteration/sdk_v0_2/prd.md)). The [next-release plan](./docs/releases/0.3.0.md) covers runtime controls, voice, and Session evidence. Other candidate directions live in `docs/todo/`.
 
 ---
 

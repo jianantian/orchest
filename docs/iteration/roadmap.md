@@ -68,10 +68,19 @@
 
 - **主线迭代**（v0.7、v0.8、v0.9）：runtime 核心能力演进，有依赖链
 - **卫星迭代**（v0.6.1、v0.8.1 ...）：与主线并行或从已完成主线切出的独立模块（易用性工具、扩展 crate 等）。独立 crate，不阻塞主线，按就绪时间合入
+- 新迭代可用主题命名，独立跟踪任务与验收。公开包版本和实际交付范围记录在[发布计划](../releases/0.3.0.md)。
 
 ## 规划中
 
-下一轮按运行控制、语音能力和 Session 证据推进。Rust、Python 和 JS 当前均为 `0.2.0`，下一版统一为 `0.3.0`。三端发包顺序见 [Orchest 下一版](./next/release-plan.md)。
+新 SDK 接口先验收用户的正常调用、失败恢复和资源清理路径，再验收架构边界与性能。两端先用公开 API 写出最小示例，Rust 负责共享语义，绑定负责语言习惯、类型映射与资源接线。性能验收记录固定负载、运行环境和基线波动，优先优化测得的主要开销。已有调用路径超出基线波动的回退须在迭代验收前解释并处理。
+
+| 内部迭代 | 依赖 |
+| --- | --- |
+| [运行控制](./runtime-controls/prd.md) | 沿用 Runtime 契约与 Session v2 |
+| [语音能力](./voice-capabilities/prd.md) | 沿用语音 V1 契约 |
+| [SDK Session 证据](./sdk-session-evidence/prd.md) | 依赖运行控制的本地会话恢复及 Rust 已有的 Session 证据 |
+
+Rust、Python 和 Node 的下一公开版本统一为 `0.3.0`。候选范围、标签和安装验证见[发布计划](../releases/0.3.0.md)。
 
 ### v1.2 — 语音契约补齐与新 provider（历史发行，Git 标签 `v1.2.0`）
 
@@ -87,9 +96,9 @@
 
 8 个 issue：会话事件日志 → checkpoint 与恢复 → in-flight 副作用账本 → 阻塞请求通道 → 原生权限模式表面 → 取消语义 → 事件模型与能力探测 → canonical 事件零丢失。权威范围与验收标准见 [`v2_0/prd.md`](./v2_0/prd.md)。
 
-9 个 issue 的第 9 个让 Python / Node 绑定跟上新契约并透传 `abort` 与按 request id 的回复；完整控制面纳入 [Orchest 0.3.0](./next/release-plan.md)。
+9 个 issue 的第 9 个让 Python / Node 绑定跟上新契约并透传 `abort` 与按 request id 的回复。完整控制面由[运行控制迭代](./runtime-controls/prd.md)推进。
 
-**不在范围内**：产品语义（计划提案、任务计划、Task/Thread/Workspace）；宿主权限档映射与 UI；OS 级沙箱实现（M4）；持久委派与后台子 agent（M3）；SDK 控制面的完整重设计（Orchest 0.3.0）。
+**不在范围内**：产品语义（计划提案、任务计划、Task/Thread/Workspace）；宿主权限档映射与 UI；OS 级沙箱实现（M4）；持久委派与后台子 agent（M3）；SDK 控制面的完整重设计（运行控制迭代）。
 
 ### 全双工语音补齐（后续规划）
 
@@ -152,7 +161,8 @@
         （历史标签 v2.0.0，2026-11-10）
         │
         ├─► ✅ Orchest 0.2.0: Rust / Python / Node 已发布
-        ├─► Orchest 0.3.0：运行控制面、语音 V2 + V4、Session 证据
+        ├─► SDK 运行控制 ── 本地会话恢复 ──► SDK Session 证据
+        ├─► 语音 V2 + V4（依赖语音 V1）
         ├─► 后续：全双工补齐（语音线 V5）
         ├─► ✅ Session 证据（Rust 0.2.0 已发布）
         ├─► M2: Multivac 本地默认 runtime
