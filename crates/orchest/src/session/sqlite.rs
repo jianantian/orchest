@@ -6,6 +6,8 @@
 use std::fs::{File, OpenOptions}; // allow-blocking-io: used by open_for_sdk's blocking worker.
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+#[cfg(all(feature = "session-evidence", unix))]
+use std::{os::unix::fs::MetadataExt, path::PathBuf};
 
 use async_trait::async_trait;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -16,6 +18,27 @@ use super::store::{SessionError, SessionMeta, SessionStore};
 
 pub struct SqliteSessionStore {
     conn: Arc<Mutex<Connection>>,
+    #[cfg(all(feature = "session-evidence", unix))]
+    reader_file: Option<Arc<ReaderFile>>,
+}
+
+#[cfg(all(feature = "session-evidence", unix))]
+struct ReaderFile {
+    path: PathBuf,
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(all(feature = "session-evidence", unix))]
+impl ReaderFile {
+    fn verify(&self) -> Result<(), SessionError> {
+        // allow-blocking-io: evidence readers verify the path on the blocking pool.
+        let metadata = std::fs::metadata(&self.path).map_err(storage)?;
+        if (metadata.dev(), metadata.ino()) != (self.device, self.inode) {
+            return Err(storage("the Session database file has been replaced"));
+        }
+        Ok(())
+    }
 }
 
 /// An exclusive OS lock for one SDK session writer.
@@ -38,6 +61,37 @@ impl SqliteSessionStore {
         Self::init(conn)
     }
 
+    #[cfg(feature = "session-evidence")]
+    pub(crate) async fn open_reader(path: std::path::PathBuf) -> Result<Self, SessionError> {
+        tokio::task::spawn_blocking(move || {
+            #[cfg(unix)]
+            let reader_file = {
+                let path = std::path::absolute(&path).map_err(storage)?;
+                // allow-blocking-io: open and identify the database on the blocking pool.
+                let metadata = std::fs::metadata(&path).map_err(storage)?;
+                ReaderFile {
+                    path,
+                    device: metadata.dev(),
+                    inode: metadata.ino(),
+                }
+            };
+            #[cfg(unix)]
+            let path = &reader_file.path;
+            let conn =
+                Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                    .map_err(storage)?;
+            #[cfg(unix)]
+            reader_file.verify()?;
+            Ok(Self {
+                conn: Arc::new(Mutex::new(conn)),
+                #[cfg(unix)]
+                reader_file: Some(Arc::new(reader_file)),
+            })
+        })
+        .await
+        .map_err(storage)?
+    }
+
     pub(crate) async fn open_for_sdk(
         path: std::path::PathBuf,
         session_id: String,
@@ -54,8 +108,32 @@ impl SqliteSessionStore {
     }
 
     fn init(conn: Connection) -> Result<Self, SessionError> {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS session_meta (
+        // Evidence and Session databases must stay independent, even when two
+        // hosts try to initialize the same empty file at the same time.
+        #[cfg(feature = "session-evidence")]
+        let mut conn = conn;
+        #[cfg(feature = "session-evidence")]
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(storage)?;
+        #[cfg(feature = "session-evidence")]
+        let database = &tx;
+        #[cfg(not(feature = "session-evidence"))]
+        let database = &conn;
+        #[cfg(feature = "session-evidence")]
+        {
+            let application_id: i32 = database
+                .pragma_query_value(None, "application_id", |row| row.get(0))
+                .map_err(storage)?;
+            if application_id == crate::session::evidence::EVIDENCE_APPLICATION_ID {
+                return Err(storage(
+                    "the Session database must be separate from the evidence database",
+                ));
+            }
+        }
+        database
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS session_meta (
                 session_id     TEXT PRIMARY KEY,
                 schema_version TEXT NOT NULL,
                 meta_json      TEXT NOT NULL,
@@ -67,10 +145,14 @@ impl SqliteSessionStore {
                 event_json TEXT NOT NULL,
                 PRIMARY KEY (session_id, seq)
             );",
-        )
-        .map_err(storage)?;
+            )
+            .map_err(storage)?;
+        #[cfg(feature = "session-evidence")]
+        tx.commit().map_err(storage)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            #[cfg(all(feature = "session-evidence", unix))]
+            reader_file: None,
         })
     }
 
@@ -80,8 +162,14 @@ impl SqliteSessionStore {
         F: FnOnce(&mut Connection) -> Result<T, SessionError> + Send + 'static,
     {
         let conn = Arc::clone(&self.conn);
+        #[cfg(all(feature = "session-evidence", unix))]
+        let reader_file = self.reader_file.clone();
         tokio::task::spawn_blocking(move || {
             let mut c = conn.lock().map_err(storage)?;
+            #[cfg(all(feature = "session-evidence", unix))]
+            if let Some(file) = &reader_file {
+                file.verify()?;
+            }
             f(&mut c)
         })
         .await
@@ -444,6 +532,19 @@ mod tests {
         assert!(store.get_meta("b").await.unwrap().is_none());
         assert!(store.read("b", 1).await.unwrap().is_empty());
         store.delete("nonexistent").await.unwrap();
+    }
+
+    #[cfg(feature = "session-evidence")]
+    #[tokio::test]
+    async fn sqlite_concurrent_sdk_writers_can_initialize_a_new_database() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("sessions.sqlite");
+        let (first, second) = tokio::join!(
+            SqliteSessionStore::open_for_sdk(database.clone(), "first".into()),
+            SqliteSessionStore::open_for_sdk(database, "second".into()),
+        );
+        assert!(first.is_ok(), "{:?}", first.err());
+        assert!(second.is_ok(), "{:?}", second.err());
     }
 
     #[tokio::test]

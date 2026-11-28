@@ -1,4 +1,5 @@
 export { Agent };
+export { EvidenceStore };
 export { Run };
 export { RunError };
 export { complete };
@@ -134,18 +135,43 @@ declare class Run {
     /** Release the event receiver and wait for active work to finish. */
     close(): Promise<void>;
 }
+/** A local store shared by opted-in runs and authorized readers. */
+declare class EvidenceStore {
+    /** @private @param {import("./native").NativeEvidenceStore} store */
+    private constructor();
+    /** @param {string} path */
+    static open(path: string): Promise<EvidenceStore>;
+    /**
+     * @param {string} sqlitePath
+     * @param {string} sessionId
+     */
+    authorize(sqlitePath: string, sessionId: string): Promise<AttemptReader>;
+}
+/** Metadata reader fixed to one authorized session instance. */
+declare class AttemptReader {
+    #private;
+    /** @param {import("./native").NativeAttemptReader} reader */
+    constructor(reader: import("./native").NativeAttemptReader);
+    /** @param {string | null} [cursor] @param {number} [limit] */
+    read(cursor?: string | null, limit?: number): Promise<import("./types").AttemptPage>;
+    revoke(): Promise<void>;
+}
+export type SessionOptions = import("./types").LocalSession & {
+    evidence?: EvidenceStore;
+};
+/** @typedef {import("./types").LocalSession & { evidence?: EvidenceStore }} SessionOptions */
 declare class Agent extends native.Agent {
     /**
      * Start a run for asynchronous, pull-based event consumption.
      * @param {string} input
      * @param {import("./types").HistoryMessage[]} [messages]
-     * @param {import("./types").SessionOptions} [session]
+     * @param {SessionOptions} [session]
      */
-    startRun(input: string, messages?: import("./types").HistoryMessage[], session?: import("./types").SessionOptions): Promise<Run>;
+    startRun(input: string, messages?: import("./types").HistoryMessage[], session?: SessionOptions): Promise<Run>;
     /**
      * Resume a local session, optionally appending a new user turn.
-     * @param {import("./types").SessionOptions} session
+     * @param {SessionOptions} session
      * @param {string} [input]
      */
-    resumeSession(session: import("./types").SessionOptions, input?: string): Promise<Run>;
+    resumeSession(session: SessionOptions, input?: string): Promise<Run>;
 }

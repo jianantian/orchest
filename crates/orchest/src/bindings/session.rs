@@ -8,11 +8,16 @@ use crate::run::actor::{ensure_fresh_session, SessionBinding};
 use crate::run::{AgentConfig, AgentRun, RunInput};
 use crate::session::{sqlite::SqliteSessionWriter, SessionError, SqliteSessionStore};
 
+#[cfg(feature = "session-evidence")]
+use crate::session::evidence::{AttemptReader, EvidenceError, EvidenceStore};
+
 use super::run::{BindingAgent, BindingRunError, BindingRunReservation, BindingRunStream};
 
 pub struct BindingSessionOptions {
     path: PathBuf,
     session_id: String,
+    #[cfg(feature = "session-evidence")]
+    evidence: Option<EvidenceStore>,
 }
 
 impl BindingSessionOptions {
@@ -26,7 +31,29 @@ impl BindingSessionOptions {
         Ok(Self {
             path: path.into(),
             session_id,
+            #[cfg(feature = "session-evidence")]
+            evidence: None,
         })
+    }
+
+    #[cfg(feature = "session-evidence")]
+    pub fn with_evidence(mut self, evidence: Option<EvidenceStore>) -> Self {
+        self.evidence = evidence;
+        self
+    }
+
+    #[cfg(feature = "session-evidence")]
+    pub async fn authorize_evidence(
+        self,
+        evidence: EvidenceStore,
+    ) -> Result<AttemptReader, BindingRunError> {
+        let store = SqliteSessionStore::open_reader(self.path)
+            .await
+            .map_err(|_| EvidenceError::Storage)?;
+        Ok(evidence
+            .bind(Arc::new(store), self.session_id)
+            .authorize_attempts()
+            .await?)
     }
 
     async fn bind(
@@ -35,10 +62,14 @@ impl BindingSessionOptions {
     ) -> Result<(AgentConfig, SqliteSessionWriter), SessionError> {
         let (store, writer) =
             SqliteSessionStore::open_for_sdk(self.path, self.session_id.clone()).await?;
-        Ok((
-            config.with_session_store(Arc::new(store), self.session_id),
-            writer,
-        ))
+        let store: Arc<dyn crate::session::SessionStore> = Arc::new(store);
+        let config = config.with_session_store(Arc::clone(&store), &self.session_id);
+        #[cfg(feature = "session-evidence")]
+        let config = match self.evidence {
+            Some(evidence) => config.with_session_evidence(evidence.bind(store, self.session_id)),
+            None => config,
+        };
+        Ok((config, writer))
     }
 }
 

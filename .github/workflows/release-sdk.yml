@@ -260,7 +260,7 @@ jobs:
             sleep 30
           done
           cp -R python/tests "$work/tests"
-          cp crates/orchest/tests/fixtures/sdk-runtime-events.json "$work/tests/"
+          cp crates/orchest/tests/fixtures/{sdk-runtime-events.json,sdk-session-evidence.py} "$work/tests/"
           cd "$work"
           venv/bin/python -m pytest tests -v
 
@@ -287,6 +287,6 @@ jobs:
           sdk=node_modules/orchest-sdk
           mkdir -p "$sdk/js/tests"
           cp "$GITHUB_WORKSPACE"/js/tests/*.test.cjs "$sdk/js/tests/"
-          cp "$GITHUB_WORKSPACE"/crates/orchest/tests/fixtures/sdk-runtime-events.json "$sdk/js/tests/"
+          cp "$GITHUB_WORKSPACE"/crates/orchest/tests/fixtures/{sdk-runtime-events.json,sdk-session-evidence.py} "$sdk/js/tests/"
           cd "$sdk"
           node --test js/tests/*.test.cjs

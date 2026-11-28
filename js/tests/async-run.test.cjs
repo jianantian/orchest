@@ -4,12 +4,12 @@ const assert = require("node:assert/strict");
 const { spawnSync } = require("node:child_process");
 const http = require("node:http");
 const { once } = require("node:events");
-const { existsSync, mkdtempSync, readFileSync, rmSync } = require("node:fs");
+const { existsSync, mkdtempSync, readFileSync, renameSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const test = require("node:test");
 
-const { Agent, RunError } = require("../index.js");
+const { Agent, EvidenceStore, RunError } = require("../index.js");
 
 
 const copiedFixture = join(__dirname, "sdk-runtime-events.json");
@@ -26,11 +26,16 @@ function normalize(event) {
 
 test("async run streams without blocking Node and shares agent occupancy", { timeout: 10_000 }, async () => {
   let releaseModel;
+  let evidenceAttempts = 0;
   const gate = new Promise((resolve) => { releaseModel = resolve; });
   const server = http.createServer(async (request, response) => {
     const parts = [];
     for await (const part of request) parts.push(part);
     const body = JSON.parse(Buffer.concat(parts).toString());
+    if (body.messages.at(-1).content[0].text === "retry evidence" && ++evidenceAttempts === 1) {
+      response.writeHead(500).end();
+      return;
+    }
     response.writeHead(200, { "content-type": "text/event-stream" });
     response.flushHeaders();
     await gate;
@@ -44,7 +49,8 @@ test("async run streams without blocking Node and shares agent occupancy", { tim
   }).listen(0, "127.0.0.1");
   await once(server, "listening");
 
-  const makeAgent = () => new Agent({
+  const makeAgent = (retry = false) => new Agent({
+    retry,
     name: "async-run-test",
     model: "anthropic/claude-sonnet-4-6",
     systemPrompt: "Answer briefly.",
@@ -155,10 +161,13 @@ test("async run streams without blocking Node and shares agent occupancy", { tim
     const session = { sqlitePath: join(directory, "session.sqlite"), sessionId: "shared" };
     const drain = async (run) => {
       try {
+        let runId;
         for await (const event of run) {
+          if (event.type === "run_started") runId = event.run_id;
           if (event.type === "run_failed") assert.fail(event.error);
         }
         assert.equal((await run.wait()).type, "run_completed");
+        return runId;
       } finally {
         await run.close();
       }
@@ -183,6 +192,99 @@ test("async run streams without blocking Node and shares agent occupancy", { tim
       await assert.rejects(first.startRun("existing", undefined, session), { code: "session_already_exists" });
       await drain(await makeAgent().resumeSession(session));
       await drain(await makeAgent().resumeSession(session, "follow-up"));
+
+      const path = join(directory, "evidence.sqlite");
+      const store = await EvidenceStore.open(path);
+      const evidenceSession = { ...session, sessionId: "evidence" };
+      await drain(await makeAgent().startRun("default off", undefined, evidenceSession));
+      const authorize = ({ sqlitePath, sessionId }) => store.authorize(sqlitePath, sessionId);
+      const reader = await authorize(evidenceSession);
+      assert.deepEqual((await reader.read()).records, []);
+      const enabled = { ...evidenceSession, evidence: store };
+      await assert.rejects(
+        makeAgent().startRun("shared database", undefined, { ...enabled, sqlitePath: path }),
+        { code: "session_storage_error" },
+      );
+      const capturedId = await drain(await makeAgent(true).resumeSession(enabled, "retry evidence"));
+      await drain(await makeAgent().resumeSession(evidenceSession, "off again"));
+      const cursor = (await reader.read(undefined, 1)).next_cursor;
+      assert.ok(cursor);
+      await assert.rejects(reader.read(undefined, 65), { code: "evidence_invalid_page_size" });
+      await assert.rejects(reader.read(cursor + "x"), { code: "evidence_invalid_cursor" });
+
+      const other = { ...evidenceSession, sqlitePath: join(directory, "other.sqlite") };
+      await drain(await makeAgent().startRun("different store", undefined, other));
+      const otherReader = await authorize(other);
+      await assert.rejects(otherReader.read(cursor), { code: "evidence_invalid_cursor" });
+      assert.deepEqual((await otherReader.read()).records, []);
+
+      const copiedScript = join(__dirname, "sdk-session-evidence.py");
+      const script = existsSync(copiedScript) ? copiedScript
+        : join(__dirname, "../../crates/orchest/tests/fixtures/sdk-session-evidence.py");
+      const changeFixture = (...args) => {
+        const result = spawnSync("python3", [script, ...args], { encoding: "utf8" });
+        assert.equal(result.status, 0, result.stderr || result.error?.message);
+      };
+      changeFixture("seed", path);
+
+      const rows = [];
+      let next = null;
+      let emptyWithCursor = false;
+      let invalid = 0;
+      do {
+        const page = await reader.read(next, 1);
+        rows.push(...page.records);
+        invalid += page.invalid_records;
+        if (page.next_cursor !== null) {
+          assert.notEqual(page.next_cursor, next);
+          emptyWithCursor ||= page.records.length === 0;
+        }
+        next = page.next_cursor;
+      } while (next !== null);
+      assert.ok(emptyWithCursor);
+      assert.equal(invalid, 1);
+      const starts = rows.filter(row => row.kind === "attempt_started");
+      const finishes = rows.filter(row => row.kind === "attempt_finished");
+      assert.equal(new Set(starts.map(row => row.attempt_id)).size, 3);
+      assert.equal(new Set(finishes.map(row => row.attempt_id)).size, 2);
+      assert.deepEqual(new Set(finishes.map(row => row.outcome)), new Set(["returned", "adapter_error"]));
+      assert.deepEqual(new Set(finishes.map(row => row.run_id)), new Set([capturedId]));
+      const concluded = starts.filter(row => finishes.some(finish => finish.attempt_id === row.attempt_id));
+      assert.equal(concluded.length, 2);
+      assert.equal(concluded[0].step, concluded[1].step);
+      assert.deepEqual(starts.filter(row => !concluded.includes(row)).map(row => row.ordinal), [99]);
+      for (const row of starts) {
+        assert.deepEqual(Object.keys(row).sort(), ["attempt_id", "kind", "model", "ordinal", "provider", "purpose", "run_id", "step"]);
+      }
+      for (const row of finishes) {
+        assert.deepEqual(Object.keys(row).sort(), ["attempt_id", "kind", "outcome", "run_id", "step"]);
+      }
+
+      changeFixture("delete", evidenceSession.sqlitePath, evidenceSession.sessionId);
+      await assert.rejects(reader.read(), { code: "evidence_session_unavailable" });
+      await drain(await makeAgent().startRun("replacement", undefined, enabled));
+      await assert.rejects(reader.read(), { code: "evidence_session_unavailable" });
+      const replacement = await authorize(evidenceSession);
+      assert.equal((await replacement.read()).records.length, 2);
+      await replacement.revoke();
+      await assert.rejects(replacement.read(), { code: "evidence_session_unavailable" });
+      await assert.rejects(authorize(evidenceSession), { code: "evidence_session_unavailable" });
+
+      const replacedSession = { ...enabled, sqlitePath: join(directory, "replaceable.sqlite") };
+      await drain(await makeAgent().startRun("before file replacement", undefined, replacedSession));
+      const oldReader = await authorize(replacedSession);
+      assert.equal((await oldReader.read()).records.length, 2);
+      renameSync(replacedSession.sqlitePath, join(directory, "previous.sqlite"));
+      await assert.rejects(oldReader.read(), { code: "evidence_session_unavailable" });
+      await drain(await makeAgent().startRun("after file replacement", undefined, replacedSession));
+      await assert.rejects(oldReader.read(), { code: "evidence_session_unavailable" });
+      const newReader = await authorize(replacedSession);
+      assert.equal((await newReader.read()).records.length, 2);
+
+      await drain(await makeAgent().resumeSession({ ...other, evidence: store }, "before evidence fault"));
+      changeFixture("break", path);
+      await assert.rejects(otherReader.read(), { code: "evidence_storage_error" });
+      await drain(await makeAgent().resumeSession({ ...other, evidence: store }, "after evidence fault"));
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

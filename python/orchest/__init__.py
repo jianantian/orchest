@@ -7,6 +7,8 @@ from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 
 from .orchest_py import (
     Agent,
+    AttemptReader,
+    EvidenceStore,
     _NativeAsrStream,
     _NativeRun,
     _start_asr_stream,
@@ -81,7 +83,38 @@ class Capabilities(TypedDict):
     lossless_events: bool
 
 
+class AttemptStarted(TypedDict):
+    kind: Literal["attempt_started"]
+    attempt_id: str
+    run_id: str
+    step: int
+    ordinal: int
+    purpose: Literal["agent_step", "compaction_summary"]
+    provider: str | None
+    model: str | None
+
+
+class AttemptFinished(TypedDict):
+    kind: Literal["attempt_finished"]
+    attempt_id: str
+    run_id: str
+    step: int
+    outcome: Literal["returned", "adapter_error", "cancelled"]
+
+
+AttemptMetadata: TypeAlias = AttemptStarted | AttemptFinished
+
+
+class AttemptPage(TypedDict):
+    records: list[AttemptMetadata]
+    next_cursor: str | None
+    invalid_records: int
+    expired_records: int
+    observed_drops: int
+
+
 class SessionOptions(TypedDict):
+    evidence: NotRequired[EvidenceStore]
     sqlite_path: str
     session_id: str
 
@@ -424,6 +457,12 @@ __all__ = [
     "CancelReason",
     "RequestResponse",
     "SessionOptions",
+    "AttemptFinished",
+    "AttemptMetadata",
+    "AttemptPage",
+    "AttemptReader",
+    "AttemptStarted",
+    "EvidenceStore",
     "Capabilities",
     "ToolEffect",
     "ApprovalScope",

@@ -88,6 +88,41 @@ const events = await agent.runSync("What's the weather in Tokyo?");
 
 `runSync` 和 `runStream` 沿用 0.2 的返回形状。所有运行入口共用同一 Agent 占用槽，重叠启动返回 `run_active`。完整流程见 [异步审批与恢复示例](../../examples/typescript/agents/async_run.ts)。
 
+### 本地 Session 证据
+
+在宿主管理的独立 SQLite 文件中记录模型尝试的元数据。新建或恢复运行时，用 `session.evidence` 显式开启。默认关闭，每次恢复都需要重新选择。
+
+```typescript
+import { EvidenceStore } from "orchest-sdk";
+
+const store = await EvidenceStore.open("/path/to/evidence.sqlite");
+const session = { sqlitePath: "/path/to/sessions.sqlite", sessionId: "example" };
+const run = await agent.startRun("Summarize this session", undefined, { ...session, evidence: store });
+
+try {
+  for await (const event of run) {
+    // Handle runtime events here.
+  }
+  await run.wait();
+} finally {
+  await run.close();
+}
+
+const reader = await store.authorize(session.sqlitePath, session.sessionId);
+let cursor: string | null = null;
+do {
+  const page = await reader.read(cursor, 16);
+  for (const record of page.records) {
+    console.log(record.attempt_id, record.kind);
+  }
+  cursor = page.next_cursor;
+} while (cursor !== null);
+```
+
+开始记录包含尝试 ID、运行 ID、步骤、尝试序号、用途、provider 和 model。结束记录包含同一尝试 ID、运行 ID、步骤和结果（`returned`、`adapter_error` 或 `cancelled`）。用 `attempt_id` 跨页关联，尚无结束记录时结果为未知。分页按原始记录推进，筛选后可以返回空页，直到 `next_cursor` 为 `null` 才结束。
+
+`invalid_records`、`expired_records` 和 `observed_drops` 描述可观测的证据缺口。丢弃数来自当前打开的证据库对象，重启后无法补计之前的丢弃。删除会话、同名重建、替换 Session 数据库文件或撤销后，已有句柄返回 `evidence_session_unavailable`。页大小超过 1–64 返回 `evidence_invalid_page_size`，无效或来自其他句柄的游标返回 `evidence_invalid_cursor`。
+
 ## 3. 注册 tool
 
 **带执行函数**（最常用）——`registerToolWithHandler` 的 handler 在模型调用该 tool 时执行并返回结果：

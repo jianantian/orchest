@@ -293,16 +293,93 @@ class Run {
   }
 }
 
+/** @type {WeakMap<EvidenceStore, import("./native").NativeEvidenceStore>} */
+const evidenceStores = new WeakMap();
+
+/** A local store shared by opted-in runs and authorized readers. */
+class EvidenceStore {
+  /** @private @param {import("./native").NativeEvidenceStore} store */
+  constructor(store) {
+    evidenceStores.set(this, store);
+  }
+
+  /** @param {string} path */
+  static async open(path) {
+    try {
+      return new EvidenceStore(await native._openEvidenceStore(path));
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+
+  /**
+   * @param {string} sqlitePath
+   * @param {string} sessionId
+   */
+  async authorize(sqlitePath, sessionId) {
+    try {
+      const store = nativeEvidenceStore(this);
+      if (store === undefined) throw new TypeError("missing EvidenceStore");
+      return new AttemptReader(await store.authorize(sqlitePath, sessionId));
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+}
+
+/** @param {EvidenceStore | undefined} store */
+function nativeEvidenceStore(store) {
+  if (store == null) return undefined;
+  const handle = evidenceStores.get(store);
+  if (handle === undefined) throw new TypeError("session.evidence must be an EvidenceStore");
+  return handle;
+}
+
+/** Metadata reader fixed to one authorized session instance. */
+class AttemptReader {
+  /** @type {import("./native").NativeAttemptReader} */ #reader;
+
+  /** @param {import("./native").NativeAttemptReader} reader */
+  constructor(reader) {
+    this.#reader = reader;
+  }
+
+  /** @param {string | null} [cursor] @param {number} [limit] */
+  async read(cursor, limit = 64) {
+    if (cursor != null && typeof cursor !== "string") {
+      throw new RunError("evidence_invalid_cursor", "invalid or foreign evidence cursor");
+    }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 64) {
+      throw new RunError("evidence_invalid_page_size", "evidence page size must be from 1 to 64");
+    }
+    try {
+      return await this.#reader.read(cursor ?? undefined, limit);
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+
+  async revoke() {
+    try {
+      await this.#reader.revoke();
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+}
+
+/** @typedef {import("./types").LocalSession & { evidence?: EvidenceStore }} SessionOptions */
+
 class Agent extends native.Agent {
   /**
    * Start a run for asynchronous, pull-based event consumption.
    * @param {string} input
    * @param {import("./types").HistoryMessage[]} [messages]
-   * @param {import("./types").SessionOptions} [session]
+   * @param {SessionOptions} [session]
    */
   async startRun(input, messages, session) {
     try {
-      return new Run(await this._startRun(input, messages, session));
+      return new Run(await this._startRun(input, messages, session, nativeEvidenceStore(session?.evidence)));
     } catch (error) {
       throw normalizeRunError(error);
     }
@@ -310,12 +387,12 @@ class Agent extends native.Agent {
 
   /**
    * Resume a local session, optionally appending a new user turn.
-   * @param {import("./types").SessionOptions} session
+   * @param {SessionOptions} session
    * @param {string} [input]
    */
   async resumeSession(session, input) {
     try {
-      return new Run(await this._resumeSession(session, input));
+      return new Run(await this._resumeSession(session, input, nativeEvidenceStore(session?.evidence)));
     } catch (error) {
       throw normalizeRunError(error);
     }
@@ -343,6 +420,7 @@ class Agent extends native.Agent {
 // Explicit `exports.X = ...` assignments: cjs-module-lexer only detects these
 // for ESM consumers, so `import { decide } from "orchest-sdk"` works.
 exports.Agent = Agent;
+exports.EvidenceStore = EvidenceStore;
 exports.Run = Run;
 exports.RunError = RunError;
 exports.complete = complete;

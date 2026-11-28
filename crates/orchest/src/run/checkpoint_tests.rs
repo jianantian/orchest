@@ -638,5 +638,6 @@ async fn evidence_writer_contention_does_not_block_session_checkpoint_or_tool() 
         .unwrap();
     assert_eq!(*tool.marker_durable.lock().unwrap(), vec![true]);
     lock.execute_batch("ROLLBACK").unwrap();
-    assert!(capture.read(None, 64).await.unwrap().observed_drops > 0);
+    let reader = capture.authorize_attempts().await.unwrap();
+    assert!(reader.read(None, 64).await.unwrap().observed_drops > 0);
 }

@@ -14,7 +14,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-orchest = { path = "../orchest", features = ["sqlite-session"] }
+orchest = { path = "../orchest", features = ["sqlite-session", "session-evidence"] }
 orchest-protocol = { path = "../orchest-protocol" }
 orchest-provider = { path = "../orchest-provider", features = ["llm", "asr", "decision"] }
 bytes = "1"
