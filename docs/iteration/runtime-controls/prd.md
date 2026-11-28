@@ -40,11 +40,11 @@
 
 ## 任务顺序
 
-| Issue | 交付 | 依赖 |
-| --- | --- | --- |
-| [001](issues/001-async-run/spec.md) | 异步运行对象、事件迭代与生命周期 | v2.0 |
-| [002](issues/002-run-controls/spec.md) | 运行控制、公开事件与错误类型 | 001 |
-| [003](issues/003-session-resume/spec.md) | Session 配置、跨实例恢复与追加输入 | 001、002 |
-| [004](issues/004-tool-registration/spec.md) | Node 工具注册对齐与双端集成验收 | 注册实现可先行，集成验收依赖 002、003 |
+| Issue | 交付 | 实施计划 | 依赖 |
+| --- | --- | --- | --- |
+| [001](issues/001-async-run/spec.md) | 异步运行对象、事件迭代与生命周期 | [计划](issues/001-async-run/plan.md) | v2.0 |
+| [002](issues/002-run-controls/spec.md) | 运行控制、公开事件与错误类型 | [计划](issues/002-run-controls/plan.md) | 001 |
+| [003](issues/003-session-resume/spec.md) | Session 配置、跨实例恢复与追加输入 | [计划](issues/003-session-resume/plan.md) | 001、002 |
+| [004](issues/004-tool-registration/spec.md) | Node 工具注册对齐与双端集成验收 | [计划](issues/004-tool-registration/plan.md) | 注册实现可先行，集成验收依赖 002、003 |
 
 控制面和语音绑定分别按契约验收，共享的绑定入口、导出与声明文件在合并时核对。
