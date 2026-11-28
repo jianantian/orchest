@@ -61,6 +61,7 @@ impl Asr for FakeAsr {
 
     async fn transcribe(&self, req: TranscribeRequest) -> Result<TranscribeResult, ProtocolError> {
         Ok(TranscribeResult {
+            voice_usage: None,
             text: self.transcript.clone(),
             language: None,
             diagnostic_metadata: serde_json::json!({"fake": true, "input_bytes": req.audio.len()}),
@@ -124,6 +125,7 @@ impl Tts for FakeTts {
     async fn synthesize(&self, req: SynthesizeRequest) -> Result<SynthesizeResult, ProtocolError> {
         let marker = format!("{}\ntext_len={}\n", self.marker_prefix, req.text.len());
         Ok(SynthesizeResult {
+            voice_usage: None,
             audio: bytes::Bytes::from(marker.into_bytes()),
             format: req.format,
             diagnostic_metadata: serde_json::json!({"fake": true}),
@@ -137,13 +139,6 @@ impl Tts for FakeTts {
         Err(ProtocolError::new(
             ErrorCode::UnsupportedOperation,
             "FakeTts does not support streaming",
-        ))
-    }
-
-    async fn start_duplex_stream(&self) -> Result<RealtimeHandle, ProtocolError> {
-        Err(ProtocolError::new(
-            ErrorCode::UnsupportedOperation,
-            "FakeTts does not support duplex",
         ))
     }
 }
@@ -228,7 +223,14 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.code, ErrorCode::UnsupportedOperation);
 
-        let err = tts.start_duplex_stream().await.unwrap_err();
+        let err = tts
+            .start_duplex_stream(orchest_protocol::TtsDuplexRequest {
+                voice: "fake".into(),
+                format: AudioFormat::Pcm16Le,
+                options: serde_json::Value::Null,
+            })
+            .await
+            .unwrap_err();
         assert_eq!(err.code, ErrorCode::UnsupportedOperation);
     }
 }

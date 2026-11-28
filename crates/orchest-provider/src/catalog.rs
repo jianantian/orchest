@@ -12,7 +12,11 @@ use orchest_protocol::Modality;
 use orchest_provider_core::catalog::ChatCatalogExt;
 
 // Re-export discovery types used by consumers via `orchest_provider::catalog`.
-pub use orchest_provider_core::catalog::{CatalogExt, ModelFilter, ModelRecord, ModelStatus};
+pub use orchest_provider_core::catalog::{
+    AsrCatalogExt, CatalogExt, ModelFilter, ModelRecord, ModelStatus, TtsCatalogExt,
+};
+
+pub use orchest_provider_core::voice::VoicePrice;
 
 static CATALOG: LazyLock<Vec<ModelRecord>> = LazyLock::new(build_catalog);
 
@@ -39,6 +43,7 @@ fn build_catalog() -> Vec<ModelRecord> {
             out.extend(
                 orchest_provider_stream::catalog::stream_asr_models()
                     .iter()
+                    .chain(orchest_provider_stream::catalog::stream_tts_models())
                     .cloned(),
             );
         }
@@ -76,6 +81,7 @@ fn project_llm(m: &orchest_provider_http::catalog::LlmModelEntry) -> ModelRecord
         // No Chat defaults until Batch 4.
         default_for_provider: false,
         pricing: m.pricing.clone(),
+        voice_pricing: None,
         ext: CatalogExt::Chat(ChatCatalogExt {
             context_window: m.context_window,
             max_output_tokens: m.max_output_tokens,

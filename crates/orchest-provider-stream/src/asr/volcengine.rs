@@ -8,13 +8,16 @@
 //! mark the final server response. The event-tagged `FLAG_WITH_EVENT` framing is
 //! tts/omni-only and lives there.
 
+use crate::metering::VoiceMeter;
 use async_trait::async_trait;
+use orchest_protocol::AsrCapability;
 use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
     Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
     StreamingTranscribeRequest, TranscribeRequest, TranscribeResult, TranscriptStability,
     TranscriptUpdateKind,
 };
+use orchest_provider_core::catalog::AsrCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
 use serde::Deserialize;
@@ -220,6 +223,9 @@ fn parse_server_response(
 /// and <https://www.volcengine.com/docs/6561/1354869>.
 pub const CLIENT_FINALIZE: bool = false;
 
+pub(crate) const CATALOG_EXT: AsrCatalogExt =
+    AsrCatalogExt::direct("openspeech_asr_ws", &[AsrCapability::ServerEndpointing]);
+
 /// Fixed segment id for the rolling-text fallback branch: a response with no
 /// utterance list carries no native segment identity, so all of it maps to one
 /// synthetic segment.
@@ -350,6 +356,7 @@ pub async fn run_asr_stream<T: ByteDuplex>(
     mut transport: T,
     mut input: mpsc::Receiver<SessionInput>,
     events: mpsc::Sender<StreamEvent>,
+    mut meter: VoiceMeter,
 ) {
     let mut mapper = VolcengineMapper::new();
     let mut input_open = true;
@@ -364,10 +371,14 @@ pub async fn run_asr_stream<T: ByteDuplex>(
                     {
                         break;
                     }
+                    meter.audio_sent(bytes.len());
                 }
                 // End of audio (input closed or an explicit interrupt): flush the
                 // last audio frame and keep reading server frames until the last.
-                None | Some(SessionInput::Interrupt) => {
+                end @ (None | Some(SessionInput::Interrupt)) => {
+                    if end.is_some() {
+                        meter.cancel();
+                    }
                     input_open = false;
                     let _ = transport.send(WsFrame::Binary(build_audio_frame(&[], true))).await;
                 }
@@ -382,16 +393,27 @@ pub async fn run_asr_stream<T: ByteDuplex>(
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_binary) {
                 Some(bytes) => match parse_response(bytes) {
                     Ok(frame) => {
+                        if let VolcengineFrame::ServerResponse { payload, .. } = &frame {
+                            let duration = payload.audio_info.as_ref().and_then(|info| info.duration);
+                            meter.reported_audio(duration.map(|value| orchest_protocol::VoiceQuantity {
+                                value, source: orchest_protocol::VoiceUsageSource::ProviderReported,
+                            }));
+                        }
                         let is_last = matches!(
                             frame,
                             VolcengineFrame::ServerResponse { is_last: true, .. }
                         );
+                        let failed = matches!(&frame, VolcengineFrame::ErrorResponse { .. });
                         for event in mapper.map(frame) {
                             if events.send(event).await.is_err() {
                                 return;
                             }
                         }
                         if is_last {
+                            meter.complete();
+                            break;
+                        }
+                        if failed {
                             break;
                         }
                     }
@@ -469,7 +491,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
         .duplex(true)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
-        .with_ext(super::asr_ext(CLIENT_FINALIZE))
+        .with_ext(CATALOG_EXT.to_descriptor_ext())
 }
 
 /// Build a [`VolcengineAsr`] from a registry [`ProviderConfig`]: `api_url` is the
@@ -527,7 +549,7 @@ impl Asr for VolcengineAsr {
             .duplex(true)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
-            .with_ext(super::asr_ext(CLIENT_FINALIZE))
+            .with_ext(CATALOG_EXT.to_descriptor_ext())
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -546,8 +568,9 @@ impl Asr for VolcengineAsr {
 
     async fn start_stream(
         &self,
-        request: StreamingTranscribeRequest,
+        mut request: StreamingTranscribeRequest,
     ) -> Result<RealtimeHandle, ProtocolError> {
+        CATALOG_EXT.take_required_capabilities(&mut request.options)?;
         if !self.config.ws_url.starts_with("wss://") {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,
@@ -586,15 +609,25 @@ impl Asr for VolcengineAsr {
             .await
             .map_err(|e| stream_err(format!("WebSocket connection failed: {e}")))?;
 
+        let payload = self.client_payload(&request);
+        let model = payload
+            .pointer("/request/model_name")
+            .and_then(Value::as_str)
+            .unwrap_or(&self.config.model);
         let mut duplex = WsDuplex::new(ws_stream);
         duplex
-            .send(WsFrame::Binary(build_full_client_request(
-                &self.client_payload(&request),
-            )?))
+            .send(WsFrame::Binary(build_full_client_request(&payload)?))
             .await?;
 
         let (input_tx, input_rx) = mpsc::channel(32);
         let (events_tx, events) = EventStream::channel(64);
+        let (meter, events) = VoiceMeter::attach(
+            events,
+            "volcengine",
+            model,
+            crate::metering::pcm16(request.format, 16_000, 1),
+            None,
+        );
 
         // Surface route selection up front, like the legacy adapter did.
         let _ = events_tx
@@ -609,6 +642,7 @@ impl Asr for VolcengineAsr {
             crate::fixture::live(duplex),
             input_rx,
             events_tx,
+            meter,
         ));
 
         Ok(RealtimeHandle {
@@ -946,7 +980,12 @@ mod tests {
         let (input_tx, input_rx) = mpsc::channel(16);
         let (events_tx, mut events_rx) = mpsc::channel(16);
 
-        let handle = tokio::spawn(run_asr_stream(transport, input_rx, events_tx));
+        let handle = tokio::spawn(run_asr_stream(
+            transport,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         // audio in -> the loop frames it as an openspeech audio-only request
         input_tx
@@ -995,7 +1034,12 @@ mod tests {
         };
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(8);
-        let _handle = tokio::spawn(run_asr_stream(transport, input_rx, events_tx));
+        let _handle = tokio::spawn(run_asr_stream(
+            transport,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         input_tx.send(SessionInput::Finalize).await.unwrap();
         crate::asr::assert_finalize_error(

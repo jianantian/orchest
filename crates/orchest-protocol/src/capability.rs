@@ -345,6 +345,8 @@ pub struct TranscribeRequest {
     pub format: AudioFormat,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
+    /// Dialect-specific options. Built-in adapters also accept
+    /// `require_capabilities`, an array of catalog capability names.
     #[serde(default)]
     pub options: Value,
 }
@@ -353,6 +355,8 @@ pub struct TranscribeRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscribeResult {
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_usage: Option<crate::VoiceUsage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
@@ -365,6 +369,8 @@ pub struct StreamingTranscribeRequest {
     pub format: AudioFormat,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
+    /// Dialect-specific options. Built-in adapters also accept
+    /// `require_capabilities`, an array of catalog capability names.
     #[serde(default)]
     pub options: Value,
 }
@@ -424,6 +430,8 @@ pub struct SynthesizeRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice: Option<String>,
     pub format: AudioFormat,
+    /// Dialect-specific options. Built-in adapters also accept
+    /// `require_capabilities`, an array of catalog capability names.
     #[serde(default)]
     pub options: Value,
 }
@@ -433,6 +441,8 @@ pub struct SynthesizeRequest {
 pub struct SynthesizeResult {
     pub audio: Bytes,
     pub format: AudioFormat,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_usage: Option<crate::VoiceUsage>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub diagnostic_metadata: Value,
 }
@@ -448,7 +458,15 @@ pub trait Tts: Send + Sync {
     async fn synthesize(&self, req: SynthesizeRequest) -> Result<SynthesizeResult, ProtocolError>;
     async fn stream_synthesize(&self, req: SynthesizeRequest)
         -> Result<EventStream, ProtocolError>;
-    async fn start_duplex_stream(&self) -> Result<RealtimeHandle, ProtocolError>;
+    async fn start_duplex_stream(
+        &self,
+        _request: crate::TtsDuplexRequest,
+    ) -> Result<crate::TtsDuplexHandle, ProtocolError> {
+        Err(ProtocolError::new(
+            crate::ErrorCode::UnsupportedOperation,
+            "TTS duplex streaming is unavailable for this adapter",
+        ))
+    }
 }
 
 /// Optional voice clone/design management, parallel to [`Tts`] (← the existing

@@ -10,14 +10,19 @@
 //! Reference: `docs/external/minimax/tts_sync.md` (frames) and `tts_async.md`
 //! §base_resp (error-code union).
 
+use crate::metering::VoiceMeter;
+pub(super) mod duplex;
+
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
+use orchest_protocol::VoiceSource;
 use orchest_protocol::{
     AudioFormat, Capability, CapabilityDescriptor, ErrorCode, EventStream, Modality, ProtocolError,
-    RealtimeHandle, StreamEvent, SynthesizeRequest, SynthesizeResult, TokenUsage, Tts,
+    StreamEvent, SynthesizeRequest, SynthesizeResult, TokenUsage, Tts,
 };
+use orchest_provider_core::catalog::TtsCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
-use orchest_provider_core::ws::{connect_async, tungstenite};
+use orchest_provider_core::ws::{tungstenite, WsConnector};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -25,6 +30,16 @@ use tokio::sync::mpsc;
 use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 use crate::tts::require_explicit_voice;
 
+pub(crate) const SPEECH_HD_PRICE: orchest_provider_core::voice::VoicePrice =
+    orchest_provider_core::voice::VoicePrice {
+        currency: "USD",
+        unit: orchest_protocol::VoiceRateUnit::BilledCharacter,
+        price_per_unit: 100.0 / 1_000_000.0,
+        scope: "MiniMax Speech 2.8 HD synchronous T2A, global pay-as-you-go",
+        source_url: "https://platform.minimax.io/docs/pricing/overview",
+    };
+
+const GLOBAL_WSS_URL: &str = "wss://api.minimax.io/ws/v1/t2a_v2";
 const DEFAULT_WSS_URL: &str = "wss://api.minimaxi.com/ws/v1/t2a_v2";
 
 #[derive(Debug, Clone, Deserialize)]
@@ -116,7 +131,7 @@ pub fn map_base_resp(resp: &BaseResp) -> Option<ProtocolError> {
         1001 | 2201 => (ErrorCode::Timeout, None),
         // Rate-limit family — surface as HTTP 429, raw code preserved.
         1002 | 1039 | 2205 => (ErrorCode::ProviderHttpError, Some(429u16)),
-        1004 => (ErrorCode::InvalidApiKey, None),
+        1004 | 2049 => (ErrorCode::InvalidApiKey, None),
         1042 | 2203 | 2204 | 2013 => (ErrorCode::InvalidRequest, None),
         2202 => (ErrorCode::ProviderStreamError, None),
         _ => (ErrorCode::ProviderTaskFailed, None),
@@ -230,21 +245,27 @@ pub fn aggregate_frames<I: IntoIterator<Item = String>>(frames: I) -> Result<Byt
 pub async fn run_minimax_synthesis<T: ByteDuplex>(
     mut transport: T,
     start_body: Value,
-    text: String,
-    format: AudioFormat,
+    request: SynthesizeRequest,
     events: mpsc::Sender<StreamEvent>,
+    mut meter: VoiceMeter,
 ) {
-    for body in [
+    for (index, body) in [
         start_body,
-        build_task_continue_body(&text),
+        build_task_continue_body(&request.text),
         build_task_finish_body(),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         if transport
             .send(WsFrame::Text(body.to_string()))
             .await
             .is_err()
         {
             return;
+        }
+        if index == 1 {
+            meter.add_text(&request.text);
         }
     }
     while let Some(frame) = transport.recv().await {
@@ -276,8 +297,9 @@ pub async fn run_minimax_synthesis<T: ByteDuplex>(
                 if events
                     .send(StreamEvent::AudioDelta {
                         data: bytes,
-                        format,
+                        format: request.format,
                         sequence: 0,
+                        tts: None,
                     })
                     .await
                     .is_err()
@@ -292,6 +314,16 @@ pub async fn run_minimax_synthesis<T: ByteDuplex>(
             }
         }
         if inbound.event == "task_finished" || inbound.is_final {
+            if let Some(extra) = inbound.extra_info.as_ref() {
+                meter.billed_characters(extra.get("usage_characters").and_then(Value::as_u64));
+                meter.reported_audio(extra.get("audio_length").and_then(Value::as_u64).map(
+                    |value| orchest_protocol::VoiceQuantity {
+                        value,
+                        source: orchest_protocol::VoiceUsageSource::ProviderReported,
+                    },
+                ));
+            }
+            meter.complete();
             let _ = events
                 .send(StreamEvent::Done {
                     usage: TokenUsage::default(),
@@ -313,32 +345,32 @@ pub struct MinimaxTtsConfig {
 /// The minimax streaming TTS provider as the spine [`Tts`].
 pub struct MinimaxTts {
     config: MinimaxTtsConfig,
+    connector: WsConnector,
 }
 
 impl MinimaxTts {
     pub fn new(config: MinimaxTtsConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            connector: WsConnector::default(),
+        }
     }
 
-    async fn open_stream(&self, request: SynthesizeRequest) -> Result<EventStream, ProtocolError> {
-        if !self.config.ws_url.starts_with("wss://") {
+    #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
+    fn websocket_request(
+        &self,
+        url: &str,
+    ) -> Result<tungstenite::http::Request<()>, ProtocolError> {
+        if !url.starts_with("wss://") {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,
                 "WebSocket URL must use wss:// for secure credential transport",
             ));
         }
-        let voice = require_explicit_voice(&request)?;
-        let start_body = build_task_start_body(
-            &self.config.model,
-            voice,
-            &request.format,
-            None,
-            &request.options,
-        );
-        let ws_request = tungstenite::http::Request::builder()
-            .uri(&self.config.ws_url)
+        tungstenite::http::Request::builder()
+            .uri(url)
             .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Host", host_of(&self.config.ws_url))
+            .header("Host", host_of(url))
             .header("Connection", "Upgrade")
             .header("Upgrade", "websocket")
             .header("Sec-WebSocket-Version", "13")
@@ -349,9 +381,25 @@ impl MinimaxTts {
             .body(())
             .map_err(|e| {
                 ProtocolError::new(ErrorCode::InvalidRequest, format!("build ws request: {e}"))
-            })?;
+            })
+    }
 
-        let (ws_stream, _response) = connect_async(ws_request).await.map_err(|e| {
+    async fn open_stream(
+        &self,
+        mut request: SynthesizeRequest,
+    ) -> Result<EventStream, ProtocolError> {
+        CATALOG_EXT.validate_options(&mut request.options)?;
+        let voice = require_explicit_voice(&request)?;
+        let start_body = build_task_start_body(
+            &self.config.model,
+            voice,
+            &request.format,
+            None,
+            &request.options,
+        );
+        let ws_request = self.websocket_request(&self.config.ws_url)?;
+
+        let ws_stream = self.connector.connect(ws_request).await.map_err(|e| {
             ProtocolError::new(
                 ErrorCode::ProviderStreamError,
                 format!("Minimax WebSocket connection failed: {e}"),
@@ -359,12 +407,20 @@ impl MinimaxTts {
         })?;
 
         let (events_tx, events) = EventStream::channel(64);
+        let (meter, events) = VoiceMeter::attach(
+            events,
+            "minimax",
+            &self.config.model,
+            None,
+            (self.config.model == "speech-2.8-hd" && self.config.ws_url == GLOBAL_WSS_URL)
+                .then_some(SPEECH_HD_PRICE),
+        );
         tokio::spawn(run_minimax_synthesis(
             WsDuplex::new(ws_stream),
             start_body,
-            request.text,
-            request.format,
+            request,
             events_tx,
+            meter,
         ));
         Ok(events)
     }
@@ -377,12 +433,23 @@ fn host_of(url: &str) -> &str {
         .unwrap_or("api.minimaxi.com")
 }
 
+pub(crate) const CATALOG_EXT: TtsCatalogExt = TtsCatalogExt {
+    source: VoiceSource::Direct,
+    protocol: "minimax_tts_ws",
+    words: false,
+    duplex: true,
+    flush: true,
+    cancel: true,
+};
+
 /// The static descriptor the registry filters on for the minimax TTS dialect.
 pub fn entry_descriptor() -> CapabilityDescriptor {
     CapabilityDescriptor::new("minimax", "speech-2.8-hd", Capability::Tts)
         .streaming(true)
+        .duplex(CATALOG_EXT.duplex)
         .with_input_modalities([Modality::Text])
         .with_output_modalities([Modality::Audio])
+        .with_ext(CATALOG_EXT.to_descriptor_ext())
 }
 
 /// Build a [`MinimaxTts`] from a registry [`ProviderConfig`].
@@ -401,11 +468,13 @@ pub fn from_provider_config(cfg: &ProviderConfig) -> Result<MinimaxTts, Protocol
         .api_url
         .clone()
         .unwrap_or_else(|| DEFAULT_WSS_URL.to_string());
-    Ok(MinimaxTts::new(MinimaxTtsConfig {
+    let mut adapter = MinimaxTts::new(MinimaxTtsConfig {
         model,
         ws_url,
         api_key,
-    }))
+    });
+    adapter.connector = WsConnector::from_options(&cfg.options)?;
+    Ok(adapter)
 }
 
 #[async_trait]
@@ -419,10 +488,9 @@ impl Tts for MinimaxTts {
     }
 
     fn descriptor(&self) -> CapabilityDescriptor {
-        CapabilityDescriptor::new("minimax", self.config.model.clone(), Capability::Tts)
-            .streaming(true)
-            .with_input_modalities([Modality::Text])
-            .with_output_modalities([Modality::Audio])
+        let mut descriptor = entry_descriptor();
+        descriptor.model = self.config.model.clone().into();
+        descriptor
     }
 
     async fn synthesize(
@@ -430,21 +498,8 @@ impl Tts for MinimaxTts {
         request: SynthesizeRequest,
     ) -> Result<SynthesizeResult, ProtocolError> {
         let format = request.format;
-        let mut stream = self.open_stream(request).await?;
-        let mut audio = Vec::new();
-        while let Some(event) = stream.next().await {
-            match event {
-                StreamEvent::AudioDelta { data, .. } => audio.extend_from_slice(&data),
-                StreamEvent::Error { error, .. } => return Err(error),
-                StreamEvent::Done { .. } => break,
-                _ => {}
-            }
-        }
-        Ok(SynthesizeResult {
-            audio: Bytes::from(audio),
-            format,
-            diagnostic_metadata: Value::Null,
-        })
+        let stream = self.open_stream(request).await?;
+        super::collect_synthesis(stream, format, self.provider_name(), self.model_name()).await
     }
 
     async fn stream_synthesize(
@@ -454,11 +509,11 @@ impl Tts for MinimaxTts {
         self.open_stream(request).await
     }
 
-    async fn start_duplex_stream(&self) -> Result<RealtimeHandle, ProtocolError> {
-        Err(ProtocolError::new(
-            ErrorCode::UnsupportedOperation,
-            "minimax TTS duplex stream is not wired on the spine",
-        ))
+    async fn start_duplex_stream(
+        &self,
+        request: orchest_protocol::TtsDuplexRequest,
+    ) -> Result<orchest_protocol::TtsDuplexHandle, ProtocolError> {
+        self.open_duplex(request).await
     }
 }
 
@@ -574,14 +629,27 @@ mod tests {
             out: out_tx,
             inbound: in_rx,
         };
-        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let (events_tx, events) = EventStream::channel(8);
+        let text = "你 é🙂";
+        let (meter, mut events_rx) = VoiceMeter::attach(
+            events,
+            "minimax",
+            "speech-2.8-hd",
+            None,
+            Some(SPEECH_HD_PRICE),
+        );
         let start = build_task_start_body("m", "v", &AudioFormat::Mp3, None, &json!({}));
         let handle = tokio::spawn(run_minimax_synthesis(
             transport,
             start,
-            "hi".to_string(),
-            AudioFormat::Mp3,
+            SynthesizeRequest {
+                text: text.into(),
+                voice: Some("v".into()),
+                format: AudioFormat::Mp3,
+                options: Value::Null,
+            },
             events_tx,
+            meter,
         ));
 
         // the loop sends task_start / task_continue / task_finish as text frames
@@ -602,19 +670,30 @@ mod tests {
             )))
             .await
             .unwrap();
+        let mut terminal: Value =
+            serde_json::from_str(&frame("task_finished", None, 0, true)).unwrap();
+        terminal["extra_info"] = json!({"usage_characters": 8, "audio_length": 175});
         in_tx
-            .send(WsFrame::Text(frame("task_finished", None, 0, true)))
+            .send(WsFrame::Text(terminal.to_string()))
             .await
             .unwrap();
         assert!(matches!(
-            events_rx.recv().await.unwrap(),
+            events_rx.next().await.unwrap(),
             StreamEvent::AudioDelta { .. }
         ));
         assert!(matches!(
-            events_rx.recv().await.unwrap(),
+            events_rx.next().await.unwrap(),
             StreamEvent::Done { .. }
         ));
         handle.await.unwrap();
+        let usage = events_rx.take_voice_usage().await.unwrap();
+        assert_eq!(usage.outcome, orchest_protocol::VoiceOutcome::Completed);
+        assert_eq!(usage.model, "speech-2.8-hd");
+        assert_eq!(usage.input_characters, Some(5));
+        assert_eq!(usage.billed_characters, Some(8));
+        assert_eq!(usage.audio_duration_ms.unwrap().value, 175);
+        assert!((usage.cost_estimate.unwrap().amount - 0.0008).abs() < 1e-12);
+        assert!(events_rx.take_voice_usage().await.is_none());
     }
 
     fn frame(event: &str, audio_hex: Option<&str>, status_code: i64, is_final: bool) -> String {

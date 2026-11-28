@@ -12,12 +12,16 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bytes::Bytes;
 use orchest_protocol::{
-    Asr, Capability, CapabilityDescriptor, ErrorCode, Language, Modality, ProtocolError,
-    RealtimeHandle, StreamingTranscribeRequest, TranscribeRequest, TranscribeResult,
+    Asr, AsrCapability, Capability, CapabilityDescriptor, ErrorCode, Language, Modality,
+    ProtocolError, RealtimeHandle, StreamingTranscribeRequest, TranscribeRequest, TranscribeResult,
 };
+use orchest_provider_core::catalog::AsrCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
 use serde::Deserialize;
 use serde_json::{json, Value};
+
+pub(crate) const CATALOG_EXT: AsrCatalogExt =
+    AsrCatalogExt::direct("assemblyai_batch_http", &[AsrCapability::Speaker]);
 
 const DEFAULT_API_URL: &str = "https://api.assemblyai.com/v2";
 
@@ -51,6 +55,10 @@ struct TranscriptResponse {
     language_code: Option<String>,
     #[serde(default)]
     error: Option<String>,
+    #[serde(default)]
+    utterances: Option<Vec<Value>>,
+    audio_duration: Option<f64>,
+    speech_model_used: Option<String>,
 }
 
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
@@ -111,11 +119,16 @@ pub fn build_submit_body(model: &str, request: &TranscribeRequest, audio_url: &s
 
 /// Project a completed transcript onto the spine result (text + detected language).
 fn map_response(response: TranscriptResponse) -> TranscribeResult {
-    let language = response.language_code.clone().map(Language);
+    let language = response.language_code.map(Language);
+    let mut diagnostic_metadata = json!({ "provider": "assemblyai", "status": response.status });
+    if let Some(utterances) = response.utterances {
+        diagnostic_metadata["utterances"] = json!(utterances);
+    }
     TranscribeResult {
+        voice_usage: None,
         text: response.text.unwrap_or_default(),
         language,
-        diagnostic_metadata: json!({ "provider": "assemblyai", "status": response.status }),
+        diagnostic_metadata,
     }
 }
 
@@ -217,6 +230,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
     CapabilityDescriptor::new("assemblyai", "universal", Capability::Asr)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
+        .with_ext(CATALOG_EXT.to_descriptor_ext())
 }
 
 /// Build an [`AssemblyAiAsr`] from a registry [`ProviderConfig`].
@@ -259,6 +273,7 @@ impl Asr for AssemblyAiAsr {
         CapabilityDescriptor::new("assemblyai", self.config.model.clone(), Capability::Asr)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
+            .with_ext(CATALOG_EXT.to_descriptor_ext())
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -267,12 +282,39 @@ impl Asr for AssemblyAiAsr {
 
     async fn transcribe(
         &self,
-        request: TranscribeRequest,
+        mut request: TranscribeRequest,
     ) -> Result<TranscribeResult, ProtocolError> {
+        let requirements = CATALOG_EXT.take_required_capabilities(&mut request.options)?;
+        if requirements
+            .iter()
+            .any(|name| name == AsrCapability::Speaker.name())
+        {
+            request.options["speaker_labels"] = json!(true);
+        }
         let audio_url = self.upload_audio(request.audio.clone()).await?;
         let id = self.submit(&request, &audio_url).await?;
         let response = self.poll(&id).await?;
-        Ok(map_response(response))
+        let reported = response.audio_duration.and_then(|seconds| {
+            orchest_provider_core::voice::duration_from_seconds(
+                seconds,
+                orchest_protocol::VoiceUsageSource::ProviderReported,
+            )
+        });
+        let model = response
+            .speech_model_used
+            .as_deref()
+            .or_else(|| request.options.get("speech_model").and_then(Value::as_str))
+            .unwrap_or(&self.config.model);
+        let usage = orchest_provider_core::voice::batch_audio_usage(
+            "assemblyai",
+            model,
+            request.format,
+            &request.audio,
+            reported,
+        );
+        let mut result = map_response(response);
+        result.voice_usage = Some(usage);
+        Ok(result)
     }
 
     async fn start_stream(
@@ -338,10 +380,14 @@ mod tests {
             text: Some("hello world".to_string()),
             language_code: Some("en".to_string()),
             error: None,
+            audio_duration: None,
+            speech_model_used: None,
+            utterances: Some(vec![json!({"speaker": "A", "text": "hello world"})]),
         };
         let result = map_response(response);
         assert_eq!(result.text, "hello world");
         assert_eq!(result.language, Some(Language("en".to_string())));
         assert_eq!(result.diagnostic_metadata["provider"], "assemblyai");
+        assert_eq!(result.diagnostic_metadata["utterances"][0]["speaker"], "A");
     }
 }

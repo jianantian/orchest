@@ -81,3 +81,164 @@ fn discovery_lists_aliyun_streaming_asr_with_descriptions() {
         assert!(!r.description.trim().is_empty());
     }
 }
+
+#[cfg(feature = "stream")]
+#[test]
+fn voice_catalog_and_registry_offer_the_same_capabilities() {
+    use orchest_protocol::{AsrCapability, CapabilityExt, CapabilitySource};
+    use orchest_provider::Registry;
+
+    let registry = Registry::with_builtin();
+    let filters = [
+        AsrCapability::CommittedAppend,
+        AsrCapability::ClientFinalize,
+    ];
+    let from_catalog: Vec<_> = list_models(ModelFilter {
+        asr_capabilities: filters.to_vec(),
+        ..Default::default()
+    })
+    .map(|row| (row.provider, row.model))
+    .collect();
+    let from_registry: Vec<_> = registry
+        .asr()
+        .asr_capabilities(filters)
+        .list()
+        .into_iter()
+        .map(|entry| {
+            (
+                entry.descriptor.provider.as_ref(),
+                entry.descriptor.model.as_ref(),
+            )
+        })
+        .collect();
+    assert_eq!(from_catalog, from_registry);
+    assert_eq!(
+        from_catalog,
+        [("deepgram", "nova-3"), ("soniox", "stt-rt-v5")]
+    );
+    let speaker = registry
+        .asr()
+        .asr_capabilities([AsrCapability::Speaker])
+        .select()
+        .unwrap();
+    assert_eq!(speaker.descriptor.provider, "assemblyai");
+    assert_eq!(speaker.descriptor.source, CapabilitySource::Static);
+
+    let tts = registry.tts().streaming().list();
+    assert_eq!(tts.len(), 3);
+    assert_eq!(registry.tts().bidirectional().list().len(), 3);
+    for entry in tts {
+        let descriptor = &entry.descriptor;
+        let id = format!("{}/{}", descriptor.provider, descriptor.model);
+        let row = find_model_for(&id, Capability::Tts).unwrap();
+        assert!(row.streaming);
+        assert!(row.duplex);
+        let CapabilityExt::Tts(ext) = &descriptor.ext else {
+            panic!("missing TTS capability details for {id}");
+        };
+        assert_eq!(ext["source"], "direct");
+        assert_eq!(ext["flush"], true);
+        assert_eq!(ext["cancel"], true);
+        assert!(ext["protocol"]
+            .as_str()
+            .is_some_and(|name| !name.is_empty()));
+        assert_eq!(
+            serde_json::to_value(row.to_descriptor().ext).unwrap(),
+            serde_json::to_value(&descriptor.ext).unwrap()
+        );
+    }
+}
+
+#[cfg(feature = "stream")]
+#[tokio::test]
+async fn voice_capabilities_are_checked_before_connecting() {
+    use std::time::Duration;
+
+    use orchest_protocol::{AudioFormat, ErrorCode, StreamingTranscribeRequest, SynthesizeRequest};
+    use orchest_provider::{ProviderConfig, Registry};
+    use serde_json::json;
+    use tokio::net::TcpListener;
+    use tokio::time::timeout;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let registry = Registry::with_builtin();
+    let config = ProviderConfig {
+        api_key: Some("test-key".into()),
+        api_url: Some(format!("wss://{}", listener.local_addr().unwrap())),
+        ..Default::default()
+    };
+    let adapter = registry.asr().id("deepgram/nova-3").build(&config).unwrap();
+    let request = |options| StreamingTranscribeRequest {
+        format: AudioFormat::Pcm16Le,
+        language: None,
+        options,
+    };
+
+    let error = adapter
+        .start_stream(request(json!({"require_capabilities": ["speaker"]})))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::UnsupportedOption);
+
+    let tts = registry
+        .tts()
+        .id("minimax/speech-2.8-hd")
+        .build(&config)
+        .unwrap();
+    let error = tts
+        .stream_synthesize(SynthesizeRequest {
+            text: "hello world".into(),
+            voice: Some("test-voice".into()),
+            format: AudioFormat::Mp3,
+            options: json!({"require_capabilities": ["words"]}),
+        })
+        .await
+        .expect_err("TTS word alignment is unavailable");
+    assert_eq!(error.code, ErrorCode::UnsupportedOption);
+
+    assert!(timeout(Duration::from_millis(30), listener.accept())
+        .await
+        .is_err());
+
+    let supported = tokio::spawn(async move {
+        adapter
+            .start_stream(request(
+                json!({"require_capabilities": ["client_finalize"]}),
+            ))
+            .await
+    });
+    let (socket, _) = timeout(Duration::from_secs(5), listener.accept())
+        .await
+        .expect("a supported request should reach the transport")
+        .unwrap();
+    drop(socket);
+    assert_eq!(
+        supported.await.unwrap().unwrap_err().code,
+        ErrorCode::ProviderStreamError
+    );
+}
+
+#[cfg(feature = "stream")]
+#[tokio::test]
+async fn duplex_tts_rejects_unverified_alignment_before_connecting() {
+    use orchest_protocol::{AudioFormat, ErrorCode, TtsDuplexRequest};
+    use orchest_provider::{ProviderConfig, Registry};
+    use serde_json::json;
+
+    let registry = Registry::with_builtin();
+    let config = ProviderConfig::default()
+        .with_api_key("test-key")
+        .with_api_url("invalid-transport");
+    for entry in registry.tts().bidirectional().list() {
+        let adapter = entry.instantiate(&config).unwrap();
+        let request = TtsDuplexRequest {
+            voice: "test".into(),
+            format: AudioFormat::Mp3,
+            options: json!({"require_capabilities": ["words"]}),
+        };
+        assert_eq!(
+            adapter.start_duplex_stream(request).await.unwrap_err().code,
+            ErrorCode::UnsupportedOption,
+        );
+    }
+}

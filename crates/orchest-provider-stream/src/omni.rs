@@ -117,6 +117,7 @@ pub fn map_server_event(
             data: audio.unwrap_or_default(),
             format: AudioFormat::Pcm16Le,
             sequence: 0,
+            tts: None,
         }),
         EV_ASR_RESPONSE => {
             let first = payload

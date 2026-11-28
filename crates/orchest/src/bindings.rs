@@ -5,6 +5,7 @@ pub mod run;
 #[cfg(feature = "sqlite-session")]
 pub mod session;
 pub mod tools;
+pub mod tts;
 
 use std::time::Duration;
 

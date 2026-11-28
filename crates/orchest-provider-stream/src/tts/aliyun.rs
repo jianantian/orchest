@@ -6,19 +6,33 @@
 //! (`run-task` → `continue-task` → `finish-task`) and synthesized audio arrives as
 //! **binary** frames; `task-finished` / `task-failed` are text lifecycle events.
 
+use crate::metering::VoiceMeter;
+pub(super) mod duplex;
+
 use async_trait::async_trait;
 use bytes::Bytes;
+use orchest_protocol::VoiceSource;
 use orchest_protocol::{
     AudioFormat, Capability, CapabilityDescriptor, ErrorCode, EventStream, Modality, ProtocolError,
-    RealtimeHandle, StreamEvent, SynthesizeRequest, SynthesizeResult, TokenUsage, Tts,
+    StreamEvent, SynthesizeRequest, SynthesizeResult, TokenUsage, Tts,
 };
+use orchest_provider_core::catalog::TtsCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
-use orchest_provider_core::ws::{connect_async, tungstenite};
+use orchest_provider_core::ws::{tungstenite, WsConnector};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 use crate::tts::require_explicit_voice;
+
+pub(crate) const COSYVOICE_V2_PRICE: orchest_provider_core::voice::VoicePrice =
+    orchest_provider_core::voice::VoicePrice {
+        currency: "USD",
+        unit: orchest_protocol::VoiceRateUnit::BilledCharacter,
+        price_per_unit: 0.286706 / 10_000.0,
+        scope: "CosyVoice v2, Beijing",
+        source_url: "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
+    };
 
 const DEFAULT_WS_URL: &str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/";
 
@@ -90,6 +104,13 @@ pub enum AliyunTtsEvent {
 /// Parse a DashScope server **text** event (`task-finished` / `task-failed`).
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn parse_server_event(text: &str) -> Result<AliyunTtsEvent, ProtocolError> {
+    parse_server_event_with_usage(text).map(|(event, _)| event)
+}
+
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
+fn parse_server_event_with_usage(
+    text: &str,
+) -> Result<(AliyunTtsEvent, Option<u64>), ProtocolError> {
     let value: Value = serde_json::from_str(text).map_err(|e| {
         ProtocolError::new(
             ErrorCode::ProviderStreamError,
@@ -98,7 +119,7 @@ pub fn parse_server_event(text: &str) -> Result<AliyunTtsEvent, ProtocolError> {
     })?;
     let header = value.get("header");
     let event = header.and_then(|h| h.get("event")).and_then(Value::as_str);
-    Ok(match event {
+    let event = match event {
         Some("task-finished") => AliyunTtsEvent::Finished,
         Some("task-failed") => AliyunTtsEvent::Failed(
             header
@@ -108,7 +129,13 @@ pub fn parse_server_event(text: &str) -> Result<AliyunTtsEvent, ProtocolError> {
                 .to_owned(),
         ),
         _ => AliyunTtsEvent::Other,
-    })
+    };
+    Ok((
+        event,
+        value
+            .pointer("/payload/usage/characters")
+            .and_then(Value::as_u64),
+    ))
 }
 
 /// Drive one DashScope synthesis: send `run-task` / `continue-task(text)` /
@@ -122,14 +149,21 @@ pub async fn run_aliyun_synthesis<T: ByteDuplex>(
     finish_task: Value,
     format: AudioFormat,
     events: mpsc::Sender<StreamEvent>,
+    mut meter: VoiceMeter,
 ) {
-    for command in [run_task, continue_task, finish_task] {
+    for (index, command) in [run_task, continue_task, finish_task]
+        .into_iter()
+        .enumerate()
+    {
         if transport
             .send(WsFrame::Text(command.to_string()))
             .await
             .is_err()
         {
             return;
+        }
+        if index == 1 {
+            meter.text_sent();
         }
     }
     let mut sequence = 0u64;
@@ -141,6 +175,7 @@ pub async fn run_aliyun_synthesis<T: ByteDuplex>(
                         data: Bytes::from(data),
                         format,
                         sequence,
+                        tts: None,
                     })
                     .await
                     .is_err()
@@ -150,8 +185,10 @@ pub async fn run_aliyun_synthesis<T: ByteDuplex>(
                 sequence += 1;
             }
             WsFrame::Binary(_) => {}
-            WsFrame::Text(text) => match parse_server_event(&text) {
-                Ok(AliyunTtsEvent::Finished) => {
+            WsFrame::Text(text) => match parse_server_event_with_usage(&text) {
+                Ok((AliyunTtsEvent::Finished, characters)) => {
+                    meter.billed_characters(characters);
+                    meter.complete();
                     let _ = events
                         .send(StreamEvent::Done {
                             usage: TokenUsage::default(),
@@ -159,7 +196,7 @@ pub async fn run_aliyun_synthesis<T: ByteDuplex>(
                         .await;
                     break;
                 }
-                Ok(AliyunTtsEvent::Failed(message)) => {
+                Ok((AliyunTtsEvent::Failed(message), _)) => {
                     let _ = events
                         .send(StreamEvent::Error {
                             error: ProtocolError::new(ErrorCode::ProviderTaskFailed, message),
@@ -168,7 +205,7 @@ pub async fn run_aliyun_synthesis<T: ByteDuplex>(
                         .await;
                     break;
                 }
-                Ok(AliyunTtsEvent::Other) => {}
+                Ok((AliyunTtsEvent::Other, characters)) => meter.billed_characters(characters),
                 Err(error) => {
                     let _ = events.send(StreamEvent::Error { error, fatal: true }).await;
                     break;
@@ -189,20 +226,50 @@ pub struct AliyunTtsConfig {
 /// The aliyun DashScope streaming TTS provider as the spine [`Tts`].
 pub struct AliyunTts {
     config: AliyunTtsConfig,
+    connector: WsConnector,
 }
 
 impl AliyunTts {
     pub fn new(config: AliyunTtsConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            connector: WsConnector::default(),
+        }
     }
 
-    async fn open_stream(&self, request: SynthesizeRequest) -> Result<EventStream, ProtocolError> {
-        if !self.config.ws_url.starts_with("wss://") {
+    #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
+    fn websocket_request(
+        &self,
+        url: &str,
+    ) -> Result<tungstenite::http::Request<()>, ProtocolError> {
+        if !url.starts_with("wss://") {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,
                 "WebSocket URL must use wss:// for secure credential transport",
             ));
         }
+        tungstenite::http::Request::builder()
+            .uri(url)
+            .header("Authorization", format!("bearer {}", self.config.api_key))
+            .header("Host", host_of(url))
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header(
+                "Sec-WebSocket-Key",
+                tungstenite::handshake::client::generate_key(),
+            )
+            .body(())
+            .map_err(|e| {
+                ProtocolError::new(ErrorCode::InvalidRequest, format!("build ws request: {e}"))
+            })
+    }
+
+    async fn open_stream(
+        &self,
+        mut request: SynthesizeRequest,
+    ) -> Result<EventStream, ProtocolError> {
+        CATALOG_EXT.validate_options(&mut request.options)?;
         let voice = require_explicit_voice(&request)?;
         let task_id = uuid::Uuid::new_v4().simple().to_string();
         let run_task = build_run_task(
@@ -215,23 +282,9 @@ impl AliyunTts {
         let continue_task = build_continue_task(&task_id, &request.text);
         let finish_task = build_finish_task(&task_id);
 
-        let ws_request = tungstenite::http::Request::builder()
-            .uri(&self.config.ws_url)
-            .header("Authorization", format!("bearer {}", self.config.api_key))
-            .header("Host", host_of(&self.config.ws_url))
-            .header("Connection", "Upgrade")
-            .header("Upgrade", "websocket")
-            .header("Sec-WebSocket-Version", "13")
-            .header(
-                "Sec-WebSocket-Key",
-                tungstenite::handshake::client::generate_key(),
-            )
-            .body(())
-            .map_err(|e| {
-                ProtocolError::new(ErrorCode::InvalidRequest, format!("build ws request: {e}"))
-            })?;
+        let ws_request = self.websocket_request(&self.config.ws_url)?;
 
-        let (ws_stream, _response) = connect_async(ws_request).await.map_err(|e| {
+        let ws_stream = self.connector.connect(ws_request).await.map_err(|e| {
             ProtocolError::new(
                 ErrorCode::ProviderStreamError,
                 format!("Aliyun WebSocket connection failed: {e}"),
@@ -239,6 +292,15 @@ impl AliyunTts {
         })?;
 
         let (events_tx, events) = EventStream::channel(64);
+        let (meter, events) = VoiceMeter::attach(
+            events,
+            "aliyun",
+            &self.config.model,
+            None,
+            (self.config.model == "cosyvoice-v2" && self.config.ws_url == DEFAULT_WS_URL)
+                .then_some(COSYVOICE_V2_PRICE),
+        );
+        let meter = meter.with_text(Some(&request.text));
         tokio::spawn(run_aliyun_synthesis(
             WsDuplex::new(ws_stream),
             run_task,
@@ -246,6 +308,7 @@ impl AliyunTts {
             finish_task,
             request.format,
             events_tx,
+            meter,
         ));
         Ok(events)
     }
@@ -258,12 +321,23 @@ fn host_of(url: &str) -> &str {
         .unwrap_or("dashscope.aliyuncs.com")
 }
 
+pub(crate) const CATALOG_EXT: TtsCatalogExt = TtsCatalogExt {
+    source: VoiceSource::Direct,
+    protocol: "dashscope_tts_ws",
+    words: false,
+    duplex: true,
+    flush: true,
+    cancel: true,
+};
+
 /// The static descriptor the registry filters on for the aliyun TTS dialect.
 pub fn entry_descriptor() -> CapabilityDescriptor {
     CapabilityDescriptor::new("aliyun", "cosyvoice-v2", Capability::Tts)
         .streaming(true)
+        .duplex(CATALOG_EXT.duplex)
         .with_input_modalities([Modality::Text])
         .with_output_modalities([Modality::Audio])
+        .with_ext(CATALOG_EXT.to_descriptor_ext())
 }
 
 /// Build an [`AliyunTts`] from a registry [`ProviderConfig`].
@@ -282,11 +356,13 @@ pub fn from_provider_config(cfg: &ProviderConfig) -> Result<AliyunTts, ProtocolE
         .api_url
         .clone()
         .unwrap_or_else(|| DEFAULT_WS_URL.to_string());
-    Ok(AliyunTts::new(AliyunTtsConfig {
+    let mut adapter = AliyunTts::new(AliyunTtsConfig {
         model,
         ws_url,
         api_key,
-    }))
+    });
+    adapter.connector = WsConnector::from_options(&cfg.options)?;
+    Ok(adapter)
 }
 
 #[async_trait]
@@ -300,10 +376,9 @@ impl Tts for AliyunTts {
     }
 
     fn descriptor(&self) -> CapabilityDescriptor {
-        CapabilityDescriptor::new("aliyun", self.config.model.clone(), Capability::Tts)
-            .streaming(true)
-            .with_input_modalities([Modality::Text])
-            .with_output_modalities([Modality::Audio])
+        let mut descriptor = entry_descriptor();
+        descriptor.model = self.config.model.clone().into();
+        descriptor
     }
 
     async fn synthesize(
@@ -311,21 +386,8 @@ impl Tts for AliyunTts {
         request: SynthesizeRequest,
     ) -> Result<SynthesizeResult, ProtocolError> {
         let format = request.format;
-        let mut stream = self.open_stream(request).await?;
-        let mut audio = Vec::new();
-        while let Some(event) = stream.next().await {
-            match event {
-                StreamEvent::AudioDelta { data, .. } => audio.extend_from_slice(&data),
-                StreamEvent::Error { error, .. } => return Err(error),
-                StreamEvent::Done { .. } => break,
-                _ => {}
-            }
-        }
-        Ok(SynthesizeResult {
-            audio: Bytes::from(audio),
-            format,
-            diagnostic_metadata: Value::Null,
-        })
+        let stream = self.open_stream(request).await?;
+        super::collect_synthesis(stream, format, self.provider_name(), self.model_name()).await
     }
 
     async fn stream_synthesize(
@@ -335,11 +397,11 @@ impl Tts for AliyunTts {
         self.open_stream(request).await
     }
 
-    async fn start_duplex_stream(&self) -> Result<RealtimeHandle, ProtocolError> {
-        Err(ProtocolError::new(
-            ErrorCode::UnsupportedOperation,
-            "aliyun TTS duplex stream is not wired on the spine",
-        ))
+    async fn start_duplex_stream(
+        &self,
+        request: orchest_protocol::TtsDuplexRequest,
+    ) -> Result<orchest_protocol::TtsDuplexHandle, ProtocolError> {
+        self.open_duplex(request).await
     }
 }
 
@@ -423,6 +485,7 @@ mod tests {
             build_finish_task("t"),
             AudioFormat::Mp3,
             events_tx,
+            VoiceMeter::default(),
         ));
 
         // the loop sends run-task / continue-task / finish-task as text frames

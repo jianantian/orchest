@@ -16,6 +16,7 @@
 pub mod asr;
 pub mod catalog;
 pub mod fixture;
+pub mod metering;
 pub mod omni;
 pub mod openspeech;
 pub mod transport;
@@ -63,17 +64,25 @@ pub fn asr_entries() -> Vec<Entry<Box<dyn Asr>>> {
 /// calls), so it fits the sync factory.
 #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context (matches the workspace error convention)
 pub fn tts_entries() -> Vec<Entry<Box<dyn Tts>>> {
-    vec![
-        Entry::new(tts::volcengine::entry_descriptor(), |cfg| {
-            Ok(Box::new(tts::volcengine::from_provider_config(cfg)?) as Box<dyn Tts>)
-        }),
-        Entry::new(tts::minimax::entry_descriptor(), |cfg| {
-            Ok(Box::new(tts::minimax::from_provider_config(cfg)?) as Box<dyn Tts>)
-        }),
-        Entry::new(tts::aliyun::entry_descriptor(), |cfg| {
-            Ok(Box::new(tts::aliyun::from_provider_config(cfg)?) as Box<dyn Tts>)
-        }),
-    ]
+    catalog::stream_tts_models()
+        .iter()
+        .map(|rec| {
+            Entry::new(rec.to_descriptor(), move |cfg| {
+                let handle: Box<dyn Tts> = match rec.provider {
+                    "volcengine" => Box::new(tts::volcengine::from_provider_config(cfg)?),
+                    "minimax" => Box::new(tts::minimax::from_provider_config(cfg)?),
+                    "aliyun" => Box::new(tts::aliyun::from_provider_config(cfg)?),
+                    other => {
+                        return Err(ProtocolError::new(
+                            ErrorCode::UnknownProvider,
+                            format!("no stream TTS dialect for {other}"),
+                        ))
+                    }
+                };
+                Ok(handle)
+            })
+        })
+        .collect()
 }
 
 /// Omni full-duplex realtime sessions (Volcengine openspeech). The factory is

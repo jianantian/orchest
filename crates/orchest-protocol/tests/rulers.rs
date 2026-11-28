@@ -62,6 +62,7 @@ async fn omni_full_duplex_seats_in_protocol() {
             data: Bytes::from_static(b"audio-0"),
             format: AudioFormat::Pcm16Le,
             sequence: 0,
+            tts: None,
         })
         .await
         .unwrap();
@@ -97,6 +98,7 @@ async fn omni_full_duplex_seats_in_protocol() {
             data: Bytes::from_static(b"audio-1"),
             format: AudioFormat::Pcm16Le,
             sequence: 1,
+            tts: None,
         })
         .await
         .unwrap();

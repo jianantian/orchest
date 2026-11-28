@@ -363,14 +363,28 @@ fn assert_contract(dialect: &str, client_finalize: bool, (observed, violations, 
 
 #[tokio::test]
 async fn deepgram_meets_the_contract() {
-    let result = replay_session("deepgram/hello.jsonl", deepgram::run_deepgram_stream).await;
+    let result = replay_session("deepgram/hello.jsonl", |duplex, input, events| {
+        deepgram::run_deepgram_stream(
+            duplex,
+            input,
+            events,
+            orchest_provider_stream::metering::VoiceMeter::default(),
+        )
+    })
+    .await;
     assert_contract("deepgram", deepgram::CLIENT_FINALIZE, result);
 }
 
 #[tokio::test]
 async fn elevenlabs_meets_the_contract() {
     let result = replay_session("elevenlabs/hello.jsonl", |duplex, input, events| {
-        elevenlabs::run_elevenlabs_stream(duplex, 16_000, input, events)
+        elevenlabs::run_elevenlabs_stream(
+            duplex,
+            16_000,
+            input,
+            events,
+            orchest_provider_stream::metering::VoiceMeter::default(),
+        )
     })
     .await;
     assert_contract("elevenlabs", elevenlabs::CLIENT_FINALIZE, result);
@@ -379,7 +393,13 @@ async fn elevenlabs_meets_the_contract() {
 #[tokio::test]
 async fn soniox_meets_the_contract() {
     let result = replay_session("soniox/hello.jsonl", |duplex, input, events| {
-        soniox::run_soniox_stream(duplex, "{}".into(), input, events)
+        soniox::run_soniox_stream(
+            duplex,
+            "{}".into(),
+            input,
+            events,
+            orchest_provider_stream::metering::VoiceMeter::default(),
+        )
     })
     .await;
     assert_contract("soniox", soniox::CLIENT_FINALIZE, result);
@@ -396,6 +416,7 @@ async fn aliyun_meets_the_contract() {
             input,
             events,
             ready,
+            orchest_provider_stream::metering::VoiceMeter::default(),
         )
     })
     .await;
@@ -404,7 +425,15 @@ async fn aliyun_meets_the_contract() {
 
 #[tokio::test]
 async fn volcengine_meets_the_contract() {
-    let result = replay_session("volcengine/hello.jsonl", volcengine::run_asr_stream).await;
+    let result = replay_session("volcengine/hello.jsonl", |duplex, input, events| {
+        volcengine::run_asr_stream(
+            duplex,
+            input,
+            events,
+            orchest_provider_stream::metering::VoiceMeter::default(),
+        )
+    })
+    .await;
     assert_contract("volcengine", volcengine::CLIENT_FINALIZE, result);
 }
 

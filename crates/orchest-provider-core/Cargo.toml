@@ -21,7 +21,7 @@ default = ["sse"]
 sse = []
 # Bidirectional websocket scaffold + binary-frame codec (openspeech/minimax-ws).
 # Pulls tokio-tungstenite.
-ws = ["dep:tokio-tungstenite", "dep:futures-util"]
+ws = ["dep:tokio-tungstenite", "dep:futures-util", "dep:native-tls"]
 # OSS upload + signed-gen (AK/SK-HMAC / OSS-signature) auth + gen-task poller.
 # Pulls the signing crates.
 oss = ["dep:hmac", "dep:sha2", "dep:hex", "dep:base64"]
@@ -40,6 +40,7 @@ uuid = { version = "1", features = ["v4"] }
 # --- weight-gated (ws) ---
 tokio-tungstenite = { version = "0.24", features = ["native-tls"], optional = true }
 futures-util = { version = "0.3", optional = true }
+native-tls = { version = "0.2", optional = true }
 
 # --- weight-gated (oss) ---
 hmac = { version = "0.12", optional = true }

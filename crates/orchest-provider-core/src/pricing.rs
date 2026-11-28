@@ -1,11 +1,8 @@
 //! Unified cost accounting (Issue 007 pricing reconciliation).
 //!
-//! Providers bill in three different shapes: LLMs by **token tier**
-//! ([`ModelPricing`]), ASR/TTS by audio **duration**, and image/video/music
-//! generation by produced **asset**. This module folds all three onto one
-//! surface — a [`Pricing`] model is applied to a matching [`Meter`] to yield a
-//! [`Cost`] — so the runtime has a single place to compute spend regardless of
-//! modality.
+//! A [`Pricing`] model is applied to a matching [`Meter`] to yield a [`Cost`].
+//! Billing units cover LLM tokens, audio duration, speech synthesis characters,
+//! and generated media assets.
 
 use orchest_protocol::{ModelPricing, TokenUsage};
 
@@ -24,7 +21,7 @@ impl Cost {
     }
 }
 
-/// The three billing models reconciled onto one surface.
+/// Billing models reconciled onto one surface.
 #[derive(Debug, Clone)]
 pub enum Pricing {
     /// LLM token-tier pricing (text/audio/image/video/cache), delegating to the
@@ -32,6 +29,11 @@ pub enum Pricing {
     Tokens(ModelPricing),
     /// Audio **duration** pricing (ASR/TTS): `per_second` of audio.
     Duration { currency: String, per_second: f64 },
+    /// Provider-billed characters in a synthesis request.
+    Characters {
+        currency: String,
+        per_character: f64,
+    },
     /// Produced-**asset** pricing (image/video/music): `per_asset`.
     Asset { currency: String, per_asset: f64 },
 }
@@ -43,6 +45,8 @@ pub enum Meter<'a> {
     Tokens(&'a TokenUsage),
     /// Audio duration in milliseconds (for [`Pricing::Duration`]).
     DurationMs(u64),
+    /// Billable characters (for [`Pricing::Characters`]).
+    Characters(u64),
     /// Number of produced assets (for [`Pricing::Asset`]).
     Assets(u64),
 }
@@ -52,7 +56,9 @@ impl Pricing {
     pub fn currency(&self) -> &str {
         match self {
             Pricing::Tokens(p) => &p.currency,
-            Pricing::Duration { currency, .. } | Pricing::Asset { currency, .. } => currency,
+            Pricing::Duration { currency, .. }
+            | Pricing::Characters { currency, .. }
+            | Pricing::Asset { currency, .. } => currency,
         }
     }
 
@@ -64,6 +70,9 @@ impl Pricing {
             (Pricing::Tokens(pricing), Meter::Tokens(usage)) => pricing.calculate(usage),
             (Pricing::Duration { per_second, .. }, Meter::DurationMs(ms)) => {
                 (ms as f64 / 1000.0) * per_second
+            }
+            (Pricing::Characters { per_character, .. }, Meter::Characters(count)) => {
+                count as f64 * per_character
             }
             (Pricing::Asset { per_asset, .. }, Meter::Assets(count)) => (count as f64) * per_asset,
             // Mismatched pricing/meter shapes contribute nothing.

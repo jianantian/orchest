@@ -14,10 +14,13 @@ use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ErrorCode, Language, Modality, ProtocolError,
     RealtimeHandle, StreamingTranscribeRequest, TranscribeRequest, TranscribeResult,
 };
+use orchest_provider_core::catalog::AsrCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
 use serde_json::{json, Value};
+
+pub(crate) const CATALOG_EXT: AsrCatalogExt = AsrCatalogExt::direct("speechmatics_batch_http", &[]);
 
 const DEFAULT_API_URL: &str = "https://asr.api.speechmatics.com/v2";
 
@@ -33,8 +36,14 @@ pub struct SpeechmaticsConfig {
 
 #[derive(Debug, Deserialize)]
 struct Transcript {
+    job: Option<TranscriptJob>,
     #[serde(default)]
     results: Vec<ResultItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TranscriptJob {
+    duration: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -264,6 +273,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
     CapabilityDescriptor::new("speechmatics", "enhanced", Capability::Asr)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
+        .with_ext(CATALOG_EXT.to_descriptor_ext())
 }
 
 /// Build a [`SpeechmaticsAsr`] from a registry [`ProviderConfig`].
@@ -304,6 +314,7 @@ impl Asr for SpeechmaticsAsr {
         CapabilityDescriptor::new("speechmatics", self.config.model.clone(), Capability::Asr)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
+            .with_ext(CATALOG_EXT.to_descriptor_ext())
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -312,14 +323,37 @@ impl Asr for SpeechmaticsAsr {
 
     async fn transcribe(
         &self,
-        request: TranscribeRequest,
+        mut request: TranscribeRequest,
     ) -> Result<TranscribeResult, ProtocolError> {
+        CATALOG_EXT.take_required_capabilities(&mut request.options)?;
         let config = build_job_config(&self.config.model, &request);
         let id = self.submit_job(config, request.audio.to_vec()).await?;
         self.poll_job(&id).await?;
         let transcript = self.fetch_transcript(&id).await?;
+        let reported = transcript
+            .job
+            .and_then(|job| job.duration)
+            .and_then(|seconds| {
+                orchest_provider_core::voice::duration_from_seconds(
+                    seconds,
+                    orchest_protocol::VoiceUsageSource::ProviderReported,
+                )
+            });
+        let model = request
+            .options
+            .get("operating_point")
+            .and_then(Value::as_str)
+            .unwrap_or(&self.config.model);
+        let usage = orchest_provider_core::voice::batch_audio_usage(
+            "speechmatics",
+            model,
+            request.format,
+            &request.audio,
+            reported,
+        );
         let (text, language) = assemble_transcript(transcript.results);
         Ok(TranscribeResult {
+            voice_usage: Some(usage),
             text,
             language: language.map(Language),
             diagnostic_metadata: json!({ "provider": "speechmatics" }),

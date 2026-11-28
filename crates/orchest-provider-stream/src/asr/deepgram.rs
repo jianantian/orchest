@@ -9,13 +9,16 @@
 //! that carries both binary audio and text control) wraps it once the transport
 //! is generalized.
 
+use crate::metering::VoiceMeter;
 use async_trait::async_trait;
+use orchest_protocol::AsrCapability;
 use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
     Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
     StreamingTranscribeRequest, TranscribeRequest, TranscribeResult, TranscriptStability,
     TranscriptUpdateKind,
 };
+use orchest_provider_core::catalog::AsrCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
 use serde::Deserialize;
@@ -23,12 +26,30 @@ use tokio::sync::mpsc;
 
 use crate::transport::{ByteDuplex, WsDuplex, WsFrame};
 
+pub(crate) const NOVA_3_PRICE: orchest_provider_core::voice::VoicePrice =
+    orchest_provider_core::voice::VoicePrice {
+        currency: "USD",
+        unit: orchest_protocol::VoiceRateUnit::AudioSecond,
+        price_per_unit: 0.0048 / 60.0,
+        scope: "Nova-3 monolingual streaming, public pay-as-you-go",
+        source_url: "https://deepgram.com/pricing",
+    };
+
 const DEFAULT_WS_URL: &str = "wss://api.deepgram.com/v1/listen";
 
 /// Whether this dialect honours `SessionInput::Finalize`: it sends Deepgram's
 /// native `Finalize` control frame, which flushes buffered audio without
 /// closing the stream (<https://developers.deepgram.com/docs/finalize>).
 pub const CLIENT_FINALIZE: bool = true;
+
+pub(crate) const CATALOG_EXT: AsrCatalogExt = AsrCatalogExt::direct(
+    "deepgram_listen_ws",
+    &[
+        AsrCapability::CommittedAppend,
+        AsrCapability::ServerEndpointing,
+        AsrCapability::ClientFinalize,
+    ],
+);
 
 /// The `Finalize` control text frame.
 pub const FINALIZE_FRAME: &str = r#"{"type":"Finalize"}"#;
@@ -48,7 +69,10 @@ pub enum DeepgramMessage {
     /// (<https://developers.deepgram.com/docs/finalize>).
     FinalizeAck,
     Error(super::UpstreamError),
-    /// Metadata / SpeechStarted / KeepAlive / unknown, or an `UtteranceEnd`
+    Metadata {
+        duration: Option<f64>,
+    },
+    /// SpeechStarted / KeepAlive / unknown, or an `UtteranceEnd`
     /// with `last_word_end == -1` (already finalized) — no content.
     Ignored,
 }
@@ -84,6 +108,9 @@ pub fn parse_message(text: &str) -> Result<DeepgramMessage, ProtocolError> {
         )
     })?;
     match value.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+        "Metadata" => Ok(DeepgramMessage::Metadata {
+            duration: value.get("duration").and_then(serde_json::Value::as_f64),
+        }),
         "Results" => Ok(DeepgramMessage::Result(parse_results(value)?)),
         "UtteranceEnd" => {
             let already_final = value
@@ -204,7 +231,7 @@ impl DeepgramMapper {
                 self.turn(true).into_iter().collect()
             }
             DeepgramMessage::Error(error) => vec![error.into_event("deepgram")],
-            DeepgramMessage::Ignored => Vec::new(),
+            DeepgramMessage::Ignored | DeepgramMessage::Metadata { .. } => Vec::new(),
         }
     }
 
@@ -306,9 +333,11 @@ pub async fn run_deepgram_stream<T: ByteDuplex>(
     mut transport: T,
     mut input: mpsc::Receiver<SessionInput>,
     events: mpsc::Sender<StreamEvent>,
+    mut meter: VoiceMeter,
 ) {
     let mut mapper = DeepgramMapper::new();
     let mut input_open = true;
+    let mut input_finished = false;
     let mut finalize = super::FinalizeWatch::default();
     loop {
         tokio::select! {
@@ -317,6 +346,7 @@ pub async fn run_deepgram_stream<T: ByteDuplex>(
                     if transport.send(WsFrame::Binary(bytes.to_vec())).await.is_err() {
                         break;
                     }
+                    meter.audio_sent(bytes.len());
                 }
                 Some(SessionInput::Finalize) => {
                     if transport.send(WsFrame::Text(FINALIZE_FRAME.to_string())).await.is_err() {
@@ -324,11 +354,14 @@ pub async fn run_deepgram_stream<T: ByteDuplex>(
                     }
                     finalize.sent();
                 }
-                None | Some(SessionInput::Interrupt) => {
+                end @ (None | Some(SessionInput::Interrupt)) => {
+                    if end.is_some() {
+                        meter.cancel();
+                    }
                     input_open = false;
-                    let _ = transport
+                    input_finished = transport
                         .send(WsFrame::Text(CLOSE_STREAM_FRAME.to_string()))
-                        .await;
+                        .await.is_ok();
                 }
                 Some(_) => {}
             },
@@ -340,6 +373,13 @@ pub async fn run_deepgram_stream<T: ByteDuplex>(
             maybe_frame = transport.recv() => match maybe_frame.as_ref().and_then(WsFrame::as_text) {
                 Some(text) => match parse_message(text) {
                     Ok(message) => {
+                        if let DeepgramMessage::Metadata { duration } = &message {
+                            meter.reported_audio(duration.and_then(|seconds| {
+                                orchest_provider_core::voice::duration_from_seconds(
+                                    seconds, orchest_protocol::VoiceUsageSource::ProviderReported,
+                                )
+                            }));
+                        }
                         let is_error = matches!(message, DeepgramMessage::Error(_));
                         let mapped = mapper.map(message);
                         let mut mapped = finalize.settle(mapper.take_finalize_answer(), mapped);
@@ -369,6 +409,9 @@ pub async fn run_deepgram_stream<T: ByteDuplex>(
                 None => match maybe_frame {
                     Some(_) => continue, // binary frame (unexpected) — ignore
                     None => {
+                        if input_finished && !transport.receive_failed() {
+                            meter.complete();
+                        }
                         let mut closing = mapper.close();
                         closing.extend(finalize.closed("deepgram"));
                         closing.push(StreamEvent::Lifecycle(LifecycleEvent::SessionClosed));
@@ -418,7 +461,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
         .duplex(true)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
-        .with_ext(super::asr_ext(CLIENT_FINALIZE))
+        .with_ext(CATALOG_EXT.to_descriptor_ext())
 }
 
 /// Build a [`DeepgramAsr`] from a registry [`ProviderConfig`]: `api_url` is the
@@ -461,7 +504,7 @@ impl Asr for DeepgramAsr {
             .duplex(true)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
-            .with_ext(super::asr_ext(CLIENT_FINALIZE))
+            .with_ext(CATALOG_EXT.to_descriptor_ext())
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -480,8 +523,9 @@ impl Asr for DeepgramAsr {
 
     async fn start_stream(
         &self,
-        _request: StreamingTranscribeRequest,
+        mut request: StreamingTranscribeRequest,
     ) -> Result<RealtimeHandle, ProtocolError> {
+        CATALOG_EXT.take_required_capabilities(&mut request.options)?;
         if !self.config.ws_url.starts_with("wss://") {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,
@@ -517,10 +561,19 @@ impl Asr for DeepgramAsr {
 
         let (input_tx, input_rx) = mpsc::channel(32);
         let (events_tx, events) = EventStream::channel(64);
+        let (meter, events) = VoiceMeter::attach(
+            events,
+            "deepgram",
+            &self.config.model,
+            crate::metering::pcm16(request.format, 16_000, 1),
+            (self.config.model == "nova-3" && self.config.ws_url == DEFAULT_WS_URL)
+                .then_some(NOVA_3_PRICE),
+        );
         tokio::spawn(run_deepgram_stream(
             crate::fixture::live(WsDuplex::new(ws_stream)),
             input_rx,
             events_tx,
+            meter,
         ));
         Ok(RealtimeHandle {
             input: input_tx,
@@ -603,7 +656,12 @@ mod tests {
         };
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(8);
-        let handle = tokio::spawn(run_deepgram_stream(transport, input_rx, events_tx));
+        let handle = tokio::spawn(run_deepgram_stream(
+            transport,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         // audio in -> a binary frame
         input_tx
@@ -653,7 +711,12 @@ mod tests {
         };
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(8);
-        let _handle = tokio::spawn(run_deepgram_stream(transport, input_rx, events_tx));
+        let _handle = tokio::spawn(run_deepgram_stream(
+            transport,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         input_tx.send(SessionInput::Finalize).await.unwrap();
         assert_eq!(
@@ -747,7 +810,7 @@ mod tests {
 
     #[test]
     fn lifecycle_messages_are_ignored() {
-        for ty in ["Metadata", "SpeechStarted", "KeepAlive"] {
+        for ty in ["SpeechStarted", "KeepAlive"] {
             let raw = json!({"type": ty}).to_string();
             assert_eq!(parse_message(&raw).unwrap(), DeepgramMessage::Ignored);
         }
@@ -923,7 +986,12 @@ mod tests {
         };
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(8);
-        let _handle = tokio::spawn(run_deepgram_stream(transport, input_rx, events_tx));
+        let _handle = tokio::spawn(run_deepgram_stream(
+            transport,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         input_tx.send(SessionInput::Finalize).await.unwrap();
         assert_eq!(
@@ -962,7 +1030,12 @@ mod tests {
         };
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(16);
-        let _handle = tokio::spawn(run_deepgram_stream(transport, input_rx, events_tx));
+        let _handle = tokio::spawn(run_deepgram_stream(
+            transport,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         input_tx.send(SessionInput::Finalize).await.unwrap();
         out_rx.recv().await.unwrap();
@@ -1001,7 +1074,12 @@ mod tests {
         };
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(16);
-        let _handle = tokio::spawn(run_deepgram_stream(transport, input_rx, events_tx));
+        let _handle = tokio::spawn(run_deepgram_stream(
+            transport,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         input_tx.send(SessionInput::Finalize).await.unwrap();
         out_rx.recv().await.unwrap();
@@ -1087,7 +1165,12 @@ mod tests {
         };
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(16);
-        let _handle = tokio::spawn(run_deepgram_stream(transport, input_rx, events_tx));
+        let _handle = tokio::spawn(run_deepgram_stream(
+            transport,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         input_tx.send(SessionInput::Finalize).await.unwrap();
         out_rx.recv().await.unwrap();

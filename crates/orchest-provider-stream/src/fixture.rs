@@ -431,6 +431,10 @@ mod recording {
             self.inner.send(frame).await
         }
 
+        fn receive_failed(&self) -> bool {
+            self.inner.receive_failed()
+        }
+
         async fn recv(&mut self) -> Option<WsFrame> {
             let frame = self.inner.recv().await?;
             let line = match &frame {

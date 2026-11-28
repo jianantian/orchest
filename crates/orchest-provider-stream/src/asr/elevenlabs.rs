@@ -7,14 +7,17 @@
 //! `partial_transcript` / `committed_transcript[_with_timestamps]` /
 //! `session_started` / `error` JSON messages.
 
+use crate::metering::VoiceMeter;
 use async_trait::async_trait;
 use base64::Engine;
+use orchest_protocol::AsrCapability;
 use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
     Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
     StreamingTranscribeRequest, TranscribeRequest, TranscribeResult, TranscriptStability,
     TranscriptUpdateKind,
 };
+use orchest_provider_core::catalog::AsrCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
 use serde_json::json;
@@ -29,6 +32,9 @@ const DEFAULT_WS_URL: &str = "wss://api.elevenlabs.io/v1/speech-to-text/stream";
 /// yields a `committed_transcript` without closing the session
 /// (<https://elevenlabs.io/docs/eleven-api/guides/how-to/speech-to-text/realtime/event-reference>).
 pub const CLIENT_FINALIZE: bool = true;
+
+pub(crate) const CATALOG_EXT: AsrCatalogExt =
+    AsrCatalogExt::direct("elevenlabs_realtime_ws", &[AsrCapability::ClientFinalize]);
 
 /// A decoded ElevenLabs inbound message.
 #[derive(Debug, PartialEq)]
@@ -201,9 +207,11 @@ pub async fn run_elevenlabs_stream<T: ByteDuplex>(
     sample_rate: u32,
     mut input: mpsc::Receiver<SessionInput>,
     events: mpsc::Sender<StreamEvent>,
+    mut meter: VoiceMeter,
 ) {
     let mut mapper = ElevenLabsMapper::new();
     let mut input_open = true;
+    let mut input_finished = false;
     let mut finalize = super::FinalizeWatch::default();
     loop {
         tokio::select! {
@@ -213,12 +221,16 @@ pub async fn run_elevenlabs_stream<T: ByteDuplex>(
                     if transport.send(WsFrame::Text(frame)).await.is_err() {
                         break;
                     }
+                    meter.audio_sent(bytes.len());
                 }
-                None | Some(SessionInput::Interrupt) => {
+                end @ (None | Some(SessionInput::Interrupt)) => {
+                    if end.is_some() {
+                        meter.cancel();
+                    }
                     input_open = false;
-                    let _ = transport
+                    input_finished = transport
                         .send(WsFrame::Text(build_audio_message(&[], true, sample_rate)))
-                        .await;
+                        .await.is_ok();
                 }
                 Some(SessionInput::Finalize) => {
                     mapper.note_finalize();
@@ -267,6 +279,9 @@ pub async fn run_elevenlabs_stream<T: ByteDuplex>(
                 None => match maybe_frame {
                     Some(_) => continue,
                     None => {
+                        if input_finished && !transport.receive_failed() {
+                            meter.complete();
+                        }
                         let mut closing = finalize.closed("elevenlabs");
                         closing.push(StreamEvent::Lifecycle(LifecycleEvent::SessionClosed));
                         for event in closing {
@@ -315,7 +330,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
         .duplex(true)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
-        .with_ext(super::asr_ext(CLIENT_FINALIZE))
+        .with_ext(CATALOG_EXT.to_descriptor_ext())
 }
 
 /// Build an [`ElevenLabsAsr`] from a registry [`ProviderConfig`].
@@ -356,7 +371,7 @@ impl Asr for ElevenLabsAsr {
             .duplex(true)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
-            .with_ext(super::asr_ext(CLIENT_FINALIZE))
+            .with_ext(CATALOG_EXT.to_descriptor_ext())
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -375,8 +390,9 @@ impl Asr for ElevenLabsAsr {
 
     async fn start_stream(
         &self,
-        _request: StreamingTranscribeRequest,
+        mut request: StreamingTranscribeRequest,
     ) -> Result<RealtimeHandle, ProtocolError> {
+        CATALOG_EXT.take_required_capabilities(&mut request.options)?;
         if !self.config.ws_url.starts_with("wss://") {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,
@@ -408,11 +424,19 @@ impl Asr for ElevenLabsAsr {
 
         let (input_tx, input_rx) = mpsc::channel(32);
         let (events_tx, events) = EventStream::channel(64);
+        let (meter, events) = VoiceMeter::attach(
+            events,
+            "elevenlabs",
+            &self.config.model,
+            crate::metering::pcm16(request.format, 16_000, 1),
+            None,
+        );
         tokio::spawn(run_elevenlabs_stream(
             crate::fixture::live(WsDuplex::new(ws_stream)),
             16_000,
             input_rx,
             events_tx,
+            meter,
         ));
         Ok(RealtimeHandle {
             input: input_tx,
@@ -564,7 +588,13 @@ mod tests {
         };
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(8);
-        let handle = tokio::spawn(run_elevenlabs_stream(transport, 16000, input_rx, events_tx));
+        let handle = tokio::spawn(run_elevenlabs_stream(
+            transport,
+            16000,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         // audio in -> an input_audio_chunk text frame
         input_tx
@@ -605,7 +635,13 @@ mod tests {
         };
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(8);
-        let _handle = tokio::spawn(run_elevenlabs_stream(transport, 16000, input_rx, events_tx));
+        let _handle = tokio::spawn(run_elevenlabs_stream(
+            transport,
+            16000,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         input_tx.send(SessionInput::Finalize).await.unwrap();
         match out_rx.recv().await.unwrap() {
@@ -667,7 +703,13 @@ mod tests {
         };
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(8);
-        let _handle = tokio::spawn(run_elevenlabs_stream(transport, 16000, input_rx, events_tx));
+        let _handle = tokio::spawn(run_elevenlabs_stream(
+            transport,
+            16000,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         input_tx.send(SessionInput::Finalize).await.unwrap();
         assert!(matches!(out_rx.recv().await.unwrap(), WsFrame::Text(_)));
@@ -689,7 +731,13 @@ mod tests {
         };
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(8);
-        let _handle = tokio::spawn(run_elevenlabs_stream(transport, 16000, input_rx, events_tx));
+        let _handle = tokio::spawn(run_elevenlabs_stream(
+            transport,
+            16000,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         input_tx.send(SessionInput::Finalize).await.unwrap();
         out_rx.recv().await.unwrap();
@@ -721,7 +769,13 @@ mod tests {
         };
         let (input_tx, input_rx) = mpsc::channel(8);
         let (events_tx, mut events_rx) = mpsc::channel(8);
-        let _handle = tokio::spawn(run_elevenlabs_stream(transport, 16000, input_rx, events_tx));
+        let _handle = tokio::spawn(run_elevenlabs_stream(
+            transport,
+            16000,
+            input_rx,
+            events_tx,
+            VoiceMeter::default(),
+        ));
 
         input_tx.send(SessionInput::Finalize).await.unwrap();
         out_rx.recv().await.unwrap();

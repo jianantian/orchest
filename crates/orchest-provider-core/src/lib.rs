@@ -28,6 +28,7 @@ pub mod pricing;
 pub mod registry;
 pub mod retry;
 pub mod telemetry;
+pub mod voice;
 
 #[cfg(feature = "sse")]
 pub mod sse;

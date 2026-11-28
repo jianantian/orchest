@@ -26,6 +26,44 @@ pub enum CapabilitySource {
     Assumed,
 }
 
+/// How a voice provider is reached, independent of the evidence for its capabilities.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum VoiceSource {
+    Direct,
+    Gateway,
+}
+
+/// ASR capabilities exposed by the adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AsrCapability {
+    CommittedAppend,
+    ServerEndpointing,
+    ClientFinalize,
+    Words,
+    Speaker,
+    Confidence,
+    SpeechStarted,
+    Failover,
+}
+
+impl AsrCapability {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::CommittedAppend => "committed_append",
+            Self::ServerEndpointing => "server_endpointing",
+            Self::ClientFinalize => "client_finalize",
+            Self::Words => "words",
+            Self::Speaker => "speaker",
+            Self::Confidence => "confidence",
+            Self::SpeechStarted => "speech_started",
+            Self::Failover => "failover",
+        }
+    }
+}
+
 /// A content modality a model can accept or produce. Lifted from the LLM catalog
 /// (`agent-runtime-providers::catalog::Modality`) into the spine so the modality
 /// bit lives in the same struct as `thinking`/`tools` (PRD §Starting Point).
@@ -125,9 +163,14 @@ impl CapabilityDescriptor {
     /// [`CapabilityExt::ASR_CLIENT_FINALIZE`] flag of the `Asr` extension; a
     /// model that does not declare it does not support Finalize.
     pub fn client_finalize(&self) -> bool {
+        self.supports_asr(AsrCapability::ClientFinalize)
+    }
+
+    /// Whether this model declares the requested speech recognition capability.
+    pub fn supports_asr(&self, capability: AsrCapability) -> bool {
         match &self.ext {
             CapabilityExt::Asr(value) => value
-                .get(CapabilityExt::ASR_CLIENT_FINALIZE)
+                .get(capability.name())
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             _ => false,
@@ -216,9 +259,8 @@ pub enum CapabilityExt {
 
 impl CapabilityExt {
     /// Key of the `Asr` extension object that declares whether the model
-    /// honours `SessionInput::Finalize` (ADR-0006 D8). A plain flag until the
-    /// ASR catalog row is typed.
-    pub const ASR_CLIENT_FINALIZE: &'static str = "client_finalize";
+    /// honours `SessionInput::Finalize` (ADR-0006 D8).
+    pub const ASR_CLIENT_FINALIZE: &'static str = AsrCapability::ClientFinalize.name();
 }
 
 /// Chat-capability detail the spine owns today: reasoning efforts, prompt cache,
