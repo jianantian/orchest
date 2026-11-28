@@ -2,7 +2,7 @@
 
 ## 先读
 
-- [Session 证据 PRD](../../../../archive/iteration/session_evidence/prd.md)与[运行控制 003](../../../runtime-controls/issues/003-session-resume/spec.md)。
+- [Session 证据 PRD](../../../../archive/iteration/session_evidence/prd.md)与[运行控制 003](../../../../archive/iteration/runtime-controls/issues/003-session-resume/spec.md)。
 - `crates/orchest/src/session/evidence/{binding,records}.rs`、`crates/orchest/src/run/config.rs` 及现有证据回归。
 - `crates/orchest-py/`、`crates/orchest-node/` 中的绑定入口、Cargo feature、类型声明和测试，以及 `.github/workflows/{sdk,release-sdk}.yml`。
 

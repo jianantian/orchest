@@ -63,6 +63,7 @@
 | hotfix 2026-10-01 | 功能 | DeepSeek 模型清单与 `deepseek-flash` 图像输入：catalog 在线模型为 `deepseek/deepseek-flash`（V4.1 Flash，`[Text, Image]`）与 `deepseek/deepseek-v4-pro`（1M 上下文 / 384K 输出、高峰 CNY 价），1.0.0 的 `deepseek/deepseek-v4-flash` 行保留为 `ModelStatus::Deprecated`（身份选择仍可解析、默认发现隐藏）；思考强度映射为官方 `low`/`high`/`max`；`deepseek-flash` 的 user `Image` 编码为 Chat `image_url` part，`deepseek-v4-pro` + 图像在 `Strict` 下发请求前报 `unsupported_image_input`；无破坏性变更，随 [1.1.0](https://github.com/jianantian/orchest/releases/tag/v1.1.0) 发布（2026-10-01）；[#318](https://github.com/jianantian/orchest/issues/318)–[#319](https://github.com/jianantian/orchest/issues/319) 关闭（[#320](https://github.com/jianantian/orchest/pull/320)） |
 | Session 证据 | 功能 | 2026-11-25 合入主线。Rust 可选 `session-evidence` feature 记录模型尝试、受控 adapter 输入重建、会话入账与压缩来源。Session v2 恢复契约沿用现有语义。Rust 可选功能已随 [0.2.0](https://github.com/jianantian/orchest/releases/tag/v0.2.0) 发布。[PR #362](https://github.com/jianantian/orchest/pull/362) · [PRD](../archive/iteration/session_evidence/prd.md) |
 | Orchest 0.2.0 | 发布 | Python `orchest-py` 与 Node `orchest-sdk` 于 2026-11-26 发布。八个 Rust crate 于 2026-11-28 按同一 SDK 源码补发 `0.2.0`，沿用原包名。[Rust](https://github.com/jianantian/orchest/releases/tag/v0.2.0) · [Python / Node](https://github.com/jianantian/orchest/releases/tag/sdk-v0.2.0) · [归档 PRD](../archive/iteration/sdk_v0_2/prd.md) · [#330](https://github.com/jianantian/orchest/issues/330) |
+| SDK 运行控制 | 功能 | 2026-11-28 合入主线。Python 和 Node 支持异步运行、按运行取消和按 ID 回复、SQLite Session v2 单写者与恢复。Node 补齐 Agent-as-Tool 和内建写文件工具。Rust CI 与三平台 SDK 安装验收通过。 [PR #368](https://github.com/jianantian/orchest/pull/368) · [归档 PRD](../archive/iteration/runtime-controls/prd.md) |
 
 ## 迭代编号约定
 
@@ -76,9 +77,8 @@
 
 | 内部迭代 | 依赖 |
 | --- | --- |
-| [运行控制](./runtime-controls/prd.md) | 沿用 Runtime 契约与 Session v2 |
 | [语音能力](./voice-capabilities/prd.md) | 沿用语音 V1 契约 |
-| [SDK Session 证据](./sdk-session-evidence/prd.md) | 依赖运行控制的本地会话恢复及 Rust 已有的 Session 证据 |
+| [SDK Session 证据](./sdk-session-evidence/prd.md) | 依赖已合入的本地会话恢复及 Rust 已有的 Session 证据 |
 
 Rust、Python 和 Node 的下一公开版本统一为 `0.3.0`。候选范围、标签和安装验证见[发布计划](../releases/0.3.0.md)。
 
@@ -96,7 +96,7 @@ Rust、Python 和 Node 的下一公开版本统一为 `0.3.0`。候选范围、�
 
 8 个 issue：会话事件日志 → checkpoint 与恢复 → in-flight 副作用账本 → 阻塞请求通道 → 原生权限模式表面 → 取消语义 → 事件模型与能力探测 → canonical 事件零丢失。权威范围与验收标准见 [`v2_0/prd.md`](./v2_0/prd.md)。
 
-9 个 issue 的第 9 个让 Python / Node 绑定跟上新契约并透传 `abort` 与按 request id 的回复。完整控制面由[运行控制迭代](./runtime-controls/prd.md)推进。
+9 个 issue 的第 9 个让 Python / Node 绑定跟上新契约并透传 `abort` 与按 request id 的回复。完整控制面已在[运行控制迭代](../archive/iteration/runtime-controls/prd.md)交付。
 
 **不在范围内**：产品语义（计划提案、任务计划、Task/Thread/Workspace）；宿主权限档映射与 UI；OS 级沙箱实现（M4）；持久委派与后台子 agent（M3）；SDK 控制面的完整重设计（运行控制迭代）。
 
@@ -161,7 +161,7 @@ Rust、Python 和 Node 的下一公开版本统一为 `0.3.0`。候选范围、�
         （历史标签 v2.0.0，2026-11-10）
         │
         ├─► ✅ Orchest 0.2.0: Rust / Python / Node 已发布
-        ├─► SDK 运行控制 ── 本地会话恢复 ──► SDK Session 证据
+        ├─► ✅ SDK 运行控制 ── 本地会话恢复 ──► SDK Session 证据
         ├─► 语音 V2 + V4（依赖语音 V1）
         ├─► 后续：全双工补齐（语音线 V5）
         ├─► ✅ Session 证据（Rust 0.2.0 已发布）
@@ -200,6 +200,7 @@ Rust、Python 和 Node 的下一公开版本统一为 `0.3.0`。候选范围、�
 | 能力 | 当前状态 | 规划版本 |
 |------|---------|---------|
 | Python / Node SDK 安装 | 从 PyPI 和 npm 安装三个支持平台的预构建包 | ✅ SDK 0.2 |
+| Python / Node SDK 运行控制与本地恢复 | 异步消费事件，按运行取消和回复，按 Session ID 恢复和追加输入 | ✅ [SDK 运行控制](../archive/iteration/runtime-controls/prd.md) |
 | Actor Model（Ractor）PoC | ~~proto-actor~~ → WorkerActor (Ractor) | ✅ v0.7 |
 | Hook / 中间件框架 | ~~零扩展点~~ → Hook trait（9 hook 点） | ✅ v0.7 |
 | Sub-agent 语义统一（Agent-as-Tool + Handoff） | ~~双路径并行~~ → Agent-as-Tool + Handoff 统一 | ✅ v0.7 |

@@ -4,7 +4,7 @@
 
 - `crates/orchest-py/src/lib.rs` 的 `register_agent_tool`、`register_write_file_tool`，`crates/orchest-node/src/lib.rs` 的现有注册入口，以及 `crates/orchest/src/tool/` 的工具实现。
 - `js/{index.js,native.d.ts,public.d.ts}`、`examples/{python,typescript}/agents/`、`docs/guide/sdk-{python,typescript}.md`、`CHANGELOG-SDK.md`。
-- [开发流程](../../../../../WORKFLOW.md)、`.github/workflows/sdk.yml` 和 [0.3.0 发布计划](../../../../releases/0.3.0.md)。
+- [开发流程](../../../../../../WORKFLOW.md)、`.github/workflows/sdk.yml` 和 [0.3.0 发布计划](../../../../../releases/0.3.0.md)。
 
 ## 修改范围
 

@@ -3,7 +3,7 @@
 ## 先读
 
 - `crates/orchest/src/session/{store,sqlite,log}.rs`、`crates/orchest/src/run/{mod,config,actor,supervisor}.rs`、`checkpoint_tests.rs` 和 `examples/rust/resilience/session_persist_resume.rs`。
-- 两端绑定的 Cargo features、001/002 的启动与控制入口、`.github/workflows/sdk.yml` 和 [SDK Session 证据 PRD](../../../sdk-session-evidence/prd.md)。
+- 两端绑定的 Cargo features、001/002 的启动与控制入口、`.github/workflows/sdk.yml` 和 [SDK Session 证据 PRD](../../../../../iteration/sdk-session-evidence/prd.md)。
 
 ## 修改范围
 

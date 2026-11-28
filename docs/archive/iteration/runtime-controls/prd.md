@@ -1,10 +1,14 @@
 # 运行控制面 · Python / Node
 
+## 完成记录
+
+2026-11-28 合入 `main`，对应 [PR #368](https://github.com/jianantian/orchest/pull/368) 和 Issues [#364](https://github.com/jianantian/orchest/issues/364)–[#367](https://github.com/jianantian/orchest/issues/367)。本地 Rust 工作区 1,372 项、Python 35 项和 Node 24 项测试通过。GitHub 的 [Rust CI](https://github.com/jianantian/orchest/actions/runs/46137294629) 和 [三平台 SDK 安装回归](https://github.com/jianantian/orchest/actions/runs/46137294621) 均通过。吞吐与恢复的本地基线分别见 [001](issues/001-async-run/plan.md) 和 [003](issues/003-session-resume/plan.md)。公开发布范围以 [0.3.0 发布计划](../../../releases/0.3.0.md) 为准。
+
 ## 背景与目标
 
-当前发布版本为 `0.2.0`，覆盖 Rust、Python `orchest-py` 和 Node `orchest-sdk`。Python 的 `run` 仍同步收集事件，Node 的 `runSync` 返回 Promise，两个 SDK 都提供回调式 `run_stream` / `runStream`。现有 `abort` 与 `respond` 通过 Agent 上的当前运行句柄工作。Rust 已提供 `RunHandle`、类型化请求、无损 canonical 事件流和 Session v2 恢复，绑定尚未提供可独立控制的异步运行对象。[v2.0 绑定契约](../v2_0/issues/009-bindings-follow-contract/spec.md)
+当前发布版本为 `0.2.0`，覆盖 Rust、Python `orchest-py` 和 Node `orchest-sdk`。Python 的 `run` 仍同步收集事件，Node 的 `runSync` 返回 Promise，两个 SDK 都提供回调式 `run_stream` / `runStream`。现有 `abort` 与 `respond` 通过 Agent 上的当前运行句柄工作。Rust 已提供 `RunHandle`、类型化请求、无损 canonical 事件流和 Session v2 恢复，绑定尚未提供可独立控制的异步运行对象。[v2.0 绑定契约](../../../iteration/v2_0/issues/009-bindings-follow-contract/spec.md)
 
-交付一条两端对称的调用路径。宿主启动运行，异步读取事件，在同一运行上回复请求或取消，并可用显式存储恢复会话。运行状态、权限、事件顺序和恢复规则沿用 Rust 内核。这是路线图中提前交付的 [M3 SDK 控制面](../direction.md#m3--生态地基)。
+交付一条两端对称的调用路径。宿主启动运行，异步读取事件，在同一运行上回复请求或取消，并可用显式存储恢复会话。运行状态、权限、事件顺序和恢复规则沿用 Rust 内核。这是路线图中提前交付的 [M3 SDK 控制面](../../../iteration/direction.md#m3--生态地基)。
 
 ## 范围与约定
 
@@ -19,9 +23,9 @@
 
 ### 与 DSH 启发的 Session 证据的衔接
 
-[Session 证据](../../archive/iteration/session_evidence/prd.md)已经作为 Rust 可选功能合入主线。它记录逐次模型调用、受控的 adapter 输入重建、会话入账与压缩来源。证据采集显式开启，查询沿用原有会话身份与授权。
+[Session 证据](../session_evidence/prd.md)已经作为 Rust 可选功能合入主线。它记录逐次模型调用、受控的 adapter 输入重建、会话入账与压缩来源。证据采集显式开启，查询沿用原有会话身份与授权。
 
-控制面沿用核心的会话和运行标识。运行事件供宿主实时处理，Session v2 日志用于恢复，独立证据存储用于事后查询。Python / Node 的显式采集和受控查询范围见 [Session 证据规格](../sdk-session-evidence/prd.md)。
+控制面沿用核心的会话和运行标识。运行事件供宿主实时处理，Session v2 日志用于恢复，独立证据存储用于事后查询。Python / Node 的显式采集和受控查询范围见 [Session 证据规格](../../../iteration/sdk-session-evidence/prd.md)。
 
 ## 架构与性能
 
@@ -35,7 +39,7 @@
 - [ ] 使用显式存储重建宿主后，可按 Session ID 恢复原运行或追加新输入。缺失会话和副作用账本场景沿用核心语义。
 - [ ] 同一 SQLite 数据库里的同一会话发生启动或恢复竞争时，只有一个调用成功取得写入权。子进程异常退出后可恢复，不同会话仍可并行。
 - [ ] Node 的两项工具注册通过权限与参数契约测试。现有 SDK 0.2 调用路径通过回归测试。
-- [ ] 在三个目标平台用本地 SDK 构建产物验证公开入口。补齐 Python、Node 示例与迁移说明。[SDK 发布策略](../../adr/0004-sdk-packaging.md)
+- [ ] 在三个目标平台用本地 SDK 构建产物验证公开入口。补齐 Python、Node 示例与迁移说明。[SDK 发布策略](../../../adr/0004-sdk-packaging.md)
 - [ ] 用固定规模的本地 adapter fixture 记录 Rust 与两端 SDK 的首事件延迟、事件吞吐、队列峰值和取消响应时间，单列跨语言开销。用固定长度的日志复测恢复延迟和峰值内存。比较前后同机多次结果，记录测得的主要开销和优化结果。
 
 ## 任务顺序
