@@ -345,6 +345,8 @@ pub struct TranscribeRequest {
     pub format: AudioFormat,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
+    /// Dialect-specific options. Built-in adapters also accept
+    /// `require_capabilities`, an array of catalog capability names.
     #[serde(default)]
     pub options: Value,
 }
@@ -365,6 +367,8 @@ pub struct StreamingTranscribeRequest {
     pub format: AudioFormat,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
+    /// Dialect-specific options. Built-in adapters also accept
+    /// `require_capabilities`, an array of catalog capability names.
     #[serde(default)]
     pub options: Value,
 }
@@ -424,6 +428,8 @@ pub struct SynthesizeRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice: Option<String>,
     pub format: AudioFormat,
+    /// Dialect-specific options. Built-in adapters also accept
+    /// `require_capabilities`, an array of catalog capability names.
     #[serde(default)]
     pub options: Value,
 }

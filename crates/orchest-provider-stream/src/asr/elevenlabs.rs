@@ -9,12 +9,14 @@
 
 use async_trait::async_trait;
 use base64::Engine;
+use orchest_protocol::AsrCapability;
 use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
     Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
     StreamingTranscribeRequest, TranscribeRequest, TranscribeResult, TranscriptStability,
     TranscriptUpdateKind,
 };
+use orchest_provider_core::catalog::AsrCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
 use serde_json::json;
@@ -29,6 +31,9 @@ const DEFAULT_WS_URL: &str = "wss://api.elevenlabs.io/v1/speech-to-text/stream";
 /// yields a `committed_transcript` without closing the session
 /// (<https://elevenlabs.io/docs/eleven-api/guides/how-to/speech-to-text/realtime/event-reference>).
 pub const CLIENT_FINALIZE: bool = true;
+
+pub(crate) const CATALOG_EXT: AsrCatalogExt =
+    AsrCatalogExt::direct("elevenlabs_realtime_ws", &[AsrCapability::ClientFinalize]);
 
 /// A decoded ElevenLabs inbound message.
 #[derive(Debug, PartialEq)]
@@ -315,7 +320,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
         .duplex(true)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
-        .with_ext(super::asr_ext(CLIENT_FINALIZE))
+        .with_ext(CATALOG_EXT.to_descriptor_ext())
 }
 
 /// Build an [`ElevenLabsAsr`] from a registry [`ProviderConfig`].
@@ -356,7 +361,7 @@ impl Asr for ElevenLabsAsr {
             .duplex(true)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
-            .with_ext(super::asr_ext(CLIENT_FINALIZE))
+            .with_ext(CATALOG_EXT.to_descriptor_ext())
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -375,8 +380,9 @@ impl Asr for ElevenLabsAsr {
 
     async fn start_stream(
         &self,
-        _request: StreamingTranscribeRequest,
+        mut request: StreamingTranscribeRequest,
     ) -> Result<RealtimeHandle, ProtocolError> {
+        CATALOG_EXT.take_required_capabilities(&mut request.options)?;
         if !self.config.ws_url.starts_with("wss://") {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,

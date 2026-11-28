@@ -39,8 +39,8 @@ pub use capability::{
 
 // --- descriptor ---
 pub use descriptor::{
-    Capability, CapabilityDescriptor, CapabilityExt, CapabilitySource, CatalogEntry,
-    ChatCapabilityExt, Modality,
+    AsrCapability, Capability, CapabilityDescriptor, CapabilityExt, CapabilitySource, CatalogEntry,
+    ChatCapabilityExt, Modality, VoiceSource,
 };
 
 // --- error ---

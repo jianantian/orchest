@@ -5,9 +5,12 @@
 //! materialization / discovery live in the wall (`orchest-provider`).
 
 use orchest_protocol::{
-    Capability, CapabilityDescriptor, CapabilityExt, CapabilitySource, CatalogEntry,
-    ChatCapabilityExt, Modality, ModelPricing,
+    AsrCapability, Capability, CapabilityDescriptor, CapabilityExt, CapabilitySource, CatalogEntry,
+    ChatCapabilityExt, ErrorCode, Modality, ModelPricing, ProtocolError, VoiceSource,
 };
+use serde_json::Value;
+
+const REQUIRED_CAPABILITIES: &str = "require_capabilities";
 
 /// Lifecycle / stability of a cataloged model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -38,13 +41,105 @@ pub struct ChatCatalogExt {
     pub thinking_max_tokens: Option<u32>,
 }
 
-/// ASR-specific catalog detail (stub for Batch 0).
-#[derive(Debug, Clone, Default)]
-pub struct AsrCatalogExt {}
+/// ASR capabilities and provider route recorded for a model.
+#[derive(Debug, Clone)]
+pub struct AsrCatalogExt {
+    pub source: VoiceSource,
+    pub protocol: &'static str,
+    pub capabilities: &'static [AsrCapability],
+}
 
-/// TTS-specific catalog detail (stub for Batch 0).
-#[derive(Debug, Clone, Default)]
-pub struct TtsCatalogExt {}
+impl AsrCatalogExt {
+    pub const fn direct(protocol: &'static str, capabilities: &'static [AsrCapability]) -> Self {
+        Self {
+            source: VoiceSource::Direct,
+            protocol,
+            capabilities,
+        }
+    }
+
+    #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
+    pub fn take_required_capabilities(
+        &self,
+        options: &mut Value,
+    ) -> Result<Vec<String>, ProtocolError> {
+        take_required_capabilities(options, |name| {
+            self.capabilities
+                .iter()
+                .any(|capability| capability.name() == name)
+        })
+    }
+
+    pub fn to_descriptor_ext(&self) -> CapabilityExt {
+        let mut detail = serde_json::json!({
+            "source": self.source,
+            "protocol": self.protocol,
+        });
+        for capability in [
+            AsrCapability::CommittedAppend,
+            AsrCapability::ServerEndpointing,
+            AsrCapability::ClientFinalize,
+            AsrCapability::Words,
+            AsrCapability::Speaker,
+            AsrCapability::Confidence,
+            AsrCapability::SpeechStarted,
+            AsrCapability::Failover,
+        ] {
+            detail[capability.name()] = self.capabilities.contains(&capability).into();
+        }
+        CapabilityExt::Asr(detail)
+    }
+}
+
+/// TTS provider route and optional audio alignment support.
+#[derive(Debug, Clone)]
+pub struct TtsCatalogExt {
+    pub source: VoiceSource,
+    pub protocol: &'static str,
+    pub words: bool,
+}
+
+impl TtsCatalogExt {
+    #[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
+    pub fn validate_options(&self, options: &mut Value) -> Result<(), ProtocolError> {
+        take_required_capabilities(options, |name| name == "words" && self.words).map(|_| ())
+    }
+
+    pub fn to_descriptor_ext(&self) -> CapabilityExt {
+        CapabilityExt::Tts(serde_json::json!({
+            "source": self.source,
+            "protocol": self.protocol,
+            "words": self.words,
+        }))
+    }
+}
+
+/// Consume portable capability requirements before forwarding dialect options.
+#[allow(clippy::result_large_err)] // justified: ProtocolError carries diagnostic context
+fn take_required_capabilities(
+    options: &mut Value,
+    supports: impl Fn(&str) -> bool,
+) -> Result<Vec<String>, ProtocolError> {
+    let Some(requirements) = options
+        .as_object_mut()
+        .and_then(|options| options.remove(REQUIRED_CAPABILITIES))
+    else {
+        return Ok(Vec::new());
+    };
+    let requirements: Vec<String> = serde_json::from_value(requirements).map_err(|_| {
+        ProtocolError::new(
+            ErrorCode::InvalidRequest,
+            "options.require_capabilities must be an array of capability names",
+        )
+    })?;
+    if let Some(missing) = requirements.iter().find(|name| !supports(name)) {
+        return Err(ProtocolError::new(
+            ErrorCode::UnsupportedOption,
+            format!("voice model does not support capability {missing}"),
+        ));
+    }
+    Ok(requirements)
+}
 
 /// Realtime-specific catalog detail (stub for Batch 0).
 #[derive(Debug, Clone, Default)]
@@ -87,7 +182,7 @@ impl ModelRecord {
 
     /// Project this row onto the registry's queryable descriptor.
     pub fn to_descriptor(&self) -> CapabilityDescriptor {
-        let mut desc = CapabilityDescriptor::new(self.provider, self.model, self.capability)
+        let desc = CapabilityDescriptor::new(self.provider, self.model, self.capability)
             .with_input_modalities(self.input_modalities.clone())
             .with_output_modalities(self.output_modalities.clone())
             .streaming(self.streaming)
@@ -98,16 +193,18 @@ impl ModelRecord {
             .default_for_provider(self.default_for_provider)
             .with_source(CapabilitySource::Static);
 
-        if let CatalogExt::Chat(c) = &self.ext {
-            desc = desc.with_ext(CapabilityExt::Chat(ChatCapabilityExt {
+        let ext = match &self.ext {
+            CatalogExt::Chat(c) => CapabilityExt::Chat(ChatCapabilityExt {
                 max_output_tokens: c.max_output_tokens,
                 context_window_size: Some(c.context_window),
                 pricing: self.pricing.clone(),
                 ..Default::default()
-            }));
-        }
-
-        desc
+            }),
+            CatalogExt::Asr(asr) => asr.to_descriptor_ext(),
+            CatalogExt::Tts(tts) => tts.to_descriptor_ext(),
+            _ => CapabilityExt::None,
+        };
+        desc.with_ext(ext)
     }
 }
 
@@ -123,6 +220,8 @@ pub struct ModelFilter {
     pub capability: Option<Capability>,
     pub provider: Option<&'static str>,
     pub streaming: Option<bool>,
+    /// Require every listed ASR capability.
+    pub asr_capabilities: Vec<AsrCapability>,
     pub duplex: Option<bool>,
     pub interruptible: Option<bool>,
     pub tools: Option<bool>,
@@ -146,6 +245,12 @@ impl ModelFilter {
             if r.provider != provider {
                 return false;
             }
+        }
+        if !self.asr_capabilities.is_empty()
+            && !matches!(&r.ext, CatalogExt::Asr(asr)
+                if self.asr_capabilities.iter().all(|capability| asr.capabilities.contains(capability)))
+        {
+            return false;
         }
         if let Some(streaming) = self.streaming {
             if r.streaming != streaming {
@@ -201,6 +306,26 @@ impl ModelFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn portable_requirements_preserve_dialect_options() {
+        let catalog = AsrCatalogExt::direct("test", &[AsrCapability::ClientFinalize]);
+        let mut options = serde_json::json!({
+            "require_capabilities": ["client_finalize"],
+            "enable_endpoint_detection": false,
+        });
+        let requested = catalog.take_required_capabilities(&mut options).unwrap();
+        assert_eq!(requested, ["client_finalize"]);
+        assert_eq!(
+            options,
+            serde_json::json!({"enable_endpoint_detection": false})
+        );
+        let error = catalog
+            .take_required_capabilities(&mut serde_json::json!({"require_capabilities": "speaker"}))
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+    }
+
     use orchest_protocol::{Capability, Modality};
 
     fn sample(description: &'static str) -> ModelRecord {
@@ -221,7 +346,7 @@ mod tests {
             status: ModelStatus::Stable,
             default_for_provider: true,
             pricing: None,
-            ext: CatalogExt::Asr(AsrCatalogExt {}),
+            ext: CatalogExt::Asr(AsrCatalogExt::direct("test", &[])),
         }
     }
 

@@ -10,12 +10,14 @@
 //! is generalized.
 
 use async_trait::async_trait;
+use orchest_protocol::AsrCapability;
 use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
     Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
     StreamingTranscribeRequest, TranscribeRequest, TranscribeResult, TranscriptStability,
     TranscriptUpdateKind,
 };
+use orchest_provider_core::catalog::AsrCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
 use serde::Deserialize;
@@ -29,6 +31,15 @@ const DEFAULT_WS_URL: &str = "wss://api.deepgram.com/v1/listen";
 /// native `Finalize` control frame, which flushes buffered audio without
 /// closing the stream (<https://developers.deepgram.com/docs/finalize>).
 pub const CLIENT_FINALIZE: bool = true;
+
+pub(crate) const CATALOG_EXT: AsrCatalogExt = AsrCatalogExt::direct(
+    "deepgram_listen_ws",
+    &[
+        AsrCapability::CommittedAppend,
+        AsrCapability::ServerEndpointing,
+        AsrCapability::ClientFinalize,
+    ],
+);
 
 /// The `Finalize` control text frame.
 pub const FINALIZE_FRAME: &str = r#"{"type":"Finalize"}"#;
@@ -418,7 +429,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
         .duplex(true)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
-        .with_ext(super::asr_ext(CLIENT_FINALIZE))
+        .with_ext(CATALOG_EXT.to_descriptor_ext())
 }
 
 /// Build a [`DeepgramAsr`] from a registry [`ProviderConfig`]: `api_url` is the
@@ -461,7 +472,7 @@ impl Asr for DeepgramAsr {
             .duplex(true)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
-            .with_ext(super::asr_ext(CLIENT_FINALIZE))
+            .with_ext(CATALOG_EXT.to_descriptor_ext())
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -480,8 +491,9 @@ impl Asr for DeepgramAsr {
 
     async fn start_stream(
         &self,
-        _request: StreamingTranscribeRequest,
+        mut request: StreamingTranscribeRequest,
     ) -> Result<RealtimeHandle, ProtocolError> {
+        CATALOG_EXT.take_required_capabilities(&mut request.options)?;
         if !self.config.ws_url.starts_with("wss://") {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,

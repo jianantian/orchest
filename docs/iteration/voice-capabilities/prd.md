@@ -30,9 +30,9 @@ v1.2 已补齐现有流式 ASR 的事件与 Finalize 契约，并随 SDK 0.2 交
 
 | Issue | 交付 | 依赖 |
 | --- | --- | --- |
-| [001](issues/001-voice-catalog/spec.md) | 能力目录、发现与便携选项校验 | v1.2 |
-| [002](issues/002-voice-metering/spec.md) | 语音用量与成本估算 | 001 的模型身份与定价字段 |
-| [003](issues/003-tts-duplex/spec.md) | TTS 双工契约与三个方言 | v1.2，目录与计量接线依赖 001、002 |
-| [004](issues/004-tts-bindings/spec.md) | Python / Node 合成 API 与 SDK 验收 | 001、002、003 |
+| [001](issues/001-voice-catalog/spec.md) · [#371](https://github.com/jianantian/orchest/issues/371) | 能力目录、发现与便携选项校验 | v1.2 |
+| [002](issues/002-voice-metering/spec.md) · [#372](https://github.com/jianantian/orchest/issues/372) | 语音用量与成本估算 | 001 的模型身份与定价字段 |
+| [003](issues/003-tts-duplex/spec.md) · [#373](https://github.com/jianantian/orchest/issues/373) | TTS 双工契约与三个方言 | v1.2，目录与计量接线依赖 001、002 |
+| [004](issues/004-tts-bindings/spec.md) · [#374](https://github.com/jianantian/orchest/issues/374) | Python / Node 合成 API 与 SDK 验收 | 001、002、003 |
 
 003 的协议验证可与 001、002 并行。004 验收 Rust 原生接口在 Python / Node 两端的公开绑定。

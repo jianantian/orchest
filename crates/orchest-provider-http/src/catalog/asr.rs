@@ -7,7 +7,7 @@
 use std::sync::LazyLock;
 
 use orchest_protocol::{Capability, Modality};
-use orchest_provider_core::catalog::{AsrCatalogExt, CatalogExt, ModelRecord, ModelStatus};
+use orchest_provider_core::catalog::{CatalogExt, ModelRecord, ModelStatus};
 
 /// HTTP-tier batch ASR models exposed for discovery and model-pinned registry entries.
 pub static HTTP_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
@@ -29,7 +29,7 @@ pub static HTTP_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Stable,
             default_for_provider: false,
             pricing: None,
-            ext: CatalogExt::Asr(AsrCatalogExt {}),
+            ext: CatalogExt::Asr(crate::asr::aliyun::CATALOG_EXT),
         },
         ModelRecord {
             id: "aliyun/fun-asr-flash-2026-06-15",
@@ -48,7 +48,7 @@ pub static HTTP_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Stable,
             default_for_provider: false,
             pricing: None,
-            ext: CatalogExt::Asr(AsrCatalogExt {}),
+            ext: CatalogExt::Asr(crate::asr::aliyun::CATALOG_EXT),
         },
         // Source: docs/archive/iteration/v0_9_6/asr-provider-guide.md
         ModelRecord {
@@ -68,7 +68,7 @@ pub static HTTP_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Stable,
             default_for_provider: true,
             pricing: None,
-            ext: CatalogExt::Asr(AsrCatalogExt {}),
+            ext: CatalogExt::Asr(crate::asr::assemblyai::CATALOG_EXT),
         },
         // Source: docs/archive/iteration/v0_9_6/asr-provider-guide.md
         ModelRecord {
@@ -89,7 +89,7 @@ pub static HTTP_ASR_MODELS: LazyLock<Vec<ModelRecord>> = LazyLock::new(|| {
             status: ModelStatus::Stable,
             default_for_provider: true,
             pricing: None,
-            ext: CatalogExt::Asr(AsrCatalogExt {}),
+            ext: CatalogExt::Asr(crate::asr::speechmatics::CATALOG_EXT),
         },
     ]
 });

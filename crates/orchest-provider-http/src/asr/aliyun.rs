@@ -8,8 +8,11 @@ use orchest_protocol::{
     ProtocolError, RealtimeHandle, StreamingTranscribeRequest, TranscribeRequest, TranscribeResult,
 };
 use orchest_provider_core::aliyun_asr::{parse_context, ContextRole};
+use orchest_provider_core::catalog::AsrCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
 use serde_json::{json, Map, Value};
+
+pub(crate) const CATALOG_EXT: AsrCatalogExt = AsrCatalogExt::direct("dashscope_asr_http", &[]);
 
 const DEFAULT_API_URL: &str =
     "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
@@ -171,6 +174,7 @@ impl Asr for AliyunAsr {
         CapabilityDescriptor::new("aliyun", self.config.model.clone(), Capability::Asr)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
+            .with_ext(CATALOG_EXT.to_descriptor_ext())
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -179,8 +183,9 @@ impl Asr for AliyunAsr {
 
     async fn transcribe(
         &self,
-        request: TranscribeRequest,
+        mut request: TranscribeRequest,
     ) -> Result<TranscribeResult, ProtocolError> {
+        CATALOG_EXT.take_required_capabilities(&mut request.options)?;
         let response = crate::http::shared_client()
             .post(&self.config.api_url)
             .bearer_auth(&self.config.api_key)

@@ -11,8 +11,8 @@
 //! pick-one ([`Query::select`]) and list-then-choose ([`Query::list`]).
 
 use orchest_protocol::{
-    Asr, Capability, ChatModel, Decision, ErrorCode, GenTask, Modality, ProtocolError,
-    RealtimeSession, Tts,
+    Asr, AsrCapability, Capability, ChatModel, Decision, ErrorCode, GenTask, Modality,
+    ProtocolError, RealtimeSession, Tts,
 };
 use orchest_provider_core::registry::{Entry, ProviderConfig};
 
@@ -114,6 +114,7 @@ struct Filters {
     model: Option<String>,
     accepts: Vec<Modality>,
     emits: Vec<Modality>,
+    asr_capabilities: Vec<AsrCapability>,
     streaming: Option<bool>,
     tools: Option<bool>,
     thinking: Option<bool>,
@@ -173,6 +174,16 @@ impl<'r, H> Query<'r, H> {
         self
     }
 
+    /// Require all supplied ASR capabilities.
+    #[must_use]
+    pub fn asr_capabilities(
+        mut self,
+        capabilities: impl IntoIterator<Item = AsrCapability>,
+    ) -> Self {
+        self.f.asr_capabilities.extend(capabilities);
+        self
+    }
+
     #[must_use]
     pub fn streaming(mut self) -> Self {
         self.f.streaming = Some(true);
@@ -215,6 +226,14 @@ impl<'r, H> Query<'r, H> {
             if d.model.as_ref() != m.as_str() {
                 return false;
             }
+        }
+        if !self
+            .f
+            .asr_capabilities
+            .iter()
+            .all(|&capability| d.supports_asr(capability))
+        {
+            return false;
         }
         if !d.accepts(&self.f.accepts) {
             return false;

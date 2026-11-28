@@ -10,10 +10,12 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use orchest_protocol::VoiceSource;
 use orchest_protocol::{
     AudioFormat, Capability, CapabilityDescriptor, ErrorCode, EventStream, Modality, ProtocolError,
     RealtimeHandle, StreamEvent, SynthesizeRequest, SynthesizeResult, TokenUsage, Tts,
 };
+use orchest_provider_core::catalog::TtsCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
 use serde_json::Value;
@@ -382,7 +384,11 @@ impl VolcengineTts {
 
     /// Connect, send the unidirectional request frame, and spawn the synthesis
     /// loop, returning the pulled [`EventStream`] of audio/lifecycle events.
-    async fn open_stream(&self, request: SynthesizeRequest) -> Result<EventStream, ProtocolError> {
+    async fn open_stream(
+        &self,
+        mut request: SynthesizeRequest,
+    ) -> Result<EventStream, ProtocolError> {
+        CATALOG_EXT.validate_options(&mut request.options)?;
         if !self.config.ws_url.starts_with("wss://") {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,
@@ -442,12 +448,19 @@ fn host_of(url: &str) -> &str {
         .unwrap_or("openspeech.bytedance.com")
 }
 
+pub(crate) const CATALOG_EXT: TtsCatalogExt = TtsCatalogExt {
+    source: VoiceSource::Direct,
+    protocol: "openspeech_tts_ws",
+    words: false,
+};
+
 /// The static descriptor the registry filters on for the Volcengine TTS dialect.
 pub fn entry_descriptor() -> CapabilityDescriptor {
     CapabilityDescriptor::new("volcengine", "tts", Capability::Tts)
         .streaming(true)
         .with_input_modalities([Modality::Text])
         .with_output_modalities([Modality::Audio])
+        .with_ext(CATALOG_EXT.to_descriptor_ext())
 }
 
 /// Build a [`VolcengineTts`] from a registry [`ProviderConfig`]: `api_url` is the
@@ -499,10 +512,9 @@ impl Tts for VolcengineTts {
     }
 
     fn descriptor(&self) -> CapabilityDescriptor {
-        CapabilityDescriptor::new("volcengine", self.config.model.clone(), Capability::Tts)
-            .streaming(true)
-            .with_input_modalities([Modality::Text])
-            .with_output_modalities([Modality::Audio])
+        let mut descriptor = entry_descriptor();
+        descriptor.model = self.config.model.clone().into();
+        descriptor
     }
 
     async fn synthesize(

@@ -9,12 +9,14 @@
 //! tts/omni-only and lives there.
 
 use async_trait::async_trait;
+use orchest_protocol::AsrCapability;
 use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
     Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
     StreamingTranscribeRequest, TranscribeRequest, TranscribeResult, TranscriptStability,
     TranscriptUpdateKind,
 };
+use orchest_provider_core::catalog::AsrCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
 use serde::Deserialize;
@@ -219,6 +221,9 @@ fn parse_server_response(
 /// the server VAD (`end_window_size`). See `docs/external/volceengine/asr.md`
 /// and <https://www.volcengine.com/docs/6561/1354869>.
 pub const CLIENT_FINALIZE: bool = false;
+
+pub(crate) const CATALOG_EXT: AsrCatalogExt =
+    AsrCatalogExt::direct("openspeech_asr_ws", &[AsrCapability::ServerEndpointing]);
 
 /// Fixed segment id for the rolling-text fallback branch: a response with no
 /// utterance list carries no native segment identity, so all of it maps to one
@@ -469,7 +474,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
         .duplex(true)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
-        .with_ext(super::asr_ext(CLIENT_FINALIZE))
+        .with_ext(CATALOG_EXT.to_descriptor_ext())
 }
 
 /// Build a [`VolcengineAsr`] from a registry [`ProviderConfig`]: `api_url` is the
@@ -527,7 +532,7 @@ impl Asr for VolcengineAsr {
             .duplex(true)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
-            .with_ext(super::asr_ext(CLIENT_FINALIZE))
+            .with_ext(CATALOG_EXT.to_descriptor_ext())
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -546,8 +551,9 @@ impl Asr for VolcengineAsr {
 
     async fn start_stream(
         &self,
-        request: StreamingTranscribeRequest,
+        mut request: StreamingTranscribeRequest,
     ) -> Result<RealtimeHandle, ProtocolError> {
+        CATALOG_EXT.take_required_capabilities(&mut request.options)?;
         if !self.config.ws_url.starts_with("wss://") {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,

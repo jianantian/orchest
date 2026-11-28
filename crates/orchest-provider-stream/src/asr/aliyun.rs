@@ -8,6 +8,7 @@
 //! is committed.
 
 use async_trait::async_trait;
+use orchest_protocol::AsrCapability;
 use orchest_protocol::{
     Asr, AudioFormat, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language,
     LifecycleEvent, Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
@@ -15,6 +16,7 @@ use orchest_protocol::{
     TranscriptUpdateKind,
 };
 use orchest_provider_core::aliyun_asr::{parse_context, ContextRole};
+use orchest_provider_core::catalog::AsrCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
 use serde::{Deserialize, Serialize};
@@ -33,6 +35,11 @@ const DEFAULT_MODEL: &str = "qwen-audio-3.0-asr-flash-streaming";
 /// finalize mid-session. See `docs/external/aliyun/asr/realtime/client-event.md`
 /// and <https://help.aliyun.com/zh/model-studio/fun-asr-realtime-websocket-api>.
 pub const CLIENT_FINALIZE: bool = false;
+
+pub(crate) const CATALOG_EXT: AsrCatalogExt = AsrCatalogExt::direct(
+    "dashscope_inference_ws",
+    &[AsrCapability::ServerEndpointing],
+);
 
 #[derive(Serialize)]
 struct ClientMessage {
@@ -456,7 +463,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
         .duplex(true)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
-        .with_ext(super::asr_ext(CLIENT_FINALIZE))
+        .with_ext(CATALOG_EXT.to_descriptor_ext())
 }
 
 /// Build an [`AliyunAsr`] from a registry [`ProviderConfig`].
@@ -498,7 +505,7 @@ impl Asr for AliyunAsr {
             .duplex(true)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
-            .with_ext(super::asr_ext(CLIENT_FINALIZE))
+            .with_ext(CATALOG_EXT.to_descriptor_ext())
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -517,8 +524,9 @@ impl Asr for AliyunAsr {
 
     async fn start_stream(
         &self,
-        request: StreamingTranscribeRequest,
+        mut request: StreamingTranscribeRequest,
     ) -> Result<RealtimeHandle, ProtocolError> {
+        CATALOG_EXT.take_required_capabilities(&mut request.options)?;
         if !self.config.ws_url.starts_with("wss://") {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,

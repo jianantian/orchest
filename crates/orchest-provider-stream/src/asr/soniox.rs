@@ -9,12 +9,14 @@
 //! wraps it once the transport carries both binary audio and text frames).
 
 use async_trait::async_trait;
+use orchest_protocol::AsrCapability;
 use orchest_protocol::{
     Asr, Capability, CapabilityDescriptor, ErrorCode, EventStream, Language, LifecycleEvent,
     Modality, ProtocolError, RealtimeHandle, SegmentRef, SessionInput, StreamEvent,
     StreamingTranscribeRequest, TranscribeRequest, TranscribeResult, TranscriptStability,
     TranscriptUpdateKind,
 };
+use orchest_provider_core::catalog::AsrCatalogExt;
 use orchest_provider_core::registry::ProviderConfig;
 use orchest_provider_core::ws::{connect_async, tungstenite};
 use serde::Deserialize;
@@ -29,6 +31,15 @@ const DEFAULT_WS_URL: &str = "wss://stt-rt.soniox.com/transcribe-websocket";
 /// manual finalization request, answered by a final `<fin>` token, without
 /// closing the stream (<https://soniox.com/docs/stt/rt/manual-finalization>).
 pub const CLIENT_FINALIZE: bool = true;
+
+pub(crate) const CATALOG_EXT: AsrCatalogExt = AsrCatalogExt::direct(
+    "soniox_realtime_ws",
+    &[
+        AsrCapability::CommittedAppend,
+        AsrCapability::ServerEndpointing,
+        AsrCapability::ClientFinalize,
+    ],
+);
 
 /// The manual-finalization control text frame.
 pub const FINALIZE_FRAME: &str = r#"{"type":"finalize"}"#;
@@ -407,7 +418,7 @@ pub fn entry_descriptor() -> CapabilityDescriptor {
         .duplex(true)
         .with_input_modalities([Modality::Audio])
         .with_output_modalities([Modality::Text])
-        .with_ext(super::asr_ext(CLIENT_FINALIZE))
+        .with_ext(CATALOG_EXT.to_descriptor_ext())
 }
 
 /// Build a [`SonioxAsr`] from a registry [`ProviderConfig`].
@@ -449,7 +460,7 @@ impl Asr for SonioxAsr {
             .duplex(true)
             .with_input_modalities([Modality::Audio])
             .with_output_modalities([Modality::Text])
-            .with_ext(super::asr_ext(CLIENT_FINALIZE))
+            .with_ext(CATALOG_EXT.to_descriptor_ext())
     }
 
     fn supported_languages(&self) -> &[Language] {
@@ -468,8 +479,9 @@ impl Asr for SonioxAsr {
 
     async fn start_stream(
         &self,
-        request: StreamingTranscribeRequest,
+        mut request: StreamingTranscribeRequest,
     ) -> Result<RealtimeHandle, ProtocolError> {
+        CATALOG_EXT.take_required_capabilities(&mut request.options)?;
         if !self.config.ws_url.starts_with("wss://") {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,

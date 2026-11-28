@@ -27,11 +27,6 @@ use tokio::time::Instant;
 /// `CapabilityDescriptor::client_finalize`.
 pub const CLIENT_FINALIZE_KEY: &str = CapabilityExt::ASR_CLIENT_FINALIZE;
 
-/// The ASR descriptor extension every streaming dialect declares.
-pub(crate) fn asr_ext(client_finalize: bool) -> CapabilityExt {
-    CapabilityExt::Asr(json!({ CLIENT_FINALIZE_KEY: client_finalize }))
-}
-
 /// `diagnostic_metadata.operation` on the error that answers a
 /// `SessionInput::Finalize`, so a caller can tell it from other stream errors.
 pub const FINALIZE_OPERATION: &str = "finalize";

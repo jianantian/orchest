@@ -16,6 +16,9 @@ except for the items `orchest-provider` re-exports.
 
 ### Added
 
+- Discover ASR and TTS models with provider route and adapter capability details.
+  Voice requests can require cataloged capabilities before provider I/O.
+
 - Add a session-instance-bound, paginated reader for model attempt metadata.
 
 - Add a structured SQLite session writer conflict error for the local SDK
