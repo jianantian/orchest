@@ -18,16 +18,17 @@ use tokio::sync::{oneshot, Mutex};
 
 use super::config::RunId;
 
-/// Identifies one request. Built from the run id and a per-run sequence
-/// number, so it is unique within the run tree and stays the same for a
-/// host that reconnects.
+/// An opaque identifier for one pending request. It stays stable while the
+/// same request is pending, including across a host reconnect. Requests
+/// opened after a restart or resume get fresh IDs even if a checkpoint
+/// rolled back the request sequence.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RequestId(String);
 
 impl RequestId {
     pub(crate) fn new(run_id: RunId, seq: u64) -> Self {
-        Self(format!("{run_id}/{seq}"))
+        Self(format!("{run_id}/{seq}/{}", uuid::Uuid::new_v4()))
     }
 
     pub fn as_str(&self) -> &str {
@@ -348,11 +349,14 @@ mod tests {
     async fn several_requests_wait_and_resolve_by_id() {
         let bus = RequestBus::default();
         let run = RunId::new();
-        let rx1 = bus.open(request(run, 1)).await;
-        let rx2 = bus.open(request(run, 2)).await;
+        let first = request(run, 1);
+        let second = request(run, 2);
+        let id1 = first.id.clone();
+        let id2 = second.id.clone();
+        let rx1 = bus.open(first).await;
+        let rx2 = bus.open(second).await;
         assert_eq!(bus.pending().await.len(), 2);
 
-        let id2 = RequestId::new(run, 2);
         bus.respond(&id2, RequestResponse::answer(json!("yes")))
             .await
             .unwrap();
@@ -360,7 +364,6 @@ mod tests {
         assert_eq!(bus.pending().await.len(), 1);
         assert!(bus.get(&id2).await.is_none());
 
-        let id1 = RequestId::new(run, 1);
         bus.withdraw(&id1).await.unwrap();
         assert_eq!(rx1.await.unwrap(), RequestResolution::Withdrawn);
         assert!(matches!(

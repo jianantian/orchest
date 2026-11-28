@@ -387,7 +387,11 @@ fn runtime_event_to_dict(py: Python<'_>, event: &RuntimeEvent) -> PyResult<Py<Py
     // Target-language glue remains here: core produces JSON, PyO3 converts it to a Python dict.
     let event_obj = runtime_event_to_wire_value(event)
         .map_err(|e| PyRuntimeError::new_err(format!("failed to serialize event: {e}")))?;
-    let json_str = serde_json::to_string(&event_obj)
+    wire_event_to_dict(py, &event_obj)
+}
+
+fn wire_event_to_dict(py: Python<'_>, event_obj: &Value) -> PyResult<Py<PyDict>> {
+    let json_str = serde_json::to_string(event_obj)
         .map_err(|e| PyRuntimeError::new_err(format!("failed to serialize event dict: {e}")))?;
 
     let json_mod = py.import("json")?;

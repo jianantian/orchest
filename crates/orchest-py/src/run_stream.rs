@@ -1,13 +1,21 @@
 use std::sync::Arc;
 
 use orchest::bindings::run::{BindingRunError, BindingRunStream};
+use orchest::bindings::run_event_to_wire_value;
 use orchest::bindings::session::BindingSessionOptions;
+use orchest::events::RuntimeEvent;
 use orchest::session::SessionError;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use super::runtime_event_to_dict;
+use super::wire_event_to_dict;
+
+fn run_event_to_dict(py: Python<'_>, event: &RuntimeEvent) -> PyResult<Py<PyDict>> {
+    let wire = run_event_to_wire_value(event)
+        .map_err(|error| PyRuntimeError::new_err(format!("failed to serialize event: {error}")))?;
+    wire_event_to_dict(py, &wire)
+}
 
 pub fn run_error(error: BindingRunError) -> PyErr {
     Python::attach(|py| -> PyResult<PyErr> {
@@ -56,7 +64,7 @@ impl NativeRun {
             let Some(event) = stream.next().await else {
                 return Ok(None);
             };
-            let converted = Python::attach(|py| runtime_event_to_dict(py, &event));
+            let converted = Python::attach(|py| run_event_to_dict(py, &event));
             if converted.is_err() {
                 stream.close().await;
             }
@@ -68,7 +76,7 @@ impl NativeRun {
         let stream = Arc::clone(&self.0);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let event = stream.wait().await.map_err(run_error)?;
-            Python::attach(|py| runtime_event_to_dict(py, &event))
+            Python::attach(|py| run_event_to_dict(py, &event))
         })
     }
 

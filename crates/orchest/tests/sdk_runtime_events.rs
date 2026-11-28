@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use orchest::bindings::runtime_event_to_wire_value;
+use orchest::bindings::run_event_to_wire_value;
 use orchest::model::ModelAdapter;
 use orchest::run::{AgentConfig, AgentRun};
 use orchest::tool::registry::ToolRegistry;
@@ -67,7 +67,7 @@ async fn sdk_fixture_matches_rust_primary_stream() {
     let (run, mut rx) = AgentRun::start(config, "fixture".into(), model, ToolRegistry::new());
     let mut actual = Vec::new();
     while let Some(event) = rx.recv().await {
-        let mut event = runtime_event_to_wire_value(&event).unwrap();
+        let mut event = run_event_to_wire_value(&event).unwrap();
         for key in ["run_id", "message_id"] {
             if event[key].is_string() {
                 event[key] = format!("<{key}>").into();

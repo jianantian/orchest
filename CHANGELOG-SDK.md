@@ -24,6 +24,10 @@ from.
 - Node can register an Agent as a tool and the native write-file tool using
   the same tool contracts as Python.
 
+- Forwarded child events on async runs use the same discriminated shape as
+  root events. Session recovery gives reissued approvals fresh IDs and rejects
+  late responses to interrupted requests.
+
 ## [0.2.0]
 
 Built from Orchest Rust crates version `2.0.0`.

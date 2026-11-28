@@ -44,8 +44,13 @@ def test_async_run_streams_and_releases_its_agent(tmp_path: Path) -> None:
                 for block in message["content"]
             )
             chunks = fixture["tool" if asks_for_tool else "complete"]
+            delegates = asks_for_tool and body["tools"][0]["name"] == "delegate"
             try:
                 for event, data in chunks:
+                    if delegates and event == "content_block_start":
+                        data = {"content_block": {**data["content_block"], "name": "delegate"}}
+                    if delegates and event == "content_block_delta":
+                        data = {"delta": {**data["delta"], "partial_json": '{"question":"fixture"}'}}
                     self.wfile.write(f"event: {event}\ndata: {json.dumps(data)}\n\n".encode())
             except (BrokenPipeError, ConnectionResetError):
                 pass
@@ -62,6 +67,13 @@ def test_async_run_streams_and_releases_its_agent(tmp_path: Path) -> None:
             api_url=f"http://127.0.0.1:{server.server_port}",
             api_key="local-test",
         )
+
+    async def request_for(run):
+        async for event in run:
+            if event["type"] == "approval_requested":
+                return event["request_id"]
+        raise AssertionError("approval was not requested")
+
 
     async def scenario() -> None:
         first = agent()
@@ -120,12 +132,6 @@ def test_async_run_streams_and_releases_its_agent(tmp_path: Path) -> None:
         for item in agents:
             item.register_tool(probe, approval="always")
 
-        async def request_for(run):
-            async for event in run:
-                if event["type"] == "approval_requested":
-                    return event["request_id"]
-            raise AssertionError("approval was not requested")
-
         async with await agents[0].start_run("left") as left, await agents[1].start_run("right") as right:
             left_id, right_id = await asyncio.gather(request_for(left), request_for(right))
             assert left.capabilities() == agents[0].capabilities()
@@ -150,6 +156,17 @@ def test_async_run_streams_and_releases_its_agent(tmp_path: Path) -> None:
             assert waiting.cancel("timeout")
             assert not waiting.cancel("timeout")
             assert [event async for event in waiting][-1]["cancel_reason"] == "timeout"
+
+        parent = agent()
+        parent.register_agent_tool("delegate", "Call the configured child", agent())
+        async with await parent.start_run("delegate a fixture request") as run:
+            forwarded = [
+                event["event"] async for event in run if event["type"] == "sub_agent_event"
+            ]
+            assert forwarded[0]["type"] == "run_started"
+            assert forwarded[-1]["type"] == "run_completed"
+            assert forwarded[-1]["output"] == "done"
+            assert (await run.wait())["type"] == "run_completed"
 
         def fail_callback(_event: object) -> None:
             raise LookupError("callback failure")
@@ -252,20 +269,24 @@ with sqlite3.connect(sys.argv[1]) as conn:
         assert sum(block.get("text") == "follow-up" for message in user_turns for block in message["content"]) == 1
         await drain(await agent().start_run("isolated", session={**session, "sqlite_path": str(tmp_path / "other.sqlite")}))
 
-        release_model.clear()
         recovered = {**session, "session_id": "process-exit"}
         child = await asyncio.create_subprocess_exec(
             sys.executable, "-u", "-c", """
 import asyncio, sys
 from orchest import Agent
 
+def probe() -> str:
+    '''Return a read-only fixture value.'''
+    return 'ok'
+
 async def main():
     agent = Agent(name="child", model="anthropic/claude-sonnet-4-6",
                   system_prompt="Answer briefly.", api_url=sys.argv[1], api_key="local-test")
+    agent.register_tool(probe, approval="always")
     run = await agent.start_run("child input", session={"sqlite_path": sys.argv[2], "session_id": sys.argv[3]})
     async for event in run:
-        if event["type"] == "model_call_started":
-            print("ready", flush=True)
+        if event["type"] == "approval_requested":
+            print(event["request_id"], flush=True)
             await asyncio.Event().wait()
 
 asyncio.run(main())
@@ -274,14 +295,35 @@ asyncio.run(main())
             stdout=asyncio.subprocess.PIPE,
         )
         try:
-            assert await asyncio.wait_for(child.stdout.readline(), 10) == b"ready\n"
+            previous_id = (await asyncio.wait_for(child.stdout.readline(), 10)).decode().strip()
+            assert previous_id
             await expect_error("session_writer_conflict", lambda: agent().resume_session(recovered))
         finally:
             if child.returncode is None:
                 child.kill()
             await child.wait()
-            release_model.set()
-        await drain(await agent().resume_session(recovered))
+
+        calls = []
+
+        def probe() -> str:
+            """Return a read-only fixture value."""
+            calls.append("probe")
+            return "ok"
+
+        restored = agent()
+        restored.register_tool(probe, approval="always")
+        async with await restored.resume_session(recovered) as run:
+            new_id = await request_for(run)
+            assert new_id != previous_id
+            await expect_error(
+                "request_not_found", lambda: run.respond(previous_id, {"decision": "deny"})
+            )
+            assert calls == []
+            await run.respond(new_id, {"decision": "approve"})
+            async for _ in run:
+                pass
+            assert (await run.wait())["type"] == "run_completed"
+            assert calls == ["probe"]
 
     async def verify() -> None:
         await scenario()

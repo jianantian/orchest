@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use napi_derive::napi;
 use orchest::bindings::run::{BindingRunError, BindingRunStream};
-use orchest::bindings::runtime_event_to_wire_value;
+use orchest::bindings::run_event_to_wire_value;
 use orchest::bindings::session::BindingSessionOptions;
 use serde_json::Value;
 
@@ -40,7 +40,7 @@ impl NativeRun {
         let Some(event) = self.stream.next().await else {
             return Ok(None);
         };
-        let converted = runtime_event_to_wire_value(&event);
+        let converted = run_event_to_wire_value(&event);
         if converted.is_err() {
             self.stream.close().await;
         }
@@ -52,8 +52,7 @@ impl NativeRun {
     #[napi]
     pub async fn wait(&self) -> napi::Result<Value> {
         let event = self.stream.wait().await.map_err(run_error)?;
-        runtime_event_to_wire_value(&event)
-            .map_err(|error| napi::Error::from_reason(error.to_string()))
+        run_event_to_wire_value(&event).map_err(|error| napi::Error::from_reason(error.to_string()))
     }
 
     #[napi]

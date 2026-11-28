@@ -253,6 +253,10 @@ test("shared Node tool registrations use the Rust schema, results, and approvals
       parent.registerAgentTool("delegate", "Delegate to a configured child", makeAgent("child"), inputKey);
       inputs.set("delegate", { [key]: `child input for ${key}` });
       const events = await runAgent(parent);
+      const forwarded = events.filter(event => event.type === "sub_agent_event").map(event => event.event);
+      assert.equal(forwarded[0].type, "run_started");
+      assert.equal(forwarded.at(-1).type, "run_completed");
+      assert.equal(forwarded.at(-1).output, "done");
       const toolResult = events.find(event => event.type === "tool_call_completed" && event.tool === "delegate");
       assert.equal(toolResult?.output.output, "done");
       assert.equal(typeof toolResult.output.child_run_id, "string");
