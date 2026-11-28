@@ -37,8 +37,17 @@ export function _complete(options: CompletionOptions): Promise<string>;
 export function _decide(options: DecisionOptions): Promise<DecisionResponse>;
 export function _transcribe(audio: Uint8Array, options: TranscribeOptions): Promise<string>;
 
+export class NativeRun {
+  nextEvent(): Promise<RuntimeEvent | null | undefined>;
+  wait(): Promise<Extract<RuntimeEvent, { type: "run_completed" | "run_failed" | "run_aborted" }>>;
+  close(): Promise<void>;
+  cancel(reason?: CancelReason, message?: string): boolean;
+}
+
 export class Agent {
   constructor(options: AgentOptions);
+  /** @internal */
+  _startRun(input: string, messages?: HistoryMessage[]): NativeRun;
 
   /** Register a tool with schema only (no handler — tool calls will error). */
   registerTool(options: {

@@ -14,6 +14,9 @@ from.
 ## [Unreleased]
 
 - Align the Python and Node package versions with the Rust workspace.
+- Add pull-based asynchronous agent runs with a bounded event stream, explicit
+  cancellation and cleanup, and a final result after event consumption. Each
+  Agent instance accepts one active run across its run entry points.
 
 ## [0.2.0]
 

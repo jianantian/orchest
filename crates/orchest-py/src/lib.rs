@@ -9,16 +9,18 @@ mod asr_stream;
 mod atomic;
 mod decision;
 mod error;
+mod run_stream;
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use orchest::bindings::run::{BindingRunSlot, BindingRunStream};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use run_stream::{run_error, NativeRun};
 use serde_json::Value;
-use tokio::sync::Mutex as TokioMutex;
 
 use orchest::bindings::{
     budget_config_from_binding, messages_from_wire_values, parse_binding_approval,
@@ -31,8 +33,8 @@ use orchest::model::{
     ThinkingLevel,
 };
 use orchest::run::{
-    AgentConfig, AgentRun, ApprovalMode, ModelConfig, RetryPolicy, RunHandle, RunInput,
-    SkillDisclosure, SkillsConfig,
+    AgentConfig, AgentRun, ApprovalMode, ModelConfig, RetryPolicy, RunInput, SkillDisclosure,
+    SkillsConfig,
 };
 use orchest::tool::async_job::{JobHandle, JobStatus};
 use orchest::tool::builtin::WriteFileTool;
@@ -108,7 +110,7 @@ struct Agent {
     retry: Option<bool>,
     tools: Vec<PyToolDef>,
     native_tools: Vec<Arc<dyn Tool>>,
-    run_handle: Arc<TokioMutex<Option<RunHandle>>>,
+    run_slot: BindingRunSlot,
 }
 
 #[derive(Clone)]
@@ -615,7 +617,7 @@ impl Agent {
             retry,
             tools: Vec::new(),
             native_tools: Vec::new(),
-            run_handle: Arc::new(TokioMutex::new(None)),
+            run_slot: BindingRunSlot::default(),
         })
     }
 
@@ -772,6 +774,36 @@ impl Agent {
         Ok(())
     }
 
+    /// Start a run for asynchronous, pull-based event consumption.
+    #[pyo3(signature = (input, messages=None))]
+    fn start_run<'py>(
+        &self,
+        py: Python<'py>,
+        input: String,
+        messages: Option<Vec<Py<PyAny>>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let reservation = self.run_slot.reserve().map_err(run_error)?;
+        let config = self.build_config()?;
+        let registry = self.build_registry()?;
+        let model = self.build_model()?;
+        let messages = py_messages_to_core(py, messages)?;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let (handle, events) = AgentRun::start_with_messages(
+                config,
+                messages,
+                RunInput::text(input),
+                model,
+                registry,
+            );
+            let stream = BindingRunStream::new(reservation.attach(handle), events);
+            Python::attach(|py| {
+                let native = Py::new(py, NativeRun(Arc::new(stream)))?;
+                let value = py.import("orchest")?.getattr("Run")?.call1((native,))?;
+                Ok(value.unbind())
+            })
+        })
+    }
+
     /// Synchronous run: collects all events and returns as a list.
     /// Compatibility helper for simple use cases.
     ///
@@ -786,11 +818,11 @@ impl Agent {
         input: String,
         messages: Option<Vec<Py<PyAny>>>,
     ) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+        let reservation = self.run_slot.reserve().map_err(run_error)?;
         let config = self.build_config()?;
         let registry = self.build_registry()?;
         let model_adapter = self.build_model()?;
         let initial_messages = py_messages_to_core(py, messages)?;
-        let run_handle_ref = Arc::clone(&self.run_handle);
 
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| PyRuntimeError::new_err(format!("failed to create runtime: {e}")))?;
@@ -804,26 +836,12 @@ impl Agent {
                     model_adapter,
                     registry,
                 );
-
-                // Store the handle for respond / abort
-                {
-                    let mut guard = run_handle_ref.lock().await;
-                    *guard = Some(handle);
-                }
-
+                let run = reservation.attach(handle);
                 let mut events = Vec::new();
                 while let Some(event) = event_rx.recv().await {
                     events.push(event);
                 }
-
-                // Wait for run to finish and clear handle
-                {
-                    let mut guard = run_handle_ref.lock().await;
-                    if let Some(h) = guard.take() {
-                        h.wait().await;
-                    }
-                }
-
+                run.join().await;
                 events
             })
         });
@@ -870,53 +888,44 @@ impl Agent {
         on_event: Py<PyAny>,
         messages: Option<Vec<Py<PyAny>>>,
     ) -> PyResult<()> {
+        let reservation = self.run_slot.reserve().map_err(run_error)?;
         let config = self.build_config()?;
         let registry = self.build_registry()?;
         let model_adapter = self.build_model()?;
         let initial_messages = py_messages_to_core(py, messages)?;
-        let run_handle_ref = Arc::clone(&self.run_handle);
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| PyRuntimeError::new_err(format!("failed to create runtime: {e}")))?;
+        let (run, mut events) = {
+            let _runtime = rt.enter();
+            let (handle, events) = AgentRun::start_with_messages(
+                config,
+                initial_messages,
+                RunInput::text(input),
+                model_adapter,
+                registry,
+            );
+            (reservation.attach(handle), events)
+        };
 
-        let (tx, rx) = std::sync::mpsc::channel::<RuntimeEvent>();
-
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-            rt.block_on(async move {
-                let (handle, mut event_rx) = AgentRun::start_with_messages(
-                    config,
-                    initial_messages,
-                    RunInput::text(input),
-                    model_adapter,
-                    registry,
-                );
-                {
-                    let mut guard = run_handle_ref.lock().await;
-                    *guard = Some(handle);
-                }
-                while let Some(event) = event_rx.recv().await {
-                    if tx.send(event).is_err() {
-                        break;
-                    }
-                }
-                // channel drop signals Python side we are done
-            });
-        });
-
-        loop {
+        let result = (|| loop {
             py.check_signals()?;
-            match rx.try_recv() {
+            match events.try_recv() {
                 Ok(event) => {
                     let dict = runtime_event_to_dict(py, &event)?;
                     on_event.call1(py, (dict,))?;
                 }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    // Release GIL while sleeping so Python signal handlers can run.
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
                     py.detach(|| std::thread::sleep(Duration::from_millis(10)));
                 }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return Ok(()),
             }
+        })();
+        if result.is_err() {
+            run.cancel(orchest::run::Cancellation::user());
         }
-
-        Ok(())
+        drop(events);
+        py.detach(|| rt.block_on(run.join()));
+        result
     }
 
     /// Answer the request `request_id` of the active run. `payload` is the
@@ -932,25 +941,14 @@ impl Agent {
             .map_err(|e| PyValueError::new_err(format!("invalid response payload: {e}")))?;
         let response =
             orchest::bindings::parse_binding_response(payload).map_err(PyValueError::new_err)?;
-        let run_handle_ref = Arc::clone(&self.run_handle);
-
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyRuntimeError::new_err(format!("failed to create runtime: {e}")))?;
-
-        rt.block_on(async {
-            let guard = run_handle_ref.lock().await;
-            if let Some(ref handle) = *guard {
-                let request_id = orchest::run::RequestId::from(request_id);
-                handle
-                    .respond(&request_id, response)
-                    .await
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-                Ok(())
-            } else {
-                Err(PyRuntimeError::new_err(
-                    "no active run to respond to — call run() or run_sync() first",
-                ))
-            }
+        let handle = self.run_slot.current().ok_or_else(|| {
+            PyRuntimeError::new_err("no active run to respond to — start a run first")
+        })?;
+        let request_id = orchest::run::RequestId::from(request_id);
+        py.detach(|| {
+            pyo3_async_runtimes::tokio::get_runtime()
+                .block_on(handle.respond(&request_id, response))
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
         })
     }
 
@@ -963,9 +961,9 @@ impl Agent {
         let cancellation =
             orchest::bindings::parse_binding_cancellation(reason.as_deref(), message)
                 .map_err(PyValueError::new_err)?;
-        let guard = self.run_handle.blocking_lock();
-        Ok(guard
-            .as_ref()
+        Ok(self
+            .run_slot
+            .current()
             .is_some_and(|handle| handle.cancel(cancellation)))
     }
 
@@ -980,6 +978,7 @@ impl Agent {
 #[pymodule]
 fn orchest_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Agent>()?;
+    m.add_class::<NativeRun>()?;
     m.add_function(wrap_pyfunction!(atomic::complete, m)?)?;
     m.add_function(wrap_pyfunction!(decision::decide, m)?)?;
     m.add_function(wrap_pyfunction!(asr::transcribe, m)?)?;

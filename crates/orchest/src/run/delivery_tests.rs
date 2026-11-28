@@ -230,3 +230,41 @@ async fn sink_failures_are_counted_and_delivery_continues() {
     assert_eq!(stats.sink_errors, count);
     assert_eq!(stats.delivered, count);
 }
+
+#[tokio::test]
+async fn sdk_close_releases_a_full_primary_receiver() {
+    use crate::bindings::run::{BindingRunError, BindingRunSlot, BindingRunStream};
+
+    let slot = BindingRunSlot::default();
+    let reservation = slot.reserve().unwrap();
+    let (handle, events) = AgentRun::start(
+        config(4),
+        "hi".into(),
+        Arc::new(CountingModel { chunks: 2_000 }),
+        ToolRegistry::new(),
+    );
+    let stream = BindingRunStream::new(reservation.attach(handle), events);
+    let handle = slot.current().unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while handle.event_delivery_stats().high_watermark < 4 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        stream.wait().await,
+        Err(BindingRunError::EventsPending)
+    ));
+    assert!(matches!(slot.reserve(), Err(BindingRunError::Active)));
+    tokio::time::timeout(Duration::from_secs(3), stream.close())
+        .await
+        .unwrap();
+    assert!(stream.next().await.is_none());
+    assert!(matches!(
+        stream.wait().await,
+        Err(BindingRunError::StreamClosed)
+    ));
+    assert!(slot.reserve().is_ok());
+}

@@ -15,6 +15,7 @@ mod asr_stream;
 mod atomic;
 mod decision;
 mod error;
+mod run_stream;
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -24,8 +25,9 @@ use napi::threadsafe_function::{
     ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 };
 use napi_derive::napi;
+use orchest::bindings::run::{BindingRunSlot, BindingRunStream};
+use run_stream::{run_error, NativeRun};
 use serde_json::Value;
-use tokio::sync::Mutex as TokioMutex;
 
 use orchest::bindings::{
     budget_config_from_binding, messages_from_wire_values, parse_binding_approval,
@@ -37,8 +39,7 @@ use orchest::model::{
     RequestOptions as RustRequestOptions, ThinkingLevel,
 };
 use orchest::run::{
-    AgentConfig, AgentRun, ModelConfig, RetryPolicy, RunHandle, RunInput, SkillDisclosure,
-    SkillsConfig,
+    AgentConfig, AgentRun, ModelConfig, RetryPolicy, RunInput, SkillDisclosure, SkillsConfig,
 };
 use orchest::tool::async_job::{JobHandle, JobStatus, PollFn};
 use orchest::tool::registry::ToolRegistry;
@@ -447,7 +448,7 @@ pub struct Agent {
     approval_mode: Option<String>,
     retry: Option<bool>,
     tools: Vec<Arc<dyn Tool>>,
-    run_handle: Arc<TokioMutex<Option<RunHandle>>>,
+    run_slot: BindingRunSlot,
 }
 
 #[napi]
@@ -474,7 +475,7 @@ impl Agent {
             approval_mode: options.approval_mode,
             retry: options.retry,
             tools: Vec::new(),
-            run_handle: Arc::new(TokioMutex::new(None)),
+            run_slot: BindingRunSlot::default(),
         })
     }
 
@@ -616,64 +617,56 @@ impl Agent {
         Ok(())
     }
 
-    #[napi]
-    pub async fn run_sync(
+    #[napi(js_name = "_startRun")]
+    pub fn start_run(
         &self,
         input: String,
         messages: Option<Vec<Value>>,
-    ) -> napi::Result<Vec<serde_json::Value>> {
-        let config = self.build_config()?;
-
-        let mut registry = ToolRegistry::new();
-        for tool in &self.tools {
-            registry
-                .register(Arc::clone(tool))
-                .map_err(|e| napi::Error::from_reason(format!("{e}")))?;
-        }
-
-        let model: Arc<dyn orchest::model::ModelAdapter> = Arc::from(
-            create_adapter_from_config(self.provider_config())
-                .map_err(|e| napi::Error::from_reason(format!("failed to create model: {e}")))?,
-        );
-
-        let initial_messages = messages_from_wire_values(messages.unwrap_or_default())
-            .map_err(|e| napi::Error::from_reason(format!("invalid `messages` entry: {e}")))?;
-        let run_handle_ref = Arc::clone(&self.run_handle);
-
-        let (handle, mut event_rx) = AgentRun::start_with_messages(
+    ) -> napi::Result<NativeRun> {
+        let reservation = self.run_slot.reserve().map_err(run_error)?;
+        let (config, registry, model, initial_messages) = self.prepare_run(messages)?;
+        let _runtime = shared_runtime().enter();
+        let (handle, events) = AgentRun::start_with_messages(
             config,
             initial_messages,
             RunInput::text(input),
             model,
             registry,
         );
+        Ok(NativeRun {
+            stream: Arc::new(BindingRunStream::new(reservation.attach(handle), events)),
+        })
+    }
 
-        {
-            let mut guard = run_handle_ref.lock().await;
-            *guard = Some(handle);
-        }
-
-        let mut events = Vec::new();
-        while let Some(event) = event_rx.recv().await {
-            events.push(event);
-        }
-
-        {
-            let mut guard = run_handle_ref.lock().await;
-            if let Some(h) = guard.take() {
-                h.wait().await;
-            }
-        }
+    #[napi]
+    pub async fn run_sync(
+        &self,
+        input: String,
+        messages: Option<Vec<Value>>,
+    ) -> napi::Result<Vec<Value>> {
+        let reservation = self.run_slot.reserve().map_err(run_error)?;
+        let (config, registry, model, initial_messages) = self.prepare_run(messages)?;
+        let (handle, mut events) = AgentRun::start_with_messages(
+            config,
+            initial_messages,
+            RunInput::text(input),
+            model,
+            registry,
+        );
+        let run = reservation.attach(handle);
 
         let mut result = Vec::new();
-        for event in &events {
-            // Target-language glue remains here: core produces JSON, napi converts it to JS values.
-            let value = runtime_event_to_wire_value(event)
-                .map_err(|e| napi::Error::from_reason(format!("serialize error: {e}")))?;
-            result.push(value);
+        while let Some(event) = events.recv().await {
+            result.push(event);
         }
-
-        Ok(result)
+        run.join().await;
+        result
+            .iter()
+            .map(|event| {
+                runtime_event_to_wire_value(event)
+                    .map_err(|error| napi::Error::from_reason(format!("serialize error: {error}")))
+            })
+            .collect()
     }
 
     #[napi(
@@ -685,68 +678,44 @@ impl Agent {
         on_event: napi::JsFunction,
         messages: Option<Vec<Value>>,
     ) -> napi::Result<()> {
-        let config = self.build_config()?;
-
-        let mut registry = ToolRegistry::new();
-        for tool in &self.tools {
-            registry
-                .register(Arc::clone(tool))
-                .map_err(|e| napi::Error::from_reason(format!("{e}")))?;
-        }
-
-        let model: Arc<dyn orchest::model::ModelAdapter> = Arc::from(
-            create_adapter_from_config(self.provider_config())
-                .map_err(|e| napi::Error::from_reason(format!("failed to create model: {e}")))?,
-        );
-
-        let initial_messages = messages_from_wire_values(messages.unwrap_or_default())
-            .map_err(|e| napi::Error::from_reason(format!("invalid `messages` entry: {e}")))?;
-
+        let reservation = self.run_slot.reserve().map_err(run_error)?;
+        let (config, registry, model, initial_messages) = self.prepare_run(messages)?;
         let tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = on_event
             .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<Value>| {
                 let js_value = ctx.env.to_js_value(&ctx.value)?;
                 Ok(vec![js_value])
             })?;
 
-        let run_handle_ref = Arc::clone(&self.run_handle);
-
-        let rt = shared_runtime();
-
-        rt.block_on(async {
-            let (handle, mut event_rx) = AgentRun::start_with_messages(
+        shared_runtime().block_on(async {
+            let (handle, mut events) = AgentRun::start_with_messages(
                 config,
                 initial_messages,
                 RunInput::text(input),
                 model,
                 registry,
             );
+            let run = reservation.attach(handle);
 
-            {
-                let mut guard = run_handle_ref.lock().await;
-                *guard = Some(handle);
-            }
-
-            while let Some(event) = event_rx.recv().await {
-                // Target-language glue remains here: core produces JSON, napi converts it to JS values.
-                let value = runtime_event_to_wire_value(&event)
-                    .map_err(|e| napi::Error::from_reason(format!("serialize error: {e}")))?;
+            while let Some(event) = events.recv().await {
+                let value = match runtime_event_to_wire_value(&event) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        run.cancel(orchest::run::Cancellation::user());
+                        drop(events);
+                        run.join().await;
+                        return Err(napi::Error::from_reason(format!(
+                            "serialize error: {error}"
+                        )));
+                    }
+                };
                 let status = tsfn.call(value, ThreadsafeFunctionCallMode::NonBlocking);
                 if status != napi::Status::Ok {
                     tracing::warn!("node event callback dropped: {:?}", status);
                 }
             }
-
-            {
-                let mut guard = run_handle_ref.lock().await;
-                if let Some(h) = guard.take() {
-                    h.wait().await;
-                }
-            }
-
-            Ok::<(), napi::Error>(())
-        })?;
-
-        Ok(())
+            run.join().await;
+            Ok(())
+        })
     }
 
     /// Answer the request `requestId` of the active run. `payload` is the
@@ -757,25 +726,13 @@ impl Agent {
     pub fn respond(&self, request_id: String, payload: Value) -> napi::Result<()> {
         let response =
             orchest::bindings::parse_binding_response(payload).map_err(napi::Error::from_reason)?;
-        let run_handle_ref = Arc::clone(&self.run_handle);
-
-        let rt = shared_runtime();
-
-        rt.block_on(async {
-            let guard = run_handle_ref.lock().await;
-            if let Some(ref handle) = *guard {
-                let request_id = orchest::run::RequestId::from(request_id);
-                handle
-                    .respond(&request_id, response)
-                    .await
-                    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-                Ok(())
-            } else {
-                Err(napi::Error::from_reason(
-                    "no active run to respond to — call runSync() first",
-                ))
-            }
-        })
+        let handle = self.run_slot.current().ok_or_else(|| {
+            napi::Error::from_reason("no active run to respond to — start a run first")
+        })?;
+        let request_id = orchest::run::RequestId::from(request_id);
+        shared_runtime()
+            .block_on(handle.respond(&request_id, response))
+            .map_err(|error| napi::Error::from_reason(error.to_string()))
     }
 
     /// Cancel the active run. `reason` is "user" (default), "timeout",
@@ -787,9 +744,9 @@ impl Agent {
         let cancellation =
             orchest::bindings::parse_binding_cancellation(reason.as_deref(), message)
                 .map_err(napi::Error::from_reason)?;
-        let guard = self.run_handle.blocking_lock();
-        Ok(guard
-            .as_ref()
+        Ok(self
+            .run_slot
+            .current()
             .is_some_and(|handle| handle.cancel(cancellation)))
     }
 
@@ -819,7 +776,32 @@ fn effects_from_options(options: Option<&Value>) -> napi::Result<orchest::tool::
         .map_err(napi::Error::from_reason)
 }
 
+type PreparedRun = (
+    AgentConfig,
+    ToolRegistry,
+    Arc<dyn orchest::model::ModelAdapter>,
+    Vec<orchest::model::Message>,
+);
+
 impl Agent {
+    fn prepare_run(&self, messages: Option<Vec<Value>>) -> napi::Result<PreparedRun> {
+        let config = self.build_config()?;
+        let mut registry = ToolRegistry::new();
+        for tool in &self.tools {
+            registry
+                .register(Arc::clone(tool))
+                .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        }
+        let model = Arc::from(create_adapter_from_config(self.provider_config()).map_err(
+            |error| napi::Error::from_reason(format!("failed to create model: {error}")),
+        )?);
+        let messages =
+            messages_from_wire_values(messages.unwrap_or_default()).map_err(|error| {
+                napi::Error::from_reason(format!("invalid `messages` entry: {error}"))
+            })?;
+        Ok((config, registry, model, messages))
+    }
+
     fn provider_config(&self) -> ProviderRuntimeConfig {
         ProviderRuntimeConfig {
             model: self.model.clone(),
@@ -1042,10 +1024,12 @@ mod tests {
                 calls: AtomicUsize::new(0),
             });
             let rt = shared_runtime();
-            let (handle, rx) = rt
-                .block_on(async { AgentRun::start(config, RunInput::text("go"), model, registry) });
-            *agent.run_handle.blocking_lock() = Some(handle);
-            rx
+            rt.block_on(async {
+                let reservation = agent.run_slot.reserve().unwrap();
+                let (handle, rx) = AgentRun::start(config, RunInput::text("go"), model, registry);
+                reservation.attach(handle);
+                rx
+            })
         }
 
         #[test]

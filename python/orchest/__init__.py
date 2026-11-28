@@ -1,5 +1,6 @@
 """Orchest Agent Runtime - Python SDK for building AI agents."""
 
+import asyncio
 import inspect
 from collections.abc import Callable
 from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
@@ -7,6 +8,7 @@ from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 from .orchest_py import (
     Agent,
     _NativeAsrStream,
+    _NativeRun,
     _start_asr_stream,
     complete,
     decide,
@@ -29,6 +31,59 @@ TokenUsage: TypeAlias = dict[str, int | dict[str, int]]
 ToolCall: TypeAlias = dict[str, Any]
 ToolRegistration: TypeAlias = dict[str, Any]
 RuntimeEvent: TypeAlias = dict[str, Any]
+
+class Run:
+    """An active agent run and its single, pull-based event iterator."""
+
+    def __init__(self, native: _NativeRun) -> None:
+        self._native = native
+        self._read_lock = asyncio.Lock()
+        self._pending: asyncio.Future[RuntimeEvent | None] | None = None
+
+    def __aiter__(self) -> "Run":
+        return self
+
+    async def __anext__(self) -> RuntimeEvent:
+        async with self._read_lock:
+            if self._pending is None:
+                self._pending = self._native.next_event()
+            try:
+                event = await asyncio.shield(self._pending)
+            except asyncio.CancelledError:
+                # A cancelled host task can retry without discarding the event.
+                raise
+            except Exception:
+                self._pending = None
+                raise
+            self._pending = None
+            if event is None:
+                raise StopAsyncIteration
+            return event
+
+    async def __aenter__(self) -> "Run":
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self.aclose()
+
+    def cancel(self, reason: str | None = None, message: str | None = None) -> bool:
+        """Request cancellation while keeping the terminal event readable."""
+        return self._native.cancel(reason, message)
+
+    async def wait(self) -> RuntimeEvent:
+        """Return the final root-run event after the iterator reaches EOF."""
+        return await self._native.wait()
+
+    async def aclose(self) -> None:
+        """Release the event receiver and wait for active work to finish."""
+        await self._native.close()
+        async with self._read_lock:
+            if self._pending is not None:
+                try:
+                    await asyncio.shield(self._pending)
+                finally:
+                    self._pending = None
+
 
 DecisionDescription: TypeAlias = str | list[JsonValue] | dict[str, JsonValue]
 BooleanCriteria = TypedDict(
@@ -272,6 +327,7 @@ async def start_asr_stream(
 
 __all__ = [
     "Agent",
+    "Run",
     "AsrStream",
     "AsrStreamEvent",
     "AsrContextMessage",

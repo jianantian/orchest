@@ -1,6 +1,7 @@
 //! Shared FFI-independent helpers used by language bindings.
 
 pub mod asr;
+pub mod run;
 
 use std::time::Duration;
 

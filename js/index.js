@@ -208,10 +208,112 @@ async function startAsrStream(options, onEvent) {
   return new AsrStream(session, callbackError);
 }
 
+/** A lifecycle error with a stable SDK code. */
+class RunError extends Error {
+  /** @param {string} code @param {string} message */
+  constructor(code, message) {
+    super(message);
+    this.name = "RunError";
+    this.code = code;
+  }
+}
+
+/** @param {unknown} error */
+function normalizeRunError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = /^__ORCHEST_RUN_ERROR__:([^:]+):([\s\S]*)$/.exec(message);
+  return match === null ? error : new RunError(match[1], match[2]);
+}
+
+/** A running agent and its single, pull-based event iterator. */
+class Run {
+  /** @type {import("./native").NativeRun} */ #native;
+  #readQueue = Promise.resolve();
+
+  /** @param {import("./native").NativeRun} run */
+  constructor(run) {
+    this.#native = run;
+  }
+
+  [Symbol.asyncIterator]() {
+    return this;
+  }
+
+  /** @returns {Promise<IteratorResult<import("./types").RuntimeEvent, undefined>>} */
+  async next() {
+    const pending = this.#readQueue.then(() => this.#native.nextEvent());
+    // Submit one native read at a time, even if the caller issues multiple pulls.
+    this.#readQueue = pending.then(() => {}, () => {});
+    const event = await pending;
+    return event == null
+      ? { done: true, value: undefined }
+      : { done: false, value: event };
+  }
+
+  /** @returns {Promise<IteratorReturnResult<undefined>>} */
+  async return() {
+    await this.close();
+    return { done: true, value: undefined };
+  }
+
+  /** @param {import("./types").CancelReason} [reason] @param {string} [message] */
+  cancel(reason, message) {
+    return this.#native.cancel(reason, message);
+  }
+
+  /** Return the final root-run event after the iterator reaches EOF. */
+  async wait() {
+    try {
+      return await this.#native.wait();
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+
+  /** Release the event receiver and wait for active work to finish. */
+  async close() {
+    await this.#native.close();
+  }
+}
+
+class Agent extends native.Agent {
+  /**
+   * Start a run for asynchronous, pull-based event consumption.
+   * @param {string} input
+   * @param {import("./types").HistoryMessage[]} [messages]
+   */
+  async startRun(input, messages) {
+    try {
+      return new Run(this._startRun(input, messages));
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+
+  /** @type {import("./native").Agent["runSync"]} */
+  async runSync(input, messages) {
+    try {
+      return await super.runSync(input, messages);
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+
+  /** @type {import("./native").Agent["runStream"]} */
+  runStream(input, onEvent, messages) {
+    try {
+      super.runStream(input, onEvent, messages);
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+}
+
 // Explicit `exports.X = ...` assignments: cjs-module-lexer only detects these
 // for ESM consumers, so `import { decide } from "orchest-sdk"` works.
-/** @type {typeof import("./native").Agent} */
-exports.Agent = native.Agent;
+exports.Agent = Agent;
+exports.Run = Run;
+exports.RunError = RunError;
 exports.complete = complete;
 exports.decide = decide;
 exports.transcribe = transcribe;

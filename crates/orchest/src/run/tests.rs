@@ -8010,18 +8010,31 @@ async fn run_failed_from_tool_hook_restarts_and_succeeds() {
         }))
         .unwrap();
 
-    let (handle, mut rx) = AgentRun::start(
+    let slot = crate::bindings::run::BindingRunSlot::default();
+    let reservation = slot.reserve().unwrap();
+    let (handle, rx) = AgentRun::start(
         aborting_repeated_failure_config(1),
         "recover please".into(),
         model,
         registry,
     );
 
+    let stream = crate::bindings::run::BindingRunStream::new(reservation.attach(handle), rx);
     let mut events = Vec::new();
-    while let Some(event) = rx.recv().await {
+    while let Some(event) = stream.next().await {
+        if matches!(event, RuntimeEvent::RunFailed { .. }) {
+            assert!(matches!(
+                stream.wait().await,
+                Err(crate::bindings::run::BindingRunError::EventsPending)
+            ));
+        }
         events.push(event);
     }
-    handle.wait().await;
+    assert!(matches!(
+        stream.wait().await.unwrap(),
+        RuntimeEvent::RunCompleted { .. }
+    ));
+    assert!(slot.reserve().is_ok());
 
     let restarts: Vec<u32> = events
         .iter()
@@ -8066,18 +8079,31 @@ async fn run_failed_restart_exhausts_retries_without_loop() {
         }))
         .unwrap();
 
-    let (handle, mut rx) = AgentRun::start(
+    let slot = crate::bindings::run::BindingRunSlot::default();
+    let reservation = slot.reserve().unwrap();
+    let (handle, rx) = AgentRun::start(
         aborting_repeated_failure_config(1),
         "keep failing".into(),
         model,
         registry,
     );
 
+    let stream = crate::bindings::run::BindingRunStream::new(reservation.attach(handle), rx);
     let mut events = Vec::new();
-    while let Some(event) = rx.recv().await {
+    while let Some(event) = stream.next().await {
+        if matches!(event, RuntimeEvent::RunFailed { .. }) {
+            assert!(matches!(
+                stream.wait().await,
+                Err(crate::bindings::run::BindingRunError::EventsPending)
+            ));
+        }
         events.push(event);
     }
-    handle.wait().await;
+    assert!(matches!(
+        stream.wait().await.unwrap(),
+        RuntimeEvent::RunFailed { .. }
+    ));
+    assert!(slot.reserve().is_ok());
 
     let restarts: Vec<u32> = events
         .iter()
