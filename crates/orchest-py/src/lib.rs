@@ -15,7 +15,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use orchest::bindings::run::BindingRunSlot;
+use orchest::bindings::run::{BindingAgent, BindingRunSlot};
+use orchest::bindings::tools::{agent_tool, write_file_tool};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -37,7 +38,6 @@ use orchest::run::{
     SkillsConfig,
 };
 use orchest::tool::async_job::{JobHandle, JobStatus};
-use orchest::tool::builtin::WriteFileTool;
 use orchest::tool::registry::ToolRegistry;
 use orchest::tool::{
     Approval, JsonSchema, Tool, ToolContext, ToolEffects, ToolError, ToolExecutionMode,
@@ -525,6 +525,17 @@ impl Agent {
         Ok(config)
     }
 
+    fn prepare_agent(&self) -> PyResult<BindingAgent> {
+        let config = self.build_config()?;
+        let registry = self.build_registry()?;
+        let model = self.build_model()?;
+        Ok(BindingAgent {
+            config,
+            model,
+            registry,
+        })
+    }
+
     fn build_registry(&self) -> Result<ToolRegistry, PyErr> {
         let mut registry = ToolRegistry::new();
         for tool in &self.native_tools {
@@ -717,60 +728,16 @@ impl Agent {
         agent: &Agent,
         input_key: Option<String>,
     ) -> PyResult<()> {
-        let input_key = input_key.unwrap_or_else(|| "question".to_string());
-        let child_config = agent.build_config()?;
-        let child_registry = agent.build_registry()?;
-        let child_model = agent.build_model()?;
-        let input_schema = serde_json::json!({
-            "type": "object",
-            "properties": {
-                input_key.clone(): {
-                    "type": "string",
-                    "description": "Task or question to delegate to the child agent"
-                }
-            },
-            "required": [input_key.clone()]
-        });
-        let mapper_key = input_key.clone();
-        let input_mapper = Arc::new(move |value: Value| {
-            value
-                .get(&mapper_key)
-                .and_then(Value::as_str)
-                .map(String::from)
-                .ok_or_else(|| {
-                    ToolError::fatal(format!("missing required parameter '{mapper_key}'"))
-                        .with_code("MISSING_PARAM")
-                })
-        });
-        let output_mapper = Arc::new(|details: Value| {
-            details
-                .get("output")
-                .cloned()
-                .unwrap_or_else(|| details.clone())
-        });
-
-        self.native_tools.push(
-            child_config
-                .as_tool(&name, &description)
-                .model(child_model)
-                .registry(child_registry)
-                .input_schema(input_schema)
-                .input_mapper(move |v| input_mapper(v))
-                .output_extractor(move |v| output_mapper(v))
-                .build()
-                .map_err(|e| {
-                    PyRuntimeError::new_err(format!("failed to build sub-agent tool: {e}"))
-                })?,
-        );
-
+        let tool = agent_tool(&name, &description, agent.prepare_agent()?, input_key).map_err(
+            |error| PyRuntimeError::new_err(format!("failed to build sub-agent tool: {error}")),
+        )?;
+        self.native_tools.push(tool);
         Ok(())
     }
 
     #[pyo3(signature = (approval=None))]
     fn register_write_file_tool(&mut self, approval: Option<String>) -> PyResult<()> {
-        let resolved = parse_binding_approval(approval.as_deref(), Approval::Always);
-        self.native_tools
-            .push(Arc::new(WriteFileTool::new_with_approval(resolved)));
+        self.native_tools.push(write_file_tool(approval.as_deref()));
         Ok(())
     }
 
@@ -785,20 +752,11 @@ impl Agent {
     ) -> PyResult<Bound<'py, PyAny>> {
         let reservation = self.run_slot.reserve().map_err(run_error)?;
         let session = session.map(session_options).transpose()?;
-        let config = self.build_config()?;
-        let registry = self.build_registry()?;
-        let model = self.build_model()?;
+        let agent = self.prepare_agent()?;
         let messages = py_messages_to_core(py, messages)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let stream = reservation
-                .start(
-                    config,
-                    model,
-                    registry,
-                    RunInput::text(input),
-                    messages,
-                    session,
-                )
+                .start(agent, RunInput::text(input), messages, session)
                 .await
                 .map_err(run_error)?;
             wrap_run(stream)
@@ -817,12 +775,10 @@ impl Agent {
         let session = session
             .ok_or_else(|| run_error(orchest::session::SessionError::NotConfigured.into()))?;
         let session = session_options(session)?;
-        let config = self.build_config()?;
-        let registry = self.build_registry()?;
-        let model = self.build_model()?;
+        let agent = self.prepare_agent()?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let stream = reservation
-                .resume(config, model, registry, session, input.map(RunInput::text))
+                .resume(agent, session, input.map(RunInput::text))
                 .await
                 .map_err(run_error)?;
             wrap_run(stream)

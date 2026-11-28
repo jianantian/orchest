@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
 const http = require("node:http");
 const { once } = require("node:events");
 const { existsSync, mkdtempSync, readFileSync, rmSync } = require("node:fs");
@@ -190,4 +191,122 @@ test("async run streams without blocking Node and shares agent occupancy", { tim
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("shared Node tool registrations use the Rust schema, results, and approvals", { timeout: 10_000 }, async () => {
+  const directory = mkdtempSync(join(tmpdir(), "orchest-tools-"));
+  const inputs = new Map();
+  const requests = [];
+  const server = http.createServer(async (request, response) => {
+    const parts = [];
+    for await (const part of request) parts.push(part);
+    const body = JSON.parse(Buffer.concat(parts).toString());
+    requests.push(body);
+    const toolResult = body.messages.some(
+      message => message.content.some(block => block.type === "tool_result"),
+    );
+    const name = body.tools?.[0]?.name;
+    const input = inputs.get(name);
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    for (const [event, data] of name && !toolResult ? fixture.tool : fixture.complete) {
+      let payload = data;
+      if (name && !toolResult && event === "content_block_start") {
+        payload = { content_block: { ...data.content_block, name } };
+      }
+      if (name && !toolResult && event === "content_block_delta") {
+        payload = { delta: { ...data.delta, partial_json: JSON.stringify(input ?? {}) } };
+      }
+      response.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+    }
+    response.end();
+  }).listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  const makeAgent = (name) => new Agent({
+    name,
+    model: "anthropic/claude-sonnet-4-6",
+    systemPrompt: `Instructions for ${name}`,
+    apiKey: "local-test",
+    apiUrl: `http://127.0.0.1:${server.address().port}`,
+  });
+  const runAgent = async (agent, approval = "deny") => {
+    const run = await agent.startRun("run the fixture");
+    try {
+      const events = [];
+      for await (const event of run) {
+        events.push(event);
+        if (event.type === "approval_requested") {
+          await run.respond(event.request_id, { decision: approval });
+        }
+      }
+      assert.equal((await run.wait()).type, "run_completed");
+      return events;
+    } finally {
+      await run.close();
+    }
+  };
+
+  try {
+    for (const inputKey of [undefined, "task"]) {
+      const parent = makeAgent("parent");
+      const key = inputKey ?? "question";
+      parent.registerAgentTool("delegate", "Delegate to a configured child", makeAgent("child"), inputKey);
+      inputs.set("delegate", { [key]: `child input for ${key}` });
+      const events = await runAgent(parent);
+      const toolResult = events.find(event => event.type === "tool_call_completed" && event.tool === "delegate");
+      assert.equal(toolResult?.output.output, "done");
+      assert.equal(typeof toolResult.output.child_run_id, "string");
+      assert.equal(typeof toolResult.output.budget_used.tokens_used, "number");
+      assert.deepEqual(requests.at(-3).tools[0].input_schema.required, [key]);
+      assert.equal(requests.at(-2).messages.at(-1).content[0].text, `child input for ${key}`);
+    }
+
+    const writer = makeAgent("writer");
+    writer.registerWriteFileTool();
+    for (const approval of ["approve", "deny"]) {
+      const output = join(directory, `${approval}.txt`);
+      inputs.set("write_file", { path: output, content: "fixture output" });
+      const events = await runAgent(writer, approval);
+      assert.deepEqual(requests.at(-2).tools[0].input_schema.required, ["path", "content"]);
+      assert(events.some(event => event.type === "approval_requested" && event.tool_call.name === "write_file"));
+      if (approval === "approve") {
+        assert.equal(readFileSync(output, "utf8"), "fixture output");
+        const dispatch = events.find(event => event.type === "tool_call_started" && event.tool === "write_file");
+        assert.deepEqual([...dispatch.metadata.effects].sort(), ["write_outside", "write_workspace"]);
+      } else {
+        assert.equal(existsSync(output), false);
+        assert(events.some(event => event.type === "approval_denied"));
+      }
+    }
+
+    const schemaOnly = makeAgent("schema only");
+    schemaOnly.registerTool({ name: "probe", description: "fixture", inputSchema: { type: "object" } });
+    assert((await runAgent(schemaOnly)).some(event => event.type === "tool_call_failed"));
+
+    const polling = makeAgent("polling");
+    polling.registerAsyncToolWithHandler(
+      "probe", "fixture", { type: "object" },
+      () => ({ job_id: "fixture-job", poll_interval_ms: 1 }),
+      (jobId) => ({ status: "completed", result: { jobId } }),
+    );
+    const polled = await runAgent(polling);
+    assert(polled.some(event => event.type === "async_tool_completed"));
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+
+test("idle registered tool callbacks let a Node host exit", () => {
+  const result = spawnSync(process.execPath, ["-e", `
+    const { Agent } = require(process.argv[1]);
+    const agent = new Agent({ name: "idle", model: "anthropic/claude-sonnet-4-6", systemPrompt: "" });
+    agent.registerToolWithHandler("probe", "fixture", {}, () => "ok");
+    agent.registerAsyncToolWithHandler("poll", "fixture", {}, () => ({ job_id: "test" }),
+      () => ({ status: "completed", result: "ok" }));
+  `, require.resolve("../index.js")], { timeout: 3_000, encoding: "utf8" });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
 });

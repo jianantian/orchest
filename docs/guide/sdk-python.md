@@ -62,6 +62,16 @@ events = agent.run("What's the weather in Tokyo?")
 
 `run(input, messages=None)` 和 `run_sync(input, messages=None)` 都返回 `list[RuntimeEvent]`（一次性返回事件列表，不是流式 generator）。`messages` 是多轮历史（session 快照同款 serde 形状），经 `AgentRun::start_with_messages` 带入；`run_stream(input, on_event, messages=None)` 同理。事件 `run_completed.stop_reason` 标记完成原因：`"MaxTokens"` 表示输出被截断，消费方应续写/重试/报错，而非直接使用。
 
+### 0.3.0 异步运行与本地恢复
+
+宿主需要边接收事件边处理审批时，用 `await agent.start_run(input)` 返回的 `Run`。在 `async with run` 内用 `async for` 读取事件。收到 `approval_requested` 时，按 `request_id` 调用 `await run.respond(request_id, {"decision": "approve"})`，也可拒绝或提供结构化答案。用 `run.capabilities()` 查询当前运行的能力。
+
+读完事件后调用 `await run.wait()`，取得根运行最终的 `run_completed`、`run_failed` 或 `run_aborted`。过早等待会返回 `AgentError`，其 `code` 为 `run_events_pending`，之后仍可继续读。用 `run.cancel()` 请求取消后可以读到终止事件。退出上下文或调用 `await run.aclose()` 会释放接收器并等待运行清理。
+
+配置本地会话时，将 `{"sqlite_path": "/path/to/sessions.sqlite", "session_id": "example"}` 作为 `start_run` 的关键字参数 `session`。重建 Agent 和工具后，用 `await agent.resume_session(session)` 恢复，或传入第二个参数追加新用户输入。SQLite 存储由宿主管理。同一数据库中的同一 Session 同时只允许一个写入者。占用时收到 `session_writer_conflict`，已有会话重复新建时收到 `session_already_exists`。
+
+原有 `run`、`run_sync`、`run_stream` 的成功调用和返回形状沿用 0.2。单个 Agent 的全部运行入口共用一个占用槽，重叠启动返回 `run_active`。完整流程见 [异步审批与恢复示例](../../examples/python/agents/async_run.py)。
+
 ### GIL 行为
 
 `run()` / `run_sync()` 在 Rust run loop 执行期间使用 `py.detach()` 释放 Python GIL；长时间 model call、Rust tool、MCP tool、skill tool 不会因为 Python 调用线程持有 GIL 而阻塞其它 Python 线程。返回事件列表转换成 Python dict/list 时会短暂重新持有 GIL。

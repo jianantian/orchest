@@ -78,6 +78,16 @@ const events = await agent.runSync("What's the weather in Tokyo?");
 
 `runSync(input, messages?)` 返回 `RuntimeEvent[]`；`messages` 是多轮历史（session 快照同款 serde 形状），经 `AgentRun::start_with_messages` 带入；`runStream(input, onEvent, messages?)` 同理。事件 `run_completed.stop_reason` 标记完成原因：`"MaxTokens"` 表示输出被截断，消费方应续写/重试/报错，而非直接使用。
 
+### 0.3.0 异步运行与本地恢复
+
+用 `await agent.startRun(input)` 启动运行，用 `for await (const event of run)` 消费事件。收到 `approval_requested` 时，按 `event.request_id` 调用 `await run.respond(event.request_id, { decision: "approve" })`，也可拒绝或提供结构化答案。用 `run.capabilities()` 查询目标运行的能力。
+
+消费到迭代结束后，`await run.wait()` 返回根运行最终的完成、失败或取消事件。过早等待会返回 `RunError`，其 `code` 为 `run_events_pending`，之后仍可继续消费。调用 `run.cancel()` 后仍可读到终止事件。提前退出循环时，迭代器会关闭并清理运行，也可显式调用 `await run.close()`。
+
+持久化运行用 `agent.startRun(input, undefined, { sqlitePath, sessionId })`。重建 Agent 和工具后，调用 `agent.resumeSession(session)` 恢复，或用 `agent.resumeSession(session, input)` 追加用户输入。同一数据库中的同一 Session 同时只允许一个写入者，冲突返回 `session_writer_conflict`，已有会话重复新建返回 `session_already_exists`。
+
+`runSync` 和 `runStream` 沿用 0.2 的返回形状。所有运行入口共用同一 Agent 占用槽，重叠启动返回 `run_active`。完整流程见 [异步审批与恢复示例](../../examples/typescript/agents/async_run.ts)。
+
 ## 3. 注册 tool
 
 **带执行函数**（最常用）——`registerToolWithHandler` 的 handler 在模型调用该 tool 时执行并返回结果：
@@ -105,6 +115,8 @@ agent.registerTool({
   },
 });
 ```
+
+用 `registerAgentTool(name, description, childAgent, inputKey?)` 委派给已配置的子 Agent。默认输入键是 `question`。用 `registerWriteFileTool(approval?)` 注册 Rust 内建 `write_file` 工具，默认审批模式为 `always`，输入为 `path` 与 UTF-8 文本 `content`。
 
 ### v0.9.9 迁移说明
 
@@ -225,7 +237,7 @@ for (const event of await agent.runSync("What's the weather in Tokyo?")) {
 
 ## 6. Event type 速查
 
-来自 `js/types.d.ts`（37 个变体，与 `crates/orchest/src/events.rs` 的 `RuntimeEvent` 一一对应，由 `scripts/check-ts-event-variants.sh` 守卫；Python 绑定走同一个 wire 转换，形状一致）：
+来自 `js/types.d.ts`（与 `crates/orchest/src/events.rs` 的 `RuntimeEvent` 一一对应，由 `scripts/check-ts-event-variants.sh` 同时校验 Python 和 TypeScript 的变体）：
 
 ```
 run_started                      model_call_started               model_stream_chunk

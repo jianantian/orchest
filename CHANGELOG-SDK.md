@@ -21,6 +21,8 @@ from.
   expose machine-readable errors and a complete event union in both SDKs.
 - Explicit SQLite Session v2 storage with local single-writer coordination,
   session resume, and the option to append a new user turn on resume.
+- Node can register an Agent as a tool and the native write-file tool using
+  the same tool contracts as Python.
 
 ## [0.2.0]
 

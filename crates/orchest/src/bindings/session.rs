@@ -3,13 +3,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::model::{Message, ModelAdapter};
+use crate::model::Message;
 use crate::run::actor::{ensure_fresh_session, SessionBinding};
 use crate::run::{AgentConfig, AgentRun, RunInput};
 use crate::session::{sqlite::SqliteSessionWriter, SessionError, SqliteSessionStore};
-use crate::tool::registry::ToolRegistry;
 
-use super::run::{BindingRunError, BindingRunReservation, BindingRunStream};
+use super::run::{BindingAgent, BindingRunError, BindingRunReservation, BindingRunStream};
 
 pub struct BindingSessionOptions {
     path: PathBuf,
@@ -46,13 +45,16 @@ impl BindingSessionOptions {
 impl BindingRunReservation {
     pub async fn start(
         self,
-        config: AgentConfig,
-        model: Arc<dyn ModelAdapter>,
-        registry: ToolRegistry,
+        agent: BindingAgent,
         input: RunInput,
         messages: Vec<Message>,
         session: Option<BindingSessionOptions>,
     ) -> Result<BindingRunStream, BindingRunError> {
+        let BindingAgent {
+            config,
+            model,
+            registry,
+        } = agent;
         let (config, writer) = if let Some(session) = session {
             let (config, writer) = session.bind(config).await?;
             let binding =
@@ -72,12 +74,15 @@ impl BindingRunReservation {
 
     pub async fn resume(
         self,
-        config: AgentConfig,
-        model: Arc<dyn ModelAdapter>,
-        registry: ToolRegistry,
+        agent: BindingAgent,
         session: BindingSessionOptions,
         input: Option<RunInput>,
     ) -> Result<BindingRunStream, BindingRunError> {
+        let BindingAgent {
+            config,
+            model,
+            registry,
+        } = agent;
         let (config, writer) = session.bind(config).await?;
         let (handle, events) = match input {
             Some(input) => AgentRun::resume_with_input(config, input, model, registry).await?,

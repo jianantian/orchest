@@ -54,6 +54,12 @@ export class Agent {
   /** @internal */
   _resumeSession(session?: SessionOptions, input?: string): Promise<NativeRun>;
 
+  /** Delegate a string input to a configured Agent. The default key is question. */
+  registerAgentTool(name: string, description: string, agent: Agent, inputKey?: string): void;
+
+  /** Register the native write_file tool. Approval defaults to always. */
+  registerWriteFileTool(approval?: "never" | "whenRisky" | "always"): void;
+
   /** Register a tool with schema only (no handler — tool calls will error). */
   registerTool(options: {
     name: string;

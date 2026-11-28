@@ -4,6 +4,7 @@ pub mod asr;
 pub mod run;
 #[cfg(feature = "sqlite-session")]
 pub mod session;
+pub mod tools;
 
 use std::time::Duration;
 

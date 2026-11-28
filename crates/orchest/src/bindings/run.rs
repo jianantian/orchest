@@ -10,7 +10,16 @@ use serde_json::Value;
 
 use crate::capabilities::Capabilities;
 use crate::events::RuntimeEvent;
-use crate::run::{Cancellation, EventReceiver, RequestError, RequestId, RunHandle};
+use crate::model::ModelAdapter;
+use crate::run::{AgentConfig, Cancellation, EventReceiver, RequestError, RequestId, RunHandle};
+use crate::tool::registry::ToolRegistry;
+
+/// Runtime inputs resolved from the host's Agent configuration.
+pub struct BindingAgent {
+    pub config: AgentConfig,
+    pub model: Arc<dyn ModelAdapter>,
+    pub registry: ToolRegistry,
+}
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]

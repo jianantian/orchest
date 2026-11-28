@@ -17,15 +17,17 @@ mod decision;
 mod error;
 mod run_stream;
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use napi::threadsafe_function::{
     ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 };
+use napi::Env;
 use napi_derive::napi;
-use orchest::bindings::run::BindingRunSlot;
+use orchest::bindings::run::{BindingAgent, BindingRunSlot};
+use orchest::bindings::tools::{agent_tool, write_file_tool};
 use run_stream::{run_error, NativeRun, SessionOptions};
 use serde_json::Value;
 
@@ -447,7 +449,7 @@ pub struct Agent {
     budget: Option<BudgetOptions>,
     approval_mode: Option<String>,
     retry: Option<bool>,
-    tools: Vec<Arc<dyn Tool>>,
+    tools: Mutex<Vec<Arc<dyn Tool>>>,
     run_slot: BindingRunSlot,
 }
 
@@ -474,7 +476,7 @@ impl Agent {
             budget: options.budget,
             approval_mode: options.approval_mode,
             retry: options.retry,
-            tools: Vec::new(),
+            tools: Mutex::new(Vec::new()),
             run_slot: BindingRunSlot::default(),
         })
     }
@@ -482,7 +484,7 @@ impl Agent {
     /// Register a tool with schema only (no handler — tool calls will error).
     /// For tools with handlers, use `registerToolWithHandler`.
     #[napi]
-    pub fn register_tool(&mut self, options: ToolRegistration) -> napi::Result<()> {
+    pub fn register_tool(&self, options: ToolRegistration) -> napi::Result<()> {
         let resolved = parse_binding_approval(options.approval.as_deref(), Approval::Never);
         let execution_mode = parse_execution_mode_node(
             options.execution_mode.as_deref(),
@@ -507,7 +509,7 @@ impl Agent {
             },
         };
 
-        self.tools.push(Arc::new(tool));
+        self.push_tool(Arc::new(tool))?;
         Ok(())
     }
 
@@ -519,7 +521,8 @@ impl Agent {
     )]
     #[allow(clippy::too_many_arguments)] // justified: NAPI binding mirrors JS API surface
     pub fn register_tool_with_handler(
-        &mut self,
+        &self,
+        env: Env,
         name: String,
         description: String,
         input_schema: serde_json::Value,
@@ -535,11 +538,7 @@ impl Agent {
         let resolved = parse_binding_approval(approval_str.as_deref(), Approval::Never);
         let execution_mode = execution_mode_from_options(options.as_ref())?;
 
-        let tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = handler
-            .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<Value>| {
-                let js_value = ctx.env.to_js_value(&ctx.value)?;
-                Ok(vec![js_value])
-            })?;
+        let tsfn = tool_callback(&env, handler)?;
 
         let tool = JsTool {
             name: name.clone(),
@@ -555,7 +554,7 @@ impl Agent {
             handler: tsfn,
         };
 
-        self.tools.push(Arc::new(tool));
+        self.push_tool(Arc::new(tool))?;
         Ok(())
     }
 
@@ -569,7 +568,8 @@ impl Agent {
     )]
     #[allow(clippy::too_many_arguments)] // justified: napi-rs exposes the JavaScript registration API as positional arguments.
     pub fn register_async_tool_with_handler(
-        &mut self,
+        &self,
+        env: Env,
         name: String,
         description: String,
         input_schema: serde_json::Value,
@@ -586,17 +586,8 @@ impl Agent {
         let resolved = parse_binding_approval(approval_str.as_deref(), Approval::Never);
         let execution_mode = execution_mode_from_options(options.as_ref())?;
 
-        let handler_tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = handler
-            .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<Value>| {
-                let js_value = ctx.env.to_js_value(&ctx.value)?;
-                Ok(vec![js_value])
-            })?;
-
-        let poll_tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = poll_handler
-            .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<Value>| {
-                let js_value = ctx.env.to_js_value(&ctx.value)?;
-                Ok(vec![js_value])
-            })?;
+        let handler_tsfn = tool_callback(&env, handler)?;
+        let poll_tsfn = tool_callback(&env, poll_handler)?;
 
         let tool = JsAsyncTool {
             name,
@@ -613,8 +604,30 @@ impl Agent {
             poll_handler: poll_tsfn,
         };
 
-        self.tools.push(Arc::new(tool));
+        self.push_tool(Arc::new(tool))?;
         Ok(())
+    }
+
+    /// Register a configured Agent as a tool.
+    #[napi]
+    pub fn register_agent_tool(
+        &self,
+        name: String,
+        description: String,
+        agent: &Agent,
+        input_key: Option<String>,
+    ) -> napi::Result<()> {
+        let agent = agent.prepare_agent()?;
+        let tool = agent_tool(&name, &description, agent, input_key).map_err(|error| {
+            napi::Error::from_reason(format!("failed to build sub-agent tool: {error}"))
+        })?;
+        self.push_tool(tool)
+    }
+
+    /// Register the shared built-in write_file tool. Approval defaults to always.
+    #[napi]
+    pub fn register_write_file_tool(&self, approval: Option<String>) -> napi::Result<()> {
+        self.push_tool(write_file_tool(approval.as_deref()))
     }
 
     #[napi(js_name = "_startRun")]
@@ -629,16 +642,10 @@ impl Agent {
             .map(SessionOptions::into_binding)
             .transpose()
             .map_err(run_error)?;
-        let (config, registry, model, initial_messages) = self.prepare_run(messages)?;
+        let agent = self.prepare_agent()?;
+        let initial_messages = parse_messages(messages)?;
         let stream = reservation
-            .start(
-                config,
-                model,
-                registry,
-                RunInput::text(input),
-                initial_messages,
-                session,
-            )
+            .start(agent, RunInput::text(input), initial_messages, session)
             .await
             .map_err(run_error)?;
         Ok(NativeRun {
@@ -656,9 +663,9 @@ impl Agent {
         let session = session
             .ok_or_else(|| run_error(orchest::session::SessionError::NotConfigured.into()))?;
         let session = session.into_binding().map_err(run_error)?;
-        let (config, registry, model, _) = self.prepare_run(None)?;
+        let agent = self.prepare_agent()?;
         let stream = reservation
-            .resume(config, model, registry, session, input.map(RunInput::text))
+            .resume(agent, session, input.map(RunInput::text))
             .await
             .map_err(run_error)?;
         Ok(NativeRun {
@@ -673,7 +680,12 @@ impl Agent {
         messages: Option<Vec<Value>>,
     ) -> napi::Result<Vec<Value>> {
         let reservation = self.run_slot.reserve().map_err(run_error)?;
-        let (config, registry, model, initial_messages) = self.prepare_run(messages)?;
+        let BindingAgent {
+            config,
+            model,
+            registry,
+        } = self.prepare_agent()?;
+        let initial_messages = parse_messages(messages)?;
         let (handle, mut events) = AgentRun::start_with_messages(
             config,
             initial_messages,
@@ -707,7 +719,12 @@ impl Agent {
         messages: Option<Vec<Value>>,
     ) -> napi::Result<()> {
         let reservation = self.run_slot.reserve().map_err(run_error)?;
-        let (config, registry, model, initial_messages) = self.prepare_run(messages)?;
+        let BindingAgent {
+            config,
+            model,
+            registry,
+        } = self.prepare_agent()?;
+        let initial_messages = parse_messages(messages)?;
         let tsfn: ThreadsafeFunction<Value, ErrorStrategy::Fatal> = on_event
             .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<Value>| {
                 let js_value = ctx.env.to_js_value(&ctx.value)?;
@@ -804,30 +821,60 @@ fn effects_from_options(options: Option<&Value>) -> napi::Result<orchest::tool::
         .map_err(napi::Error::from_reason)
 }
 
-type PreparedRun = (
-    AgentConfig,
-    ToolRegistry,
-    Arc<dyn orchest::model::ModelAdapter>,
-    Vec<orchest::model::Message>,
-);
+fn tool_callback(
+    env: &Env,
+    handler: napi::JsFunction,
+) -> napi::Result<ThreadsafeFunction<Value, ErrorStrategy::Fatal>> {
+    let mut callback = handler
+        .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<Value>| {
+            Ok(vec![ctx.env.to_js_value(&ctx.value)?])
+        })?;
+    // The run's active SDK calls keep Node alive while it waits for a tool.
+    // A registered but idle tool must allow the host to exit.
+    callback.unref(env)?;
+    Ok(callback)
+}
+
+fn parse_messages(messages: Option<Vec<Value>>) -> napi::Result<Vec<orchest::model::Message>> {
+    messages_from_wire_values(messages.unwrap_or_default())
+        .map_err(|error| napi::Error::from_reason(format!("invalid `messages` entry: {error}")))
+}
 
 impl Agent {
-    fn prepare_run(&self, messages: Option<Vec<Value>>) -> napi::Result<PreparedRun> {
-        let config = self.build_config()?;
+    fn push_tool(&self, tool: Arc<dyn Tool>) -> napi::Result<()> {
+        self.tools
+            .lock()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?
+            .push(tool);
+        Ok(())
+    }
+
+    fn build_registry(&self) -> napi::Result<ToolRegistry> {
+        let tools = self
+            .tools
+            .lock()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?
+            .clone();
         let mut registry = ToolRegistry::new();
-        for tool in &self.tools {
+        for tool in tools {
             registry
-                .register(Arc::clone(tool))
+                .register(tool)
                 .map_err(|error| napi::Error::from_reason(error.to_string()))?;
         }
+        Ok(registry)
+    }
+
+    fn prepare_agent(&self) -> napi::Result<BindingAgent> {
+        let config = self.build_config()?;
+        let registry = self.build_registry()?;
         let model = Arc::from(create_adapter_from_config(self.provider_config()).map_err(
             |error| napi::Error::from_reason(format!("failed to create model: {error}")),
         )?);
-        let messages =
-            messages_from_wire_values(messages.unwrap_or_default()).map_err(|error| {
-                napi::Error::from_reason(format!("invalid `messages` entry: {error}"))
-            })?;
-        Ok((config, registry, model, messages))
+        Ok(BindingAgent {
+            config,
+            model,
+            registry,
+        })
     }
 
     fn provider_config(&self) -> ProviderRuntimeConfig {
@@ -1008,7 +1055,7 @@ mod tests {
         }
 
         fn agent() -> Agent {
-            let mut agent = Agent::new(AgentOptions {
+            let agent = Agent::new(AgentOptions {
                 name: "test-agent".into(),
                 model: "claude-sonnet-4".into(),
                 system_prompt: "test".into(),
@@ -1043,10 +1090,7 @@ mod tests {
         /// Starts a run of `agent` with `model` and makes it the active run.
         fn start(agent: &Agent, hang: bool) -> EventReceiver {
             let config = agent.build_config().unwrap();
-            let mut registry = ToolRegistry::new();
-            for tool in &agent.tools {
-                registry.register(Arc::clone(tool)).unwrap();
-            }
+            let registry = agent.build_registry().unwrap();
             let model = Arc::new(Model {
                 hang,
                 calls: AtomicUsize::new(0),
