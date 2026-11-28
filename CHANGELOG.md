@@ -14,9 +14,20 @@ except for the items `orchest-provider` re-exports.
 
 ## [Unreleased]
 
+### Added
+
+- Add a structured SQLite session writer conflict error for the local SDK
+  session lifecycle.
+
 ### Changed
 
 - Align the Rust workspace and both SDKs on release version `0.3.0`.
+
+### Fixed
+
+- Give newly opened approval requests fresh opaque IDs after run restart or
+  session resume, so a response from an interrupted attempt cannot match the
+  new request.
 
 ## [0.2.0]
 

@@ -300,6 +300,7 @@ pub struct RunHandle {
     pub(crate) ready: Arc<Notify>,
     /// Background task that owns the actor lifecycle.
     pub(crate) actor_join: JoinHandle<()>,
+    pub(crate) task_done: watch::Receiver<()>,
     pub(crate) request_bus: RequestBus,
     /// Shared delegated-child registry for this run tree.
     pub(crate) child_registry: ChildRunRegistry,
@@ -309,6 +310,10 @@ pub struct RunHandle {
 impl RunHandle {
     pub async fn wait(self) {
         let _ = self.actor_join.await;
+    }
+
+    pub(crate) async fn wait_for_task(&self) {
+        let _ = self.task_done.clone().changed().await;
     }
 
     /// Cancels the run as a user request. See [`Self::cancel`].

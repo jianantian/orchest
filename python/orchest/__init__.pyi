@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 
 
@@ -273,6 +273,7 @@ class ApprovalRequestedEvent(TypedDict):
     kind: str
     payload: JsonValue
     tool_call: ToolCall
+    context: NotRequired[JsonValue]
     run_depth: int
     child_run_id: str | None
 
@@ -281,6 +282,7 @@ class ApprovalGrantedEvent(TypedDict):
     type: Literal["approval_granted"]
     request_id: str
     tool_call: ToolCall
+    context: NotRequired[JsonValue]
     run_depth: int
     child_run_id: str | None
 
@@ -457,7 +459,7 @@ class RunAbortedEvent(TypedDict):
     reason: str | None
     # "user" | "timeout" | "upstream" | "host_disconnected" | "watcher";
     # None when the supervisor gave up on a crashed worker.
-    cancel_reason: str | None
+    cancel_reason: CancelReason | None
     run_depth: int
     child_run_id: str | None
 
@@ -476,6 +478,76 @@ class EventsDroppedEvent(TypedDict):
     count: int
     from_seq: int
     to_seq: int
+    run_depth: int
+    child_run_id: str | None
+
+
+class ModelRetryEvent(TypedDict):
+    type: Literal["model_retry"]
+    attempt: int
+    error: str
+    next_delay: dict[str, int]
+    run_depth: int
+    child_run_id: str | None
+
+
+class ToolCallRetryEvent(TypedDict):
+    type: Literal["tool_call_retry"]
+    tool: str
+    attempt: int
+    previous_error: JsonValue
+    next_delay: dict[str, int]
+    run_depth: int
+    child_run_id: str | None
+
+
+class ToolCallBatchStartedEvent(TypedDict):
+    type: Literal["tool_call_batch_started"]
+    batch_id: str
+    tool_count: int
+    run_depth: int
+    child_run_id: str | None
+
+
+class ToolCallBatchItemStartedEvent(TypedDict):
+    type: Literal["tool_call_batch_item_started"]
+    batch_id: str
+    tool: str
+    requested_order: int
+    run_depth: int
+    child_run_id: str | None
+
+
+class ToolCallBatchItemCompletedEvent(TypedDict):
+    type: Literal["tool_call_batch_item_completed"]
+    batch_id: str
+    tool: str
+    requested_order: int
+    completion_order: int
+    run_depth: int
+    child_run_id: str | None
+
+
+class SubAgentEvent(TypedDict):
+    type: Literal["sub_agent_event"]
+    parent_run_id: str
+    child_run_id: str
+    event: "RuntimeEvent"
+    run_depth: int
+
+
+class HookPanickedEvent(TypedDict):
+    type: Literal["hook_panicked"]
+    hook_name: str
+    message: str
+    run_depth: int
+    child_run_id: str | None
+
+
+class AgentUpdatedEvent(TypedDict):
+    type: Literal["agent_updated"]
+    previous_agent: str
+    new_agent: str
     run_depth: int
     child_run_id: str | None
 
@@ -519,6 +591,14 @@ RuntimeEvent: TypeAlias = (
     | EventsDroppedEvent
     | RunCompletedEvent
     | RunFailedEvent
+    | ModelRetryEvent
+    | ToolCallRetryEvent
+    | ToolCallBatchStartedEvent
+    | ToolCallBatchItemStartedEvent
+    | ToolCallBatchItemCompletedEvent
+    | SubAgentEvent
+    | HookPanickedEvent
+    | AgentUpdatedEvent
 )
 
 class AgentError(Exception):
@@ -662,6 +742,71 @@ async def start_asr_stream(
     options: dict[str, Any] | None = None,
 ) -> AsrStream: ...
 
+CancelReason: TypeAlias = Literal["user", "timeout", "upstream", "host_disconnected", "watcher"]
+ApprovalScope: TypeAlias = Literal["once", "session"]
+Enforcement: TypeAlias = Literal["none", "soft", "hard"]
+ToolEffect: TypeAlias = Literal[
+    "read", "write_workspace", "write_outside", "network", "credential", "destructive", "process"
+]
+
+
+class ApproveRequest(TypedDict):
+    type: Literal["approve"]
+
+
+class DenyRequest(TypedDict):
+    type: Literal["deny"]
+    reason: NotRequired[str | None]
+
+
+class AnswerRequest(TypedDict):
+    type: Literal["answer"]
+    payload: JsonValue
+
+
+class RequestResponse(TypedDict):
+    decision: Literal["approve", "deny"] | ApproveRequest | DenyRequest | AnswerRequest
+    scope: NotRequired[ApprovalScope]
+    session_rules: NotRequired[JsonValue]
+
+
+class EnforcementFacts(TypedDict):
+    backend: str | None
+    isolation: Enforcement
+    permission_gate: Enforcement
+    code_execution: Enforcement | None
+    read_only: Enforcement
+
+
+class Capabilities(TypedDict):
+    resume: bool
+    preemptive_cancel: bool
+    approval_scopes: list[ApprovalScope]
+    builtin_request_kinds: list[str]
+    host_request_kinds: bool
+    parallel_tools: bool
+    delegation: bool
+    effects: list[ToolEffect]
+    enforcement: EnforcementFacts
+    lossless_events: bool
+
+
+class SessionOptions(TypedDict):
+    sqlite_path: str
+    session_id: str
+
+
+class Run:
+    def __aiter__(self) -> Run: ...
+    async def __anext__(self) -> RuntimeEvent: ...
+    async def __aenter__(self) -> Run: ...
+    async def __aexit__(self, *exc_info: object) -> None: ...
+    def cancel(self, reason: CancelReason | None = None, message: str | None = None) -> bool: ...
+    async def respond(self, request_id: str, payload: RequestResponse) -> None: ...
+    def capabilities(self) -> Capabilities: ...
+    async def wait(self) -> RunCompletedEvent | RunFailedEvent | RunAbortedEvent: ...
+    async def aclose(self) -> None: ...
+
 class Agent:
     def __init__(
         self,
@@ -718,6 +863,13 @@ class Agent:
     # dicts (same serde shape as session snapshots, e.g.
     # {"role": "user", "content": [{"Text": "..."}]}); forwarded to
     # AgentRun.start_with_messages as the run's initial history.
+    def start_run(
+        self, input: str, messages: list[dict[str, Any]] | None = None,
+        *, session: SessionOptions | None = None,
+    ) -> Awaitable[Run]: ...
+    def resume_session(
+        self, session: SessionOptions, input: str | None = None
+    ) -> Awaitable[Run]: ...
     def run_sync(self, input: str, messages: list[dict[str, Any]] | None = None) -> list[RuntimeEvent]: ...
     def run(self, input: str, messages: list[dict[str, Any]] | None = None) -> list[RuntimeEvent]: ...
     def run_stream(self, input: str, on_event: Callable[[RuntimeEvent], None], messages: list[dict[str, Any]] | None = None) -> None: ...

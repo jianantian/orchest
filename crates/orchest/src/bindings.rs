@@ -1,6 +1,10 @@
 //! Shared FFI-independent helpers used by language bindings.
 
 pub mod asr;
+pub mod run;
+#[cfg(feature = "sqlite-session")]
+pub mod session;
+pub mod tools;
 
 use std::time::Duration;
 
@@ -167,6 +171,25 @@ pub fn runtime_event_value_to_wire_value(value: Value) -> Value {
     }
 }
 
+/// Converts an async SDK run event, including the events forwarded by child
+/// runs. The legacy SDK converters retain their original nested wire shape.
+pub fn run_event_to_wire_value(event: &RuntimeEvent) -> Result<Value, serde_json::Error> {
+    serde_json::to_value(event).map(run_event_value_to_wire_value)
+}
+
+fn run_event_value_to_wire_value(value: Value) -> Value {
+    let mut wire = runtime_event_value_to_wire_value(value);
+    if matches!(
+        wire["type"].as_str(),
+        Some("child_run_event" | "sub_agent_event")
+    ) {
+        if let Some(event) = wire.get_mut("event") {
+            *event = run_event_value_to_wire_value(event.take());
+        }
+    }
+    wire
+}
+
 pub fn to_snake_case(name: &str) -> String {
     let mut out = String::new();
     for (i, ch) in name.chars().enumerate() {
@@ -295,6 +318,39 @@ mod tests {
         assert_eq!(converted["run_id"], "r1");
         assert_eq!(converted["run_depth"], 0);
         assert_eq!(converted["child_run_id"], Value::Null);
+    }
+
+    #[test]
+    fn async_run_converts_nested_events_without_touching_tool_payloads() {
+        use crate::events::RuntimeEvent;
+        use crate::run::RunId;
+
+        let event = RuntimeEvent::SubAgentEvent {
+            parent_run_id: RunId::new(),
+            child_run_id: RunId::new(),
+            event: Box::new(RuntimeEvent::ChildRunEvent {
+                child_run_id: RunId::new(),
+                run_depth: 2,
+                event: Box::new(RuntimeEvent::RunCompleted {
+                    output: json!({"RunStarted": {"value": "tool data"}}),
+                    stop_reason: crate::model::StopReason::EndTurn,
+                }),
+            }),
+        };
+
+        let wire = super::run_event_to_wire_value(&event).unwrap();
+        assert_eq!(wire["type"], "sub_agent_event");
+        assert_eq!(wire["event"]["type"], "child_run_event");
+        assert_eq!(wire["event"]["run_depth"], 2);
+        assert_eq!(wire["event"]["event"]["type"], "run_completed");
+        assert_eq!(
+            wire["event"]["event"]["output"],
+            json!({"RunStarted": {"value": "tool data"}})
+        );
+
+        let legacy = super::runtime_event_to_wire_value(&event).unwrap();
+        assert_eq!(legacy["event"]["ChildRunEvent"]["run_depth"], 2);
+        assert!(legacy["event"].get("type").is_none());
     }
 
     #[test]

@@ -14,9 +14,11 @@ A host that needs exact state reads the session log (or asks the handle:
 `RunHandle::pending_requests`, `RunHandle::cancellation`). A host that renders
 progress reads the stream. Everything below is the stream.
 
-Every event in the binding wire shape also carries `type` (the snake_case name
-below), `run_depth` and `child_run_id`. `js/types.d.ts` and
-`python/orchest/__init__.pyi` list the fields of each.
+Every event in the SDK `Run` stream carries `type` (the snake_case name below),
+`run_depth` and `child_run_id`. Forwarded events under `child_run_event` and
+`sub_agent_event` use the same shape inside their `event` field. Legacy Agent
+entry points use the Rust serde shape for the inner event. See `js/types.d.ts`
+and `python/orchest/__init__.pyi` for the fields.
 
 ## Delivery
 

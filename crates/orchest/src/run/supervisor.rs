@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use ractor::{Actor, ActorProcessingErr, ActorRef, SupervisionEvent};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::events::{FanoutWaveBus, RuntimeEvent};
 use crate::model::ModelAdapter;
@@ -383,7 +383,9 @@ pub(crate) fn spawn_supervised(
         arbitrator,
     };
 
+    let (task_done, task_completion) = watch::channel(());
     let actor_join = tokio::spawn(async move {
+        let _done = task_done;
         let (sup_ref, sup_handle) = Actor::spawn(None, SupervisorActor, sup_args)
             .await
             .expect("SupervisorActor spawn failed");
@@ -403,6 +405,7 @@ pub(crate) fn spawn_supervised(
         actor_ref: actor_ref_shared,
         ready,
         actor_join,
+        task_done: task_completion,
         request_bus,
         child_registry,
         supervisor_ref: supervisor_ref_for_handle,

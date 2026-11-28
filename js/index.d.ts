@@ -1,10 +1,13 @@
-export declare var Agent: typeof import("./native").Agent;
+export { Agent };
+export { Run };
+export { RunError };
 export { complete };
 export { decide };
 export { transcribe };
 export { ProviderError };
 export { AsrStream };
 export { startAsrStream };
+declare const native: typeof import("./native");
 /**
  * Structured provider failure, normalized across the atomic APIs.
  */
@@ -83,3 +86,66 @@ declare class AsrStream {
  * @returns {Promise<AsrStream>}
  */
 declare function startAsrStream(options: import("./types").AsrStreamOptions, onEvent: (event: import("./types").AsrStreamEvent) => void): Promise<AsrStream>;
+/** A lifecycle error with a stable SDK code. */
+declare class RunError extends Error {
+    code: string;
+    /** @param {string} code @param {string} message */
+    constructor(code: string, message: string);
+}
+/** A running agent and its single, pull-based event iterator. */
+declare class Run {
+    #private;
+    /** @param {import("./native").NativeRun} run */
+    constructor(run: import("./native").NativeRun);
+    [Symbol.asyncIterator](): this;
+    /** @returns {Promise<IteratorResult<import("./types").RuntimeEvent, undefined>>} */
+    next(): Promise<IteratorResult<import("./types").RuntimeEvent, undefined>>;
+    /** @returns {Promise<IteratorReturnResult<undefined>>} */
+    return(): Promise<IteratorReturnResult<undefined>>;
+    /** @param {import("./types").CancelReason} [reason] @param {string} [message] */
+    cancel(reason?: import("./types").CancelReason, message?: string): boolean;
+    /**
+     * Answer a pending request on this run.
+     * @param {string} requestId
+     * @param {import("./types").RequestResponse} payload
+     */
+    respond(requestId: string, payload: import("./types").RequestResponse): Promise<void>;
+    capabilities(): import("./types").Capabilities;
+    /** Return the final root-run event after the iterator reaches EOF. */
+    wait(): Promise<{
+        type: "run_completed";
+        output: unknown;
+        stop_reason: import("./types").StopReason;
+        run_depth: number;
+        child_run_id: string | null;
+    } | {
+        type: "run_failed";
+        error: string;
+        kind: import("./types").RunFailureKind;
+        run_depth: number;
+        child_run_id: string | null;
+    } | {
+        type: "run_aborted";
+        reason: string | null;
+        cancel_reason: import("./types").CancelReason | null;
+        run_depth: number;
+        child_run_id: string | null;
+    }>;
+    /** Release the event receiver and wait for active work to finish. */
+    close(): Promise<void>;
+}
+declare class Agent extends native.Agent {
+    /**
+     * Start a run for asynchronous, pull-based event consumption.
+     * @param {string} input
+     * @param {import("./types").HistoryMessage[]} [messages]
+     * @param {import("./types").SessionOptions} [session]
+     */
+    startRun(input: string, messages?: import("./types").HistoryMessage[], session?: import("./types").SessionOptions): Promise<Run>;
+    /**
+     * Resume a local session, optionally appending a new user turn.
+     * @param {import("./types").SessionOptions} session
+     * @param {string} [input]
+     */
+    resumeSession(session: import("./types").SessionOptions, input?: string): Promise<Run>;
+}

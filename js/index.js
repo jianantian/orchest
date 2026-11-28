@@ -208,10 +208,143 @@ async function startAsrStream(options, onEvent) {
   return new AsrStream(session, callbackError);
 }
 
+/** A lifecycle error with a stable SDK code. */
+class RunError extends Error {
+  /** @param {string} code @param {string} message */
+  constructor(code, message) {
+    super(message);
+    this.name = "RunError";
+    this.code = code;
+  }
+}
+
+/** @param {unknown} error */
+function normalizeRunError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = /^__ORCHEST_RUN_ERROR__:([^:]+):([\s\S]*)$/.exec(message);
+  return match === null ? error : new RunError(match[1], match[2]);
+}
+
+/** A running agent and its single, pull-based event iterator. */
+class Run {
+  /** @type {import("./native").NativeRun} */ #native;
+  #readQueue = Promise.resolve();
+
+  /** @param {import("./native").NativeRun} run */
+  constructor(run) {
+    this.#native = run;
+  }
+
+  [Symbol.asyncIterator]() {
+    return this;
+  }
+
+  /** @returns {Promise<IteratorResult<import("./types").RuntimeEvent, undefined>>} */
+  async next() {
+    const pending = this.#readQueue.then(() => this.#native.nextEvent());
+    // Submit one native read at a time, even if the caller issues multiple pulls.
+    this.#readQueue = pending.then(() => {}, () => {});
+    const event = await pending;
+    return event == null
+      ? { done: true, value: undefined }
+      : { done: false, value: event };
+  }
+
+  /** @returns {Promise<IteratorReturnResult<undefined>>} */
+  async return() {
+    await this.close();
+    return { done: true, value: undefined };
+  }
+
+  /** @param {import("./types").CancelReason} [reason] @param {string} [message] */
+  cancel(reason, message) {
+    return this.#native.cancel(reason, message);
+  }
+
+  /**
+   * Answer a pending request on this run.
+   * @param {string} requestId
+   * @param {import("./types").RequestResponse} payload
+   */
+  async respond(requestId, payload) {
+    try {
+      await this.#native.respond(requestId, payload);
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+
+  capabilities() {
+    return this.#native.capabilities();
+  }
+
+  /** Return the final root-run event after the iterator reaches EOF. */
+  async wait() {
+    try {
+      return await this.#native.wait();
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+
+  /** Release the event receiver and wait for active work to finish. */
+  async close() {
+    await this.#native.close();
+  }
+}
+
+class Agent extends native.Agent {
+  /**
+   * Start a run for asynchronous, pull-based event consumption.
+   * @param {string} input
+   * @param {import("./types").HistoryMessage[]} [messages]
+   * @param {import("./types").SessionOptions} [session]
+   */
+  async startRun(input, messages, session) {
+    try {
+      return new Run(await this._startRun(input, messages, session));
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+
+  /**
+   * Resume a local session, optionally appending a new user turn.
+   * @param {import("./types").SessionOptions} session
+   * @param {string} [input]
+   */
+  async resumeSession(session, input) {
+    try {
+      return new Run(await this._resumeSession(session, input));
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+
+  /** @type {import("./native").Agent["runSync"]} */
+  async runSync(input, messages) {
+    try {
+      return await super.runSync(input, messages);
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+
+  /** @type {import("./native").Agent["runStream"]} */
+  runStream(input, onEvent, messages) {
+    try {
+      super.runStream(input, onEvent, messages);
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+}
+
 // Explicit `exports.X = ...` assignments: cjs-module-lexer only detects these
 // for ESM consumers, so `import { decide } from "orchest-sdk"` works.
-/** @type {typeof import("./native").Agent} */
-exports.Agent = native.Agent;
+exports.Agent = Agent;
+exports.Run = Run;
+exports.RunError = RunError;
 exports.complete = complete;
 exports.decide = decide;
 exports.transcribe = transcribe;

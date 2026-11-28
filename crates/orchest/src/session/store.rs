@@ -30,6 +30,9 @@ pub enum SessionError {
     /// Resume was called on a config without a session store and session id.
     #[error("no session store and session id are configured")]
     NotConfigured,
+    /// Another SDK run holds the local write lease for this session.
+    #[error("session '{0}' already has a writer")]
+    WriterConflict(String),
 }
 
 /// When a run makes its session log durable.

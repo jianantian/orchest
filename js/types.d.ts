@@ -283,7 +283,7 @@ export type StopReason =
  */
 export type RunFailureKind = "BudgetExceeded" | "MaxStepsReached" | "Other";
 
-/** The host's answer to a request (`Agent.respond`). */
+/** The host's answer to a blocking request. */
 export interface RequestResponse {
   /** A bare "approve" / "deny", or the tagged form (`answer` carries a payload). */
   decision:
@@ -297,7 +297,7 @@ export interface RequestResponse {
   session_rules?: unknown;
 }
 
-/** What a run supports (`Agent.capabilities`). */
+/** What a run supports. */
 export interface Capabilities {
   resume: boolean;
   preemptive_cancel: boolean;
@@ -387,6 +387,12 @@ export type RuntimeEvent =
   | { type: "run_failed"; error: string; kind: RunFailureKind; run_depth: number; child_run_id: string | null }
   | { type: "run_aborted"; reason: string | null; cancel_reason: CancelReason | null; run_depth: number; child_run_id: string | null }
   | { type: "processes_terminated"; terminated: number | null; error: string | null; run_depth: number; child_run_id: string | null };
+
+/** File-backed Session v2 storage selected by the host. */
+export interface SessionOptions {
+  sqlitePath: string;
+  sessionId: string;
+}
 
 export interface HistoryMessage {
   /** "system" | "user" | "assistant" | "tool" (plus provider-specific roles). */

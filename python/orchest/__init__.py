@@ -1,5 +1,6 @@
 """Orchest Agent Runtime - Python SDK for building AI agents."""
 
+import asyncio
 import inspect
 from collections.abc import Callable
 from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
@@ -7,6 +8,7 @@ from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 from .orchest_py import (
     Agent,
     _NativeAsrStream,
+    _NativeRun,
     _start_asr_stream,
     complete,
     decide,
@@ -29,6 +31,121 @@ TokenUsage: TypeAlias = dict[str, int | dict[str, int]]
 ToolCall: TypeAlias = dict[str, Any]
 ToolRegistration: TypeAlias = dict[str, Any]
 RuntimeEvent: TypeAlias = dict[str, Any]
+
+CancelReason: TypeAlias = Literal["user", "timeout", "upstream", "host_disconnected", "watcher"]
+ApprovalScope: TypeAlias = Literal["once", "session"]
+Enforcement: TypeAlias = Literal["none", "soft", "hard"]
+ToolEffect: TypeAlias = Literal[
+    "read", "write_workspace", "write_outside", "network", "credential", "destructive", "process"
+]
+
+
+class ApproveRequest(TypedDict):
+    type: Literal["approve"]
+
+
+class DenyRequest(TypedDict):
+    type: Literal["deny"]
+    reason: NotRequired[str | None]
+
+
+class AnswerRequest(TypedDict):
+    type: Literal["answer"]
+    payload: JsonValue
+
+
+class RequestResponse(TypedDict):
+    decision: Literal["approve", "deny"] | ApproveRequest | DenyRequest | AnswerRequest
+    scope: NotRequired[ApprovalScope]
+    session_rules: NotRequired[JsonValue]
+
+
+class EnforcementFacts(TypedDict):
+    backend: str | None
+    isolation: Enforcement
+    permission_gate: Enforcement
+    code_execution: Enforcement | None
+    read_only: Enforcement
+
+
+class Capabilities(TypedDict):
+    resume: bool
+    preemptive_cancel: bool
+    approval_scopes: list[ApprovalScope]
+    builtin_request_kinds: list[str]
+    host_request_kinds: bool
+    parallel_tools: bool
+    delegation: bool
+    effects: list[ToolEffect]
+    enforcement: EnforcementFacts
+    lossless_events: bool
+
+
+class SessionOptions(TypedDict):
+    sqlite_path: str
+    session_id: str
+
+
+class Run:
+    """An active agent run and its single, pull-based event iterator."""
+
+    def __init__(self, native: _NativeRun) -> None:
+        self._native = native
+        self._read_lock = asyncio.Lock()
+        self._pending: asyncio.Future[RuntimeEvent | None] | None = None
+
+    def __aiter__(self) -> "Run":
+        return self
+
+    async def __anext__(self) -> RuntimeEvent:
+        async with self._read_lock:
+            if self._pending is None:
+                self._pending = self._native.next_event()
+            try:
+                event = await asyncio.shield(self._pending)
+            except asyncio.CancelledError:
+                # A cancelled host task can retry without discarding the event.
+                raise
+            except Exception:
+                self._pending = None
+                raise
+            self._pending = None
+            if event is None:
+                raise StopAsyncIteration
+            return event
+
+    async def __aenter__(self) -> "Run":
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self.aclose()
+
+    def cancel(self, reason: CancelReason | None = None, message: str | None = None) -> bool:
+        """Request cancellation while keeping the terminal event readable."""
+        return self._native.cancel(reason, message)
+
+    async def respond(self, request_id: str, payload: RequestResponse) -> None:
+        """Answer a pending request on this run."""
+        await self._native.respond(request_id, payload)
+
+    def capabilities(self) -> Capabilities:
+        """Report the capabilities captured when this run started."""
+        return self._native.capabilities()
+
+    async def wait(self) -> RuntimeEvent:
+        """Return the final root-run event after the iterator reaches EOF."""
+        return await self._native.wait()
+
+    async def aclose(self) -> None:
+        """Release the event receiver and wait for active work to finish."""
+        await self._native.close()
+        async with self._read_lock:
+            if self._pending is not None:
+                try:
+                    await asyncio.shield(self._pending)
+                finally:
+                    self._pending = None
+
 
 DecisionDescription: TypeAlias = str | list[JsonValue] | dict[str, JsonValue]
 BooleanCriteria = TypedDict(
@@ -272,6 +389,7 @@ async def start_asr_stream(
 
 __all__ = [
     "Agent",
+    "Run",
     "AsrStream",
     "AsrStreamEvent",
     "AsrContextMessage",
@@ -303,6 +421,17 @@ __all__ = [
     "ModelError",
     "RequestOptions",
     "RuntimeEvent",
+    "CancelReason",
+    "RequestResponse",
+    "SessionOptions",
+    "Capabilities",
+    "ToolEffect",
+    "ApprovalScope",
+    "Enforcement",
+    "EnforcementFacts",
+    "ApproveRequest",
+    "DenyRequest",
+    "AnswerRequest",
     "SkillError",
     "ScoreQuestion",
     "ScoreAnswer",

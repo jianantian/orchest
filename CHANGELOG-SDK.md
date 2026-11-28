@@ -14,6 +14,19 @@ from.
 ## [Unreleased]
 
 - Align the Python and Node package versions with the Rust workspace.
+- Add pull-based asynchronous agent runs with a bounded event stream, explicit
+  cancellation and cleanup, and a final result after event consumption. Each
+  Agent instance accepts one active run across its run entry points.
+- Answer blocking requests and query capabilities on a specific run. Run calls
+  expose machine-readable errors and a complete event union in both SDKs.
+- Explicit SQLite Session v2 storage with local single-writer coordination,
+  session resume, and the option to append a new user turn on resume.
+- Node can register an Agent as a tool and the native write-file tool using
+  the same tool contracts as Python.
+
+- Forwarded child events on async runs use the same discriminated shape as
+  root events. Session recovery gives reissued approvals fresh IDs and rejects
+  late responses to interrupted requests.
 
 ## [0.2.0]
 
