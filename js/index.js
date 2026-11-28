@@ -261,6 +261,23 @@ class Run {
     return this.#native.cancel(reason, message);
   }
 
+  /**
+   * Answer a pending request on this run.
+   * @param {string} requestId
+   * @param {import("./types").RequestResponse} payload
+   */
+  async respond(requestId, payload) {
+    try {
+      await this.#native.respond(requestId, payload);
+    } catch (error) {
+      throw normalizeRunError(error);
+    }
+  }
+
+  capabilities() {
+    return this.#native.capabilities();
+  }
+
   /** Return the final root-run event after the iterator reaches EOF. */
   async wait() {
     try {

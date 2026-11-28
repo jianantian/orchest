@@ -1,0 +1,191 @@
+{
+  "complete": [
+    [
+      "message_start",
+      {
+        "message": {
+          "usage": {
+            "input_tokens": 1
+          }
+        }
+      }
+    ],
+    [
+      "content_block_start",
+      {
+        "content_block": {
+          "type": "text"
+        }
+      }
+    ],
+    [
+      "content_block_delta",
+      {
+        "delta": {
+          "type": "text_delta",
+          "text": "done"
+        }
+      }
+    ],
+    [
+      "content_block_stop",
+      {}
+    ],
+    [
+      "message_delta",
+      {
+        "delta": {
+          "stop_reason": "end_turn"
+        },
+        "usage": {
+          "output_tokens": 1
+        }
+      }
+    ],
+    [
+      "message_stop",
+      {}
+    ]
+  ],
+  "tool": [
+    [
+      "message_start",
+      {
+        "message": {
+          "usage": {
+            "input_tokens": 1
+          }
+        }
+      }
+    ],
+    [
+      "content_block_start",
+      {
+        "content_block": {
+          "type": "tool_use",
+          "id": "probe-1",
+          "name": "probe"
+        }
+      }
+    ],
+    [
+      "content_block_delta",
+      {
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "{}"
+        }
+      }
+    ],
+    [
+      "content_block_stop",
+      {}
+    ],
+    [
+      "message_delta",
+      {
+        "delta": {
+          "stop_reason": "tool_use"
+        },
+        "usage": {
+          "output_tokens": 1
+        }
+      }
+    ],
+    [
+      "message_stop",
+      {}
+    ]
+  ],
+  "expected": [
+    {
+      "child_run_id": null,
+      "run_depth": 0,
+      "run_id": "<run_id>",
+      "type": "run_started"
+    },
+    {
+      "child_run_id": null,
+      "run_depth": 0,
+      "step": 0,
+      "type": "model_call_started"
+    },
+    {
+      "child_run_id": null,
+      "message_id": "<message_id>",
+      "run_depth": 0,
+      "step": 0,
+      "type": "message_started"
+    },
+    {
+      "child_run_id": null,
+      "delta": {
+        "Text": {
+          "delta": "done"
+        }
+      },
+      "run_depth": 0,
+      "type": "model_stream_chunk"
+    },
+    {
+      "child_run_id": null,
+      "delta": {
+        "text": "done",
+        "type": "text"
+      },
+      "message_id": "<message_id>",
+      "run_depth": 0,
+      "type": "message_updated"
+    },
+    {
+      "child_run_id": null,
+      "delta": {
+        "Done": {
+          "usage": {
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "details": {},
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "reasoning_tokens": 0
+          }
+        }
+      },
+      "run_depth": 0,
+      "type": "model_stream_chunk"
+    },
+    {
+      "child_run_id": null,
+      "content": [
+        {
+          "Text": "done"
+        }
+      ],
+      "message_id": "<message_id>",
+      "run_depth": 0,
+      "stop_reason": "EndTurn",
+      "type": "message_ended"
+    },
+    {
+      "child_run_id": null,
+      "run_depth": 0,
+      "tokens": {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "cost_usd": 1.8e-05,
+        "details": {},
+        "input_tokens": 1,
+        "output_tokens": 1,
+        "reasoning_tokens": 0
+      },
+      "type": "model_call_completed"
+    },
+    {
+      "child_run_id": null,
+      "output": "done",
+      "run_depth": 0,
+      "stop_reason": "EndTurn",
+      "type": "run_completed"
+    }
+  ]
+}

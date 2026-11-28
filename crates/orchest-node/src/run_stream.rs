@@ -49,6 +49,20 @@ impl NativeRun {
     }
 
     #[napi]
+    pub async fn respond(&self, request_id: String, payload: Value) -> napi::Result<()> {
+        self.stream
+            .respond(request_id, payload)
+            .await
+            .map_err(run_error)
+    }
+
+    #[napi]
+    pub fn capabilities(&self) -> napi::Result<Value> {
+        serde_json::to_value(self.stream.capabilities())
+            .map_err(|error| napi::Error::from_reason(error.to_string()))
+    }
+
+    #[napi]
     pub fn cancel(&self, reason: Option<String>, message: Option<String>) -> napi::Result<bool> {
         let cancellation =
             orchest::bindings::parse_binding_cancellation(reason.as_deref(), message)

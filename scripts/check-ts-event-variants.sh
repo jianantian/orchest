@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
-# Guards the JS RuntimeEvent union against drift from the core enum.
-#
-# js/types.d.ts declares one union variant per `RuntimeEvent` variant in
-# crates/orchest/src/events.rs, in the wire shape the bindings emit
-# (`type` = snake_case discriminant, plus injected run_depth/child_run_id).
-# This check fails when the two sets differ in either direction — the union
-# had drifted twice before (missing variants, missing injected fields).
+# Guards the TypeScript and Python RuntimeEvent unions against drift from
+# the Rust enum's snake_case wire discriminant.
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
@@ -13,8 +8,9 @@ cd "$repo_root"
 
 events="crates/orchest/src/events.rs"
 declarations="js/types.d.ts"
+python_declarations="python/orchest/__init__.pyi"
 
-for file in "$events" "$declarations"; do
+for file in "$events" "$declarations" "$python_declarations"; do
   if [[ ! -e "$file" ]]; then
     echo "error: expected file '$file' does not exist" >&2
     exit 1
@@ -35,32 +31,47 @@ ts_variants="$(
     sort
 )"
 
+py_variants="$(
+  python3 - "$python_declarations" <<'PYTHON'
+import ast
+import sys
+from pathlib import Path
+
+module = ast.parse(Path(sys.argv[1]).read_text())
+classes = {node.name: node for node in module.body if isinstance(node, ast.ClassDef)}
+union = next(
+    node.value for node in module.body
+    if isinstance(node, ast.AnnAssign) and node.target.id == "RuntimeEvent"
+)
+for name in sorted(node.id for node in ast.walk(union) if isinstance(node, ast.Name)):
+    declaration = next(
+        field.annotation for field in classes[name].body
+        if isinstance(field, ast.AnnAssign) and field.target.id == "type"
+    )
+    print(ast.literal_eval(declaration.slice))
+PYTHON
+)"
+py_variants="$(echo "$py_variants" | sort)"
+
 if [[ -z "$core_variants" ]]; then
   echo "error: no RuntimeEvent variants parsed from $events" >&2
   exit 1
 fi
-if [[ -z "$ts_variants" ]]; then
-  echo "error: no RuntimeEvent variants parsed from $declarations" >&2
-  exit 1
-fi
 
-missing="$(comm -23 <(echo "$core_variants") <(echo "$ts_variants"))"
-extra="$(comm -13 <(echo "$core_variants") <(echo "$ts_variants"))"
+check_declarations() {
+  local path="$1"
+  local variants="$2"
+  local missing extra
+  missing="$(comm -23 <(echo "$core_variants") <(echo "$variants"))"
+  extra="$(comm -13 <(echo "$core_variants") <(echo "$variants"))"
+  if [[ -n "$missing" || -n "$extra" ]]; then
+    echo "error: RuntimeEvent declaration drift in $path" >&2
+    if [[ -n "$missing" ]]; then echo "Missing: $missing" >&2; fi
+    if [[ -n "$extra" ]]; then echo "Extra: $extra" >&2; fi
+    return 1
+  fi
+}
 
-status=0
-if [[ -n "$missing" ]]; then
-  echo "error: RuntimeEvent variants missing from $declarations:" >&2
-  echo "$missing" | sed 's/^/  - /' >&2
-  status=1
-fi
-if [[ -n "$extra" ]]; then
-  echo "error: $declarations declares variants absent from $events:" >&2
-  echo "$extra" | sed 's/^/  - /' >&2
-  status=1
-fi
-
-if [[ "$status" -ne 0 ]]; then
-  exit 1
-fi
-
-echo "RuntimeEvent variant check passed ($(echo "$core_variants" | wc -l | tr -d ' ') variants)."
+check_declarations "$declarations" "$ts_variants"
+check_declarations "$python_declarations" "$py_variants"
+echo "RuntimeEvent variant check passed for both SDKs ($(echo "$core_variants" | wc -l | tr -d ' ') variants)."

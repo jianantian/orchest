@@ -17,6 +17,8 @@ from.
 - Add pull-based asynchronous agent runs with a bounded event stream, explicit
   cancellation and cleanup, and a final result after event consumption. Each
   Agent instance accepts one active run across its run entry points.
+- Answer blocking requests and query capabilities on a specific run. Run calls
+  expose machine-readable errors and a complete event union in both SDKs.
 
 ## [0.2.0]
 

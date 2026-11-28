@@ -283,7 +283,7 @@ export type StopReason =
  */
 export type RunFailureKind = "BudgetExceeded" | "MaxStepsReached" | "Other";
 
-/** The host's answer to a request (`Agent.respond`). */
+/** The host's answer to a blocking request. */
 export interface RequestResponse {
   /** A bare "approve" / "deny", or the tagged form (`answer` carries a payload). */
   decision:
@@ -297,7 +297,7 @@ export interface RequestResponse {
   session_rules?: unknown;
 }
 
-/** What a run supports (`Agent.capabilities`). */
+/** What a run supports. */
 export interface Capabilities {
   resume: boolean;
   preemptive_cancel: boolean;

@@ -59,6 +59,31 @@ impl NativeRun {
         })
     }
 
+    fn respond<'py>(
+        &self,
+        py: Python<'py>,
+        request_id: String,
+        payload: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let json = py
+            .import("json")?
+            .call_method1("dumps", (payload,))
+            .and_then(|value| value.extract::<String>())
+            .map_err(|error| run_error(BindingRunError::InvalidResponse(error.to_string())))?;
+        let payload = serde_json::from_str(&json)
+            .map_err(|error| run_error(BindingRunError::InvalidResponse(error.to_string())))?;
+        let stream = Arc::clone(&self.0);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            stream.respond(request_id, payload).await.map_err(run_error)
+        })
+    }
+
+    fn capabilities<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let json = serde_json::to_string(self.0.capabilities())
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        py.import("json")?.call_method1("loads", (json,))
+    }
+
     #[pyo3(signature = (reason=None, message=None))]
     fn cancel(&self, reason: Option<String>, message: Option<String>) -> PyResult<bool> {
         let cancellation =

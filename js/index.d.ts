@@ -104,6 +104,13 @@ declare class Run {
     return(): Promise<IteratorReturnResult<undefined>>;
     /** @param {import("./types").CancelReason} [reason] @param {string} [message] */
     cancel(reason?: import("./types").CancelReason, message?: string): boolean;
+    /**
+     * Answer a pending request on this run.
+     * @param {string} requestId
+     * @param {import("./types").RequestResponse} payload
+     */
+    respond(requestId: string, payload: import("./types").RequestResponse): Promise<void>;
+    capabilities(): import("./types").Capabilities;
     /** Return the final root-run event after the iterator reaches EOF. */
     wait(): Promise<{
         type: "run_completed";

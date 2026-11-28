@@ -42,6 +42,8 @@ export class NativeRun {
   wait(): Promise<Extract<RuntimeEvent, { type: "run_completed" | "run_failed" | "run_aborted" }>>;
   close(): Promise<void>;
   cancel(reason?: CancelReason, message?: string): boolean;
+  respond(requestId: string, payload: RequestResponse): Promise<void>;
+  capabilities(): Capabilities;
 }
 
 export class Agent {

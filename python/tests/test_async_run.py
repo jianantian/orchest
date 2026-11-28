@@ -2,30 +2,44 @@ import asyncio
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
 from orchest import Agent, AgentError
 
 
+def load_fixture() -> dict:
+    fixture = Path(__file__).with_name("sdk-runtime-events.json")
+    if not fixture.exists():
+        fixture = Path(__file__).parents[2] / "crates/orchest/tests/fixtures/sdk-runtime-events.json"
+    return json.loads(fixture.read_text())
+
+
+def normalize(event: dict) -> dict:
+    return {
+        key: f"<{key}>" if key in {"run_id", "message_id"} and isinstance(value, str) else value
+        for key, value in event.items()
+    }
+
+
 def test_async_run_streams_and_releases_its_agent() -> None:
     release_model = threading.Event()
+    fixture = load_fixture()
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
-            self.rfile.read(int(self.headers["Content-Length"]))
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
             release_model.wait(10)
-            chunks = [
-                ("message_start", {"message": {"usage": {"input_tokens": 1}}}),
-                ("content_block_start", {"content_block": {"type": "text"}}),
-                ("content_block_delta", {"delta": {"type": "text_delta", "text": "done"}}),
-                ("content_block_stop", {}),
-                ("message_delta", {"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 1}}),
-                ("message_stop", {}),
-            ]
+            asks_for_tool = body.get("tools") and not any(
+                block.get("type") == "tool_result"
+                for message in body["messages"]
+                for block in message["content"]
+            )
+            chunks = fixture["tool" if asks_for_tool else "complete"]
             try:
                 for event, data in chunks:
                     self.wfile.write(f"event: {event}\ndata: {json.dumps(data)}\n\n".encode())
@@ -82,12 +96,56 @@ def test_async_run_streams_and_releases_its_agent() -> None:
 
         release_model.set()
         async with await first.start_run("again") as run:
+            events = []
             async for event in run:
+                events.append(normalize(event))
                 if event["type"] == "run_completed":
                     with pytest.raises(AgentError) as pending:
                         await run.wait()
                     assert pending.value.code == "run_events_pending"
             assert (await run.wait())["type"] == "run_completed"
+            assert events == fixture["expected"]
+
+        calls = []
+        agents = [agent(), agent()]
+        def probe() -> str:
+            """Return the fixture tool result."""
+            calls.append("probe")
+            return "ok"
+
+        for item in agents:
+            item.register_tool(probe, approval="always")
+
+        async def request_for(run):
+            async for event in run:
+                if event["type"] == "approval_requested":
+                    return event["request_id"]
+            raise AssertionError("approval was not requested")
+
+        async with await agents[0].start_run("left") as left, await agents[1].start_run("right") as right:
+            left_id, right_id = await asyncio.gather(request_for(left), request_for(right))
+            assert left.capabilities() == agents[0].capabilities()
+            for request_id, payload, code in [
+                (right_id, {"decision": "approve"}, "request_not_found"),
+                (left_id, {"decision": "bad"}, "invalid_response"),
+            ]:
+                with pytest.raises(AgentError) as error:
+                    await left.respond(request_id, payload)
+                assert error.value.code == code
+            await left.respond(left_id, {"decision": {"type": "answer", "payload": {"ok": True}}})
+            with pytest.raises(AgentError) as expired:
+                await left.respond(left_id, {"decision": "approve"})
+            assert expired.value.code == "request_not_found"
+            await right.respond(right_id, {"decision": "deny"})
+            for active in (left, right):
+                assert [event async for event in active][-1]["type"] == "run_completed"
+            assert calls == ["probe"]
+
+        async with await agents[0].start_run("cancel approval") as waiting:
+            await request_for(waiting)
+            assert waiting.cancel("timeout")
+            assert not waiting.cancel("timeout")
+            assert [event async for event in waiting][-1]["cancel_reason"] == "timeout"
 
         def fail_callback(_event: object) -> None:
             raise LookupError("callback failure")

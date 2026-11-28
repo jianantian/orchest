@@ -6,10 +6,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::{watch, Mutex as AsyncMutex};
 use tokio_util::sync::CancellationToken;
 
-use crate::events::RuntimeEvent;
-use crate::run::{Cancellation, EventReceiver, RunHandle};
+use serde_json::Value;
 
-#[derive(Debug, Clone, Copy, thiserror::Error)]
+use crate::capabilities::Capabilities;
+use crate::events::RuntimeEvent;
+use crate::run::{Cancellation, EventReceiver, RequestError, RequestId, RunHandle};
+
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BindingRunError {
     #[error("the agent already has an active run")]
@@ -20,15 +23,21 @@ pub enum BindingRunError {
     StreamClosed,
     #[error("the run ended without a terminal result")]
     MissingResult,
+    #[error("{0}")]
+    InvalidResponse(String),
+    #[error(transparent)]
+    RequestNotFound(#[from] RequestError),
 }
 
 impl BindingRunError {
-    pub fn code(self) -> &'static str {
+    pub fn code(&self) -> &'static str {
         match self {
             Self::Active => "run_active",
             Self::EventsPending => "run_events_pending",
             Self::StreamClosed => "run_stream_closed",
             Self::MissingResult => "run_missing_result",
+            Self::InvalidResponse(_) => "invalid_response",
+            Self::RequestNotFound(_) => "request_not_found",
         }
     }
 }
@@ -169,6 +178,20 @@ impl BindingRunStream {
 
     pub fn cancel(&self, cancellation: Cancellation) -> bool {
         self.run.cancel(cancellation)
+    }
+
+    pub async fn respond(&self, request_id: String, payload: Value) -> Result<(), BindingRunError> {
+        let response =
+            super::parse_binding_response(payload).map_err(BindingRunError::InvalidResponse)?;
+        self.run
+            .handle
+            .respond(&RequestId::from(request_id), response)
+            .await?;
+        Ok(())
+    }
+
+    pub fn capabilities(&self) -> &Capabilities {
+        self.run.handle.capabilities()
     }
 
     pub fn stop_reading(&self) {
